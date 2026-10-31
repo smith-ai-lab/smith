@@ -1,0 +1,154 @@
+f(a, b)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (call (name f) (name a) (name b))))))
+
+f()
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (call (name f))))))
+
+xs[i]
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (index (name xs) (name i))))))
+
+xs[a:b]
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (slice_of (name xs) (name a) (name b))))))
+
+xs[a:]
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (slice_of (name xs) (name a) (absent))))))
+
+xs[:b]
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (slice_of (name xs) (absent) (name b))))))
+
+xs[:]
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (slice_of (name xs) (absent) (absent))))))
+
+p.x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (member x (name p))))))
+
+p->x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (member x arrow (name p))))))
+
+a.b.c
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (member c (member b (name a)))))))
+
+f(x).y[0]
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (index (member y (call (name f) (name x))) (integer 0))))))
+
+i++
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary post_increment (name i))))))
+
+i--
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary post_decrement (name i))))))
+
+ascii::digit(c)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (call (name ascii::digit) (name c))))))
+
+c::printf(s)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (call (name c::printf) (name s))))))
+
+xs[i + 1].name
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (member name (index (name xs) (binary add (name i) (integer 1))))))))
+
+f(g(x), h(y, z))
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (call (name f) (call (name g) (name x)) (call (name h) (name y) (name z)))))))
+
+-a[0]
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary negate (index (name a) (integer 0)))))))
+
+*p++
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary dereference (unary post_increment (name p)))))))
+
+&xs[0]
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary address_of (index (name xs) (integer 0)))))))
+
+++a--
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary pre_increment (unary post_decrement (name a)))))))
+
+xs[1][2]
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (index (index (name xs) (integer 1)) (integer 2))))))
+

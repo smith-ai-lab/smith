@@ -1,0 +1,20 @@
+U8[:]
+(module m
+  (variable t (slice (named U8))))
+
+I32[4]
+(module m
+  (variable t (array (named I32) (integer 4))))
+
+I32[n]
+(module m
+  (variable t (array (named I32) (name n))))
+
+I32[:][3]
+(module m
+  (variable t (slice (array (named I32) (integer 3)))))
+
+Point *[:]
+(module m
+  (variable t (slice (pointer (named Point)))))
+

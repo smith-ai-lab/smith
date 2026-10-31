@@ -1,0 +1,32 @@
+Fn(Bool (I32, I32))
+(module m
+  (variable t (applied Fn (type_arg (function_type (named I32) (named I32) (result (named Bool)))))))
+
+Fn(I32 ())
+(module m
+  (variable t (applied Fn (type_arg (function_type (result (named I32)))))))
+
+Fn(I32 (I32, ...))
+(module m
+  (variable t (applied Fn (type_arg (function_type variadic (named I32) (result (named I32)))))))
+
+Fn(void (U8 *, Usize))
+(module m
+  (variable t (applied Fn (type_arg (function_type (pointer (named U8)) (named Usize) (result (named void)))))))
+
+Fn(Option(I32) (I32))
+(module m
+  (variable t (applied Fn (type_arg (function_type (named I32) (result (applied Option (type_arg (named I32)))))))))
+
+Fn(Bool (Fn(I32 (I32)), I32))
+(module m
+  (variable t (applied Fn (type_arg (function_type (applied Fn (type_arg (function_type (named I32) (result (named I32))))) (named I32) (result (named Bool)))))))
+
+const Fn(I32 (I32))
+(module m
+  (variable t (applied Fn const (type_arg (function_type (named I32) (result (named I32)))))))
+
+Fn(const char *(Str))
+(module m
+  (variable t (applied Fn (type_arg (function_type (named Str) (result (pointer (named char const))))))))
+

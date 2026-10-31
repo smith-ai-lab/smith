@@ -1,0 +1,140 @@
+-x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary negate (name x))))))
+
++x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary plus (name x))))))
+
+!x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary logical_not (name x))))))
+
+~x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary bit_not (name x))))))
+
+&x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary address_of (name x))))))
+
+*p
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary dereference (name p))))))
+
+++x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary pre_increment (name x))))))
+
+--x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary pre_decrement (name x))))))
+
+sizeof x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (query sizeof (name x))))))
+
+sizeof(Point)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (query sizeof (named Point))))))
+
+sizeof(x)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (query sizeof (name x))))))
+
+sizeof x + 1
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary add (query sizeof (name x)) (integer 1))))))
+
+alignof(Point)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (query alignof (named Point))))))
+
+countof(xs)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (query countof (name xs))))))
+
+sizeof(Point) * 2
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary multiply (query sizeof (named Point)) (integer 2))))))
+
+try f(x)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (try (call (name f) (name x)))))))
+
+try f(x) + 1
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary add (try (call (name f) (name x))) (integer 1))))))
+
+- -x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary negate (unary negate (name x)))))))
+
+*&x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary dereference (unary address_of (name x)))))))
+
+!(a && b)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary logical_not (binary logical_and (name a) (name b)))))))
+

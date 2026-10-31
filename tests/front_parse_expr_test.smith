@@ -1,0 +1,243 @@
+// Tests of front::parse_expr (#1145, A3 of track A of #1112): expressions read from text, dumped through front::ast
+// and compared with the golden files of tests/front/parse_expr (`smith test --update` writes a changed one), and one
+// test for each error. The sources are written in the final spelling. The statement hook is a stub that skips a
+// braced body, so a lambda can be read before A4 exists.
+module front_parse_expr_test;
+
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+import std::text;
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_expr;
+import front::parse_type;
+
+// The stub of the statement hook: skips a braced body and gives an empty block.
+static ast::Stmt *stub_statement(parse::Parser *p) {
+    usize depth = 0;
+    for (usize i = 0; i < countof(p->tokens); i += 1) {
+        lex::TokenKind kind = parse::peek(p).kind;
+        if (kind == lex::end_of_file) break;
+        if (kind == lex::left_brace) depth += 1;
+        if (kind == lex::right_brace) depth -= 1;
+        parse::advance(p);
+        if (depth == 0) break;
+    }
+    ast::StmtRef none[:] = {};
+    return ast::block(none);
+}
+
+// A parser over the tokens of source with the real hooks and the stub; a lexing error fails the test.
+static parse::Parser parser_of(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    lex::Tokens tokens = {};
+    switch (lexed) {
+    case .ok:
+        tokens = lexed.ok;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    parse::Parser p = parse::make(tokens, source);
+    p.hooks.expression = parse_expr::expression;
+    p.hooks.type = parse_type::type;
+    p.hooks.statement = stub_statement;
+    return p;
+}
+
+// The dump of one expression, as the value returned by a function `f` of a module, then the errors, one a line, and
+// what was left unread.
+static Str dump_one(Str source) {
+    parse::Parser p = parser_of(source);
+    ast::Expr *e = parse::expression(&p);
+    ast::StmtRef statements[1] = {ast::return_value(e)};
+    ast::StmtRef none[:] = {};
+    ast::Stmt *body = ast::block(none);
+    if (e != nullptr) {
+        body = ast::block(statements);
+    }
+    ast::Param params[:] = {};
+    ast::DeclRef decls[1] = {ast::function("f", params, ast::named("I32"), body)};
+    ast::Module m = ast::new_module("m", decls);
+    Str dumped = ast::dump(&m);
+    char text[:] = format::push(source, "\n", dumped);
+    for (usize i = 0; i < countof(p.errors); i += 1) {
+        text = format::push(text, "error ", p.errors[i].span.start, "-", p.errors[i].span.end, ": ",
+                            p.errors[i].message, "\n");
+    }
+    if (parse::peek(&p).kind != lex::end_of_file) {
+        text = format::push(text, "left over: `", parse::text(&p, parse::peek(&p)), "`\n");
+    }
+    return text;
+}
+
+// Every line of `lines` is a source, dumped one after the other with a blank line between.
+static Str dump_all(Str lines) {
+    char all[:] = {};
+    usize start = 0;
+    for (usize i = 0; i <= countof(lines); i += 1) {
+        if (i < countof(lines) && lines[i] != '\n') continue;
+        all = format::push(all, dump_one(lines[start:i]), "\n");
+        start = i + 1;
+    }
+    return all;
+}
+
+static void check_golden(Str path, Str lines) {
+    arena::Arena memory = test::memory(1U << 23);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::golden(path, dump_all(lines));
+}
+
+// Two texts are the same (a literal converts to Str in a parameter, not in a generic).
+static void same(Str actual, Str expected) {
+    test::check_equal(actual, expected);
+}
+
+// The first error message of a source; the test fails when there is none.
+static Str first_error(Str source) {
+    parse::Parser p = parser_of(source);
+    _ = parse::expression(&p);
+    test::check_condition(countof(p.errors) > 0);
+    return p.errors[0].message;
+}
+
+static bool contains(Str text, Str piece) {
+    if (countof(piece) > countof(text)) return false;
+    for (usize i = 0; i + countof(piece) <= countof(text); i += 1) {
+        if (mem::equal(text[i:i + countof(piece)], piece)) return true;
+    }
+    return false;
+}
+
+export void test_parse_expr_precedence_and_associativity() {
+    check_golden("tests/front/parse_expr/precedence.txt",
+                 "a - b - c\na = b = c\na + b * c\na * b + c * d\n!a && b || c\na || b && c\na ? b : c ? d : e\n"
+                 "a ? b : c + 1\na = b ? c : d\na < b == c < d\na & b | c ^ d\na << 1 + 2\n-a * b\na - -b\n!!a\n"
+                 "x += y *= 2\na && b == c\na | b && c\na % b / c\na >> b << c\na <= b >= c != d");
+}
+
+export void test_parse_expr_postfix_forms() {
+    check_golden(
+        "tests/front/parse_expr/postfix.txt",
+        "f(a, b)\nf()\nxs[i]\nxs[a:b]\nxs[a:]\nxs[:b]\nxs[:]\np.x\np->x\na.b.c\nf(x).y[0]\ni++\ni--\n"
+        "ascii::digit(c)\nc::printf(s)\nxs[i + 1].name\nf(g(x), h(y, z))\n-a[0]\n*p++\n&xs[0]\n++a--\nxs[1][2]");
+}
+
+export void test_parse_expr_prefix_forms() {
+    check_golden("tests/front/parse_expr/prefix.txt",
+                 "-x\n+x\n!x\n~x\n&x\n*p\n++x\n--x\nsizeof x\nsizeof(Point)\nsizeof(x)\nsizeof x + 1\nalignof(Point)\n"
+                 "countof(xs)\nsizeof(Point) * 2\ntry f(x)\ntry f(x) + 1\n- -x\n*&x\n!(a && b)");
+}
+
+export void test_parse_expr_casts_against_parenthesized_values() {
+    check_golden("tests/front/parse_expr/casts.txt",
+                 "(I32)x\n(x) - 1\n(I32) - 1\n(Point *)p\n(const char *)s\n(geometry::Box)b\n(unsigned long)n\n"
+                 "(I32)x + 1\n(I32)(x + 1)\n(U8)(I32)x\n(typeof(x))y\n(x)\n(x + y) * z\n(a)(b)\n(c::size_t)x\n"
+                 "(Option(I32))x\n(I32)f(x)");
+}
+
+export void test_parse_expr_compound_literals_and_initializers() {
+    check_golden(
+        "tests/front/parse_expr/compound.txt",
+        "(Point){.x = 1, .y = 2}\n(I32[3]){1, 2, 3}\n{1, 2}\n{}\n{.x = 1, [2] = 3, .a.b = 4}\n{{1, 2}, {3, 4}}\n"
+        "{.none}\n{1,}\n(Point){.x = f(1), .y = a + b}\nf((Point){1, 2})\n{.p = (Point){1, 2}, .name = \"x\"}");
+}
+
+export void test_parse_expr_literals_with_their_decoded_values() {
+    check_golden("tests/front/parse_expr/literals.txt",
+                 "42\n0\n0xFF\n0b1010\n0777\n1'000'000\n10u\n10UL\n0xFFull\n18446744073709551615\n1.5\n2e3\n1.5f\n"
+                 ".5\n0x1.8p3\n0x10p-1\n1'0.2'5\n'a'\n'\\n'\n'\\x41'\n'\\u00e9'\n'\\0'\n'\\''\n\"hi\"\n\"a\\tb\\n\"\n"
+                 "\"a\" \"b\"\n\"\\u00e9\\x41\"\n\"q\\\"q\"\ntrue\nfalse\nnullptr\nu8\"x\"\nL'a'");
+}
+
+export void test_parse_expr_names_and_types_as_values() {
+    check_golden("tests/front/parse_expr/names.txt",
+                 "x\nascii::digit\nc::printf\nc::EOF\nstd::mem::alloc\n.empty\nf(I32)\nsizeof(Point)\nOption(I32)\n"
+                 "geometry::Box\nU8 *\nconst I32\nf(Option(I32), x)\nFn(Bool (I32, I32))\nPoint\nunsigned long\n"
+                 "make(Point, 3)\nI32[:]\nlist::make(I32)");
+}
+
+export void test_parse_expr_lambdas() {
+    check_golden("tests/front/parse_expr/lambdas.txt",
+                 "[] { return 1; }\n[x](I32 a) -> I32 { return a + x; }\n[](I32 a, I32 b) { }\n[x, y] { }\n"
+                 "[](a, b) { return a < b; }\nslice::sort(xs, [](I32 a, I32 b) { return a < b; })\n"
+                 "[](Fn(I32 (I32)) f) -> Option(I32) { }\n[](I32 a) -> I32 { { } }");
+}
+
+export void test_parse_expr_errors_in_the_dump() {
+    check_golden("tests/front/parse_expr/errors.txt",
+                 "a +\n)\n(a + b\nf(a, \nxs[1\na ? b\nx.\n.\n18446744073709551616\n\"\\q\"\n'ab'\n'\\xfff'\n(a, b)\n"
+                 "xs[a, b]\n(I32 (*)(I32))x\n[x\n[]\n[] 1\nsizeof(Point\n}\n(c::size_t)x");
+}
+
+export void test_parse_expr_a_comma_expression_names_the_fix() {
+    Str message = first_error("(a, b)");
+    test::check_condition(contains(message, "no comma operator"));
+    test::check_condition(contains(message, "two statements"));
+    Str index = first_error("xs[a, b]");
+    test::check_condition(contains(index, "no comma operator"));
+}
+
+export void test_parse_expr_a_function_pointer_declarator_names_fn() {
+    Str message = first_error("(I32 (*)(I32))x");
+    test::check_condition(contains(message, "Fn(I32 (I32))"));
+}
+
+export void test_parse_expr_an_unclosed_paren() {
+    same(first_error("(a + b"), "expected `)` to close the `(`, found the end of the file");
+    same(first_error("f(a, b"), "expected `)` to end the arguments, found the end of the file");
+}
+
+export void test_parse_expr_missing_operands() {
+    same(first_error("a +"), "expected an expression, found the end of the file");
+    same(first_error(")"), "expected an expression, found `)`");
+    same(first_error("a ? b"), "expected `:` of the conditional, found the end of the file");
+}
+
+export void test_parse_expr_literal_errors() {
+    same(first_error("18446744073709551616"), "this integer literal does not fit in 64 bits");
+    same(first_error("\"\\q\""), "unknown or malformed escape sequence in a literal");
+    same(first_error("'ab'"), "a character literal holds one character");
+}
+
+export void test_parse_expr_an_expression_stops_before_what_it_cannot_continue() {
+    parse::Parser p = parser_of("a + b; c");
+    ast::Expr *e = parse::expression(&p);
+    test::check_condition(e != nullptr);
+    test::check_equal(countof(p.errors), 0);
+    test::check_equal(parse::peek(&p).kind == lex::semicolon, true);
+    test::check_equal(e->span.start, 0);
+    test::check_equal(e->span.end, 5);
+}
+
+export void test_parse_expr_spans_cover_the_operands() {
+    parse::Parser p = parser_of("  f(x, y)[2] + -z");
+    ast::Expr *e = parse::expression(&p);
+    test::check_condition(e != nullptr);
+    test::check_equal(e->span.start, 2);
+    test::check_equal(e->span.end, 17);
+    test::check_condition(e->kind == .binary);
+    if (e->kind == .binary) {
+        test::check_equal(e->kind.binary.left->span.end, 12);
+        test::check_equal(e->kind.binary.right->span.start, 15);
+    }
+}
+
+export void test_parse_expr_a_hook_that_is_not_set_is_reported() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("(I32)x");
+    p.hooks.type = nullptr;
+    ast::Expr *e = parse::expression(&p);
+    test::check_condition(e == nullptr);
+    same(p.errors[0].message, "no parser for a type is installed");
+}

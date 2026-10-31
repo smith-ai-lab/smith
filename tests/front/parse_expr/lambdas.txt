@@ -1,0 +1,87 @@
+[] { return 1; }
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (lambda
+          (block))))))
+
+[x](I32 a) -> I32 { return a + x; }
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (lambda x
+          (param a (named I32))
+          (result (named I32))
+          (block))))))
+
+[](I32 a, I32 b) { }
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (lambda
+          (param a (named I32))
+          (param b (named I32))
+          (block))))))
+
+[x, y] { }
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (lambda x y
+          (block))))))
+
+[](a, b) { return a < b; }
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (lambda
+          (param a)
+          (param b)
+          (block))))))
+
+slice::sort(xs, [](I32 a, I32 b) { return a < b; })
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (call
+          (name slice::sort)
+          (name xs)
+          (lambda
+            (param a (named I32))
+            (param b (named I32))
+            (block)))))))
+
+[](Fn(I32 (I32)) f) -> Option(I32) { }
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (lambda
+          (param f (applied Fn (type_arg (function_type (named I32) (result (named I32))))))
+          (result (applied Option (type_arg (named I32))))
+          (block))))))
+
+[](I32 a) -> I32 { { } }
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (lambda
+          (param a (named I32))
+          (result (named I32))
+          (block))))))
+
