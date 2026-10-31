@@ -62,14 +62,14 @@ export void test_build_smith_a_build_smith_of_the_high_level_calls_builds_runs_t
     scratch::expect_text("build.smith: a second build has nothing to do", "smith: no work to do.", second.out);
     scratch::Run run = scratch::sh(&p, "smith run");
     scratch::expect_text("build.smith: smith run runs the program", "12", last_line(run.out));
-    scratch::Run tested = scratch::sh(&p, "smith test");
+    scratch::Run tested = scratch::sh(&p, "env SMITH_OUTPUT=full smith test");
     scratch::expect_status("build.smith: smith test passes", 0, &tested);
     scratch::expect_contains("build.smith: ... its test", format::push(tested.out, tested.err).data,
                              "1 passed, 0 failed");
     scratch::Run profiles = scratch::build(&p, "release fast");
     scratch::expect_status("build.smith: the other profiles build", 0, &profiles);
     scratch::expect_text("build.smith: ... and run", "12", scratch::capture(&p, "build/release/shapes"));
-    scratch::Run proved = scratch::sh(&p, "smith prove");
+    scratch::Run proved = scratch::sh(&p, "env SMITH_OUTPUT=full smith prove");
     scratch::expect_status("build.smith: smith prove runs", 0, &proved);
     scratch::expect_contains("build.smith: ... and says there is nothing to prove", proved.out, "nothing to prove");
 }
@@ -87,7 +87,7 @@ export void test_build_smith_a_low_level_task_beside_the_high_level_calls() {
     scratch::expect_status("low-level: a task in a build.smith runs", 0, &greet);
     scratch::expect_contains("low-level: ... and prints", greet.out,
                              format::push("hello from ", scratch::capture(&p, "uname -s")).data);
-    scratch::Run tested = scratch::sh(&p, "smith test");
+    scratch::Run tested = scratch::sh(&p, "env SMITH_OUTPUT=full smith test");
     scratch::expect_status("low-level: the tests of the high-level calls still pass", 0, &tested);
 }
 
@@ -120,7 +120,7 @@ export void test_build_smith_beside_a_build_c_is_an_error_that_names_both() {
     scratch::expect_contains("both: ... names both", built.err, "both build.c and build.smith are here");
     scratch::Run run = scratch::sh(&p, "smith run");
     scratch::expect_status("both: smith run says the same", 2, &run);
-    scratch::Run tested = scratch::sh(&p, "smith test");
+    scratch::Run tested = scratch::sh(&p, "env SMITH_OUTPUT=full smith test");
     scratch::expect_status("both: smith test says the same", 2, &tested);
 }
 
@@ -176,7 +176,7 @@ export void test_build_smith_dump_config_gives_the_commands_of_no_build_file_and
     scratch::expect_status("dump: ... builds", 0, &built);
     scratch::Run run = scratch::sh(&p, "smith run");
     scratch::expect_text("dump: ... runs", "12", last_line(run.out));
-    scratch::Run tested = scratch::sh(&p, "smith test");
+    scratch::Run tested = scratch::sh(&p, "env SMITH_OUTPUT=full smith test");
     scratch::expect_contains("dump: ... and tests", format::push(tested.out, tested.err).data, "1 passed, 0 failed");
     scratch::Run again = scratch::sh(&p, "smith build --dump-config");
     scratch::expect_status("dump: a project with a build.smith: status 0", 0, &again);
@@ -225,7 +225,7 @@ export void test_build_smith_dump_config_of_a_c_project_gives_the_commands_tests
     const char *conventional = dump_c_project(&p);
     scratch::expect_text("dump: the build.c gives the commands of no build file", conventional,
                          commands_of(&p, "cdump"));
-    scratch::Run tested = scratch::sh(&p, "smith test");
+    scratch::Run tested = scratch::sh(&p, "env SMITH_OUTPUT=full smith test");
     scratch::expect_contains("dump: ... and tests", format::push(tested.out, tested.err).data, "1 passed, 0 failed");
     scratch::Run again = scratch::sh(&p, "smith build --dump-config");
     scratch::expect_status("dump: a project with a build.c: status 0", 0, &again);
@@ -277,13 +277,13 @@ export void test_build_smith_lint_reads_a_build_smith_as_written() {
     scratch::copy_tree(&p, ".clang-tidy", "repo-clang-tidy");
     (void)scratch::sh(
         &p, "sed 's/^  smith-effects,$/  -smith-effects,/' repo-clang-tidy >.clang-tidy && rm repo-clang-tidy");
-    scratch::Run clean = scratch::sh(&p, "smith lint");
+    scratch::Run clean = scratch::sh(&p, "env SMITH_OUTPUT=full smith lint");
     if (clean.status != 0) {
         test::note("lint said: %s%s", clean.out, clean.err);
     }
     scratch::expect_status("lint: a clean build.smith passes", 0, &clean);
     (void)scratch::sh(&p, "printf '\\nstatic int BadName(int x) {\\n    return x;\\n}\\n' >>build.smith");
-    scratch::Run bad = scratch::sh(&p, "smith lint");
+    scratch::Run bad = scratch::sh(&p, "env SMITH_OUTPUT=full smith lint");
     scratch::expect_status("lint: a finding in build.smith fails", 1, &bad);
     scratch::expect_contains("lint: ... at its line, in the name as written", format::push(bad.out, bad.err).data,
                              "build.smith:10:12");
@@ -297,7 +297,7 @@ export void test_build_smith_check_reads_a_build_smith_with_no_main() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run checked = scratch::sh(&p, "smith check");
+    scratch::Run checked = scratch::sh(&p, "env SMITH_OUTPUT=full smith check");
     const char *err = checked.err;
     const char *lint = c::strstr(err, "smith check: lint ");
     bool ok =
