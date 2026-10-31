@@ -92,6 +92,21 @@ static void push_move(MoveList *list, Move move) {
                 list->buf[end].to.row == move.to.row && list->buf[end].to.col == move.to.col);
 }
 
+// The move generator's body, shared by the two functions that carry its properties (one proof of both was over the
+// budget): a macro, so that each of them proves it for itself with the calls to push_move in its own body.
+#define ADD_STEPS()                                                                                \
+  do {                                                                                             \
+    if (plus_legal) {                                                                              \
+      push_move(&moves->diagonals, (Move){ .from = { .row = row, .col = col },                     \
+                                           .to = { .row = row + forward(board), .col = col + 1 } }); \
+    }                                                                                              \
+    if (minus_legal) {                                                                             \
+      push_move(&moves->diagonals, (Move){ .from = { .row = row, .col = col },                     \
+                                           .to = { .row = row + forward(board), .col = col - 1 } }); \
+    }                                                                                              \
+  } while (0)
+
+// Carries: the list grew by at most two, and everything added is a legal step.
 void get_valid_diagonals(Moves *restrict moves, const Board *restrict board, uint8_t row, uint8_t col) {
   smith_requires(row < rows && col < cols);
   smith_requires(moves->diagonals.len + 2 <= max_moves);
@@ -100,15 +115,19 @@ void get_valid_diagonals(Moves *restrict moves, const Board *restrict board, uin
   // The board is read once for each step, for the specification and for the move.
   const bool plus_legal = step_is_legal(board, row, col, 1);
   const bool minus_legal = step_is_legal(board, row, col, -1);
-  if (plus_legal) {
-    push_move(&moves->diagonals, (Move){ .from = { .row = row, .col = col },
-                                         .to = { .row = row + forward(board), .col = col + 1 } });
-  }
-  if (minus_legal) {
-    push_move(&moves->diagonals, (Move){ .from = { .row = row, .col = col },
-                                         .to = { .row = row + forward(board), .col = col - 1 } });
-  }
+  ADD_STEPS();
   smith_ensures(moves->diagonals.len <= old + 2);
   smith_ensures(added_only_legal_steps(board, &moves->diagonals, old, row, col, plus_legal, minus_legal));
+}
+
+// Carries: every legal step was added.
+void get_valid_diagonals_complete(Moves *restrict moves, const Board *restrict board, uint8_t row, uint8_t col) {
+  smith_requires(row < rows && col < cols);
+  smith_requires(moves->diagonals.len + 2 <= max_moves);
+  smith_requires(board->turn == P1 || board->turn == P2);
+  const uint8_t old = moves->diagonals.len;
+  const bool plus_legal = step_is_legal(board, row, col, 1);
+  const bool minus_legal = step_is_legal(board, row, col, -1);
+  ADD_STEPS();
   smith_ensures(added_every_legal_step(board, &moves->diagonals, old, row, col, plus_legal, minus_legal));
 }
