@@ -182,7 +182,7 @@ static const BuildProtocol build_protocols[] = {
 };
 constexpr size_t build_protocol_count = sizeof build_protocols / sizeof build_protocols[0];
 
-static constexpr char build_library_folder[] = "lib/smith"; // the libraries written in .smith
+static constexpr char build_library_folder[] = "lib/std"; // the libraries written in .smith
 
 // The generator is a program of smith's own C (scripts/protocol.c, on lib/json.c), built here and not shipped: like
 // scripts/pack.c, a tool of the build. arena, contract and text are the modules of smith, compiled from their sources.
@@ -240,7 +240,7 @@ static const char *const *build_protocol_steps(SmithBuild *b, const BuildConfig 
     return outputs;
 }
 
-// The libraries in the tree: lib/smith/<name>.smith, a test (<name>_test.smith) not among them. A file says in itself
+// The libraries in the tree: lib/std/<name>.smith, a test (<name>_test.smith) not among them. A file says in itself
 // what the build does with it, on a line of its own: `// smith-build: link` (smith_object compiles it and smith links
 // it) or `// smith-build: header` (only its header is made here); a file with neither is embedded by smith.c and
 // linted unless it says `// smith-build: no lint` (a file with no declaration of its own). Adding a library edits no
@@ -273,7 +273,7 @@ static const char *const *build_marked(SmithBuild *b, const char *mark) {
     return names;
 }
 
-// The headers of the libraries written in .smith (lib/smith/<name>.smith, the module smith::<name>) and of smith::build
+// The headers of the libraries written in .smith (lib/std/<name>.smith, the module std::<name>) and of std::build
 // are build outputs, never committed (knowledge/smith-module-headers.md): `.smith/include/smith/<name>.h`, written by
 // the smith that compiles smith (CC, the previous release: the lag rule) from the module's source. A module that a
 // smith_object compiles (marked `// smith-build: link`) has its header step from smith_object; the others are made
@@ -290,15 +290,14 @@ static const char *build_compiler_file(SmithBuild *b, const BuildConfig *config)
 }
 
 // The headers a header step waits for: a module's header pass reads the headers of the modules it imports, so each
-// `import smith::<name>;` of its source that names another of the header modules makes that header an input of the
+// `import std::<name>;` of its source that names another of the header modules makes that header an input of the
 // step (the others are written first by smith itself, smith_write_lang_headers, which orders them the same way).
 static const char *const *build_header_imports(SmithBuild *b, const char *source, const char *self) {
     const char *const *inputs = smith_list(b, nullptr);
     const char *const *modules = build_header_modules(b);
-    const char *lines =
-        smith_capture_or(b, (const char *[]){"grep", "-h", "^[ \t]*import smith::", source, nullptr}, "");
-    for (const char *at = strstr(lines, "import smith::"); at != nullptr; at = strstr(at + 1, "import smith::")) {
-        const char *name = at + strlen("import smith::");
+    const char *lines = smith_capture_or(b, (const char *[]){"grep", "-h", "^[ \t]*import std::", source, nullptr}, "");
+    for (const char *at = strstr(lines, "import std::"); at != nullptr; at = strstr(at + 1, "import std::")) {
+        const char *name = at + strlen("import std::");
         size_t length = strcspn(name, ";\n");
         for (size_t i = 0; modules[i] != nullptr; i++) { // bounded by the tree
             if (strlen(modules[i]) != length || strncmp(modules[i], name, length) != 0) continue;
@@ -1072,7 +1071,7 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
                 "\"$1\" -pthread -o \"$work/exhaustive\" || exit 1; start=$(date +%s); "
                 "\"$work/exhaustive\"; status=$?; "
                 "echo \"exhaustive: exit $status in $(($(date +%s) - start)) s\"; exit $status",
-                binary, smith_fmt(b, "%s/text.smith", "lib/smith"), nullptr},
+                binary, smith_fmt(b, "%s/text.smith", "lib/std"), nullptr},
         .inputs = (const char *[]){binary, nullptr},
     };
     smith_task(b, "text-exhaustive", &exhaustive);

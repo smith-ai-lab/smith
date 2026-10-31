@@ -1,5 +1,5 @@
 module t::typed_call;
-import smith::test;
+import std::test;
 export void typed_call_test() {
     test::check_equal(1, 1);
 }

@@ -54,7 +54,7 @@ struct SmithFileHandler {
     ssize_t (*read)(SmithFileHandler *self, int fd, void *buffer, size_t size);
     ssize_t (*write)(SmithFileHandler *self, int fd, const void *buffer, size_t size);
     int (*close)(SmithFileHandler *self, int fd);
-    // The members below are called by smith::files (lib/smith/files.smith), not by an interposed libc function; each
+    // The members below are called by std::files (lib/std/files.smith), not by an interposed libc function; each
     // may be null, which is libc's own call (stat, mkdir, unlink, rename, opendir, mmap, munmap). They return 0 for
     // success and -1 with errno set, as the libc calls do.
     int (*stat)(SmithFileHandler *self, const char *path, SmithFileStatus *status);
@@ -121,7 +121,7 @@ SmithClockHandler *smith_handlers_set_clock(SmithClockHandler *clock);
 
 // The clock of the calling thread, null when none is set.
 SmithClockHandler *smith_handlers_clock(void);
-// The child processes of the calling thread: smith::process (lib/smith/process.smith) calls these members itself, with
+// The child processes of the calling thread: std::process (lib/std/process.smith) calls these members itself, with
 // no libc function behind them, so a thread with a handler never starts a real process. A child is an id the handler
 // chooses (greater than 0). Calls return 0 (or a count) for success and -1 with errno set, as the libc calls do. No
 // process handler set is the real posix_spawn, pipes and waitpid. Issue #240; knowledge/process.md.
@@ -161,7 +161,7 @@ SmithProcessHandler *smith_handlers_set_process(SmithProcessHandler *process);
 // The processes of the calling thread, null when the real ones are in force.
 SmithProcessHandler *smith_handlers_process(void);
 
-// The network of the calling thread: smith::net (lib/smith/net.smith) calls these members itself, with no libc function
+// The network of the calling thread: std::net (lib/std/net.smith) calls these members itself, with no libc function
 // behind them, so a thread with a handler never opens a real socket. A connection or a listener is an id the handler
 // chooses (greater than 0). Calls return an id, a count or 0 for success and -1 with errno set, as the libc calls do.
 // No net handler set is the real sockets, with TLS from the system's stack. Issue #240; knowledge/net.md.
@@ -205,7 +205,7 @@ SmithNetHandler *smith_handlers_set_net(SmithNetHandler *net);
 // The network of the calling thread, null when the real one is in force.
 SmithNetHandler *smith_handlers_net(void);
 
-// The entropy of the calling thread: the random bytes getentropy fills (smith::random::seed asks it). `fill` writes
+// The entropy of the calling thread: the random bytes getentropy fills (std::random::seed asks it). `fill` writes
 // `size` bytes of buffer and never fails (a fake writes the bytes of a number it holds, so a test scripts the seed). No
 // entropy handler set is the system's. arc4random and getrandom are not reached.
 typedef struct SmithEntropyHandler SmithEntropyHandler;
@@ -220,11 +220,11 @@ SmithEntropyHandler *smith_handlers_set_entropy(SmithEntropyHandler *entropy);
 // The entropy of the calling thread, null when none is set.
 SmithEntropyHandler *smith_handlers_entropy(void);
 
-// The scheduler of the calling thread: whatever runs tasks (smith::task, issue #241). A blocking call on a descriptor
+// The scheduler of the calling thread: whatever runs tasks (std::task, issue #241). A blocking call on a descriptor
 // (read, write, pread, pwrite, readv, writev, send, recv, accept, connect) that no files or console handler answers
 // becomes a SmithIoRequest handed to `io`, which does it and parks the calling task until it completes; the code that
 // called is written as a plain blocking call. No scheduler set (the default) is the real functions. `spawn`, `pause`
-// and `wait` are smith::task's (a group is defined there); the runtime only stores the scheduler. This header is
+// and `wait` are std::task's (a group is defined there); the runtime only stores the scheduler. This header is
 // C-level and internal. A call that `io` itself makes to one of those functions reaches the scheduler again: a
 // scheduler does its real calls with smith_handlers_set_table naming a table that has no scheduler. Issue #936;
 // knowledge/handlers.md.

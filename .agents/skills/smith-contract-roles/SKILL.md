@@ -8,7 +8,7 @@ description: "Where each contract call goes: a precondition at entry is requires
 ```smith
 module checks;
 
-import smith::contract;
+import std::contract;
 
 export i32 first(const i32 *xs, usize count) {
     contract::requires(count > 0);                // the precondition: callers prove it, the body assumes it

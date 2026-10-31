@@ -5,7 +5,7 @@ typedef struct Shape {
         float circle;
         float rect;
     };
-} __attribute__((annotate("smith::enum"))) Shape;
+} __attribute__((annotate("std::enum"))) Shape;
 float unchecked(Shape s) {
     return s.circle;
 }

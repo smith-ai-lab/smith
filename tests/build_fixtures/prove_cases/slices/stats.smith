@@ -1,6 +1,6 @@
 module stats;
 
-import smith::contract;
+import std::contract;
 
 export i32 first(i32 xs[:]) {
     contract::ensures(true);

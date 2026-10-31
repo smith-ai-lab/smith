@@ -1,10 +1,10 @@
-// test::golden (lib/smith/test.smith, issue #292): the fixture tests/build_fixtures/golden has a test file whose
+// test::golden (lib/std/test.smith, issue #292): the fixture tests/build_fixtures/golden has a test file whose
 // goldens pass, differ, are too long to show, are missing, or are empty. Each test here is its own project.
 module golden_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
 
 export void test_golden_a_text_equal_to_its_file_passes() {

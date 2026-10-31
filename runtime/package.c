@@ -216,7 +216,7 @@ static void smith_package_remove(const char *path) {
     if (nftw(path, smith_package_remove_entry, 64, FTW_DEPTH | FTW_PHYS) != 0) remove(path);
 }
 
-// The archive readers, in smith's own code, so extraction runs no other process: gzip (on smith::inflate), then xz,
+// The archive readers, in smith's own code, so extraction runs no other process: gzip (on std::inflate), then xz,
 // then tar (which uses both). The order matters, so each include is a block of its own that clang-format leaves
 // be.
 #include "gzip.c"
@@ -644,7 +644,7 @@ static bool smith_package_install(const char *url, const char *wanted, const Smi
 }
 
 // Makes sure the package is in the cache and puts its absolute path in folder (PATH_MAX bytes). The download goes
-// through the net handler of the calling thread (a test scripts the network with smith::net's fake). With `wanted` (the
+// through the net handler of the calling thread (a test scripts the network with std::net's fake). With `wanted` (the
 // "sha256:<hex>" a build.c names) the download must match it, and a package already cached is not fetched again. With
 // nullptr (`smith fetch`) the archive is always downloaded and its hash is the answer, put in `hash` either way.
 // `offline` turns a missing package into an error that names the URL.

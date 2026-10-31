@@ -1,6 +1,6 @@
 ---
 name: smith-arena
-description: "Using smith::arena (import smith::arena; arena::push, push_slice): memory without malloc. Load when code imports smith::arena or includes <smith/arena.h>, or on allocating memory in C without malloc."
+description: "Using std::arena (import std::arena; arena::push, push_slice): memory without malloc. Load when code imports std::arena or includes <smith/arena.h>, or on allocating memory in C without malloc."
 ---
 
 # Memory without malloc: smith's arena
@@ -9,11 +9,11 @@ An arena is a block of memory with a cursor. Nothing is freed on its own: a rese
 
 ## Use it
 
-In a `.smith` file the arena is a module (`lib/smith/arena.smith`, `module smith::arena;`) and the type is an argument, so size and alignment cannot disagree and the result is typed (`smith-lang-generics`):
+In a `.smith` file the arena is a module (`lib/std/arena.smith`, `module std::arena;`) and the type is an argument, so size and alignment cannot disagree and the result is typed (`smith-lang-generics`):
 
 ```smith
 module points;
-import smith::arena;
+import std::arena;
 
 typedef struct {
     f32 x, y;
@@ -41,7 +41,7 @@ i32 main() {
 
 ```smith
 module scratch;
-import smith::arena;
+import std::arena;
 
 export usize scratch_sum(arena::Arena *a, usize count) {
     arena::Scope scope = arena::scope_begin(a);

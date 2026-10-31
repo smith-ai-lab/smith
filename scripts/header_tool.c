@@ -1,5 +1,5 @@
-// The writer of the .smith libraries' headers, standalone: `header_tool lib/smith/arena.smith -o arena.h` is
-// `smith cc --smith-header lib/smith/arena.smith -o arena.h` without a smith, a clang or an LLVM. The writer is a
+// The writer of the .smith libraries' headers, standalone: `header_tool lib/std/arena.smith -o arena.h` is
+// `smith cc --smith-header lib/std/arena.smith -o arena.h` without a smith, a clang or an LLVM. The writer is a
 // plain lexer and the lowering (runtime/lang*.c), which this file includes as smith.c does; a C compiler builds it:
 //   cc -std=gnu23 -x c scripts/header_tool.c -o header_tool
 // It is how scripts/seed_linux.c, which has no smith, makes the headers that smith.c's compile needs; a test

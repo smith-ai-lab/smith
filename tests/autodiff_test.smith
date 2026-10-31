@@ -1,4 +1,4 @@
-// End-to-end tests for smith::autodiff (Enzyme, run at link time inside smith's lld), from tests/autodiff.sh (issue
+// End-to-end tests for std::autodiff (Enzyme, run at link time inside smith's lld), from tests/autodiff.sh (issue
 // #292): a toy across .smith and C files in the three profiles and under `smith test`, a copy of learner's scan
 // reference against its hand-written backward, AddressSanitizer after Enzyme in the debug profile (an out-of-bounds
 // read in the primal and in the gradient), the commands of a program that does not differentiate, the calls
@@ -7,10 +7,10 @@
 // returns to it (a Run's texts) is given back with that memory, and scratch::clean frees what make holds.
 module autodiff_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 import <string.h>;
 
@@ -395,5 +395,5 @@ export void test_autodiff_a_smith_with_an_external_clang_refuses_an_autodiff_pro
         scratch::sh(&p, "chmod +x external-clang && env SMITH_CLANG=\"$PWD/external-clang\" smith build");
     scratch::expect_status("autodiff: refusal: a smith with an external clang fails", 2, &built);
     scratch::expect_contains("autodiff: refusal: ... saying it needs Enzyme", built.err,
-                             "smith::autodiff needs a smith with Enzyme linked in");
+                             "std::autodiff needs a smith with Enzyme linked in");
 }

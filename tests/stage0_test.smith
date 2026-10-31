@@ -4,9 +4,9 @@
 // gnu2x on Linux, where a missing release would build the seed, which SMITH_STAGE0_SEED=0 turns off.
 module stage0_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
 
 // The folder of the repository (the project's) holds: bin/curl and fake-smith (built from the fixture), the tool, an

@@ -9,7 +9,7 @@ static void helper(const char *text) {
     log_it(text);
 }
 
-[[smith::pure]] int bad(const char *text) {
+[[std::pure]] int bad(const char *text) {
     helper(text);
     return 0;
 }

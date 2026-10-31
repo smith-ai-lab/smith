@@ -1,6 +1,6 @@
 ---
 name: smith-json
-description: "Reading JSON with smith's json (import smith::json; <smith/json.h>): an arena tree and from C. Load for JSON, code that calls smith_json_ or includes <smith/json.h>, tokenizer.json, MCP, DAP or JSON-RPC messages."
+description: "Reading JSON with smith's json (import std::json; <smith/json.h>): an arena tree and from C. Load for JSON, code that calls smith_json_ or includes <smith/json.h>, tokenizer.json, MCP, DAP or JSON-RPC messages."
 ---
 
 # JSON: smith's json
@@ -10,8 +10,8 @@ description: "Reading JSON with smith's json (import smith::json; <smith/json.h>
 ## Read a tree
 
 ```smith
-import smith::arena;
-import smith::text;
+import std::arena;
+import std::text;
 import <smith/json.h>;
 
 // The name of a document's "name" member, or an empty text; the error goes to the console of the caller.

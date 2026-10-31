@@ -4,10 +4,10 @@
 // reads. Each fixture is tests/build_fixtures/steps_<name>/build.c.
 module build_steps_text_test;
 
-import smith::arena;
-import smith::mem;
+import std::arena;
+import std::mem;
 import scratch;
-import smith::test;
+import std::test;
 
 constexpr usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
 

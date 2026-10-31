@@ -3,8 +3,8 @@
 // with a text, each failing name in the note of the failure.
 module prove_cases;
 
-import smith::format;
-import smith::test;
+import std::format;
+import std::test;
 import scratch;
 
 // `smith prove args -- -I include`, both streams together. $c in args is tests/prove. The command is built in a buffer

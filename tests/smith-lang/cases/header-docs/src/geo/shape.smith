@@ -23,7 +23,7 @@ export u64 norm2(Point p) {
 export u32 origin_count = 1; // how many origins there are
 
 /** Whether the point is the origin. */
-[[smith::c_name("geo_is_origin")]] export bool is_origin(Point p) {
+[[std::c_name("geo_is_origin")]] export bool is_origin(Point p) {
     return norm2(p) == 0;
 }
 

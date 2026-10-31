@@ -1,12 +1,12 @@
 ---
 name: smith-text-numbers
-description: "Parsing and writing numbers with smith::text: u64, i64, hex, f32 and f64, exact round trips and what is refused. Load when converting text to numbers or numbers to text without libc."
+description: "Parsing and writing numbers with std::text: u64, i64, hex, f32 and f64, exact round trips and what is refused. Load when converting text to numbers or numbers to text without libc."
 ---
 
 # Numbers
 
 ```smith
-import smith::text;
+import std::text;
 
 void parse(const char word[:]) {
     u64 u, h;
@@ -30,7 +30,7 @@ void parse(const char word[:]) {
 ## Write numbers
 
 ```smith
-import smith::text;
+import std::text;
 
 usize write_line(char out[:], u64 tick, u64 hash) {   // out has room for the three numbers and two spaces
     usize length = text::write_u64(out, tick);       // each write needs countof(out) >= text::number_capacity (20), the longest: -9223372036854775808

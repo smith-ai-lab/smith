@@ -8,12 +8,12 @@
 // `smith cache`) is a scratch project of that fixture and the build file in a cache of its own, run by the real smith.
 module lint_cache_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
-import smith::files;
-import smith::format;
+import std::files;
+import std::format;
 import <smith_core_lint_cache.h>;
 import <string.h>;
 

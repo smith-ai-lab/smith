@@ -1,6 +1,6 @@
 module main;
 
-import smith::tools;
+import std::tools;
 import <stdio.h>;
 
 int main() {

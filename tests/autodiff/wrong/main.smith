@@ -1,7 +1,7 @@
 // A template: tests/autodiff_test.smith replaces CALL with calls of autodiff::gradient that must not compile.
 module main;
 
-import smith::autodiff;
+import std::autodiff;
 
 typedef struct {
     f64 v[2];

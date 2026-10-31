@@ -9,14 +9,14 @@
 // skill that gets its first block needs one: `test_every_skill_with_a_block_has_a_test` says which.
 module skills_test;
 
-import smith::arena;
-import smith::env;
-import smith::files;
-import smith::format;
-import smith::test;
+import std::arena;
+import std::env;
+import std::files;
+import std::format;
+import std::test;
 import <string.h>;
 import scratch;
-import smith::mem;
+import std::mem;
 
 constexpr usize modules_max = 32;
 constexpr usize memory_size = (usize)16 << 20; // 16 MiB: a test's texts, given back with its memory
@@ -234,7 +234,7 @@ static const char *repo_file(arena::Arena *arena, const char *repo, const char *
     }
 }
 
-// A skill with a `c` or `smith` block needs a test below. The folder and the files are read through smith::files, so a
+// A skill with a `c` or `smith` block needs a test below. The folder and the files are read through std::files, so a
 // skill added to the folder selects the test.
 export void test_every_skill_with_a_block_has_a_test() {
     arena::Arena memory = test::memory(memory_size);

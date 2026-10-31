@@ -10,13 +10,13 @@
 // available (no network).
 module tree_sitter_test;
 
-import smith::arena;
-import smith::env;
-import smith::files;
-import smith::format;
-import smith::test;
+import std::arena;
+import std::env;
+import std::files;
+import std::format;
+import std::test;
 import scratch;
-import smith::mem;
+import std::mem;
 import <string.h>;
 
 // The tree-sitter runtime, pinned by the hash of its archive (v0.27.1, which reads parsers of ABI 15, the one
@@ -151,7 +151,7 @@ static bool left_out(const char *name) {
     return false;
 }
 
-// The top level of the repository, listed through smith::files and copied into own/ (the listing below runs there).
+// The top level of the repository, listed through std::files and copied into own/ (the listing below runs there).
 static void copy_own_files(const scratch::Project *p) {
     env::Value repo = env::get("SMITH_REPO");
     const char *base = repo == .some ? repo.some.data : ".";

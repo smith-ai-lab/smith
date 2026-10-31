@@ -35,7 +35,7 @@ tags: [lowering, internals]
     imports are read first, the deepest first (`smith_raw_prefetch`, by the text of the `import` lines, at most eight
     modules, found among the files beside it as `--smith-header` finds them), because the interface borrows the tables of
     the lowering that asked for it and cannot ask for a second; so an export that takes `core::Thing *` is written with
-    the `[[smith::c_name]]` that `core` chose (`CoreThing`), as the header `smith build` writes would, and
+    the `[[std::c_name]]` that `core` chose (`CoreThing`), as the header `smith build` writes would, and
     `smith cc main.smith rolls.smith core.smith` needs no `-I .smith/include`. Unlike the header
     on disk it keeps the module's lines: each declaration is on its line (the first line is `#pragma once`, or the `#ifndef` of the guard when the header has an instance section) and its name
     at its column where the text before allows, so a diagnostic that points into it is at the declaration in the module,

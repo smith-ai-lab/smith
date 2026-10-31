@@ -1836,7 +1836,7 @@ class SmithHook final : public TokenHook, public NameSource {
 
     // In a module the macros the target predefines under a plain name (`linux`, `unix`, `i386`) are undefined from the
     // `module` line on: a module has no preprocessor and reads the target through `target::`, so they would only
-    // replace a name of the program's (`import smith::clock::linux;`, a local `unix`) with 1 (issue #382). The reserved
+    // replace a name of the program's (`import std::clock::linux;`, a local `unix`) with 1 (issue #382). The reserved
     // spellings (`__linux__`) and the macros of the command line stay; a file with no `module` line keeps C's meaning.
     void undefineTargetMacros(SourceLocation at) {
         targetMacrosUndefined = true;
@@ -2502,7 +2502,7 @@ class SmithHook final : public TokenHook, public NameSource {
     }
 
     // The enum whose constants `fields` lists: a plain enum, or the tag enum of a payload enum's struct (annotated
-    // `smith::enum`, runtime/lang_enum.c), whose variants are the tag's constants.
+    // `std::enum`, runtime/lang_enum.c), whose variants are the tag's constants.
     // The name of an enum's constant as the source writes it: C's is prefixed by the module (`docs_Low`) or, for an
     // enum with a C name, by the type (`Volume_Low`). The module's prefix is what the constant shares with the type's
     // own (prefixed) name, up to a `_`.
@@ -2519,7 +2519,7 @@ class SmithHook final : public TokenHook, public NameSource {
         if (const auto *plain = type.getCanonicalType()->getAs<EnumType>()) return plain->getDecl()->getDefinition();
         if (record == nullptr || record->getDefinition() == nullptr) return nullptr;
         const auto *annotation = record->getDefinition()->getAttr<AnnotateAttr>();
-        if (annotation == nullptr || annotation->getAnnotation() != "smith::enum") return nullptr;
+        if (annotation == nullptr || annotation->getAnnotation() != "std::enum") return nullptr;
         for (const FieldDecl *field : record->getDefinition()->fields()) {
             if (field->getName() == "tag") {
                 if (const auto *tag = field->getType().getCanonicalType()->getAs<EnumType>())
@@ -3596,6 +3596,15 @@ class SmithHook final : public TokenHook, public NameSource {
             entry.source = path;
             source = std::move(*buffer);
             break;
+        }
+        if (!source && StringRef(module).starts_with("smith/")) {
+            // The header of std::arena is smith/arena.h (C has no namespaces, #366) and its source std/arena.smith.
+            Interface *library = interfaceOf("std/" + module.substr(6));
+            if (library != nullptr && library->ok) {
+                entry = *library;
+                return &entry;
+            }
+            problem.clear();
         }
         if (!source) {
             entry.text = "cannot find module `" + name + "`: no `" + module + ".h` in the include paths, no `" +

@@ -11,7 +11,7 @@ static_assert(shapes::second(3) == 6);
 constexpr i32 chosen = shapes::second(shapes::dot(1) - 28);
 
 // What a failed check of an index calls (the library's, in a real program).
-[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+[[std::c_name("smith_failure")]] export void failure(u8 code) {
     c::exit(code);
 }
 

@@ -1,1 +1,1 @@
--I @REPO@/include main.smith @REPO@/tests/smith-lang/cases/generic-some-operand/src/finder.smith @REPO@/lib/smith/contract.smith @REPO@/lib/trace.c -o @OUT@/program
+-I @REPO@/include main.smith @REPO@/tests/smith-lang/cases/generic-some-operand/src/finder.smith @REPO@/lib/std/contract.smith @REPO@/lib/trace.c -o @OUT@/program

@@ -48,7 +48,7 @@ docs_Shape_tag_round,
 /// Nothing.
 docs_Shape_tag_none, docs_Shape_tag_plain } tag; union {
 float round; }; // no doc
-} __attribute__((annotate("smith::enum"))) docs_Shape;
+} __attribute__((annotate("std::enum"))) docs_Shape;
 
 void docs_run() __asm__("_docs::run");
 #ifdef __cplusplus

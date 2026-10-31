@@ -7,12 +7,12 @@
 // has nothing to test, and the tests do nothing.
 module lsp_test;
 
-import smith::arena;
-import smith::format;
-import smith::test;
+import std::arena;
+import std::format;
+import std::test;
 import scratch;
 import <string.h>;
-import smith::mem;
+import std::mem;
 
 // The pieces one after another, in the current allocator (the test's arena).
 static const char *join(const char *a, const char *b, const char *c) {
@@ -729,7 +729,7 @@ export void test_lsp_query_refs() {
     // review).
     scratch::expect_text(
         "query refs: a function with a c_name, asked by its written name",
-        "geom/vec.smith:16:50: ref: [[smith::c_name(\"geom_vec_squared\")]] export f32 length2(Vec a) {\n"
+        "geom/vec.smith:16:48: ref: [[std::c_name(\"geom_vec_squared\")]] export f32 length2(Vec a) {\n"
         "user.smith:16:17: ref: return vec::length2(a);",
         query(&p, "refs vec::length2"));
 }
@@ -755,7 +755,7 @@ export void test_lsp_query_hover_and_symbols() {
                          "geom/vec.smith:3:8: class: Vec\n"
                          "geom/vec.smith:8:8: function: dot\n"
                          "geom/vec.smith:12:18: function: larger\n"
-                         "geom/vec.smith:16:46: function: length2",
+                         "geom/vec.smith:16:44: function: length2",
                          query(&p, "symbols geom/vec.smith"));
 }
 
@@ -1300,7 +1300,7 @@ export void test_lsp_effects_across_files_show_the_chain_and_clear_on_save() {
     const char *log = session(&p, "open a.c b.c -- replace b.c '    printf(\"%d\\n\", x);\n' '' -- save b.c");
     expect_line(
         "effects: a.c shows the error through b.c, with the chain", log,
-        "diag a.c:2:41: Smith-effect: `bad` is [[smith::pure]], but it has the effects console, globals: bad -> noisy "
+        "diag a.c:2:39: Smith-effect: `bad` is [[std::pure]], but it has the effects console, globals: bad -> noisy "
         "(a.c:2) -> printf (b.c:4)");
     scratch::expect_count("effects: after b.c is saved without the print, a.c has no diagnostics again", 1,
                           count_prefix(log, "diag a.c"));
@@ -1347,7 +1347,7 @@ export void test_lsp_hover_has_no_fails_for_a_proved_index() {
     scratch::sh(&root, "mkdir -p proof");
     scratch::Project p = folder(&root, "proof");
     scratch::write(&p, "pick.smith",
-                   "module pick;\nimport bounds;\nimport smith::contract;\n"
+                   "module pick;\nimport bounds;\nimport std::contract;\n"
                    "export i32 at(usize i) {\n"
                    "    i32 buffer[8] = {1, 2, 3, 4, 5, 6, 7, 8};\n"
                    "    i32 window[:] = buffer;\n"
@@ -1356,7 +1356,7 @@ export void test_lsp_hover_has_no_fails_for_a_proved_index() {
                    "    return window[j];\n"
                    "}\n");
     scratch::write(&p, "bounds.smith",
-                   "module bounds;\nimport smith::contract;\n"
+                   "module bounds;\nimport std::contract;\n"
                    "export usize clamp(usize n) {\n"
                    "    usize r = n < 8 ? n : 7;\n"
                    "    contract::ensures(r < 8);\n"

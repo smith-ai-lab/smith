@@ -1,10 +1,10 @@
 module reads_test;
 
-import smith::arena;
-import smith::files;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::files;
+import std::format;
+import std::mem;
+import std::test;
 import <string.h>;
 
 // Reads one file: the record names it.

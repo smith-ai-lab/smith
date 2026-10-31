@@ -1,9 +1,9 @@
 // Fixed-size caps that used to drop input silently (issue #604): a count beyond the old cap is read whole.
 module caps_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
 
 // What a test's commands print goes to an arena of the runner's (test::memory), the current allocator from start to

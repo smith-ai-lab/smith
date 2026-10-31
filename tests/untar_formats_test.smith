@@ -5,12 +5,12 @@
 // of tests/build_fixtures/untar/prelude (including tests/xz.py) stay for tests/untar_sanitizers_test.smith.
 module untar_formats_test;
 
-import smith::arena;
-import smith::format;
-import smith::test;
+import std::arena;
+import std::format;
+import std::test;
 import scratch;
 import <string.h>;
-import smith::mem;
+import std::mem;
 
 static scratch::Project untar_project() {
     scratch::Project p = scratch::make("p", "untar");

@@ -1,5 +1,5 @@
 module generic::user;
-import smith::pool;
+import std::pool;
 
 export f64 *fill(pool::Pool *pool, usize count) {
     f64 *values = pool::push_array(pool, f64, count);

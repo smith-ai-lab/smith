@@ -9,10 +9,10 @@
 //    Developer Tools permission (knowledge/debugger.md); without them these tests do nothing.
 module mcp_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 
 // The pieces one after another, from the current allocator (the test's arena).
@@ -33,8 +33,8 @@ static scratch::Project folder(const scratch::Project *root, const char *name) {
 // --- the server on the fake io ---------------------------------------------------------------------------------------
 
 constexpr char fake_sources[_] =
-    "tests/mcp_fake.c lib/smith/text.smith lib/smith/arena.smith lib/smith/contract.smith runtime/io.smith "
-    "lib/smith/random.smith";
+    "tests/mcp_fake.c lib/std/text.smith lib/std/arena.smith lib/std/contract.smith runtime/io.smith "
+    "lib/std/random.smith";
 
 // The generated protocol code (.smith/protocol/dap.c and mcp.c, 6 s of CPU at -O2, more than half of the file's
 // compile) does not depend on NDEBUG (it holds no assertion), so the two optimized builds link the same two objects.

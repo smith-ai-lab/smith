@@ -2,7 +2,7 @@ module within;
 
 import <stdio.h>;
 import <stdlib.h>;
-import smith::effects;
+import std::effects;
 
 static i32 quiet(i32 x) {
     return x + 1;

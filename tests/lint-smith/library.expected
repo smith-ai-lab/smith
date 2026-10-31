@@ -1,3 +1,3 @@
-idiom/library.smith:3:1: error: `import <smith/arena.h>;` reads smith::arena, a module, through its C header: write `import smith::arena;` and call it as `arena::name(...)` (a typed push is `arena::push(&a, T)`)
-idiom/library.smith:5:20: error: `c::SmithArena` is `arena::Arena` of the module smith::arena, reached through its C header: write `import smith::arena;` and `arena::Arena` (a typed push is `arena::push(&a, T)`)
-idiom/library.smith:6:23: error: `c::smith_arena_push` is `arena::push_raw` of the module smith::arena, reached through its C header: write `import smith::arena;` and `arena::push_raw` (a typed push is `arena::push(&a, T)`)
+idiom/library.smith:3:1: error: `import <smith/arena.h>;` reads std::arena, a module, through its C header: write `import std::arena;` and call it as `arena::name(...)` (a typed push is `arena::push(&a, T)`)
+idiom/library.smith:5:20: error: `c::SmithArena` is `arena::Arena` of the module std::arena, reached through its C header: write `import std::arena;` and `arena::Arena` (a typed push is `arena::push(&a, T)`)
+idiom/library.smith:6:23: error: `c::smith_arena_push` is `arena::push_raw` of the module std::arena, reached through its C header: write `import std::arena;` and `arena::push_raw` (a typed push is `arena::push(&a, T)`)

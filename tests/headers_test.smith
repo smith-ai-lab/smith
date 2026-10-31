@@ -1,6 +1,6 @@
 // What a module's generated C header includes: exactly what its exported declarations need
 // (knowledge/smith-module-headers.md).
-//   1. the generated header of every library module (lib/smith/*.smith; none is in git) compiles on its own, as
+//   1. the generated header of every library module (lib/std/*.smith; none is in git) compiles on its own, as
 //      C and as C++; a library added there needs a test here: `test_every_library_module_has_a_header_test` says which;
 //   2. the rule, on the small modules of tests/build_fixtures/headers: an import only a body uses stays out; an import
 //   an
@@ -12,12 +12,12 @@
 //      old limit of eight is read by source and by header, up to the limit that is an error naming it.
 module headers_test;
 
-import smith::arena;
-import smith::env;
-import smith::files;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::env;
+import std::files;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 import <string.h>;
 
@@ -89,12 +89,12 @@ static void standalone(const scratch::Project *p, const char *name, const char *
 // compiles its own header from there: 28 tests that each wrote all twenty cost 1.2 s of CPU each (#638).
 constexpr char generated_script[_] =
     "if [ \"$(uname -s)\" = Darwin ]; then sf='-f %N_%m_%z'; else sf='-c %n_%Y_%s'; fi; "
-    "key=$( { stat $sf \"$SMITH_SELF\"; cat \"$SMITH_REPO\"/lib/smith/*.smith; } | shasum -a 256 | cut -c1-20 ); "
+    "key=$( { stat $sf \"$SMITH_SELF\"; cat \"$SMITH_REPO\"/lib/std/*.smith; } | shasum -a 256 | cut -c1-20 ); "
     "c=$SMITH_TEST_CACHE/headers-$key; "
     "if [ ! -e \"$c/done\" ]; then "
     "if mkdir \"$c.lock\" 2>/dev/null; then "
     "rm -rf \"$c\"; mkdir -p \"$c/generated\" && cd \"$SMITH_REPO\" && "
-    "for f in lib/smith/*.smith; do case \"$f\" in *_test.smith) ;; "
+    "for f in lib/std/*.smith; do case \"$f\" in *_test.smith) ;; "
     "*) \"$SMITH_SELF\" cc --smith-header \"$f\" -o \"$c/generated/$(basename \"$f\" .smith).h\" || "
     "{ rm -rf \"$c\" \"$c.lock\"; exit 1; };; esac; done && : >\"$c/done\"; rmdir \"$c.lock\"; "
     "else n=0; until [ -e \"$c/done\" ]; do "
@@ -115,11 +115,11 @@ static void generated(const char *name) {
                joined("-I ", folder, " -I \"$SMITH_REPO/.smith/include\""));
 }
 
-// The names in lib/smith of the repository, one a line, listed through smith::files so that the record of the test
+// The names in lib/std of the repository, one a line, listed through std::files so that the record of the test
 // names the listing and a module added there selects the test.
 static const char *library_names() {
     env::Value repo = env::get("SMITH_REPO");
-    const char *folder = joined(repo == .some ? repo.some.data : ".", "/lib/smith");
+    const char *folder = joined(repo == .some ? repo.some.data : ".", "/lib/std");
     files::EntriesResult listed = files::list(folder[0:c::strlen(folder)]);
     files::Entries entries = {};
     switch (listed) {
@@ -163,8 +163,8 @@ export void test_the_shapes_the_lowering_carries_are_the_ones_the_headers_write(
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::write_header_of(&p, "lib/smith/option.smith", "option.h");
-    scratch::write_header_of(&p, "lib/smith/result.smith", "result.h");
+    scratch::write_header_of(&p, "lib/std/option.smith", "option.h");
+    scratch::write_header_of(&p, "lib/std/result.smith", "result.h");
     has(&p, "option", "option.h", "// smith-eshape: option(T) { T some ; none ; }", true);
     has(&p, "result", "result.h", "// smith-eshape: result(T,E) { T ok ; E error ; }", true);
 }

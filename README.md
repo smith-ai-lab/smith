@@ -12,7 +12,7 @@ One binary: compiler, build, tests, proofs, formatter, linter, debugger and edit
 // stats.smith
 module stats;
 
-import smith::contract;
+import std::contract;
 
 export i32 largest(i32 xs[:]) {
     contract::requires(countof(xs) > 0);
@@ -36,7 +36,7 @@ export typeof(x) clamp(auto x, typeof(x) low, typeof(x) high) {
 // main.smith
 module main;
 
-import smith::console;
+import std::console;
 import stats;
 
 i32 main() {
@@ -109,7 +109,7 @@ int sum(const int *xs, size_t n); // the length is a second argument, and nothin
 ```smith project=slices run
 module main;
 
-import smith::console;
+import std::console;
 
 i32 sum(const i32 xs[:]) {
     i32 total = 0;
@@ -169,13 +169,13 @@ export void skip(const char (*text)[:], usize n) {
 
 [smith-lang-slice-pointers](.agents/skills/smith-lang-slice-pointers/SKILL.md).
 
-One library does what `strcmp`, `memchr` and `memset` did for every element type: `smith::slice` compares, searches, sorts, fills and reverses any slice, with no allocation, and `smith::ascii` tests one character with no locale. `slice::find` returns an `option(usize)` where C returned a sentinel, and an index or its absence travels as one value:
+One library does what `strcmp`, `memchr` and `memset` did for every element type: `std::slice` compares, searches, sorts, fills and reverses any slice, with no allocation, and `std::ascii` tests one character with no locale. `slice::find` returns an `option(usize)` where C returned a sentinel, and an index or its absence travels as one value:
 
 ```smith
 module header;
 
-import smith::ascii;
-import smith::slice;
+import std::ascii;
+import std::slice;
 
 export bool is_setting(const char line[:]) {
     const char prefix[:] = "#";
@@ -209,9 +209,9 @@ void copy(float *dst, const float *src, size_t n) {
 ```smith project=memcopy run
 module main;
 
-import smith::arena;
-import smith::console;
-import smith::mem;
+import std::arena;
+import std::console;
+import std::mem;
 
 i32 main() {
     f32 raw[4] = {1.5f, 2.5f, 3.5f, 4.5f};
@@ -235,15 +235,15 @@ same true, copy[1] 0, copy[3] 4.5, grown 4
 
 `mem::copy`, `mem::move`, `mem::zero`, `mem::fill`, `mem::equal`, `mem::bytes(&x)` and `mem::view(bytes, f32)` take slices (`xs = mem::realloc(xs, n)` resizes one, `mem::try_realloc` returns an `option`), so a length that does not match is a checked failure, and they lower to the C functions. In a file with a `module` line the raw `memcpy`, `memmove`, `memset`, `memcmp`, `malloc`, `calloc`, `realloc` and `free` are a `smith-mem` finding that names the replacement (`smith lint --fix` applies the mechanical ones); a function that implements a wrapper says `contract::trusted()`. A `.c` file is untouched. [smith-mem](.agents/skills/smith-mem/SKILL.md).
 
-A test can make memory refuse on purpose with `smith::failing`: `failing::make(parent, key)` is an allocator that refuses one allocation in eight by a draw from a `random::Key`, so a failure replays from its seed ([smith-failing](.agents/skills/smith-failing/SKILL.md)).
+A test can make memory refuse on purpose with `std::failing`: `failing::make(parent, key)` is an allocator that refuses one allocation in eight by a draw from a `random::Key`, so a failure replays from its seed ([smith-failing](.agents/skills/smith-failing/SKILL.md)).
 
 ```smith project=refuse run
 module main;
 
-import smith::failing;
-import smith::console;
-import smith::mem;
-import smith::random;
+import std::failing;
+import std::console;
+import std::mem;
+import std::random;
 
 typedef option(i32 *) MaybeInt;
 
@@ -324,7 +324,7 @@ One function prints any struct, read at compile time:
 ```smith project=reflect run
 module main;
 
-import smith::console;
+import std::console;
 
 struct Particle {
     f64 mass;
@@ -388,7 +388,7 @@ export f64 total_of_doubles(auto... args) {
 module main;
 
 import meta;
-import smith::console;
+import std::console;
 
 i32 main() {
     console::print(meta::mean(1, 2.5f, (i64)3, 3.5), "\n");
@@ -479,7 +479,7 @@ two that overlap.
 ```smith project=bytes refuse
 module bytes;
 
-import smith::contract;
+import std::contract;
 
 export void copy(u8 dst[restrict :], const u8 src[const restrict :]) {
     contract::requires(countof(dst) >= countof(src));
@@ -525,7 +525,7 @@ out. Debug keeps every check, and so does a source edited since the proof.
 ```smith
 module first;
 
-import smith::contract;
+import std::contract;
 
 export i32 head(const i32 xs[:]) {
     contract::requires(countof(xs) >= 1); // every caller is proved to meet it
@@ -542,8 +542,8 @@ export i32 head(const i32 xs[:]) {
 // tests/stats_test.smith
 module stats_test;
 
-import smith::random;
-import smith::test;
+import std::random;
+import std::test;
 import stats;
 
 export void test_clamp_cuts_a_big_value() { // (void): pure, it can touch nothing
@@ -561,13 +561,13 @@ A test takes no io: the world is reached through the direct libraries and their 
 
 ### Randomness is pure; the system's entropy is one effect
 
-A `random::Key` is a value: the same key gives the same numbers on every build, so `smith::random` touches nothing. A key from the system comes from `smith::entropy`, the one place that asks for randomness, and its signature shows it.
+A `random::Key` is a value: the same key gives the same numbers on every build, so `std::random` touches nothing. A key from the system comes from `std::entropy`, the one place that asks for randomness, and its signature shows it.
 
 ```smith
 module fresh;
 
-import smith::entropy;
-import smith::random;
+import std::entropy;
+import std::random;
 
 export random::Key replayable(u64 seed) { // pure: the same seed, the same key
     return random::key_make(seed);
@@ -596,7 +596,7 @@ A function's effects are inferred from its body and its callees, so a function t
 ```smith
 module report;
 
-import smith::console;
+import std::console;
 
 // it prints: its effects include the console
 export void report(i32 top) {
@@ -616,8 +616,8 @@ export i32 twice(i32 x) {
 ```smith project=gradient run
 module main;
 
-import smith::autodiff;
-import smith::console;
+import std::autodiff;
+import std::console;
 
 struct Line {
     f64 m;
@@ -715,7 +715,7 @@ int main(void) {
 ```smith project=ported run
 module greet;
 
-import smith::console;
+import std::console;
 
 export void greet(const char name[:]) {
     console::print("hello, ", name, "\n");

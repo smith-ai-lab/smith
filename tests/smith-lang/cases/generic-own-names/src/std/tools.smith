@@ -1,0 +1,30 @@
+module std::tools;
+
+import <stdio.h>;
+
+export i32 offset = 10;
+
+export i32 pick() {
+    return tools::offset + 1;
+}
+
+// A module's own exports are written qualified, in a generic's instance as in the module: `tools::offset`.
+export typeof_unqual(*x) shifted(auto x, auto... rest) {
+    typeof_unqual(*x) result = *x + tools::offset + tools::pick();
+    return result + (i32)countof(rest);
+}
+
+// `rest...` in an initializer list: the elements of the argument list, in order.
+export i32 table_sum(auto... rest) {
+    i32 table[_] = {rest..., 100};
+    i32 sum = 0;
+    for (usize i = 0; i < sizeof table / sizeof table[0]; i++)
+        sum += table[i];
+    return sum;
+}
+
+// `rest...` in an initializer with other elements, and `countof(rest)` beside it.
+export i32 nested(auto... rest) {
+    i32 table[_] = {rest..., 5, 1};
+    return table[0] + table[sizeof table / sizeof table[0] - 1] + (i32)countof(rest) + 1;
+}

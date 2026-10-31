@@ -1,6 +1,6 @@
 module main;
 import <stdio.h>;
-import smith::arena;
+import std::arena;
 
 static option(f32[:]) first(f32 x[:]) {
     if (countof(x) == 0) return .none;

@@ -1,12 +1,12 @@
 ---
 type: architecture
-title: smith::task, fibers, groups and one worker per core
+title: std::task, fibers, groups and one worker per core
 description: Tasks on 256 KB mmap stacks with a guard page, switched by assembly, run by one worker thread per core, waited for in a task::Group, with the scheduler a handler (issues #241, #940).
 tags: [task, fiber, scheduler]
 ---
-# smith::task
+# std::task
 
-`lib/smith/task.smith` is the first step of issue #241: smith manages lifetimes as scopes, an arena for memory, a group for tasks. Decided there: `main` is always the first task, `wait` and `pause` work in `main`, there is no `task::run`. This page is what exists; the plan (the typed `spawn`, parking I/O, a simulation scheduler) stays in the issue.
+`lib/std/task.smith` is the first step of issue #241: smith manages lifetimes as scopes, an arena for memory, a group for tasks. Decided there: `main` is always the first task, `wait` and `pause` work in `main`, there is no `task::run`. This page is what exists; the plan (the typed `spawn`, parking I/O, a simulation scheduler) stays in the issue.
 
 - **A task is a fiber.** One `mmap` holds a guard page (`PROT_NONE`, one page), 256 KB of stack, and at its top the task's own record, so no allocator is involved and a refusal by the system is a checked failure. The mapping is released when the task has ended. Each task is two mappings, so a process holds about 32,000 live tasks under Linux's default `vm.max_map_count` of 65530; a later ticket decides how to go past it.
 - **The switch is assembly in the module**: file-scope `__asm__` under `if constexpr` on `target::arch` and `target::os` (arm64 macOS, arm64 Linux, x86-64 Linux; any other target is a `static_assert`). It saves the callee-saved registers on the old stack, stores the stack pointer and loads the new one; a new task's stack holds a frame that returns into a boot stub, which calls the entry with the task. Under AddressSanitizer each switch calls `__sanitizer_start_switch_fiber` and `finish`, and an ended task's mapping is unpoisoned before it is unmapped, so the next stack at that address starts clean.
@@ -18,4 +18,4 @@ tags: [task, fiber, scheduler]
 - **Each task has its own handlers and its own `errno`.** A task holds a `SmithHandlers` table: at `spawn` it is a copy of the spawner's current table (`*smith_handlers_table()`), so a new task starts with its spawner's handlers and what it sets afterwards stays its own. At every switch `transfer` calls `smith_handlers_set_table` with the entered task's table (`main`, the first task, keeps the thread's own, null): the swap is one store, and the per-kind counters of #885 stay right because they are not touched here. `errno` is saved into the leaving task and restored from the entered one at each switch (`__error()` on macOS, `__errno_location()` on Linux). This module is the only caller of `smith_handlers_set_table`.
 - **Not here:** parking I/O, cancellation, work stealing (later, when measured), and more than about 32,000 live tasks that have started on Linux (two mappings each against `vm.max_map_count`).
 
-Tests: `lib/smith/task_test.smith`.
+Tests: `lib/std/task_test.smith`.

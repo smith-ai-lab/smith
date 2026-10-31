@@ -16,7 +16,7 @@ extern "C" {
 #endif
 #ifndef SMITH_ENUM_SMITH_ENUM_OPTION_USIZE
 #define SMITH_ENUM_SMITH_ENUM_OPTION_USIZE
-struct smith_enum_option_usize { enum smith_enum_option_usize_tag { smith_enum_option_usize_tag_some, smith_enum_option_usize_tag_none } tag; union { size_t some; }; } __attribute__((annotate("smith::enum")));
+struct smith_enum_option_usize { enum smith_enum_option_usize_tag { smith_enum_option_usize_tag_some, smith_enum_option_usize_tag_none } tag; union { size_t some; }; } __attribute__((annotate("std::enum")));
 #endif
 
 struct smith_enum_option_usize finder_find(const char *text, char wanted) __asm__("_finder::find");

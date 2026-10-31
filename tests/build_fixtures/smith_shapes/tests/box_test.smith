@@ -1,6 +1,6 @@
 module box_test;
 
-import smith::test;
+import std::test;
 import geometry::box;
 
 export void test_area() {

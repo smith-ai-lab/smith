@@ -11,7 +11,7 @@ enum geo_shapes_Color { geo_shapes_Color_red, geo_shapes_Color_green };
 typedef enum geo_shapes_Color geo_shapes_Color;
 struct smith_enum_geo_shapes_Shape {enum geo_shapes_Shape_tag {geo_shapes_Shape_tag_circle, geo_shapes_Shape_tag_empty } tag; union {
 geo_shapes_Point circle; };
-} __attribute__((annotate("smith::enum")));
+} __attribute__((annotate("std::enum")));
 typedef struct smith_enum_geo_shapes_Shape geo_shapes_Shape;
 struct geo_shapes_Hidden {
 __INT32_TYPE__ secret;

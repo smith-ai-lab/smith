@@ -16,7 +16,7 @@ extern "C" {
 #endif
 #ifndef SMITH_ENUM_SMITH_ENUM_OPTION_I32
 #define SMITH_ENUM_SMITH_ENUM_OPTION_I32
-struct smith_enum_option_i32 { enum smith_enum_option_i32_tag { smith_enum_option_i32_tag_some, smith_enum_option_i32_tag_none } tag; union { int32_t some; }; } __attribute__((annotate("smith::enum")));
+struct smith_enum_option_i32 { enum smith_enum_option_i32_tag { smith_enum_option_i32_tag_some, smith_enum_option_i32_tag_none } tag; union { int32_t some; }; } __attribute__((annotate("std::enum")));
 #endif
 
 typedef struct smith_enum_option_i32 a_Maybe;

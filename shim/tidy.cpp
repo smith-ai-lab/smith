@@ -145,14 +145,14 @@ class SmithNaming final : public RenamerClangTidyCheck {
         return false;
     }
 
-    // A payload enum (`typedef enum { Circle circle; empty; } Shape;`) is lowered to a struct marked `smith::enum` that
+    // A payload enum (`typedef enum { Circle circle; empty; } Shape;`) is lowered to a struct marked `std::enum` that
     // holds the enum `Shape_tag` with the constants `Shape_tag_circle`, and the member `tag`: the lowering's own names.
     static bool isEnumRecord(const Decl *decl) {
         const auto *record = dyn_cast_or_null<RecordDecl>(decl);
         if (record == nullptr) return false;
         for (const Decl *each : record->redecls())
             for (const auto *attr : each->specific_attrs<AnnotateAttr>())
-                if (attr->getAnnotation() == "smith::enum") return true;
+                if (attr->getAnnotation() == "std::enum") return true;
         return false;
     }
 

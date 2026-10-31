@@ -5,15 +5,15 @@
 // `SMITH_PROVED_REPORT=1`.
 module prove_checks_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 
 constexpr char edges[_] = "module edges;\n"
                           "\n"
-                          "import smith::contract;\n"
+                          "import std::contract;\n"
                           "\n"
                           "export i32 first(const i32 xs[:]) {\n"
                           "    contract::requires(countof(xs) >= 1);\n"
@@ -98,7 +98,7 @@ export void test_prove_checks_an_edit_puts_the_checks_back_until_it_is_proved_ag
     scratch::write(&p, "edges.smith",
                    "// edited\n"
                    "module edges;\n"
-                   "import smith::contract;\n"
+                   "import std::contract;\n"
                    "export i32 first(const i32 xs[:]) {\n"
                    "    contract::requires(countof(xs) >= 1);\n"
                    "    contract::ensures(true);\n"
@@ -145,7 +145,7 @@ export void test_prove_checks_the_proof_file_is_an_input_of_the_compile_in_a_rel
 // `r < 3`. The proof file's key covers that file, so changing the promise puts the check back (issue #221).
 constexpr char bounds_source[_] = "module bounds;\n"
                                   "\n"
-                                  "import smith::contract;\n"
+                                  "import std::contract;\n"
                                   "\n"
                                   "export usize pick(usize n) {\n"
                                   "    contract::requires(n < 3);\n"
@@ -156,7 +156,7 @@ constexpr char bounds_source[_] = "module bounds;\n"
 
 constexpr char bounds_loose[_] = "module bounds;\n"
                                  "\n"
-                                 "import smith::contract;\n"
+                                 "import std::contract;\n"
                                  "\n"
                                  "export usize pick(usize n) {\n"
                                  "    contract::requires(n < 3);\n"
@@ -168,7 +168,7 @@ constexpr char bounds_loose[_] = "module bounds;\n"
 constexpr char user_source[_] = "module user;\n"
                                 "\n"
                                 "import bounds;\n"
-                                "import smith::contract;\n"
+                                "import std::contract;\n"
                                 "\n"
                                 "export i32 at(const i32 xs[:]) {\n"
                                 "    contract::requires(countof(xs) == 3);\n"
@@ -245,7 +245,7 @@ export void test_prove_checks_a_changed_callee_compiles_the_caller_again() {
 // not `fail`; a `requires` is never left out, and an assert the prover cannot prove stays.
 constexpr char contracts_source[_] = "module contracts;\n"
                                      "\n"
-                                     "import smith::contract;\n"
+                                     "import std::contract;\n"
                                      "\n"
                                      "export i32 sure(i32 x) {\n"
                                      "    contract::requires(x < 10);\n"

@@ -6,10 +6,10 @@
 // lists of findings are the golden files of tests/lint-smith.
 module lint_smith_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import <string.h>;
 import scratch;
 
@@ -324,7 +324,7 @@ export void test_lint_a_module_that_calls_a_generic_lints_clean() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     prepare(&p, false);
-    (void)lint(&p, "run generic/user.smith smith/pool.smith >generic.out; echo $? >generic.status");
+    (void)lint(&p, "run generic/user.smith std/pool.smith >generic.out; echo $? >generic.status");
     scratch::expect_text("a module that calls a generic lints clean", "0", scratch::capture(&p, "cat generic.status"));
     scratch::expect_text("... with no finding about the instance's name", "0",
                          scratch::capture(&p, "grep -c 'push_array<' generic.out"));
@@ -521,8 +521,7 @@ export void test_lint_smith_module_library_import_smith_arena_is_clean_and_so_is
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     prepare(&p, false);
-    scratch::expect_text("smith-module-library: import smith::arena is clean, and so is a C header that is no module",
-                         "",
+    scratch::expect_text("smith-module-library: import std::arena is clean, and so is a C header that is no module", "",
                          lint_text(&p, "idiom smith-module-library idiom/library_ok.smith idiom/library_c.smith "
                                        ">library-ok.out; idiom_findings <library-ok.out"));
 }
@@ -664,7 +663,7 @@ static void write_module_files(const scratch::Project *p) {
     scratch::write(p, "tests/loose_test.smith", "// The tests.\n\nvoid test_x(void) {}\n");
     scratch::write(p, "main.smith", "i32 main(i32 argc, char *argv[]) {\n    return argc - 1;\n}\n");
     scratch::write(p, "build.smith",
-                   "import smith::build;\n\nvoid build(build::Build *b) {\n    build::app(b, &(build::App){});\n}\n");
+                   "import std::build;\n\nvoid build(build::Build *b) {\n    build::app(b, &(build::App){});\n}\n");
     scratch::write(p, "mod/fine.smith",
                    "// A comment first, then the line.\nmodule mod::fine;\n\nexport u32 helper(u32 n) {\n"
                    "    return n + 1;\n}\n");

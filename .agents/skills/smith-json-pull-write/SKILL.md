@@ -8,7 +8,7 @@ description: "The pull parser and the bounded writer of smith's json: reading wi
 ## Pull, without a tree
 
 ```smith
-import smith::text;
+import std::text;
 import <smith/json.h>;
 
 bool has_model(const char input[:], c::SmithJsonLimits limits) {
@@ -28,7 +28,7 @@ A number is kept as its text, checked for JSON's grammar only. Convert it yourse
 ## Write
 
 ```smith
-import smith::text;
+import std::text;
 import <smith/json.h>;
 
 bool write_pi(const char (*out)[:]) {

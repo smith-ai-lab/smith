@@ -1,7 +1,7 @@
 import <stdlib.h>;
 import <time.h>;
 import <unistd.h>;
-import smith::test;
+import std::test;
 
 // Waits that spend no CPU time (#754), and a test that does spend it.
 void test_idle_1_waits_for_a_child(void) {

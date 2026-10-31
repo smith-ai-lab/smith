@@ -8,7 +8,7 @@ description: "smith prove: proving the contracts of a program with Alive2, Bitwu
 ```smith
 module primes;
 
-import smith::contract;
+import std::contract;
 
 export i32 sum(usize count) {
     contract::requires(count <= 5);              // assumed here, proved at every call

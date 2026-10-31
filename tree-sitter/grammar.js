@@ -222,7 +222,7 @@ module.exports = grammar(C, {
 
     // export on a declaration, a function definition, a typedef or a tag: only where a module declares (file scope),
     // so a field or a variable called export stays one.
-    // [[smith::c_name("Name")]] export ...: attributes before `export` give the export its C name.
+    // [[std::c_name("Name")]] export ...: attributes before `export` give the export its C name.
     export_declaration: $ => seq(
       repeat($.attribute_declaration),
       'export',
@@ -342,7 +342,7 @@ module.exports = grammar(C, {
     ),
 
     // `enum Mode : unsigned char { ... }`
-    // C23 attributes after the keyword: typedef struct [[clang::annotate("smith::capability")]] SmithOp { ... } SmithOp;
+    // C23 attributes after the keyword: typedef struct [[clang::annotate("std::capability")]] SmithOp { ... } SmithOp;
     struct_specifier: $ => prec.right(seq(
       'struct',
       optional($.attribute_specifier),

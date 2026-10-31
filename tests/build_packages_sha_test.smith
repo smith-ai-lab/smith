@@ -2,10 +2,10 @@
 // empty message), and shasum on random data around the padding boundaries.
 module build_packages_sha_test;
 
-import smith::arena;
-import smith::mem;
-import smith::format;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::format;
+import std::test;
 import scratch;
 
 static const char *sha(const scratch::Project *p, const char *file) {

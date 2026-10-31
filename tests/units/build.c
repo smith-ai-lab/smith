@@ -59,7 +59,7 @@ void build(SmithBuild *b) {
     smith_object(b, &runtime_io);
     SmithTests tests = {
         .objects = (const SmithObject *[]){&http, &core, &runtime_io, nullptr},
-        .sources = smith_glob(b, smith_list(b, "lib/smith/*_test.smith", "lib/*_test.smith", "tests/*_test.smith",
+        .sources = smith_glob(b, smith_list(b, "lib/std/*_test.smith", "lib/*_test.smith", "tests/*_test.smith",
                                             "tests/scratch.smith", "tests/runner.smith", "tests/prove_cases.smith",
                                             "tests/corpus.smith", nullptr)),
         .flags = flags,

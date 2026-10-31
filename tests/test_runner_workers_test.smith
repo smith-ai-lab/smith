@@ -5,10 +5,10 @@
 // tests/build_fixtures/runner_workers, _many, _inproc and _explain.
 module test_runner_workers_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import runner;
 import scratch;
 

@@ -1,6 +1,6 @@
 import <stdint.h>;
 import <stdio.h>;
-import smith::text;
+import std::text;
 
 extern u64 from_c(void);
 

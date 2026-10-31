@@ -1,10 +1,10 @@
 // A test that differentiates too: the tests of an autodiff program are built the same way.
 module toy_test;
 
-import smith::arena;
-import smith::autodiff;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::autodiff;
+import std::mem;
+import std::test;
 import toy;
 
 export void test_loss_gradient() {

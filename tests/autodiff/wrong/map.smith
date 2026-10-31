@@ -1,7 +1,7 @@
 // map cannot walk a pointer field.
 module main;
 
-import smith::autodiff;
+import std::autodiff;
 
 typedef struct {
     f64 *v;

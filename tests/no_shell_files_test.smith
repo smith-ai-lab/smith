@@ -5,10 +5,10 @@
 // The guard is a test, so `smith check` runs it on every tree the train checks.
 module no_shell_files_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 
 // The tracked shell files, one a line; the repository is the script's first argument.

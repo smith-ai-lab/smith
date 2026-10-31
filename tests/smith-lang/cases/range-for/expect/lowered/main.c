@@ -62,7 +62,7 @@ if (x == 4) break;
 total += x;
 }
 return total;
-}struct smith_enum_result_i32__u8 {enum smith_enum_result_i32__u8_tag {smith_enum_result_i32__u8_tag_ok, smith_enum_result_i32__u8_tag_error } tag; union { __INT32_TYPE__ ok; __UINT8_TYPE__ error; }; } __attribute__((annotate("smith::enum")));
+}struct smith_enum_result_i32__u8 {enum smith_enum_result_i32__u8_tag {smith_enum_result_i32__u8_tag_ok, smith_enum_result_i32__u8_tag_error } tag; union { __INT32_TYPE__ ok; __UINT8_TYPE__ error; }; } __attribute__((annotate("std::enum")));
 static struct smith_enum_result_i32__u8 main_checked(struct smith_array_const_i32_n {const __INT32_TYPE__ * data; __SIZE_TYPE__ count [1]; } xs) {
 __INT32_TYPE__ total = 0;
 for (__SIZE_TYPE__ smith_rfor_i11 = 0; smith_rfor_i11 < countof ( xs); smith_rfor_i11 ++) {__INT32_TYPE__ x = xs [smith_rfor_i11];

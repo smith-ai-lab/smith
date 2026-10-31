@@ -1251,7 +1251,7 @@ const char *const *smith_list(SmithBuild *b, const char *first, ...) {
 }
 
 // The libraries smith writes into .smith/lib; the list is in smith.c's smith_libraries. A library's source is C
-// (.smith/lib/<name>.c) or a .smith module (.smith/lib/smith/<name>.smith, the module smith::<name>); its header is
+// (.smith/lib/<name>.c) or a .smith module (.smith/lib/std/<name>.smith, the module std::<name>); its header is
 // .smith/include/smith/<name>.h either way.
 // smith writes every library it ships before build.c runs, so that folder is the list: smith.c's table is the only
 // one, and the two cannot disagree.
@@ -1263,10 +1263,10 @@ const char *smith_library(SmithBuild *b, const char *name) {
         plain = plain && ((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '_');
     const char *source = smith_fmt(b, ".smith/lib/%s.c", name);
     if (plain && access(source, R_OK) == 0) return source;
-    source = smith_fmt(b, ".smith/lib/smith/%s.smith", name);
+    source = smith_fmt(b, ".smith/lib/std/%s.smith", name);
     if (plain && access(source, R_OK) == 0) return source;
     const char *const *found = smith_glob(b, smith_list(b, ".smith/lib/*.c", nullptr));
-    const char *const *modules = smith_glob(b, smith_list(b, ".smith/lib/smith/*.smith", nullptr));
+    const char *const *modules = smith_glob(b, smith_list(b, ".smith/lib/std/*.smith", nullptr));
     const char *const *names = smith_list(b, nullptr);
     for (size_t i = 0; found[i] != nullptr; i++) // bounded by the glob's result
         names = smith_cat(b, names,
@@ -1274,7 +1274,7 @@ const char *smith_library(SmithBuild *b, const char *name) {
                           nullptr);
     for (size_t i = 0; modules[i] != nullptr; i++) // bounded by the glob's result
         names = smith_cat(
-            b, names, smith_list(b, smith_replace_extension(b, modules[i] + strlen(".smith/lib/smith/"), ""), nullptr),
+            b, names, smith_list(b, smith_replace_extension(b, modules[i] + strlen(".smith/lib/std/"), ""), nullptr),
             nullptr);
     smith_fail("smith_library: unknown library \"%s\"; known: %s", name, smith_join(b, names, ", "));
 }
@@ -1766,7 +1766,7 @@ static const char *const *smith_lines_required(SmithBuild *b, const char *path);
 static const char *const *smith_split_lines(char *text, size_t size);
 
 // The flags a library of smith's declares (the registry in smith.c writes them beside its source, one a line, as
-// .smith/lib/smith/random.flags). They come after the project's own, so that they win: random's results need
+// .smith/lib/std/random.flags). They come after the project's own, so that they win: random's results need
 // -ffp-contract=off whatever flags the project compiles it with.
 static const char *const *smith_library_flags(SmithBuild *b, const char *source) {
     if (strncmp(source, ".smith/lib/", strlen(".smith/lib/")) != 0) return smith_list(b, nullptr);
@@ -1894,7 +1894,9 @@ static const char *smith_lang_register(const char *source, const char **header, 
     const char *path = smith_text("%s%s", smith_lang_slashed(name), ".smith");
     bool placed = strcmp(source, path) == 0 || smith_ends_with(source, smith_text("/%s", path));
     if (!placed) smith_fail("smith_object: %s declares module %s, so its path must end in %s", source, name, path);
-    *header = smith_text(".smith/include/%s.h", smith_lang_slashed(name));
+    // the header of std::arena is smith/arena.h: C has no namespaces (#366)
+    *header = strncmp(name, "std::", 5) == 0 ? smith_text(".smith/include/smith/%s.h", smith_lang_slashed(name + 5))
+                                             : smith_text(".smith/include/%s.h", smith_lang_slashed(name));
     *first = false;
     for (size_t i = 0; i < smith_lang_module_count; i++) {
         if (strcmp(smith_lang_module_names[i], name) != 0) continue;
@@ -2346,7 +2348,7 @@ void smith_object(SmithBuild *b, SmithObject *object) {
         const char *header = nullptr;
         // A smith library's header is the formatted one smith wrote with its source (.smith/include/smith/): a step
         // would write it again as the generator makes it, unformatted, and the two would take turns
-        bool library = strncmp(copy.source, ".smith/lib/smith/", 17) == 0;
+        bool library = strncmp(copy.source, ".smith/lib/std/", 15) == 0;
         // one header step per module: the first compile's flags are the ones the header pass is given
         bool first = false;
         if (smith_lang_register(copy.source, &header, &first) != nullptr && first && !library)
@@ -2402,12 +2404,12 @@ static const char *const *smith_library_files(const char *const *libraries) {
 
 static const char *const *smith_library_needs(SmithBuild *b, const char *name);
 
-// The name of a library of smith's from its source (".smith/lib/arena.c", ".smith/lib/smith/text.smith"), else nullptr.
+// The name of a library of smith's from its source (".smith/lib/arena.c", ".smith/lib/std/text.smith"), else nullptr.
 static const char *smith_library_of(const char *source) {
     const char *prefix = ".smith/lib/";
     if (strncmp(source, prefix, strlen(prefix)) != 0) return nullptr;
     const char *name = source + strlen(prefix);
-    if (strncmp(name, "smith/", strlen("smith/")) == 0) name += strlen("smith/");
+    if (strncmp(name, "std/", strlen("std/")) == 0) name += strlen("std/");
     const char *dot = strrchr(name, '.');
     return dot == nullptr || strchr(name, '/') != nullptr ? nullptr : smith_text("%.*s", (int)(dot - name), name);
 }
@@ -3025,8 +3027,8 @@ constexpr size_t smith_tests_max = 65536;
 // The name in a line that defines a test, `void test_<name>(void) {`, `void test_<name>(SmithKey <key>) {` (a property
 // test) with <name> in [a-z0-9_] and <key> in [a-z_], or nullptr. Any other parameter list is refused
 // (smith_tests_find). A module's test in a `.smith` file is `export void test_...` (a private one is `static`,
-// which nothing can call), its key may be written `c::SmithKey` or, with `import smith::random;`, `random::Key`
-// (`<alias>::Key` for `import smith::random as <alias>;`: `key_type` is that spelling, "random::Key", or nullptr), and
+// which nothing can call), its key may be written `c::SmithKey` or, with `import std::random;`, `random::Key`
+// (`<alias>::Key` for `import std::random as <alias>;`: `key_type` is that spelling, "random::Key", or nullptr), and
 // a failing allocator beside it. *length is the name's
 // length, test_ not counted; *kind is how the test is called.
 typedef enum {
@@ -3089,28 +3091,24 @@ static const char *smith_tests_match_known(const char *line, bool module, const 
     return rest[0] == '\0' ? name : nullptr;
 }
 
-// The spelling of smith::random's key type a `.smith` file's import line gives, "random::Key" or "<alias>::Key", or
+// The spelling of std::random's key type a `.smith` file's import line gives, "random::Key" or "<alias>::Key", or
 // nullptr when the line is no such import.
 static const char *smith_tests_type_of_import(const char *line, const char *module, const char *type) {
-    // `smith::` and `std::` name the same library; landing 2 of #366 deletes the `smith::` entry.
-    for (const char *const *root = (const char *const[]){"smith", "std", nullptr}; *root != nullptr; root++) {
-        const char *prefix = smith_text("import %s::%s", *root, module);
-        if (strncmp(line, prefix, strlen(prefix)) != 0) continue;
-        const char *rest = line + strlen(prefix);
-        if (strcmp(rest, ";") == 0) return smith_text("%s::%s", module, type);
-        if (strncmp(rest, " as ", 4) != 0) return nullptr;
-        size_t size = strspn(rest + 4, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_");
-        if (size == 0 || strcmp(rest + 4 + size, ";") != 0) return nullptr;
-        return smith_text("%.*s::%s", (int)size, rest + 4, type);
-    }
-    return nullptr;
+    const char *prefix = smith_text("import std::%s", module);
+    if (strncmp(line, prefix, strlen(prefix)) != 0) return nullptr;
+    const char *rest = line + strlen(prefix);
+    if (strcmp(rest, ";") == 0) return smith_text("%s::%s", module, type);
+    if (strncmp(rest, " as ", 4) != 0) return nullptr;
+    size_t size = strspn(rest + 4, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_");
+    if (size == 0 || strcmp(rest + 4 + size, ";") != 0) return nullptr;
+    return smith_text("%.*s::%s", (int)size, rest + 4, type);
 }
 
 static const char *smith_tests_key_type(const char *line) {
     return smith_tests_type_of_import(line, "random", "Key");
 }
 
-// The spelling of smith::failing's allocator a `.smith` file's import line gives, "failing::Failing" or
+// The spelling of std::failing's allocator a `.smith` file's import line gives, "failing::Failing" or
 // "<alias>::Failing", or nullptr.
 static const char *smith_tests_failing_type(const char *line) {
     return smith_tests_type_of_import(line, "failing", "Failing");
@@ -3157,8 +3155,13 @@ typedef struct {
 // a::b and test_x give a_b_test_x, as the lowering names an export.
 static const char *smith_tests_symbol(const char *module, const char *test) {
     if (module == nullptr) return test;
-    char *flat = smith_alloc(strlen(module) + 1);
+    char *flat = smith_alloc(strlen(module) + 2);
     size_t used = 0;
+    if (strncmp(module, "std::", 5) == 0) { // the standard library's C names start smith_ (#366)
+        memcpy(flat, "smith_", 6);
+        used = 6;
+        module += 5;
+    }
     for (size_t i = 0; module[i] != '\0'; i++) { // bounded by the module's name
         if (module[i] == ':' && module[i + 1] == ':') {
             flat[used++] = '_';
@@ -3210,7 +3213,7 @@ static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count
                 fprintf(stderr,
                         "smith: smith_tests: %s: test_%.*s has parameters the runner does not pass; a test "
                         "takes none: write `void test_%.*s(void)` or `(random::Key key)` and reach the world "
-                        "through smith::files, smith::process and the other direct libraries\n",
+                        "through std::files, std::process and the other direct libraries\n",
                         run->inputs[i], (int)length, name, (int)length, name);
                 return false;
             }
@@ -3272,7 +3275,7 @@ static int smith_tests_scan(SmithRun *run) {
         rows[i] = smith_text("    {\"%s\", %s, %s, %s},\n", found[i].name, slot_names[0], slot_names[1], slot_names[2]);
     }
     // The header declares the allocator's tag and does not include <smith/failing.h>: a test file that imports
-    // smith::failing reads that header's instance section, which an earlier plain include would have skipped.
+    // std::failing reads that header's instance section, which an earlier plain include would have skipped.
     const char *header = smith_text("// Generated by smith_tests from the test files; do not edit.\n#pragma once\n\n"
                                     "#include <smith/random.h>\n\nstruct SmithFailing;\n\n%s",
                                     smith_join(run->b, prototypes, ""));
@@ -3416,7 +3419,7 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
         b, copy.flags, smith_list(b, "-include", list_header, "-Werror=missing-prototypes", nullptr), nullptr);
     size_t count = smith_count(copy.sources);
     // The libraries the test files import or include, and those they use, besides the five below: found as smith_app
-    // finds a program's, so a test of smith::inflate links it with nothing named.
+    // finds a program's, so a test of std::inflate links it with nothing named.
     const char *const *imported = smith_tests_imported(b, copy.sources);
     const char **objects =
         smith_new_list(count + 7 + smith_app_libraries_max + smith_count((const char *const *)tests->objects));
@@ -3613,7 +3616,7 @@ static void smith_app_library(const char *name, size_t length) {
     memcpy(copy, name, length);
     copy[length] = '\0';
     bool known = smith_app_is_file(smith_text(".smith/lib/%s.c", copy)) ||
-                 smith_app_is_file(smith_text(".smith/lib/smith/%s.smith", copy));
+                 smith_app_is_file(smith_text(".smith/lib/std/%s.smith", copy));
     if (!known) return;
     for (size_t i = 0; i < smith_app_found.queue.count; i++) {
         if (strcmp(smith_app_found.queue.names[i], copy) == 0) return;
@@ -3725,7 +3728,7 @@ static bool smith_app_name_byte(char c) {
     return smith_lang_word_byte(c) || c == ':';
 }
 
-// `import a::b::c [as x]`: std::<library> (or smith::) is a library of smith's, anything else a module found by its
+// `import a::b::c [as x]`: std::<library> is a library of smith's, anything else a module found by its
 // source at a/b/c.smith under a root (the importing module's, as the compiler looks). Not finding one is the compile's
 // to report.
 static void smith_app_module(const char *rest, bool libraries_only) {
@@ -3733,7 +3736,7 @@ static void smith_app_module(const char *rest, bool libraries_only) {
     while (smith_app_name_byte(rest[length]))
         length += 1;
     if (length == 0) return;
-    size_t skip = strncmp(rest, "smith::", 7) == 0 ? 7 : strncmp(rest, "std::", 5) == 0 ? 5 : 0; // either spelling
+    size_t skip = strncmp(rest, "std::", 5) == 0 ? 5 : 0;
     if (skip > 0 && length > skip) {
         smith_app_library(rest + skip, length - skip);
         return;
@@ -3947,7 +3950,7 @@ static bool smith_app_covers(const char *folder, const char *source) {
     return strncmp(source, folder, length) == 0 && (source[length] == '/' || source[length] == '\0');
 }
 
-// ---- Autodiff programs (smith::autodiff, the smith-autodiff skill). Enzyme differentiates LLVM IR when smith links,
+// ---- Autodiff programs (std::autodiff, the smith-autodiff skill). Enzyme differentiates LLVM IR when smith links,
 // so
 // ---- an autodiff program is built unlike the others, in this one place: with full LTO (Enzyme must see the function
 // it
@@ -3960,7 +3963,7 @@ static bool smith_app_covers(const char *folder, const char *source) {
 // ---- smith's lld runs ASan right after Enzyme (shim/lld.cpp). UndefinedBehaviorSanitizer is left out: its run-time
 // ---- handlers (__ubsan_handle_*) break Enzyme ("No create nofree of empty function"), and its trap form loses its
 // ---- checks inside the gradient (issue #59 tracks UB checks after Enzyme). Change the policy here.
-static bool smith_app_autodiff; // the program or the tests being declared use smith::autodiff
+static bool smith_app_autodiff; // the program or the tests being declared use std::autodiff
 
 // The debug profile's sanitizer flags, as an autodiff program takes them: ASan only.
 static const char *smith_autodiff_sanitizer(const char *flag) {
@@ -3989,13 +3992,13 @@ static const char *const *smith_autodiff_flags(SmithBuild *b, const char *const 
                      smith_when(b, compile, smith_list(b, "-Xclang", "-disable-llvm-passes", nullptr)), nullptr);
 }
 
-// Whether the libraries the scan found include smith::autodiff; the smith that builds it must have Enzyme.
+// Whether the libraries the scan found include std::autodiff; the smith that builds it must have Enzyme.
 static bool smith_app_found_autodiff(void) {
     for (size_t i = 0; i < smith_app_found.queue.count; i++) {
         if (strcmp(smith_app_found.queue.names[i], "autodiff") != 0) continue;
         const char *enzyme = getenv("SMITH_ENZYME");
         if (enzyme == nullptr || strcmp(enzyme, "yes") != 0)
-            smith_fail("smith::autodiff needs a smith with Enzyme linked in; this one has none (the stage0, or built "
+            smith_fail("std::autodiff needs a smith with Enzyme linked in; this one has none (the stage0, or built "
                        "before `smith build llvm` made Enzyme): run `smith build llvm`, then `smith build` in the "
                        "smith repository, and use that smith");
         return true;
@@ -4190,7 +4193,8 @@ static SmithObject *smith_app_object(SmithBuild *b, const char *profile, const c
     const char *under = source;
     if (strncmp(source, library, strlen(library)) == 0) {
         under = source + strlen(library);
-        if (strncmp(under, "smith/", strlen("smith/")) != 0) under = smith_text("smith/%s", under);
+        if (strncmp(under, "std/", strlen("std/")) == 0) under += strlen("std/");
+        under = smith_text("smith/%s", under);
     }
     // An autodiff program's objects are made with other flags, so they are beside the others, never the same file.
     const char *output = smith_replace_extension(
@@ -4593,7 +4597,7 @@ static const char *smith_tests_symbolizer_link(SmithRun *run, const char *self) 
 }
 
 // `smith test --changed` (issue #456): the runner gives each test a folder of profiles, and merges them into the
-// test's record in .smith/records when it ends (lib/smith/test.smith, runtime/coverage.c). The runner's own exit
+// test's record in .smith/records when it ends (lib/std/test.smith, runtime/coverage.c). The runner's own exit
 // writes nowhere. SMITH_REPO is this project, not the one of a smith that runs us. `programs` are the paths the build
 // made, the runner first, separated by `:`: those that exist now and were built with the counters are read (llvm-cov
 // ignores one built without them).

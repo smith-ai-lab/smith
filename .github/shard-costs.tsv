@@ -144,7 +144,7 @@ cpu	2.089	resource_test::resource_an_idle_programs_folder_is_removed
 cpu	2.147	resource_test::resource_eight_first_compiles_at_once_leave_one_folder
 cpu	27.820	resource_test::resource_eight_workers_of_two_smiths_all_link_and_run
 cpu	2.290	resource_test::resource_two_smiths_keep_their_own_programs
-cpu	5.566	smith::inflate_test::prop_inflate_round_trips_stored_blocks
+cpu	5.566	std::inflate_test::prop_inflate_round_trips_stored_blocks
 cpu	2.766	smith_fmt_test::the_c_files_of_smith_format_the_same_as_c_and_as_smith
 cpu	15.376	smith_lang_c_test::smith_c_compiles_the_same_as_smith
 cpu	2.119	test_runner_aborts_test::runner_aborts_a_blocked_test_is_reported_workers

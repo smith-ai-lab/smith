@@ -6,19 +6,19 @@
 // their folder.
 module json_test;
 
-import smith::arena;
-import smith::env;
-import smith::files;
-import smith::format;
-import smith::math;
-import smith::random;
-import smith::test;
-import smith::text;
+import std::arena;
+import std::env;
+import std::files;
+import std::format;
+import std::math;
+import std::random;
+import std::test;
+import std::text;
 import <smith/json.h>;
 import <stdio.h>;
 import <stdlib.h>;
 import <string.h>;
-import smith::mem;
+import std::mem;
 
 // The bytes of a buffer, for the calls of files that take a slice.
 static typeof(const u8[:]) test_file_bytes(const void *data, usize size) {

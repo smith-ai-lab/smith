@@ -4,10 +4,10 @@
 // runs it as workers and with --isolate. Fixtures: tests/build_fixtures/runner_*.
 module test_runner_project_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import runner;
 import scratch;
 
@@ -250,15 +250,15 @@ static void check_library_compiles(const char *source) {
 }
 
 export void test_runner_project_the_test_library_compiles_clean_under_the_conventions_warnings() {
-    check_library_compiles("lib/smith/test.smith");
+    check_library_compiles("lib/std/test.smith");
 }
 
 export void test_runner_project_the_random_library_compiles_clean_under_the_conventions_warnings() {
-    check_library_compiles("lib/smith/random.smith");
+    check_library_compiles("lib/std/random.smith");
 }
 
 export void test_runner_project_the_arena_library_compiles_clean_under_the_conventions_warnings() {
-    check_library_compiles("lib/smith/arena.smith");
+    check_library_compiles("lib/std/arena.smith");
 }
 
 export void test_runner_project_the_trace_library_compiles_clean_under_the_conventions_warnings() {
@@ -267,7 +267,7 @@ export void test_runner_project_the_trace_library_compiles_clean_under_the_conve
 
 // Section 13. Tests in .smith files: found by name in a file with no module line and in a module (`export void test_x()
 // {`, its C name a_b_test_x and its symbol a::b::test_x), shown and selected by the name as written, and a failure's
-// report names the .smith line and the function as written. A library in the module `smith::test` is machinery, like
+// report names the .smith line and the function as written. A library in the module `std::test` is machinery, like
 // the C one.
 static void build_lang(const scratch::Project *p) {
     scratch::Run run = runner::build(p, "");
@@ -357,9 +357,9 @@ export void test_runner_project_a_failing_smith_test_names_the_smith_line_and_th
             runner::squeezed(fails.out),
             format::push("tests/geometry/box_test.smith:", area, " geometry::box_test::test_area_fails").data);
         scratch::Run through = runner::smith_test(&p, iso, "--test geometry::box_test::area_through_a_library");
-        runner::expect_has(iso, "smith tests: a frame of the module smith::test is not the failing line", &through,
+        runner::expect_has(iso, "smith tests: a frame of the module std::test is not the failing line", &through,
                            format::push("check failed at tests/geometry/box_test.smith:", library).data);
-        runner::expect_lacks(iso, "smith tests: ... nor in the chain", &through, "smith::test::");
+        runner::expect_lacks(iso, "smith tests: ... nor in the chain", &through, "std::test::");
         scratch::Run no_module = runner::smith_test(&p, iso, "--test plain_fails");
         scratch::expect_contains(runner::label(iso, "smith tests: a test of a file with no module is named as written"),
                                  runner::squeezed(no_module.out),

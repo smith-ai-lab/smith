@@ -1,8 +1,8 @@
 module geometry::box_test;
 import geometry::box;
-import smith::random;
-import smith::test;
-import smith::test::helpers as helpers;
+import std::random;
+import std::test;
+import std::test::helpers as helpers;
 
 export void test_area() {
     u64 area = box::area(2, 3);

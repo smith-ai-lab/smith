@@ -5,10 +5,10 @@
 // The C programs are tests/handlers/*.c and print one `ok` or `FAIL` line per check.
 module handlers_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 import <string.h>;
 
@@ -78,8 +78,8 @@ export void test_macos_handlers_an_arena_set_as_the_allocator_serves_the_c_alloc
     if (!runtime(&p)) {
         return;
     }
-    must(&p, "handlers: the arena library builds", "smith cc $f -c lib/smith/arena.smith -o arena.o");
-    must(&p, "handlers: the contract library builds", "smith cc $f -c lib/smith/contract.smith -o contract.o");
+    must(&p, "handlers: the arena library builds", "smith cc $f -c lib/std/arena.smith -o arena.o");
+    must(&p, "handlers: the contract library builds", "smith cc $f -c lib/std/contract.smith -o contract.o");
     must(&p, "handlers: the arena allocator test builds",
          "smith cc $f $h/arena.c arena.o contract.o lib/trace.c libsmith_handlers.dylib -o t_arena");
     passes(&p, "handlers: the arena allocator test passes", "./t_arena");

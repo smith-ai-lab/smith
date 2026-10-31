@@ -1,1 +1,1 @@
--Wmisleading-indentation -Werror -I @REPO@/include main.smith @REPO@/tests/smith-lang/cases/generic-option-slice-of/src/rows.smith @REPO@/lib/smith/contract.smith @REPO@/lib/trace.c -o @OUT@/program
+-Wmisleading-indentation -Werror -I @REPO@/include main.smith @REPO@/tests/smith-lang/cases/generic-option-slice-of/src/rows.smith @REPO@/lib/std/contract.smith @REPO@/lib/trace.c -o @OUT@/program

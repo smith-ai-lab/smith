@@ -1,15 +1,15 @@
 ---
 name: smith-net
-description: "Using smith::net (import smith::net; net::connect, connect_tls, listen, accept, read, read_within, write, close, stop, net::fake): TCP and TLS by direct calls that return a result, with a scripted in-memory fake for tests. Load when code imports smith::net or includes <smith/net.h>, or on opening a socket, a TLS connection or a server."
+description: "Using std::net (import std::net; net::connect, connect_tls, listen, accept, read, read_within, write, close, stop, net::fake): TCP and TLS by direct calls that return a result, with a scripted in-memory fake for tests. Load when code imports std::net or includes <smith/net.h>, or on opening a socket, a TLS connection or a server."
 ---
 
-# TCP and TLS by direct calls: smith::net
+# TCP and TLS by direct calls: std::net
 
 Call `net::` anywhere. A call returns `result(T, net::Error)`; the error is what the world said (`NotFound` for a name that does not resolve, `Refused`, `Unreachable`, `TimedOut`, `Reset`, `InUse`, `Denied`, `TooMany`; for TLS `Expired`, `NotYetValid`, `WrongHost`, `Untrusted`, `BadCertificate`, `HandshakeFailed`, `Unsupported` when the system has no TLS stack; `Other`). A host is a name or an address (`const char host[:]`). The calls block, take your buffers and allocate nothing.
 
 ```smith
 module scratch;
-import smith::net;
+import std::net;
 export usize fetch(const u8 request[:], u8 reply[:]) {
     net::ConnectionResult made = net::connect_tls("example.com", 443);
     switch (made) {
@@ -33,9 +33,9 @@ export usize fetch(const u8 request[:], u8 reply[:]) {
 **The fake, for tests** (nothing is opened):
 ```smith
 module scratch_fake;
-import smith::arena;
-import smith::mem;
-import smith::net;
+import std::arena;
+import std::mem;
+import std::net;
 export usize greeting_size(arena::Arena *a) {
     arena::ArenaAllocator allocator = arena::allocator(a); // the fake's bytes: the allocator in force
     mem::Allocator *outside = mem::set_allocator(&allocator.base);

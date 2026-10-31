@@ -5,9 +5,9 @@
 // its own, with the working tree edited after the commit.
 module lint_changed_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
 
 // The project, committed, with a cache of its own; made before the test's memory, since scratch::clean frees what it

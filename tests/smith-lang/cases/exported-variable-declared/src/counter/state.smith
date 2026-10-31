@@ -5,7 +5,7 @@ module counter::state;
 export u32 total = 3;
 export u32 spare;
 export const char *const names[2] = {"low", "high"};
-[[smith::c_name("counter_state_chosen")]] export u64 chosen = 9;
+[[std::c_name("counter_state_chosen")]] export u64 chosen = 9;
 export constexpr u32 limit = 4;
 u32 hidden = 2;
 

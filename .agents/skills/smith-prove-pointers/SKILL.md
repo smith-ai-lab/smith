@@ -8,7 +8,7 @@ description: "smith prove and returned pointers: a pointer returned under smith_
 ```smith
 module pool;
 
-import smith::contract;
+import std::contract;
 
 export i32 *at(i32 xs[4], usize i) {
     contract::requires(i < 4);

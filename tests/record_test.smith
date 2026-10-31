@@ -6,10 +6,10 @@
 // arena as the current allocator, so what scratch returns goes back with the arena.
 module record_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 
 // A repository of the fixture, committed on main. SMITH_OUTPUT=full for the messages of the nested smith.

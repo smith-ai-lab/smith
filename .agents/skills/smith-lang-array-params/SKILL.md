@@ -10,7 +10,7 @@ In C a parameter `i32 xs[2]` is a pointer: the `2` is dropped. In a file with a 
 ```smith
 module rows;
 
-import smith::contract;
+import std::contract;
 
 export i32 pick(i32 xs[4], usize i) {      // 4 objects: the header keeps the size
     contract::requires(i < 4);               // all `smith prove` needs: xs[i] is in the array

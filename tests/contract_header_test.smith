@@ -2,13 +2,13 @@
 // message, the stop, NDEBUG), the calls they leave in the IR for `smith prove` to find, the library built by a project
 // with smith_library, and the static analyzer reading a contract as an assumption. The programs are in
 // tests/build_fixtures/contract_programs; the project's build.c in contract_project. The library's own tests are
-// lib/smith/contract_test.smith.
+// lib/std/contract_test.smith.
 module contract_header_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 
 // What a test's commands print, and the texts made from it, go to an arena of the runner's (test::memory), the
@@ -63,7 +63,7 @@ static void must(const scratch::Project *p, const char *name, const char *comman
 // A program compiled with the flags and the library, the arguments `extra` first.
 static void compile(const scratch::Project *p, const char *source, const char *extra, const char *output) {
     must(p, format::push("contract: ", output, " compiles").data,
-         format::push("smith cc $f ", extra, " ", source, " $lib/smith/contract.smith $lib/trace.c -o ", output).data);
+         format::push("smith cc $f ", extra, " ", source, " $lib/std/contract.smith $lib/trace.c -o ", output).data);
 }
 
 // ---- 1. At run time: passing contracts are silent, a failing one prints its text, file and line, then aborts.
@@ -198,7 +198,7 @@ static void library_compiles(const char *standard) {
     must(&p, format::push("contract: library: compiles as ", standard).data,
          format::push("smith cc -std=", standard,
                       " -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I $SMITH_REPO/.smith/include -c "
-                      "$lib/smith/contract.smith -o contract.o")
+                      "$lib/std/contract.smith -o contract.o")
              .data);
 }
 
@@ -216,7 +216,7 @@ export void test_contract_library_compiles_as_gnu2y() {
 static scratch::Project test_project() {
     scratch::Project p = start("contract_project");
     scratch::Run copied =
-        scratch::sh(&p, "mkdir -p smith && cp \"$SMITH_REPO/lib/smith/contract_test.smith\" smith/contract_test.smith");
+        scratch::sh(&p, "mkdir -p std && cp \"$SMITH_REPO/lib/std/contract_test.smith\" std/contract_test.smith");
     scratch::expect_status("contract: the library's tests are copied", 0, &copied);
     return p;
 }
@@ -227,7 +227,7 @@ static const char *summary(const scratch::Project *p) {
 }
 
 static const char *test_count(const scratch::Project *p) {
-    const char *count = captured(p, "grep -c '^export void test_' smith/contract_test.smith");
+    const char *count = captured(p, "grep -c '^export void test_' std/contract_test.smith");
     return format::push(count, " passed, 0 failed").data;
 }
 

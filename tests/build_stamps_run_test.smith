@@ -2,9 +2,9 @@
 // (smith_run_combined) and 9s (a failed .run step names itself; what a .run step read reruns it).
 module build_stamps_run_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
 
 constexpr usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it

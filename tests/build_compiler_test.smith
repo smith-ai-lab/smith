@@ -6,9 +6,9 @@
 // holds.
 module build_compiler_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
 
 constexpr usize memory_size = (usize)16 << 20; // 16 MiB

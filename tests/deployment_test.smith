@@ -3,9 +3,9 @@
 // smith under test, `$SMITH_SELF`.
 module deployment_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
 import target;
 

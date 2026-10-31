@@ -4,9 +4,9 @@
 // freed by clean. This test frees everything and passes.
 module scratch_free_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
 
 // The pattern of a test file (issue #843): a project, and a test::memory arena as the current allocator around the

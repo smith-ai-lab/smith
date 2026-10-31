@@ -11,10 +11,10 @@ stack by frame pointers and writes the addresses with each image's UUID and slid
 symbolizer. smith turns them into the failing line, its source and the call chain with LLVM's symbolizer, reading
 the debug map of the binary (its object files), not a dSYM: a failure costs about 8 ms beyond smith's start, `dsymutil`
 40 to 150 ms at every link. `smith build test` pipes the runner through `smith symbolize`; smith run as
-`llvm-symbolizer` serves the sanitizers. The checks are the generic functions of `smith::test` (`test::check_equal(a, b)`, `check_less`, `check_near`, ...; the
+`llvm-symbolizer` serves the sanitizers. The checks are the generic functions of `std::test` (`test::check_equal(a, b)`, `check_less`, `check_near`, ...; the
 `SMITH_CHECK` macros are gone), and a test that must abort calls `test::expect_abort()`. **A test's signature says what it
 may touch** (issue #45): `void test_x(void)` is pure, `void test_x(random::Key key)` a property test (the key from the
-run's seed), a test takes no io (the world is the direct libraries and their fakes, the working directory the project root). The runner is `smith::test`'s `main`; its own
+run's seed), a test takes no io (the world is the direct libraries and their fakes, the working directory the project root). The runner is `std::test`'s `main`; its own
 effects (forked workers, pipes, signals, shared memory) are calls in the module, which defines the `Runner` capability,
 and it prints, times and lists processes through `console`, `clock` and `env`. The shrinking hook is a field of the key (`random::Key.tap`),
 not a global.

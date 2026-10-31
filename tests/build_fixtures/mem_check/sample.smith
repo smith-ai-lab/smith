@@ -2,8 +2,8 @@ module sample;
 
 import <string.h>;
 import <stdlib.h>;
-import smith::mem;
-import smith::contract;
+import std::mem;
+import std::contract;
 
 export typedef struct {
     i32 a;

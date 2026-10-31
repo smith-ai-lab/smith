@@ -12,18 +12,18 @@
 // minute; `smith build prove-sound-full`).
 module prove_sound_test;
 
-import smith::arena;
-import smith::format;
-import smith::test;
+import std::arena;
+import std::format;
+import std::test;
 import scratch;
 import <string.h>;
-import smith::mem;
+import std::mem;
 
 // The flags of the harnesses: the sanitizers, the includes of the library and of the raw lowering of two modules, and
 // the files every harness links.
 constexpr char cc_flags[_] = "-std=gnu23 -g -O0 -fsanitize=address,undefined -fno-sanitize-recover=all "
                              "-ftrivial-auto-var-init=pattern -I \"$SMITH_REPO/.smith/include\" -I lowered -w";
-constexpr char cc_common[_] = "lib/trace.c lib/smith/contract.smith";
+constexpr char cc_common[_] = "lib/trace.c lib/std/contract.smith";
 
 // The files every harness links, in the project.
 static void copy_common(const scratch::Project *p) {
@@ -35,8 +35,8 @@ static void copy_common(const scratch::Project *p) {
 // Two harnesses reach the modules' static functions by including their raw lowering (`smith cc --smith-lower`), made
 // in process (issue #646).
 static void lower_modules(const scratch::Project *p) {
-    scratch::write_lowered(p, "lib/smith/arena.smith", "lowered/arena_lowered.c");
-    scratch::write_lowered(p, "lib/smith/random.smith", "lowered/random_lowered.c");
+    scratch::write_lowered(p, "lib/std/arena.smith", "lowered/arena_lowered.c");
+    scratch::write_lowered(p, "lib/std/random.smith", "lowered/random_lowered.c");
 }
 
 // The values after `prefix` on each line of `text` that starts with it, joined by spaces.

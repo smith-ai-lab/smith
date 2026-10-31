@@ -1,4 +1,4 @@
-// smith's archive readers (runtime/gzip.c on lib/smith/inflate.smith, runtime/xz.c, runtime/untar.c) as functions, in
+// smith's archive readers (runtime/gzip.c on lib/std/inflate.smith, runtime/xz.c, runtime/untar.c) as functions, in
 // process (issue #646): the bytes of an archive in, a folder of files or the refusal out, through `smith_core_extract`
 // and `smith_core_tree` (include/smith_core.h, smith.c compiled as a library by tests/units/build.c). No process
 // starts. They replace the checks of tests/untar_formats_test.smith and tests/untar_refuse_test.smith that went
@@ -14,12 +14,12 @@
 // folder (the same format as `smith_core_tree`), so the golden does not come from the code under test.
 module untar_readers_test;
 
-import smith::arena;
-import smith::files;
-import smith::format;
-import smith::inflate;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::files;
+import std::format;
+import std::inflate;
+import std::mem;
+import std::test;
 import scratch;
 import <smith_core.h>;
 import <string.h>;

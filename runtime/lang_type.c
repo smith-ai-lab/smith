@@ -1550,7 +1550,7 @@ static void smith_lang_ty_qualified(SmithLang *lang, const SmithHost *host, cons
         ty->call_pending = true;
 }
 
-// `[[smith::c_name("...")]]` is read whole by the lowering, so the tracker saw its first `[` and none of the rest: the
+// `[[std::c_name("...")]]` is read whole by the lowering, so the tracker saw its first `[` and none of the rest: the
 // bracket it counted is closed here, or every declaration after it would read as inside brackets.
 static void smith_lang_ty_attribute_taken(void) {
     if (smith_lang_ty.paren > 0) smith_lang_ty.paren -= 1;
@@ -1583,7 +1583,7 @@ static bool smith_lang_ty_token(SmithLang *lang, const SmithHost *host, const Sm
 // ---- Functions over `type` of the imports (issue #107)
 
 // An exported function over `type` is recorded in its module's header (a plain generic), and each importer defines it,
-// at its first declaration, as a private function: `slice_of` of smith::arena may be called at compile time from any
+// at its first declaration, as a private function: `slice_of` of std::arena may be called at compile time from any
 // module. The record is the tokens the exporting module's lowering wrote; they are queued as the source's, marked
 // `replay`: only type values are lowered in them (smith_lang_ty_token), then they go to the parser. A function is at
 // most as long as the queue.

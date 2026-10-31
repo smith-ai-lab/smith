@@ -1,13 +1,13 @@
 // The clang-tidy check smith-mem (issue #399, shim/mem.h): in a module, C's raw memory functions are an error that
-// names the typed function of smith::mem; a function that calls contract::trusted() is the edge and is skipped; a .c
+// names the typed function of std::mem; a function that calls contract::trusted() is the edge and is skipped; a .c
 // file and a .smith file with no module line are untouched; `smith lint --fix` rewrites the calls that map
 // mechanically. A scratch project (tests/build_fixtures/mem_check) with one check on.
 module mem_check_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 
 constexpr char prelude[_] = "flags=\"-std=gnu2y -I. -I.smith/include -I$SMITH_REPO/.smith/include\"; "

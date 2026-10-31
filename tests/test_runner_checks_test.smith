@@ -1,12 +1,12 @@
-// The checks of smith::test as the runner reports them (ported from tests/test.sh, sections 1, 4a, 5b, 5c and 7): a
+// The checks of std::test as the runner reports them (ported from tests/test.sh, sections 1, 4a, 5b, 5c and 7): a
 // project of failing tests is built, the runner is run on it, and the output is read. Each case runs as workers and
 // with --isolate, which must give the same result. Fixtures: tests/build_fixtures/runner_*.
 module test_runner_checks_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import runner;
 import scratch;
 

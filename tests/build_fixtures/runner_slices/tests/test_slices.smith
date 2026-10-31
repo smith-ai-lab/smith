@@ -1,4 +1,4 @@
-import smith::test;
+import std::test;
 
 void test_same(void) {
     i32 left[3] = {1, 2, 3};

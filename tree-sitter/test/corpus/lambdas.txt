@@ -196,7 +196,7 @@ lambda: the type of a parameter and its lifetime attributes
 ================================================================================
 
 void sort(Person *xs, usize n, lambda(bool (Person *, Person *)) less);
-void each(i32 *xs, [[smith::until(g)]] lambda(void (i32)) h, [[smith::escapes]] lambda(void (void)) k);
+void each(i32 *xs, [[std::until(g)]] lambda(void (i32)) h, [[std::escapes]] lambda(void (void)) k);
 
 --------------------------------------------------------------------------------
 

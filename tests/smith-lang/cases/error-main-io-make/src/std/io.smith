@@ -1,0 +1,17 @@
+// A stand-in for std::io, which the language knows by its name: an io that counts its arguments and says when it is
+// closed.
+module std::io;
+import <stdio.h>;
+
+[[std::c_name("SmithIo")]] export typedef struct {
+    i32 count;
+} Io;
+
+[[std::c_name("smith_io_make")]] export Io make(i32 argc, char **argv) {
+    (void)argv;
+    return (Io){.count = argc};
+}
+
+[[std::c_name("smith_io_close")]] export void close(Io *io) {
+    c::printf("closed after %d argument\n", io->count);
+}

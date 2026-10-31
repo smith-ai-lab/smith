@@ -11,7 +11,7 @@ export constexpr type Handler = i32 (*)(Request *);
 export constexpr type Block = u8[4];
 export constexpr type Row = i32 (*)[4];
 export constexpr type Pointers = Request *[2];
-[[smith::c_name("geo_feet")]] export constexpr type Feet = f32;
+[[std::c_name("geo_feet")]] export constexpr type Feet = f32;
 
 export Meters add(Meters a, Meters b) {
     return a + b;

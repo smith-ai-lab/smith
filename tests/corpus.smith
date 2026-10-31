@@ -3,11 +3,11 @@
 // first (#749).
 module corpus;
 
-import smith::arena;
-import smith::format;
-import smith::files;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::files;
+import std::mem;
+import std::test;
 import <string.h>;
 
 constexpr usize shown_width = 60; // each side of a differing line is cut here
@@ -51,7 +51,7 @@ export const char *difference(arena::Arena *arena, const char *what, const char 
         .data;
 }
 
-// The file at `path` (read through smith::files), in the arena, or null.
+// The file at `path` (read through std::files), in the arena, or null.
 export const char *read_file(arena::Arena *arena, const char *path) {
     files::BytesResult file = files::read_file(path[0:c::strlen(path)]);
     files::Bytes bytes = {};

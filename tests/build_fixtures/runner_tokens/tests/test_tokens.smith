@@ -1,6 +1,6 @@
 import <stdio.h>;
 import <unistd.h>;
-import smith::test;
+import std::test;
 
 // Three tests that end at once and then two that must run together: the last two are only started together if the
 // cores the first three held went back to the pool (#754).

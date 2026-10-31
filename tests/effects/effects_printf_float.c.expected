@@ -1,6 +1,6 @@
 status 1
-effects_printf_float.c:11:12: error: smith-effect: `floaty` is [[smith::pure]], but it has the effects globals: floaty -> snprintf (effects_printf_float.c:11)
-effects_printf_float.c:15:12: error: smith-effect: `wide` is [[smith::pure]], but it has the effects globals: wide -> snprintf (effects_printf_float.c:15)
-effects_printf_float.c:19:12: error: smith-effect: `dynamic` is [[smith::pure]], but it has the effects globals: dynamic -> snprintf (effects_printf_float.c:19)
+effects_printf_float.c:11:12: error: smith-effect: `floaty` is [[std::pure]], but it has the effects globals: floaty -> snprintf (effects_printf_float.c:11)
+effects_printf_float.c:15:12: error: smith-effect: `wide` is [[std::pure]], but it has the effects globals: wide -> snprintf (effects_printf_float.c:15)
+effects_printf_float.c:19:12: error: smith-effect: `dynamic` is [[std::pure]], but it has the effects globals: dynamic -> snprintf (effects_printf_float.c:19)
 effects_printf_float.c:23:5: error: smith-effect: `shown` is limited to console, but it has the effects globals: shown -> printf (effects_printf_float.c:23)
-effects_printf_float.c:28:12: error: smith-effect: `fortified` is [[smith::pure]], but it has the effects globals: fortified -> snprintf (effects_printf_float.c:28)
+effects_printf_float.c:28:12: error: smith-effect: `fortified` is [[std::pure]], but it has the effects globals: fortified -> snprintf (effects_printf_float.c:28)

@@ -10,7 +10,7 @@ The conventions compile with `-Wall -Wextra -Wpedantic ... -Werror`, then your f
 ```smith fragment
 module build;
 
-import smith::build;
+import std::build;
 
 export void build(build::Build *b) {
     build::defaults(b, &(build::Defaults){
