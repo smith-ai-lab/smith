@@ -16,15 +16,9 @@ import <string.h>;
 
 constexpr usize memory_size = (usize)16 << 20; // 16 MiB
 
-// Copies tests/autodiff/<source> into the project as `name`: a file becomes the file `name`, a folder's contents go
-// into the folder `name` ("" is the project itself), as `cp -R source/. name`.
+// Copies tests/autodiff/<source> into the project as `name` (scratch::copy_tree).
 static void copy(arena::Arena *memory, const scratch::Project *p, const char *source, const char *name) {
-    scratch::Run copied = scratch::sh(
-        p, format::push(memory, "from=\"$SMITH_REPO/tests/autodiff/", source, "\"; to='", name[0] == '\0' ? "." : name,
-                        "'; if [ -d \"$from\" ]; then mkdir -p \"$to\" && cp -R \"$from/.\" \"$to\"; else "
-                        "mkdir -p \"$(dirname \"$to\")\" && cp \"$from\" \"$to\"; fi")
-               .data);
-    scratch::expect_status(format::push(memory, "autodiff: tests/autodiff/", source, " is copied").data, 0, &copied);
+    scratch::copy_tree(p, format::push(memory, "tests/autodiff/", source).data, name);
 }
 
 // The project is a git repository of its own.
@@ -44,11 +38,6 @@ static void file_as(arena::Arena *memory, const scratch::Project *p, const char 
 static void from_dir(arena::Arena *memory, const scratch::Project *p, const char *folder) {
     git_project(p);
     copy(memory, p, folder, "");
-}
-
-// What a command printed, as $(...) gives it (without the newlines at the end), in the test's memory.
-static const char *capture(arena::Arena *memory, const scratch::Project *p, const char *command) {
-    return scratch::sh(p, format::push(memory, "printf %s \"$(", command, ")\"").data).out;
 }
 
 static void builds(const scratch::Project *p, const char *name, const char *arguments) {
@@ -82,15 +71,15 @@ export void test_autodiff_toy_runs_in_each_profile_with_derivatives_equal_to_the
                                           " reverse and forward derivatives equal the analytic ones")
                                  .data,
                              "0",
-                             capture(&memory, &p, format::push(&memory, program, " 2>/dev/null | ", disagree).data));
+                             scratch::capture(&p, format::push(&memory, program, " 2>/dev/null | ", disagree).data));
         scratch::expect_text(
             format::push(&memory, "autodiff: toy: ", profiles[i], " prints six lines and eight of autodiff::gradient")
                 .data,
-            "14", capture(&memory, &p, format::push(&memory, program, " 2>/dev/null | wc -l | tr -d ' '").data));
+            "14", scratch::capture(&p, format::push(&memory, program, " 2>/dev/null | wc -l | tr -d ' '").data));
         scratch::expect_text(
             format::push(&memory, "autodiff: toy: ", profiles[i], " prints nothing of Enzyme's own to standard error")
                 .data,
-            "", capture(&memory, &p, format::push(&memory, program, " 2>&1 >/dev/null").data));
+            "", scratch::capture(&p, format::push(&memory, program, " 2>&1 >/dev/null").data));
     }
 }
 
@@ -103,7 +92,7 @@ export void test_autodiff_toy_commands_have_no_passes_full_lto_and_asan_without_
     defer mem::set_allocator(outside);
     from_dir(&memory, &p, "toy");
     const char *commands =
-        capture(&memory, &p, "smith build -t commands build/debug/toy build/release/toy build/fast/toy");
+        scratch::capture(&p, "smith build -t commands build/debug/toy build/release/toy build/fast/toy");
     scratch::expect_contains("autodiff: toy: every compile has no optimization passes", commands,
                              "-Xclang -disable-llvm-passes");
     scratch::expect_contains("autodiff: toy: every link is full LTO", commands,
@@ -113,7 +102,7 @@ export void test_autodiff_toy_commands_have_no_passes_full_lto_and_asan_without_
                              "-fsanitize=address -fno-sanitize-recover=address");
     scratch::expect_lacks("autodiff: toy: ... and no UndefinedBehaviorSanitizer", commands, "undefined");
     scratch::expect_lacks("autodiff: toy: release and fast have no sanitizer",
-                          capture(&memory, &p, "smith build -t commands build/release/toy build/fast/toy"),
+                          scratch::capture(&p, "smith build -t commands build/release/toy build/fast/toy"),
                           "-fsanitize");
     scratch::expect_contains("autodiff: toy: the objects are beside the others", commands,
                              "build/debug/autodiff/kernel.o");
@@ -158,7 +147,7 @@ export void test_autodiff_a_program_that_does_not_differentiate_keeps_its_comman
     scratch::expect_status("autodiff: plain: git init", 0, &git);
     builds(&p, "autodiff: plain: release and fast build", "release fast");
     const char *commands =
-        capture(&memory, &p, "smith build -t commands build/debug/plain build/release/plain build/fast/plain");
+        scratch::capture(&p, "smith build -t commands build/debug/plain build/release/plain build/fast/plain");
     scratch::expect_contains("autodiff: plain: debug has the sanitizers", commands, "-fsanitize=address,undefined");
     scratch::expect_contains("autodiff: plain: release links with ThinLTO", commands, "-flto=thin");
     scratch::expect_lacks("autodiff: plain: no full LTO", commands, "-flto=full");
@@ -347,7 +336,7 @@ static const char *wrong_call(const char *call) {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     file_as(&memory, &p, "wrong/main.smith", "template.smith");
-    const char *line = capture(&memory, &p, "grep -n '^    CALL' template.smith | cut -d: -f1");
+    const char *line = scratch::capture(&p, "grep -n '^    CALL' template.smith | cut -d: -f1");
     scratch::Run made = scratch::sh(&p, format::push(&memory, "esc=$(printf '%s' '", call,
                                                      "' | sed 's/&/\\\\&/g'); sed \"s|CALL|$esc|\" template.smith "
                                                      ">main.smith && rm template.smith")

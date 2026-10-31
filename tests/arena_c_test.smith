@@ -8,7 +8,6 @@
 module arena_c_test;
 
 import smith::arena;
-import smith::clock;
 import smith::format;
 import smith::mem;
 import smith::test;
@@ -33,18 +32,12 @@ static void compile(arena::Arena *memory, const scratch::Project *p, const char 
 
 // The files the commands compile, copied into the project: the libraries and the program of the test.
 static void copy_sources(const scratch::Project *p) {
-    scratch::Run copied =
-        scratch::sh(p, "mkdir -p tests && cp -R \"$SMITH_REPO/lib\" lib && cp \"$SMITH_REPO/tests/arena.c\" tests/");
-    scratch::expect_status("the sources are copied", 0, &copied);
+    scratch::copy_tree(p, "lib", "lib");
+    scratch::copy_tree(p, "tests/arena.c", "tests/arena.c");
 }
 
 static scratch::Run mode(arena::Arena *memory, const scratch::Project *p, const char *program, const char *which) {
     return scratch::sh(p, format::push(memory, "./", program, " ", which).data);
-}
-
-// What a command printed, in the test's memory (scratch::expect_text ignores the newline at the end).
-static const char *output(const scratch::Project *p, const char *command) {
-    return scratch::sh(p, command).out;
 }
 
 export void test_arena_c_stop_is_on_in_every_build_ndebug_included() {
@@ -184,9 +177,9 @@ export void test_arena_c_project_gets_the_library_with_smith_library() {
     defer mem::set_allocator(outside);
     builds(&p, "project: the build succeeds");
     scratch::expect_text("project: the header is written", "yes",
-                         output(&p, "[ -f .smith/include/smith/arena.h ] && echo yes"));
+                         scratch::capture(&p, "[ -f .smith/include/smith/arena.h ] && echo yes"));
     scratch::expect_text("project: the source is written", "yes",
-                         output(&p, "[ -f .smith/lib/smith/arena.smith ] && echo yes"));
+                         scratch::capture(&p, "[ -f .smith/lib/smith/arena.smith ] && echo yes"));
     scratch::Run run = scratch::sh(&p, "./build/app");
     scratch::expect_contains("project: the program runs", run.out, "item 7");
     scratch::expect_status("project: the program exits 0", 0, &run);
@@ -202,11 +195,11 @@ export void test_arena_c_project_unchanged_library_is_not_rewritten() {
     builds(&p, "the build succeeds");
     const char *stamp =
         "stat -c %Y .smith/lib/smith/arena.smith 2>/dev/null || stat -f %m .smith/lib/smith/arena.smith";
-    const char *before = output(&p, stamp);
-    clock::sleep(1100 * clock::millisecond);
+    const char *before = scratch::capture(&p, stamp);
+    scratch::sleep(&p, 1100);
     scratch::Run again = scratch::build(&p, "");
     scratch::expect_status("the second build succeeds", 0, &again);
-    scratch::expect_text("project: an unchanged library is not rewritten", before, output(&p, stamp));
+    scratch::expect_text("project: an unchanged library is not rewritten", before, scratch::capture(&p, stamp));
 }
 
 export void test_arena_c_project_compile_commands_give_main_the_include_flag() {
@@ -217,7 +210,7 @@ export void test_arena_c_project_compile_commands_give_main_the_include_flag() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     builds(&p, "the build succeeds");
-    const char *entry = output(&p, "grep -A12 '\"file\": \"main.c\"' compile_commands.json | tr -d '\\n'");
+    const char *entry = scratch::capture(&p, "grep -A12 '\"file\": \"main.c\"' compile_commands.json | tr -d '\\n'");
     scratch::expect_contains("project: compile_commands.json gives main.c the include flag", entry, "\"-I\"");
     scratch::expect_contains("project: ... which is .smith/include", entry, "\".smith/include\"");
 }
@@ -234,7 +227,7 @@ export void test_arena_c_project_clangd_reports_no_errors_in_main() {
     // The sample prints with printf; this tests the build flags the editor gets, not smith-effects.
     scratch::write(&p, ".clang-tidy", "Checks: \"-*\"\n");
     scratch::expect_text("project: clangd reports no errors in main.c", "0",
-                         output(&p, "smith lsp --check=main.c 2>&1 | grep -c 'E\\[' || true"));
+                         scratch::capture(&p, "smith lsp --check=main.c 2>&1 | grep -c 'E\\[' || true"));
 }
 
 export void test_arena_c_typed_file_uses_push_and_push_slice() {
@@ -246,7 +239,7 @@ export void test_arena_c_typed_file_uses_push_and_push_slice() {
     defer mem::set_allocator(outside);
     builds(&p, "typed: a .smith file using arena::push and push_slice builds");
     scratch::expect_text("typed: push and push_slice give zeroed, usable memory", "0 3 9 5 zeroed 1",
-                         output(&p, "./build/typed >out.txt; echo $? $(cut -d, -f1 out.txt)"));
+                         scratch::capture(&p, "./build/typed >out.txt; echo $? $(cut -d, -f1 out.txt)"));
 }
 
 export void test_arena_c_typed_count_that_overflows_is_refused() {
