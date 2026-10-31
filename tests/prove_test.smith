@@ -6,26 +6,30 @@
 // changed (issue #31). The budget of a proof is CPU time, so a loaded machine slows a test and never fails it. The
 // cases are in tests/prove_test.smith (basic), prove_memory_test.smith (what calls promise, pointers, restrict),
 // prove_smith_test.smith (modules and projects in .smith) and prove_misc_test.smith (trusted, the IR, the cache, loops,
-// modifies, coverage).
+// modifies, coverage). Each test makes its project with scratch::make and has a test::memory arena as the current
+// allocator, so what scratch returns goes back with the arena.
 module prove_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 import target;
 
-static scratch::Project fresh(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+static scratch::Project fresh() {
+    scratch::Project p = scratch::make("p", nullptr);
     scratch::copy_tree(&p, "tests/prove", "cases");
     return p;
 }
 
 // `smith prove args -- -I include`, the output of both streams together; $c is tests/prove.
 static scratch::Run prove(const scratch::Project *p, const char *args) {
-    return scratch::sh(
-        p,
-        format::push(&p->io->arena, "c=cases; smith prove ", args, " -- -I \"$SMITH_REPO/.smith/include\" 2>&1").data);
+    char command[1024];
+    format::Written written = format::to(command, sizeof command, "c=cases; smith prove ", args,
+                                         " -- -I \"$SMITH_REPO/.smith/include\" 2>&1");
+    test::check_condition(written.fits);
+    return scratch::sh(p, command);
 }
 
 static scratch::Run proved(const scratch::Project *p, const char *name, const char *args) {
@@ -45,27 +49,47 @@ static void has(const char *name, const scratch::Run *run, const char *needle) {
 }
 
 // 1. The issue's clamp, and a function that uses it through its contract alone.
-export void test_prove_clamp_is_proved_with_both_functions(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_clamp_is_proved_with_both_functions() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = proved(&p, "clamp: proved", "-v \"$c/clamp.c\"");
     has("clamp: ... both functions", &run, "2 proved, 0 failed");
 }
 
 // 1b. smith_assert is a proof point, like the assert it replaces.
-export void test_prove_assert_one_the_premise_gives_is_proved(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_assert_one_the_premise_gives_is_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     proved(&p, "assert: one the premise gives is proved", "\"$c/assertion.c\" --function=next");
 }
 
-export void test_prove_assert_one_it_does_not_give_fails_with_its_line_and_condition(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_assert_one_it_does_not_give_fails_with_its_line_and_condition() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, "assert: one it does not give fails", "\"$c/assertion.c\" --function=too_sure");
     has("assert: ... with its line and condition", &run, "assertion.c:16: assert(x < 50) may fail");
 }
 
 // 2. A caller that breaks the contract fails, with the line and the values.
-export void test_prove_caller_that_breaks_the_contract_fails_with_the_line_and_the_values(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_caller_that_breaks_the_contract_fails_with_the_line_and_the_values() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, "caller: fails", "\"$c/clamp.c\" \"$c/bad_caller.c\"");
     has("caller: ... at the call, with the contract it breaks", &run,
         "bad_caller.c:10: the call of clamp may break smith_requires(low <= high)");
@@ -73,23 +97,38 @@ export void test_prove_caller_that_breaks_the_contract_fails_with_the_line_and_t
 }
 
 // 3. Undefined behaviour is a proof obligation, and a counterexample prints its values.
-export void test_prove_overflow_fails_naming_the_undefined_behaviour_with_values(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_overflow_fails_naming_the_undefined_behaviour_with_values() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, "overflow: fails", "--function=add_unchecked \"$c/overflow.c\"");
     has("overflow: ... names the undefined behaviour", &run,
         "overflow.c:8: undefined behaviour: signed integer addition overflow");
     has("overflow: ... with values that overflow", &run, "counterexample: a = ");
 }
 
-export void test_prove_ensures_a_true_one_is_proved_and_a_false_one_fails_with_its_values(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_ensures_a_true_one_is_proved_and_a_false_one_fails_with_its_values() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = prove(&p, "--function=add --function=add_wrong \"$c/overflow.c\"");
     has("ensures: a true one is proved", &run, "1 proved, 1 failed");
     has("ensures: a false one fails with its values", &run, "smith_ensures(sum < a + b) may be false");
 }
 
-export void test_prove_ensures_the_counterexamples_values_are_consistent(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_ensures_the_counterexamples_values_are_consistent() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::expect_text(
         "ensures: the counterexample's values are consistent (a + b = sum)", "ok",
         scratch::capture(&p,
@@ -99,13 +138,23 @@ export void test_prove_ensures_the_counterexamples_values_are_consistent(io::Io 
 }
 
 // 4. The column one past a row of 8 (checkers' get_user_move) is caught, per dimension.
-export void test_prove_board_row_and_col_below_8_is_proved(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_board_row_and_col_below_8_is_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     proved(&p, "board: row < 8 && col < 8 is proved", "--function=cell \"$c/board.c\"");
 }
 
-export void test_prove_board_col_up_to_8_fails_as_an_index_out_of_bounds_with_column_8(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_board_col_up_to_8_fails_as_an_index_out_of_bounds_with_column_8() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, "board: col <= 8 fails", "--function=cell_wrong \"$c/board.c\"");
     has("board: ... as an array index out of bounds", &run, "undefined behaviour: Array index out of bounds");
     has("board: ... with column 8", &run, "col = 8");
@@ -113,21 +162,36 @@ export void test_prove_board_col_up_to_8_fails_as_an_index_out_of_bounds_with_co
 
 // 5. A function is proved through a callee's contract alone; the callee's body is assembly, which is an error of its
 // own.
-export void test_prove_assembly_scaled_is_proved_without_reading_the_body_of_the_callee(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_assembly_scaled_is_proved_without_reading_the_body_of_the_callee() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     proved(&p, "assembly: scaled is proved without reading the body of sensor_percent",
            "--function=scaled \"$c/assembly.c\"");
 }
 
-export void test_prove_assembly_what_the_contract_does_not_give_fails_with_the_value(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_assembly_what_the_contract_does_not_give_fails_with_the_value() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run =
         refuted(&p, "assembly: what the contract does not give fails", "--function=scaled_too_far \"$c/assembly.c\"");
     has("assembly: ... with the value", &run, "percent = ");
 }
 
-export void test_prove_assembly_the_callee_itself_cannot_be_proved_and_says_to_mark_it_trusted(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_assembly_the_callee_itself_cannot_be_proved_and_says_to_mark_it_trusted() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = prove(&p, "--function=sensor_percent \"$c/assembly.c\"");
     has("assembly: the callee itself cannot be proved", &run, "inline assembly cannot be proved");
     has("assembly: ... and says to mark the function trusted", &run,
@@ -135,21 +199,36 @@ export void test_prove_assembly_the_callee_itself_cannot_be_proved_and_says_to_m
 }
 
 // 6. Each construct that cannot be proved is an error that says where and what to do.
-export void test_prove_recursion_is_an_error_that_says_what_to_do(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_recursion_is_an_error_that_says_what_to_do() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = prove(&p, "\"$c/recursion.c\"");
     has("recursion: is an error", &run, "recursion.c:9: cannot be proved: recursion: countdown calls itself");
     has("recursion: ... that says what to do", &run, "write it as a loop with a constant bound");
 }
 
-export void test_prove_function_pointer_is_an_error(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_function_pointer_is_an_error() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = prove(&p, "\"$c/pointer.c\"");
     has("function pointer: is an error", &run, "pointer.c:10: cannot be proved: a call through a function pointer");
 }
 
-export void test_prove_no_body_is_an_error_that_suggests_a_trusted_boundary(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_no_body_is_an_error_that_suggests_a_trusted_boundary() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = prove(&p, "\"$c/nobody.c\"");
     has("no body: is an error", &run,
         "nobody.c:10: cannot be proved: a call of lookup, which has neither a body nor a contract");
@@ -157,16 +236,26 @@ export void test_prove_no_body_is_an_error_that_suggests_a_trusted_boundary(io::
         "this is the edge of the program: put smith_trusted() as the first statement of");
 }
 
-export void test_prove_loop_with_no_bound_is_an_error_that_says_to_bound_it_with_a_requires(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_loop_with_no_bound_is_an_error_that_says_to_bound_it_with_a_requires() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = prove(&p, "\"$c/unbounded.c\"");
     has("loop: with no bound is an error", &run,
         "unbounded.c:8: cannot be proved: the loop has no bound the prover can see: its exit depends on `n`");
     has("loop: ... and says to bound it with a requires", &run, "contract::requires(n <= ...)");
 }
 
-export void test_prove_loop_count_no_bound_fails_naming_the_line_and_the_count(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_loop_count_no_bound_fails_naming_the_line_and_the_count() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, "loop count: no bound fails", "\"$c/loop_count.c\" --function=sum_unbounded");
     has("loop count: names the line and the count", &run,
         "loop_count.c:11: cannot be proved: the loop has no bound the prover can see: it runs `count` times");
@@ -174,28 +263,47 @@ export void test_prove_loop_count_no_bound_fails_naming_the_line_and_the_count(i
         "state its worst case, contract::requires(count <= ...), which callers then prove");
 }
 
-export void test_prove_loop_count_a_requires_on_the_count_bounds_the_loop(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_loop_count_a_requires_on_the_count_bounds_the_loop() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     proved(&p, "loop count: a requires on the count bounds the loop", "\"$c/loop_count.c\" --function=sum_bounded");
 }
 
-export void test_prove_loop_count_a_divide_has_no_count_and_the_passes_it_takes_are_said(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_loop_count_a_divide_has_no_count_and_the_passes_it_takes_are_said() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = prove(&p, "\"$c/loop_count.c\" --function=digits_divided");
     has("loop count: a divide has no count, and the passes it takes are said", &run,
         "a 64-bit value divided by 10 each pass is not a count LLVM can derive");
     has("loop count: ... with the counter that bounds it", &run, "at most 20");
 }
 
-export void test_prove_loop_count_a_counter_bounded_by_a_constant_proves(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_loop_count_a_counter_bounded_by_a_constant_proves() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     proved(&p, "loop count: a counter bounded by a constant proves", "\"$c/loop_count.c\" --function=digits_counted");
 }
 
-export void test_prove_objective_c_a_message_send_is_an_error(io::Io *io) {
-    (void)io; // not read on Linux, which has no Objective-C runtime headers (<objc/NSObject.h>)
-    if constexpr (target::os == target::macos) {
-        scratch::Project p = fresh(io);
+export void test_prove_objective_c_a_message_send_is_an_error() {
+    if constexpr (target::os == target::macos) { // Linux has no Objective-C runtime headers (<objc/NSObject.h>)
+        scratch::Project p = fresh();
+        defer scratch::clean(&p);
+        arena::Arena memory = test::memory(1U << 22);
+        arena::ArenaAllocator allocator = arena::allocator(&memory);
+        mem::Allocator *outside = mem::set_allocator(&allocator.base);
+        defer mem::set_allocator(outside);
         scratch::Run run = prove(&p, "\"$c/message.m\"");
         has("Objective-C: a message send is an error", &run,
             "message.m:10: cannot be proved: an Objective-C message send");
@@ -204,8 +312,13 @@ export void test_prove_objective_c_a_message_send_is_an_error(io::Io *io) {
 
 // 6b. A proof that grows past its memory limit is stopped, and says so (macOS enforces no RLIMIT_AS, so the parent
 // watches the process's footprint). This one uses about 0.9 GB in its 10 s; 0.3 GB stops it first.
-export void test_prove_memory_a_proof_over_its_limit_fails_naming_the_limit_the_function_and_the_way_out(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_memory_a_proof_over_its_limit_fails_naming_the_limit_the_function_and_the_way_out() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, "memory: a proof over its limit fails", "--memory=0.3 \"$c/blowup.c\"");
     has("memory: ... naming the limit", &run, "over its memory limit of 0.3 GB");
     has("memory: ... and the function", &run, "FAIL  blowup");
@@ -215,8 +328,13 @@ export void test_prove_memory_a_proof_over_its_limit_fails_naming_the_limit_the_
 // 7. A proof that runs out of time fails, like a test that times out. The budget is CPU time (so that a busy machine
 // does not change a verdict), counted as on 8 idle cores: this one query runs on one thread, and 2 s of it is the whole
 // budget.
-export void test_prove_budget_a_proof_out_of_time_fails_saying_what_it_used_and_where_the_time_went(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_budget_a_proof_out_of_time_fails_saying_what_it_used_and_where_the_time_went() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, "budget: fails", "--budget=2 \"$c/division.c\"");
     has("budget: ... as a budget of CPU time", &run, "over its budget of 2 s of CPU time");
     has("budget: ... that says what it used", &run, "having used 2.");
@@ -245,8 +363,13 @@ constexpr char orphan_script[_] =
     "[ -z \"$alive\" ] && break; sleep 0.1; done; "
     "[ -n \"$children\" ] && echo running || echo no child; echo \"alive:$alive\"";
 
-export void test_prove_orphan_the_proofs_process_ends_with_its_parent(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_orphan_the_proofs_process_ends_with_its_parent() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::sh(&p, orphan_script);
     has("orphan: a proof was running when its parent was killed", &run, "running");
     scratch::expect_text("orphan: the proof's process ends with its parent", "running\nalive:", run.out);
