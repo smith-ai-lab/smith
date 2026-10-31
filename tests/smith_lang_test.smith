@@ -1104,10 +1104,6 @@ export void test_error_standard_type() {
     corpus_case("error-standard-type");
 }
 
-export void test_error_str_array() {
-    corpus_case("error-str-array");
-}
-
 export void test_error_str_name() {
     corpus_case("error-str-name");
 }
@@ -1490,6 +1486,10 @@ export void test_generic_sized_result_sizeof() {
 
 export void test_generic_call_statement_after_braceless_if() {
     corpus_case("generic-call-statement-after-braceless-if");
+}
+
+export void test_slice_literal_initializers() {
+    corpus_case("slice-literal-initializers");
 }
 
 export void test_generic_slice() {

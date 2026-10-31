@@ -3328,15 +3328,6 @@ import <stdint.h>;
 u64 widen(uint32_t x, size_t n, ptrdiff_t d) {
     return x + n + d;
 }
-==> error-str-array/src/main.smith <==
-module main;
-
-// An array of `str` takes no braces yet: each element would be initialized member by member, leaving a slice empty.
-
-i32 main() {
-    str names[1] = {"a"};
-    return (i32)sizeof names;
-}
 ==> error-str-name/src/main.smith <==
 module main;
 
@@ -10525,6 +10516,41 @@ i32 main() {
     c::printf("%zu %zu\n", total((struct Pair){.value = "x"}), total((struct Pair){"ab", "c"}));
     struct Pair e = {};
     c::printf("%zu %c\n", countof(e.key), a.value[2]);
+    return 0;
+}
+==> slice-literal-initializers/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+struct Pair {
+    const char written[:];
+    const char sized[:];
+};
+
+static const Pair table[2] = {{"unsigned", "u32"}, {"signed", "i32"}};
+typedef const char Text[:];
+static const Text names[3] = {"a", "bb", "ccc"};
+
+static void put(const char text[:]) {
+    c::printf("%.*s\n", (int)countof(text), text.data);
+}
+
+i32 main() {
+    bool flag = true;
+    for (usize i = 0; i < 2; i++) {
+        put(table[i].written);
+        put(table[i].sized);
+    }
+    for (usize i = 0; i < 3; i++)
+        put(names[i]);
+    str words[2] = {"x", "yz"};
+    for (usize i = 0; i < 2; i++)
+        put(words[i]);
+    put(flag ? "yes" : "no");
+    put(!flag ? "yes" : "no");
+    i32 plain[4] = {1, 2, 3, 4};
+    c::printf("%d\n", (int)countof(plain));
     return 0;
 }
 ==> slice-lowering/src/slices.smith <==
