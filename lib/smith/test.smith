@@ -7,7 +7,6 @@ module smith::test;
 
 import smith::arena;
 import smith::contract;
-import smith::files;
 import smith::io;
 import smith::math;
 import smith::random;
@@ -1329,36 +1328,44 @@ void diff_render(Diff *diff, const Edit *edits, usize count, const Row *old_rows
 // The bytes of the file in the test's memory (a zero after them), or nullptr when it cannot be read. The files effect
 // is a real io made for the call from the runner's make_io, as run_io makes a test's.
 const char *golden_read_free(const char *path, usize *size) {
-    files::BytesResult file = files::read_file(path[0:c::strlen(path)]);
-    const char *result = nullptr;
-    if (file == .ok) {
-        usize count = countof(file.ok);
-        arena::Arena memory_arena = memory(count + 1);
-        char *buffer = arena::push_slice(&memory_arena, char, count + 1).data;
-        if (count > 0) __builtin_memcpy(buffer, file.ok.data, count);
-        *size = count;
-        result = buffer;
-        if (file.ok.data != nullptr)
-            c::smith_mem_free(file.ok.data); // NOLINT(smith-module-library): the block of the current allocator
+    i32 descriptor = c::open(path, c::O_RDONLY); // NOLINT(smith-preprocessor)
+    if (descriptor < 0) return nullptr;
+    isize end = c::lseek(descriptor, 0, c::SEEK_END); // NOLINT(smith-preprocessor)
+    c::lseek(descriptor, 0, c::SEEK_SET);             // NOLINT(smith-preprocessor)
+    usize count = end > 0 ? (usize)end : 0;
+    arena::Arena memory_arena = memory(count + 1);
+    char *buffer = arena::push_slice(&memory_arena, char, count + 1).data;
+    usize filled = 0;
+    while (filled < count) {
+        isize got = c::read(descriptor, buffer + filled, count - filled);
+        if (got <= 0) break;
+        filled += (usize)got;
     }
-    return result;
+    c::close(descriptor);
+    buffer[filled] = '\0';
+    *size = filled;
+    return buffer;
 }
 
 // The same file written with no io, its folders made. False when it cannot be.
 bool golden_write_free(const char *path, const char *text, usize size) {
     char folder[path_capacity];
     __builtin_snprintf(folder, sizeof folder, "%s", path);
-    char *slash = c::strrchr(folder, '/');
-    bool made = true;
-    if (slash != nullptr && slash != folder) {
+    for (char *slash = c::strchr(folder + 1, '/'); slash != nullptr; slash = c::strchr(slash + 1, '/')) {
         *slash = '\0';
-        files::DoneResult folder_made = files::make_folder(folder[0:c::strlen(folder)]);
-        made = folder_made == .ok;
+        c::mkdir(folder, 493); // 0755; one that is there already is fine
+        *slash = '/';
     }
-    const u8 *bytes = (const u8 *)text;
-    if (!made) return false;
-    files::CountResult written = files::write_file(path[0:c::strlen(path)], bytes[0:size], files::Replace);
-    return written == .ok;
+    i32 descriptor = c::open(path, c::O_WRONLY | c::O_CREAT | c::O_TRUNC, 420); // NOLINT(smith-preprocessor)
+    if (descriptor < 0) return false;
+    usize done = 0;
+    while (done < size) {
+        isize put = c::write(descriptor, text + done, size - done);
+        if (put <= 0) break;
+        done += (usize)put;
+    }
+    c::close(descriptor);
+    return done == size;
 }
 
 const char *golden_read(io::Io *io, const char *path, usize *size) {
@@ -1483,7 +1490,7 @@ export void golden(io::Io *io, const char path[:], const char actual[:]) {
 // The same with no io (issue #843): the file is read and written through smith::files, with the same diff on a mismatch
 // and the same `smith test --update` behavior. The name carries `_free` while test::golden takes the io; #240 removes
 // that parameter and the name with it.
-export void golden_free(const char path[:], const char actual[:]) {
+export void golden_free(const char path[:], const char actual[:]) { // NOLINT(smith-effects): a test's files, until #240
     golden_check(nullptr, path, actual);
 }
 
