@@ -1,7 +1,8 @@
 // front::cimport (#1114, #1112 track C): a C header's functions and structs, read through clang's C++ libraries
 // (shim/cimport.cpp). The test runs in track B's front-end runner, which links clang. The headers are the fixture
-// tests/front/cimport/fixture.h and the system's <string.h> and <stdio.h>; the full lists are the golden files in
-// tests/front/cimport/. `smith test --update` writes them.
+// tests/front/cimport/fixture.h and the system's <string.h> and <stdio.h>; the fixture's full list is the golden file
+// tests/front/cimport/fixture.golden (the system headers differ by platform, so they get checks, not goldens). `smith
+// test --update` writes them.
 module front_cimport_test;
 
 import front::cimport;
@@ -174,11 +175,14 @@ export void test_cimport_string_h_has_strlen_returning_usize_of_a_const_char_poi
     test::check_equal(countof(h.error), 0);
     const cimport::Function *length_fn = find(&h, "strlen");
     test::check_condition(length_fn != nullptr);
-    Str want_result = "size_t = U64";
-    test::check_condition(slice::equal(type_text(&h, length_fn->result), want_result));
+    // A system header's spelling differs by platform (macOS: size_t = __darwin_size_t = U64), so the checks are on
+    // what holds everywhere: the typedef name first, the sized type last, and a pointer to a const char.
+    Str result = type_text(&h, length_fn->result);
+    test::check_condition(c::strncmp(result.data, "size_t = ", 9) == 0);
+    test::check_condition(result[countof(result) - 3] == 'U' && result[countof(result) - 2] == '6');
+    Str param = type_text(&h, length_fn->parameters[0].type);
     Str want_param = "*const I8";
-    test::check_condition(slice::equal(type_text(&h, length_fn->parameters[0].type), want_param));
-    test::golden("tests/front/cimport/string.golden", dump(&h));
+    test::check_condition(slice::equal(param, want_param));
 }
 
 export void test_cimport_stdio_h_printf_is_variadic_and_file_is_a_typedef_of_a_struct() {
@@ -190,7 +194,10 @@ export void test_cimport_stdio_h_printf_is_variadic_and_file_is_a_typedef_of_a_s
     test::check_equal(countof(h.error), 0);
     const cimport::Function *printf_fn = find(&h, "printf");
     test::check_condition(printf_fn != nullptr && printf_fn->variadic);
-    test::golden("tests/front/cimport/stdio.golden", dump(&h));
+    const cimport::Function *open_fn = find(&h, "fopen");
+    test::check_condition(open_fn != nullptr);
+    Str file = type_text(&h, open_fn->result);
+    test::check_condition(c::strncmp(file.data, "*FILE = struct ", 15) == 0);
 }
 
 export void test_cimport_a_missing_header_is_an_error_naming_the_header_and_the_folders() {
