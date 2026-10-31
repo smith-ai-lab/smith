@@ -1,0 +1,85 @@
+// The remembered SDK path (#660, runtime/sdk_cache.c) is keyed by DEVELOPER_DIR: a second `smith cc` that names
+// another developer folder asks xcrun again and uses that folder's SDK, never the stale remembered path (#708). The
+// test needs the real /usr/bin/xcrun and two developer folders that each have an SDK (Xcode and /Library/Developer/
+// CommandLineTools), so it is macOS-only (`macos` in the name) and says why when it has fewer than two.
+module sdk_cache_test;
+
+import smith::arena;
+import smith::format;
+import smith::test;
+import scratch;
+import smith::mem;
+
+constexpr usize memory_size = (usize)1 << 20; // 1 MiB
+
+// The developer folders on this machine that answer `xcrun --show-sdk-path`: the first two, one per line.
+constexpr char folders_script[_] =
+    "for d in \"$(xcode-select -p 2>/dev/null)\" /Applications/Xcode*.app/Contents/Developer "
+    "/Library/Developer/CommandLineTools; do [ -d \"$d\" ] && DEVELOPER_DIR=$d /usr/bin/xcrun --show-sdk-path "
+    ">/dev/null 2>&1 && echo \"$d\"; done | awk '!seen[$0]++' | head -2";
+
+// The text of a line, 1-based, of a command's output.
+static const char *line_of(arena::Arena *arena, const char *text, usize number) {
+    usize start = 0;
+    for (usize n = 1; n < number; n++) {
+        while (text[start] != '\0' && text[start] != '\n') {
+            start++;
+        }
+        if (text[start] == '\n') {
+            start++;
+        }
+    }
+    usize end = start;
+    while (text[end] != '\0' && text[end] != '\n') {
+        end++;
+    }
+    char *copy = arena::push_slice(arena, char, end - start + 1).data;
+    mem::copy(copy[0:end - start], text[start:end]);
+    copy[end - start] = '\0';
+    return copy;
+}
+
+export void test_macos_sdk_cache_follows_developer_dir() {
+    scratch::Project p = scratch::make("sdk", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    if (!scratch::same(scratch::capture(&p, "uname -s"), "Darwin")) {
+        test::note("not macOS: there is no xcrun");
+        return;
+    }
+    const char *folders = scratch::capture(&p, folders_script);
+    const char *first = line_of(arena, folders, 1);
+    const char *second = line_of(arena, folders, 2);
+    if (second[0] == '\0') {
+        test::note("fewer than two developer folders with an SDK on this machine: nothing to switch between");
+        return;
+    }
+    scratch::copy_tree(&p, "tests/stub.c", "tests/stub.c");
+    scratch::Run built = scratch::sh(&p, "mkdir -p bin data && ${CC:-cc} -std=gnu23 -DNAME='\"clang\"' tests/stub.c "
+                                         "-o bin/clang");
+    scratch::expect_status("the stub compiler is built", 0, &built);
+    // Same empty data folder for both runs; the stub clang prints the SDKROOT smith chose.
+    const char *prefix = format::push(arena, "env -u SDKROOT -u CLANG_NO_DEFAULT_CONFIG XDG_DATA_HOME=", p.dir,
+                                      "/data STUB_SHOW_ENV=1 SMITH_CLANG=", p.dir, "/bin/clang DEVELOPER_DIR=")
+                             .data;
+    const char *want_first =
+        scratch::capture(&p, format::push(arena, "DEVELOPER_DIR='", first, "' /usr/bin/xcrun --show-sdk-path").data);
+    const char *want_second =
+        scratch::capture(&p, format::push(arena, "DEVELOPER_DIR='", second, "' /usr/bin/xcrun --show-sdk-path").data);
+    scratch::expect_lacks("the two developer folders have different SDK paths", want_first, want_second);
+    scratch::Run one = scratch::sh(&p, format::push(arena, prefix, first, " \"$SMITH_SELF\" cc -c a.c").data);
+    scratch::expect_contains("the first developer folder's SDK is used", one.out,
+                             format::push(arena, "env SDKROOT=", want_first, "\n").data);
+    const char *key = scratch::read(&p, "data/smith/sdk");
+    scratch::expect_contains("the answer is remembered with DEVELOPER_DIR in its key", key,
+                             format::push(arena, first, "|").data);
+    scratch::Run two = scratch::sh(&p, format::push(arena, prefix, second, " \"$SMITH_SELF\" cc -c a.c").data);
+    scratch::expect_contains("another DEVELOPER_DIR asks again: the new SDK is used", two.out,
+                             format::push(arena, "env SDKROOT=", want_second, "\n").data);
+    scratch::expect_contains("... and the remembered key is the new one", scratch::read(&p, "data/smith/sdk"),
+                             format::push(arena, second, "|").data);
+}
