@@ -85,5 +85,12 @@ runs:
       run: |
         start=$(date +%s)
         # `--list` builds the runner and every test program and runs none of them
-        "$SMITH" test --list >/dev/null
+        # a failure prints the end of smith's own output, which this step used to drop with the list (#1115)
+        if ! SMITH_OUTPUT=full "$SMITH" test --list >"$RUNNER_TEMP/list.out" 2>&1; then
+          tail -n 300 "$RUNNER_TEMP/list.out"
+          for runner in build/*/front-project/build/tests; do
+            [ -x "$runner" ] && { echo "::group::$runner --list"; "$runner" --list 2>&1 | tail -n 100; echo "::endgroup::"; }
+          done
+          exit 1
+        fi
         echo "tests built: $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
