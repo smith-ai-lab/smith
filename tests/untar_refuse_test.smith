@@ -4,19 +4,19 @@
 // hostile and the damaged archives, the single .gz) is tested as functions in tests/untar_readers_test.smith, which
 // replaced the other cases of this file (issue #646); the readers under the sanitizers are
 // tests/untar_sanitizers_test.smith. Every fetch has a cache of its own; the shell functions are those of
-// tests/build_fixtures/untar/prelude.
+// tests/build_fixtures/untar/prelude. A test's texts are pushed on its test::memory arena, which is also the current
+// allocator, so what scratch returns goes back with it.
 module untar_refuse_test;
 
 import smith::arena;
 import smith::format;
-import smith::io;
 import smith::test;
 import scratch;
 import <string.h>;
 import smith::mem;
 
-static scratch::Project untar_project(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "untar");
+static scratch::Project untar_project() {
+    scratch::Project p = scratch::make("p", "untar");
     scratch::copy_tree(&p, "tests/untar.c", "tests/untar.c");
     scratch::copy_tree(&p, "tests/xz.py", "tests/xz.py");
     scratch::copy_tree(&p, "lib", "lib");
@@ -24,69 +24,77 @@ static scratch::Project untar_project(io::Io *io) {
     return p;
 }
 
-static scratch::Run run(const scratch::Project *p, const char *body) {
-    return scratch::sh(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+static scratch::Run run(arena::Arena *memory, const scratch::Project *p, const char *body) {
+    return scratch::sh(p, format::push(memory, ". ./prelude; ", body).data);
 }
 
-static const char *text(const scratch::Project *p, const char *body) {
-    return scratch::capture(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+static const char *text(arena::Arena *memory, const scratch::Project *p, const char *body) {
+    return scratch::capture(p, format::push(memory, ". ./prelude; ", body).data);
 }
 
 // A setup command that must succeed.
-static void setup(const scratch::Project *p, const char *body) {
-    scratch::Run made = run(p, body);
+static void setup(arena::Arena *memory, const scratch::Project *p, const char *body) {
+    scratch::Run made = run(memory, p, body);
     scratch::expect_status("the setup of the case", 0, &made);
 }
 
-static const char *join(const scratch::Project *p, const char *a, const char *b) {
-    return format::push(&p->io->arena, a, b).data;
+static const char *join(arena::Arena *memory, const char *a, const char *b) {
+    return format::push(memory, a, b).data;
 }
 
 // Fetches an archive (a path in the project) into a cache of its own; the package folder is in *package, or
 // "/nonexistent" when it failed.
-static scratch::Run fetch(const scratch::Project *p, const char *cache, const char *archive, const char **package) {
-    scratch::Run fetched = run(p, format::push(&p->io->arena, "XDG_CACHE_HOME=\"$PWD/cache-", cache,
-                                               "\" smith fetch \"file://$PWD/", archive, "\"")
-                                      .data);
+static scratch::Run fetch(arena::Arena *memory, const scratch::Project *p, const char *cache, const char *archive,
+                          const char **package) {
+    scratch::Run fetched =
+        run(memory, p,
+            format::push(memory, "XDG_CACHE_HOME=\"$PWD/cache-", cache, "\" smith fetch \"file://$PWD/", archive, "\"")
+                .data);
     *package = "/nonexistent";
     const char *start = fetched.status == 0 ? c::strstr(fetched.out, "\"sha256:") : nullptr;
     if (start != nullptr) {
-        char *hash = arena::push_slice(&p->io->arena, char, 65).data;
+        char *hash = arena::push_slice(memory, char, 65).data;
         mem::copy(hash[0:64], start[8:8 + 64]);
         hash[64] = '\0';
-        *package = format::push(&p->io->arena, p->dir, "/cache-", cache, "/smith/packages/", hash).data;
+        *package = format::push(memory, p->dir, "/cache-", cache, "/smith/packages/", hash).data;
     }
     return fetched;
 }
 
 // An archive that must be refused: a failing status, a message with the reason, and nothing left in the cache.
-static void refuse(const scratch::Project *p, const char *name, const char *archive, const char *needle) {
+static void refuse(arena::Arena *memory, const scratch::Project *p, const char *name, const char *archive,
+                   const char *needle) {
     const char *package = nullptr;
-    scratch::Run fetched = fetch(p, "r", archive, &package);
-    scratch::expect_failure(join(p, name, ": fails"), &fetched);
-    scratch::expect_contains(join(p, name, ": says why"), fetched.err, needle);
-    scratch::expect_contains(join(p, name, ": names the archive"), fetched.err,
-                             format::push(&p->io->arena, "cannot extract file://", text(p, "pwd"), "/", archive).data);
-    scratch::expect_text(join(p, name, ": leaves no package"), "0",
-                         text(p, "ls \"$PWD/cache-r/smith/packages\" 2>/dev/null | grep -c '^[0-9a-f]\\{64\\}$'"));
-    scratch::expect_text(join(p, name, ": and no temporary"), "0",
-                         text(p, "ls -A \"$PWD/cache-r/smith/packages\" 2>/dev/null | grep -c '^\\.tmp'"));
+    scratch::Run fetched = fetch(memory, p, "r", archive, &package);
+    scratch::expect_failure(join(memory, name, ": fails"), &fetched);
+    scratch::expect_contains(join(memory, name, ": says why"), fetched.err, needle);
+    scratch::expect_contains(join(memory, name, ": names the archive"), fetched.err,
+                             format::push(memory, "cannot extract file://", text(memory, p, "pwd"), "/", archive).data);
+    scratch::expect_text(
+        join(memory, name, ": leaves no package"), "0",
+        text(memory, p, "ls \"$PWD/cache-r/smith/packages\" 2>/dev/null | grep -c '^[0-9a-f]\\{64\\}$'"));
+    scratch::expect_text(join(memory, name, ": and no temporary"), "0",
+                         text(memory, p, "ls -A \"$PWD/cache-r/smith/packages\" 2>/dev/null | grep -c '^\\.tmp'"));
 }
 
 // A refusal of a tar made from the hostile tree by one tar command, run in the tree's folder.
-static void refuse_hostile(io::Io *io, const char *name, const char *archive, const char *tar_arguments,
-                           const char *needle) {
-    scratch::Project p = untar_project(io);
-    setup(&p,
-          format::push(&io->arena, "hostile_tree; (cd \"$h\" && tar -cf \"$arc/", archive, "\" ", tar_arguments, ")")
-              .data);
-    refuse(&p, name, join(&p, "arc/", archive), needle);
+static void refuse_hostile(arena::Arena *memory, const scratch::Project *p, const char *name, const char *archive,
+                           const char *tar_arguments, const char *needle) {
+    setup(memory, p,
+          format::push(memory, "hostile_tree; (cd \"$h\" && tar -cf \"$arc/", archive, "\" ", tar_arguments, ")").data);
+    refuse(memory, p, name, join(memory, "arc/", archive), needle);
 }
 
 // Hostile archives, made with tar's -P and -s so that it writes the names it would normally refuse. This one is refused
 // with the reason and leaves nothing in the cache.
-export void test_untar_refuses_traversal(io::Io *io) {
-    refuse_hostile(io, "traversal", "up.tar", "-P -s ',^pkg-1.0/a.txt$,../evil,' pkg-1.0/a.txt",
+export void test_untar_refuses_traversal() {
+    scratch::Project p = untar_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    refuse_hostile(&memory, &p, "traversal", "up.tar", "-P -s ',^pkg-1.0/a.txt$,../evil,' pkg-1.0/a.txt",
                    "goes up out of the package");
 }
 
@@ -98,24 +106,30 @@ constexpr char make_single[_] =
     "printf 'tiny\\n' >single/tiny; : >single/nothing; "
     "for f in tool-bin text; do gzip -c \"single/$f\" >\"$arc/$f.gz\"; done; ";
 
-static void single_gz_extracts(io::Io *io, const char *f) {
-    scratch::Project p = untar_project(io);
-    setup(&p, make_single);
+static void single_gz_extracts(arena::Arena *memory, const scratch::Project *p, const char *f) {
+    setup(memory, p, make_single);
     const char *package = nullptr;
-    scratch::Run fetched = fetch(&p, "a", join(&p, join(&p, "arc/", f), ".gz"), &package);
-    const char *name = join(&p, "single gz ", f);
-    scratch::expect_status(join(&p, name, ": extracts"), 0, &fetched);
-    scratch::expect_text(join(&p, name, ": one file, named without .gz"), f,
-                         text(&p, join(&p, "ls 2>/dev/null ", package)));
+    scratch::Run fetched = fetch(memory, p, "a", join(memory, join(memory, "arc/", f), ".gz"), &package);
+    const char *name = join(memory, "single gz ", f);
+    scratch::expect_status(join(memory, name, ": extracts"), 0, &fetched);
+    scratch::expect_text(join(memory, name, ": one file, named without .gz"), f,
+                         text(memory, p, join(memory, "ls 2>/dev/null ", package)));
     scratch::expect_text(
-        join(&p, name, ": the same bytes"), text(&p, join(&p, "shasum -a 256 <single/", f)),
-        text(&p, format::push(&p.io->arena, "shasum -a 256 <\"", package, "/", f, "\" 2>/dev/null").data));
-    scratch::expect_text(join(&p, name, ": mode 0644"), "-rw-r--r--",
-                         text(&p, format::push(&p.io->arena, "f=\"", package, "/", f,
-                                               "\"; stat -c %A \"$f\" 2>/dev/null || stat -f %Sp \"$f\" 2>/dev/null")
-                                      .data));
+        join(memory, name, ": the same bytes"), text(memory, p, join(memory, "shasum -a 256 <single/", f)),
+        text(memory, p, format::push(memory, "shasum -a 256 <\"", package, "/", f, "\" 2>/dev/null").data));
+    scratch::expect_text(join(memory, name, ": mode 0644"), "-rw-r--r--",
+                         text(memory, p,
+                              format::push(memory, "f=\"", package, "/", f,
+                                           "\"; stat -c %A \"$f\" 2>/dev/null || stat -f %Sp \"$f\" 2>/dev/null")
+                                  .data));
 }
 
-export void test_untar_single_gz_text(io::Io *io) {
-    single_gz_extracts(io, "text");
+export void test_untar_single_gz_text() {
+    scratch::Project p = untar_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    single_gz_extracts(&memory, &p, "text");
 }

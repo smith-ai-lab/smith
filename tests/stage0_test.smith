@@ -4,10 +4,10 @@
 // gnu2x on Linux, where a missing release would build the seed, which SMITH_STAGE0_SEED=0 turns off.
 module stage0_test;
 
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import scratch;
-import smith::mem;
 
 // The folder of the repository (the project's) holds: bin/curl and fake-smith (built from the fixture), the tool, an
 // origin, and `repo`: a copy of the two scripts, five commits, a release for the second and a release for a commit that
@@ -28,14 +28,12 @@ constexpr const char *setup =
     "done; "
     "git push -q origin main side --tags; echo $second > ../second";
 
-static scratch::Project repository(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "stage0");
-    scratch::copy_tree(&p, "scripts/stage0.c", "stage0.c");
-    scratch::copy_tree(&p, "scripts/sha256.h", "sha256.h");
-    scratch::copy_tree(&p, "scripts/release.sh", "release.sh");
-    scratch::Run made = scratch::sh(&p, setup);
+static void repository(const scratch::Project *p) {
+    scratch::copy_tree(p, "scripts/stage0.c", "stage0.c");
+    scratch::copy_tree(p, "scripts/sha256.h", "sha256.h");
+    scratch::copy_tree(p, "scripts/release.sh", "release.sh");
+    scratch::Run made = scratch::sh(p, setup);
     scratch::expect_status("stage0: the scratch repository is made", 0, &made);
-    return p;
 }
 
 // Runs the tool in the repository with the stand-in curl first on PATH.
@@ -70,8 +68,14 @@ static const char *line(const char *text, usize number) {
 
 // The release of the newest ancestor is used (not the side branch's), the arguments reach `smith build`, the smith-cc
 // found first is the release's own, and a second run downloads nothing.
-export void test_stage0_picks_the_newest_ancestor_and_runs_its_smith(io::Io *io) {
-    scratch::Project p = repository(io);
+export void test_stage0_picks_the_newest_ancestor_and_runs_its_smith() {
+    scratch::Project p = scratch::make("p", "stage0");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    repository(&p);
     scratch::Run run = tool(&p, "-DX=1", "");
     scratch::expect_status("stage0: the first run passes", 0, &run);
     char expected[160];
@@ -92,8 +96,14 @@ export void test_stage0_picks_the_newest_ancestor_and_runs_its_smith(io::Io *io)
 }
 
 // A newer ancestor with a release wins.
-export void test_stage0_a_newer_release_wins(io::Io *io) {
-    scratch::Project p = repository(io);
+export void test_stage0_a_newer_release_wins() {
+    scratch::Project p = scratch::make("p", "stage0");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    repository(&p);
     scratch::Run first = tool(&p, "", "");
     scratch::expect_status("stage0: the first run passes", 0, &first);
     scratch::Run made =
@@ -109,8 +119,14 @@ export void test_stage0_a_newer_release_wins(io::Io *io) {
 
 // A newer release that has no tarball for this platform (the other platform's job published first, or only) is
 // passed over for the newest one that has it (#799).
-export void test_stage0_a_release_without_this_platform_is_skipped(io::Io *io) {
-    scratch::Project p = repository(io);
+export void test_stage0_a_release_without_this_platform_is_skipped() {
+    scratch::Project p = scratch::make("p", "stage0");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    repository(&p);
     scratch::Run made = scratch::sh(&p, "cd repo && third=$(git rev-parse HEAD~1) && mkdir ../gh/stage0-$third && "
                                         "echo x > ../gh/stage0-$third/smith-plan9-mips.tar.xz && "
                                         "git tag stage0-$third $third && git push -q origin --tags");
@@ -123,8 +139,14 @@ export void test_stage0_a_release_without_this_platform_is_skipped(io::Io *io) {
 }
 
 // A checksum that does not match stops it.
-export void test_stage0_a_wrong_checksum_stops(io::Io *io) {
-    scratch::Project p = repository(io);
+export void test_stage0_a_wrong_checksum_stops() {
+    scratch::Project p = scratch::make("p", "stage0");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    repository(&p);
     (void)scratch::sh(&p, "echo corrupt >> gh/stage0-$(cat second)/smith-$(uname -s | tr '[:upper:]' '[:lower:]')-"
                           "$(uname -m).tar.xz");
     scratch::Run run = tool(&p, "", "");
@@ -136,8 +158,14 @@ export void test_stage0_a_wrong_checksum_stops(io::Io *io) {
 }
 
 // No ancestor has a release.
-export void test_stage0_no_release_says_so(io::Io *io) {
-    scratch::Project p = repository(io);
+export void test_stage0_no_release_says_so() {
+    scratch::Project p = scratch::make("p", "stage0");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    repository(&p);
     (void)scratch::sh(&p, "cd repo && git tag -d stage0-$(cat ../second) >/dev/null && git push -q origin "
                           ":refs/tags/stage0-$(cat ../second)");
     scratch::Run run = tool(&p, "", "");
@@ -146,8 +174,14 @@ export void test_stage0_no_release_says_so(io::Io *io) {
 }
 
 // SMITH_STAGE0_RELEASE names the release.
-export void test_stage0_a_named_release_is_used(io::Io *io) {
-    scratch::Project p = repository(io);
+export void test_stage0_a_named_release_is_used() {
+    scratch::Project p = scratch::make("p", "stage0");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    repository(&p);
     scratch::Run run = tool(&p, "", "SMITH_STAGE0_RELEASE=stage0-$(cat ../second)");
     char expected[160];
     __builtin_snprintf(expected, sizeof expected, "stage0: downloading stage0-%s", second(&p));

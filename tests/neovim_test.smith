@@ -6,8 +6,9 @@
 // the smith under test (`smith cc --smith-tree-sitter`).
 module neovim_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 
@@ -32,11 +33,11 @@ constexpr char shim[_] =
 
 constexpr char fakedap[_] = "--cmd \"set runtimepath+=$d/fakedap\"";
 
-// How Neovim is started: the shell that runs first (the shim of smith), the PATH in front of the smith under test,
-// whether the smith under test is on the PATH at all, the data folder (relative to the scratch home) and more
+// How Neovim is started: the line the shim of smith says (nullptr for no shim), the PATH in front of the smith under
+// test, whether the smith under test is on the PATH at all, the data folder (relative to the scratch home) and more
 // arguments.
 typedef struct {
-    const char *before;
+    const char *version_line;
     const char *front;
     bool bare;
     bool needs_git;
@@ -45,8 +46,13 @@ typedef struct {
 } Start;
 
 // Runs the test `name` of tests/neovim.lua in a Neovim of its own, in a scratch home of its own.
-static void nvim(io::Io *io, const char *name, const Start *start) {
-    scratch::Project p = scratch::project(io, "nvim", "neovim");
+static void nvim(const char *name, const Start *start) {
+    scratch::Project p = scratch::make("nvim", "neovim");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     if (scratch::sh(&p, "command -v nvim >/dev/null").status != 0) {
         return;
     }
@@ -59,10 +65,14 @@ static void nvim(io::Io *io, const char *name, const Start *start) {
     }
     scratch::expect_status("neovim: the scratch home is made", 0, &made);
     const char *path =
-        start->bare ? "/usr/bin:/bin" : format::push(&io->arena, start->front, p.tested, ":/usr/bin:/bin").data;
+        start->bare ? "/usr/bin:/bin" : format::push(&memory, start->front, p.tested, ":/usr/bin:/bin").data;
+    const char *before =
+        start->version_line == nullptr
+            ? ""
+            : format::push(&memory, shim, "shim \"$PWD/shimmed\" \"smith 0.0", start->version_line, "\"; ").data;
     const char *command =
         format::push(
-            &io->arena, "nvim=$(command -v nvim); ", start->before, "d=$PWD; export XDG_DATA_HOME=$d/", start->data,
+            &memory, "nvim=$(command -v nvim); ", before, "d=$PWD; export XDG_DATA_HOME=$d/", start->data,
             " XDG_CONFIG_HOME=$d/config XDG_STATE_HOME=$d/state XDG_CACHE_HOME=$d/cache HOME=$d/home "
             "GIT_CONFIG_NOSYSTEM=1; ",
             "env PATH=\"", path, "\" SMITH_NVIM_TEST=", name,
@@ -79,178 +89,184 @@ static void nvim(io::Io *io, const char *name, const Start *start) {
     if (run.status != 0 || !scratch::contains(run.out, "ok  ")) {
         test::note("%s (status %d)\n%s", name, run.status, run.out);
     }
-    scratch::expect_status(format::push(&io->arena, "neovim: ", name).data, 0, &run);
-    scratch::expect_contains(format::push(&io->arena, "neovim: ", name, " says ok").data, run.out, "ok  ");
+    scratch::expect_status(format::push(&memory, "neovim: ", name).data, 0, &run);
+    scratch::expect_contains(format::push(&memory, "neovim: ", name, " says ok").data, run.out, "ok  ");
 }
 
 // The usual: the smith under test first on PATH.
-static void plain(io::Io *io, const char *name, const char *extra) {
-    Start start = {.before = "", .front = "", .bare = false, .needs_git = false, .data = "data", .extra = extra};
-    nvim(io, name, &start);
+static void plain(const char *name, const char *extra) {
+    Start start = {
+        .version_line = nullptr, .front = "", .bare = false, .needs_git = false, .data = "data", .extra = extra};
+    nvim(name, &start);
 }
 
-export void test_neovim_filetype(io::Io *io) {
-    plain(io, "filetype", "");
+export void test_neovim_filetype() {
+    plain("filetype", "");
 }
 
-export void test_neovim_parser(io::Io *io) {
-    plain(io, "parser", "");
+export void test_neovim_parser() {
+    plain("parser", "");
 }
 
-export void test_neovim_highlights(io::Io *io) {
-    plain(io, "highlights", "");
+export void test_neovim_highlights() {
+    plain("highlights", "");
 }
 
-export void test_neovim_highlight_buffer(io::Io *io) {
-    plain(io, "highlight_buffer", "");
+export void test_neovim_highlight_buffer() {
+    plain("highlight_buffer", "");
 }
 
-export void test_neovim_plain_c(io::Io *io) {
-    plain(io, "plain_c", "");
+export void test_neovim_plain_c() {
+    plain("plain_c", "");
 }
 
-export void test_neovim_header_in_project(io::Io *io) {
-    plain(io, "header_in_project", "");
+export void test_neovim_header_in_project() {
+    plain("header_in_project", "");
 }
 
-export void test_neovim_header_outside(io::Io *io) {
-    plain(io, "header_outside", "");
+export void test_neovim_header_outside() {
+    plain("header_outside", "");
 }
 
-export void test_neovim_header_user_choice(io::Io *io) {
-    plain(io, "header_user_choice", "--cmd \"let g:c_syntax_for_h = 1\"");
+export void test_neovim_header_user_choice() {
+    plain("header_user_choice", "--cmd \"let g:c_syntax_for_h = 1\"");
 }
 
-export void test_neovim_lsp_config(io::Io *io) {
-    plain(io, "lsp_config", "");
+export void test_neovim_lsp_config() {
+    plain("lsp_config", "");
 }
 
-export void test_neovim_lsp_attach(io::Io *io) {
-    plain(io, "lsp_attach", "");
+export void test_neovim_lsp_attach() {
+    plain("lsp_attach", "");
 }
 
-export void test_neovim_lsp_attach_smith(io::Io *io) {
-    plain(io, "lsp_attach_smith", "");
+export void test_neovim_lsp_attach_smith() {
+    plain("lsp_attach_smith", "");
 }
 
-export void test_neovim_lsp_attach_smith_alone(io::Io *io) {
-    plain(io, "lsp_attach_smith_alone", "");
+export void test_neovim_lsp_attach_smith_alone() {
+    plain("lsp_attach_smith_alone", "");
 }
 
 // nvim-dap on the runtimepath: the adapter registers at startup; a user's own adapter and configurations stay.
-export void test_neovim_dap_registers(io::Io *io) {
-    plain(io, "dap_registers", fakedap);
+export void test_neovim_dap_registers() {
+    plain("dap_registers", fakedap);
 }
 
-export void test_neovim_dap_one_configuration(io::Io *io) {
-    plain(io, "dap_one_configuration", fakedap);
+export void test_neovim_dap_one_configuration() {
+    plain("dap_one_configuration", fakedap);
 }
 
-export void test_neovim_dap_test_under_cursor(io::Io *io) {
-    plain(io, "dap_test_under_cursor", fakedap);
+export void test_neovim_dap_test_under_cursor() {
+    plain("dap_test_under_cursor", fakedap);
 }
 
-export void test_neovim_dap_main_under_cursor(io::Io *io) {
-    plain(io, "dap_main_under_cursor", fakedap);
+export void test_neovim_dap_main_under_cursor() {
+    plain("dap_main_under_cursor", fakedap);
 }
 
-export void test_neovim_dap_test_name_in_module(io::Io *io) {
-    plain(io, "dap_test_name_in_module", fakedap);
+export void test_neovim_dap_test_name_in_module() {
+    plain("dap_test_name_in_module", fakedap);
 }
 
-export void test_neovim_dap_asks_without_project(io::Io *io) {
-    plain(io, "dap_asks_without_project", fakedap);
+export void test_neovim_dap_asks_without_project() {
+    plain("dap_asks_without_project", fakedap);
 }
 
-export void test_neovim_dap_runner_of(io::Io *io) {
-    plain(io, "dap_runner_of", "");
+export void test_neovim_dap_runner_of() {
+    plain("dap_runner_of", "");
 }
 
-export void test_neovim_neotest_is_test_file(io::Io *io) {
-    plain(io, "neotest_is_test_file", "");
+export void test_neovim_neotest_is_test_file() {
+    plain("neotest_is_test_file", "");
 }
 
-export void test_neovim_neotest_shown_name(io::Io *io) {
-    plain(io, "neotest_shown_name", "");
+export void test_neovim_neotest_shown_name() {
+    plain("neotest_shown_name", "");
 }
 
-export void test_neovim_neotest_discover_c(io::Io *io) {
-    plain(io, "neotest_discover_c", "");
+export void test_neovim_neotest_discover_c() {
+    plain("neotest_discover_c", "");
 }
 
-export void test_neovim_neotest_discover_smith(io::Io *io) {
-    plain(io, "neotest_discover_smith", "");
+export void test_neovim_neotest_discover_smith() {
+    plain("neotest_discover_smith", "");
 }
 
-export void test_neovim_neotest_build_spec(io::Io *io) {
-    plain(io, "neotest_build_spec", "");
+export void test_neovim_neotest_build_spec() {
+    plain("neotest_build_spec", "");
 }
 
-export void test_neovim_neotest_results(io::Io *io) {
-    plain(io, "neotest_results", "");
+export void test_neovim_neotest_results() {
+    plain("neotest_results", "");
 }
 
-export void test_neovim_dap_build_program(io::Io *io) {
-    plain(io, "dap_build_program", fakedap);
+export void test_neovim_dap_build_program() {
+    plain("dap_build_program", fakedap);
 }
 
-export void test_neovim_dap_default_project(io::Io *io) {
-    plain(io, "dap_default_project", fakedap);
+export void test_neovim_dap_default_project() {
+    plain("dap_default_project", fakedap);
 }
 
-export void test_neovim_dap_build_fails(io::Io *io) {
-    plain(io, "dap_build_fails", fakedap);
+export void test_neovim_dap_build_fails() {
+    plain("dap_build_fails", fakedap);
 }
 
-export void test_neovim_dap_program_of(io::Io *io) {
-    plain(io, "dap_program_of", "");
+export void test_neovim_dap_program_of() {
+    plain("dap_program_of", "");
 }
 
-export void test_neovim_dap_keeps_the_users(io::Io *io) {
-    plain(io, "dap_keeps_the_users",
+export void test_neovim_dap_keeps_the_users() {
+    plain("dap_keeps_the_users",
           "--cmd \"set runtimepath+=$d/fakedap\" --cmd \"lua package.loaded.dap = { adapters = { smith = 'mine' }, "
           "configurations = { c = { { name = 'user c' } } } }\"");
 }
 
-export void test_neovim_dap_absent(io::Io *io) {
-    plain(io, "dap_absent", "");
+export void test_neovim_dap_absent() {
+    plain("dap_absent", "");
 }
 
 // The commit of the plugin against the commit smith was built from: a smith that says the line and is the real one
 // otherwise, first on PATH.
-static void version(io::Io *io, const char *name, const char *line, const char *extra) {
-    const char *before = format::push(&io->arena, shim, "shim \"$PWD/shimmed\" \"smith 0.0", line, "\"; ").data;
+static void version(const char *name, const char *line, const char *extra) {
     Start start = {
-        .before = before, .front = "$d/shimmed:", .bare = false, .needs_git = true, .data = "data", .extra = extra};
-    nvim(io, name, &start);
+        .version_line = line, .front = "$d/shimmed:", .bare = false, .needs_git = true, .data = "data", .extra = extra};
+    nvim(name, &start);
 }
 
-export void test_neovim_version_same(io::Io *io) {
-    version(io, "version_same", " commit $(git -C \"$SMITH_REPO\" rev-parse HEAD)", "");
+export void test_neovim_version_same() {
+    version("version_same", " commit $(git -C \"$SMITH_REPO\" rev-parse HEAD)", "");
 }
 
-export void test_neovim_version_different(io::Io *io) {
-    version(io, "version_different", " commit 0123456789abcdef0123456789abcdef01234567", "");
+export void test_neovim_version_different() {
+    version("version_different", " commit 0123456789abcdef0123456789abcdef01234567", "");
 }
 
-export void test_neovim_version_unknown(io::Io *io) {
-    version(io, "version_unknown", "", "");
+export void test_neovim_version_unknown() {
+    version("version_unknown", "", "");
 }
 
-export void test_neovim_version_at_startup(io::Io *io) {
-    version(io, "version_at_startup", " commit 0123456789abcdef0123456789abcdef01234567",
+export void test_neovim_version_at_startup() {
+    version("version_at_startup", " commit 0123456789abcdef0123456789abcdef01234567",
             "--cmd \"lua _G.smith_notices = {}; vim.notify = function(message) table.insert(_G.smith_notices, message) "
             "end\" --cmd \"unlet g:smith_no_version_check\"");
 }
 
-export void test_neovim_no_smith(io::Io *io) {
-    Start start = {.before = "", .front = "", .bare = true, .needs_git = false, .data = "empty-data", .extra = ""};
-    nvim(io, "no_smith", &start);
+export void test_neovim_no_smith() {
+    Start start = {
+        .version_line = nullptr, .front = "", .bare = true, .needs_git = false, .data = "empty-data", .extra = ""};
+    nvim("no_smith", &start);
 }
 
 // A smith built from a checkout names its commit, which is the plugin's way to compare.
-export void test_neovim_smith_version_names_its_commit(io::Io *io) {
-    scratch::Project p = scratch::project(io, "version", nullptr);
+export void test_neovim_smith_version_names_its_commit() {
+    scratch::Project p = scratch::make("version", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     const char *version_text = scratch::capture(&p, "smith version");
     if (!scratch::contains(version_text, " commit ")) {
         return; // this smith was built without a commit

@@ -3,13 +3,16 @@
 // never trusted, and a tree that ninja built (SMITH_NINJA).
 module build_executor_tools_test;
 
+import smith::arena;
+import smith::mem;
 import smith::format;
-import smith::io;
 import smith::test;
 import scratch;
 
 static scratch::Run exec(const scratch::Project *p, const char *arguments) {
-    return scratch::sh(p, format::push(&p->io->arena, "smith --smith-exec build.ninja ", arguments).data);
+    char command[1024];
+    (void)format::to(command, sizeof command, "smith --smith-exec build.ninja ", arguments);
+    return scratch::sh(p, command);
 }
 
 static const char *yes_no(const scratch::Project *p, const char *name) {
@@ -18,18 +21,30 @@ static const char *yes_no(const scratch::Project *p, const char *name) {
 
 // The two outputs of exec_tools: "app dir/one.o", each yes or no.
 static const char *outputs(const scratch::Project *p) {
-    return format::push(&p->io->arena, yes_no(p, "app"), " ", yes_no(p, "dir/one.o")).data;
+    static char text[16];
+    (void)format::to(text, sizeof text, yes_no(p, "app"), " ", yes_no(p, "dir/one.o"));
+    return text;
 }
 
 // 14f. The tools, and the manifests the executor refuses.
-export void test_build_executor_output_folders_are_made_before_the_command_runs(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_tools");
+export void test_build_executor_output_folders_are_made_before_the_command_runs() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_tools");
+    defer scratch::clean(&p);
     (void)exec(&p, "");
     scratch::expect_text("output folders: made before the command runs", "c", scratch::read(&p, "dir/one.o"));
 }
 
-export void test_build_executor_tools_list_targets_commands_and_the_compilation_database(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_tools");
+export void test_build_executor_tools_list_targets_commands_and_the_compilation_database() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_tools");
+    defer scratch::clean(&p);
     (void)exec(&p, "");
     scratch::expect_contains("tools: targets lists the roots", exec(&p, "-t targets").out, "all: phony");
     scratch::expect_contains("tools: targets all lists every output with its rule", exec(&p, "-t targets all").out,
@@ -47,23 +62,38 @@ export void test_build_executor_tools_list_targets_commands_and_the_compilation_
                              "unknown tool 'nothing'");
 }
 
-export void test_build_executor_clean_removes_the_outputs_and_keeps_the_manifest(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_tools");
+export void test_build_executor_clean_removes_the_outputs_and_keeps_the_manifest() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_tools");
+    defer scratch::clean(&p);
     (void)exec(&p, "");
     scratch::expect_contains("tools: clean says how many it removed", exec(&p, "-t clean").out, "Cleaning... 2 files.");
     scratch::expect_text("tools: clean removed the outputs", "no no", outputs(&p));
     scratch::expect_text("tools: and kept the manifest, a generator's output", "yes", yes_no(&p, "build.ninja"));
 }
 
-export void test_build_executor_clean_of_one_target_removes_only_what_it_needs(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_tools");
+export void test_build_executor_clean_of_one_target_removes_only_what_it_needs() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_tools");
+    defer scratch::clean(&p);
     (void)exec(&p, "");
     (void)exec(&p, "-t clean dir/one.o");
     scratch::expect_text("tools: clean of one target removes only what it needs", "yes no", outputs(&p));
 }
 
-export void test_build_executor_cleandead_removes_what_the_manifest_no_longer_makes(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_tools");
+export void test_build_executor_cleandead_removes_what_the_manifest_no_longer_makes() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_tools");
+    defer scratch::clean(&p);
     (void)exec(&p, "");
     (void)scratch::sh(&p, "sed -i.bak '/^build app/,/^  cmd = cp dir/d' build.ninja");
     (void)scratch::sh(&p, "sed -i.bak 's/^build all: phony app/build all: phony dir\\/one.o/' build.ninja");
@@ -73,8 +103,9 @@ export void test_build_executor_cleandead_removes_what_the_manifest_no_longer_ma
 }
 
 // A manifest the executor refuses: its reason on stderr and the status 1.
-static void refuses(io::Io *io, const char *name, const char *manifest, const char *argument, const char *reason) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+static void refuses(const char *name, const char *manifest, const char *argument, const char *reason) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
     char text[512];
     (void)format::to(text, sizeof text, "rule step\n  command = $cmd\n", manifest, "\n");
     scratch::write(&p, "build.ninja", text);
@@ -85,32 +116,57 @@ static void refuses(io::Io *io, const char *name, const char *manifest, const ch
     scratch::expect_status(text, 1, &run);
 }
 
-export void test_build_executor_refuses_a_dependency_cycle(io::Io *io) {
-    refuses(io, "cycle", "build a: step b\n  cmd = true\nbuild b: step a\n  cmd = true\ndefault a", "",
+export void test_build_executor_refuses_a_dependency_cycle() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    refuses("cycle", "build a: step b\n  cmd = true\nbuild b: step a\n  cmd = true\ndefault a", "",
             "dependency cycle: a -> b -> a");
 }
 
-export void test_build_executor_refuses_a_missing_input_with_no_rule(io::Io *io) {
-    refuses(io, "missing", "build x: step nofile\n  cmd = true\ndefault x", "",
+export void test_build_executor_refuses_a_missing_input_with_no_rule() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    refuses("missing", "build x: step nofile\n  cmd = true\ndefault x", "",
             "'nofile', needed by 'x', missing and no known rule to make it");
 }
 
-export void test_build_executor_refuses_two_rules_for_one_output(io::Io *io) {
-    refuses(io, "twice", "build x: step\n  cmd = true\nbuild x: step\n  cmd = true\ndefault x", "",
+export void test_build_executor_refuses_two_rules_for_one_output() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    refuses("twice", "build x: step\n  cmd = true\nbuild x: step\n  cmd = true\ndefault x", "",
             "multiple rules generate x");
 }
 
-export void test_build_executor_refuses_an_unknown_rule(io::Io *io) {
-    refuses(io, "rule", "build x: nothing\ndefault x", "", "unknown build rule");
+export void test_build_executor_refuses_an_unknown_rule() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    refuses("rule", "build x: nothing\ndefault x", "", "unknown build rule");
 }
 
-export void test_build_executor_refuses_an_unknown_target(io::Io *io) {
-    refuses(io, "target", "build x: step\n  cmd = true\ndefault x", "nothere", "unknown target 'nothere'");
+export void test_build_executor_refuses_an_unknown_target() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    refuses("target", "build x: step\n  cmd = true\ndefault x", "nothere", "unknown target 'nothere'");
 }
 
 // 14g. What is kept between builds: a ninja tree is rebuilt once, a damaged log is never trusted.
-export void test_build_executor_a_second_build_has_nothing_to_do_and_a_cut_log_line_is_not_read(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_state");
+export void test_build_executor_a_second_build_has_nothing_to_do_and_a_cut_log_line_is_not_read() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_state");
+    defer scratch::clean(&p);
     (void)exec(&p, "");
     (void)exec(&p, "");
     scratch::expect_count("state: the second build has nothing to do", 1, scratch::lines(&p, "runs"));
@@ -123,8 +179,13 @@ export void test_build_executor_a_second_build_has_nothing_to_do_and_a_cut_log_l
     scratch::expect_count("state: a line cut short is not read", 1, scratch::lines(&p, "runs"));
 }
 
-export void test_build_executor_a_log_of_another_version_or_no_log_runs_every_command(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_state");
+export void test_build_executor_a_log_of_another_version_or_no_log_runs_every_command() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_state");
+    defer scratch::clean(&p);
     (void)exec(&p, "");
     (void)scratch::sh(&p, "printf '# smith log 2\\n' >.smith/.smith_log");
     (void)exec(&p, "");
@@ -136,8 +197,13 @@ export void test_build_executor_a_log_of_another_version_or_no_log_runs_every_co
     scratch::expect_count("state: no log means every command runs", 3, scratch::lines(&p, "runs"));
 }
 
-export void test_build_executor_a_changed_command_or_a_deleted_output_is_built_again(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_state");
+export void test_build_executor_a_changed_command_or_a_deleted_output_is_built_again() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_state");
+    defer scratch::clean(&p);
     (void)exec(&p, "");
     (void)scratch::sh(&p, "sed -i.bak 's/echo ran/echo ran again/' build.ninja");
     (void)exec(&p, "");
@@ -147,8 +213,13 @@ export void test_build_executor_a_changed_command_or_a_deleted_output_is_built_a
     scratch::expect_count("state: a deleted output is built again", 3, scratch::lines(&p, "runs"));
 }
 
-export void test_build_executor_a_newer_input_is_built_again_and_a_newer_output_is_left_alone(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_state");
+export void test_build_executor_a_newer_input_is_built_again_and_a_newer_output_is_left_alone() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_state");
+    defer scratch::clean(&p);
     (void)exec(&p, "");
     scratch::sleep(&p, 50);
     (void)scratch::sh(&p, "touch in");
@@ -165,8 +236,8 @@ static bool has_ninja(const scratch::Project *p) {
 }
 
 // A tree that ninja built has its own log, which smith does not read: the first smith build runs everything.
-static scratch::Project ninja_tree(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "tail_ninja");
+static scratch::Project ninja_tree() {
+    scratch::Project p = scratch::make("p", "tail_ninja");
     scratch::write(&p, "input", "one\n");
     return p;
 }
@@ -176,11 +247,18 @@ static scratch::Run build_with_ninja(const scratch::Project *p) {
 }
 
 static const char *status_and_output(const scratch::Project *p, const scratch::Run *run) {
-    return format::push(&p->io->arena, run->status, " ", scratch::read(p, "output")).data;
+    static char text[1024];
+    (void)format::to(text, sizeof text, run->status, " ", scratch::read(p, "output"));
+    return text;
 }
 
-export void test_build_executor_smith_ninja_runs_the_manifest_with_ninja(io::Io *io) {
-    scratch::Project p = ninja_tree(io);
+export void test_build_executor_smith_ninja_runs_the_manifest_with_ninja() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = ninja_tree();
+    defer scratch::clean(&p);
     if (!has_ninja(&p)) {
         return; // the checks of the SMITH_NINJA fallback need ninja
     }
@@ -190,8 +268,13 @@ export void test_build_executor_smith_ninja_runs_the_manifest_with_ninja(io::Io 
     scratch::expect_text("ninja: and smith's is not", "no", yes_no(&p, ".smith/.smith_log"));
 }
 
-export void test_build_executor_smith_takes_over_a_tree_ninja_built(io::Io *io) {
-    scratch::Project p = ninja_tree(io);
+export void test_build_executor_smith_takes_over_a_tree_ninja_built() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = ninja_tree();
+    defer scratch::clean(&p);
     if (!has_ninja(&p)) {
         return; // the checks of the SMITH_NINJA fallback need ninja
     }
