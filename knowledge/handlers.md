@@ -106,7 +106,7 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
   second pass over the same work takes none; `arena::release` gives them back. `arena::fixed(memory, capacity)` never grows: a full one is the checked failure that names the capacity. `arena::try_push_raw` is the form that
   returns null. As an allocator (`arena::allocator`) a growing arena answers `owns` for every chunk and null only when
   its backing refuses. `arena::try_push` is the `option` form of `push` (`.none` instead of the stop or the checked failure, nothing
-  pushed), built on `try_push_raw` as `mem::try_alloc` is on `try_alloc_raw`; a slice has no `option` form yet.
+  pushed), built on `try_push_raw` as `mem::try_alloc` is on `try_alloc_raw`; `arena::try_push_slice` is the slice form (an `option` of the slice, `.none` on a refusal or an overflow, nothing pushed), as `mem::try_alloc_slice`.
 
 - **Environment and clock (issue #240):** `SmithEnvHandler {get}` answers `getenv`; `SmithClockHandler {now, sleep}` (nanoseconds)
   answers `clock_gettime`, `nanosleep`, `usleep` and `sleep`. Each is per thread with a setter that returns the previous

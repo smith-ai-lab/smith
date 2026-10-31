@@ -1,13 +1,9 @@
 ---
 name: smith-check-lints
-description: "smith's own clang-tidy checks and what each reports: smith-effects, smith-preprocessor, smith-sized-types, smith-module-library, smith-module, smith-bounded-loop, smith-c23, smith-constexpr, smith-unsafe. Load on a finding named smith-* from smith lint or the editor."
+description: "smith's own clang-tidy checks and what each reports: smith-preprocessor, smith-sized-types, smith-module-library, smith-module, smith-bounded-loop, smith-c23, smith-constexpr, smith-unsafe. Load on a finding named smith-* from smith lint or the editor."
 ---
 
 # The smith checks
-
-## smith-effects
-
-smith's default `.clang-tidy` lists the check `smith-effects` beside bugprone, misc-no-recursion, readability-function-size and readability-identifier-naming: a program may touch the world only through the direct modules (`console`, `files`, `clock`, `process`, `net`, `env`) or a capability, so `printf`, `fopen`, `time`, `malloc` and the like are reported with the module to call instead (`console::print`, `files::read_file`, `clock::now`, `arena::push`). `smith lint` and the editor both run it, on `.smith` files with names as written (`c::fopen`). `smith lint --dump-config > .clang-tidy` shows it; a project that does not want it deletes it from `Checks`, and `smith-effects.CFiles: false` makes it read `.smith` files only. The rules, how to mark a project's own capability and how to fix each finding are in [smith-effects](../smith-effects/SKILL.md).
 
 ## smith-preprocessor
 

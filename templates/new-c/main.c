@@ -9,8 +9,7 @@
 // The edge of the program: the proof stops here, since printf has no contract.
 static void report(int32_t sum) {
     smith_trusted();
-    (void)printf( // NOLINT(smith-effects): smith::console has no C call that formats; the lint goes with #240
-        "the first 5 primes add up to %" PRId32 "\nhello from @NAME@\n", sum);
+    (void)printf("the first 5 primes add up to %" PRId32 "\nhello from @NAME@\n", sum);
 }
 
 int main(void) {

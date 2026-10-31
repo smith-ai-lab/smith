@@ -52,7 +52,6 @@
     "./.agents/skills/smith-debug/",
     "./.agents/skills/smith-docs/",
     "./.agents/skills/smith-docs-check/",
-    "./.agents/skills/smith-effects/",
     "./.agents/skills/smith-failing/",
     "./.agents/skills/smith-files/",
     "./.agents/skills/smith-entropy/",
@@ -141,7 +140,8 @@
     "./.agents/skills/smith-text/",
     "./.agents/skills/smith-text-c/",
     "./.agents/skills/smith-text-numbers/",
-    "./.agents/skills/smith-trace/"
+    "./.agents/skills/smith-trace/",
+    "./.agents/skills/smith-wrapping/"
   ],
   "lspServers": {
     "smith": {

@@ -125,6 +125,25 @@ export void test_runner_project_a_test_sees_full_only_with_the_full_option() {
     }
 }
 
+export void test_runner_project_repeated_test_filters_add_up() {
+    scratch::Project p = runner::project("runner_base", "runner_extras");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_extras(&p);
+    for (usize mode = 0; mode < 2; mode++) {
+        const char *iso = runner::flag(mode);
+        scratch::Run one = runner::tests(&p, iso, "--test bits_equal");
+        runner::expect_has(iso, "filters: one --test runs one test", &one, "1 passed, 0 failed");
+        scratch::Run both = runner::tests(&p, iso, "--test bits_equal --test size");
+        runner::expect_has(iso, "filters: two --test run both tests", &both, "2 passed, 0 failed");
+        scratch::Run task = runner::smith_test(&p, iso, "--test bits_equal --test size");
+        runner::expect_has(iso, "filters: ... and through smith test", &task, "2 passed, 0 failed");
+    }
+}
+
 export void test_runner_project_check_same_bits_compares_the_bits_and_shows_them_in_hex() {
     scratch::Project p = runner::project("runner_base", "runner_extras");
     defer scratch::clean(&p);
@@ -189,7 +208,7 @@ export void test_runner_project_clangd_reads_a_test_file_without_errors() {
     if (scratch::sh(&p, "smith lsp --version").status != 0) return;
     scratch::Run built = runner::build(&p, "");
     scratch::expect_status("clangd: the project builds", 0, &built);
-    // The sample is not what smith-effects tests; its checks are off.
+    // The sample is not what the lint tests; its checks are off.
     scratch::write(&p, ".clang-tidy", "Checks: \"-*\"\n");
     scratch::expect_text(
         "clangd: no errors in a test file", "0",
@@ -208,7 +227,7 @@ export void test_runner_project_the_analyzer_takes_a_test_check_as_an_assumption
     runner::add(&p, "runner_analyzer");
     scratch::Run built = runner::build(&p, "");
     scratch::expect_status("analyzer: the project builds", 0, &built);
-    // The sample is not what smith-effects tests; its checks are off.
+    // The sample is not what the lint tests; its checks are off.
     scratch::write(&p, ".clang-tidy", "Checks: \"-*\"\n");
     scratch::Run lint =
         scratch::sh(&p, "smith lint --checks='-*,clang-analyzer-*' analyzer.smith -- -std=gnu2y -I.smith/include 2>&1");

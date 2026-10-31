@@ -18,4 +18,5 @@ record type, internal linkage in C: `constexpr`). smith's own C passes the C-sid
 
 ## Decisions
 
-- The idiom checks and `smith-effects` are clang-tidy checks, on in smith's default `.clang-tidy`; a program touches the world only through capabilities passed down from `main`.
+- The idiom checks are clang-tidy checks, on in smith's default `.clang-tidy`.
+- A program calls the C library and smith's direct modules (`files`, `process`, `net`, `clock`, `console`, `env`) from anywhere; effects are inferred from what a function calls (#207), and tests and arenas control them through handlers (#239); no `io` value is passed down from `main` (owner, 2026-10-30; #240).

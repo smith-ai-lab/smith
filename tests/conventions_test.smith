@@ -10,6 +10,8 @@ import smith::arena;
 import smith::mem;
 import smith::test;
 import scratch;
+import <smith/json.h>;
+import <string.h>;
 
 constexpr usize memory_size = (usize)16 << 20; // 16 MiB
 
@@ -360,8 +362,8 @@ export void test_conventions_test_a_project_with_no_tests_says_so() {
     scratch::expect_contains("test: ... in smith test's words", run.err, "the build declares no tests");
 }
 
-// #812: a project with no build.c once wrote a trailing comma, so the editor's strict parse refused the file. A real
-// JSON parser (python3, on every machine that runs these tests) reads it and finds an entry for main.c.
+// #812: a project with no build.c once wrote a trailing comma, so the editor's strict parse refused the file. smith's
+// own JSON parser (#828) reads it and finds an entry for main.c.
 export void test_conventions_compile_commands_of_a_project_with_no_build_file_is_json() {
     scratch::Project p = scratch::make("plain_json", "conv_plain");
     defer scratch::clean(&p);
@@ -371,14 +373,25 @@ export void test_conventions_compile_commands_of_a_project_with_no_build_file_is
     defer mem::set_allocator(outside);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("json: smith build", 0, &run);
-    scratch::Run parsed =
-        scratch::sh(&p, "python3 -I -c 'import json,sys; d = json.load(open(\".smith/compile_commands.json\")); "
-                        "sys.exit(0 if any(e[\"file\"].endswith(\"main.c\") for e in d) else 3)' 2>&1");
-    scratch::expect_status("json: .smith/compile_commands.json parses and lists main.c", 0, &parsed);
-    if (parsed.status != 0) {
-        test::note("json: the file is:\n%s\nparser said: %s", scratch::read(&p, ".smith/compile_commands.json"),
-                   parsed.out);
+    const char *document = scratch::read(&p, ".smith/compile_commands.json");
+    const char input[:] = document[0:c::strlen(document)];
+    const c::SmithJsonValue *root = nullptr;
+    c::SmithJsonError error = {};
+    constexpr c::SmithJsonLimits limits = {.depth = 64, .string_length = 1 << 20, .count = 1 << 20};
+    bool valid = c::smith_json_parse(input, limits, &root, &error);
+    test::note("json: the file is:\n%s", document);
+    test::check(valid);
+    bool found = false;
+    if (valid && root->kind == c::SmithJsonKind_Array) {
+        for (usize i = 0; i < root->count; i++) {
+            const c::SmithJsonValue *file = c::smith_json_member(root->items[i], "file");
+            if (file != nullptr && file->kind == c::SmithJsonKind_String && countof(file->text) >= 6 &&
+                c::strncmp(file->text.data + countof(file->text) - 6, "main.c", 6) == 0) {
+                found = true;
+            }
+        }
     }
+    test::check(found);
 }
 
 // --- 6. several programs, the defaults every program shares, folders' flags, includes found through -I
@@ -414,9 +427,9 @@ export void test_conventions_multi_builds_runs_tests_and_reads_the_defaults() {
 
     scratch::Run compile = scratch::build(&p, "-t commands build/release/src/base/value.o");
     scratch::expect_contains("multi: release compiles to ThinLTO", compile.out, "-flto=thin");
-    scratch::Run link = scratch::build(&p, "-t commands build/release/multi");
-    scratch::expect_contains("multi: ... and links with it", link.out, "-flto=thin");
-    scratch::expect_contains("multi: ... and with the defaults' link flags", link.out, "-Wl,-rpath,/opt/multi");
+    scratch::Run linked = scratch::build(&p, "-t commands build/release/multi");
+    scratch::expect_contains("multi: ... and links with it", linked.out, "-flto=thin");
+    scratch::expect_contains("multi: ... and with the defaults' link flags", linked.out, "-Wl,-rpath,/opt/multi");
     scratch::Run folder = scratch::build(&p, "-t commands build/debug/src/base/value.o");
     scratch::expect_contains("multi: a folder's flags reach its sources", folder.out, "-DFROM_BASE=1");
     scratch::Run main = scratch::build(&p, "-t commands build/debug/main.o");

@@ -369,3 +369,31 @@ export void test_dry_run_without_changed_is_refused() {
     scratch::expect_contains("the message", run.out, "--dry-run and --base go with --changed");
     scratch::expect_failure("exit status", &run);
 }
+
+// What `smith lint --changed` chooses (issue #1076), in process through `smith_core_changed_lint`: the files that
+// changed and those that import one that did. Called twice in one process, the second forgets the first.
+export void test_lint_chooses_the_changed_files_and_their_importers_twice() {
+    enter();
+    defer leave();
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    const char *names = "";
+    for (usize i = 0; i < countof(base); i++) {
+        write(p.dir, base[i]);
+        names = format::push(names, base[i].path, "\n").data;
+    }
+    constexpr usize capacity = 1U << 16;
+    char *out = mem::alloc_slice(char, capacity).data;
+    test::check_equal(c::smith_core_changed_lint(p.dir, names, "M\tlib/a.smith\n", out, capacity), true);
+    scratch::expect_contains("a", out, "lib/a.smith\n");
+    scratch::expect_contains("its test", out, "lib/a_test.smith\n");
+    scratch::expect_contains("b, which imports a", out, "lib/b.smith\n");
+    scratch::expect_contains("the test of b", out, "lib/b_test.smith\n");
+    scratch::expect_lacks("c", out, "c_test");
+    scratch::expect_contains("the line", out,
+                             "smith lint --changed: 1 changed file since HEAD: 4 of 14 files to lint\n");
+    char *again = mem::alloc_slice(char, capacity).data;
+    test::check_equal(c::smith_core_changed_lint(p.dir, names, "M\tlib/c_test.smith\n", again, capacity), true);
+    scratch::expect_text(
+        "only c", "lib/c_test.smith\nsmith lint --changed: 1 changed file since HEAD: 1 of 14 files to lint\n", again);
+}

@@ -22,9 +22,12 @@ constexpr char setup[_] =
     "\\n' "
     "\"$d/project\" >project/compile_commands.json && export HOME=$d/home GIT_CONFIG_NOSYSTEM=1";
 
-// The projects smith new writes (no build file; the plugin finds them by their main), made only for the tests that
-// read them: a C one that builds (hello), a C one whose main.c does not compile (broken), and one of the default
-// language (fresh).
+// Measured (#719, Linux x86_64, 4 cores, Neovim 0.11.5, `smith test --test neovim_test::`): all 37 tests under 10 s
+// wall; the light ones take 0.2 to 1.4 s and the ones that build a `smith new` project 3.0 to 6.4 s
+// (dap_test_under_cursor, neotest_build_spec, dap_main_under_cursor). The parser comes from the smith runtime's cache,
+// so no test builds it. The projects smith new writes (no build file; the plugin finds them by their main), made only
+// for the tests that read them: a C one that builds (hello), a C one whose main.c does not compile (broken), and one of
+// the default language (fresh).
 constexpr char make_new[_] =
     "mk() { smith new \"$@\" >new.log 2>&1 || { echo \"smith new $*: failed\" >&2; tail -n 40 new.log >&2; return 1; "
     "}; }; ";

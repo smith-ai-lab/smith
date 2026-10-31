@@ -1,3 +1,4 @@
+// smith-build: header
 // smith::math, <smith/math.h>: the numbers a program asks of the machine, as functions of a type. Every export is a
 // generic function, so it has no C spelling (the header holds only its record): C includes <math.h> and <stdint.h>,
 // which are macros it can use. The functions are built on clang's builtins (a builtin is a function, not a macro), so a

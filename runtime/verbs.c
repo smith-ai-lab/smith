@@ -639,7 +639,7 @@ static size_t smith_lint_changed(const char **files, const char **flags, size_t 
     if (result == SmithChanged_Failed)
         smith_die(smith_exit_usage, "git cannot say what changed", "pass --changed=<ref>");
     if (result == SmithChanged_Full) {
-        fprintf(stderr, "smith lint --changed: %s changed, so every file is linted\n", why);
+        smith_changed_lint_says_all(why);
         return count;
     }
     size_t kept = 0;
@@ -648,10 +648,7 @@ static size_t smith_lint_changed(const char **files, const char **flags, size_t 
         files[kept] = files[i];
         flags[kept++] = flags[i];
     }
-    size_t changed = smith_changed_lint_paths();
-    fprintf(stderr, "smith lint --changed: %zu changed file%s since %.12s: %zu of %zu files to lint\n", changed,
-            changed == 1 ? "" : "s", base, kept, count);
-    if (kept == 0) fputs("smith lint --changed: no file is affected, so nothing is linted\n", stderr);
+    smith_changed_lint_says(kept, count, base);
     return kept;
 }
 
@@ -1185,8 +1182,37 @@ static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
     return -1;
 }
 
+constexpr char smith_test_usage[] =
+    "usage: smith test [--test <names>] [--changed] [--update] [-v] [-k[<n>]] [<runner flags>]\n"
+    "\n"
+    "Builds the tests smith_tests declares and runs them; nothing is built or run for --help.\n"
+    "  --test <names>     run the tests whose name contains one of the comma-separated names\n"
+    "  --changed          run only the tests the change since main can affect (--base <ref>, --dry-run, --list)\n"
+    "  --list             print the selected tests and run none\n"
+    "  --update           rewrite the expected output of the tests that compare with a file\n"
+    "  -v, --verbose      show everything as it happens\n"
+    "  -k[<n>]            keep going after <n> build errors (0: all)\n"
+    "  --fail-fast        stop at the first failing test\n"
+    "  --seed <n>         the seed of a random test; --seeds <n> how many\n"
+    "  --jobs <n>         how many tests run at once\n"
+    "  --timeout <s>      the limit of one test; --wall-timeout and --idle-timeout the run's\n"
+    "  --coverage         the line coverage of the last run\n"
+    "  -h, --help         this text\n";
+
+// Whether `--help` or `-h` is among the arguments of `smith test`.
+static bool smith_test_wants_help(int count, char **args) {
+    for (int i = 0; i < count; i++) {
+        if (strcmp(args[i], "--help") == 0 || strcmp(args[i], "-h") == 0) return true;
+    }
+    return false;
+}
+
 // `smith test`: builds and runs the tests smith_tests declares; the arguments go to the runner.
 static int smith_test_project(int count, char **args, const char *self) {
+    if (smith_test_wants_help(count, args)) {
+        fputs(smith_test_usage, stdout);
+        return 0;
+    }
     if (count > 0 && strcmp(args[0], "--coverage") == 0) return smith_coverage_main(count - 1, args + 1); // #456
     int quiet = smith_quiet_verb("test", count, args, self, true);
     if (quiet >= 0) return quiet;

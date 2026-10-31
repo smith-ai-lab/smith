@@ -1,3 +1,4 @@
+// smith-build: link
 // smith::mem, <smith/mem.h>: memory through the allocator of the current thread. Its C API is the generated header
 // include/smith/mem.h (a build output, not in git); the names follow the rule of arena.smith:
 // `mem::alloc_raw` is `smith_mem_alloc`, `mem::set_allocator` is `smith_mem_set_allocator`.

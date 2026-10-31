@@ -74,14 +74,36 @@ static bool smith_lang_nested_expression_before(uint32_t at, uint32_t first) {
     return false;
 }
 
+// The `]` of the capture list that opens at `open` (`[]`, `[x]`, `[x, y]`: names and commas), or UINT32_MAX.
+static uint32_t smith_lang_nested_list_end(uint32_t open, uint32_t limit) {
+    bool name = true;
+    for (uint32_t at = open + 1; at < limit; at++) {
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
+        if (name && smith_lang_gt_punct(token, "]")) return at == open + 1 ? at : UINT32_MAX;
+        if (name) {
+            if (token->kind != SmithTokenKind_Identifier) return UINT32_MAX;
+            name = false;
+        } else if (smith_lang_gt_punct(token, "]")) {
+            return at;
+        } else if (smith_lang_gt_punct(token, ",")) {
+            name = true;
+        } else {
+            return UINT32_MAX;
+        }
+    }
+    return UINT32_MAX;
+}
+
 // The lambda that starts at `at` (a `[`) when it is one: its parts.
 static bool smith_lang_nested_lambda(uint32_t at, uint32_t first, uint32_t limit, SmithLangNested *out) {
     if (at + 3 >= limit || !smith_lang_gt_punct(&smith_lang_gt.tokens[at], "[") ||
-        !smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "]") || !smith_lang_nested_expression_before(at, first)) {
+        !smith_lang_nested_expression_before(at, first)) {
         return false;
     }
-    SmithLangNested found = {.start = at, .params_from = at + 2, .params_to = at + 2};
-    uint32_t next = at + 2;
+    uint32_t list = smith_lang_nested_list_end(at, limit);
+    if (list == UINT32_MAX || list + 1 >= limit) return false;
+    SmithLangNested found = {.start = at, .params_from = list + 1, .params_to = list + 1};
+    uint32_t next = list + 1;
     const SmithLangGenToken *token = &smith_lang_gt.tokens[next];
     if (smith_lang_gt_punct(token, "(")) {
         uint32_t close = smith_lang_nested_close(next, limit, "(", ")");
@@ -506,7 +528,8 @@ static bool smith_lang_nested_write(SmithLang *lang, const SmithHost *host, Smit
 constexpr size_t smith_lang_argl_max = 8;
 
 typedef struct {
-    uint32_t params_from, params_to; // the tokens between the parentheses
+    uint32_t captures_from, captures_to; // the tokens between `[` and `]`
+    uint32_t params_from, params_to;     // the tokens between the parentheses
     bool has_type;
     uint32_t type_from, type_to; // `-> R`: the tokens of R
     uint32_t body_from, body_to; // the `{` and the `}`
@@ -542,10 +565,18 @@ static uint32_t smith_lang_argl_match(const SmithLangPool *pool, uint32_t open, 
 
 // The parts of the lambda `[](P) -> R { body }` that is exactly [from, to) of the pool.
 static bool smith_lang_argl_parse(const SmithLangPool *pool, uint32_t from, uint32_t to, SmithLangArgl *out) {
-    if (to < from + 4 || !smith_lang_argl_punct(pool, from, "[") || !smith_lang_argl_punct(pool, from + 1, "]"))
-        return false;
-    SmithLangArgl found = {.params_from = from + 2, .params_to = from + 2};
-    uint32_t at = from + 2;
+    if (to < from + 4 || !smith_lang_argl_punct(pool, from, "[")) return false;
+    uint32_t list = from + 1;
+    while (list < to && !smith_lang_argl_punct(pool, list, "]")) {
+        bool name = pool->tokens[list].kind == SmithTokenKind_Identifier;
+        bool comma = smith_lang_argl_punct(pool, list, ",");
+        if (!name && !comma) return false; // a capture list holds names and commas only
+        list += 1;
+    }
+    if (list >= to - 1) return false;
+    SmithLangArgl found = {
+        .captures_from = from + 1, .captures_to = list, .params_from = list + 1, .params_to = list + 1};
+    uint32_t at = list + 1;
     if (smith_lang_argl_punct(pool, at, "(")) {
         uint32_t close = smith_lang_argl_match(pool, at, to, "(", ")");
         if (close == UINT32_MAX) return false;
@@ -658,6 +689,14 @@ static bool smith_lang_argl_check(SmithLang *lang, const SmithHost *host, const 
         smith_lang_error(lang, host, place,
                          "the argument of `%s` is not a lambda: a lambda is `[](parameters) -> type { body }`",
                          smith_lang_str(generic->member));
+        return false;
+    }
+    if (code.captures_to > code.captures_from) {
+        const SmithLangGenToken *first = &smith_lang_gt.tokens[code.captures_from];
+        smith_lang_error(lang, host, place,
+                         "the lambda passed to `%s` captures `%.*s`: the capture list is read, but captures are not "
+                         "lowered yet (#1074)",
+                         smith_lang_str(generic->member), (int)first->length, smith_lang_gt_str(first));
         return false;
     }
     if (!smith_lang_argl_f_split(fa, fb, &f)) {

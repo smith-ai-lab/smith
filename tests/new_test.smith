@@ -958,8 +958,7 @@ export void test_new_breaking_each_docs_rule_fails_smith_docs() {
 }
 
 // 12. The template's rules stay smith's: every rule and option of smith's own files is in the template's. Allowed
-// differences: smith-only assert macro, typedef names, unity-build include check, and smith-effects.CFiles (smith's C
-// is being ported to .smith, so smith checks .smith only; the template checks C files too).
+// differences: smith-only assert macro, typedef names, and unity-build include check.
 constexpr char tidy_functions[_] =
     "tidy_items() { awk '/^Checks:/ { mode = \"checks\"; next } /^[A-Za-z]+:/ && !/^CheckOptions:/ { mode = \"\"; next "
     "} "
@@ -968,7 +967,7 @@ constexpr char tidy_functions[_] =
     "mode == \"options\" && /^  [a-zA-Z]/ { sub(/:.*/, \"\"); gsub(/ /, \"\"); print \"option \" $0 }' \"$1\"; }; "
     "missing_rules() { tidy_items \"$1\" | grep -v -e 'bugprone-suspicious-include' -e "
     "'bugprone-assert-side-effect.AssertMacros' "
-    "-e 'readability-identifier-naming.TypedefIgnoredRegexp' -e 'smith-effects.CFiles' | while read -r kind item; do "
+    "-e 'readability-identifier-naming.TypedefIgnoredRegexp' | while read -r kind item; do "
     "tidy_items \"$2\" | grep -qxF \"$kind $item\" || echo \"$kind $item\"; done; }; ";
 
 export void test_new_the_templates_rules_stay_smiths() {

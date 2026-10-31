@@ -1,3 +1,4 @@
+// smith-build: header
 // smith::test, <smith/test.h>: tests, written once and done well. Its C API is the generated header
 // include/smith/test.h (a build output, not in git). Every export has a short name here and, where
 // C calls it, a C name (the attribute before it): `test::check_equal_i32` is `smith_check_equal_i32`, `test::Test` is
@@ -3291,8 +3292,8 @@ bool parse(const char *text, u64 *value) {
     return true;
 }
 
-// Parses --test's value: the name as written, `test_area` or `geometry::box_test::test_area`, selects what the shown
-// name does.
+// Parses --test's value (repeated --test values add up): the name as written, `test_area` or
+// `geometry::box_test::test_area`, selects what the shown name does.
 void parse_filter(Options *options, const char *value) {
     static char written[512];
     const char *last = c::strrchr(value, ':');
@@ -3301,7 +3302,22 @@ void parse_filter(Options *options, const char *value) {
         __builtin_snprintf(written, sizeof written, "%.*s%s", (i32)(tail - value), value, tail + 5);
         value = written;
     }
-    options->filter = value;
+    if (options->filter == nullptr) {
+        options->filter = value;
+        return;
+    }
+    // A repeated --test adds up: the filters join as a comma list, and a test runs when any of them matches.
+    static char joined[4096];
+    usize used = c::strlen(options->filter);
+    if (options->filter != joined) {
+        if (used >= sizeof joined) return;
+        __builtin_memcpy(joined, options->filter, used + 1);
+    }
+    usize more = c::strlen(value);
+    if (used + 1 + more >= sizeof joined) return;
+    joined[used] = ',';
+    __builtin_memcpy(joined + used + 1, value, more + 1);
+    options->filter = joined;
 }
 
 constexpr u64 shards_max = 1000;

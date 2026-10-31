@@ -222,7 +222,7 @@ export void test_arena_c_project_clangd_reports_no_errors_in_main() {
     defer mem::set_allocator(outside);
     builds(&p, "the build succeeds");
     if (scratch::sh(&p, "smith lsp --version").status != 0) return;
-    // The sample prints with printf; this tests the build flags the editor gets, not smith-effects.
+    // The sample prints with printf; this tests the build flags the editor gets.
     scratch::write(&p, ".clang-tidy", "Checks: \"-*\"\n");
     scratch::expect_text("project: clangd reports no errors in main.c", "0",
                          scratch::capture(&p, "smith lsp --check=main.c 2>&1 | grep -c 'E\\[' || true"));

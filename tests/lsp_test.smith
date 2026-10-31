@@ -1249,28 +1249,6 @@ export void test_lsp_editor_a_smith_typedef_is_judged_as_written() {
                          joined(log, "diag "));
 }
 
-// smith-effects (issue #45) is one of smith's default checks, so the editor shows it too: a raw call in a .smith file
-// is reported at the `c::` where the source wrote it, with the replacement named; a call that is pure is quiet.
-export void test_lsp_editor_smith_effects_reports_a_raw_call() {
-    scratch::Project root = scratch::make("lsp", "lsp");
-    defer scratch::clean(&root);
-    arena::Arena memory = test::memory(1U << 22);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    if (!prepare(&root, false)) {
-        return;
-    }
-    scratch::Project p = folder(&root, "editor-effects");
-    const char *log = session(&p, "open fx.smith");
-    scratch::expect_count("editor: smith-effects reports one finding, a pure call is quiet", 1,
-                          count_prefix(log, "diag "));
-    scratch::expect_contains(
-        "editor: smith-effects reports a raw call in a .smith file, as written", joined(log, "diag "),
-        "diag fx.smith:11:5: `c::puts` touches the world: take a `SmithConsole *` from main's SmithIo and print and "
-        "read through it (smith_console_print, smith_console_read_line)");
-}
-
 // A payload enum (issue #198): clangd's token buffer must account for every token the lowering writes for it, or it
 // spins forever building the buffer (#205). The file is read, and an error of the dot rule is reported where it was
 // written.

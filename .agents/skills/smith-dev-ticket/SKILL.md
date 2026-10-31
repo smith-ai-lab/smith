@@ -12,7 +12,7 @@ The reader has no context: not this conversation, not the owner's words. The tic
 2. **The design as decided**: every decision stated, with the owner's words (quoted) where they matter. Leave nothing to be guessed.
 3. **Use cases**: when the design depends on them, collect them first (ask the owner) and list them here. No use cases yet means the ticket is not ready.
 4. **Files and areas**: where the change goes and what it must not touch, so tickets in a batch do not overlap.
-5. **Escalate before building**: exactly what must not be decided below the lead. If nothing, say "nothing". A design choice is never made below the level that owns it.
+5. **Escalate before building**: what the builder must ask about rather than decide. If nothing, say "nothing".
 6. **Done when**: the commands that show it, and what they print. For a feature, also the docs it updates (the skill, the concept, the README if users reach for it), so future agents learn it without reading the code.
 
 ## Bad

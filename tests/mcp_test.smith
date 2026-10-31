@@ -34,7 +34,7 @@ static scratch::Project folder(const scratch::Project *root, const char *name) {
 
 constexpr char fake_sources[_] =
     "tests/mcp_fake.c lib/smith/text.smith lib/smith/arena.smith lib/smith/contract.smith runtime/io.smith "
-    "lib/smith/random.smith";
+    "lib/smith/random.smith lib/smith/math.smith lib/smith/mem.smith lib/handlers.c";
 
 // The generated protocol code (.smith/protocol/dap.c and mcp.c, 6 s of CPU at -O2, more than half of the file's
 // compile) does not depend on NDEBUG (it holds no assertion), so the two optimized builds link the same two objects.

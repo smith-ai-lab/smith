@@ -1,0 +1,15 @@
+module main;
+
+import <stdio.h>;
+
+i32 twice(i32 a) {
+    return a * 2;
+}
+
+i32 main() {
+    i32 (*table[2])(i32) = {twice, twice};
+    i32 i = 1;
+    i32 (*triple)(i32) = [](i32 a) -> i32 { return a * 3; };
+    c::printf("%d %d\n", table[i](4), triple(5));
+    return 0;
+}
