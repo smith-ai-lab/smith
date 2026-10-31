@@ -3568,6 +3568,16 @@ bool selects(const Options *options, const char *name) {
     return c::strstr(name, options->filter) != nullptr;
 }
 
+// Whether the filter matches a test of either platform: a CI part of `--macos-only` or `--skip-macos` whose filter (a
+// pull request's `--changed` selection) names only the other part's tests has nothing to run, which is no error.
+bool filter_matches_any(const Options *options) {
+    Options both = *options;
+    both.macos = 0;
+    for (usize i = 0; i < table_size; i++)
+        if (selects(&both, table[i].name)) return true;
+    return false;
+}
+
 // Fisher-Yates, drawing from the seed: the same seed gives the same order. This finds a test that passes only because
 // of what ran before it.
 void shuffle(usize *order_of, usize count, u64 seed) {
@@ -3852,6 +3862,11 @@ static usize report_run(const Plan *plan, const Options *options, f64 start) {
         return 0;
     }
     if (plan->count == 0 && options.filter != nullptr) {
+        if (options.macos != 0 && filter_matches_any(&options)) { // the other platform's tests only: nothing to run
+            say(&options, "no test of %s matches \"%s\": nothing to run\n",
+                options.macos == 1 ? "--macos-only" : "--skip-macos", options.filter);
+            return 0;
+        }
         say(&options, "no test matches \"%s\"\n", options.filter);
         return 1;
     }
