@@ -21,11 +21,11 @@
 // Type kinds: 0 void; 1 bool; 2 integer (a = bits, b = 1 when signed); 3 floating (a = bits); 4 pointer (a = pointee);
 // 5 array (a = element, b = count); 6 typedef (a = name, b = underlying); 7 struct (a = struct index); 8 function
 // (a = return type, b = first parameter, c = parameter count; flags bit 2 = variadic); 9 unsupported (a = the spelling
-// of the C type that has no smith equivalent: a union, `long double`, a bit-field). Type flags: 1 const, 2 restrict.
-// A declaration that uses an unsupported type is still read, with that type, and is also in the not imported list with
-// the reason: the use is what reports it.
-// Struct flags: 1 opaque (no definition).
-// Not imported kinds: 0 declaration, 1 attribute (name is the declaration's, reason the attribute's spelling).
+// of the C type that has no smith equivalent: a union, `long double`, a bit-field); 10 function pointer (a = the
+// function type; smith has no pointer-to-function syntax, it is `Fn` applied to the function type). Type flags: 1
+// const, 2 restrict. A declaration that uses an unsupported type is still read, with that type, and is also in the not
+// imported list with the reason: the use is what reports it. Struct flags: 1 opaque (no definition). Not imported
+// kinds: 0 declaration, 1 attribute (name is the declaration's, reason the attribute's spelling).
 //
 // Memory: the caller's buffer. When it is too small the call returns the words needed and the caller calls again.
 #include <array>
@@ -61,7 +61,19 @@ typedef struct {
 
 namespace {
 
-enum Kind : uint32_t { Void, Bool, Integer, Floating, Pointer, Array, Typedef, Struct, Function, Unsupported };
+enum Kind : uint32_t {
+    Void,
+    Bool,
+    Integer,
+    Floating,
+    Pointer,
+    Array,
+    Typedef,
+    Struct,
+    Function,
+    Unsupported,
+    FnPointer
+};
 
 struct Reader {
     clang::ASTContext *context_ptr;
@@ -186,7 +198,9 @@ uint32_t Reader::convert_inner(clang::QualType type, bool behind) {
     if (const auto *t = type->getAs<clang::BuiltinType>()) return builtin(t, flags);
     if (const auto *t = type->getAs<clang::PointerType>()) {
         uint32_t pointee = convert(t->getPointeeType(), true);
-        return pointee == bad ? bad : type_node(Pointer, flags, pointee, 0, 0);
+        if (pointee == bad) return bad;
+        bool to_function = types[pointee][0] == Function;
+        return type_node(to_function ? FnPointer : Pointer, flags, pointee, 0, 0);
     }
     if (const auto *t = llvm::dyn_cast<clang::ConstantArrayType>(type.getTypePtr())) {
         uint32_t element = convert(t->getElementType(), behind);

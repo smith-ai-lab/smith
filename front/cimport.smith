@@ -22,6 +22,7 @@ export constexpr U32 kind_array = 5;       // a = element, b = count
 export constexpr U32 kind_typedef = 6;     // name, a = underlying
 export constexpr U32 kind_struct = 7;      // a = index in Header.structs
 export constexpr U32 kind_function = 8;    // a = result, parameters, variadic
+export constexpr U32 kind_fn_pointer = 10; // a = the function type: `Fn` applied to it, never a pointer
 export constexpr U32 kind_unsupported = 9; // name = the C type's spelling: a union, `long double`, a bit-field
 
 export constexpr U32 flag_const = 1;

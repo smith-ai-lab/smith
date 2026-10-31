@@ -32,6 +32,9 @@ static Str type_text(const Header *h, U32 index) {
         if (t.kind == cimport::kind_pointer) {
             out = str_of(format::push(out, constant, "*"));
             at = t.a;
+        } else if (t.kind == cimport::kind_fn_pointer) {
+            out = str_of(format::push(out, constant, "Fn of "));
+            at = t.a;
         } else if (t.kind == cimport::kind_array) {
             out = str_of(format::push(out, constant, "[", t.b, "]"));
             at = t.a;

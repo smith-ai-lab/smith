@@ -5,8 +5,8 @@ struct Point {
 struct Opaque (opaque)
 struct Holder {
     inner: *struct Opaque
-    compare: Compare = *Fn#6
-    callback: *Fn#11
+    compare: Compare = Fn of Fn#6
+    callback: Fn of Fn#11
     name: *const I8
     id: Id = U64
     weights: [4]F32
@@ -17,7 +17,7 @@ struct Flags {
 fn add(a: I32, b: I32) -> I32
 fn log_line(format: *const I8, ...) -> I32
 fn origin() -> struct Point
-fn sort(holder: *struct Holder, compare: Compare = *Fn#23) -> Void
+fn sort(holder: *struct Holder, compare: Compare = Fn of Fn#23) -> Void
 fn precise() -> unsupported(long double)
 Fn#6 = Fn(*const Void, *const Void) -> I32
 Fn#11 = Fn(*Void, I32) -> I32
