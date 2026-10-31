@@ -1,0 +1,7 @@
+module keep;
+
+// A generic whose result type is derived from an argument: `return v;` is the `.some` of the instance's option.
+
+export option(typeof(v)) keep(auto v) {
+    return v;
+}

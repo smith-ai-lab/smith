@@ -753,6 +753,66 @@ static bool smith_lang_enum_return_words(SmithLang *lang, const SmithHost *host,
     return true;
 }
 
+// The `;` that ends the statement of the generic's tokens that begins after `at`, or UINT32_MAX when there is none.
+static uint32_t smith_lang_enum_statement_end(uint32_t at, uint32_t end) {
+    int depth = 0;
+    for (uint32_t i = at + 1; i < end; i++) {
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[i];
+        if (token->special != SmithLangGen_Plain) continue;
+        depth += smith_lang_gt_punct(token, "(") || smith_lang_gt_punct(token, "[") || smith_lang_gt_punct(token, "{");
+        depth -= smith_lang_gt_punct(token, ")") || smith_lang_gt_punct(token, "]") || smith_lang_gt_punct(token, "}");
+        if (depth == 0 && smith_lang_gt_punct(token, ";")) return i;
+        if (depth < 0) return UINT32_MAX;
+    }
+    return UINT32_MAX;
+}
+
+// `return v;` in an instance whose result is an `option(T)` or a `result(T, E)`: `v` is the `.some` or the `.ok`,
+// unless it is a value of the result type itself. The instance's body has no types the lowering can ask the compiler
+// for, so the compiler picks: the value is held once, and a `_Generic` on its type returns it as it is or wraps it. The
+// branch not taken is never a conversion that fails, because its payload is a zero of the payload's type there.
+static bool smith_lang_enum_replay_wrap(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                        SmithLangFrame *frame) {
+    uint32_t at = frame->pos;
+    const SmithLangGenToken *first = &smith_lang_gt.tokens[at + 1];
+    if (first->special != SmithLangGen_Plain || smith_lang_gt_punct(first, ".") || smith_lang_gt_punct(first, "{") ||
+        smith_lang_gt_punct(first, ";") || smith_lang_gt_is(first, SmithTokenKind_Identifier, "try") ||
+        host->type_query == nullptr) {
+        return false;
+    }
+    SmithLangEnumType type;
+    bool is_result;
+    if (!smith_lang_enum_result(lang, host, replay->generic, replay->instance, &type) ||
+        !smith_lang_enum_builtin(&type, &is_result)) {
+        return false;
+    }
+    uint32_t stop = smith_lang_enum_statement_end(at, frame->end);
+    if (stop == UINT32_MAX) return false;
+    uint32_t place = smith_lang_gen_place(host, replay->generic, &smith_lang_gt.tokens[at], replay->location);
+    const char *variant = is_result ? "ok" : "some";
+    uint32_t id = ++replay->try_next;
+    char head[smith_lang_enum_name_max * 2 + 400];
+    int used = snprintf(head, sizeof head, "return __extension__ ( { ");
+    if (is_result) {
+        used += snprintf(head + used, sizeof head - (size_t)used,
+                         "_Static_assert ( ! __builtin_types_compatible_p ( __typeof__ ( ( ( %s * ) 0 ) -> ok ) , "
+                         "__typeof__ ( ( ( %s * ) 0 ) -> error ) ) , \"`ok` and `error` have one type: write the "
+                         "variant out\" ) ; ",
+                         type.type, type.type);
+    }
+    snprintf(head + used, sizeof head - (size_t)used, "__auto_type smith_wrap_%u =", id);
+    char tail[smith_lang_enum_name_max * 5 + 300];
+    snprintf(
+        tail, sizeof tail,
+        "; _Generic ( smith_wrap_%u , %s : smith_wrap_%u , default : ( %s ) { . tag = %s_tag_%s , . %s = _Generic ( "
+        "smith_wrap_%u , %s : ( ( %s * ) 0 ) -> %s , default : smith_wrap_%u ) } ) ; } )",
+        id, type.type, id, type.type, type.type + 7, variant, variant, id, type.type, type.type, variant, id);
+    frame->pos = stop; // the `;` goes on after the statement expression
+    SmithLangSlicePart parts[] = {{head, 0, 0}, {nullptr, at + 1, stop}, {tail, 0, 0}};
+    smith_lang_slice_parts(replay, place, parts, 3);
+    return true;
+}
+
 // At `return` in an instance's body: `return .name ;` and `return { .name = payload }` are written as the compound
 // literal of the function's payload enum. True when the frame's tokens were taken.
 static bool smith_lang_enum_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
@@ -769,7 +829,7 @@ static bool smith_lang_enum_replay(SmithLang *lang, const SmithHost *host, Smith
     bool braced = false;
     if (!smith_lang_enum_return_words(lang, host, replay, at, frame->end, "return", words, sizeof words, &next,
                                       &braced)) {
-        return false;
+        return smith_lang_enum_replay_wrap(lang, host, replay, frame);
     }
     uint32_t place = smith_lang_gen_place(host, replay->generic, keyword, replay->location);
     frame->pos = next;
@@ -958,20 +1018,8 @@ static bool smith_lang_try_replay_return(SmithLang *lang, const SmithHost *host,
         smith_lang_try_kind(type.type) == SmithLangTryKind_None) {
         return false;
     }
-    int depth = 0;
-    uint32_t stop = frame->end;
-    for (uint32_t i = at + 1; i < frame->end; i++) { // the `;` of the statement
-        const SmithLangGenToken *token = &smith_lang_gt.tokens[i];
-        if (token->special != SmithLangGen_Plain) continue;
-        depth += smith_lang_gt_punct(token, "(") || smith_lang_gt_punct(token, "[") || smith_lang_gt_punct(token, "{");
-        depth -= smith_lang_gt_punct(token, ")") || smith_lang_gt_punct(token, "]") || smith_lang_gt_punct(token, "}");
-        if (depth == 0 && smith_lang_gt_punct(token, ";")) {
-            stop = i;
-            break;
-        }
-        if (depth < 0) return false;
-    }
-    if (stop == frame->end) return false;
+    uint32_t stop = smith_lang_enum_statement_end(at, frame->end);
+    if (stop == UINT32_MAX) return false;
     uint32_t place = smith_lang_gen_place(host, replay->generic, &smith_lang_gt.tokens[at], replay->location);
     uint32_t id = ++replay->try_next;
     char lead[smith_lang_enum_name_max + 64];
