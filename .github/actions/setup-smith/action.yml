@@ -85,5 +85,5 @@ runs:
       run: |
         start=$(date +%s)
         # `--list` builds the runner and every test program and runs none of them
-        "$SMITH" test --list >/dev/null
+        "$SMITH" test --list 2>&1 | grep -v "^\[" | tail -80
         echo "tests built: $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
