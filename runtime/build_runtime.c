@@ -1779,7 +1779,8 @@ static const char *const *smith_library_flags(SmithBuild *b, const char *source)
 
 // A module has no warnings (knowledge/module-diagnostics.md): the compile of a .smith file with a `module` line ends
 // with the baseline as errors, after every other flag so that none turns one off, then the project's .errors.
-static const char *const *smith_module_flags(SmithBuild *b, const char *source);
+static const char *const *smith_module_flags(SmithBuild *b, const char *source, const char *const *flags);
+static bool smith_flags_have(const char *const *flags, const char *needle);
 // The project's .warnings, as warnings that never fail the build; only the compile database (smith lint, the editor)
 // carries them, so a build stays quiet.
 static const char *const *smith_module_advisories(SmithBuild *b, const char *source);
@@ -2357,7 +2358,7 @@ void smith_object(SmithBuild *b, SmithObject *object) {
     copy.step = (SmithStep){
         .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source),
                              smith_lang_flags(b, copy.source), copy.flags, proved_flags,
-                             smith_library_flags(b, copy.source), smith_module_flags(b, copy.source), tail, nullptr),
+                             smith_library_flags(b, copy.source), smith_module_flags(b, copy.source, copy.flags), tail, nullptr),
         .inputs = smith_one(copy.source),
         .implicit_inputs =
             smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)), proved_inputs, nullptr),
@@ -2750,7 +2751,7 @@ void smith_compile_command(SmithBuild *b, const char *compiler, const char *sour
     const char *const tail[] = {"-c", copy, nullptr};
     const char *const *arguments =
         smith_cat(b, smith_one(smith_copy_string(compiler)), smith_modules_for(b, copy), smith_lang_flags(b, copy),
-                  smith_copy_list(flags), smith_library_flags(b, copy), smith_module_flags(b, copy), tail, nullptr);
+                  smith_copy_list(flags), smith_library_flags(b, copy), smith_module_flags(b, copy, flags), tail, nullptr);
     smith_command_rows[smith_command_row_count++] = (SmithCommandRow){copy, arguments, nullptr};
 }
 
@@ -4169,10 +4170,22 @@ static const char *const *smith_module_prefixed(SmithBuild *b, const char *const
     return smith_cat(b, flags, then == nullptr ? smith_list(b, nullptr) : then, nullptr);
 }
 
-static const char *const *smith_module_flags(SmithBuild *b, const char *source) {
+// A module's arithmetic is checked in every profile (issue #1099, #351): signed overflow, shifts, division by zero and
+// float casts out of range. Unsigned arithmetic wraps as C defines it. In debug UBSan's own arithmetic checks are off
+// for a module (-fno-sanitize, owner 2026-10-31) and smith's checks, the same instrumentation, run in their place.
+static const char *const *smith_module_arithmetic(SmithBuild *b, const char *source, const char *const *flags) {
     if (!smith_is_module_source(source)) return smith_list(b, nullptr);
-    return smith_module_prefixed(b, smith_module_baseline, "-Werror=",
-                                 smith_module_prefixed(b, smith_app_state.defaults.errors, "-Werror=", nullptr));
+    const char *checks = "signed-integer-overflow,shift,integer-divide-by-zero,float-cast-overflow";
+    bool debug = smith_flags_have(flags, "-fsanitize=address,undefined");
+    return smith_cat(b, smith_when(b, debug, smith_list(b, smith_text("-fno-sanitize=%s", checks), nullptr)),
+                     smith_list(b, smith_text("-fsanitize=%s", checks), nullptr), nullptr);
+}
+
+static const char *const *smith_module_flags(SmithBuild *b, const char *source, const char *const *flags) {
+    if (!smith_is_module_source(source)) return smith_list(b, nullptr);
+    return smith_cat(b, smith_module_arithmetic(b, source, flags), smith_module_prefixed(b, smith_module_baseline, "-Werror=",
+                                 smith_module_prefixed(b, smith_app_state.defaults.errors, "-Werror=", nullptr)),
+                     nullptr);
 }
 
 static const char *const *smith_module_advisories(SmithBuild *b, const char *source) {

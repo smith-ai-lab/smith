@@ -1,0 +1,53 @@
+// A module source is compiled with smith's arithmetic checks in every profile (issue #1099, #351); a C file keeps
+// exactly its flags.
+module module_arith_flags_test;
+
+import smith::arena;
+import smith::mem;
+import smith::test;
+import scratch;
+
+static const char *checks = "-fsanitize=signed-integer-overflow,shift,integer-divide-by-zero,float-cast-overflow";
+static const char *off = "-fno-sanitize=signed-integer-overflow,shift,integer-divide-by-zero,float-cast-overflow";
+
+static const char *module_main = "module main;\n\ni32 main() {\n    return 0;\n}\n";
+static const char *c_main = "int main(void) {\n    return 0;\n}\n";
+
+export void test_module_arith_flags_a_module_has_the_checks_in_each_profile() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "main.smith", module_main);
+    scratch::Run debug = scratch::build(&p, "-v");
+    scratch::expect_status("debug: a module with no overflow builds", 0, &debug);
+    scratch::expect_contains("debug: the four checks are on the compile line", debug.out, checks);
+    scratch::expect_contains("debug: UBSan's four are off", debug.out, off);
+    scratch::expect_text("debug: it runs", "0", scratch::capture(&p, "./build/debug/main; printf $?"));
+    scratch::Run release = scratch::build(&p, "release -v");
+    scratch::expect_status("release: a module with no overflow builds", 0, &release);
+    scratch::expect_contains("release: the four checks are on the compile line", release.out, checks);
+    scratch::expect_lacks("release: no -fno-sanitize", release.out, "-fno-sanitize=signed");
+    scratch::expect_text("release: it runs", "0", scratch::capture(&p, "./build/release/main; printf $?"));
+    scratch::Run fast = scratch::build(&p, "fast -v");
+    scratch::expect_status("fast: a module with no overflow builds", 0, &fast);
+    scratch::expect_contains("fast: the four checks are on the compile line", fast.out, checks);
+}
+
+export void test_module_arith_flags_a_c_file_keeps_its_flags() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "main.c", c_main);
+    scratch::Run run = scratch::build(&p, "-v");
+    scratch::expect_status("a C file builds", 0, &run);
+    const char *commands = run.out;
+    scratch::expect_lacks("a C file has none of the checks", commands, "signed-integer-overflow,shift");
+    scratch::expect_lacks("a C file has no -fno-sanitize", commands, "-fno-sanitize=signed");
+    scratch::expect_contains("a C file keeps UBSan", commands, "-fsanitize=address,undefined");
+}
