@@ -1,3 +1,4 @@
+// smith-build: header
 // smith::autodiff, <smith/autodiff.h>: Enzyme's own interface, as Enzyme documents it, declared and never defined, and
 // `gradient` and `map`, the typed calls built on it (the last exports; a .smith file's, since they are generic).
 // Enzyme differentiates LLVM IR: it finds a call to __enzyme_autodiff (reverse mode) or __enzyme_fwddiff (forward mode)

@@ -1,3 +1,4 @@
+// smith-build: header
 // smith::format, <smith/format.h>: formatted text into a buffer or the allocator, in place of snprintf. Written in
 // .smith only: a generic function has no C spelling, so the header declares the types and C keeps snprintf.
 module smith::format;

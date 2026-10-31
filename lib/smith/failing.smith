@@ -1,3 +1,4 @@
+// smith-build: header
 // smith::failing, <smith/failing.h>: an allocator for tests that refuses some allocations by chance, drawn from a
 // random::Key, so a test reaches every allocation-failure path of the code under test and a failure replays from its
 // seed. It wraps the interface of smith::mem (it is a test tool built on random, not part of the interface). Its C

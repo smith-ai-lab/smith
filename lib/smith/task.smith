@@ -1,24 +1,30 @@
+// smith-build: header
 // smith::task, <smith/task.h>: tasks that run on stacks of their own (fibers) and are waited for in groups, the way an
 // arena is a scope for memory: a group is opened in a scope and closed by `defer`.
 //
 //   task::Group group = {};
 //   defer task::wait(&group);
 //
-// `main` is the first task: `wait` and `pause` work in it like in any task, there is no `task::run`, and no thread is
-// started (every task runs on the thread that spawned it). The scheduler is the inline one: a spawned task runs at once
-// until it ends or pauses, then control returns to the spawner; `wait`, and a `pause` of `main`, resume the paused
-// tasks in turn. A task has a stack of 256 KB of mapped memory above a guard page, so an overflow is a fault, not a
-// corrupted neighbour; under AddressSanitizer each switch is announced to it. The switch is assembly for arm64 (macOS,
-// Linux) and x86-64 (Linux). Each task has its own handler table (a copy of its spawner's at spawn) and its own errno,
-// both swapped at every switch. Issue #241; knowledge/task.md.
+// `main` is the first task: `wait` and `pause` work in it like in any task, there is no `task::run`. The default
+// scheduler runs the tasks on one worker thread per core (`sysconf(_SC_NPROCESSORS_ONLN)`), each with its own run
+// queue. The workers start at the first `spawn`: a program that never spawns starts no thread. `main` runs on the
+// thread that spawned first, which is worker 0 and the first thread of a program; `main` never moves, and while it
+// waits or pauses that thread runs the tasks queued for it. A task goes to the least loaded worker at spawn and stays
+// on it for its whole life: no migration, no stealing. The inline scheduler (`task::inline_scheduler()`) is for
+// debugging: a spawned task runs at once until it ends or pauses, on the spawner's thread, and `wait` resumes the
+// paused tasks in turn. A task has a stack of 256 KB of mapped memory above a guard page, so an overflow is a fault,
+// not a corrupted neighbour; under AddressSanitizer each switch is announced to it. The switch is assembly for arm64
+// (macOS, Linux) and x86-64 (Linux). Each task has its own handler table (a copy of its spawner's at spawn) and its own
+// errno, both swapped at every switch. Issue #241, #940; knowledge/task.md.
 //
-// What is not here yet, in the issue: the typed `spawn(&group, f, args...)` (it waits for the language, #316),
-// workers on more than one thread, and waiting on sockets and pipes.
+// What is not here yet, in the issue: the typed `spawn(&group, f, args...)` (it waits for the language, #316), and
+// waiting on sockets and pipes.
 module smith::task;
 
 import smith::contract;
 import target;
 import <errno.h>;                           // errno's location
+import <pthread.h>;                         // the worker threads, their lock and wake-ups
 import <smith/handlers.h>;                  // SmithHandlers, smith_handlers_table, smith_handlers_set_table
 import <sanitizer/asan_interface.h>;        // unpoison_memory_region
 import <sanitizer/common_interface_defs.h>; // the fiber calls: start_switch_fiber, finish_switch_fiber
@@ -41,10 +47,13 @@ constexpr i32 protect_none = c::PROT_NONE;
 constexpr i32 protect_both = c::PROT_READ | c::PROT_WRITE;
 constexpr i32 map_private_anonymous = c::MAP_PRIVATE | c::MAP_ANON;
 constexpr i32 page_size_name = c::_SC_PAGESIZE;
+constexpr i32 processors_name = c::_SC_NPROCESSORS_ONLN;
 // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
 
 // The usable stack of a task: 256 KB, below a record of the task itself, above one guard page.
 constexpr usize stack_size = 262144;
+
+struct Worker;
 
 struct Task {
     void *sp;      // the stack pointer while it is not running
@@ -62,6 +71,15 @@ struct Task {
     c::SmithHandlers handlers; // the handlers this task sees; a copy of its spawner's at spawn
     c::SmithHandlers *table;   // what smith_handlers_set_table gets when it is entered: &handlers, null for the first
     i32 saved_errno;           // its errno while it is not running
+    // The default scheduler's.
+    bool keep_fake_stack; // AddressSanitizer: its fake stack outlives it, for the next task on the same stack
+    bool managed;         // run by a worker: its record is not in its mapping, and its stack comes and goes with it
+    Worker *worker;       // the worker it stays on for its whole life
+    Group *waiting_on;    // the group a `wait` of this task is waiting for
+    Task *wait_next;      // the list of waiting tasks
+    bool in_wait;         // it has registered as a waiter
+    bool parked;          // and has switched out of its worker
+    bool woken;           // the group ended before it had switched out
 };
 
 // The context switch: saves the callee-saved registers on the stack, stores the stack pointer in *save, takes the one
@@ -220,7 +238,10 @@ void transfer(Task *from, Task *to) {
     *errno_location() = to->saved_errno;
     c::smith_handlers_set_table(to->table);
     if constexpr (target::address_sanitizer) {
-        c::__sanitizer_start_switch_fiber(from->finished ? nullptr : &from->fake_stack, to->bottom, to->size);
+        // An ended task's fake stack is destroyed (a mapping made and unmapped for every task) unless its stack goes to
+        // the worker's cache: the next task on that stack takes the fake stack over.
+        c::__sanitizer_start_switch_fiber(from->finished && !from->keep_fake_stack ? nullptr : &from->fake_stack,
+                                          to->bottom, to->size);
     }
     switch_stacks(&from->sp, to->sp);
     if constexpr (target::address_sanitizer) {
@@ -241,12 +262,15 @@ void transfer(Task *from, Task *to) {
     task->entry(task->context);
 }
 
+void finish_managed(Task *task); // the default scheduler's, below
+bool stack_will_be_kept(Task *task);
+
 // The entry of a new task, on its own stack: runs it, then goes back to whoever resumed it, for good.
 void task_main(Task *task) {
     if constexpr (target::address_sanitizer) {
         const void *bottom = nullptr;
         usize size = 0;
-        c::__sanitizer_finish_switch_fiber(nullptr, &bottom, &size);
+        c::__sanitizer_finish_switch_fiber(task->fake_stack, &bottom, &size);
         if (task->resumer->size == 0) {
             task->resumer->bottom = bottom;
             task->resumer->size = size;
@@ -254,7 +278,11 @@ void task_main(Task *task) {
     }
     call_entry(task);
     task->finished = true;
-    task->group->pending -= 1;
+    task->keep_fake_stack = task->managed && stack_will_be_kept(task);
+    if (task->managed)
+        finish_managed(task);
+    else
+        task->group->pending -= 1;
     transfer(task, task->resumer);
     c::smith_failure_format(c::SmithFailure_Memory, "a finished task was entered again"); // unreachable
 }
@@ -263,31 +291,23 @@ void task_main(Task *task) {
     c::smith_failure_format(c::SmithFailure_Capacity, "%s", what);
 }
 
-// A new task: one mapping holding a guard page, the stack and, at its top, the task's own record. Never null: the
-// system refusing the memory is a checked failure.
-Task *make_task(Group *group, void (*entry)(void *context), void *context) {
-    contract::trusted(); // it lays out raw memory and writes the first frame
+// One mapping: a guard page and `stack_size` bytes above it. Never null: the system refusing the memory is a checked
+// failure.
+void *map_stack(usize extra) {
+    contract::trusted(); // it lays out raw memory
     // NOLINTBEGIN(smith-effects): the system's memory is the edge of this module
     usize page = (usize)c::sysconf(page_size_name);
-    usize record = (sizeof(Task) + 63) / 64 * 64;
-    usize region_size = page + stack_size;
-    void *region = c::mmap(nullptr, region_size, protect_both, map_private_anonymous, -1, 0);
+    void *region = c::mmap(nullptr, page + stack_size + extra, protect_both, map_private_anonymous, -1, 0);
     if ((usize)region == ~(usize)0) refuse("task: the system refused a stack");
     if (c::mprotect(region, page, protect_none) != 0) refuse("task: the system refused a guard page");
     // NOLINTEND(smith-effects)
-    u8 *base = (u8 *)region;
-    Task *task = (Task *)(base + region_size - record);
-    *task = (Task){};
-    task->region = region;
-    task->region_size = region_size;
-    task->bottom = base + page;
-    task->size = stack_size - record;
-    task->group = group;
-    task->entry = entry;
-    task->context = context;
-    task->handlers = *c::smith_handlers_table(); // the spawner's handlers, as of now
-    task->table = &task->handlers;
-    usize top = (usize)(base + region_size - record) & ~(usize)15;
+    return region;
+}
+
+// Writes the first frame of a task on the stack whose usable bytes end at `end`: the task starts in task_main.
+void lay_frame(Task *task, u8 *end) {
+    contract::trusted(); // it writes the first frame
+    usize top = (usize)end & ~(usize)15;
     usize entry_address = (usize)task_main;
     usize boot = (usize)boot_stub;
     if constexpr (target::arch == target::aarch64) {
@@ -307,23 +327,69 @@ Task *make_task(Group *group, void (*entry)(void *context), void *context) {
         frame[6] = boot;          // the return address
         task->sp = frame;
     }
+}
+
+// The fields every task starts with.
+void init_task(Task *task, Group *group, void (*entry)(void *context), void *context) {
+    contract::trusted(); // the handlers are copied from the runtime's table
+    *task = (Task){};
+    task->group = group;
+    task->entry = entry;
+    task->context = context;
+    task->handlers = *c::smith_handlers_table(); // the spawner's handlers, as of now
+    task->table = &task->handlers;
+}
+
+// A new task of the inline scheduler: one mapping holding a guard page, the stack and, at its top, the task's own
+// record, so no allocator is involved.
+Task *make_task(Group *group, void (*entry)(void *context), void *context) {
+    contract::trusted();                            // it lays out raw memory
+    usize page = (usize)c::sysconf(page_size_name); // NOLINT(smith-effects)
+    usize record = (sizeof(Task) + 63) / 64 * 64;
+    u8 *base = (u8 *)map_stack(0);
+    usize region_size = page + stack_size;
+    Task *task = (Task *)(base + region_size - record);
+    init_task(task, group, entry, context);
+    task->region = base;
+    task->region_size = region_size;
+    task->bottom = base + page;
+    task->size = stack_size - record;
+    lay_frame(task, base + region_size - record);
     return task;
 }
 
-// Enters a task from the current one and returns when it pauses or ends. An ended task's stack is unmapped here.
+// Enters a task from the current one and returns true when it has ended, false when it paused.
 bool resume(Task *task) {
     contract::requires(task != nullptr && !task->finished);
     Task *self = current();
     task->resumer = self;
     transfer(self, task);
-    if (!task->finished) return false;
+    return task->finished;
+}
+
+// The frames an ended task left poisoned for AddressSanitizer must not be poison in the next mapping that lands there.
+// Every frame but the last two (task_main and transfer, which never return) unpoisoned itself as it returned, so the
+// top of the mapping is all there is to clean.
+constexpr usize unpoison_bytes = 16384;
+
+void unpoison(void *region, usize size) {
     contract::trusted(); // the mapping is the task's own, and no one holds the task any more
+    [[maybe_unused]] usize start = size - unpoison_bytes;
     if constexpr (target::address_sanitizer) {
-        // The frames the task left poisoned must not be poison in the next mapping that lands here.
-        c::__asan_unpoison_memory_region(task->region, task->region_size);
+        c::__asan_unpoison_memory_region((u8 *)region + start, unpoison_bytes);
+    } else {
+        (void)region;
+        (void)size;
     }
-    c::munmap(task->region, task->region_size); // NOLINT(smith-effects)
-    return true;
+}
+
+// An ended task of the inline scheduler: its mapping, which holds the record, is unmapped.
+void release_inline(Task *task) {
+    contract::trusted(); // the mapping is the task's own, and no one holds the task any more
+    void *region = task->region;
+    usize size = task->region_size;
+    unpoison(region, size);
+    c::munmap(region, size); // NOLINT(smith-effects)
 }
 
 // The calling task gives the worker back to the one that resumed it, and returns when it is resumed.
@@ -355,7 +421,10 @@ Task *unpark() {
 // Runs the task at the queue's head once; it goes to the queue's tail if it pauses.
 void step_parked() {
     Task *task = unpark();
-    if (!resume(task)) park(task);
+    if (resume(task))
+        release_inline(task);
+    else
+        park(task);
 }
 
 // The inline scheduler's spawn: starts a task of `group` that calls entry(context) on a stack of its own, and runs it
@@ -364,7 +433,10 @@ void inline_spawn([[maybe_unused]] Scheduler *self, Group *group, void (*entry)(
     contract::requires(group != nullptr && entry != nullptr);
     Task *task = make_task(group, entry, context);
     group->pending += 1;
-    if (!resume(task)) park(task);
+    if (resume(task))
+        release_inline(task);
+    else
+        park(task);
 }
 
 // The inline scheduler's wait: runs the paused tasks in turn until every task of `group` has ended. Tasks that wait on
@@ -399,9 +471,379 @@ void inline_pause([[maybe_unused]] Scheduler *scheduler) {
 // made under it reaches the real function.
 Scheduler inline_value = {.spawn = inline_spawn, .pause = inline_pause, .wait = inline_wait};
 
-// The inline scheduler, to set with `use` or to wrap in a scheduler of your own. With none set it is the one.
+// The inline scheduler, to set with `use` or to wrap in a scheduler of your own, and for debugging: tasks run one at a
+// time on the calling thread, in an order that repeats.
 export Scheduler *inline_scheduler() {
     return &inline_value;
+}
+
+// ---- The default scheduler: one worker thread per core. ----
+//
+// One mutex guards the run queues, the counts and the list of waiting tasks; a worker with nothing to run sleeps on its
+// own condition variable. A task is queued on one worker at spawn and never leaves it. The records of the tasks and the
+// memory under them come from pools: a record from a global one (a short spin lock of its own), a stack from the cache
+// of the worker that runs the task, so a finished task's stack serves the next one that starts there.
+constexpr usize workers_max = 64;
+constexpr usize stack_cache_max = 16;        // stacks a worker keeps for the next tasks; the rest are unmapped
+constexpr usize chunk_size = 65536;          // the records of tasks come in chunks of this many bytes
+constexpr usize thread_stack_size = 1048576; // under the worker's loop; a task runs on a stack of its own
+constexpr usize chunk_header = 64;           // the link to the next chunk
+
+struct Worker {
+    Task *head; // the run queue: tasks ready to run on this worker, in order
+    Task *tail;
+    usize ready; // tasks in the queue
+    usize load;  // tasks alive on this worker: spawn gives the next one to the least loaded
+    c::pthread_cond_t wake;
+    c::pthread_t thread; // unused for worker 0, which is the thread of `main`
+    void *thread_stack;  // the mapping under the thread: it is ours, so the C library keeps nothing of the thread
+    void *cache;         // stacks of finished tasks, linked through their lowest word
+    usize cached;
+};
+
+Worker workers[workers_max];
+usize worker_count;
+bool active;       // the workers exist
+bool stopping;     // they are to exit
+usize live;        // tasks spawned and not ended
+usize busy;        // workers running a task right now
+usize ready_total; // tasks in all the queues
+usize page_bytes;
+c::pthread_mutex_t sched_lock;
+Task *waiters; // tasks waiting for a group
+u8 pool_lock;  // the spin lock of the two pools below
+Task *free_records;
+void *chunks;
+thread_local Worker *home; // the worker whose thread this is
+
+void lock_scheduler() {
+    c::pthread_mutex_lock(&sched_lock); // NOLINT(smith-effects): the process effect is this module's
+}
+
+void unlock_scheduler() {
+    c::pthread_mutex_unlock(&sched_lock); // NOLINT(smith-effects)
+}
+
+void pool_acquire() {
+    while (__atomic_exchange_n(&pool_lock, 1, __ATOMIC_ACQUIRE) !=
+           0) { // NOLINT(smith-bounded-loop): a few instructions held
+    }
+}
+
+void pool_release() {
+    __atomic_store_n(&pool_lock, 0, __ATOMIC_RELEASE);
+}
+
+// A record for a task, from the pool; never null.
+Task *record_take() {
+    contract::trusted(); // it carves records out of raw memory
+    pool_acquire();
+    if (free_records == nullptr) {
+        // NOLINTBEGIN(smith-effects): the system's memory is the edge of this module
+        void *chunk = c::mmap(nullptr, chunk_size, protect_both, map_private_anonymous, -1, 0);
+        // NOLINTEND(smith-effects)
+        if ((usize)chunk == ~(usize)0) refuse("task: the system refused memory for tasks");
+        *(void **)chunk = chunks;
+        chunks = chunk;
+        usize record = (sizeof(Task) + 63) / 64 * 64;
+        for (usize offset = chunk_header; offset + record <= chunk_size; offset += record) {
+            Task *free_one = (Task *)((u8 *)chunk + offset);
+            free_one->wait_next = free_records;
+            free_records = free_one;
+        }
+    }
+    Task *task = free_records;
+    free_records = task->wait_next;
+    pool_release();
+    return task;
+}
+
+void record_give(Task *task) {
+    pool_acquire();
+    task->wait_next = free_records;
+    free_records = task;
+    pool_release();
+}
+
+void push_ready(Worker *worker, Task *task) {
+    task->next = nullptr;
+    if (worker->tail == nullptr)
+        worker->head = task;
+    else
+        worker->tail->next = task;
+    worker->tail = task;
+    worker->ready += 1;
+    ready_total += 1;
+    c::pthread_cond_signal(&worker->wake); // NOLINT(smith-effects)
+}
+
+Task *pop_ready(Worker *worker) {
+    Task *task = worker->head;
+    worker->head = task->next;
+    if (worker->head == nullptr) worker->tail = nullptr;
+    task->next = nullptr;
+    worker->ready -= 1;
+    ready_total -= 1;
+    return task;
+}
+
+// The tasks waiting for `group` are ready again, each on its own worker. Holds the lock.
+void wake_waiters(Group *group) {
+    Task **chain = &waiters;
+    while (*chain != nullptr) {
+        Task *waiter = *chain;
+        if (waiter->waiting_on != group) {
+            chain = &waiter->wait_next;
+            continue;
+        }
+        *chain = waiter->wait_next;
+        waiter->waiting_on = nullptr;
+        if (waiter->parked) { // it has switched out: queue it
+            waiter->parked = false;
+            waiter->in_wait = false;
+            push_ready(waiter->worker, waiter);
+        } else { // it is about to: its worker queues it when it has
+            waiter->woken = true;
+        }
+    }
+    c::pthread_cond_signal(&workers[0].wake); // NOLINT(smith-effects): `main` may be waiting for it
+}
+
+// A task of the default scheduler has ended: the group counts it and its waiters wake.
+void finish_managed(Task *task) {
+    lock_scheduler();
+    task->group->pending -= 1;
+    live -= 1;
+    task->worker->load -= 1;
+    if (task->group->pending == 0) wake_waiters(task->group);
+    unlock_scheduler();
+}
+
+// Whether the worker's cache has room for the stack of this ended task.
+bool stack_will_be_kept(Task *task) {
+    return task->worker->cached < stack_cache_max;
+}
+
+// A task that has not run yet gets a stack: the worker's cache first.
+void start_managed(Task *task, Worker *worker) {
+    contract::trusted(); // it lays out raw memory
+    u8 *region = (u8 *)worker->cache;
+    if (region != nullptr) {
+        worker->cache = *(void **)(region + page_bytes);
+        worker->cached -= 1;
+        task->fake_stack = *(void **)(region + page_bytes + sizeof(void *));
+    } else {
+        region = (u8 *)map_stack(0);
+    }
+    task->region = region;
+    task->region_size = page_bytes + stack_size;
+    task->bottom = region + page_bytes;
+    task->size = stack_size;
+    lay_frame(task, region + page_bytes + stack_size);
+}
+
+// An ended task gives its stack to its worker's cache, or back to the system, and its record to the pool.
+void release_managed(Task *task, Worker *worker) {
+    contract::trusted(); // the mapping is the task's own, and no one holds the task any more
+    u8 *region = (u8 *)task->region;
+    usize size = task->region_size;
+    unpoison(region, size);
+    if (task->keep_fake_stack) {
+        *(void **)(region + page_bytes) = worker->cache;
+        *(void **)(region + page_bytes + sizeof(void *)) = task->fake_stack;
+        worker->cache = region;
+        worker->cached += 1;
+    } else {
+        c::munmap(region, size); // NOLINT(smith-effects)
+    }
+    record_give(task);
+}
+
+// Runs the task at the head of the worker's queue until it pauses, waits or ends. Called with the lock held, and
+// returns with it held.
+void run_ready(Worker *worker) {
+    Task *task = pop_ready(worker);
+    busy += 1;
+    unlock_scheduler();
+    if (task->region == nullptr) start_managed(task, worker);
+    bool ended = resume(task);
+    if (ended) release_managed(task, worker);
+    lock_scheduler();
+    busy -= 1;
+    if (ended) return;
+    if (!task->in_wait) { // it paused
+        push_ready(worker, task);
+    } else if (task->woken) { // its group ended before it had switched out
+        task->woken = false;
+        task->in_wait = false;
+        push_ready(worker, task);
+    } else {
+        task->parked = true; // the last task of its group queues it
+    }
+}
+
+// The thread of a worker other than 0: runs what is queued for it, sleeps when there is none, ends at shutdown.
+void *worker_main(void *argument) {
+    Worker *worker = (Worker *)argument;
+    home = worker;
+    lock_scheduler();
+    while (worker->head != nullptr || !stopping) {
+        if (worker->head != nullptr) {
+            run_ready(worker);
+        } else {
+            c::pthread_cond_wait(&worker->wake, &sched_lock); // NOLINT(smith-effects)
+        }
+    }
+    unlock_scheduler();
+    return nullptr;
+}
+
+// The calling thread becomes worker 0 and the others start.
+void start_workers() {
+    contract::trusted(); // threads and their primitives are the edge
+    // NOLINTBEGIN(smith-effects): threads are this module's process effect
+    page_bytes = (usize)c::sysconf(page_size_name);
+    isize processors = c::sysconf(processors_name);
+    usize count = processors < 1 ? 1 : (usize)processors;
+    if (count > workers_max) count = workers_max;
+    c::pthread_mutex_init(&sched_lock, nullptr);
+    stopping = false;
+    worker_count = count;
+    for (usize i = 0; i < count; i++) {
+        workers[i] = (Worker){};
+        c::pthread_cond_init(&workers[i].wake, nullptr);
+    }
+    home = &workers[0];
+    active = true;
+    for (usize i = 1; i < count; i++) {
+        c::pthread_attr_t attributes = {};
+        c::pthread_attr_init(&attributes);
+        workers[i].thread_stack = map_stack(thread_stack_size - stack_size);
+        c::pthread_attr_setstack(&attributes, (u8 *)workers[i].thread_stack + page_bytes, thread_stack_size);
+        i32 failed = c::pthread_create(&workers[i].thread, &attributes, worker_main, (void *)&workers[i]);
+        c::pthread_attr_destroy(&attributes);
+        if (failed != 0) refuse("task: the system refused a worker thread");
+    }
+    // NOLINTEND(smith-effects)
+}
+
+// The last task has ended: the workers exit and everything they held is given back. Called by worker 0 with the lock
+// held; returns with the lock gone.
+void stop_workers() {
+    contract::trusted(); // threads and mappings are the edge
+    // NOLINTBEGIN(smith-effects): threads are this module's process effect
+    stopping = true;
+    for (usize i = 1; i < worker_count; i++)
+        c::pthread_cond_signal(&workers[i].wake);
+    unlock_scheduler();
+    for (usize i = 1; i < worker_count; i++)
+        c::pthread_join(workers[i].thread, nullptr);
+    for (usize i = 0; i < worker_count; i++) {
+        while (workers[i].cache != nullptr) {
+            void *region = workers[i].cache;
+            workers[i].cache = *(void **)((u8 *)region + page_bytes);
+            c::munmap(region, page_bytes + stack_size);
+        }
+        c::pthread_cond_destroy(&workers[i].wake);
+        if (workers[i].thread_stack != nullptr) c::munmap(workers[i].thread_stack, page_bytes + thread_stack_size);
+    }
+    while (chunks != nullptr) {
+        void *chunk = chunks;
+        chunks = *(void **)chunk;
+        c::munmap(chunk, chunk_size);
+    }
+    free_records = nullptr;
+    c::pthread_mutex_destroy(&sched_lock);
+    // NOLINTEND(smith-effects)
+    active = false;
+    home = nullptr;
+}
+
+// The default scheduler's spawn: the task is queued on the least loaded worker (ties to the spawner's own) and runs
+// there, never anywhere else.
+void default_spawn([[maybe_unused]] Scheduler *self, Group *group, void (*entry)(void *context), void *context) {
+    contract::requires(group != nullptr && entry != nullptr);
+    if (!active) start_workers();
+    contract::requires(home != nullptr);
+    Task *task = record_take();
+    init_task(task, group, entry, context);
+    task->managed = true;
+    lock_scheduler();
+    Worker *target = home;
+    for (usize i = 0; i < worker_count; i++) {
+        if (workers[i].load < target->load) target = &workers[i];
+    }
+    task->worker = target;
+    target->load += 1;
+    live += 1;
+    group->pending += 1;
+    push_ready(target, task);
+    unlock_scheduler();
+}
+
+// The default scheduler's wait. `main` runs the tasks queued on its worker while it waits and sleeps when there are
+// none; any other task parks until the last task of the group wakes it on its own worker.
+void default_wait([[maybe_unused]] Scheduler *self, Group *group) {
+    contract::requires(group != nullptr);
+    if (!active) {
+        contract::assert(group->pending == 0);
+        return;
+    }
+    Task *self_task = current();
+    lock_scheduler();
+    if (self_task->resumer == nullptr) { // `main`, on worker 0
+        while (group->pending > 0) {
+            if (home->head != nullptr) {
+                run_ready(home);
+            } else if (busy == 0 && ready_total == 0) {
+                unlock_scheduler();
+                c::smith_failure_format(c::SmithFailure_Memory,
+                                        "task::wait: %zu tasks are waiting on nothing (a deadlock)", group->pending);
+            } else {
+                c::pthread_cond_wait(&home->wake, &sched_lock); // NOLINT(smith-effects)
+            }
+        }
+        if (live == 0) {
+            stop_workers();
+            return;
+        }
+    } else {
+        while (group->pending > 0) {
+            self_task->waiting_on = group;
+            self_task->in_wait = true;
+            self_task->parked = false;
+            self_task->woken = false;
+            self_task->wait_next = waiters;
+            waiters = self_task;
+            unlock_scheduler();
+            suspend();
+            lock_scheduler();
+        }
+    }
+    unlock_scheduler();
+}
+
+// The default scheduler's pause. A task gives its worker back to the loop, which queues it at the tail; `main` runs
+// one round of the tasks queued on its worker.
+void default_pause([[maybe_unused]] Scheduler *self) {
+    Task *self_task = current();
+    if (self_task->resumer != nullptr) {
+        suspend();
+        return;
+    }
+    if (!active) return;
+    lock_scheduler();
+    for (usize round = home->ready; round > 0 && home->head != nullptr; round--)
+        run_ready(home);
+    unlock_scheduler();
+}
+
+Scheduler default_value = {.spawn = default_spawn, .pause = default_pause, .wait = default_wait};
+
+// The default scheduler: one worker thread per core, started at the first spawn, each with its own run queue. What
+// runs when none is set.
+export Scheduler *default_scheduler() {
+    return &default_value;
 }
 
 // Makes `scheduler` the one that runs the tasks of the calling task and of the tasks it spawns, and returns the
@@ -413,10 +855,10 @@ export Scheduler *use(Scheduler *scheduler) {
     return c::smith_handlers_set_scheduler(scheduler);
 }
 
-// The scheduler tasks go to now: the one set for the calling task, the inline one when none is.
+// The scheduler tasks go to now: the one set for the calling task, the default one when none is.
 Scheduler *current_scheduler() {
     Scheduler *set = c::smith_handlers_scheduler();
-    return set != nullptr ? set : inline_scheduler();
+    return set != nullptr ? set : default_scheduler();
 }
 
 // Starts a task of `group` through the current scheduler. Exported only so the module's own tests (a module of their

@@ -1,6 +1,6 @@
 ---
 name: smith-dev-rules
-description: "The rules every agent follows when changing smith: test the smith under test, scratch folders, no pkill, idiom, capabilities, one full check, and the friction report. Load at the start of any change to smith."
+description: "The rules every agent follows when changing smith: test the smith under test, scratch folders, no pkill, idiom, effects, one full check, and the friction report. Load at the start of any change to smith."
 ---
 
 # smith-dev-rules
@@ -10,7 +10,7 @@ The decisions are in [decisions](../../../knowledge/decisions.md); these are the
 - **Test the smith under test.** Run a change's tests with `build/<OS>-<arch>/smith`, not the installed `smith`, when the change is to the language, a library or the build. A test that builds a project puts the tested smith's folder (its `smith-cc` and `smith-c++`) first on `PATH`, so nothing in it compiles with the installed smith.
 - **Scratch folders are your own.** Make each with `mktemp -d` (under your scratchpad when you have one), never a fixed name such as `proj`: another agent may be using it.
 - **Write idiomatic Smith, not C renamed.** In a `.smith` file: sized types (`u64`, `usize`, `f64`), `import <h>;` with `c::` names, modules that import modules, generics where a type was passed as `sizeof` and `alignof`, and no preprocessor. Count them before and after a port: a module with a standard C type, an `#include` or an `#if` left is not done.
-- **Effects come through the direct modules.** No raw call to the world outside a capability's own module (`smith-effects`); a program calls the direct modules (`console`, `files`, `process`, `net`, `clock`, `env`, `entropy`) and a test uses each one's `set_handler` or fake.
+- **Effects are inferred, not passed down.** A program calls the C library and smith's direct modules (`files`, `process`, `net`, `clock`, `console`, `env`) from anywhere; effects are inferred from what a function calls (#207), and tests and arenas control them through handlers (#239); no `io` value is passed down from `main`.
 - **Never signal a process that is not your own unwaited child**, and never `pkill` or `killall`: a reparented pid may already be another test's compile.
 - **`host->read_header` returns a buffer valid only until the next read**, and the lowering's own lookups read others: copy what you need before calling anything that may read a header.
 - **Edit `.c`, `.h` and `.smith` sources with Edit or Write, not shell edits (`sed`, heredocs), and read the diagnostics that come back** (Claude Code passes `smith lsp`'s diagnostics only after Edit or Write); find a symbol's definition and uses with the LSP tool (hover, goToDefinition, findReferences) or from the shell with `smith lsp def`, `refs` and `hover` (one query a line on stdin with `smith lsp -`), not grep; after an edit made outside Edit or Write, `smith lsp diag FILE`. Shell edits stay fine for generated files and expected outputs.

@@ -25,7 +25,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [One compiler, in smith's own process](one-compiler.md): smith ships upstream LLVM 23.1.3 linked into itself, compiles C, C++ and Objective-C in its own process, and picks other compilers only through environment variables.
 - [The platform layer](platform-layer.md): What smith does differently on macOS and Linux lives in one file per platform, runtime/platform_macos.c and runtime/platform_linux.c, with the same functions, and this table says what differs.
 - [smith prove checks LLVM IR with Alive2, Bitwuzla and Z3](prover.md): smith prove proves each function with a contract in a process of its own, assumes functions marked smith_trusted, and uses no list.
-- [smith::task, fibers and groups on one thread](task.md): Tasks on 256 KB mmap stacks with a guard page, switched by assembly, waited for in a task::Group, with the scheduler a handler (issue #241).
+- [smith::task, fibers, groups and one worker per core](task.md): Tasks on 256 KB mmap stacks with a guard page, switched by assembly, run by one worker thread per core, waited for in a task::Group, with the scheduler a handler (issues #241, #940).
 - [smith::slice and smith::ascii replace text's slice operations](slice-library.md): A slice library generic over the element does what text did for chars, with no allocation, option for a search that may find nothing, and a character test that reads no locale.
 - [The .smith language](smith-language.md): A .smith file is C with modules, lowered to C as clang reads it by a token hook, with sized types, the rules, one command, and what the language does not do yet.
 
@@ -48,8 +48,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 ## Contracts
 
 - [The build API](build-api.md): Every call of <smith/build.h> with its fields, defaults and the generated manifest.
-- [smith-effects, a program touches the world only through capabilities](effects-check.md): A clang-tidy check decided function by function from the source: raw effects live only in a capability's module, and a program calls the direct modules.
-- [Ownership idioms, what a returned pointer means](ownership-idioms.md): A returned pointer follows one of C's four idioms, written as [[std::returns_owned(f)]], returns_borrowed(n) or returns_internal; smith accepts, validates and records them, and judges no call site yet.
+- [Ownership idioms, what a returned pointer means](ownership-idioms.md): A returned pointer is borrowed from argument n, from static or from the current allocator, or it is an owned resource, written as [[std::returns_owned(f)]], returns_borrowed(n) or returns_static; smith accepts, validates and records them, and judges no call site yet.
 - [A module has no warnings](module-diagnostics.md): The compile of a .smith file with a module line fails on a fixed baseline of diagnostics, each with a written way to say I meant it; heuristic ones are opt-in and advisory.
 - [The idiom checks](idiom-checks.md): clang-tidy checks smith-sized-types, smith-module-library, smith-module, smith-bounded-loop, smith-c23 and smith-constexpr tell an agent what idiomatic Smith and C23 look like.
 - [A proof is fast, and fast is CPU time](proof-budget.md): Each proof has a budget of about 10 s of CPU time charged as on 8 idle cores, so a busy machine slows a proof and never fails it.

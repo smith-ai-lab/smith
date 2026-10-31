@@ -7,7 +7,7 @@ description: "C into .smith: `import <math.h>;`, `c::printf`, `c::EOF`, `c::WIFE
 
 ```smith
 import <math.h>;
-import <stdio.h>; // printf and the like are raw effects: take a capability instead
+import <stdio.h>;
 
 f32 length(f32 x, f32 y) {
     return c::sqrtf(x * x + y * y);        // a C name is always written c::name

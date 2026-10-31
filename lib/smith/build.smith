@@ -1,3 +1,4 @@
+// smith-build: header
 // smith::build, <smith/build.h>: the API of a project's build file, which `smith build` compiles and runs to write
 // build.ninja. Its C API is the generated header include/smith/build.h (a build output, not in
 // git). Every export has no body here: the build runtime (runtime/build_runtime.c) defines it in C, under its C name,
