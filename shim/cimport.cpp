@@ -20,8 +20,11 @@
 //
 // Type kinds: 0 void; 1 bool; 2 integer (a = bits, b = 1 when signed); 3 floating (a = bits); 4 pointer (a = pointee);
 // 5 array (a = element, b = count); 6 typedef (a = name, b = underlying); 7 struct (a = struct index); 8 function
-// (a = return type, b = first parameter, c = parameter count; flags bit 2 = variadic). Type flags: 1 const, 2 restrict.
-// Struct flags: 1 opaque (no definition, or members that could not be imported).
+// (a = return type, b = first parameter, c = parameter count; flags bit 2 = variadic); 9 unsupported (a = the spelling
+// of the C type that has no smith equivalent: a union, `long double`, a bit-field). Type flags: 1 const, 2 restrict.
+// A declaration that uses an unsupported type is still read, with that type, and is also in the not imported list with
+// the reason: the use is what reports it.
+// Struct flags: 1 opaque (no definition).
 // Not imported kinds: 0 declaration, 1 attribute (name is the declaration's, reason the attribute's spelling).
 //
 // Memory: the caller's buffer. When it is too small the call returns the words needed and the caller calls again.
@@ -58,11 +61,13 @@ typedef struct {
 
 namespace {
 
-enum Kind : uint32_t { Void, Bool, Integer, Floating, Pointer, Array, Typedef, Struct, Function };
+enum Kind : uint32_t { Void, Bool, Integer, Floating, Pointer, Array, Typedef, Struct, Function, Unsupported };
 
 struct Reader {
     clang::ASTContext *context_ptr;
-    clang::ASTContext &context() { return *context_ptr; }
+    clang::ASTContext &context() {
+        return *context_ptr;
+    }
     std::string pool = std::string(1, '\0'); // offset 0 is the empty string
     std::map<std::string, uint32_t> strings;
     std::vector<std::array<uint32_t, 5>> types;
@@ -72,7 +77,10 @@ struct Reader {
     std::map<const clang::RecordDecl *, uint32_t> struct_index;
     std::vector<std::array<uint32_t, 2>> fields, parameters;
     std::vector<std::array<uint32_t, 3>> not_imported;
-    std::string failure; // why the last conversion failed
+    std::string failure; // why the first type of the declaration in hand could not be imported
+    void fail(const std::string &why) {
+        if (failure.empty()) failure = why;
+    }
 
     explicit Reader(clang::ASTContext *c) : context_ptr(c) {}
 
@@ -106,6 +114,7 @@ struct Reader {
     // The type, or UINT32_MAX with `failure` set. `behind` is true under a pointer, where a struct that could not be
     // imported stays usable as an opaque one.
     uint32_t convert(clang::QualType type, bool behind);
+    uint32_t convert_inner(clang::QualType type, bool behind);
     uint32_t builtin(const clang::BuiltinType *type, uint32_t flags);
     uint32_t function_type(const clang::FunctionProtoType *proto, uint32_t flags);
     void function(const clang::FunctionDecl *decl);
@@ -134,7 +143,7 @@ uint32_t Reader::builtin(const clang::BuiltinType *type, uint32_t flags) {
         if (type->getKind() == B::Float || type->getKind() == B::Double || type->getKind() == B::Half)
             return type_node(Floating, flags, bits, 0, 0);
     }
-    failure = std::string("the type `") + type->getName(context().getPrintingPolicy()).str() + "` is not imported";
+    fail(std::string("the type `") + type->getName(context().getPrintingPolicy()).str() + "` is not imported");
     return bad;
 }
 
@@ -155,11 +164,16 @@ uint32_t Reader::function_type(const clang::FunctionProtoType *proto, uint32_t f
 }
 
 uint32_t Reader::convert(clang::QualType type, bool behind) {
+    uint32_t t = convert_inner(type, behind);
+    return t != bad ? t : type_node(Unsupported, 0, text(type.getAsString()), 0, 0);
+}
+
+uint32_t Reader::convert_inner(clang::QualType type, bool behind) {
     uint32_t flags = 0;
     if (type.isConstQualified()) flags |= 1;
     if (type.isRestrictQualified()) flags |= 2;
     if (type.isVolatileQualified()) {
-        failure = "a volatile type is not imported";
+        fail("a volatile type is not imported");
         return bad;
     }
     if (const auto *t = type->getAs<clang::TypedefType>()) {
@@ -180,37 +194,34 @@ uint32_t Reader::convert(clang::QualType type, bool behind) {
         return type_node(Array, flags, element, static_cast<uint32_t>(t->getSize().getZExtValue()), 0);
     }
     if (type->isArrayType()) {
-        failure = "an array without a fixed size is not imported";
+        fail("an array without a fixed size is not imported");
         return bad;
     }
     if (const auto *t = type->getAs<clang::FunctionProtoType>()) return function_type(t, flags);
     if (type->isFunctionNoProtoType()) {
-        failure = "a function without a prototype is not imported";
+        fail("a function without a prototype is not imported");
         return bad;
     }
     if (const auto *t = type->getAs<clang::RecordType>()) {
         const clang::RecordDecl *decl = t->getDecl();
         if (decl->isUnion()) {
-            failure = "a union is not imported";
+            fail("a union is not imported");
             return bad;
         }
         uint32_t index = record(decl);
-        if (!behind && (structs[index][3] & 1) != 0) {
-            failure = "the struct `" + pool.substr(structs[index][0]) + "` is used by value but is opaque";
-            return bad;
-        }
         return type_node(Struct, flags, index, 0, 0);
     }
     if (type->isEnumeralType()) { // C2 reads enums; until then they are their integer type
         return convert(type->getAs<clang::EnumType>()->getDecl()->getIntegerType(), behind);
     }
-    failure = std::string("the type `") + type.getAsString() + "` is not imported";
+    fail(std::string("the type `") + type.getAsString() + "` is not imported");
     return bad;
 }
 
 uint32_t Reader::record(const clang::RecordDecl *decl) {
     const clang::RecordDecl *definition = decl->getDefinition();
-    const clang::RecordDecl *key = definition != nullptr ? definition : llvm::cast<clang::RecordDecl>(decl->getCanonicalDecl());
+    const clang::RecordDecl *key =
+        definition != nullptr ? definition : llvm::cast<clang::RecordDecl>(decl->getCanonicalDecl());
     auto found = struct_index.find(key);
     if (found != struct_index.end()) return found->second;
     uint32_t index = static_cast<uint32_t>(structs.size());
@@ -220,24 +231,21 @@ uint32_t Reader::record(const clang::RecordDecl *decl) {
         if (const clang::TypedefNameDecl *t = key->getTypedefNameForAnonDecl()) name = t->getName().str();
     structs.push_back({text(name), 0, 0, 1});
     if (definition == nullptr) return index; // opaque
+    std::string outer = failure;             // the declaration that met this struct keeps its own reason
+    failure.clear();
     std::vector<std::array<uint32_t, 2>> read;
-    std::string why;
     for (const clang::FieldDecl *field : definition->fields()) {
+        uint32_t t;
         if (field->isBitField()) {
-            why = "the field `" + field->getName().str() + "` is a bit-field";
-            break;
-        }
-        uint32_t t = convert(field->getType(), false);
-        if (t == bad) {
-            why = "the field `" + field->getName().str() + "`: " + failure;
-            break;
+            fail("the field `" + field->getName().str() + "` is a bit-field");
+            t = type_node(Unsupported, 0, text("bit-field " + field->getType().getAsString()), 0, 0);
+        } else {
+            t = convert(field->getType(), false);
         }
         read.push_back({text(field->getName().str()), t});
     }
-    if (!why.empty()) {
-        skip(0, "struct " + name, why);
-        return index; // stays opaque: usable behind a pointer
-    }
+    if (!failure.empty()) skip(0, "struct " + name, failure);
+    failure = outer;
     structs[index][1] = static_cast<uint32_t>(fields.size());
     structs[index][2] = static_cast<uint32_t>(read.size());
     structs[index][3] = 0;
@@ -252,30 +260,26 @@ void Reader::function(const clang::FunctionDecl *decl) {
         skip(0, name, "an inline function with a body is not imported");
         return;
     }
-    const auto *proto = decl->getType()->getAs<clang::FunctionProtoType>();
+    // The type as written: a redeclaration of a library function (strlen) takes the builtin's type, which has lost
+    // the typedef names (size_t).
+    clang::QualType written =
+        decl->getTypeSourceInfo() != nullptr ? decl->getTypeSourceInfo()->getType() : decl->getType();
+    const auto *proto = written->getAs<clang::FunctionProtoType>();
     if (proto == nullptr) {
         skip(0, name, "a function without a prototype is not imported");
         return;
     }
-    uint32_t result = convert(decl->getReturnType(), false);
+    failure.clear();
+    uint32_t result = convert(proto->getReturnType(), false);
     std::vector<std::array<uint32_t, 2>> params;
-    for (const clang::ParmVarDecl *p : decl->parameters()) {
-        if (result == bad) break;
-        uint32_t t = convert(p->getType(), false);
-        if (t == bad) {
-            result = bad;
-            break;
-        }
-        params.push_back({text(p->getName().str()), t});
-    }
-    if (result == bad) {
-        skip(0, name, failure);
-        return;
-    }
+    for (unsigned i = 0; i < decl->getNumParams() && i < proto->getNumParams(); i++)
+        params.push_back({text(decl->getParamDecl(i)->getName().str()), convert(proto->getParamType(i), false)});
+    if (!failure.empty()) skip(0, name, failure);
     uint32_t first = static_cast<uint32_t>(parameters.size());
     for (auto &p : params)
         parameters.push_back(p);
-    functions.push_back({text(name), result, first, static_cast<uint32_t>(params.size()), proto->isVariadic() ? 1U : 0U});
+    functions.push_back(
+        {text(name), result, first, static_cast<uint32_t>(params.size()), proto->isVariadic() ? 1U : 0U});
     for (const clang::Attr *a : decl->attrs())
         if (!a->isImplicit()) skip(1, name, a->getSpelling());
 }
@@ -292,7 +296,8 @@ void Reader::walk(const clang::TranslationUnitDecl *unit) {
         } else if (const auto *r = llvm::dyn_cast<clang::RecordDecl>(d)) {
             if (r->isUnion()) {
                 std::string name = r->getName().str();
-                if (name.empty() && r->getTypedefNameForAnonDecl()) name = r->getTypedefNameForAnonDecl()->getName().str();
+                if (name.empty() && r->getTypedefNameForAnonDecl())
+                    name = r->getTypedefNameForAnonDecl()->getName().str();
                 if (r->isThisDeclarationADefinition()) skip(0, "union " + name, "a union is not imported");
                 continue;
             }
@@ -321,14 +326,16 @@ std::vector<std::string> folders_of(const std::vector<std::string> &flags) {
     std::vector<std::string> out;
     for (size_t i = 0; i < flags.size(); i++) {
         const std::string &f = flags[i];
-        if ((f == "-I" || f == "-isystem" || f == "-iquote") && i + 1 < flags.size()) out.push_back(flags[++i]);
-        else if (f.rfind("-I", 0) == 0 && f.size() > 2) out.push_back(f.substr(2));
+        if ((f == "-I" || f == "-isystem" || f == "-iquote") && i + 1 < flags.size())
+            out.push_back(flags[++i]);
+        else if (f.rfind("-I", 0) == 0 && f.size() > 2)
+            out.push_back(f.substr(2));
     }
     return out;
 }
 
 class Capture : public clang::DiagnosticConsumer {
-public:
+  public:
     std::string first_error;
     void HandleDiagnostic(clang::DiagnosticsEngine::Level level, const clang::Diagnostic &info) override {
         clang::DiagnosticConsumer::HandleDiagnostic(level, info);
@@ -383,9 +390,11 @@ extern "C" size_t smith_cimport_read(const SmithCimportRequest *request, uint32_
     // Lay the tables out: header, types, functions, structs, fields, parameters, not imported, then the pool.
     constexpr size_t head = 17;
     size_t at = head;
-    size_t types_at = at, functions_at = types_at + reader.types.size() * 5, structs_at = functions_at + reader.functions.size() * 5;
+    size_t types_at = at, functions_at = types_at + reader.types.size() * 5,
+           structs_at = functions_at + reader.functions.size() * 5;
     size_t fields_at = structs_at + reader.structs.size() * 4, parameters_at = fields_at + reader.fields.size() * 2;
-    size_t skipped_at = parameters_at + reader.parameters.size() * 2, pool_at = skipped_at + reader.not_imported.size() * 3;
+    size_t skipped_at = parameters_at + reader.parameters.size() * 2,
+           pool_at = skipped_at + reader.not_imported.size() * 3;
     size_t pool_words = (reader.pool.size() + 3) / 4, total = pool_at + pool_words;
     if (total > capacity || words == nullptr) return total;
     std::memset(words, 0, total * 4);

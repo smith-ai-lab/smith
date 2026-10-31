@@ -1,0 +1,210 @@
+struct __locale_struct {
+    __locales: [13]*struct __locale_data
+    __ctype_b: *const U16
+    __ctype_tolower: *const I32
+    __ctype_toupper: *const I32
+    __names: [13]*const I8
+}
+struct __locale_data (opaque)
+fn memcpy(__dest: *Void, __src: *const Void, __n: size_t = U64) -> *Void
+fn memmove(__dest: *Void, __src: *const Void, __n: size_t = U64) -> *Void
+fn memccpy(__dest: *Void, __src: *const Void, __c: I32, __n: size_t = U64) -> *Void
+fn memset(__s: *Void, __c: I32, __n: size_t = U64) -> *Void
+fn memcmp(__s1: *const Void, __s2: *const Void, __n: size_t = U64) -> I32
+fn __memcmpeq(__s1: *const Void, __s2: *const Void, __n: size_t = U64) -> I32
+fn memchr(__s: *const Void, __c: I32, __n: size_t = U64) -> *Void
+fn strcpy(__dest: *I8, __src: *const I8) -> *I8
+fn strncpy(__dest: *I8, __src: *const I8, __n: size_t = U64) -> *I8
+fn strcat(__dest: *I8, __src: *const I8) -> *I8
+fn strncat(__dest: *I8, __src: *const I8, __n: size_t = U64) -> *I8
+fn strcmp(__s1: *const I8, __s2: *const I8) -> I32
+fn strncmp(__s1: *const I8, __s2: *const I8, __n: size_t = U64) -> I32
+fn strcoll(__s1: *const I8, __s2: *const I8) -> I32
+fn strxfrm(__dest: *I8, __src: *const I8, __n: size_t = U64) -> size_t = U64
+fn strcoll_l(__s1: *const I8, __s2: *const I8, __l: locale_t = __locale_t = *struct __locale_struct) -> I32
+fn strxfrm_l(__dest: *I8, __src: *const I8, __n: size_t = U64, __l: locale_t = __locale_t = *struct __locale_struct) -> size_t = U64
+fn strdup(__s: *const I8) -> *I8
+fn strndup(__string: *const I8, __n: size_t = U64) -> *I8
+fn strchr(__s: *const I8, __c: I32) -> *I8
+fn strrchr(__s: *const I8, __c: I32) -> *I8
+fn strchrnul(__s: *const I8, __c: I32) -> *I8
+fn strcspn(__s: *const I8, __reject: *const I8) -> size_t = U64
+fn strspn(__s: *const I8, __accept: *const I8) -> size_t = U64
+fn strpbrk(__s: *const I8, __accept: *const I8) -> *I8
+fn strstr(__haystack: *const I8, __needle: *const I8) -> *I8
+fn strtok(__s: *I8, __delim: *const I8) -> *I8
+fn __strtok_r(__s: *I8, __delim: *const I8, __save_ptr: **I8) -> *I8
+fn strtok_r(__s: *I8, __delim: *const I8, __save_ptr: **I8) -> *I8
+fn strcasestr(__haystack: *const I8, __needle: *const I8) -> *I8
+fn memmem(__haystack: *const Void, __haystacklen: size_t = U64, __needle: *const Void, __needlelen: size_t = U64) -> *Void
+fn __mempcpy(__dest: *Void, __src: *const Void, __n: size_t = U64) -> *Void
+fn mempcpy(__dest: *Void, __src: *const Void, __n: size_t = U64) -> *Void
+fn strlen(__s: *const I8) -> size_t = U64
+fn strnlen(__string: *const I8, __maxlen: size_t = U64) -> size_t = U64
+fn strerror(__errnum: I32) -> *I8
+fn strerror_r(__errnum: I32, __buf: *I8, __buflen: size_t = U64) -> I32
+fn strerror_l(__errnum: I32, __l: locale_t = __locale_t = *struct __locale_struct) -> *I8
+fn bcmp(__s1: *const Void, __s2: *const Void, __n: size_t = U64) -> I32
+fn bcopy(__src: *const Void, __dest: *Void, __n: size_t = U64) -> Void
+fn bzero(__s: *Void, __n: size_t = U64) -> Void
+fn index(__s: *const I8, __c: I32) -> *I8
+fn rindex(__s: *const I8, __c: I32) -> *I8
+fn ffs(__i: I32) -> I32
+fn ffsl(__l: I64) -> I32
+fn ffsll(__ll: I64) -> I32
+fn strcasecmp(__s1: *const I8, __s2: *const I8) -> I32
+fn strncasecmp(__s1: *const I8, __s2: *const I8, __n: size_t = U64) -> I32
+fn strcasecmp_l(__s1: *const I8, __s2: *const I8, __loc: locale_t = __locale_t = *struct __locale_struct) -> I32
+fn strncasecmp_l(__s1: *const I8, __s2: *const I8, __n: size_t = U64, __loc: locale_t = __locale_t = *struct __locale_struct) -> I32
+fn explicit_bzero(__s: *Void, __n: size_t = U64) -> Void
+fn strsep(__stringp: **I8, __delim: *const I8) -> *I8
+fn strsignal(__sig: I32) -> *I8
+fn __stpcpy(__dest: *I8, __src: *const I8) -> *I8
+fn stpcpy(__dest: *I8, __src: *const I8) -> *I8
+fn __stpncpy(__dest: *I8, __src: *const I8, __n: size_t = U64) -> *I8
+fn stpncpy(__dest: *I8, __src: *const I8, __n: size_t = U64) -> *I8
+fn strlcpy(__dest: *I8, __src: *const I8, __n: size_t = U64) -> size_t = U64
+fn strlcat(__dest: *I8, __src: *const I8, __n: size_t = U64) -> size_t = U64
+not imported attribute memcpy: nothrow
+not imported attribute memcpy: nonnull
+not imported attribute memmove: nothrow
+not imported attribute memmove: nonnull
+not imported attribute memccpy: nothrow
+not imported attribute memccpy: nonnull
+not imported attribute memset: nothrow
+not imported attribute memset: nonnull
+not imported attribute memcmp: nothrow
+not imported attribute memcmp: pure
+not imported attribute memcmp: nonnull
+not imported attribute __memcmpeq: nothrow
+not imported attribute __memcmpeq: pure
+not imported attribute __memcmpeq: nonnull
+not imported attribute memchr: nothrow
+not imported attribute memchr: pure
+not imported attribute memchr: nonnull
+not imported attribute strcpy: nothrow
+not imported attribute strcpy: nonnull
+not imported attribute strncpy: nothrow
+not imported attribute strncpy: nonnull
+not imported attribute strcat: nothrow
+not imported attribute strcat: nonnull
+not imported attribute strncat: nothrow
+not imported attribute strncat: nonnull
+not imported attribute strcmp: nothrow
+not imported attribute strcmp: pure
+not imported attribute strcmp: nonnull
+not imported attribute strncmp: nothrow
+not imported attribute strncmp: pure
+not imported attribute strncmp: nonnull
+not imported attribute strcoll: nothrow
+not imported attribute strcoll: pure
+not imported attribute strcoll: nonnull
+not imported attribute strxfrm: nothrow
+not imported attribute strxfrm: nonnull
+not imported attribute strcoll_l: nothrow
+not imported attribute strcoll_l: pure
+not imported attribute strcoll_l: nonnull
+not imported attribute strxfrm_l: nothrow
+not imported attribute strxfrm_l: nonnull
+not imported attribute strdup: nothrow
+not imported attribute strdup: malloc
+not imported attribute strdup: nonnull
+not imported attribute strndup: nothrow
+not imported attribute strndup: malloc
+not imported attribute strndup: nonnull
+not imported attribute strchr: nothrow
+not imported attribute strchr: pure
+not imported attribute strchr: nonnull
+not imported attribute strrchr: nothrow
+not imported attribute strrchr: pure
+not imported attribute strrchr: nonnull
+not imported attribute strchrnul: nothrow
+not imported attribute strchrnul: pure
+not imported attribute strchrnul: nonnull
+not imported attribute strcspn: nothrow
+not imported attribute strcspn: pure
+not imported attribute strcspn: nonnull
+not imported attribute strspn: nothrow
+not imported attribute strspn: pure
+not imported attribute strspn: nonnull
+not imported attribute strpbrk: nothrow
+not imported attribute strpbrk: pure
+not imported attribute strpbrk: nonnull
+not imported attribute strstr: nothrow
+not imported attribute strstr: pure
+not imported attribute strstr: nonnull
+not imported attribute strtok: nothrow
+not imported attribute strtok: nonnull
+not imported attribute __strtok_r: nothrow
+not imported attribute __strtok_r: nonnull
+not imported attribute strtok_r: nothrow
+not imported attribute strtok_r: nonnull
+not imported attribute strcasestr: nothrow
+not imported attribute strcasestr: pure
+not imported attribute strcasestr: nonnull
+not imported attribute memmem: nothrow
+not imported attribute memmem: pure
+not imported attribute memmem: nonnull
+not imported attribute __mempcpy: nothrow
+not imported attribute __mempcpy: nonnull
+not imported attribute mempcpy: nothrow
+not imported attribute mempcpy: nonnull
+not imported attribute strlen: nothrow
+not imported attribute strlen: pure
+not imported attribute strlen: nonnull
+not imported attribute strnlen: nothrow
+not imported attribute strnlen: pure
+not imported attribute strnlen: nonnull
+not imported attribute strerror: nothrow
+not imported attribute strerror_r: asm
+not imported attribute strerror_r: nothrow
+not imported attribute strerror_r: nonnull
+not imported attribute strerror_l: nothrow
+not imported attribute bcmp: nothrow
+not imported attribute bcmp: pure
+not imported attribute bcmp: nonnull
+not imported attribute bcopy: nothrow
+not imported attribute bcopy: nonnull
+not imported attribute bzero: nothrow
+not imported attribute bzero: nonnull
+not imported attribute index: nothrow
+not imported attribute index: pure
+not imported attribute index: nonnull
+not imported attribute rindex: nothrow
+not imported attribute rindex: pure
+not imported attribute rindex: nonnull
+not imported attribute ffs: nothrow
+not imported attribute ffs: const
+not imported attribute ffsl: nothrow
+not imported attribute ffsl: const
+not imported attribute ffsll: nothrow
+not imported attribute ffsll: const
+not imported attribute strcasecmp: nothrow
+not imported attribute strcasecmp: pure
+not imported attribute strcasecmp: nonnull
+not imported attribute strncasecmp: nothrow
+not imported attribute strncasecmp: pure
+not imported attribute strncasecmp: nonnull
+not imported attribute strcasecmp_l: nothrow
+not imported attribute strcasecmp_l: pure
+not imported attribute strcasecmp_l: nonnull
+not imported attribute strncasecmp_l: nothrow
+not imported attribute strncasecmp_l: pure
+not imported attribute strncasecmp_l: nonnull
+not imported attribute explicit_bzero: nothrow
+not imported attribute explicit_bzero: nonnull
+not imported attribute strsep: nothrow
+not imported attribute strsep: nonnull
+not imported attribute strsignal: nothrow
+not imported attribute __stpcpy: nothrow
+not imported attribute __stpcpy: nonnull
+not imported attribute stpcpy: nothrow
+not imported attribute stpcpy: nonnull
+not imported attribute __stpncpy: nothrow
+not imported attribute __stpncpy: nonnull
+not imported attribute stpncpy: nothrow
+not imported attribute stpncpy: nonnull
+not imported attribute strlcpy: nothrow
+not imported attribute strlcpy: nonnull
+not imported attribute strlcat: nothrow
+not imported attribute strlcat: nonnull

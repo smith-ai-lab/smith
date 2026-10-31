@@ -1,0 +1,167 @@
+// front::cimport (#1112 track C, #1114): what a C header declares, read through clang's C++ libraries at the one edge
+// file, shim/cimport.cpp. `read` parses the header and returns its functions and structs as records; whatever it
+// cannot express is in `not_imported` with a reason, never guessed and never dropped silently.
+//
+// The shape is one to one with the declarations track A's front::ast will have (A1, #1112): the conversion to those
+// nodes is its own small ticket. Types are a table; a type refers to another by its index in `Header.types`.
+//
+// Not wired into `smith cc`: the work shows through tests/front_cimport_test.smith.
+module front::cimport;
+
+import <string.h>;
+
+import std::arena;
+
+// The kinds of CType. The layout of the shim's flat result (shim/cimport.cpp) is the source of these numbers.
+export constexpr U32 kind_void = 0;
+export constexpr U32 kind_bool = 1;
+export constexpr U32 kind_integer = 2;     // a = bits, b = 1 when signed
+export constexpr U32 kind_floating = 3;    // a = bits
+export constexpr U32 kind_pointer = 4;     // a = pointee
+export constexpr U32 kind_array = 5;       // a = element, b = count
+export constexpr U32 kind_typedef = 6;     // name, a = underlying
+export constexpr U32 kind_struct = 7;      // a = index in Header.structs
+export constexpr U32 kind_function = 8;    // a = result, parameters, variadic
+export constexpr U32 kind_unsupported = 9; // name = the C type's spelling: a union, `long double`, a bit-field
+
+export constexpr U32 flag_const = 1;
+export constexpr U32 flag_restrict = 2;
+
+// What was left out: a declaration (kind_declaration) or an attribute of one (kind_attribute).
+export constexpr U32 not_imported_declaration = 0;
+export constexpr U32 not_imported_attribute = 1;
+
+export struct Parameter {
+    Str name; // empty when the declaration has none
+    U32 type;
+};
+
+export struct CType {
+    U32 kind;
+    U32 flags;
+    U32 a;
+    U32 b;
+    Str name;                // a typedef's name
+    Parameter parameters[:]; // a function type's
+    Bool variadic;
+};
+
+export struct Function {
+    Str name;
+    U32 result; // an index in Header.types
+    Parameter parameters[:];
+    Bool variadic;
+};
+
+export struct Field {
+    Str name;
+    U32 type;
+};
+
+export struct Record {
+    Str name;    // empty for an anonymous struct that no typedef names
+    Bool opaque; // no definition, or members that could not be imported
+    Field fields[:];
+};
+
+export struct NotImported {
+    U32 kind;
+    Str name;
+    Str reason;
+};
+
+export struct Header {
+    CType types[:];
+    Function functions[:];
+    Record structs[:];
+    NotImported not_imported[:];
+    Str error; // empty when the header was read
+};
+
+// Keep in step with SmithCimportRequest in shim/cimport.cpp.
+struct Request {
+    const char *name;
+    I32 quoted;
+    const char *folder;
+    const char *flags;
+};
+
+extern Usize smith_cimport_read(const Request *request, U32 *words, Usize capacity);
+
+static Str text(const char *pool, U32 at) {
+    Usize length = c::strlen(pool + at);
+    return pool[at:at + length];
+}
+
+static Parameter parameter_at(const U32 w[:], const char *pool, U32 first, U32 index) {
+    Usize at = first + 2 * (Usize)index;
+    return (Parameter){.name = text(pool, w[at]), .type = w[at + 1]};
+}
+
+// Reads `name` (written `<name>` or, with quoted, "name" beside `folder`) with the compile flags `flags`, one on each
+// line. All three are NUL-terminated. The records are allocated in `a`.
+export Header read(arena::Arena *a, const char *name, Bool quoted, const char *folder, const char *flags) {
+    Request request = {.name = name, .quoted = quoted ? 1 : 0, .folder = folder, .flags = flags};
+    Usize capacity = 1U << 16;
+    U32 words[:] = arena::push_slice(a, U32, capacity);
+    Usize needed = smith_cimport_read(&request, words.data, capacity);
+    if (needed > capacity) { // the first call said how many
+        words = arena::push_slice(a, U32, needed);
+        needed = smith_cimport_read(&request, words.data, needed);
+    }
+    const U32 w[:] = words;
+    const char *pool = (const char *)words.data + w[2];
+    Header header = {};
+    header.error = text(pool, w[16]);
+    header.types = arena::push_slice(a, CType, w[5]);
+    for (U32 i = 0; i < w[5]; i++) {
+        Usize at = w[4] + 5 * (Usize)i;
+        CType t = {.kind = w[at], .flags = w[at + 1], .a = w[at + 2], .b = w[at + 3]};
+        if (t.kind == kind_typedef) {
+            t.name = text(pool, w[at + 2]);
+            t.a = w[at + 3];
+            t.b = 0;
+        }
+        if (t.kind == kind_unsupported) {
+            t.name = text(pool, w[at + 2]);
+            t.a = 0;
+        }
+        if (t.kind == kind_function) {
+            t.variadic = (w[at + 1] & 4) != 0;
+            t.parameters = arena::push_slice(a, Parameter, w[at + 4]);
+            for (U32 j = 0; j < w[at + 4]; j++) {
+                t.parameters[j] = parameter_at(w, pool, w[12], w[at + 3] + j);
+            }
+            t.b = 0;
+        }
+        header.types[i] = t;
+    }
+    header.functions = arena::push_slice(a, Function, w[7]);
+    for (U32 i = 0; i < w[7]; i++) {
+        Usize at = w[6] + 5 * (Usize)i;
+        Function f = {.name = text(pool, w[at]), .result = w[at + 1], .variadic = (w[at + 4] & 1) != 0};
+        f.parameters = arena::push_slice(a, Parameter, w[at + 3]);
+        for (U32 j = 0; j < w[at + 3]; j++) {
+            f.parameters[j] = parameter_at(w, pool, w[12], w[at + 2] + j);
+        }
+        header.functions[i] = f;
+    }
+    header.structs = arena::push_slice(a, Record, w[9]);
+    for (U32 i = 0; i < w[9]; i++) {
+        Usize at = w[8] + 4 * (Usize)i;
+        Record s = {.name = text(pool, w[at]), .opaque = (w[at + 3] & 1) != 0};
+        s.fields = arena::push_slice(a, Field, w[at + 2]);
+        for (U32 j = 0; j < w[at + 2]; j++) {
+            Usize f = w[10] + 2 * ((Usize)w[at + 1] + j);
+            s.fields[j] = (Field){.name = text(pool, w[f]), .type = w[f + 1]};
+        }
+        header.structs[i] = s;
+    }
+    header.not_imported = arena::push_slice(a, NotImported, w[15]);
+    for (U32 i = 0; i < w[15]; i++) {
+        Usize at = w[14] + 3 * (Usize)i;
+        header.not_imported[i] =
+            (NotImported){.kind = w[at], .name = text(pool, w[at + 1]), .reason = text(pool, w[at + 2])};
+    }
+    return header;
+}

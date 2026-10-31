@@ -1,0 +1,27 @@
+struct Point {
+    x: I32
+    y: F64
+}
+struct Opaque (opaque)
+struct Holder {
+    inner: *struct Opaque
+    compare: Compare = *Fn#6
+    callback: *Fn#11
+    name: *const I8
+    id: Id = U64
+    weights: [4]F32
+}
+struct Flags {
+    ready: unsupported(bit-field int)
+}
+fn add(a: I32, b: I32) -> I32
+fn log_line(format: *const I8, ...) -> I32
+fn origin() -> struct Point
+fn sort(holder: *struct Holder, compare: Compare = *Fn#23) -> Void
+fn precise() -> unsupported(long double)
+Fn#6 = Fn(*const Void, *const Void) -> I32
+Fn#11 = Fn(*Void, I32) -> I32
+Fn#23 = Fn(*const Void, *const Void) -> I32
+not imported union Either: a union is not imported
+not imported struct Flags: the field `ready` is a bit-field
+not imported precise: the type `long double` is not imported

@@ -1,0 +1,266 @@
+struct __fsid_t {
+    __val: [2]I32
+}
+struct __mbstate_t {
+    __count: I32
+    __value: unsupported(union (unnamed at /usr/include/x86_64-linux-gnu/bits/types/__mbstate_t.h:16:3))
+}
+struct _G_fpos_t {
+    __pos: __off_t = I64
+    __state: __mbstate_t = struct __mbstate_t
+}
+struct _G_fpos64_t {
+    __pos: __off64_t = I64
+    __state: __mbstate_t = struct __mbstate_t
+}
+struct _IO_marker (opaque)
+struct _IO_codecvt (opaque)
+struct _IO_wide_data (opaque)
+struct _IO_FILE {
+    _flags: I32
+    _IO_read_ptr: *I8
+    _IO_read_end: *I8
+    _IO_read_base: *I8
+    _IO_write_base: *I8
+    _IO_write_ptr: *I8
+    _IO_write_end: *I8
+    _IO_buf_base: *I8
+    _IO_buf_end: *I8
+    _IO_save_base: *I8
+    _IO_backup_base: *I8
+    _IO_save_end: *I8
+    _markers: *struct _IO_marker
+    _chain: *struct _IO_FILE
+    _fileno: I32
+    _flags2: I32
+    _old_offset: __off_t = I64
+    _cur_column: U16
+    _vtable_offset: I8
+    _shortbuf: [1]I8
+    _lock: *_IO_lock_t = Void
+    _offset: __off64_t = I64
+    _codecvt: *struct _IO_codecvt
+    _wide_data: *struct _IO_wide_data
+    _freeres_list: *struct _IO_FILE
+    _freeres_buf: *Void
+    __pad5: size_t = U64
+    _mode: I32
+    _unused2: [20]I8
+}
+struct _IO_cookie_io_functions_t {
+    read: *cookie_read_function_t = Fn#28
+    write: *cookie_write_function_t = Fn#33
+    seek: *cookie_seek_function_t = Fn#37
+    close: *cookie_close_function_t = Fn#40
+}
+struct __va_list_tag {
+    gp_offset: U32
+    fp_offset: U32
+    overflow_arg_area: *Void
+    reg_save_area: *Void
+}
+fn remove(__filename: *const I8) -> I32
+fn rename(__old: *const I8, __new: *const I8) -> I32
+fn renameat(__oldfd: I32, __old: *const I8, __newfd: I32, __new: *const I8) -> I32
+fn fclose(__stream: *FILE = struct _IO_FILE) -> I32
+fn tmpfile() -> *FILE = struct _IO_FILE
+fn tmpnam(_: *I8) -> *I8
+fn tmpnam_r(__s: *I8) -> *I8
+fn tempnam(__dir: *const I8, __pfx: *const I8) -> *I8
+fn fflush(__stream: *FILE = struct _IO_FILE) -> I32
+fn fflush_unlocked(__stream: *FILE = struct _IO_FILE) -> I32
+fn fopen(__filename: *const I8, __modes: *const I8) -> *FILE = struct _IO_FILE
+fn freopen(__filename: *const I8, __modes: *const I8, __stream: *FILE = struct _IO_FILE) -> *FILE = struct _IO_FILE
+fn fdopen(__fd: I32, __modes: *const I8) -> *FILE = struct _IO_FILE
+fn fopencookie(__magic_cookie: *Void, __modes: *const I8, __io_funcs: cookie_io_functions_t = struct _IO_cookie_io_functions_t) -> *FILE = struct _IO_FILE
+fn fmemopen(__s: *Void, __len: size_t = U64, __modes: *const I8) -> *FILE = struct _IO_FILE
+fn open_memstream(__bufloc: **I8, __sizeloc: *size_t = U64) -> *FILE = struct _IO_FILE
+fn setbuf(__stream: *FILE = struct _IO_FILE, __buf: *I8) -> Void
+fn setvbuf(__stream: *FILE = struct _IO_FILE, __buf: *I8, __modes: I32, __n: size_t = U64) -> I32
+fn setbuffer(__stream: *FILE = struct _IO_FILE, __buf: *I8, __size: size_t = U64) -> Void
+fn setlinebuf(__stream: *FILE = struct _IO_FILE) -> Void
+fn fprintf(__stream: *FILE = struct _IO_FILE, __format: *const I8, ...) -> I32
+fn printf(__format: *const I8, ...) -> I32
+fn sprintf(__s: *I8, __format: *const I8, ...) -> I32
+fn vfprintf(__s: *FILE = struct _IO_FILE, __format: *const I8, __arg: *struct __va_list_tag) -> I32
+fn vprintf(__format: *const I8, __arg: *struct __va_list_tag) -> I32
+fn vsprintf(__s: *I8, __format: *const I8, __arg: *struct __va_list_tag) -> I32
+fn snprintf(__s: *I8, __maxlen: size_t = U64, __format: *const I8, ...) -> I32
+fn vsnprintf(__s: *I8, __maxlen: size_t = U64, __format: *const I8, __arg: *struct __va_list_tag) -> I32
+fn vasprintf(__ptr: **I8, __f: *const I8, __arg: *struct __va_list_tag) -> I32
+fn __asprintf(__ptr: **I8, __fmt: *const I8, ...) -> I32
+fn asprintf(__ptr: **I8, __fmt: *const I8, ...) -> I32
+fn vdprintf(__fd: I32, __fmt: *const I8, __arg: *struct __va_list_tag) -> I32
+fn dprintf(__fd: I32, __fmt: *const I8, ...) -> I32
+fn fscanf(__stream: *FILE = struct _IO_FILE, __format: *const I8, ...) -> I32
+fn scanf(__format: *const I8, ...) -> I32
+fn sscanf(__s: *const I8, __format: *const I8, ...) -> I32
+fn vfscanf(__s: *FILE = struct _IO_FILE, __format: *const I8, __arg: *struct __va_list_tag) -> I32
+fn vscanf(__format: *const I8, __arg: *struct __va_list_tag) -> I32
+fn vsscanf(__s: *const I8, __format: *const I8, __arg: *struct __va_list_tag) -> I32
+fn fgetc(__stream: *FILE = struct _IO_FILE) -> I32
+fn getc(__stream: *FILE = struct _IO_FILE) -> I32
+fn getchar() -> I32
+fn getc_unlocked(__stream: *FILE = struct _IO_FILE) -> I32
+fn getchar_unlocked() -> I32
+fn fgetc_unlocked(__stream: *FILE = struct _IO_FILE) -> I32
+fn fputc(__c: I32, __stream: *FILE = struct _IO_FILE) -> I32
+fn putc(__c: I32, __stream: *FILE = struct _IO_FILE) -> I32
+fn putchar(__c: I32) -> I32
+fn fputc_unlocked(__c: I32, __stream: *FILE = struct _IO_FILE) -> I32
+fn putc_unlocked(__c: I32, __stream: *FILE = struct _IO_FILE) -> I32
+fn putchar_unlocked(__c: I32) -> I32
+fn getw(__stream: *FILE = struct _IO_FILE) -> I32
+fn putw(__w: I32, __stream: *FILE = struct _IO_FILE) -> I32
+fn fgets(__s: *I8, __n: I32, __stream: *FILE = struct _IO_FILE) -> *I8
+fn __getdelim(__lineptr: **I8, __n: *size_t = U64, __delimiter: I32, __stream: *FILE = struct _IO_FILE) -> __ssize_t = I64
+fn getdelim(__lineptr: **I8, __n: *size_t = U64, __delimiter: I32, __stream: *FILE = struct _IO_FILE) -> __ssize_t = I64
+fn getline(__lineptr: **I8, __n: *size_t = U64, __stream: *FILE = struct _IO_FILE) -> __ssize_t = I64
+fn fputs(__s: *const I8, __stream: *FILE = struct _IO_FILE) -> I32
+fn puts(__s: *const I8) -> I32
+fn ungetc(__c: I32, __stream: *FILE = struct _IO_FILE) -> I32
+fn fread(__ptr: *Void, __size: size_t = U64, __n: size_t = U64, __stream: *FILE = struct _IO_FILE) -> size_t = U64
+fn fwrite(__ptr: *const Void, __size: size_t = U64, __n: size_t = U64, __s: *FILE = struct _IO_FILE) -> size_t = U64
+fn fread_unlocked(__ptr: *Void, __size: size_t = U64, __n: size_t = U64, __stream: *FILE = struct _IO_FILE) -> size_t = U64
+fn fwrite_unlocked(__ptr: *const Void, __size: size_t = U64, __n: size_t = U64, __stream: *FILE = struct _IO_FILE) -> size_t = U64
+fn fseek(__stream: *FILE = struct _IO_FILE, __off: I64, __whence: I32) -> I32
+fn ftell(__stream: *FILE = struct _IO_FILE) -> I64
+fn rewind(__stream: *FILE = struct _IO_FILE) -> Void
+fn fseeko(__stream: *FILE = struct _IO_FILE, __off: __off_t = I64, __whence: I32) -> I32
+fn ftello(__stream: *FILE = struct _IO_FILE) -> __off_t = I64
+fn fgetpos(__stream: *FILE = struct _IO_FILE, __pos: *fpos_t = __fpos_t = struct _G_fpos_t) -> I32
+fn fsetpos(__stream: *FILE = struct _IO_FILE, __pos: *const fpos_t = __fpos_t = struct _G_fpos_t) -> I32
+fn clearerr(__stream: *FILE = struct _IO_FILE) -> Void
+fn feof(__stream: *FILE = struct _IO_FILE) -> I32
+fn ferror(__stream: *FILE = struct _IO_FILE) -> I32
+fn clearerr_unlocked(__stream: *FILE = struct _IO_FILE) -> Void
+fn feof_unlocked(__stream: *FILE = struct _IO_FILE) -> I32
+fn ferror_unlocked(__stream: *FILE = struct _IO_FILE) -> I32
+fn perror(__s: *const I8) -> Void
+fn fileno(__stream: *FILE = struct _IO_FILE) -> I32
+fn fileno_unlocked(__stream: *FILE = struct _IO_FILE) -> I32
+fn pclose(__stream: *FILE = struct _IO_FILE) -> I32
+fn popen(__command: *const I8, __modes: *const I8) -> *FILE = struct _IO_FILE
+fn ctermid(__s: *I8) -> *I8
+fn flockfile(__stream: *FILE = struct _IO_FILE) -> Void
+fn ftrylockfile(__stream: *FILE = struct _IO_FILE) -> I32
+fn funlockfile(__stream: *FILE = struct _IO_FILE) -> Void
+fn __uflow(_: *FILE = struct _IO_FILE) -> I32
+fn __overflow(_: *FILE = struct _IO_FILE, _: I32) -> I32
+Fn#28 = Fn(*Void, *I8, size_t = U64) -> __ssize_t = I64
+Fn#33 = Fn(*Void, *const I8, size_t = U64) -> __ssize_t = I64
+Fn#37 = Fn(*Void, *__off64_t = I64, I32) -> I32
+Fn#40 = Fn(*Void) -> I32
+not imported struct __mbstate_t: a union is not imported
+not imported attribute remove: nothrow
+not imported attribute rename: nothrow
+not imported attribute renameat: nothrow
+not imported attribute fclose: nonnull
+not imported attribute tmpfile: malloc
+not imported attribute tmpnam: nothrow
+not imported attribute tmpnam_r: nothrow
+not imported attribute tempnam: nothrow
+not imported attribute tempnam: malloc
+not imported attribute fopen: malloc
+not imported attribute freopen: nonnull
+not imported attribute fdopen: nothrow
+not imported attribute fdopen: malloc
+not imported attribute fopencookie: nothrow
+not imported attribute fopencookie: malloc
+not imported attribute fmemopen: nothrow
+not imported attribute fmemopen: malloc
+not imported attribute open_memstream: nothrow
+not imported attribute open_memstream: malloc
+not imported attribute setbuf: nothrow
+not imported attribute setbuf: nonnull
+not imported attribute setvbuf: nothrow
+not imported attribute setvbuf: nonnull
+not imported attribute setbuffer: nothrow
+not imported attribute setbuffer: nonnull
+not imported attribute setlinebuf: nothrow
+not imported attribute setlinebuf: nonnull
+not imported attribute fprintf: format
+not imported attribute fprintf: nonnull
+not imported attribute printf: format
+not imported attribute sprintf: format
+not imported attribute sprintf: nothrow
+not imported attribute vfprintf: format
+not imported attribute vfprintf: nonnull
+not imported attribute vprintf: format
+not imported attribute vsprintf: format
+not imported attribute vsprintf: nothrow
+not imported attribute snprintf: nothrow
+not imported attribute snprintf: format
+not imported attribute vsnprintf: nothrow
+not imported attribute vsnprintf: format
+not imported attribute vasprintf: nothrow
+not imported attribute vasprintf: format
+not imported attribute __asprintf: nothrow
+not imported attribute __asprintf: format
+not imported attribute asprintf: nothrow
+not imported attribute asprintf: format
+not imported attribute vdprintf: format
+not imported attribute dprintf: format
+not imported attribute fscanf: format
+not imported attribute fscanf: nonnull
+not imported attribute scanf: format
+not imported attribute sscanf: format
+not imported attribute sscanf: nothrow
+not imported attribute vfscanf: format
+not imported attribute vfscanf: nonnull
+not imported attribute vscanf: format
+not imported attribute vsscanf: nothrow
+not imported attribute vsscanf: format
+not imported attribute fgetc: nonnull
+not imported attribute getc: nonnull
+not imported attribute getc_unlocked: nonnull
+not imported attribute fgetc_unlocked: nonnull
+not imported attribute fputc: nonnull
+not imported attribute putc: nonnull
+not imported attribute fputc_unlocked: nonnull
+not imported attribute putc_unlocked: nonnull
+not imported attribute getw: nonnull
+not imported attribute putw: nonnull
+not imported attribute fgets: nonnull
+not imported attribute __getdelim: nonnull
+not imported attribute getdelim: nonnull
+not imported attribute getline: nonnull
+not imported attribute fputs: nonnull
+not imported attribute ungetc: nonnull
+not imported attribute fread: nonnull
+not imported attribute fwrite: nonnull
+not imported attribute fread_unlocked: nonnull
+not imported attribute fwrite_unlocked: nonnull
+not imported attribute fseek: nonnull
+not imported attribute ftell: nonnull
+not imported attribute rewind: nonnull
+not imported attribute fseeko: nonnull
+not imported attribute ftello: nonnull
+not imported attribute fgetpos: nonnull
+not imported attribute fsetpos: nonnull
+not imported attribute clearerr: nothrow
+not imported attribute clearerr: nonnull
+not imported attribute feof: nothrow
+not imported attribute feof: nonnull
+not imported attribute ferror: nothrow
+not imported attribute ferror: nonnull
+not imported attribute clearerr_unlocked: nothrow
+not imported attribute clearerr_unlocked: nonnull
+not imported attribute feof_unlocked: nothrow
+not imported attribute feof_unlocked: nonnull
+not imported attribute ferror_unlocked: nothrow
+not imported attribute ferror_unlocked: nonnull
+not imported attribute perror: cold
+not imported attribute fileno: nothrow
+not imported attribute fileno: nonnull
+not imported attribute fileno_unlocked: nothrow
+not imported attribute fileno_unlocked: nonnull
+not imported attribute pclose: nonnull
+not imported attribute popen: malloc
+not imported attribute ctermid: nothrow
+not imported attribute flockfile: nothrow
+not imported attribute flockfile: nonnull
+not imported attribute ftrylockfile: nothrow
+not imported attribute ftrylockfile: nonnull
+not imported attribute funlockfile: nothrow
+not imported attribute funlockfile: nonnull
