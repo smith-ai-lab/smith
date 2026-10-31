@@ -316,3 +316,79 @@ export void test_prove_checks_an_edited_source_keeps_its_contract_checks() {
     scratch::expect_contains("stale: every check is back", report_of(&p, "contracts.smith"),
                              "0 removed (proved), 4 kept");
 }
+
+// The arithmetic checks (issue #1101, of #351) are recorded like an index: the lines of an addition, a division, a
+// remainder, a shift and a float to int conversion that a proved function can never trip are in the proof file, and the
+// same operations in a function that cannot prove them are not (`bare` fails, so its check stays).
+constexpr char arithmetic_source[_] = "module arith;\n"
+                                      "\n"
+                                      "import std::contract;\n"
+                                      "\n"
+                                      "export i32 sum(i32 x) {\n"
+                                      "    contract::requires(x > 0 && x < 100);\n"
+                                      "    contract::ensures(true);\n"
+                                      "    return x + 1;\n"
+                                      "}\n"
+                                      "\n"
+                                      "export i32 bare(i32 x) {\n"
+                                      "    contract::ensures(true);\n"
+                                      "    return x + 1;\n"
+                                      "}\n"
+                                      "\n"
+                                      "export i32 quotient(i32 x, i32 y) {\n"
+                                      "    contract::requires(y > 0);\n"
+                                      "    contract::ensures(true);\n"
+                                      "    return x / y;\n"
+                                      "}\n"
+                                      "\n"
+                                      "export i32 remainder(i32 x, i32 y) {\n"
+                                      "    contract::requires(y > 0);\n"
+                                      "    contract::ensures(true);\n"
+                                      "    return x % y;\n"
+                                      "}\n"
+                                      "\n"
+                                      "export i32 shifted(i32 x) {\n"
+                                      "    contract::requires(x >= 0 && x < 100);\n"
+                                      "    contract::ensures(true);\n"
+                                      "    return x << 2;\n"
+                                      "}\n"
+                                      "\n"
+                                      "export i32 narrow(f32 x) {\n"
+                                      "    contract::requires(x > 0.0f && x < 100.0f);\n"
+                                      "    contract::ensures(true);\n"
+                                      "    return (i32)x;\n"
+                                      "}\n";
+
+constexpr char arithmetic_main[_] =
+    "module main;\n"
+    "\n"
+    "import arith;\n"
+    "\n"
+    "i32 main() {\n"
+    "    return arith::sum(1) + arith::bare(1) + arith::quotient(4, 2) + arith::remainder(5, 2) +\n"
+    "           arith::shifted(1) + arith::narrow(2.0f) - 15;\n"
+    "}\n";
+
+export void test_prove_checks_arithmetic_checks_are_recorded_when_proved() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "arith.smith", arithmetic_source);
+    scratch::write(&p, "main.smith", arithmetic_main);
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("the project builds", 0, &built);
+    scratch::Run run = scratch::sh(&p, "smith prove -v 2>&1");
+    scratch::expect_status("`bare` cannot prove its addition, so the run fails", 1, &run);
+    const char *pts = scratch::read(&p, ".smith/proved/arith.smith.pts");
+    scratch::expect_contains("the proved addition", pts, "\n8\n");
+    scratch::expect_lacks("the unproved addition stays a check", pts, "\n13\n");
+    scratch::expect_contains("the division", pts, "\n19\n");
+    scratch::expect_contains("the remainder", pts, "\n25\n");
+    scratch::expect_contains("the shift", pts, "\n31\n");
+    scratch::expect_contains("the float to int conversion", pts, "\n37\n");
+    scratch::expect_contains("-v counts them", run.out,
+                             "arithmetic checks (overflow, shift, division, float to int): 5 proved, 1 remain");
+}

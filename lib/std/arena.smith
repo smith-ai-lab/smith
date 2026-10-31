@@ -25,8 +25,8 @@ import <stdlib.h>; // aligned_alloc and free: the current allocator, a growing a
 // the backing refusing is a checked failure naming the size. With no backing given, a chunk is aligned_alloc's and goes
 // back with free: the allocator in force on the thread, which a set allocator swaps (owner, 2026-10-30: "you just
 // always use the current allocator"), so a zero arena that is not released is a leak a test's checker reports.
-// arena::try_push_raw (null) and arena::try_push (an `option`) are the forms of a push for code that
-// refuses.
+// arena::try_push_raw (null), arena::try_push and arena::try_push_slice (an `option`) are the forms of a push for code
+// that refuses.
 //
 // The project compiles lib/std/arena.smith itself (build.c: smith_library(b, "arena")), so the library is built with
 // the project's own flags, sanitizers included.
@@ -450,6 +450,32 @@ export type slice_of(type element, usize count) {
     }
     result.data = push_array_raw(arena, sizeof(T), total, alignof(T));
     return result;
+}
+
+// The slice of dims over memory: the sizes in `count`, row-major, as push_slice builds it.
+slice_of(T, countof(dims)) slice_over(constexpr type T, void *memory, auto... dims) {
+    struct smith_array_T_n result = {};
+    for constexpr (usize i = 0; i < countof(dims); i++)
+        result.count[i] = (usize)dims[i];
+    result.data = (T *)memory;
+    return result;
+}
+
+// The slice of push_slice, or `.none` when the arena cannot hold it (a fixed arena out of space, the backing of a
+// growing one refusing, a size that overflows): the form for code that refuses, where push_slice is a checked failure.
+// A refusal pushes nothing, and the size and the data travel as one. Built on try_push_array_raw as
+// mem::try_alloc_slice is on try_alloc_raw. For .smith; C uses smith_arena_try_push_array.
+[[std::c_name("smith_arena_try_push_slice_type")]] export [[nodiscard]] option(slice_of(T, countof(dims)))
+    try_push_slice(Arena *arena, constexpr type T, auto... dims) {
+    static_assert(countof(dims) > 0,
+                  "try_push_slice needs a size for each `[:]` of the result: try_push_slice(&a, T, n)");
+    usize total = 1;
+    for constexpr (usize i = 0; i < countof(dims); i++) {
+        if (__builtin_mul_overflow(total, (usize)dims[i], &total)) return .none;
+    }
+    void *memory = try_push_array_raw(arena, sizeof(T), total, alignof(T));
+    if (memory == nullptr) return .none;
+    return {.some = slice_over(T, memory, dims...)};
 }
 
 // A second arena of capacity bytes out of the memory the parent has not used: the next capacity bytes after its cursor,

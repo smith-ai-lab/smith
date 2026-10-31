@@ -33,7 +33,7 @@ export i32 demo() {
 
 - **Where**: in a function body (an argument, an initializer, an assignment, after `return`), and in a file-scope initializer (`static i32 (*const f)(i32) = [](i32 a) { return a; };`, or inside the braces of a table).
 - **The return type** is `-> T`, else the type of the first `return` when it is the body's first statement, else `void` (no `return`). Write `-> T` for any other body. Every later `return` is checked against an inferred type: `this `return` has another type than the lambda's`; `-> T` says which.
-- **No captures.** A name the body uses from the enclosing function is an error that names it: `` `factor` belongs to the enclosing function: ... a function pointer can't carry captures ``. Names of the module, the lambda's own parameters and locals, and `c::` names are fine.
+- **No captures.** A name the body uses from the enclosing function is an error that names it: `` `factor` belongs to the enclosing function: ... a function pointer can't carry captures ``. Names of the module, the lambda's own parameters and locals, and `c::` names are fine. A capture list `[x, y]` (locals' names, in a module) is read, but captures are not lowered yet (#958): the error names the first capture.
 - **No name**, so no recursion; effects are inferred like any function's; parameters are written types. **Underneath**: a hidden function `smith_lambda_<file hash>_<place>` written after the enclosing function (a file-scope lambda: a `static` one before its declaration). A lambda in a `static` local's initializer is not constant: use file scope.
 
 ## In a generic

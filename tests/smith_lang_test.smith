@@ -2012,6 +2012,26 @@ export void test_error_fields_enum_member() {
     corpus_case("error-fields-enum-member");
 }
 
+export void test_error_lambda_capture_to_pointer() {
+    corpus_case("error-lambda-capture-to-pointer");
+}
+
+export void test_error_lambda_capture_not_local() {
+    corpus_case("error-lambda-capture-not-local");
+}
+
+export void test_error_lambda_capture_no_module() {
+    corpus_case("error-lambda-capture-no-module");
+}
+
+export void test_error_lambda_capture_generic() {
+    corpus_case("error-lambda-capture-generic");
+}
+
+export void test_lambda_capture_list_not_a_lambda() {
+    corpus_case("lambda-capture-list-not-a-lambda");
+}
+
 export void test_lambda_basic() {
     corpus_case("lambda-basic");
 }

@@ -1,25 +1,31 @@
 ---
 name: smith-json
-description: "Reading JSON with smith's json (import std::json; <smith/json.h>): an arena tree and from C. Load for JSON, code that calls smith_json_ or includes <smith/json.h>, tokenizer.json, MCP, DAP or JSON-RPC messages."
+description: "Reading JSON with smith's json (import std::json; <smith/json.h>): a tree from malloc and from C. Load for JSON, code that calls smith_json_ or includes <smith/json.h>, tokenizer.json, MCP, DAP or JSON-RPC messages."
 ---
 
 # JSON: smith's json
 
-**json is C today, used from `.smith` as `import <smith/json.h>;` with every name under `c::`** (`c::SmithJsonValue`, `c::smith_json_parse`); it becomes a module later (the names and what they do stay). Text and the arena are modules already, so its text is `const char[:]` (the header's `struct smith_array_const_char_n`) and the arena is `arena::Arena` (`SmithArena`). The prose below names functions by their C names (`smith_json_parse`); in `.smith` write `c::` before each. The C form is under "From C".
+**json is C today, used from `.smith` as `import <smith/json.h>;` with every name under `c::`** (`c::SmithJsonValue`, `c::smith_json_parse`); it becomes a module later (the names and what they do stay). Text is a module already, so its text is `const char[:]` (the header's `struct smith_array_const_char_n`). The tree is plain `malloc`: whatever allocator is in force gives it (put an arena in force around a parse to free the tree by resetting it; `smith-mem`). The prose below names functions by their C names (`smith_json_parse`); in `.smith` write `c::` before each. The C form is under "From C".
 
 ## Read a tree
 
 ```smith
 import std::arena;
+import std::mem;
 import std::text;
 import <smith/json.h>;
 
-// The name of a document's "name" member, or an empty text; the error goes to the console of the caller.
+// The name of a document's "name" member, or an empty text; the error goes to the console of the caller. The tree is
+// taken from the arena put in force for the parse, so the caller's reset of `a` frees it.
 typeof(const char[:]) name_of(arena::Arena *a, const char input[:]) {
+    arena::ArenaAllocator allocator = arena::allocator(a);
+    mem::Allocator *before = mem::set_allocator(&allocator.base);
     c::SmithJsonLimits limits = {.depth = 32, .string_length = 1 << 16, .count = 1 << 20}; // yours, never defaults
     const c::SmithJsonValue *root;
     c::SmithJsonError error;
-    if (!c::smith_json_parse(a, input, limits, &root, &error)) return {};
+    bool parsed = c::smith_json_parse(input, limits, &root, &error);
+    mem::set_allocator(before);
+    if (!parsed) return {};
     const c::SmithJsonValue *name = c::smith_json_member(root, "name"); // the last of a repeated key, or nullptr
     if (name == nullptr) return {};
     return name->text;
@@ -33,12 +39,12 @@ usize total_items(const c::SmithJsonValue *list) {
 ```
 
 - A value has `kind`, `offset`, `key`, `text` (a decoded string, or a number as written), `count`, `items` and `span`.
-- The input must outlive the tree. A string with no escape is a slice of it; one with escapes is decoded into the arena.
-- A tree the arena cannot hold panics: the push stops the program with the arena's report (there is no `OutOfMemory` reason). A bad document, or one over a limit, is the `false` and `error`.
+- The input must outlive the tree. A string with no escape is a slice of it; one with escapes is decoded into the tree's block.
+- A tree the allocator in force cannot give stops the program (there is no `OutOfMemory` reason). A bad document, or one over a limit, is the `false` and `error`.
 
 ## From C
 
-C includes `<smith/json.h>` and uses the names as they are (`struct smith_array_const_char_n` with `.data` and `.count[0]`, `SmithArena`, `smith_text_make`):
+C includes `<smith/json.h>` and uses the names as they are (`struct smith_array_const_char_n` with `.data` and `.count[0]`, `smith_text_make`):
 
 ```c
 #include <smith/json.h>
@@ -46,7 +52,7 @@ C includes `<smith/json.h>` and uses the names as they are (`struct smith_array_
 SmithJsonLimits limits = {.depth = 32, .string_length = 1 << 16, .count = 1 << 20};
 const SmithJsonValue *root;
 SmithJsonError error;
-if (!smith_json_parse(&arena, input, limits, &root, &error))
+if (!smith_json_parse(input, limits, &root, &error)) // malloc's tree: free it, or set an arena first
     fprintf(stderr, "byte %zu: %s\n", error.offset, smith_json_reason_text(error.reason));
 const SmithJsonValue *name = smith_json_member(root, "name");
 ```

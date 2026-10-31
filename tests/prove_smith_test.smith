@@ -311,6 +311,45 @@ export void test_prove_smith_counting_a_bound_that_is_too_small_fails_at_its_lin
     has("smith counting: ... at its line", &run, "counting.smith:33: smith_ensures(hits <= 3) may be false");
 }
 
+// 11a4. A lemma is a function (#1053): calling it gives its `ensures` to the prover once its `requires` is proved at
+// the call, and a function called inside a contract is read through its body, so the claim is about its result.
+export void test_prove_smith_lemmas_a_called_lemma_and_a_claim_about_a_call_are_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prove_cases::each_proved(
+        &p, "smith lemmas: the lemmas and the claims about a call are proved", "\"$c/geometry/lemmas.smith\"",
+        "geometry::lemmas::", "square_is_nonnegative square small_square_fits use_small twice_is_double");
+}
+
+export void test_prove_smith_lemmas_a_lemma_called_where_its_requires_may_be_false_is_refused_at_the_call() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = refuted(&p, "smith lemmas: a lemma called outside its requires is refused",
+                               "--function=geometry::lemmas::use_small_wrong \"$c/geometry/lemmas.smith\"");
+    has("smith lemmas: ... at the call", &run,
+        "lemmas.smith:37: the call of geometry::lemmas::small_square_fits may break");
+}
+
+export void test_prove_smith_lemmas_a_claim_about_a_call_with_the_wrong_body_fails_with_a_counterexample() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = refuted(&p, "smith lemmas: a claim about a call with the wrong body fails",
+                               "--function=geometry::lemmas::thrice_is_double \"$c/geometry/lemmas.smith\"");
+    has("smith lemmas: ... with a counterexample", &run, "counterexample: n = ");
+}
+
 // 11b. The project verb proves .smith sources too (issue #42): a convention project, no build file, with a contract in
 // a module and a trusted function written with c::smith_trusted().
 export void test_prove_project_a_smith_projects_contracts_are_proved_as_written() {

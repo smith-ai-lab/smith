@@ -586,6 +586,28 @@ export void test_recursion_plain_smith() {
     effects_case("recursion_plain.smith");
 }
 
+// Functions reached only from proved checks (issue #1055): no recursion error, no effects on the caller; the same
+// function called from running code, or from a check that is not proved, keeps the error.
+export void test_proof_only_smith() {
+    effects_case("proof_only.smith");
+}
+
+// The report of the analysis: which functions are proof-only, by symbol. A scratch project, because it needs the
+// compiler's process and its environment.
+export void test_proof_only_report() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "tests/effects", "tests/effects");
+    scratch::Run run = scratch::sh(
+        &p, "cd tests/effects && SMITH_EFFECTS_PROOF_ONLY=../../report smith cc -std=gnu2y -I "
+            "\"$SMITH_REPO/.smith/include\" -c proof_only.smith -o /dev/null >/dev/null 2>&1; sort ../../report");
+    test::golden(slice_of("tests/effects/proof_only.report.expected"), slice_of(run.out));
+}
+
 // libc's hidden state and the idiom of a returned pointer (issue #724): a printf with a float conversion is `globals`,
 // a module may call a pointer-returning libc function the table gives an idiom, and one it does not is an error.
 export void test_effects_printf_float_c() {

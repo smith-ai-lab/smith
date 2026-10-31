@@ -43,6 +43,7 @@ struct Point {
     int induction_loop = -1;                  // a loop proved by induction: its index in Unit::loops
     bool induction_step = false;              // ... and this is its check at the back edge (else: on entry)
     bool contract_check = false; // an ensures, invariant or assert call: a run-time check the lowering can omit
+    unsigned trap_id = ~0u;      // a Kind::Trap: the id of its llvm.ubsantrap (clang's SanitizerHandler order)
 };
 
 // A call of a function whose contract replaced it.

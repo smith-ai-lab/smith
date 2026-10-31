@@ -1,0 +1,19 @@
+// A HOME that holds a ".." segment (issue #428): smith unpacks clang's files under it and works, where it used to abort
+// on an assert that scanned the root along with the pack's own paths.
+module home_dotdot_test;
+
+import std::test;
+import scratch;
+
+export void test_home_dotdot_a_home_with_a_parent_segment_unpacks_clang_and_compiles() {
+    scratch::Project p = scratch::make("proj", nullptr);
+    defer scratch::clean(&p);
+    scratch::write(&p, "empty.c", "int smith_home_dotdot;\n");
+    scratch::Run run =
+        scratch::sh(&p, "mkdir -p x y && env -u XDG_DATA_HOME HOME=\"$PWD/x/../y\" smith cc -c empty.c -o empty.o");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_status("smith compiles with HOME=<dir>/x/../y", 0, &run);
+    scratch::expect_lacks("... and does not abort", run.err, "assert");
+    test::check_condition(scratch::exists(&p, "empty.o"));
+}

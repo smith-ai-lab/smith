@@ -511,6 +511,7 @@ struct Edge {
     std::string symbol;      // the callee's linkage name, for a call the summary resolves across files
     bool unresolved = false; // a project function the file has no body for: no effect here, see the summary
     bool tail = false;       // `[[clang::musttail]] return f(...);`: a jump, which makes a loop of a cycle
+    bool proof = false;      // the call is inside the argument of a proved check (`smith_proved(f(n))`, #1055)
 };
 
 // A place a function pointer is made or called, for the report-only mode of the pointer rule (#396): a call through a
@@ -635,6 +636,7 @@ class Collector {
     std::vector<const StaticAssertDecl *> &asserts; // the static_asserts of the body, for effects::within
     std::set<const Expr *> callees;   // the callee expressions of the calls met, which are not conversions to a pointer
     std::set<const CallExpr *> tails; // the calls of `[[clang::musttail]] return` statements, met before the calls
+    std::set<const CallExpr *> proofs; // the calls inside the argument of a proved check, met before the calls
 
     // The call a `[[clang::musttail]] return f(...);` makes, remembered: an attributed statement is visited before its
     // children.
@@ -645,6 +647,31 @@ class Collector {
         const auto *returned = dyn_cast<ReturnStmt>(attributed->getSubStmt());
         if (!musttail || returned == nullptr || returned->getRetValue() == nullptr) return;
         if (const auto *call = dyn_cast<CallExpr>(returned->getRetValue()->IgnoreParenImpCasts())) tails.insert(call);
+    }
+
+    // The name of a check `smith prove` proved, as the lowering writes it where the call stood: `smith_proved` in an
+    // optimized build, which leaves the check out, and `smith_contract_proved_<kind>` in a build that keeps it (#325).
+    static bool provedCheck(llvm::StringRef name) {
+        return name == "smith_proved" || name == "smith_contract_proved_ensures" ||
+               name == "smith_contract_proved_invariant" || name == "smith_contract_proved_assert";
+    }
+
+    // The calls in the arguments of a proved check are proof code: remembered before they are met (a call is visited
+    // before its children), so `onCall` marks their edges.
+    void noteProved(const CallExpr *call) {
+        const FunctionDecl *callee = call->getDirectCallee();
+        if (callee == nullptr || !provedCheck(plain_name(callee))) return;
+        std::vector<const Stmt *> work;
+        for (const Expr *arg : call->arguments())
+            work.push_back(arg);
+        while (!work.empty()) {
+            const Stmt *statement = work.back();
+            work.pop_back();
+            if (statement == nullptr) continue;
+            if (const auto *inner = dyn_cast<CallExpr>(statement)) proofs.insert(inner);
+            for (const Stmt *child : statement->children())
+                work.push_back(child);
+        }
     }
 
     void visit(const Stmt *statement) {
@@ -664,6 +691,7 @@ class Collector {
             }
         } else if (const auto *call = dyn_cast<CallExpr>(statement)) {
             callees.insert(call->getCallee()->IgnoreParens());
+            noteProved(call);
             if (const FunctionDecl *callee = call->getDirectCallee()) {
                 llvm::StringRef called = plain_name(callee);
                 node.grows = node.grows || called == "alloca" || called == "__builtin_alloca" ||
@@ -699,6 +727,7 @@ class Collector {
             edge.loc = call->getBeginLoc();
             edge.symbol = symbols(definition);
             edge.tail = tails.count(call) != 0;
+            edge.proof = proofs.count(call) != 0;
             node.edges.push_back(edge);
             return;
         }
@@ -926,6 +955,7 @@ class Analysis {
 
     void run() {
         collect(context.getTranslationUnitDecl());
+        pruneProofOnly();
         solve();
         if (pointerReport()) reportPointers();
         for (const FunctionDecl *function : order) { // source order: the map's order is the pointers'
@@ -1117,6 +1147,90 @@ class Analysis {
             } else if (const auto *linkage = dyn_cast<LinkageSpecDecl>(decl)) {
                 collect(linkage);
             }
+        }
+    }
+
+    // Proof-only functions (#1055). A function that no running code reaches: it has internal linkage, its address is
+    // never taken, and every call of it is inside the argument of a proved check or inside another proof-only function.
+    // Its check is gone (an optimized build leaves it out, and the other kind of build keeps it as a net the proof says
+    // cannot fail), so the function runs nowhere that counts: it has no effects, a cycle of such functions is no
+    // recursion error, and the lowering leaves it out of an optimized build. A function reached from a check that is
+    // not proved, or from running code as well, is running and stays whole. The calls of the proof code are dropped
+    // from the graph here, before the sets are solved and the cycles looked for.
+    std::set<const FunctionDecl *> proofOnly;
+
+    void pruneProofOnly() {
+        std::map<const FunctionDecl *, size_t> called; // calls of each internal function with a body
+        std::set<const FunctionDecl *> taken;
+        for (const FunctionDecl *function : order) {
+            const Node &node = nodes[function];
+            for (const Edge &edge : node.edges)
+                if (edge.callee != nullptr) called[edge.callee]++;
+            for (const PointerUse &use : node.pointers)
+                if (use.target != nullptr) taken.insert(use.target->getDefinition());
+        }
+        auto candidate = [&](const FunctionDecl *function) {
+            return !function->isExternallyVisible() && taken.count(function) == 0 && called.count(function) != 0 &&
+                   !function->hasAttr<UsedAttr>() && !function->hasAttr<ConstructorAttr>() &&
+                   !function->hasAttr<DestructorAttr>();
+        };
+        // The running functions: every one that is not a candidate, and what they call outside proof code.
+        std::set<const FunctionDecl *> running;
+        std::vector<const FunctionDecl *> work;
+        for (const FunctionDecl *function : order)
+            if (!candidate(function)) {
+                running.insert(function);
+                work.push_back(function);
+            }
+        // The proof code: what a running function calls inside a proved check, and what that calls.
+        std::set<const FunctionDecl *> proof;
+        std::vector<const FunctionDecl *> proofWork;
+        while (!work.empty()) {
+            const FunctionDecl *function = work.back();
+            work.pop_back();
+            for (const Edge &edge : nodes[function].edges) {
+                if (edge.callee == nullptr) continue;
+                if (!edge.proof) {
+                    if (running.insert(edge.callee).second) work.push_back(edge.callee);
+                } else if (proof.insert(edge.callee).second) {
+                    proofWork.push_back(edge.callee);
+                }
+            }
+        }
+        while (!proofWork.empty()) {
+            const FunctionDecl *function = proofWork.back();
+            proofWork.pop_back();
+            for (const Edge &edge : nodes[function].edges)
+                if (edge.callee != nullptr && proof.insert(edge.callee).second) proofWork.push_back(edge.callee);
+        }
+        for (const FunctionDecl *function : proof)
+            if (running.count(function) == 0) proofOnly.insert(function);
+        if (proofOnly.empty()) return;
+        // Drop the calls of proof code: those into a proof-only function, and all those a proof-only function makes.
+        for (const FunctionDecl *function : order) {
+            Node &node = nodes[function];
+            if (proofOnly.count(function) != 0) {
+                node.edges.clear();
+                continue;
+            }
+            llvm::erase_if(node.edges, [&](const Edge &edge) {
+                return edge.callee != nullptr && edge.proof && proofOnly.count(edge.callee) != 0;
+            });
+        }
+        reportProofOnly();
+    }
+
+    // `SMITH_EFFECTS_PROOF_ONLY=<file>` appends a line `proof-only <name>` for each function found, the report the
+    // erasure and its test read.
+    void reportProofOnly() {
+        const char *path = getenv("SMITH_EFFECTS_PROOF_ONLY");
+        if (path == nullptr) return;
+        std::string text;
+        for (const FunctionDecl *function : order)
+            if (proofOnly.count(function) != 0) text += "proof-only " + symbolOf(function) + "\n";
+        if (FILE *file = fopen(path, "a")) {
+            fwrite(text.data(), 1, text.size(), file);
+            fclose(file);
         }
     }
 

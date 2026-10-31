@@ -375,14 +375,41 @@ void cache_store(const std::string &path, const prove::Outcome &outcome) {
 // the source lines.
 FILE *checks_file = nullptr;
 
+// The ids of llvm.ubsantrap (shim/prove_ir.cpp's trap_messages) of the arithmetic checks of issue #351: signed overflow
+// of an addition (0), a multiplication (12), a negation (13) and a subtraction (21), a division or remainder by zero or
+// of the minimum by -1 (3), a float converted out of range (5) and a shift out of bounds (20).
+bool arithmetic_trap(const prove::Point &point) {
+    if (point.kind != prove::Kind::Trap) return false;
+    for (unsigned id : {0u, 3u, 5u, 12u, 13u, 20u, 21u}) {
+        if (point.trap_id == id) return true;
+    }
+    return false;
+}
+
+bool module_point(const prove::Point &point) {
+    return point.inlined.empty() && point.line != 0 && point.file.size() >= 6 &&
+           point.file.compare(point.file.size() - 6, 6, ".smith") == 0;
+}
+
+// For -v: how many arithmetic checks of module sources proved functions proved (`proved`), and how many a function
+// that did not prove left standing (`kept`). One row per function, `A<TAB>proved<TAB>kept`, for the parent to add up.
+void record_arithmetic(const prove::Unit &unit, bool proved) {
+    if (checks_file == nullptr || unit.name.find('<') != std::string::npos) return;
+    unsigned count = 0;
+    for (const prove::Point &point : unit.points)
+        count += arithmetic_trap(point) && module_point(point);
+    if (count == 0) return;
+    std::fprintf(checks_file, "A\t%u\t%u\n", proved ? count : 0, proved ? 0 : count);
+    std::fflush(checks_file);
+}
+
 void record_checks(const prove::Unit &unit) {
     if (checks_file == nullptr || unit.name.find('<') != std::string::npos) return;
+    record_arithmetic(unit, true);
     std::set<std::string> sources;
     for (const prove::Point &point : unit.points) {
         bool index_check = point.kind == prove::Kind::Assert && point.text == proved::check_text();
-        if ((!index_check && !point.contract_check) || !point.inlined.empty() || point.line == 0 ||
-            point.file.size() < 6 || point.file.compare(point.file.size() - 6, 6, ".smith") != 0)
-            continue;
+        if ((!index_check && !point.contract_check && !arithmetic_trap(point)) || !module_point(point)) continue;
         std::fprintf(checks_file, "%s\t%u\n", point.file.c_str(), point.line);
         sources.insert(point.file);
     }
@@ -411,7 +438,7 @@ std::vector<std::string> split_tabs(const std::string &row) {
 // Writes `.smith/proved/<source>.pts` for each source with a proved check, from what the children recorded. The
 // source's text is read now: the key is of what was proved. A source whose proof read a file that cannot be found is
 // not written (its checks stay). Returns how many files it wrote.
-unsigned write_proved() {
+unsigned write_proved(unsigned &arithmetic_proved, unsigned &arithmetic_kept) {
     std::map<std::string, std::set<unsigned>> lines;
     std::map<std::string, std::set<std::string>> dependencies;
     std::set<std::string> unkeyed;
@@ -428,6 +455,9 @@ unsigned write_proved() {
             } else if (path != own) {
                 dependencies[parts[1]].insert(path);
             }
+        } else if (parts.size() == 3 && parts[0] == "A") {
+            arithmetic_proved += static_cast<unsigned>(std::strtoul(parts[1].c_str(), nullptr, 10));
+            arithmetic_kept += static_cast<unsigned>(std::strtoul(parts[2].c_str(), nullptr, 10));
         } else if (parts.size() == 2) {
             lines[parts[0]].insert(static_cast<unsigned>(std::strtoul(parts[1].c_str(), nullptr, 10)));
         }
@@ -552,6 +582,7 @@ int prove_prepared(prove::Prepared &prepared, const prove::Options &options) {
         print_time_report(prepared.unit, outcome, options);
         break;
     case prove::Outcome::Failed:
+        record_arithmetic(prepared.unit, false);
         std::printf("FAIL  %s  %.2f s wall, %.2f s CPU, charged %.2f s\n", label.c_str(), outcome.seconds,
                     outcome.cpu_seconds, outcome.charged);
         for (const prove::Finding &finding : outcome.findings)
@@ -559,6 +590,7 @@ int prove_prepared(prove::Prepared &prepared, const prove::Options &options) {
         print_time_report(prepared.unit, outcome, options);
         break;
     case prove::Outcome::Timeout:
+        record_arithmetic(prepared.unit, false);
         std::printf(
             "FAIL  %s\n  over its budget of %.0f s of CPU time (counted as on %u idle cores): it was charged "
             "%.1f s, having used %.1f s of CPU in %.1f s of wall time, and was stopped; prove it in smaller "
@@ -881,9 +913,14 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
         }
     }
     if (checks_file != nullptr) {
-        unsigned written = write_proved();
+        unsigned arithmetic_proved = 0;
+        unsigned arithmetic_kept = 0;
+        unsigned written = write_proved(arithmetic_proved, arithmetic_kept);
         if (written > 0 && arguments.options.verbose)
             std::printf("proved checks of %u sources written to .smith/proved/ for a release build\n", written);
+        if (arguments.options.verbose && arithmetic_proved + arithmetic_kept > 0)
+            std::printf("arithmetic checks (overflow, shift, division, float to int): %u proved, %u remain\n",
+                        arithmetic_proved, arithmetic_kept);
         std::fclose(checks_file);
         checks_file = nullptr;
     }

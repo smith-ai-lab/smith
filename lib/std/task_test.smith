@@ -6,6 +6,8 @@ module std::task_test;
 
 import <dirent.h>;
 import <errno.h>;
+import <sys/socket.h>;
+import <sys/un.h>;
 import <smith/handlers.h>;
 import <time.h>;
 import <sys/wait.h>;
@@ -603,4 +605,165 @@ export void test_task_a_task_waits_for_its_children_and_is_woken_on_its_worker()
     test::check_equal(count, (usize)320);
     for (usize i = 0; i < 16; i++)
         test::check(waiters[i].done >= 20);
+}
+
+// ---- Waiting on sockets and pipes: macOS parks the task in the worker's kqueue. ----
+//
+// Each test runs the tasks on ONE worker (`task::limit_workers`), so a call that blocked the thread instead of parking
+// the task would hang the test. Under Linux the default scheduler has no `io` yet (epoll is the next ticket): they
+// return.
+
+if constexpr (target::os == target::macos) {
+    // NOLINTBEGIN(smith-preprocessor)
+    constexpr i32 unix_family = c::AF_UNIX;
+    constexpr i32 stream_socket = c::SOCK_STREAM;
+    // NOLINTEND(smith-preprocessor)
+
+    struct Link {
+        i32 reader;
+        i32 writer;
+        Log *log;
+        char buffer[8];
+        isize got;
+        usize rounds;         // what the busy writer has paused so far
+        usize rounds_at_read; // and where it was when the reader got its bytes
+    };
+
+    // Reads with nothing to read yet: the task parks here and its worker runs the writer.
+    void run_blocked_reader(Link *pair) {
+        log_mark(pair->log, 'a');
+        pair->got = c::read(pair->reader, pair->buffer, 8); // NOLINT(smith-effects)
+        pair->rounds_at_read = pair->rounds;
+        log_mark(pair->log, 'r');
+    }
+
+    void run_writer(Link *pair) {
+        log_mark(pair->log, 'b');
+        c::write(pair->writer, "hi", 2); // NOLINT(smith-effects)
+        log_mark(pair->log, 'w');
+    }
+
+    // Writes, then pauses 2000 times: the reader must run while it is still looping.
+    void run_busy_writer(Link *pair) {
+        log_mark(pair->log, 'b');
+        c::write(pair->writer, "hi", 2); // NOLINT(smith-effects)
+        for (usize i = 0; i < 2000; i++) {
+            pair->rounds += 1;
+            task::pause();
+        }
+    }
+
+    void run_link(Link *pair, void (*second)(Link *pair)) {
+        task::limit_workers(1);
+        {
+            task::Group group = {};
+            defer task::wait(&group);
+            task::spawn(&group, run_blocked_reader, pair);
+            task::spawn(&group, second, pair);
+        }
+        task::limit_workers(0);
+    }
+}
+
+export void test_task_a_read_on_a_socketpair_parks_the_task_and_the_worker_runs_another() {
+    if constexpr (target::os == target::macos) {
+        i32 fds[2] = {};
+        test::check_equal(c::socketpair(unix_family, stream_socket, 0, fds), 0); // NOLINT(smith-effects)
+        Log log = {};
+        Link pair = {.reader = fds[0], .writer = fds[1], .log = &log};
+        run_link(&pair, run_writer);
+        check_marks(&log, "abwr"); // the reader parked, the writer ran, the reader came back with the bytes
+        test::check_equal((i32)pair.got, 2);
+        test::check_equal((i32)pair.buffer[0], (i32)'h');
+        c::close(fds[0]); // NOLINT(smith-effects)
+        c::close(fds[1]); // NOLINT(smith-effects)
+    }
+}
+
+export void test_task_a_read_on_a_pipe_parks_the_task_and_the_worker_runs_another() {
+    if constexpr (target::os == target::macos) {
+        i32 fds[2] = {};
+        test::check_equal(c::pipe(fds), 0); // NOLINT(smith-effects)
+        Log log = {};
+        Link pair = {.reader = fds[0], .writer = fds[1], .log = &log};
+        run_link(&pair, run_writer);
+        check_marks(&log, "abwr");
+        test::check_equal((i32)pair.got, 2);
+        c::close(fds[0]); // NOLINT(smith-effects)
+        c::close(fds[1]); // NOLINT(smith-effects)
+    }
+}
+
+export void test_task_a_task_that_pauses_in_a_loop_does_not_starve_a_task_waiting_on_a_socket() {
+    if constexpr (target::os == target::macos) {
+        i32 fds[2] = {};
+        test::check_equal(c::socketpair(unix_family, stream_socket, 0, fds), 0); // NOLINT(smith-effects)
+        Log log = {};
+        Link pair = {.reader = fds[0], .writer = fds[1], .log = &log};
+        run_link(&pair, run_busy_writer);
+        test::check_equal((i32)pair.got, 2);
+        test::check(pair.rounds_at_read < 100); // the reader ran at the writer's first pauses, not after its 2000
+        test::check_equal(pair.rounds, (usize)2000);
+        c::close(fds[0]); // NOLINT(smith-effects)
+        c::close(fds[1]); // NOLINT(smith-effects)
+    }
+}
+
+if constexpr (target::os == target::macos) {
+    struct Meeting {
+        struct c::sockaddr_un address;
+        i32 listener;
+        i32 accepted;
+        i32 connected;
+        Log *log;
+    };
+
+    void run_acceptor(Meeting *meeting) {
+        log_mark(meeting->log, 'a');
+        meeting->accepted =
+            c::accept(meeting->listener, nullptr, nullptr); // NOLINT(smith-effects): parks, nothing is waiting
+        log_mark(meeting->log, 'A');
+    }
+
+    void run_connector(Meeting *meeting) {
+        log_mark(meeting->log, 'c');
+        meeting->connected = c::socket(unix_family, stream_socket, 0);                       // NOLINT(smith-effects)
+        i32 failed = c::connect(meeting->connected, (struct c::sockaddr *)&meeting->address, // NOLINT(smith-effects)
+                                sizeof(meeting->address));
+        test::check_equal(failed, 0);
+        log_mark(meeting->log, 'C');
+    }
+}
+
+export void test_task_an_accept_and_a_connect_in_two_tasks_on_one_worker_both_complete() {
+    if constexpr (target::os == target::macos) {
+        Log log = {};
+        Meeting meeting = {.log = &log};
+        meeting.address.sun_family = unix_family;
+        const char *path = "/tmp/smith_task_test_accept"; // one test uses it, and it is removed at the end
+        for (usize i = 0; path[i] != 0; i++)
+            meeting.address.sun_path[i] = path[i];
+        c::unlink(meeting.address.sun_path);                         // NOLINT(smith-effects)
+        meeting.listener = c::socket(unix_family, stream_socket, 0); // NOLINT(smith-effects)
+        test::check_equal(c::bind(meeting.listener, (struct c::sockaddr *)&meeting.address, sizeof(meeting.address)),
+                          0);                                 // NOLINT(smith-effects)
+        test::check_equal(c::listen(meeting.listener, 4), 0); // NOLINT(smith-effects)
+        task::limit_workers(1);
+        {
+            task::Group group = {};
+            defer task::wait(&group);
+            task::spawn(&group, run_acceptor, &meeting);
+            task::spawn(&group, run_connector, &meeting);
+        }
+        task::limit_workers(0);
+        test::check(meeting.accepted >= 0);
+        test::check(meeting.connected >= 0);
+        test::check_equal(log.length, (usize)4);
+        test::check_equal((i32)log.marks[0], (i32)'a'); // the acceptor parked first; the connector ran while it did
+        test::check_equal((i32)log.marks[1], (i32)'c');
+        c::close(meeting.accepted);          // NOLINT(smith-effects)
+        c::close(meeting.connected);         // NOLINT(smith-effects)
+        c::close(meeting.listener);          // NOLINT(smith-effects)
+        c::unlink(meeting.address.sun_path); // NOLINT(smith-effects)
+    }
 }

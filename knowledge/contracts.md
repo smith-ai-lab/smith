@@ -17,6 +17,8 @@ check bounds at run time; contracts will prove them.
 
 **Checks run in every build; only a proof removes one** (issue #326, owner, 2026-10-25; a proved `ensures`, `invariant` or `assert` is left out of an optimized build, a `requires` never, issue #325): `contract::requires`, `ensures`, `invariant`, `assert`, slice bounds, arena budgets and the library's preconditions check in debug, release and fast, `NDEBUG` or not. "Even in release builds, we probably want to keep preconditions, because if you have a broken invariant, that's a really big deal. But that's what proofs are for." There is no global switch and `target::assertions` no longer affects smith's checks. A hot spot is answered with more proofs; an explicit per-function opt-out would be its own decision, with numbers. Skill: smith-contract.
 
+A lemma is a function: calling it gives its `ensures` to the prover once its `requires` is proved at the call (#1053).
+
 ## Decisions
 
 - Contracts are calls read by `smith prove` (Alive2, Bitwuzla, Z3), not a clang plugin and not `-fbounds-safety`; the boundary is `smith_trusted()` and there is no list.

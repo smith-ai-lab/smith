@@ -153,3 +153,30 @@ export void test_build_verbs_build_info_and_the_compile_database_say_what_the_ve
     scratch::expect_text("verbs: building smith_needs makes the generated file", "yes",
                          scratch::exists(&p, "build/made.c") ? "yes" : "no");
 }
+
+// `smith test <flag>` (#1113) prints the usage and exits 0 without building: the folder has no build file, so a build
+// would fail, and nothing is made under .smith/.
+static void prints_the_test_usage(const char *command) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = scratch::sh(&p, command);
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_status("verbs: smith test help exits 0", 0, &run);
+    scratch::expect_contains("verbs: ... and prints the usage", run.out, "usage: smith test");
+    scratch::expect_contains("verbs: ... naming --test", run.out, "--test <names>");
+    scratch::expect_contains("verbs: ... and --changed", run.out, "--changed");
+    scratch::expect_text("verbs: ... and builds nothing", "no", scratch::exists(&p, ".smith") ? "yes" : "no");
+}
+
+export void test_build_verbs_test_help_prints_the_usage_and_builds_nothing() {
+    prints_the_test_usage("smith test --help");
+}
+
+export void test_build_verbs_test_dash_h_prints_the_usage_and_builds_nothing() {
+    prints_the_test_usage("smith test -h");
+}

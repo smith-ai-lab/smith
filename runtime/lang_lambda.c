@@ -22,6 +22,7 @@
 constexpr size_t smith_lang_lambda_max = 900;
 constexpr size_t smith_lang_lambda_text_max = (size_t)1 << 17;
 constexpr size_t smith_lang_lambda_hints_max = 64;
+constexpr size_t smith_lang_lambda_per_list = 32; // tokens of a capture list read ahead
 
 static SmithToken smith_lang_lambda_work[smith_lang_lambda_max];      // the tokens of the lambda being read
 static SmithToken smith_lang_lambda_defs[smith_lang_lambda_max + 64]; // definitions waiting for a function's end
@@ -36,7 +37,8 @@ typedef struct {
 } SmithLangLambdaOut;
 
 typedef struct {
-    size_t params_from, params_to; // the tokens between the parentheses
+    size_t captures_from, captures_to; // the tokens between `[` and `]`
+    size_t params_from, params_to;     // the tokens between the parentheses
     bool has_type;
     size_t type_from, type_to; // `-> T`: the tokens of T
     size_t body_from, body_to; // the `{` and the `}`
@@ -124,8 +126,32 @@ static void smith_lang_lambda_copy(SmithLangLambdaOut *out, const SmithToken *fr
 
 // ---- Reading a lambda's parts
 
+// In kept tokens: the `]` of the capture list that opens at `at` (a `[`), or 0 when the brackets hold anything but
+// names separated by commas. `[]`, `[x]` and `[x, y]` are capture lists; `[x + 1]` and `[obj message]` are not.
+static size_t smith_lang_lambda_list_end(const SmithToken *t, size_t at, size_t n) {
+    bool name = true; // a name, or the `]` of an empty list, comes next
+    for (size_t i = at + 1; i < n; i++) {
+        if (name && smith_lang_punct(&t[i], "]")) return i == at + 1 ? i : 0;
+        if (name) {
+            if (t[i].kind != SmithTokenKind_Identifier) return 0;
+            name = false;
+        } else if (smith_lang_punct(&t[i], "]")) {
+            return i;
+        } else if (smith_lang_punct(&t[i], ",")) {
+            name = true;
+        } else {
+            return 0;
+        }
+    }
+    return 0;
+}
+
 static bool smith_lang_lambda_parts(const SmithToken *t, size_t n, SmithLangLambdaParts *p) {
-    size_t at = 2; // after `[` `]`
+    size_t close = n > 0 && smith_lang_punct(&t[0], "[") ? smith_lang_lambda_list_end(t, 0, n) : 0;
+    if (close == 0) return false;
+    p->captures_from = 1;
+    p->captures_to = close;
+    size_t at = close + 1; // after `[` ... `]`
     p->params_from = at;
     p->params_to = at;
     p->has_type = false;
@@ -158,6 +184,27 @@ static bool smith_lang_lambda_parts(const SmithToken *t, size_t n, SmithLangLamb
     return true;
 }
 
+// Through the host's lookahead: the index of the `]` of the capture list whose first token after the `[` is at `first`,
+// or SIZE_MAX when the brackets hold anything but names separated by commas.
+static size_t smith_lang_lambda_peek_list_end(SmithLang *lang, const SmithHost *host, size_t first) {
+    bool name = true;
+    for (size_t i = first; i < first + smith_lang_lambda_per_list; i++) {
+        const SmithToken *at = smith_lang_peek(lang, host, i, false);
+        if (name && smith_lang_punct(at, "]")) return i == first ? i : SIZE_MAX;
+        if (name) {
+            if (at->kind != SmithTokenKind_Identifier) return SIZE_MAX;
+            name = false;
+        } else if (smith_lang_punct(at, "]")) {
+            return i;
+        } else if (smith_lang_punct(at, ",")) {
+            name = true;
+        } else {
+            return SIZE_MAX;
+        }
+    }
+    return SIZE_MAX;
+}
+
 // Whether a token before a `[` leaves an expression to start: not a subscript, not a declarator's brackets.
 static bool smith_lang_lambda_expression_before(const SmithToken *before) {
     if (before->kind == SmithTokenKind_Identifier) return smith_lang_ident(before, "return");
@@ -169,15 +216,17 @@ static bool smith_lang_lambda_expression_before(const SmithToken *before) {
 
 // In a kept body: the `}` of a lambda that starts at `at` (a `[`), or 0.
 static size_t smith_lang_lambda_nested_end(const SmithToken *t, size_t at, size_t n) {
-    if (at == 0 || at + 2 >= n || !smith_lang_punct(&t[at], "[") || !smith_lang_punct(&t[at + 1], "]")) return 0;
+    if (at == 0 || at + 2 >= n || !smith_lang_punct(&t[at], "[")) return 0;
     if (!smith_lang_lambda_expression_before(&t[at - 1])) return 0;
-    if (!smith_lang_punct(&t[at + 2], "(") && !smith_lang_punct(&t[at + 2], "{") &&
-        !smith_lang_punct(&t[at + 2], "->")) {
+    size_t close = smith_lang_lambda_list_end(t, at, n);
+    if (close == 0 || close + 1 >= n) return 0;
+    if (!smith_lang_punct(&t[close + 1], "(") && !smith_lang_punct(&t[close + 1], "{") &&
+        !smith_lang_punct(&t[close + 1], "->")) {
         return 0;
     }
     int depth = 0;
     bool body = false;
-    for (size_t i = at + 2; i < n; i++) {
+    for (size_t i = close + 1; i < n; i++) {
         if (smith_lang_punct(&t[i], "{")) {
             depth += 1;
             body = true;
@@ -508,6 +557,32 @@ static void smith_lang_lambda_captures(SmithLang *lang, const SmithHost *host, c
     }
 }
 
+// The capture list `[x, y]` of a lambda that becomes a plain function. Captures exist only in modules: in a file with
+// no `module` line the list is read and left to the body's hint (a name of the enclosing function). In a module each
+// name must be a local of the enclosing function, and a lambda that captures converts to no function pointer.
+static bool smith_lang_lambda_check_list(SmithLang *lang, const SmithHost *host, const SmithToken *t,
+                                         const SmithLangLambdaParts *p) {
+    if (!lang->is_module || p->captures_from == p->captures_to) return true;
+    for (size_t i = p->captures_from; i < p->captures_to; i += 2) {
+        SmithLookup found = {};
+        if (host->lookup != nullptr) found = host->lookup(host->context, t[i].text, t[i].length, SmithLookup_Value);
+        if (found.kind == SmithLookup_Value && found.in_main_file &&
+            smith_lang_name_find(lang, t[i].text, t[i].length) == nullptr) {
+            continue;
+        }
+        smith_lang_error(lang, host, t[i].location,
+                         "`%.*s` is not a local of the enclosing function: a capture list names locals only (to "
+                         "capture a computed value, write a local first)",
+                         (int)t[i].length, t[i].text);
+        return false;
+    }
+    smith_lang_error(lang, host, t[p->captures_from].location,
+                     "this lambda captures `%.*s`, and a lambda that captures converts to no function pointer (a "
+                     "function pointer can't carry captures); pass it where a `lambda(F)` is expected",
+                     (int)t[p->captures_from].length, t[p->captures_from].text);
+    return false;
+}
+
 // The definition and the name of the lambda in `t[0 .. n)`. `file_scope`: the definition is `static`, written before
 // its use; else it has the file's own external name (a block can only declare an external function) and is hidden.
 static bool smith_lang_lambda_define(SmithLang *lang, const SmithHost *host, const SmithToken *t, size_t n,
@@ -518,6 +593,7 @@ static bool smith_lang_lambda_define(SmithLang *lang, const SmithHost *host, con
                          "a lambda is `[](parameters) -> type { body }`; the parameters and `-> type` are optional");
         return false;
     }
+    if (!smith_lang_lambda_check_list(lang, host, t, parts)) return false;
     bool inferred = !parts->has_type;
     type[0] = 0;
     if (inferred) {
@@ -556,9 +632,9 @@ static bool smith_lang_lambda_in_function(const SmithHost *host) {
 // Whether the `[` being lowered starts a lambda in an expression of a function.
 static bool smith_lang_lambda_starts(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (!smith_lang_punct(token, "[") || lang->lambda.depth == 0 || host->previous == nullptr) return false;
-    const SmithToken *close = smith_lang_peek(lang, host, 0, false);
-    if (!smith_lang_punct(close, "]")) return false;
-    const SmithToken *next = smith_lang_peek(lang, host, 1, false);
+    size_t close = smith_lang_lambda_peek_list_end(lang, host, 0);
+    if (close == SIZE_MAX) return false;
+    const SmithToken *next = smith_lang_peek(lang, host, close + 1, false);
     if (!smith_lang_punct(next, "(") && !smith_lang_punct(next, "{") && !smith_lang_punct(next, "->")) return false;
     if (!lang->lambda.started || !smith_lang_lambda_expression_before(&lang->lambda.last)) return false;
     return smith_lang_lambda_in_function(host);
@@ -663,15 +739,13 @@ constexpr size_t smith_lang_lambda_per_declaration = 8;
 // The queue index of the `}` that ends the lambda whose `[` is at `i`, or 0 when it is none (`[` `]` and `(`, `{` or
 // `->`, then a body).
 static size_t smith_lang_lambda_queue_end(SmithLang *lang, const SmithHost *host, size_t i, size_t limit) {
-    const SmithToken *close = smith_lang_peek(lang, host, i + 1, false);
-    const SmithToken *next = smith_lang_peek(lang, host, i + 2, false);
-    if (!smith_lang_punct(close, "]") ||
-        (!smith_lang_punct(next, "(") && !smith_lang_punct(next, "{") && !smith_lang_punct(next, "->"))) {
-        return 0;
-    }
+    size_t close = smith_lang_lambda_peek_list_end(lang, host, i + 1);
+    if (close == SIZE_MAX) return 0;
+    const SmithToken *next = smith_lang_peek(lang, host, close + 1, false);
+    if (!smith_lang_punct(next, "(") && !smith_lang_punct(next, "{") && !smith_lang_punct(next, "->")) return 0;
     int braces = 0;
     bool body = false;
-    for (size_t j = i + 2; j < limit; j++) {
+    for (size_t j = close + 1; j < limit; j++) {
         const SmithToken *inner = smith_lang_peek(lang, host, j, false);
         if (inner->kind == SmithTokenKind_Eof) return 0;
         braces += smith_lang_punct(inner, "{") ? 1 : 0;
@@ -780,19 +854,18 @@ static bool smith_lang_lambda_declaration(SmithLang *lang, const SmithHost *host
 }
 
 // The raw lowering (the header pass, `--smith-lower`) has no parser and writes no function body to the compiler: the
-// `[` `]` of a lambda in a body are dropped, so that they are not read as an array's empty brackets.
+// `[` ... `]` of a lambda in a body are dropped, so that they are not read as an array's empty brackets.
 static bool smith_lang_lambda_raw(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangLambda *state = &lang->lambda;
     if (!smith_lang_punct(token, "[") || !state->started || !smith_lang_lambda_expression_before(&state->last)) {
         return false;
     }
-    const SmithToken *close = smith_lang_peek(lang, host, 0, false);
-    const SmithToken *next = smith_lang_peek(lang, host, 1, false);
-    if (!smith_lang_punct(close, "]") ||
-        (!smith_lang_punct(next, "(") && !smith_lang_punct(next, "{") && !smith_lang_punct(next, "->"))) {
-        return false;
-    }
-    return smith_lang_tuple_replace(lang, 1, nullptr, 0); // the `]` goes too, and the `[` with this return
+    size_t close = smith_lang_lambda_peek_list_end(lang, host, 0);
+    if (close == SIZE_MAX) return false;
+    const SmithToken *next = smith_lang_peek(lang, host, close + 1, false);
+    if (!smith_lang_punct(next, "(") && !smith_lang_punct(next, "{") && !smith_lang_punct(next, "->")) return false;
+    // the capture list and its `]` go too, and the `[` with this return
+    return smith_lang_tuple_replace(lang, close + 1, nullptr, 0);
 }
 
 // What lambdas do with a token. True when the token is consumed.

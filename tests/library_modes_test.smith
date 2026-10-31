@@ -228,9 +228,10 @@ export void test_library_modes_json_compiles_as_c2y() {
     compiles_as("lib/json.c", "gnu2y");
 }
 
-// smith's own libraries are not libc, and the compiler's calls for a big struct are not the program's.
+// smith's own libraries are not libc, and the compiler's calls for a big struct are not the program's; json's tree is
+// plain malloc, whatever allocator is in force.
 export void test_library_modes_json_names_no_libc_function() {
-    names_no_libc_function("lib/json.c", "-e memcpy -e memset -e bzero -e memmove -e 'smith_.*'");
+    names_no_libc_function("lib/json.c", "-e malloc -e memcpy -e memset -e bzero -e memmove -e 'smith_.*'");
 }
 
 export void test_library_modes_text_compiles_as_c23() {

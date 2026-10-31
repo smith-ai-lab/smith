@@ -313,3 +313,34 @@ export void test_a_file_with_an_import_and_a_variable_compiles_with_coverage() {
                         "-I .smith/include -I . -c main.smith -o main.o");
     scratch::expect_status("coverage: the compile finishes", 0, &run);
 }
+
+// An indexed for-each over a slice (`for (usize i, T x : xs)`) once made its object's coverage map malformed, so a
+// test that linked it made no record (issue #1008, std::process's vector_make). A program with one runs, and its
+// record is made.
+export void test_an_indexed_for_each_makes_a_record() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = scratch::sh(
+        &p, format::push(
+                "set -e; r=$(pwd -P); ", find_tools,
+                "printf 'module main;\\ni32 sum(i32 xs[:]) {\\n    i32 total = 0;\\n    for (usize i, i32 x : xs) {\\n"
+                "        total += (i32)i + x;\\n    }\\n    return total;\\n}\\n"
+                "i32 main() {\\n    i32 xs[3] = {1, 2, 3};\\n    return sum(xs) > 100;\\n}\\n' > main.smith; "
+                "smith cc -fprofile-instr-generate -fcoverage-mapping -c main.smith -o prog.o; "
+                "smith cc -fprofile-instr-generate -fcoverage-mapping prog.o -o prog; "
+                "export SMITH_COVERAGE_DIR=$r/cov SMITH_COVERAGE_BINARY=$r/prog.o SMITH_REPO=$r; "
+                "mkdir -p cov/raw/t__one; ",
+                run_one, "echo \"raw: $(find cov -name '*.profraw' | wc -l | tr -d ' ')\"")
+                .data);
+    if (run.status == 77) {
+        test::note("coverage: skipped, this smith has no LLVM inside");
+        return;
+    }
+    scratch::expect_status("the run", 0, &run);
+    scratch::expect_lacks("no malformed data", run.err, "malformed");
+    scratch::expect_contains("the profile is merged and deleted", run.out, "raw: 0");
+}
