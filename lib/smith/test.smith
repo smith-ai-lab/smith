@@ -1930,6 +1930,34 @@ void make_scratch(const Test *test, const Options *options, io::Io *io) {
     c::setenv("SMITH_CORES", "4", 1);
 }
 
+constexpr usize saved_count = 4; // the variables make_scratch sets
+
+// The variables make_scratch sets, as the runner had them (a value, or unset), so the next test in the worker sees the
+// same environment: the scratch folder is gone when the test passed (#841).
+struct SavedEnvironment {
+    bool set[saved_count];
+    char value[saved_count][path_capacity];
+};
+
+const char *const saved_names[saved_count] = {"TMPDIR", "SMITH_TEST_SCRATCH", "SMITH_SLOTS_DIR", "SMITH_CORES"};
+
+void environment_save(SavedEnvironment *saved) {
+    for (usize i = 0; i < saved_count; i++) {
+        const char *text = c::getenv(saved_names[i]);
+        saved->set[i] = text != nullptr;
+        if (text != nullptr) __builtin_snprintf(saved->value[i], path_capacity, "%s", text);
+    }
+}
+
+void environment_restore(const SavedEnvironment *saved) {
+    for (usize i = 0; i < saved_count; i++) {
+        if (saved->set[i])
+            c::setenv(saved_names[i], saved->value[i], 1);
+        else
+            c::unsetenv(saved_names[i]);
+    }
+}
+
 // Runs a test that takes an io: a real one, made for this test alone, on the run's seed.
 void run_io(const Test *test, const Options *options, const Command *command) {
     u64 seed = command->seed_given ? command->seed : options->io_seed;
@@ -1940,11 +1968,14 @@ void run_io(const Test *test, const Options *options, const Command *command) {
     io::Io io = runner->make_io(runner->argc, runner->argv);
     io.seed = seed;
     io.key = random::key_make(seed);
+    SavedEnvironment saved;
+    environment_save(&saved);
     make_scratch(test, options, &io);
     checked_begin(options);
     test->with_io(&io);
     checked_finish();
     io::close(&io);
+    environment_restore(&saved); // a failed test never gets here: it retires its worker
 }
 
 // A test's name as a folder name (runtime/coverage.c cleans a name the same way): what is not a letter, a digit or `_`
