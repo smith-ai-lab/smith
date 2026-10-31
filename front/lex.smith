@@ -1,0 +1,775 @@
+// front::lex, the tokenizer of smith's own front end (#1112, A2 of track A; internal, not wired into `smith cc`).
+//
+// It reads the text of a `.smith` file and gives all its tokens at once, ending with an `end_of_file` token. There is
+// no preprocessor in a `.smith` file, so there are no `#` tokens either: a `#` outside a string or a comment is an
+// error that says to write `constexpr` or `import`.
+//
+//   Token { TokenKind kind; Span span; }    the text of a token is `source[span.start:span.end]` (lex::text): no copy
+//   lex::tokenize(source)                   Result(Token[:], LexError): the tokens, or the first error
+//   lex::dump(tokens, source)               one token a line, `line:column kind text`, for golden files
+//
+// What the tokenizer decides, and what it leaves to the parser:
+//   * An identifier is a `type_name` when its first character is an uppercase ASCII letter (`I32`, `Point`, `Option`)
+//     and a `name` otherwise (`x`, `printf`, `_tmp`); what `c::EOF` is, is the parser's question. A keyword has a kind
+//     of its own (`kw_if`): C23's keywords, `_Atomic _BitInt _Complex _Decimal32 _Decimal64 _Decimal128 _Generic
+//     _Imaginary _Noreturn` and smith's `module import export defer try countof`. `int`, `char`, `long`, `unsigned`
+//     and the rest of C's type keywords stay keywords: the parser decides what it accepts.
+//   * A literal has the form checked, not its value (the parser decodes it): `integer` (decimal, `0x`, octal, `0b`,
+//     `'` between digits, the suffixes `u l ll wb`), `floating` (decimal and hexadecimal, `f l` and `f16`..`f128`
+//     style suffixes), `character` and `string`, with the prefixes `u8`, `u`, `U` and `L` and C's escapes.
+//   * The punctuators are C's without the preprocessor's `#` and `##`, plus `::`. `[:]` is three tokens, `[[` is two
+//     and `]]` is two. There are no trigraphs and no digraphs.
+//   * Whitespace and comments (`//`, `/* */`) make no tokens.
+// An error is an unterminated string, character or block comment, a malformed number, a `#`, or a byte that starts no
+// token. Tokenizing stops at the first.
+module front::lex;
+
+import front::ast;
+import std::arena;
+import std::ascii;
+import std::mem;
+import std::text;
+
+// What a token is. The keywords are `kw_alignas` to `kw_countof` and the punctuators `left_paren` to `comma`, each run
+// in one piece.
+// NOLINTBEGIN(readability-identifier-naming)
+// The constants are written short, as lex::name and lex::kw_if, and the check wants C's Type_Value.
+export enum TokenKind {
+    end_of_file,
+    type_name,
+    name,
+    integer,
+    floating,
+    character,
+    string,
+    kw_alignas,
+    kw_alignof,
+    kw_auto,
+    kw_bool,
+    kw_break,
+    kw_case,
+    kw_char,
+    kw_const,
+    kw_constexpr,
+    kw_continue,
+    kw_default,
+    kw_do,
+    kw_double,
+    kw_else,
+    kw_enum,
+    kw_extern,
+    kw_false,
+    kw_float,
+    kw_for,
+    kw_goto,
+    kw_if,
+    kw_inline,
+    kw_int,
+    kw_long,
+    kw_nullptr,
+    kw_register,
+    kw_restrict,
+    kw_return,
+    kw_short,
+    kw_signed,
+    kw_sizeof,
+    kw_static,
+    kw_static_assert,
+    kw_struct,
+    kw_switch,
+    kw_thread_local,
+    kw_true,
+    kw_typedef,
+    kw_typeof,
+    kw_typeof_unqual,
+    kw_union,
+    kw_unsigned,
+    kw_void,
+    kw_volatile,
+    kw_while,
+    kw_atomic,
+    kw_bit_int,
+    kw_complex,
+    kw_decimal32,
+    kw_decimal64,
+    kw_decimal128,
+    kw_generic,
+    kw_imaginary,
+    kw_noreturn,
+    kw_module,
+    kw_import,
+    kw_export,
+    kw_defer,
+    kw_try,
+    kw_countof,
+    left_paren,
+    right_paren,
+    left_bracket,
+    right_bracket,
+    left_brace,
+    right_brace,
+    dot,
+    arrow,
+    plus_plus,
+    minus_minus,
+    ampersand,
+    star,
+    plus,
+    minus,
+    tilde,
+    bang,
+    slash,
+    percent,
+    less_less,
+    greater_greater,
+    less,
+    greater,
+    less_equal,
+    greater_equal,
+    equal_equal,
+    bang_equal,
+    caret,
+    pipe,
+    ampersand_ampersand,
+    pipe_pipe,
+    question,
+    colon,
+    colon_colon,
+    semicolon,
+    ellipsis,
+    equal,
+    star_equal,
+    slash_equal,
+    percent_equal,
+    plus_equal,
+    minus_equal,
+    less_less_equal,
+    greater_greater_equal,
+    ampersand_equal,
+    caret_equal,
+    pipe_equal,
+    comma,
+};
+// NOLINTEND(readability-identifier-naming)
+
+// A token: its kind and where its text lies in the source.
+export struct Token {
+    TokenKind kind;
+    ast::Span span;
+};
+
+// The tokens of a file, and what tokenizing gives: the tokens or the first error.
+export typedef typeof(Token[:]) Tokens;
+
+// Why tokenizing stopped: where, and what is wrong (a literal, owned by nobody).
+export typedef struct {
+    ast::Span span;
+    Str message;
+} LexError;
+
+export typedef Result(Tokens, LexError) Lexed;
+
+// The names and the texts of the kinds, in the order of the enumeration (a test checks the tables are as long as it).
+static const char *const kind_names[114] = {
+    "end_of_file",
+    "type_name",
+    "name",
+    "integer",
+    "floating",
+    "character",
+    "string",
+    "kw_alignas",
+    "kw_alignof",
+    "kw_auto",
+    "kw_bool",
+    "kw_break",
+    "kw_case",
+    "kw_char",
+    "kw_const",
+    "kw_constexpr",
+    "kw_continue",
+    "kw_default",
+    "kw_do",
+    "kw_double",
+    "kw_else",
+    "kw_enum",
+    "kw_extern",
+    "kw_false",
+    "kw_float",
+    "kw_for",
+    "kw_goto",
+    "kw_if",
+    "kw_inline",
+    "kw_int",
+    "kw_long",
+    "kw_nullptr",
+    "kw_register",
+    "kw_restrict",
+    "kw_return",
+    "kw_short",
+    "kw_signed",
+    "kw_sizeof",
+    "kw_static",
+    "kw_static_assert",
+    "kw_struct",
+    "kw_switch",
+    "kw_thread_local",
+    "kw_true",
+    "kw_typedef",
+    "kw_typeof",
+    "kw_typeof_unqual",
+    "kw_union",
+    "kw_unsigned",
+    "kw_void",
+    "kw_volatile",
+    "kw_while",
+    "kw_atomic",
+    "kw_bit_int",
+    "kw_complex",
+    "kw_decimal32",
+    "kw_decimal64",
+    "kw_decimal128",
+    "kw_generic",
+    "kw_imaginary",
+    "kw_noreturn",
+    "kw_module",
+    "kw_import",
+    "kw_export",
+    "kw_defer",
+    "kw_try",
+    "kw_countof",
+    "left_paren",
+    "right_paren",
+    "left_bracket",
+    "right_bracket",
+    "left_brace",
+    "right_brace",
+    "dot",
+    "arrow",
+    "plus_plus",
+    "minus_minus",
+    "ampersand",
+    "star",
+    "plus",
+    "minus",
+    "tilde",
+    "bang",
+    "slash",
+    "percent",
+    "less_less",
+    "greater_greater",
+    "less",
+    "greater",
+    "less_equal",
+    "greater_equal",
+    "equal_equal",
+    "bang_equal",
+    "caret",
+    "pipe",
+    "ampersand_ampersand",
+    "pipe_pipe",
+    "question",
+    "colon",
+    "colon_colon",
+    "semicolon",
+    "ellipsis",
+    "equal",
+    "star_equal",
+    "slash_equal",
+    "percent_equal",
+    "plus_equal",
+    "minus_equal",
+    "less_less_equal",
+    "greater_greater_equal",
+    "ampersand_equal",
+    "caret_equal",
+    "pipe_equal",
+    "comma",
+};
+
+static const char *const kind_texts[114] = {
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "alignas",
+    "alignof",
+    "auto",
+    "bool",
+    "break",
+    "case",
+    "char",
+    "const",
+    "constexpr",
+    "continue",
+    "default",
+    "do",
+    "double",
+    "else",
+    "enum",
+    "extern",
+    "false",
+    "float",
+    "for",
+    "goto",
+    "if",
+    "inline",
+    "int",
+    "long",
+    "nullptr",
+    "register",
+    "restrict",
+    "return",
+    "short",
+    "signed",
+    "sizeof",
+    "static",
+    "static_assert",
+    "struct",
+    "switch",
+    "thread_local",
+    "true",
+    "typedef",
+    "typeof",
+    "typeof_unqual",
+    "union",
+    "unsigned",
+    "void",
+    "volatile",
+    "while",
+    "_Atomic",
+    "_BitInt",
+    "_Complex",
+    "_Decimal32",
+    "_Decimal64",
+    "_Decimal128",
+    "_Generic",
+    "_Imaginary",
+    "_Noreturn",
+    "module",
+    "import",
+    "export",
+    "defer",
+    "try",
+    "countof",
+    "(",
+    ")",
+    "[",
+    "]",
+    "{",
+    "}",
+    ".",
+    "->",
+    "++",
+    "--",
+    "&",
+    "*",
+    "+",
+    "-",
+    "~",
+    "!",
+    "/",
+    "%",
+    "<<",
+    ">>",
+    "<",
+    ">",
+    "<=",
+    ">=",
+    "==",
+    "!=",
+    "^",
+    "|",
+    "&&",
+    "||",
+    "?",
+    ":",
+    "::",
+    ";",
+    "...",
+    "=",
+    "*=",
+    "/=",
+    "%=",
+    "+=",
+    "-=",
+    "<<=",
+    ">>=",
+    "&=",
+    "^=",
+    "|=",
+    ",",
+};
+
+// The name of a kind as a dump prints it (`kw_if`, `left_paren`).
+export Str kind_name(TokenKind kind) {
+    return text::make(kind_names[kind]);
+}
+
+// The text of a keyword or a punctuator, empty for the kinds that have none (names and literals).
+export Str kind_text(TokenKind kind) {
+    return text::make(kind_texts[kind]);
+}
+
+// Whether a kind is one of the keywords.
+export Bool is_keyword(TokenKind kind) {
+    return kind >= kw_alignas && kind <= kw_countof;
+}
+
+// Whether a kind is a punctuator.
+export Bool is_punctuator(TokenKind kind) {
+    return kind >= left_paren && kind <= comma;
+}
+
+// The text of a token.
+export Str text(Str source, Token token) {
+    return source[token.span.start:token.span.end];
+}
+
+// What one scan found: where the token ends and what it is.
+struct Scanned {
+    Usize end;
+    TokenKind kind;
+};
+
+static LexError error_at(Usize start, Usize end, Str message) {
+    LexError failure = {.span = {.start = (U32)start, .end = (U32)end}, .message = message};
+    return failure;
+}
+
+static Bool is_identifier_start(char c) {
+    return ascii::alpha(c) || c == '_';
+}
+
+static Bool is_identifier_part(char c) {
+    return ascii::alpha(c) || ascii::digit(c) || c == '_';
+}
+
+static Bool is_blank(char c) {
+    return ascii::space(c) || c == '\v' || c == '\f';
+}
+
+static Bool same(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+// The end of the comment or the white space at i (i itself when there is none); a block comment that never ends is an
+// error.
+static Result(Usize, LexError) skip_trivia(Str s, Usize i) {
+    Usize n = countof(s);
+    Usize p = i;
+    while (p < n) {
+        if (is_blank(s[p])) {
+            p += 1;
+        } else if (s[p] == '/' && p + 1 < n && s[p + 1] == '/') {
+            while (p < n && s[p] != '\n')
+                p += 1;
+        } else if (s[p] == '/' && p + 1 < n && s[p + 1] == '*') {
+            Usize close = p + 2;
+            while (close + 1 < n && !(s[close] == '*' && s[close + 1] == '/'))
+                close += 1;
+            if (close + 1 >= n) return {.error = error_at(p, n, "unterminated block comment")};
+            p = close + 2;
+        } else {
+            return p;
+        }
+    }
+    return p;
+}
+
+// The digit value of c in radix 2, 8, 10 or 16, or 99 when c is none.
+static U32 digit_value(char c) {
+    if (c >= '0' && c <= '9') return (U32)(c - '0');
+    if (c >= 'a' && c <= 'f') return (U32)(c - 'a') + 10;
+    if (c >= 'A' && c <= 'F') return (U32)(c - 'A') + 10;
+    return 99;
+}
+
+// The end of the run of digits of the radix at i, with `'` allowed between two digits.
+static Usize digit_run(Str s, Usize i, U32 radix) {
+    Usize n = countof(s);
+    Usize p = i;
+    while (p < n) {
+        if (digit_value(s[p]) < radix) {
+            p += 1;
+        } else if (s[p] == '\'' && p > i && p + 1 < n && digit_value(s[p + 1]) < radix) {
+            p += 2;
+        } else {
+            break;
+        }
+    }
+    return p;
+}
+
+// Whether every character of the suffix is one of the allowed ones.
+static Bool suffix_of(Str suffix, Str allowed) {
+    for (char c : suffix) {
+        Bool found = false;
+        for (char a : allowed) {
+            if (c == a) found = true;
+        }
+        if (!found) return false;
+    }
+    return true;
+}
+
+// The radix a number starts with, and how many characters its prefix (`0x`, `0b`) takes.
+static U32 number_radix(Str s, Usize i) {
+    Usize n = countof(s);
+    if (s[i] != '0' || i + 1 >= n) return 10;
+    if (s[i + 1] == 'x' || s[i + 1] == 'X') return 16;
+    if (s[i + 1] == 'b' || s[i + 1] == 'B') return 2;
+    return 10;
+}
+
+// The end of a number's exponent at i (`e5`, `p-3`), i when there is none; an exponent with no digits is an error.
+static Result(Usize, LexError) exponent(Str s, Usize start, Usize i, char marker_lower) {
+    Usize n = countof(s);
+    if (i >= n || (s[i] != marker_lower && s[i] != (char)(marker_lower - 32))) return i;
+    Usize p = i + 1;
+    if (p < n && (s[p] == '+' || s[p] == '-')) p += 1;
+    if (p >= n || !ascii::digit(s[p])) return {.error = error_at(start, p, "the exponent of a number has no digits")};
+    return digit_run(s, p, 10);
+}
+
+// One number at i: an integer or a floating constant, with its suffix.
+static Result(Scanned, LexError) scan_number(Str s, Usize i) {
+    Usize n = countof(s);
+    U32 radix = number_radix(s, i);
+    Usize p = i;
+    if (radix != 10) p += 2;
+    Usize first = p;
+    p = digit_run(s, p, radix);
+    Bool floating_point = false;
+    if (p < n && s[p] == '.' && radix != 2) {
+        floating_point = true;
+        p = digit_run(s, p + 1, radix);
+    }
+    Bool has_exponent = false;
+    if (radix != 2 && (first < p || floating_point)) {
+        Result(Usize, LexError) exponent_end = exponent(s, i, p, radix == 16 ? 'p' : 'e');
+        if (exponent_end == .error) return {.error = exponent_end.error};
+        Usize after = exponent_end.ok;
+        has_exponent = after != p;
+        floating_point = floating_point || has_exponent;
+        p = after;
+    }
+    if (radix == 16 && floating_point && !has_exponent) {
+        return {.error = error_at(i, p, "a hexadecimal floating constant needs an exponent")};
+    }
+    if (radix != 10 && first == p) return {.error = error_at(i, p, "a number prefix needs digits after it")};
+    if (radix == 10 && !floating_point && s[i] == '0') {
+        for (Usize k = i; k < p; k++) {
+            if (s[k] == '8' || s[k] == '9') return {.error = error_at(i, p, "an octal constant has no digit 8 or 9")};
+        }
+    }
+    Usize q = p;
+    while (q < n && is_identifier_part(s[q]))
+        q += 1;
+    Str suffix = s[p:q];
+    if (floating_point && !suffix_of(suffix, "fFlLdDxX0123456789")) {
+        return {.error = error_at(i, q, "a floating constant has an invalid suffix")};
+    }
+    if (!floating_point && !suffix_of(suffix, "uUlLwWbB")) {
+        return {.error = error_at(i, q, "an integer constant has an invalid suffix")};
+    }
+    Scanned result = {.end = q, .kind = floating_point ? floating : integer};
+    return result;
+}
+
+// The end of the quoted literal whose opening quote is at quote_at (the prefix, if any, starts at start).
+static Result(Usize, LexError) scan_quoted(Str s, Usize start, Usize quote_at) {
+    Usize n = countof(s);
+    char quote = s[quote_at];
+    Usize p = quote_at + 1;
+    while (p < n && s[p] != quote) {
+        if (s[p] == '\n') break;
+        if (s[p] == '\\') p += 1;
+        p += 1;
+    }
+    if (p >= n || s[p] != quote) {
+        Str message = quote == '"' ? "unterminated string literal" : "unterminated character literal";
+        return {.error = error_at(start, p < n ? p : n, message)};
+    }
+    if (quote == '\'' && p == quote_at + 1) return {.error = error_at(start, p + 1, "empty character literal")};
+    return p + 1;
+}
+
+// The kind of the identifier or keyword in s[start:end].
+static TokenKind identifier_kind(Str s, Usize start, Usize end) {
+    Str word = s[start:end];
+    for (Usize k = (Usize)kw_alignas; k <= (Usize)kw_countof; k++) {
+        if (same(kind_text((TokenKind)k), word)) return (TokenKind)k;
+    }
+    return word[0] >= 'A' && word[0] <= 'Z' ? type_name : name;
+}
+
+// Whether the word is a literal's prefix: `u8`, `u`, `U` or `L`.
+static Bool is_literal_prefix(Str word) {
+    return same(word, "u8") || same(word, "u") || same(word, "U") || same(word, "L");
+}
+
+// An identifier, a keyword, or a literal with a prefix, starting at i.
+static Result(Scanned, LexError) scan_word(Str s, Usize i) {
+    Usize n = countof(s);
+    Usize p = i;
+    while (p < n && is_identifier_part(s[p]))
+        p += 1;
+    if (p < n && (s[p] == '"' || s[p] == '\'') && is_literal_prefix(s[i:p])) {
+        Result(Usize, LexError) closed = scan_quoted(s, i, p);
+        if (closed == .error) return {.error = closed.error};
+        Scanned literal = {.end = closed.ok, .kind = s[p] == '"' ? string : character};
+        return literal;
+    }
+    Scanned word = {.end = p, .kind = identifier_kind(s, i, p)};
+    return word;
+}
+
+// The punctuator at i: the longest one that matches.
+static Result(Scanned, LexError) scan_punctuator(Str s, Usize i) {
+    Usize n = countof(s);
+    for (Usize length = 3; length >= 1; length--) {
+        if (i + length > n) continue;
+        Str candidate = s[i:i + length];
+        for (Usize k = (Usize)left_paren; k <= (Usize)comma; k++) {
+            if (same(kind_text((TokenKind)k), candidate)) {
+                Scanned found = {.end = i + length, .kind = (TokenKind)k};
+                return found;
+            }
+        }
+    }
+    if (s[i] == '#') {
+        return {.error = error_at(i, i + 1,
+                                  "there is no preprocessor in a .smith file: write `constexpr` for a constant and "
+                                  "`import` for a header")};
+    }
+    return {.error = error_at(i, i + 1, "this byte starts no token")};
+}
+
+// The one token that starts at i.
+static Result(Scanned, LexError) scan_token(Str s, Usize i) {
+    char c = s[i];
+    if (is_identifier_start(c)) return scan_word(s, i);
+    if (ascii::digit(c) || (c == '.' && i + 1 < countof(s) && ascii::digit(s[i + 1]))) return scan_number(s, i);
+    if (c == '"' || c == '\'') {
+        Result(Usize, LexError) closed = scan_quoted(s, i, i);
+        if (closed == .error) return {.error = closed.error};
+        Scanned literal = {.end = closed.ok, .kind = c == '"' ? string : character};
+        return literal;
+    }
+    return scan_punctuator(s, i);
+}
+
+// Writes the tokens of source into tokens (room for one more than the bytes of the source) and gives their count.
+static Result(Usize, LexError) fill(Str source, Tokens tokens) {
+    Usize n = countof(source);
+    Usize count = 0;
+    Usize i = 0;
+    i = try skip_trivia(source, i);
+    while (i < n) {
+        Result(Scanned, LexError) next = scan_token(source, i);
+        if (next == .error) return {.error = next.error};
+        Scanned scanned = next.ok;
+        Token token = {.kind = scanned.kind, .span = {.start = (U32)i, .end = (U32)scanned.end}};
+        tokens[count] = token;
+        count += 1;
+        i = try skip_trivia(source, scanned.end);
+    }
+    Token last = {.kind = end_of_file, .span = {.start = (U32)n, .end = (U32)n}};
+    tokens[count] = last;
+    return count + 1;
+}
+
+// All the tokens of source, ending with an `end_of_file` token, or the first error. The tokens are the current
+// allocator's.
+export Lexed tokenize(Str source) {
+    Tokens tokens = mem::alloc_slice(Token, countof(source) + 1);
+    Result(Usize, LexError) filled = fill(source, tokens);
+    if (filled == .error) {
+        mem::free(tokens.data);
+        return {.error = filled.error};
+    }
+    Tokens shrunk = mem::realloc(tokens, filled.ok);
+    return {.ok = shrunk};
+}
+
+// A text being written: `data` holds `used` characters and has room for more.
+struct Builder {
+    char data[:];
+    Usize used;
+};
+
+static void reserve(Builder *b, Usize more) {
+    Usize needed = b->used + more;
+    if (needed <= countof(b->data)) return;
+    Usize grown = countof(b->data) * 2;
+    if (grown < needed) grown = needed;
+    if (grown < 256) grown = 256;
+    b->data = mem::realloc(b->data, grown);
+}
+
+static void append(Builder *b, Str piece) {
+    reserve(b, countof(piece));
+    for (Usize i = 0; i < countof(piece); i++) {
+        b->data[b->used + i] = piece[i];
+    }
+    b->used += countof(piece);
+}
+
+static void append_char(Builder *b, char c) {
+    reserve(b, 1);
+    b->data[b->used] = c;
+    b->used += 1;
+}
+
+static void append_number(Builder *b, Usize value) {
+    char digits[20];
+    Usize count = 0;
+    Usize rest = value;
+    while (rest > 0) {
+        digits[count] = (char)('0' + rest % 10);
+        count += 1;
+        rest /= 10;
+    }
+    if (count == 0) append_char(b, '0');
+    for (Usize i = count; i > 0; i--) {
+        append_char(b, digits[i - 1]);
+    }
+}
+
+// One line for each token, `line:column kind text`: the line and the column count from 1, the column in bytes; the
+// text is left out for a token with none (the end of the file). A newline ends every line.
+export Str dump(Tokens tokens, Str source) {
+    Builder out = {};
+    Usize line = 1;
+    Usize line_start = 0;
+    Usize scanned = 0;
+    for (Token token : tokens) {
+        for (Usize i = scanned; i < token.span.start; i++) {
+            if (source[i] == '\n') {
+                line += 1;
+                line_start = i + 1;
+            }
+        }
+        scanned = token.span.start;
+        append_number(&out, line);
+        append_char(&out, ':');
+        append_number(&out, token.span.start - line_start + 1);
+        append_char(&out, ' ');
+        append(&out, kind_name(token.kind));
+        if (token.span.end > token.span.start) {
+            append_char(&out, ' ');
+            append(&out, text(source, token));
+        }
+        append_char(&out, '\n');
+    }
+    Str result = out.data[0:out.used];
+    return result;
+}
