@@ -2976,6 +2976,27 @@ i32 count(i32 double, u8 long) {
 }
 static i32 sizeof(i32 x);
 i32 const volatile *restrict while = 0;
+==> error-lambda-captures-local/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+i32 main() {
+    i32 factor = 3;
+    i32 (*scale)(i32) = [](i32 a) -> i32 { return a * factor; };
+    c::printf("%d\n", scale(2));
+    return 0;
+}
+==> error-lambda-returns-disagree/src/main.smith <==
+module main;
+
+i32 main() {
+    i32 (*pick)(i32) = [](i32 a) {
+        return a;
+        return 1.5;
+    };
+    return (i32)pick(1);
+}
 ==> error-main-io-make/src/main.smith <==
 import smith::io;
 
@@ -9059,6 +9080,113 @@ u8 alignas(4) aligned = 5;
 i32 main() {
     i32 sum = (i32)first + (i32)second + (i32)third + (i32)fourth + sizeof(u8) + sizeof(u16);
     printf("%d %d\n", sum, aligned);
+    return 0;
+}
+==> lambda-basic/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+i32 apply(i32 (*f)(i32), i32 x) {
+    return f(x);
+}
+
+i32 main() {
+    i32 doubled = apply([](i32 a) -> i32 { return a * 2; }, 4);
+    i32 (*triple)(i32) = [](i32 a) { return a * 3; };
+    c::printf("%d %d\n", doubled, triple(5));
+    return 0;
+}
+==> lambda-nested/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+i32 main() {
+    i32 (*outer)(i32) = [](i32 a) -> i32 {
+        i32 (*inner)(i32) = [](i32 b) { return b + 1; };
+        return inner(a) * 2;
+    };
+    c::printf("%d\n", outer(4));
+    return 0;
+}
+==> lambda-no-parameters/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+i32 main() {
+    i32 (*seven)() = [] { return 7; };
+    void (*hello)() = [] { c::printf("hello\n"); };
+    hello();
+    c::printf("%d\n", seven());
+    return 0;
+}
+==> lambda-plain/src/main.smith <==
+#include <stdio.h>
+
+int apply(int (*f)(int), int x) {
+    return f(x);
+}
+
+int main(void) {
+    int r = apply([](int a) { return a + 1; }, 4);
+    printf("%d\n", r);
+    return 0;
+}
+==> lambda-qsort/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import <stdlib.h>;
+
+i32 main() {
+    i32 values[5] = {3, 1, 4, 1, 5};
+    c::qsort(values, 5, sizeof(i32), [](const void *a, const void *b) -> int {
+        const i32 *left = (const i32 *)a;
+        const i32 *right = (const i32 *)b;
+        return *left - *right;
+    });
+    for (i32 i = 0; i < 5; i++) {
+        c::printf("%d ", values[i]);
+    }
+    c::printf("\n");
+    return 0;
+}
+==> lambda-static/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+static i32 (*const square)(i32) = [](i32 a) -> i32 { return a * a; };
+
+struct Op {
+    const char *name;
+    i32 (*call)(i32, i32);
+};
+
+static const struct Op ops[_] = {
+    {"plus", [](i32 a, i32 b) { return a + b; }},
+    {"minus", [](i32 a, i32 b) { return a - b; }},
+};
+
+i32 main() {
+    c::printf("%d\n", square(7));
+    for (i32 i = 0; i < 2; i++) {
+        c::printf("%s %d\n", ops[i].name, ops[i].call(9, 4));
+    }
+    return 0;
+}
+==> lambda-two/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+i32 main() {
+    i32 (*add)(i32, i32) = [](i32 a, i32 b) { return a + b; };
+    i32 (*mul)(i32, i32) = [](i32 a, i32 b) { return a * b; };
+    f64 (*half)(f64) = [](f64 x) { return x / 2.0; };
+    c::printf("%d %d %.1f\n", add(2, 3), mul(2, 3), half(5.0));
     return 0;
 }
 ==> library-smith-text/src/main.smith <==

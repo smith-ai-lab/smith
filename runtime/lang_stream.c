@@ -1286,7 +1286,7 @@ static void smith_lang_process_token(SmithLang *lang, const SmithHost *host, con
         if (token->synthetic || !smith_lang_ty_token(lang, host, token)) smith_lang_emit_code(lang, host, *token);
         return;
     }
-    if (smith_lang_try_token(lang, host, token)) return;
+    if (smith_lang_lambda_token(lang, host, token) || smith_lang_try_token(lang, host, token)) return;
     if (smith_lang_unused_token(lang, host, token)) return;
     if ((lang->due_count > 0 || lang->local_count > 0) && smith_lang_tag_bare(lang, host, token)) return;
     if (smith_lang_enum_function(lang, host, token)) return; // before the type values: it reads `type f(...)` itself
@@ -1587,7 +1587,7 @@ bool smith_lang_c_use_allowed(const SmithLang *lang, uint32_t location) {
 }
 
 bool smith_lang_holds(const SmithLang *lang) {
-    return lang->head_count > 0;
+    return lang->head_count > 0 || lang->lambda.phase != 0 || lang->lambda.pending > 0;
 }
 
 bool smith_lang_is_module(const SmithLang *lang) {
