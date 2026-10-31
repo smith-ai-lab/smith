@@ -48,8 +48,8 @@ void build(SmithBuild *b) {
                             "-I", smith_fmt(b, "%s/runtime/protocol", root), nullptr),
     };
     smith_object(b, &core);
-    // smith's private io layer (issue #903): smith.c includes its header, which this object's step writes. The object is
-    // not linked: lib/smith/io.smith, which the io tests link, defines the same C names until #894 deletes it.
+    // smith's private io layer (issue #903): smith.c includes its header, which this object's step writes. The object
+    // is not linked: lib/smith/io.smith, which the io tests link, defines the same C names until #894 deletes it.
     SmithObject runtime_io = {
         .compiler = "smith-cc",
         .source = smith_fmt(b, "%s/runtime/io.smith", root),
