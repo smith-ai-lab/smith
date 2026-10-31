@@ -349,36 +349,3 @@ export void test_macos_dap_dbg_many_dimensions_and_qualifier_tags() {
     scratch::expect_contains("dbg shows a const slice as text with its written type", out,
                              "(const char[const :]) c = \"hey\" count=3");
 }
-
-// The io form of main (`i32 main` taking io's value) is the function `smith_user_main` to the compiler and `main` to
-// the debugger, with a module line or without (the DWARF name; no debugger process runs).
-static void check_io_main(const char *file) {
-    scratch::Project root = scratch::make("dap", "dap");
-    defer scratch::clean(&root);
-    arena::Arena memory = test::memory(memory_size);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    if (!ready(&root) || !has_hook(&root)) {
-        return;
-    }
-    if (scratch::sh(&root, "command -v dwarfdump >/dev/null").status != 0) {
-        return;
-    }
-    scratch::Project p = folder(&root, "iomain");
-    scratch::Run built =
-        scratch::sh(&p, format::push("smith cc -g -O0 -I \"$SMITH_REPO/.smith/include\" -c ", file, " -o o.o").data);
-    scratch::expect_status("the io-form main builds", 0, &built);
-    const char *names = scratch::capture(
-        &p, "dwarfdump --debug-info o.o 2>/dev/null | grep -A1 'DW_AT_linkage_name.*smith_user_main' | tail -n 1");
-    scratch::expect_contains(format::push("the io-form main of ", file, " is main to the debugger").data, names,
-                             "DW_AT_name\t(\"main\")");
-}
-
-export void test_macos_dap_the_io_main_without_a_module_line_is_main() {
-    check_io_main("plain/a.smith");
-}
-
-export void test_macos_dap_the_io_main_with_a_module_line_is_main() {
-    check_io_main("main.smith");
-}

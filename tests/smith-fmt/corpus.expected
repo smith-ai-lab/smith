@@ -3144,11 +3144,12 @@ i32 main() {
     return apply([](f64 a) -> i32 { return 0; }, 4);
 }
 ==> error-main-io-make/src/main.smith <==
+module main;
 import smith::io;
 
+// The io form of main is an error in a module: the arguments are `str args[:]`.
 i32 main(io::Io *io) {
-    io::Io other = io::make(1, nullptr);
-    return other.count - io->count;
+    return io->count;
 }
 ==> error-main-io-make/src/smith/io.smith <==
 // A stand-in for smith::io, which the language knows by its name: an io that counts its arguments and says when it is
@@ -9625,101 +9626,6 @@ i32 main(str args[:]) {
     str program = args[0];
     c::printf("%zu argument, the program's name is not empty: %d\n", countof(args), countof(program) > 0);
     return 5;
-}
-==> main-io-module/src/main.smith <==
-module main;
-import smith::io as program_io;
-import <stdio.h>;
-
-i32 helper(i32 x) {
-    return x + 1;
-}
-
-// A main in a module is the same: the name the file gives the import does not matter.
-i32 main(program_io::Io *io) {
-    c::printf("main has %d argument\n", helper(io->count - 1));
-    return 4;
-}
-==> main-io-module/src/smith/io.smith <==
-// A stand-in for smith::io, which the language knows by its name: an io that counts its arguments and says when it is
-// closed.
-module smith::io;
-import <stdio.h>;
-
-[[smith::c_name("SmithIo")]] export typedef struct {
-    i32 count;
-} Io;
-
-[[smith::c_name("smith_io_make")]] export Io make(i32 argc, char **argv) {
-    (void)argv;
-    return (Io){.count = argc};
-}
-
-[[smith::c_name("smith_io_close")]] export void close(Io *io) {
-    c::printf("closed after %d argument\n", io->count);
-}
-==> main-io-two-forms/src/main.smith <==
-import smith::io;
-import <stdio.h>;
-
-// The C form still works in a file that imports smith::io, and makes the io itself.
-i32 main(i32 argc, char *argv[]) {
-    io::Io io = io::make(argc, argv);
-    c::printf("made the io with %d argument\n", io.count);
-    io::close(&io);
-    return 0;
-}
-==> main-io-two-forms/src/smith/io.smith <==
-// A stand-in for smith::io, which the language knows by its name: an io that counts its arguments and says when it is
-// closed.
-module smith::io;
-import <stdio.h>;
-
-[[smith::c_name("SmithIo")]] export typedef struct {
-    i32 count;
-} Io;
-
-[[smith::c_name("smith_io_make")]] export Io make(i32 argc, char **argv) {
-    (void)argv;
-    return (Io){.count = argc};
-}
-
-[[smith::c_name("smith_io_close")]] export void close(Io *io) {
-    c::printf("closed after %d argument\n", io->count);
-}
-==> main-io/src/main.smith <==
-import smith::io;
-import <stdio.h>;
-
-i32 helper(i32 x) {
-    return x * 2;
-}
-
-// The io form: smith makes the io and closes it after, and the status is what main returns.
-i32 main(io::Io *io) {
-    c::printf("main has %d argument\n", io->count);
-    if (io->count == 1) {
-        return helper(21);
-    }
-    return 0;
-}
-==> main-io/src/smith/io.smith <==
-// A stand-in for smith::io, which the language knows by its name: an io that counts its arguments and says when it is
-// closed.
-module smith::io;
-import <stdio.h>;
-
-[[smith::c_name("SmithIo")]] export typedef struct {
-    i32 count;
-} Io;
-
-[[smith::c_name("smith_io_make")]] export Io make(i32 argc, char **argv) {
-    (void)argv;
-    return (Io){.count = argc};
-}
-
-[[smith::c_name("smith_io_close")]] export void close(Io *io) {
-    c::printf("closed after %d argument\n", io->count);
 }
 ==> main-old-form-error/src/main.smith <==
 module main;
