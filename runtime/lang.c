@@ -29,8 +29,6 @@ constexpr size_t smith_lang_chars_max = (size_t)1 << 20;
 constexpr size_t smith_lang_scratch_max = (size_t)1 << 18;
 constexpr size_t smith_lang_head_max = 4096;
 constexpr size_t smith_lang_queue_max = 1024;
-// What `i32 main(io::Io *io)` is called once lowered (runtime/lang_head.c).
-constexpr char smith_lang_io_main_name[] = "smith_user_main";
 constexpr size_t smith_lang_batch_max = 4096;
 constexpr size_t smith_lang_call_sites_max = 2048; // calls to generics the editor can be told of
 constexpr size_t smith_lang_call_frames_max = 16;  // generic calls inside generic calls' arguments
@@ -455,12 +453,6 @@ struct SmithLang {
     bool enums_seen;    // an enum with payloads was written in this file, or an import's header has one (lang_enum.c)
     bool slices_seen;   // a slice was written in this file, or an import's header has one (runtime/lang_slice.c)
     bool tuples_seen;   // a tuple type was written in this file, or an import's header has one (runtime/lang_tuple.c)
-    bool io_import;     // the file imports smith::io: its `main` may take the io (runtime/lang_head.c)
-    bool io_main;       // `i32 main(io::Io *io)` was read: it is `smith_user_main`, and a `main` is written at the end
-    uint32_t io_main_location; // of that function's name
-    SmithLangText io_type; // how this file's lowering writes `io::Io` (SmithIo, or the module's name without a header)
-    bool io_make_seen;     // `io::make` was written somewhere in the file
-    uint32_t io_make_location; // of the first
     bool broken_reported;
     bool started;
     bool finished;

@@ -376,8 +376,6 @@ bool smith_lang_feed(SmithLang *lang, const SmithHost *host, const SmithToken *t
 // Whether a macro of an imported header may be expanded at this location (it was named c.X there).
 bool smith_lang_c_use_allowed(const SmithLang *lang, uint32_t location);
 bool smith_lang_is_module(const SmithLang *lang);
-// Whether the file imports smith::io, so that its `i32 main(io::Io *io)` is rewritten: the host reads `i32` whole.
-bool smith_lang_io_import(const SmithLang *lang);
 // In a module's function body, whether the host offers only braces and the names it watches (the host's fast paths).
 bool smith_lang_body_sparse(const SmithLang *lang);
 // Whether the file has run-time arrays from an import (the host then offers every token and keeps none).
