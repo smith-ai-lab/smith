@@ -187,6 +187,33 @@ typedef struct {
     char name[smith_lang_enum_name_max]; // main_Shape
 } SmithLangEnumType;
 
+static bool smith_lang_eshape_queued(const char *tag);
+
+// Whether the type is the language's own `option` or `result` struct that the lowering has queued in front of an
+// instance and the compiler has not read yet (an instance requested from a function body is written at the end of the
+// file, with its structs, in one batch): its variants follow from the shape.
+static bool smith_lang_enum_unread(const char *name) {
+    return (strncmp(name, "smith_enum_option_", 18) == 0 || strncmp(name, "smith_enum_result_", 18) == 0) &&
+           smith_lang_eshape_queued(name);
+}
+
+// The variant of an unread struct: false when the struct has none of the name, `carries` says it has a payload.
+static bool smith_lang_enum_unread_variant(const SmithLangEnumType *type, const char *variant, size_t length,
+                                           bool *carries) {
+    if (!smith_lang_enum_unread(type->name)) return false;
+    bool is_option = strncmp(type->name, "smith_enum_option_", 18) == 0;
+    static const char *const options[] = {"some", "none"};
+    static const char *const results[] = {"ok", "error"};
+    const char *const *names = is_option ? options : results;
+    for (size_t i = 0; i < 2; i++) { // some, none or ok, error
+        if (strlen(names[i]) == length && memcmp(names[i], variant, length) == 0) {
+            *carries = i == 0 || !is_option;
+            return true;
+        }
+    }
+    return false;
+}
+
 // A canonical type that is a payload enum: `struct smith_enum_<name>` with a tag enum `<name>_tag`.
 static bool smith_lang_enum_type(const SmithHost *host, const char *canonical, SmithLangEnumType *out) {
     if (host->lookup == nullptr) return false;
@@ -206,7 +233,8 @@ static bool smith_lang_enum_type(const SmithHost *host, const char *canonical, S
     if (host->lookup(host->context, tag, (uint32_t)length, SmithLookup_Tag).kind == SmithLookup_Tag) return true;
     snprintf(out->name, sizeof out->name, "%s", named);
     length = snprintf(tag, sizeof tag, "%s_tag", out->name);
-    return host->lookup(host->context, tag, (uint32_t)length, SmithLookup_Tag).kind == SmithLookup_Tag;
+    return host->lookup(host->context, tag, (uint32_t)length, SmithLookup_Tag).kind == SmithLookup_Tag ||
+           smith_lang_enum_unread(out->name);
 }
 
 // The type of an expression written as tokens, when it is a payload enum.
@@ -223,14 +251,18 @@ static bool smith_lang_enum_of(SmithLang *lang, const SmithHost *host, const Smi
 static bool smith_lang_enum_constant(const SmithHost *host, const SmithLangEnumType *type, const SmithToken *variant,
                                      char *out, size_t capacity) {
     int length = snprintf(out, capacity, "%s_tag_%.*s", type->name, (int)variant->length, variant->text);
+    bool carries = false;
     return length > 0 && (size_t)length < capacity &&
-           host->lookup(host->context, out, (uint32_t)length, SmithLookup_Value).kind == SmithLookup_Value;
+           (host->lookup(host->context, out, (uint32_t)length, SmithLookup_Value).kind == SmithLookup_Value ||
+            smith_lang_enum_unread_variant(type, variant->text, variant->length, &carries));
 }
 
 // Whether the variant carries a payload: the struct has a member of its name.
 static bool smith_lang_enum_carries(const SmithHost *host, const SmithLangEnumType *type, const SmithToken *variant) {
     char text[smith_lang_enum_name_max * 2 + 16];
     SmithExprType found = {};
+    bool carries = false;
+    if (smith_lang_enum_unread_variant(type, variant->text, variant->length, &carries)) return carries;
     snprintf(text, sizeof text, "(\x1f%s\x1f)\x1f{\x1f}\x1f.\x1f%.*s", type->type, (int)variant->length, variant->text);
     for (char *at = text; *at != 0; at++) { // the type's words are tokens
         if (*at == ' ') *at = '\x1f';
@@ -1356,6 +1388,10 @@ static SmithLangEnumDefined *smith_lang_eshape_entry(const char *tag) {
         }
     }
     return nullptr;
+}
+
+static bool smith_lang_eshape_queued(const char *tag) {
+    return smith_lang_eshape_entry(tag) != nullptr;
 }
 
 static SmithLangEnumDefined *smith_lang_eshape_note_defined(const char *tag);

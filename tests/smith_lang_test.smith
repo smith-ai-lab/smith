@@ -705,6 +705,10 @@ export void test_enum_generic_return() {
     corpus_case("enum-generic-return");
 }
 
+export void test_enum_generic_import_in_function() {
+    corpus_case("enum-generic-import-in-function");
+}
+
 export void test_enum_payload_lowering() {
     corpus_case("enum-payload-lowering");
 }
