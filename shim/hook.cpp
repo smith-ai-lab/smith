@@ -823,6 +823,15 @@ class SmithHook final : public TokenHook, public NameSource {
     // (`i32 double(i32 x)`), and is reported as that, once, at the name. The hook is offered everything for as long as
     // the look lasts, and what it would not have been offered is passed over.
     bool offer(Token &tok) {
+        if (!targetMacrosUndefined) {
+            // The `module` line's own name may be one (`module demo::linux;`), and the line is not known to be one
+            // until it is read: the first word of the file is enough, since C has no declaration that starts with it.
+            if (tok.is(tok::identifier) && tok.getIdentifierInfo()->getName() == "module" &&
+                spelledInMain(tok.getLocation()) && !seenFirstToken) {
+                undefineTargetMacros(tok.getLocation());
+            }
+            if (spelledInMain(tok.getLocation()) && !tok.is(tok::eof)) seenFirstToken = true;
+        }
         const IdentifierInfo *capitalBefore = nullptr;
         lowerCapital(tok, PP.getHookPrevious(1, capitalBefore));
         lastKind = tok.getKind();
@@ -1824,6 +1833,24 @@ class SmithHook final : public TokenHook, public NameSource {
             countofToKeyword(tok);
         }
         return consumed;
+    }
+
+    // In a module the macros the target predefines under a plain name (`linux`, `unix`, `i386`) are undefined from the
+    // `module` line on: a module has no preprocessor and reads the target through `target::`, so they would only
+    // replace a name of the program's (`import smith::clock::linux;`, a local `unix`) with 1 (issue #382). The reserved
+    // spellings (`__linux__`) and the macros of the command line stay; a file with no `module` line keeps C's meaning.
+    void undefineTargetMacros(SourceLocation at) {
+        targetMacrosUndefined = true;
+        const SourceManager &sources = PP.getSourceManager();
+        std::vector<IdentifierInfo *> plain;
+        for (auto &entry : PP.macros()) {
+            IdentifierInfo *info = const_cast<IdentifierInfo *>(entry.first);
+            const MacroInfo *macro = PP.getMacroInfo(info);
+            if (macro == nullptr || macro->isBuiltinMacro() || info->getName().starts_with("_")) continue;
+            if (sources.getBufferName(macro->getDefinitionLoc()) == "<built-in>") plain.push_back(info);
+        }
+        for (IdentifierInfo *info : plain)
+            PP.appendMacroDirective(info, new (PP.getPreprocessorAllocator()) UndefMacroDirective(at));
     }
 
     // The identifier `countof` of the lowering's output, as the keyword `_Countof`, unless it names a member
@@ -3789,7 +3816,9 @@ class SmithHook final : public TokenHook, public NameSource {
 
   private:
     bool checked = false;
-    bool moduleFile = false; // the file has a `module` line: its array parameters keep their shape
+    bool seenFirstToken = false;        // a token of the main file went by
+    bool targetMacrosUndefined = false; // a module's undefining of the target's plain macros is done
+    bool moduleFile = false;            // the file has a `module` line: its array parameters keep their shape
 
     // The lowering goes back to the next file; what it knew of this one stays.
     void giveBack() {

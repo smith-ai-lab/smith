@@ -1,0 +1,8 @@
+module demo::linux;
+
+// A module is named by what it is, and `linux` is a word the Linux target's compiler defines as 1 in C: not here.
+export i32 unix = 7;
+
+export i32 i386() {
+    return unix + 1;
+}
