@@ -1,0 +1,222 @@
+// Tests of front::parse_stmt (#1146, A4 of track A of #1112): statements read through stubs for the expression and
+// declaration hooks, with golden dumps in tests/front/parse_stmt (`smith test --update` writes a changed one). The stub
+// expression is the tokens up to the end of the expression (a `;`, `)`, `,` or `:` outside brackets) as one name, and
+// the stub declaration is the tokens up to its `;` as a variable, so a dump shows what the statement parser decided.
+module front_parse_stmt_test;
+
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_stmt;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+
+static Bool ends_expression(lex::TokenKind kind) {
+    return kind == lex::semicolon || kind == lex::right_paren || kind == lex::comma || kind == lex::colon ||
+           kind == lex::right_brace || kind == lex::end_of_file;
+}
+
+static Bool opens(lex::TokenKind kind) {
+    return kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace;
+}
+
+static Bool closes(lex::TokenKind kind) {
+    return kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace;
+}
+
+// The tokens of an expression as one name; an error and null when there are none.
+static ast::Expr *stub_expression(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    Usize depth = 0;
+    while (depth > 0 || !ends_expression(parse::peek(p).kind)) {
+        lex::TokenKind kind = parse::peek(p).kind;
+        if (kind == lex::end_of_file) break;
+        if (opens(kind)) depth += 1;
+        if (closes(kind) && depth > 0) depth -= 1;
+        parse::advance(p);
+    }
+    if (p->position == 0 || parse::span_from(p, start).end == start) {
+        parse::expect(p, lex::name, "an expression");
+        return nullptr;
+    }
+    return ast::name(p->source[start:parse::span_from(p, start).end]);
+}
+
+// A declaration up to its `;`: the name is the last token before `=` or `;`, the text before it is the type, and the
+// text after `=` is the initializer. The `;` is taken.
+static ast::Decl *stub_declaration(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    U32 name_start = start;
+    U32 name_end = start;
+    ast::Expr *init = nullptr;
+    Usize depth = 0;
+    while (!parse::at(p, lex::end_of_file)) {
+        lex::Token token = parse::peek(p);
+        if (depth == 0 && token.kind == lex::semicolon) break;
+        if (depth == 0 && token.kind == lex::equal) {
+            parse::advance(p);
+            init = stub_expression(p);
+            break;
+        }
+        if (opens(token.kind)) depth += 1;
+        if (closes(token.kind) && depth > 0) depth -= 1;
+        if (token.kind == lex::name) {
+            name_start = token.span.start;
+            name_end = token.span.end;
+        }
+        parse::advance(p);
+    }
+    parse::expect(p, lex::semicolon, "`;`");
+    Str type_text = p->source[start:name_start];
+    while (countof(type_text) > 0 && type_text[countof(type_text) - 1] == ' ')
+        type_text = type_text[0:countof(type_text) - 1];
+    return ast::variable(p->source[name_start:name_end], ast::named(type_text), init);
+}
+
+static parse::Parser parser_of(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    lex::Tokens tokens = {};
+    switch (lexed) {
+    case .ok:
+        tokens = lexed.ok;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    parse::Parser p = parse::make(tokens, source);
+    p.hooks.expression = stub_expression;
+    p.hooks.declaration = stub_declaration;
+    p.hooks.statement = parse_stmt::statement;
+    return p;
+}
+
+// The statement of source (a block, usually) as the body of a function of a module, dumped.
+static Str dump_of(parse::Parser *p) {
+    ast::Stmt *body = parse::statement(p);
+    ast::Param no_params[:] = {};
+    ast::DeclRef decls[1] = {ast::function("f", no_params, ast::named("Void"), body)};
+    ast::Module m = ast::new_module("m", decls);
+    return ast::dump(&m);
+}
+
+// The dump of a source that parses with no error and to its end.
+static Str clean_dump(Str source) {
+    parse::Parser p = parser_of(source);
+    Str dump = dump_of(&p);
+    test::check_equal(countof(p.errors), 0);
+    test::check_equal(parse::at(&p, lex::end_of_file), true);
+    return dump;
+}
+
+export void test_parse_stmt_every_form() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source =
+        "{ ; x; return; return 1; goto done; done: x; defer f(x); static_assert(x, \"why\"); static_assert(y); "
+        "break; continue; while (x) y; do y; while (x); for (I32 i = 0; i; i) z; for (;;) ; for (x; y; z) { } "
+        "for constexpr (I32 i = 0; i; i) z; if (x) y; else z; if constexpr (x) y; }";
+    test::golden("tests/front/parse_stmt/forms.txt", clean_dump(source));
+}
+
+export void test_parse_stmt_switch_with_grouped_labels() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "{ switch (v) { case 1: case 2: a; b; case .circle: return 1; case .square: default: if (x) { y; } "
+                 "} switch (w) { } }";
+    test::golden("tests/front/parse_stmt/switch.txt", clean_dump(source));
+}
+
+export void test_parse_stmt_nested_blocks_and_dangling_else() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "{ { { a; } b; } if (p) if (q) x; else y; if (p) { if (q) x; } else y; "
+                 "if (p) x; else if (q) y; else z; l: while (c) for (;;) defer w; }";
+    test::golden("tests/front/parse_stmt/nesting.txt", clean_dump(source));
+}
+
+export void test_parse_stmt_a_very_deep_nesting_does_not_use_the_call_stack() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Usize depth = 20000;
+    char text[:] = mem::alloc_slice(char, 2 * depth + 2);
+    for (Usize i = 0; i < depth; i++) {
+        text[i] = '{';
+        text[depth + i] = '}';
+    }
+    text[2 * depth] = ';';
+    parse::Parser p = parser_of(text[0:2 * depth]);
+    ast::Stmt *whole = parse::statement(&p);
+    test::check_equal(countof(p.errors), 0);
+    test::check_equal(whole != nullptr, true);
+    test::check_equal(whole->kind == .block, true);
+    test::check_equal(parse::at(&p, lex::end_of_file), true);
+}
+
+export void test_parse_stmt_declaration_or_expression() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "{ Point p; geometry::Box b = x; Option(I32) o; x * y; f(x); const I32 n = 1; static auto z = 2; "
+                 "struct Pair q; int k; [[maybe_unused]] I32 u; c::size_t len; c::stat *info; c::printf(x); "
+                 "c::EOF; geometry::area(b); x = y; }";
+    test::golden("tests/front/parse_stmt/declaration_or_expression.txt", clean_dump(source));
+}
+
+export void test_parse_stmt_recovery_two_broken_statements_give_two_errors() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "{ a; break 1; b; if x) y; goto ; c; }";
+    parse::Parser p = parser_of(source);
+    Str dump = dump_of(&p);
+    test::check_equal(countof(p.errors), 3);
+    test::check_equal(parse::at(&p, lex::end_of_file), true);
+    test::golden("tests/front/parse_stmt/recovery.txt", dump);
+    char messages[:] = format::push(p.errors[0].message, "\n", p.errors[1].message, "\n", p.errors[2].message, "\n");
+    test::golden("tests/front/parse_stmt/recovery_errors.txt", messages);
+}
+
+export void test_parse_stmt_a_missing_close_brace_is_one_error() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("{ a; if (x) { b; ");
+    ast::Stmt *whole = parse::statement(&p);
+    test::check_equal(whole != nullptr, true);
+    test::check_equal(countof(p.errors) >= 1, true);
+    test::check_equal(parse::at(&p, lex::end_of_file), true);
+}
+
+export void test_parse_stmt_a_long_block_is_read_in_linear_time() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Usize count = 20000;
+    char text[:] = mem::alloc_slice(char, 2 * count + 2);
+    text[0] = '{';
+    for (Usize i = 0; i < count; i++) {
+        text[1 + 2 * i] = 'x';
+        text[2 + 2 * i] = ';';
+    }
+    text[2 * count + 1] = '}';
+    parse::Parser p = parser_of(text);
+    ast::Stmt *whole = parse::statement(&p);
+    test::check_equal(countof(p.errors), 0);
+    if (whole->kind == .block) test::check_equal(countof(whole->kind.block.items), count);
+    test::check_equal(whole->kind == .block, true);
+}

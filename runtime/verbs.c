@@ -1464,7 +1464,16 @@ static int smith_check_project(int count, char **args, const char *self) {
         fprintf(stderr, "smith check: no build file and no main, so lint, test and prove are skipped\n");
     } else {
         smith_check_run(self, "lint", split, loud, failed, &failed_count);
+#ifdef __APPLE__
         smith_check_run(self, "test", split, loud, failed, &failed_count);
+#else
+        // The tests that need macOS cannot run here: the runner's `--skip-macos`, as CI's test shards pass it.
+        static SmithVerbArgs test_split;
+        test_split = *split;
+        test_split.options[test_split.option_count++] = (char *)"--skip-macos";
+        fprintf(stderr, "smith check: the macOS-only tests do not run on this host\n");
+        smith_check_run(self, "test", &test_split, loud, failed, &failed_count);
+#endif
         if (smith_has_prover()) {
             smith_check_run(self, "prove", split, loud, failed, &failed_count);
         } else {

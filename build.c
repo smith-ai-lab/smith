@@ -872,9 +872,11 @@ static const char *const *build_test_modules(SmithBuild *b, const BuildConfig *c
     for (size_t i = 0; tests[i] != nullptr; i++) {
         const char *header = headers[i];
         const char *object = smith_fmt(b, "%s/lint/%zu.o", folder, i);
-        // The front end's tests (their own runner, build_front_units) import LLVM's C API.
+        // The front end's tests and its emitter (their own runner, build_front_units) import LLVM's C API.
         const char *const *llvm_headers =
-            smith_when(b, strncmp(tests[i], "tests/front_", strlen("tests/front_")) == 0,
+            smith_when(b,
+                       strncmp(tests[i], "tests/front_", strlen("tests/front_")) == 0 ||
+                           strncmp(tests[i], "front/", strlen("front/")) == 0,
                        smith_list(b, "-I", smith_fmt(b, "%s/include", config->llvm), nullptr));
         SmithStep compile = {
             .command = smith_cat(b, smith_list(b, smith_cc, nullptr), flags, llvm_headers,

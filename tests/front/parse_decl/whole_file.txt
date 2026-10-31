@@ -1,0 +1,17 @@
+(module geometry
+  (import std::arena)
+  (import_c angled math.h)
+  (struct Point exported
+    (field x (named F32))
+    (field y (named F32)))
+  (enum Maybe exported
+    (enumerator point (named Point))
+    (enumerator none))
+  (variable limit constexpr (named I32) (integer 8))
+  (variable counter static (named I32))
+  (function origin_x exported
+    (param p (named Point))
+    (result (named I32))
+    (block
+      (return (name p))))
+  (static_assert "a limit" (name limit)))

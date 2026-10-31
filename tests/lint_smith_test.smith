@@ -527,6 +527,19 @@ export void test_lint_smith_module_library_import_smith_arena_is_clean_and_so_is
                                        ">library-ok.out; idiom_findings <library-ok.out"));
 }
 
+export void test_lint_smith_mem_realloc_on_a_slice_of_pointers_is_clean() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    scratch::expect_text("mem::realloc on a slice of pointers passes lint (#1178)", "",
+                         lint_text(&p, "idiom bugprone-multi-level-implicit-pointer-conversion "
+                                       "idiom/realloc_pointers.smith >realloc.out; idiom_findings <realloc.out"));
+}
+
 export void test_lint_smith_bounded_loop_endless_loops_outside_main_in_c_and_smith() {
     scratch::Project p = scratch::make("p", "lint_smith");
     defer scratch::clean(&p);

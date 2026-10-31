@@ -1,0 +1,452 @@
+// Tests of front::parse_decl (#1147, A5 of track A of #1112): declarations and whole files, read with small stubs of
+// the three hooks of the other tickets (types, expressions, statements), dumped with `ast::dump` against the golden
+// files of tests/front/parse_decl (`smith test --update` writes a changed one), and one test for each error, which
+// checks that the message names the fix. Each test gives the current allocator an arena.
+module front_parse_decl_test;
+
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+typedef ast::TypeRef TypeRefList[:];
+typedef ast::StmtRef StmtRefList[:];
+
+static Bool same(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+// The name of a variable declaration, or empty.
+static Str variable_name(const ast::Decl *d) {
+    if (d->kind == .variable) return d->kind.variable.name;
+    return "";
+}
+
+// Two texts are the same.
+static void expect_text(Str actual, Str expected) {
+    test::check_equal(actual, expected);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The stubs: just enough of a type, an expression and a statement for the declarations to hold.
+
+// `a::b::C` read from the tokens, as a path.
+static ast::Path stub_path(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    U32 end = start;
+    while (parse::at(p, lex::name) || parse::at(p, lex::type_name)) {
+        end = parse::advance(p).span.end;
+        if (!parse::accept(p, lex::colon_colon)) break;
+    }
+    return ast::path(p->source[start:end]);
+}
+
+static TypeRefList stub_params(parse::Parser *p) {
+    ast::TypeRef *block = (ast::TypeRef *)mem::alloc_array_raw(sizeof(ast::TypeRef), 8, alignof(ast::TypeRef));
+    Usize count = 0;
+    parse::expect(p, lex::left_paren, "`(`");
+    while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file) && count < 8) {
+        block[count] = parse::type(p);
+        count += 1;
+        if (!parse::accept(p, lex::comma)) break;
+    }
+    parse::expect(p, lex::right_paren, "`)`");
+    TypeRefList params = block[0:count];
+    return params;
+}
+
+// `I32`, `c::size_t`, `const T` and `T *`.
+static ast::TypeExpr *stub_base(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    Bool is_const = parse::accept(p, lex::kw_const);
+    Bool is_path =
+        parse::at(p, lex::type_name) || (parse::at(p, lex::name) && parse::peek_at(p, 1).kind == lex::colon_colon);
+    if (!is_path) {
+        parse::error(p, parse::peek(p).span, "the type stub reads a type name");
+        return nullptr;
+    }
+    ast::Path path = stub_path(p);
+    ast::TypeKind kind = {.named = {.path = path}};
+    ast::TypeExpr *type = ast::new_type((ast::TypeExpr){.kind = kind});
+    while (parse::accept(p, lex::star)) {
+        ast::TypeKind pointer = {.pointer = {.pointee = type}};
+        type = ast::new_type((ast::TypeExpr){.kind = pointer});
+    }
+    type->qualifiers.is_const = is_const;
+    type->span = parse::span_from(p, start);
+    return type;
+}
+
+// A base type, or `Fn(R (P, Q))`.
+static ast::TypeExpr *stub_type(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    Bool is_fn = parse::at(p, lex::type_name) && same(parse::text(p, parse::peek(p)), "Fn") &&
+                 parse::peek_at(p, 1).kind == lex::left_paren;
+    if (!is_fn) return stub_base(p);
+    ast::Path path = stub_path(p);
+    parse::advance(p);
+    ast::TypeExpr *result = stub_base(p);
+    TypeRefList params = stub_params(p);
+    parse::expect(p, lex::right_paren, "`)`");
+    ast::TypeKind function = {.function = {.params = params, .result = result}};
+    ast::TypeArg args[:] = mem::alloc_slice(ast::TypeArg, 1);
+    ast::TypeArg arg = {.type = {.type = ast::new_type((ast::TypeExpr){.kind = function})}};
+    args[0] = arg;
+    ast::TypeKind applied = {.applied = {.name = path, .args = args}};
+    ast::TypeExpr *type = ast::new_type((ast::TypeExpr){.kind = applied});
+    type->span = parse::span_from(p, start);
+    return type;
+}
+
+// An integer, a string or a name.
+static ast::Expr *stub_expression(parse::Parser *p) {
+    lex::Token token = parse::peek(p);
+    if (token.kind == lex::integer) {
+        parse::advance(p);
+        U64 value = 0;
+        for (char digit : parse::text(p, token)) {
+            value = value * 10 + (U64)(digit - '0');
+        }
+        return ast::integer(value);
+    }
+    if (token.kind == lex::string) {
+        Str text = parse::text(p, parse::advance(p));
+        return ast::string(text[1:countof(text) - 1]);
+    }
+    if (token.kind == lex::name || token.kind == lex::type_name) {
+        ast::Path path = stub_path(p);
+        ast::ExprKind kind = {.name = {.path = path}};
+        return ast::expr(kind);
+    }
+    parse::error(p, token.span, "the expression stub reads an integer, a string or a name");
+    return nullptr;
+}
+
+// `{ return e; ... }`: the returns of the block, and every other token skipped.
+static ast::Stmt *stub_statement(parse::Parser *p) {
+    parse::expect(p, lex::left_brace, "`{`");
+    ast::StmtRef *block = (ast::StmtRef *)mem::alloc_array_raw(sizeof(ast::StmtRef), 8, alignof(ast::StmtRef));
+    Usize count = 0;
+    while (!parse::at(p, lex::right_brace) && !parse::at(p, lex::end_of_file)) {
+        if (parse::accept(p, lex::kw_return) && count < 8) {
+            block[count] = ast::return_value(parse::expression(p));
+            count += 1;
+        } else {
+            parse::advance(p);
+        }
+    }
+    parse::expect(p, lex::right_brace, "`}`");
+    StmtRefList items = block[0:count];
+    return ast::block(items);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Helpers
+
+// A parser over the tokens of source with the stubs and the declaration parser installed; a lexing error fails the
+// test.
+static parse::Parser parser_of(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    lex::Tokens tokens = {};
+    switch (lexed) {
+    case .ok:
+        tokens = lexed.ok;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    parse::Parser p = parse::make(tokens, source);
+    p.hooks.expression = stub_expression;
+    p.hooks.type = stub_type;
+    p.hooks.statement = stub_statement;
+    p.hooks.declaration = parse_decl::declaration;
+    return p;
+}
+
+// The dump of a whole file; an error recorded while parsing fails the test.
+static Str dump_of(Str source) {
+    parse::Parser p = parser_of(source);
+    ast::Module m = parse_decl::file(&p, "test.smith");
+    if (countof(p.errors) > 0) {
+        Str expected = "no error";
+        test::check_equal(p.errors[0].message, expected);
+    }
+    return ast::dump(&m);
+}
+
+// The first error recorded for a whole file, or `no error`.
+static Str first_error(Str source) {
+    parse::Parser p = parser_of(source);
+    ast::Module m = parse_decl::file(&p, "test.smith");
+    if (countof(p.errors) == 0) return "no error";
+    return p.errors[0].message;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Golden dumps
+
+export void test_parse_decl_variables() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "I32 a;\n"
+                 "export I32 b = 3;\n"
+                 "static I32 c;\n"
+                 "extern I32 d;\n"
+                 "constexpr I32 e = 4;\n"
+                 "thread_local I32 f;\n"
+                 "static inline I32 g;\n"
+                 "[[std::pure]] I32 h;\n"
+                 "[[std::c_name(\"i\")]] export I32 i;\n"
+                 "const I32 j = 1;\n"
+                 "c::size_t k;\n"
+                 "I32 *l = 0;\n"
+                 "auto m = 5;\n"
+                 "I32 xs[4];\n"
+                 "I32 ys[:];\n"
+                 "I32 grid[:][2];\n"
+                 "I32 cube[2][3][4];\n"
+                 "Fn(I32 (I32)) callback;\n";
+    test::golden("tests/front/parse_decl/variables.txt", dump_of(source));
+}
+
+export void test_parse_decl_functions() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "export I32 first(I32 a, I32 b) { return a; }\n"
+                 "Void proto(I32, I32 b);\n"
+                 "I32 count(void);\n"
+                 "I32 none();\n"
+                 "I32 sum(I32 xs[4], I32 ys[:], I32 m[:][2]);\n"
+                 "Void generic(constexpr Type T, T x, auto... rest);\n"
+                 "I32 printf_like(Str format, ...);\n"
+                 "Void tagged([[std::maybe_unused]] I32 x, I32 y [[std::maybe_unused]]);\n"
+                 "static inline I32 twice(I32 x) { return x; }\n"
+                 "[[std::pure]] I32 pure(I32 x);\n"
+                 "Fn(I32 (I32)) pick(Fn(I32 (I32)) f);\n";
+    test::golden("tests/front/parse_decl/functions.txt", dump_of(source));
+}
+
+export void test_parse_decl_types() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "struct Point { I32 x; I32 y; };\n"
+                 "export struct Opaque;\n"
+                 "union Bits { U32 word; U8 byte; };\n"
+                 "struct Flags { U32 ready : 3; U32 mode : 2; U32 : 3; I32 grid[4]; I32 rows[:]; };\n"
+                 "typedef struct { F32 radius; } Circle;\n"
+                 "typedef union { U32 word; U8 byte; } Word;\n"
+                 "typedef struct Pair { I32 a; I32 b; } Pair;\n"
+                 "enum Color { red, green = 2, blue };\n"
+                 "enum Small : U8 { low, high = 255, };\n"
+                 "typedef enum { Circle circle; Rect rect; empty; } Shape;\n"
+                 "typedef enum : U8 { Circle circle; empty; } Tagged;\n"
+                 "export typedef I32 Index;\n"
+                 "typedef I32 Row[4];\n"
+                 "typedef Fn(I32 (I32)) Handler;\n";
+    test::golden("tests/front/parse_decl/types.txt", dump_of(source));
+}
+
+export void test_parse_decl_file_level() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "module geometry::shapes;\n"
+                 "import std::arena;\n"
+                 "import geometry::box;\n"
+                 "import <stdio.h>;\n"
+                 "import <sys/stat.h>;\n"
+                 "import \"x.h\";\n"
+                 "static_assert(1, \"one\");\n"
+                 "static_assert(2);\n"
+                 "if constexpr (flag) { import <unistd.h>; I32 posix; } else { I32 other; }\n"
+                 "if constexpr (a) { if constexpr (b) { I32 both; } else { I32 only_a; } }\n"
+                 "if constexpr (a) { I32 x; } else if constexpr (b) { I32 y; } else { I32 z; }\n"
+                 "if constexpr (c) { }\n"
+                 "[[std::pure]] I32 attributed(I32 x);\n";
+    test::golden("tests/front/parse_decl/file_level.txt", dump_of(source));
+}
+
+export void test_parse_decl_if_constexpr_chains_and_nests() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "if constexpr (a) { I32 x; } else if constexpr (b) { I32 y; } else { I32 z; }\n"
+                 "if constexpr (a) { if constexpr (b) { if constexpr (c) { I32 deep; } } I32 after; }\n"
+                 "I32 last;\n";
+    test::golden("tests/front/parse_decl/if_chain.txt", dump_of(source));
+}
+
+export void test_parse_decl_a_whole_small_file() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "// A small module.\n"
+                 "module geometry;\n"
+                 "\n"
+                 "import std::arena;\n"
+                 "import <math.h>;\n"
+                 "\n"
+                 "export struct Point {\n"
+                 "    F32 x;\n"
+                 "    F32 y;\n"
+                 "};\n"
+                 "\n"
+                 "export typedef enum {\n"
+                 "    Point point;\n"
+                 "    none;\n"
+                 "} Maybe;\n"
+                 "\n"
+                 "constexpr I32 limit = 8;\n"
+                 "static I32 counter;\n"
+                 "\n"
+                 "export I32 origin_x(Point p) {\n"
+                 "    return p;\n"
+                 "}\n"
+                 "\n"
+                 "static_assert(limit, \"a limit\");\n";
+    test::golden("tests/front/parse_decl/whole_file.txt", dump_of(source));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The hook, and the progress after an error
+
+export void test_parse_decl_the_hook_reads_one_declaration() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("I32 a = 1; I32 b;");
+    ast::Decl *first = parse::declaration(&p);
+    test::check_condition(first != nullptr);
+    expect_text(variable_name(first), "a");
+    test::check_equal(parse::peek(&p).kind == lex::type_name, true);
+    ast::Decl *second = parse::declaration(&p);
+    test::check_condition(second != nullptr);
+    expect_text(variable_name(second), "b");
+    test::check_equal(parse::at(&p, lex::end_of_file), true);
+    test::check_equal(countof(p.errors), 0);
+}
+
+export void test_parse_decl_goes_on_after_an_error() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("I32 a, b;\nI32 ok;\nI32 f(a, b) { return 1; }\nI32 last;");
+    ast::Module m = parse_decl::file(&p, "test.smith");
+    test::check_equal(countof(p.errors), 2);
+    test::check_equal(countof(m.decls), 2);
+    expect_text(variable_name(m.decls[0]), "ok");
+    expect_text(variable_name(m.decls[1]), "last");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// One test for each error: the message names the fix
+
+export void test_parse_decl_error_several_names() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str expected = "one name per declaration: write `I32 a;` and `I32 b;`";
+    expect_text(first_error("I32 a, b;"), expected);
+    expect_text(first_error("I32 a = 1, b = 2;"), expected);
+    expect_text(first_error("struct S { I32 a, b; };"), expected);
+    expect_text(first_error("typedef I32 A, B;"), "one name per declaration: write `I32 A;` and `I32 B;`");
+}
+
+export void test_parse_decl_error_function_pointer_declarator() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str expected = "C's function-pointer declarator is gone: write `Fn(I32 (I32)) f` (a function value is `Fn(F)` "
+                   "everywhere)";
+    expect_text(first_error("I32 (*f)(I32);"), expected);
+    Str typedef_expected = "C's function-pointer declarator is gone: write `Fn(I32 (I32, I32)) Handler` (a function "
+                           "value is `Fn(F)` everywhere)";
+    expect_text(first_error("typedef I32 (*Handler)(I32, I32);"), typedef_expected);
+}
+
+export void test_parse_decl_error_k_and_r_parameters() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str expected = "a parameter list without types (K&R) is gone: write the type of `a`, as in `I32 f(I32 a)`";
+    expect_text(first_error("I32 f(a, b) I32 a; I32 b; { return a; }"), expected);
+}
+
+export void test_parse_decl_error_implicit_int() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str main_expected = "a declaration needs a type (there is no implicit `int`): write the type before `main`, as in "
+                        "`I32 main`";
+    expect_text(first_error("main() { return 0; }"), main_expected);
+    Str x_expected = "a declaration needs a type (there is no implicit `int`): write the type before `x`, as in "
+                     "`I32 x`";
+    expect_text(first_error("static x = 3;"), x_expected);
+}
+
+export void test_parse_decl_error_array_without_a_size() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_text(first_error("I32 xs[];"), "an array needs a size: write `[N]`, or `[:]` for a slice");
+}
+
+export void test_parse_decl_error_a_tag_spelled_as_c() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str expected = "`struct Point` is C's spelling: a tag is a type name, write `Point`";
+    expect_text(first_error("struct Point p;"), expected);
+    Str by_itself = "declare the type by itself: write `struct Name {...};`, then `Name x;` for the variable";
+    expect_text(first_error("struct Point { I32 x; } p;"), by_itself);
+    Str lowercase = "a type's name starts with a capital letter: `point` is the spelling of a value";
+    expect_text(first_error("struct point { I32 x; };"), lowercase);
+}
+
+export void test_parse_decl_error_a_missing_end() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_text(first_error("I32 a"), "expected `;` after the declaration, found the end of the file");
+    Str open_block = "expected `}` to close `if constexpr`, found the end of the file";
+    expect_text(first_error("if constexpr (a) { I32 x;"), open_block);
+    Str not_constexpr = "expected `constexpr`: `if constexpr` is the only `if` of a file, found `(`";
+    expect_text(first_error("if (a) { I32 x; }"), not_constexpr);
+}
+
+export void test_parse_decl_anonymous_records() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "typedef enum { struct { I32 a; } one; union { U32 word; F32 real; } bits; empty; } Shape;\n"
+                 "struct { I32 x; I32 y; } origin;\n"
+                 "export union { U32 word; } shared[2];\n";
+    test::golden("tests/front/parse_decl/anonymous.txt", dump_of(source));
+}
