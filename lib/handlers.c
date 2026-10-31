@@ -312,12 +312,26 @@ __attribute__((noinline)) static SmithScheduler *smith_handlers_scheduler_curren
 // The pthread mutexes the calling thread holds (issue #938), counted only while some scheduler is set.
 static thread_local int smith_handlers_locks_held;
 
+// Every touch of the count is its own function that is never inlined: inlined, the compiler may compute the
+// thread-local's address (a call to the loader) before the branch that keeps it away from libSystem's initializer.
+__attribute__((noinline)) static void smith_handlers_locks_add(int change) {
+    if (change > 0 || smith_handlers_locks_held > 0) smith_handlers_locks_held += change;
+}
+
+__attribute__((noinline)) static bool smith_handlers_locks_any(void) {
+    return smith_handlers_locks_held > 0;
+}
+
+__attribute__((noinline)) static void smith_handlers_locks_reset(void) {
+    smith_handlers_locks_held = 0;
+}
+
 SmithScheduler *smith_handlers_set_scheduler(SmithScheduler *scheduler) {
     SmithScheduler *previous = smith_handlers_tab()->scheduler;
     smith_handlers_tab()->scheduler = scheduler;
     if (previous == nullptr && scheduler != nullptr) atomic_fetch_add(&smith_handlers_scheduler_active, 1);
     if (previous != nullptr && scheduler == nullptr) atomic_fetch_sub(&smith_handlers_scheduler_active, 1);
-    if (scheduler == nullptr) smith_handlers_locks_held = 0;
+    if (scheduler == nullptr) smith_handlers_locks_reset();
     return previous;
 }
 
@@ -328,8 +342,7 @@ SmithScheduler *smith_handlers_scheduler(void) {
 // A task never switches while it holds one, so per thread is per task. A routed call made above zero is the real call:
 // parking there could leave another task of the same worker blocked on that mutex for good.
 static void smith_handlers_lock_taken(void) {
-    if (atomic_load_explicit(&smith_handlers_scheduler_active, memory_order_relaxed) != 0)
-        smith_handlers_locks_held += 1;
+    if (atomic_load_explicit(&smith_handlers_scheduler_active, memory_order_relaxed) != 0) smith_handlers_locks_add(1);
 }
 
 // No thread-local is touched while no scheduler is set: libSystem's own initializer unlocks mutexes before
@@ -337,14 +350,14 @@ static void smith_handlers_lock_taken(void) {
 // count.
 static void smith_handlers_lock_given(void) {
     if (atomic_load_explicit(&smith_handlers_scheduler_active, memory_order_relaxed) == 0) return;
-    if (smith_handlers_locks_held > 0) smith_handlers_locks_held -= 1;
+    smith_handlers_locks_add(-1);
 }
 
 // True when a scheduler took the request: its result is then the call's, with errno set as the real call would set it.
 // The counter is read here, so a thread with no scheduler pays one load.
 static bool smith_handlers_route(SmithIoRequest *request) {
     if (atomic_load_explicit(&smith_handlers_scheduler_active, memory_order_relaxed) == 0) return false;
-    if (smith_handlers_locks_held > 0) return false;
+    if (smith_handlers_locks_any()) return false;
     SmithScheduler *scheduler = smith_handlers_scheduler_current();
     if (scheduler == nullptr || scheduler->io == nullptr) return false;
     scheduler->io(scheduler, request);
