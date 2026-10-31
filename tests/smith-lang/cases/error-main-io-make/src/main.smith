@@ -1,6 +1,7 @@
+module main;
 import smith::io;
 
+// The io form of main is an error in a module: the arguments are `str args[:]`.
 i32 main(io::Io *io) {
-    io::Io other = io::make(1, nullptr);
-    return other.count - io->count;
+    return io->count;
 }
