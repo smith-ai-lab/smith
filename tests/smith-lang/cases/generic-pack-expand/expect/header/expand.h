@@ -13,7 +13,7 @@
 // smith-linked: sq plus vsum
 // smith-hidden: sq plus vsum
 // clang-format on
-#pragma once
+#ifndef SMITH_HEADER_expand
 #include <stddef.h>
 #include <stdint.h>
 #ifdef __cplusplus
@@ -23,11 +23,22 @@ typedef struct {
 int32_t a;
 int32_t b;
 } expand_Pair;
+#ifdef __cplusplus
+}
+#endif
+#define SMITH_HEADER_expand
+#endif
 #ifdef SMITH_INSTANCES
+#ifndef SMITH_HEADER_expand_INSTANCES
+#define SMITH_HEADER_expand_INSTANCES
+#ifdef __cplusplus
+extern "C" {
+#endif
 int32_t expand_sq(int32_t x) __asm__("_expand::sq");
 int32_t expand_plus(int32_t a, int32_t b) __asm__("_expand::plus");
 int32_t expand_vsum(int32_t count, ...) __asm__("_expand::vsum");
-#endif
 #ifdef __cplusplus
 }
+#endif
+#endif
 #endif

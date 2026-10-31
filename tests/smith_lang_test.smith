@@ -1449,6 +1449,10 @@ export void test_generic_private_generic() {
     corpus_case("generic-private-generic");
 }
 
+export void test_generic_private_included_first() {
+    corpus_case("generic-private-included-first");
+}
+
 export void test_generic_private_names() {
     corpus_case("generic-private-names");
 }
@@ -1543,6 +1547,10 @@ export void test_header_conditional() {
 
 export void test_header_conditional_define() {
     corpus_case("header-conditional-define");
+}
+
+export void test_header_nolint_pair() {
+    corpus_case("header-nolint-pair");
 }
 
 export void test_header_docs() {
