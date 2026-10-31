@@ -7,6 +7,7 @@ module smith::test;
 
 import smith::arena;
 import smith::contract;
+import smith::files;
 import smith::io;
 import smith::math;
 import smith::random;
@@ -1327,7 +1328,41 @@ void diff_render(Diff *diff, const Edit *edits, usize count, const Row *old_rows
 
 // The bytes of the file in the test's memory (a zero after them), or nullptr when it cannot be read. The files effect
 // is a real io made for the call from the runner's make_io, as run_io makes a test's.
+const char *golden_read_free(const char *path, usize *size) {
+    files::BytesResult file = files::read_file(path[0:c::strlen(path)]);
+    const char *result = nullptr;
+    if (file == .ok) {
+        usize count = countof(file.ok);
+        arena::Arena memory_arena = memory(count + 1);
+        char *buffer = arena::push_slice(&memory_arena, char, count + 1).data;
+        if (count > 0) __builtin_memcpy(buffer, file.ok.data, count);
+        *size = count;
+        result = buffer;
+        if (file.ok.data != nullptr)
+            c::smith_mem_free(file.ok.data); // NOLINT(smith-module-library): the block of the current allocator
+    }
+    return result;
+}
+
+// The same file written with no io, its folders made. False when it cannot be.
+bool golden_write_free(const char *path, const char *text, usize size) {
+    char folder[path_capacity];
+    __builtin_snprintf(folder, sizeof folder, "%s", path);
+    char *slash = c::strrchr(folder, '/');
+    bool made = true;
+    if (slash != nullptr && slash != folder) {
+        *slash = '\0';
+        files::DoneResult folder_made = files::make_folder(folder[0:c::strlen(folder)]);
+        made = folder_made == .ok;
+    }
+    const u8 *bytes = (const u8 *)text;
+    if (!made) return false;
+    files::CountResult written = files::write_file(path[0:c::strlen(path)], bytes[0:size], files::Replace);
+    return written == .ok;
+}
+
 const char *golden_read(io::Io *io, const char *path, usize *size) {
+    if (io == nullptr) return golden_read_free(path, size);
     io::Read file = io::files_read(&io->files, &io->arena, path);
     const char *result = nullptr;
     if (file.error.code == 0) {
@@ -1342,6 +1377,7 @@ const char *golden_read(io::Io *io, const char *path, usize *size) {
 
 // The file written whole, its folders made. False when it cannot be.
 bool golden_write(io::Io *io, const char *path, const char *text, usize size) {
+    if (io == nullptr) return golden_write_free(path, text, size);
     char folder[path_capacity];
     __builtin_snprintf(folder, sizeof folder, "%s", path);
     char *slash = c::strrchr(folder, '/');
@@ -1419,7 +1455,7 @@ export [[nodiscard]] bool updating() {
 // `smith test --update` the file is written when it differs (its folders made) and the test passes; the runner lists
 // the files it wrote. The file is read and written through the files of the io the test takes, as any test that touches
 // files does.
-export void golden(io::Io *io, const char path[:], const char actual[:]) {
+void golden_check(io::Io *io, const char path[:], const char actual[:]) {
     char file[path_capacity];
     if (countof(path) == 0 || countof(path) >= path_capacity)
         golden_fail("the golden path is empty or too long", "", "");
@@ -1438,6 +1474,17 @@ export void golden(io::Io *io, const char path[:], const char actual[:]) {
     }
     if (expected == nullptr) golden_fail("no file ", file, "; run smith test --update to write it");
     golden_differ(file, expected, size, actual_text, actual_size);
+}
+
+export void golden(io::Io *io, const char path[:], const char actual[:]) {
+    golden_check(io, path, actual);
+}
+
+// The same with no io (issue #843): the file is read and written through smith::files, with the same diff on a mismatch
+// and the same `smith test --update` behavior. The name carries `_free` while test::golden takes the io; #240 removes
+// that parameter and the name with it.
+export void golden_free(const char path[:], const char actual[:]) {
+    golden_check(nullptr, path, actual);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
