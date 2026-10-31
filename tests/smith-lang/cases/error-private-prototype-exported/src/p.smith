@@ -1,0 +1,12 @@
+module p;
+
+export typedef struct { I32 v; } Box;
+
+Box *shared();
+
+I32 value() { return shared()->v; }
+
+export Box *shared() {
+    static Box box;
+    return &box;
+}
