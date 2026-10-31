@@ -1,0 +1,1683 @@
+// front::ast: the syntax tree of smith's own front end (#1112, ticket A1). The parser (track A) produces it, the
+// emitter (track B) consumes it, and B's first tests build trees by hand with the constructors below.
+//
+// Plain data: every type is exported with all its fields. A kind is a payload enum (`Expr.kind`, `Stmt.kind`, ...) with
+// its data in the variant; a child that may be absent is a null pointer, a list of children is a slice, and a string is
+// a `Str` into the source text or the current allocator. Nodes are allocated through the current allocator
+// (std::mem), so a caller that sets an arena as the allocator frees a whole tree at once. Nothing here is recursive:
+// the walk of the dump uses an explicit stack, and so must every walk of the tree.
+//
+// The dump, `ast::dump(module)`: an S-expression, a node per line, two spaces per depth, ending in a newline. A node is
+// `(kind scalars` then its children, each on its own line one level deeper, and the closing parenthesis follows the
+// last child on its line; a node whose children are all childless is written on one line, `(binary add (name a) (name
+// b))`:
+//
+//   (function add exported
+//     (param a (named I32))
+//     (param b (named I32))
+//     (result (named I32))
+//     (block
+//       (return (binary add (name a) (name b)))))
+//
+// The scalars of a node follow its kind in a fixed order: names and operators as words, a `Path` as `a::b`, flags as
+// the words that are set (`exported`, `static`, `const`, `arrow`, `constexpr`, `variadic`, ...), a string quoted with
+// `\n`, `\"`, `\\` and `\xNN` for the rest. Spans are not dumped, so a golden file does not move with the layout of
+// the source. An absent child that a reader could not place by its kind (the parts of a `for`, the end of a slice) is
+// `(absent)`; an absent `else` or `return` value is left out. The dump's text is built in the current allocator.
+module front::ast;
+
+import std::arena;
+import std::format;
+import std::mem;
+import <string.h>;
+
+// ---------------------------------------------------------------------------------------------------------------
+// Leaves
+
+// Byte offsets in the file, `start` inclusive, `end` exclusive.
+export struct Span {
+    U32 start;
+    U32 end;
+};
+
+// `Str` inside the inline struct of a payload enum's variant breaks today's lowering, so those fields are written
+// `Text`: the same type.
+export typedef Str Text;
+
+// One word of the source. A list of strings cannot be a field today: `Str xs[:]` is a slice of slices, which smith
+// makes a two-dimensional block (`xs[:][:]`, rows of one length), not a list of texts. So the two lists of words,
+// `Path.segments` and the captures of a lambda, are slices of this struct.
+export struct Identifier {
+    Str text;
+    Span span;
+};
+
+// `x`, `c::printf`, `geometry::Box`.
+export struct Path {
+    Identifier segments[:];
+    Span span;
+};
+
+export struct Qualifiers {
+    Bool is_const;
+    Bool is_volatile;
+    Bool is_restrict;
+};
+
+export struct Expr;
+export struct Stmt;
+export struct Decl;
+export struct TypeExpr;
+
+// A pointer to a child. A slice of children is a slice of these: `Expr *args[:]` writes a header with the name glued
+// to the type (`struct smith_array_ast_Expr_ptr_nargs;`), so a slice of pointers is spelled through a typedef until the
+// header is fixed; the type is the same pointer.
+export typedef Expr *ExprRef;
+export typedef Stmt *StmtRef;
+export typedef Decl *DeclRef;
+export typedef TypeExpr *TypeRef;
+
+// `[[std::pure]]`, `[[std::c_name("f")]]`.
+export struct Attribute {
+    Path name;
+    ExprRef args[:];
+    Span span;
+};
+
+// ---------------------------------------------------------------------------------------------------------------
+// Types
+
+// The argument of an applied type: `Option(T)` has a type, `Array(I32, 4)` a type and a value.
+export typedef enum {
+    struct {
+        TypeExpr *type;
+    } type;
+    struct {
+        Expr *value;
+    } value;
+} TypeArg;
+
+export typedef enum {
+    struct {
+        Path path;
+    } named; // `I32`, `Point`, `c::FILE`, a concept such as `Int`
+    auto_type;
+    struct {
+        TypeExpr *pointee;
+    } pointer;
+    struct {
+        TypeExpr *element;
+        Expr *count;
+    } array;
+    struct {
+        TypeExpr *element;
+    } slice; // `T[:]`; `T[:][2]` is a slice of arrays
+    struct {
+        TypeRef params[:];
+        TypeExpr *result;
+        Bool variadic;
+    } function;
+    struct {
+        Path name;
+        TypeArg args[:];
+    } applied; // `Option(T)`, `Result(T, E)`, `Fn(F)`, a user's type function
+    struct {
+        Expr *operand;
+    } type_of;
+} TypeKind;
+
+export struct TypeExpr {
+    Span span;
+    Qualifiers qualifiers;
+    TypeKind kind;
+};
+
+// ---------------------------------------------------------------------------------------------------------------
+// Expressions
+
+export typedef enum {
+    negate;
+    plus;
+    logical_not;
+    bit_not;
+    address_of;
+    dereference;
+    pre_increment;
+    pre_decrement;
+    post_increment;
+    post_decrement;
+} UnaryOp;
+
+export typedef enum {
+    add;
+    subtract;
+    multiply;
+    divide;
+    remainder;
+    shift_left;
+    shift_right;
+    less;
+    greater;
+    less_equal;
+    greater_equal;
+    equal;
+    not_equal;
+    bit_and;
+    bit_xor;
+    bit_or;
+    logical_and;
+    logical_or;
+} BinaryOp;
+
+export typedef enum {
+    plain;
+    add;
+    subtract;
+    multiply;
+    divide;
+    remainder;
+    shift_left;
+    shift_right;
+    bit_and;
+    bit_xor;
+    bit_or;
+} AssignOp;
+
+export typedef enum {
+    size_of;
+    align_of;
+    count_of;
+} QueryOp;
+
+export typedef enum {
+    struct {
+        Text name;
+    } field;
+    struct {
+        Expr *index;
+    } index;
+} Designator;
+
+export struct Initializer {
+    Designator designators[:];
+    Expr *value;
+};
+
+export struct Param {
+    Str name;
+    TypeExpr *type;
+    Bool is_constexpr;
+    Bool is_rest; // `auto... rest`
+    Attribute attributes[:];
+    Span span;
+};
+
+export typedef enum {
+    struct {
+        U64 value;
+        Text suffix;
+    } integer;
+    struct {
+        F64 value;
+        Text suffix;
+    } floating;
+    struct {
+        U32 value;
+    } character;
+    struct {
+        Text bytes;
+    } string; // escapes decoded
+    struct {
+        Bool value;
+    } boolean;
+    null_pointer;
+    struct {
+        Path path;
+    } name;
+    struct {
+        Text name;
+    } variant; // `.empty`
+    struct {
+        TypeExpr *type;
+    } type_value; // a type as a value: `f(I32)`
+    struct {
+        UnaryOp op;
+        Expr *operand;
+    } unary;
+    struct {
+        BinaryOp op;
+        Expr *left;
+        Expr *right;
+    } binary;
+    struct {
+        AssignOp op;
+        Expr *target;
+        Expr *value;
+    } assign;
+    struct {
+        Expr *condition;
+        Expr *then_value;
+        Expr *else_value;
+    } conditional;
+    struct {
+        Expr *callee;
+        ExprRef args[:];
+    } call;
+    struct {
+        Expr *base;
+        Expr *index;
+    } index;
+    struct {
+        Expr *base;
+        Expr *start;
+        Expr *end;
+    } slice_of; // `xs[a:b]`, either end null
+    struct {
+        Expr *base;
+        Text name;
+        Bool arrow;
+    } member;
+    struct {
+        TypeExpr *type;
+        Expr *operand;
+    } cast;
+    struct {
+        QueryOp op;
+        TypeExpr *type;
+        Expr *operand;
+    } query; // exactly one of type and operand
+    struct {
+        TypeExpr *type;
+        Initializer items[:];
+    } compound; // `(Point){...}`; `{...}` has a null type
+    struct {
+        Identifier captures[:];
+        Param params[:];
+        TypeExpr *result;
+        Stmt *body;
+    } lambda; // `[x]` copies, the rest by reference
+    struct {
+        Expr *operand;
+    } try_expr;
+} ExprKind;
+
+export struct Expr {
+    Span span;
+    ExprKind kind;
+};
+
+// ---------------------------------------------------------------------------------------------------------------
+// Statements
+
+export struct SwitchCase {
+    ExprRef values[:];
+    Bool is_default;
+    StmtRef body[:]; // a case falls through when its body does not end the case
+    Span span;
+};
+
+export typedef enum {
+    struct {
+        Expr *value;
+    } expression;
+    struct {
+        Decl *decl;
+    } declaration;
+    struct {
+        StmtRef items[:];
+    } block;
+    struct {
+        Expr *condition;
+        Stmt *then_branch;
+        Stmt *else_branch;
+        Bool is_constexpr;
+    } if_stmt;
+    struct {
+        Expr *condition;
+        Stmt *body;
+    } while_stmt;
+    struct {
+        Stmt *body;
+        Expr *condition;
+    } do_while;
+    struct {
+        Stmt *init;
+        Expr *condition;
+        Expr *step;
+        Stmt *body;
+        Bool is_constexpr;
+    } for_stmt;
+    struct {
+        Expr *value;
+        SwitchCase cases[:];
+    } switch_stmt;
+    break_stmt;
+    continue_stmt;
+    struct {
+        Expr *value;
+    } return_stmt;
+    struct {
+        Stmt *body;
+    } defer_stmt;
+    struct {
+        Text label;
+    } goto_stmt;
+    struct {
+        Text label;
+        Stmt *body;
+    } labeled;
+    struct {
+        Expr *condition;
+        Text message;
+    } static_assert_stmt;
+    empty;
+} StmtKind;
+
+export struct Stmt {
+    Span span;
+    StmtKind kind;
+};
+
+// ---------------------------------------------------------------------------------------------------------------
+// Declarations
+
+export struct FieldDecl {
+    Str name;
+    TypeExpr *type;
+    Expr *bit_width;
+    Span span;
+};
+
+export struct Enumerator {
+    Str name;
+    Expr *value;
+    TypeExpr *payload; // a payload enum's variant
+    Span span;
+};
+
+export typedef enum {
+    struct {
+        Text name;
+        TypeExpr *type;
+        Expr *init;
+        Bool is_constexpr;
+        Bool is_thread_local;
+    } variable; // `auto x = ...` has the type auto_type
+    struct {
+        Text name;
+        Param params[:];
+        TypeExpr *result;
+        Stmt *body;
+        Bool variadic;
+    } function; // a null body: a prototype
+    struct {
+        Text name;
+        Bool is_union;
+        FieldDecl fields[:];
+    } record;
+    struct {
+        Text name;
+        TypeExpr *underlying;
+        Enumerator items[:];
+    } enumeration;
+    struct {
+        Text name;
+        TypeExpr *type;
+    } type_alias; // `typedef`
+    struct {
+        Path path;
+    } import_module;
+    struct {
+        Text header;
+        Bool angled;
+    } import_c; // `import <stdio.h>;` and `import "x.h";`
+    struct {
+        Expr *condition;
+        Text message;
+    } static_assert_decl;
+    struct {
+        Expr *condition;
+        DeclRef then_decls[:];
+        DeclRef else_decls[:];
+    } if_constexpr;
+} DeclKind;
+
+export struct Decl {
+    Span span;
+    Attribute attributes[:];
+    Bool exported;
+    Bool is_static;
+    Bool is_extern;
+    Bool is_inline;
+    DeclKind kind;
+};
+
+export struct Module {
+    Path name;
+    Str file;
+    DeclRef decls[:];
+};
+
+// ---------------------------------------------------------------------------------------------------------------
+// Constructors: a node copied into the current allocator.
+
+export Expr *new_expr(Expr value) {
+    Expr *node = mem::alloc(Expr);
+    *node = value;
+    return node;
+}
+
+export Stmt *new_stmt(Stmt value) {
+    Stmt *node = mem::alloc(Stmt);
+    *node = value;
+    return node;
+}
+
+export Decl *new_decl(Decl value) {
+    Decl *node = mem::alloc(Decl);
+    *node = value;
+    return node;
+}
+
+export TypeExpr *new_type(TypeExpr value) {
+    TypeExpr *node = mem::alloc(TypeExpr);
+    *node = value;
+    return node;
+}
+
+// The same from the kind alone, so a tree reads as it nests: `ast::expr({.binary = {.op = .add, ...}})`. The span
+// is empty, as the spans of a tree built by hand.
+export Expr *expr(ExprKind kind) {
+    return new_expr((Expr){.kind = kind});
+}
+
+export Stmt *stmt(StmtKind kind) {
+    return new_stmt((Stmt){.kind = kind});
+}
+
+export TypeExpr *make_type(TypeKind kind) {
+    return new_type((TypeExpr){.kind = kind});
+}
+
+// A declaration with the flags of `base` (its kind is replaced by `kind`): `ast::decl({.exported = true}, {.function =
+// ...})`.
+export Decl *decl(Decl base, DeclKind kind) {
+    base.kind = kind;
+    return new_decl(base);
+}
+
+typedef Param ParamList[:];
+typedef ExprRef ExprRefList[:];
+typedef StmtRef StmtRefList[:];
+typedef DeclRef DeclRefList[:];
+typedef FieldDecl FieldDeclList[:];
+typedef Enumerator EnumeratorList[:];
+
+// A list copied into the current allocator, so the constructors below own their lists: a caller passes a stack array
+// (`ast::Param params[2] = {a, b};`) and the node keeps its own copy.
+static ParamList copy_params(Param list[:]) {
+    ParamList copy = mem::alloc_slice(Param, countof(list));
+    for (usize i = 0; i < countof(list); i++)
+        copy[i] = list[i];
+    return copy;
+}
+
+static ExprRefList copy_exprs(ExprRef list[:]) {
+    // Not mem::alloc_slice: its instance for a pointer element draws the lint of a multilevel conversion.
+    ExprRef *block = (ExprRef *)mem::alloc_array_raw(sizeof(ExprRef), countof(list), alignof(ExprRef));
+    for (usize i = 0; i < countof(list); i++)
+        block[i] = list[i];
+    ExprRefList copy = block[0:countof(list)];
+    return copy;
+}
+
+static StmtRefList copy_stmts(StmtRef list[:]) {
+    // Not mem::alloc_slice: its instance for a pointer element draws the lint of a multilevel conversion.
+    StmtRef *block = (StmtRef *)mem::alloc_array_raw(sizeof(StmtRef), countof(list), alignof(StmtRef));
+    for (usize i = 0; i < countof(list); i++)
+        block[i] = list[i];
+    StmtRefList copy = block[0:countof(list)];
+    return copy;
+}
+
+static DeclRefList copy_decls(DeclRef list[:]) {
+    // Not mem::alloc_slice: its instance for a pointer element draws the lint of a multilevel conversion.
+    DeclRef *block = (DeclRef *)mem::alloc_array_raw(sizeof(DeclRef), countof(list), alignof(DeclRef));
+    for (usize i = 0; i < countof(list); i++)
+        block[i] = list[i];
+    DeclRefList copy = block[0:countof(list)];
+    return copy;
+}
+
+static FieldDeclList copy_fields(FieldDecl list[:]) {
+    FieldDeclList copy = mem::alloc_slice(FieldDecl, countof(list));
+    for (usize i = 0; i < countof(list); i++)
+        copy[i] = list[i];
+    return copy;
+}
+
+static EnumeratorList copy_enumerators(Enumerator list[:]) {
+    EnumeratorList copy = mem::alloc_slice(Enumerator, countof(list));
+    for (usize i = 0; i < countof(list); i++)
+        copy[i] = list[i];
+    return copy;
+}
+
+// `a::b::c` as a path of three segments (the text is not copied).
+export Path path(Str text) {
+    usize count = 1;
+    for (usize i = 0; i + 1 < countof(text); i++)
+        if (text[i] == ':' && text[i + 1] == ':') count += 1;
+    Path result = {.segments = mem::alloc_slice(Identifier, count)};
+    usize segment = 0;
+    usize begin = 0;
+    for (usize i = 0; i + 1 < countof(text); i++) {
+        if (text[i] == ':' && text[i + 1] == ':') {
+            result.segments[segment] = (Identifier){.text = text[begin:i]};
+            segment += 1;
+            begin = i + 2;
+        }
+    }
+    result.segments[segment] = (Identifier){.text = text[begin:countof(text)]};
+    return result;
+}
+
+// `x`, `c::printf`.
+export Expr *name(Str text) {
+    ExprKind kind = {.name = {.path = path(text)}};
+    return expr(kind);
+}
+
+export Expr *integer(U64 value) {
+    ExprKind kind = {.integer = {.value = value}};
+    return expr(kind);
+}
+
+export Expr *binary(BinaryOp op, Expr *left, Expr *right) {
+    ExprKind kind = {.binary = {.op = op, .left = left, .right = right}};
+    return expr(kind);
+}
+
+export Expr *call(Expr *callee, ExprRef args[:]) {
+    ExprKind kind = {.call = {.callee = callee, .args = copy_exprs(args)}};
+    return expr(kind);
+}
+
+// `I32`, `Point`, `c::FILE`.
+export TypeExpr *named(Str text) {
+    TypeKind kind = {.named = {.path = path(text)}};
+    return make_type(kind);
+}
+
+export Stmt *return_value(Expr *value) {
+    StmtKind kind = {.return_stmt = {.value = value}};
+    return stmt(kind);
+}
+
+export Stmt *block(StmtRef list[:]) {
+    StmtKind kind = {.block = {.items = copy_stmts(list)}};
+    return stmt(kind);
+}
+
+// A case of a switch (a default when `is_default`), with its own copy of the lists.
+export SwitchCase switch_case(ExprRef values[:], Bool is_default, StmtRef body[:]) {
+    return (SwitchCase){.values = copy_exprs(values), .is_default = is_default, .body = copy_stmts(body)};
+}
+
+export Attribute attribute(Str text) {
+    return (Attribute){.name = path(text)};
+}
+
+export Param param(Str text, TypeExpr *type) {
+    return (Param){.name = text, .type = type};
+}
+
+// Declarations by name (a string literal cannot be written inside a nested initializer of a payload enum today, so
+// the helpers take the names as arguments). Set `exported` and the other flags on the result.
+export Decl *variable(Str text, TypeExpr *type, Expr *init) {
+    DeclKind kind = {.variable = {.name = text, .type = type, .init = init}};
+    return decl((Decl){}, kind);
+}
+
+export Decl *function(Str text, Param params[:], TypeExpr *result, Stmt *body) {
+    DeclKind kind = {.function = {.name = text, .params = copy_params(params), .result = result, .body = body}};
+    return decl((Decl){}, kind);
+}
+
+export FieldDecl field(Str text, TypeExpr *type) {
+    return (FieldDecl){.name = text, .type = type};
+}
+
+export Decl *record_decl(Str text, FieldDecl members[:]) {
+    DeclKind kind = {.record = {.name = text, .fields = copy_fields(members)}};
+    return decl((Decl){}, kind);
+}
+
+export Enumerator enumerator(Str text, Expr *value, TypeExpr *payload) {
+    return (Enumerator){.name = text, .value = value, .payload = payload};
+}
+
+export Decl *enumeration(Str text, TypeExpr *underlying, Enumerator items[:]) {
+    DeclKind kind = {.enumeration = {.name = text, .underlying = underlying, .items = copy_enumerators(items)}};
+    return decl((Decl){}, kind);
+}
+
+export Decl *type_alias(Str text, TypeExpr *type) {
+    DeclKind kind = {.type_alias = {.name = text, .type = type}};
+    return decl((Decl){}, kind);
+}
+
+// `import std::arena;`
+export Decl *import_module(Str text) {
+    DeclKind kind = {.import_module = {.path = path(text)}};
+    return decl((Decl){}, kind);
+}
+
+// `import <stdio.h>;` (angled) and `import "x.h";`.
+export Decl *import_c(Str header, Bool angled) {
+    DeclKind kind = {.import_c = {.header = header, .angled = angled}};
+    return decl((Decl){}, kind);
+}
+
+// A module of these declarations; its name is a path (`geometry::shapes`) and its file is empty.
+export Module new_module(Str text, DeclRef decls[:]) {
+    return (Module){.name = path(text), .decls = copy_decls(decls)};
+}
+
+export Expr *string(Str bytes) {
+    ExprKind kind = {.string = {.bytes = bytes}};
+    return expr(kind);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The dump
+
+// A growing text in the current allocator.
+struct Output {
+    char data[:];
+    usize length;
+};
+
+static void reserve(Output *text, usize more) {
+    usize needed = text->length + more;
+    if (needed <= countof(text->data)) return;
+    usize capacity = countof(text->data) * 2;
+    if (capacity < needed) capacity = needed;
+    if (capacity < 256) {
+        capacity = 256;
+    }
+    char grown[:] = mem::alloc_slice(char, capacity);
+    for (usize i = 0; i < text->length; i++)
+        grown[i] = text->data[i];
+    text->data = grown;
+}
+
+static void put(Output *text, Str piece) {
+    reserve(text, countof(piece));
+    for (usize i = 0; i < countof(piece); i++)
+        text->data[text->length + i] = piece[i];
+    text->length += countof(piece);
+}
+
+static Str pick(Bool first, Str a, Str b) {
+    if (first) return a;
+    return b;
+}
+
+static void put_char(Output *text, char c) {
+    reserve(text, 1);
+    text->data[text->length] = c;
+    text->length += 1;
+}
+
+static void put_u64(Output *text, U64 number) {
+    char digits[40];
+    usize written = format::to(digits, sizeof digits, number).length;
+    put(text, digits[0:written]);
+}
+
+static void put_f64(Output *text, F64 number) {
+    char digits[40];
+    usize written = format::to(digits, sizeof digits, number).length;
+    put(text, digits[0:written]);
+}
+
+static void put_word(Output *text, Str word) {
+    put_char(text, ' ');
+    put(text, word);
+}
+
+static void put_path(Output *text, Path path) {
+    for (usize i = 0; i < countof(path.segments); i++) {
+        if (i > 0) put(text, "::");
+        put(text, path.segments[i].text);
+    }
+}
+
+// A string in quotes with escapes.
+static void put_quoted(Output *text, Str bytes) {
+    constexpr Str hex = "0123456789abcdef";
+    put_char(text, '"');
+    for (usize i = 0; i < countof(bytes); i++) {
+        char c = bytes[i];
+        if (c == '\n')
+            put(text, "\\n");
+        else if (c == '"')
+            put(text, "\\\"");
+        else if (c == '\\')
+            put(text, "\\\\");
+        else if (c < 32 || c > 126) {
+            put(text, "\\x");
+            put_char(text, hex[((U32)(U8)c >> 4U) & 15U]);
+            put_char(text, hex[(U32)(U8)c & 15U]);
+        } else
+            put_char(text, c);
+    }
+    put_char(text, '"');
+}
+
+static void put_flag(Output *text, Bool set, Str word) {
+    if (set) put_word(text, word);
+}
+
+static void put_qualifiers(Output *text, Qualifiers q) {
+    put_flag(text, q.is_const, "const");
+    put_flag(text, q.is_volatile, "volatile");
+    put_flag(text, q.is_restrict, "restrict");
+}
+
+// What one line of the dump stands for. Each variant points into the tree.
+typedef enum {
+    const Module *module;
+    Decl *decl;
+    Stmt *stmt;
+    Expr *expr;
+    TypeExpr *type;
+    TypeArg *type_arg;
+    Param *param;
+    FieldDecl *field;
+    Enumerator *enumerator;
+    SwitchCase *switch_case;
+    Attribute *attribute;
+    Initializer *initializer;
+    Designator *designator;
+    struct {
+        Text label;
+        DeclRef decls[:];
+    } decl_group;
+    struct {
+        Text label;
+        TypeExpr *type;
+    } typed; // a type under a label: `(result ...)`
+    absent;
+} Node;
+
+// A node with the range of its children in the list of nodes (breadth first, so the children of a node are next to
+// each other).
+struct Item {
+    Node node;
+    usize first;
+    usize count;
+    usize size;  // the nodes under it, itself included
+    Bool nested; // a statement, declaration or case is under it
+};
+
+struct Items {
+    Item data[:];
+    usize length;
+};
+
+static void add(Items *items, Node node) {
+    if (items->length == countof(items->data)) {
+        usize capacity = countof(items->data) * 2;
+        if (capacity < 64) {
+            capacity = 64;
+        }
+        Item grown[:] = mem::alloc_slice(Item, capacity);
+        for (usize i = 0; i < items->length; i++)
+            grown[i] = items->data[i];
+        items->data = grown;
+    }
+    items->data[items->length] = (Item){.node = node};
+    items->length += 1;
+}
+
+// A child that may be null: absent when null and `placed` (its position says what it is), else left out.
+static void add_expr(Items *items, Expr *expr, Bool placed) {
+    if (expr != nullptr)
+        add(items, {.expr = expr});
+    else if (placed)
+        add(items, .absent);
+}
+
+static void add_stmt(Items *items, Stmt *stmt, Bool placed) {
+    if (stmt != nullptr)
+        add(items, {.stmt = stmt});
+    else if (placed)
+        add(items, .absent);
+}
+
+static void add_type(Items *items, TypeExpr *type, Bool placed) {
+    if (type != nullptr)
+        add(items, {.type = type});
+    else if (placed)
+        add(items, .absent);
+}
+
+static void add_attributes(Items *items, Attribute attributes[:]) {
+    for (usize i = 0; i < countof(attributes); i++)
+        add(items, {.attribute = &attributes[i]});
+}
+
+static void add_exprs(Items *items, ExprRef list[:]) {
+    for (usize i = 0; i < countof(list); i++)
+        add(items, {.expr = list[i]});
+}
+
+static void add_stmts(Items *items, StmtRef list[:]) {
+    for (usize i = 0; i < countof(list); i++)
+        add(items, {.stmt = list[i]});
+}
+
+// The result type of a function or lambda, under its label (a type child alone would not say it is the result).
+static void add_result(Items *items, TypeExpr *type) {
+    if (type == nullptr) return;
+    Text label = "result";
+    Node result = {.typed = {.label = label, .type = type}};
+    add(items, result);
+}
+
+static void add_group(Items *items, Text label, DeclRef decls[:]) {
+    Node group = {.decl_group = {.label = label, .decls = decls}};
+    add(items, group);
+}
+
+static void add_decls(Items *items, DeclRef list[:]) {
+    for (usize i = 0; i < countof(list); i++)
+        add(items, {.decl = list[i]});
+}
+
+static void add_params(Items *items, Param params[:]) {
+    for (usize i = 0; i < countof(params); i++)
+        add(items, {.param = &params[i]});
+}
+
+// The children of an expression.
+static void expr_children(Items *items, Expr *e) {
+    switch (e->kind) {
+    case .integer:
+    case .floating:
+    case .character:
+    case .string:
+    case .boolean:
+    case .null_pointer:
+    case .name:
+    case .variant:
+        break;
+    case .type_value:
+        add_type(items, e->kind.type_value.type, false);
+        break;
+    case .unary:
+        add_expr(items, e->kind.unary.operand, false);
+        break;
+    case .binary:
+        add_expr(items, e->kind.binary.left, false);
+        add_expr(items, e->kind.binary.right, false);
+        break;
+    case .assign:
+        add_expr(items, e->kind.assign.target, false);
+        add_expr(items, e->kind.assign.value, false);
+        break;
+    case .conditional:
+        add_expr(items, e->kind.conditional.condition, false);
+        add_expr(items, e->kind.conditional.then_value, false);
+        add_expr(items, e->kind.conditional.else_value, false);
+        break;
+    case .call:
+        add_expr(items, e->kind.call.callee, false);
+        add_exprs(items, e->kind.call.args);
+        break;
+    case .index:
+        add_expr(items, e->kind.index.base, false);
+        add_expr(items, e->kind.index.index, false);
+        break;
+    case .slice_of:
+        add_expr(items, e->kind.slice_of.base, false);
+        add_expr(items, e->kind.slice_of.start, true);
+        add_expr(items, e->kind.slice_of.end, true);
+        break;
+    case .member:
+        add_expr(items, e->kind.member.base, false);
+        break;
+    case .cast:
+        add_type(items, e->kind.cast.type, false);
+        add_expr(items, e->kind.cast.operand, false);
+        break;
+    case .query:
+        add_type(items, e->kind.query.type, false);
+        add_expr(items, e->kind.query.operand, false);
+        break;
+    case .compound:
+        add_type(items, e->kind.compound.type, true);
+        for (usize i = 0; i < countof(e->kind.compound.items); i++)
+            add(items, {.initializer = &e->kind.compound.items[i]});
+        break;
+    case .lambda:
+        add_params(items, e->kind.lambda.params);
+        add_result(items, e->kind.lambda.result);
+        add_stmt(items, e->kind.lambda.body, false);
+        break;
+    case .try_expr:
+        add_expr(items, e->kind.try_expr.operand, false);
+        break;
+    }
+}
+
+// The children of a statement.
+static void stmt_children(Items *items, Stmt *s) {
+    switch (s->kind) {
+    case .expression:
+        add_expr(items, s->kind.expression.value, false);
+        break;
+    case .declaration:
+        add(items, {.decl = s->kind.declaration.decl});
+        break;
+    case .block:
+        add_stmts(items, s->kind.block.items);
+        break;
+    case .if_stmt:
+        add_expr(items, s->kind.if_stmt.condition, false);
+        add_stmt(items, s->kind.if_stmt.then_branch, false);
+        add_stmt(items, s->kind.if_stmt.else_branch, false);
+        break;
+    case .while_stmt:
+        add_expr(items, s->kind.while_stmt.condition, false);
+        add_stmt(items, s->kind.while_stmt.body, false);
+        break;
+    case .do_while:
+        add_stmt(items, s->kind.do_while.body, false);
+        add_expr(items, s->kind.do_while.condition, false);
+        break;
+    case .for_stmt:
+        add_stmt(items, s->kind.for_stmt.init, true);
+        add_expr(items, s->kind.for_stmt.condition, true);
+        add_expr(items, s->kind.for_stmt.step, true);
+        add_stmt(items, s->kind.for_stmt.body, false);
+        break;
+    case .switch_stmt:
+        add_expr(items, s->kind.switch_stmt.value, false);
+        for (usize i = 0; i < countof(s->kind.switch_stmt.cases); i++)
+            add(items, {.switch_case = &s->kind.switch_stmt.cases[i]});
+        break;
+    case .break_stmt:
+    case .continue_stmt:
+    case .goto_stmt:
+    case .empty:
+        break;
+    case .return_stmt:
+        add_expr(items, s->kind.return_stmt.value, false);
+        break;
+    case .defer_stmt:
+        add_stmt(items, s->kind.defer_stmt.body, false);
+        break;
+    case .labeled:
+        add_stmt(items, s->kind.labeled.body, false);
+        break;
+    case .static_assert_stmt:
+        add_expr(items, s->kind.static_assert_stmt.condition, false);
+        break;
+    }
+}
+
+// The children of a declaration (its attributes first).
+static void decl_children(Items *items, Decl *d) {
+    add_attributes(items, d->attributes);
+    switch (d->kind) {
+    case .variable:
+        add_type(items, d->kind.variable.type, false);
+        add_expr(items, d->kind.variable.init, false);
+        break;
+    case .function:
+        add_params(items, d->kind.function.params);
+        add_result(items, d->kind.function.result);
+        add_stmt(items, d->kind.function.body, false);
+        break;
+    case .record:
+        for (usize i = 0; i < countof(d->kind.record.fields); i++)
+            add(items, {.field = &d->kind.record.fields[i]});
+        break;
+    case .enumeration:
+        add_type(items, d->kind.enumeration.underlying, false);
+        for (usize i = 0; i < countof(d->kind.enumeration.items); i++)
+            add(items, {.enumerator = &d->kind.enumeration.items[i]});
+        break;
+    case .type_alias:
+        add_type(items, d->kind.type_alias.type, false);
+        break;
+    case .import_module:
+    case .import_c:
+        break;
+    case .static_assert_decl:
+        add_expr(items, d->kind.static_assert_decl.condition, false);
+        break;
+    case .if_constexpr:
+        add_expr(items, d->kind.if_constexpr.condition, false);
+        add_group(items, "then", d->kind.if_constexpr.then_decls);
+        if (countof(d->kind.if_constexpr.else_decls) > 0) add_group(items, "else", d->kind.if_constexpr.else_decls);
+        break;
+    }
+}
+
+// The children of a type.
+static void type_children(Items *items, TypeExpr *t) {
+    switch (t->kind) {
+    case .named:
+    case .auto_type:
+        break;
+    case .pointer:
+        add_type(items, t->kind.pointer.pointee, false);
+        break;
+    case .array:
+        add_type(items, t->kind.array.element, false);
+        add_expr(items, t->kind.array.count, true);
+        break;
+    case .slice:
+        add_type(items, t->kind.slice.element, false);
+        break;
+    case .function:
+        for (usize i = 0; i < countof(t->kind.function.params); i++)
+            add_type(items, t->kind.function.params[i], false);
+        add_type(items, t->kind.function.result, false);
+        break;
+    case .applied:
+        for (usize i = 0; i < countof(t->kind.applied.args); i++)
+            add(items, {.type_arg = &t->kind.applied.args[i]});
+        break;
+    case .type_of:
+        add_expr(items, t->kind.type_of.operand, false);
+        break;
+    }
+}
+
+// The children of the nodes that are not a kind of their own.
+static void other_children(Items *items, Node node) {
+    switch (node) {
+    case .module:
+        add_decls(items, node.module->decls);
+        break;
+    case .decl:
+        decl_children(items, node.decl);
+        break;
+    case .stmt:
+        stmt_children(items, node.stmt);
+        break;
+    case .expr:
+        expr_children(items, node.expr);
+        break;
+    case .type:
+        type_children(items, node.type);
+        break;
+    case .type_arg:
+        switch (*node.type_arg) {
+        case .type:
+            add_type(items, node.type_arg->type.type, false);
+            break;
+        case .value:
+            add_expr(items, node.type_arg->value.value, false);
+            break;
+        }
+        break;
+    case .param:
+        add_attributes(items, node.param->attributes);
+        add_type(items, node.param->type, false);
+        break;
+    case .field:
+        add_type(items, node.field->type, false);
+        add_expr(items, node.field->bit_width, false);
+        break;
+    case .enumerator:
+        add_expr(items, node.enumerator->value, false);
+        add_type(items, node.enumerator->payload, false);
+        break;
+    case .switch_case:
+        add_exprs(items, node.switch_case->values);
+        add_stmts(items, node.switch_case->body);
+        break;
+    case .attribute:
+        add_exprs(items, node.attribute->args);
+        break;
+    case .initializer:
+        for (usize i = 0; i < countof(node.initializer->designators); i++)
+            add(items, {.designator = &node.initializer->designators[i]});
+        add_expr(items, node.initializer->value, false);
+        break;
+    case .designator:
+        if (*node.designator == .index) add_expr(items, node.designator->index.index, false);
+        break;
+    case .decl_group:
+        add_decls(items, node.decl_group.decls);
+        break;
+    case .typed:
+        add_type(items, node.typed.type, false);
+        break;
+    case .absent:
+        break;
+    }
+}
+
+static Str unary_word(UnaryOp op) {
+    switch (op) {
+    case .negate:
+        return "negate";
+    case .plus:
+        return "plus";
+    case .logical_not:
+        return "logical_not";
+    case .bit_not:
+        return "bit_not";
+    case .address_of:
+        return "address_of";
+    case .dereference:
+        return "dereference";
+    case .pre_increment:
+        return "pre_increment";
+    case .pre_decrement:
+        return "pre_decrement";
+    case .post_increment:
+        return "post_increment";
+    case .post_decrement:
+        return "post_decrement";
+    }
+    return "";
+}
+
+static Str binary_word(BinaryOp op) {
+    switch (op) {
+    case .add:
+        return "add";
+    case .subtract:
+        return "subtract";
+    case .multiply:
+        return "multiply";
+    case .divide:
+        return "divide";
+    case .remainder:
+        return "remainder";
+    case .shift_left:
+        return "shift_left";
+    case .shift_right:
+        return "shift_right";
+    case .less:
+        return "less";
+    case .greater:
+        return "greater";
+    case .less_equal:
+        return "less_equal";
+    case .greater_equal:
+        return "greater_equal";
+    case .equal:
+        return "equal";
+    case .not_equal:
+        return "not_equal";
+    case .bit_and:
+        return "bit_and";
+    case .bit_xor:
+        return "bit_xor";
+    case .bit_or:
+        return "bit_or";
+    case .logical_and:
+        return "logical_and";
+    case .logical_or:
+        return "logical_or";
+    }
+    return "";
+}
+
+static Str assign_word(AssignOp op) {
+    switch (op) {
+    case .plain:
+        return "plain";
+    case .add:
+        return "add";
+    case .subtract:
+        return "subtract";
+    case .multiply:
+        return "multiply";
+    case .divide:
+        return "divide";
+    case .remainder:
+        return "remainder";
+    case .shift_left:
+        return "shift_left";
+    case .shift_right:
+        return "shift_right";
+    case .bit_and:
+        return "bit_and";
+    case .bit_xor:
+        return "bit_xor";
+    case .bit_or:
+        return "bit_or";
+    }
+    return "";
+}
+
+static Str query_word(QueryOp op) {
+    switch (op) {
+    case .size_of:
+        return "sizeof";
+    case .align_of:
+        return "alignof";
+    case .count_of:
+        return "countof";
+    }
+    return "";
+}
+
+// The head of an expression that is a literal or a name.
+static void literal_head(Output *text, Expr *e) {
+    if (e->kind == .integer) {
+        put(text, "integer ");
+        put_u64(text, e->kind.integer.value);
+        if (countof(e->kind.integer.suffix) > 0) put_word(text, e->kind.integer.suffix);
+    } else if (e->kind == .floating) {
+        put(text, "floating ");
+        put_f64(text, e->kind.floating.value);
+        if (countof(e->kind.floating.suffix) > 0) put_word(text, e->kind.floating.suffix);
+    } else if (e->kind == .character) {
+        put(text, "character ");
+        put_u64(text, e->kind.character.value);
+    } else if (e->kind == .string) {
+        put(text, "string ");
+        put_quoted(text, e->kind.string.bytes);
+    } else if (e->kind == .boolean) {
+        put(text, pick(e->kind.boolean.value, "boolean true", "boolean false"));
+    } else if (e->kind == .name) {
+        put(text, "name ");
+        put_path(text, e->kind.name.path);
+    } else if (e->kind == .variant) {
+        put(text, "variant ");
+        put(text, e->kind.variant.name);
+    }
+}
+
+// The head of an expression: its kind and scalars, without the parentheses.
+static void expr_head(Output *text, Expr *e) {
+    switch (e->kind) {
+    case .integer:
+    case .floating:
+    case .character:
+    case .string:
+    case .boolean:
+    case .name:
+    case .variant:
+        literal_head(text, e);
+        break;
+    case .null_pointer:
+        put(text, "null_pointer");
+        break;
+    case .type_value:
+        put(text, "type_value");
+        break;
+    case .unary:
+        put(text, "unary ");
+        put(text, unary_word(e->kind.unary.op));
+        break;
+    case .binary:
+        put(text, "binary ");
+        put(text, binary_word(e->kind.binary.op));
+        break;
+    case .assign:
+        put(text, "assign ");
+        put(text, assign_word(e->kind.assign.op));
+        break;
+    case .conditional:
+        put(text, "conditional");
+        break;
+    case .call:
+        put(text, "call");
+        break;
+    case .index:
+        put(text, "index");
+        break;
+    case .slice_of:
+        put(text, "slice_of");
+        break;
+    case .member:
+        put(text, "member ");
+        put(text, e->kind.member.name);
+        put_flag(text, e->kind.member.arrow, "arrow");
+        break;
+    case .cast:
+        put(text, "cast");
+        break;
+    case .query:
+        put(text, "query ");
+        put(text, query_word(e->kind.query.op));
+        break;
+    case .compound:
+        put(text, "compound");
+        break;
+    case .lambda:
+        put(text, "lambda");
+        for (usize i = 0; i < countof(e->kind.lambda.captures); i++) {
+            put_word(text, e->kind.lambda.captures[i].text);
+        }
+        break;
+    case .try_expr:
+        put(text, "try");
+        break;
+    }
+}
+
+static void stmt_head(Output *text, Stmt *s) {
+    switch (s->kind) {
+    case .expression:
+        put(text, "expression");
+        break;
+    case .declaration:
+        put(text, "declaration");
+        break;
+    case .block:
+        put(text, "block");
+        break;
+    case .if_stmt:
+        put(text, "if");
+        put_flag(text, s->kind.if_stmt.is_constexpr, "constexpr");
+        break;
+    case .while_stmt:
+        put(text, "while");
+        break;
+    case .do_while:
+        put(text, "do_while");
+        break;
+    case .for_stmt:
+        put(text, "for");
+        put_flag(text, s->kind.for_stmt.is_constexpr, "constexpr");
+        break;
+    case .switch_stmt:
+        put(text, "switch");
+        break;
+    case .break_stmt:
+        put(text, "break");
+        break;
+    case .continue_stmt:
+        put(text, "continue");
+        break;
+    case .return_stmt:
+        put(text, "return");
+        break;
+    case .defer_stmt:
+        put(text, "defer");
+        break;
+    case .goto_stmt:
+        put(text, "goto ");
+        put(text, s->kind.goto_stmt.label);
+        break;
+    case .labeled:
+        put(text, "labeled ");
+        put(text, s->kind.labeled.label);
+        break;
+    case .static_assert_stmt:
+        put(text, "static_assert ");
+        put_quoted(text, s->kind.static_assert_stmt.message);
+        break;
+    case .empty:
+        put(text, "empty");
+        break;
+    }
+}
+
+static void type_head(Output *text, TypeExpr *t) {
+    switch (t->kind) {
+    case .named:
+        put(text, "named ");
+        put_path(text, t->kind.named.path);
+        break;
+    case .auto_type:
+        put(text, "auto");
+        break;
+    case .pointer:
+        put(text, "pointer");
+        break;
+    case .array:
+        put(text, "array");
+        break;
+    case .slice:
+        put(text, "slice");
+        break;
+    case .function:
+        put(text, "function_type");
+        put_flag(text, t->kind.function.variadic, "variadic");
+        break;
+    case .applied:
+        put(text, "applied ");
+        put_path(text, t->kind.applied.name);
+        break;
+    case .type_of:
+        put(text, "type_of");
+        break;
+    }
+    put_qualifiers(text, t->qualifiers);
+}
+
+static void decl_head(Output *text, Decl *d) {
+    switch (d->kind) {
+    case .variable:
+        put(text, "variable ");
+        put(text, d->kind.variable.name);
+        put_flag(text, d->kind.variable.is_constexpr, "constexpr");
+        put_flag(text, d->kind.variable.is_thread_local, "thread_local");
+        break;
+    case .function:
+        put(text, "function ");
+        put(text, d->kind.function.name);
+        put_flag(text, d->kind.function.variadic, "variadic");
+        break;
+    case .record:
+        put(text, pick(d->kind.record.is_union, "union ", "struct "));
+        put(text, d->kind.record.name);
+        break;
+    case .enumeration:
+        put(text, "enum ");
+        put(text, d->kind.enumeration.name);
+        break;
+    case .type_alias:
+        put(text, "typedef ");
+        put(text, d->kind.type_alias.name);
+        break;
+    case .import_module:
+        put(text, "import ");
+        put_path(text, d->kind.import_module.path);
+        break;
+    case .import_c:
+        put(text, pick(d->kind.import_c.angled, "import_c angled ", "import_c "));
+        put(text, d->kind.import_c.header);
+        break;
+    case .static_assert_decl:
+        put(text, "static_assert ");
+        put_quoted(text, d->kind.static_assert_decl.message);
+        break;
+    case .if_constexpr:
+        put(text, "if_constexpr");
+        break;
+    }
+    put_flag(text, d->exported, "exported");
+    put_flag(text, d->is_static, "static");
+    put_flag(text, d->is_extern, "extern");
+    put_flag(text, d->is_inline, "inline");
+}
+
+// The head of every other node.
+static void other_head(Output *text, Node node) {
+    switch (node) {
+    case .module:
+        put(text, "module ");
+        put_path(text, node.module->name);
+        break;
+    case .decl:
+        decl_head(text, node.decl);
+        break;
+    case .stmt:
+        stmt_head(text, node.stmt);
+        break;
+    case .expr:
+        expr_head(text, node.expr);
+        break;
+    case .type:
+        type_head(text, node.type);
+        break;
+    case .type_arg:
+        put(text, pick(*node.type_arg == .type, "type_arg", "value_arg"));
+        break;
+    case .param:
+        put(text, "param ");
+        put(text, node.param->name);
+        put_flag(text, node.param->is_constexpr, "constexpr");
+        put_flag(text, node.param->is_rest, "rest");
+        break;
+    case .field:
+        put(text, "field ");
+        put(text, node.field->name);
+        break;
+    case .enumerator:
+        put(text, "enumerator ");
+        put(text, node.enumerator->name);
+        break;
+    case .switch_case:
+        put(text, pick(node.switch_case->is_default, "default", "case"));
+        break;
+    case .attribute:
+        put(text, "attribute ");
+        put_path(text, node.attribute->name);
+        break;
+    case .initializer:
+        put(text, "initializer");
+        break;
+    case .designator:
+        if (*node.designator == .field) {
+            put(text, "field_designator ");
+            put(text, node.designator->field.name);
+        } else
+            put(text, "index_designator");
+        break;
+    case .decl_group:
+        put(text, node.decl_group.label);
+        break;
+    case .typed:
+        put(text, node.typed.label);
+        break;
+    case .absent:
+        put(text, "absent");
+        break;
+    }
+}
+
+// One entry of the walk's stack: a node still to write, or the closing parenthesis of one already begun.
+struct Step {
+    usize item;
+    U32 depth;
+    Bool close;
+    Bool beside; // written on the line of its parent
+};
+
+static void push_step(Step stack[:], usize *top, Step step) {
+    stack[*top] = step;
+    *top += 1;
+}
+
+// Whether a node and everything under it is written on one line: no statement, declaration or case under it, and not
+// many nodes.
+constexpr usize flat_size_max = 16;
+
+static Bool is_flat(Item item) {
+    if (item.node == .decl && (item.node.decl->kind == .record || item.node.decl->kind == .enumeration)) return false;
+    return !item.nested && item.size <= flat_size_max;
+}
+
+// Whether a node starts a line of its own whatever its size.
+static Bool breaks_line(Node node) {
+    switch (node) {
+    case .stmt:
+    case .decl:
+    case .switch_case:
+    case .decl_group:
+        return true;
+    case .module:
+    case .expr:
+    case .type:
+    case .type_arg:
+    case .param:
+    case .field:
+    case .enumerator:
+    case .attribute:
+    case .initializer:
+    case .designator:
+    case .typed:
+    case .absent:
+        return false;
+    }
+    return false;
+}
+
+// Fills the size and nesting of each node: the children of a node come after it, so a walk from the end sees them
+// first.
+static void measure(Items *items) {
+    for (usize at = items->length; at > 0; at--) {
+        Item item = items->data[at - 1];
+        usize size = 1;
+        Bool nested = false;
+        for (usize i = 0; i < item.count; i++) {
+            Item child = items->data[item.first + i];
+            size += child.size;
+            if (child.nested || breaks_line(child.node)) nested = true;
+        }
+        items->data[at - 1].size = size;
+        items->data[at - 1].nested = nested;
+    }
+}
+
+// Writes the nodes of `items`, the root first, with an explicit stack.
+static void render(Output *text, Item list[:], usize length) {
+    Step stack[:] = mem::alloc_slice(Step, 2 * length + 2);
+    usize top = 0;
+    push_step(stack, &top, (Step){.item = 0});
+    while (top > 0) {
+        top -= 1;
+        Step step = stack[top];
+        if (step.close) {
+            put_char(text, ')');
+            continue;
+        }
+        if (step.beside)
+            put_char(text, ' ');
+        else if (step.depth > 0) {
+            put_char(text, '\n');
+            for (U32 i = 0; i < step.depth; i++)
+                put(text, "  ");
+        }
+        put_char(text, '(');
+        other_head(text, list[step.item].node);
+        Item item = list[step.item];
+        Bool flat = is_flat(item);
+        push_step(stack, &top, (Step){.close = true});
+        for (usize i = item.count; i > 0; i--)
+            push_step(stack, &top, (Step){.item = item.first + i - 1, .depth = step.depth + 1, .beside = flat});
+    }
+}
+
+// The tree of `m` as text, in the current allocator.
+export Str dump(const Module *m) {
+    Items items = {};
+    add(&items, {.module = m});
+    for (usize at = 0; at < items.length; at++) {
+        usize before = items.length;
+        other_children(&items, items.data[at].node);
+        items.data[at].first = before;
+        items.data[at].count = items.length - before;
+    }
+    measure(&items);
+    Output text = {};
+    render(&text, items.data, items.length);
+    put_char(&text, '\n');
+    return text.data[0:text.length];
+}
