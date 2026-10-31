@@ -427,8 +427,25 @@ typedef struct {
     char ret_type[256];
 } SmithLangTry;
 
+// Lambdas (runtime/lang_lambda.c): the one being read, and how much waits for the end of the function.
+typedef struct {
+    uint32_t phase; // 1: the tokens of a lambda are being kept
+    uint32_t start; // the place of its `[`
+    uint32_t count; // tokens kept
+    int32_t parens;
+    int32_t braces;
+    bool body;        // the body's `{` was read
+    uint32_t pending; // tokens of definitions written when the function ends
+    size_t text_used;
+    bool started;     // a token of the file was seen
+    uint32_t depth;   // the braces open, counted here (a file without a module line keeps no count)
+    bool after_close; // the last one ended a declaration or a function
+    SmithToken last;  // the last token seen (a name is `x`; `return` is itself)
+} SmithLangLambda;
+
 struct SmithLang {
     SmithLangTry tr;
+    SmithLangLambda lambda;
     bool broken;
     bool advance_skip; // the token just lowered took its matching bracket with it: no call counts it
                        // (runtime/lang_tuple.c)
@@ -468,9 +485,10 @@ struct SmithLang {
     bool doc_pending; // an export is next and has a doc comment (doc_export_from .. doc_export_to)
     const SmithTrivia *doc_export_from;
     const SmithTrivia *doc_export_to;
-    bool export_tail;    // the header has the export's end, though export_active is off (a variable, a prototype)
-    bool tail_open;      // an export just ended in the header: a comment after it on its line follows it there
-    bool unnamed_c_name; // an export ended that took no name from its [[smith::c_name]]
+    bool export_tail;     // the header has the export's end, though export_active is off (a variable, a prototype)
+    bool tail_open;       // an export just ended in the header: a comment after it on its line follows it there
+    uint32_t nolint_open; // NOLINTBEGIN comments the header has no NOLINTEND for yet (a pair stays together)
+    bool unnamed_c_name;  // an export ended that took no name from its [[smith::c_name]]
     uint32_t unnamed_c_name_location;
     size_t c_name_count; // how many of the module's own names have a C name chosen
     SmithLangCName cnames[smith_lang_cnames_max];
@@ -1017,6 +1035,9 @@ static const char *smith_lang_str(SmithLangText text) {
 
 // `try` and `errdefer` for `result` and `option`.
 #include "lang_try.c"
+
+// Lambdas that capture nothing, lifted out of their function.
+#include "lang_lambda.c"
 
 // `_` and `_name` mean unused; `_ = expr;` discards a value.
 #include "lang_unused.c"

@@ -3,7 +3,7 @@
 // declared twice.
 module build_errors_test;
 
-import smith::io;
+import smith::arena;
 import smith::test;
 import scratch;
 import smith::mem;
@@ -19,8 +19,13 @@ static const char *first_line(const char *text) {
     return line;
 }
 
-export void test_build_errors_no_build_c_fails(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_build_errors_no_build_c_fails() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("errors: no build.c fails", 2, &run);
     scratch::expect_text("errors: no build.c message",
@@ -28,16 +33,26 @@ export void test_build_errors_no_build_c_fails(io::Io *io) {
                          first_line(run.err));
 }
 
-export void test_build_errors_no_default_fails(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "errors_no_default");
+export void test_build_errors_no_default_fails() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "errors_no_default");
+    defer scratch::clean(&p);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("errors: no smith_default fails", 2, &run);
     scratch::expect_contains("errors: no smith_default message", run.err, "no default; call smith_default");
 }
 
 // An empty default, such as a glob that matched nothing, builds nothing rather than every target.
-export void test_build_errors_an_empty_default_builds_nothing_and_ninja_arguments_are_refused(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "errors_empty_default");
+export void test_build_errors_an_empty_default_builds_nothing_and_ninja_arguments_are_refused() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "errors_empty_default");
+    defer scratch::clean(&p);
     scratch::Run run = scratch::build(&p, "");
     char text[64];
     __builtin_snprintf(text, sizeof text, "%d %s", run.status, scratch::exists(&p, "x") ? "present" : "absent");
@@ -49,14 +64,24 @@ export void test_build_errors_an_empty_default_builds_nothing_and_ninja_argument
     scratch::expect_status("errors: -CX is refused", 2, &folder);
 }
 
-export void test_build_errors_a_failing_step_makes_smith_build_fail(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "errors_failing_step");
+export void test_build_errors_a_failing_step_makes_smith_build_fail() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "errors_failing_step");
+    defer scratch::clean(&p);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_failure("errors: a failing step makes smith build fail", &run);
 }
 
-export void test_build_errors_a_compile_error_in_build_c_fails(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_build_errors_a_compile_error_in_build_c_fails() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
     scratch::write(&p, "build.c", "int build(void) { return ; }\n");
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_failure("errors: a compile error in build.c fails", &run);
@@ -65,8 +90,13 @@ export void test_build_errors_a_compile_error_in_build_c_fails(io::Io *io) {
     scratch::expect_contains("errors: clang's message is shown", both, "error:");
 }
 
-export void test_build_errors_an_unimplemented_field_exits_2(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "errors_content_hash");
+export void test_build_errors_an_unimplemented_field_exits_2() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "errors_content_hash");
+    defer scratch::clean(&p);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("errors: an unimplemented field exits 2", 2, &run);
     scratch::expect_contains("errors: the unimplemented message", run.err,
@@ -74,8 +104,13 @@ export void test_build_errors_an_unimplemented_field_exits_2(io::Io *io) {
 }
 
 // 9g. A step, a task or an alias declared twice.
-export void test_build_twice_identical_steps_tasks_and_aliases_are_one_and_a_different_step_is_an_error(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "twice_steps");
+export void test_build_twice_identical_steps_tasks_and_aliases_are_one_and_a_different_step_is_an_error() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "twice_steps");
+    defer scratch::clean(&p);
     scratch::Run first = scratch::build(&p, "");
     char text[64];
     __builtin_snprintf(text, sizeof text, "%d %zu", first.status, scratch::lines(&p, "runs"));
@@ -92,16 +127,26 @@ export void test_build_twice_identical_steps_tasks_and_aliases_are_one_and_a_dif
                              "the output 'shared.o' is already made by an earlier step whose .description differs");
 }
 
-export void test_build_twice_a_task_that_differs_is_an_error(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "twice_task");
+export void test_build_twice_a_task_that_differs_is_an_error() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "twice_task");
+    defer scratch::clean(&p);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("twice: a task that differs is an error", 2, &run);
     scratch::expect_contains("twice: the task error names the field", run.err,
                              "task tool: the task is already declared and its .command differs");
 }
 
-export void test_build_twice_an_alias_with_other_targets_is_an_error(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "twice_alias");
+export void test_build_twice_an_alias_with_other_targets_is_an_error() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "twice_alias");
+    defer scratch::clean(&p);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("twice: an alias with other targets is an error", 2, &run);
     scratch::expect_contains("twice: the alias error", run.err,

@@ -1,12 +1,13 @@
 // Package downloads on a scripted network, from tests/package.sh (issue #292): redirects, a cross-scheme redirect
 // refused, 404, a truncated body, a broken connection, a wrong hash, a TLS failure and a killed fetch's leftovers.
-// tests/package.c holds the checks; the cache and tar are real, the network is io's scripted one. It is compiled with
-// smith's cc against the repository ($SMITH_REPO) and run on a tar.gz made here, once at -O0 under ASan and UBSan, once
-// at -O2.
+// tests/package.c holds the checks; the cache and tar are real, the network is smith::net's scripted one. It is
+// compiled with smith's cc against the repository ($SMITH_REPO) and run on a tar.gz made here, once at -O0 under ASan
+// and UBSan, once at -O2.
 module package_checks_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 
@@ -14,42 +15,66 @@ import scratch;
 constexpr char compile_prefix[_] =
     "smith cc -std=gnu23 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
     "-Wstrict-prototypes -Wvla -Werror -Wno-unused-function -I \"$SMITH_REPO/.smith/include\" ";
-constexpr char libraries[_] = " lib/smith/arena.smith lib/smith/contract.smith "
-                              "lib/smith/inflate.smith lib/smith/io.smith lib/smith/random.smith";
+constexpr char libraries[_] =
+    " lib/smith/arena.smith lib/smith/contract.smith lib/smith/env.smith lib/smith/files.smith "
+    "lib/smith/inflate.smith lib/smith/io.smith lib/smith/mem.smith lib/smith/net.smith "
+    "lib/smith/random.smith bin/handlers.o";
 
-static scratch::Project package_project(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::copy_tree(&p, "lib", "lib");
-    scratch::copy_tree(&p, "tests/package.c", "tests/package.c");
-    scratch::copy_tree(&p, "runtime", "runtime");
+static void package_project(const scratch::Project *p) {
+    scratch::copy_tree(p, "lib", "lib");
+    scratch::copy_tree(p, "tests/package.c", "tests/package.c");
+    scratch::copy_tree(p, "runtime", "runtime");
     scratch::Run made = scratch::sh(
-        &p, "mkdir -p src/pkg-1.0/bin scratch bin && printf 'hello package\\n' >src/pkg-1.0/hello.txt && "
-            "printf '#!/bin/sh\\necho tool ran\\n' >src/pkg-1.0/bin/tool && chmod +x src/pkg-1.0/bin/tool && "
-            "(cd src && tar -czf ../pkg.tar.gz pkg-1.0)");
+        p, "mkdir -p src/pkg-1.0/bin scratch bin && printf 'hello package\\n' >src/pkg-1.0/hello.txt && "
+           "printf '#!/bin/sh\\necho tool ran\\n' >src/pkg-1.0/bin/tool && chmod +x src/pkg-1.0/bin/tool && "
+           "(cd src && tar -czf ../pkg.tar.gz pkg-1.0)");
     scratch::expect_status("the package is made", 0, &made);
-    return p;
 }
 
 // Compiles tests/package.c with the flags, and runs it on the archive in a scratch folder of its own.
 static scratch::Run compile_and_run(const scratch::Project *p, const char *flags, const char *program) {
-    scratch::Run compiled = scratch::sh(
-        p, format::push(&p->io->arena, compile_prefix, flags, " tests/package.c", libraries, " -o ", program).data);
+    char command[1024];
+    // The handlers runtime (the libraries call its getters and setters) is the library's own C: built with the flags
+    // it is built with everywhere, not this test's warnings.
+    format::Written written =
+        format::to(command, sizeof command, "smith cc -std=gnu23 -O2 -fPIC -I \"$SMITH_REPO/.smith/include\" ",
+                   "-c lib/handlers.c -o bin/handlers.o");
+    test::check_condition(written.fits);
+    scratch::Run runtime = scratch::sh(p, command);
+    scratch::expect_status("lib/handlers.c compiles", 0, &runtime);
+    written =
+        format::to(command, sizeof command, compile_prefix, flags, " tests/package.c", libraries, " -o ", program);
+    test::check_condition(written.fits);
+    scratch::Run compiled = scratch::sh(p, command);
     scratch::expect_status("tests/package.c compiles", 0, &compiled);
-    return scratch::sh(
-        p, format::push(&p->io->arena, "cd scratch && ../", program, " \"$PWD/../pkg.tar.gz\" \"$PWD\"").data);
+    written = format::to(command, sizeof command, "cd scratch && ../", program, " \"$PWD/../pkg.tar.gz\" \"$PWD\"");
+    test::check_condition(written.fits);
+    return scratch::sh(p, command);
 }
 
-export void test_package_checks_pass_at_o0_under_asan_and_ubsan(io::Io *io) {
-    scratch::Project p = package_project(io);
+export void test_package_checks_pass_at_o0_under_asan_and_ubsan() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    package_project(&p);
     scratch::Run run = compile_and_run(&p, "-O0 -g -fsanitize=address,undefined", "bin/asan");
     scratch::expect_text("checks: pass at -O0 under ASan and UBSan", "0 package: all checks passed",
-                         format::push(&io->arena, run.status == 0 ? "0 " : "1 ", run.out).data);
+                         format::push(run.status == 0 ? "0 " : "1 ", run.out).data);
     scratch::expect_text("checks: ... and nothing was printed to stderr", "", run.err);
 }
 
-export void test_package_checks_pass_at_o2(io::Io *io) {
-    scratch::Project p = package_project(io);
+export void test_package_checks_pass_at_o2() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    package_project(&p);
     scratch::Run run = compile_and_run(&p, "-O2", "bin/fast");
     scratch::expect_text("checks: pass at -O2", "0 package: all checks passed",
-                         format::push(&io->arena, run.status == 0 ? "0 " : "1 ", run.out).data);
+                         format::push(run.status == 0 ? "0 " : "1 ", run.out).data);
 }

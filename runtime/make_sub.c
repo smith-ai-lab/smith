@@ -246,8 +246,13 @@ static void smith_make_import_all(void) {
                 if (smith_make_parse_make(&node->commands[j], &folder, &goals, &count) != SmithMakeCall_Folder)
                     continue;
                 const char *path = smith_make_under(node->cwd, folder);
-                if (smith_make_sub_find(path, goals, count) != nullptr || smith_make_sub_count >= smith_make_subs_max)
+                if (smith_make_sub_find(path, goals, count) != nullptr) continue;
+                if (smith_make_sub_count >= smith_make_subs_max) {
+                    smith_make_report_at(node->commands[j].where,
+                                         "more than %zu $(MAKE) -C sub-makes (the limit); %s is not followed",
+                                         smith_make_subs_max, path);
                     continue;
+                }
                 size_t before = g->node_count;
                 SmithMakeSub *sub = &smith_make_subs[smith_make_sub_count++];
                 *sub = (SmithMakeSub){path, goals, count, nullptr};

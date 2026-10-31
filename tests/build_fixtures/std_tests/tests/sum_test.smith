@@ -1,13 +1,7 @@
 module sum_test;
 
-import std::io;
 import std::test;
 
 export void test_sum_runs_when_written_with_std() {
     test::check_equal(2 + 3, 5);
-}
-
-export void test_sum_takes_a_real_io(io::Io *io) {
-    (void)io;
-    test::check_equal(1 + 1, 2);
 }

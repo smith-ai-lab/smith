@@ -163,9 +163,9 @@ static void smith_cov_table_line(char *const *field, size_t count) {
     }
 }
 
-// Reads a table, or a record, into the arrays; false when the file cannot be read or is not one.
-static bool smith_cov_load(const char *path) {
-    if (smith_cov_slurp(path) == 0 || strncmp(smith_cov_text, "smith-coverage 1\n", 17) != 0) return false;
+// Reads the table, or record, in `smith_cov_text` into the arrays; false when it is not one.
+static bool smith_cov_parse(void) {
+    if (strncmp(smith_cov_text, "smith-coverage 1\n", 17) != 0) return false;
     char *line = smith_cov_text + 17;
     for (size_t guard = 0; *line != '\0' && guard < (size_t)1 << 24; guard++) { // bounded by the lines
         char *end = strchr(line, '\n');
@@ -182,6 +182,11 @@ static bool smith_cov_load(const char *path) {
         line = end + 1;
     }
     return !smith_cov_overflow;
+}
+
+// Reads a table, or a record, into the arrays; false when the file cannot be read or is not one.
+static bool smith_cov_load(const char *path) {
+    return smith_cov_slurp(path) != 0 && smith_cov_parse();
 }
 
 // ---- Reading llvm-cov's lcov
@@ -572,16 +577,8 @@ static int smith_cov_function_at(int file, uint32_t line) {
     return best;
 }
 
-// `smith test --coverage report <table> <base> <out>`: the table's totals, and the lines the diff from <base> to HEAD
-// added that coverage counts and no test ran, each with the commit that wrote it. The file is documented in
-// knowledge/coverage-selection.md.
-static int smith_cov_report(const char *table, const char *base, const char *output) {
-    if (!smith_cov_load(table)) {
-        fprintf(stderr, "smith test --coverage report: %s is missing or malformed\n", table);
-        return 1;
-    }
-    FILE *out = fopen(output, "w");
-    if (out == nullptr) return 1;
+// The first line of a report: the table's totals.
+static void smith_cov_totals(FILE *out) {
     size_t lines = 0;
     size_t covered = 0;
     for (size_t i = 0; i < smith_cov_file_count; i++) {             // bounded by the files
@@ -599,14 +596,10 @@ static int smith_cov_report(const char *table, const char *base, const char *out
     }
     fprintf(out, "coverage\t%s\tlines\t%zu\t%zu\tfunctions\t%zu\t%zu\n", smith_cov_commit, covered, lines, ran,
             smith_cov_function_count);
-    char range[300];
-    snprintf(range, sizeof range, "%s..HEAD", base);
-    smith_cov_new_side = true;
-    const char *const diff[] = {"diff", "-U0", "--no-renames", range, "--", nullptr};
-    if (!smith_changed_git(diff, smith_cov_diff_line)) {
-        fprintf(out, "changed\tunknown\tunknown\n");
-        return fclose(out) == 0 ? 0 : 1;
-    }
+}
+
+// The rest of it: the added lines of the hunks that coverage counts and no test ran, then their totals.
+static void smith_cov_uncovered(FILE *out) {
     size_t changed = 0;
     size_t uncovered = 0;
     for (size_t h = 0; h < smith_cov_hunk_count; h++) { // bounded by the hunks
@@ -621,6 +614,28 @@ static int smith_cov_report(const char *table, const char *base, const char *out
         }
     }
     fprintf(out, "changed\t%zu\t%zu\n", changed, uncovered);
+}
+
+// `smith test --coverage report <table> <base> <out>`: the table's totals, and the lines the diff from <base> to HEAD
+// added that coverage counts and no test ran, each with the commit that wrote it. The file is documented in
+// knowledge/coverage-selection.md.
+static int smith_cov_report(const char *table, const char *base, const char *output) {
+    if (!smith_cov_load(table)) {
+        fprintf(stderr, "smith test --coverage report: %s is missing or malformed\n", table);
+        return 1;
+    }
+    FILE *out = fopen(output, "w");
+    if (out == nullptr) return 1;
+    smith_cov_totals(out);
+    char range[300];
+    snprintf(range, sizeof range, "%s..HEAD", base);
+    smith_cov_new_side = true;
+    const char *const diff[] = {"diff", "-U0", "--no-renames", range, "--", nullptr};
+    if (!smith_changed_git(diff, smith_cov_diff_line)) {
+        fprintf(out, "changed\tunknown\tunknown\n");
+        return fclose(out) == 0 ? 0 : 1;
+    }
+    smith_cov_uncovered(out);
     return fclose(out) == 0 ? 0 : 1;
 }
 
@@ -638,3 +653,44 @@ static int smith_coverage_main(int argc, char **argv) {
           stderr);
     return 2;
 }
+
+#ifdef SMITH_CORE
+#include "smith_core_coverage.h"
+
+// Forgets a table an earlier call read: each `smith test --coverage` is a process, so its tables start empty.
+static void smith_cov_reset(void) {
+    memset(smith_cov_inst, 0, sizeof smith_cov_inst);
+    memset(smith_cov_cover, 0, sizeof smith_cov_cover);
+    memset(smith_cov_test_bits, 0, sizeof smith_cov_test_bits);
+    smith_cov_pool_used = 0;
+    smith_cov_file_count = 0;
+    smith_cov_function_count = 0;
+    smith_cov_test_count = 0;
+    smith_cov_hunk_count = 0;
+    smith_cov_commit[0] = '\0';
+    smith_cov_overflow = false;
+}
+
+// include/smith_core_coverage.h: the report of changed lines no test ran, from a table's text and the added lines.
+bool smith_core_coverage_report(const char *table, const SmithCoreChanged *changed, size_t count, char *output,
+                                size_t output_size) {
+    smith_cov_reset();
+    size_t length = strlen(table);
+    FILE *out = fmemopen(output, output_size, "w");
+    bool ok = out != nullptr && length <= smith_cov_text_max;
+    if (ok) {
+        memcpy(smith_cov_text, table, length + 1);
+        ok = smith_cov_parse();
+    }
+    if (ok) {
+        smith_cov_totals(out);
+        for (size_t i = 0; i < count && smith_cov_hunk_count < smith_cov_hunks_max; i++) { // bounded by the argument
+            smith_cov_hunks[smith_cov_hunk_count++] = (SmithCovHunk){
+                smith_cov_file_find(changed[i].path), changed[i].path, changed[i].first, changed[i].count, true};
+        }
+        smith_cov_uncovered(out);
+    }
+    if (out != nullptr) fclose(out);
+    return ok;
+}
+#endif

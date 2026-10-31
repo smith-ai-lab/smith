@@ -40,7 +40,7 @@ Smith is C plus compile time: each form is a C construct run while an instance i
 
 ## Errors
 
-- ``` `r` is the tuple of the arguments, and is not passed whole ```: spread it with `r...`, or write `r[i]` or `countof(r)`. Passing the tuple whole, or returning it, is not built.
+- ``` `r` is the tuple of the arguments, and is not passed whole ```: spread it with `r...`, or write `r[i]` or `countof(r)`. Passing the tuple whole, or returning it, is not built; its struct is `typeof(rest)` and `a->[rest]...` its members, as in a lambda's entry (`smith-lang-lambdas`, "In a generic").
 - ``` `r[3]` is out of range: `r` has 2 arguments ```; a run-time index says which is not a constant.
 - ``built lists are gone: write a struct or a tuple type ...``: `auto x = {r...};` in a generic.
 - ``` `for constexpr` is the loop of a generic function's body ... a plain function's loop is `for` ```.

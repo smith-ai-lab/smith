@@ -35,7 +35,7 @@ smith_build_PackageResult cmake_package = smith_package(b, &(SmithPackage){
   when build.c asks for it, before the executor runs.
 - **`smith fetch <url>`** downloads the archive, prints `.hash = "sha256:...",` to paste into build.c, and leaves the
   package in the cache.
-- **Download** is smith's own HTTPS client (`lib/http.c` over `io.net`, Network.framework on macOS and OpenSSL on Linux, with the system's trust;
+- **Download** is smith's own HTTPS client (`lib/http.c` over `smith::net` and `smith::files`, Network.framework on macOS and OpenSSL on Linux, with the system's trust;
   `file://` copies a local file, for tests). It follows redirects, https only (a redirect to another scheme is an
   error), streams the body to the temporary file a block at a time, fails a server that sends nothing for 60 s with
   `ETIMEDOUT`, and reports statuses, redirect loops, short bodies and TLS failures as messages that name the URL.

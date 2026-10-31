@@ -33,7 +33,55 @@
 
 static atomic_bool smith_handlers_ready;
 static atomic_uint smith_handlers_active; // threads with an allocator set: 0 is the fast path, libc with no lookup
-static thread_local SmithAllocator *smith_handlers_table;
+static atomic_uint smith_handlers_files_active;
+static atomic_uint smith_handlers_console_active;
+static atomic_uint smith_handlers_env_active;
+static atomic_uint smith_handlers_clock_active;
+static atomic_uint smith_handlers_entropy_active;
+static atomic_uint smith_handlers_net_active;
+static atomic_uint smith_handlers_process_active;
+static atomic_uint smith_handlers_scheduler_active;
+
+// The handlers of a thread are one table (SmithHandlers). A thread has a table of its own, and a thread-local pointer
+// names the current one (null: its own); the task runtime swaps the pointer with smith_handlers_set_table. The counters
+// above count the non-null handlers of the tables that are current, so a thread that sets none costs one load.
+static thread_local SmithHandlers smith_handlers_own;
+static thread_local SmithHandlers *smith_handlers_current_table;
+
+// Inlined into the noinline functions that read it: the thread-local is still read only after the counter and ready
+// checks.
+__attribute__((always_inline)) static inline SmithHandlers *smith_handlers_tab(void) {
+    return smith_handlers_current_table != nullptr ? smith_handlers_current_table : &smith_handlers_own;
+}
+
+static void smith_handlers_count(atomic_uint *counter, const void *from, const void *to) {
+    if (from == nullptr && to != nullptr) atomic_fetch_add(counter, 1);
+    if (from != nullptr && to == nullptr) atomic_fetch_sub(counter, 1);
+}
+
+static void smith_handlers_recount(const SmithHandlers *from, const SmithHandlers *to) {
+    smith_handlers_count(&smith_handlers_active, from->allocator, to->allocator);
+    smith_handlers_count(&smith_handlers_files_active, from->files, to->files);
+    smith_handlers_count(&smith_handlers_console_active, from->console, to->console);
+    smith_handlers_count(&smith_handlers_env_active, from->env, to->env);
+    smith_handlers_count(&smith_handlers_clock_active, from->clock, to->clock);
+    smith_handlers_count(&smith_handlers_entropy_active, from->entropy, to->entropy);
+    smith_handlers_count(&smith_handlers_net_active, from->net, to->net);
+    smith_handlers_count(&smith_handlers_process_active, from->process, to->process);
+    smith_handlers_count(&smith_handlers_scheduler_active, from->scheduler, to->scheduler);
+}
+
+SmithHandlers *smith_handlers_table(void) {
+    return smith_handlers_tab();
+}
+
+SmithHandlers *smith_handlers_set_table(SmithHandlers *table) {
+    SmithHandlers *previous = smith_handlers_tab();
+    SmithHandlers *next = table != nullptr ? table : &smith_handlers_own;
+    smith_handlers_recount(previous, next);
+    smith_handlers_current_table = next;
+    return previous;
+}
 
 __attribute__((constructor)) static void smith_handlers_start(void) {
     atomic_store(&smith_handlers_ready, true);
@@ -42,7 +90,7 @@ __attribute__((constructor)) static void smith_handlers_start(void) {
 // The thread-local is read in a function of its own: unoptimized code computes a thread-local's address where the
 // function starts, before the checks, and dyld calls close and write before the image's thread-local storage exists.
 __attribute__((noinline)) static SmithAllocator *smith_handlers_table_get(void) {
-    return smith_handlers_table;
+    return smith_handlers_tab()->allocator;
 }
 
 __attribute__((noinline)) static SmithAllocator *smith_handlers_current(void) {
@@ -52,8 +100,8 @@ __attribute__((noinline)) static SmithAllocator *smith_handlers_current(void) {
 }
 
 SmithAllocator *smith_handlers_set_allocator(SmithAllocator *allocator) {
-    SmithAllocator *previous = smith_handlers_table;
-    smith_handlers_table = allocator;
+    SmithAllocator *previous = smith_handlers_tab()->allocator;
+    smith_handlers_tab()->allocator = allocator;
     if (previous == nullptr && allocator != nullptr) atomic_fetch_add(&smith_handlers_active, 1);
     if (previous != nullptr && allocator == nullptr) atomic_fetch_sub(&smith_handlers_active, 1);
     return previous;
@@ -64,17 +112,13 @@ SmithAllocator *smith_handlers_allocator(void) {
 }
 
 // The files and the console, found the same way: a counter of the threads that have one, a thread-local table.
-static atomic_uint smith_handlers_files_active;
-static atomic_uint smith_handlers_console_active;
-static thread_local SmithFileHandler *smith_handlers_files_table;
-static thread_local SmithConsoleHandler *smith_handlers_console_table;
 
 __attribute__((noinline)) static SmithFileHandler *smith_handlers_files_get(void) {
-    return smith_handlers_files_table;
+    return smith_handlers_tab()->files;
 }
 
 __attribute__((noinline)) static SmithConsoleHandler *smith_handlers_console_get(void) {
-    return smith_handlers_console_table;
+    return smith_handlers_tab()->console;
 }
 
 __attribute__((noinline)) static SmithFileHandler *smith_handlers_files_current(void) {
@@ -90,8 +134,8 @@ __attribute__((noinline)) static SmithConsoleHandler *smith_handlers_console_cur
 }
 
 SmithFileHandler *smith_handlers_set_files(SmithFileHandler *files) {
-    SmithFileHandler *previous = smith_handlers_files_table;
-    smith_handlers_files_table = files;
+    SmithFileHandler *previous = smith_handlers_tab()->files;
+    smith_handlers_tab()->files = files;
     if (previous == nullptr && files != nullptr) atomic_fetch_add(&smith_handlers_files_active, 1);
     if (previous != nullptr && files == nullptr) atomic_fetch_sub(&smith_handlers_files_active, 1);
     return previous;
@@ -102,8 +146,8 @@ SmithFileHandler *smith_handlers_files(void) {
 }
 
 SmithConsoleHandler *smith_handlers_set_console(SmithConsoleHandler *console) {
-    SmithConsoleHandler *previous = smith_handlers_console_table;
-    smith_handlers_console_table = console;
+    SmithConsoleHandler *previous = smith_handlers_tab()->console;
+    smith_handlers_tab()->console = console;
     if (previous == nullptr && console != nullptr) atomic_fetch_add(&smith_handlers_console_active, 1);
     if (previous != nullptr && console == nullptr) atomic_fetch_sub(&smith_handlers_console_active, 1);
     return previous;
@@ -114,17 +158,13 @@ SmithConsoleHandler *smith_handlers_console(void) {
 }
 
 // The environment and the clock, found the same way.
-static atomic_uint smith_handlers_env_active;
-static atomic_uint smith_handlers_clock_active;
-static thread_local SmithEnvHandler *smith_handlers_env_table;
-static thread_local SmithClockHandler *smith_handlers_clock_table;
 
 __attribute__((noinline)) static SmithEnvHandler *smith_handlers_env_get(void) {
-    return smith_handlers_env_table;
+    return smith_handlers_tab()->env;
 }
 
 __attribute__((noinline)) static SmithClockHandler *smith_handlers_clock_get(void) {
-    return smith_handlers_clock_table;
+    return smith_handlers_tab()->clock;
 }
 
 __attribute__((noinline)) static SmithEnvHandler *smith_handlers_env_current(void) {
@@ -140,8 +180,8 @@ __attribute__((noinline)) static SmithClockHandler *smith_handlers_clock_current
 }
 
 SmithEnvHandler *smith_handlers_set_env(SmithEnvHandler *env) {
-    SmithEnvHandler *previous = smith_handlers_env_table;
-    smith_handlers_env_table = env;
+    SmithEnvHandler *previous = smith_handlers_tab()->env;
+    smith_handlers_tab()->env = env;
     if (previous == nullptr && env != nullptr) atomic_fetch_add(&smith_handlers_env_active, 1);
     if (previous != nullptr && env == nullptr) atomic_fetch_sub(&smith_handlers_env_active, 1);
     return previous;
@@ -152,8 +192,8 @@ SmithEnvHandler *smith_handlers_env(void) {
 }
 
 SmithClockHandler *smith_handlers_set_clock(SmithClockHandler *clock) {
-    SmithClockHandler *previous = smith_handlers_clock_table;
-    smith_handlers_clock_table = clock;
+    SmithClockHandler *previous = smith_handlers_tab()->clock;
+    smith_handlers_tab()->clock = clock;
     if (previous == nullptr && clock != nullptr) atomic_fetch_add(&smith_handlers_clock_active, 1);
     if (previous != nullptr && clock == nullptr) atomic_fetch_sub(&smith_handlers_clock_active, 1);
     return previous;
@@ -164,11 +204,9 @@ SmithClockHandler *smith_handlers_clock(void) {
 }
 
 // The entropy, found the same way.
-static atomic_uint smith_handlers_entropy_active;
-static thread_local SmithEntropyHandler *smith_handlers_entropy_table;
 
 __attribute__((noinline)) static SmithEntropyHandler *smith_handlers_entropy_get(void) {
-    return smith_handlers_entropy_table;
+    return smith_handlers_tab()->entropy;
 }
 
 __attribute__((noinline)) static SmithEntropyHandler *smith_handlers_entropy_current(void) {
@@ -178,8 +216,8 @@ __attribute__((noinline)) static SmithEntropyHandler *smith_handlers_entropy_cur
 }
 
 SmithEntropyHandler *smith_handlers_set_entropy(SmithEntropyHandler *entropy) {
-    SmithEntropyHandler *previous = smith_handlers_entropy_table;
-    smith_handlers_entropy_table = entropy;
+    SmithEntropyHandler *previous = smith_handlers_tab()->entropy;
+    smith_handlers_tab()->entropy = entropy;
     if (previous == nullptr && entropy != nullptr) atomic_fetch_add(&smith_handlers_entropy_active, 1);
     if (previous != nullptr && entropy == nullptr) atomic_fetch_sub(&smith_handlers_entropy_active, 1);
     return previous;
@@ -210,11 +248,9 @@ static int smith_handlers_clock_sleep(SmithClockHandler *clock, uint64_t nanosec
 }
 
 // The network, found the same way (no libc function is interposed: smith::net calls the handler).
-static atomic_uint smith_handlers_net_active;
-static thread_local SmithNetHandler *smith_handlers_net_table;
 
 __attribute__((noinline)) static SmithNetHandler *smith_handlers_net_get(void) {
-    return smith_handlers_net_table;
+    return smith_handlers_tab()->net;
 }
 
 __attribute__((noinline)) static SmithNetHandler *smith_handlers_net_current(void) {
@@ -224,8 +260,8 @@ __attribute__((noinline)) static SmithNetHandler *smith_handlers_net_current(voi
 }
 
 SmithNetHandler *smith_handlers_set_net(SmithNetHandler *net) {
-    SmithNetHandler *previous = smith_handlers_net_table;
-    smith_handlers_net_table = net;
+    SmithNetHandler *previous = smith_handlers_tab()->net;
+    smith_handlers_tab()->net = net;
     if (previous == nullptr && net != nullptr) atomic_fetch_add(&smith_handlers_net_active, 1);
     if (previous != nullptr && net == nullptr) atomic_fetch_sub(&smith_handlers_net_active, 1);
     return previous;
@@ -236,11 +272,9 @@ SmithNetHandler *smith_handlers_net(void) {
 }
 
 // The child processes, found the same way (no libc function is interposed: smith::process calls the handler).
-static atomic_uint smith_handlers_process_active;
-static thread_local SmithProcessHandler *smith_handlers_process_table;
 
 __attribute__((noinline)) static SmithProcessHandler *smith_handlers_process_get(void) {
-    return smith_handlers_process_table;
+    return smith_handlers_tab()->process;
 }
 
 __attribute__((noinline)) static SmithProcessHandler *smith_handlers_process_current(void) {
@@ -250,8 +284,8 @@ __attribute__((noinline)) static SmithProcessHandler *smith_handlers_process_cur
 }
 
 SmithProcessHandler *smith_handlers_set_process(SmithProcessHandler *process) {
-    SmithProcessHandler *previous = smith_handlers_process_table;
-    smith_handlers_process_table = process;
+    SmithProcessHandler *previous = smith_handlers_tab()->process;
+    smith_handlers_tab()->process = process;
     if (previous == nullptr && process != nullptr) atomic_fetch_add(&smith_handlers_process_active, 1);
     if (previous != nullptr && process == nullptr) atomic_fetch_sub(&smith_handlers_process_active, 1);
     return previous;
@@ -259,6 +293,76 @@ SmithProcessHandler *smith_handlers_set_process(SmithProcessHandler *process) {
 
 SmithProcessHandler *smith_handlers_process(void) {
     return smith_handlers_process_current();
+}
+
+// The scheduler, found the same way. The calls it answers (read, write, pread, pwrite, readv, writev, send, recv,
+// accept, connect) build a request and hand it to `io`; with no scheduler, or one without `io`, they are the real
+// calls.
+
+__attribute__((noinline)) static SmithScheduler *smith_handlers_scheduler_get(void) {
+    return smith_handlers_tab()->scheduler;
+}
+
+__attribute__((noinline)) static SmithScheduler *smith_handlers_scheduler_current(void) {
+    if (atomic_load_explicit(&smith_handlers_scheduler_active, memory_order_relaxed) == 0) return nullptr;
+    if (!atomic_load_explicit(&smith_handlers_ready, memory_order_relaxed)) return nullptr;
+    return smith_handlers_scheduler_get();
+}
+
+// The pthread mutexes the calling thread holds (issue #938), counted only while some scheduler is set.
+static thread_local int smith_handlers_locks_held;
+
+// Every touch of the count is its own function that is never inlined: inlined, the compiler may compute the
+// thread-local's address (a call to the loader) before the branch that keeps it away from libSystem's initializer.
+__attribute__((noinline)) static void smith_handlers_locks_add(int change) {
+    if (change > 0 || smith_handlers_locks_held > 0) smith_handlers_locks_held += change;
+}
+
+__attribute__((noinline)) static bool smith_handlers_locks_any(void) {
+    return smith_handlers_locks_held > 0;
+}
+
+__attribute__((noinline)) static void smith_handlers_locks_reset(void) {
+    smith_handlers_locks_held = 0;
+}
+
+SmithScheduler *smith_handlers_set_scheduler(SmithScheduler *scheduler) {
+    SmithScheduler *previous = smith_handlers_tab()->scheduler;
+    smith_handlers_tab()->scheduler = scheduler;
+    if (previous == nullptr && scheduler != nullptr) atomic_fetch_add(&smith_handlers_scheduler_active, 1);
+    if (previous != nullptr && scheduler == nullptr) atomic_fetch_sub(&smith_handlers_scheduler_active, 1);
+    if (scheduler == nullptr) smith_handlers_locks_reset();
+    return previous;
+}
+
+SmithScheduler *smith_handlers_scheduler(void) {
+    return smith_handlers_scheduler_current();
+}
+
+// A task never switches while it holds one, so per thread is per task. A routed call made above zero is the real call:
+// parking there could leave another task of the same worker blocked on that mutex for good.
+static void smith_handlers_lock_taken(void) {
+    if (atomic_load_explicit(&smith_handlers_scheduler_active, memory_order_relaxed) != 0) smith_handlers_locks_add(1);
+}
+
+// No thread-local is touched while no scheduler is set: libSystem's own initializer unlocks mutexes before
+// thread-locals work (macOS aborts in _tlv_bootstrap_error there). Setting a thread's scheduler to none resets its
+// count.
+static void smith_handlers_lock_given(void) {
+    if (atomic_load_explicit(&smith_handlers_scheduler_active, memory_order_relaxed) == 0) return;
+    smith_handlers_locks_add(-1);
+}
+
+// True when a scheduler took the request: its result is then the call's, with errno set as the real call would set it.
+// The counter is read here, so a thread with no scheduler pays one load.
+static bool smith_handlers_route(SmithIoRequest *request) {
+    if (atomic_load_explicit(&smith_handlers_scheduler_active, memory_order_relaxed) == 0) return false;
+    if (smith_handlers_locks_any()) return false;
+    SmithScheduler *scheduler = smith_handlers_scheduler_current();
+    if (scheduler == nullptr || scheduler->io == nullptr) return false;
+    scheduler->io(scheduler, request);
+    if (request->result < 0) errno = request->error;
+    return true;
 }
 
 static bool smith_handlers_has(int flags, int bit) {
@@ -393,18 +497,85 @@ static int smith_handlers_open(const char *path, int flags, ...) {
     return files != nullptr ? files->open(files, path, flags, mode) : open(path, flags, mode);
 }
 
+static int smith_handlers_mutex_lock(pthread_mutex_t *mutex) {
+    int result = pthread_mutex_lock(mutex);
+    if (result == 0) smith_handlers_lock_taken();
+    return result;
+}
+
+static int smith_handlers_mutex_trylock(pthread_mutex_t *mutex) {
+    int result = pthread_mutex_trylock(mutex);
+    if (result == 0) smith_handlers_lock_taken();
+    return result;
+}
+
+static int smith_handlers_mutex_unlock(pthread_mutex_t *mutex) {
+    smith_handlers_lock_given();
+    return pthread_mutex_unlock(mutex);
+}
+
 static ssize_t smith_handlers_read(int fd, void *buffer, size_t size) {
     SmithConsoleHandler *console = fd == 0 ? smith_handlers_console_current() : nullptr;
     if (console != nullptr) return console->read(console, buffer, size);
     SmithFileHandler *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
-    return files != nullptr ? files->read(files, fd, buffer, size) : read(fd, buffer, size);
+    if (files != nullptr) return files->read(files, fd, buffer, size);
+    SmithIoRequest request = {.operation = SmithIoOperation_Read, .fd = fd, .buffer = buffer, .size = size};
+    return smith_handlers_route(&request) ? request.result : read(fd, buffer, size);
 }
 
 static ssize_t smith_handlers_write(int fd, const void *buffer, size_t size) {
     SmithConsoleHandler *console = fd == 1 || fd == 2 ? smith_handlers_console_current() : nullptr;
     if (console != nullptr) return console->write(console, fd, buffer, size);
     SmithFileHandler *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
-    return files != nullptr ? files->write(files, fd, buffer, size) : write(fd, buffer, size);
+    if (files != nullptr) return files->write(files, fd, buffer, size);
+    SmithIoRequest request = {.operation = SmithIoOperation_Write, .fd = fd, .source = buffer, .size = size};
+    return smith_handlers_route(&request) ? request.result : write(fd, buffer, size);
+}
+
+static ssize_t smith_handlers_pread(int fd, void *buffer, size_t size, off_t offset) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Pread, .fd = fd, .buffer = buffer, .size = size, .offset = offset};
+    return smith_handlers_route(&request) ? request.result : pread(fd, buffer, size, offset);
+}
+
+static ssize_t smith_handlers_pwrite(int fd, const void *buffer, size_t size, off_t offset) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Pwrite, .fd = fd, .source = buffer, .size = size, .offset = offset};
+    return smith_handlers_route(&request) ? request.result : pwrite(fd, buffer, size, offset);
+}
+
+static ssize_t smith_handlers_readv(int fd, const struct iovec *vectors, int count) {
+    SmithIoRequest request = {.operation = SmithIoOperation_Readv, .fd = fd, .vectors = vectors, .count = count};
+    return smith_handlers_route(&request) ? request.result : readv(fd, vectors, count);
+}
+
+static ssize_t smith_handlers_writev(int fd, const struct iovec *vectors, int count) {
+    SmithIoRequest request = {.operation = SmithIoOperation_Writev, .fd = fd, .vectors = vectors, .count = count};
+    return smith_handlers_route(&request) ? request.result : writev(fd, vectors, count);
+}
+
+static ssize_t smith_handlers_send(int fd, const void *buffer, size_t size, int flags) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Send, .fd = fd, .source = buffer, .size = size, .flags = flags};
+    return smith_handlers_route(&request) ? request.result : send(fd, buffer, size, flags);
+}
+
+static ssize_t smith_handlers_recv(int fd, void *buffer, size_t size, int flags) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Recv, .fd = fd, .buffer = buffer, .size = size, .flags = flags};
+    return smith_handlers_route(&request) ? request.result : recv(fd, buffer, size, flags);
+}
+
+static int smith_handlers_accept(int fd, struct sockaddr *address, socklen_t *address_length) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Accept, .fd = fd, .address = address, .address_length = address_length};
+    return smith_handlers_route(&request) ? (int)request.result : accept(fd, address, address_length);
+}
+
+static int smith_handlers_connect(int fd, const struct sockaddr *peer, socklen_t peer_length) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Connect, .fd = fd, .peer = peer, .peer_length = peer_length};
+    return smith_handlers_route(&request) ? (int)request.result : connect(fd, peer, peer_length);
 }
 
 static int smith_handlers_close(int fd) {
@@ -714,6 +885,14 @@ __attribute__((used, section("__DATA,__interpose"))) static const SmithInterpose
     {(uintptr_t)&smith_handlers_open, (uintptr_t)&open},
     {(uintptr_t)&smith_handlers_read, (uintptr_t)&read},
     {(uintptr_t)&smith_handlers_write, (uintptr_t)&write},
+    {(uintptr_t)&smith_handlers_pread, (uintptr_t)&pread},
+    {(uintptr_t)&smith_handlers_pwrite, (uintptr_t)&pwrite},
+    {(uintptr_t)&smith_handlers_readv, (uintptr_t)&readv},
+    {(uintptr_t)&smith_handlers_writev, (uintptr_t)&writev},
+    {(uintptr_t)&smith_handlers_send, (uintptr_t)&send},
+    {(uintptr_t)&smith_handlers_recv, (uintptr_t)&recv},
+    {(uintptr_t)&smith_handlers_accept, (uintptr_t)&accept},
+    {(uintptr_t)&smith_handlers_connect, (uintptr_t)&connect},
     {(uintptr_t)&smith_handlers_close, (uintptr_t)&close},
     {(uintptr_t)&smith_handlers_syscall, (uintptr_t)&syscall},
     {(uintptr_t)&smith_handlers_fwrite, (uintptr_t)&fwrite},
@@ -749,6 +928,9 @@ __attribute__((used, section("__DATA,__interpose"))) static const SmithInterpose
     {(uintptr_t)&smith_handlers_nanosleep, (uintptr_t)&nanosleep},
     {(uintptr_t)&smith_handlers_usleep, (uintptr_t)&usleep},
     {(uintptr_t)&smith_handlers_sleep, (uintptr_t)&sleep},
+    {(uintptr_t)&smith_handlers_mutex_lock, (uintptr_t)&pthread_mutex_lock},
+    {(uintptr_t)&smith_handlers_mutex_trylock, (uintptr_t)&pthread_mutex_trylock},
+    {(uintptr_t)&smith_handlers_mutex_unlock, (uintptr_t)&pthread_mutex_unlock},
 };
 // clang-format on
 #pragma clang diagnostic pop
@@ -827,6 +1009,14 @@ typedef void (*SmithHandlersFunction)(void);
 [[gnu::weak]] extern void ___interceptor_open(void);
 [[gnu::weak]] extern void ___interceptor_read(void);
 [[gnu::weak]] extern void ___interceptor_write(void);
+[[gnu::weak]] extern void ___interceptor_pread(void);
+[[gnu::weak]] extern void ___interceptor_pwrite(void);
+[[gnu::weak]] extern void ___interceptor_readv(void);
+[[gnu::weak]] extern void ___interceptor_writev(void);
+[[gnu::weak]] extern void ___interceptor_send(void);
+[[gnu::weak]] extern void ___interceptor_recv(void);
+[[gnu::weak]] extern void ___interceptor_accept(void);
+[[gnu::weak]] extern void ___interceptor_connect(void);
 [[gnu::weak]] extern void ___interceptor_close(void);
 [[gnu::weak]] extern void ___interceptor_syscall(void);
 [[gnu::weak]] extern void ___interceptor_fwrite(void);
@@ -850,6 +1040,11 @@ typedef void (*SmithHandlersFunction)(void);
 [[gnu::weak]] extern void ___interceptor_freopen(void);
 [[gnu::weak]] extern void ___interceptor_getenv(void);
 [[gnu::weak]] extern void ___interceptor_clock_gettime(void);
+[[gnu::weak]] extern void ___interceptor___vfprintf_chk(void);
+[[gnu::weak]] extern void ___interceptor___vdprintf_chk(void);
+[[gnu::weak]] extern void ___interceptor___fgets_chk(void);
+[[gnu::weak]] extern void ___interceptor___fread_chk(void);
+[[gnu::weak]] extern void ___interceptor___read_chk(void);
 [[gnu::weak]] extern void ___interceptor_nanosleep(void);
 [[gnu::weak]] extern void ___interceptor_usleep(void);
 [[gnu::weak]] extern void ___interceptor_sleep(void);
@@ -875,9 +1070,20 @@ static SmithHandlersFunction smith_handlers_find(SmithHandlersNext *next) {
     return address;
 }
 
+static SmithHandlersNext smith_handlers_next_mutex_lock = {"pthread_mutex_lock", nullptr, nullptr};
+static SmithHandlersNext smith_handlers_next_mutex_trylock = {"pthread_mutex_trylock", nullptr, nullptr};
+static SmithHandlersNext smith_handlers_next_mutex_unlock = {"pthread_mutex_unlock", nullptr, nullptr};
 static SmithHandlersNext smith_handlers_next_open = {"open", ___interceptor_open, nullptr};
 static SmithHandlersNext smith_handlers_next_read = {"read", ___interceptor_read, nullptr};
 static SmithHandlersNext smith_handlers_next_write = {"write", ___interceptor_write, nullptr};
+static SmithHandlersNext smith_handlers_next_pread = {"pread", ___interceptor_pread, nullptr};
+static SmithHandlersNext smith_handlers_next_pwrite = {"pwrite", ___interceptor_pwrite, nullptr};
+static SmithHandlersNext smith_handlers_next_readv = {"readv", ___interceptor_readv, nullptr};
+static SmithHandlersNext smith_handlers_next_writev = {"writev", ___interceptor_writev, nullptr};
+static SmithHandlersNext smith_handlers_next_send = {"send", ___interceptor_send, nullptr};
+static SmithHandlersNext smith_handlers_next_recv = {"recv", ___interceptor_recv, nullptr};
+static SmithHandlersNext smith_handlers_next_accept = {"accept", ___interceptor_accept, nullptr};
+static SmithHandlersNext smith_handlers_next_connect = {"connect", ___interceptor_connect, nullptr};
 static SmithHandlersNext smith_handlers_next_getenv = {"getenv", ___interceptor_getenv, nullptr};
 static SmithHandlersNext smith_handlers_next_getentropy = {"getentropy", nullptr, nullptr};
 static SmithHandlersNext smith_handlers_next_clock_gettime = {"clock_gettime", ___interceptor_clock_gettime, nullptr};
@@ -897,6 +1103,11 @@ static SmithHandlersNext smith_handlers_next_puts = {"puts", ___interceptor_puts
 static SmithHandlersNext smith_handlers_next_vfprintf = {"vfprintf", ___interceptor_vfprintf, nullptr};
 static SmithHandlersNext smith_handlers_next_vdprintf = {"vdprintf", ___interceptor_vdprintf, nullptr};
 static SmithHandlersNext smith_handlers_next_fflush = {"fflush", ___interceptor_fflush, nullptr};
+static SmithHandlersNext smith_handlers_next_vfprintf_chk = {"__vfprintf_chk", ___interceptor___vfprintf_chk, nullptr};
+static SmithHandlersNext smith_handlers_next_vdprintf_chk = {"__vdprintf_chk", ___interceptor___vdprintf_chk, nullptr};
+static SmithHandlersNext smith_handlers_next_fgets_chk = {"__fgets_chk", ___interceptor___fgets_chk, nullptr};
+static SmithHandlersNext smith_handlers_next_fread_chk = {"__fread_chk", ___interceptor___fread_chk, nullptr};
+static SmithHandlersNext smith_handlers_next_read_chk = {"__read_chk", ___interceptor___read_chk, nullptr};
 static SmithHandlersNext smith_handlers_next_fopen = {"fopen", ___interceptor_fopen, nullptr};
 static SmithHandlersNext smith_handlers_next_fclose = {"fclose", ___interceptor_fclose, nullptr};
 static SmithHandlersNext smith_handlers_next_vfscanf = {"vfscanf", ___interceptor_vfscanf, nullptr};
@@ -1001,18 +1212,101 @@ int open(const char *path, int flags, ...) {
     return ((int (*)(const char *, int, ...))smith_handlers_find(&smith_handlers_next_open))(path, flags, mode);
 }
 
+int pthread_mutex_lock(pthread_mutex_t *mutex) {
+    int result = ((int (*)(pthread_mutex_t *))smith_handlers_find(&smith_handlers_next_mutex_lock))(mutex);
+    if (result == 0) smith_handlers_lock_taken();
+    return result;
+}
+
+int pthread_mutex_trylock(pthread_mutex_t *mutex) {
+    int result = ((int (*)(pthread_mutex_t *))smith_handlers_find(&smith_handlers_next_mutex_trylock))(mutex);
+    if (result == 0) smith_handlers_lock_taken();
+    return result;
+}
+
+int pthread_mutex_unlock(pthread_mutex_t *mutex) {
+    smith_handlers_lock_given();
+    return ((int (*)(pthread_mutex_t *))smith_handlers_find(&smith_handlers_next_mutex_unlock))(mutex);
+}
+
 ssize_t read(int fd, void *buffer, size_t size) {
     SmithConsoleHandler *console = fd == 0 ? smith_handlers_console_current() : nullptr;
     if (console != nullptr) return console->read(console, buffer, size);
     SmithFileHandler *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
-    return files != nullptr ? files->read(files, fd, buffer, size) : smith_handlers_raw_read(fd, buffer, size);
+    if (files != nullptr) return files->read(files, fd, buffer, size);
+    SmithIoRequest request = {.operation = SmithIoOperation_Read, .fd = fd, .buffer = buffer, .size = size};
+    return smith_handlers_route(&request) ? request.result : smith_handlers_raw_read(fd, buffer, size);
 }
 
 ssize_t write(int fd, const void *buffer, size_t size) {
     SmithConsoleHandler *console = fd == 1 || fd == 2 ? smith_handlers_console_current() : nullptr;
     if (console != nullptr) return console->write(console, fd, buffer, size);
     SmithFileHandler *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
-    return files != nullptr ? files->write(files, fd, buffer, size) : smith_handlers_raw_write(fd, buffer, size);
+    if (files != nullptr) return files->write(files, fd, buffer, size);
+    SmithIoRequest request = {.operation = SmithIoOperation_Write, .fd = fd, .source = buffer, .size = size};
+    return smith_handlers_route(&request) ? request.result : smith_handlers_raw_write(fd, buffer, size);
+}
+
+ssize_t pread(int fd, void *buffer, size_t size, off_t offset) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Pread, .fd = fd, .buffer = buffer, .size = size, .offset = offset};
+    if (smith_handlers_route(&request)) return request.result;
+    return ((ssize_t (*)(int, void *, size_t, off_t))smith_handlers_find(&smith_handlers_next_pread))(fd, buffer, size,
+                                                                                                      offset);
+}
+
+ssize_t pwrite(int fd, const void *buffer, size_t size, off_t offset) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Pwrite, .fd = fd, .source = buffer, .size = size, .offset = offset};
+    if (smith_handlers_route(&request)) return request.result;
+    return ((ssize_t (*)(int, const void *, size_t, off_t))smith_handlers_find(&smith_handlers_next_pwrite))(
+        fd, buffer, size, offset);
+}
+
+ssize_t readv(int fd, const struct iovec *vectors, int count) {
+    SmithIoRequest request = {.operation = SmithIoOperation_Readv, .fd = fd, .vectors = vectors, .count = count};
+    if (smith_handlers_route(&request)) return request.result;
+    return ((ssize_t (*)(int, const struct iovec *, int))smith_handlers_find(&smith_handlers_next_readv))(fd, vectors,
+                                                                                                          count);
+}
+
+ssize_t writev(int fd, const struct iovec *vectors, int count) {
+    SmithIoRequest request = {.operation = SmithIoOperation_Writev, .fd = fd, .vectors = vectors, .count = count};
+    if (smith_handlers_route(&request)) return request.result;
+    return ((ssize_t (*)(int, const struct iovec *, int))smith_handlers_find(&smith_handlers_next_writev))(fd, vectors,
+                                                                                                           count);
+}
+
+ssize_t send(int fd, const void *buffer, size_t size, int flags) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Send, .fd = fd, .source = buffer, .size = size, .flags = flags};
+    if (smith_handlers_route(&request)) return request.result;
+    return ((ssize_t (*)(int, const void *, size_t, int))smith_handlers_find(&smith_handlers_next_send))(fd, buffer,
+                                                                                                         size, flags);
+}
+
+ssize_t recv(int fd, void *buffer, size_t size, int flags) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Recv, .fd = fd, .buffer = buffer, .size = size, .flags = flags};
+    if (smith_handlers_route(&request)) return request.result;
+    return ((ssize_t (*)(int, void *, size_t, int))smith_handlers_find(&smith_handlers_next_recv))(fd, buffer, size,
+                                                                                                   flags);
+}
+
+int accept(int fd, struct sockaddr *address, socklen_t *address_length) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Accept, .fd = fd, .address = address, .address_length = address_length};
+    if (smith_handlers_route(&request)) return (int)request.result;
+    return ((int (*)(int, struct sockaddr *, socklen_t *))smith_handlers_find(&smith_handlers_next_accept))(
+        fd, address, address_length);
+}
+
+int connect(int fd, const struct sockaddr *peer, socklen_t peer_length) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Connect, .fd = fd, .peer = peer, .peer_length = peer_length};
+    if (smith_handlers_route(&request)) return (int)request.result;
+    return ((int (*)(int, const struct sockaddr *, socklen_t))smith_handlers_find(&smith_handlers_next_connect))(
+        fd, peer, peer_length);
 }
 
 int close(int fd) {
@@ -1172,6 +1466,70 @@ int puts(const char *text) {
     va_end(args);
     return written;
 }
+
+// ---- The fortified forms. A program built with _FORTIFY_SOURCE calls __printf_chk and its kind for the stdio
+// functions above; each does what its plain form does here, and with no handler set glibc's own _chk (ASan's when the
+// program has it), so the fortification's checks still run.
+
+// NOLINTBEGIN(bugprone-reserved-identifier,readability-identifier-naming): glibc's names
+int __vfprintf_chk(FILE *stream, int flag, const char *format, va_list args) {
+    return ((int (*)(FILE *, int, const char *, va_list))smith_handlers_find(&smith_handlers_next_vfprintf_chk))(
+        smith_handlers_map(stream), flag, format, args);
+}
+
+int __fprintf_chk(FILE *stream, int flag, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    int written = __vfprintf_chk(stream, flag, format, args);
+    va_end(args);
+    return written;
+}
+
+int __vprintf_chk(int flag, const char *format, va_list args) {
+    return __vfprintf_chk(stdout, flag, format, args);
+}
+
+int __printf_chk(int flag, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    int written = __vfprintf_chk(stdout, flag, format, args);
+    va_end(args);
+    return written;
+}
+
+int __vdprintf_chk(int fd, int flag, const char *format, va_list args) {
+    bool console = (fd == 1 || fd == 2) && smith_handlers_console_current() != nullptr;
+    if (console) return __vfprintf_chk(fd == 1 ? stdout : stderr, flag, format, args);
+    return ((int (*)(int, int, const char *, va_list))smith_handlers_find(&smith_handlers_next_vdprintf_chk))(
+        fd, flag, format, args);
+}
+
+int __dprintf_chk(int fd, int flag, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    int written = __vdprintf_chk(fd, flag, format, args);
+    va_end(args);
+    return written;
+}
+
+char *__fgets_chk(char *line, size_t length, int size, FILE *stream) {
+    return ((char *(*)(char *, size_t, int, FILE *))smith_handlers_find(&smith_handlers_next_fgets_chk))(
+        line, length, size, smith_handlers_map(stream));
+}
+
+size_t __fread_chk(void *data, size_t length, size_t size, size_t count, FILE *stream) {
+    return ((size_t (*)(void *, size_t, size_t, size_t, FILE *))smith_handlers_find(&smith_handlers_next_fread_chk))(
+        data, length, size, count, smith_handlers_map(stream));
+}
+
+// A read that overruns its buffer is glibc's to report; every other one is read.
+ssize_t __read_chk(int fd, void *buffer, size_t size, size_t length) {
+    if (size > length)
+        return ((ssize_t (*)(int, void *, size_t, size_t))smith_handlers_find(&smith_handlers_next_read_chk))(
+            fd, buffer, size, length);
+    return read(fd, buffer, size);
+}
+// NOLINTEND(bugprone-reserved-identifier,readability-identifier-naming)
 
 int fflush(FILE *stream) {
     return ((int (*)(FILE *))smith_handlers_find(&smith_handlers_next_fflush))(

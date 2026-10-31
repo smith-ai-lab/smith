@@ -3,16 +3,18 @@
 // and runs known answers, extraction, every shorter prefix of an archive refused, and random damage that may not crash,
 // hang, write outside the folder or leave a symlink that points out. The shell functions are those of
 // tests/build_fixtures/untar/prelude. By default every 5th prefix is tried (all the ones near a block boundary and in
-// the first two blocks); UNTAR_FULL=1 tries every one (issue #31).
+// the first two blocks); UNTAR_FULL=1 tries every one (issue #31). A test's texts are pushed on its test::memory arena,
+// which is also the current allocator, so what scratch returns goes back with it.
 module untar_sanitizers_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 
-static scratch::Project untar_project(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "untar");
+static scratch::Project untar_project() {
+    scratch::Project p = scratch::make("p", "untar");
     scratch::copy_tree(&p, "tests/untar.c", "tests/untar.c");
     scratch::copy_tree(&p, "tests/xz.py", "tests/xz.py");
     scratch::copy_tree(&p, "lib", "lib");
@@ -21,7 +23,7 @@ static scratch::Project untar_project(io::Io *io) {
 }
 
 static scratch::Run run(const scratch::Project *p, const char *body) {
-    return scratch::sh(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+    return scratch::sh(p, format::push(". ./prelude; ", body).data);
 }
 
 // A setup command that must succeed.
@@ -31,118 +33,167 @@ static void setup(const scratch::Project *p, const char *body) {
 }
 
 // What the shell's "$rc $out $err" is: the status, the output and the errors of a run.
-static const char *all_of(const scratch::Project *p, const scratch::Run *r) {
-    return format::push(&p->io->arena, r->status, " ", r->out, " ", r->err).data;
+static const char *all_of(const scratch::Run *r) {
+    return format::push(r->status, " ", r->out, " ", r->err).data;
 }
 
 // "$rc $out".
-static const char *status_and_out(const scratch::Project *p, const scratch::Run *r) {
-    return format::push(&p->io->arena, r->status, " ", r->out).data;
+static const char *status_and_out(const scratch::Run *r) {
+    return format::push(r->status, " ", r->out).data;
 }
 
-static const char *join(const scratch::Project *p, const char *a, const char *b) {
-    return format::push(&p->io->arena, a, b).data;
+static const char *join(const char *a, const char *b) {
+    return format::push(a, b).data;
 }
 
 // The program and the seeds are made once and shared (shared_untar in the prelude), not by each test.
-static scratch::Project sanitized_project(io::Io *io) {
-    scratch::Project p = untar_project(io);
-    setup(&p, "shared_untar");
+static scratch::Project sanitized_project() {
+    scratch::Project p = untar_project();
+    scratch::Run made = scratch::sh(&p, ". ./prelude; shared_untar");
+    scratch::expect_status("the setup of the case", 0, &made);
+    scratch::release(made.out);
+    scratch::release(made.err);
     return p;
 }
 
 // `./untar mode archive ...` on an archive of the project.
 static scratch::Run untar(const scratch::Project *p, const char *arguments) {
-    return run(p, join(p, "./untar ", arguments));
+    return run(p, join("./untar ", arguments));
 }
 
-static const char *seed_path(io::Io *io, const char *seed) {
-    return format::push(&io->arena, "\"$work/seeds/", seed, "\"").data;
+static const char *seed_path(const char *seed) {
+    return format::push("\"$work/seeds/", seed, "\"").data;
 }
 
 // A known archive of a small tree is extracted.
-static void seed_extracts(io::Io *io, const scratch::Project *p, const char *seed) {
-    const char *archive = seed_path(io, seed);
-    scratch::Run extracted = untar(p, format::push(&io->arena, "extract ", archive, " \"$work/untar-out\"").data);
-    scratch::expect_text(format::push(&io->arena, "sanitizers: ", seed, " extracts").data, "0 ok",
-                         status_and_out(p, &extracted));
+static void seed_extracts(const scratch::Project *p, const char *seed) {
+    const char *archive = seed_path(seed);
+    scratch::Run extracted = untar(p, format::push("extract ", archive, " \"$work/untar-out\"").data);
+    scratch::expect_text(format::push("sanitizers: ", seed, " extracts").data, "0 ok", status_and_out(&extracted));
 }
 
 // Every shorter prefix of it is refused: the part `part` of `parts` of them (the parts run side by side as tests and
 // together try all).
-static void seed_prefixes_are_refused(io::Io *io, const scratch::Project *p, const char *seed, usize part,
-                                      usize parts) {
-    const char *archive = seed_path(io, seed);
-    scratch::Run prefixes = untar(
-        p, format::push(&io->arena, "prefixes ", archive, " \"$work/scratch\" $prefix_step ", part, " ", parts).data);
-    scratch::expect_status(format::push(&io->arena, "sanitizers: every shorter prefix of ", seed, " is refused").data,
-                           0, &prefixes);
+static void seed_prefixes_are_refused(const scratch::Project *p, const char *seed, usize part, usize parts) {
+    const char *archive = seed_path(seed);
+    scratch::Run prefixes =
+        untar(p, format::push("prefixes ", archive, " \"$work/scratch\" $prefix_step ", part, " ", parts).data);
+    scratch::expect_status(format::push("sanitizers: every shorter prefix of ", seed, " is refused").data, 0,
+                           &prefixes);
     scratch::expect_contains(
-        format::push(&io->arena, "sanitizers: every shorter prefix of ", seed, " is refused (the output)").data,
-        all_of(p, &prefixes), "0 ");
+        format::push("sanitizers: every shorter prefix of ", seed, " is refused (the output)").data, all_of(&prefixes),
+        "0 ");
     scratch::expect_contains("sanitizers: ... and the count says so", prefixes.out, "prefixes refused");
 }
 
 // And 1500 damaged copies do no harm.
-static void seed_damaged_copies_do_no_harm(io::Io *io, const scratch::Project *p, const char *seed) {
-    const char *archive = seed_path(io, seed);
-    scratch::Run fuzzed = untar(p, format::push(&io->arena, "fuzz ", archive, " \"$work/scratch\" 1500 1").data);
-    scratch::expect_contains(format::push(&io->arena, "sanitizers: 1500 damaged copies of ", seed, " do no harm").data,
-                             all_of(p, &fuzzed), "0 1500 damaged archives");
+static void seed_damaged_copies_do_no_harm(const scratch::Project *p, const char *seed) {
+    const char *archive = seed_path(seed);
+    scratch::Run fuzzed = untar(p, format::push("fuzz ", archive, " \"$work/scratch\" 1500 1").data);
+    scratch::expect_contains(format::push("sanitizers: 1500 damaged copies of ", seed, " do no harm").data,
+                             all_of(&fuzzed), "0 1500 damaged archives");
 }
 
 // The five seeds: known archives of a small tree, each extracted, every shorter prefix refused, and 1500 damaged
 // copies. The plain tar, whose prefixes are most of them, is three tests of its own.
-static void seed_is_read_safely(io::Io *io, const char *seed) {
-    scratch::Project p = sanitized_project(io);
-    seed_extracts(io, &p, seed);
-    seed_prefixes_are_refused(io, &p, seed, 0, 1);
-    seed_damaged_copies_do_no_harm(io, &p, seed);
+static void seed_is_read_safely(const scratch::Project *p, const char *seed) {
+    seed_extracts(p, seed);
+    seed_prefixes_are_refused(p, seed, 0, 1);
+    seed_damaged_copies_do_no_harm(p, seed);
 }
 
-export void test_untar_sanitizers_known_gzip_and_xz_streams_and_each_of_their_prefixes_refused(io::Io *io) {
-    scratch::Project p = sanitized_project(io);
+export void test_untar_sanitizers_known_gzip_and_xz_streams_and_each_of_their_prefixes_refused() {
+    scratch::Project p = sanitized_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run vectors = untar(&p, "vectors");
     scratch::expect_text("sanitizers: known gzip (fixed Huffman codes) and xz streams, and each of their prefixes "
                          "refused",
-                         "0 vectors ok", status_and_out(&p, &vectors));
+                         "0 vectors ok", status_and_out(&vectors));
 }
 
-export void test_untar_sanitizers_seed_tar(io::Io *io) {
-    scratch::Project p = sanitized_project(io);
-    seed_extracts(io, &p, "seed.tar");
-    seed_damaged_copies_do_no_harm(io, &p, "seed.tar");
+export void test_untar_sanitizers_seed_tar() {
+    scratch::Project p = sanitized_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    seed_extracts(&p, "seed.tar");
+    seed_damaged_copies_do_no_harm(&p, "seed.tar");
 }
 
-export void test_untar_sanitizers_seed_tar_prefixes_first_third(io::Io *io) {
-    scratch::Project p = sanitized_project(io);
-    seed_prefixes_are_refused(io, &p, "seed.tar", 0, 3);
+export void test_untar_sanitizers_seed_tar_prefixes_first_third() {
+    scratch::Project p = sanitized_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    seed_prefixes_are_refused(&p, "seed.tar", 0, 3);
 }
 
-export void test_untar_sanitizers_seed_tar_prefixes_second_third(io::Io *io) {
-    scratch::Project p = sanitized_project(io);
-    seed_prefixes_are_refused(io, &p, "seed.tar", 1, 3);
+export void test_untar_sanitizers_seed_tar_prefixes_second_third() {
+    scratch::Project p = sanitized_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    seed_prefixes_are_refused(&p, "seed.tar", 1, 3);
 }
 
-export void test_untar_sanitizers_seed_tar_prefixes_last_third(io::Io *io) {
-    scratch::Project p = sanitized_project(io);
-    seed_prefixes_are_refused(io, &p, "seed.tar", 2, 3);
+export void test_untar_sanitizers_seed_tar_prefixes_last_third() {
+    scratch::Project p = sanitized_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    seed_prefixes_are_refused(&p, "seed.tar", 2, 3);
 }
 
-export void test_untar_sanitizers_seed_tar_gz(io::Io *io) {
-    seed_is_read_safely(io, "seed.tar.gz");
+export void test_untar_sanitizers_seed_tar_gz() {
+    scratch::Project p = sanitized_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    seed_is_read_safely(&p, "seed.tar.gz");
 }
 
-export void test_untar_sanitizers_single_gz(io::Io *io) {
-    seed_is_read_safely(io, "single.gz");
+export void test_untar_sanitizers_single_gz() {
+    scratch::Project p = sanitized_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    seed_is_read_safely(&p, "single.gz");
 }
 
-export void test_untar_sanitizers_seed_tar_xz(io::Io *io) {
-    seed_is_read_safely(io, "seed.tar.xz");
+export void test_untar_sanitizers_seed_tar_xz() {
+    scratch::Project p = sanitized_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    seed_is_read_safely(&p, "seed.tar.xz");
 }
 
-export void test_untar_sanitizers_sha256_tar_xz(io::Io *io) {
-    seed_is_read_safely(io, "sha256.tar.xz");
+export void test_untar_sanitizers_sha256_tar_xz() {
+    scratch::Project p = sanitized_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    seed_is_read_safely(&p, "sha256.tar.xz");
 }
 
 // The AppleDouble tar, as in the section 3 tests, when this tar writes AppleDouble entries.
@@ -155,8 +206,13 @@ constexpr char make_apple[_] =
     "(cd apple-plain && tar -rf \"$arc/apple.tar\" -s ',dot_,._,' pkg-1.0/dot_plain pkg-1.0/dot_tiny); "
     "gzip -c \"$arc/apple.tar\" >\"$arc/apple.tar.gz\"";
 
-export void test_untar_sanitizers_appledouble_entries_do_no_harm(io::Io *io) {
-    scratch::Project p = sanitized_project(io);
+export void test_untar_sanitizers_appledouble_entries_do_no_harm() {
+    scratch::Project p = sanitized_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     setup(&p, make_apple);
     if (run(&p, "grep -a -c '\\._a' \"$arc/apple.tar\"").out[0] == '0') {
         test::note("skip  AppleDouble entries: this tar writes none");
@@ -164,51 +220,75 @@ export void test_untar_sanitizers_appledouble_entries_do_no_harm(io::Io *io) {
     }
     scratch::Run gz = untar(&p, "prefixes \"$arc/apple.tar.gz\" \"$work/scratch\" $prefix_step");
     scratch::expect_contains("sanitizers: every shorter prefix of the AppleDouble tar.gz is refused",
-                             status_and_out(&p, &gz), "0 ");
+                             status_and_out(&gz), "0 ");
     scratch::Run plain = untar(&p, "prefixes \"$arc/apple.tar\" \"$work/scratch\" $prefix_step");
     scratch::expect_contains("sanitizers: every shorter prefix of the AppleDouble tar is refused",
-                             status_and_out(&p, &plain), "0 ");
+                             status_and_out(&plain), "0 ");
     scratch::Run fuzzed = untar(&p, "fuzz \"$arc/apple.tar\" \"$work/scratch\" 800 6");
-    scratch::expect_contains("sanitizers: damaged AppleDouble entries do no harm", all_of(&p, &fuzzed),
+    scratch::expect_contains("sanitizers: damaged AppleDouble entries do no harm", all_of(&fuzzed),
                              "0 800 damaged archives");
 }
 
-export void test_untar_sanitizers_damaged_headers_of_the_pax_tar_do_no_harm(io::Io *io) {
-    scratch::Project p = sanitized_project(io);
+export void test_untar_sanitizers_damaged_headers_of_the_pax_tar_do_no_harm() {
+    scratch::Project p = sanitized_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     setup(&p, "make_src; (cd src && tar --format pax -cf \"$arc/pax.tar\" pkg-1.0)");
     scratch::Run fuzzed = untar(&p, "fuzz \"$arc/pax.tar\" \"$work/scratch\" 800 2");
-    scratch::expect_contains("sanitizers: damaged headers of the pax tar do no harm", all_of(&p, &fuzzed),
+    scratch::expect_contains("sanitizers: damaged headers of the pax tar do no harm", all_of(&fuzzed),
                              "0 800 damaged archives");
 }
 
-export void test_untar_sanitizers_damaged_headers_of_the_gnu_tar_do_no_harm(io::Io *io) {
-    scratch::Project p = sanitized_project(io);
+export void test_untar_sanitizers_damaged_headers_of_the_gnu_tar_do_no_harm() {
+    scratch::Project p = sanitized_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     setup(&p, "d=pkg-1.0/$(printf 'a%.0s' $(seq 80))/$(printf 'b%.0s' $(seq 80))/$(printf 'c%.0s' $(seq 80)); "
               "mkdir -p \"long/$d\" long/pkg-1.0/ü; echo deep >\"long/$d/file.txt\"; "
               "echo accent >long/pkg-1.0/ü/é.txt; (cd long && tar --format gnutar -cf \"$arc/long-gnu.tar\" pkg-1.0)");
     scratch::Run fuzzed = untar(&p, "fuzz \"$arc/long-gnu.tar\" \"$work/scratch\" 800 3");
-    scratch::expect_contains("sanitizers: damaged headers of the GNU tar do no harm", all_of(&p, &fuzzed),
+    scratch::expect_contains("sanitizers: damaged headers of the GNU tar do no harm", all_of(&fuzzed),
                              "0 800 damaged archives");
 }
 
-export void test_untar_sanitizers_damaged_xz_blocks_do_no_harm(io::Io *io) {
-    scratch::Project p = sanitized_project(io);
+export void test_untar_sanitizers_damaged_xz_blocks_do_no_harm() {
+    scratch::Project p = sanitized_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     setup(&p, "make_a_tar; xz -T2 --block-size=8192 -c \"$arc/a.tar\" >\"$arc/blocks.tar.xz\"");
     scratch::Run fuzzed = untar(&p, "fuzz \"$arc/blocks.tar.xz\" \"$work/scratch\" 800 4");
-    scratch::expect_contains("sanitizers: damaged xz blocks do no harm", all_of(&p, &fuzzed), "0 800 damaged archives");
+    scratch::expect_contains("sanitizers: damaged xz blocks do no harm", all_of(&fuzzed), "0 800 damaged archives");
 }
 
-export void test_untar_sanitizers_damaged_stored_blocks_do_no_harm(io::Io *io) {
-    scratch::Project p = sanitized_project(io);
+export void test_untar_sanitizers_damaged_stored_blocks_do_no_harm() {
+    scratch::Project p = sanitized_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     setup(&p, "make_rand; gzip -c \"$arc/rand.tar\" >\"$arc/rand.tar.gz\"");
     scratch::Run fuzzed = untar(&p, "fuzz \"$arc/rand.tar.gz\" \"$work/scratch\" 300 5");
-    scratch::expect_contains("sanitizers: damaged stored blocks do no harm", all_of(&p, &fuzzed),
-                             "0 300 damaged archives");
+    scratch::expect_contains("sanitizers: damaged stored blocks do no harm", all_of(&fuzzed), "0 300 damaged archives");
 }
 
 // 6. No process runs tar: nothing in smith names it, and with tar forbidden to run the same extractions work.
-export void test_untar_no_tar_nothing_in_smith_names_it(io::Io *io) {
-    scratch::Project p = untar_project(io);
+export void test_untar_no_tar_nothing_in_smith_names_it() {
+    scratch::Project p = untar_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "smith.c", "sources/smith.c");
     scratch::copy_tree(&p, "runtime", "sources/runtime");
     scratch::expect_text("no tar: nothing in smith names it", "0",
@@ -224,9 +304,8 @@ constexpr char sandbox_profile[_] =
 // True when sandbox-exec exists and works here (it does not inside another sandbox).
 static bool sandbox_ready(const scratch::Project *p) {
     setup(p, "make_a_tar; gzip -c \"$arc/a.tar\" >\"$arc/a.tar.gz\"; xz -c \"$arc/a.tar\" >\"$arc/a.tar.xz\"");
-    scratch::Run found = scratch::sh(p, join(p, sandbox_profile,
-                                             "command -v sandbox-exec >/dev/null 2>&1 && "
-                                             "sandbox-exec -p \"$profile\" /usr/bin/true"));
+    scratch::Run found = scratch::sh(p, join(sandbox_profile, "command -v sandbox-exec >/dev/null 2>&1 && "
+                                                              "sandbox-exec -p \"$profile\" /usr/bin/true"));
     if (found.status != 0) {
         test::note("skip  no tar: sandbox-exec is not available here");
         return false;
@@ -236,11 +315,16 @@ static bool sandbox_ready(const scratch::Project *p) {
 
 // The command under sandbox-exec with the profile.
 static scratch::Run sandboxed(const scratch::Project *p, const char *command) {
-    return run(p, join(p, join(p, sandbox_profile, "sandbox-exec -p \"$profile\" "), command));
+    return run(p, join(join(sandbox_profile, "sandbox-exec -p \"$profile\" "), command));
 }
 
-export void test_untar_no_tar_the_sandbox_does_forbid_tar(io::Io *io) {
-    scratch::Project p = untar_project(io);
+export void test_untar_no_tar_the_sandbox_does_forbid_tar() {
+    scratch::Project p = untar_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     if (!sandbox_ready(&p)) {
         return;
     }
@@ -248,8 +332,13 @@ export void test_untar_no_tar_the_sandbox_does_forbid_tar(io::Io *io) {
     scratch::expect_failure("no tar: the sandbox does forbid tar", &forbidden);
 }
 
-export void test_untar_no_tar_a_tar_xz_extracts_with_tar_gzip_and_xz_forbidden_to_run(io::Io *io) {
-    scratch::Project p = untar_project(io);
+export void test_untar_no_tar_a_tar_xz_extracts_with_tar_gzip_and_xz_forbidden_to_run() {
+    scratch::Project p = untar_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     if (!sandbox_ready(&p)) {
         return;
     }
@@ -257,8 +346,13 @@ export void test_untar_no_tar_a_tar_xz_extracts_with_tar_gzip_and_xz_forbidden_t
     scratch::expect_status("no tar: a .tar.xz extracts with tar, gzip and xz forbidden to run", 0, &fetched);
 }
 
-export void test_untar_no_tar_a_tar_gz_extracts_with_tar_gzip_and_xz_forbidden_to_run(io::Io *io) {
-    scratch::Project p = untar_project(io);
+export void test_untar_no_tar_a_tar_gz_extracts_with_tar_gzip_and_xz_forbidden_to_run() {
+    scratch::Project p = untar_project(); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     if (!sandbox_ready(&p)) {
         return;
     }

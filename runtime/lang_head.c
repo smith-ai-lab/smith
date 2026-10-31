@@ -428,10 +428,11 @@ static bool smith_lang_head_slice_struct(const SmithLang *lang, size_t at) {
     const SmithLangHeld *tag = &lang->head[at + 1];
     const SmithLangHeld *brace = &lang->head[at + 2];
     const char *name = smith_lang_scratch_str(tag->text);
-    return keyword->synthetic && tag->synthetic && brace->synthetic &&
-           smith_lang_equals(smith_lang_scratch_str(keyword->text), keyword->text.length, "struct") &&
-           tag->text.length > 12 && memcmp(name, "smith_array_", 12) == 0 &&
-           smith_lang_equals(smith_lang_scratch_str(brace->text), brace->text.length, "{");
+    bool brace_open = smith_lang_equals(smith_lang_scratch_str(brace->text), brace->text.length, "{");
+    bool keyword_struct = smith_lang_equals(smith_lang_scratch_str(keyword->text), keyword->text.length, "struct");
+    if (!tag->synthetic || !brace_open || !keyword_struct || tag->text.length <= 12) return false;
+    if (memcmp(name, "smith_tuple_", 12) == 0) return true; // a tuple's `struct` and `{` are the source's own
+    return keyword->synthetic && brace->synthetic && memcmp(name, "smith_array_", 12) == 0;
 }
 
 // An exported function's prototype and its definition both define a slice's struct in their parameter lists: two
@@ -466,6 +467,18 @@ static void smith_lang_hoist_slice_structs(SmithLang *lang, const SmithHost *hos
     }
 }
 
+// `[[maybe_unused]]` in the module's code only (not the header), before the token `like`.
+static void smith_lang_emit_maybe_unused(SmithLang *lang, const SmithHost *host, const SmithToken *like) {
+    static const char *const words[] = {"[", "[", "maybe_unused", "]", "]"};
+    for (size_t i = 0; i < 5; i++) { // 5 tokens
+        SmithToken made = smith_lang_synth(i == 2 ? SmithTokenKind_Identifier : SmithTokenKind_Punctuator, words[i],
+                                           strlen(words[i]), like);
+        made.line_start = i == 0 && like->line_start;
+        made.space_before = i == 0 && like->space_before;
+        smith_lang_emit_code(lang, host, made);
+    }
+}
+
 static void smith_lang_emit_head(SmithLang *lang, const SmithHost *host, bool header_too, bool with_static) {
     size_t static_at = with_static ? smith_lang_head_after_attributes(lang) : SIZE_MAX;
     bool function = lang->decl.is_function && !lang->decl.is_typedef;
@@ -474,10 +487,19 @@ static void smith_lang_emit_head(SmithLang *lang, const SmithHost *host, bool he
     lang->array_after_close = false;
     size_t brackets = 0;
     bool param_bracket = false;
+    // An exported constant is used by definition (its importers read it): the module's own copy never warns unused.
+    bool exported_constant = lang->decl.exported && lang->decl.is_constexpr && !function && !lang->decl.is_alias &&
+                             !lang->decl.is_typedef && lang->decl.declared > 0;
     for (size_t i = 0; i < lang->head_count; i++) { // bounded by the head
         if (smith_lang_head_dropped(lang, i)) continue;
         SmithLangHeld *held = &lang->head[i];
         SmithToken now = smith_lang_held_token(lang, held);
+        if (exported_constant) {
+            exported_constant = false;
+            smith_lang_emit_maybe_unused(lang, host, &now);
+            held->line_start = false;
+            held->space_before = true;
+        }
         if (held->hoisted) { // the code names the tag; the header keeps the definition
             if (header_too) smith_lang_emit_header(lang, now);
             continue;

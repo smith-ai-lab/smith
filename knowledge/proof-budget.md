@@ -1,12 +1,12 @@
 ---
 type: contract
 title: A proof is fast, and fast is CPU time
-description: Each proof has a budget of about 30 s of CPU time charged as on 8 idle cores (10 s again once hosted CI is in place), so a busy machine slows a proof and never fails it.
+description: Each proof has a budget of about 10 s of CPU time charged as on 8 idle cores, so a busy machine slows a proof and never fails it.
 tags: [prove, budget]
 ---
 # A proof is fast, and fast is CPU time
 
-**A proof is fast, or it is written wrong, and fast is CPU time.** Like a test, each proof has a budget of about 30 s (10 s until GitHub's slower hosted runners came; back to 10 s once the pipeline is unclogged, owner 2026-10-29),
+**A proof is fast, or it is written wrong, and fast is CPU time.** Like a test, each proof has a budget of about 10 s (raised to 30 s on 2026-10-29 while the pipeline was clogged, back to 10 s on 2026-10-31, #804),
 and one that exceeds it fails. The fix is to write it differently: free inputs instead of random draws, local proofs,
 and a contract per function, so that callers use the contract instead of the body. The budget is CPU time, so that a
 busy machine slows a proof and never fails it (owner's decision, after load averages of 17 to 54 made proofs time

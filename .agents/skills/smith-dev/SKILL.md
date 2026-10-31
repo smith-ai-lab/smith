@@ -5,7 +5,7 @@ description: "Start here for any change to smith itself (smith.c, runtime/, shim
 
 # smith-dev
 
-[AGENTS.md](../../../AGENTS.md) holds the rules and decisions, [knowledge](../../../knowledge/index.md) says what smith is, and GitHub issues hold the planned work. These skills are for changing smith only and are not in the plugin. To use smith as a compiler, load [smith](../smith/SKILL.md); to edit smith's own `build.c`, also load [smith-build](../smith-build/SKILL.md).
+[knowledge/decisions.md](../../../knowledge/decisions.md) lists every decision, [knowledge](../../../knowledge/index.md) says what smith is, and GitHub issues hold the planned work. These skills are for changing smith only and are not in the plugin. To use smith as a compiler, load [smith](../smith/SKILL.md); to edit smith's own `build.c`, also load [smith-build](../smith-build/SKILL.md).
 
 | To | Load |
 | --- | --- |
@@ -18,4 +18,8 @@ description: "Start here for any change to smith itself (smith.c, runtime/, shim
 | change the `.smith` language, its hook or its tools | [smith-dev-language](../smith-dev-language/SKILL.md) |
 | add a library or port one to `.smith` | [smith-dev-library](../smith-dev-library/SKILL.md) |
 | write smith's own C | [smith-dev-c](../smith-dev-c/SKILL.md) |
-| change AGENTS.md, a concept or a skill | [smith-dev-docs](../smith-dev-docs/SKILL.md) |
+| change a concept or a skill | [smith-dev-docs](../smith-dev-docs/SKILL.md) |
+| lead the work: lanes, the bottleneck, cloud lanes, the owner | [smith-dev-lead](../smith-dev-lead/SKILL.md) |
+| run the factory: roadmap, fundamentals before features, test beds, the owner's Mac | [smith-dev-factory](../smith-dev-factory/SKILL.md) |
+| run one lane of tickets as its orchestrator | [smith-dev-orchestrate](../smith-dev-orchestrate/SKILL.md) |
+| write a ticket someone with no context can do | [smith-dev-ticket](../smith-dev-ticket/SKILL.md) |

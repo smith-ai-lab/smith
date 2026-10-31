@@ -1,0 +1,1 @@
+src/main.smith:4:15: unused variable 'spare' [-Werror,-Wunused-const-variable]

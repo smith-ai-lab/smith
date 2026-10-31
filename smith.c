@@ -651,6 +651,17 @@ static void smith_programs_make(const char *runtime, const char *programs, const
         snprintf(path, sizeof path, "%s/bin/%s", temporary, names[i]);
         if (!smith_platform_clone(self, path)) smith_die(smith_exit_usage, "cannot link", path);
     }
+#ifdef __APPLE__
+    // The clones are linked with the handlers runtime like every program (-lsmith_handlers, an @executable_path rpath),
+    // so its dylib is beside them: a clone of the one beside the running smith.
+    char dylib[PATH_MAX];
+    snprintf(dylib, sizeof dylib, "%s", self);
+    char *last = strrchr(dylib, '/');
+    SMITH_ASSERT(last != nullptr);
+    snprintf(last + 1, sizeof dylib - (size_t)(last + 1 - dylib), "libsmith_handlers.dylib");
+    snprintf(path, sizeof path, "%s/bin/libsmith_handlers.dylib", temporary);
+    if (!smith_platform_clone(dylib, path)) smith_die(smith_exit_usage, "cannot link", path);
+#endif
     char target[PATH_MAX];
     snprintf(target, sizeof target, "%s/lib", runtime);
     snprintf(path, sizeof path, "%s/lib", temporary);
@@ -1224,6 +1235,8 @@ static const SmithLibrary smith_libraries[] = {
 // `smith --smith-explain`: the values of a failed check, read from the stopped test with lldb.
 #include "runtime/explain.c"
 // Packages, shared with the build runtime: the cache, the download and SHA-256.
+#include <smith/io.h>
+
 #include "runtime/package.c"
 // `smith cache`, and the lock a build holds on the caches.
 #include "runtime/cache.c"
@@ -1446,7 +1459,8 @@ static SmithBuildFile smith_build_file(void) {
 // The libraries the build program links, .smith modules that the smith doing the build compiles whatever compiler
 // compiles build.c itself (an external SMITH_CLANG knows no .smith): the runtime's package.c and the executor use them
 // through their headers. random declares -ffp-contract=off.
-static const char *const smith_build_program_libraries[] = {"arena", "contract", "inflate", "io", "random"};
+static const char *const smith_build_program_libraries[] = {"arena", "contract", "env", "files", "inflate",
+                                                            "io",    "mem",      "net", "random"};
 
 // The compiles are `-MD` and name the debug info's folder `.`, so the step cache serves them to every project whose
 // build file and libraries are the same (executor.md, "The step cache"): -MMD is refused by it, and a `-g` object
@@ -1505,6 +1519,15 @@ static size_t smith_build_program_manifest(char *out, size_t capacity, const cha
         SMITH_ASSERT(more > 0 && (size_t)more < sizeof objects - objects_length);
         objects_length += (size_t)more;
     }
+    // The libraries call the handlers' getters and setters (smith::mem, files, net), so the runtime is linked as an
+    // object (on macOS too, where it interposes nothing in the program that holds it: only its functions are used).
+    int handlers = snprintf(out + written, capacity - (size_t)written,
+                            "build .smith/build-program/handlers.o: cc .smith/lib/handlers.c\n");
+    SMITH_ASSERT(handlers > 0 && (size_t)handlers < capacity - (size_t)written);
+    written += handlers;
+    int more_objects =
+        snprintf(objects + objects_length, sizeof objects - objects_length, " .smith/build-program/handlers.o");
+    SMITH_ASSERT(more_objects > 0 && (size_t)more_objects < sizeof objects - objects_length);
     int linked = snprintf(out + written, capacity - (size_t)written, "build .smith/program: link %s\n", objects);
     SMITH_ASSERT(linked > 0 && (size_t)linked < capacity - (size_t)written);
     return (size_t)written + (size_t)linked;
@@ -2300,9 +2323,7 @@ static int smith_fetch_main(int count, char **args) {
     char folder[PATH_MAX];
     char hash[smith_package_hash_size];
     SmithPackageFault error;
-    SmithIo io = smith_io_make(0, nullptr);
-    bool fetched = smith_package_ensure(&io, args[0], nullptr, false, folder, hash, &error);
-    smith_io_close(&io);
+    bool fetched = smith_package_ensure(args[0], nullptr, false, folder, hash, &error);
     if (!fetched) smith_die(smith_exit_usage, "fetch failed:", error.text);
     printf(".hash = \"%s\",\n", hash);
     fflush(stdout);
@@ -2350,9 +2371,6 @@ static constexpr unsigned char smith_new_gitignore[] = {
 };
 static constexpr unsigned char smith_new_claude_settings[] = {
 #embed "templates/new/claude-settings.json"
-};
-static constexpr unsigned char smith_new_agents[] = {
-#embed "templates/new/agents.md"
 };
 static constexpr unsigned char smith_new_knowledge_index[] = {
 #embed "templates/new/knowledge-index.md"
@@ -2407,7 +2425,6 @@ static const SmithNewFile smith_new_files[] = {
     SMITH_NEW_ONLY("primes_test.c", smith_new_primes_test_c, SmithNewLanguage_C, false),
     SMITH_NEW_FILE(".gitignore", smith_new_gitignore, false, false, false),
     SMITH_NEW_FILE(".claude/settings.json", smith_new_claude_settings, false, false, false),
-    SMITH_NEW_FILE("AGENTS.md", smith_new_agents, true, false, false),
     SMITH_NEW_FILE("knowledge/index.md", smith_new_knowledge_index, true, false, true),
     SMITH_NEW_ONLY("knowledge/program.md", smith_new_knowledge_program, SmithNewLanguage_Smith, true),
     SMITH_NEW_ONLY("knowledge/program.md", smith_new_knowledge_program_c, SmithNewLanguage_C, true),
@@ -3420,7 +3437,7 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
     return true;
 }
 
-// `smith docs`: the check of AGENTS.md, knowledge/ and the skills, with the types knowledge/index.md declares.
+// `smith docs`: the check of knowledge/ and the skills, with the types knowledge/index.md declares.
 #include "runtime/docs.c"
 
 // `smith mcp`: the debugger server of issue #22. A feature of the full smith (-DSMITH_MCP, which `smith build` passes
@@ -3455,7 +3472,7 @@ typedef enum {
     SmithVerb_New,
     SmithVerb_Fetch,
     SmithVerb_Cache,
-    SmithVerb_Docs,          // smith docs: checks AGENTS.md, knowledge/ and skills
+    SmithVerb_Docs,          // smith docs: checks knowledge/ and skills
     SmithVerb_Symbolize,     // smith symbolize: stack traces turned into lines
     SmithVerb_Version,       // smith version: the version line and the commit smith was built from
     SmithVerb_Mcp,           // smith mcp: the debugger as an MCP server (the full smith)
@@ -3569,7 +3586,7 @@ static void smith_usage(FILE *out) {
           "  lsp                     clangd\n"
           "  dbg, dap                lldb, and lldb-dap (the Debug Adapter Protocol server)\n"
           "  mcp                     the debugger as an MCP server over stdio (agents: launch, breakpoint, stack...)\n"
-          "  docs                    check AGENTS.md, knowledge/ and the skills of the project\n"
+          "  docs                    check knowledge/ and the skills of the project\n"
           "  new, fetch, cache       start a project, fetch a package, show and clean the caches\n"
           "  version                 the version and the commit smith was built from\n",
           out);

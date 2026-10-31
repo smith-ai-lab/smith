@@ -8,7 +8,7 @@
 // smith-linked: table widen clamp_to_base
 // smith-hidden: base slots Plain Boosted Mode Range table widen clamp_to_base
 // clang-format on
-#pragma once
+#ifndef SMITH_HEADER_scale
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -16,7 +16,17 @@
 extern "C" {
 #endif
 int32_t scale_calls() __asm__("_scale::calls");
+#ifdef __cplusplus
+}
+#endif
+#define SMITH_HEADER_scale
+#endif
 #ifdef SMITH_INSTANCES
+#ifndef SMITH_HEADER_scale_INSTANCES
+#define SMITH_HEADER_scale_INSTANCES
+#ifdef __cplusplus
+extern "C" {
+#endif
 constexpr int32_t scale_base = 10;
 constexpr int32_t scale_slots = scale_base / 2;
 typedef enum { scale_Plain, scale_Boosted } scale_Mode;
@@ -27,7 +37,8 @@ int32_t high;
 extern int32_t scale_table[scale_slots] __asm__("_scale::table");
 scale_Range scale_widen(scale_Range r, FILE *log) __asm__("_scale::widen");
 int32_t scale_clamp_to_base(int32_t x) __asm__("_scale::clamp_to_base");
-#endif
 #ifdef __cplusplus
 }
+#endif
+#endif
 #endif

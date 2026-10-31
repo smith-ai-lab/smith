@@ -33,6 +33,11 @@ static char smith_changed_kinds[smith_changed_paths_max];        // A added, M m
 static size_t smith_changed_path_count;
 static bool smith_changed_overflow;
 static char smith_changed_text[smith_changed_text_max + 1];
+static FILE *smith_changed_log; // where the selection says what it did: nullptr is stderr, the core's is a buffer
+
+static FILE *smith_changed_out(void) {
+    return smith_changed_log != nullptr ? smith_changed_log : stderr;
+}
 
 // The files that select the whole suite: the patches, the shims that no record sees and the runner's own build. The
 // driver (smith.c) and the lowering (runtime/lang*) are not here: they run counted in the records of the train, so a
@@ -713,12 +718,12 @@ static void smith_changed_records(void) {
     if (!smith_changed_records_folder(folder, sizeof folder)) {
         smith_changed_fetch();
         if (!smith_changed_records_folder(folder, sizeof folder)) {
-            fputs("smith test --changed: no records of tests, the graph decides\n", stderr);
+            fputs("smith test --changed: no records of tests, the graph decides\n", smith_changed_out());
             return;
         }
     }
     if (smith_rec_check_folder(folder) == 0) {
-        fputs("smith test --changed: no records of tests, the graph decides\n", stderr);
+        fputs("smith test --changed: no records of tests, the graph decides\n", smith_changed_out());
         return;
     }
     smith_changed_unplaced = smith_changed_unnamed();
@@ -1029,11 +1034,13 @@ static size_t smith_changed_full_path(void) {
 }
 
 static void smith_changed_report(size_t selected, size_t tests, const char *base) {
-    fprintf(stderr, "smith test --changed: %zu changed file%s since %.12s: %zu of %zu test files selected\n",
+    fprintf(smith_changed_out(),
+            "smith test --changed: %zu changed file%s since %.12s: %zu of %zu test files selected\n",
             smith_changed_path_count, smith_changed_path_count == 1 ? "" : "s", base, selected, tests);
     for (size_t i = 0; i < smith_changed_file_count; i++) {
         if (smith_changed_chosen[i])
-            fprintf(stderr, "smith test --changed:   %s: %s\n", smith_changed_files[i], smith_changed_why[i]);
+            fprintf(smith_changed_out(), "smith test --changed:   %s: %s\n", smith_changed_files[i],
+                    smith_changed_why[i]);
     }
 }
 
@@ -1044,12 +1051,12 @@ static bool smith_changed_build_c_gate(const char *base, const char *head) {
         if (!smith_changed_build_c_local(base, head)) {
             fputs("smith test --changed: build.c changed outside the functions of tasks no test runs, so every test "
                   "runs\n",
-                  stderr);
+                  smith_changed_out());
             return false;
         }
         smith_changed_build_local = true;
         smith_rec_ignored_input = "build.c";
-        fprintf(stderr,
+        fprintf(smith_changed_out(),
                 "smith test --changed: build.c changed only in %zu name%s no test runs (%s%s): the tests that name "
                 "one run\n",
                 smith_changed_local_count, smith_changed_local_count == 1 ? "" : "s", smith_changed_local_names[0],
@@ -1066,7 +1073,7 @@ static bool smith_changed_build_c_gate(const char *base, const char *head) {
 static bool smith_changed_collect(const char *base_name, const char *head, bool relative, const char *who, char *base,
                                   size_t size) {
     if (!smith_changed_base(base_name, base, size) || (head != nullptr && !smith_changed_name_ok(head))) {
-        fprintf(stderr, "%s: no base: pass --base <ref> (no origin/main or main to compare with)\n", who);
+        fprintf(smith_changed_out(), "%s: no base: pass --base <ref> (no origin/main or main to compare with)\n", who);
         return false;
     }
     static const char *const list[] = {"ls-files", "--cached", "--others", "--exclude-standard", nullptr};
@@ -1078,36 +1085,36 @@ static bool smith_changed_collect(const char *base_name, const char *head, bool 
     bool diffed = smith_changed_git(head != nullptr ? range : diff, smith_changed_on_diff);
     if (head == nullptr) (void)smith_changed_git(others, smith_changed_on_untracked);
     if (!listed || !diffed) {
-        fprintf(stderr, "%s: git could not compare with %s\n", who, base);
+        fprintf(smith_changed_out(), "%s: git could not compare with %s\n", who, base);
         return false;
     }
     return true;
 }
 
-// Decides which tests to run from the changes `smith_changed_collect` reads. With `head`, the changes are those of
-// base..head (no untracked files); the files themselves (imports, records) are still read from the working tree.
-// `filter` gets the value of `--test` for SmithChanged_Some.
-static SmithChangedResult smith_changed_select(const char *base_name, const char *head, SmithChangedBuffer *filter) {
-    char base[256];
-    if (!smith_changed_collect(base_name, head, false, "smith test --changed", base, sizeof base))
-        return SmithChanged_Failed;
+// The rest of the decision, from the files and the changed paths already read (by git, or given to the core). `gate`
+// judges build.c by the functions of its diff, which asks git for them.
+static SmithChangedResult smith_changed_decide(const char *base, const char *head, SmithChangedBuffer *filter,
+                                               bool gate) {
     if (smith_changed_overflow) return SmithChanged_Full;
     size_t full = smith_changed_full_path();
     if (full > 0) {
-        fprintf(stderr, "smith test --changed: %s selects the whole suite\n", smith_changed_paths[full - 1]);
+        fprintf(smith_changed_out(), "smith test --changed: %s selects the whole suite\n",
+                smith_changed_paths[full - 1]);
         return SmithChanged_Full;
     }
-    if (!smith_changed_build_c_gate(base, head)) return SmithChanged_Full;
+    if (gate && !smith_changed_build_c_gate(base, head)) return SmithChanged_Full;
     smith_changed_build_graph();
     smith_changed_records();
     if (smith_changed_unplaced != nullptr) {
-        fprintf(stderr, "smith test --changed: %s is named by no record and no file imports it, so every test runs\n",
+        fprintf(smith_changed_out(),
+                "smith test --changed: %s is named by no record and no file imports it, so every test runs\n",
                 smith_changed_unplaced);
         return SmithChanged_Full;
     }
     int unknown = smith_changed_unknown();
     if (unknown >= 0) {
-        fprintf(stderr, "smith test --changed: %s is an input of no test the graph knows, so every test runs\n",
+        fprintf(smith_changed_out(),
+                "smith test --changed: %s is an input of no test the graph knows, so every test runs\n",
                 smith_changed_paths[unknown]);
         return SmithChanged_Full;
     }
@@ -1122,7 +1129,7 @@ static SmithChangedResult smith_changed_select(const char *base_name, const char
         selected += smith_changed_chosen[i] ? 1 : 0;
     smith_changed_report(selected, tests, base);
     if (selected == 0 && smith_rec_result_count == 0 && smith_changed_makes_records && tests > 0) {
-        fputs("smith test --changed: no records yet, so every test runs once to make them\n", stderr);
+        fputs("smith test --changed: no records yet, so every test runs once to make them\n", smith_changed_out());
         return SmithChanged_Full;
     }
     if (selected == 0) return SmithChanged_None;
@@ -1137,6 +1144,16 @@ static SmithChangedResult smith_changed_select(const char *base_name, const char
     }
     bool all = selected == tests && !narrowed;
     return smith_changed_overflow ? SmithChanged_Full : all ? SmithChanged_Full : SmithChanged_Some;
+}
+
+// Decides which tests to run from the changes `smith_changed_collect` reads. With `head`, the changes are those of
+// base..head (no untracked files); the files themselves (imports, records) are still read from the working tree.
+// `filter` gets the value of `--test` for SmithChanged_Some.
+static SmithChangedResult smith_changed_select(const char *base_name, const char *head, SmithChangedBuffer *filter) {
+    char base[256];
+    if (!smith_changed_collect(base_name, head, false, "smith test --changed", base, sizeof base))
+        return SmithChanged_Failed;
+    return smith_changed_decide(base, head, filter, true);
 }
 
 // ---- `smith lint --changed`
@@ -1195,3 +1212,70 @@ static bool smith_changed_lint_wants(const char *path) {
     int at = smith_changed_find(path);
     return at < 0 || smith_changed_hit[at];
 }
+
+#ifdef SMITH_CORE
+#include "smith_core_changed.h"
+
+// Forgets a selection, so the next one starts from nothing.
+static void smith_changed_reset(void) {
+    smith_changed_pool_used = 0;
+    smith_changed_file_count = 0;
+    smith_changed_edge_count = 0;
+    smith_changed_path_count = 0;
+    smith_changed_overflow = false;
+    memset(smith_changed_hit, 0, sizeof smith_changed_hit);
+    memset(smith_changed_chosen, 0, sizeof smith_changed_chosen);
+    memset(smith_changed_why, 0, sizeof smith_changed_why);
+    memset(smith_changed_names, 0, sizeof smith_changed_names);
+    memset(smith_changed_unnamed_seed, 0, sizeof smith_changed_unnamed_seed);
+    memset(smith_changed_unnamed_reach, 0, sizeof smith_changed_unnamed_reach);
+    smith_changed_covered = false;
+    smith_changed_unplaced = nullptr;
+    smith_changed_local_count = 0;
+    smith_changed_build_local = false;
+    smith_changed_embedded_count = 0;
+    smith_changed_makes_records = false;
+    smith_rec_reset();
+}
+
+// Gives each line of `text` to `line`.
+static void smith_changed_each_line(const char *text, void (*line)(char *)) {
+    char copy[PATH_MAX + 8];
+    for (const char *at = text; *at != '\0';) { // bounded by the text
+        size_t length = strcspn(at, "\n");
+        snprintf(copy, sizeof copy, "%.*s", (int)length, at);
+        if (copy[0] != '\0') line(copy);
+        at += length + (at[length] == '\n' ? 1 : 0);
+    }
+}
+
+// include/smith_core_changed.h: the selection of `smith test --changed`, in process.
+bool smith_core_changed_select(const char *folder, const char *files, const char *changes, char *out, size_t out_size) {
+    int home = open(".", O_RDONLY);
+    FILE *log = fmemopen(out, out_size, "w");
+    bool ok = home >= 0 && log != nullptr && chdir(folder) == 0;
+    if (ok) {
+        smith_changed_reset();
+        smith_changed_log = log;
+        smith_changed_each_line(files, smith_changed_on_file);
+        smith_changed_each_line(changes, smith_changed_on_diff);
+        SmithChangedBuffer filter = {};
+        SmithChangedResult result = smith_changed_decide("HEAD", nullptr, &filter, false);
+        if (result == SmithChanged_None) {
+            fputs("smith test --changed: no test is affected\n", log);
+        } else {
+            fprintf(log, "smith test --changed: %s\n",
+                    result == SmithChanged_Some ? "--dry-run: the tests run with --test (above)"
+                                                : "--dry-run: every test runs");
+            if (result == SmithChanged_Some)
+                fprintf(log, "smith test --changed: --test %s\n", smith_changed_buffer_text(&filter));
+        }
+        smith_changed_buffer_free(&filter);
+        smith_changed_log = nullptr;
+        ok = fchdir(home) == 0;
+    }
+    if (log != nullptr) fclose(log);
+    if (home >= 0) close(home);
+    return ok;
+}
+#endif

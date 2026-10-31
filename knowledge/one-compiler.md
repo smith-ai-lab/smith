@@ -26,3 +26,7 @@ clang's file. So a smith rebuilt with the same LLVM rebuilds nothing, and a rebu
 `SMITH_CLANG`, `SMITH_CLANGXX` (an external clang, instead of the one inside smith) and `SMITH_METAL` pick the compilers, `SMITH_VERBOSE=1` prints the command, and
 `smith cc --smith-which <args>` (or `smith-cc --smith-which <args>`) prints the choice without running it. `SMITH_NINJA=<ninja>` makes `smith build` run its
 manifest with that ninja instead of smith's own executor.
+
+## Decisions
+
+- One compiler, upstream LLVM 23.1.3, built by `smith build llvm` and linked into smith; no LLVM install at run time; smith is built by its previous release, never by Homebrew's `llvm`; `.metal` goes to Apple's `metal`.

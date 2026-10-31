@@ -1,0 +1,31 @@
+module main;
+
+import <stdio.h>;
+import target;
+
+// A generic with a `for constexpr` loop inside a file-scope `if constexpr` (issue #602): the loop's braces are not the
+// block's, so the block ends at its own last brace.
+if constexpr (target::os == target::macos || target::os != target::macos) {
+    export i32 sum_fields(constexpr type T, T *x) {
+        i32 sum = 0;
+        for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+            sum += 1;
+        }
+        return sum;
+    }
+
+    struct Pair {
+        i32 a;
+        i32 b;
+    };
+
+    i32 after(Pair *p) {
+        return sum_fields(Pair, p);
+    }
+}
+
+i32 main() {
+    Pair p = {1, 2};
+    c::printf("%d\n", after(&p));
+    return 0;
+}

@@ -1,0 +1,46 @@
+// A failure reports and exits whatever lock another thread holds (#573): smith lsp's reader thread is blocked in a read
+// on stdin, which holds stdin's lock, and the failure path used to flush every FILE and wait for it forever.
+module failure_flush_test;
+
+import smith::arena;
+import smith::mem;
+import smith::test;
+import scratch;
+
+constexpr char program[_] = "#include <pthread.h>\n"
+                            "#include <smith/trace.h>\n"
+                            "#include <stdio.h>\n"
+                            "#include <unistd.h>\n"
+                            "static void *reader(void *unused) {\n"
+                            "    (void)unused;\n"
+                            "    (void)getchar();\n"
+                            "    return nullptr;\n"
+                            "}\n"
+                            "int main(void) {\n"
+                            "    alarm(8);\n"
+                            "    pthread_t thread;\n"
+                            "    pthread_create(&thread, nullptr, reader, nullptr);\n"
+                            "    sleep(1);\n"
+                            "    printf(\"before\\n\");\n"
+                            "    smith_failure(SmithFailure_Check);\n"
+                            "}\n";
+
+constexpr char build[_] = "smith cc -std=gnu23 -I \"$SMITH_REPO/.smith/include\" app.c \"$SMITH_REPO/lib/trace.c\" "
+                          "-o app";
+
+// The program's stdin is a pipe that stays open and silent for longer than the program's own 8 s alarm.
+export void test_failure_flush_a_failure_reports_while_another_thread_reads_stdin() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "app.c", program);
+    scratch::Run built = scratch::sh(&p, build);
+    scratch::expect_status("the program builds", 0, &built);
+    scratch::Run run = scratch::sh(&p, "sleep 10 | ./app");
+    scratch::expect_status("the failure aborts, not killed by the alarm", 134, &run);
+    scratch::expect_contains("stdout was flushed first", run.out, "before");
+    scratch::expect_contains("the report is printed", run.err, "check failed");
+}

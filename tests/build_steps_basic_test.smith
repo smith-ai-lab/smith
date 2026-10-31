@@ -1,14 +1,79 @@
 // The steps of a build.c, ported from tests/build.sh sections 1 to 8 and 9b: a copy step, tasks and stamp steps, spaces
 // and a literal $, a depfile, what build.c includes, options, glob/env/capture, restat and always, and where smith
-// keeps its files. Each fixture is tests/build_fixtures/steps_<name>/build.c.
+// keeps its files. What is rebuilt and why (a changed input, a changed command, tasks and stamps, a depfile, restat,
+// always) is checked in process through `smith_core_plan` (include/smith_core_plan.h, issue #646) on the manifest
+// that build.c writes for each fixture (tests/build_fixtures/steps_<name>/build.c), with a fake command that makes the
+// outputs its text names and times the test gives. What needs build.c compiled and run by the real smith (the verb's
+// wiring, its options, the environment, the regeneration when build.c changes) is a scratch project of the fixture.
 module build_steps_basic_test;
 
-import smith::io;
+import smith::arena;
+import smith::format;
+import smith::mem;
 import smith::test;
 import scratch;
+import <smith_core_plan.h>;
 
-export void test_build_steps_a_copy_step_reruns_when_its_input_changes(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_copy");
+constexpr usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
+constexpr usize output_capacity = 1U << 14;
+
+// The manifest `smith build` writes for a build.c (.smith/build.ninja): a rule that runs $cmd, the steps, and the
+// phony targets every build.c has.
+constexpr const char *manifest_head = "ninja_required_version = 1.10\nbuilddir = .smith\nrule step\n  command = $cmd\n";
+constexpr const char *manifest_tail = "build smith_needs: phony\nbuild smith_tests: phony\nbuild smith_info: phony\n";
+
+// What a build did: its explanations and `ran <output>` lines, and how many commands ran.
+typedef struct {
+    const char *text;
+    usize ran;
+} Build;
+
+// The manifest of a project, as the head, `steps` and the tail make it.
+static void manifest(const char *dir, const char *steps) {
+    char text[2048];
+    (void)format::to(text, sizeof text, manifest_head, steps, manifest_tail);
+    test::check_condition(c::smith_core_plan_write(dir, ".smith/build.ninja", text, 1));
+}
+
+// A file of the project, with the time (in seconds) its last edit had.
+static void put(const char *dir, const char *name, const char *text, i64 time) {
+    test::check_condition(c::smith_core_plan_write(dir, name, text, time));
+}
+
+// One `smith build` of the targets (nullptr for the defaults), whose commands run at `time`: `unchanged` are the
+// outputs a command leaves as they are, `depends` what the depfile of an output names.
+static Build build(const char *dir, const char *const *targets, i64 time, const char *const *unchanged,
+                   const char *const *depends) {
+    c::SmithCorePlan plan = {.folder = dir,
+                             .manifest = ".smith/build.ninja",
+                             .targets = targets,
+                             .unchanged = unchanged,
+                             .depends = depends,
+                             .time = time};
+    char *text = mem::alloc_slice(char, output_capacity).data;
+    usize ran = 0;
+    test::check_equal(c::smith_core_plan(&plan, text, output_capacity, &ran), true);
+    Build done = {text, ran};
+    return done;
+}
+
+static Build build_defaults(const char *dir, i64 time) {
+    return build(dir, nullptr, time, nullptr, nullptr);
+}
+
+static void expect_ran(const char *name, usize expected, const Build *done) {
+    scratch::expect_count(name, expected, done->ran);
+    if (expected == 0) scratch::expect_contains(name, done->text, "no work to do");
+}
+
+// The one end to end case of the verb's wiring: build.c compiled and run by the real smith, then its executor.
+export void test_build_steps_a_copy_step_reruns_when_its_input_changes_end_to_end() {
+    scratch::Project p = scratch::make("p", "steps_copy");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "input", "one\n");
     scratch::Run first = scratch::build(&p, "");
     scratch::expect_status("copy: the first build exits 0", 0, &first);
@@ -20,32 +85,143 @@ export void test_build_steps_a_copy_step_reruns_when_its_input_changes(io::Io *i
     scratch::expect_text("copy: a changed input reruns the step", "two", scratch::capture(&p, "cat output"));
 }
 
-export void test_build_steps_a_task_runs_every_time_and_a_stamp_step_once_per_input(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_tasks");
-    scratch::write(&p, "watched", "a\n");
-    (void)scratch::build(&p, "hello");
-    (void)scratch::build(&p, "hello");
-    scratch::expect_count("task: runs on every smith build <task>", 2, scratch::lines(&p, "log"));
-    (void)scratch::build(&p, "");
-    (void)scratch::build(&p, "");
-    scratch::expect_count("stamp step: runs once for an unchanged input", 1, scratch::lines(&p, "stamped_log"));
-    scratch::write(&p, "watched", "b\n");
-    (void)scratch::build(&p, "");
-    scratch::expect_count("stamp step: reruns when its input changes", 2, scratch::lines(&p, "stamped_log"));
+export void test_build_steps_a_copy_step_reruns_when_its_input_changes() {
+    scratch::Project p = scratch::make("p", "steps_copy");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    constexpr const char *copy = "build output: step input\n  cmd = cp input output\n";
+    manifest(p.dir, copy);
+    put(p.dir, "input", "one\n", 100);
+    Build first = build_defaults(p.dir, 200);
+    expect_ran("copy: the first build makes the output", 1, &first);
+    scratch::expect_contains("copy: ... because it is missing", first.text, "output output doesn't exist");
+    Build second = build_defaults(p.dir, 300);
+    expect_ran("copy: the second build does nothing", 0, &second);
+    put(p.dir, "input", "two\n", 400);
+    Build changed = build_defaults(p.dir, 500);
+    expect_ran("copy: a changed input reruns the step", 1, &changed);
+    scratch::expect_contains("copy: ... because the output is older", changed.text,
+                             "older than most recent input input");
+    manifest(p.dir, "build output: step input\n  cmd = cp input output && true\n");
+    Build command = build_defaults(p.dir, 600);
+    expect_ran("copy: a changed command reruns the step", 1, &command);
+    scratch::expect_contains("copy: ... and says so", command.text, "command line changed for output");
+}
+
+export void test_build_steps_a_task_runs_every_time_and_a_stamp_step_once_per_input() {
+    scratch::Project p = scratch::make("p", "steps_tasks");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    // A task's command makes nothing its step names; a stamp step touches its stamp.
+    manifest(p.dir, "build .smith/task/hello: step\n  cmd = sh -c 'echo ran >> log'\n"
+                    "build hello: phony .smith/task/hello\n"
+                    "build .smith/stamp/f1: step watched\n"
+                    "  cmd = sh -c 'echo ran >> stamped_log' && touch .smith/stamp/f1\n"
+                    "default .smith/stamp/f1\n");
+    put(p.dir, "watched", "a\n", 100);
+    const char *const hello[_] = {"hello", nullptr};
+    Build first = build(p.dir, hello, 200, nullptr, nullptr);
+    expect_ran("task: runs on smith build <task>", 1, &first);
+    Build again = build(p.dir, hello, 300, nullptr, nullptr);
+    expect_ran("task: runs on every smith build <task>", 1, &again);
+    Build stamped = build_defaults(p.dir, 400);
+    expect_ran("stamp step: runs for a new input", 1, &stamped);
+    Build unchanged = build_defaults(p.dir, 500);
+    expect_ran("stamp step: runs once for an unchanged input", 0, &unchanged);
+    put(p.dir, "watched", "b\n", 600);
+    Build changed = build_defaults(p.dir, 700);
+    expect_ran("stamp step: reruns when its input changes", 1, &changed);
 }
 
 // Two stamp steps with one command and different inputs get two stamps, so ninja accepts both.
-export void test_build_steps_two_stamp_steps_with_one_command_both_run(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_two_stamps");
-    scratch::write(&p, "one", "a\n");
-    scratch::write(&p, "two", "a\n");
-    scratch::Run run = scratch::build(&p, "");
-    scratch::expect_status("stamp steps with one command: both run", 0, &run);
-    scratch::expect_count("stamp steps with one command: both run", 2, scratch::lines(&p, "log"));
+export void test_build_steps_two_stamp_steps_with_one_command_both_run() {
+    scratch::Project p = scratch::make("p", "steps_two_stamps");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    manifest(p.dir, "build .smith/stamp/s1: step one\n  cmd = sh -c 'echo ran >> log' && touch .smith/stamp/s1\n"
+                    "build .smith/stamp/s2: step two\n  cmd = sh -c 'echo ran >> log' && touch .smith/stamp/s2\n"
+                    "default .smith/stamp/s1 .smith/stamp/s2\n");
+    put(p.dir, "one", "a\n", 100);
+    put(p.dir, "two", "a\n", 100);
+    Build run = build_defaults(p.dir, 200);
+    expect_ran("stamp steps with one command: both run", 2, &run);
 }
 
-export void test_build_steps_spaces_and_a_literal_dollar_survive(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_spaces");
+export void test_build_steps_a_changed_header_rebuilds_the_object_through_its_depfile() {
+    scratch::Project p = scratch::make("p", "steps_depfile");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    manifest(p.dir, "build a.o: step a.c\n  cmd = sh -c 'cc -MMD -MF a.o.d -c a.c -o a.o && echo x >> count'\n"
+                    "  depfile = a.o.d\n  deps = gcc\ndefault a.o\n");
+    put(p.dir, "a.c", "#include \"a.h\"\n", 100);
+    put(p.dir, "a.h", "#define VALUE 1\n", 100);
+    const char *const depends[_] = {"a.o: a.c a.h", nullptr};
+    Build first = build(p.dir, nullptr, 200, nullptr, depends);
+    expect_ran("depfile: the first build compiles the object", 1, &first);
+    Build second = build(p.dir, nullptr, 300, nullptr, depends);
+    expect_ran("depfile: an unchanged tree compiles once", 0, &second);
+    put(p.dir, "a.h", "#define VALUE 2\n", 400);
+    Build changed = build(p.dir, nullptr, 500, nullptr, depends);
+    expect_ran("depfile: a changed header rebuilds the object", 1, &changed);
+    scratch::expect_contains("depfile: ... because of the header", changed.text, "most recent input a.h");
+}
+
+export void test_build_steps_restat_stops_what_depends_on_an_unchanged_output() {
+    scratch::Project p = scratch::make("p", "steps_restat");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    manifest(p.dir, "build generated: step trigger\n  cmd = sh -c 'echo fixed > generated' generated\n  restat = 1\n"
+                    "build copied: step generated\n  cmd = sh -c 'cp generated copied' generated copied\n"
+                    "default copied\n");
+    put(p.dir, "trigger", "1\n", 100);
+    Build first = build_defaults(p.dir, 200);
+    expect_ran("restat: the first build runs both steps", 2, &first);
+    put(p.dir, "trigger", "2\n", 300);
+    const char *const unchanged[_] = {"generated", nullptr};
+    Build second = build(p.dir, nullptr, 400, unchanged, nullptr);
+    expect_ran("restat: the generator reran and an unchanged output does not rerun what depends on it", 1, &second);
+    scratch::expect_contains("restat: ... and it is the generator", second.text, "ran generated");
+    Build third = build(p.dir, nullptr, 500, nullptr, nullptr);
+    expect_ran("restat: the next build has nothing to do", 0, &third);
+}
+
+export void test_build_steps_always_reruns_the_step_every_build() {
+    scratch::Project p = scratch::make("p", "steps_always");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    manifest(p.dir, "build smith_always: phony\nbuild tick: step | smith_always\n"
+                    "  cmd = sh -c 'echo x >> ticks; touch \"$$0\"' tick\ndefault tick\n");
+    Build first = build_defaults(p.dir, 200);
+    expect_ran("always: runs the step", 1, &first);
+    Build second = build_defaults(p.dir, 300);
+    expect_ran("always: reruns the step every build", 1, &second);
+}
+
+export void test_build_steps_spaces_and_a_literal_dollar_survive() {
+    scratch::Project p = scratch::make("p", "steps_spaces");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "my input.txt", "spaced\n");
     (void)scratch::build(&p, "");
     scratch::expect_text("spaces: a file name with a space is copied", "spaced",
@@ -54,20 +230,14 @@ export void test_build_steps_spaces_and_a_literal_dollar_survive(io::Io *io) {
                          scratch::capture(&p, "cat 'dollar file.txt'"));
 }
 
-export void test_build_steps_a_changed_header_rebuilds_the_object_through_its_depfile(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_depfile");
-    scratch::write(&p, "a.c", "#include \"a.h\"\nint a(void) { return VALUE; }\n");
-    scratch::write(&p, "a.h", "#define VALUE 1\n");
-    (void)scratch::build(&p, "");
-    (void)scratch::build(&p, "");
-    scratch::expect_count("depfile: an unchanged tree compiles once", 1, scratch::lines(&p, "count"));
-    scratch::write(&p, "a.h", "#define VALUE 2\n");
-    (void)scratch::build(&p, "");
-    scratch::expect_count("depfile: a changed header rebuilds the object", 2, scratch::lines(&p, "count"));
-}
-
-export void test_build_steps_editing_build_c_and_what_it_includes_reruns_the_step(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_includes");
+// Only the real smith shows that a build.c (and what it includes) that changed is compiled and run again.
+export void test_build_steps_editing_build_c_and_what_it_includes_reruns_the_step() {
+    scratch::Project p = scratch::make("p", "steps_includes");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "config.h", "#define MESSAGE \"v1\"\n");
     (void)scratch::build(&p, "");
     scratch::expect_text("build.c: first output", "v1", scratch::capture(&p, "cat out"));
@@ -82,8 +252,13 @@ export void test_build_steps_editing_build_c_and_what_it_includes_reruns_the_ste
     scratch::expect_status("build.c: the changed command ran", 0, &changed);
 }
 
-export void test_build_steps_options_reach_the_commands_and_bad_ones_fail(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_options");
+export void test_build_steps_options_reach_the_commands_and_bad_ones_fail() {
+    scratch::Project p = scratch::make("p", "steps_options");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)scratch::build(&p, "");
     scratch::expect_text("options: the fallback", "world quiet", scratch::capture(&p, "cat greeting"));
     (void)scratch::build(&p, "-Dname=Ada");
@@ -104,8 +279,13 @@ export void test_build_steps_options_reach_the_commands_and_bad_ones_fail(io::Io
     scratch::expect_status("options: a bare -D for a valued option fails", 2, &bare);
 }
 
-export void test_build_steps_glob_env_and_capture_feed_the_commands(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_glob_env");
+export void test_build_steps_glob_env_and_capture_feed_the_commands() {
+    scratch::Project p = scratch::make("p", "steps_glob_env");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)scratch::sh(&p, "mkdir src && echo a >src/a.txt");
     (void)scratch::build(&p, "");
     scratch::expect_text("glob: the first file", "a", scratch::capture(&p, "cat joined"));
@@ -120,26 +300,13 @@ export void test_build_steps_glob_env_and_capture_feed_the_commands(io::Io *io) 
                          scratch::capture(&p, "cat capture.out"));
 }
 
-export void test_build_steps_restat_stops_what_depends_on_an_unchanged_output(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_restat");
-    scratch::write(&p, "trigger", "1\n");
-    (void)scratch::build(&p, "");
-    scratch::write(&p, "trigger", "2\n");
-    (void)scratch::build(&p, "");
-    scratch::expect_count("restat: the generator reran", 2, scratch::lines(&p, "generations"));
-    scratch::expect_count("restat: an unchanged output does not rerun what depends on it", 1,
-                          scratch::lines(&p, "copies"));
-}
-
-export void test_build_steps_always_reruns_the_step_every_build(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_always");
-    (void)scratch::build(&p, "");
-    (void)scratch::build(&p, "");
-    scratch::expect_count("always: reruns the step every build", 2, scratch::lines(&p, "ticks"));
-}
-
-export void test_build_steps_smith_keeps_its_files_in_dot_smith_and_a_clean_task_works(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_folder");
+export void test_build_steps_smith_keeps_its_files_in_dot_smith_and_a_clean_task_works() {
+    scratch::Project p = scratch::make("p", "steps_folder");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run first = scratch::build(&p, "");
     scratch::expect_status("folder: a build whose steps write nothing under build/ leaves no build/", 0, &first);
     scratch::expect_text("folder: a build whose steps write nothing under build/ leaves no build/", "absent",

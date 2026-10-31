@@ -5,8 +5,11 @@
 // race is a matter of timing, so this checks the order itself, in process: no process starts.
 module header_order_test;
 
+import smith::arena;
+import smith::env;
+import smith::files;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import <smith_core.h>;
 
@@ -20,7 +23,8 @@ static usize waves_of(const char *names[:], const char *texts[:], usize waves[:]
 export void test_a_module_waits_for_the_modules_it_imports() {
     const char *names[4] = {"io", "arena", "random", "contract"};
     const char *texts[4] = {
-        "module smith::io;\nimport smith::arena;\nimport smith::contract;\nimport smith::random;\nimport <errno.h>;\n",
+        ("module smith::"
+         "io;\nimport smith::arena;\nimport smith::contract;\nimport smith::random;\nimport <errno.h>;\n"),
         "module smith::arena;\nimport smith::contract;\n",
         "module smith::random;\nimport smith::contract;\n",
         "module smith::contract;\n",
@@ -73,21 +77,36 @@ export void test_an_import_with_leading_blanks_and_no_final_newline_counts() {
     test::check_equal(waves[1], 0);
 }
 
-static const char *read_module(io::Io *io, const char *name) {
-    const char *repo = io::args_env(&io->args, "SMITH_REPO");
-    test::check(repo != nullptr);
-    const char *path = format::push(&io->arena, repo, "/lib/smith/", name, ".smith").data;
-    io::Read file = io::files_read(&io->files, &io->arena, path);
-    test::check_equal(file.error.code, 0);
-    return (const char *)file.data.data;
+static const char *read_module(arena::Arena *memory, const char *name) {
+    env::Value repo = env::get("SMITH_REPO");
+    if (repo != .some) {
+        test::check(false);
+        return "";
+    }
+    const char *path = format::push(repo.some.data, "/lib/smith/", name, ".smith").data;
+    files::BytesResult file = files::read_file(path[0:c::strlen(path)]);
+    if (file != .ok) {
+        test::check(false);
+        return "";
+    }
+    usize size = countof(file.ok);
+    const char *bytes = (const char *)file.ok.data;
+    char *text = arena::push_slice(memory, char, size + 1).data;
+    mem::copy(text[0:size], bytes[0:size]);
+    text[size] = '\0';
+    return text;
 }
 
 // The sources smith embeds: io imports arena, contract, math and random, the modules whose names its header got wrong.
-export void test_io_is_written_after_arena_and_random(io::Io *io) {
+export void test_io_is_written_after_arena_and_random() {
+    arena::Arena memory = test::memory((usize)1 << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     const char *names[modules_max] = {"io", "arena", "contract", "math", "random"};
     const char *texts[modules_max] = {};
     for (usize i = 0; i < 5; i++)
-        texts[i] = read_module(io, names[i]);
+        texts[i] = read_module(&memory, names[i]);
     usize waves[modules_max] = {};
     usize count = c::smith_core_header_waves(names, texts, 5, waves);
     test::check(count >= 2);

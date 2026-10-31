@@ -1,0 +1,14 @@
+module scale;
+
+export struct Key {
+    u64 bits;
+};
+
+static u64 derive(u64 x) {
+    return x * 2;
+}
+
+// An exported generic that uses a private name: its instance needs the header's instance section.
+export typeof(x) twice(auto x) {
+    return (typeof(x))derive(1) + x;
+}

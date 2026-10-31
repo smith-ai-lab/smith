@@ -7,8 +7,8 @@
 // fix-it. A file added to tests/effects needs a test here: `test_every_file_has_a_test` says which.
 module effects_infer_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
 import smith::mem;
 import smith::test;
 import <stdlib.h>;
@@ -20,57 +20,75 @@ static typeof(const char[:]) slice_of(const char *text) {
     return text[0:c::strlen(text)];
 }
 
-static const char *join(const scratch::Project *p, const char *a, const char *b, const char *c, const char *d) {
-    return format::push(&p->io->arena, a, b, c, d).data;
+static const char *join(const char *a, const char *b, const char *c, const char *d) {
+    return format::push(a, b, c, d).data;
 }
 
-// What a compile of the file prints, as tests/effects/<file>.expected holds it.
-static void effects_case(io::Io *io, const char *file) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+// What a compile of the file prints, as tests/effects/<file>.expected holds it. The output goes to a file of the
+// project, never $TMPDIR, which the tests running beside this one share.
+static void effects_case(const char *file) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "tests/effects", "tests/effects");
     const char *command =
-        format::push(&io->arena, "cd tests/effects && { smith cc -std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c ",
-                     file,
-                     " -o /dev/null >\"$TMPDIR/out\" 2>&1; echo \"status $?\"; grep -E '^[^ ]+:[0-9]+:[0-9]+: "
-                     "(error|note|warning):' "
-                     "\"$TMPDIR/out\"; }")
+        format::push("cd tests/effects && { smith cc -std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c ", file,
+                     " -o /dev/null >../../out 2>&1; echo \"status $?\"; grep -E '^[^ ]+:[0-9]+:[0-9]+: "
+                     "(error|note|warning):' ../../out; }")
             .data;
     scratch::Run run = scratch::sh(&p, command);
-    test::golden(io, slice_of(format::push(&io->arena, "tests/effects/", file, ".expected").data), slice_of(run.out));
+    test::golden(slice_of(format::push("tests/effects/", file, ".expected").data), slice_of(run.out));
 }
 
 // The report-only pointer rule: the lines SMITH_EFFECTS_POINTERS gets, a call with the effects its type states.
-export void test_effects_pointers_report(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_effects_pointers_report() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "tests/effects_pointers", "tests/effects_pointers");
-    scratch::Run run = scratch::sh(
-        &p, "cd tests/effects_pointers && SMITH_EFFECTS_POINTERS=\"$TMPDIR/report\" smith cc "
-            "-std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c pointers.c -o /dev/null >\"$TMPDIR/out\" 2>&1; "
-            "echo \"status $?\"; cat \"$TMPDIR/report\"");
-    test::golden(io, slice_of("tests/effects_pointers/pointers.c.expected"), slice_of(run.out));
+    scratch::Run run =
+        scratch::sh(&p, "cd tests/effects_pointers && SMITH_EFFECTS_POINTERS=../../report smith cc "
+                        "-std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c pointers.c -o /dev/null >../../out 2>&1; "
+                        "echo \"status $?\"; cat ../../report");
+    test::golden(slice_of("tests/effects_pointers/pointers.c.expected"), slice_of(run.out));
 }
 
-export void test_every_file_has_a_test(io::Io *io) {
-    scratch::expect_text("files of tests/effects with no test", "",
-                         scratch::untested_names(io, "tests/effects", "tests/effects_infer_test.smith",
-                                                 "effects_case(io, ", ".c", ".smith"));
+export void test_every_file_has_a_test() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::expect_text(
+        "files of tests/effects with no test", "",
+        scratch::untested_names("tests/effects", "tests/effects_infer_test.smith", "effects_case(", ".c", ".smith"));
 }
 
 // The editor: clangd shows the same error, for C and for a module.
-static void effects_editor(io::Io *io, const char *file) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+static void effects_editor(const char *file) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "tests/effects", "tests/effects");
-    scratch::Run run = scratch::sh(
-        &p, format::push(&io->arena, "timeout -s KILL 120 smith lsp --check=tests/effects/", file, " 2>&1").data);
+    scratch::Run run =
+        scratch::sh(&p, format::push("timeout -s KILL 120 smith lsp --check=tests/effects/", file, " 2>&1").data);
     scratch::expect_contains(file, run.out, "smith-effect: `bad` is [[smith::pure]]");
 }
 
-export void test_lsp_effects_chain_c(io::Io *io) {
-    effects_editor(io, "effects_chain.c");
+export void test_lsp_effects_chain_c() {
+    effects_editor("effects_chain.c");
 }
 
-export void test_lsp_effects_chain_smith(io::Io *io) {
-    effects_editor(io, "effects_chain.smith");
+export void test_lsp_effects_chain_smith() {
+    effects_editor("effects_chain.smith");
 }
 
 // Across files: each compile leaves a summary beside its object (`x.o.fx`), and the link of objects that have one
@@ -94,8 +112,13 @@ static void write_cross(const scratch::Project *p) {
                    "int main(void) { return fine(1) + bad(\"x\") + lost(); }\n");
 }
 
-export void test_across_files_in_c_the_link_names_the_chain_through_the_other_file(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_across_files_in_c_the_link_names_the_chain_through_the_other_file() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     write_cross(&p);
     scratch::Run compiled = scratch::sh(&p, "smith cc -c b.c -o b.o && smith cc -c a.c -o a.o");
     scratch::expect_status("across files, C: the objects", 0, &compiled);
@@ -107,8 +130,13 @@ export void test_across_files_in_c_the_link_names_the_chain_through_the_other_fi
 
 // The same on one command that compiles and links, where clang's objects are temporary files with their summaries
 // beside them (the linker the driver starts checks them).
-export void test_across_files_in_c_one_command_that_compiles_and_links_names_the_same_chain(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_across_files_in_c_one_command_that_compiles_and_links_names_the_same_chain() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     write_cross(&p);
     scratch::Run linked = scratch::sh(&p, "smith cc a.c b.c -o program_one 2>&1 | grep -E 'smith-effect'");
     scratch::expect_text("across files, C: one command that compiles and links names the same chain", cross_expected,
@@ -117,8 +145,13 @@ export void test_across_files_in_c_one_command_that_compiles_and_links_names_the
 
 // A link of more objects than any fixed count the check once had (it skipped the objects past 128, so a function of the
 // last one had no source and was `unknown`): the object that defines `noisy` comes last, after 200 others.
-export void test_across_files_in_c_a_link_of_many_objects_reads_every_summary(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_across_files_in_c_a_link_of_many_objects_reads_every_summary() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     write_cross(&p);
     scratch::Run compiled =
         scratch::sh(&p, "smith cc -c b.c -o b.o && smith cc -c a.c -o a.o && list= && for i in $(seq 1 200); do "
@@ -154,8 +187,13 @@ static const char *rebuilt(const scratch::Project *p) {
     return scratch::sh(p, "smith build 2>&1 | grep -E 'smith-effect' | sed 's/^main.smith:4:[0-9]*: //'").out;
 }
 
-export void test_across_files_in_modules_a_builds_link_names_the_chain_through_the_other_module(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_across_files_in_modules_a_builds_link_names_the_chain_through_the_other_module() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     write_modules(&p);
     scratch::expect_text("across files, modules: a build's link names the chain through the other module", loud_error,
                          rebuilt(&p));
@@ -163,8 +201,13 @@ export void test_across_files_in_modules_a_builds_link_names_the_chain_through_t
 
 // An incremental build gives the verdict of a clean one: only the callee's file is edited (to something pure and then
 // back), and the importer, whose object is up to date, is judged by the summary of what changed.
-export void test_an_incremental_build_gives_the_verdict_of_a_clean_one(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_an_incremental_build_gives_the_verdict_of_a_clean_one() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     write_modules(&p);
     scratch::expect_text("the first build has the error", loud_error, rebuilt(&p));
     scratch::write(&p, "fx/lib.smith", lib_quiet);
@@ -178,8 +221,13 @@ export void test_an_incremental_build_gives_the_verdict_of_a_clean_one(io::Io *i
 // The same in a C build (main.c and lib.c, the conventions): only lib.c is edited, to be pure and back, and a summary
 // lost (the folder removed) is made again with the same verdict. smith has no object cache (its caches are modules and
 // packages), so there is no cached object that could miss its summary: an object whose summary is gone is rebuilt.
-export void test_a_c_build_gives_the_verdict_of_a_clean_one_when_lib_c_changes(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_a_c_build_gives_the_verdict_of_a_clean_one_when_lib_c_changes() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     constexpr char loud[_] =
         "#include <stdio.h>\n#include \"lib.h\"\nint noisy(int x) { printf(\"%d\\n\", x); return x; }\n";
     scratch::write(&p, "lib.h", "int noisy(int);\n");
@@ -223,32 +271,33 @@ constexpr char stack_a_without_rec[_] =
     "int even(int n) { if (n == 0) return 1; [[clang::musttail]] return odd(n - 1); }\n"
     "int main(void) { printf(\"%d\\n\", f(1) + even(4)); return 0; }\n";
 
-// The project with a.c and b.c compiled, with the frames the backend gave as references, and linked as `p`.
-static scratch::Project stack_project(io::Io *io, const char *source) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::write(&p, "a.c", source);
-    scratch::write(&p, "b.c", "int g(int *p) { return p[3]; }\n");
+// a.c and b.c compiled in the project, with the frames the backend gave as references, and linked as `p`.
+static void stack_project(const scratch::Project *p, const char *source) {
+    scratch::write(p, "a.c", source);
+    scratch::write(p, "b.c", "int g(int *p) { return p[3]; }\n");
     scratch::Run run =
-        scratch::sh(&p, "smith cc -c a.c -o a.o && smith cc -c b.c -o b.o && smith cc -fstack-usage -c a.c "
-                        "-o ref_a.o && smith cc -fstack-usage -c b.c -o ref_b.o && smith cc a.o b.o -o p");
+        scratch::sh(p, "smith cc -c a.c -o a.o && smith cc -c b.c -o b.o && smith cc -fstack-usage -c a.c "
+                       "-o ref_a.o && smith cc -fstack-usage -c b.c -o ref_b.o && smith cc a.o b.o -o p");
     scratch::expect_status("the objects are made and linked", 0, &run);
-    return p;
 }
 
 // The frame of a function in a reference's .su file, or -1.
 static i64 frame(const scratch::Project *p, const char *reference, const char *name) {
-    const char *command = format::push(&p->io->arena, "awk -F'\\t' -v n=", name,
-                                       " '{ split($1, p, \":\"); if (p[length(p)] == n) print $2 }' ", reference, ".su")
-                              .data;
+    char command[512];
+    format::Written written =
+        format::to(command, sizeof command, "awk -F'\\t' -v n=", name,
+                   " '{ split($1, p, \":\"); if (p[length(p)] == n) print $2 }' ", reference, ".su");
+    test::check_condition(written.fits);
     const char *text = scratch::sh(p, command).out;
     return text[0] == '\0' ? -1 : (i64)c::strtol(text, nullptr, 10);
 }
 
 // A column of a function's row in <program>.stack: 2 is its worst case, 3 the deepest call.
 static const char *row(const scratch::Project *p, const char *program, const char *name, const char *column) {
-    const char *command =
-        format::push(&p->io->arena, "awk -F'\\t' -v n=", name, " '$1 == n { print $", column, " }' ", program, ".stack")
-            .data;
+    char command[512];
+    format::Written written = format::to(command, sizeof command, "awk -F'\\t' -v n=", name, " '$1 == n { print $",
+                                         column, " }' ", program, ".stack");
+    test::check_condition(written.fits);
     return scratch::sh(p, command).out;
 }
 
@@ -260,26 +309,50 @@ static i64 stack_want(const scratch::Project *p, const char *a, const char *b) {
     return frame(p, a, "f") + frame(p, a, "h") + frame(p, b, "g");
 }
 
-export void test_stack_f_h_g_is_the_sum_of_the_three_frames_the_backend_gave(io::Io *io) {
-    scratch::Project p = stack_project(io, stack_a);
+export void test_stack_f_h_g_is_the_sum_of_the_three_frames_the_backend_gave() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    stack_project(&p, stack_a);
     i64 want = stack_want(&p, "ref_a", "ref_b");
     test::check_greater(want, (i64)0);
     test::check_equal(number(row(&p, "p", "f", "2")), want);
     scratch::expect_text("stack: the deepest call", "f -> h -> g", row(&p, "p", "f", "3"));
 }
 
-export void test_stack_recursion_is_unbounded(io::Io *io) {
-    scratch::Project p = stack_project(io, stack_a);
+export void test_stack_recursion_is_unbounded() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    stack_project(&p, stack_a);
     scratch::expect_text("stack: recursion is unbounded", "unbounded", row(&p, "p", "rec", "2"));
 }
 
-export void test_stack_a_cycle_of_musttail_calls_is_bounded(io::Io *io) {
-    scratch::Project p = stack_project(io, stack_a);
+export void test_stack_a_cycle_of_musttail_calls_is_bounded() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    stack_project(&p, stack_a);
     test::check_greater_equal(number(row(&p, "p", "even", "2")), (i64)0);
 }
 
-export void test_stack_a_call_of_code_with_no_source_is_at_least_n_plus_unknown(io::Io *io) {
-    scratch::Project p = stack_project(io, stack_a_without_rec);
+export void test_stack_a_call_of_code_with_no_source_is_at_least_n_plus_unknown() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    stack_project(&p, stack_a_without_rec);
     const char *text = row(&p, "p", "main", "2");
     scratch::expect_contains("stack: main is 'at least N + unknown (calls: printf)', no number for printf", text,
                              "at least ");
@@ -287,8 +360,14 @@ export void test_stack_a_call_of_code_with_no_source_is_at_least_n_plus_unknown(
 }
 
 // One command that compiles and links writes the same file, and leaves no .su behind.
-export void test_stack_one_command_that_compiles_and_links_writes_the_same_stack_and_no_su(io::Io *io) {
-    scratch::Project p = stack_project(io, stack_a);
+export void test_stack_one_command_that_compiles_and_links_writes_the_same_stack_and_no_su() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    stack_project(&p, stack_a);
     scratch::Run run = scratch::sh(&p, "rm -f p.stack && smith cc a.c b.c -o p2");
     scratch::expect_status("stack: compile and link in one command", 0, &run);
     test::check_equal(number(row(&p, "p2", "f", "2")), stack_want(&p, "ref_a", "ref_b"));
@@ -296,8 +375,14 @@ export void test_stack_one_command_that_compiles_and_links_writes_the_same_stack
 }
 
 // -O2: the frames are the optimized ones, and the file says so.
-export void test_stack_o2_frames_are_the_optimized_ones_and_the_file_says_so(io::Io *io) {
-    scratch::Project p = stack_project(io, stack_a);
+export void test_stack_o2_frames_are_the_optimized_ones_and_the_file_says_so() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    stack_project(&p, stack_a);
     scratch::Run run = scratch::sh(&p, "smith cc -O2 -c a.c -o a2.o && smith cc -O2 -c b.c -o b2.o && smith cc -O2 "
                                        "-fstack-usage -c a.c -o ref2_a.o && "
                                        "smith cc -O2 -fstack-usage -c b.c -o ref2_b.o && smith cc -O2 a2.o b2.o -o p3");
@@ -322,8 +407,13 @@ export void test_stack_o2_frames_are_the_optimized_ones_and_the_file_says_so(io:
 }
 
 // A module: the frames of `.smith` functions, through smith build.
-export void test_stack_a_modules_function_has_its_frame_and_its_callees_in_the_builds_stack(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_stack_a_modules_function_has_its_frame_and_its_callees_in_the_builds_stack() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run made = scratch::sh(&p, "mkdir -p fx");
     scratch::expect_status("the folder of the module", 0, &made);
     scratch::write(&p, "fx/lib.smith",
@@ -343,8 +433,13 @@ export void test_stack_a_modules_function_has_its_frame_and_its_callees_in_the_b
 
 // The link names every function as the source writes it: a private function of the importer (`bad2`, not `main_bad2`),
 // an export of a module (`fx2::lib::loud`) and a private function of that module (`shout`).
-export void test_names_the_link_shows_functions_as_written(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_names_the_link_shows_functions_as_written() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run made = scratch::sh(&p, "mkdir -p fx2");
     scratch::expect_status("the folder of the module", 0, &made);
     scratch::write(
@@ -366,8 +461,13 @@ export void test_names_the_link_shows_functions_as_written(io::Io *io) {
 
 // The editor shows the same verdict as the link, for modules: with the summaries the build made, `smith lsp --check` of
 // the importer shows the error and its chain; once the callee is pure (and its summary made), it is gone.
-export void test_the_editor_shows_the_same_verdict_as_the_link_for_modules(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_the_editor_shows_the_same_verdict_as_the_link_for_modules() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     write_modules(&p);
     scratch::Run first = scratch::sh(&p, "smith build >/dev/null 2>&1");
     (void)first; // the build fails on the error: the summaries are what the editor needs
@@ -386,8 +486,13 @@ export void test_the_editor_shows_the_same_verdict_as_the_link_for_modules(io::I
 }
 
 // The fix-it of an effects error: applied (clang's -fixit), the file compiles.
-export void test_the_fix_it_of_an_effects_error_replaces_the_attribute_and_the_files_compile(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_the_fix_it_of_an_effects_error_replaces_the_attribute_and_the_files_compile() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "tests/effects/effects_ceiling.c", "c.c");
     scratch::write(
         &p, "p.c",
@@ -397,9 +502,9 @@ export void test_the_fix_it_of_an_effects_error_replaces_the_attribute_and_the_f
     const char *flags = "-std=gnu2y -I \"$SMITH_REPO/.smith/include\" -include stdio.h -include stdlib.h";
     for (usize i = 0; i < 2; i++) {
         const char *file = i == 0 ? "c.c" : "p.c";
-        (void)scratch::sh(&p, join(&p, "smith cc ", flags, " -Xclang -fixit -fsyntax-only ", file));
-        scratch::Run compiled = scratch::sh(&p, join(&p, "smith cc ", flags, " -fsyntax-only ", file));
-        scratch::expect_status(join(&p, "fix-it: ", file, " compiles", ""), 0, &compiled);
+        (void)scratch::sh(&p, join("smith cc ", flags, " -Xclang -fixit -fsyntax-only ", file));
+        scratch::Run compiled = scratch::sh(&p, join("smith cc ", flags, " -fsyntax-only ", file));
+        scratch::expect_status(join("fix-it: ", file, " compiles", ""), 0, &compiled);
     }
     scratch::Run ceiling =
         scratch::sh(&p, "grep -q '^\\[\\[smith::effects(alloc, files, globals)\\]\\] void \\*too_much' c.c");
@@ -416,113 +521,128 @@ export void test_the_fix_it_of_an_effects_error_replaces_the_attribute_and_the_f
 // Inline assembly read by the assembler (issue #396): a block with no system call is pure, a system call has its libc
 // function's effects, an unknown number and a call through a register are `unknown`. The file is for AArch64 (macOS and
 // Linux); on another target its text is empty.
-export void test_effects_asm_c(io::Io *io) {
+export void test_effects_asm_c() {
     if constexpr (target::arch == target::aarch64) {
-        effects_case(io, "effects_asm.c");
-    } else {
-        _ = io;
+        effects_case("effects_asm.c");
     }
 }
 
 // Making memory executable is the effect `code`.
-export void test_effects_code_c(io::Io *io) {
-    effects_case(io, "effects_code.c");
+export void test_effects_code_c() {
+    effects_case("effects_code.c");
 }
 
-export void test_effects_args_c(io::Io *io) {
-    effects_case(io, "effects_args.c");
+// Starting a task is the effect `tasks` (#935): a declaration carries it, a pure caller is rejected, and a query sees
+// it.
+export void test_effects_tasks_smith() {
+    effects_case("effects_tasks.smith");
 }
 
-export void test_effects_ceiling_c(io::Io *io) {
-    effects_case(io, "effects_ceiling.c");
+export void test_effects_args_c() {
+    effects_case("effects_args.c");
 }
 
-export void test_effects_chain_c(io::Io *io) {
-    effects_case(io, "effects_chain.c");
+export void test_effects_ceiling_c() {
+    effects_case("effects_ceiling.c");
 }
 
-export void test_effects_chain_smith(io::Io *io) {
-    effects_case(io, "effects_chain.smith");
+export void test_effects_chain_c() {
+    effects_case("effects_chain.c");
 }
 
-export void test_effects_entropy_smith(io::Io *io) {
-    effects_case(io, "effects_entropy.smith");
+export void test_effects_chain_smith() {
+    effects_case("effects_chain.smith");
 }
 
-export void test_effects_globals_c(io::Io *io) {
-    effects_case(io, "effects_globals.c");
+export void test_effects_entropy_smith() {
+    effects_case("effects_entropy.smith");
 }
 
-export void test_effects_internal_c(io::Io *io) {
-    effects_case(io, "effects_internal.c");
+export void test_effects_globals_c() {
+    effects_case("effects_globals.c");
 }
 
-export void test_effects_pure_ok_c(io::Io *io) {
-    effects_case(io, "effects_pure_ok.c");
+export void test_effects_internal_c() {
+    effects_case("effects_internal.c");
 }
 
-export void test_effects_unknown_c(io::Io *io) {
-    effects_case(io, "effects_unknown.c");
+export void test_effects_pure_ok_c() {
+    effects_case("effects_pure_ok.c");
 }
 
-export void test_recursion_c(io::Io *io) {
-    effects_case(io, "recursion.c");
+export void test_effects_unknown_c() {
+    effects_case("effects_unknown.c");
 }
 
-export void test_recursion_smith(io::Io *io) {
-    effects_case(io, "recursion.smith");
+export void test_recursion_c() {
+    effects_case("recursion.c");
 }
 
-export void test_recursion_plain_smith(io::Io *io) {
-    effects_case(io, "recursion_plain.smith");
+export void test_recursion_smith() {
+    effects_case("recursion.smith");
+}
+
+export void test_recursion_plain_smith() {
+    effects_case("recursion_plain.smith");
 }
 
 // libc's hidden state and the idiom of a returned pointer (issue #724): a printf with a float conversion is `globals`,
 // a module may call a pointer-returning libc function the table gives an idiom, and one it does not is an error.
-export void test_effects_printf_float_c(io::Io *io) {
-    effects_case(io, "effects_printf_float.c");
+export void test_effects_printf_float_c() {
+    effects_case("effects_printf_float.c");
 }
 
-export void test_effects_libc_idioms_smith(io::Io *io) {
-    effects_case(io, "effects_libc_idioms.smith");
+export void test_effects_libc_idioms_smith() {
+    effects_case("effects_libc_idioms.smith");
 }
 
-export void test_effects_libc_unknown_pointer_smith(io::Io *io) {
-    effects_case(io, "effects_libc_unknown_pointer.smith");
+export void test_effects_libc_unknown_pointer_smith() {
+    effects_case("effects_libc_unknown_pointer.smith");
 }
 
 // A function that allocates when an argument is null (issue #724): an array or a null constant names the form, any
 // other argument is an error.
-export void test_effects_libc_null_buffer_smith(io::Io *io) {
-    effects_case(io, "effects_libc_null_buffer.smith");
+export void test_effects_libc_null_buffer_smith() {
+    effects_case("effects_libc_null_buffer.smith");
 }
 
-export void test_effects_libc_null_unknown_smith(io::Io *io) {
-    effects_case(io, "effects_libc_null_unknown.smith");
+export void test_effects_libc_null_unknown_smith() {
+    effects_case("effects_libc_null_unknown.smith");
 }
 
 // A C file with the libc headers, compiled in the plugin's idiom mode (`SMITH_EFFECTS_IDIOMS=missing|list`).
-static scratch::Run idiom_report(io::Io *io, const char *mode) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::write(&p, "headers.c",
+static scratch::Run idiom_report(const scratch::Project *p, const char *mode) {
+    scratch::write(p, "headers.c",
                    "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <strings.h>\n"
                    "#include <time.h>\n#include <locale.h>\n#include <pwd.h>\n#include <dlfcn.h>\n"
                    "#include <dirent.h>\n#include <netdb.h>\n#include <sys/mman.h>\n#include <unistd.h>\n"
                    "#include <libgen.h>\n#include <signal.h>\n#include <errno.h>\n#include <sys/socket.h>\n");
-    return scratch::sh(&p, format::push(&io->arena, "SMITH_EFFECTS_IDIOMS=", mode,
-                                        " smith cc -D_GNU_SOURCE -c headers.c -o /dev/null 2>&1 | grep smith-ownership")
-                               .data);
+    return scratch::sh(p, format::push("SMITH_EFFECTS_IDIOMS=", mode,
+                                       " smith cc -D_GNU_SOURCE -c headers.c -o /dev/null 2>&1 | grep smith-ownership")
+                              .data);
 }
 
 // Every function of the table that a system header declares and that returns a pointer has an idiom; a name the
 // platform does not declare (`__error`, `__errno_location`) is not looked for.
-export void test_every_pointer_returning_function_of_the_table_has_an_idiom(io::Io *io) {
-    scratch::Run run = idiom_report(io, "missing");
+export void test_every_pointer_returning_function_of_the_table_has_an_idiom() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = idiom_report(&p, "missing");
     scratch::expect_text("functions of the table that return a pointer and have no idiom", "", run.out);
 }
 
-export void test_the_table_records_the_idiom_of_a_returned_pointer(io::Io *io) {
-    scratch::Run run = idiom_report(io, "list");
+export void test_the_table_records_the_idiom_of_a_returned_pointer() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = idiom_report(&p, "list");
     scratch::expect_contains("strdup is owned, freed by free", run.out, "smith-ownership: strdup owned:free\n");
     scratch::expect_contains("strerror is internal", run.out, "smith-ownership: strerror internal\n");
     scratch::expect_contains("strchr points into argument 1", run.out, "smith-ownership: strchr borrowed:1\n");
@@ -538,8 +658,13 @@ export void test_the_table_records_the_idiom_of_a_returned_pointer(io::Io *io) {
 
 // effects::within in a generic (skill smith-lang-effects): a function of another module is judged by the link, which
 // names the chain through that module; one that fits builds.
-export void test_within_in_modules_the_link_judges_a_function_of_another_module_and_names_the_chain(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_within_in_modules_the_link_judges_a_function_of_another_module_and_names_the_chain() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run made = scratch::sh(&p, "mkdir -p fx3");
     scratch::expect_status("the folder of the module", 0, &made);
     scratch::write(&p, "fx3/lib.smith",
@@ -562,8 +687,13 @@ export void test_within_in_modules_the_link_judges_a_function_of_another_module_
 // Promises: `smith check` lists what smith trusts and does not check, from the `P` lines of the summaries its own build
 // leaves (an effects attribute on a declaration with no source, a function that calls smith_trusted()), a header's
 // once.
-export void test_promises_smith_check_lists_two_declared_promises_and_a_trusted_function(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_promises_smith_check_lists_two_declared_promises_and_a_trusted_function() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "lib.h",
                    "[[smith::effects(alloc, net)]] int curl_perform(void *handle);\n[[smith::pure]] int twice(int);\n");
     scratch::write(
@@ -579,23 +709,28 @@ export void test_promises_smith_check_lists_two_declared_promises_and_a_trusted_
         run.out);
 }
 
-export void test_within_smith(io::Io *io) {
-    effects_case(io, "within.smith");
+export void test_within_smith() {
+    effects_case("within.smith");
 }
 
 // fails (issue #325): a checked index, an assert, abort and a trap are failure points; a ceiling without `fails`
 // rejects the function that has one, and `within(f, effects::none)` rejects it with the chain.
-export void test_fails_c(io::Io *io) {
-    effects_case(io, "effects_fails.c");
+export void test_fails_c() {
+    effects_case("effects_fails.c");
 }
 
-export void test_fails_smith(io::Io *io) {
-    effects_case(io, "effects_fails.smith");
+export void test_fails_smith() {
+    effects_case("effects_fails.smith");
 }
 
 // A callee in another file: the link judges it from the summary and the chain goes through the file.
-export void test_fails_a_callee_in_another_file_reaches_a_pure_caller_at_the_link(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_fails_a_callee_in_another_file_reaches_a_pure_caller_at_the_link() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run made = scratch::sh(&p, "mkdir -p fx4");
     scratch::expect_status("the folder of the module", 0, &made);
     scratch::write(&p, "fx4/lib.smith",
@@ -621,8 +756,13 @@ export void test_fails_a_callee_in_another_file_reaches_a_pure_caller_at_the_lin
 // A proved contract check is not a failure point (issue #325), in every build: after `smith prove`, an optimized build
 // leaves out the assert and debug keeps it under a name that is no failure point, so the function that only had it is
 // [[smith::pure]] in both; with no proof the assert makes it `fails`.
-export void test_fails_a_proved_assert_adds_no_fails_in_any_build(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_fails_a_proved_assert_adds_no_fails_in_any_build() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "sure.smith",
                    "module sure;\nimport smith::contract;\n"
                    "export [[smith::pure]] i32 low(i32 x) { i32 y = x & 7; contract::assert(y < 8); return y; }\n");
@@ -643,8 +783,13 @@ export void test_fails_a_proved_assert_adds_no_fails_in_any_build(io::Io *io) {
 // A proved index is no failure point in any build (issue #325): the contract lets the prover prove `xs[i]`, so after
 // `smith prove` a [[smith::pure]] function that only indexes passes in debug as well, where the check is still
 // emitted, under the name `smith_failure_proved` that the effects table reads as no failure.
-export void test_fails_a_proved_index_adds_no_fails_in_debug(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_fails_a_proved_index_adds_no_fails_in_debug() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "pick.smith",
                    "module pick;\nimport bounds;\nimport smith::contract;\n"
                    "export [[smith::pure]] i32 at(usize i) {\n"
@@ -678,25 +823,30 @@ export void test_fails_a_proved_index_adds_no_fails_in_debug(io::Io *io) {
 
 // The ownership idioms (#720): `returns_owned(f)`, `returns_borrowed(n)` and `returns_internal` on a function or a
 // function pointer's typedef are accepted, each bad use is an error naming the rule, in C and in a module.
-export void test_ownership_good_c(io::Io *io) {
-    effects_case(io, "ownership_good.c");
+export void test_ownership_good_c() {
+    effects_case("ownership_good.c");
 }
 
-export void test_ownership_bad_function_c(io::Io *io) {
-    effects_case(io, "ownership_bad_function.c");
+export void test_ownership_bad_function_c() {
+    effects_case("ownership_bad_function.c");
 }
 
-export void test_ownership_good_module(io::Io *io) {
-    effects_case(io, "ownership_module_good.smith");
+export void test_ownership_good_module() {
+    effects_case("ownership_module_good.smith");
 }
 
-export void test_ownership_bad_module(io::Io *io) {
-    effects_case(io, "ownership_module_bad.smith");
+export void test_ownership_bad_module() {
+    effects_case("ownership_module_bad.smith");
 }
 
 // The idiom joins the function's entry in the summary (`O` a function, `T` a typedef) and the link reads the file.
-export void test_ownership_is_recorded_in_the_summary(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_ownership_is_recorded_in_the_summary() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "a.c",
                    "#include <stdlib.h>\n[[std::returns_owned(free)]] char *dup1(const char *s);\n"
                    "[[std::returns_borrowed(1)]] char *find1(const char *s, int c);\n"
@@ -715,6 +865,6 @@ export void test_ownership_is_recorded_in_the_summary(io::Io *io) {
 }
 
 // The same rules for the idiom written on a function pointer type with `annotate_type`.
-export void test_ownership_type_bad_c(io::Io *io) {
-    effects_case(io, "ownership_type_bad.c");
+export void test_ownership_type_bad_c() {
+    effects_case("ownership_type_bad.c");
 }

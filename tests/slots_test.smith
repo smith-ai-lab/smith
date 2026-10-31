@@ -3,13 +3,18 @@
 // folder of flock'd files, and `smith --smith-slots PROGRAM` takes one token the same way for a test. Each case is a
 // shell script in a scratch folder with its own folder (SMITH_SLOTS_DIR) and a pool of one token unless it sets more
 // (SMITH_CORES); the jobs meet through files, never through time: a job that must be waiting says so on stderr, which
-// the script waits for, and a job that holds a token waits for the file `free`.
+// the script waits for, and a job that holds a token waits for the file `free`. A test makes its project, then sets its
+// own memory as the current allocator: what scratch returns to it is given back with that memory, and scratch::clean
+// frees what make holds.
 module slots_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
+
+constexpr usize memory_size = (usize)1 << 20; // 1 MiB
 
 // The commands of every case: `w FILE` waits for a file, `ww FILE TEXT` waits for a text in a file, `hold` is a job
 // that keeps its slot until the file `free` exists.
@@ -19,71 +24,87 @@ constexpr char prelude[_] =
     "ww() { until grep -q \"$2\" \"$1\" 2>/dev/null; do sleep 0.05; done; }; "
     "hold='touch held; while [ ! -e free ]; do sleep 0.05; done'; ";
 
-static const char *slots_case(io::Io *io, const char *script) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(&p, format::push(&io->arena, prelude, script).data);
+// Runs the case after the prelude and `pool` in a project of its own and returns what it printed, which is in the
+// test's memory (the runner gives it back after the test).
+static const char *slots_case_in(const char *pool, const char *steps, const char *script) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = scratch::sh(&p, format::push(prelude, pool, steps, script).data);
     scratch::expect_status("the case ends", 0, &run);
     return run.out;
 }
 
+static const char *slots_case(const char *script) {
+    return slots_case_in("", "", script);
+}
+
 // A job waits while the slot is taken, says why, and runs once it is released.
-export void test_a_job_waits_for_the_slot_and_runs_after_the_release(io::Io *io) {
-    const char *out = slots_case(io, "smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
-                                     "smith --smith-slots sh -c 'touch b_ran' 2>b.err & b=$!; "
-                                     "ww b.err 'waiting for a core (1 of 1 held'; "
-                                     "[ -e b_ran ] && echo early; touch free; wait $a; wait $b; "
-                                     "[ -e b_ran ] && echo ran");
+export void test_a_job_waits_for_the_slot_and_runs_after_the_release() {
+    const char *out = slots_case("smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
+                                 "smith --smith-slots sh -c 'touch b_ran' 2>b.err & b=$!; "
+                                 "ww b.err 'waiting for a core (1 of 1 held'; "
+                                 "[ -e b_ran ] && echo early; touch free; wait $a; wait $b; "
+                                 "[ -e b_ran ] && echo ran");
     scratch::expect_text("the second job waits, then runs", "ran\n", out);
 }
 
 // The OS drops the lock of a process that is killed: the next job takes the slot with no cleanup.
-export void test_a_killed_holder_frees_its_slot(io::Io *io) {
-    const char *out = slots_case(io, "smith --smith-slots sh -c \"$hold\" & a=$!; w held; kill -9 $a; "
-                                     "wait $a 2>/dev/null; smith --smith-slots touch b_ran; "
-                                     "[ -e b_ran ] && echo ran; touch free");
+export void test_a_killed_holder_frees_its_slot() {
+    const char *out = slots_case("smith --smith-slots sh -c \"$hold\" & a=$!; w held; kill -9 $a; "
+                                 "wait $a 2>/dev/null; smith --smith-slots touch b_ran; "
+                                 "[ -e b_ran ] && echo ran; touch free");
     scratch::expect_text("the slot is free after a kill", "ran\n", out);
 }
 
 // A waiting CI job (SMITH_PRIORITY=ci) gets the next slot before a local job that waited first.
-export void test_a_waiting_ci_job_takes_the_next_slot_before_a_local_one(io::Io *io) {
-    const char *out = slots_case(io, "smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
-                                     "smith --smith-slots sh -c 'echo L >>order' 2>l.err & l=$!; "
-                                     "ww l.err 'waiting for a core'; "
-                                     "SMITH_PRIORITY=ci smith --smith-slots sh -c 'echo C >>order' 2>c.err & c=$!; "
-                                     "ww c.err 'waiting for a core'; touch free; wait $a $l $c; cat order");
+export void test_a_waiting_ci_job_takes_the_next_slot_before_a_local_one() {
+    const char *out = slots_case("smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
+                                 "smith --smith-slots sh -c 'echo L >>order' 2>l.err & l=$!; "
+                                 "ww l.err 'waiting for a core'; "
+                                 "SMITH_PRIORITY=ci smith --smith-slots sh -c 'echo C >>order' 2>c.err & c=$!; "
+                                 "ww c.err 'waiting for a core'; touch free; wait $a $l $c; cat order");
     scratch::expect_text("the CI job runs first", "C\nL\n", out);
 }
 
 // A smith that a smith runs holds no slot of its own (it would wait for its parent's, which is held until it ends).
-export void test_a_child_inherits_the_slot_of_its_parent(io::Io *io) {
-    const char *out = slots_case(io, "smith --smith-slots sh -c 'smith --smith-slots touch inner'; "
-                                     "[ -e inner ] && echo ran");
+export void test_a_child_inherits_the_slot_of_its_parent() {
+    const char *out = slots_case("smith --smith-slots sh -c 'smith --smith-slots touch inner'; "
+                                 "[ -e inner ] && echo ran");
     scratch::expect_text("the inner job runs under the one slot", "ran\n", out);
 }
 
 // The variable of a holder that is gone means nothing: the job takes a slot of its own, so it waits here.
-export void test_the_slot_of_a_dead_parent_is_not_inherited(io::Io *io) {
-    const char *out = slots_case(io, "sh -c 'exit 0' & p=$!; wait $p; "
-                                     "smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
-                                     "SMITH_SLOT_HELD=$p smith --smith-slots touch b_ran 2>b.err & b=$!; "
-                                     "ww b.err 'waiting for a core'; [ -e b_ran ] && echo early; "
-                                     "touch free; wait $a $b; echo done");
+export void test_the_slot_of_a_dead_parent_is_not_inherited() {
+    const char *out = slots_case("sh -c 'exit 0' & p=$!; wait $p; "
+                                 "smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
+                                 "SMITH_SLOT_HELD=$p smith --smith-slots touch b_ran 2>b.err & b=$!; "
+                                 "ww b.err 'waiting for a core'; [ -e b_ran ] && echo early; "
+                                 "touch free; wait $a $b; echo done");
     scratch::expect_text("a stale variable gives no slot", "done\n", out);
 }
 
 // SMITH_SLOTS=0 turns the limit off.
-export void test_zero_slots_means_no_limit(io::Io *io) {
-    const char *out = slots_case(io, "smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
-                                     "SMITH_SLOTS=0 smith --smith-slots touch b_ran; [ -e b_ran ] && echo ran; "
-                                     "touch free; wait $a");
+export void test_zero_slots_means_no_limit() {
+    const char *out = slots_case("smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
+                                 "SMITH_SLOTS=0 smith --smith-slots touch b_ran; [ -e b_ran ] && echo ran; "
+                                 "touch free; wait $a");
     scratch::expect_text("no limit, no wait", "ran\n", out);
 }
 
 // The slot is taken at the first real step, not on entry. The executor alone runs a manifest of one trivial step (no
 // compile): while the slot is held it waits, and the same manifest once up to date (no step to run) finishes at once
 // under the same held slot.
-export void test_the_executor_takes_its_slot_at_the_first_step_and_an_up_to_date_run_takes_none(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_the_executor_takes_its_slot_at_the_first_step_and_an_up_to_date_run_takes_none() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     const char *script = "printf 'rule step\n  command = $cmd\nbuild out: step\n  cmd = touch out\n' >m.ninja; "
                          "smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
                          "smith --smith-exec m.ninja 2>b.err >/dev/null & b=$!; "
@@ -91,33 +112,33 @@ export void test_the_executor_takes_its_slot_at_the_first_step_and_an_up_to_date
                          "rm free held; smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
                          "smith --smith-exec m.ninja 2>c.err >/dev/null; echo \"status $?\"; "
                          "grep -c 'waiting for a core' c.err; touch free; wait $a";
-    scratch::Run run = scratch::sh(&p, format::push(&io->arena, prelude, script).data);
+    scratch::Run run = scratch::sh(&p, format::push(prelude, script).data);
     scratch::expect_text("the first run waits, the second does not", "built\nstatus 0\n0\n", run.out);
 }
 
 // A holder whose parent is gone (reparented, an orphan) loses its slot: the next job takes it without a release. The
 // holder here is started in a subshell that ends at once, and it would keep the slot until `free`.
-export void test_the_slot_of_an_orphan_is_reclaimed(io::Io *io) {
-    const char *out = slots_case(io, "(smith --smith-slots sh -c \"$hold\" &); w held; "
-                                     "smith --smith-slots touch b_ran; [ -e b_ran ] && echo ran; touch free");
+export void test_the_slot_of_an_orphan_is_reclaimed() {
+    const char *out = slots_case("(smith --smith-slots sh -c \"$hold\" &); w held; "
+                                 "smith --smith-slots touch b_ran; [ -e b_ran ] && echo ran; touch free");
     scratch::expect_text("the orphan's slot is free", "ran\n", out);
 }
 
 // The slot file of a holder that is still alive and has its parent is not touched: the second job waits.
-export void test_the_slot_of_a_live_holder_with_its_parent_is_kept(io::Io *io) {
-    const char *out = slots_case(io, "smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
-                                     "smith --smith-slots touch b_ran 2>b.err & b=$!; "
-                                     "ww b.err 'waiting for a core'; sleep 1; [ -e b_ran ] && echo early; "
-                                     "touch free; wait $a $b; echo done");
+export void test_the_slot_of_a_live_holder_with_its_parent_is_kept() {
+    const char *out = slots_case("smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
+                                 "smith --smith-slots touch b_ran 2>b.err & b=$!; "
+                                 "ww b.err 'waiting for a core'; sleep 1; [ -e b_ran ] && echo early; "
+                                 "touch free; wait $a $b; echo done");
     scratch::expect_text("a live holder keeps its slot", "done\n", out);
 }
 
 // A one-test run starts while all but one token are held: it takes the last token, whatever the pool's size.
-export void test_a_run_starts_while_all_but_one_token_are_held(io::Io *io) {
-    const char *out = slots_case(io, "export SMITH_CORES=4; "
-                                     "for n in 1 2 3; do smith --smith-slots sh -c \"touch held$n; "
-                                     "while [ ! -e free ]; do sleep 0.05; done\" & done; w held1; w held2; w held3; "
-                                     "smith --smith-slots touch b_ran; [ -e b_ran ] && echo ran; touch free; wait");
+export void test_a_run_starts_while_all_but_one_token_are_held() {
+    const char *out = slots_case("export SMITH_CORES=4; "
+                                 "for n in 1 2 3; do smith --smith-slots sh -c \"touch held$n; "
+                                 "while [ ! -e free ]; do sleep 0.05; done\" & done; w held1; w held2; w held3; "
+                                 "smith --smith-slots touch b_ran; [ -e b_ran ] && echo ran; touch free; wait");
     scratch::expect_text("the run takes the last token at once", "ran\n", out);
 }
 
@@ -128,39 +149,44 @@ constexpr char three_steps[_] = "printf 'rule step\n  command = $cmd\n"
                                 "build o3: step\n  cmd = touch r3; while [ ! -e go ]; do sleep 0.05; done; touch o3\n"
                                 "default o1 o2 o3\n' >m.ninja; ";
 
+// A case in a pool of four with the three steps written.
+static const char *three_steps_case(const char *script) {
+    return slots_case_in("export SMITH_CORES=4; ", three_steps, script);
+}
+
 // A run that got fewer tokens than its steps wanted starts with what it got and grows as tokens free up: three steps
 // in a pool of four where three tokens are held, so the base token runs one; each token released starts a step.
-export void test_a_running_run_grows_as_tokens_free_up(io::Io *io) {
-    const char *out = slots_case(
-        io, format::push(&io->arena, "export SMITH_CORES=4; ", three_steps,
-                         "for n in 1 2 3; do smith --smith-slots sh -c \"touch held$n; "
+export void test_a_running_run_grows_as_tokens_free_up() {
+    const char *out =
+        three_steps_case("for n in 1 2 3; do smith --smith-slots sh -c \"touch held$n; "
                          "while [ ! -e free$n ]; do sleep 0.05; done\" & done; w held1; w held2; w held3; "
                          "smith --smith-exec m.ninja >/dev/null 2>b.err & e=$!; w r1; sleep 1; "
                          "[ -e r2 ] && echo early; touch free1; w r2; [ -e r3 ] && echo early; touch free2; w r3; "
-                         "touch go free3; wait $e; wait; echo done")
-                .data);
+                         "touch go free3; wait $e; wait; echo done");
     scratch::expect_text("each released token starts a step", "done\n", out);
 }
 
 // While a CI run holds a token, a local run leaves a quarter of the pool (one of four) free for it: of three steps in
 // a pool of four the local run runs two, and the third starts once the CI run is gone.
-export void test_a_ci_holder_leaves_a_local_run_fewer_cores(io::Io *io) {
-    const char *out =
-        slots_case(io, format::push(&io->arena, "export SMITH_CORES=4; ", three_steps,
-                                    "SMITH_PRIORITY=ci smith --smith-slots sh -c \"touch held; "
-                                    "while [ ! -e free ]; do sleep 0.05; done\" & c=$!; w held; "
-                                    "smith --smith-exec m.ninja >/dev/null 2>b.err & e=$!; w r1; w r2; sleep 1; "
-                                    "[ -e r3 ] && echo early; touch free; w r3; touch go; wait $e; wait $c; "
-                                    "[ -e o3 ] && echo done")
-                           .data);
+export void test_a_ci_holder_leaves_a_local_run_fewer_cores() {
+    const char *out = three_steps_case("SMITH_PRIORITY=ci smith --smith-slots sh -c \"touch held; "
+                                       "while [ ! -e free ]; do sleep 0.05; done\" & c=$!; w held; "
+                                       "smith --smith-exec m.ninja >/dev/null 2>b.err & e=$!; w r1; w r2; sleep 1; "
+                                       "[ -e r3 ] && echo early; touch free; w r3; touch go; wait $e; wait $c; "
+                                       "[ -e o3 ] && echo done");
     scratch::expect_text("the CI run keeps a core while it runs", "done\n", out);
 }
 
 // `smith build preflight` takes its base token at once and holds it for the whole run: a second preflight waits at its
 // start, and what the first runs (an inner executor here, standing for its build, fmt, lint and test) rides on the
 // token, with the one token there is, and does not wait. The project's task holds until `free` exists.
-export void test_preflight_takes_its_token_at_once_and_holds_it_for_the_whole_run(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_preflight_takes_its_token_at_once_and_holds_it_for_the_whole_run() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "build.c",
                    "#include <smith/build.h>\n"
                    "void build(SmithBuild *b) {\n"
@@ -176,23 +202,20 @@ export void test_preflight_takes_its_token_at_once_and_holds_it_for_the_whole_ru
                          "ww b.err 'waiting for a core'; [ -e two/out ] && echo early; "
                          "touch free; wait $a; touch two/free; wait $b; echo done; grep -c 'waiting for a core' a.err; "
                          "[ -e out ] && echo inner-built";
-    scratch::Run run = scratch::sh(&p, format::push(&io->arena, prelude, script).data);
+    scratch::Run run = scratch::sh(&p, format::push(prelude, script).data);
     scratch::expect_text("the second waits, the first's inner build rides on its token", "done\n0\ninner-built\n",
                          run.out);
 }
 
 // A CI run, or any run with SMITH_SLOTS_LOG set, ends with one stderr line on what the pool gave it (issue #754): the
 // wait for its base token, the workers it had and the attempts that found no token. A run with neither says nothing.
-export void test_a_ci_run_reports_what_the_pool_gave_it(io::Io *io) {
-    const char *out =
-        slots_case(io, format::push(&io->arena, "export SMITH_CORES=4; ", three_steps,
-                                    "touch go; smith --smith-exec m.ninja >/dev/null 2>quiet.err; rm o1 o2 o3; "
-                                    "SMITH_PRIORITY=ci smith --smith-exec m.ninja >/dev/null 2>ci.err; "
-                                    "rm o1 o2 o3; "
-                                    "SMITH_SLOTS_LOG=1 smith --smith-exec m.ninja >/dev/null 2>log.err; "
-                                    "grep -c 'smith: pool:' quiet.err; "
-                                    "grep -c 'smith: pool: waited [0-9]* ms for the base core; .* of 4 "
-                                    "cores' ci.err log.err")
-                           .data);
+export void test_a_ci_run_reports_what_the_pool_gave_it() {
+    const char *out = three_steps_case("touch go; smith --smith-exec m.ninja >/dev/null 2>quiet.err; rm o1 o2 o3; "
+                                       "SMITH_PRIORITY=ci smith --smith-exec m.ninja >/dev/null 2>ci.err; "
+                                       "rm o1 o2 o3; "
+                                       "SMITH_SLOTS_LOG=1 smith --smith-exec m.ninja >/dev/null 2>log.err; "
+                                       "grep -c 'smith: pool:' quiet.err; "
+                                       "grep -c 'smith: pool: waited [0-9]* ms for the base core; .* of 4 "
+                                       "cores' ci.err log.err");
     scratch::expect_text("only a CI or logged run reports", "0\nci.err:1\nlog.err:1\n", out);
 }

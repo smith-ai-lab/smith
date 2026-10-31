@@ -1,6 +1,6 @@
 ---
 name: smith-net
-description: "Using smith::net (import smith::net; net::connect, connect_tls, listen, accept, read, write, close, stop, net::fake): TCP and TLS by direct calls that return a result, with a scripted in-memory fake for tests. Load when code imports smith::net or includes <smith/net.h>, or on opening a socket, a TLS connection or a server without io::Io."
+description: "Using smith::net (import smith::net; net::connect, connect_tls, listen, accept, read, read_within, write, close, stop, net::fake): TCP and TLS by direct calls that return a result, with a scripted in-memory fake for tests. Load when code imports smith::net or includes <smith/net.h>, or on opening a socket, a TLS connection or a server without io::Io."
 ---
 
 # TCP and TLS by direct calls: smith::net
@@ -27,7 +27,7 @@ export usize fetch(const u8 request[:], u8 reply[:]) {
 | Call | Does |
 |---|---|
 | `connect(host, port)` / `connect_tls(host, port)` / `close(&c)` | a `Connection`: plain TCP (every address tried) / TLS over it, the system's trust deciding with no way to turn it off / releases it |
-| `read(&c, buffer)` / `write(&c, data)` | read at least one byte (0 is the end: the peer is done); write all of the bytes (`Reset` when the peer has gone, never SIGPIPE) |
+| `read(&c, buffer)` / `write(&c, data)` | read at least one byte (0 is the end: the peer is done); write all of the bytes (`Reset` when the peer has gone, never SIGPIPE); `read_within(&c, buffer, timeout_ns)` is `read` that gives up with `TimedOut` (on macOS a TLS connection that timed out is cancelled: only `close` is left) |
 | `listen(host, port)` / `accept(&l)` / `stop(&l)` | a `Listener` (empty host: every address; port 0: a free one, in `l.port`); the server's `Connection`, blocking; plain TCP only |
 - **Misuse is a checked failure**: a second close or stop, a use after it, an empty read buffer, a fake that would wait for ever. On macOS only an expired or not-yet-valid certificate is told apart; any other rejection is `BadCertificate` (OpenSSL names `WrongHost` and `Untrusted`). A macOS TLS connection keeps a block of the current allocator: the region must outlive it.
 **The fake, for tests** (nothing is opened):
@@ -57,4 +57,4 @@ export usize greeting_size(arena::Arena *a) {
     }
 }
 ```
-A `Server` script answers one connect to its host and port (the first not yet used): `response` in pieces of `chunk` bytes and then the end, or `fails` with an `error` (a TLS one stands for a refused certificate); `fake_sent(&fake, connection.id)` is what the program wrote. A fake also listens: `listen` then `connect` to its port pairs the client with what `accept` returns, so a server and its client run in one test (a read with nothing to read and no closed peer is a checked failure). C names are `smith_network_*`; async operations wait for #241. See also [smith-io-net](../smith-io-net/SKILL.md), [smith-files](../smith-files/SKILL.md), [net](../../../knowledge/net.md).
+A `Server` script answers one connect to its host and port (the first not yet used): `response` in pieces of `chunk` bytes and then the end, or `fails` with an `error` (a TLS one stands for a refused certificate), `response_size` for a binary response, `stalls` (stay open and silent: `read_within` times out at once) or `resets` (a read fails with `Reset` after the response); `fake_sent(&fake, connection.id)` is what the program wrote. A fake also listens: `listen` then `connect` to its port pairs the client with what `accept` returns, so a server and its client run in one test (a read with nothing to read and no closed peer is a checked failure). C names are `smith_network_*`; async operations wait for #241. See also [smith-io-net](../smith-io-net/SKILL.md), [smith-files](../smith-files/SKILL.md), [net](../../../knowledge/net.md).

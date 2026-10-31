@@ -2,14 +2,19 @@
 // AddressSanitizer and with NDEBUG and run in the modes it takes (the capacity stop, ASan's catches, the lazy poison, a
 // carved arena), the module compiled under a new project's warnings, and a project that gets the library with
 // smith_library (from C, from a .smith file, and the error of an unknown name). The behavior of the library is
-// lib/smith/arena_test.smith. The projects are tests/build_fixtures/arena_project, arena_typed and arena_unknown.
+// lib/smith/arena_test.smith. The projects are tests/build_fixtures/arena_project, arena_typed and arena_unknown. A
+// test makes its project, then sets its own memory as the current allocator: what scratch returns to it (a Run's texts)
+// is given back with that memory, and scratch::clean frees what make holds.
 module arena_c_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 import <string.h>;
+
+constexpr usize memory_size = (usize)16 << 20; // 16 MiB
 
 constexpr char flags[_] = "-std=gnu23 -Wall -Wextra -Wpedantic -Werror -I \"$SMITH_REPO/.smith/include\"";
 constexpr char sources[_] = "tests/arena.c lib/smith/arena.smith "
@@ -20,31 +25,29 @@ static void compile(const scratch::Project *p, const char *name) {
     const char *extra = c::strcmp(name, "asan") == 0   ? "-g -fsanitize=address,undefined"
                         : c::strcmp(name, "fast") == 0 ? "-w -DNDEBUG -O2"
                                                        : "";
-    scratch::Run built =
-        scratch::sh(p, format::push(&p->io->arena, "smith cc ", flags, " ", extra, " ", sources, " -o ", name).data);
-    scratch::expect_status(format::push(&p->io->arena, "the ", name, " program builds").data, 0, &built);
+    scratch::Run built = scratch::sh(p, format::push("smith cc ", flags, " ", extra, " ", sources, " -o ", name).data);
+    scratch::expect_status(format::push("the ", name, " program builds").data, 0, &built);
 }
 
-// A project holding the files the commands compile: the libraries and the program of the test, copied through io.
-static scratch::Project sources_project(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::copy_tree(&p, "lib", "lib");
-    scratch::copy_tree(&p, "tests/arena.c", "tests/arena.c");
-    return p;
-}
-
-static scratch::Project arena_project(io::Io *io, const char *program) {
-    scratch::Project p = sources_project(io);
-    compile(&p, program);
-    return p;
+// The files the commands compile, copied into the project: the libraries and the program of the test.
+static void copy_sources(const scratch::Project *p) {
+    scratch::copy_tree(p, "lib", "lib");
+    scratch::copy_tree(p, "tests/arena.c", "tests/arena.c");
 }
 
 static scratch::Run mode(const scratch::Project *p, const char *program, const char *which) {
-    return scratch::sh(p, format::push(&p->io->arena, "./", program, " ", which).data);
+    return scratch::sh(p, format::push("./", program, " ", which).data);
 }
 
-export void test_arena_c_stop_is_on_in_every_build_ndebug_included(io::Io *io) {
-    scratch::Project p = arena_project(io, "fast");
+export void test_arena_c_stop_is_on_in_every_build_ndebug_included() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    copy_sources(&p);
+    compile(&p, "fast");
     scratch::Run run = mode(&p, "fast", "stop");
     scratch::expect_status("stop: the status is abort's", 134, &run);
     scratch::expect_contains("stop: the message names the request", run.err, "push of 100 bytes");
@@ -52,15 +55,29 @@ export void test_arena_c_stop_is_on_in_every_build_ndebug_included(io::Io *io) {
     scratch::expect_text("stop: nothing runs afterwards", "", run.out);
 }
 
-export void test_arena_c_asan_catches_a_write_past_a_push(io::Io *io) {
-    scratch::Project p = arena_project(io, "asan");
+export void test_arena_c_asan_catches_a_write_past_a_push() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    copy_sources(&p);
+    compile(&p, "asan");
     scratch::Run run = mode(&p, "asan", "oob");
     scratch::expect_contains("asan: a write past a push is caught", run.err, "AddressSanitizer");
     scratch::expect_contains("asan: it is a poisoned-region error", run.err, "use-after-poison");
 }
 
-export void test_arena_c_lazy_poison_a_64_gib_arena_under_asan(io::Io *io) {
-    scratch::Project p = arena_project(io, "asan");
+export void test_arena_c_lazy_poison_a_64_gib_arena_under_asan() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    copy_sources(&p);
+    compile(&p, "asan");
     compile(&p, "plain");
     scratch::Run big = mode(&p, "asan", "big");
     scratch::expect_status("lazy: a 64 GiB arena under ASan makes little memory resident", 0, &big);
@@ -77,8 +94,15 @@ export void test_arena_c_lazy_poison_a_64_gib_arena_under_asan(io::Io *io) {
     scratch::expect_contains("lazy: a read of a push after a reset is caught", stale.err, "use-after-poison");
 }
 
-export void test_arena_c_carved_arena_commits_nothing_until_used(io::Io *io) {
-    scratch::Project p = arena_project(io, "asan");
+export void test_arena_c_carved_arena_commits_nothing_until_used() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    copy_sources(&p);
+    compile(&p, "asan");
     compile(&p, "plain");
     scratch::Run lazy = mode(&p, "asan", "carvelazy");
     scratch::expect_status("carve: 2 GiB carved out of a 64 GiB arena under ASan makes little memory resident", 0,
@@ -88,8 +112,15 @@ export void test_arena_c_carved_arena_commits_nothing_until_used(io::Io *io) {
     scratch::expect_status("carve: the same without ASan", 0, &plain);
 }
 
-export void test_arena_c_carved_arena_catches_what_any_arena_catches(io::Io *io) {
-    scratch::Project p = arena_project(io, "asan");
+export void test_arena_c_carved_arena_catches_what_any_arena_catches() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    copy_sources(&p);
+    compile(&p, "asan");
     compile(&p, "fast");
     scratch::Run oob = mode(&p, "asan", "carveoob");
     scratch::expect_contains("carve: a write one byte past a push in a carved arena is caught", oob.err,
@@ -104,36 +135,45 @@ export void test_arena_c_carved_arena_catches_what_any_arena_catches(io::Io *io)
     scratch::expect_contains("carve: ... and the message names the request", stop.err, "push of 2048 bytes");
 }
 
-static void compiles_as(io::Io *io, const char *standard) {
-    scratch::Project p = sources_project(io);
+static void compiles_as(const char *standard) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    copy_sources(&p);
     scratch::Run built = scratch::sh(
-        &p, format::push(&io->arena, "smith cc -std=", standard,
+        &p, format::push("smith cc -std=", standard,
                          " -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -I \"$SMITH_REPO/.smith/include\" "
                          "-iquote \"$SMITH_REPO/.smith/include/smith\" -c lib/smith/arena.smith -o a.o")
                 .data);
     scratch::expect_status(
-        format::push(&io->arena, "library: compiles as -std=", standard, " with the new project's warnings").data, 0,
-        &built);
+        format::push("library: compiles as -std=", standard, " with the new project's warnings").data, 0, &built);
 }
 
-export void test_arena_c_library_compiles_as_c23(io::Io *io) {
-    compiles_as(io, "gnu23");
+export void test_arena_c_library_compiles_as_c23() {
+    compiles_as("gnu23");
 }
 
-export void test_arena_c_library_compiles_as_c2y(io::Io *io) {
-    compiles_as(io, "gnu2y");
+export void test_arena_c_library_compiles_as_c2y() {
+    compiles_as("gnu2y");
 }
 
 // The project's build, with its smith_library, run in the project.
-static scratch::Project built_project(io::Io *io, const char *fixture, const char *name) {
-    scratch::Project p = scratch::project(io, "p", fixture);
-    scratch::Run built = scratch::build(&p, "");
+static void builds(const scratch::Project *p, const char *name) {
+    scratch::Run built = scratch::build(p, "");
     scratch::expect_status(name, 0, &built);
-    return p;
 }
 
-export void test_arena_c_project_gets_the_library_with_smith_library(io::Io *io) {
-    scratch::Project p = built_project(io, "arena_project", "project: the build succeeds");
+export void test_arena_c_project_gets_the_library_with_smith_library() {
+    scratch::Project p = scratch::make("p", "arena_project");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    builds(&p, "project: the build succeeds");
     scratch::expect_text("project: the header is written", "yes",
                          scratch::capture(&p, "[ -f .smith/include/smith/arena.h ] && echo yes"));
     scratch::expect_text("project: the source is written", "yes",
@@ -143,8 +183,14 @@ export void test_arena_c_project_gets_the_library_with_smith_library(io::Io *io)
     scratch::expect_status("project: the program exits 0", 0, &run);
 }
 
-export void test_arena_c_project_unchanged_library_is_not_rewritten(io::Io *io) {
-    scratch::Project p = built_project(io, "arena_project", "the build succeeds");
+export void test_arena_c_project_unchanged_library_is_not_rewritten() {
+    scratch::Project p = scratch::make("p", "arena_project");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    builds(&p, "the build succeeds");
     const char *stamp =
         "stat -c %Y .smith/lib/smith/arena.smith 2>/dev/null || stat -f %m .smith/lib/smith/arena.smith";
     const char *before = scratch::capture(&p, stamp);
@@ -154,15 +200,27 @@ export void test_arena_c_project_unchanged_library_is_not_rewritten(io::Io *io) 
     scratch::expect_text("project: an unchanged library is not rewritten", before, scratch::capture(&p, stamp));
 }
 
-export void test_arena_c_project_compile_commands_give_main_the_include_flag(io::Io *io) {
-    scratch::Project p = built_project(io, "arena_project", "the build succeeds");
+export void test_arena_c_project_compile_commands_give_main_the_include_flag() {
+    scratch::Project p = scratch::make("p", "arena_project");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    builds(&p, "the build succeeds");
     const char *entry = scratch::capture(&p, "grep -A12 '\"file\": \"main.c\"' compile_commands.json | tr -d '\\n'");
     scratch::expect_contains("project: compile_commands.json gives main.c the include flag", entry, "\"-I\"");
     scratch::expect_contains("project: ... which is .smith/include", entry, "\".smith/include\"");
 }
 
-export void test_arena_c_project_clangd_reports_no_errors_in_main(io::Io *io) {
-    scratch::Project p = built_project(io, "arena_project", "the build succeeds");
+export void test_arena_c_project_clangd_reports_no_errors_in_main() {
+    scratch::Project p = scratch::make("p", "arena_project");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    builds(&p, "the build succeeds");
     if (scratch::sh(&p, "smith lsp --version").status != 0) return;
     // The sample prints with printf; this tests the build flags the editor gets, not smith-effects.
     scratch::write(&p, ".clang-tidy", "Checks: \"-*\"\n");
@@ -170,29 +228,51 @@ export void test_arena_c_project_clangd_reports_no_errors_in_main(io::Io *io) {
                          scratch::capture(&p, "smith lsp --check=main.c 2>&1 | grep -c 'E\\[' || true"));
 }
 
-export void test_arena_c_typed_file_uses_push_and_push_slice(io::Io *io) {
-    scratch::Project p =
-        built_project(io, "arena_typed", "typed: a .smith file using arena::push and push_slice builds");
+export void test_arena_c_typed_file_uses_push_and_push_slice() {
+    scratch::Project p = scratch::make("p", "arena_typed");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    builds(&p, "typed: a .smith file using arena::push and push_slice builds");
     scratch::expect_text("typed: push and push_slice give zeroed, usable memory", "0 3 9 5 zeroed 1",
                          scratch::capture(&p, "./build/typed >out.txt; echo $? $(cut -d, -f1 out.txt)"));
 }
 
-export void test_arena_c_typed_count_that_overflows_is_refused(io::Io *io) {
-    scratch::Project p = built_project(io, "arena_typed", "the build succeeds");
+export void test_arena_c_typed_count_that_overflows_is_refused() {
+    scratch::Project p = scratch::make("p", "arena_typed");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    builds(&p, "the build succeeds");
     scratch::Run run = scratch::sh(&p, "./build/typed 18446744073709551615");
     scratch::expect_status("typed: a count that overflows size_t is refused", 134, &run);
     scratch::expect_contains("typed: ... with the C message", run.err, "items of 16 bytes overflow size_t");
 }
 
-export void test_arena_c_typed_count_past_the_capacity_is_refused(io::Io *io) {
-    scratch::Project p = built_project(io, "arena_typed", "the build succeeds");
+export void test_arena_c_typed_count_past_the_capacity_is_refused() {
+    scratch::Project p = scratch::make("p", "arena_typed");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    builds(&p, "the build succeeds");
     scratch::Run run = scratch::sh(&p, "./build/typed 1000000");
     scratch::expect_status("typed: a count past the capacity is refused", 134, &run);
     scratch::expect_contains("typed: ... naming the request", run.err, "push of 16000000 bytes (align 8)");
 }
 
-export void test_arena_c_unknown_library_lists_the_known_names(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "arena_unknown");
+export void test_arena_c_unknown_library_lists_the_known_names() {
+    scratch::Project p = scratch::make("p", "arena_unknown");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("unknown: the build fails with status 2", 2, &run);
     scratch::expect_contains("unknown: the message names the library", run.err,

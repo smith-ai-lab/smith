@@ -1,6 +1,6 @@
 ---
 name: @KEBAB@-docs
-description: "Maintaining @NAME@'s documentation: what belongs in AGENTS.md, knowledge (the what) and skills (the how), adding or changing a knowledge concept or a skill, keeping the index and links current, and running smith docs. Load when a change touches docs, or code that a concept describes."
+description: "Maintaining @NAME@'s documentation: what belongs in knowledge (the what) and skills (the how), adding or changing a knowledge concept or a skill, keeping the index and links current, and running smith docs. Load when a change touches docs, or code that a concept describes."
 ---
 
 # Maintain knowledge and skills
@@ -9,12 +9,11 @@ Each fact has one home:
 
 | Home | Holds | Example |
 | --- | --- | --- |
-| [AGENTS.md](../../../AGENTS.md) | rules and decisions, one line each | no allocation after startup |
 | [knowledge/](../../../knowledge/index.md) | what @NAME@ is: conventions, architecture, contracts, design | the sum is asserted |
 | `.agents/skills/` | how to do a task, step by step | how to add a module |
 | the project's issues | plans and the roadmap: what to build next, its scope and acceptance | add a command line |
 
-When a fact seems to belong in two homes, it lives in one and the other links to it. Skills link knowledge; knowledge never links skills. A line stays only if an agent needs it and the code can't say it quickly: no history or rationale, and plans go in an issue.
+When a fact seems to belong in two homes, it lives in one and the other links to it. Skills link knowledge; knowledge never links skills. A line stays only if an agent needs it and the code can't say it quickly: no history or rationale, and plans go in an issue. smith gives the project no AGENTS.md; its skills (the smith plugin's and this one) carry what an agent needs.
 
 ## Knowledge is an Open Knowledge Format bundle
 
@@ -55,6 +54,6 @@ The format is [OKF](https://github.com/GoogleCloudPlatform/knowledge-catalog/blo
    - `knowledge/index.md` lists exactly the concepts on disk, with matching descriptions;
    - every skill's `name` is its folder, and it has a `description`;
    - `.claude/skills` links to `../.agents/skills`;
-   - every relative link in AGENTS.md, knowledge and skills resolves, and knowledge links no skill;
+   - every relative link in knowledge and skills resolves, and knowledge links no skill;
    - no document has a merge-conflict marker.
 2. Docs-only commits are `docs(knowledge): …` or `docs(skills): …`.

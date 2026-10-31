@@ -39,7 +39,6 @@ constexpr i32 econnrefused = c::ECONNREFUSED;
 constexpr i32 econnreset = c::ECONNRESET;
 constexpr i32 edeadlk = c::EDEADLK;
 constexpr i32 eexist = c::EEXIST;
-constexpr i32 eisdir = c::EISDIR;
 constexpr i32 einval = c::EINVAL;
 constexpr i32 emsgsize = c::EMSGSIZE;
 constexpr i32 enoent = c::ENOENT;
@@ -143,10 +142,10 @@ export void test_io_fake_arguments_seed_and_programs() {
     test::check(is(result.output, "tool output\n"));
     io::Process process = {};
     test::check_equal(io::processes_spawn(&fake.processes, run, &process).code, 0);
-    io::Op wait = {};
-    io::processes_wait_async(&fake.processes, &wait, process);
+    io::Op waiting = {};
+    io::processes_wait_async(&fake.processes, &waiting, process);
     test::check_equal(io::run(&fake, 0), 1);
-    test::check_equal(wait.exit_status, 5);
+    test::check_equal(waiting.exit_status, 5);
     const char *const absent[_] = {"absent", nullptr};
     test::check_equal(io::processes_run(&fake.processes, &fake.arena, absent).error.code, enoent);
     io::Capture capture = {};
@@ -329,21 +328,6 @@ export void test_io_fake_tree_appends_lists_maps_and_removes() {
     test::check(io::files_info(&fake.files, ".").folder);
 }
 
-// A copy keeps the bytes and the permission bits of a file, and refuses a folder (a symbolic link stays a link: the
-// docs fixtures of tests/docs_test.smith have some).
-export void test_io_real_copy_keeps_the_bytes(io::Io *io) {
-    const char *root = test::scratch(io);
-    char from[512];
-    char to[512];
-    __builtin_snprintf(from, sizeof from, "%s/source.sh", root);
-    __builtin_snprintf(to, sizeof to, "%s/copy.sh", root);
-    test::check_equal(io::files_write(&io->files, from, test_io_bytes("echo hi\n", 8), io::Replace).code, 0);
-    test::check_equal(io::files_copy(&io->files, from, to).code, 0);
-    io::Read copy = io::files_read(&io->files, &io->arena, to);
-    test::check_equal(countof(copy.data), 8);
-    test::check_equal(io::files_copy(&io->files, root, to).code, eisdir);
-}
-
 // Appending many times: the fake grows the file by doubling, not by copying it each time.
 export void test_io_fake_append_many_times() {
     alignas(arena::align_max) static u8 memory[1 << 20];
@@ -476,14 +460,6 @@ export void test_io_fake_net_scripted_servers() {
     check_two_connections(&fake);
 }
 
-// The runner's io is real; adding a server scripts its network only, and its files stay real.
-export void test_io_real_io_with_a_scripted_network(io::Io *io) {
-    check_scripted_net(io);
-    check_two_connections(io);
-    io::Read real_file = io::files_read(&io->files, &io->arena, "hello.txt");
-    test::check(real_file.error.code == 0 || real_file.error.code == enoent);
-}
-
 // ---------------------------------------------------------------- children
 
 // Runs the loop until the op is done.
@@ -548,17 +524,17 @@ export void test_io_fake_child_output_input_and_exit() {
     test::check_equal(write.error.code, 0);
     test::check_equal(write.taken, 7);
     test::check(is(io::test_child_input(&fake, 0), "request"));
-    io::Op wait = {};
-    io::processes_wait_async(&fake.processes, &wait, first.process);
+    io::Op waiting = {};
+    io::processes_wait_async(&fake.processes, &waiting, first.process);
     test::check_equal(io::run(&fake, 0), 0); // alive
-    test::check(!wait.done);
+    test::check(!waiting.done);
     io::child_close_input(&first);
     test::check_equal(io::run(&fake, 0), 2);
     test::check(read.done);
     test::check(read.end);
-    test::check(wait.done);
-    test::check_equal(wait.exit_status, 7);
-    test::check_equal(wait.signal, 0);
+    test::check(waiting.done);
+    test::check_equal(waiting.exit_status, 7);
+    test::check_equal(waiting.signal, 0);
     io::child_write_async(&first, &write, test_io_bytes("late", 4));
     test::check_equal(io::run(&fake, 0), 1);
     test::check_equal(write.error.code, epipe);
@@ -583,15 +559,15 @@ export void test_io_fake_two_children_of_one_program_and_kill() {
     char buffer[32];
     test::check_equal(child_read(&fake, &second, buffer, sizeof buffer, 6), 6);
     test::check_equal(__builtin_memcmp(buffer, "second", 6), 0);
-    io::Op wait = {};
+    io::Op waiting = {};
     io::Op read = {};
-    io::processes_wait_async(&fake.processes, &wait, second.process);
+    io::processes_wait_async(&fake.processes, &waiting, second.process);
     io::child_read_async(&second, &read, test_io_buffer(buffer, sizeof buffer));
     test::check_equal(io::run(&fake, 0), 0);
     test::check_equal(io::child_kill(&second, sigkill).code, 0);
     test::check_equal(io::run(&fake, 0), 2);
-    test::check_equal(wait.signal, sigkill);
-    test::check_equal(wait.exit_status, 0);
+    test::check_equal(waiting.signal, sigkill);
+    test::check_equal(waiting.exit_status, 0);
     test::check(read.end);
     test::check_equal(io::child_kill(&second, sigkill).code, esrch);
     test::check(io::test_child_input(&fake, 3) == nullptr);

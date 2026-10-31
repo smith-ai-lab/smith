@@ -27,3 +27,7 @@ installed smith is always main's; nobody runs `smith build install`.
 
 **A red pull request** is its author's: read the failing job (`gh run view --log-failed`), fix it on the branch, push.
 A conflict with main is fixed by merging main into the branch, never by a rebase or a force-push.
+
+## Decisions
+
+- Never merge a broken build (owner, 2026-10-25: "We should just have the discipline to not merge broken builds"): every change is a pull request from its own branch; GitHub's hosted runners run the full check on it (`ci.yml`), and GitHub's merge queue merges it, squashed, only when the required check `ci` passes on it together with main and the entries ahead of it; nobody pushes to main, and there are no exceptions for known failures (owner, 2026-10-29: "they make a pr when ready, those are running on github runners, not the self hosted one, once the ci passes, we merge into main").

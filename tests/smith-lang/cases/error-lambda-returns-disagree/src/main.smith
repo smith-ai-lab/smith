@@ -1,0 +1,9 @@
+module main;
+
+i32 main() {
+    i32 (*pick)(i32) = [](i32 a) {
+        return a;
+        return 1.5;
+    };
+    return (i32)pick(1);
+}

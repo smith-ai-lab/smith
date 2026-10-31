@@ -1,0 +1,10 @@
+module main;
+
+import <stdio.h>;
+
+i32 main() {
+    i32 factor = 3;
+    i32 (*scale)(i32) = [](i32 a) -> i32 { return a * factor; };
+    c::printf("%d\n", scale(2));
+    return 0;
+}

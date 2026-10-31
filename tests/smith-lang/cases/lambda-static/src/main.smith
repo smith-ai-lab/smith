@@ -1,0 +1,23 @@
+module main;
+
+import <stdio.h>;
+
+static i32 (*const square)(i32) = [](i32 a) -> i32 { return a * a; };
+
+struct Op {
+    const char *name;
+    i32 (*call)(i32, i32);
+};
+
+static const struct Op ops[_] = {
+    {"plus", [](i32 a, i32 b) { return a + b; }},
+    {"minus", [](i32 a, i32 b) { return a - b; }},
+};
+
+i32 main() {
+    c::printf("%d\n", square(7));
+    for (i32 i = 0; i < 2; i++) {
+        c::printf("%s %d\n", ops[i].name, ops[i].call(9, 4));
+    }
+    return 0;
+}

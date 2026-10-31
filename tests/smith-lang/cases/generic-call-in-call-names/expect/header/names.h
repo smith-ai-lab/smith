@@ -11,16 +11,27 @@
 // smith-linked: sq
 // smith-hidden: sq
 // clang-format on
-#pragma once
+#ifndef SMITH_HEADER_names
 #include <stddef.h>
 #include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#ifdef SMITH_INSTANCES
-int32_t names_sq(int32_t x) __asm__("_names::sq");
-#endif
 #ifdef __cplusplus
 }
+#endif
+#define SMITH_HEADER_names
+#endif
+#ifdef SMITH_INSTANCES
+#ifndef SMITH_HEADER_names_INSTANCES
+#define SMITH_HEADER_names_INSTANCES
+#ifdef __cplusplus
+extern "C" {
+#endif
+int32_t names_sq(int32_t x) __asm__("_names::sq");
+#ifdef __cplusplus
+}
+#endif
+#endif
 #endif

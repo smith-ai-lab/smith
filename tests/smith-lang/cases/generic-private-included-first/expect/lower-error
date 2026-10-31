@@ -1,0 +1,1 @@
+src/main.smith:9:54: cannot tell the type of `2`, the argument of `twice`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

@@ -1,0 +1,1 @@
+src/main.smith:18:29: cannot tell what `main_triple`, the argument of `apply`, is: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); the parameter `f` is `constexpr auto` and takes the name of a function

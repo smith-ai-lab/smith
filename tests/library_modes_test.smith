@@ -8,8 +8,9 @@
 // library compiled alone under the warnings of a new project and naming no libc function.
 module library_modes_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 
@@ -28,10 +29,19 @@ static const Library text = {"lib/smith/text_test.smith", "smith/text_test.smith
 static const Library inflate = {"lib/smith/inflate_test.smith", "smith/inflate_test.smith",
                                 "smith::inflate_test::", "arena,random,inflate"};
 
+// The pieces as one text, in the current allocator: the test's memory, which is given back after the test.
+const char *joined(auto... pieces) {
+    usize length = format::length(pieces...);
+    char *memory = mem::alloc_array_raw(sizeof(char), length + 1, alignof(char)); // a generic's local has no type yet
+    (void)format::to(memory, length + 1, pieces...);
+    return memory;
+}
+
 // One project holds the tests of all three libraries and is built once in a mode (the libraries and the test library
-// are compiled once for the three, not once for each); the runner's filter picks the tests of one library.
-static scratch::Project units_project(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "library_units");
+// are compiled once for the three, not once for each); the runner's filter picks the tests of one library. The copies
+// give back what they allocate, so the project is made before the test's memory, which scratch::clean must not see.
+static scratch::Project units_project() {
+    scratch::Project p = scratch::make("p", "library_units");
     scratch::copy_tree(&p, json.source, json.path);
     scratch::copy_tree(&p, text.source, text.path);
     scratch::copy_tree(&p, inflate.source, inflate.path);
@@ -39,49 +49,46 @@ static scratch::Project units_project(io::Io *io) {
     return p;
 }
 
-static scratch::Project built_in_mode(io::Io *io, const char *mode) {
-    scratch::Project p = units_project(io);
-    scratch::Run built = scratch::build(&p, format::push(&io->arena, "-DMODE=", mode,
-                                                         " -DLIBS=arena,random,text,json,inflate -DTEST=", json.path,
-                                                         ",", text.path, ",", inflate.path)
-                                                .data);
-    scratch::expect_status(format::push(&io->arena, mode, ": the tests build").data, 0, &built);
-    return p;
+// The project built in a mode.
+static void build_in_mode(const scratch::Project *p, const char *mode) {
+    scratch::Run built =
+        scratch::build(p, joined("-DMODE=", mode, " -DLIBS=arena,random,text,json,inflate -DTEST=", json.path, ",",
+                                 text.path, ",", inflate.path));
+    scratch::expect_status(joined(mode, ": the tests build"), 0, &built);
 }
 
 // The runner's summary line, without its time: "N passed, 0 failed".
 static const char *summary(const scratch::Project *p, const char *command) {
-    return scratch::capture(p, format::push(&p->io->arena, command,
-                                            " 2>&1 | grep ' passed, ' | "
-                                            "sed 's/ in [0-9.]* s$//'")
-                                   .data);
+    return scratch::capture(p, joined(command, " 2>&1 | grep ' passed, ' | sed 's/ in [0-9.]* s$//'"));
 }
 
 // Every test of a library passes, in the workers and with a process per test.
 static void passes(const scratch::Project *p, const Library *library, const char *mode) {
-    io::Io *io = p->io;
-    const char *count =
-        scratch::capture(p, format::push(&io->arena, "grep -c '^export void test_' ", library->path).data);
-    const char *all = format::push(&io->arena, count, " passed, 0 failed").data;
-    const char *filter = format::push(&io->arena, " --test ", library->module).data;
-    scratch::expect_text(format::push(&io->arena, mode, " ", library->module, ": all ", count, " tests pass").data, all,
-                         summary(p, format::push(&io->arena, "env SMITH_JSON_SUITE= ./build/tests", filter).data));
-    scratch::expect_text(
-        format::push(&io->arena, mode, " ", library->module, ": all pass with a process per test").data, all,
-        summary(p, format::push(&io->arena, "env SMITH_JSON_SUITE= ./build/tests --isolate", filter).data));
+    const char *count = scratch::capture(p, joined("grep -c '^export void test_' ", library->path));
+    const char *all = joined(count, " passed, 0 failed");
+    const char *filter = joined(" --test ", library->module);
+    scratch::expect_text(joined(mode, " ", library->module, ": all ", count, " tests pass"), all,
+                         summary(p, joined("env SMITH_JSON_SUITE= ./build/tests", filter)));
+    scratch::expect_text(joined(mode, " ", library->module, ": all pass with a process per test"), all,
+                         summary(p, joined("env SMITH_JSON_SUITE= ./build/tests --isolate", filter)));
 }
 
 // One build in a mode and the tests of the three libraries on it.
-static scratch::Project all_pass_in_mode(io::Io *io, const char *mode) {
-    scratch::Project p = built_in_mode(io, mode);
-    passes(&p, &json, mode);
-    passes(&p, &text, mode);
-    passes(&p, &inflate, mode);
-    return p;
+static void all_pass_in_mode(const scratch::Project *p, const char *mode) {
+    build_in_mode(p, mode);
+    passes(p, &json, mode);
+    passes(p, &text, mode);
+    passes(p, &inflate, mode);
 }
 
-export void test_library_modes_ndebug(io::Io *io) {
-    all_pass_in_mode(io, "ndebug");
+export void test_library_modes_ndebug() {
+    scratch::Project p = units_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    all_pass_in_mode(&p, "ndebug");
 }
 
 // JSONTestSuite, pinned by the hash of its archive: the folder of its test_parsing, or "" when it cannot be fetched.
@@ -95,9 +102,7 @@ static const char *json_suite(const scratch::Project *p) {
                            "sha256:32ab2fb37cc26679dbd9164dbb7053bcef10134643d53cb0cef45de7680dcdcc"))
         return "";
     const char *folder = scratch::capture(p, "sed -n 's/^smith: .* is in //p' fetch.txt");
-    return fetched.status == 0 && scratch::exists(p, "fetch.txt")
-               ? format::push(&p->io->arena, folder, "/test_parsing").data
-               : "";
+    return fetched.status == 0 && scratch::exists(p, "fetch.txt") ? joined(folder, "/test_parsing") : "";
 }
 
 // What was done with the suite: the counts, and each implementation-defined case. Skipped with no network. Runs on the
@@ -106,9 +111,8 @@ static void json_conformance(const scratch::Project *p) {
     const char *suite = json_suite(p);
     if (suite[0] == '\0') return; // no network
     scratch::Run run =
-        scratch::sh(p, format::push(&p->io->arena, "env SMITH_JSON_SUITE=", suite,
-                                    " SMITH_JSON_LISTING=\"$PWD/listing\" ./build/tests --test json_conformance")
-                           .data);
+        scratch::sh(p, joined("env SMITH_JSON_SUITE=", suite,
+                              " SMITH_JSON_LISTING=\"$PWD/listing\" ./build/tests --test json_conformance"));
     scratch::expect_status("the conformance test runs", 0, &run);
     scratch::expect_text("suite: every y_ accepted, every n_ refused, every i_ as listed",
                          "y_: 95 of 95 accepted; n_: 188 of 188 refused; i_: 35 of 35 as listed",
@@ -117,8 +121,14 @@ static void json_conformance(const scratch::Project *p) {
 
 // The build in the fast mode: the tests of the three libraries, then on the same build the full size of text's sweep
 // (sixteen times denser) and JSONTestSuite.
-export void test_library_modes_fast(io::Io *io) {
-    scratch::Project p = all_pass_in_mode(io, "fast");
+export void test_library_modes_fast() {
+    scratch::Project p = units_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    all_pass_in_mode(&p, "fast");
     scratch::expect_text("full: the sweep of the float patterns, sixteen times denser", "1 passed, 0 failed",
                          summary(&p, "./build/tests --full --test f32_sweep"));
     json_conformance(&p);
@@ -127,26 +137,29 @@ export void test_library_modes_fast(io::Io *io) {
 // Fuzzing under AddressSanitizer and UBSan: many more keys for the damaged documents, the random bytes and the written
 // documents.
 static void fuzz(const scratch::Project *p, const char *name) {
-    scratch::expect_text(format::push(&p->io->arena, "fuzz: ", name, " on 5000 keys under ASan and UBSan").data,
-                         "1 passed, 0 failed",
-                         summary(p, format::push(&p->io->arena, "./build/tests --test ", name, " --seeds 5000").data));
+    scratch::expect_text(joined("fuzz: ", name, " on 5000 keys under ASan and UBSan"), "1 passed, 0 failed",
+                         summary(p, joined("./build/tests --test ", name, " --seeds 5000")));
 }
 
 // More trials for the damage, under the sanitizers: the heavy runs by hand are in the units runner's notes.
 static void damaged_inflate(const scratch::Project *p) {
     const char *seeds[5] = {"1", "2", "3", "4", "5"};
     for (usize i = 0; i < 5; i++) {
-        scratch::expect_text(format::push(&p->io->arena, "damaged input never misbehaves (--seed ", seeds[i], ")").data,
-                             "1 passed, 0 failed",
-                             summary(p, format::push(&p->io->arena, "./build/tests --seed ", seeds[i],
-                                                     " --test test_inflate_survives_corrupt_input")
-                                            .data));
+        scratch::expect_text(
+            joined("damaged input never misbehaves (--seed ", seeds[i], ")"), "1 passed, 0 failed",
+            summary(p, joined("./build/tests --seed ", seeds[i], " --test test_inflate_survives_corrupt_input")));
     }
 }
 
 // The build under the sanitizers: the three fuzzers of json and the damage to inflate's input.
-export void test_library_modes_asan_fuzz_json_and_damage_inflate(io::Io *io) {
-    scratch::Project p = built_in_mode(io, "asan");
+export void test_library_modes_asan_fuzz_json_and_damage_inflate() {
+    scratch::Project p = units_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_in_mode(&p, "asan");
     fuzz(&p, "json_damaged_documents_never_misbehave");
     fuzz(&p, "json_random_bytes_never_misbehave");
     fuzz(&p, "json_any_value_written");
@@ -156,8 +169,13 @@ export void test_library_modes_asan_fuzz_json_and_damage_inflate(io::Io *io) {
 // One header for C and for .smith: a project with smith_library(b, "text"), a C file that includes <smith/text.h> and
 // a .smith file that does `import smith::text;`. smith writes the header and the module's header step writes the same
 // bytes, so neither is "not a header smith wrote" and a second build has nothing to do.
-export void test_library_modes_text_c_and_smith_share_one_header(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "text_both");
+export void test_library_modes_text_c_and_smith_share_one_header() {
+    scratch::Project p = scratch::make("p", "text_both");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run built = scratch::build(&p, "");
     scratch::expect_status("both: C and .smith share the header, and the project builds", 0, &built);
     scratch::Run run = scratch::sh(&p, "./build/prog");
@@ -170,81 +188,89 @@ export void test_library_modes_text_c_and_smith_share_one_header(io::Io *io) {
 
 // A library alone: it compiles in C23 and C2y, and with the checks off, using no library function of libc (but the
 // compiler's own calls for a big struct).
-static void compiles_as(io::Io *io, const char *source, const char *standard) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+static void compiles_as(const char *source, const char *standard) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
     scratch::copy_tree(&p, "lib", "lib");
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run built = scratch::sh(
-        &p, format::push(&io->arena, "smith cc -std=", standard,
-                         " -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I \"$SMITH_REPO/.smith/include\" -c ",
-                         source, " -o library.o")
-                .data);
-    scratch::expect_status(format::push(&io->arena, "library: compiles as ", standard).data, 0, &built);
+        &p, joined("smith cc -std=", standard,
+                   " -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I \"$SMITH_REPO/.smith/include\" -c ", source,
+                   " -o library.o"));
+    scratch::expect_status(joined("library: compiles as ", standard), 0, &built);
 }
 
-static void names_no_libc_function(io::Io *io, const char *source, const char *allowed) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+static void names_no_libc_function(const char *source, const char *allowed) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
     scratch::copy_tree(&p, "lib", "lib");
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run built =
-        scratch::sh(&p, format::push(&io->arena,
-                                     "smith cc -std=gnu23 -O2 -DNDEBUG -ffreestanding -fno-stack-protector -I "
-                                     "\"$SMITH_REPO/.smith/include\" -c ",
-                                     source, " -o library.o")
-                            .data);
+        scratch::sh(&p, joined("smith cc -std=gnu23 -O2 -DNDEBUG -ffreestanding -fno-stack-protector -I "
+                               "\"$SMITH_REPO/.smith/include\" -c ",
+                               source, " -o library.o"));
     scratch::expect_status("the library compiles freestanding", 0, &built);
-    scratch::expect_text(
-        "library: names no libc function", "",
-        scratch::capture(&p,
-                         format::push(&io->arena, "nm -u library.o | awk '{print $NF}' | sed 's/^_//' | grep -v -x ",
-                                      allowed, " | sort | tr '\\n' ' '")
-                             .data));
+    scratch::expect_text("library: names no libc function", "",
+                         scratch::capture(&p, joined("nm -u library.o | awk '{print $NF}' | sed 's/^_//' | grep -v -x ",
+                                                     allowed, " | sort | tr '\\n' ' '")));
 }
 
-export void test_library_modes_json_compiles_as_c23(io::Io *io) {
-    compiles_as(io, "lib/json.c", "gnu23");
+export void test_library_modes_json_compiles_as_c23() {
+    compiles_as("lib/json.c", "gnu23");
 }
 
-export void test_library_modes_json_compiles_as_c2y(io::Io *io) {
-    compiles_as(io, "lib/json.c", "gnu2y");
+export void test_library_modes_json_compiles_as_c2y() {
+    compiles_as("lib/json.c", "gnu2y");
 }
 
 // smith's own libraries are not libc, and the compiler's calls for a big struct are not the program's.
-export void test_library_modes_json_names_no_libc_function(io::Io *io) {
-    names_no_libc_function(io, "lib/json.c", "-e memcpy -e memset -e bzero -e memmove -e 'smith_.*'");
+export void test_library_modes_json_names_no_libc_function() {
+    names_no_libc_function("lib/json.c", "-e memcpy -e memset -e bzero -e memmove -e 'smith_.*'");
 }
 
-export void test_library_modes_text_compiles_as_c23(io::Io *io) {
-    compiles_as(io, "lib/smith/text.smith", "gnu23");
+export void test_library_modes_text_compiles_as_c23() {
+    compiles_as("lib/smith/text.smith", "gnu23");
 }
 
-export void test_library_modes_text_compiles_as_c2y(io::Io *io) {
-    compiles_as(io, "lib/smith/text.smith", "gnu2y");
+export void test_library_modes_text_compiles_as_c2y() {
+    compiles_as("lib/smith/text.smith", "gnu2y");
 }
 
-export void test_library_modes_text_names_no_libc_function(io::Io *io) {
-    names_no_libc_function(io, "lib/smith/text.smith", "-e memcpy -e memset -e bzero -e memmove -e 'smith_.*'");
+export void test_library_modes_text_names_no_libc_function() {
+    names_no_libc_function("lib/smith/text.smith", "-e memcpy -e memset -e bzero -e memmove -e 'smith_.*'");
 }
 
 // lib/http.c compiled under the warnings of a new project (its behavior is lib/http_test.smith), from tests/http.sh.
-static void http_compiles(io::Io *io, const char *standard, const char *extra, const char *name) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+static void http_compiles(const char *standard, const char *extra, const char *name) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
     scratch::copy_tree(&p, "lib", "lib");
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run built = scratch::sh(
-        &p, format::push(&io->arena, "smith cc -std=", standard,
-                         " -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
-                         "-Wstrict-prototypes -Wvla -Werror ",
-                         extra, " -I \"$SMITH_REPO/.smith/include\" -c lib/http.c -o http.o")
-                .data);
+        &p, joined("smith cc -std=", standard,
+                   " -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
+                   "-Wstrict-prototypes -Wvla -Werror ",
+                   extra, " -I \"$SMITH_REPO/.smith/include\" -c lib/http.c -o http.o"));
     scratch::expect_status(name, 0, &built);
 }
 
-export void test_library_modes_http_compiles_as_c23(io::Io *io) {
-    http_compiles(io, "gnu23", "", "library: compiles as -std=gnu23 with the new project's warnings");
+export void test_library_modes_http_compiles_as_c23() {
+    http_compiles("gnu23", "", "library: compiles as -std=gnu23 with the new project's warnings");
 }
 
-export void test_library_modes_http_compiles_as_c2y(io::Io *io) {
-    http_compiles(io, "gnu2y", "", "library: compiles as -std=gnu2y with the new project's warnings");
+export void test_library_modes_http_compiles_as_c2y() {
+    http_compiles("gnu2y", "", "library: compiles as -std=gnu2y with the new project's warnings");
 }
 
-export void test_library_modes_http_compiles_with_ndebug(io::Io *io) {
-    http_compiles(io, "gnu23", "-O2 -DNDEBUG", "library: compiles with NDEBUG and the same warnings");
+export void test_library_modes_http_compiles_with_ndebug() {
+    http_compiles("gnu23", "-O2 -DNDEBUG", "library: compiles with NDEBUG and the same warnings");
 }

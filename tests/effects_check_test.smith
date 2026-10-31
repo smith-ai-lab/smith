@@ -8,16 +8,18 @@
 // tests/build_fixtures/effects_check/expected/*.txt. The editor's case is in tests/lsp_test.smith.
 module effects_check_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import <string.h>;
 import scratch;
 
 constexpr char only_effects[_] = "Checks: \"-*,smith-effects\"\nWarningsAsErrors: \"*\"\n";
 
-static scratch::Project project(io::Io *io, const char *clang_tidy) {
-    scratch::Project p = scratch::project(io, "proj", "effects_check");
+// The fixture with a .clang-tidy of its own; the caller cleans it.
+static scratch::Project project(const char *clang_tidy) {
+    scratch::Project p = scratch::make("proj", "effects_check");
     scratch::write(&p, ".clang-tidy", clang_tidy);
     return p;
 }
@@ -26,9 +28,10 @@ static typeof(const char[:]) slice_of(const char *text) {
     return text[0:c::strlen(text)];
 }
 
-// The findings of `smith lint --quiet files -- flags`, one line each, with the path of the project left off.
+// The findings of `smith lint --quiet files -- flags`, one line each, with the path of the project left off, in the
+// test's arena.
 static const char *findings(const scratch::Project *p, const char *files, const char *extra) {
-    const char *command = format::push(&p->io->arena, "smith lint --quiet ", files, " -- ", extra,
+    const char *command = format::push("smith lint --quiet ", files, " -- ", extra,
                                        " 2>&1 | grep -E '^/.*:[0-9]+:[0-9]+: (error|warning):' | sed -e "
                                        "'s|^.*/proj/||' -e 's/ \\[smith-effects,-warnings-as-errors\\]$//'")
                               .data;
@@ -38,83 +41,101 @@ static const char *findings(const scratch::Project *p, const char *files, const 
 constexpr char flags[_] = "-I\"$SMITH_REPO/.smith/include\" -I. -std=gnu2y";
 
 // A case whose findings are a golden file.
-static void golden(io::Io *io, const char *name, const char *files, const char *extra) {
-    scratch::Project p = project(io, only_effects);
+static void golden(const char *name, const char *files, const char *extra) {
+    scratch::Project p = project(only_effects);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     const char *found = findings(&p, files, extra);
-    test::golden(io,
-                 slice_of(format::push(&io->arena, "tests/build_fixtures/effects_check/expected/", name, ".txt").data),
-                 slice_of(format::push(&io->arena, found, "\n").data));
+    test::golden(slice_of(format::push("tests/build_fixtures/effects_check/expected/", name, ".txt").data),
+                 slice_of(format::push(found, "\n").data));
 }
 
 // --- rule 1: a raw effect outside a capability's module; rule 2: failure is not one ---
 
-export void test_effects_a_raw_call_outside_a_capability_is_reported_naming_the_capability_to_take(io::Io *io) {
-    golden(io, "raw", "raw.c", flags);
+export void test_effects_a_raw_call_outside_a_capability_is_reported_naming_the_capability_to_take() {
+    golden("raw", "raw.c", flags);
 }
 
-export void test_effects_pure_calls_and_the_failure_calls_are_allowed(io::Io *io) {
+export void test_effects_pure_calls_and_the_failure_calls_are_allowed() {
     // string.h, math.h, snprintf, strto*, qsort, sscanf, builtins; assert, abort, __builtin_trap, __builtin_unreachable
-    scratch::Project p = project(io, only_effects);
+    scratch::Project p = project(only_effects);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::expect_text("effects: no finding in the pure and failure functions", "0",
-                         scratch::capture(&p, format::push(&io->arena, "smith lint --quiet raw.c -- ", flags,
+                         scratch::capture(&p, format::push("smith lint --quiet raw.c -- ", flags,
                                                            " 2>&1 | grep -c -e 'raw.c:\\(1[7-9]\\|[2-4][0-9]\\):'")
                                                   .data));
 }
 
 // --- rule 3 and 4: a capability's module ---
 
-export void test_effects_a_capability_modules_helpers_may_make_raw_calls_but_leaking_exports_are_reported(io::Io *io) {
-    golden(io, "cap", "lib/cap.c", flags);
+export void test_effects_a_capability_modules_helpers_may_make_raw_calls_but_leaking_exports_are_reported() {
+    golden("cap", "lib/cap.c", flags);
 }
 
-export void test_effects_a_file_that_merely_uses_the_capability_is_not_its_implementation(io::Io *io) {
-    golden(io, "cap_user", "lib/cap_user.c", flags);
+export void test_effects_a_file_that_merely_uses_the_capability_is_not_its_implementation() {
+    golden("cap_user", "lib/cap_user.c", flags);
 }
 
 // the pairing is io.h with io.c: lib/io.c beside an include/ folder is the implementation too
-export void test_effects_src_dev_c_beside_include_proj_dev_h_is_the_implementation_of_dev(io::Io *io) {
-    scratch::Project p = project(io, only_effects);
+export void test_effects_src_dev_c_beside_include_proj_dev_h_is_the_implementation_of_dev() {
+    scratch::Project p = project(only_effects);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::expect_text("effects: src/dev.c beside include/proj/dev.h is the implementation of Dev", "",
                          findings(&p, "src/dev.c", "-I\"$SMITH_REPO/.smith/include\" -I. -std=gnu2y -Iinclude"));
 }
 
 // --- rule 5: a main-only constructor ---
 
-export void test_effects_smith_io_make_is_allowed_in_main_and_reported_elsewhere(io::Io *io) {
-    golden(io, "made", "made.c", flags);
+export void test_effects_smith_io_make_is_allowed_in_main_and_reported_elsewhere() {
+    golden("made", "made.c", flags);
 }
 
 // --- rule 6: no capability in static storage ---
 
-export void test_effects_a_capability_in_static_storage_is_reported(io::Io *io) {
-    golden(io, "stored", "stored.c", flags);
+export void test_effects_a_capability_in_static_storage_is_reported() {
+    golden("stored", "stored.c", flags);
 }
 
 // --- Objective-C: a message to a system framework's class or object ---
 
-export void test_effects_macos_an_objective_c_message_to_a_framework_class_is_reported(io::Io *io) {
-    golden(io, "objc", "objc.m", "-fobjc-arc");
+export void test_effects_macos_an_objective_c_message_to_a_framework_class_is_reported() {
+    golden("objc", "objc.m", "-fobjc-arc");
 }
 
 // --- C++: constructors, destructors, operators and conversions have no identifier for a name ---
 
-export void test_effects_cxx_constructors_and_operators_do_not_crash_and_are_judged(io::Io *io) {
-    golden(io, "cxx", "cxx.cpp", "-std=c++20");
+export void test_effects_cxx_constructors_and_operators_do_not_crash_and_are_judged() {
+    golden("cxx", "cxx.cpp", "-std=c++20");
 }
 
 // --- .smith: names as written ---
 
-export void test_effects_smith_files_report_names_as_written(io::Io *io) {
-    golden(io, "smith", "hw/dev.smith hw_main.smith", flags);
+export void test_effects_smith_files_report_names_as_written() {
+    golden("smith", "hw/dev.smith hw_main.smith", flags);
 }
 
-export void test_effects_smith_the_lowerings_names_never_appear_and_an_instance_is_its_generics(io::Io *io) {
-    scratch::Project p = project(io, only_effects);
-    scratch::Run run = scratch::sh(
-        &p, format::push(&io->arena, "smith lint --quiet hw/dev.smith hw_main.smith -- ", flags, " 2>&1").data);
+export void test_effects_smith_the_lowerings_names_never_appear_and_an_instance_is_its_generics() {
+    scratch::Project p = project(only_effects);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run =
+        scratch::sh(&p, format::push("smith lint --quiet hw/dev.smith hw_main.smith -- ", flags, " 2>&1").data);
     scratch::expect_text(".smith: the lowering's names never appear", "0",
-                         scratch::capture(&p, format::push(&io->arena,
-                                                           "smith lint --quiet hw/dev.smith hw_main.smith "
+                         scratch::capture(&p, format::push("smith lint --quiet hw/dev.smith hw_main.smith "
                                                            "-- ",
                                                            flags, " 2>&1 | grep -c 'hw_dev_'")
                                                   .data));
@@ -125,19 +146,29 @@ export void test_effects_smith_the_lowerings_names_never_appear_and_an_instance_
 
 // --- the option CFiles ---
 
-export void test_effects_cfiles_false_a_c_file_is_not_checked_and_a_smith_file_is(io::Io *io) {
-    scratch::Project p = project(io, "Checks: \"-*,smith-effects\"\nWarningsAsErrors: \"*\"\nCheckOptions:\n  "
-                                     "smith-effects.CFiles: false\n");
+export void test_effects_cfiles_false_a_c_file_is_not_checked_and_a_smith_file_is() {
+    scratch::Project p = project("Checks: \"-*,smith-effects\"\nWarningsAsErrors: \"*\"\nCheckOptions:\n  "
+                                 "smith-effects.CFiles: false\n");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     const char *found = findings(&p, "raw.c made.c hw_main.smith", flags);
-    test::golden(io, slice_of("tests/build_fixtures/effects_check/expected/off.txt"),
-                 slice_of(format::push(&io->arena, found, "\n").data));
+    test::golden(slice_of("tests/build_fixtures/effects_check/expected/off.txt"),
+                 slice_of(format::push(found, "\n").data));
 }
 
-export void test_effects_cfiles_true_the_c_file_is_checked(io::Io *io) {
-    scratch::Project p = project(io, "Checks: \"-*,smith-effects\"\nWarningsAsErrors: \"*\"\nCheckOptions:\n  "
-                                     "smith-effects.CFiles: true\n");
+export void test_effects_cfiles_true_the_c_file_is_checked() {
+    scratch::Project p = project("Checks: \"-*,smith-effects\"\nWarningsAsErrors: \"*\"\nCheckOptions:\n  "
+                                 "smith-effects.CFiles: true\n");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::expect_text("effects: CFiles true: the .c file is checked", "6",
-                         scratch::capture(&p, format::push(&io->arena, "smith lint --quiet raw.c -- ", flags,
+                         scratch::capture(&p, format::push("smith lint --quiet raw.c -- ", flags,
                                                            " 2>&1 | grep -E '^/.*:[0-9]+:[0-9]+: (error|warning):' | "
                                                            "grep -c 'raw.c'")
                                                   .data));
@@ -145,16 +176,27 @@ export void test_effects_cfiles_true_the_c_file_is_checked(io::Io *io) {
 
 // --- smith's default .clang-tidy has the check, and --dump-config shows it ---
 
-export void test_effects_smith_lint_dump_config_shows_smith_effects_among_the_checks(io::Io *io) {
-    scratch::Project p = scratch::project(io, "proj", "effects_check");
+export void test_effects_smith_lint_dump_config_shows_smith_effects_among_the_checks() {
+    scratch::Project p = scratch::make("proj", "effects_check");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::expect_text("effects: smith lint --dump-config shows smith-effects among the checks", "1",
                          scratch::capture(&p, "smith lint --dump-config 2>/dev/null | grep -c ', smith-effects'"));
 }
 
-export void test_effects_with_no_clang_tidy_the_default_checks_report_a_raw_call(io::Io *io) {
-    scratch::Project p = scratch::project(io, "proj", "effects_check");
-    scratch::expect_text("effects: with no .clang-tidy the default checks report a raw call", "1",
-                         scratch::capture(&p, format::push(&io->arena, "smith lint --quiet raw.c -- ", flags,
-                                                           " 2>&1 | grep -c 'fopen. touches the world'")
-                                                  .data));
+export void test_effects_with_no_clang_tidy_the_default_checks_report_a_raw_call() {
+    scratch::Project p = scratch::make("proj", "effects_check");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::expect_text(
+        "effects: with no .clang-tidy the default checks report a raw call", "1",
+        scratch::capture(
+            &p,
+            format::push("smith lint --quiet raw.c -- ", flags, " 2>&1 | grep -c 'fopen. touches the world'").data));
 }

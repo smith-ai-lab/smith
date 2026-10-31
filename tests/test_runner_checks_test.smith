@@ -3,21 +3,30 @@
 // with --isolate, which must give the same result. Fixtures: tests/build_fixtures/runner_*.
 module test_runner_checks_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import runner;
 import scratch;
 
-static scratch::Project checks_project(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_checks");
-    scratch::Run built = runner::build(&p, "");
-    scratch::expect_status("build: the runner builds", 0, &built);
-    return p;
+static scratch::Project checks_project() {
+    return runner::project("runner_base", "runner_checks");
 }
 
-export void test_runner_checks_the_scan_writes_the_table_and_the_list_is_in_file_order(io::Io *io) {
-    scratch::Project p = checks_project(io);
+static void build_checks(const scratch::Project *p) {
+    scratch::Run built = runner::build(p, "");
+    scratch::expect_status("build: the runner builds", 0, &built);
+}
+
+export void test_runner_checks_the_scan_writes_the_table_and_the_list_is_in_file_order() {
+    scratch::Project p = checks_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_checks(&p);
     scratch::expect_text("build: the scan writes the prototypes", "yes",
                          scratch::exists(&p, "build/tests_list.h") ? "yes" : "no");
     scratch::expect_text("build: ... and the table", "yes", scratch::exists(&p, "build/tests_list.c") ? "yes" : "no");
@@ -26,46 +35,63 @@ export void test_runner_checks_the_scan_writes_the_table_and_the_list_is_in_file
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run list = runner::tests(&p, iso, "--list");
-        scratch::expect_text(runner::label(io, iso, "list: names, in file order"),
+        scratch::expect_text(runner::label(iso, "list: names, in file order"),
                              "passing\ncompare\ncondition\nunsigned\nfloat_bits\nchar\nbool\npointer\nnear\nnear_nan\n"
                              "stops\nc_passing\nc_equal\nc_near\nc_pointer",
                              list.out);
     }
 }
 
-export void test_runner_checks_a_passing_test_prints_its_line_and_the_summary_only(io::Io *io) {
-    scratch::Project p = checks_project(io);
+export void test_runner_checks_a_passing_test_prints_its_line_and_the_summary_only() {
+    scratch::Project p = checks_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_checks(&p);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
-        scratch::expect_text(runner::label(io, iso, "pass: the line and the summary, nothing else"),
+        scratch::expect_text(runner::label(iso, "pass: the line and the summary, nothing else"),
                              "PASS passing\n\n1 passed, 0 failed",
                              runner::plain(&p, iso, "--test passing --verbose").out);
-        scratch::expect_text(runner::label(io, iso, "pass: without --verbose only the summary"), "1 passed, 0 failed",
+        scratch::expect_text(runner::label(iso, "pass: without --verbose only the summary"), "1 passed, 0 failed",
                              runner::plain(&p, iso, "--test passing").out);
-        scratch::expect_text(runner::label(io, iso, "pass: the C names pass too, and hide the output"),
+        scratch::expect_text(runner::label(iso, "pass: the C names pass too, and hide the output"),
                              "PASS c_passing\n\n1 passed, 0 failed",
                              runner::plain(&p, iso, "--test c_passing --verbose").out);
     }
 }
 
-export void test_runner_checks_the_runner_alone_prints_a_raw_trace_with_a_and_b(io::Io *io) {
-    scratch::Project p = checks_project(io);
+export void test_runner_checks_the_runner_alone_prints_a_raw_trace_with_a_and_b() {
+    scratch::Project p = checks_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_checks(&p);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "--test compare");
-        runner::expect_has(io, iso, "raw: a failed check prints a trace block", &run,
-                           "  smith-trace begin check failed");
-        runner::expect_has(io, iso, "raw: ... with frames", &run, "  smith-trace frame 0x");
-        runner::expect_has(io, iso, "raw: ... and the image's UUID", &run, "  smith-trace image ");
-        runner::expect_has(io, iso, "raw: ... both values with their type, named a and b", &run,
+        runner::expect_has(iso, "raw: a failed check prints a trace block", &run, "  smith-trace begin check failed");
+        runner::expect_has(iso, "raw: ... with frames", &run, "  smith-trace frame 0x");
+        runner::expect_has(iso, "raw: ... and the image's UUID", &run, "  smith-trace image ");
+        runner::expect_has(iso, "raw: ... both values with their type, named a and b", &run,
                            "    a = 7   (i64)\n    b = 6   (i64)");
-        runner::expect_has(io, iso, "raw: ... then the note and the test's output", &run,
+        runner::expect_has(iso, "raw: ... then the note and the test's output", &run,
                            "    note: loop 3\n    the test's output");
     }
 }
 
-export void test_runner_checks_a_failed_ordering_check_names_the_line_and_its_values(io::Io *io) {
-    scratch::Project p = checks_project(io);
+export void test_runner_checks_a_failed_ordering_check_names_the_line_and_its_values() {
+    scratch::Project p = checks_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_checks(&p);
     if (!runner::can_symbolize(&p)) return;
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
@@ -80,8 +106,14 @@ export void test_runner_checks_a_failed_ordering_check_names_the_line_and_its_va
     }
 }
 
-export void test_runner_checks_each_type_prints_the_way_its_kind_does(io::Io *io) {
-    scratch::Project p = checks_project(io);
+export void test_runner_checks_each_type_prints_the_way_its_kind_does() {
+    scratch::Project p = checks_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_checks(&p);
     if (!runner::can_symbolize(&p)) return;
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
@@ -94,34 +126,43 @@ export void test_runner_checks_each_type_prints_the_way_its_kind_does(io::Io *io
         runner::expect_failure_block(&p, iso, "types: a bool prints true and false", "bool", "tests/test_checks.smith",
                                      "test::check_equal(flag, false);", "flag = true, false   (bool)", "");
         const char *traced = runner::symbolized(&p, iso, "--test pointer");
-        scratch::expect_contains(runner::label(io, iso, "types: a pointer prints as an address"), traced,
-                                 "pointer = 0x");
-        scratch::expect_contains(runner::label(io, iso, "types: ... and nullptr as nullptr"), traced,
-                                 ", nullptr   (ptr)");
+        scratch::expect_contains(runner::label(iso, "types: a pointer prints as an address"), traced, "pointer = 0x");
+        scratch::expect_contains(runner::label(iso, "types: ... and nullptr as nullptr"), traced, ", nullptr   (ptr)");
     }
 }
 
-export void test_runner_checks_check_near_shows_the_values_the_tolerance_and_the_distance(io::Io *io) {
-    scratch::Project p = checks_project(io);
+export void test_runner_checks_check_near_shows_the_values_the_tolerance_and_the_distance() {
+    scratch::Project p = checks_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_checks(&p);
     if (!runner::can_symbolize(&p)) return;
     usize line = runner::line_of(&p, "tests/test_checks.smith", "test::check_near(low, high, tolerance);");
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         const char *traced = runner::symbolized(&p, iso, "--test near");
-        scratch::expect_contains(runner::label(io, iso, "near: the failure names the line"), traced,
-                                 format::push(&io->arena, "  check failed at tests/test_checks.smith:", line).data);
-        scratch::expect_contains(runner::label(io, iso, "near: ... shows the first value"), traced,
-                                 "= 1 [0x1p+0]   (f64)");
-        scratch::expect_contains(runner::label(io, iso, "near: ... the second"), traced, "= 1.5 [0x1.8p+0]   (f64)");
-        scratch::expect_contains(runner::label(io, iso, "near: ... the tolerance"), traced,
+        scratch::expect_contains(runner::label(iso, "near: the failure names the line"), traced,
+                                 format::push("  check failed at tests/test_checks.smith:", line).data);
+        scratch::expect_contains(runner::label(iso, "near: ... shows the first value"), traced, "= 1 [0x1p+0]   (f64)");
+        scratch::expect_contains(runner::label(iso, "near: ... the second"), traced, "= 1.5 [0x1.8p+0]   (f64)");
+        scratch::expect_contains(runner::label(iso, "near: ... the tolerance"), traced,
                                  "= 0.1 [0x1.999999999999ap-4]   (f64)");
-        scratch::expect_contains(runner::label(io, iso, "near: ... and the distance"), traced, "distance");
-        scratch::expect_contains(runner::label(io, iso, "near: ... which is 0.5"), traced, "= 0.5 [0x1p-1]   (f64)");
+        scratch::expect_contains(runner::label(iso, "near: ... and the distance"), traced, "distance");
+        scratch::expect_contains(runner::label(iso, "near: ... which is 0.5"), traced, "= 0.5 [0x1p-1]   (f64)");
     }
 }
 
-export void test_runner_checks_the_c_checks_print_the_same_block_named_by_their_text(io::Io *io) {
-    scratch::Project p = checks_project(io);
+export void test_runner_checks_the_c_checks_print_the_same_block_named_by_their_text() {
+    scratch::Project p = checks_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_checks(&p);
     if (!runner::can_symbolize(&p)) return;
     usize near_line = runner::line_of(&p, "tests/test_checks_c.c", "smith_check_near_f64(1.0, 1.5, 0.1);");
     for (usize mode = 0; mode < 2; mode++) {
@@ -130,67 +171,86 @@ export void test_runner_checks_the_c_checks_print_the_same_block_named_by_their_
                                      "c_equal", "tests/test_checks_c.c", "smith_check_equal_i64(x, 6);",
                                      "x = 7, 6   (i64)", "");
         const char *traced = runner::symbolized(&p, iso, "--test c_near");
-        scratch::expect_contains(runner::label(io, iso, "c: smith_check_near_f64 names its line"), traced,
-                                 format::push(&io->arena, "  check failed at tests/test_checks_c.c:", near_line).data);
-        scratch::expect_contains(runner::label(io, iso, "c: ... and the distance"), traced, "= 0.5 [0x1p-1]   (f64)");
+        scratch::expect_contains(runner::label(iso, "c: smith_check_near_f64 names its line"), traced,
+                                 format::push("  check failed at tests/test_checks_c.c:", near_line).data);
+        scratch::expect_contains(runner::label(iso, "c: ... and the distance"), traced, "= 0.5 [0x1p-1]   (f64)");
     }
 }
 
-export void test_runner_checks_a_nan_fails_and_a_failed_check_ends_the_test(io::Io *io) {
-    scratch::Project p = checks_project(io);
+export void test_runner_checks_a_nan_fails_and_a_failed_check_ends_the_test() {
+    scratch::Project p = checks_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_checks(&p);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run nan = runner::tests(&p, iso, "--test near_nan");
-        runner::expect_has(io, iso, "near: a NaN fails", &nan, "FAIL near_nan");
-        runner::expect_has(io, iso, "near: ... and prints the NaN", &nan, "= nan");
+        runner::expect_has(iso, "near: a NaN fails", &nan, "FAIL near_nan");
+        runner::expect_has(iso, "near: ... and prints the NaN", &nan, "= nan");
         scratch::Run stops = runner::tests(&p, iso, "--test stops");
-        runner::expect_lacks(io, iso, "stop: a failed check ends the test", &stops, "never printed");
+        runner::expect_lacks(iso, "stop: a failed check ends the test", &stops, "never printed");
     }
 }
 
 // Section 4a: the checks as generic functions.
-static scratch::Project api_project(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_api");
-    scratch::Run built = runner::build(&p, "");
-    scratch::expect_status("api: the runner builds", 0, &built);
-    return p;
+static scratch::Project api_project() {
+    return runner::project("runner_base", "runner_api");
 }
 
-export void test_runner_checks_the_api_tests_are_found_and_the_passing_ones_pass(io::Io *io) {
-    scratch::Project p = api_project(io);
+static void build_api(const scratch::Project *p) {
+    scratch::Run built = runner::build(p, "");
+    scratch::expect_status("api: the runner builds", 0, &built);
+}
+
+export void test_runner_checks_the_api_tests_are_found_and_the_passing_ones_pass() {
+    scratch::Project p = api_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_api(&p);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run list = runner::tests(&p, iso, "--list");
         scratch::expect_text(
-            runner::label(io, iso, "api: the tests are found"),
+            runner::label(iso, "api: the tests are found"),
             "ordering_passes\nlt_fails\nle_fails\ngt_fails\nge_fails\nne_fails\nnan_lt\nnan_le\nnan_gt\nnan_ge\n"
             "nan_eq\nnan_ne_passes\nnear_generic_passes\nnear_f32_fails\nnear_infinity_fails\nsame_bits_passes\n"
             "same_bits_zero_fails\nsame_bits_f32_fails\npointer_passes\npointer_null_fails\npointer_not_null_fails\n"
             "typed_passes\nexpressions_pass\nmemory_passes\nmemory_stops",
             list.out);
         scratch::Run run = runner::tests(&p, iso, "--verbose --test _pass");
-        runner::expect_has(io, iso, "api: the ordering checks pass on ordered values of every type", &run,
+        runner::expect_has(iso, "api: the ordering checks pass on ordered values of every type", &run,
                            "PASS ordering_passes");
-        runner::expect_has(io, iso, "api: ... not_equal passes on a NaN, which equals nothing", &run,
-                           "PASS nan_ne_passes");
-        runner::expect_has(io, iso, "api: ... near passes for f32 and f64 and for equal infinities", &run,
+        runner::expect_has(iso, "api: ... not_equal passes on a NaN, which equals nothing", &run, "PASS nan_ne_passes");
+        runner::expect_has(iso, "api: ... near passes for f32 and f64 and for equal infinities", &run,
                            "PASS near_generic_passes");
-        runner::expect_has(io, iso, "api: ... same_bits passes for a NaN and -0 against itself", &run,
+        runner::expect_has(iso, "api: ... same_bits passes for a NaN and -0 against itself", &run,
                            "PASS same_bits_passes");
-        runner::expect_has(io, iso, "api: ... a pointer is checked against nullptr and its own address", &run,
+        runner::expect_has(iso, "api: ... a pointer is checked against nullptr and its own address", &run,
                            "PASS pointer_passes");
-        runner::expect_has(io, iso, "api: ... a cast on the first argument gives the type", &run, "PASS typed_passes");
-        runner::expect_has(io, iso, "api: ... arguments may be expressions", &run, "PASS expressions_pass");
-        runner::expect_has(io, iso, "api: ... test::memory gives a typed arena", &run, "PASS memory_passes");
-        runner::expect_has(io, iso, "api: ... and none of them failed", &run, "8 passed, 0 failed");
+        runner::expect_has(iso, "api: ... a cast on the first argument gives the type", &run, "PASS typed_passes");
+        runner::expect_has(iso, "api: ... arguments may be expressions", &run, "PASS expressions_pass");
+        runner::expect_has(iso, "api: ... test::memory gives a typed arena", &run, "PASS memory_passes");
+        runner::expect_has(iso, "api: ... and none of them failed", &run, "8 passed, 0 failed");
         scratch::Run stops = runner::tests(&p, iso, "--verbose --test memory_stops");
-        runner::expect_has(io, iso, "api: the arena of test::memory stops on a push past its capacity", &stops,
+        runner::expect_has(iso, "api: the arena of test::memory stops on a push past its capacity", &stops,
                            "PASS memory_stops");
     }
 }
 
-export void test_runner_checks_the_ordering_checks_fail_with_the_values_and_their_types(io::Io *io) {
-    scratch::Project p = api_project(io);
+export void test_runner_checks_the_ordering_checks_fail_with_the_values_and_their_types() {
+    scratch::Project p = api_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_api(&p);
     if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
     for (usize mode = 0; mode < 2; mode++) {
@@ -208,8 +268,14 @@ export void test_runner_checks_the_ordering_checks_fail_with_the_values_and_thei
     }
 }
 
-export void test_runner_checks_a_nan_is_unordered_so_every_comparison_but_not_equal_fails(io::Io *io) {
-    scratch::Project p = api_project(io);
+export void test_runner_checks_a_nan_is_unordered_so_every_comparison_but_not_equal_fails() {
+    scratch::Project p = api_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_api(&p);
     if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
     for (usize mode = 0; mode < 2; mode++) {
@@ -232,8 +298,14 @@ export void test_runner_checks_a_nan_is_unordered_so_every_comparison_but_not_eq
     }
 }
 
-export void test_runner_checks_same_bits_tells_zero_from_minus_zero_and_shows_hex(io::Io *io) {
-    scratch::Project p = api_project(io);
+export void test_runner_checks_same_bits_tells_zero_from_minus_zero_and_shows_hex() {
+    scratch::Project p = api_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_api(&p);
     if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
     for (usize mode = 0; mode < 2; mode++) {
@@ -247,8 +319,14 @@ export void test_runner_checks_same_bits_tells_zero_from_minus_zero_and_shows_he
     }
 }
 
-export void test_runner_checks_check_near_for_f32_and_infinity_and_pointers_report_their_values(io::Io *io) {
-    scratch::Project p = api_project(io);
+export void test_runner_checks_check_near_for_f32_and_infinity_and_pointers_report_their_values() {
+    scratch::Project p = api_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_api(&p);
     if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
     for (usize mode = 0; mode < 2; mode++) {
@@ -261,22 +339,27 @@ export void test_runner_checks_check_near_for_f32_and_infinity_and_pointers_repo
                                      "           distance = 0.5 [0x1p-1]   (f32)",
                                      "");
         const char *infinity = runner::symbolized(&p, iso, "--test near_infinity_fails");
-        scratch::expect_contains(runner::label(io, iso, "api: check_near fails on an infinity against a finite value"),
+        scratch::expect_contains(runner::label(iso, "api: check_near fails on an infinity against a finite value"),
                                  infinity, "check failed at tests/test_api.smith:");
-        scratch::expect_contains(runner::label(io, iso, "api: ... and the distance is inf"), infinity, "= inf   (f64)");
+        scratch::expect_contains(runner::label(iso, "api: ... and the distance is inf"), infinity, "= inf   (f64)");
         const char *pointer = runner::symbolized(&p, iso, "--test pointer_null_fails");
         scratch::expect_contains(
-            runner::label(io, iso, "api: a non-null pointer against nullptr prints its address and nullptr"), pointer,
+            runner::label(iso, "api: a non-null pointer against nullptr prints its address and nullptr"), pointer,
             "some = 0x");
-        scratch::expect_contains(runner::label(io, iso, "api: ... and the type"), pointer, ", nullptr   (ptr)");
+        scratch::expect_contains(runner::label(iso, "api: ... and the type"), pointer, ", nullptr   (ptr)");
         runner::expect_failure_block(&p, iso, "api: a null pointer fails check_not_equal against nullptr",
                                      "pointer_not_null_fails", file, "test::check_not_equal(none, nullptr);",
                                      "none = nullptr, nullptr   (ptr)", "");
     }
 }
 
-export void test_runner_checks_a_second_argument_that_loses_the_type_is_a_compile_error(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_conflict");
+export void test_runner_checks_a_second_argument_that_loses_the_type_is_a_compile_error() {
+    scratch::Project p = runner::project("runner_base", "runner_conflict");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run built = runner::build(&p, "");
     scratch::expect_status("conflict: two types in one check fail to build", 1, &built);
     scratch::expect_contains("conflict: ... naming the type and the cast", built.out,
@@ -284,41 +367,55 @@ export void test_runner_checks_a_second_argument_that_loses_the_type_is_a_compil
 }
 
 // Section 5b and 5c.
-export void test_runner_checks_a_struct_is_compared_field_by_field(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_structs");
+export void test_runner_checks_a_struct_is_compared_field_by_field() {
+    scratch::Project p = runner::project("runner_base", "runner_structs");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run built = runner::build(&p, "");
     scratch::expect_status("struct: the runner builds", 0, &built);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "");
-        runner::expect_has(io, iso, "struct: equal structs pass, the other three fail", &run, "1 passed, 3 failed");
-        runner::expect_has(io, iso, "struct: a nested field is named by its path", &run,
+        runner::expect_has(iso, "struct: equal structs pass, the other three fail", &run, "1 passed, 3 failed");
+        runner::expect_has(iso, "struct: a nested field is named by its path", &run,
                            "a.pair.b = 2.5 [0x1.4p+1]   (f32)");
-        runner::expect_has(io, iso, "struct: ... and the other struct's value", &run,
-                           "b.pair.b = 3.5 [0x1.cp+1]   (f32)");
-        runner::expect_has(io, iso, "struct: an array element is named by its index", &run, "a.values[2] = 3   (i32)");
-        runner::expect_has(io, iso, "struct: a bit-field is compared by its value", &run, "b.flags = 2   (i32)");
+        runner::expect_has(iso, "struct: ... and the other struct's value", &run, "b.pair.b = 3.5 [0x1.cp+1]   (f32)");
+        runner::expect_has(iso, "struct: an array element is named by its index", &run, "a.values[2] = 3   (i32)");
+        runner::expect_has(iso, "struct: a bit-field is compared by its value", &run, "b.flags = 2   (i32)");
     }
 }
 
-export void test_runner_checks_two_slices_are_compared_by_count_and_element(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_slices");
+export void test_runner_checks_two_slices_are_compared_by_count_and_element() {
+    scratch::Project p = runner::project("runner_base", "runner_slices");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run built = runner::build(&p, "");
     scratch::expect_status("slice: the runner builds", 0, &built);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "");
-        runner::expect_has(io, iso, "slice: equal slices pass, the other three fail", &run, "1 passed, 3 failed");
-        runner::expect_has(io, iso, "slice: the first element that differs is named", &run, "a[1] = 2   (i32)");
-        runner::expect_has(io, iso, "slice: ... and the other slice's", &run, "b[1] = 5   (i32)");
-        runner::expect_has(io, iso, "slice: a different count is named", &run, "a.count = 3");
-        runner::expect_has(io, iso, "slice: a row compares as a slice", &run, "a[0] = 1 [0x1p+0]     (f32)");
+        runner::expect_has(iso, "slice: equal slices pass, the other three fail", &run, "1 passed, 3 failed");
+        runner::expect_has(iso, "slice: the first element that differs is named", &run, "a[1] = 2   (i32)");
+        runner::expect_has(iso, "slice: ... and the other slice's", &run, "b[1] = 5   (i32)");
+        runner::expect_has(iso, "slice: a different count is named", &run, "a.count = 3");
+        runner::expect_has(iso, "slice: a row compares as a slice", &run, "a[0] = 1 [0x1p+0]     (f32)");
     }
 }
 
 // Section 7: a lossy comparison in C is a -Wconversion error.
-export void test_runner_checks_a_lossy_comparison_in_c_fails_to_compile(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_lossy");
+export void test_runner_checks_a_lossy_comparison_in_c_fails_to_compile() {
+    scratch::Project p = runner::project("runner_base", "runner_lossy");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run built = runner::build(&p, "");
     scratch::expect_status("conversion: a lossy comparison fails to compile", 1, &built);
     scratch::expect_contains("conversion: ... with -Wconversion's message", built.out,

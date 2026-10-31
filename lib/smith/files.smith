@@ -21,6 +21,7 @@ module smith::files;
 
 import smith::arena;
 import smith::contract;
+import smith::env;
 import smith::mem;
 import target;
 import <dirent.h>;
@@ -268,6 +269,7 @@ typedef struct {
 } Lister;
 
 i32 lister_open(Lister *lister, const char *folder) {
+    contract::trusted(); // the edge: it asks the handler of the thread and opens the folder
     lister->handler = c::smith_handlers_files();
     lister->folder = folder;
     lister->index = 0;
@@ -284,6 +286,7 @@ i32 lister_open(Lister *lister, const char *folder) {
 
 // 1 when item is filled, 0 past the last entry, -1 on an error (the errno is in `code`).
 i32 lister_next(Lister *lister, c::SmithFileItem *item, i32 *code) {
+    contract::trusted(); // the edge: it calls the handler's list or readdir
     if (lister->handler != nullptr) {
         i32 found = lister->handler->list(lister->handler, lister->folder, lister->index++, item);
         if (found < 0) *code = errno_now();
@@ -307,6 +310,7 @@ i32 lister_next(Lister *lister, c::SmithFileItem *item, i32 *code) {
 }
 
 void lister_close(Lister *lister) {
+    contract::trusted(); // the edge: it calls the handler's list or closedir
     if (lister->directory != nullptr) c::closedir(lister->directory);
 }
 
@@ -329,6 +333,35 @@ i32 open_flags(Mode mode) {
     misuse("files: open takes Read, Replace, Append or New");
 }
 
+// `smith test --changed` (issue #739, knowledge/coverage-selection.md): with SMITH_READS_LOG set, a file this process
+// opens to read, a file it maps and a folder it lists are appended to that file, one absolute path a line (a folder's
+// ends in `/`: its listing, not what is in it), so the record of the test that ran names the data it read. Children
+// inherit the variable (read through smith::env, so a test stands in for it on its own thread). Nothing happens
+// without it, and nothing while a files handler answers: its paths are not the real file system's.
+void reads_log_append(const char *log, const char *path) {
+    if (log[0] == '\0') return;
+    char resolved[path_max];
+    if (c::realpath(path, resolved) == nullptr) return; // a path that is not there has nothing to hash
+    usize length = c::strlen(resolved);
+    if (length + 3 >= path_max) return;
+    struct c::stat status = {};
+    bool folder = c::stat(resolved, &status) == 0 && (status.st_mode & mode_kind_mask) == mode_folder;
+    if (folder) resolved[length++] = '/';
+    resolved[length++] = '\n';
+    i32 descriptor = c::open(log, open_append, file_mode);
+    if (descriptor < 0) return;
+    isize written = c::write(descriptor, resolved, length);
+    (void)written; // a line lost makes the record a path short; the next change to it is judged by the graph
+    c::close(descriptor);
+}
+
+void reads_log(const char *path) {
+    contract::trusted(); // the edge: it asks the handler of the thread and the environment
+    if (c::smith_handlers_files() != nullptr) return;
+    env::Value named = env::get("SMITH_READS_LOG");
+    if (named == .some) reads_log_append(named.some.data, path); // the environment's text ends with a NUL
+}
+
 // Opens the file. A mode the call does not take is a checked failure.
 [[smith::c_name("smith_fs_open")]] export [[nodiscard]] OpenResult open(const char path[:], Mode mode) {
     i32 flags = open_flags(mode);
@@ -340,11 +373,13 @@ i32 open_flags(Mode mode) {
     if (descriptor < 0) {
         return {.error = error_from(errno_now())};
     }
+    if (mode == Read) reads_log(where.text);
     return (File){.descriptor = descriptor};
 }
 
 // Reads up to the length of the buffer into it and returns how many bytes it read: 0 is the end of the file.
 [[smith::c_name("smith_fs_read")]] export [[nodiscard]] CountResult read(File file, u8 buffer[:]) {
+    contract::trusted(); // the edge: it calls the system's read
     if (countof(buffer) == 0) return (usize)0;
     for (usize tries = 0; tries < 64; tries++) { // a signal may interrupt the read
         isize count = c::read(file.descriptor, buffer.data, countof(buffer));
@@ -385,6 +420,7 @@ i32 open_flags(Mode mode) {
 
 // Reads the open file to its end into a block of the current allocator; hint is the size to start with.
 BytesResult read_open(File file, usize hint) {
+    contract::trusted(); // reads to the end of the file: its passes are the file's size
     u8 buffer[:] = mem::alloc_slice(u8, hint);
     usize filled = 0;
     bool ended = false;
@@ -537,6 +573,7 @@ i32 entry_compare(const void *a, const void *b) {
 
 // What is in a folder, sorted by name, without "." and "..". The entries and their names are in the current allocator.
 [[smith::c_name("smith_fs_list")]] export [[nodiscard]] EntriesResult list(const char folder[:]) {
+    contract::trusted(); // the edge: it lists a folder and sorts the names with qsort
     Path where = path_make(folder);
     if (!where.fits) {
         return {.error = NameTooLong};
@@ -546,6 +583,7 @@ i32 entry_compare(const void *a, const void *b) {
     if (code != 0) {
         return {.error = error_from(code)};
     }
+    reads_log(where.text);
     usize total = 0;
     c::SmithFileItem item = {};
     for (usize rounds = 0; rounds < ((usize)1 << 20); rounds++) { // each round reads an entry or ends
@@ -601,6 +639,7 @@ i32 entry_compare(const void *a, const void *b) {
     if (descriptor < 0) {
         return {.error = error_from(errno_now())};
     }
+    reads_log(where.text);
     struct c::stat info_of = {};
     i32 code = c::fstat(descriptor, &info_of) == 0 ? 0 : errno_now();
     bool is_folder = code == 0 && (info_of.st_mode & mode_kind_mask) == mode_folder;

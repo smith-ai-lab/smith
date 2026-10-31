@@ -14,7 +14,7 @@ on smith). The Makefile is evaluated at translation time, with what a command li
 can change kept as options and tests in build.c; a construct outside the subset is reported by name, file and line,
 never guessed.
 
-Step 2 of the adoption ladder (AGENTS.md, issue #44) should be a command, not a day of hand translation. In a folder
+Step 2 of the adoption ladder (the adoption ladder, issue #44) should be a command, not a day of hand translation. In a folder
 with a `Makefile` (or `GNUmakefile` or `makefile`, the first of them in that order, by exact name) and no `build.c` or
 `build.smith`, the implicit build is the Makefile, and `smith build --dump-config > build.c` prints it as a build file.
 An empty `build.c` or `build.smith` counts as none, because the shell makes it before smith runs. With a `main.smith`
@@ -87,3 +87,7 @@ outputs) as `make -n -B` for smith, checkers, learner and, apart from the meshes
 are better in ways a reader of text cannot be: they declare the files a recipe makes besides its target, write
 generated sources from build.c instead of from a recipe run every time, split a script into steps with their own
 inputs, and defer (`smith_defer`) what a generated Makefile (game's `build/meshes.mk`, from `-include`) would define.
+
+## Decisions
+
+- A Makefile is translated by smith's own reader of GNU make's common subset; no vendored make (GPLv3, no license forced on smith).

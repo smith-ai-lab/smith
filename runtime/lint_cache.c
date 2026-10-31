@@ -214,13 +214,26 @@ static bool smith_lc_make_folder(const char *path) {
 }
 
 // The cache folders and the parts of the key that do not depend on the file. False: nothing is cached.
+#ifdef SMITH_CORE
+static const char *smith_lc_core_cache; // the units runner's cache folder and SMITH_LINT_CACHE: no setenv in a test
+static const char *smith_lc_core_setting;
+#endif
+
 static bool smith_lc_start(void) {
     const char *setting = getenv("SMITH_LINT_CACHE");
+#ifdef SMITH_CORE
+    if (smith_lc_core_cache != nullptr) setting = smith_lc_core_setting;
+#endif
     if (setting != nullptr && strcmp(setting, "0") == 0) return false;
     smith_lc.explain = setting != nullptr && strcmp(setting, "why") == 0;
     SmithPackageFault error;
     char base[PATH_MAX];
     if (!smith_cache_base(base, &error) || getcwd(smith_lc.root, sizeof smith_lc.root) == nullptr) return false;
+#ifdef SMITH_CORE
+    if (smith_lc_core_cache != nullptr &&
+        snprintf(base, sizeof base, "%s/smith", smith_lc_core_cache) >= (int)sizeof base)
+        return false;
+#endif
     int written = snprintf(smith_lc.folder, sizeof smith_lc.folder, "%s/lint", base);
     if (written <= 0 || (size_t)written >= sizeof smith_lc.folder) return false;
     smith_lc.root_length = strlen(smith_lc.root);
@@ -337,9 +350,9 @@ static void smith_lc_plan(size_t number, const char *file, const char *flags) {
 
 static bool smith_lc_parse(const char *text, int *status, unsigned long long *size, int *header);
 
-// Looks for the job's result: true and its exit status when it is there (its output printed on standard output, as
-// the child's log would be), false when it is not or is damaged.
-static bool smith_lc_replay(size_t number, int *status) {
+// Looks for the job's result: true and its exit status when it is there (its output printed on `out`, as the child's
+// log would be), false when it is not or is damaged.
+static bool smith_lc_replay_to(size_t number, int *status, FILE *out) {
     const SmithLcJob *job = &smith_lc_jobs[number];
     char path[PATH_MAX];
     if (!job->keyed || !smith_lc_entry_path(path, 'r', job->key, false)) return false;
@@ -360,11 +373,15 @@ static bool smith_lc_replay(size_t number, int *status) {
     const char *body = smith_lc_entry + prefix + (size_t)header + 1;
     size_t swapped = smith_lc_swap(body, length, smith_lc_scratch, sizeof smith_lc_scratch, false);
     if (swapped == SIZE_MAX) return false;
-    fwrite(smith_lc_scratch, 1, swapped, stdout);
-    fflush(stdout);
+    fwrite(smith_lc_scratch, 1, swapped, out);
+    fflush(out);
     smith_lc_refresh(path);
     *status = code;
     return true;
+}
+
+static bool smith_lc_replay(size_t number, int *status) {
+    return smith_lc_replay_to(number, status, stdout);
 }
 
 // ---- Misses
@@ -573,3 +590,77 @@ static bool smith_lc_open(void) {
     if (smith_lc.enabled) smith_lc_prune();
     return smith_lc.enabled;
 }
+
+#ifdef SMITH_CORE
+#include "smith_core_lint_cache.h"
+
+// Forgets the digests, names and manifests of an earlier run: each run of `smith lint` is a process, so they start
+// empty.
+static void smith_lc_reset(void) {
+    memset(smith_lc_file_table, 0, sizeof smith_lc_file_table);
+    smith_lc_file_count = 0;
+    smith_lc_pool_used = 0;
+    smith_lc_manifests_used = 0;
+    smith_lc = (SmithLc){};
+}
+
+// The dependency file a miss would have clang-tidy write: the names it read, as `x.o: a b`.
+static void smith_lc_fake_depfile(size_t number, const char *reads) {
+    char depfile[PATH_MAX];
+    if (!smith_lc_depfile(number, depfile)) return;
+    FILE *file = fopen(depfile, "wb");
+    if (file == nullptr) return;
+    fputs("x.o: ", file);
+    for (const char *c = reads; *c != '\0'; c++) // bounded by the string
+        fputc(*c == '\n' ? ' ' : *c, file);
+    fputc('\n', file);
+    fclose(file);
+}
+
+// One miss: the fake clang-tidy "ran" with its output and status, and the cache stores what it kept.
+static void smith_lc_fake_run(size_t number, const SmithCoreLintFile *file, FILE *out) {
+    char *extra[1];
+    (void)smith_lc_extra(number, extra);
+    smith_lc_fake_depfile(number, file->reads);
+    FILE *log = tmpfile();
+    if (log == nullptr) return;
+    fputs(file->output, log);
+    smith_lc_store(number, file->status << 8, log);
+    fclose(log);
+    fputs(file->output, out);
+}
+
+// include/smith_core_lint_cache.h: the decisions of a `smith lint` run, in process.
+bool smith_core_lint_plan(const char *folder, const char *cache, const char *setting, const SmithCoreLintFile *files,
+                          size_t count, SmithCoreLintResult *results, char *output, size_t output_size) {
+    if (count > smith_lc_jobs_max) return false;
+    int home = open(".", O_RDONLY);
+    FILE *out = fmemopen(output, output_size, "w");
+    if (home < 0 || out == nullptr || chdir(folder) != 0) {
+        if (out != nullptr) fclose(out);
+        if (home >= 0) close(home);
+        return false;
+    }
+    smith_lc_core_cache = cache;
+    smith_lc_core_setting = setting;
+    smith_lc_reset();
+    bool cached = smith_lc_open();
+    smith_lc.began += (int64_t)2000000000; // the run starts after the files the test wrote, whatever their mtimes
+    for (size_t i = 0; i < count; i++) {   // bounded by the files
+        int status = 0;
+        if (cached) smith_lc_plan(i, files[i].file, files[i].flags);
+        bool hit = cached && smith_lc_replay_to(i, &status, out);
+        if (!hit) {
+            status = files[i].status;
+            smith_lc_fake_run(i, &files[i], out);
+        }
+        results[i] = (SmithCoreLintResult){.ran = !hit, .cached = hit, .status = status};
+    }
+    fclose(out);
+    smith_lc_core_cache = nullptr;
+    smith_lc_core_setting = nullptr;
+    bool back = fchdir(home) == 0;
+    close(home);
+    return back;
+}
+#endif
