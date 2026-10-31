@@ -714,6 +714,7 @@ export void test_enum_generic_import_in_function() {
 
 export void test_enum_option_slice() {
     corpus_case("enum-option-slice");
+    corpus_case("enum-option-slice-assign");
 }
 
 export void test_enum_payload_lowering() {
