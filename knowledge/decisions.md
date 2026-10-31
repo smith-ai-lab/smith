@@ -19,7 +19,7 @@ A decision changes only with the owner. Each line links the concept that holds i
 - `smith dbg` and `smith dap` are lldb and lldb-dap from the same LLVM, with the system's debugserver, no Python and no curses. [debugger](debugger.md)
 - Contracts are calls read by `smith prove` (Alive2, Bitwuzla, Z3), not a clang plugin and not `-fbounds-safety`; the boundary is `smith_trusted()` and there is no list. [contracts](contracts.md), [prover](prover.md)
 - Checks run in every build; only a proof removes one (owner, 2026-10-25). [contracts](contracts.md)
-- A proof is fast or it is written wrong, and fast is CPU time (about 10 s on 8 idle cores; 30 s until the pipeline is unclogged, owner 2026-10-29: "For now just increase the limit to 30s, and then once the pipeline is unclogged we can tighten back to 10s"). [proof-budget](proof-budget.md)
+- A proof is fast or it is written wrong, and fast is CPU time (about 10 s on 8 idle cores). [proof-budget](proof-budget.md)
 - `smith build`, `check` and `test` draw from a host-wide pool of cores, `SMITH_CORES` (default: the core count): a run takes one core at its first heavy step and one more for each further worker, and gives each back as it ends, so it grows as cores free up; CI (`SMITH_PRIORITY=ci`) goes first, a smith run by a smith rides on its parent's core, and a dead or orphaned holder's cores are reclaimed (owner, 2026-10-27: "it's cheaper to just make the decision and then move on"). [slots](slots.md)
 - Enzyme is linked into smith's lld; an autodiff program links with full LTO, and debug has ASan and no UBSan. [autodiff](autodiff.md)
 - Adopting smith is incremental from both ends and every step is optional; `smith cc` never changes a default. [adoption-path](adoption-path.md)
