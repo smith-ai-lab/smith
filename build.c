@@ -244,10 +244,12 @@ static const char *const *build_protocol_steps(SmithBuild *b, const BuildConfig 
 static const char *const build_header_modules[] = {"ascii",  "autodiff", "build", "categorical", "effects", "failing",
                                                    "format", "math",     "mem",   "slice",       "test",    nullptr};
 
-// The compiler's own file, which a header step lists as an input: it is the smith that writes the header.
+// The file that says which compiler config->cc is, which a step the compiler runs lists as an input: it is the smith
+// that writes the header, and it moves only when the compiler changes, not when the same smith is linked again.
+const char *smith_compiler_file(const char *compiler);
 static const char *build_compiler_file(SmithBuild *b, const BuildConfig *config) {
-    if (strchr(config->cc, '/') != nullptr) return config->cc;
-    return smith_capture_or(b, (const char *[]){"which", config->cc, nullptr}, config->cc);
+    (void)b;
+    return smith_compiler_file(config->cc);
 }
 
 // The headers a header step waits for: a module's header pass reads the headers of the modules it imports, so each

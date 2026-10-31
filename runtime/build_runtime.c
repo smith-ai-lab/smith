@@ -1003,8 +1003,9 @@ constexpr size_t smith_compilers_max = 64;
 static const char *smith_compilers[smith_compilers_max];
 static size_t smith_compiler_count;
 
-// The file that holds the identity of this compiler, and a note to write it.
-static const char *smith_compiler_file(const char *compiler) {
+// The file that holds the identity of this compiler, and a note to write it. build.c lists it as the input of a step
+// that the compiler runs, so that the step waits for a change of compiler and not for the compiler's file.
+const char *smith_compiler_file(const char *compiler) {
     bool known = false;
     for (size_t i = 0; i < smith_compiler_count; i++)
         known = known || strcmp(smith_compilers[i], compiler) == 0;
