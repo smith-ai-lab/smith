@@ -1900,6 +1900,10 @@ export void test_tuple_modules() {
     corpus_case("tuple-modules");
 }
 
+export void test_tuple_pointer_param() {
+    corpus_case("tuple-pointer-param");
+}
+
 export void test_tuple_spelling() {
     corpus_case("tuple-spelling");
 }
