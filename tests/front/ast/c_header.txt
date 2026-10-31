@@ -1,0 +1,3 @@
+(module c_header
+  (struct FILE opaque from_c)
+  (typedef Handler from_c (applied Fn (type_arg (function_type (named c::int) (unsupported_c "long double") (result (named c::int)))))))

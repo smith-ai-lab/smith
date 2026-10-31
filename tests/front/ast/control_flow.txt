@@ -1,0 +1,25 @@
+(module flow
+  (function count
+    (param n (named I32))
+    (result (named I32))
+    (block
+      (declaration
+        (variable total (named I32) (integer 0)))
+      (for
+        (declaration
+          (variable i (named I32) (integer 0)))
+        (binary less (name i) (name n))
+        (assign add (name i) (integer 1))
+        (block
+          (if
+            (binary equal (binary remainder (name i) (integer 2)) (integer 0))
+            (expression (assign add (name total) (name i)))
+            (continue))))
+      (switch
+        (name total)
+        (case
+          (integer 0)
+          (integer 1)
+          (return (integer 1)))
+        (default
+          (return (integer 2)))))))
