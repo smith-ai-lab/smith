@@ -248,7 +248,11 @@ static const char *const build_header_modules[] = {"ascii",  "autodiff", "build"
 // that writes the header, and it moves only when the compiler changes, not when the same smith is linked again.
 // A smith before this one has no such function (the lag rule: this file is built by the previous release's runtime), so
 // it is weak and the compiler's own file stands in.
+#ifdef __APPLE__
+__attribute__((weak_import)) const char *smith_compiler_file(const char *compiler);
+#else
 [[gnu::weak]] const char *smith_compiler_file(const char *compiler);
+#endif
 static const char *build_compiler_file(SmithBuild *b, const BuildConfig *config) {
     if (smith_compiler_file != nullptr) return smith_compiler_file(config->cc);
     if (strchr(config->cc, '/') != nullptr) return config->cc;
