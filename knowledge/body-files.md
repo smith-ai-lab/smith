@@ -20,6 +20,9 @@ lowered with the parser's types. The module's own compile has the whole lowered 
   is evaluated (and inlined) and emits no code, so the module's one symbol stays the function (a weak copy would be an
   object-code copy in every importer). The header says which exported functions have a body (`// smith-bodies: a b`);
   a module with none has no file and costs nothing.
+- **The text is what the compiler read.** A sized name the lowering made from a type's spelling (the `u8` of a slice's struct
+  in a body) is written as the compiler's name for the type (`__UINT8_TYPE__`), because the buffer an importer includes
+  is read as written, with no hook to read `u8` as the type (issue #881).
 - **Who writes it, and when.** Nothing in the build graph: an importer asks for the file when it needs it. The build
   cannot know before the headers exist what an importer mentions, and a step for each module would double the front
   end of every module whether it is needed or not. The importer's compile (`shim/hook.cpp`, `readBody`) takes
