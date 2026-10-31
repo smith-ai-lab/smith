@@ -399,6 +399,10 @@ jobs:
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
           SCOPE: ${{ needs.changes.outputs.scope }}
+          MECHANICAL: ${{ needs.mechanical.result }}
+          TEST: ${{ needs.test.result }}
+          DOCS: ${{ needs.docs.result }}
+          TEST_LINUX: ${{ needs.test-linux.result }}
         run: |
           echo "scope: $SCOPE; jobs: $RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
           case " $RESULTS " in
@@ -407,6 +411,23 @@ jobs:
             exit 1
             ;;
           esac
+          # A skipped job passes only where `changes` said the area was not touched (#1139). The scope says which jobs
+          # the run owes: `full` owes mechanical, test and test-linux, `docs` owes docs, `release` (a push to main)
+          # owes test-linux, `none` owes nothing. A job that was owed and skipped (a skipped `pack` skipped the three
+          # macOS jobs for hours) fails the check.
+          case "$SCOPE" in
+          full) owed="MECHANICAL TEST TEST_LINUX" ;;
+          docs) owed="DOCS" ;;
+          release) owed="TEST_LINUX" ;;
+          *) owed="" ;;
+          esac
+          for name in $owed; do
+            eval "result=\$$name"
+            if [ "$result" != success ]; then
+              echo "::error::$name was owed by scope $SCOPE and its result is '$result', not success"
+              exit 1
+            fi
+          done
 
   warm:
     # a push to main (a commit the queue checked) builds smith and the tests once more only to save the step cache,
