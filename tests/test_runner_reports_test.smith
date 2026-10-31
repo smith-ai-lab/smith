@@ -14,7 +14,8 @@ import runner;
 import scratch;
 
 // A copy of the shared build of the runner (runner::built_copy): its debug information names the sources relative to
-// the project, so a report read in the copy prints `tests/test_reports.smith:N`, and no test builds a runner of its own.
+// the project, so a report read in the copy prints `tests/test_reports.smith:N`, and no test builds a runner of its
+// own.
 static scratch::Project reports_project() {
     return runner::built_copy("runner_base", "runner_reports", "-DSAN=0");
 }
