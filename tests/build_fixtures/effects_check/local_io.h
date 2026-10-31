@@ -1,5 +1,5 @@
 #pragma once
-// A small capability record of the fixtures' own, standing where the deleted smith::io stood: one value that main makes.
+// A small capability record of the fixtures' own, standing where the deleted io library stood: one value that main makes.
 typedef struct [[clang::annotate("smith::capability")]] {
     int fd;
 } LocalIo;

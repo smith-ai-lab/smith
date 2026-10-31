@@ -168,7 +168,7 @@ unsigned owner_id(const Instruction &instruction) {
     return id_of(instruction.getMetadata("smith.owner"));
 }
 
-// A function with no body in the module that its header marks [[clang::annotate("smith::edge")]] (smith::io's exports)
+// A function with no body in the module that its header marks [[clang::annotate("smith::edge")]] (a library's edge exports)
 // is the edge of the program, as a trusted function is, with no contract: it gets the attribute "smith.edge".
 void mark_edges(Module &module) {
     GlobalVariable *annotations = module.getGlobalVariable("llvm.global.annotations");
@@ -989,7 +989,7 @@ namespace {
 
 // A function of a smith library the program links: read so that its callers use its contract (a trusted one is assumed,
 // one with an smith_ensures is used through it, any other is part of its caller), and never proved here, since the
-// library's own proof covers it. An edge export (smith::io's) loses its body: it stays the edge, as when only its
+// library's own proof covers it. An edge export (a library's) loses its body: it stays the edge, as when only its
 // header is read.
 void mark_library(Module &module) {
     for (Function &function : module) {
