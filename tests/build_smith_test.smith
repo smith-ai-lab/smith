@@ -271,12 +271,8 @@ export void test_build_smith_lint_reads_a_build_smith_as_written() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    // smith's own checks, but not smith-effects: this program prints with printf, and the lint here is about
-    // build.smith.
     scratch::copy_tree(&p, ".clang-format", ".clang-format");
-    scratch::copy_tree(&p, ".clang-tidy", "repo-clang-tidy");
-    (void)scratch::sh(
-        &p, "sed 's/^  smith-effects,$/  -smith-effects,/' repo-clang-tidy >.clang-tidy && rm repo-clang-tidy");
+    scratch::copy_tree(&p, ".clang-tidy", ".clang-tidy");
     scratch::Run clean = scratch::sh(&p, "env SMITH_OUTPUT=full smith lint");
     if (clean.status != 0) {
         test::note("lint said: %s%s", clean.out, clean.err);

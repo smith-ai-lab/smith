@@ -154,7 +154,7 @@ export void test_build_isolation_clangd_reports_no_errors_in_a_file_that_imports
     // compile_commands.json carries the module flags, and smith lsp (clangd, no --query-driver) builds the modules.
     scratch::expect_contains("modules: compile_commands.json names the smith map",
                              scratch::read(&p, "compile_commands.json"), "smith.modulemap");
-    // The sample is not what smith-effects tests; its checks are off.
+    // The sample is not what the lint tests; its checks are off.
     scratch::write(&p, ".clang-tidy", "Checks: \"-*\"\n");
     scratch::expect_text("modules: clangd reports no errors in a file that imports smith's headers", "",
                          scratch::capture(&p, "smith lsp --check=\"$(pwd -P)/all_of_them.c\" 2>&1 >/dev/null | "

@@ -56,4 +56,4 @@ stats.smith:9:5: error: smith-effect: `bad` is [[smith::pure]], but it has the e
 - **What a returned pointer means** (#720): `[[std::returns_owned(free)]] char *strdup(const char *s);` (the caller frees it with `free`, a declared function of one pointer), `[[std::returns_borrowed(1)]] char *strchr(const char *s, int c);` (points into parameter 1, a pointer or a slice), `[[std::returns_internal]] char *strerror(int e);` (never freed). On a function that returns a pointer or a slice, one per declaration; on a function pointer's typedef write it first (`[[std::returns_internal]] typedef char *(*Describe)(int);`) or as `[[clang::annotate_type("std::owns:internal")]]` after the parameters. A bad use is `error: smith-ownership: ...`. Today it is recorded (`O` and `T` lines of the `.fx` summary) and nothing is judged. In a module write `free`, not `c::free`.
 - **Not yet** (issue #207, #263): hover.
 
-Overview: `smith-lang`. Reference: [knowledge/effects-check.md](../../../knowledge/effects-check.md).
+Overview: `smith-lang`. Reference: [knowledge/effect-inference.md](../../../knowledge/effect-inference.md).

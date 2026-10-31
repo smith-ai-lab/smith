@@ -1,6 +1,0 @@
-raw.c:8:18: error: `fopen` touches the world: take a `SmithFiles *` from main's SmithIo and read and write files through it (smith_files_read, smith_files_write)
-raw.c:10:5: error: `printf` touches the world: take a `SmithConsole *` from main's SmithIo and print and read through it (smith_console_print, smith_console_read_line)
-raw.c:11:11: error: `getenv` touches the world: take a `SmithArgs *` from main's SmithIo and read the environment through it (smith_args_env)
-raw.c:12:20: error: `malloc` touches the world: take a `SmithArena *` from main's SmithIo and allocate from it (smith_arena_push, or arena::push in .smith)
-raw.c:13:5: error: `free` touches the world: take a `SmithArena *` from main's SmithIo and allocate from it (smith_arena_push, or arena::push in .smith)
-raw.c:14:5: error: `exit` touches the world: return the status from main instead

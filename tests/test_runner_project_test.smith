@@ -189,7 +189,7 @@ export void test_runner_project_clangd_reads_a_test_file_without_errors() {
     if (scratch::sh(&p, "smith lsp --version").status != 0) return;
     scratch::Run built = runner::build(&p, "");
     scratch::expect_status("clangd: the project builds", 0, &built);
-    // The sample is not what smith-effects tests; its checks are off.
+    // The sample is not what the lint tests; its checks are off.
     scratch::write(&p, ".clang-tidy", "Checks: \"-*\"\n");
     scratch::expect_text(
         "clangd: no errors in a test file", "0",
@@ -208,7 +208,7 @@ export void test_runner_project_the_analyzer_takes_a_test_check_as_an_assumption
     runner::add(&p, "runner_analyzer");
     scratch::Run built = runner::build(&p, "");
     scratch::expect_status("analyzer: the project builds", 0, &built);
-    // The sample is not what smith-effects tests; its checks are off.
+    // The sample is not what the lint tests; its checks are off.
     scratch::write(&p, ".clang-tidy", "Checks: \"-*\"\n");
     scratch::Run lint =
         scratch::sh(&p, "smith lint --checks='-*,clang-analyzer-*' analyzer.smith -- -std=gnu2y -I.smith/include 2>&1");

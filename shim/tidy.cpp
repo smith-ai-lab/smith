@@ -9,7 +9,6 @@
 #ifdef SMITH_HOOK
 #include "clang-tidy/ClangTidyModule.h"
 #include "clang-tidy/readability/IdentifierNamingCheck.h"
-#include "effects.h"
 #include "idiom.h"
 #include "mem.h"
 #include "names.h"
@@ -212,10 +211,6 @@ class SmithModule final : public ClangTidyModule {
                 return make(Name, Context);
             });
         }
-        Factories.registerCheckFactory("smith-effects", [](StringRef Name, ClangTidyContext *Context) {
-            attach(Context);
-            return std::make_unique<smith_effects::Effects>(Name, Context);
-        });
         Factories.registerCheckFactory("smith-preprocessor", [](StringRef Name, ClangTidyContext *Context) {
             attach(Context);
             return std::make_unique<smith_preprocessor::PreprocessorCheck>(Name, Context);
