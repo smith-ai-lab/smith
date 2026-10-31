@@ -20,7 +20,9 @@ void build(SmithBuild *b) {
                                  "-I", smith_fmt(b, "%s/include", llvm), nullptr};
     // LLVM's static archives name each other: on Linux they are linked in a group, and what the C API does not reach is
     // dropped (build.c of the repository does the same for smith's own link).
-    const char *const *archives = smith_glob(b, smith_list(b, smith_fmt(b, "%s/lib/libLLVM*.a", llvm), nullptr));
+    // Track C (front/cimport) reads headers through clang's libraries, so the group holds those too.
+    const char *const *archives = smith_glob(b, smith_list(b, smith_fmt(b, "%s/lib/libclang[A-Z]*.a", llvm),
+                                                           smith_fmt(b, "%s/lib/libLLVM*.a", llvm), nullptr));
 #ifdef __APPLE__
     const char *const *libraries =
         smith_cat(b, archives, smith_list(b, "-lc++", "-lm", "-lcompression", nullptr), nullptr);
@@ -31,7 +33,31 @@ void build(SmithBuild *b) {
                   smith_list(b, "-Wl,--end-group", "-lstdc++", "-lm", "-lpthread", "-ldl", "-lrt", nullptr), nullptr);
     const char *const *gc = smith_list(b, "-Wl,--gc-sections", nullptr);
 #endif
+    // The edge files to LLVM (shim/cimport*.cpp, none yet) are C++ and compiled with build.c's shim flags under the
+    // runner's sanitizers (-fno-rtti, so no vptr check) and linked in. An empty glob links nothing.
+    const char *const *cxx_sources = smith_glob(b, smith_list(b, smith_fmt(b, "%s/shim/cimport*.cpp", root), nullptr));
+    const char *const *cxx_flags =
+        smith_list(b, "-std=c++17", "-g", "-O0", "-Wall", "-Wextra", "-Werror", "-fno-exceptions", "-fno-rtti",
+                   "-D__STDC_CONSTANT_MACROS", "-D__STDC_FORMAT_MACROS", "-D__STDC_LIMIT_MACROS", "-isystem",
+                   smith_fmt(b, "%s/include", llvm), "-fsanitize=address,undefined", "-fno-sanitize=vptr",
+                   "-fno-sanitize-recover=all", nullptr);
+    static SmithObject objects[64];
+    const SmithObject *cxx_objects[64];
+    size_t cxx_count = 0;
+    for (size_t i = 0; cxx_sources[i] != nullptr && cxx_count < 63; i++) {
+        SmithObject *object = &objects[cxx_count];
+        *object = (SmithObject){
+            .compiler = smith_fmt(b, "%s/bin/clang++", llvm),
+            .source = cxx_sources[i],
+            .output = smith_fmt(b, "build/tests_objects/cimport_%zu.o", i),
+            .flags = cxx_flags,
+        };
+        smith_object(b, object);
+        cxx_objects[cxx_count++] = object;
+    }
+    cxx_objects[cxx_count] = nullptr;
     SmithTests tests = {
+        .objects = cxx_objects,
         .sources = smith_glob(b, smith_list(b, "front/*.smith", "tests/front_*_test.smith", nullptr)),
         .flags = flags,
         // LLVM keeps process-lifetime tables (its pass registry, the targets) that the first call allocates and nothing
