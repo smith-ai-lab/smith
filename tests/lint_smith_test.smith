@@ -272,7 +272,7 @@ export void test_lint_with_no_arguments_lints_the_smith_sources_a_build_compiles
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "templates/defaults/clang-tidy", ".clang-tidy");
-    scratch::Run run = scratch::sh(&p, "smith lint >verb.out 2>verb.err");
+    scratch::Run run = scratch::sh(&p, "env SMITH_OUTPUT=full smith lint >verb.out 2>verb.err");
     scratch::expect_status("smith lint with no arguments fails on a finding in a .smith file the build compiles", 1,
                            &run);
     scratch::expect_text(
@@ -299,7 +299,7 @@ export void test_lint_with_no_arguments_lints_the_smith_sources_the_build_does_n
             "printf 'ignored.smith\\n' >.clang-format-ignore; sed -i.bak 's/BadLocal/good_local/' main.smith; "
             "rm main.smith.bak; git add -A");
     scratch::expect_status("the project is prepared", 0, &prepared_run);
-    scratch::Run run = scratch::sh(&p, "smith lint >gate.out 2>gate.err");
+    scratch::Run run = scratch::sh(&p, "env SMITH_OUTPUT=full smith lint >gate.out 2>gate.err");
     scratch::expect_status("a finding in a .smith file the build does not compile fails smith lint", 1, &run);
     scratch::expect_text("... it is reported at the source", "1",
                          scratch::capture(&p,
