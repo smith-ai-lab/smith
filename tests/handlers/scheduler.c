@@ -7,6 +7,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -174,7 +175,38 @@ static void a_files_handler_still_answers_its_read(void) {
           result == 4 && files.reads == 1 && fake.calls == 0 && buffer[0] == 'f');
 }
 
+static void a_read_under_a_pthread_mutex_is_the_real_one(void) {
+    Fake fake = {.scheduler = {.io = fake_io}, .answer = 99};
+    pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+    int pipes[2];
+    char buffer[8] = "";
+    if (pipe(pipes) != 0) abort();
+    SmithScheduler *outside = smith_handlers_set_scheduler(&fake.scheduler);
+    pthread_mutex_lock(&mutex);
+    ssize_t wrote = write(pipes[1], "xyz", 3);
+    ssize_t held = read(pipes[0], buffer, 8);
+    int during = fake.calls;
+    pthread_mutex_unlock(&mutex);
+    ssize_t after = read(pipes[0], buffer, 8);
+    int tried = pthread_mutex_trylock(&mutex);
+    ssize_t wrote_again = write(pipes[1], "uv", 2);
+    ssize_t under_try = read(pipes[0], buffer, 8);
+    int during_try = fake.calls;
+    pthread_mutex_unlock(&mutex);
+    ssize_t last = read(pipes[0], buffer, 8);
+    smith_handlers_set_scheduler(outside);
+    close(pipes[0]);
+    close(pipes[1]);
+    check("scheduler: under a held pthread mutex write and read are the real ones, not io",
+          wrote == 3 && held == 3 && during == 0);
+    check("scheduler: after the unlock the read reaches io", after == 99);
+    check("scheduler: a successful trylock counts as held",
+          tried == 0 && wrote_again == 2 && under_try == 2 && during_try == 1);
+    check("scheduler: after the last unlock reads reach io again", last == 99 && fake.calls == 2);
+}
+
 int main(void) {
+    a_read_under_a_pthread_mutex_is_the_real_one();
     routes_each_call();
     sets_errno_from_a_failed_request();
     is_the_real_call_with_none_set();

@@ -131,7 +131,13 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
   macOS, definitions through `dlsym(RTLD_NEXT)` (ASan's interceptor when sanitized) on Linux. A call `io` itself makes
   to one of these functions reaches the scheduler again, so a scheduler does its real calls under
   `smith_handlers_set_table` with a table that has no scheduler. `tests/handlers/scheduler.c` tests it with a fake whose
-  `io` logs each request. `tests/handlers/bench.c` prints a one-byte `read` of `/dev/zero` with no handler (Linux
+  `io` logs each request. **A pthread mutex held (issue #938):** C code may still hold one across a blocking call, and a
+  task that parked there could leave another task of the same worker blocked on that mutex for good. So the runtime
+  counts, per thread, the mutexes held while a scheduler is set (`pthread_mutex_lock` and a successful
+  `pthread_mutex_trylock` add one, `pthread_mutex_unlock` takes one away; interposed on macOS, defined on Linux), and a
+  routed call made above zero is the real call, blocking the thread, not `io`. Per thread is per task because a task
+  switches only by parking. Known gaps: two tasks on the same worker can still deadlock through C locks taken in
+  opposite orders, and `pthread_cond_wait` stalls its worker. `tests/handlers/bench.c` prints a one-byte `read` of `/dev/zero` with no handler (Linux
   x86_64, -O2, best of five, syscall noise about 5 ns): 156.8 ns before and 159.4 ns after.
 
 - **One table per thread (issue #885):** the handlers of a thread are one `SmithHandlers` (`include/smith/handlers.h`: a
