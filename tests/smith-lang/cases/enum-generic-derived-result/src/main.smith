@@ -1,0 +1,15 @@
+module main;
+
+import <stdio.h>;
+import keep;
+
+typedef option(i32) Number;
+
+i32 main(void) {
+    Number n = keep::keep(7);
+    switch (n) {
+    case .some: c::printf("some %d\n", n.some); break;
+    case .none: c::printf("none\n"); break;
+    }
+    return 0;
+}
