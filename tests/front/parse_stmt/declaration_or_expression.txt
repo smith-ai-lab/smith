@@ -1,0 +1,30 @@
+(module m
+  (function f
+    (result (named Void))
+    (block
+      (declaration
+        (variable p (named Point)))
+      (declaration
+        (variable b (named geometry::Box) (name x)))
+      (declaration
+        (variable o (named Option(I32))))
+      (expression (name x * y))
+      (expression (name f(x)))
+      (declaration
+        (variable n (named const I32) (name 1)))
+      (declaration
+        (variable z (named static auto) (name 2)))
+      (declaration
+        (variable q (named struct Pair)))
+      (declaration
+        (variable k (named int)))
+      (declaration
+        (variable u (named [[maybe_unused]] I32)))
+      (declaration
+        (variable len (named c::size_t)))
+      (declaration
+        (variable info (named c::stat *)))
+      (expression (name c::printf(x)))
+      (expression (name c::EOF))
+      (expression (name geometry::area(b)))
+      (expression (name x = y)))))

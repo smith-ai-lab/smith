@@ -1,0 +1,37 @@
+(module m
+  (function f
+    (result (named Void))
+    (block
+      (block
+        (block
+          (expression (name a)))
+        (expression (name b)))
+      (if
+        (name p)
+        (if
+          (name q)
+          (expression (name x))
+          (expression (name y))))
+      (if
+        (name p)
+        (block
+          (if
+            (name q)
+            (expression (name x))))
+        (expression (name y)))
+      (if
+        (name p)
+        (expression (name x))
+        (if
+          (name q)
+          (expression (name y))
+          (expression (name z))))
+      (labeled l
+        (while
+          (name c)
+          (for
+            (absent)
+            (absent)
+            (absent)
+            (defer
+              (expression (name w)))))))))

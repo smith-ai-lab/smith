@@ -1,0 +1,10 @@
+(module m
+  (function f
+    (result (named Void))
+    (block
+      (expression (name a))
+      (empty)
+      (expression (name b))
+      (if
+        (empty))
+      (expression (name c)))))
