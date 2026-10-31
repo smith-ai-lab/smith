@@ -1,0 +1,2 @@
+src/main.smith:21:19: cannot tell what `main_twice`, the argument of `wrap`, is: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); the parameter `handler` is `constexpr auto` and takes the name of a function
+src/main.smith:22:19: cannot tell what `main_negate`, the argument of `wrap`, is: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); the parameter `handler` is `constexpr auto` and takes the name of a function

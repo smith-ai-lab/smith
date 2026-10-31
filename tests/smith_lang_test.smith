@@ -2032,6 +2032,38 @@ export void test_lambda_static() {
     corpus_case("lambda-static");
 }
 
+export void test_lambda_generic_type() {
+    corpus_case("lambda-generic-type");
+}
+
+export void test_lambda_generic_handler() {
+    corpus_case("lambda-generic-handler");
+}
+
+export void test_lambda_generic_table() {
+    corpus_case("lambda-generic-table");
+}
+
+export void test_lambda_generic_infer() {
+    corpus_case("lambda-generic-infer");
+}
+
+export void test_lambda_generic_spawn() {
+    corpus_case("lambda-generic-spawn");
+}
+
+export void test_error_lambda_generic_runtime_capture() {
+    corpus_case("error-lambda-generic-runtime-capture");
+}
+
+export void test_error_lambda_generic_return_type() {
+    corpus_case("error-lambda-generic-return-type");
+}
+
+export void test_error_lambda_generic_nested() {
+    corpus_case("error-lambda-generic-nested");
+}
+
 export void test_lambda_nested() {
     corpus_case("lambda-nested");
 }

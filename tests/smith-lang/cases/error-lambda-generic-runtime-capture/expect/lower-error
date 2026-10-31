@@ -1,0 +1,1 @@
+src/main.smith:7:33: `factor` belongs to the generic's caller: a lambda that uses it would capture it, and a lambda converts to a function pointer only when it captures nothing (a function pointer can't carry captures); the generic's `constexpr` parameters are not captures
