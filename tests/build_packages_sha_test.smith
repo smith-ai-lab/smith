@@ -2,13 +2,16 @@
 // empty message), and shasum on random data around the padding boundaries.
 module build_packages_sha_test;
 
+import smith::arena;
+import smith::mem;
 import smith::format;
-import smith::io;
 import smith::test;
 import scratch;
 
 static const char *sha(const scratch::Project *p, const char *file) {
-    return scratch::capture(p, format::push(&p->io->arena, "smith --smith-sha256 ", file).data);
+    char command[256];
+    (void)format::to(command, sizeof command, "smith --smith-sha256 ", file);
+    return scratch::capture(p, command);
 }
 
 static void vector(const scratch::Project *p, const char *name, const char *content, const char *expected) {
@@ -16,8 +19,13 @@ static void vector(const scratch::Project *p, const char *name, const char *cont
     scratch::expect_text(name, expected, sha(p, "input"));
 }
 
-export void test_build_packages_sha256_matches_the_nist_vectors(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_build_packages_sha256_matches_the_nist_vectors() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
     vector(&p, "sha256: \"abc\"", "abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     vector(&p, "sha256: the empty message", "", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     vector(&p, "sha256: the 448-bit message", "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
@@ -32,12 +40,19 @@ export void test_build_packages_sha256_matches_the_nist_vectors(io::Io *io) {
 }
 
 static void equals_shasum(const scratch::Project *p, const char *name, const char *bytes) {
-    (void)scratch::sh(p, format::push(&p->io->arena, "head -c ", bytes, " /dev/urandom >random").data);
+    char command[256];
+    (void)format::to(command, sizeof command, "head -c ", bytes, " /dev/urandom >random");
+    (void)scratch::sh(p, command);
     scratch::expect_text(name, scratch::capture(p, "shasum -a 256 random | cut -d' ' -f1"), sha(p, "random"));
 }
 
-export void test_build_packages_sha256_equals_shasum_on_random_bytes(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_build_packages_sha256_equals_shasum_on_random_bytes() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
     equals_shasum(&p, "sha256: 300000 random bytes equal shasum", "300000");
     const char *sizes[9] = {"55", "56", "57", "63", "64", "65", "119", "120", "128"}; // around the padding boundaries
     for (usize i = 0; i < 9; i++) {

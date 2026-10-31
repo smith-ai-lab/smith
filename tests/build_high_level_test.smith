@@ -3,7 +3,8 @@
 // itself.
 module build_high_level_test;
 
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import scratch;
 import target;
@@ -15,8 +16,31 @@ static const char *mtime(const scratch::Project *p, const char *file) {
     return scratch::capture(p, command);
 }
 
-export void test_build_high_level_objects_programs_and_the_compile_database(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "high_level");
+// The build.c entry of compile_commands.json compiles build.c with exactly its arguments, the build program's.
+static void build_c_entry_compiles(const scratch::Project *p) {
+    const char *arguments = "$(sed -n '/\"file\": \"build.c\"/,/^    \\]/p' compile_commands.json | sed -n 's/^      "
+                            "\"\\(.*\\)\",\\{0,1\\}$/\\1/p' | "
+                            "tail -n +2 | grep -v '^-c$' | grep -v '^build.c$')";
+    char command[1024];
+    __builtin_snprintf(command, sizeof command, "smith cc %s -fsyntax-only build.c 2>&1; echo \"$?\"", arguments);
+    scratch::expect_text("build.c entry: clang -fsyntax-only with its arguments succeeds", "0",
+                         scratch::sh(p, command).out);
+    __builtin_snprintf(command, sizeof command, "echo %s", arguments);
+    const char *entry_flags = scratch::capture(p, command);
+    const char *program_flags = scratch::capture(
+        p,
+        "sed -n 's/.*command = [^ ]* \\(cc \\)\\{0,1\\}\\(-std=gnu23.*-I \\.smith\\/include\\) -MM\\{0,1\\}D.*/\\2/p' "
+        ".smith/build-program/build.ninja | head -n 1");
+    scratch::expect_text("build.c entry: its flags are the build program's", program_flags, entry_flags);
+}
+
+export void test_build_high_level_objects_programs_and_the_compile_database() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "high_level");
+    defer scratch::clean(&p);
     (void)scratch::sh(&p, "cc -c extra.c -o extra.o && ar rcs libextra.a extra.o");
     scratch::Run built = scratch::build(&p, "-v");
     scratch::expect_status("high level: the program builds", 0, &built);
@@ -69,19 +93,5 @@ export void test_build_high_level_objects_programs_and_the_compile_database(io::
     (void)scratch::build(&p, "");
     scratch::expect_text("compile_commands.json: a changed flag changes it", "yes",
                          scratch::contains(scratch::read(&p, "compile_commands.json"), "\"-Wall\"") ? "yes" : "no");
-    // the build.c entry compiles build.c with exactly these arguments
-    const char *arguments = "$(sed -n '/\"file\": \"build.c\"/,/^    \\]/p' compile_commands.json | sed -n 's/^      "
-                            "\"\\(.*\\)\",\\{0,1\\}$/\\1/p' | "
-                            "tail -n +2 | grep -v '^-c$' | grep -v '^build.c$')";
-    char command[1024];
-    __builtin_snprintf(command, sizeof command, "smith cc %s -fsyntax-only build.c 2>&1; echo \"$?\"", arguments);
-    scratch::expect_text("build.c entry: clang -fsyntax-only with its arguments succeeds", "0",
-                         scratch::sh(&p, command).out);
-    __builtin_snprintf(command, sizeof command, "echo %s", arguments);
-    const char *entry_flags = scratch::capture(&p, command);
-    const char *program_flags = scratch::capture(
-        &p,
-        "sed -n 's/.*command = [^ ]* \\(cc \\)\\{0,1\\}\\(-std=gnu23.*-I \\.smith\\/include\\) -MM\\{0,1\\}D.*/\\2/p' "
-        ".smith/build-program/build.ninja | head -n 1");
-    scratch::expect_text("build.c entry: its flags are the build program's", program_flags, entry_flags);
+    build_c_entry_compiles(&p);
 }
