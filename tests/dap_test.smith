@@ -4,30 +4,35 @@
 // the replies. They launch real processes under a debugger, so they need Developer mode and the Developer Tools
 // permission of the terminal running them (knowledge/debugger.md); a smith without clang or lldb inside (the stage0),
 // or an account that may not debug, has nothing to test, and the tests do nothing.
+// A test makes its project, then sets its own memory as the current allocator: what scratch returns to it (a Run's
+// texts, a file it reads) is given back with that memory, and scratch::clean frees what make holds.
 module dap_test;
 
 import smith::format;
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import scratch;
 
-static scratch::Project folder(const scratch::Project *root, const char *name) {
+constexpr usize memory_size = (usize)16 << 20; // 16 MiB
+
+// A folder of the project, as a project of its own; it shares the root's folders, which the root's clean removes.
+static scratch::Project folder(arena::Arena *memory, const scratch::Project *root, const char *name) {
     scratch::Project f = *root;
-    f.dir = format::push(&root->io->arena, root->dir, "/", name).data;
+    f.dir = format::push(memory, root->dir, "/", name).data;
     return f;
 }
 
-// The fixture in a folder of the scratch space, the client built, and prog built in src. False when this smith has no
-// lldb, or this account may not debug.
-static bool make(io::Io *io, scratch::Project *root) {
-    *root = scratch::project(io, "dap", "dap");
+// The client built in the project of the fixture, and prog built in src. False when this smith has no lldb, or this
+// account may not debug.
+static bool ready(arena::Arena *memory, const scratch::Project *root) {
     scratch::Run usable = scratch::sh(
         root, "[ \"$(smith cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2)\" = 'clang in-process' ] && "
               "smith dbg --version >/dev/null 2>&1");
     if (usable.status != 0) {
         return false;
     }
-    scratch::Project src = folder(root, "src");
+    scratch::Project src = folder(memory, root, "src");
     scratch::Run built = scratch::sh(&src, "smith cc -g -O0 prog.c -o prog");
     scratch::expect_status("dap: prog.c builds", 0, &built);
     scratch::copy_tree(root, "tests/dap_client.c", "tests/dap_client.c");
@@ -44,18 +49,23 @@ static bool has_hook(const scratch::Project *p) {
     return scratch::sh(p, "smith cc --smith-which -x c 2>/dev/null | grep -q 'token-hook yes'").status == 0;
 }
 
-static scratch::Run dbg(const scratch::Project *p, io::Io *io, const char *arguments) {
-    return scratch::sh(p, format::push(&io->arena, "smith dbg -b ", arguments, " 2>&1").data);
+static scratch::Run dbg(arena::Arena *memory, const scratch::Project *p, const char *arguments) {
+    return scratch::sh(p, format::push(memory, "smith dbg -b ", arguments, " 2>&1").data);
 }
 
 // smith dbg, in batch mode: a breakpoint by line, run, a variable, a struct field, a backtrace.
-export void test_macos_dap_dbg_a_c_program(io::Io *io) {
-    scratch::Project root;
-    if (!make(io, &root)) {
+export void test_macos_dap_dbg_a_c_program() {
+    scratch::Project root = scratch::make("dap", "dap");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!ready(&memory, &root)) {
         return;
     }
-    scratch::Project src = folder(&root, "src");
-    const char *out = dbg(&src, io,
+    scratch::Project src = folder(&memory, &root, "src");
+    const char *out = dbg(&memory, &src,
                           "-o 'b prog.c:10' -o run -o 'frame variable sum' -o 'frame variable p' -o 'print p.x' -o bt "
                           "prog")
                           .out;
@@ -68,15 +78,20 @@ export void test_macos_dap_dbg_a_c_program(io::Io *io) {
 }
 
 // A payload enum (issue #198) shows its active variant and only that variant's payload, not every member of the union.
-export void test_macos_dap_dbg_a_payload_enum(io::Io *io) {
-    scratch::Project root;
-    if (!make(io, &root) || !has_hook(&root)) {
+export void test_macos_dap_dbg_a_payload_enum() {
+    scratch::Project root = scratch::make("dap", "dap");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!ready(&memory, &root) || !has_hook(&root)) {
         return;
     }
-    scratch::Project p = folder(&root, "enumdir");
+    scratch::Project p = folder(&memory, &root, "enumdir");
     scratch::Run built = scratch::sh(&p, "smith cc -g -O0 main.smith -o enum_prog");
     scratch::expect_status("the payload enum program builds", 0, &built);
-    const char *out = dbg(&p, io, "-o 'b main.smith:17' -o run -o 'frame variable a b c' enum_prog").out;
+    const char *out = dbg(&memory, &p, "-o 'b main.smith:17' -o run -o 'frame variable a b c' enum_prog").out;
     scratch::expect_contains("dbg shows a payload enum's active variant and its payload", out,
                              "a = circle {\n  circle = (r = 2)\n}");
     scratch::expect_contains("... a variant with no payload by its name", out, "b = empty {}");
@@ -86,9 +101,14 @@ export void test_macos_dap_dbg_a_payload_enum(io::Io *io) {
 
 // smith dap: a client writes DAP messages, and the adapter's replies are read back. A silent adapter (no output, no
 // CPU) is reported as a missing permission after the idle limit, not waited out.
-export void test_macos_dap_a_silent_adapter_is_a_missing_permission(io::Io *io) {
-    scratch::Project root;
-    if (!make(io, &root)) {
+export void test_macos_dap_a_silent_adapter_is_a_missing_permission() {
+    scratch::Project root = scratch::make("dap", "dap");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!ready(&memory, &root)) {
         return;
     }
     scratch::Run made = scratch::sh(&root, "printf '#!/bin/sh\\nexec sleep 30\\n' >silent && chmod +x silent");
@@ -99,9 +119,14 @@ export void test_macos_dap_a_silent_adapter_is_a_missing_permission(io::Io *io) 
                              "the debugger is waiting for permission (Developer Tools)");
 }
 
-export void test_macos_dap_a_session_on_a_c_program(io::Io *io) {
-    scratch::Project root;
-    if (!make(io, &root)) {
+export void test_macos_dap_a_session_on_a_c_program() {
+    scratch::Project root = scratch::make("dap", "dap");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!ready(&memory, &root)) {
         return;
     }
     scratch::Run session =
@@ -126,23 +151,29 @@ constexpr char build_lang[_] =
     "geometry/box.smith -o box.o && smith cc -g -O0 -I include -c main.smith -o main.o && smith cc -g box.o main.o -o "
     "lang";
 
-static bool make_lang(io::Io *io, scratch::Project *p) {
-    scratch::Project root;
-    if (!make(io, &root) || !has_hook(&root)) {
+// The folder lang of the project, with its program built.
+static bool lang(arena::Arena *memory, const scratch::Project *root, scratch::Project *p) {
+    if (!ready(memory, root) || !has_hook(root)) {
         return false;
     }
-    *p = folder(&root, "lang");
+    *p = folder(memory, root, "lang");
     scratch::Run built = scratch::sh(p, build_lang);
     scratch::expect_status("the .smith program builds", 0, &built);
     return built.status == 0;
 }
 
-export void test_macos_dap_dbg_stops_in_a_modules_function_named_as_written(io::Io *io) {
+export void test_macos_dap_dbg_stops_in_a_modules_function_named_as_written() {
+    scratch::Project root = scratch::make("dap", "dap");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Project p;
-    if (!make_lang(io, &p)) {
+    if (!lang(&memory, &root, &p)) {
         return;
     }
-    const char *out = dbg(&p, io,
+    const char *out = dbg(&memory, &p,
                           "-o 'b geometry::box::area' -o run -o bt -o 'frame variable' -o 'print b.w' -o 'print "
                           "(geometry::box::Box)b' -o 'type lookup geometry::box::Box' -o finish lang")
                           .out;
@@ -159,20 +190,32 @@ export void test_macos_dap_dbg_stops_in_a_modules_function_named_as_written(io::
     scratch::expect_contains("dbg's finish returns the value", out, "Return value: (f32) $0 = 6");
 }
 
-export void test_macos_dap_dbg_the_other_compile_unit_agrees_on_the_type(io::Io *io) {
+export void test_macos_dap_dbg_the_other_compile_unit_agrees_on_the_type() {
+    scratch::Project root = scratch::make("dap", "dap");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Project p;
-    if (!make_lang(io, &p)) {
+    if (!lang(&memory, &root, &p)) {
         return;
     }
-    const char *out = dbg(&p, io, "-o 'b main.smith:5' -o run -o 'frame variable b' lang").out;
+    const char *out = dbg(&memory, &p, "-o 'b main.smith:5' -o run -o 'frame variable b' lang").out;
     scratch::expect_contains("dbg's other compile unit agrees on the type", out,
                              "(geometry::box::Box) b = (w = 2, h = 3)");
     scratch::expect_lacks("the C spelling does not show in dbg", out, "geometry_box");
 }
 
-export void test_macos_dap_a_smith_session_has_names_as_written(io::Io *io) {
+export void test_macos_dap_a_smith_session_has_names_as_written() {
+    scratch::Project root = scratch::make("dap", "dap");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Project p;
-    if (!make_lang(io, &p)) {
+    if (!lang(&memory, &root, &p)) {
         return;
     }
     scratch::Run session = scratch::sh(&p, "../dap_client \"$(command -v smith)\" \"$PWD/lang\" "
@@ -184,15 +227,20 @@ export void test_macos_dap_a_smith_session_has_names_as_written(io::Io *io) {
 
 // A generic's instance (issue #15): the frame is `pick::larger<i32>` with the types it was asked for, and it is in the
 // generic's own source, at the line written there, not in the compiler's copy of the tokens.
-export void test_macos_dap_dbg_a_generics_instance(io::Io *io) {
-    scratch::Project root;
-    if (!make(io, &root) || !has_hook(&root)) {
+export void test_macos_dap_dbg_a_generics_instance() {
+    scratch::Project root = scratch::make("dap", "dap");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!ready(&memory, &root) || !has_hook(&root)) {
         return;
     }
-    scratch::Project p = folder(&root, "generic");
+    scratch::Project p = folder(&memory, &root, "generic");
     scratch::Run built = scratch::sh(&p, "smith cc -g -O0 gmain.smith pick.smith -o generic");
     scratch::expect_status("the generic program builds", 0, &built);
-    const char *out = dbg(&p, io, "-o 'br set -r larger' -o run -o bt -o 'frame variable' -o c -o bt generic").out;
+    const char *out = dbg(&memory, &p, "-o 'br set -r larger' -o run -o bt -o 'frame variable' -o c -o bt generic").out;
     scratch::expect_contains("dbg stops in an instance", out, "stop reason = breakpoint 1.1");
     scratch::expect_contains("dbg's frame is the instance, named with its types", out,
                              "generic`pick::larger<i32>(a=3, b=8) at pick.smith:4");
@@ -208,16 +256,21 @@ export void test_macos_dap_dbg_a_generics_instance(io::Io *io) {
 
 // The argument list and `for constexpr`: the loop is written out turn by turn, and each argument is the variable
 // `rest_<index>`; the steps are at the lines of the generic's own source.
-export void test_macos_dap_dbg_an_argument_list_and_for_constexpr(io::Io *io) {
-    scratch::Project root;
-    if (!make(io, &root) || !has_hook(&root)) {
+export void test_macos_dap_dbg_an_argument_list_and_for_constexpr() {
+    scratch::Project root = scratch::make("dap", "dap");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!ready(&memory, &root) || !has_hook(&root)) {
         return;
     }
-    scratch::Project p = folder(&root, "lists");
+    scratch::Project p = folder(&memory, &root, "lists");
     scratch::Run built = scratch::sh(&p, "smith cc -g -O0 lmain.smith gather.smith -o lists");
     scratch::expect_status("the argument list program builds", 0, &built);
     const char *out =
-        dbg(&p, io, "-o 'br set -r sum_with_marker' -o run -o next -o next -o 'frame variable' -o c lists").out;
+        dbg(&memory, &p, "-o 'br set -r sum_with_marker' -o run -o next -o next -o 'frame variable' -o c lists").out;
     scratch::expect_contains("dbg steps a for constexpr at the generic's own lines", out, "total += (i32)rest[i];");
     scratch::expect_contains("dbg names the argument list's elements", out, "(int) rest_1 = 2");
     scratch::expect_contains("dbg names the first argument", out, "(int) rest_0 = 1");
@@ -227,16 +280,21 @@ export void test_macos_dap_dbg_an_argument_list_and_for_constexpr(io::Io *io) {
 // by the variables request of dap, not as a pointer and a count array. The formatters are lldb's own C++ ones.
 constexpr char build_slice[_] = "smith cc -g -O0 -c main.smith -o main.o && smith cc -g main.o -o slice";
 
-export void test_macos_dap_dbg_a_slice(io::Io *io) {
-    scratch::Project root;
-    if (!make(io, &root) || !has_hook(&root)) {
+export void test_macos_dap_dbg_a_slice() {
+    scratch::Project root = scratch::make("dap", "dap");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!ready(&memory, &root) || !has_hook(&root)) {
         return;
     }
-    scratch::Project p = folder(&root, "slice");
+    scratch::Project p = folder(&memory, &root, "slice");
     scratch::Run built = scratch::sh(&p, build_slice);
     scratch::expect_status("the slice program builds", 0, &built);
     const char *out =
-        dbg(&p, io, "-o 'b main.smith:6' -o run -o 'frame variable xs name' -o 'frame variable xs[2]' slice").out;
+        dbg(&memory, &p, "-o 'b main.smith:6' -o run -o 'frame variable xs name' -o 'frame variable xs[2]' slice").out;
     scratch::expect_contains("dbg shows a slice with its type as written and its count", out,
                              "(i32[:]) xs = count=3 {");
     scratch::expect_contains("dbg shows a slice's elements", out, "[2] = 6");
@@ -244,12 +302,17 @@ export void test_macos_dap_dbg_a_slice(io::Io *io) {
     scratch::expect_contains("dbg indexes a slice", out, "(i32) xs[2] = 6");
 }
 
-export void test_macos_dap_a_slice_session(io::Io *io) {
-    scratch::Project root;
-    if (!make(io, &root) || !has_hook(&root)) {
+export void test_macos_dap_a_slice_session() {
+    scratch::Project root = scratch::make("dap", "dap");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!ready(&memory, &root) || !has_hook(&root)) {
         return;
     }
-    scratch::Project p = folder(&root, "slice");
+    scratch::Project p = folder(&memory, &root, "slice");
     scratch::Run built = scratch::sh(&p, build_slice);
     scratch::expect_status("the slice program builds", 0, &built);
     scratch::Run session = scratch::sh(&p, "../dap_client \"$(command -v smith)\" \"$PWD/slice\" \"$PWD/main.smith\" 6 "
@@ -262,15 +325,20 @@ export void test_macos_dap_a_slice_session(io::Io *io) {
 // Many dimensions and the qualifier tags (issue #106): rows are children of children with the fixed sizes and every
 // count, and the tags of `restrict` and `const` slices (written by hand here: their lowering is the compiler's) show
 // their elements and the type as the language writes it.
-export void test_macos_dap_dbg_many_dimensions_and_qualifier_tags(io::Io *io) {
-    scratch::Project root;
-    if (!make(io, &root) || !has_hook(&root)) {
+export void test_macos_dap_dbg_many_dimensions_and_qualifier_tags() {
+    scratch::Project root = scratch::make("dap", "dap");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!ready(&memory, &root) || !has_hook(&root)) {
         return;
     }
-    scratch::Project p = folder(&root, "slices2");
+    scratch::Project p = folder(&memory, &root, "slices2");
     scratch::Run built = scratch::sh(&p, "smith cc -g -O0 -c main.smith -o main.o && smith cc -g main.o -o slices2");
     scratch::expect_status("the many-dimension slice program builds", 0, &built);
-    const char *out = dbg(&p, io,
+    const char *out = dbg(&memory, &p,
                           "-o 'b main.smith:11' -o run -o 'frame variable rows grid r c' -o 'frame variable "
                           "rows[1][0]' slices2")
                           .out;
@@ -284,30 +352,35 @@ export void test_macos_dap_dbg_many_dimensions_and_qualifier_tags(io::Io *io) {
                              "(const char[const :]) c = \"hey\" count=3");
 }
 
-// `i32 main(io::Io *io)` is the function `smith_user_main` to the compiler and `main` to the debugger, with a module
-// line or without (the DWARF name; no debugger process runs).
-static void check_io_main(io::Io *io, const char *file) {
-    scratch::Project root;
-    if (!make(io, &root) || !has_hook(&root)) {
+// The io form of main (`i32 main` taking io's value) is the function `smith_user_main` to the compiler and `main` to
+// the debugger, with a module line or without (the DWARF name; no debugger process runs).
+static void check_io_main(const char *file) {
+    scratch::Project root = scratch::make("dap", "dap");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!ready(&memory, &root) || !has_hook(&root)) {
         return;
     }
     if (scratch::sh(&root, "command -v dwarfdump >/dev/null").status != 0) {
         return;
     }
-    scratch::Project p = folder(&root, "iomain");
+    scratch::Project p = folder(&memory, &root, "iomain");
     scratch::Run built = scratch::sh(
-        &p, format::push(&io->arena, "smith cc -g -O0 -I \"$SMITH_REPO/.smith/include\" -c ", file, " -o o.o").data);
+        &p, format::push(&memory, "smith cc -g -O0 -I \"$SMITH_REPO/.smith/include\" -c ", file, " -o o.o").data);
     scratch::expect_status("the io-form main builds", 0, &built);
     const char *names = scratch::capture(
         &p, "dwarfdump --debug-info o.o 2>/dev/null | grep -A1 'DW_AT_linkage_name.*smith_user_main' | tail -n 1");
-    scratch::expect_contains(format::push(&io->arena, "the io-form main of ", file, " is main to the debugger").data,
+    scratch::expect_contains(format::push(&memory, "the io-form main of ", file, " is main to the debugger").data,
                              names, "DW_AT_name\t(\"main\")");
 }
 
-export void test_macos_dap_the_io_main_without_a_module_line_is_main(io::Io *io) {
-    check_io_main(io, "plain/a.smith");
+export void test_macos_dap_the_io_main_without_a_module_line_is_main() {
+    check_io_main("plain/a.smith");
 }
 
-export void test_macos_dap_the_io_main_with_a_module_line_is_main(io::Io *io) {
-    check_io_main(io, "main.smith");
+export void test_macos_dap_the_io_main_with_a_module_line_is_main() {
+    check_io_main("main.smith");
 }
