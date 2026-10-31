@@ -624,7 +624,7 @@ static const char *const build_smith_inputs[] = {
     "lib/smith/arena.smith",
     "lib/smith/autodiff.smith",
     "lib/smith/inflate.smith",
-    "lib/smith/io.smith",
+    "runtime/io.smith",
     "lib/smith/random.smith",
     "lib/smith/contract.smith",
     "lib/smith/effects.smith",
@@ -693,8 +693,8 @@ static const char *const build_smith_inputs[] = {
 // lldb loads.
 // The libraries smith links, .smith modules compiled by the smith that runs this build (smith.c and the runtime see
 // only their headers); text is its own object beside them.
-static const char *const build_linked_libraries[] = {"arena", "contract", "env", "files",  "inflate",
-                                                     "io",    "mem",      "net", "random", "text"};
+static const char *const build_linked_libraries[] = {"arena", "contract", "env",    "files", "inflate",
+                                                     "mem",   "net",      "random", "text"};
 
 // The step that stops the build when the LLVM install is not there, and says what to run: an input of what links it.
 // Only the default target runs it, so `smith build llvm` works on a smith with no LLVM install.
@@ -747,8 +747,16 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     SmithObject commit = build_commit_object(b, config, folder);
     BuildShims shims = {};
     SmithObject libraries[sizeof build_linked_libraries / sizeof build_linked_libraries[0]] = {};
-    const SmithObject *objects[40] = {&object, &commit};
-    size_t count = 2;
+    // smith's private io layer (runtime/io.smith, issue #903), compiled by the same compiler and linked beside them
+    SmithObject runtime_io = {
+        .compiler = config->cc,
+        .source = "runtime/io.smith",
+        .output = smith_fmt(b, "%s/runtime_io.o", folder),
+        .flags = flags,
+    };
+    smith_object(b, &runtime_io);
+    const SmithObject *objects[40] = {&object, &commit, &runtime_io};
+    size_t count = 3;
     for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
         libraries[i] = (SmithObject){
             .compiler = config->cc,
@@ -923,7 +931,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     smith_compile_command(b, config->cc, "lib/smith/files.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/format.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/inflate.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/io.smith", smith_flags);
+    smith_compile_command(b, config->cc, "runtime/io.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/clock.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/console.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/entropy.smith", smith_flags);

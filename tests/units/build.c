@@ -48,6 +48,16 @@ void build(SmithBuild *b) {
                             "-I", smith_fmt(b, "%s/runtime/protocol", root), nullptr),
     };
     smith_object(b, &core);
+    // smith's private io layer (issue #903): smith.c includes its header, which this object's step writes. The object
+    // is not linked: lib/smith/io.smith, which the io tests link, defines the same C names.
+    // #894 deletes that library and adds `&runtime_io` to the objects of `tests` below.
+    SmithObject runtime_io = {
+        .compiler = "smith-cc",
+        .source = smith_fmt(b, "%s/runtime/io.smith", root),
+        .output = "build/tests_objects/runtime_io.o",
+        .flags = flags,
+    };
+    smith_object(b, &runtime_io);
     SmithTests tests = {
         .objects = (const SmithObject *[]){&http, &core, nullptr},
         .sources = smith_glob(b, smith_list(b, "lib/smith/*_test.smith", "lib/*_test.smith", "tests/*_test.smith",

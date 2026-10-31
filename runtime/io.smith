@@ -1,0 +1,3869 @@
+// runtime::io, <runtime/io.h>: everything a program does to the world outside it, as values you hold and pass on. Its C
+// API is the generated header .smith/include/runtime/io.h (a build output, not in git). Every export has a short name
+// here and a C name (the attribute before it): `io::make` is `smith_io_make`, `io::Io` is `SmithIo`,
+// `io::console_printf` is `smith_console_printf`. The comments above an export are the header's doc comments, so they
+// name the Smith names; the first one says how a C name follows from them.
+// NOLINTBEGIN(smith-mem): lag rule: smith links io, the previous release has no smith::mem; convert to mem:: after it
+module runtime::io;
+
+import smith::arena;
+import smith::contract;
+import smith::math;
+import smith::random;
+import target;
+import <errno.h>;
+import <dirent.h>;
+import <dlfcn.h>;
+import <fcntl.h>;
+import <limits.h>;
+import <pthread.h>;
+import <signal.h>;
+import <spawn.h>;
+import <stdio.h>;
+import <stdlib.h>;
+import <string.h>;
+import <sys/mman.h>;
+import <sys/random.h>;
+import <sys/stat.h>;
+import <sys/wait.h>;
+import <time.h>;
+import <unistd.h>;
+// Each platform's own headers. Every header both use is imported above, before the branches: a branch not taken is
+// still read by the preprocessor, so a header name in it must not be a macro of a header imported before it
+// (`errno` is one once <errno.h> is in).
+if constexpr (target::os == target::macos) {
+    import <Network/Network.h>;
+    import <dispatch/dispatch.h>;
+    import <sys/event.h>;
+} else {
+    import <arpa/inet.h>;
+    import <netdb.h>;
+    import <sys/epoll.h>;
+    import <sys/socket.h>;
+    import <sys/syscall.h>;
+    import <sys/timerfd.h>;
+}
+
+// <smith/io.h>: everything a program does to the world outside it, as values you hold and pass on. One line in main
+// makes all of it:
+//
+//   i32 main(i32 argc, char **argv) {
+//       io::Io io = io::make(argc, argv);
+//       ...
+//   }
+//
+// In C the same line is `SmithIo io = smith_io_make(argc, argv);`: the module's names are short (io::make, io::Io,
+// io::console_printf) and C calls them by the same words with the prefix `smith_` or `Smith` (smith_io_make, SmithIo,
+// smith_console_printf; a function of a capability is smith_<capability>_<name>: io::files_read is smith_files_read).
+// The comments below name the Smith names.
+//
+// io holds every capability the program has, as a field: io.arena (memory), io.key and io.seed (randomness), io.console
+// (stdin, stdout, stderr), io.files (the file system), io.clock (monotonic and wall time),
+// io.processes (spawn and wait), io.net (TLS connections) and io.args. Code can only do what it
+// was handed: a function that is not given a clock cannot depend on time, and one that is not given files cannot touch
+// the disk.
+//
+// A function takes the narrowest thing that covers what it uses.
+//   One or two capabilities: those alone.
+//     Mesh mesh_load(io::Files *files, arena::Arena *arena, const char *path);
+//     Mesh mesh = mesh_load(&io.files, &io.arena, "cube.obj");        // in main
+//   Most of io: the whole of it.
+//     void game_run(io::Io *io);
+//   A bundle several functions share: a struct the project defines, of the capabilities that group needs.
+//     typedef struct { io::Files *files; io::Console *console; arena::Arena *arena; } Editor;
+//     Editor editor = {&io.files, &io.console, &io.arena};
+//     editor_open(&editor, path);
+// If a signature wants four or more separate capabilities, take io::Io * or define the struct. The pointers point into
+// the io in main, so keep that one in place for as long as they are used.
+//
+// The types of the capabilities are marked [[clang::annotate("smith::capability")]], and io::make
+// [[clang::annotate("smith::main_only")]]: `smith lint` (the check smith-effects) reports a raw call such as fopen or
+// printf outside a capability's own implementation, and io::make called anywhere but main. A project marks its own
+// capability (a window, a GPU) the same way; the smith-io skill has the rules.
+//
+// Errors are values. Every operation reports success or an io::Error with a message; nothing is printed behind your
+// back, and a function that can fail says so in its result. Only what the program cannot continue without stops it:
+// io::make failing to reserve memory, and (as in the arena) a push past the arena's capacity.
+//
+// Blocking calls are for simple code:
+//   io::Read text = io::files_read(&io.files, &io.arena, "config.txt");
+//   if (text.error.code != 0) { io::console_print_error(&io.console, text.error.message); return 1; }
+//   for (usize turn = 0; turn < turn_max; turn++) {          // reading until the input ends
+//       io::Read line = io::console_read_line(&io.console, &io.arena);
+//       if (line.end) break;
+//       ...
+//   }
+//
+// Asynchronous calls are for waiting on several things at once. You submit an operation in an io::Op you own and keep
+// alive, then io::run completes what is ready, marking each op done:
+//   io::Op timer = {}, wait = {};
+//   io::clock_timeout_async(&io.clock, &timer, 2'000'000'000);
+//   io::processes_wait_async(&io.processes, &wait, child);
+//   for (usize i = 0; i < rounds_max && !(timer.done && wait.done); i++)
+//       io::run(&io, io::forever);
+// Completion is a done flag, not a callback. Everything the program needs is in the op (error, data, status), a loop in
+// the caller's own control flow reads it where the state lives, no closure or context pointer is needed, and an
+// io_uring or IOCP backend can complete the same struct by its user data. An op must not move or be freed while it is
+// pending, and may be reused after it is done. Names, paths and data an op points at belong to the caller until done.
+//
+// Underneath is one event loop: kqueue on macOS, epoll on Linux. Neither has asynchronous file IO the library uses,
+// so file operations run synchronously, in the order they were submitted, inside io::run: submitting only queues
+// them. Pipes and the console wait on the loop, timers and process exits too (kqueue's EVFILT_TIMER and EVFILT_PROC
+// on macOS, a timerfd and a pidfd on Linux). On macOS network connections are Network.framework's, which calls back
+// on a dispatch queue; each callback pushes its finished op onto a lock-free list and signals the same kqueue
+// (EVFILT_USER). On Linux they are nonblocking sockets (TLS by OpenSSL, loaded when the first connection needs it)
+// driven by the same epoll, with no thread. Either way the ops complete in io::run like every other. Every blocking
+// call is an op submitted and run to completion on the same loop. Each platform's code is in an `if constexpr
+// (target::os == target::macos)` branch, so the other's headers are never read.
+//
+// For tests there is a fake with the same type: io::make_test. Its files are in memory, its console is scripted
+// text with the output captured, its clock moves only when told to, its key is given, its servers are scripted, and its
+// memory is a buffer you provide. Code under test cannot tell it from the real one.
+//
+// The project compiles lib/smith/io.smith itself (build.c: smith_library(b, "io")), along with the arena and random
+// libraries.
+
+// An error: code is 0 for success, otherwise an errno value (ENOENT, EINVAL...), and message says what failed, such
+// as "open config.txt: No such file or directory". Real and fake io give the same code and message.
+[[smith::c_name("SmithError")]] export typedef struct {
+    i32 code;
+    char message[192];
+} Error;
+
+// The result of reading: data is the bytes read, a `const u8[:]`, in the arena you gave; for a file or a line it has a
+// zero after it that its count does not count, so it can be handed to C. For a read of the console, end is true when
+// the input is over and nothing was read.
+[[smith::c_name("SmithRead")]] export typedef struct {
+    Error error;
+    const u8 data[:];
+    bool end;
+} Read;
+
+// The caller owns an op and keeps it where it is until done. Fill it only through the *_async functions. Reuse after
+// done is allowed.
+[[smith::c_name("SmithLoop")]] export typedef struct SmithLoop Loop;
+
+// NOLINTBEGIN(readability-identifier-naming)
+// An enum's constants are written short in a module (io::Replace, C's SmithWrite_Replace), and the check wants C's
+// Type_Value.
+
+[[smith::c_name("SmithOpKind")]] export typedef enum {
+    None,
+    FileRead,
+    FileWrite,
+    ConsoleRead,
+    PipeRead,
+    PipeWrite,
+    Timeout,
+    ProcessWait,
+    NetConnect,
+    NetSend,
+    NetReceive,
+    NetClose,
+} OpKind;
+// NOLINTEND(readability-identifier-naming)
+
+// NOLINTBEGIN(readability-identifier-naming)
+// An enum's constants are written short in a module (io::Replace, C's SmithWrite_Replace), and the check wants C's
+// Type_Value.
+
+// How io::files_write puts the bytes in the file.
+[[smith::c_name("SmithWrite")]] export typedef enum {
+    Replace, // creates the file or replaces what it held
+    Atomic,  // the same, so that nobody sees it half written: the bytes go to "<path>.tmp" and are renamed
+             // over the path, and a failure leaves the old file as it was
+    Append,  // adds size bytes to the end, creating the file if it is not there
+    New,     // creates the file only if there is none: EEXIST if the path is taken, which is how a program
+             // makes a unique name, by trying another
+} Write;
+// NOLINTEND(readability-identifier-naming)
+
+[[smith::c_name("SmithOp")]] export typedef struct [[clang::annotate("smith::capability")]] SmithOp {
+    bool done;        // set by io::run when the op finished, successfully or not
+    Error error;      // valid once done
+    const u8 data[:]; // reads: the bytes read (a file's and a line's have a zero after them, not counted)
+    usize taken;      // writes: the bytes taken
+    bool end;         // console reads: the input is over
+    i32 exit_status;  // process waits: the exit status, or 0 if killed
+    i32 signal;       // process waits: the signal that killed it, or 0
+    struct {          // private to the library
+        OpKind kind;
+        struct SmithOp *next;
+        Loop *loop;
+        void *console;
+        void *connection;
+        void *child;              // the fake's child, for a child's reads and writes
+        struct SmithOp *finished; // network ops: the list of ops the callbacks have finished
+        arena::Arena *arena;
+        const char *path;
+        const void *input;
+        u8 *destination;
+        usize capacity;
+        i32 descriptor;
+        i32 process;
+        bool *reaped; // process waits: set when the wait has reaped the process (io::child_wait_async)
+        u64 deadline;
+        bool ready;
+        bool fill;
+        Write mode;
+    } internal;
+} Op;
+
+// io::run waits at most this long (in nanoseconds); 0 only completes what is ready, and io::forever waits
+// for at least one operation.
+[[smith::c_name("smith_io_forever")]] export constexpr i64 forever = -1;
+
+[[smith::c_name("SmithConsole")]] export typedef struct [[clang::annotate("smith::capability")]] {
+    Loop *loop;
+    u8 buffer[4096]; // input read from the console and not yet taken
+    usize start;
+    usize end;
+} Console;
+
+[[smith::c_name("SmithFiles")]] export typedef struct [[clang::annotate("smith::capability")]] {
+    Loop *loop;
+} Files;
+
+[[smith::c_name("SmithClock")]] export typedef struct [[clang::annotate("smith::capability")]] {
+    Loop *loop;
+} Clock;
+
+[[smith::c_name("SmithProcesses")]] export typedef struct [[clang::annotate("smith::capability")]] {
+    Loop *loop;
+} Processes;
+
+[[smith::c_name("SmithNet")]] export typedef struct [[clang::annotate("smith::capability")]] {
+    Loop *loop;
+} Net;
+
+[[smith::c_name("SmithArgs")]] export typedef struct [[clang::annotate("smith::capability")]] {
+    usize count;
+    const char *const *values; // values[count] is nullptr
+    const char *const
+        *environment; // the fake's "NAME=value" entries, then nullptr; the real io's is nullptr (see below)
+} Args;
+
+[[smith::c_name("SmithIo")]] export typedef struct [[clang::annotate("smith::capability")]] {
+    arena::Arena arena;
+    random::Key key; // from getentropy, or from $SMITH_SEED to replay a run
+    u64 seed;        // the key's seed: print it to be able to replay
+    Console console;
+    Files files;
+    Clock clock;
+    Processes processes;
+    Net net;
+    Args args;
+    Loop *loop;
+} Io;
+
+// --- files: any path the program is given, absolute or relative; a missing one is ENOENT ---
+
+[[smith::c_name("SmithFileInfo")]] export typedef struct {
+    Error error; // ENOENT if there is nothing at the path
+    bool folder;
+    bool writable; // the program may write here: to a file, or make files in a folder
+    usize size;    // bytes of a file; 0 for a folder
+} FileInfo;
+
+[[smith::c_name("SmithFileEntry")]] export typedef struct {
+    const char *name; // the name alone, not the path
+    bool folder;
+    usize size; // bytes of a file; 0 for a folder
+    bool link;  // a symbolic link (a link to a folder has folder set too)
+} FileEntry;
+
+[[smith::c_name("SmithFileList")]] export typedef struct {
+    Error error;
+    const FileEntry *entries; // in the arena, sorted by name, without "." and ".."
+    usize count;
+} FileList;
+
+[[smith::c_name("SmithMapped")]] export typedef struct {
+    Error error;
+    void *data; // page-aligned (aligned to arena::align_max in the fake)
+    usize size;
+} Mapped;
+
+// --- processes ---
+
+[[smith::c_name("SmithProcess")]] export typedef struct {
+    i32 id; // a process id; a negative id is a process of the fake io
+} Process;
+
+[[smith::c_name("SmithProcessResult")]] export typedef struct {
+    Error error;        // could not start (a missing program is ENOENT); otherwise success even if it failed
+    i32 exit_status;    // 0 if killed
+    i32 signal;         // the signal that killed it, or 0
+    const char *output; // stdout, NUL-terminated, in the arena
+    usize output_size;
+    const char *errors; // stderr
+    usize errors_size;
+} ProcessResult;
+
+// A process id is free to be used again once its wait has completed, so a signal sent to it after that may reach
+// another program, and nothing may signal one after its wait. io::child_kill and io::capture_stop know it for the
+// processes they own; for an io::Process of io::processes_spawn that is the caller's to keep: do not kill an id
+// after the wait for it has completed.
+// A process whose stdout and stderr are captured together (as `2>&1`, so the lines come in the order the process wrote
+// them) while it runs on the loop, so a program can run several at once and print each one's output whole when it ends.
+// The caller owns the struct and keeps it where it is until done.
+[[smith::c_name("SmithCapture")]] export typedef struct [[clang::annotate("smith::capability")]] SmithCapture {
+    Process process;    // the process started; it leads a process group of its own, so kill(-process.id, ...) reaches
+                        // its children as well
+    bool done;          // set by io::capture_poll: the process exited and its output was read to the end
+    Error error;        // valid once done: a read failed, or the wait did
+    i32 exit_status;    // 0 if killed
+    i32 signal;         // the signal that killed it, or 0
+    const char *output; // stdout and stderr, NUL-terminated, in the arena given at the start
+    usize output_size;
+    bool truncated; // the arena had no room for all of the output: the end of it was read and dropped
+    struct {        // private to the library
+        Loop *loop;
+        arena::Arena *arena;
+        u8 *data;
+        usize capacity;
+        i32 descriptor;
+        bool reading;
+        bool exited;
+        Op read;
+        Op wait;
+    } internal;
+} Capture;
+
+// A process started with pipes (io::processes_start_piped): the program writes to its stdin and reads its stdout, as
+// ops on the loop, so one io::run waits on several children's output, the program's own stdin, timers and exits
+// together. The caller owns the struct and keeps it where it is until the child is closed. The child leads a process
+// group of its own, so io::child_kill reaches its children too. Its stderr is the program's own, not a pipe: a child
+// that logs there can never block on a full pipe nobody reads (and for a server whose stdout is a protocol, the client
+// that started it sees the child's log with its own stderr). The pipes carry bytes, not lines: framing is the caller's.
+// One write, one read and one wait may be pending on a child at once. Close a descriptor's side
+// (io::child_close_input, io::child_close) only when no op on it is pending.
+[[smith::c_name("SmithChild")]] export typedef struct [[clang::annotate("smith::capability")]] SmithChild {
+    Process process; // wait for it with io::child_wait_async (io::processes_wait_async cannot tell
+                     // io::child_kill that the process is gone)
+    struct {         // private to the library
+        Loop *loop;
+        bool reaped; // the wait of io::child_wait_async has completed: the id may be another program's now
+        i32 input;   // the write end of the child's stdin; -1 once closed
+        i32 output;  // the read end of the child's stdout; -1 once closed
+    } internal;
+} Child;
+
+// --- net: TLS connections, from the platform (Network.framework on macOS, OpenSSL on Linux) ---
+//
+// A connection is a struct you own and keep where it is until its close has completed. The calls below are ops:
+// connect, then send and receive (one of each at a time), then close. An error is a value: refused and unreachable
+// hosts are the errno of the system (ECONNREFUSED, EHOSTUNREACH), a name that does not resolve is ENOENT, and a
+// certificate or handshake failure is EAUTH with a message that says why ("the certificate is not for this host"). The
+// system's own trust decides; there is no way to turn the check off. A connection that failed is closed by the program,
+// as one that worked is: close completes every op still pending on it with ECANCELED, and it is the last thing to touch
+// the connection, so it may be freed once the close is done.
+[[smith::c_name("SmithConnection")]] export typedef struct [[clang::annotate("smith::capability")]] SmithConnection {
+    struct { // private to the library
+        Loop *loop;
+        void *handle;
+        void *script;
+        usize position;
+        _Atomic(struct SmithOp *) waiting[4]; // connect, send, receive, close
+        _Atomic bool closed;
+        bool end; // the peer has finished sending
+        char name[96];
+    } internal;
+} Connection;
+
+// --- the fake io, for tests ---
+
+[[smith::c_name("SmithIoTest")]] export typedef struct {
+    void *memory; // the arena's memory, aligned to arena::align_max
+    usize capacity;
+    u64 seed;                // the key is random::key_make(seed)
+    const char *input;       // what stdin holds; nullptr is empty. The console reads it, then reports the end
+    const char *const *argv; // the arguments, nullptr-terminated; nullptr for none
+    usize argc;
+    const char *const *environment; // "NAME=value" entries, nullptr-terminated; nullptr for none
+    usize cores;                    // io::processes_cores; 0 means 1
+} Test;
+
+// NOLINTBEGIN(readability-identifier-naming)
+// An enum's constants are written short in a module (io::Replace, C's SmithWrite_Replace), and the check wants C's
+// Type_Value.
+
+// When a scripted child (io::test_add_child) has exited.
+[[smith::c_name("SmithChildExit")]] export typedef enum {
+    Never,       // never by itself: only io::child_kill ends it (a debugger waiting for requests)
+    Start,       // at once, like `true`: its output can be read, and a write is EPIPE
+    InputClosed, // when its stdin is closed, like `cat`
+    OutputRead,  // when all its output has been read
+} ChildExit;
+// NOLINTEND(readability-identifier-naming)
+
+// A child of the fake io, for io::processes_start_piped: the first script of the program that no child has used yet
+// is the one started (so two children of one program are two scripts). The child writes output to its stdout in pieces
+// of at most chunk bytes when chunk is not 0, from the start; a read waits (never completes, so the clock moves in
+// io::run) while it has written all it will and has not exited, and ends after the exit. A wait completes at the
+// exit, with status, or with the signal of io::child_kill. Writes are kept (io::test_child_input), up to 8 KiB;
+// a write to an exited child is EPIPE. Up to 16 children.
+[[smith::c_name("SmithChildScript")]] export typedef struct {
+    const char *program;
+    const char *output;
+    usize chunk;
+    ChildExit exit_on;
+    i32 status;
+} ChildScript;
+
+// A scripted server for the net: a connection to host:port is served by the first server added for it that no
+// connection has used yet, so a redirect to another host is a second server. The server sends response, in pieces of at
+// most chunk bytes when chunk is not 0, and then either closes cleanly or, when error is not 0, fails the next receive
+// with that errno. With tls_failure the connect fails with EAUTH and that message instead. A connection to a host with
+// no server is ECONNREFUSED. Once any server is added the real io is scripted too: its files, console and clock stay
+// real, and no connection goes out to the network. This is how a test of code that downloads runs on a real disk. Up to
+// 64 servers.
+[[smith::c_name("SmithNetServer")]] export typedef struct {
+    const char *host;
+    u16 port;
+    const void *response;
+    usize response_size;
+    usize chunk;
+    i32 error;
+    const char *tls_failure;
+    bool
+        stall; // after the response, a receive never completes: the server has gone quiet (a closed connection ends it)
+} NetServer;
+
+// The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
+// NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
+if constexpr (target::os == target::macos) {
+    constexpr i32 eauth = c::EAUTH;
+} else {
+    constexpr i32 eauth = 80; // macOS's EAUTH, which Linux has not: a certificate or handshake failure keeps the number
+}
+constexpr i32 ecanceled = c::ECANCELED;
+constexpr i32 econnrefused = c::ECONNREFUSED;
+if constexpr (target::os != target::macos) {
+    constexpr i32 econnreset = c::ECONNRESET;
+}
+constexpr i32 edeadlk = c::EDEADLK;
+constexpr i32 eexist = c::EEXIST;
+constexpr i32 eagain = c::EAGAIN;
+constexpr i32 eintr = c::EINTR;
+constexpr i32 einval = c::EINVAL;
+constexpr i32 eio = c::EIO;
+if constexpr (target::os != target::macos) {
+    constexpr i32 einprogress = c::EINPROGRESS;
+}
+constexpr i32 eisdir = c::EISDIR;
+constexpr i32 at_symlink_nofollow = c::AT_SYMLINK_NOFOLLOW;
+constexpr i32 emsgsize = c::EMSGSIZE;
+constexpr i32 enametoolong = c::ENAMETOOLONG;
+constexpr i32 enoent = c::ENOENT;
+constexpr i32 enosys = c::ENOSYS;
+constexpr i32 enospc = c::ENOSPC;
+constexpr i32 eperm = c::EPERM;
+constexpr i32 epipe = c::EPIPE;
+constexpr i32 esrch = c::ESRCH;
+constexpr i32 o_nonblock = c::O_NONBLOCK;
+constexpr i32 o_rdonly = c::O_RDONLY;
+constexpr i32 open_read = c::O_RDONLY | c::O_CLOEXEC;
+constexpr i32 open_replace = c::O_WRONLY | c::O_CREAT | c::O_TRUNC | c::O_CLOEXEC;
+constexpr i32 open_append = c::O_WRONLY | c::O_CREAT | c::O_APPEND | c::O_CLOEXEC;
+constexpr i32 open_new = c::O_WRONLY | c::O_CREAT | c::O_EXCL | c::O_CLOEXEC;
+constexpr i32 dlopen_flags = c::RTLD_NOW | c::RTLD_LOCAL;
+constexpr i32 fd_cloexec = c::FD_CLOEXEC;
+constexpr i32 set_descriptor_flags = c::F_SETFD;
+constexpr i32 set_status_flags = c::F_SETFL;
+constexpr i32 stdin_fd = c::STDIN_FILENO;
+constexpr i32 stdout_fd = c::STDOUT_FILENO;
+constexpr i32 stderr_fd = c::STDERR_FILENO;
+constexpr i32 write_ok = c::W_OK;
+constexpr i32 processors_online = c::_SC_NPROCESSORS_ONLN;
+constexpr usize path_max = c::PATH_MAX;
+constexpr i32 sig_pipe = c::SIGPIPE;
+constexpr i32 sig_block = c::SIG_BLOCK;
+constexpr i32 sig_setmask = c::SIG_SETMASK;
+constexpr i32 protect_both = c::PROT_READ | c::PROT_WRITE;
+constexpr i32 map_file = c::MAP_PRIVATE;
+if constexpr (target::os == target::macos) {
+    constexpr i32 map_reservation = c::MAP_PRIVATE | c::MAP_ANON | c::MAP_NORESERVE;
+    constexpr u16 ev_watch = c::EV_ADD | c::EV_ONESHOT;
+    constexpr u16 ev_register = c::EV_ADD | c::EV_CLEAR;
+    constexpr i16 evfilt_proc = c::EVFILT_PROC;
+    constexpr i16 evfilt_read = c::EVFILT_READ;
+    constexpr i16 evfilt_timer = c::EVFILT_TIMER;
+    constexpr i16 evfilt_user = c::EVFILT_USER;
+    constexpr i16 evfilt_write = c::EVFILT_WRITE;
+    constexpr u32 note_exit = c::NOTE_EXIT;
+    constexpr u32 note_nseconds = c::NOTE_NSECONDS;
+    constexpr u32 note_trigger = c::NOTE_TRIGGER;
+} else {
+    constexpr i32 map_reservation = c::MAP_PRIVATE | c::MAP_ANONYMOUS | c::MAP_NORESERVE;
+    constexpr u32 epoll_input = c::EPOLLIN;
+    constexpr u32 epoll_output = c::EPOLLOUT;
+    constexpr u32 epoll_once = c::EPOLLONESHOT;
+    constexpr u32 epoll_edge = c::EPOLLET;
+    constexpr i32 epoll_add = c::EPOLL_CTL_ADD;
+    constexpr i32 epoll_modify = c::EPOLL_CTL_MOD;
+    constexpr i32 epoll_cloexec = c::EPOLL_CLOEXEC;
+    constexpr i32 timer_cloexec = c::TFD_CLOEXEC;
+    constexpr i32 timer_nonblock = c::TFD_NONBLOCK;
+    constexpr i64 syscall_pidfd_open = c::SYS_pidfd_open;
+    constexpr i32 af_unspec = c::AF_UNSPEC;
+    constexpr i32 af_inet = c::AF_INET;
+    constexpr i32 af_inet6 = c::AF_INET6;
+    constexpr i32 enomem = c::ENOMEM;
+    constexpr i32 sock_stream = c::SOCK_STREAM;
+    constexpr i32 sock_nonblock = c::SOCK_NONBLOCK;
+    constexpr i32 sock_cloexec = c::SOCK_CLOEXEC;
+    constexpr i32 sol_socket = c::SOL_SOCKET;
+    constexpr i32 so_error = c::SO_ERROR;
+    constexpr i32 msg_nosignal = c::MSG_NOSIGNAL;
+    constexpr i32 eai_system = c::EAI_SYSTEM;
+}
+constexpr c::clockid_t clock_monotonic = c::CLOCK_MONOTONIC;
+constexpr c::clockid_t clock_realtime = c::CLOCK_REALTIME;
+constexpr i32 spawn_set_group = c::POSIX_SPAWN_SETPGROUP;
+constexpr i32 seq_cst = __ATOMIC_SEQ_CST;
+// NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
+
+// <sys/stat.h>'s and <sys/wait.h>'s own macros write their masks as octal literals, which C2y deprecates, so the
+// kind of a file and the way a process ended are read here from the same bits.
+constexpr u32 mode_kind_mask = 0xF000;
+constexpr u32 mode_fifo = 0x1000;
+constexpr u32 mode_character = 0x2000;
+constexpr u32 mode_folder = 0x4000;
+constexpr u32 mode_link = 0xA000;
+constexpr u32 mode_socket = 0xC000;
+constexpr u32 status_signal_mask = 0x7F; // the low seven bits of a wait status are the signal, 0 for an exit
+
+constexpr usize reservation = (usize)64 << 30;
+
+constexpr usize fake_files_max = 64;
+constexpr usize fake_programs_max = 16;
+constexpr usize fake_capture_size = (usize)64 << 10;
+constexpr usize fake_children_max = 16;
+constexpr usize child_input_max = 8192;  // what a scripted child keeps of its stdin
+constexpr i32 fake_child_base = 1 << 16; // a fake child's process id is -(base + index + 1)
+constexpr usize events_max = 16;
+constexpr usize entries_max = (usize)1 << 20; // entries of one folder
+constexpr usize print_max = 4096;             // what io::console_printf formats
+constexpr usize chunk = 4096;
+constexpr i32 folder_mode = 0b111111111; // rwxrwxrwx, before the umask
+constexpr i32 file_mode = 0b110100100;   // rw-r--r--, before the umask
+constexpr u64 nanoseconds = 1'000'000'000;
+constexpr usize fake_servers_max = 64;
+constexpr usize request_max = 8192;
+if constexpr (target::os == target::macos) {
+    constexpr usize wakeup = 1; // the ident of the loop's EVFILT_USER event
+    constexpr usize cas_tries = (usize)1 << 20;
+} else {
+    constexpr usize addresses_max = 32; // addresses of one host a connect tries
+    constexpr usize wait_rounds_max = (usize)1 << 20;
+}
+
+// The kind of a file, from its mode.
+bool mode_is(u32 mode, u32 kind) {
+    return (mode & mode_kind_mask) == kind;
+}
+
+// errno, which is a macro for the system's function.
+if constexpr (target::os == target::macos) {
+    i32 errno_now() {
+        return *c::__error();
+    }
+} else {
+    i32 errno_now() {
+        return *c::__errno_location();
+    }
+}
+
+typedef struct {
+    const char *path;
+    u8 *data; // capacity bytes: the size bytes of the file and then zeros (a NUL at least)
+    usize size;
+    usize capacity;
+    bool folder; // a folder made by io::files_make_folder; the folders of a file's path need no entry
+} FakeFile;
+
+typedef struct {
+    const char *program;
+    const char *output;
+    i32 status;
+} FakeProgram;
+
+// A server of the scripted network and the bytes its client has sent.
+typedef struct {
+    const char *host;
+    u16 port;
+    const u8 *response;
+    usize response_size;
+    usize chunk;
+    i32 error;
+    const char *tls_failure;
+    bool stall; // after the response, a receive waits for ever
+    bool used;
+    char *request; // request_max + 1 bytes
+    usize request_size;
+} FakeServer;
+
+// A scripted child of the fake io and its state.
+typedef struct {
+    const char *program;
+    const u8 *output;
+    usize output_size;
+    usize chunk;
+    ChildExit exit_on;
+    i32 status;
+    bool used;
+    usize output_position;
+    u8 *input; // child_input_max + 1 bytes
+    usize input_size;
+    bool input_closed;
+    bool killed;
+    i32 signal;
+} FakeChild;
+
+typedef struct {
+    FakeServer servers[fake_servers_max];
+    usize count;
+} FakeNet;
+
+typedef struct {
+    arena::Arena storage; // a quarter of the test memory: file contents, names and scripts
+    FakeFile files[fake_files_max];
+    usize file_count;
+    FakeProgram programs[fake_programs_max];
+    usize program_count;
+    FakeChild children[fake_children_max];
+    usize child_count;
+    const char *input;
+    usize input_size;
+    usize input_position;
+    char *output;
+    usize output_size;
+    char *errors;
+    usize errors_size;
+    u64 monotonic;
+    i64 wall;
+    usize cores;
+} Fake;
+
+if constexpr (target::os == target::macos) {
+    // Network.framework's functions, looked up with dlopen when the first connection is made (see the net section).
+    typedef struct {
+        typeof(c::nw_endpoint_create_host) *endpoint_create_host;
+        typeof(c::nw_parameters_create_secure_tcp) *parameters_create_secure_tcp;
+        typeof(c::nw_connection_create) *connection_create;
+        typeof(c::nw_connection_set_queue) *set_queue;
+        typeof(c::nw_connection_set_state_changed_handler) *set_state_handler;
+        typeof(c::nw_connection_start) *start;
+        typeof(c::nw_connection_cancel) *cancel;
+        typeof(c::nw_connection_send) *send;
+        typeof(c::nw_connection_receive) *receive;
+        typeof(c::nw_error_get_error_domain) *error_domain;
+        typeof(c::nw_error_get_error_code) *error_code;
+        const c::nw_parameters_configure_protocol_block_t *configure_default;
+        const c::nw_parameters_configure_protocol_block_t *configure_disable;
+        const c::nw_content_context_t *context_message;
+    } NetApi;
+} else {
+    // OpenSSL's functions, looked up with dlopen when the first TLS connection is made (see the net section). Declared
+    // here with opaque pointers, so building the library needs no OpenSSL header.
+    typedef struct {
+        const void *(*client_method)();
+        void *(*context_new)(const void *method);
+        void (*context_free)(void *context);
+        i32 (*context_default_paths)(void *context);
+        void (*context_verify)(void *context, i32 mode, void *callback);
+        i64 (*context_control)(void *context, i32 command, i64 number, void *pointer);
+        u64 (*context_options)(void *context, u64 options);
+        void *(*session_new)(void *context);
+        void (*session_free)(void *session);
+        i32 (*session_set_fd)(void *session, i32 descriptor);
+        i64 (*session_control)(void *session, i32 command, i64 number, void *pointer);
+        i32 (*session_set_host)(void *session, const char *name);
+        void *(*session_parameters)(void *session);
+        i32 (*parameters_set_address)(void *parameters, const char *text);
+        i32 (*session_connect)(void *session);
+        i32 (*session_read)(void *session, void *buffer, i32 size);
+        i32 (*session_write)(void *session, const void *buffer, i32 size);
+        i32 (*session_error)(const void *session, i32 result);
+        i32 (*session_shutdown)(void *session);
+        i64 (*verify_result)(const void *session);
+        const char *(*verify_text)(i64 code);
+        u64 (*error_next)();
+        void (*error_describe)(u64 code, char *buffer, usize size);
+        void (*error_clear)();
+    } NetApi;
+}
+
+if constexpr (target::os == target::macos) {
+    struct Loop {
+        i32 queue; // the kqueue, -1 in the fake
+        Fake *fake;
+        Op *head;
+        Op *tail;
+        usize pending;
+        void *memory; // the reservation, to release
+        usize memory_size;
+        FakeNet *servers;       // the scripted network, once a server is added; the fake io's only one
+        _Atomic(Op *) finished; // network ops whose callbacks have run: pushed by any thread, taken by the loop
+        NetApi net_api;         // Network.framework's functions, once the first connection needs them
+        bool net_loaded;
+        c::dispatch_queue_t net_queue; // the serial queue its callbacks run on
+    };
+} else {
+    struct Loop {
+        i32 queue; // the epoll descriptor, -1 in the fake
+        Fake *fake;
+        Op *head;
+        Op *tail;
+        usize pending;
+        void *memory; // the reservation, to release
+        usize memory_size;
+        FakeNet *servers; // the scripted network, once a server is added; the fake io's only one
+        usize settled;  // ops other than the one in hand that the net code completed (a close cancels what is pending)
+        NetApi net_api; // OpenSSL's functions, once the first TLS connection needs them
+        bool net_loaded;
+        void *net_context; // the SSL_CTX every TLS connection is made from
+    };
+}
+
+// ---------------------------------------------------------------- errors
+
+// A check that stays in every build: this library is the edge, which a proof never reads, and trusted, a check's body
+// is not read either. The assert writes the failure report (the call's line and the stack);
+// the trap after it is a second stop.
+void check(bool holds) {
+    contract::trusted();
+    contract::check_assert(
+        holds); // not contract::assert: a header's `assert` macro makes that a name error beside slices
+    if (!holds) __builtin_trap();
+}
+
+// The error for an errno value, with the message "what path: strerror".
+[[smith::c_name("smith_error_make")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+error_make(i32 code, const char *what, const char *path) {
+    Error error = {.code = code};
+    if (code == 0) return error;
+    char reason[96] = "";
+    if (c::strerror_r(code, reason, sizeof reason) != 0) __builtin_snprintf(reason, sizeof reason, "error %d", code);
+    i32 written = __builtin_snprintf(error.message, sizeof error.message, "%s %s: %s", what, path, reason);
+    check(written > 0);
+    return error;
+}
+
+[[gnu::format(__printf__, 2, 3)]] Error error_text(i32 code, const char *format, ...) {
+    Error error = {.code = code};
+    __builtin_va_list arguments;
+    __builtin_va_start(arguments, format);
+    i32 written = __builtin_vsnprintf(error.message, sizeof error.message, format, arguments);
+    __builtin_va_end(arguments);
+    check(written > 0);
+    return error;
+}
+
+[[noreturn]] void stop(const char *message) {
+    (void)c::dprintf(stderr_fd, "smith: io: %s\n", message);
+    c::abort();
+}
+
+// ---------------------------------------------------------------- growing buffers
+
+// A block in the arena that doubles when full (the old block stays behind), for output of unknown size.
+typedef struct {
+    arena::Arena *arena;
+    u8 *data;
+    usize size;
+    usize capacity;
+} Grow;
+
+// Makes room for at least `extra` more bytes and a NUL.
+void grow_reserve(Grow *grow, usize extra) {
+    check(grow->arena != nullptr && grow->size <= grow->capacity);
+    if (grow->data != nullptr && grow->capacity - grow->size > extra) return;
+    usize wanted = grow->capacity * 2;
+    if (wanted < grow->size + extra + 1) wanted = grow->size + extra + 1;
+    if (wanted < 256) wanted = 256;
+    u8 *bigger = (u8 *)arena::push_array_raw(grow->arena, sizeof(u8), wanted, alignof(u8));
+    if (grow->size > 0) __builtin_memcpy(bigger, grow->data, grow->size);
+    grow->data = bigger;
+    grow->capacity = wanted;
+}
+
+void grow_append(Grow *grow, const void *bytes, usize size) {
+    grow_reserve(grow, size);
+    if (size > 0) __builtin_memcpy(grow->data + grow->size, bytes, size);
+    grow->size += size;
+    grow->data[grow->size] = 0;
+}
+
+// ---------------------------------------------------------------- descriptors
+
+// Writes all size bytes. Each pass writes at least one byte or fails, so the loop is bounded by size.
+i32 write_all(i32 descriptor, const void *data, usize size) {
+    const u8 *bytes = (const u8 *)data;
+    usize done = 0;
+    for (usize passes = 0; done < size && passes <= size + 64; passes++) {
+        isize n = c::write(descriptor, bytes + done, size - done);
+        if (n < 0 && errno_now() == eintr) continue;
+        if (n < 0) return errno_now();
+        done += (usize)n;
+    }
+    return done == size ? 0 : eio;
+}
+
+// ---------------------------------------------------------------- the fake
+
+Fake *fake_of(Loop *loop) {
+    return loop->fake;
+}
+
+FakeFile *fake_find(Fake *fake, const char *path) {
+    for (usize i = 0; i < fake->file_count; i++)
+        if (c::strcmp(fake->files[i].path, path) == 0) return &fake->files[i];
+    return nullptr;
+}
+
+Error fake_capture(Fake *fake, bool errors, const char *text) {
+    char *buffer = errors ? fake->errors : fake->output;
+    usize *size = errors ? &fake->errors_size : &fake->output_size;
+    usize length = c::strlen(text);
+    if (length > fake_capture_size - 1 - *size) {
+        Error error = {.code = enospc};
+        __builtin_snprintf(error.message, sizeof error.message, "write console: the test io captures at most %zu bytes",
+                           fake_capture_size - 1);
+        return error;
+    }
+    __builtin_memcpy(buffer + *size, text, length);
+    *size += length;
+    buffer[*size] = 0;
+    return (Error){};
+}
+
+// What a read produced: the n bytes at bytes, as the op's data.
+void op_data(Op *op, const void *bytes, usize n) {
+    const u8 *first = (const u8 *)bytes;
+    op->data = first[0:n];
+}
+
+Error fake_read_file(Fake *fake, arena::Arena *arena, const char *path, Read *result) {
+    FakeFile *file = fake_find(fake, path);
+    if (file == nullptr) return error_make(enoent, "open", path);
+    if (file->folder) return error_make(eisdir, "read", path);
+    u8 *copy = (u8 *)arena::push_array_raw(arena, sizeof(u8), file->size + 1, alignof(u8));
+    if (file->size > 0) __builtin_memcpy(copy, file->data, file->size);
+    const u8 *contents = copy;
+    result->data = contents[0:file->size];
+    return (Error){};
+}
+
+// The entry for a path, made if it is not there. nullptr when the fake holds as many files as it can.
+FakeFile *fake_entry(Fake *fake, const char *path) {
+    FakeFile *file = fake_find(fake, path);
+    if (file != nullptr) return file;
+    if (fake->file_count == fake_files_max) return nullptr;
+    file = &fake->files[fake->file_count++];
+    *file = (FakeFile){};
+    char *name = (char *)arena::push_array_raw(&fake->storage, sizeof(char), c::strlen(path) + 1, alignof(char));
+    __builtin_memcpy(name, path, c::strlen(path));
+    file->path = name;
+    return file;
+}
+
+Error fake_write_file(Fake *fake, const char *path, const void *data, usize size) {
+    FakeFile *file = fake_entry(fake, path);
+    if (file == nullptr) return error_make(enospc, "create", path);
+    file->data = (u8 *)arena::push_array_raw(&fake->storage, sizeof(u8), size + 1, alignof(u8));
+    if (size > 0) __builtin_memcpy(file->data, data, size);
+    file->size = size;
+    file->capacity = size + 1;
+    file->folder = false;
+    return (Error){};
+}
+
+Error fake_append_file(Fake *fake, const char *path, const void *data, usize size) {
+    FakeFile *file = fake_entry(fake, path);
+    if (file == nullptr) return error_make(enospc, "create", path);
+    if (file->folder) return error_make(eisdir, "open", path);
+    if (file->data == nullptr || file->size + size + 1 > file->capacity) { // grows by doubling
+        usize wanted = file->capacity * 2 > file->size + size + 1 ? file->capacity * 2 : file->size + size + 1;
+        u8 *bigger = (u8 *)arena::push_array_raw(&fake->storage, sizeof(u8), wanted, alignof(u8));
+        if (file->size > 0) __builtin_memcpy(bigger, file->data, file->size);
+        file->data = bigger;
+        file->capacity = wanted;
+    }
+    if (size > 0) __builtin_memcpy(file->data + file->size, data, size);
+    file->size += size;
+    file->data[file->size] = 0;
+    return (Error){};
+}
+
+Error fake_write(Fake *fake, const char *path, const void *data, usize size, Write mode) {
+    switch (mode) {
+    case Replace:
+    case Atomic:
+        return fake_write_file(fake, path, data, size);
+    case Append:
+        return fake_append_file(fake, path, data, size);
+    case New:
+        if (fake_find(fake, path) != nullptr) return error_make(eexist, "open", path);
+        return fake_write_file(fake, path, data, size);
+    }
+    return error_make(einval, "write", path);
+}
+
+// The length of a folder's path without trailing slashes; "." and "" are the fake's root, of length 0.
+usize fake_folder_length(const char *path) {
+    usize length = c::strlen(path);
+    while (length > 1 && path[length - 1] == '/')
+        length -= 1;
+    if (length == 0 || (length == 1 && path[0] == '.')) return 0;
+    return length;
+}
+
+// Whether a folder is at the path: made by io::files_make_folder, or holding a file or folder of the fake.
+bool fake_folder_exists(const Fake *fake, const char *path) {
+    usize length = fake_folder_length(path);
+    if (length == 0) return true;
+    for (usize i = 0; i < fake->file_count; i++) {
+        const char *other = fake->files[i].path;
+        usize other_length = c::strlen(other);
+        if (fake->files[i].folder && other_length == length && c::strncmp(other, path, length) == 0) return true;
+        if (other_length > length && c::strncmp(other, path, length) == 0 && other[length] == '/') return true;
+    }
+    return false;
+}
+
+FileInfo fake_info(const Fake *fake, const char *path) {
+    FileInfo info = {.writable = true};
+    for (usize i = 0; i < fake->file_count; i++) {
+        if (c::strcmp(fake->files[i].path, path) == 0 && !fake->files[i].folder) {
+            info.size = fake->files[i].size;
+            return info;
+        }
+    }
+    if (fake_folder_exists(fake, path)) {
+        info.folder = true;
+        return info;
+    }
+    info.writable = false;
+    info.error = error_make(enoent, "stat", path);
+    return info;
+}
+
+Error fake_make_folder(Fake *fake, const char *path) {
+    FileInfo info = fake_info(fake, path);
+    if (info.error.code == 0) return info.folder ? (Error){} : error_make(eexist, "mkdir", path);
+    FakeFile *file = fake_entry(fake, path);
+    if (file == nullptr) return error_make(enospc, "mkdir", path);
+    file->folder = true;
+    return (Error){};
+}
+
+Error fake_remove(Fake *fake, const char *path) {
+    for (usize i = 0; i < fake->file_count; i++) {
+        if (c::strcmp(fake->files[i].path, path) != 0) continue;
+        if (fake->files[i].folder) return error_make(eperm, "remove", path);
+        for (usize j = i + 1; j < fake->file_count; j++)
+            fake->files[j - 1] = fake->files[j];
+        fake->file_count -= 1;
+        return (Error){};
+    }
+    return error_make(fake_folder_exists(fake, path) ? eperm : enoent, "remove", path);
+}
+
+i32 entry_compare(const void *a, const void *b) {
+    return c::strcmp(((const FileEntry *)a)->name, ((const FileEntry *)b)->name);
+}
+
+// Adds what a path inside the listed folder shows there: its first name, a folder if the path goes on or is a folder.
+void fake_list_add(arena::Arena *arena, FileList *list, FileEntry *entries, const FakeFile *file, const char *rest) {
+    const char *slash = c::strchr(rest, '/');
+    usize name_length = slash != nullptr ? (usize)(slash - rest) : c::strlen(rest);
+    if (name_length == 0) return;
+    usize at = 0;
+    for (; at < list->count; at++) {
+        if (c::strncmp(entries[at].name, rest, name_length) == 0 && entries[at].name[name_length] == 0) break;
+    }
+    if (at == list->count) {
+        char *name = (char *)arena::push_array_raw(arena, sizeof(char), name_length + 1, alignof(char));
+        __builtin_memcpy(name, rest, name_length);
+        entries[list->count++].name = name;
+    }
+    entries[at].folder = entries[at].folder || slash != nullptr || file->folder;
+    entries[at].size = entries[at].folder ? 0 : file->size;
+}
+
+FileList fake_list(Fake *fake, arena::Arena *arena, const char *folder) {
+    FileList list = {};
+    if (!fake_folder_exists(fake, folder)) {
+        list.error = error_make(enoent, "open", folder);
+        return list;
+    }
+    usize length = fake_folder_length(folder);
+    FileEntry *entries =
+        (FileEntry *)arena::push_array_raw(arena, sizeof(FileEntry), fake_files_max + 1, alignof(FileEntry));
+    for (usize i = 0; i < fake->file_count; i++) {
+        const FakeFile *file = &fake->files[i];
+        if (length > 0 && !(c::strncmp(file->path, folder, length) == 0 && file->path[length] == '/')) continue;
+        fake_list_add(arena, &list, entries, file, file->path + (length > 0 ? length + 1 : 0));
+    }
+    c::qsort(entries, list.count, sizeof *entries, entry_compare);
+    list.entries = entries;
+    return list;
+}
+
+Error fake_map(Fake *fake, const char *path, Mapped *mapped) {
+    FakeFile *file = fake_find(fake, path);
+    if (file == nullptr || file->folder) return error_make(enoent, "open", path);
+    if (file->size == 0) return error_make(einval, "map", path);
+    mapped->data = arena::push_raw(&fake->storage, file->size, arena::align_max);
+    __builtin_memcpy(mapped->data, file->data, file->size);
+    mapped->size = file->size;
+    return (Error){};
+}
+
+// ---------------------------------------------------------------- the fake's children
+
+// Whether the scripted child has exited.
+bool fake_child_ended(const FakeChild *child) {
+    if (child->killed) return true;
+    switch (child->exit_on) {
+    case Never:
+        return false;
+    case Start:
+        return true;
+    case InputClosed:
+        return child->input_closed;
+    case OutputRead:
+        return child->output_position == child->output_size;
+    }
+    return false;
+}
+
+FakeChild *fake_child_of(Fake *fake, i32 id) {
+    i32 index = -id - fake_child_base - 1;
+    if (index < 0 || (usize)index >= fake->child_count) return nullptr;
+    return &fake->children[index];
+}
+
+// Whether an op of the fake waits for a child that has not got there: a read with no output left from a child still
+// running, or a wait for a child still running. Those never complete by themselves.
+bool fake_child_waiting(Fake *fake, const Op *op) {
+    if (fake == nullptr) return false;
+    if (op->internal.kind == ProcessWait) {
+        const FakeChild *child = fake_child_of(fake, op->internal.process);
+        return child != nullptr && !fake_child_ended(child);
+    }
+    if (op->internal.kind == PipeRead && op->internal.child != nullptr) {
+        const FakeChild *child = (const FakeChild *)op->internal.child;
+        return child->output_position == child->output_size && !fake_child_ended(child);
+    }
+    return false;
+}
+
+void fake_child_read(Op *op) {
+    FakeChild *child = (FakeChild *)op->internal.child;
+    usize left = child->output_size - child->output_position;
+    usize n = left < op->internal.capacity ? left : op->internal.capacity;
+    if (child->chunk != 0 && n > child->chunk) n = child->chunk;
+    if (n > 0) __builtin_memcpy(op->internal.destination, child->output + child->output_position, n);
+    child->output_position += n;
+    op_data(op, op->internal.destination, n);
+    op->end = n == 0;
+}
+
+void fake_child_write(Op *op) {
+    FakeChild *child = (FakeChild *)op->internal.child;
+    usize size = op->internal.capacity;
+    if (fake_child_ended(child)) {
+        op->error = error_make(epipe, "write", "child stdin");
+    } else if (size > child_input_max - child->input_size) {
+        op->error = error_make(enospc, "write", "child stdin (the test io keeps 8 KiB)");
+    } else {
+        __builtin_memcpy(child->input + child->input_size, op->internal.input, size);
+        child->input_size += size;
+        child->input[child->input_size] = 0;
+        op->taken = size;
+    }
+}
+
+// ---------------------------------------------------------------- real file operations
+
+// `smith test --changed` (issue #739, knowledge/coverage-selection.md): with SMITH_READS_LOG set, a file this process
+// opens to read and a folder it lists are appended to that file, one absolute path a line (a folder's ends in `/`: its
+// listing, not what is in it), so the record of the test that ran names the data it read. Children inherit the
+// variable. Nothing happens without it.
+void reads_log(const char *path) {
+    const char *log = c::getenv("SMITH_READS_LOG");
+    if (log == nullptr || log[0] == '\0') return;
+    char resolved[path_max];
+    if (c::realpath(path, resolved) == nullptr) return; // a path that is not there has nothing to hash
+    usize length = c::strlen(resolved);
+    if (length + 3 >= path_max) return;
+    struct c::stat status = {};
+    bool folder = c::stat(resolved, &status) == 0 && mode_is(status.st_mode, mode_folder);
+    if (folder) resolved[length++] = '/';
+    resolved[length++] = '\n';
+    i32 descriptor = c::open(log, open_append, file_mode);
+    if (descriptor < 0) return;
+    isize written = c::write(descriptor, resolved, length);
+    (void)written; // a line lost makes the record a path short; the next change to it is judged by the graph
+    c::close(descriptor);
+}
+
+Error real_read_file(arena::Arena *arena, const char *path, Read *result) {
+    i32 descriptor = c::open(path, open_read);
+    if (descriptor < 0) return error_make(errno_now(), "open", path);
+    reads_log(path);
+    struct c::stat info = {};
+    Grow grow = {.arena = arena};
+    if (c::fstat(descriptor, &info) == 0 && info.st_size > 0) grow_reserve(&grow, (usize)info.st_size);
+    Error error = {};
+    for (usize rounds = 0; rounds <= arena->capacity; rounds++) { // each round reads a byte or ends
+        grow_reserve(&grow, chunk);
+        isize n = c::read(descriptor, grow.data + grow.size, grow.capacity - grow.size - 1);
+        if (n < 0 && errno_now() == eintr) continue;
+        if (n < 0) error = error_make(errno_now(), "read", path);
+        if (n <= 0) break;
+        grow.size += (usize)n;
+    }
+    c::close(descriptor);
+    grow_reserve(&grow, 0);
+    grow.data[grow.size] = 0;
+    const u8 *contents = grow.data;
+    result->data = contents[0:grow.size];
+    return error;
+}
+
+// Opens path with the flags (writing, and what makes or keeps the file), writes all of data and closes.
+Error real_put(const char *path, i32 flags, const void *data, usize size) {
+    i32 descriptor = c::open(path, flags, file_mode);
+    if (descriptor < 0) return error_make(errno_now(), "open", path);
+    i32 code = write_all(descriptor, data, size);
+    if (c::close(descriptor) != 0 && code == 0) code = errno_now();
+    return error_make(code, "write", path);
+}
+
+// Writes "<path>.tmp" and renames it over the path, so the path holds the old file or the whole new one.
+Error real_write_atomic(const char *path, const void *data, usize size) {
+    char temporary[path_max];
+    i32 length = __builtin_snprintf(temporary, sizeof temporary, "%s.tmp", path);
+    if (length < 0 || (usize)length >= sizeof temporary) return error_make(enametoolong, "write", path);
+    Error error = real_put(temporary, open_replace, data, size);
+    if (error.code == 0 && c::rename(temporary, path) != 0) error = error_make(errno_now(), "rename", path);
+    if (error.code != 0) c::unlink(temporary);
+    return error;
+}
+
+Error real_write_file(const char *path, const void *data, usize size, Write mode) {
+    switch (mode) {
+    case Replace:
+        return real_put(path, open_replace, data, size);
+    case Atomic:
+        return real_write_atomic(path, data, size);
+    case Append:
+        return real_put(path, open_append, data, size);
+    case New:
+        return real_put(path, open_new, data, size);
+    }
+    return error_make(einval, "write", path);
+}
+
+// mkdir -p: each folder of the path in turn; a folder that is there is fine, a file in the way is EEXIST.
+Error real_make_folder(const char *path) {
+    char partial[path_max];
+    usize length = c::strlen(path);
+    if (length == 0 || length >= sizeof partial) return error_make(length == 0 ? enoent : enametoolong, "mkdir", path);
+    __builtin_memcpy(partial, path, length + 1);
+    for (usize i = 1; i <= length; i++) {
+        if (partial[i] != '/' && partial[i] != 0) continue;
+        char kept = partial[i];
+        partial[i] = 0;
+        struct c::stat info = {};
+        if (c::mkdir(partial, folder_mode) != 0) {
+            i32 code = errno_now();
+            if (code != eexist || c::stat(partial, &info) != 0 || !mode_is(info.st_mode, mode_folder)) {
+                return error_make(code, "mkdir", path);
+            }
+        }
+        partial[i] = kept;
+    }
+    return (Error){};
+}
+
+FileInfo real_info(const char *path) {
+    FileInfo info = {};
+    struct c::stat status = {};
+    if (c::stat(path, &status) != 0) {
+        info.error = error_make(errno_now(), "stat", path);
+        return info;
+    }
+    info.folder = mode_is(status.st_mode, mode_folder);
+    info.size = info.folder ? 0 : (usize)status.st_size;
+    info.writable = c::access(path, write_ok) == 0;
+    return info;
+}
+
+// Grows the entries array by doubling, the old block staying behind in the arena.
+FileEntry *real_entries_grow(arena::Arena *arena, FileEntry *entries, usize count, usize *capacity) {
+    usize wanted = *capacity == 0 ? 64 : *capacity * 2;
+    FileEntry *bigger = (FileEntry *)arena::push_array_raw(arena, sizeof(FileEntry), wanted, alignof(FileEntry));
+    if (count > 0) __builtin_memcpy(bigger, entries, count * sizeof *entries);
+    *capacity = wanted;
+    return bigger;
+}
+
+constexpr usize copy_rounds_max = (usize)1 << 24; // chunks of one file
+
+Error real_copy(const char *from, const char *to) {
+    struct c::stat status = {};
+    if (c::lstat(from, &status) != 0) return error_make(errno_now(), "stat", from);
+    if (mode_is(status.st_mode, mode_link)) {
+        char target[path_max];
+        isize length = c::readlink(from, target, sizeof target - 1);
+        if (length < 0) return error_make(errno_now(), "readlink", from);
+        target[length] = '\0';
+        return c::symlink(target, to) == 0 ? (Error){} : error_make(errno_now(), "symlink", to);
+    }
+    if (mode_is(status.st_mode, mode_folder)) return error_make(eisdir, "copy", from);
+    i32 source = c::open(from, open_read);
+    if (source < 0) return error_make(errno_now(), "open", from);
+    reads_log(from);
+    i32 permissions = (i32)(status.st_mode & 0x1FF);
+    i32 target = c::open(to, open_replace, permissions);
+    if (target < 0) {
+        i32 code = errno_now();
+        c::close(source);
+        return error_make(code, "open", to);
+    }
+    i32 code = 0;
+    char bytes[chunk * 16];
+    for (usize round = 0; round < copy_rounds_max && code == 0; round++) {
+        isize got = c::read(source, bytes, sizeof bytes);
+        if (got < 0) code = errno_now();
+        if (got <= 0) break;
+        code = write_all(target, bytes, (usize)got);
+    }
+    if (code == 0 && c::fchmod(target, (c::mode_t)permissions) != 0) code = errno_now();
+    c::close(source);
+    if (c::close(target) != 0 && code == 0) code = errno_now();
+    return error_make(code, "copy", to);
+}
+
+FileList real_list(arena::Arena *arena, const char *folder) {
+    FileList list = {};
+    c::DIR *directory = c::opendir(folder);
+    if (directory == nullptr) {
+        list.error = error_make(errno_now(), "open", folder);
+        return list;
+    }
+    reads_log(folder);
+    FileEntry *entries = nullptr;
+    usize capacity = 0;
+    for (usize i = 0; i < entries_max; i++) { // each round reads an entry or ends
+        struct c::dirent *item = c::readdir(directory);
+        if (item == nullptr) break;
+        if (c::strcmp(item->d_name, ".") == 0 || c::strcmp(item->d_name, "..") == 0) continue;
+        if (list.count == capacity) entries = real_entries_grow(arena, entries, list.count, &capacity);
+        struct c::stat status = {};
+        bool known = c::fstatat(c::dirfd(directory), item->d_name, &status, 0) == 0;
+        bool is_folder = known && mode_is(status.st_mode, mode_folder);
+        struct c::stat own = {};
+        bool is_link = c::fstatat(c::dirfd(directory), item->d_name, &own, at_symlink_nofollow) == 0 &&
+                       mode_is(own.st_mode, mode_link);
+        usize length = c::strlen(item->d_name);
+        char *name = (char *)arena::push_array_raw(arena, sizeof(char), length + 1, alignof(char));
+        __builtin_memcpy(name, item->d_name, length);
+        entries[list.count++] = (FileEntry){
+            .name = name,
+            .folder = is_folder,
+            .size = known && !is_folder ? (usize)status.st_size : 0,
+            .link = is_link,
+        };
+    }
+    c::closedir(directory);
+    if (list.count > 1) c::qsort(entries, list.count, sizeof *entries, entry_compare);
+    list.entries = entries;
+    return list;
+}
+
+Mapped real_map(const char *path) {
+    Mapped mapped = {};
+    i32 descriptor = c::open(path, open_read);
+    if (descriptor < 0) {
+        mapped.error = error_make(errno_now(), "open", path);
+        return mapped;
+    }
+    reads_log(path);
+    struct c::stat info = {};
+    if (c::fstat(descriptor, &info) != 0) {
+        mapped.error = error_make(errno_now(), "stat", path);
+    } else if (info.st_size <= 0) {
+        mapped.error = error_make(einval, "map", path);
+    } else {
+        void *bytes = c::mmap(nullptr, (usize)info.st_size, protect_both, map_file, descriptor, 0);
+        if (bytes == (void *)-1) { // NOLINT(performance-no-int-to-ptr): MAP_FAILED
+            mapped.error = error_make(errno_now(), "map", path);
+        } else {
+            mapped.data = bytes;
+            mapped.size = (usize)info.st_size;
+        }
+    }
+    c::close(descriptor);
+    return mapped;
+}
+
+// ---------------------------------------------------------------- the console's input
+
+// Reads up to capacity bytes from stdin (or the fake's text) into destination; 0 is the end.
+isize console_source(Loop *loop, u8 *destination, usize capacity, i32 *code) {
+    if (loop->fake == nullptr) {
+        for (usize tries = 0; tries < 64; tries++) { // a signal may interrupt the read
+            isize n = c::read(stdin_fd, destination, capacity);
+            if (n >= 0 || errno_now() != eintr) {
+                *code = n < 0 ? errno_now() : 0;
+                return n;
+            }
+        }
+        *code = eintr;
+        return -1;
+    }
+    Fake *fake = loop->fake;
+    usize left = fake->input_size - fake->input_position;
+    usize n = left < capacity ? left : capacity;
+    if (n > 0) __builtin_memcpy(destination, fake->input + fake->input_position, n);
+    fake->input_position += n;
+    *code = 0;
+    return (isize)n;
+}
+
+// ---------------------------------------------------------------- the scripted network
+
+bool net_scripted(const Loop *loop) {
+    return loop->fake != nullptr || loop->servers != nullptr;
+}
+
+Error net_closed(const char *name) {
+    return error_make(ecanceled, "use closed connection", name);
+}
+
+FakeServer *net_server_find(FakeNet *net, const char *host, u16 port, usize n, bool only_unused) {
+    for (usize i = 0; i < net->count; i++) {
+        FakeServer *server = &net->servers[i];
+        if (server->port != port || c::strcmp(server->host, host) != 0) continue;
+        if (only_unused ? !server->used : n-- == 0) return server;
+    }
+    return nullptr;
+}
+
+// A receive on a scripted connection whose server has sent everything and stalls.
+bool net_stalled(const Op *op) {
+    if (op->internal.kind != NetReceive) return false;
+    const Connection *connection = (const Connection *)op->internal.connection;
+    const FakeServer *server = (const FakeServer *)connection->internal.script;
+    return server != nullptr && server->stall && connection->internal.position == server->response_size &&
+           !__c11_atomic_load(&connection->internal.closed, seq_cst);
+}
+
+void net_scripted_connect(Loop *loop, Op *op, Connection *connection) {
+    const char *host = connection->internal.name;
+    FakeServer *server = nullptr;
+    if (loop->servers != nullptr) server = net_server_find(loop->servers, host, (u16)op->internal.deadline, 0, true);
+    if (server == nullptr) {
+        op->error = error_make(econnrefused, "connect", host);
+    } else if (server->tls_failure != nullptr) {
+        server->used = true;
+        op->error = error_text(eauth, "connect %s: TLS: %s", host, server->tls_failure);
+    } else {
+        server->used = true;
+        connection->internal.script = server;
+        connection->internal.position = 0;
+    }
+}
+
+void net_scripted_receive(Op *op, Connection *connection) {
+    FakeServer *server = (FakeServer *)connection->internal.script;
+    usize left = server->response_size - connection->internal.position;
+    usize take = left < op->internal.capacity ? left : op->internal.capacity;
+    if (server->chunk > 0 && take > server->chunk) take = server->chunk;
+    if (take > 0) __builtin_memcpy(op->internal.destination, server->response + connection->internal.position, take);
+    connection->internal.position += take;
+    op_data(op, op->internal.destination, take);
+    if (take > 0) return;
+    if (server->error != 0)
+        op->error = error_make(server->error, "read", connection->internal.name);
+    else
+        op->end = true;
+}
+
+void net_scripted_send(Op *op, Connection *connection) {
+    FakeServer *server = (FakeServer *)connection->internal.script;
+    if (server->request_size + op->taken > request_max) {
+        op->error = error_make(enospc, "send", connection->internal.name);
+        return;
+    }
+    __builtin_memcpy(server->request + server->request_size, op->internal.input, op->taken);
+    server->request_size += op->taken;
+    server->request[server->request_size] = 0;
+}
+
+void net_complete_scripted(Loop *loop, Op *op) {
+    Connection *connection = (Connection *)op->internal.connection;
+    if (op->internal.kind == NetConnect) {
+        net_scripted_connect(loop, op, connection);
+        return;
+    }
+    if (op->internal.kind == NetClose) {
+        __c11_atomic_store(&connection->internal.closed, true, seq_cst);
+    } else if (connection->internal.script == nullptr || __c11_atomic_load(&connection->internal.closed, seq_cst)) {
+        op->error = net_closed(connection->internal.name);
+    } else if (op->internal.kind == NetSend) {
+        net_scripted_send(op, connection);
+    } else {
+        net_scripted_receive(op, connection);
+    }
+}
+
+// ---------------------------------------------------------------- the loop
+
+if constexpr (target::os != target::macos) {
+    // What the platform's sections (the loop (Linux: epoll), net (Linux: OpenSSL)) give the loop below; each is defined
+    // there.
+    bool loop_watch(Loop *loop, Op *op);
+    void op_release(Op *op);
+    bool net_complete_real(Loop *loop, Op *op);
+    void net_connection_event(Loop *loop, Connection *connection, usize *completed);
+
+    // SIGPIPE: a write to a pipe or socket whose reader is gone must be the error EPIPE and never a signal. sigset_t is
+    // a structure on Linux (a bit set on macOS), so it is built with glibc's functions. macOS's <signal.h> defines
+    // macros of the same names, and smith-preprocessor reads this branch on macOS too, where it is never compiled.
+    // NOLINTBEGIN(smith-preprocessor)
+    void pipe_signal_hold(c::sigset_t *before) {
+        c::sigset_t pipe_signal = {};
+        c::sigemptyset(&pipe_signal);
+        c::sigaddset(&pipe_signal, sig_pipe);
+        c::pthread_sigmask(sig_block, &pipe_signal, before);
+    }
+
+    // Puts the mask back; when the write raised SIGPIPE it is taken off the thread first.
+    void pipe_signal_release(const c::sigset_t *before, bool raised) {
+        if (raised) {
+            c::sigset_t pipe_signal = {};
+            c::sigemptyset(&pipe_signal);
+            c::sigaddset(&pipe_signal, sig_pipe);
+            c::sigset_t pending = {};
+            i32 taken = 0;
+            c::sigpending(&pending);
+            if (c::sigismember(&pending, sig_pipe) == 1) c::sigwait(&pipe_signal, &taken);
+        }
+        c::pthread_sigmask(sig_setmask, before, nullptr);
+    }
+    // NOLINTEND(smith-preprocessor)
+}
+
+void loop_link(Loop *loop, Op *op) {
+    op->internal.next = nullptr;
+    if (loop->tail == nullptr)
+        loop->head = op;
+    else
+        loop->tail->internal.next = op;
+    loop->tail = op;
+    loop->pending += 1;
+}
+
+void loop_unlink(Loop *loop, Op *op) {
+    Op *previous = nullptr;
+    Op *at = loop->head;
+    for (usize i = 0; i < loop->pending && at != op; i++) { // bounded by the pending ops
+        previous = at;
+        at = at->internal.next;
+    }
+    check(at == op);
+    if (previous == nullptr)
+        loop->head = op->internal.next;
+    else
+        previous->internal.next = op->internal.next;
+    if (loop->tail == op) loop->tail = previous;
+    loop->pending -= 1;
+    op->internal.next = nullptr;
+}
+
+if constexpr (target::os == target::macos) {
+    // Whether kqueue can say when a read on the descriptor would finish: pipes, sockets and terminals, not files.
+    bool descriptor_waitable(i32 descriptor) {
+        struct c::stat info = {};
+        if (c::fstat(descriptor, &info) != 0) return false;
+        return mode_is(info.st_mode, mode_fifo) || mode_is(info.st_mode, mode_socket) ||
+               mode_is(info.st_mode, mode_character);
+    }
+
+    // Asks the kernel to tell us when the op can finish. False means it cannot be watched, so the op is simply run when
+    // the loop next looks (a regular file or /dev/null is always readable).
+    bool loop_watch(Loop *loop, Op *op) {
+        usize ident = 0;
+        i16 filter = 0;
+        u32 fflags = 0;
+        isize data = 0;
+        switch (op->internal.kind) {
+        case ConsoleRead:
+        case PipeRead:
+            // kqueue reports a regular file readable only while its offset is before the end, so at the end it would
+            // never fire: a file (or anything but a pipe, a socket or a terminal) is read at once, and a read at its
+            // end returns 0.
+            if (!descriptor_waitable(op->internal.descriptor)) return false;
+            ident = (usize)op->internal.descriptor;
+            filter = evfilt_read;
+            break;
+        case PipeWrite:
+            ident = (usize)op->internal.descriptor;
+            filter = evfilt_write;
+            break;
+        case ProcessWait:
+            ident = (usize)op->internal.process;
+            filter = evfilt_proc;
+            fflags = note_exit;
+            break;
+        case Timeout:
+            ident = (usize)op;
+            filter = evfilt_timer;
+            fflags = note_nseconds;
+            data = (isize)op->internal.deadline;
+            break;
+        case NetConnect:
+        case NetSend:
+        case NetReceive:
+        case NetClose:
+            return !net_scripted(loop); // a callback finishes it and wakes the loop; a script is ready at once
+        case None:
+        case FileRead:
+        case FileWrite:
+            return false;
+        }
+        struct c::kevent change = {
+            .ident = ident,
+            .filter = filter,
+            .flags = ev_watch,
+            .fflags = fflags,
+            .data = data,
+            .udata = op,
+        };
+        return c::kevent(loop->queue, &change, 1, nullptr, 0, nullptr) == 0;
+    }
+}
+
+// Queues a freshly filled op. Ops that wait for the kernel are watched; the rest are ready when the loop runs.
+void loop_submit(Loop *loop, Op *op) {
+    check(op->internal.kind != None);
+    Fake *fake = loop->fake;
+    Console *console = (Console *)op->internal.console;
+    bool buffered = console != nullptr && console->end > console->start && !op->internal.fill;
+    op->internal.loop = loop;
+    if (fake != nullptr) {
+        op->internal.ready = op->internal.kind != Timeout; // fake timers wait for the clock
+        if (op->internal.kind == Timeout) op->internal.deadline += fake->monotonic;
+    } else if (buffered) {
+        op->internal.ready = true;
+    } else if (op->internal.kind == Timeout) {
+        op->internal.ready = op->internal.deadline == 0 || !loop_watch(loop, op);
+    } else {
+        op->internal.ready = !loop_watch(loop, op);
+    }
+    loop_link(loop, op);
+}
+
+void loop_finish_file(Loop *loop, Op *op) {
+    Read result = {};
+    if (op->internal.kind == FileRead) {
+        op->error = loop->fake != nullptr ? fake_read_file(loop->fake, op->internal.arena, op->internal.path, &result)
+                                          : real_read_file(op->internal.arena, op->internal.path, &result);
+        op->data = result.data;
+    } else {
+        op->error = loop->fake != nullptr
+                        ? fake_write(loop->fake, op->internal.path, op->internal.input, op->taken, op->internal.mode)
+                        : real_write_file(op->internal.path, op->internal.input, op->taken, op->internal.mode);
+    }
+}
+
+// Serves a console read from what is buffered, else from the source; a fill goes to the console's own buffer.
+void loop_finish_console(Loop *loop, Op *op) {
+    Console *console = (Console *)op->internal.console;
+    usize size = 0;
+    if (!op->internal.fill && console->end > console->start) {
+        size = console->end - console->start;
+        if (size > op->internal.capacity) size = op->internal.capacity;
+        __builtin_memcpy(op->internal.destination, console->buffer + console->start, size);
+        console->start += size;
+    } else {
+        i32 code = 0;
+        isize n = console_source(loop, op->internal.destination, op->internal.capacity, &code);
+        if (n < 0)
+            op->error = error_make(code, "read", "stdin");
+        else
+            size = (usize)n;
+        if (op->internal.fill) console->end += size;
+    }
+    op->end = size == 0 && op->error.code == 0 && op->internal.capacity > 0;
+    if (!op->internal.fill && op->internal.destination != nullptr) op->internal.destination[size] = 0;
+    op_data(op, op->internal.destination, size);
+}
+
+void loop_finish_wait(Loop *loop, Op *op) {
+    if (loop->fake != nullptr) {
+        const FakeChild *child = fake_child_of(loop->fake, op->internal.process);
+        if (child != nullptr) {
+            if (child->killed)
+                op->signal = child->signal;
+            else
+                op->exit_status = child->status;
+            return;
+        }
+        usize index = (usize)(-op->internal.process) - 1;
+        op->exit_status = loop->fake->programs[index].status;
+        return;
+    }
+    i32 status = 0;
+    c::pid_t result = -1;
+    for (usize tries = 0; tries < 64 && result < 0; tries++) { // a signal may interrupt the wait
+        result = c::waitpid(op->internal.process, &status, 0);
+        if (result < 0 && errno_now() != eintr) break;
+    }
+    u32 signal_number = (u32)status & status_signal_mask;
+    if (result < 0) {
+        op->error = error_make(errno_now(), "wait", "process");
+    } else if (signal_number == 0) { // exited
+        op->exit_status = (i32)(((u32)status >> 8) & 0xFF);
+    } else if (signal_number != status_signal_mask) { // killed by a signal (0x7F is a stop)
+        op->signal = (i32)signal_number;
+    }
+}
+
+// Writes what is left of the op's data to the pipe, once. SIGPIPE is blocked for the call and, when the write raised
+// it, taken off the thread, so a pipe whose reader is gone is the error EPIPE and never a signal. True when the op is
+// done: all written, or failed; false when the pipe is full, and the op waits for room again.
+if constexpr (target::os == target::macos) {
+    bool loop_finish_write(Loop *loop, Op *op) {
+        usize total = op->internal.capacity;
+        if (op->taken < total) {
+            // sigset_t is a bit set on macOS (<signal.h> has macros for these, which are the preprocessor's): signal n
+            // is bit n - 1.
+            c::sigset_t pipe_signal = (c::sigset_t)1 << (u32)(sig_pipe - 1);
+            c::sigset_t before = {};
+            c::pthread_sigmask(sig_block, &pipe_signal, &before);
+            isize n = c::write(op->internal.descriptor, (const u8 *)op->internal.input + op->taken, total - op->taken);
+            i32 code = errno_now();
+            if (n < 0 && code == epipe) {
+                c::sigset_t pending = {};
+                i32 taken = 0;
+                c::sigpending(&pending);
+                if ((pending & pipe_signal) != 0) c::sigwait(&pipe_signal, &taken);
+            }
+            c::pthread_sigmask(sig_setmask, &before, nullptr);
+            if (n >= 0) op->taken += (usize)n;
+            if (n < 0 && code != eagain && code != eintr) op->error = error_make(code, "write", "child stdin");
+            if (n < 0 && (code == eagain || code == eintr)) {
+                op->internal.ready = !loop_watch(loop, op);
+                return false;
+            }
+        }
+        if (op->taken < total && op->error.code == 0) {
+            op->internal.ready = !loop_watch(loop, op); // wait until the pipe has room again
+            return false;
+        }
+        return true;
+    }
+} else {
+    bool loop_finish_write(Loop *loop, Op *op) {
+        usize total = op->internal.capacity;
+        if (op->taken < total) {
+            c::sigset_t before = {};
+            pipe_signal_hold(&before);
+            isize n = c::write(op->internal.descriptor, (const u8 *)op->internal.input + op->taken, total - op->taken);
+            i32 code = errno_now();
+            pipe_signal_release(&before, n < 0 && code == epipe);
+            if (n >= 0) op->taken += (usize)n;
+            if (n < 0 && code != eagain && code != eintr) op->error = error_make(code, "write", "child stdin");
+            if (n < 0 && (code == eagain || code == eintr)) {
+                op->internal.ready = !loop_watch(loop, op);
+                return false;
+            }
+        }
+        if (op->taken < total && op->error.code == 0) {
+            op->internal.ready = !loop_watch(loop, op); // wait until the pipe has room again
+            return false;
+        }
+        return true;
+    }
+}
+
+// Runs the op's work, marks it done and takes it off the loop. False when the op is not done: a write that the pipe
+// took only part of.
+bool loop_complete(Loop *loop, Op *op) {
+    switch (op->internal.kind) {
+    case FileRead:
+    case FileWrite:
+        loop_finish_file(loop, op);
+        break;
+    case ConsoleRead:
+        loop_finish_console(loop, op);
+        break;
+    case PipeWrite:
+        if (op->internal.child != nullptr)
+            fake_child_write(op);
+        else if (!loop_finish_write(loop, op))
+            return false;
+        break;
+    case PipeRead: {
+        if (op->internal.child != nullptr) {
+            fake_child_read(op);
+            break;
+        }
+        isize n = c::read(op->internal.descriptor, op->internal.destination, op->internal.capacity);
+        if (n < 0) op->error = error_make(errno_now(), "read", "pipe");
+        op_data(op, op->internal.destination, n < 0 ? 0 : (usize)n);
+        op->end = n == 0;
+        break;
+    }
+    case ProcessWait:
+        loop_finish_wait(loop, op);
+        if (op->internal.reaped != nullptr) *op->internal.reaped = true; // the id is free for another program now
+        break;
+    case NetConnect:
+    case NetSend:
+    case NetReceive:
+    case NetClose:
+        if constexpr (target::os != target::macos) {
+            if (!net_scripted(loop) && !net_complete_real(loop, op)) return false;
+        }
+        if (net_scripted(loop)) net_complete_scripted(loop, op);
+        break;
+    case Timeout:
+    case None:
+        break;
+    }
+    if constexpr (target::os != target::macos) {
+        op_release(op);
+    }
+    loop_unlink(loop, op);
+    op->done = true;
+    return true;
+}
+
+bool op_ready(Loop *loop, const Op *op) {
+    if (net_stalled(op) || fake_child_waiting(loop->fake, op)) return false;
+    if (loop->fake != nullptr && op->internal.kind == Timeout) return loop->fake->monotonic >= op->internal.deadline;
+    return op->internal.ready;
+}
+
+// Completes every op that needs no waiting, in submission order.
+usize loop_complete_ready(Loop *loop) {
+    usize completed = 0;
+    Op *at = loop->head;
+    usize visit = loop->pending;
+    for (usize i = 0; i < visit && at != nullptr; i++) { // bounded by the ops pending now
+        Op *next = at->internal.next;
+        if (op_ready(loop, at) && loop_complete(loop, at)) completed += 1;
+        at = next;
+    }
+    return completed;
+}
+
+if constexpr (target::os == target::macos) {
+    // Runs on the loop thread: completes every op the callbacks have finished. The list is last in, first out; it is
+    // turned around so that ops complete in the order they finished.
+    void net_drain(Loop *loop, usize *completed) {
+        Op *list = __c11_atomic_exchange(&loop->finished, nullptr, seq_cst);
+        Op *ordered = nullptr;
+        for (usize i = 0; list != nullptr && i < loop->pending; i++) { // bounded by the ops pending
+            Op *next = list->internal.finished;
+            list->internal.finished = ordered;
+            ordered = list;
+            list = next;
+        }
+        for (usize i = 0; ordered != nullptr && i <= loop->pending; i++) {
+            Op *next = ordered->internal.finished;
+            loop_complete(loop, ordered);
+            *completed += 1;
+            ordered = next;
+        }
+    }
+} else {
+    // ---------------------------------------------------------------- the loop (Linux: epoll)
+
+    // The kernel tells the loop through one epoll descriptor, every event carrying a key: the op it is for, or (with
+    // the low bit set) the connection, whose socket is registered once, edge-triggered, for as long as it is open.
+
+    // Whether epoll can say when a read on the descriptor would finish: pipes, sockets and terminals, not files.
+    bool descriptor_waitable(i32 descriptor) {
+        struct c::stat info = {};
+        if (c::fstat(descriptor, &info) != 0) return false;
+        return mode_is(info.st_mode, mode_fifo) || mode_is(info.st_mode, mode_socket) ||
+               mode_is(info.st_mode, mode_character);
+    }
+
+    // Arms the descriptor for the events, adding it the first time. False when epoll refuses it (a regular file,
+    // /dev/null).
+    bool epoll_arm(Loop *loop, i32 descriptor, u32 events, u64 key) {
+        struct c::epoll_event event = {.events = events, .data = {.u64 = key}};
+        if (c::epoll_ctl(loop->queue, epoll_modify, descriptor, &event) == 0) return true;
+        if (errno_now() != enoent) return false;
+        return c::epoll_ctl(loop->queue, epoll_add, descriptor, &event) == 0;
+    }
+
+    u64 op_key(const Op *op) {
+        return (u64)(usize)op;
+    }
+
+    // A process exit is its pidfd becoming readable (Linux 5.3 and later); the pidfd is the op's descriptor until it is
+    // done.
+    bool process_watch(Loop *loop, Op *op) {
+        i64 made = c::syscall(syscall_pidfd_open, (i64)op->internal.process, (i64)0);
+        if (made < 0) return false;
+        op->internal.descriptor = (i32)made;
+        if (epoll_arm(loop, (i32)made, epoll_input | epoll_once, op_key(op))) return true;
+        c::close((i32)made);
+        op->internal.descriptor = 0;
+        return false;
+    }
+
+    // A timer is a timerfd set to the op's relative deadline, which is the op's descriptor until it is done.
+    bool timer_watch(Loop *loop, Op *op) {
+        i32 timer = c::timerfd_create(clock_monotonic, timer_cloexec + timer_nonblock); // two distinct bits
+        if (timer < 0) return false;
+        u64 ns = op->internal.deadline;
+        struct c::itimerspec limit = {
+            .it_value = {.tv_sec = (i64)(ns / nanoseconds), .tv_nsec = (i64)(ns % nanoseconds)}};
+        if (c::timerfd_settime(timer, 0, &limit, nullptr) == 0 &&
+            epoll_arm(loop, timer, epoll_input | epoll_once, op_key(op))) {
+            op->internal.descriptor = timer;
+            return true;
+        }
+        c::close(timer);
+        return false;
+    }
+
+    // Closes the descriptor a timer or a process wait was watched through.
+    void op_release(Op *op) {
+        bool helper = op->internal.kind == Timeout || op->internal.kind == ProcessWait;
+        if (helper && op->internal.descriptor > 0) c::close(op->internal.descriptor);
+        if (helper) op->internal.descriptor = 0;
+    }
+
+    // Asks the kernel to tell us when the op can finish. False means it cannot be watched, so the op is simply run when
+    // the loop next looks (a regular file or /dev/null is always readable).
+    bool loop_watch(Loop *loop, Op *op) {
+        switch (op->internal.kind) {
+        case ConsoleRead:
+        case PipeRead:
+            // epoll refuses a regular file, which is always readable, and a read at its end returns 0: a file (or
+            // anything but a pipe, a socket or a terminal) is read at once.
+            if (!descriptor_waitable(op->internal.descriptor)) return false;
+            return epoll_arm(loop, op->internal.descriptor, epoll_input | epoll_once, op_key(op));
+        case PipeWrite:
+            return epoll_arm(loop, op->internal.descriptor, epoll_output | epoll_once, op_key(op));
+        case ProcessWait:
+            return process_watch(loop, op);
+        case Timeout:
+            return timer_watch(loop, op);
+        case NetConnect:
+        case NetSend:
+        case NetReceive:
+        case NetClose: // run at once, which starts it; a step that would block waits on the connection's own
+                       // registration
+        case None:
+        case FileRead:
+        case FileWrite:
+            return false;
+        }
+        return false;
+    }
+
+    // epoll_wait takes milliseconds, rounded up so that a short wait is not a spin; -1 waits for ever.
+    i32 epoll_timeout(i64 timeout_ns) {
+        constexpr i64 limit = 1'073'741'824; // 2^30 ms, about 12 days
+        if (timeout_ns < 0) return -1;
+        i64 ms = (timeout_ns + 999'999) / 1'000'000;
+        return (i32)(ms < limit ? ms : limit);
+    }
+
+    // One wait on the epoll and the completion of what it reported.
+    void loop_events(Loop *loop, i64 timeout_ns, usize *completed) {
+        struct c::epoll_event events[events_max];
+        i32 count = c::epoll_wait(loop->queue, events, (i32)events_max, epoll_timeout(timeout_ns));
+        for (i32 i = 0; i < count; i++) { // at most events_max
+            u64 key = events[i].data.u64;
+            if ((key & 1) != 0) {
+                net_connection_event(loop, (Connection *)(usize)(key & ~(u64)1), completed);
+                continue;
+            }
+            Op *op = (Op *)(usize)key;
+            check(!op->done);
+            if (loop_complete(loop, op)) *completed += 1;
+        }
+        *completed += loop->settled;
+        loop->settled = 0;
+    }
+}
+
+if constexpr (target::os == target::macos) {
+    usize loop_run(Loop *loop, i64 timeout_ns) {
+        usize completed = loop_complete_ready(loop);
+        if (loop->fake != nullptr && completed == 0 && timeout_ns > 0) { // the fake waits by letting its clock pass
+            loop->fake->monotonic += (u64)timeout_ns;
+            loop->fake->wall += timeout_ns;
+            completed = loop_complete_ready(loop);
+        }
+        if (loop->fake != nullptr || loop->pending == 0) return completed;
+        if (completed > 0) timeout_ns = 0;
+        struct c::timespec limit = {.tv_sec = timeout_ns / (i64)nanoseconds, .tv_nsec = timeout_ns % (i64)nanoseconds};
+        struct c::kevent events[events_max];
+        i32 count = c::kevent(loop->queue, nullptr, 0, events, (i32)events_max, timeout_ns < 0 ? nullptr : &limit);
+        for (i32 i = 0; i < count; i++) { // at most events_max
+            if (events[i].filter == evfilt_user) {
+                net_drain(loop, &completed);
+                continue;
+            }
+            Op *op = (Op *)events[i].udata;
+            check(!op->done);
+            if (loop_complete(loop, op)) completed += 1;
+        }
+        return completed;
+    }
+} else {
+    usize loop_run(Loop *loop, i64 timeout_ns) {
+        usize completed = loop_complete_ready(loop);
+        if (loop->fake != nullptr && completed == 0 && timeout_ns > 0) { // the fake waits by letting its clock pass
+            loop->fake->monotonic += (u64)timeout_ns;
+            loop->fake->wall += timeout_ns;
+            completed = loop_complete_ready(loop);
+        }
+        completed += loop->settled;
+        loop->settled = 0;
+        if (loop->fake != nullptr || loop->pending == 0) return completed;
+        if (completed > 0) timeout_ns = 0;
+        loop_events(loop, timeout_ns, &completed);
+        // io::forever waits for an op to complete: an event that only moved a TLS handshake or a partial write along is
+        // not one, so the wait goes on.
+        for (usize rounds = 0; timeout_ns < 0 && completed == 0 && loop->pending > 0 && rounds < wait_rounds_max;
+             rounds++)
+            loop_events(loop, timeout_ns, &completed);
+        return completed;
+    }
+}
+
+// Runs the loop until the op is done: the blocking calls are this. The fake cannot wait for anything, so an op that is
+// not ready there would wait forever and fails with EDEADLK instead.
+void loop_wait(Loop *loop, Op *op) {
+    constexpr usize rounds_max = (usize)1 << 24;
+    for (usize pass = 0; !op->done && pass < rounds_max; pass++) {
+        usize completed = loop_run(loop, forever);
+        if (completed == 0 && !op->done && loop->fake != nullptr) {
+            loop_unlink(loop, op);
+            op->error = error_make(edeadlk, "wait", "in the test io, which nothing can advance");
+            op->done = true;
+        }
+    }
+    check(op->done);
+}
+
+// Completes the operations that are ready, waiting up to timeout_ns for the first when none is; returns how many it
+// completed. File operations always complete here. The fake io never waits: it completes what is ready now, and when
+// given a time to wait and nothing is ready it lets that much of its clock pass (that is how it waits) and completes
+// what became ready.
+[[smith::c_name("smith_io_run")]] export [[clang::annotate("smith::edge")]] usize run(Io *io, i64 timeout_ns) {
+    return loop_run(io->loop, timeout_ns);
+}
+
+// ---------------------------------------------------------------- files
+
+void op_start(Op *op, Loop *loop, OpKind kind) {
+    check(op->done || op->internal.kind == None);
+    *op = (Op){};
+    op->internal.kind = kind;
+    op->internal.loop = loop;
+}
+
+// The whole file, in the arena.
+[[smith::c_name("smith_files_read_async")]] export [[clang::annotate("smith::edge")]] void
+files_read_async(Files *files, Op *op, arena::Arena *arena, const char *path) {
+    op_start(op, files->loop, FileRead);
+    op->internal.arena = arena;
+    op->internal.path = path;
+    loop_submit(files->loop, op);
+}
+
+[[smith::c_name("smith_files_write_async")]] export [[clang::annotate("smith::edge")]] void
+files_write_async(Files *files, Op *op, const char *path, const u8 data[:], Write mode) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    op_start(op, files->loop, FileWrite);
+    op->internal.path = path;
+    op->internal.mode = mode;
+    op->internal.input = data.data;
+    op->taken = countof(data);
+    loop_submit(files->loop, op);
+}
+
+// The whole file, in the arena.
+[[smith::c_name("smith_files_read")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Read
+files_read(Files *files, arena::Arena *arena, const char *path) {
+    Op op = {};
+    files_read_async(files, &op, arena, path);
+    if (!op.done) loop_wait(files->loop, &op);
+    return (Read){.error = op.error, .data = op.data};
+}
+
+// Writes the bytes of data to the file as the mode says.
+[[smith::c_name("smith_files_write")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+files_write(Files *files, const char *path, const u8 data[:], Write mode) {
+    Op op = {};
+    files_write_async(files, &op, path, data, mode);
+    if (!op.done) loop_wait(files->loop, &op);
+    return op.error;
+}
+
+// The calls below run at once and only block: they do not queue behind asynchronous file operations still pending.
+
+// Deletes a file (not a folder: EPERM).
+[[smith::c_name("smith_files_remove")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+files_remove(Files *files, const char *path) {
+    if constexpr (target::os != target::macos) {
+        if (files->loop->fake == nullptr) { // unlink says EISDIR on Linux where macOS says EPERM
+            if (c::unlink(path) == 0) return (Error){};
+            i32 code = errno_now();
+            return error_make(code == eisdir ? eperm : code, "remove", path);
+        }
+    }
+    if (files->loop->fake != nullptr) return fake_remove(files->loop->fake, path);
+    return c::unlink(path) == 0 ? (Error){} : error_make(errno_now(), "remove", path);
+}
+
+// Makes the folder and the ones above it that are missing; one that is there already is success.
+[[smith::c_name("smith_files_make_folder")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+files_make_folder(Files *files, const char *path) {
+    if (files->loop->fake != nullptr) return fake_make_folder(files->loop->fake, path);
+    return real_make_folder(path);
+}
+
+// What is at the path (symbolic links followed).
+[[smith::c_name("smith_files_info")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] FileInfo
+files_info(Files *files, const char *path) {
+    if (files->loop->fake != nullptr) return fake_info(files->loop->fake, path);
+    return real_info(path);
+}
+
+// Copies a file to another path as it is: its bytes and its permission bits, or a symbolic link as a link (a folder is
+// EISDIR). The real files only: the fake io has no such file system (ENOSYS).
+[[smith::c_name("smith_files_copy")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+files_copy(Files *files, const char *from, const char *to) {
+    if (files->loop->fake != nullptr) return error_make(enosys, "copy", from);
+    return real_copy(from, to);
+}
+
+// What is in a folder.
+[[smith::c_name("smith_files_list")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] FileList
+files_list(Files *files, arena::Arena *arena, const char *folder) {
+    if (files->loop->fake != nullptr) return fake_list(files->loop->fake, arena, folder);
+    return real_list(arena, folder);
+}
+
+// Maps the file into the address space instead of reading it: nothing is copied or read until the memory is touched,
+// so a large file costs only the pages used. The mapping is private: writes change the memory and never the file. It
+// lasts as long as the program, and an empty file is EINVAL. The fake gives a copy.
+[[smith::c_name("smith_files_map")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Mapped
+files_map(Files *files, const char *path) {
+    Mapped mapped = {};
+    if (files->loop->fake != nullptr) {
+        mapped.error = fake_map(files->loop->fake, path, &mapped);
+        return mapped;
+    }
+    return real_map(path);
+}
+
+// ---------------------------------------------------------------- console
+
+Error console_write(Console *console, bool errors, const char *text) {
+    if (console->loop->fake != nullptr) return fake_capture(console->loop->fake, errors, text);
+    i32 code = write_all(errors ? stderr_fd : stdout_fd, text, c::strlen(text));
+    return error_make(code, "write", errors ? "stderr" : "stdout");
+}
+
+// --- console ---
+
+// Writes the text to stdout or stderr, all of it or an error.
+[[smith::c_name("smith_console_print")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+console_print(Console *console, const char *text) {
+    return console_write(console, false, text);
+}
+
+[[smith::c_name("smith_console_print_error")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+console_print_error(Console *console, const char *text) {
+    return console_write(console, true, text);
+}
+
+[[gnu::format(__printf__, 3, 0)]] Error console_format(Console *console, bool errors, const char *format,
+                                                       __builtin_va_list arguments) {
+    char text[print_max];
+    i32 length = __builtin_vsnprintf(text, sizeof text, format, arguments);
+    if (length < 0) return error_make(einval, "format for", errors ? "stderr" : "stdout");
+    if ((usize)length >= sizeof text) return error_make(emsgsize, "print", errors ? "stderr" : "stdout");
+    return console_write(console, errors, text);
+}
+
+// printf for the console: formats into a buffer of 4 KiB and prints it. Longer output is EMSGSIZE and prints nothing.
+// Not [[nodiscard]], since a program that prints a report has nowhere else to say that stdout is closed.
+[[smith::c_name("smith_console_printf")]] export
+    [[clang::annotate("smith::edge")]] [[gnu::format(__printf__, 2, 3)]] Error
+    console_printf(Console *console, const char *format, ...) {
+    __builtin_va_list arguments;
+    __builtin_va_start(arguments, format);
+    Error error = console_format(console, false, format, arguments);
+    __builtin_va_end(arguments);
+    return error;
+}
+
+[[smith::c_name("smith_console_eprintf")]] export
+    [[clang::annotate("smith::edge")]] [[gnu::format(__printf__, 2, 3)]] Error
+    console_eprintf(Console *console, const char *format, ...) {
+    __builtin_va_list arguments;
+    __builtin_va_start(arguments, format);
+    Error error = console_format(console, true, format, arguments);
+    __builtin_va_end(arguments);
+    return error;
+}
+
+// Completes with whatever is available, at most max bytes, in the arena; size 0 and end set mean the input is over.
+[[smith::c_name("smith_console_read_async")]] export [[clang::annotate("smith::edge")]] void
+console_read_async(Console *console, Op *op, arena::Arena *arena, usize max) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(max > 0);
+    op_start(op, console->loop, ConsoleRead);
+    op->internal.console = console;
+    op->internal.arena = arena;
+    op->internal.descriptor = stdin_fd;
+    op->internal.destination = (u8 *)arena::push_array_raw(arena, sizeof(u8), max + 1, alignof(u8));
+    op->internal.capacity = max;
+    loop_submit(console->loop, op);
+}
+
+// Reads more input into the console's buffer, running the loop until it arrives. False at the end or on an error.
+bool console_fill(Console *console, Error *error) {
+    if (console->start > 0) {
+        __builtin_memmove(console->buffer, console->buffer + console->start, console->end - console->start);
+        console->end -= console->start;
+        console->start = 0;
+    }
+    Op op = {};
+    op_start(&op, console->loop, ConsoleRead);
+    op.internal.console = console;
+    op.internal.fill = true;
+    op.internal.descriptor = stdin_fd;
+    op.internal.destination = console->buffer + console->end;
+    op.internal.capacity = sizeof console->buffer - console->end;
+    loop_submit(console->loop, &op);
+    loop_wait(console->loop, &op);
+    *error = op.error;
+    return op.error.code == 0 && countof(op.data) > 0;
+}
+
+// The next line of stdin without its newline, in the arena. At the end of the input end is true; a last line with no
+// newline is still returned first.
+[[smith::c_name("smith_console_read_line")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Read
+console_read_line(Console *console, arena::Arena *arena) {
+    Grow line = {.arena = arena};
+    Read result = {};
+    bool newline = false;
+    bool any = false;
+    for (usize rounds = 0; !newline && rounds <= arena->capacity; rounds++) { // each round consumes or ends
+        const u8 *start = console->buffer + console->start;
+        usize available = console->end - console->start;
+        const u8 *found = available > 0 ? (const u8 *)c::memchr(start, '\n', available) : nullptr;
+        usize take = found != nullptr ? (usize)(found - start) : available;
+        if (available > 0) any = true;
+        grow_append(&line, start, take);
+        console->start += take + (found != nullptr ? 1 : 0);
+        newline = found != nullptr;
+        if (!newline && !console_fill(console, &result.error)) break;
+    }
+    if (result.error.code != 0) return result;
+    result.end = !newline && !any;
+    grow_reserve(&line, 0);
+    line.data[line.size] = 0;
+    const u8 *contents = line.data;
+    result.data = contents[0:line.size];
+    return result;
+}
+
+// ---------------------------------------------------------------- clock
+
+u64 time_ns(c::clockid_t which) {
+    struct c::timespec now = {};
+    i32 result = c::clock_gettime(which, &now);
+    check(result == 0);
+    (void)result;
+    return (u64)now.tv_sec * nanoseconds + (u64)now.tv_nsec;
+}
+
+// --- clock ---
+
+// Monotonic nanoseconds: they never go back, and mean nothing but as a difference.
+[[smith::c_name("smith_clock_now")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] u64
+clock_now(const Clock *clock) {
+    return clock->loop->fake != nullptr ? clock->loop->fake->monotonic : time_ns(clock_monotonic);
+}
+
+// Nanoseconds since the Unix epoch.
+[[smith::c_name("smith_clock_wall")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] i64
+clock_wall(const Clock *clock) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    return clock->loop->fake != nullptr ? clock->loop->fake->wall : (i64)time_ns(clock_realtime);
+}
+
+// Moves the fake clock forward, and only the fake clock (required). Both the monotonic and the wall time move.
+[[smith::c_name("smith_clock_advance")]] export [[clang::annotate("smith::edge")]] void clock_advance(Clock *clock,
+                                                                                                      u64 ns) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(clock->loop->fake != nullptr); // only the fake clock can be advanced
+    contract::requires(ns <= math::max(u64) >> 1);
+    clock->loop->fake->monotonic += ns;
+    clock->loop->fake->wall += (i64)ns;
+}
+
+// Completes after ns nanoseconds of the clock. On the fake clock that is when it has been advanced that far.
+[[smith::c_name("smith_clock_timeout_async")]] export [[clang::annotate("smith::edge")]] void
+clock_timeout_async(Clock *clock, Op *op, u64 ns) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(ns <= math::max(u64) >> 1);
+    op_start(op, clock->loop, Timeout);
+    op->internal.deadline = ns; // relative; the fake adds its clock on submit, the loop's timer takes it relative
+    loop_submit(clock->loop, op);
+}
+
+// Blocks for ns. On the fake clock nothing can advance it, so this is the error EDEADLK unless ns is 0.
+[[smith::c_name("smith_clock_sleep")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+clock_sleep(Clock *clock, u64 ns) {
+    Op op = {};
+    clock_timeout_async(clock, &op, ns);
+    loop_wait(clock->loop, &op);
+    return op.error;
+}
+
+// ---------------------------------------------------------------- processes
+
+const FakeProgram *fake_program(const Fake *fake, const char *name, i32 *id) {
+    for (usize i = 0; i < fake->program_count; i++) {
+        if (c::strcmp(fake->programs[i].program, name) == 0) {
+            *id = -(i32)i - 1;
+            return &fake->programs[i];
+        }
+    }
+    return nullptr;
+}
+
+typedef struct {
+    i32 out;       // when not -1, replaces the child's stdout
+    i32 err;       // the same for stderr
+    bool leader;   // the child starts its own process group
+    bool terminal; // the child keeps this process's stdin; otherwise it reads /dev/null
+    i32 in;        // when not 0 (a pipe's read end is never 0 here), replaces the child's stdin
+} Spawn;
+
+// macOS's <unistd.h> does not declare it.
+extern char **environ;
+
+// Starts argv as the spawn says.
+Error spawn_in(const char *const *argv, Spawn spawn, i32 *id) {
+    i32 out = spawn.out;
+    i32 err = spawn.err;
+    bool leader = spawn.leader;
+    c::posix_spawn_file_actions_t actions = {};
+    c::posix_spawn_file_actions_init(&actions);
+    if (spawn.in > 0)
+        c::posix_spawn_file_actions_adddup2(&actions, spawn.in, stdin_fd);
+    else if (!spawn.terminal)
+        c::posix_spawn_file_actions_addopen(&actions, stdin_fd, "/dev/null", o_rdonly, 0);
+    if (out >= 0) c::posix_spawn_file_actions_adddup2(&actions, out, stdout_fd);
+    if (err >= 0) c::posix_spawn_file_actions_adddup2(&actions, err, stderr_fd);
+    c::posix_spawnattr_t attributes = {};
+    c::posix_spawnattr_init(&attributes);
+    if (leader) {
+        c::posix_spawnattr_setflags(&attributes, spawn_set_group);
+        c::posix_spawnattr_setpgroup(&attributes, 0);
+    }
+    c::pid_t pid = 0;
+    // posix_spawnp takes char *const *, though it never writes to the arguments.
+    i32 code = c::posix_spawnp(&pid, argv[0], &actions, &attributes, (char *const *)(usize)argv, environ);
+    c::posix_spawnattr_destroy(&attributes);
+    c::posix_spawn_file_actions_destroy(&actions);
+    *id = (i32)pid;
+    return error_make(code, "run", argv[0]);
+}
+
+Error spawn(const char *const *argv, i32 out, i32 err, i32 *id) {
+    return spawn_in(argv, (Spawn){.out = out, .err = err}, id);
+}
+
+// --- processes ---
+
+// Starts argv[0] with no stdin and the program's own stdout and stderr, without waiting.
+[[smith::c_name("smith_processes_spawn")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+processes_spawn(Processes *processes, const char *const *argv, Process *process) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(argv[0] != nullptr);
+    Fake *fake = processes->loop->fake;
+    if (fake == nullptr) return spawn(argv, -1, -1, &process->id);
+    const FakeProgram *program = fake_program(fake, argv[0], &process->id);
+    if (program == nullptr) return error_make(enoent, "run", argv[0]);
+    return fake_capture(fake, false, program->output);
+}
+
+// Starts argv[0] with the program's own stdin, stdout and stderr, in this process group, so a signal from the terminal
+// reaches it: for a program that talks to the person at the terminal. Without waiting.
+[[smith::c_name("smith_processes_spawn_terminal")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+processes_spawn_terminal(Processes *processes, const char *const *argv, Process *process) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(argv[0] != nullptr);
+    if (processes->loop->fake != nullptr) return processes_spawn(processes, argv, process);
+    return spawn_in(argv, (Spawn){.out = -1, .err = -1, .terminal = true}, &process->id);
+}
+
+// Completes when the process has exited, with op->exit_status or op->signal.
+[[smith::c_name("smith_processes_wait_async")]] export [[clang::annotate("smith::edge")]] void
+processes_wait_async(Processes *processes, Op *op, Process process) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(process.id != 0);
+    op_start(op, processes->loop, ProcessWait);
+    op->internal.process = process.id;
+    loop_submit(processes->loop, op);
+}
+
+// Completes when the child has exited, with op->exit_status or op->signal, like io::processes_wait_async; afterwards
+// io::child_kill does not signal the child's id, which is free for another program from then on. The child stays
+// where it is until the op is done.
+[[smith::c_name("smith_child_wait_async")]] export [[clang::annotate("smith::edge")]] void
+child_wait_async(Child *child, Op *op) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(child->process.id != 0);
+    op_start(op, child->internal.loop, ProcessWait);
+    op->internal.process = child->process.id;
+    op->internal.reaped = &child->internal.reaped;
+    loop_submit(child->internal.loop, op);
+}
+
+// How many processes can run at once: the machine's logical cores. The fake has what io::Test.cores says, or 1.
+[[smith::c_name("smith_processes_cores")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] usize
+processes_cores(const Processes *processes) {
+    if (processes->loop->fake != nullptr) return processes->loop->fake->cores;
+    const char *given = c::getenv("SMITH_CORES"); // the share of a slot (runtime/slots.c), or a fake host in a test
+    i64 cores = given != nullptr && given[0] != '\0' ? c::strtol(given, nullptr, 10) : 0;
+    if (cores <= 0) cores = c::sysconf(processors_online);
+    return cores > 0 ? (usize)cores : 1;
+}
+
+// --- children with pipes
+
+// Makes a pipe whose ends close on exec; the child gets its copies by dup2.
+bool pipe_make(i32 ends[2]) {
+    if (c::pipe(ends) != 0) return false;
+    c::fcntl(ends[0], set_descriptor_flags, fd_cloexec);
+    c::fcntl(ends[1], set_descriptor_flags, fd_cloexec);
+    return true;
+}
+
+Error child_start_real(Loop *loop, const char *const *argv, Child *child) {
+    i32 in[2] = {-1, -1};
+    i32 out[2] = {-1, -1};
+    if (!pipe_make(in) || !pipe_make(out)) {
+        Error error = error_make(errno_now(), "pipe for", argv[0]);
+        for (usize end = 0; end < 2; end++) {
+            if (in[end] >= 0) c::close(in[end]);
+        }
+        return error;
+    }
+    Error error = spawn_in(argv, (Spawn){.out = out[1], .err = -1, .leader = true, .in = in[0]}, &child->process.id);
+    c::close(in[0]);
+    c::close(out[1]);
+    if (error.code != 0) {
+        c::close(in[1]);
+        c::close(out[0]);
+        return error;
+    }
+    c::fcntl(in[1], set_status_flags, o_nonblock); // a write takes what the pipe has room for
+    child->internal.loop = loop;
+    child->internal.input = in[1];
+    child->internal.output = out[0];
+    return error;
+}
+
+Error child_start_fake(Fake *fake, const char *const *argv, Child *child) {
+    for (usize i = 0; i < fake->child_count; i++) {
+        FakeChild *script = &fake->children[i];
+        if (script->used || c::strcmp(script->program, argv[0]) != 0) continue;
+        script->used = true;
+        child->process.id = -fake_child_base - (i32)i - 1;
+        return (Error){};
+    }
+    return error_make(enoent, "run", argv[0]);
+}
+
+// Starts argv[0] (found on PATH) with a pipe for stdin and a pipe for stdout and returns at once. The error is that it
+// could not start (a missing program is ENOENT). On the fake, argv[0] needs a script (io::test_add_child) and is
+// otherwise ENOENT.
+[[smith::c_name("smith_processes_start_piped")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+processes_start_piped(Processes *processes, const char *const *argv, Child *child) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(argv[0] != nullptr);
+    *child = (Child){.internal = {.loop = processes->loop, .input = -1, .output = -1}};
+    if (processes->loop->fake != nullptr) return child_start_fake(processes->loop->fake, argv, child);
+    return child_start_real(processes->loop, argv, child);
+}
+
+// Completes when all bytes of data are in the child's stdin pipe (op->taken is its count when done), or fails: EPIPE
+// when the child has closed its stdin or exited (op->taken says how much was taken before that). SIGPIPE cannot kill
+// the program. The data stays the caller's until done. The pipe takes 64 KiB at a time, so a larger write completes as
+// the child reads, and a program that also reads its output (io::child_read_async) cannot deadlock on it.
+[[smith::c_name("smith_child_write_async")]] export [[clang::annotate("smith::edge")]] void
+child_write_async(Child *child, Op *op, const u8 data[:]) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    Loop *loop = child->internal.loop;
+    op_start(op, loop, PipeWrite);
+    op->internal.input = data.data;
+    op->internal.capacity = countof(data);
+    if (loop->fake != nullptr) {
+        op->internal.child = fake_child_of(loop->fake, child->process.id);
+    } else {
+        check(child->internal.input >= 0);
+        op->internal.descriptor = child->internal.input;
+    }
+    loop_submit(loop, op);
+}
+
+// Completes with whatever the child's stdout holds, at least one byte and at most countof(buffer), in buffer (op->data,
+// not NUL-terminated); op->end is true when the child (and every process that kept the pipe) has closed it and nothing
+// was read.
+[[smith::c_name("smith_child_read_async")]] export [[clang::annotate("smith::edge")]] void
+child_read_async(Child *child, Op *op, u8 buffer[:]) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(countof(buffer) > 0);
+    Loop *loop = child->internal.loop;
+    op_start(op, loop, PipeRead);
+    op->internal.destination = buffer.data;
+    op->internal.capacity = countof(buffer);
+    if (loop->fake != nullptr) {
+        op->internal.child = fake_child_of(loop->fake, child->process.id);
+    } else {
+        check(child->internal.output >= 0);
+        op->internal.descriptor = child->internal.output;
+    }
+    loop_submit(loop, op);
+}
+
+// Closes the child's stdin, so it sees the end of its input. A child that reads until then, as cat does, exits.
+[[smith::c_name("smith_child_close_input")]] export [[clang::annotate("smith::edge")]] void
+child_close_input(Child *child) {
+    Fake *fake = child->internal.loop->fake;
+    if (fake != nullptr) {
+        fake_child_of(fake, child->process.id)->input_closed = true;
+    } else if (child->internal.input >= 0) {
+        c::close(child->internal.input);
+        child->internal.input = -1;
+    }
+}
+
+// Sends the signal to the child's process group. ESRCH if there is nothing left to signal: also, with no signal
+// sent, once the wait of io::child_wait_async has completed, since the id could then be another program's.
+[[smith::c_name("smith_child_kill")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+child_kill(Child *child, i32 signal) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(signal > 0);
+    Fake *fake = child->internal.loop->fake;
+    if (fake != nullptr) {
+        FakeChild *script = fake_child_of(fake, child->process.id);
+        if (fake_child_ended(script)) return error_make(esrch, "kill", "child");
+        script->killed = true;
+        script->signal = signal;
+        return (Error){};
+    }
+    // The wait has reaped the process: its id, and its group's, may be another program's, which is not ours to signal.
+    if (child->internal.reaped) return error_make(esrch, "kill", "child");
+    if (c::kill(-child->process.id, signal) != 0) return error_make(errno_now(), "kill", "child");
+    return (Error){};
+}
+
+// Closes what is still open of the pipes. It does not kill or wait: wait for the exit first (the pipes close with the
+// child anyway), and call this once, after the last op on the child is done.
+[[smith::c_name("smith_child_close")]] export [[clang::annotate("smith::edge")]] void child_close(Child *child) {
+    if (child->internal.loop->fake != nullptr) return;
+    if (child->internal.input >= 0) c::close(child->internal.input);
+    if (child->internal.output >= 0) c::close(child->internal.output);
+    child->internal.input = child->internal.output = -1;
+}
+
+// One captured stream of a running process: its pipe, its op, and what it has read.
+typedef struct {
+    i32 descriptor;
+    bool open;
+    Op op;
+    Grow grow;
+} Stream;
+
+// Takes a finished read into the stream, closing it at the end; then submits the next read.
+void stream_feed(Loop *loop, Stream *stream) {
+    if (!stream->open) return;
+    if (stream->op.internal.kind != None) {
+        if (!stream->op.done) return;
+        stream->grow.size += countof(stream->op.data);
+        if (stream->op.end || stream->op.error.code != 0) {
+            c::close(stream->descriptor);
+            stream->open = false;
+            stream->grow.data[stream->grow.size] = 0;
+            return;
+        }
+    }
+    grow_reserve(&stream->grow, chunk);
+    op_start(&stream->op, loop, PipeRead);
+    stream->op.internal.descriptor = stream->descriptor;
+    stream->op.internal.destination = stream->grow.data + stream->grow.size;
+    stream->op.internal.capacity = stream->grow.capacity - stream->grow.size - 1;
+    loop_submit(loop, &stream->op);
+}
+
+Error run_pipes(const char *const *argv, Stream *out, Stream *err, i32 *id) {
+    i32 pipes[2][2] = {{-1, -1}, {-1, -1}};
+    if (c::pipe(pipes[0]) != 0 || c::pipe(pipes[1]) != 0) return error_make(errno_now(), "pipe for", argv[0]);
+    for (usize i = 0; i < 2; i++)
+        for (usize end = 0; end < 2; end++)
+            c::fcntl(pipes[i][end], set_descriptor_flags, fd_cloexec);
+    Error error = spawn(argv, pipes[0][1], pipes[1][1], id);
+    c::close(pipes[0][1]);
+    c::close(pipes[1][1]);
+    out->descriptor = pipes[0][0];
+    err->descriptor = pipes[1][0];
+    out->open = err->open = error.code == 0;
+    if (error.code != 0) {
+        c::close(pipes[0][0]);
+        c::close(pipes[1][0]);
+    }
+    return error;
+}
+
+ProcessResult run_real(Loop *loop, arena::Arena *arena, const char *const *argv) {
+    ProcessResult result = {};
+    Stream out = {.grow = {.arena = arena}};
+    Stream err = {.grow = {.arena = arena}};
+    i32 id = 0;
+    result.error = run_pipes(argv, &out, &err, &id);
+    if (result.error.code != 0) return result;
+    Op ended = {};
+    op_start(&ended, loop, ProcessWait);
+    ended.internal.process = id;
+    loop_submit(loop, &ended);
+    for (usize rounds = 0; rounds <= arena->capacity + 64; rounds++) { // each round completes an op
+        stream_feed(loop, &out);
+        stream_feed(loop, &err);
+        if (!out.open && !err.open && ended.done) break;
+        loop_run(loop, forever);
+    }
+    check(ended.done);
+    result.error = ended.error;
+    result.exit_status = ended.exit_status;
+    result.signal = ended.signal;
+    grow_reserve(&out.grow, 0);
+    grow_reserve(&err.grow, 0);
+    result.output = (const char *)out.grow.data;
+    result.output_size = out.grow.size;
+    result.errors = (const char *)err.grow.data;
+    result.errors_size = err.grow.size;
+    return result;
+}
+
+// Runs argv[0] (found on PATH) with no stdin and waits, capturing stdout and stderr in the arena. The capture is
+// read in doubling blocks, so it may use up to twice the output's size.
+[[smith::c_name("smith_processes_run")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] ProcessResult
+processes_run(Processes *processes, arena::Arena *arena, const char *const *argv) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(argv[0] != nullptr);
+    Fake *fake = processes->loop->fake;
+    if (fake == nullptr) return run_real(processes->loop, arena, argv);
+    ProcessResult result = {};
+    i32 id = 0;
+    const FakeProgram *program = fake_program(fake, argv[0], &id);
+    if (program == nullptr) {
+        result.error = error_make(enoent, "run", argv[0]);
+        return result;
+    }
+    result.exit_status = program->status;
+    result.output_size = c::strlen(program->output);
+    char *copy = (char *)arena::push_array_raw(arena, sizeof(char), result.output_size + 1, alignof(char));
+    __builtin_memcpy(copy, program->output, result.output_size);
+    result.output = copy;
+    result.errors = (const char *)arena::push_array_raw(arena, sizeof(char), 1, alignof(char));
+    return result;
+}
+
+// ---------------------------------------------------------------- net
+
+if constexpr (target::os == target::macos) {
+    // Network.framework is loaded with dlopen when the first connection is made, never linked: a program that makes no
+    // connection (smith routing a compile, say) pays nothing at start, where linking the framework costs about 2.5 ms
+    // in every process. The functions and the constants the C API names are looked up once and kept in the loop.
+} else {
+    // OpenSSL is loaded with dlopen when the first TLS connection is made, never linked: a program that makes no
+    // connection (smith routing a compile, say) pays nothing at start, and a machine without OpenSSL runs everything
+    // else. The functions are looked up once and kept in the loop; the constants the C API names are written here,
+    // since the headers that hold them are not read. A connection is a nonblocking socket registered once with the
+    // loop's epoll (edge- triggered, for input and output, keyed by the connection); an op of the connection is a step
+    // that tries its system call and, when the call would block, waits for the next event of the socket and tries
+    // again. So a connect, a send, a receive and a close complete in io::run like every other op, on the thread that
+    // calls it.
+    //
+    // What a Connection and its ops hold on Linux: internal.position + 1 is the socket (0 for none; the scripted
+    // network uses position for its own offset), internal.handle the SSL object (nullptr for plain TCP),
+    // internal.waiting the op of each kind that is pending. A connect op holds the resolved addresses in internal.input
+    // and the one being tried in internal.child, whether it is TLS in internal.fill, the phase in internal.process and
+    // the last errno in internal.capacity; a send op's internal.capacity is how much a plain socket has taken.
+
+    constexpr i32 ssl_verify_peer = 1;
+    constexpr i32 ssl_ctrl_server_name = 55;
+    constexpr i32 ssl_ctrl_min_version = 123;
+    constexpr u64 ssl_op_ignore_unexpected_eof = 1 << 7; // a peer that closes without close_notify ends the input
+    constexpr i64 tls_version_1_2 = 0x0303;
+    constexpr i32 ssl_error_want_read = 2;
+    constexpr i32 ssl_error_want_write = 3;
+    constexpr i32 ssl_error_syscall = 5;
+    constexpr i32 ssl_error_zero_return = 6;
+    constexpr i32 phase_handshake = 1; // internal.process of a connect: 0 while the socket connects
+    constexpr usize error_text_max = 120;
+}
+
+// Looks a symbol up and stores its address in the pointer at destination. Symbols are data or functions; either way
+// dlsym returns an address. ISO C has no conversion from object pointers to function pointers, and dlsym's contract is
+// exactly that conversion, so the address is copied byte for byte.
+bool net_symbol(void *library, const char *name, void *destination) {
+    void *address = c::dlsym(library, name);
+    if (address == nullptr) return false;
+    __builtin_memcpy(destination, (const void *)&address, sizeof address);
+    return true;
+}
+
+if constexpr (target::os == target::macos) {
+    bool net_load(NetApi *api) {
+        void *library = c::dlopen("/System/Library/Frameworks/Network.framework/Network", dlopen_flags);
+        if (library == nullptr) return false;
+        return net_symbol(library, "nw_endpoint_create_host", (void *)&api->endpoint_create_host) &&
+               net_symbol(library, "nw_parameters_create_secure_tcp", (void *)&api->parameters_create_secure_tcp) &&
+               net_symbol(library, "nw_connection_create", (void *)&api->connection_create) &&
+               net_symbol(library, "nw_connection_set_queue", (void *)&api->set_queue) &&
+               net_symbol(library, "nw_connection_set_state_changed_handler", (void *)&api->set_state_handler) &&
+               net_symbol(library, "nw_connection_start", (void *)&api->start) &&
+               net_symbol(library, "nw_connection_cancel", (void *)&api->cancel) &&
+               net_symbol(library, "nw_connection_send", (void *)&api->send) &&
+               net_symbol(library, "nw_connection_receive", (void *)&api->receive) &&
+               net_symbol(library, "nw_error_get_error_domain", (void *)&api->error_domain) &&
+               net_symbol(library, "nw_error_get_error_code", (void *)&api->error_code) &&
+               net_symbol(library, "_nw_parameters_configure_protocol_default_configuration",
+                          (void *)&api->configure_default) &&
+               net_symbol(library, "_nw_parameters_configure_protocol_disable", (void *)&api->configure_disable) &&
+               net_symbol(library, "_nw_content_context_default_message", (void *)&api->context_message);
+    }
+
+    // The functions, loaded on first use; nullptr if the framework is not there.
+    const NetApi *net_api(Loop *loop) {
+        if (!loop->net_loaded) {
+            if (!net_load(&loop->net_api)) return nullptr;
+            loop->net_queue = c::dispatch_queue_create("smith.net", nullptr); // a serial queue
+            loop->net_loaded = loop->net_queue != nullptr;
+        }
+        return loop->net_loaded ? &loop->net_api : nullptr;
+    }
+
+    // --- finishing ops from any thread
+
+    // Wakes the loop's kevent. Safe from any thread.
+    void net_wake(Loop *loop) {
+        struct c::kevent trigger = {.ident = wakeup, .filter = evfilt_user, .fflags = note_trigger};
+        i32 result = c::kevent(loop->queue, &trigger, 1, nullptr, 0, nullptr);
+        check(result == 0);
+        (void)result;
+    }
+
+    // Hands a finished op to the loop thread, which marks it done in io::run. Callable from any thread, once per op.
+    void net_finish(Loop *loop, Op *op, Error error) {
+        op->error = error;
+        Op *head = __c11_atomic_load(&loop->finished, seq_cst);
+        for (usize tries = 0; tries < cas_tries; tries++) { // a lost race retries with the new head
+            op->internal.finished = head;
+            if (__c11_atomic_compare_exchange_weak(&loop->finished, &head, op, seq_cst, seq_cst)) break;
+        }
+        net_wake(loop);
+    }
+
+    // The op waiting in a connection's slot, taken so that exactly one caller finishes it; nullptr if none is.
+    Op *net_take(Connection *connection, OpKind kind) {
+        usize slot = (usize)(kind - NetConnect);
+        check(slot < sizeof connection->internal.waiting / sizeof connection->internal.waiting[0]);
+        return __c11_atomic_exchange(&connection->internal.waiting[slot], nullptr, seq_cst);
+    }
+
+    void net_finish_slot(Loop *loop, Connection *connection, OpKind kind, Error error) {
+        Op *op = net_take(connection, kind);
+        if (op != nullptr) net_finish(loop, op, error);
+    }
+
+    // --- errors
+
+    // What the system's TLS stack means by a status (Security/SecureTransport.h), for the ones a certificate check
+    // gives.
+    const char *net_tls_reason(i32 status) {
+        switch (status) {
+        case -9807:
+            return "the certificate chain is not valid";
+        case -9808:
+            return "the certificate was rejected (wrong host, self-signed or untrusted)";
+        case -9812:
+            return "the certificate's root is not trusted";
+        case -9813:
+            return "the certificate has no trusted root";
+        case -9814:
+            return "the certificate has expired";
+        case -9815:
+            return "the certificate is not valid yet";
+        case -9843:
+            return "the certificate is not for this host";
+        case -9806:
+            return "the connection was closed during the handshake";
+        default:
+            return "the handshake failed";
+        }
+    }
+
+    // A Network.framework error as an Error, with the connection's host in the message.
+    Error net_error(const NetApi *api, c::nw_error_t error, const char *verb, const char *name) {
+        i32 code = api->error_code(error);
+        switch (api->error_domain(error)) {
+        case c::nw_error_domain_posix:
+            return error_make(code, verb, name);
+        case c::nw_error_domain_dns:
+            return error_text(enoent, "%s %s: cannot find the host (DNS error %d)", verb, name, code);
+        case c::nw_error_domain_tls:
+            return error_text(eauth, "%s %s: TLS: %s (status %d)", verb, name, net_tls_reason(code), code);
+        default:
+            return error_text(eio, "%s %s: network error %d", verb, name, code);
+        }
+    }
+
+    // --- real connections
+
+    // The state callback, on the dispatch queue: finishes the connect when the connection is ready or fails, fails what
+    // is pending when it fails, and on the last state (cancelled) finishes the rest and the close.
+    void net_on_state(Loop *loop, Connection *connection, c::nw_connection_state_t state, c::nw_error_t error) {
+        const NetApi *api = &loop->net_api;
+        c::nw_connection_t handle = (c::nw_connection_t)connection->internal.handle;
+        if (state == c::nw_connection_state_ready) {
+            net_finish_slot(loop, connection, NetConnect, (Error){});
+        } else if (error != nullptr &&
+                   (state == c::nw_connection_state_failed || state == c::nw_connection_state_waiting)) {
+            Error failure = net_error(api, error, "connect", connection->internal.name);
+            net_finish_slot(loop, connection, NetConnect, failure);
+            net_finish_slot(loop, connection, NetSend, failure);
+            net_finish_slot(loop, connection, NetReceive, failure);
+            api->cancel(handle); // the cancelled state follows, and the program closes the connection
+        } else if (state == c::nw_connection_state_cancelled) {
+            __c11_atomic_store(&connection->internal.closed, true, seq_cst);
+            Error gone = net_closed(connection->internal.name);
+            net_finish_slot(loop, connection, NetConnect, gone);
+            net_finish_slot(loop, connection, NetSend, gone);
+            net_finish_slot(loop, connection, NetReceive, gone);
+            net_finish_slot(loop, connection, NetClose, (Error){});
+            c::os_release(handle);
+        }
+    }
+
+    void net_begin(Loop *loop, Op *op, Connection *connection, const char *host, u16 port, bool tls) {
+        const NetApi *api = net_api(loop);
+        if (api == nullptr) {
+            __c11_atomic_store(&connection->internal.waiting[0], op, seq_cst);
+            net_finish_slot(loop, connection, NetConnect,
+                            error_make(enosys, "connect", "(Network.framework is not available)"));
+            return;
+        }
+        char service[8];
+        __builtin_snprintf(service, sizeof service, "%u", (u32)port);
+        c::nw_endpoint_t endpoint = api->endpoint_create_host(host, service);
+        c::nw_parameters_t parameters = api->parameters_create_secure_tcp(
+            tls ? *api->configure_default : *api->configure_disable, *api->configure_default);
+        c::nw_connection_t handle = api->connection_create(endpoint, parameters);
+        c::os_release(endpoint);
+        c::os_release(parameters);
+        connection->internal.handle = handle;
+        __c11_atomic_store(&connection->internal.waiting[0], op, seq_cst);
+        api->set_queue(handle, loop->net_queue);
+        api->set_state_handler(handle, ^(c::nw_connection_state_t state, c::nw_error_t error) {
+            net_on_state(loop, connection, state, error);
+        });
+        api->start(handle);
+    }
+
+    // Copies a received block into the buffer, up to its capacity.
+    usize net_copy(c::dispatch_data_t content, u8 *buffer, usize capacity) {
+        __block usize copied = 0;
+        if (content == nullptr) return 0;
+        c::dispatch_data_apply(content, ^bool(c::dispatch_data_t region, usize offset, const void *bytes, usize size) {
+            (void)region;
+            (void)offset;
+            usize take = size < capacity - copied ? size : capacity - copied;
+            __builtin_memcpy(buffer + copied, bytes, take);
+            copied += take;
+            return true;
+        });
+        return copied;
+    }
+
+    void net_received(Loop *loop, Connection *connection, c::dispatch_data_t content, bool complete,
+                      c::nw_error_t error) {
+        Op *op = net_take(connection, NetReceive);
+        if (op == nullptr) return;
+        op_data(op, op->internal.destination, net_copy(content, op->internal.destination, op->internal.capacity));
+        Error failure = {};
+        if (error != nullptr) failure = net_error(&loop->net_api, error, "read", connection->internal.name);
+        if (complete && error == nullptr) connection->internal.end = true;
+        op->end = connection->internal.end && countof(op->data) == 0;
+        net_finish(loop, op, failure);
+    }
+
+    void net_receive_real(Loop *loop, Op *op, Connection *connection) {
+        const NetApi *api = &loop->net_api;
+        if (connection->internal.end) { // the peer finished with the last block
+            op_data(op, op->internal.destination, 0);
+            op->end = true;
+            net_finish(loop, op, (Error){});
+            return;
+        }
+        __c11_atomic_store(&connection->internal.waiting[NetReceive - NetConnect], op, seq_cst);
+        api->receive(
+            (c::nw_connection_t)connection->internal.handle, 1, (u32)op->internal.capacity,
+            ^(c::dispatch_data_t content, c::nw_content_context_t context, bool complete, c::nw_error_t error) {
+                (void)context;
+                net_received(loop, connection, content, complete, error);
+            });
+    }
+
+    void net_send_real(Loop *loop, Op *op, Connection *connection) {
+        const NetApi *api = &loop->net_api;
+        __c11_atomic_store(&connection->internal.waiting[NetSend - NetConnect], op, seq_cst);
+        c::dispatch_data_t data = c::dispatch_data_create(op->internal.input, op->taken, loop->net_queue, nullptr);
+        api->send((c::nw_connection_t)connection->internal.handle, data, *api->context_message, true,
+                  ^(c::nw_error_t error) {
+                      Error failure = {};
+                      if (error != nullptr)
+                          failure = net_error(&loop->net_api, error, "write", connection->internal.name);
+                      net_finish_slot(loop, connection, NetSend, failure);
+                  });
+        c::dispatch_release(data);
+    }
+} else {
+    bool net_load_crypto(void *library, NetApi *api) {
+        return net_symbol(library, "X509_verify_cert_error_string", (void *)&api->verify_text) &&
+               net_symbol(library, "ERR_get_error", (void *)&api->error_next) &&
+               net_symbol(library, "ERR_error_string_n", (void *)&api->error_describe) &&
+               net_symbol(library, "ERR_clear_error", (void *)&api->error_clear) &&
+               net_symbol(library, "X509_VERIFY_PARAM_set1_ip_asc", (void *)&api->parameters_set_address);
+    }
+
+    bool net_load(NetApi *api) {
+        void *library = c::dlopen("libssl.so.3", dlopen_flags);
+        void *crypto = c::dlopen("libcrypto.so.3", dlopen_flags);
+        if (library == nullptr || crypto == nullptr) return false;
+        return net_load_crypto(crypto, api) && net_symbol(library, "TLS_client_method", (void *)&api->client_method) &&
+               net_symbol(library, "SSL_CTX_new", (void *)&api->context_new) &&
+               net_symbol(library, "SSL_CTX_free", (void *)&api->context_free) &&
+               net_symbol(library, "SSL_CTX_set_default_verify_paths", (void *)&api->context_default_paths) &&
+               net_symbol(library, "SSL_CTX_set_verify", (void *)&api->context_verify) &&
+               net_symbol(library, "SSL_CTX_ctrl", (void *)&api->context_control) &&
+               net_symbol(library, "SSL_CTX_set_options", (void *)&api->context_options) &&
+               net_symbol(library, "SSL_new", (void *)&api->session_new) &&
+               net_symbol(library, "SSL_free", (void *)&api->session_free) &&
+               net_symbol(library, "SSL_set_fd", (void *)&api->session_set_fd) &&
+               net_symbol(library, "SSL_ctrl", (void *)&api->session_control) &&
+               net_symbol(library, "SSL_set1_host", (void *)&api->session_set_host) &&
+               net_symbol(library, "SSL_get0_param", (void *)&api->session_parameters) &&
+               net_symbol(library, "SSL_connect", (void *)&api->session_connect) &&
+               net_symbol(library, "SSL_read", (void *)&api->session_read) &&
+               net_symbol(library, "SSL_write", (void *)&api->session_write) &&
+               net_symbol(library, "SSL_get_error", (void *)&api->session_error) &&
+               net_symbol(library, "SSL_shutdown", (void *)&api->session_shutdown) &&
+               net_symbol(library, "SSL_get_verify_result", (void *)&api->verify_result);
+    }
+
+    // The functions, loaded on first use together with the context every connection is made from: the system's trust
+    // (SSL_CERT_FILE and SSL_CERT_DIR, else the distribution's store), certificates required, TLS 1.2 or later. nullptr
+    // if the libraries are not there.
+    const NetApi *net_api(Loop *loop) {
+        if (loop->net_loaded) return &loop->net_api;
+        if (!net_load(&loop->net_api)) return nullptr;
+        const NetApi *api = &loop->net_api;
+        void *context = api->context_new(api->client_method());
+        if (context == nullptr) return nullptr;
+        api->context_default_paths(context);
+        api->context_verify(context, ssl_verify_peer, nullptr);
+        api->context_control(context, ssl_ctrl_min_version, tls_version_1_2, nullptr);
+        api->context_options(context, ssl_op_ignore_unexpected_eof);
+        loop->net_context = context;
+        loop->net_loaded = true;
+        return api;
+    }
+
+    // --- a connection's socket and slots
+
+    i32 net_fd(const Connection *connection) {
+        return (i32)connection->internal.position - 1;
+    }
+
+    void net_fd_set(Connection *connection, i32 descriptor) {
+        connection->internal.position = (usize)descriptor + 1;
+    }
+
+    u64 net_key(const Connection *connection) {
+        return (u64)(usize)connection | 1;
+    }
+
+    Op *net_slot(Connection *connection, OpKind kind) {
+        usize slot = (usize)(kind - NetConnect);
+        check(slot < sizeof connection->internal.waiting / sizeof connection->internal.waiting[0]);
+        return __c11_atomic_load(&connection->internal.waiting[slot], seq_cst);
+    }
+
+    void net_slot_set(Connection *connection, OpKind kind, Op *op) {
+        usize slot = (usize)(kind - NetConnect);
+        check(slot < sizeof connection->internal.waiting / sizeof connection->internal.waiting[0]);
+        __c11_atomic_store(&connection->internal.waiting[slot], op, seq_cst);
+    }
+
+    // What a connect op holds is given back when it is done, however it ended.
+    void net_release(Op *op) {
+        if (op->internal.kind != NetConnect || op->internal.input == nullptr) return;
+        c::freeaddrinfo((struct c::addrinfo *)(usize)op->internal.input);
+        op->internal.input = nullptr;
+        op->internal.child = nullptr;
+    }
+
+    // Completes an op of the connection that is not the one the loop is completing (a close cancels what is pending).
+    void net_settle(Loop *loop, Connection *connection, OpKind kind, Error error) {
+        Op *op = net_slot(connection, kind);
+        if (op == nullptr || op->done) return;
+        net_slot_set(connection, kind, nullptr);
+        op->error = error;
+        net_release(op);
+        loop_unlink(loop, op);
+        op->done = true;
+        loop->settled += 1;
+    }
+
+    // Frees the TLS object and the socket (which leaves the epoll with it) and marks the connection closed.
+    void net_teardown(Loop *loop, Connection *connection) {
+        if (connection->internal.handle != nullptr) {
+            loop->net_api.session_free(connection->internal.handle);
+            connection->internal.handle = nullptr;
+        }
+        i32 descriptor = net_fd(connection);
+        if (descriptor >= 0) c::close(descriptor);
+        net_fd_set(connection, -1);
+        __c11_atomic_store(&connection->internal.closed, true, seq_cst);
+    }
+
+    // --- errors
+
+    // What a certificate check says (X509_V_ERR_*), for the ones a program meets; the rest use OpenSSL's own words.
+    const char *net_verify_reason(const NetApi *api, i64 code) {
+        switch (code) {
+        case 10:
+            return "the certificate has expired";
+        case 9:
+            return "the certificate is not valid yet";
+        case 18:
+        case 19:
+            return "the certificate is self-signed and not trusted";
+        case 20:
+        case 21:
+            return "the certificate's root is not trusted";
+        case 62:
+        case 64:
+            return "the certificate is not for this host";
+        default:
+            return api->verify_text(code);
+        }
+    }
+
+    // A failed TLS call as an Error. saved is errno right after the call. A failure of the system call is its errno; a
+    // refused certificate or a handshake that failed is EAUTH, with the reason.
+    Error net_tls_error(const NetApi *api, void *session, i32 reason, i32 saved, const char *verb, const char *name) {
+        if (reason == ssl_error_syscall && saved != 0) return error_make(saved, verb, name);
+        if (reason == ssl_error_syscall)
+            return error_text(econnreset, "%s %s: the connection was closed by the peer", verb, name);
+        char text[error_text_max] = "the handshake failed";
+        i64 verify = api->verify_result(session);
+        if (verify != 0) {
+            __builtin_snprintf(text, sizeof text, "%s", net_verify_reason(api, verify));
+        } else {
+            u64 code = api->error_next();
+            if (code != 0) api->error_describe(code, text, sizeof text);
+        }
+        api->error_clear();
+        return error_text(eauth, "%s %s: TLS: %s", verb, name, text);
+    }
+
+    // --- connecting
+
+    Error net_resolve(Op *op, const Connection *connection) {
+        char service[8];
+        __builtin_snprintf(service, sizeof service, "%u", (u32)op->internal.deadline);
+        struct c::addrinfo hints = {.ai_family = af_unspec, .ai_socktype = sock_stream};
+        struct c::addrinfo *addresses = nullptr;
+        i32 result = c::getaddrinfo(connection->internal.name, service, &hints, &addresses);
+        if (result == eai_system) return error_make(errno_now(), "connect", connection->internal.name);
+        if (result != 0)
+            return error_text(enoent, "connect %s: cannot find the host (%s)", connection->internal.name,
+                              c::gai_strerror(result));
+        op->internal.input = addresses;
+        op->internal.child = addresses;
+        return (Error){};
+    }
+
+    // Starts a connect to the next address that will take one. True when one is under way (or made); false when the
+    // addresses are used up, the last errno in op->internal.capacity.
+    bool net_dial(Loop *loop, Op *op, Connection *connection) {
+        for (usize tries = 0; op->internal.child != nullptr && tries < addresses_max; tries++) {
+            const struct c::addrinfo *address = (const struct c::addrinfo *)op->internal.child;
+            op->internal.child = address->ai_next;
+            i32 descriptor = c::socket(address->ai_family, address->ai_socktype + sock_nonblock + sock_cloexec,
+                                       address->ai_protocol);
+            if (descriptor < 0) {
+                op->internal.capacity = (usize)errno_now();
+                continue;
+            }
+            bool armed = epoll_arm(loop, descriptor, epoll_input | epoll_output | epoll_edge, net_key(connection));
+            if (armed &&
+                (c::connect(descriptor, address->ai_addr, address->ai_addrlen) == 0 || errno_now() == einprogress)) {
+                net_fd_set(connection, descriptor);
+                return true;
+            }
+            op->internal.capacity = (usize)errno_now();
+            c::close(descriptor);
+        }
+        return false;
+    }
+
+    // Whether the connect of the socket has finished: 1 made, 0 under way, -1 failed with the errno in code.
+    i32 net_dial_state(const Connection *connection, i32 *code) {
+        i32 descriptor = net_fd(connection);
+        struct c::sockaddr_storage peer = {};
+        c::socklen_t size = sizeof peer;
+        if (c::getpeername(descriptor, (struct c::sockaddr *)&peer, &size) == 0) return 1;
+        i32 failure = 0;
+        c::socklen_t length = sizeof failure;
+        if (c::getsockopt(descriptor, sol_socket, so_error, &failure, &length) != 0) failure = errno_now();
+        *code = failure;
+        return failure != 0 ? -1 : 0;
+    }
+
+    // The TLS object for the connection: SNI and the name the certificate must carry (an address, for a host given as
+    // one).
+    void *net_session(Loop *loop, Op *op, Connection *connection) {
+        const NetApi *api = &loop->net_api;
+        const char *host = connection->internal.name;
+        void *session = api->session_new(loop->net_context);
+        if (session == nullptr || api->session_set_fd(session, net_fd(connection)) != 1) {
+            if (session != nullptr) api->session_free(session);
+            op->error = error_make(enomem, "connect", host);
+            return nullptr;
+        }
+        u8 address[16];
+        bool literal = c::inet_pton(af_inet, host, address) == 1 || c::inet_pton(af_inet6, host, address) == 1;
+        if (literal) {
+            api->parameters_set_address(api->session_parameters(session), host);
+        } else {
+            api->session_control(session, ssl_ctrl_server_name, 0, (void *)(usize)host);
+            api->session_set_host(session, host);
+        }
+        connection->internal.handle = session;
+        return session;
+    }
+
+    // One try of the TLS handshake: true when it is over (made, or failed with the op's error).
+    bool net_handshake(Loop *loop, Op *op, Connection *connection) {
+        const NetApi *api = &loop->net_api;
+        void *session = connection->internal.handle;
+        if (session == nullptr) session = net_session(loop, op, connection);
+        if (session == nullptr) return true;
+        api->error_clear();
+        i32 result = api->session_connect(session);
+        i32 saved = errno_now();
+        if (result == 1) return true;
+        i32 reason = api->session_error(session, result);
+        if (reason == ssl_error_want_read || reason == ssl_error_want_write) return false;
+        op->error = net_tls_error(api, session, reason, saved, "connect", connection->internal.name);
+        return true;
+    }
+
+    // The first try of a connect: loads OpenSSL for TLS, resolves the host (blocking) and starts the first address.
+    bool net_connect_begin(Loop *loop, Op *op, Connection *connection) {
+        const char *host = connection->internal.name;
+        if (op->internal.fill && net_api(loop) == nullptr) {
+            op->error =
+                error_text(enosys, "connect %s: TLS needs libssl.so.3 (OpenSSL 3), which cannot be loaded", host);
+            return true;
+        }
+        op->error = net_resolve(op, connection);
+        if (op->error.code != 0) return true;
+        if (net_dial(loop, op, connection)) return false;
+        i32 code = op->internal.capacity != 0 ? (i32)op->internal.capacity : eio;
+        op->error = error_make(code, "connect", host);
+        return true;
+    }
+
+    // One step of a connect: true when it is over. The socket is looked at until it is connected (a failed address
+    // moves on to the next), then the TLS handshake is tried until it ends.
+    bool net_connect_step(Loop *loop, Op *op, Connection *connection) {
+        if (op->internal.process == phase_handshake) return net_handshake(loop, op, connection);
+        if (net_fd(connection) < 0 && op->internal.input == nullptr) {
+            bool over = net_connect_begin(loop, op, connection);
+            if (over) return true;
+        }
+        for (usize tries = 0; tries < addresses_max; tries++) { // each failed address is one try
+            i32 code = 0;
+            i32 state = net_dial_state(connection, &code);
+            if (state == 0) return false;
+            if (state > 0) break;
+            c::close(net_fd(connection));
+            net_fd_set(connection, -1);
+            op->internal.capacity = (usize)code;
+            if (!net_dial(loop, op, connection)) {
+                op->error = error_make(code, "connect", connection->internal.name);
+                return true;
+            }
+        }
+        if (!op->internal.fill) return true;
+        op->internal.process = phase_handshake;
+        return net_handshake(loop, op, connection);
+    }
+
+    // --- sending, receiving and closing
+
+    // The most one TLS call takes or gives: OpenSSL counts in int.
+    usize net_tls_chunk(usize size) {
+        constexpr usize most = 0x7FFF'FFFF;
+        return size < most ? size : most;
+    }
+
+    // One step of a send on a plain socket: true when all the bytes are taken or it failed; false when it would block.
+    bool net_send_plain(Op *op, Connection *connection) {
+        const u8 *bytes = (const u8 *)op->internal.input;
+        for (usize tries = 0; tries < 64; tries++) { // a signal may interrupt the call
+            usize left = op->taken - op->internal.capacity;
+            c::sigset_t before = {};
+            pipe_signal_hold(&before);
+            isize n = c::send(net_fd(connection), bytes + op->internal.capacity, left, msg_nosignal);
+            i32 saved = errno_now();
+            pipe_signal_release(&before, n < 0 && saved == epipe);
+            if (n >= 0) op->internal.capacity += (usize)n;
+            if (n >= 0 && op->internal.capacity == op->taken) return true;
+            if (n < 0 && saved == eintr) continue;
+            if (n < 0 && saved == eagain) return false;
+            if (n < 0) {
+                op->error = error_make(saved, "write", connection->internal.name);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // The same through the TLS session: it takes all of the bytes or says to wait for the socket.
+    bool net_send_tls(const NetApi *api, Op *op, Connection *connection) {
+        void *session = connection->internal.handle;
+        c::sigset_t before = {};
+        pipe_signal_hold(&before);
+        api->error_clear();
+        i32 n = api->session_write(session, (const u8 *)op->internal.input + op->internal.capacity,
+                                   (i32)net_tls_chunk(op->taken - op->internal.capacity));
+        i32 saved = errno_now();
+        pipe_signal_release(&before, n <= 0 && saved == epipe);
+        if (n > 0) {
+            op->internal.capacity += (usize)n;
+            return op->internal.capacity == op->taken;
+        }
+        i32 reason = api->session_error(session, n);
+        if (reason == ssl_error_want_read || reason == ssl_error_want_write) return false;
+        op->error = net_tls_error(api, session, reason, saved, "write", connection->internal.name);
+        return true;
+    }
+
+    // One step of a send: true when all the bytes are taken, or it failed.
+    bool net_send_step(Loop *loop, Op *op, Connection *connection) {
+        if (__c11_atomic_load(&connection->internal.closed, seq_cst)) {
+            op->error = net_closed(connection->internal.name);
+            return true;
+        }
+        if (op->taken == 0) return true;
+        if (connection->internal.handle != nullptr) return net_send_tls(&loop->net_api, op, connection);
+        return net_send_plain(op, connection);
+    }
+
+    // The peer has finished sending: the receive completes with no bytes and end.
+    void net_receive_end(Op *op, Connection *connection) {
+        connection->internal.end = true;
+        op_data(op, op->internal.destination, 0);
+        op->end = true;
+    }
+
+    // One step of a receive on a plain socket.
+    bool net_receive_plain(Op *op, Connection *connection) {
+        for (usize tries = 0; tries < 64; tries++) { // a signal may interrupt the call
+            isize n = c::read(net_fd(connection), op->internal.destination, op->internal.capacity);
+            i32 saved = errno_now();
+            if (n > 0) {
+                op_data(op, op->internal.destination, (usize)n);
+                return true;
+            }
+            if (n == 0) {
+                net_receive_end(op, connection);
+                return true;
+            }
+            if (saved == eagain) return false;
+            if (saved == eintr) continue;
+            op->error = error_make(saved, "read", connection->internal.name);
+            return true;
+        }
+        return false;
+    }
+
+    // The same through the TLS session. A peer that closes the connection, with or without close_notify, ends the
+    // input.
+    bool net_receive_tls(const NetApi *api, Op *op, Connection *connection) {
+        void *session = connection->internal.handle;
+        api->error_clear();
+        i32 n = api->session_read(session, op->internal.destination, (i32)net_tls_chunk(op->internal.capacity));
+        i32 saved = errno_now();
+        if (n > 0) {
+            op_data(op, op->internal.destination, (usize)n);
+            return true;
+        }
+        i32 reason = api->session_error(session, n);
+        if (reason == ssl_error_want_read || reason == ssl_error_want_write) return false;
+        if (reason == ssl_error_zero_return || (reason == ssl_error_syscall && saved == 0)) {
+            net_receive_end(op, connection);
+            return true;
+        }
+        op->error = net_tls_error(api, session, reason, saved, "read", connection->internal.name);
+        return true;
+    }
+
+    // One step of a receive: true when it has bytes, the end, or an error.
+    bool net_receive_step(Loop *loop, Op *op, Connection *connection) {
+        if (__c11_atomic_load(&connection->internal.closed, seq_cst)) {
+            op->error = net_closed(connection->internal.name);
+            return true;
+        }
+        if (connection->internal.end) {
+            net_receive_end(op, connection);
+            return true;
+        }
+        if (connection->internal.handle != nullptr) return net_receive_tls(&loop->net_api, op, connection);
+        return net_receive_plain(op, connection);
+    }
+
+    // Closes at once: what is pending is cancelled, the TLS session told, the socket released. A connection already
+    // closed (or never opened) is closed without a word.
+    void net_close_step(Loop *loop, Connection *connection) {
+        if (__c11_atomic_load(&connection->internal.closed, seq_cst)) return;
+        void *session = connection->internal.handle;
+        if (session != nullptr) {
+            c::sigset_t before = {};
+            pipe_signal_hold(&before);
+            loop->net_api.error_clear();
+            loop->net_api.session_shutdown(session);
+            pipe_signal_release(&before, errno_now() == epipe);
+        }
+        Error gone = net_closed(connection->internal.name);
+        net_settle(loop, connection, NetConnect, gone);
+        net_settle(loop, connection, NetSend, gone);
+        net_settle(loop, connection, NetReceive, gone);
+        net_teardown(loop, connection);
+    }
+
+    // Runs one step of a real connection's op. True when the op is over (the caller completes it); false when it waits
+    // for the socket, and then the op is not ready until the connection's next event.
+    bool net_complete_real(Loop *loop, Op *op) {
+        Connection *connection = (Connection *)op->internal.connection;
+        bool over = true;
+        switch (op->internal.kind) {
+        case NetConnect:
+            over = net_connect_step(loop, op, connection);
+            if (over &&
+                op->error.code != 0) { // a connection that failed to connect is closed, as the program will close it
+                net_settle(loop, connection, NetSend, net_closed(connection->internal.name));
+                net_settle(loop, connection, NetReceive, net_closed(connection->internal.name));
+                net_teardown(loop, connection);
+            }
+            break;
+        case NetSend:
+            over = net_send_step(loop, op, connection);
+            break;
+        case NetReceive:
+            over = net_receive_step(loop, op, connection);
+            break;
+        case NetClose:
+            net_close_step(loop, connection);
+            break;
+        case None:
+        case FileRead:
+        case FileWrite:
+        case ConsoleRead:
+        case PipeRead:
+        case PipeWrite:
+        case Timeout:
+        case ProcessWait:
+            break;
+        }
+        if (!over) {
+            op->internal.ready = false;
+            return false;
+        }
+        net_slot_set(connection, op->internal.kind, nullptr);
+        net_release(op);
+        return true;
+    }
+
+    // An event of the connection's socket: tries each op waiting on it again, in the order connect, send, receive.
+    void net_connection_event(Loop *loop, Connection *connection, usize *completed) {
+        constexpr OpKind kinds[3] = {NetConnect, NetSend, NetReceive};
+        for (usize i = 0; i < 3; i++) {
+            Op *op = net_slot(connection, kinds[i]);
+            if (op == nullptr || op->done || op->internal.ready) continue;
+            if (!net_complete_real(loop, op)) continue;
+            loop_unlink(loop, op);
+            op->done = true;
+            *completed += 1;
+        }
+    }
+}
+
+// --- the calls
+
+void net_start(Net *net, Op *op, Connection *connection, OpKind kind) {
+    op_start(op, net->loop, kind);
+    op->internal.connection = connection;
+    if constexpr (target::os != target::macos) {
+        if (!net_scripted(net->loop)) net_slot_set(connection, kind, op);
+    }
+}
+
+// Opens a connection to host:port; with tls, it is a TLS connection whose certificate is checked against host. The op
+// completes when the connection is ready, or fails.
+[[smith::c_name("smith_net_connect_async")]] export [[clang::annotate("smith::edge")]] void
+net_connect_async(Net *net, Op *op, Connection *connection, const char *host, u16 port, bool tls) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(host[0] != 0);
+    net_start(net, op, connection, NetConnect);
+    *connection = (Connection){};
+    connection->internal.loop = net->loop;
+    if constexpr (target::os != target::macos) {
+        net_fd_set(connection, -1);
+        if (!net_scripted(net->loop)) net_slot_set(connection, NetConnect, op); // the reset above cleared net_start's
+    }
+    __builtin_snprintf(connection->internal.name, sizeof connection->internal.name, "%s", host);
+    op->internal.deadline = port; // the scripted network reads the port from here
+    if constexpr (target::os != target::macos) {
+        op->internal.fill = tls;
+    }
+    loop_submit(net->loop, op);
+    if constexpr (target::os == target::macos) {
+        if (!net_scripted(net->loop)) net_begin(net->loop, op, connection, host, port, tls);
+    }
+}
+
+// Sends all bytes of data. On macOS the library copies them, so they need not outlive the call; on Linux they stay the
+// caller's until the op is done, like every op's data.
+[[smith::c_name("smith_net_send_async")]] export [[clang::annotate("smith::edge")]] void
+net_send_async(Net *net, Op *op, Connection *connection, const u8 data[:]) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    usize size = countof(data);
+    net_start(net, op, connection, NetSend);
+    op->internal.input = data.data;
+    op->taken = size;
+    loop_submit(net->loop, op);
+    if constexpr (target::os == target::macos) {
+        if (net_scripted(net->loop)) return;
+        if (__c11_atomic_load(&connection->internal.closed, seq_cst) || size == 0) {
+            net_finish(net->loop, op, size == 0 ? (Error){} : net_closed(connection->internal.name));
+            return;
+        }
+        net_send_real(net->loop, op, connection);
+    }
+}
+
+// Completes with whatever has arrived, at least one byte and at most countof(buffer), in buffer (op->data;
+// not NUL-terminated); op->end is true when the peer is done sending and nothing was read.
+[[smith::c_name("smith_net_receive_async")]] export [[clang::annotate("smith::edge")]] void
+net_receive_async(Net *net, Op *op, Connection *connection, u8 buffer[:]) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(countof(buffer) > 0 && countof(buffer) <= math::max(u32));
+    net_start(net, op, connection, NetReceive);
+    op->internal.destination = buffer.data;
+    op->internal.capacity = countof(buffer);
+    loop_submit(net->loop, op);
+    if constexpr (target::os == target::macos) {
+        if (net_scripted(net->loop)) return;
+        if (__c11_atomic_load(&connection->internal.closed, seq_cst)) {
+            net_finish(net->loop, op, net_closed(connection->internal.name));
+            return;
+        }
+        net_receive_real(net->loop, op, connection);
+    }
+}
+
+// Closes the connection.
+[[smith::c_name("smith_net_close_async")]] export [[clang::annotate("smith::edge")]] void
+net_close_async(Net *net, Op *op, Connection *connection) {
+    net_start(net, op, connection, NetClose);
+    loop_submit(net->loop, op);
+    if (net_scripted(net->loop)) {
+        __c11_atomic_store(&connection->internal.closed, true, seq_cst); // a receive waiting on the script is cancelled
+        return;
+    }
+    if constexpr (target::os == target::macos) {
+        if (connection->internal.handle == nullptr || __c11_atomic_load(&connection->internal.closed, seq_cst)) {
+            net_finish(net->loop, op, (Error){});
+            return;
+        }
+        __c11_atomic_store(&connection->internal.waiting[NetClose - NetConnect], op, seq_cst);
+        const NetApi *api = &net->loop->net_api;
+        api->cancel((c::nw_connection_t)connection->internal.handle);
+        if (__c11_atomic_load(&connection->internal.closed, seq_cst))
+            net_finish_slot(net->loop, connection, NetClose, (Error){});
+    }
+}
+
+// The same, blocking.
+[[smith::c_name("smith_net_connect")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+net_connect(Net *net, Connection *connection, const char *host, u16 port, bool tls) {
+    Op op = {};
+    net_connect_async(net, &op, connection, host, port, tls);
+    loop_wait(net->loop, &op);
+    return op.error;
+}
+
+[[smith::c_name("smith_net_send")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+net_send(Net *net, Connection *connection, const u8 data[:]) {
+    Op op = {};
+    net_send_async(net, &op, connection, data);
+    loop_wait(net->loop, &op);
+    return op.error;
+}
+
+[[smith::c_name("smith_net_receive")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Read
+net_receive(Net *net, Connection *connection, u8 buffer[:]) {
+    Op op = {};
+    net_receive_async(net, &op, connection, buffer);
+    loop_wait(net->loop, &op);
+    return (Read){.error = op.error, .data = op.data, .end = op.end};
+}
+
+[[smith::c_name("smith_net_close")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+net_close(Net *net, Connection *connection) {
+    Op op = {};
+    net_close_async(net, &op, connection);
+    loop_wait(net->loop, &op);
+    return op.error;
+}
+
+// --- the scripted network's setup
+
+// Adds a scripted server for the net (see io::NetServer).
+[[smith::c_name("smith_io_test_add_server")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+test_add_server(Io *io, NetServer server) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(server.host != nullptr && (server.response != nullptr || server.response_size == 0));
+    Loop *loop = io->loop;
+    if (loop->servers == nullptr) loop->servers = arena::push(&io->arena, FakeNet);
+    FakeNet *net = loop->servers;
+    if (net->count == fake_servers_max) return error_make(enospc, "script", server.host);
+    FakeServer *entry = &net->servers[net->count++];
+    char *host = (char *)arena::push_array_raw(&io->arena, sizeof(char), c::strlen(server.host) + 1, alignof(char));
+    __builtin_memcpy(host, server.host, c::strlen(server.host));
+    u8 *response = (u8 *)arena::push_array_raw(&io->arena, sizeof(u8), server.response_size + 1, alignof(u8));
+    if (server.response_size > 0) __builtin_memcpy(response, server.response, server.response_size);
+    char *tls_failure = nullptr;
+    if (server.tls_failure != nullptr) {
+        tls_failure =
+            (char *)arena::push_array_raw(&io->arena, sizeof(char), c::strlen(server.tls_failure) + 1, alignof(char));
+        __builtin_memcpy(tls_failure, server.tls_failure, c::strlen(server.tls_failure));
+    }
+    *entry = (FakeServer){.host = host,
+                          .port = server.port,
+                          .response = response,
+                          .response_size = server.response_size,
+                          .chunk = server.chunk,
+                          .error = server.error,
+                          .tls_failure = tls_failure,
+                          .stall = server.stall,
+                          .request =
+                              (char *)arena::push_array_raw(&io->arena, sizeof(char), request_max + 1, alignof(char))};
+    return (Error){};
+}
+
+// The bytes the client sent on the n-th connection (from 0) to host:port, NUL-terminated, up to 8 KiB; nullptr if there
+// was no such connection.
+[[smith::c_name("smith_io_test_request")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+test_request(const Io *io, const char *host, u16 port, usize n) {
+    if (io->loop->servers == nullptr) return nullptr;
+    const FakeServer *server = net_server_find(io->loop->servers, host, port, n, false);
+    return server != nullptr && server->used ? server->request : nullptr;
+}
+
+// ---------------------------------------------------------------- captured processes
+
+// Starts the process with one pipe for stdout and stderr; the wait is submitted at once, the first read by the poll.
+Error capture_start(Loop *loop, const char *const *argv, Capture *capture) {
+    i32 pipes[2] = {-1, -1};
+    if (c::pipe(pipes) != 0) return error_make(errno_now(), "pipe for", argv[0]);
+    c::fcntl(pipes[0], set_descriptor_flags, fd_cloexec);
+    c::fcntl(pipes[1], set_descriptor_flags, fd_cloexec);
+    Error error = spawn_in(argv, (Spawn){.out = pipes[1], .err = pipes[1], .leader = true}, &capture->process.id);
+    c::close(pipes[1]);
+    if (error.code != 0) {
+        c::close(pipes[0]);
+        return error;
+    }
+    capture->internal.descriptor = pipes[0];
+    op_start(&capture->internal.wait, loop, ProcessWait);
+    capture->internal.wait.internal.process = capture->process.id;
+    loop_submit(loop, &capture->internal.wait);
+    return error;
+}
+
+// The fake runs nothing: the scripted program's output and status are the result, and the capture is done at once.
+Error capture_fake(Fake *fake, arena::Arena *arena, const char *const *argv, Capture *capture) {
+    const FakeProgram *program = fake_program(fake, argv[0], &capture->process.id);
+    if (program == nullptr) return error_make(enoent, "run", argv[0]);
+    capture->exit_status = program->status;
+    capture->output_size = c::strlen(program->output);
+    char *copy = (char *)arena::push_array_raw(arena, sizeof(char), capture->output_size + 1, alignof(char));
+    __builtin_memcpy(copy, program->output, capture->output_size + 1);
+    capture->output = copy;
+    capture->done = true;
+    return (Error){};
+}
+
+// Starts argv[0] (found on PATH) with no stdin and returns at once; the error is that it could not start (a missing
+// program is ENOENT). The output is read in doubling blocks into the arena, so it may use up to twice its size.
+[[smith::c_name("smith_processes_capture_async")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+processes_capture_async(Processes *processes, arena::Arena *arena, const char *const *argv, Capture *capture) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(argv[0] != nullptr);
+    Loop *loop = processes->loop;
+    *capture = (Capture){};
+    capture->internal.loop = loop;
+    capture->internal.arena = arena;
+    if (loop->fake != nullptr) return capture_fake(loop->fake, arena, argv, capture);
+    return capture_start(loop, argv, capture);
+}
+
+// Whether the arena can hold the block the output would double into.
+bool capture_can_grow(const Capture *capture) {
+    return arena::fits(capture->internal.arena, capture->internal.capacity * 2, 1);
+}
+
+// Makes room for the next read. When the arena cannot hold more, the capture keeps what it has: it gives up its last
+// block's worth of bytes as a place to read the rest into, which is read and thrown away, so the process is never
+// stopped by a full pipe and the output is cut instead.
+void capture_room(Capture *capture) {
+    bool full = capture->internal.data != nullptr && capture->internal.capacity - capture->output_size <= chunk;
+    if (full && !capture->truncated && !capture_can_grow(capture)) {
+        capture->truncated = true;
+        capture->output_size = capture->internal.capacity - chunk - 1;
+    }
+    if (capture->truncated) return;
+    Grow grow = {.arena = capture->internal.arena,
+                 .data = capture->internal.data,
+                 .size = capture->output_size,
+                 .capacity = capture->internal.capacity};
+    grow_reserve(&grow, chunk);
+    capture->internal.data = grow.data;
+    capture->internal.capacity = grow.capacity;
+}
+
+// Takes a finished read into the capture, closing the pipe at its end; then submits the next read.
+void capture_feed(Capture *capture) {
+    Op *reading = &capture->internal.read;
+    if (capture->internal.reading && !reading->done) return;
+    if (capture->internal.reading) {
+        if (!capture->truncated) capture->output_size += countof(reading->data);
+        capture->internal.reading = false;
+        if (reading->end || reading->error.code != 0) {
+            if (reading->error.code != 0 && capture->error.code == 0) capture->error = reading->error;
+            c::close(capture->internal.descriptor);
+            capture->internal.descriptor = -1;
+        }
+    }
+    if (capture->internal.descriptor < 0) return;
+    capture_room(capture);
+    op_start(reading, capture->internal.loop, PipeRead);
+    reading->internal.descriptor = capture->internal.descriptor;
+    reading->internal.destination = capture->internal.data + capture->output_size;
+    reading->internal.capacity = capture->internal.capacity - capture->output_size - 1;
+    loop_submit(capture->internal.loop, reading);
+    capture->internal.reading = true;
+}
+
+// Takes in what io::run completed and submits the next read; true once the capture is done. Call it after each
+// io::run for every capture still running.
+[[smith::c_name("smith_capture_poll")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] bool
+capture_poll(Capture *capture) {
+    if (capture->done) return true;
+    capture_feed(capture);
+    Op *ended = &capture->internal.wait;
+    if (!capture->internal.exited && ended->done) {
+        capture->internal.exited = true;
+        capture->exit_status = ended->exit_status;
+        capture->signal = ended->signal;
+        if (ended->error.code != 0 && capture->error.code == 0) capture->error = ended->error;
+    }
+    if (!capture->internal.exited || capture->internal.descriptor >= 0) return false;
+    capture->internal.data[capture->output_size] = 0;
+    capture->output = (const char *)capture->internal.data;
+    capture->done = true;
+    return true;
+}
+
+// Sends the signal to the capture's process group, unless its wait has completed: the id is then free for another
+// program, so ESRCH is returned and nothing is sent. That is also the answer once the capture is done. A process that
+// has exited but whose output is still being read (a child of it holds the pipe) is therefore not reached either; it
+// ends on its own or when the caller gives up on the output.
+[[smith::c_name("smith_capture_stop")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+capture_stop(Capture *capture, i32 signal) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(signal > 0);
+    // Once the wait has completed the process is reaped and its id may be another program's; a fake capture is done at
+    // once.
+    if (capture->done || capture->internal.wait.done || capture->process.id <= 0)
+        return error_make(esrch, "stop", "capture");
+    if (c::kill(-capture->process.id, signal) != 0) return error_make(errno_now(), "stop", "capture");
+    return (Error){};
+}
+
+// ---------------------------------------------------------------- arguments
+
+// --- arguments ---
+
+// The argument i (0 is the program), or nullptr past the end.
+[[smith::c_name("smith_args_get")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+args_get(const Args *args, usize i) {
+    return i < args->count ? args->values[i] : nullptr;
+}
+
+// The value of an environment variable, or nullptr if it is not set. An empty value is "". The real io reads the
+// process's environment each time, so a setenv after io::make shows.
+[[smith::c_name("smith_args_env")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+args_env(const Args *args, const char *name) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(name[0] != 0);
+    usize length = c::strlen(name);
+    if (args->environment == nullptr) return c::getenv(name); // the real io asks the process, which setenv may change
+    for (usize i = 0; i < entries_max && args->environment[i] != nullptr; i++) {
+        const char *entry = args->environment[i];
+        if (c::strncmp(entry, name, length) == 0 && entry[length] == '=') return entry + length + 1;
+    }
+    return nullptr;
+}
+
+// ---------------------------------------------------------------- making io
+
+Loop *loop_make(arena::Arena *arena, bool fake) {
+    Loop *loop = arena::push(arena, Loop);
+    loop->queue = -1;
+    if (fake) {
+        loop->fake = arena::push(arena, Fake);
+        loop->fake->output = (char *)arena::push_array_raw(arena, sizeof(char), fake_capture_size, alignof(char));
+        loop->fake->errors = (char *)arena::push_array_raw(arena, sizeof(char), fake_capture_size, alignof(char));
+        usize storage = (arena->capacity - arena->used) / 4 / arena::align_max * arena::align_max;
+        loop->fake->storage = arena::fixed(arena::push_raw(arena, storage, arena::align_max), storage);
+    } else {
+        if constexpr (target::os == target::macos) {
+            loop->queue = c::kqueue();
+            if (loop->queue < 0) stop("kqueue failed");
+            c::fcntl(loop->queue, set_descriptor_flags, fd_cloexec);
+            struct c::kevent trigger = {.ident = wakeup, .filter = evfilt_user, .flags = ev_register};
+            if (c::kevent(loop->queue, &trigger, 1, nullptr, 0, nullptr) != 0) stop("kqueue failed");
+        } else {
+            loop->queue = c::epoll_create1(epoll_cloexec);
+            if (loop->queue < 0) stop("epoll failed");
+        }
+    }
+    return loop;
+}
+
+void io_link(Io *io, usize argc, const char *const *argv, const char *const *environment) {
+    io->console.loop = io->loop;
+    io->files.loop = io->loop;
+    io->clock.loop = io->loop;
+    io->processes.loop = io->loop;
+    io->net.loop = io->loop;
+    io->args.count = argc;
+    io->args.values = argv;
+    io->args.environment = environment;
+}
+
+// $SMITH_SEED replays a run; otherwise the seed is 64 bits of the system's entropy.
+u64 seed_read() {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    const char *text = c::getenv("SMITH_SEED");
+    if (text != nullptr) {
+        char *end = nullptr;
+        if constexpr (target::os == target::macos) {
+            *c::__error() = 0;
+        } else {
+            *c::__errno_location() = 0;
+        }
+        bool hex = text[0] == '0' && (text[1] == 'x' || text[1] == 'X');
+        u64 value = c::strtoull(text, &end, hex ? 16 : 10);
+        if (text[0] == '\0' || *end != '\0' || errno_now() != 0) stop("SMITH_SEED is not a number");
+        return value;
+    }
+    u64 seed = 0;
+    if (c::getentropy(&seed, sizeof seed) != 0) stop("getentropy failed");
+    return seed;
+}
+
+// The real io. The arena is 64 GiB of address space reserved with mmap; only pages a program touches cost memory (under
+// AddressSanitizer the arena poisons lazily, so the shadow grows with what is used). SMITH_SEED, a
+// decimal or 0x number, makes the key; otherwise it comes from getentropy. A SMITH_SEED that is not a number, or a
+// failure to reserve memory, stops the program with a message.
+[[smith::c_name("smith_io_make")]] export
+    [[clang::annotate("smith::edge")]] [[nodiscard, clang::annotate("smith::main_only")]] Io
+    make(i32 argc, char **argv) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(argc >= 0);
+    void *memory = c::mmap(nullptr, reservation, protect_both, map_reservation, -1, 0);
+    if (memory == (void *)-1)
+        stop("cannot reserve memory for the arena"); // NOLINT(performance-no-int-to-ptr): MAP_FAILED
+    Io io = {.arena = arena::fixed(memory, reservation)};
+    io.loop = loop_make(&io.arena, false);
+    io.loop->memory = memory;
+    io.loop->memory_size = reservation;
+    io.seed = seed_read();
+    io.key = random::key_make(io.seed);
+    io_link(&io, (usize)argc, (const char *const *)argv, nullptr);
+    return io;
+}
+
+// Releases the reservation and the event loop. A program need not call it: the process ends.
+[[smith::c_name("smith_io_close")]] export [[clang::annotate("smith::edge")]] void close(Io *io) {
+    Loop *loop = io->loop;
+    if constexpr (target::os != target::macos) {
+        if (loop->net_context != nullptr) loop->net_api.context_free(loop->net_context);
+    }
+    if (loop->queue >= 0) c::close(loop->queue);
+    if (loop->memory != nullptr) c::munmap(loop->memory, loop->memory_size);
+    *io = (Io){};
+}
+
+// ---------------------------------------------------------------- the test io
+
+// Same type as the real one. Files, programs and the console's output are inside the arena: the fake holds up to 64
+// files and folders and 16 programs, and captures up to 64 KiB of stdout and 64 KiB of stderr (more is ENOSPC).
+[[smith::c_name("smith_io_make_test")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Io
+make_test(Test test) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(test.memory != nullptr && test.capacity > 0);
+    Io io = {.arena = arena::fixed(test.memory, test.capacity)};
+    io.loop = loop_make(&io.arena, true);
+    io.seed = test.seed;
+    io.key = random::key_make(test.seed);
+    Fake *fake = io.loop->fake;
+    if (test.input != nullptr) {
+        fake->input_size = c::strlen(test.input);
+        char *copy = (char *)arena::push_array_raw(&io.arena, sizeof(char), fake->input_size + 1, alignof(char));
+        __builtin_memcpy(copy, test.input, fake->input_size);
+        fake->input = copy;
+    }
+    const char **values =
+        (const char **)arena::push_array_raw(&io.arena, sizeof(const char *), test.argc + 1, alignof(const char *));
+    for (usize i = 0; i < test.argc; i++) {
+        check(test.argv != nullptr);
+        values[i] = test.argv[i];
+    }
+    usize entries = 0;
+    for (; test.environment != nullptr && test.environment[entries] != nullptr; entries++) {
+    }
+    const char **variables =
+        (const char **)arena::push_array_raw(&io.arena, sizeof(const char *), entries + 1, alignof(const char *));
+    for (usize i = 0; i < entries; i++)
+        variables[i] = test.environment[i];
+    fake->cores = test.cores > 0 ? test.cores : 1;
+    io_link(&io, test.argc, values, variables);
+    return io;
+}
+
+// Adds an in-memory file (the text is copied), replacing one of the same path.
+[[smith::c_name("smith_io_test_add_file")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+test_add_file(Io *io, const char *path, const char *text) {
+    return fake_write_file(fake_of(io->loop), path, text, c::strlen(text));
+}
+
+// Scripts a program for io::processes_run and spawn: its stdout and its exit status.
+[[smith::c_name("smith_io_test_add_program")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+test_add_program(Io *io, const char *program, const char *output, i32 status) {
+    Fake *fake = fake_of(io->loop);
+    if (fake->program_count == fake_programs_max) return error_make(enospc, "script", program);
+    FakeProgram *entry = &fake->programs[fake->program_count++];
+    char *name = (char *)arena::push_array_raw(&fake->storage, sizeof(char), c::strlen(program) + 1, alignof(char));
+    __builtin_memcpy(name, program, c::strlen(program));
+    char *text = (char *)arena::push_array_raw(&fake->storage, sizeof(char), c::strlen(output) + 1, alignof(char));
+    __builtin_memcpy(text, output, c::strlen(output));
+    *entry = (FakeProgram){.program = name, .output = text, .status = status};
+    return (Error){};
+}
+
+// Scripts a child of the fake io (see io::ChildScript).
+[[smith::c_name("smith_io_test_add_child")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+test_add_child(Io *io, ChildScript script) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    Fake *fake = fake_of(io->loop);
+    contract::requires(script.program != nullptr);
+    if (fake->child_count == fake_children_max) return error_make(enospc, "script", script.program);
+    FakeChild *entry = &fake->children[fake->child_count++];
+    usize output_size = script.output != nullptr ? c::strlen(script.output) : 0;
+    char *name =
+        (char *)arena::push_array_raw(&fake->storage, sizeof(char), c::strlen(script.program) + 1, alignof(char));
+    __builtin_memcpy(name, script.program, c::strlen(script.program));
+    u8 *output = (u8 *)arena::push_array_raw(&fake->storage, sizeof(u8), output_size + 1, alignof(u8));
+    if (output_size > 0) __builtin_memcpy(output, script.output, output_size);
+    *entry =
+        (FakeChild){.program = name,
+                    .output = output,
+                    .output_size = output_size,
+                    .chunk = script.chunk,
+                    .exit_on = script.exit_on,
+                    .status = script.status,
+                    .input = (u8 *)arena::push_array_raw(&fake->storage, sizeof(u8), child_input_max + 1, alignof(u8))};
+    return (Error){};
+}
+
+// The bytes written to the n-th scripted child's stdin (n counts the scripts added, from 0), NUL-terminated; nullptr if
+// there is no such child.
+[[smith::c_name("smith_io_test_child_input")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+test_child_input(const Io *io, usize n) {
+    const Fake *fake = fake_of(io->loop);
+    if (n >= fake->child_count) return nullptr;
+    return (const char *)fake->children[n].input;
+}
+
+// What the program printed to stdout and stderr so far, NUL-terminated.
+[[smith::c_name("smith_io_test_output")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+test_output(const Io *io) {
+    return fake_of(io->loop)->output;
+}
+
+[[smith::c_name("smith_io_test_errors")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+test_errors(const Io *io) {
+    return fake_of(io->loop)->errors;
+}
+// NOLINTEND(smith-mem)
