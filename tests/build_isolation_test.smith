@@ -3,14 +3,20 @@
 // smith_modules, and every header of smith's libraries importing alone and together.
 module build_isolation_test;
 
+import smith::arena;
+import smith::mem;
 import smith::format;
-import smith::io;
 import smith::test;
 import scratch;
 
 // 11d. Modules: isolation. A header that only worked after another include fails, and a textual header works.
-export void test_build_isolation_a_header_that_needed_an_earlier_include_fails(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "modules_isolation");
+export void test_build_isolation_a_header_that_needed_an_earlier_include_fails() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "modules_isolation");
+    defer scratch::clean(&p);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_failure("modules: a header that needed an earlier include fails", &run);
     scratch::expect_contains("modules: clang says which module and which line", run.out, "unknown type name 'size_t'");
@@ -18,8 +24,13 @@ export void test_build_isolation_a_header_that_needed_an_earlier_include_fails(i
                              "While building module 'inc_needs_stddef'");
 }
 
-export void test_build_isolation_a_header_included_twice_must_be_marked_textual(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "modules_isolation");
+export void test_build_isolation_a_header_included_twice_must_be_marked_textual() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "modules_isolation");
+    defer scratch::clean(&p);
     scratch::Run twice = scratch::build(&p, "-DSOURCE=twice.c");
     scratch::expect_failure("modules: a header included twice with different macros, not marked, fails to be a module",
                             &twice);
@@ -33,8 +44,13 @@ export void test_build_isolation_a_header_included_twice_must_be_marked_textual(
 }
 
 // 11e. Modules: sanitized and plain builds keep their own modules, and a Metal file never gets the flags.
-export void test_build_isolation_sanitized_and_plain_builds_keep_their_own_modules(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "modules_sanitized");
+export void test_build_isolation_sanitized_and_plain_builds_keep_their_own_modules() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "modules_sanitized");
+    defer scratch::clean(&p);
     scratch::own_cache(&p);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("modules: a plain and a sanitized object build", 0, &run);
@@ -42,14 +58,19 @@ export void test_build_isolation_sanitized_and_plain_builds_keep_their_own_modul
     scratch::expect_status("modules: the program runs", 0, &app);
     scratch::expect_text(
         "modules: the two builds have caches of their own", "ok",
-        scratch::capture(&p, format::push(&io->arena, "n=$(find ", p.cache,
+        scratch::capture(&p, format::push(&memory, "n=$(find ", p.cache,
                                           "/smith/modules -mindepth 2 -maxdepth 2 -type d | wc -l | tr -d ' '); "
                                           "[ \"$n\" -ge 2 ] && echo ok || echo \"$n\"")
                                  .data));
 }
 
-export void test_build_isolation_the_compile_commands_carry_the_module_flags_but_not_for_metal(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "modules_sanitized");
+export void test_build_isolation_the_compile_commands_carry_the_module_flags_but_not_for_metal() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "modules_sanitized");
+    defer scratch::clean(&p);
     scratch::own_cache(&p);
     scratch::Run run = scratch::build(&p, "");
     test::check_equal(run.status, 0);
@@ -64,15 +85,20 @@ export void test_build_isolation_the_compile_commands_carry_the_module_flags_but
 }
 
 // 11f. Modules: errors.
-export void test_build_isolation_smith_modules_after_smith_object_is_an_error(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "modules_errors");
+export void test_build_isolation_smith_modules_after_smith_object_is_an_error() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "modules_errors");
+    defer scratch::clean(&p);
     test::check_equal(scratch::sh(&p, "cp after_object.txt build.c").status, 0);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_failure("modules: after smith_object is an error", &run);
     scratch::expect_contains("modules: the message", run.err, "smith_modules is called after smith_object");
 }
 
-static void refuses_the_folders(io::Io *io, scratch::Project *p, const char *folders) {
+static void refuses_the_folders(scratch::Project *p, const char *folders) {
     char text[512];
     char name[256];
     (void)format::to(text, sizeof text,
@@ -85,20 +111,29 @@ static void refuses_the_folders(io::Io *io, scratch::Project *p, const char *fol
     scratch::expect_failure(name, &run);
     (void)format::to(name, sizeof name, "modules: ", folders, ": the message starts smith: build.c: smith_modules");
     scratch::expect_contains(name, run.err, "smith: build.c: smith_modules");
-    (void)io;
 }
 
-export void test_build_isolation_smith_modules_refuses_bad_folders(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "modules_errors");
-    refuses_the_folders(io, &p, "\"inc\", \"inc/sub\"");
-    refuses_the_folders(io, &p, "\"nothing\"");
-    refuses_the_folders(io, &p, "\".\"");
-    refuses_the_folders(io, &p, "\"../inc\"");
+export void test_build_isolation_smith_modules_refuses_bad_folders() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "modules_errors");
+    defer scratch::clean(&p);
+    refuses_the_folders(&p, "\"inc\", \"inc/sub\"");
+    refuses_the_folders(&p, "\"nothing\"");
+    refuses_the_folders(&p, "\".\"");
+    refuses_the_folders(&p, "\"../inc\"");
 }
 
 // 11g. Modules: every header of smith's own libraries imports alone and together (io includes the arena and random).
-export void test_build_isolation_smith_headers_import_alone_and_together(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "modules_headers");
+export void test_build_isolation_smith_headers_import_alone_and_together() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "modules_headers");
+    defer scratch::clean(&p);
     scratch::Run run = scratch::build(&p, "-v");
     scratch::expect_status("modules: smith's headers import alone and together", 0, &run);
     scratch::expect_contains("modules: the smith map is used", run.out,
@@ -107,8 +142,13 @@ export void test_build_isolation_smith_headers_import_alone_and_together(io::Io 
                              "module smith_io {");
 }
 
-export void test_build_isolation_clangd_reports_no_errors_in_a_file_that_imports_smiths_headers(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "modules_headers");
+export void test_build_isolation_clangd_reports_no_errors_in_a_file_that_imports_smiths_headers() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "modules_headers");
+    defer scratch::clean(&p);
     scratch::Run run = scratch::build(&p, "-v");
     test::check_equal(run.status, 0);
     // compile_commands.json carries the module flags, and smith lsp (clangd, no --query-driver) builds the modules.
