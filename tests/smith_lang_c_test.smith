@@ -149,10 +149,6 @@ export void test_ternary_compiles_the_same_as_smith() {
     compare("tests/smith-lang-c/ternary", "", false);
 }
 
-export void test_ternary_runs_one_arm() {
-    behave("ternary");
-}
-
 export void test_folding_compiles_the_same_as_smith() {
     compare("tests/smith-lang-c/folding", "", false);
 }
@@ -207,6 +203,10 @@ export void test_the_languages_words_as_names_print_the_same_as_c() {
 
 export void test_ordinary_constructs_print_the_same_as_c() {
     behave("ordinary");
+}
+
+export void test_ternary_runs_one_arm() {
+    behave("ternary");
 }
 
 export void test_loops_print_the_same_as_c() {
