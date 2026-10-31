@@ -2,9 +2,12 @@
 // (smith_run_combined) and 9s (a failed .run step names itself; what a .run step read reruns it).
 module build_stamps_run_test;
 
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import scratch;
+
+constexpr usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
 
 static const char *yes_no(bool value) {
     return value ? "yes" : "no";
@@ -25,8 +28,13 @@ static void reruns_then_settles(const scratch::Project *p, const char *what, con
 }
 
 // 9p. .stamp: a syntax check whose result is that it passed, with a depfile that names the stamp.
-export void test_build_stamp_a_passing_check_leaves_its_stamp_and_settles(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "stamp_check");
+export void test_build_stamp_a_passing_check_leaves_its_stamp_and_settles() {
+    scratch::Project p = scratch::make("p", "stamp_check");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run first = scratch::build(&p, "");
     scratch::expect_text("stamp: the check passes and leaves its stamp", "0 yes", status_and_stamp(&p, &first));
     scratch::expect_contains("stamp: it ran", first.out, "check a");
@@ -34,8 +42,13 @@ export void test_build_stamp_a_passing_check_leaves_its_stamp_and_settles(io::Io
     scratch::expect_contains("stamp: unchanged, nothing reruns", second.out, "no work to do");
 }
 
-export void test_build_stamp_a_changed_source_or_header_reruns_the_check(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "stamp_check");
+export void test_build_stamp_a_changed_source_or_header_reruns_the_check() {
+    scratch::Project p = scratch::make("p", "stamp_check");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)scratch::build(&p, "");
     (void)scratch::sh(&p, "printf '\\n' >>a.c");
     reruns_then_settles(&p, "stamp: a changed source reruns", "stamp: then it settles", "");
@@ -43,8 +56,13 @@ export void test_build_stamp_a_changed_source_or_header_reruns_the_check(io::Io 
     reruns_then_settles(&p, "stamp: a changed header reruns", "stamp: then it settles again", "");
 }
 
-export void test_build_stamp_changed_flags_rerun_the_check(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "stamp_check");
+export void test_build_stamp_changed_flags_rerun_the_check() {
+    scratch::Project p = scratch::make("p", "stamp_check");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)scratch::build(&p, "");
     scratch::Run changed = scratch::build(&p, "-DW=-Wextra");
     scratch::expect_contains("stamp: changed flags rerun", changed.out, "check a");
@@ -52,8 +70,13 @@ export void test_build_stamp_changed_flags_rerun_the_check(io::Io *io) {
     scratch::expect_contains("stamp: the same flags settle", same.out, "no work to do");
 }
 
-export void test_build_stamp_a_failing_check_fails_the_build_and_leaves_no_stamp(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "stamp_check");
+export void test_build_stamp_a_failing_check_fails_the_build_and_leaves_no_stamp() {
+    scratch::Project p = scratch::make("p", "stamp_check");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)scratch::build(&p, "-DW=-Wextra");
     scratch::write(&p, "a.c", "int a(void) { return ; }\n");
     (void)scratch::sh(&p, "rm -f build/check/a.stamp");
@@ -69,8 +92,13 @@ export void test_build_stamp_a_failing_check_fails_the_build_and_leaves_no_stamp
 }
 
 // 9r. smith_run_combined: stdout and stderr in one stream, in order; statuses as smith_run_status gives.
-export void test_build_run_combined_keeps_the_order_of_both_streams_and_the_statuses(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "run_combined");
+export void test_build_run_combined_keeps_the_order_of_both_streams_and_the_statuses() {
+    scratch::Project p = scratch::make("p", "run_combined");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("run_combined: the probe step succeeds", 0, &run);
     scratch::expect_text("run_combined: lines in the order written, and the statuses",
@@ -83,8 +111,13 @@ export void test_build_run_combined_keeps_the_order_of_both_streams_and_the_stat
 }
 
 // 9s. A failed .run step names itself; what a .run step read reruns it.
-export void test_build_depend_what_a_run_step_read_reruns_it(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "run_step");
+export void test_build_depend_what_a_run_step_read_reruns_it() {
+    scratch::Project p = scratch::make("p", "run_step");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run first = scratch::build(&p, "");
     char text[128];
     __builtin_snprintf(text, sizeof text, "%d %s %zu", first.status,
@@ -104,8 +137,13 @@ export void test_build_depend_what_a_run_step_read_reruns_it(io::Io *io) {
     scratch::expect_count("depend: a change to the input list reruns it too", 3, scratch::lines(&p, "learn.log"));
 }
 
-export void test_build_name_a_failed_run_step_names_itself(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "run_step");
+export void test_build_name_a_failed_run_step_names_itself() {
+    scratch::Project p = scratch::make("p", "run_step");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run named = scratch::build(&p, "named");
     scratch::expect_failure("name: a failing .run step fails", &named);
     char both[4096];
@@ -119,8 +157,13 @@ export void test_build_name_a_failed_run_step_names_itself(io::Io *io) {
                              "smith: unnamed.out: failed (status 5)");
 }
 
-export void test_build_depend_recording_a_path_without_a_depfile_fails(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "run_step");
+export void test_build_depend_recording_a_path_without_a_depfile_fails() {
+    scratch::Project p = scratch::make("p", "run_step");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run orphan = scratch::build(&p, "orphan");
     scratch::expect_failure("depend: recording a path without a .depfile fails", &orphan);
     char both[4096];

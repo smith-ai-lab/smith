@@ -4,27 +4,34 @@
 // asserted nothing and is not ported. Each fixture is tests/build_fixtures/steps_<name>/build.c.
 module build_steps_run_test;
 
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import scratch;
 import <string.h>;
+
+constexpr usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
 
 static const char *stamp_exists(const scratch::Project *p) {
     return scratch::capture(p, "ls .smith/stamp/* >/dev/null 2>&1 && echo yes || echo no");
 }
 
-static scratch::Project libc_project(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_libc");
-    scratch::write(&p, "base.c",
+static void write_libc_sources(const scratch::Project *p) {
+    scratch::write(p, "base.c",
                    "#include <math.h>\n#include <string.h>\n"
                    "float base_root(float x) {\n    char a[4] = \"abc\", c[4];\n"
                    "    memcpy(c, a, 4);\n    return sqrtf(x) + (float)c[0];\n}\n");
-    scratch::write(&p, "game.c", "float base_root(float x);\nfloat game_run(float x) { return base_root(x); }\n");
-    return p;
+    scratch::write(p, "game.c", "float base_root(float x);\nfloat game_run(float x) { return base_root(x); }\n");
 }
 
-export void test_build_steps_function_a_clean_tree_passes_and_a_second_build_does_nothing(io::Io *io) {
-    scratch::Project p = libc_project(io);
+export void test_build_steps_function_a_clean_tree_passes_and_a_second_build_does_nothing() {
+    scratch::Project p = scratch::make("p", "steps_libc");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    write_libc_sources(&p);
     scratch::Run first = scratch::build(&p, "check-libc");
     scratch::expect_status("function: a clean tree passes", 0, &first);
     scratch::expect_text("function: a clean tree passes", "yes", stamp_exists(&p));
@@ -32,8 +39,14 @@ export void test_build_steps_function_a_clean_tree_passes_and_a_second_build_doe
     scratch::expect_contains("function: a second build does nothing", second.out, "no work to do");
 }
 
-export void test_build_steps_function_a_forbidden_symbol_fails_the_build_and_restoring_passes(io::Io *io) {
-    scratch::Project p = libc_project(io);
+export void test_build_steps_function_a_forbidden_symbol_fails_the_build_and_restoring_passes() {
+    scratch::Project p = scratch::make("p", "steps_libc");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    write_libc_sources(&p);
     (void)scratch::build(&p, "check-libc");
     scratch::write(&p, "game.c",
                    "#include <stdio.h>\nfloat base_root(float x);\n"
@@ -50,8 +63,13 @@ export void test_build_steps_function_a_forbidden_symbol_fails_the_build_and_res
     scratch::expect_text("function: restored, it passes", "yes", stamp_exists(&p));
 }
 
-export void test_build_steps_a_run_step_with_restat_stops_what_depends_on_unchanged_bytes(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_run_restat");
+export void test_build_steps_a_run_step_with_restat_stops_what_depends_on_unchanged_bytes() {
+    scratch::Project p = scratch::make("p", "steps_run_restat");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "seed.txt", "hello world\nline two\n");
     scratch::Run first = scratch::build(&p, "");
     scratch::expect_status("restat: the .run step writes its output", 0, &first);
@@ -68,8 +86,13 @@ export void test_build_steps_a_run_step_with_restat_stops_what_depends_on_unchan
     scratch::expect_count("restat: changed bytes rerun what depends on it", 2, scratch::lines(&p, "copies.log"));
 }
 
-export void test_build_steps_a_run_task_runs_every_time_with_its_args(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_run_restat");
+export void test_build_steps_a_run_task_runs_every_time_with_its_args() {
+    scratch::Project p = scratch::make("p", "steps_run_restat");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "seed.txt", "hello world\nline two\n");
     scratch::Run first = scratch::build(&p, "show");
     scratch::expect_contains("task: runs and prints", first.out, "task saw alpha");
@@ -79,8 +102,13 @@ export void test_build_steps_a_run_task_runs_every_time_with_its_args(io::Io *io
                          scratch::capture(&p, "sed -n 1p runs.log | sed 's/ *$//'"));
 }
 
-export void test_build_steps_a_run_function_returning_three_fails_the_build_and_stops_what_follows(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_run_restat");
+export void test_build_steps_a_run_function_returning_three_fails_the_build_and_stops_what_follows() {
+    scratch::Project p = scratch::make("p", "steps_run_restat");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "seed.txt", "hello world\nline two\n");
     scratch::Run run = scratch::sh(&p, "smith build broken 2>&1");
     scratch::expect_failure("failure: a function returning 3 fails the build", &run);
@@ -89,8 +117,13 @@ export void test_build_steps_a_run_function_returning_three_fails_the_build_and_
     scratch::expect_text("failure: nothing after it ran", "no", scratch::exists(&p, "after.out") ? "yes" : "no");
 }
 
-export void test_build_steps_editing_the_function_reruns_the_step_and_options_reach_it(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_run_edit");
+export void test_build_steps_editing_the_function_reruns_the_step_and_options_reach_it() {
+    scratch::Project p = scratch::make("p", "steps_run_edit");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run first = scratch::build(&p, "it");
     scratch::expect_status("edit: the function runs", 0, &first);
     scratch::expect_text("edit: the function runs", "v1 nobody", scratch::capture(&p, "cat it.out"));
@@ -108,16 +141,26 @@ export void test_build_steps_editing_the_function_reruns_the_step_and_options_re
     scratch::expect_text("options: a value with a space and a dollar", "v2 a b$c", scratch::capture(&p, "cat it.out"));
 }
 
-export void test_build_steps_a_run_step_added_in_a_defer_callback_runs(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_run_edit");
+export void test_build_steps_a_run_step_added_in_a_defer_callback_runs() {
+    scratch::Project p = scratch::make("p", "steps_run_edit");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("defer: a .run step added in a smith_defer callback runs", 0, &run);
     scratch::expect_text("defer: a .run step added in a smith_defer callback runs", "from defer",
                          scratch::capture(&p, "cat deferred.out"));
 }
 
-export void test_build_steps_smith_run_status_and_smith_run_lines(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_run_status");
+export void test_build_steps_smith_run_status_and_smith_run_lines() {
+    scratch::Project p = scratch::make("p", "steps_run_status");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::sh(&p, "smith build 2>&1");
     scratch::expect_status("run_status: the probe step succeeds", 0, &run);
     scratch::expect_contains("run_status: failing program prints the message", run.out, "smith: sh failed (status 5)");
@@ -130,8 +173,13 @@ export void test_build_steps_smith_run_status_and_smith_run_lines(io::Io *io) {
 
 // A .run step gets its data from its command: .args and .inputs with a space and a $ in a value, no -D option, and
 // build() is not called again for it.
-export void test_build_steps_a_run_step_gets_its_data_from_its_command(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_run_data");
+export void test_build_steps_a_run_step_gets_its_data_from_its_command() {
+    scratch::Project p = scratch::make("p", "steps_run_data");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "in put.txt", "a\n");
     scratch::write(&p, "$HOME.txt", "b\n");
     scratch::Run first = scratch::build(&p, "-Dwho=Ada");
@@ -154,8 +202,13 @@ static usize count_of(const char *text, const char *needle) {
     return count;
 }
 
-export void test_build_steps_smith_run_program_passes_the_environment_and_returns_statuses(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_run_program");
+export void test_build_steps_smith_run_program_passes_the_environment_and_returns_statuses() {
+    scratch::Project p = scratch::make("p", "steps_run_program");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::sh(&p, "env HOME_KEPT=old smith build play");
     scratch::expect_status("run_program: the step succeeds", 0, &run);
     scratch::expect_contains("run_program: the environment variable arrives", run.out,

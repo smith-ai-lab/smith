@@ -3,13 +3,21 @@
 // .smith/compile_commands.json (knowledge/build-execution.md).
 module build_verbs_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 
-static void refuses_a_task_and_an_alias_named(io::Io *io, const char *verb) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+constexpr usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
+
+static void refuses_a_task_and_an_alias_named(const char *verb) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     char text[1024];
     char name[256];
     (void)format::to(text, sizeof text,
@@ -39,36 +47,41 @@ static void refuses_a_task_and_an_alias_named(io::Io *io, const char *verb) {
     scratch::expect_contains(name, alias.err, text);
 }
 
-export void test_build_verbs_fmt_is_not_a_task_or_an_alias(io::Io *io) {
-    refuses_a_task_and_an_alias_named(io, "fmt");
+export void test_build_verbs_fmt_is_not_a_task_or_an_alias() {
+    refuses_a_task_and_an_alias_named("fmt");
 }
 
-export void test_build_verbs_lint_is_not_a_task_or_an_alias(io::Io *io) {
-    refuses_a_task_and_an_alias_named(io, "lint");
+export void test_build_verbs_lint_is_not_a_task_or_an_alias() {
+    refuses_a_task_and_an_alias_named("lint");
 }
 
-export void test_build_verbs_docs_is_not_a_task_or_an_alias(io::Io *io) {
-    refuses_a_task_and_an_alias_named(io, "docs");
+export void test_build_verbs_docs_is_not_a_task_or_an_alias() {
+    refuses_a_task_and_an_alias_named("docs");
 }
 
-export void test_build_verbs_prove_is_not_a_task_or_an_alias(io::Io *io) {
-    refuses_a_task_and_an_alias_named(io, "prove");
+export void test_build_verbs_prove_is_not_a_task_or_an_alias() {
+    refuses_a_task_and_an_alias_named("prove");
 }
 
-export void test_build_verbs_check_is_not_a_task_or_an_alias(io::Io *io) {
-    refuses_a_task_and_an_alias_named(io, "check");
+export void test_build_verbs_check_is_not_a_task_or_an_alias() {
+    refuses_a_task_and_an_alias_named("check");
 }
 
-export void test_build_verbs_run_is_not_a_task_or_an_alias(io::Io *io) {
-    refuses_a_task_and_an_alias_named(io, "run");
+export void test_build_verbs_run_is_not_a_task_or_an_alias() {
+    refuses_a_task_and_an_alias_named("run");
 }
 
-export void test_build_verbs_test_is_not_a_task_or_an_alias(io::Io *io) {
-    refuses_a_task_and_an_alias_named(io, "test");
+export void test_build_verbs_test_is_not_a_task_or_an_alias() {
+    refuses_a_task_and_an_alias_named("test");
 }
 
-export void test_build_verbs_a_test_step_is_built_incrementally_by_smith_tests(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "verbs_step");
+export void test_build_verbs_a_test_step_is_built_incrementally_by_smith_tests() {
+    scratch::Project p = scratch::make("p", "verbs_step");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run first = scratch::build(&p, "smith_tests");
     scratch::expect_status("verbs: .test on a step: smith_tests builds it", 0, &first);
     scratch::expect_count("verbs: ... it ran once", 1, scratch::lines(&p, "runs"));
@@ -91,8 +104,13 @@ static const char *matches(const scratch::Project *p, const char *file, const ch
     return scratch::capture(p, command);
 }
 
-export void test_build_verbs_build_info_and_the_compile_database_say_what_the_verbs_read(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "verbs_info");
+export void test_build_verbs_build_info_and_the_compile_database_say_what_the_verbs_read() {
+    scratch::Project p = scratch::make("p", "verbs_info");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::build(&p, "build/main.o");
     scratch::expect_status("verbs: build.c runs with a task test made by smith_tests", 0, &run);
     const char *info = ".smith/build.info";

@@ -3,12 +3,20 @@
 // keeps its files. Each fixture is tests/build_fixtures/steps_<name>/build.c.
 module build_steps_basic_test;
 
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import scratch;
 
-export void test_build_steps_a_copy_step_reruns_when_its_input_changes(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_copy");
+constexpr usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
+
+export void test_build_steps_a_copy_step_reruns_when_its_input_changes() {
+    scratch::Project p = scratch::make("p", "steps_copy");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "input", "one\n");
     scratch::Run first = scratch::build(&p, "");
     scratch::expect_status("copy: the first build exits 0", 0, &first);
@@ -20,8 +28,13 @@ export void test_build_steps_a_copy_step_reruns_when_its_input_changes(io::Io *i
     scratch::expect_text("copy: a changed input reruns the step", "two", scratch::capture(&p, "cat output"));
 }
 
-export void test_build_steps_a_task_runs_every_time_and_a_stamp_step_once_per_input(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_tasks");
+export void test_build_steps_a_task_runs_every_time_and_a_stamp_step_once_per_input() {
+    scratch::Project p = scratch::make("p", "steps_tasks");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "watched", "a\n");
     (void)scratch::build(&p, "hello");
     (void)scratch::build(&p, "hello");
@@ -35,8 +48,13 @@ export void test_build_steps_a_task_runs_every_time_and_a_stamp_step_once_per_in
 }
 
 // Two stamp steps with one command and different inputs get two stamps, so ninja accepts both.
-export void test_build_steps_two_stamp_steps_with_one_command_both_run(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_two_stamps");
+export void test_build_steps_two_stamp_steps_with_one_command_both_run() {
+    scratch::Project p = scratch::make("p", "steps_two_stamps");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "one", "a\n");
     scratch::write(&p, "two", "a\n");
     scratch::Run run = scratch::build(&p, "");
@@ -44,8 +62,13 @@ export void test_build_steps_two_stamp_steps_with_one_command_both_run(io::Io *i
     scratch::expect_count("stamp steps with one command: both run", 2, scratch::lines(&p, "log"));
 }
 
-export void test_build_steps_spaces_and_a_literal_dollar_survive(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_spaces");
+export void test_build_steps_spaces_and_a_literal_dollar_survive() {
+    scratch::Project p = scratch::make("p", "steps_spaces");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "my input.txt", "spaced\n");
     (void)scratch::build(&p, "");
     scratch::expect_text("spaces: a file name with a space is copied", "spaced",
@@ -54,8 +77,13 @@ export void test_build_steps_spaces_and_a_literal_dollar_survive(io::Io *io) {
                          scratch::capture(&p, "cat 'dollar file.txt'"));
 }
 
-export void test_build_steps_a_changed_header_rebuilds_the_object_through_its_depfile(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_depfile");
+export void test_build_steps_a_changed_header_rebuilds_the_object_through_its_depfile() {
+    scratch::Project p = scratch::make("p", "steps_depfile");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "a.c", "#include \"a.h\"\nint a(void) { return VALUE; }\n");
     scratch::write(&p, "a.h", "#define VALUE 1\n");
     (void)scratch::build(&p, "");
@@ -66,8 +94,13 @@ export void test_build_steps_a_changed_header_rebuilds_the_object_through_its_de
     scratch::expect_count("depfile: a changed header rebuilds the object", 2, scratch::lines(&p, "count"));
 }
 
-export void test_build_steps_editing_build_c_and_what_it_includes_reruns_the_step(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_includes");
+export void test_build_steps_editing_build_c_and_what_it_includes_reruns_the_step() {
+    scratch::Project p = scratch::make("p", "steps_includes");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "config.h", "#define MESSAGE \"v1\"\n");
     (void)scratch::build(&p, "");
     scratch::expect_text("build.c: first output", "v1", scratch::capture(&p, "cat out"));
@@ -82,8 +115,13 @@ export void test_build_steps_editing_build_c_and_what_it_includes_reruns_the_ste
     scratch::expect_status("build.c: the changed command ran", 0, &changed);
 }
 
-export void test_build_steps_options_reach_the_commands_and_bad_ones_fail(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_options");
+export void test_build_steps_options_reach_the_commands_and_bad_ones_fail() {
+    scratch::Project p = scratch::make("p", "steps_options");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)scratch::build(&p, "");
     scratch::expect_text("options: the fallback", "world quiet", scratch::capture(&p, "cat greeting"));
     (void)scratch::build(&p, "-Dname=Ada");
@@ -104,8 +142,13 @@ export void test_build_steps_options_reach_the_commands_and_bad_ones_fail(io::Io
     scratch::expect_status("options: a bare -D for a valued option fails", 2, &bare);
 }
 
-export void test_build_steps_glob_env_and_capture_feed_the_commands(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_glob_env");
+export void test_build_steps_glob_env_and_capture_feed_the_commands() {
+    scratch::Project p = scratch::make("p", "steps_glob_env");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)scratch::sh(&p, "mkdir src && echo a >src/a.txt");
     (void)scratch::build(&p, "");
     scratch::expect_text("glob: the first file", "a", scratch::capture(&p, "cat joined"));
@@ -120,8 +163,13 @@ export void test_build_steps_glob_env_and_capture_feed_the_commands(io::Io *io) 
                          scratch::capture(&p, "cat capture.out"));
 }
 
-export void test_build_steps_restat_stops_what_depends_on_an_unchanged_output(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_restat");
+export void test_build_steps_restat_stops_what_depends_on_an_unchanged_output() {
+    scratch::Project p = scratch::make("p", "steps_restat");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "trigger", "1\n");
     (void)scratch::build(&p, "");
     scratch::write(&p, "trigger", "2\n");
@@ -131,15 +179,25 @@ export void test_build_steps_restat_stops_what_depends_on_an_unchanged_output(io
                           scratch::lines(&p, "copies"));
 }
 
-export void test_build_steps_always_reruns_the_step_every_build(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_always");
+export void test_build_steps_always_reruns_the_step_every_build() {
+    scratch::Project p = scratch::make("p", "steps_always");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)scratch::build(&p, "");
     (void)scratch::build(&p, "");
     scratch::expect_count("always: reruns the step every build", 2, scratch::lines(&p, "ticks"));
 }
 
-export void test_build_steps_smith_keeps_its_files_in_dot_smith_and_a_clean_task_works(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_folder");
+export void test_build_steps_smith_keeps_its_files_in_dot_smith_and_a_clean_task_works() {
+    scratch::Project p = scratch::make("p", "steps_folder");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run first = scratch::build(&p, "");
     scratch::expect_status("folder: a build whose steps write nothing under build/ leaves no build/", 0, &first);
     scratch::expect_text("folder: a build whose steps write nothing under build/ leaves no build/", "absent",
