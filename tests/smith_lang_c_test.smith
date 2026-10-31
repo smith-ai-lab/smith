@@ -20,8 +20,9 @@ import scratch;
 // that is identical before it is identical after, and the cases that are about it say -O2.
 constexpr char flags[_] =
     "-std=gnu23 -O0 -g0 -Wno-builtin-macro-redefined -D'__FILE__=\"unit\"' -I include -I .smith/include";
-// smith.c alone is compared at -O1: at -O0 `query.why != nullptr ? query.why : "..."` in lang_type.c is a branch as .c
-// and a select as .smith (the same program; the optimizer makes the two one).
+// smith.c alone is compared at -O1: at -O0 `*handle == 0 ? smith_lang_ty_second_level() : ""` in lang_type.c is a
+// branch as .c and a select as .smith (the same program; the optimizer makes the two one). Code generation asks the
+// constant evaluator whether the call is cheap to run unconditionally, and with SmithConstexprC it can run (#652).
 constexpr char in_process_o1[_] = "-O1 -DSMITH_IN_PROCESS -D'SMITH_CLANG_RESOURCE=\"tests/stub.c\"' "
                                   "-D'SMITH_CLANG_ID=\"llvm-0 0\"'";
 
