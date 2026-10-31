@@ -905,6 +905,10 @@ export void test_error_export_static() {
     corpus_case("error-export-static");
 }
 
+export void test_error_private_prototype_exported() {
+    corpus_case("error-private-prototype-exported");
+}
+
 export void test_error_export_two_names() {
     corpus_case("error-export-two-names");
 }
