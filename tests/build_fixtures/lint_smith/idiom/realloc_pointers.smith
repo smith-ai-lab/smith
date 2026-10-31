@@ -1,0 +1,20 @@
+module idiom::realloc_pointers;
+
+import smith::mem;
+
+struct Node {
+    i32 value;
+};
+
+typedef Node *NodeRef;
+
+// A list of pointers grown through the typed function (#1178): no cast to void * is written at the call.
+NodeRef grow(NodeRef xs[:], usize n) {
+    return mem::realloc(xs, n);
+}
+
+i32 main() {
+    NodeRef xs[:] = {};
+    xs = grow(xs, 4);
+    return (i32)countof(xs);
+}
