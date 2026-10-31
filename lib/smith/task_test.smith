@@ -26,8 +26,7 @@ void log_mark(Log *log, char mark) {
 }
 
 // Writes its name `rounds` times, pausing after each.
-void run_marker(void *context) {
-    Marker *marker = (Marker *)context;
+void run_marker(Marker *marker) {
     for (usize i = 0; i < marker->rounds; i++) {
         log_mark(marker->log, marker->name);
         task::pause();
@@ -44,7 +43,7 @@ export void test_task_a_spawned_task_runs_at_once_and_wait_returns() {
     Log log = {};
     Marker a = {.log = &log, .name = 'a', .rounds = 1};
     task::Group group = {};
-    task::spawn_raw(&group, run_marker, &a);
+    task::spawn(&group, run_marker, &a);
     test::check_equal(log.length, (usize)1); // it ran up to its first pause
     test::check_equal(group.pending, (usize)1);
     task::wait(&group);
@@ -57,9 +56,9 @@ export void test_task_a_group_waits_for_three_tasks_that_each_pause_twice() {
     Marker b = {.log = &log, .name = 'b', .rounds = 2};
     Marker c = {.log = &log, .name = 'c', .rounds = 2};
     task::Group group = {};
-    task::spawn_raw(&group, run_marker, &a);
-    task::spawn_raw(&group, run_marker, &b);
-    task::spawn_raw(&group, run_marker, &c);
+    task::spawn(&group, run_marker, &a);
+    task::spawn(&group, run_marker, &b);
+    task::spawn(&group, run_marker, &c);
     check_marks(&log, "abc"); // each ran at once up to its first pause
     task::wait(&group);
     check_marks(&log, "abcabc"); // and the others in the order they paused
@@ -72,7 +71,7 @@ export void test_task_main_pauses_and_the_others_run_a_round() {
     task::Group group = {};
     defer task::wait(&group);
     test::check(log.length == 0);
-    task::spawn_raw(&group, run_marker, &a);
+    task::spawn(&group, run_marker, &a);
     test::check_equal(log.length, (usize)1);
     task::pause(); // main offers the thread: the paused task writes its second mark
     test::check_equal(log.length, (usize)2);
@@ -89,11 +88,10 @@ struct Parent {
 };
 
 // A task spawns a task of its own into a group of its own and waits for it.
-void run_parent(void *context) {
-    Parent *parent = (Parent *)context;
+void run_parent(Parent *parent) {
     task::Group children = {};
     defer task::wait(&children);
-    task::spawn_raw(&children, run_marker, parent->inner);
+    task::spawn(&children, run_marker, parent->inner);
     log_mark(parent->log, 'p');
 }
 
@@ -102,7 +100,7 @@ export void test_task_a_task_spawns_into_a_nested_group() {
     Marker inner = {.log = &log, .name = 'i', .rounds = 2};
     Parent parent = {.log = &log, .inner = &inner};
     task::Group group = {};
-    task::spawn_raw(&group, run_parent, &parent);
+    task::spawn(&group, run_parent, &parent);
     task::wait(&group);
     check_marks(&log, "ipi");
     test::check_equal(group.pending, (usize)0);
@@ -121,36 +119,37 @@ usize use_stack(usize n) {
     return n + big[0] + big[131071];
 }
 
-void run_deep(void *context) {
-    Deep *deep = (Deep *)context;
+void run_deep(Deep *deep) {
     deep->reached = use_stack(deep->depth);
 }
 
 export void test_task_a_task_has_a_stack_of_256_kilobytes() {
     Deep deep = {.depth = 100};
     task::Group group = {};
-    task::spawn_raw(&group, run_deep, &deep);
+    task::spawn(&group, run_deep, &deep);
     task::wait(&group);
     test::check_equal(deep.reached, (usize)103);
 }
 
-void run_count(void *context) {
-    *(usize *)context += 1;
+void run_count(usize *count) {
+    *count += 1;
 }
 
+// Each task ends at once, so its two mappings (guard and stack) are gone before the next is made: the count is far
+// below Linux's default vm.max_map_count of 65530, which caps the tasks that are alive at one time (about 32,000).
 export void test_task_ten_thousand_tasks_come_and_go_in_one_group() {
     usize count = 0;
     task::Group group = {};
     for (usize i = 0; i < 10000; i++)
-        task::spawn_raw(&group, run_count, &count);
+        task::spawn(&group, run_count, &count);
     task::wait(&group);
     test::check_equal(count, (usize)10000);
     test::check_equal(group.pending, (usize)0);
 }
 
 // Writes just below the end of the stack it runs on, which is the guard page.
-void run_overflow(void *context) {
-    (void)context;
+void run_overflow(u8 *unused) {
+    (void)unused;
     volatile u8 here = 0;
     volatile u8 *below = (volatile u8 *)&here - 262144;
     *below = 1;
@@ -162,8 +161,9 @@ export void test_task_a_write_below_the_stack_faults() {
     i32 child = c::fork();
     test::check(child >= 0);
     if (child == 0) {
+        u8 unused = 0;
         task::Group group = {};
-        task::spawn_raw(&group, run_overflow, nullptr);
+        task::spawn(&group, run_overflow, &unused);
         task::wait(&group);
         c::_exit(0); // reached only if the write did not fault
     }

@@ -210,6 +210,13 @@ void transfer(Task *from, Task *to) {
     }
 }
 
+// Calls the entry a typed `spawn` stored as `void (*)(void *)`. It was written as `void (*)(T *)`, and a pointer to any
+// object is passed the same way on every target here, so the call is right; UBSan's function-type check cannot know
+// that.
+[[clang::no_sanitize("function")]] void call_entry(Task *task) {
+    task->entry(task->context);
+}
+
 // The entry of a new task, on its own stack: runs it, then goes back to whoever resumed it, for good.
 void task_main(Task *task) {
     if constexpr (target::address_sanitizer) {
@@ -221,7 +228,7 @@ void task_main(Task *task) {
             task->resumer->size = size;
         }
     }
-    task->entry(task->context);
+    call_entry(task);
     task->finished = true;
     task->group->pending -= 1;
     transfer(task, task->resumer);
@@ -328,12 +335,22 @@ void step_parked() {
 // Starts a task of `group` that calls entry(context) on a stack of its own, and runs it at once until it ends or
 // pauses. Exported only so the module's own tests (a module of their own) can start a task; the typed `spawn(&group, f,
 // args...)` waits for the language (#316) and replaces it.
-[[smith::c_name("smith_task_spawn_raw")]] export void spawn_raw(Group *group, void (*entry)(void *context),
-                                                                void *context) {
+void spawn_raw(Group *group, void (*entry)(void *context), void *context) {
     contract::requires(group != nullptr && entry != nullptr);
     Task *task = make_task(group, entry, context);
     group->pending += 1;
     if (!resume(task)) park(task);
+}
+
+// Starts a task of `group` that calls f(arg) on a stack of its own and runs it at once until it ends or pauses, as the
+// inline scheduler does. `f` is a `void (*)(T *)` and `arg` a `T *`, any `T`; both must stay alive until `wait(group)`.
+// This form goes when the lambda form of #945 lands.
+export void spawn(Group *group, auto f, auto *arg) {
+    static_assert(__builtin_types_compatible_p(typeof(f), void (*)(typeof(arg))),
+                  "task::spawn: f must be void (*)(T *) for the T * of arg");
+    contract::trusted(); // f(arg) is called as f(void *): a pointer to any object has one representation
+    usize address = (usize)f;
+    spawn_raw(group, (void (*)(void *))address, (void *)arg);
 }
 
 // Returns when every task spawned into `group` has ended, running the paused tasks in turn. Tasks that wait on each
