@@ -19,3 +19,6 @@ description: "Start here for any change to smith itself (smith.c, runtime/, shim
 | add a library or port one to `.smith` | [smith-dev-library](../smith-dev-library/SKILL.md) |
 | write smith's own C | [smith-dev-c](../smith-dev-c/SKILL.md) |
 | change AGENTS.md, a concept or a skill | [smith-dev-docs](../smith-dev-docs/SKILL.md) |
+| lead the work: lanes, the bottleneck, cloud lanes, the owner | [smith-dev-lead](../smith-dev-lead/SKILL.md) |
+| run one lane of tickets as its orchestrator | [smith-dev-orchestrate](../smith-dev-orchestrate/SKILL.md) |
+| write a ticket someone with no context can do | [smith-dev-ticket](../smith-dev-ticket/SKILL.md) |

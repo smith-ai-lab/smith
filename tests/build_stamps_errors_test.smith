@@ -3,36 +3,57 @@
 // build.c in tests/build_fixtures that the test copies over build.c (the variants are `.txt` files).
 module build_stamps_errors_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 
+constexpr usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
+
 // Copies the variant (`<name>.txt` of the fixture) over build.c and builds.
 static scratch::Run build_variant(const scratch::Project *p, const char *name, const char *arguments) {
-    scratch::Run copied = scratch::sh(p, format::push(&p->io->arena, "cp ", name, ".txt build.c").data);
+    char command[256];
+    format::Written written = format::to(command, sizeof command, "cp ", name, ".txt build.c");
+    test::check_condition(written.fits);
+    scratch::Run copied = scratch::sh(p, command);
     test::check_equal(copied.status, 0);
     return scratch::build(p, arguments);
 }
 
 // 9i. High-level errors.
-export void test_build_stamps_errors_a_missing_compiler_fails(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "stamp_high_errors");
+export void test_build_stamps_errors_a_missing_compiler_fails() {
+    scratch::Project p = scratch::make("p", "stamp_high_errors");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = build_variant(&p, "missing_compiler", "");
     scratch::expect_status("errors: a missing .compiler fails", 2, &run);
     scratch::expect_contains("errors: the message names .compiler", run.err, ".compiler is required");
 }
 
-export void test_build_stamps_errors_an_unregistered_object_fails(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "stamp_high_errors");
+export void test_build_stamps_errors_an_unregistered_object_fails() {
+    scratch::Project p = scratch::make("p", "stamp_high_errors");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = build_variant(&p, "unregistered", "");
     scratch::expect_status("errors: an unregistered object fails", 2, &run);
     scratch::expect_contains("errors: the message says it was never passed to smith_object", run.err,
                              "never passed to smith_object");
 }
 
-export void test_build_stamps_errors_compile_commands_twice_or_under_smith_fails(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "stamp_high_errors");
+export void test_build_stamps_errors_compile_commands_twice_or_under_smith_fails() {
+    scratch::Project p = scratch::make("p", "stamp_high_errors");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run twice = build_variant(&p, "twice", "");
     scratch::expect_status("errors: a second smith_compile_commands fails", 2, &twice);
     scratch::expect_contains("errors: the message says twice", twice.err, "twice");
@@ -41,8 +62,13 @@ export void test_build_stamps_errors_compile_commands_twice_or_under_smith_fails
 }
 
 // 9j. smith_compile_command: an entry with no step.
-export void test_build_stamps_compile_command_writes_entries_without_a_step(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "stamp_compile_command");
+export void test_build_stamps_compile_command_writes_entries_without_a_step() {
+    scratch::Project p = scratch::make("p", "stamp_compile_command");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("compile_command: the build succeeds", 0, &run);
     scratch::Run made = scratch::sh(&p, "sed \"s|@DIR@|$(pwd -P)|\" expected.json.in >expected.json");
@@ -51,8 +77,13 @@ export void test_build_stamps_compile_command_writes_entries_without_a_step(io::
                          scratch::read(&p, "expected.json"), scratch::read(&p, "compile_commands.json"));
 }
 
-export void test_build_stamps_compile_command_without_a_compiler_a_source_or_after_the_file_fails(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "stamp_compile_command");
+export void test_build_stamps_compile_command_without_a_compiler_a_source_or_after_the_file_fails() {
+    scratch::Project p = scratch::make("p", "stamp_compile_command");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run compiler = build_variant(&p, "missing_compiler", "");
     scratch::expect_status("errors: a missing compiler for smith_compile_command fails", 2, &compiler);
     scratch::expect_contains("errors: the message names compiler", compiler.err,
@@ -67,29 +98,49 @@ export void test_build_stamps_compile_command_without_a_compiler_a_source_or_aft
 }
 
 // 9q. .stamp errors: with .outputs, on a task, a different .stamp for an existing output.
-export void test_build_stamps_errors_a_stamp_with_outputs_fails(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "stamp_errors");
+export void test_build_stamps_errors_a_stamp_with_outputs_fails() {
+    scratch::Project p = scratch::make("p", "stamp_errors");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = build_variant(&p, "outputs", "");
     scratch::expect_status("stamp errors: .stamp with .outputs fails", 2, &run);
     scratch::expect_contains("stamp errors: the message names both", run.err, ".stamp");
 }
 
-export void test_build_stamps_errors_a_stamp_on_a_task_fails(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "stamp_errors");
+export void test_build_stamps_errors_a_stamp_on_a_task_fails() {
+    scratch::Project p = scratch::make("p", "stamp_errors");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = build_variant(&p, "task", "");
     scratch::expect_status("stamp errors: .stamp on a task fails", 2, &run);
     scratch::expect_contains("stamp errors: the message says task", run.err, "task t");
 }
 
-export void test_build_stamps_errors_a_different_stamp_for_an_output_fails(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "stamp_errors");
+export void test_build_stamps_errors_a_different_stamp_for_an_output_fails() {
+    scratch::Project p = scratch::make("p", "stamp_errors");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = build_variant(&p, "differs", "");
     scratch::expect_status("stamp errors: a different .stamp for an output fails", 2, &run);
     scratch::expect_contains("stamp errors: the message names the field", run.err, "whose .stamp differs");
 }
 
-export void test_build_stamps_errors_a_run_step_and_a_command_step_both_stamp(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "stamp_errors");
+export void test_build_stamps_errors_a_run_step_and_a_command_step_both_stamp() {
+    scratch::Project p = scratch::make("p", "stamp_errors");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = build_variant(&p, "run_and_command", "");
     char text[64];
     __builtin_snprintf(text, sizeof text, "%d %s %s", run.status,
@@ -99,8 +150,13 @@ export void test_build_stamps_errors_a_run_step_and_a_command_step_both_stamp(io
 }
 
 // 10. ninja arguments pass through (the copy project of case 1).
-export void test_build_stamps_ninja_arguments_pass_through(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "copy");
+export void test_build_stamps_ninja_arguments_pass_through() {
+    scratch::Project p = scratch::make("p", "copy");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run first = scratch::build(&p, "");
     test::check_equal(first.status, 0);
     scratch::Run targets = scratch::build(&p, "-t targets");
@@ -112,8 +168,13 @@ export void test_build_stamps_ninja_arguments_pass_through(io::Io *io) {
 
 // 13a. Name collisions are all reported in one run, with the fix; two steps with no outputs and equal inputs say to
 // give one a .stamp; a build by convention names no build.c (#47).
-export void test_build_stamps_collisions_are_reported_in_one_run_with_the_fix(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "collisions");
+export void test_build_stamps_collisions_are_reported_in_one_run_with_the_fix() {
+    scratch::Project p = scratch::make("p", "collisions");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("collisions: the build file fails", 2, &run);
     scratch::expect_contains("collisions: the task named after a verb", run.err,
@@ -128,8 +189,13 @@ export void test_build_stamps_collisions_are_reported_in_one_run_with_the_fix(io
     scratch::expect_contains("collisions: and the fix", run.err, "give one of them a distinct .stamp");
 }
 
-export void test_build_stamps_convention_an_unknown_option_names_no_build_file(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_build_stamps_convention_an_unknown_option_names_no_build_file() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "main.c", "int main(void) { return 0; }\n");
     scratch::Run run = scratch::build(&p, "-Dnope");
     scratch::expect_contains("convention: an unknown option names no build file", run.err,
