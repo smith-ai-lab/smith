@@ -13,7 +13,7 @@ output is byte-identical with and without RTTI and exceptions (only the install 
 llvm` also builds, static and from packages pinned by hash, with nothing from Homebrew (Ninja, GMP, MPFR, Meson, CaDiCaL
 and symfpu are among them): Z3 5.3.1, Alive2 (commit 01a5ec4, the newest that builds against 23.1.3) and Bitwuzla 0.9.1
 (`build_prove_libs_make`, `build_bitwuzla_make` and `build_ninja_make` in `build.c`, no shell). Only the stage0 has no prover. Each function is proved in a process of
-its own, which ends at its budget (SIGALRM) and when its parent dies. Bitwuzla decides the queries on every core, cheap query first and the full one only if that fails; Z3 only finds a counterexample's values, because on queries
+its own, which ends at its budget (SIGALRM) and when its parent dies. Bitwuzla decides the queries on every core, cheap query first and the full one only if that fails; Z3 decides the queries over `Integer`, `Natural` and `Real` (owner, 2026-10-31, #193) and otherwise only finds a counterexample's values, because on queries
 with many stores through one array Z3 takes minutes where Bitwuzla takes a fraction of a second. Skill:
 smith-contract.
 
