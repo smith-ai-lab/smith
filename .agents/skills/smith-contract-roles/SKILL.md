@@ -38,6 +38,10 @@ See `smith-contract`.
 A lemma's `requires` is its hypothesis and its `ensures` its claim; using it is calling it: the prover proves the `requires` at the call, then knows the `ensures` for the arguments passed. A function called inside a contract is read through its body (or its own contract), so a claim can be about its result.
 
 ```smith
+module squares;
+
+import smith::contract;
+
 export void square_is_nonnegative(i32 n) {
     contract::ensures((i64)n * (i64)n >= 0);
 }
