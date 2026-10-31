@@ -1,0 +1,3 @@
+expected `;`, found `1`
+expected `(`, found `x`
+expected a label, found `;`
