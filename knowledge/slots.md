@@ -27,3 +27,7 @@ Many lanes and two CI runners share one Mac, and its load reached 100 to 170 (#3
 **Tests.** The runner gives each test `SMITH_SLOTS_DIR=<its scratch folder>/slots`, so a smith a test starts counts private slots and never waits for the host's (#627); `tests/slots_test.smith` sets its own.
 
 **Not covered.** `smith lint`, `fmt` and `prove` take no token of their own (lint and prove run `smith build` first, which does); the test runner started by hand, outside `smith test`, has no pool and runs all its workers. `smith --smith-slots PROGRAM` takes a token and runs the program: it is for `tests/slots_test.smith`.
+
+## Decisions
+
+- `smith build`, `check` and `test` draw from a host-wide pool of cores, `SMITH_CORES` (default: the core count): a run takes one core at its first heavy step and one more for each further worker, and gives each back as it ends, so it grows as cores free up; CI (`SMITH_PRIORITY=ci`) goes first, a smith run by a smith rides on its parent's core, and a dead or orphaned holder's cores are reclaimed (owner, 2026-10-27: "it's cheaper to just make the decision and then move on").

@@ -3,20 +3,26 @@
 // use the fixture tests/build_fixtures/runner_checked; the arena cases a C program, tests/mem_checked/main.c.
 module mem_checked_test;
 
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import runner;
 import scratch;
 
-static scratch::Project checked_project(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_checked");
-    scratch::Run run = runner::build(&p, "");
+// Builds the runner of the project made from runner_checked.
+static void build_checked(const scratch::Project *p) {
+    scratch::Run run = runner::build(p, "");
     scratch::expect_status("checked: the runner builds", 0, &run);
-    return p;
 }
 
-export void test_mem_checked_a_leaking_test_fails_naming_its_allocation_site(io::Io *io) {
-    scratch::Project p = checked_project(io);
+export void test_mem_checked_a_leaking_test_fails_naming_its_allocation_site() {
+    scratch::Project p = runner::project_free("runner_base", "runner_checked");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_checked(&p);
     scratch::Run run = runner::tests(&p, "", "--test checked_2_leaks --trace");
     scratch::expect_status("checked: a leaking test fails the run", 1, &run);
     scratch::expect_contains("checked: ... as a memory leak", run.out, "smith-trace begin memory leaked");
@@ -29,8 +35,14 @@ export void test_mem_checked_a_leaking_test_fails_naming_its_allocation_site(io:
     }
 }
 
-export void test_mem_checked_a_test_that_frees_what_it_allocates_passes(io::Io *io) {
-    scratch::Project p = checked_project(io);
+export void test_mem_checked_a_test_that_frees_what_it_allocates_passes() {
+    scratch::Project p = runner::project_free("runner_base", "runner_checked");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_checked(&p);
     scratch::Run run = runner::tests(&p, "", "--test checked_1_clean --verbose");
     scratch::expect_contains("checked: a clean test passes", run.out, "PASS checked_1_clean");
     scratch::Run leaks = runner::tests(&p, "", "--test checked_2_leaks --unchecked");
@@ -39,8 +51,14 @@ export void test_mem_checked_a_test_that_frees_what_it_allocates_passes(io::Io *
 
 // Tests with no io (issue #815): the runner accepts them, and a malloc of a C library the test calls is the checked
 // allocator's like mem::alloc.
-export void test_mem_checked_a_test_with_no_io_that_leaks_through_c_malloc_fails_naming_the_site(io::Io *io) {
-    scratch::Project p = checked_project(io);
+export void test_mem_checked_a_test_with_no_io_that_leaks_through_c_malloc_fails_naming_the_site() {
+    scratch::Project p = runner::project_free("runner_base", "runner_checked");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_checked(&p);
     scratch::Run run = runner::tests(&p, "", "--test checked_7_c_leak --trace");
     scratch::expect_status("checked: a leak in C fails the run", 1, &run);
     scratch::expect_contains("checked: ... as a memory leak", run.out, "smith-trace begin memory leaked");
@@ -53,8 +71,14 @@ export void test_mem_checked_a_test_with_no_io_that_leaks_through_c_malloc_fails
     scratch::expect_contains("checked: a malloc that is freed passes", freed.out, "PASS checked_8_c_malloc_freed");
 }
 
-export void test_mem_checked_a_test_that_prints_does_not_fail_for_the_c_librarys_own_blocks(io::Io *io) {
-    scratch::Project p = checked_project(io);
+export void test_mem_checked_a_test_that_prints_does_not_fail_for_the_c_librarys_own_blocks() {
+    scratch::Project p = runner::project_free("runner_base", "runner_checked");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_checked(&p);
     scratch::Run run = runner::tests(&p, "", "--test checked_9_printf --verbose");
     scratch::expect_contains("checked: printf passes", run.out, "PASS checked_9_printf");
     scratch::expect_lacks("checked: ... with no leak", run.out, "memory leaked");
@@ -62,8 +86,14 @@ export void test_mem_checked_a_test_that_prints_does_not_fail_for_the_c_librarys
 
 // What a process returns to a test belongs to the test (issue #815): the test that frees it passes, the one that keeps
 // it fails with `memory leaked`.
-export void test_mem_checked_what_a_process_returns_is_the_tests_to_free(io::Io *io) {
-    scratch::Project p = checked_project(io);
+export void test_mem_checked_what_a_process_returns_is_the_tests_to_free() {
+    scratch::Project p = runner::project_free("runner_base", "runner_checked");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_checked(&p);
     scratch::Run freed = runner::tests(&p, "", "--test checked_10_process_output_freed --verbose");
     scratch::expect_contains("checked: freed output passes", freed.out,
                              "PASS test_checked_process::checked_10_process_output_freed");
@@ -72,8 +102,14 @@ export void test_mem_checked_what_a_process_returns_is_the_tests_to_free(io::Io 
     scratch::expect_contains("checked: ... as a memory leak", kept.out, "smith-trace begin memory leaked");
 }
 
-export void test_mem_checked_a_double_free_is_reported_with_both_sites(io::Io *io) {
-    scratch::Project p = checked_project(io);
+export void test_mem_checked_a_double_free_is_reported_with_both_sites() {
+    scratch::Project p = runner::project_free("runner_base", "runner_checked");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_checked(&p);
     scratch::Run run = runner::tests(&p, "", "--test checked_3_double_free --trace");
     scratch::expect_contains("checked: a double free fails the test", run.out, "smith-trace begin memory error");
     scratch::expect_contains("checked: ... saying so", run.out, "a block already freed: a double free");
@@ -81,15 +117,27 @@ export void test_mem_checked_a_double_free_is_reported_with_both_sites(io::Io *i
     scratch::expect_contains("checked: ... and the first free", run.out, "smith-trace begin first freed here");
 }
 
-export void test_mem_checked_a_free_of_a_foreign_block_is_reported(io::Io *io) {
-    scratch::Project p = checked_project(io);
+export void test_mem_checked_a_free_of_a_foreign_block_is_reported() {
+    scratch::Project p = runner::project_free("runner_base", "runner_checked");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_checked(&p);
     scratch::Run run = runner::tests(&p, "", "--test checked_4_foreign_free --trace");
     scratch::expect_contains("checked: a foreign free fails the test", run.out, "smith-trace begin memory error");
     scratch::expect_contains("checked: ... saying so", run.out, "a block this allocator did not make");
 }
 
-export void test_mem_checked_a_use_after_free_and_an_overflow_are_sanitizer_reports(io::Io *io) {
-    scratch::Project p = checked_project(io);
+export void test_mem_checked_a_use_after_free_and_an_overflow_are_sanitizer_reports() {
+    scratch::Project p = runner::project_free("runner_base", "runner_checked");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_checked(&p);
     scratch::Run after = runner::tests(&p, "", "--test checked_5_use_after_free");
     scratch::expect_contains("checked: a write after free is a use-after-poison", after.out, "use-after-poison");
     scratch::Run past = runner::tests(&p, "", "--test checked_6_overflow");
@@ -97,23 +145,34 @@ export void test_mem_checked_a_use_after_free_and_an_overflow_are_sanitizer_repo
                              "heap-buffer-overflow");
 }
 
-static scratch::Project arena_project(io::Io *io) {
-    scratch::Project p = scratch::project(io, "arena_reset", nullptr);
-    scratch::copy_tree(&p, "tests/mem_checked/main.c", "main.c");
-    scratch::Run built = scratch::sh(&p, "smith build >build.log 2>&1");
+// Builds tests/mem_checked/main.c in the project.
+static void build_arena(const scratch::Project *p) {
+    scratch::copy_tree(p, "tests/mem_checked/main.c", "main.c");
+    scratch::Run built = scratch::sh(p, "smith build >build.log 2>&1");
     scratch::expect_status("checked: the arena program builds", 0, &built);
-    return p;
 }
 
-export void test_mem_checked_an_arena_used_after_reset_is_an_asan_report(io::Io *io) {
-    scratch::Project p = arena_project(io);
+export void test_mem_checked_an_arena_used_after_reset_is_an_asan_report() {
+    scratch::Project p = scratch::make("arena_reset", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_arena(&p);
     scratch::Run run = scratch::sh(&p, "./build/debug/arena_reset 2>&1");
     scratch::expect_contains("checked: debug: a read after an arena reset is use-after-poison", run.out,
                              "use-after-poison");
 }
 
-export void test_mem_checked_outside_a_test_a_double_free_aborts_with_its_report_and_a_leak_is_listed(io::Io *io) {
-    scratch::Project p = arena_project(io);
+export void test_mem_checked_outside_a_test_a_double_free_aborts_with_its_report_and_a_leak_is_listed() {
+    scratch::Project p = scratch::make("arena_reset", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_arena(&p);
     scratch::Run twice = scratch::sh(&p, "./build/debug/arena_reset double 2>&1");
     scratch::expect_contains("checked: a double free outside a test is reported", twice.out, "a double free");
     scratch::expect_contains("checked: ... with the allocation site", twice.out, "smith-trace begin allocated here");

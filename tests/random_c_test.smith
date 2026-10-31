@@ -3,11 +3,13 @@
 // new project's warnings, the refusals (-ffast-math, a normal with deviation 0) and a project that gets random,
 // categorical and the arena with smith_library (tests/build_fixtures/random_project). tests/random.c reaches the
 // module's static functions by including its raw lowering, what `smith cc --smith-lower` writes. The behavior of the
-// library is lib/smith/random_test.smith.
+// library is lib/smith/random_test.smith. Each test makes its project with scratch::make and has a test::memory arena
+// as the current allocator, so what scratch returns goes back with the arena.
 module random_c_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 import target;
@@ -19,16 +21,16 @@ constexpr char warn[_] = "-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimpli
 constexpr char sources[_] = "-I lowered tests/random.c lib/smith/arena.smith "
                             "lib/smith/contract.smith lib/trace.c";
 
-// A project holding the files the commands compile: the libraries and the program of the test, copied through io.
-static scratch::Project sources_project(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+// A project holding the files the commands compile: the libraries and the program of the test, copied in.
+static scratch::Project sources_project() {
+    scratch::Project p = scratch::make("p", nullptr);
     scratch::copy_tree(&p, "lib", "lib");
     scratch::copy_tree(&p, "tests/random.c", "tests/random.c");
     return p;
 }
 
-static scratch::Project lowered_project(io::Io *io) {
-    scratch::Project p = sources_project(io);
+static scratch::Project lowered_project() {
+    scratch::Project p = sources_project();
     // the lowering is made in process: the text is all this needs (the compiles below stay end to end)
     scratch::write_lowered(&p, "lib/smith/random.smith", "lowered/random_lowered.c");
     return p;
@@ -44,103 +46,134 @@ static const char *math_library() {
 }
 
 // Builds tests/random.c with the flags into `name`.
-static scratch::Run compile(const scratch::Project *p, const char *warnings, const char *flags, const char *name) {
-    return scratch::sh(p, format::push(&p->io->arena, "smith cc ", warnings, " -I \"$SMITH_REPO/.smith/include\" ",
-                                       flags, " ", sources, math_library(), " -o ", name)
+static scratch::Run compile(arena::Arena *arena, const scratch::Project *p, const char *warnings, const char *flags,
+                            const char *name) {
+    return scratch::sh(p, format::push(arena, "smith cc ", warnings, " -I \"$SMITH_REPO/.smith/include\" ", flags, " ",
+                                       sources, math_library(), " -o ", name)
                               .data);
 }
 
-static void checks_pass(io::Io *io, const char *name, const char *flags) {
-    scratch::Project p = lowered_project(io);
-    scratch::Run built = compile(&p, format::push(&io->arena, "-std=gnu23 ", warn).data, flags, "checks");
+static void checks_pass(const char *name, const char *flags) {
+    scratch::Project p = lowered_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run built = compile(&memory, &p, format::push(&memory, "-std=gnu23 ", warn).data, flags, "checks");
     scratch::expect_status("the checks build", 0, &built);
     scratch::Run checked = scratch::sh(&p, "./checks");
     scratch::expect_status(name, 0, &checked);
     scratch::expect_text(name, "random: all checks passed", checked.out);
 }
 
-export void test_random_c_checks_pass_at_o0_under_asan_and_ubsan(io::Io *io) {
-    checks_pass(io, "checks: pass at -O0 under ASan and UBSan", "-O0 -g -fsanitize=address,undefined");
+export void test_random_c_checks_pass_at_o0_under_asan_and_ubsan() {
+    checks_pass("checks: pass at -O0 under ASan and UBSan", "-O0 -g -fsanitize=address,undefined");
 }
 
-export void test_random_c_checks_pass_at_o2(io::Io *io) {
-    checks_pass(io, "checks: pass at -O2", "-O2");
+export void test_random_c_checks_pass_at_o2() {
+    checks_pass("checks: pass at -O2", "-O2");
 }
 
-static void compiles_as(io::Io *io, const char *standard) {
-    scratch::Project p = sources_project(io);
-    scratch::Run built = scratch::sh(&p, format::push(&io->arena, "smith cc -std=", standard, " ", warn,
+static void compiles_as(const char *standard) {
+    scratch::Project p = sources_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run built = scratch::sh(&p, format::push(&memory, "smith cc -std=", standard, " ", warn,
                                                       " -I \"$SMITH_REPO/.smith/include\" -c "
                                                       "lib/smith/random.smith -o r.o")
                                              .data);
     scratch::expect_status(
-        format::push(&io->arena, "library: compiles as -std=", standard, " with the new project's warnings").data, 0,
+        format::push(&memory, "library: compiles as -std=", standard, " with the new project's warnings").data, 0,
         &built);
 }
 
-export void test_random_c_library_compiles_as_c23(io::Io *io) {
-    compiles_as(io, "gnu23");
+export void test_random_c_library_compiles_as_c23() {
+    compiles_as("gnu23");
 }
 
-export void test_random_c_library_compiles_as_c2y(io::Io *io) {
-    compiles_as(io, "gnu2y");
+export void test_random_c_library_compiles_as_c2y() {
+    compiles_as("gnu2y");
 }
 
 // Every configuration prints the same digest.
-static void digest(io::Io *io, const char *name, const char *flags) {
-    scratch::Project p = lowered_project(io);
-    scratch::Run built = compile(&p, "-w", flags, "digest");
-    scratch::expect_status(format::push(&io->arena, "digest: ", name, " builds").data, 0, &built);
+static void digest(const char *name, const char *flags) {
+    scratch::Project p = lowered_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run built = compile(&memory, &p, "-w", flags, "digest");
+    scratch::expect_status(format::push(&memory, "digest: ", name, " builds").data, 0, &built);
     scratch::Run run = scratch::sh(&p, "./digest digest");
-    scratch::expect_text(format::push(&io->arena, "digest: ", name).data, expected_digest, run.out);
+    scratch::expect_text(format::push(&memory, "digest: ", name).data, expected_digest, run.out);
 }
 
-export void test_random_c_digest_o0_sanitized(io::Io *io) {
-    digest(io, "-O0 sanitized", "-std=gnu23 -O0 -g -fsanitize=address,undefined");
+export void test_random_c_digest_o0_sanitized() {
+    digest("-O0 sanitized", "-std=gnu23 -O0 -g -fsanitize=address,undefined");
 }
 
-export void test_random_c_digest_o2(io::Io *io) {
-    digest(io, "-O2", "-std=gnu23 -O2");
+export void test_random_c_digest_o2() {
+    digest("-O2", "-std=gnu23 -O2");
 }
 
-export void test_random_c_digest_o2_ndebug(io::Io *io) {
-    digest(io, "-O2 -DNDEBUG", "-std=gnu23 -O2 -DNDEBUG");
+export void test_random_c_digest_o2_ndebug() {
+    digest("-O2 -DNDEBUG", "-std=gnu23 -O2 -DNDEBUG");
 }
 
-export void test_random_c_digest_o3_ndebug(io::Io *io) {
-    digest(io, "-O3 -DNDEBUG", "-std=gnu23 -O3 -DNDEBUG");
+export void test_random_c_digest_o3_ndebug() {
+    digest("-O3 -DNDEBUG", "-std=gnu23 -O3 -DNDEBUG");
 }
 
-export void test_random_c_digest_gnu2y(io::Io *io) {
-    digest(io, "-std=gnu2y", "-std=gnu2y -O2");
+export void test_random_c_digest_gnu2y() {
+    digest("-std=gnu2y", "-std=gnu2y -O2");
 }
 
-export void test_random_c_digest_fp_contract_fast_which_the_pragma_defeats(io::Io *io) {
-    digest(io, "-ffp-contract=fast, which the pragma defeats", "-std=gnu23 -O2 -ffp-contract=fast");
+export void test_random_c_digest_fp_contract_fast_which_the_pragma_defeats() {
+    digest("-ffp-contract=fast, which the pragma defeats", "-std=gnu23 -O2 -ffp-contract=fast");
 }
 
-export void test_random_c_digest_o3_march_native_fp_contract_fast(io::Io *io) {
-    digest(io, "-O3 -march=native -ffp-contract=fast", "-std=gnu23 -O3 -march=native -ffp-contract=fast");
+export void test_random_c_digest_o3_march_native_fp_contract_fast() {
+    digest("-O3 -march=native -ffp-contract=fast", "-std=gnu23 -O3 -march=native -ffp-contract=fast");
 }
 
-export void test_random_c_refusal_ffast_math_fails_to_compile(io::Io *io) {
-    scratch::Project p = sources_project(io);
+export void test_random_c_refusal_ffast_math_fails_to_compile() {
+    scratch::Project p = sources_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run built = scratch::sh(&p, "smith cc -std=gnu23 -I \"$SMITH_REPO/.smith/include\" -ffast-math -c "
                                          "lib/smith/random.smith -o r.o");
     scratch::expect_failure("refusal: -ffast-math fails to compile", &built);
     scratch::expect_contains("refusal: ... with the reason", built.err, "-ffast-math changes floating-point results");
 }
 
-export void test_random_c_refusal_ofast_fails_to_compile(io::Io *io) {
-    scratch::Project p = sources_project(io);
+export void test_random_c_refusal_ofast_fails_to_compile() {
+    scratch::Project p = sources_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run built = scratch::sh(&p, "smith cc -std=gnu23 -I \"$SMITH_REPO/.smith/include\" -Ofast -c "
                                          "lib/smith/random.smith -o r.o");
     scratch::expect_failure("refusal: -Ofast fails to compile", &built);
 }
 
-export void test_random_c_refusal_a_normal_with_deviation_0_aborts(io::Io *io) {
-    scratch::Project p = lowered_project(io);
-    scratch::Run built = compile(&p, format::push(&io->arena, "-std=gnu23 ", warn).data, "-O2", "checks");
+export void test_random_c_refusal_a_normal_with_deviation_0_aborts() {
+    scratch::Project p = lowered_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run built = compile(&memory, &p, format::push(&memory, "-std=gnu23 ", warn).data, "-O2", "checks");
     scratch::expect_status("the checks build", 0, &built);
     scratch::Run run = scratch::sh(&p, "./checks assert");
     scratch::expect_status("refusal: a normal with deviation 0 aborts", 134, &run);
@@ -154,15 +187,22 @@ export void test_random_c_refusal_a_normal_with_deviation_0_aborts(io::Io *io) {
     }
 }
 
-static scratch::Project built_project(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "random_project");
+static scratch::Project built_project() {
+    scratch::Project p = scratch::make("p", "random_project");
     scratch::Run built = scratch::build(&p, "");
     scratch::expect_status("project: the build succeeds", 0, &built);
+    scratch::release(built.out); // built before the test's arena is the current allocator
+    scratch::release(built.err);
     return p;
 }
 
-export void test_random_c_project_gets_random_and_the_arena_with_smith_library(io::Io *io) {
-    scratch::Project p = built_project(io);
+export void test_random_c_project_gets_random_and_the_arena_with_smith_library() {
+    scratch::Project p = built_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::expect_text("project: the header is written", "yes",
                          scratch::capture(&p, "[ -f .smith/include/smith/random.h ] && echo yes"));
     scratch::expect_text("project: the source is written", "yes",
@@ -172,8 +212,13 @@ export void test_random_c_project_gets_random_and_the_arena_with_smith_library(i
     scratch::expect_text("project: the program runs (it prints)", "mean 0.5, normal 1, index 1", run.out);
 }
 
-export void test_random_c_project_unchanged_library_is_not_rewritten(io::Io *io) {
-    scratch::Project p = built_project(io);
+export void test_random_c_project_unchanged_library_is_not_rewritten() {
+    scratch::Project p = built_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     const char *stamp = "stat -c %Y .smith/lib/smith/random.smith"; // GNU stat's -f is the file system's status
     if constexpr (target::os == target::macos) {
         stamp = "stat -f %m .smith/lib/smith/random.smith 2>/dev/null || stat -c %Y .smith/lib/smith/random.smith";
@@ -185,8 +230,13 @@ export void test_random_c_project_unchanged_library_is_not_rewritten(io::Io *io)
     scratch::expect_text("project: an unchanged library is not rewritten", before, scratch::capture(&p, stamp));
 }
 
-export void test_random_c_project_clangd_reports_no_errors_in_main(io::Io *io) {
-    scratch::Project p = built_project(io);
+export void test_random_c_project_clangd_reports_no_errors_in_main() {
+    scratch::Project p = built_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     if (scratch::sh(&p, "smith lsp --version").status != 0) return;
     // The sample prints with printf; this tests the build flags the editor gets, not smith-effects.
     scratch::write(&p, ".clang-tidy", "Checks: \"-*\"\n");

@@ -13,16 +13,27 @@
 // smith-linked: sq
 // smith-hidden: sq
 // clang-format on
-#pragma once
+#ifndef SMITH_HEADER_typed
 #include <stddef.h>
 #include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#ifdef SMITH_INSTANCES
-int32_t typed_sq(int32_t x) __asm__("_typed::sq");
-#endif
 #ifdef __cplusplus
 }
+#endif
+#define SMITH_HEADER_typed
+#endif
+#ifdef SMITH_INSTANCES
+#ifndef SMITH_HEADER_typed_INSTANCES
+#define SMITH_HEADER_typed_INSTANCES
+#ifdef __cplusplus
+extern "C" {
+#endif
+int32_t typed_sq(int32_t x) __asm__("_typed::sq");
+#ifdef __cplusplus
+}
+#endif
+#endif
 #endif

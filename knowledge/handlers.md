@@ -46,8 +46,8 @@ prebuilt library's and one loaded with `dlopen`. Owner (2026-10-24): "always int
   which glibc's `<stdio.h>` makes extern inline when optimized, are defined under those names by asm labels, and
   `getdelim`/`__getdelim` (an optimized `getline`) are the stream's too. `malloc_usable_size` stands for `malloc_size`;
   there are no zones. A sanitized program also links an `__asan_default_options` (strong: the runtime's weak one is first in the link) of `abort_on_error=1:detect_leaks=0`, so a report
-  stops with SIGABRT as on macOS and the leak check Linux's ASan adds at exit is off, as on macOS. Known gap: a program built with `_FORTIFY_SOURCE` calls `__printf_chk` and its kind,
-  which the runtime does not define.
+  stops with SIGABRT as on macOS and the leak check Linux's ASan adds at exit is off, as on macOS. A program built with `_FORTIFY_SOURCE` calls `__printf_chk` and its kind (`__fprintf_chk`, `__vfprintf_chk`, `__dprintf_chk`, `__fgets_chk`,
+  `__fread_chk`, `__read_chk`...); the runtime defines them as their plain forms, and with no handler set they call glibc's own `_chk` (ASan's when sanitized).
 - **An optimizer knows malloc**: it may drop or fold a malloc/free pair, so a handler is seen only through calls it cannot
   see through (`tests/handlers/project.c` keeps its pointers in `volatile`).
 
@@ -109,9 +109,22 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
   handler, and none set is libc's. `gettimeofday`, `time` and the Mach clocks are not reached. A fake clock's `sleep`
   advances its time and returns, so sleeping on it never blocks. See [direct-call-modules](direct-call-modules.md).
 - **Processes (issue #240):** `SmithProcessHandler {start, read, write, close_input, wait, kill, close, cores}` is called by `smith::process` itself (no libc function is interposed); per thread, with a setter returning the previous handler, and none set is the real posix_spawn, pipes and waitpid. See [process](process.md).
-- **Network (issue #240):** `SmithNetHandler {connect, listen, port, accept, read, write, close}` is called by `smith::net` itself (no libc function is interposed); per thread, with a setter returning the previous handler, and none set is the real sockets and TLS. See [net](net.md).
+- **Network (issue #240):** `SmithNetHandler {connect, listen, port, accept, read, write, close, read_within}` is called by `smith::net` itself (no libc function is interposed); per thread, with a setter returning the previous handler, and none set is the real sockets and TLS; `read_within` is a read with a deadline (-1 with `ETIMEDOUT`), and a handler that leaves it null gets `read`. See [net](net.md).
 - **Entropy (issue #240):** `SmithEntropyHandler {fill}` answers `getentropy` (per thread, setter returns the previous
   one, none set is the system's; `fill` writes the bytes and never fails). `arc4random` and `getrandom` are not reached.
   `entropy::seed()` (`smith::entropy`) is the one caller in smith's libraries; it has the `entropy` effect
   (`getentropy` is `entropy` in `shim/effects_table.h`), and `smith::random` stays pure. A test scripts it with
   `entropy::fake(number)`, whose `fill` writes the bytes of a number.
+
+- **One table per thread (issue #885):** the handlers of a thread are one `SmithHandlers` (`include/smith/handlers.h`: a
+  pointer per kind, `allocator`, `files`, `console`, `env`, `clock`, `entropy`, `net`, `process`). Each thread has a table
+  of its own and one `thread_local` pointer names the current table (null: its own); `smith_handlers_table()` returns it and
+  `smith_handlers_set_table(table)` makes another current and returns the previous one (null: the thread's own). Every
+  setter and getter keeps its name and meaning: it reads or writes its member of the current table, so a thread that never
+  swaps behaves as before. The per-kind counters count the non-null handlers of the tables that are current (a swap moves
+  them), so the fast path is still one relaxed load, and the thread-local is still read in a `noinline` function after
+  the counter and `ready` checks. The task runtime (#241) gives each task a table and swaps it at a task switch: one store
+  instead of eight. `tests/handlers/table.c` tests the swap and two threads; `tests/handlers/bench.c` prints the cost of a
+  malloc/free pair (Linux x86_64, -O2, best of five): no handler 11.4 ns before and 11.5 ns after; under a bump handler
+  6.2 ns before and 6.6 ns after; the bump pair under ASan 6.7 ns before and 7.0 ns after (no handler under ASan 161 ns
+  both).

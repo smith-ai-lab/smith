@@ -1,12 +1,17 @@
 // `smith dbg` launches without a shell (#388): lldb's `run` expands the arguments through a shell that globs what the
 // user quoted and gives up after ~10 s of wall time. smith's `run` passes them as they are; `process launch -X true`
 // still expands. smith dbg is in the full smith only, so a smith without it skips these.
+// A test makes its project, then sets its own memory as the current allocator: what scratch returns to it (a Run's
+// texts, a file it reads) is given back with that memory, and scratch::clean frees what make holds.
 module dbg_launch_test;
 
 import scratch;
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import target;
+
+constexpr usize memory_size = (usize)16 << 20; // 16 MiB
 
 constexpr char program[_] = "#include <stdio.h>\n"
                             "int main(int count, char **arguments) {\n"
@@ -24,8 +29,13 @@ static bool made(scratch::Project *p) {
     return true;
 }
 
-export void test_macos_dbg_launch_run_passes_arguments_as_they_are(io::Io *io) {
-    scratch::Project p = scratch::project(io, "dbg_run", nullptr);
+export void test_macos_dbg_launch_run_passes_arguments_as_they_are() {
+    scratch::Project p = scratch::make("dbg_run", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     if (!made(&p)) return;
     scratch::Run run = scratch::sh(&p, "smith dbg -b -o 'settings set plugin.process.gdb-remote.packet-timeout 600' "
                                        "-o run args -- 'a b' '*.txt' 2>&1");
@@ -34,8 +44,13 @@ export void test_macos_dbg_launch_run_passes_arguments_as_they_are(io::Io *io) {
     scratch::expect_lacks("run: nothing is expanded", run.out, "<one.txt>");
 }
 
-export void test_macos_dbg_launch_process_launch_with_x_true_expands(io::Io *io) {
-    scratch::Project p = scratch::project(io, "dbg_expand", nullptr);
+export void test_macos_dbg_launch_process_launch_with_x_true_expands() {
+    scratch::Project p = scratch::make("dbg_expand", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     if (!made(&p)) return;
     scratch::Run run = scratch::sh(&p, "smith dbg -b -o 'settings set plugin.process.gdb-remote.packet-timeout 600' "
                                        "-o 'process launch -X true' args -- '*.txt' 2>&1");

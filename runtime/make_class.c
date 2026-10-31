@@ -294,6 +294,19 @@ static void smith_make_classify(void) {
 
 constexpr size_t smith_make_inputs_max = 65536;
 
+// Adds one input; past the limit it is reported (once per list), never dropped without a word.
+static void smith_make_input_add(const char **result, size_t *used, const char *name) {
+    if (*used < smith_make_inputs_max) {
+        result[(*used)++] = name;
+        return;
+    }
+    if (*used == smith_make_inputs_max) {
+        smith_make_report("more than %zu prerequisites in one list (the limit); %s and the rest are not listed",
+                          smith_make_inputs_max, name);
+        (*used)++; // reported once
+    }
+}
+
 // What a list of prerequisites means to build.c: files, the outputs of steps and the names of tasks; a target that only
 // groups others (no recipe, no file) is replaced by what it groups, and a folder or FORCE is dropped.
 static const char **smith_make_inputs(const char *const *names, size_t count, size_t *out_count) {
@@ -301,30 +314,42 @@ static const char **smith_make_inputs(const char *const *names, size_t count, si
     const char **result = smith_make_new_list((smith_make_inputs_max + 1));
     size_t depth = 0;
     size_t used = 0;
+    if (count > smith_make_inputs_max) {
+        smith_make_report("more than %zu prerequisites in one list (the limit); %s and the rest are not listed",
+                          smith_make_inputs_max, names[smith_make_inputs_max]);
+        count = smith_make_inputs_max;
+    }
     for (size_t i = count; i > 0; i--)
         work[depth++] = names[i - 1];
     for (size_t steps = 0; depth > 0 && steps < smith_make_inputs_max * 4; steps++) {
         const char *name = work[--depth];
         const SmithMakeNode *node = smith_make_node_find(name);
         if (node == nullptr) {
-            if (strcmp(name, "FORCE") != 0 && used < smith_make_inputs_max) result[used++] = name;
+            if (strcmp(name, "FORCE") != 0) smith_make_input_add(result, &used, name);
             continue;
         }
         const SmithMakeInfo *info = smith_make_info_of(node);
         if (info->kind == SmithMakeKind_Drop && !node->has_recipe && !smith_make_exists(name)) {
-            for (size_t k = info->prerequisite_count; k > 0 && depth < smith_make_inputs_max; k--)
+            for (size_t k = info->prerequisite_count; k > 0; k--) {
+                if (depth >= smith_make_inputs_max) {
+                    smith_make_report("more than %zu prerequisites waiting in one list (the limit); %s is not listed",
+                                      smith_make_inputs_max, info->prerequisites[k - 1]);
+                    break;
+                }
                 work[depth++] = info->prerequisites[k - 1];
+            }
             continue;
         }
         if (info->kind == SmithMakeKind_Drop && info->directory) continue;
         if (info->kind == SmithMakeKind_Drop && smith_make_exists(name)) {
-            if (used < smith_make_inputs_max) result[used++] = name;
+            smith_make_input_add(result, &used, name);
             continue;
         }
         if (info->kind == SmithMakeKind_Drop) continue;
         bool named = info->kind == SmithMakeKind_Alias || info->kind == SmithMakeKind_Task;
-        if (used < smith_make_inputs_max) result[used++] = named ? info->emit_name : name;
+        smith_make_input_add(result, &used, named ? info->emit_name : name);
     }
+    if (used > smith_make_inputs_max) used = smith_make_inputs_max; // the report above says the rest was left out
     result[used] = nullptr;
     *out_count = used;
     return result;

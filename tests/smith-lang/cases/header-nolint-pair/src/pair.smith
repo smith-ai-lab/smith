@@ -1,0 +1,20 @@
+module pair;
+
+// The doubled value. The region below is closed after the function, and the header keeps both comments.
+// NOLINTBEGIN(smith-c23)
+export inline i32 twice(i32 value) {
+    return value * 2;
+}
+// NOLINTEND(smith-c23)
+
+// A region the header has none of: nothing of it is exported.
+// NOLINTBEGIN(smith-c23)
+i32 hidden(i32 value) {
+    return value + 1;
+}
+// NOLINTEND(smith-c23)
+
+// The first value.
+export i32 first() {
+    return hidden(0);
+}

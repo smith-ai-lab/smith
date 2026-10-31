@@ -1,17 +1,27 @@
 // `smith build` and the compiler it runs, from tests/build.sh sections 12 and 13: a change of compiler rebuilds every
 // object it compiled and a build with the same compiler does nothing, smith routed to an external clang, a replaced
 // smith, and the identity a smith reports. Each test is a project of its own (tests/build_fixtures), so they run side
-// by side with the rest.
+// by side with the rest. A test makes its project, then sets its own memory as the current allocator: what scratch
+// returns to it (a Run's texts, a file it reads) is given back with that memory, and scratch::clean frees what make
+// holds.
 module build_compiler_test;
 
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import scratch;
 
+constexpr usize memory_size = (usize)16 << 20; // 16 MiB
+
 // 13. ninja sees the same command (`smith ...`) before and after, so the objects would look up to date. Each object and
 // program depends on a file in .smith/compiler/ that says which compiler it is.
-export void test_build_a_change_of_compiler_rebuilds_every_object(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "compiler_change");
+export void test_build_a_change_of_compiler_rebuilds_every_object() {
+    scratch::Project p = scratch::make("p", "compiler_change");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)scratch::build(&p, "");
     // two compiles, the link of the program and the link of the handlers runtime beside it
     scratch::expect_count("compiler change: the first build runs the compiler on both sources and links twice", 4,
@@ -46,8 +56,13 @@ export void test_build_a_change_of_compiler_rebuilds_every_object(io::Io *io) {
 
 // smith as the compiler: what it runs is part of what it is. The external clangs are wrappers that note their runs on
 // a.c and run the real clang (smith build compiles build.c with them as well, which they let pass).
-export void test_build_smith_routes_to_an_external_clang(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "external_clang");
+export void test_build_smith_routes_to_an_external_clang() {
+    scratch::Project p = scratch::make("p", "external_clang");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)scratch::sh(&p, "mkdir smith-bin && { cp -c \"$SMITH_SELF\" smith-bin/smith-cc 2>/dev/null || cp "
                           "\"$SMITH_SELF\" smith-bin/smith-cc; }");
     scratch::Run first = scratch::sh(&p, "env SMITH_CLANG=\"$PWD/bin/w2\" smith build");
@@ -73,8 +88,13 @@ export void test_build_smith_routes_to_an_external_clang(io::Io *io) {
 
 // The compiler is the clang smith runs, not smith's file: a smith replaced by a copy (a rebuilt smith) compiles the
 // same.
-export void test_build_a_replaced_smith_with_the_same_clang_rebuilds_nothing(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "external_clang");
+export void test_build_a_replaced_smith_with_the_same_clang_rebuilds_nothing() {
+    scratch::Project p = scratch::make("p", "external_clang");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)scratch::sh(&p, "mkdir smith-bin && { cp -c \"$SMITH_SELF\" smith-bin/smith-cc 2>/dev/null || cp "
                           "\"$SMITH_SELF\" smith-bin/smith-cc; }");
     scratch::Run upgrade = scratch::sh(&p, "env -u SMITH_CLANG smith build");
@@ -97,8 +117,13 @@ export void test_build_a_replaced_smith_with_the_same_clang_rebuilds_nothing(io:
 
 // What a smith with clang inside says about its clang is its identity: a rebuilt smith reports the same, a rebuilt LLVM
 // another. A stand-in smith that prints the two lines shows both.
-export void test_build_a_smith_with_another_llvm_rebuilds_the_object(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "compiler_identity");
+export void test_build_a_smith_with_another_llvm_rebuilds_the_object() {
+    scratch::Project p = scratch::make("p", "compiler_identity");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)scratch::build(&p, "");
     scratch::expect_count("identity: the first build compiles", 1, scratch::lines(&p, "runs"));
     (void)scratch::sh(&p, "cp fake/smith-cc fake/smith-cc.new && mv fake/smith-cc.new fake/smith-cc");
@@ -115,8 +140,13 @@ export void test_build_a_smith_with_another_llvm_rebuilds_the_object(io::Io *io)
 
 // smith-cc is a link to smith, and a program knows it is a compiler by the name it is run by: the identity is asked of
 // the link as found on PATH, not of the file it points to, or every rebuilt smith would be a new compiler.
-export void test_build_a_smith_that_is_a_link_to_a_program_is_asked_by_the_links_name(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "compiler_identity");
+export void test_build_a_smith_that_is_a_link_to_a_program_is_asked_by_the_links_name() {
+    scratch::Project p = scratch::make("p", "compiler_identity");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(
         &p, "fake/smith",
         "#!/bin/sh\n"

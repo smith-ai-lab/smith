@@ -2,8 +2,9 @@
 // .smith/modules and the cache shared in $XDG_CACHE_HOME/smith/modules.
 module build_modules_test;
 
+import smith::arena;
+import smith::mem;
 import smith::format;
-import smith::io;
 import smith::test;
 import scratch;
 
@@ -12,8 +13,13 @@ static const char *real_dir(const scratch::Project *p) {
     return scratch::capture(p, "pwd -P");
 }
 
-export void test_build_modules_a_header_is_a_module_with_its_flags_maps_and_dependencies(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "clang_modules");
+export void test_build_modules_a_header_is_a_module_with_its_flags_maps_and_dependencies() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "clang_modules");
+    defer scratch::clean(&p);
     scratch::own_cache(&p);
     char text[2048];
     scratch::Run built = scratch::build(&p, "-v");
@@ -54,8 +60,13 @@ export void test_build_modules_a_header_is_a_module_with_its_flags_maps_and_depe
     scratch::expect_contains("modules: a no-op rebuild does nothing", again.out, "no work to do");
 }
 
-export void test_build_modules_edits_rebuild_what_reaches_them_and_the_cache_is_shared(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "clang_modules");
+export void test_build_modules_edits_rebuild_what_reaches_them_and_the_cache_is_shared() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "clang_modules");
+    defer scratch::clean(&p);
     scratch::own_cache(&p);
     (void)scratch::build(&p, "");
     scratch::sleep(&p, 1000);

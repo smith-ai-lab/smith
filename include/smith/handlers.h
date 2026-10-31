@@ -192,6 +192,9 @@ struct SmithNetHandler {
     ssize_t (*write)(SmithNetHandler *self, int connection, const void *buffer, size_t size);
     // Closes a connection or a listener. Called once; the handler may refuse a second time.
     int (*close)(SmithNetHandler *self, int id);
+    // Like `read`, but gives up when nothing has arrived within timeout_ns: -1 with errno ETIMEDOUT. Null: the net
+    // uses `read` (no deadline).
+    ssize_t (*read_within)(SmithNetHandler *self, int connection, void *buffer, size_t size, int64_t timeout_ns);
 };
 
 // Sets the network of the calling thread (null: the real one), returning the one it had.
@@ -214,3 +217,25 @@ SmithEntropyHandler *smith_handlers_set_entropy(SmithEntropyHandler *entropy);
 
 // The entropy of the calling thread, null when none is set.
 SmithEntropyHandler *smith_handlers_entropy(void);
+
+// The handlers of a thread are one table: a pointer per kind, null for none set. Every thread has a table of its own,
+// and it is the current one until smith_handlers_set_table names another; the setters and getters above read and write
+// their member of the current table. The task runtime (issue #241) gives each task a table and swaps it at a task
+// switch, one store; knowledge/handlers.md.
+typedef struct {
+    SmithAllocator *allocator;
+    SmithFileHandler *files;
+    SmithConsoleHandler *console;
+    SmithEnvHandler *env;
+    SmithClockHandler *clock;
+    SmithEntropyHandler *entropy;
+    SmithNetHandler *net;
+    SmithProcessHandler *process;
+} SmithHandlers;
+
+// The current table of the calling thread: its own unless smith_handlers_set_table named another.
+SmithHandlers *smith_handlers_table(void);
+
+// Makes `table` the current table of the calling thread (null: its own) and returns the one that was current, as
+// signal() does; restoring it is the caller's.
+SmithHandlers *smith_handlers_set_table(SmithHandlers *table);

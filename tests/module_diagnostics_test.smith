@@ -2,7 +2,8 @@
 // and of nothing else, and build::defaults' .errors adds a diagnostic to it.
 module module_diagnostics_test;
 
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import scratch;
 
@@ -53,24 +54,39 @@ static const char *build_with(const char *field) {
     return text;
 }
 
-export void test_module_diagnostics_a_module_fails_on_the_baseline(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_module_diagnostics_a_module_fails_on_the_baseline() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "main.smith", cast_away_const);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_failure("a cast that drops const fails in a module", &run);
     scratch::expect_contains("the message names the diagnostic", both(&run), "-Wcast-qual");
 }
 
-export void test_module_diagnostics_a_mismatched_function_cast_fails(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_module_diagnostics_a_mismatched_function_cast_fails() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "main.smith", mismatched_function_cast);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_failure("a function pointer cast to another type fails in a module", &run);
     scratch::expect_contains("the message names the diagnostic", both(&run), "-Wcast-function-type-strict");
 }
 
-export void test_module_diagnostics_a_c_file_keeps_its_flags(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_module_diagnostics_a_c_file_keeps_its_flags() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "main.c",
                    "int main(void) {\n    const char *s = \"hi\";\n    char *m = (char *)s;\n    return m[0] == 'h' ? "
                    "0 : 1;\n}\n");
@@ -78,8 +94,13 @@ export void test_module_diagnostics_a_c_file_keeps_its_flags(io::Io *io) {
     scratch::expect_status("the same cast compiles in a .c file", 0, &run);
 }
 
-export void test_module_diagnostics_an_extra_is_off_until_listed(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_module_diagnostics_an_extra_is_off_until_listed() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "main.smith", padded);
     scratch::Run quiet = scratch::build(&p, "");
     scratch::expect_status("padding is no error by default", 0, &quiet);
@@ -89,8 +110,13 @@ export void test_module_diagnostics_an_extra_is_off_until_listed(io::Io *io) {
     scratch::expect_contains("the message names the diagnostic", both(&run), "-Wpadded");
 }
 
-export void test_module_diagnostics_warnings_never_fail_the_build(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_module_diagnostics_warnings_never_fail_the_build() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "main.smith", padded);
     scratch::write(&p, "build.smith", build_with(".warnings = build::list(b, \"padded\", nullptr)"));
     scratch::Run run = scratch::build(&p, "");

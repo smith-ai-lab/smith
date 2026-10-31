@@ -229,7 +229,7 @@ i32 main() {
 same true, copy[1] 0, copy[3] 4.5
 ```
 
-`mem::copy`, `mem::move`, `mem::zero`, `mem::fill`, `mem::equal`, `mem::bytes(&x)` and `mem::view(bytes, f32)` take slices, so a length that does not match is a checked failure, and they lower to the C functions. In a file with a `module` line the raw `memcpy`, `memmove`, `memset` and `memcmp` are a `smith-mem` finding that names the replacement (`smith lint --fix` applies the mechanical ones); a function that implements a wrapper says `contract::trusted()`. A `.c` file is untouched. [smith-mem](.agents/skills/smith-mem/SKILL.md).
+`mem::copy`, `mem::move`, `mem::zero`, `mem::fill`, `mem::equal`, `mem::bytes(&x)` and `mem::view(bytes, f32)` take slices, so a length that does not match is a checked failure, and they lower to the C functions. In a file with a `module` line the raw `memcpy`, `memmove`, `memset`, `memcmp`, `malloc`, `calloc` and `free` are a `smith-mem` finding that names the replacement (`smith lint --fix` applies the mechanical ones); a function that implements a wrapper says `contract::trusted()`. A `.c` file is untouched. [smith-mem](.agents/skills/smith-mem/SKILL.md).
 
 A test can make memory refuse on purpose with `smith::failing`: `failing::make(parent, key)` is an allocator that refuses one allocation in eight by a draw from a `random::Key`, so a failure replays from its seed ([smith-failing](.agents/skills/smith-failing/SKILL.md)).
 
@@ -752,7 +752,7 @@ i32 main() {
 | `smith dbg`, `smith dap` | lldb, and lldb-dap for editors | [smith-debug](.agents/skills/smith-debug/SKILL.md) |
 | `smith mcp` | the debugger as tools for an agent | [smith-mcp](.agents/skills/smith-mcp/SKILL.md) |
 | `smith lsp` | clangd, for C, C++ and `.smith` | [smith-lsp](.agents/skills/smith-lsp/SKILL.md) |
-| `smith docs` | checks `AGENTS.md`, `knowledge/` and the skills | [smith-docs](.agents/skills/smith-docs/SKILL.md) |
+| `smith docs` | checks `knowledge/` and the skills | [smith-docs](.agents/skills/smith-docs/SKILL.md) |
 | `smith fetch`, `smith cache` | packages, by URL and hash, and the caches | [smith-packages](.agents/skills/smith-packages/SKILL.md) |
 
 The libraries are [arena](.agents/skills/smith-arena/SKILL.md), [io](.agents/skills/smith-io/SKILL.md),

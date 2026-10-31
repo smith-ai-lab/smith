@@ -2,18 +2,29 @@
 // that sees only the exports; `smith test` finds any `*_test.smith` or `*_test.c`; `smith build` never links one.
 module build_layout_test;
 
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import scratch;
 
-export void test_build_layout_a_test_beside_its_module_is_run_by_smith_test(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "unit_beside");
+export void test_build_layout_a_test_beside_its_module_is_run_by_smith_test() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "unit_beside");
+    defer scratch::clean(&p);
     scratch::Run run = scratch::sh(&p, "smith test --test geometry::box_test::a_box_has_the_area_of_its_sides");
     scratch::expect_status("layout: smith test runs the test beside the module", 0, &run);
 }
 
-export void test_build_layout_the_program_never_links_a_test(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "unit_beside");
+export void test_build_layout_the_program_never_links_a_test() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "unit_beside");
+    defer scratch::clean(&p);
     scratch::Run built = scratch::build(&p, "");
     scratch::expect_status("layout: smith build passes", 0, &built);
     scratch::expect_text("layout: no object of a test", "0",
@@ -22,8 +33,13 @@ export void test_build_layout_the_program_never_links_a_test(io::Io *io) {
     scratch::expect_status("layout: and the program runs", 0, &ran);
 }
 
-export void test_build_layout_a_test_module_cannot_name_a_private_function(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "unit_private");
+export void test_build_layout_a_test_module_cannot_name_a_private_function() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "unit_private");
+    defer scratch::clean(&p);
     scratch::Run run = scratch::sh(&p, "env SMITH_OUTPUT=full smith test");
     scratch::expect_failure("layout: a private function is out of reach", &run);
     scratch::expect_contains("layout: and the error says so", run.out, "lists no export `scale`");

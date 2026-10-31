@@ -4,10 +4,12 @@
 // reads. Each fixture is tests/build_fixtures/steps_<name>/build.c.
 module build_steps_text_test;
 
-import smith::io;
-import smith::test;
-import scratch;
+import smith::arena;
 import smith::mem;
+import scratch;
+import smith::test;
+
+constexpr usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
 
 // The last line of a text without its trailing newlines, as `echo "$out" | tail -n 1` gives it.
 static const char *last_line(const char *text) {
@@ -33,8 +35,13 @@ static const char *present(const scratch::Project *p, const char *name) {
     return scratch::exists(p, name) ? "present" : "absent";
 }
 
-export void test_build_steps_a_command_word_with_newlines_runs_from_a_file(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_newline");
+export void test_build_steps_a_command_word_with_newlines_runs_from_a_file() {
+    scratch::Project p = scratch::make("p", "steps_newline");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "input", "a\n");
     scratch::Run first = scratch::build(&p, "");
     scratch::expect_status("newline: a multi-line sh -c script with positional arguments runs", 0, &first);
@@ -61,15 +68,25 @@ export void test_build_steps_a_command_word_with_newlines_runs_from_a_file(io::I
                          scratch::capture(&p, "ls .smith/command | grep -c '^[0-9a-f]\\{16\\}$'"));
 }
 
-export void test_build_steps_a_newline_in_a_description_is_an_error(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_newline_description");
+export void test_build_steps_a_newline_in_a_description_is_an_error() {
+    scratch::Project p = scratch::make("p", "steps_newline_description");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("newline: a newline in a description is still an error", 2, &run);
     scratch::expect_contains("newline: the description message", run.err, "holds a newline");
 }
 
-export void test_build_steps_smith_write_makes_the_file_and_leaves_an_equal_one_alone(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_write");
+export void test_build_steps_smith_write_makes_the_file_and_leaves_an_equal_one_alone() {
+    scratch::Project p = scratch::make("p", "steps_write");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run first = scratch::build(&p, "");
     scratch::expect_status("write: the bytes, in a folder smith made", 0, &first);
     scratch::expect_text("write: the bytes, in a folder smith made", "one",
@@ -105,8 +122,13 @@ static void refuses_the_write_path(const scratch::Project *p, const char *path) 
 // Seven builds of one project: each used to be a test of its own with a project of its own, and each of those spent
 // about 2 CPU-s building the build program. A refused path stops build.c before it writes anything, so the builds
 // do not see one another; the one that is accepted comes last. The assertions are the same.
-export void test_build_steps_smith_write_refuses_bad_paths_and_accepts_dot_slash_folder_file(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_write_paths");
+export void test_build_steps_smith_write_refuses_bad_paths_and_accepts_dot_slash_folder_file() {
+    scratch::Project p = scratch::make("p", "steps_write_paths");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     refuses_the_write_path(&p, "/abs.txt");
     refuses_the_write_path(&p, "../up.txt");
     refuses_the_write_path(&p, "a/../b.txt");
@@ -118,8 +140,13 @@ export void test_build_steps_smith_write_refuses_bad_paths_and_accepts_dot_slash
     scratch::expect_text("write: ./folder/file is accepted", "x", scratch::capture(&p, "cat fine/ok.txt"));
 }
 
-export void test_build_steps_capture_or_gives_the_fallback_for_a_failing_program(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_capture_or");
+export void test_build_steps_capture_or_gives_the_fallback_for_a_failing_program() {
+    scratch::Project p = scratch::make("p", "steps_capture_or");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     // No slot: under load the nested build would print "waiting for a slot" (#433) into the stderr compared below.
     scratch::Run run = scratch::sh(&p, "env SMITH_SLOTS=0 smith build");
     scratch::expect_status("capture_or: failed, missing, working, noisy, killed and a nullptr fallback", 0, &run);
@@ -128,8 +155,13 @@ export void test_build_steps_capture_or_gives_the_fallback_for_a_failing_program
     scratch::expect_text("capture_or: stderr goes to /dev/null", "", run.err);
 }
 
-export void test_build_steps_capture_of_a_failing_program_is_still_an_error(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_capture_fail");
+export void test_build_steps_capture_of_a_failing_program_is_still_an_error() {
+    scratch::Project p = scratch::make("p", "steps_capture_fail");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("capture: a failing program is still an error", 2, &run);
 }
@@ -147,8 +179,13 @@ static void refuses_the_task_name(const scratch::Project *p, const char *argumen
 // Nine builds of one project: each used to be a test of its own with a project of its own, and each of those spent
 // about 2 CPU-s building the build program. The builds that succeed come first, on the project as the fixture left it;
 // a refused name stops build.c before any task runs. The assertions are the same.
-export void test_build_steps_task_and_alias_names_may_hold_slashes_and_bad_ones_are_refused(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_names");
+export void test_build_steps_task_and_alias_names_may_hold_slashes_and_bad_ones_are_refused() {
+    scratch::Project p = scratch::make("p", "steps_names");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)scratch::build(&p, "check/src/a.c");
     scratch::Run group = scratch::build(&p, "group/all");
     scratch::expect_status("names: a task named after a file runs, and so does an alias with a '/'", 0, &group);
@@ -164,8 +201,13 @@ export void test_build_steps_task_and_alias_names_may_hold_slashes_and_bad_ones_
     refuses_the_task_name(&p, "-Dname=a:b", "a:b");
 }
 
-export void test_build_steps_a_defer_callback_reads_the_options_build_read(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_option_again");
+export void test_build_steps_a_defer_callback_reads_the_options_build_read() {
+    scratch::Project p = scratch::make("p", "steps_option_again");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "source", "s\n");
     scratch::Run loud = scratch::build(&p, "-Dname=Ada -Dloud");
     scratch::expect_status("option again: a callback reads the values build() read", 0, &loud);
@@ -180,8 +222,13 @@ export void test_build_steps_a_defer_callback_reads_the_options_build_read(io::I
                              "option 'name' is declared as a value and read as a flag");
 }
 
-export void test_build_steps_smith_glob_takes_several_patterns_sorted_each_name_once(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_glob_several");
+export void test_build_steps_smith_glob_takes_several_patterns_sorted_each_name_once() {
+    scratch::Project p = scratch::make("p", "steps_glob_several");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)scratch::sh(&p, "mkdir src other && echo a >src/a.txt && echo b >src/b.txt && echo c >other/c.md");
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("glob: the union is sorted with each name once", 0, &run);
@@ -189,8 +236,13 @@ export void test_build_steps_smith_glob_takes_several_patterns_sorted_each_name_
                          scratch::capture(&p, "tr '\\n' ' ' <joined | sed 's| *$||'"));
 }
 
-export void test_build_steps_smith_join_and_smith_list_build_text_and_lists(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_join_list");
+export void test_build_steps_smith_join_and_smith_list_build_text_and_lists() {
+    scratch::Project p = scratch::make("p", "steps_join_list");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("join, list: build.c runs", 0, &run);
     scratch::expect_text("join: empty, one, several, empty separator, newline, mapped",
@@ -201,8 +253,13 @@ export void test_build_steps_smith_join_and_smith_list_build_text_and_lists(io::
                          scratch::capture(&p, "cat list.txt"));
 }
 
-export void test_build_steps_double_star_in_smith_glob(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_glob_star");
+export void test_build_steps_double_star_in_smith_glob() {
+    scratch::Project p = scratch::make("p", "steps_glob_star");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)scratch::sh(&p, "mkdir -p src/x/y/z src/.hid/deep other && echo >src/a.c && echo >src/x/b.c && "
                           "echo >src/x/y/z/d.c && echo >src/x/y/c.c && echo >src/.hid/h.c && echo >src/.hid/h.h && "
                           "echo >src/x/y/e.h && echo >other/a.c");
@@ -220,8 +277,13 @@ export void test_build_steps_double_star_in_smith_glob(io::Io *io) {
 }
 
 // An option that only a smith_defer callback reads: stage 1 cannot know it yet, stage 2 checks it.
-export void test_build_steps_an_option_only_a_defer_callback_reads_is_checked_after_it_ran(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "steps_defer_option");
+export void test_build_steps_an_option_only_a_defer_callback_reads_is_checked_after_it_ran() {
+    scratch::Project p = scratch::make("p", "steps_defer_option");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "source", "x\n");
     scratch::Run late = scratch::build(&p, "-Dsuffix=late");
     scratch::expect_status("defer option: read only in the callback, on a fresh tree", 0, &late);
