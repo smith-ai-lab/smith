@@ -27,6 +27,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [smith prove checks LLVM IR with Alive2, Bitwuzla and Z3](prover.md): smith prove proves each function with a contract in a process of its own, assumes functions marked smith_trusted, and uses no list.
 - [smith::task, fibers, groups and one worker per core](task.md): Tasks on 256 KB mmap stacks with a guard page, switched by assembly, run by one worker thread per core, waited for in a task::Group, with the scheduler a handler (issues #241, #940).
 - [smith::slice and smith::ascii replace text's slice operations](slice-library.md): A slice library generic over the element does what text did for chars, with no allocation, option for a search that may find nothing, and a character test that reads no locale.
+- [smith::wrapping is the written way out of a module's overflow checks](wrapping-arithmetic.md): Signed arithmetic that wraps in two's complement, by name, so a module can mean wrapping where the checked default would fail the task (issue #351).
 - [The .smith language](smith-language.md): A .smith file is C with modules, lowered to C as clang reads it by a token hook, with sized types, the rules, one command, and what the language does not do yet.
 
 ## Conventions

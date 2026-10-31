@@ -237,6 +237,10 @@ export void test_the_slice_header_compiles_alone() {
     generated("slice");
 }
 
+export void test_the_wrapping_header_compiles_alone() {
+    generated("wrapping");
+}
+
 export void test_the_task_header_compiles_alone() {
     generated("task");
 }
