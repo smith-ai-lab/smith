@@ -3364,11 +3364,13 @@ static const char *const *smith_tests_imported(SmithBuild *b, const char *const 
 // The libraries the runner and the code under test call: the arena and random (the test library draws its keys and
 // memory from them), mem (the checked allocator it sets around each test) and failing (the refusing one a test may ask
 // for), trace (a failure's report), contract
-// (<smith/contract.h>) and io, then those the test files import. Each is compiled here, with the test flags, unless the
+// (<smith/contract.h>), format and the direct libraries the runner calls (env, clock, console, files, process), then those
+// the test files import. Each is compiled here, with the test flags, unless the
 // project links it itself in .objects, so no library is defined twice. Returns the new count of objects.
 static size_t smith_tests_libraries(SmithBuild *b, const SmithTests *copy, const SmithTests *tests,
                                     const char *const *imported, const char **objects, size_t used) {
-    static const char *const libraries[] = {"arena", "random", "trace", "contract", "io", "mem", "failing"};
+    static const char *const libraries[] = {"arena", "random", "trace", "contract", "mem", "failing", "format",
+                                            "env", "clock", "console", "files", "process"};
     for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
         const char *source = smith_library(b, libraries[i]); // C or a .smith module
         if (smith_tests_links(tests, source)) continue;
