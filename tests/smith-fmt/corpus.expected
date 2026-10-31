@@ -1081,6 +1081,34 @@ i32 main() {
     if (h == .error) c::printf("error %d\n", h.error);
     return 0;
 }
+==> enum-generic-derived-result/src/keep.smith <==
+module keep;
+
+// A generic whose result type is derived from an argument: `return v;` is the `.some` of the instance's option.
+
+export option(typeof(v)) keep(auto v) {
+    return v;
+}
+==> enum-generic-derived-result/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import keep;
+
+typedef option(i32) Number;
+
+i32 main(void) {
+    Number n = keep::keep(7);
+    switch (n) {
+    case .some:
+        c::printf("some %d\n", n.some);
+        break;
+    case .none:
+        c::printf("none\n");
+        break;
+    }
+    return 0;
+}
 ==> enum-generic-import-in-function/src/lists.smith <==
 module lists;
 
