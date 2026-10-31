@@ -18,7 +18,6 @@ compile_commands.json
 /include/smith/failing.h
 /include/smith/format.h
 /include/smith/inflate.h
-/include/smith/io.h
 /include/smith/math.h
 /include/smith/mem.h
 /include/smith/option.h

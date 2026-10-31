@@ -68,7 +68,7 @@ Built means in the language today; planned means decided and in an open issue.
 | a channel | a generator, `stream::Stream(T)` | #436 | planned |
 | a signal handler | `signal::stream(SIGINT, ...)` | #447 | planned |
 | a stack overflow | the compiler proves each task's stack depth | #446 | planned |
-| `io::Io` threaded from `main` | direct-call modules: `files`, `process`, `net`, `clock`, `console`, `env` | #240 | planned |
+| the world threaded from `main` | direct-call modules: `files`, `process`, `net`, `clock`, `console`, `env` | #240 | done |
 
 ## Every check speaks the same way (proposed)
 

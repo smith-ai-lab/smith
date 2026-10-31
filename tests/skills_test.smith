@@ -387,38 +387,6 @@ export void test_skill_smith_inflate_sink() {
     skill_case("smith-inflate-sink");
 }
 
-export void test_skill_smith_io() {
-    skill_case("smith-io");
-}
-
-export void test_skill_smith_io_async() {
-    skill_case("smith-io-async");
-}
-
-export void test_skill_smith_io_c() {
-    skill_case("smith-io-c");
-}
-
-export void test_skill_smith_io_capabilities() {
-    skill_case("smith-io-capabilities");
-}
-
-export void test_skill_smith_io_errors() {
-    skill_case("smith-io-errors");
-}
-
-export void test_skill_smith_io_fake() {
-    skill_case("smith-io-fake");
-}
-
-export void test_skill_smith_io_net() {
-    skill_case("smith-io-net");
-}
-
-export void test_skill_smith_io_processes() {
-    skill_case("smith-io-processes");
-}
-
 export void test_skill_smith_json() {
     skill_case("smith-json");
 }

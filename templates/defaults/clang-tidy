@@ -11,9 +11,8 @@
 #   optin.performance.Padding: a struct's padding is a layout choice, and the order of fields is already the programmer's
 #     (22 findings, none acted on).
 #
-# smith-effects: a program touches the world only through capabilities (SmithIo and its parts) that main passes down, so a
-# function's signature says what it can do. A call into a system header that is not pure is reported: take a
-# SmithFiles *, SmithConsole * and so on instead (the smith-io skill). Delete smith-effects from Checks to opt out, or set
+# smith-effects: a call into a system header that is not pure is reported, with the smith module that makes the call
+# swappable (smith::files, smith::console, smith::process and so on, the smith-effects skill). Delete smith-effects from Checks to opt out, or set
 # smith-effects.CFiles: false below to check .smith files only.
 #
 # smith-preprocessor: a .smith file has no preprocessor. Every directive (#include, #define, #if, #pragma, ...) and every

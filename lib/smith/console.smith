@@ -1,6 +1,6 @@
 // smith::console, <smith/console.h>: standard output, standard error and standard input, through the console handler
 // of the thread (include/smith/handlers.h), so a test can stand in for them: a fake console captures what a function
-// prints and answers what it reads. Called directly, no `io::Io` value:
+// prints and answers what it reads. Called directly, with no capability value to pass:
 //
 //   console::print("moved ", dx, " ", dy, "\n");        // typed pieces, as format::to; no length limit
 //   console::print_error("cannot open ", path, "\n");

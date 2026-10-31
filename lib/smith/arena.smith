@@ -454,7 +454,7 @@ export type slice_of(type element, usize count) {
 
 // A second arena of capacity bytes out of the memory the parent has not used: the next capacity bytes after its cursor,
 // aligned to align_max, and the parent's cursor moves past them. Nothing in them is touched or poisoned, so when the
-// parent is a reservation of address space (the 64 GiB mmap of smith_io_make) the carved arena commits pages only as it
+// parent is a reservation of address space (a large mmap) the carved arena commits pages only as it
 // is used, and a program can carve hundreds of MiB at start for arenas with different lifetimes (one reset every frame,
 // one for the run). Running out of the parent's capacity is the same stop as a push. Requires that the parent has no
 // scope open, since the end of the scope would hand the carved memory back.

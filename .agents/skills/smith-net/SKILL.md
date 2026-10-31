@@ -1,11 +1,11 @@
 ---
 name: smith-net
-description: "Using smith::net (import smith::net; net::connect, connect_tls, listen, accept, read, read_within, write, close, stop, net::fake): TCP and TLS by direct calls that return a result, with a scripted in-memory fake for tests. Load when code imports smith::net or includes <smith/net.h>, or on opening a socket, a TLS connection or a server without io::Io."
+description: "Using smith::net (import smith::net; net::connect, connect_tls, listen, accept, read, read_within, write, close, stop, net::fake): TCP and TLS by direct calls that return a result, with a scripted in-memory fake for tests. Load when code imports smith::net or includes <smith/net.h>, or on opening a socket, a TLS connection or a server."
 ---
 
 # TCP and TLS by direct calls: smith::net
 
-No `io::Io` value: call `net::` anywhere. A call returns `result(T, net::Error)`; the error is what the world said (`NotFound` for a name that does not resolve, `Refused`, `Unreachable`, `TimedOut`, `Reset`, `InUse`, `Denied`, `TooMany`; for TLS `Expired`, `NotYetValid`, `WrongHost`, `Untrusted`, `BadCertificate`, `HandshakeFailed`, `Unsupported` when the system has no TLS stack; `Other`). A host is a name or an address (`const char host[:]`). The calls block, take your buffers and allocate nothing.
+Call `net::` anywhere. A call returns `result(T, net::Error)`; the error is what the world said (`NotFound` for a name that does not resolve, `Refused`, `Unreachable`, `TimedOut`, `Reset`, `InUse`, `Denied`, `TooMany`; for TLS `Expired`, `NotYetValid`, `WrongHost`, `Untrusted`, `BadCertificate`, `HandshakeFailed`, `Unsupported` when the system has no TLS stack; `Other`). A host is a name or an address (`const char host[:]`). The calls block, take your buffers and allocate nothing.
 
 ```smith
 module scratch;
@@ -57,4 +57,4 @@ export usize greeting_size(arena::Arena *a) {
     }
 }
 ```
-A `Server` script answers one connect to its host and port (the first not yet used): `response` in pieces of `chunk` bytes and then the end, or `fails` with an `error` (a TLS one stands for a refused certificate), `response_size` for a binary response, `stalls` (stay open and silent: `read_within` times out at once) or `resets` (a read fails with `Reset` after the response); `fake_sent(&fake, connection.id)` is what the program wrote. A fake also listens: `listen` then `connect` to its port pairs the client with what `accept` returns, so a server and its client run in one test (a read with nothing to read and no closed peer is a checked failure). C names are `smith_network_*`; async operations wait for #241. See also [smith-io-net](../smith-io-net/SKILL.md), [smith-files](../smith-files/SKILL.md), [net](../../../knowledge/net.md).
+A `Server` script answers one connect to its host and port (the first not yet used): `response` in pieces of `chunk` bytes and then the end, or `fails` with an `error` (a TLS one stands for a refused certificate), `response_size` for a binary response, `stalls` (stay open and silent: `read_within` times out at once) or `resets` (a read fails with `Reset` after the response); `fake_sent(&fake, connection.id)` is what the program wrote. A fake also listens: `listen` then `connect` to its port pairs the client with what `accept` returns, so a server and its client run in one test (a read with nothing to read and no closed peer is a checked failure). C names are `smith_network_*`; async operations wait for #241. See also [smith-files](../smith-files/SKILL.md), [net](../../../knowledge/net.md).

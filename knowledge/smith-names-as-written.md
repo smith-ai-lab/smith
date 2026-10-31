@@ -118,7 +118,7 @@ given (`tests/lint_smith_test.smith`).
   system header is reported at the `c::` where the source wrote it, with the callee as written (`c::fopen`), a main-only
   constructor is named as the module writes it, and the rules about capabilities (a type marked
   `[[clang::annotate("smith::capability")]]`; the module that defines it may make raw calls) read the module's file as
-  its implementation. The skill smith-io has the rules and how to fix each finding.
+  its implementation. The skill smith-effects has the rules and how to fix each finding.
 
 ## Decisions
 

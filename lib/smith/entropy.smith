@@ -1,7 +1,7 @@
 // smith::entropy, <smith/entropy.h>: random bytes from the system, through the entropy handler of the thread
 // (include/smith/handlers.h), so a test can stand in for them. It is the one place smith's libraries ask the system
 // for randomness: smith::random stays pure (a `random::Key` is a value, made from a seed), and a key from the system
-// comes from here. Called directly, no `io::Io` value:
+// comes from here. Called directly, with no capability value to pass:
 //
 //   random::Key key = entropy::seed();
 //

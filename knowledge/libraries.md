@@ -31,12 +31,8 @@ or a `.smith` module `lib/smith/<name>.smith` (`module smith::<name>;`), one row
 `smith.c`. A C library's header is hand-written (`include/smith/<name>.h`). A `.smith` library's header is a build
 output, never committed ([smith-module-headers](smith-module-headers.md)): smith embeds the source and the installed
 smith writes the header into `.smith/include/smith/` at first use; its C API (names, symbols via `[[smith::c_name]]`,
-doc comments) stays what it was. `option` and `result` (issue #198) are `.smith` modules, `smith::option` and `smith::result`, that export only a type function each; they are no library to link and are never imported: the lowering carries their `// smith-eshape:` lines itself (`runtime/lang_enum.c`) so that `option(T)` and `result(T, E)` are in scope in every module. `text`, `random`, `arena`, `test` and `io` are `.smith` (issue #39; #45). C passes `sizeof` and
+doc comments) stays what it was. `option` and `result` (issue #198) are `.smith` modules, `smith::option` and `smith::result`, that export only a type function each; they are no library to link and are never imported: the lowering carries their `// smith-eshape:` lines itself (`runtime/lang_enum.c`) so that `option(T)` and `result(T, E)` are in scope in every module. `text`, `random`, `arena` and `test` are `.smith` (issue #39; #45). C passes `sizeof` and
 `alignof` to `smith_arena_push`; `.smith` writes the type as an argument, `arena::push(&a, T)` and
 `arena::push_slice(&a, T, sizes...)` (a slice with a size for each `[:]`).
 
-**Talking to the OS:** `smith::io` (`import smith::io;`, `<smith/io.h>` from C) is the one way a program touches the
-world outside it (memory, randomness, console, files, clock, processes, the network), each platform behind it on its
-best API (kqueue and Network.framework on macOS, epoll and OpenSSL on Linux). Its module names are the C names without the prefix (`io::Io` is
-`SmithIo`, `io::console_printf` is `smith_console_printf`); no nested modules, so a capability's functions are
-`io::<capability>_<name>`.
+**Talking to the OS:** a program touches the world outside it through the direct modules `smith::console`, `files`, `process`, `net`, `clock`, `env` and `entropy` (`import smith::files;`, `<smith/files.h>` from C), each called with no value passed down from `main`, each platform behind it on its best API (kqueue and Network.framework on macOS, epoll and OpenSSL on Linux), and a test stands in for each with its `set_handler` or fake. Smith's private runtime layer `runtime/io.smith` serves the executor and `smith mcp` and is no user library.

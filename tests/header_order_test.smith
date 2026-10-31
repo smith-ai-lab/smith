@@ -21,10 +21,10 @@ static usize waves_of(const char *names[:], const char *texts[:], usize waves[:]
 }
 
 export void test_a_module_waits_for_the_modules_it_imports() {
-    const char *names[4] = {"io", "arena", "random", "contract"};
+    const char *names[4] = {"files", "arena", "random", "contract"};
     const char *texts[4] = {
         ("module smith::"
-         "io;\nimport smith::arena;\nimport smith::contract;\nimport smith::random;\nimport <errno.h>;\n"),
+         "files;\nimport smith::arena;\nimport smith::contract;\nimport smith::random;\nimport <errno.h>;\n"),
         "module smith::arena;\nimport smith::contract;\n",
         "module smith::random;\nimport smith::contract;\n",
         "module smith::contract;\n",
@@ -35,7 +35,7 @@ export void test_a_module_waits_for_the_modules_it_imports() {
     test::check_equal(waves[3], 0); // contract imports nothing
     test::check_equal(waves[1], 1);
     test::check_equal(waves[2], 1); // arena and random are written at the same time
-    test::check_equal(waves[0], 2); // io after both
+    test::check_equal(waves[0], 2); // files after both
 }
 
 export void test_modules_that_import_nothing_are_all_in_the_first_wave() {
@@ -97,13 +97,13 @@ static const char *read_module(arena::Arena *memory, const char *name) {
     return text;
 }
 
-// The sources smith embeds: io imports arena, contract, math and random, the modules whose names its header got wrong.
-export void test_io_is_written_after_arena_and_random() {
+// The sources smith embeds: files imports arena, contract, env and mem, the modules whose names its header got wrong.
+export void test_files_is_written_after_the_modules_it_imports() {
     arena::Arena memory = test::memory((usize)1 << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *names[modules_max] = {"io", "arena", "contract", "math", "random"};
+    const char *names[modules_max] = {"files", "arena", "contract", "env", "mem"};
     const char *texts[modules_max] = {};
     for (usize i = 0; i < 5; i++)
         texts[i] = read_module(&memory, names[i]);
