@@ -7,7 +7,9 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 
 typedef struct SmithAllocator SmithAllocator;
 
@@ -218,6 +220,66 @@ SmithEntropyHandler *smith_handlers_set_entropy(SmithEntropyHandler *entropy);
 // The entropy of the calling thread, null when none is set.
 SmithEntropyHandler *smith_handlers_entropy(void);
 
+// The scheduler of the calling thread: whatever runs tasks (smith::task, issue #241). A blocking call on a descriptor
+// (read, write, pread, pwrite, readv, writev, send, recv, accept, connect) that no files or console handler answers
+// becomes a SmithIoRequest handed to `io`, which does it and parks the calling task until it completes; the code that
+// called is written as a plain blocking call. No scheduler set (the default) is the real functions. `spawn`, `pause`
+// and `wait` are smith::task's (a group is defined there); the runtime only stores the scheduler. This header is
+// C-level and internal. A call that `io` itself makes to one of those functions reaches the scheduler again: a
+// scheduler does its real calls with smith_handlers_set_table naming a table that has no scheduler. Issue #936;
+// knowledge/handlers.md.
+typedef struct SmithScheduler SmithScheduler;
+struct SmithTaskGroup;
+
+// What an I/O request asks for; the members of the request each operation reads are in the comments of SmithIoRequest.
+enum SmithIoOperation {
+    SmithIoOperation_Read = 1,
+    SmithIoOperation_Write = 2,
+    SmithIoOperation_Pread = 3,
+    SmithIoOperation_Pwrite = 4,
+    SmithIoOperation_Readv = 5,
+    SmithIoOperation_Writev = 6,
+    SmithIoOperation_Send = 7,
+    SmithIoOperation_Recv = 8,
+    SmithIoOperation_Accept = 9,
+    SmithIoOperation_Connect = 10
+};
+
+// One call, shaped as a completion ("do this, wake me when done"), so a backend may be readiness (kqueue, epoll), a
+// pool or a completion queue (io_uring, IOCP). `io` fills `result` (what the real call returns) and `error` (the errno
+// it would have set, meaningful when result is -1).
+typedef struct {
+    int operation; // a SmithIoOperation
+    int fd;
+    void *buffer;                // Read, Pread, Recv: where the bytes go
+    const void *source;          // Write, Pwrite, Send: the bytes
+    size_t size;                 // Read, Write, Pread, Pwrite, Send, Recv: how many
+    off_t offset;                // Pread, Pwrite
+    const struct iovec *vectors; // Readv, Writev
+    int count;                   // Readv, Writev: the number of vectors
+    int flags;                   // Send, Recv
+    struct sockaddr *address;    // Accept: where the peer's address goes (may be null)
+    socklen_t *address_length;   // Accept: its size in, its length out (null with a null address)
+    const struct sockaddr *peer; // Connect: where to
+    socklen_t peer_length;       // Connect
+    ssize_t result;
+    int error;
+} SmithIoRequest;
+
+struct SmithScheduler {
+    void (*spawn)(SmithScheduler *self, struct SmithTaskGroup *group, void (*entry)(void *context), void *context);
+    void (*pause)(SmithScheduler *self);
+    void (*wait)(SmithScheduler *self, struct SmithTaskGroup *group);
+    // Does the request, parking the calling task until it completes. Null: the real calls.
+    void (*io)(SmithScheduler *self, SmithIoRequest *request);
+};
+
+// Sets the scheduler of the calling thread (null: none), returning the one it had.
+SmithScheduler *smith_handlers_set_scheduler(SmithScheduler *scheduler);
+
+// The scheduler of the calling thread, null when none is set.
+SmithScheduler *smith_handlers_scheduler(void);
+
 // The handlers of a thread are one table: a pointer per kind, null for none set. Every thread has a table of its own,
 // and it is the current one until smith_handlers_set_table names another; the setters and getters above read and write
 // their member of the current table. The task runtime (issue #241) gives each task a table and swaps it at a task
@@ -231,6 +293,7 @@ typedef struct {
     SmithEntropyHandler *entropy;
     SmithNetHandler *net;
     SmithProcessHandler *process;
+    SmithScheduler *scheduler;
 } SmithHandlers;
 
 // The current table of the calling thread: its own unless smith_handlers_set_table named another.

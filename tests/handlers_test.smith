@@ -323,3 +323,19 @@ export void test_handlers_a_swapped_table_is_the_one_write_and_malloc_reach_and_
          "smith cc $f $h/table.c lib/handlers.c -o t_table");
     passes(&p, "handlers: the table test passes", "./t_table");
 }
+
+// The scheduler handler (issue #936): a fake scheduler's `io` sees each interposed socket and descriptor call as a
+// request; none set, the calls are the real ones. On both systems, built the way the table test is.
+export void test_handlers_a_scheduler_receives_read_write_send_recv_accept_connect_pread_and_readv() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "tests/handlers", "tests/handlers");
+    scratch::copy_tree(&p, "lib", "lib");
+    must(&p, "handlers: the scheduler test builds with the runtime linked in",
+         "smith cc $f $h/scheduler.c lib/handlers.c -o t_scheduler");
+    passes(&p, "handlers: the scheduler test passes", "./t_scheduler");
+}

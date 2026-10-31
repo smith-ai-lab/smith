@@ -40,6 +40,7 @@ static atomic_uint smith_handlers_clock_active;
 static atomic_uint smith_handlers_entropy_active;
 static atomic_uint smith_handlers_net_active;
 static atomic_uint smith_handlers_process_active;
+static atomic_uint smith_handlers_scheduler_active;
 
 // The handlers of a thread are one table (SmithHandlers). A thread has a table of its own, and a thread-local pointer
 // names the current one (null: its own); the task runtime swaps the pointer with smith_handlers_set_table. The counters
@@ -67,6 +68,7 @@ static void smith_handlers_recount(const SmithHandlers *from, const SmithHandler
     smith_handlers_count(&smith_handlers_entropy_active, from->entropy, to->entropy);
     smith_handlers_count(&smith_handlers_net_active, from->net, to->net);
     smith_handlers_count(&smith_handlers_process_active, from->process, to->process);
+    smith_handlers_count(&smith_handlers_scheduler_active, from->scheduler, to->scheduler);
 }
 
 SmithHandlers *smith_handlers_table(void) {
@@ -293,6 +295,43 @@ SmithProcessHandler *smith_handlers_process(void) {
     return smith_handlers_process_current();
 }
 
+// The scheduler, found the same way. The calls it answers (read, write, pread, pwrite, readv, writev, send, recv,
+// accept, connect) build a request and hand it to `io`; with no scheduler, or one without `io`, they are the real
+// calls.
+
+__attribute__((noinline)) static SmithScheduler *smith_handlers_scheduler_get(void) {
+    return smith_handlers_tab()->scheduler;
+}
+
+__attribute__((noinline)) static SmithScheduler *smith_handlers_scheduler_current(void) {
+    if (atomic_load_explicit(&smith_handlers_scheduler_active, memory_order_relaxed) == 0) return nullptr;
+    if (!atomic_load_explicit(&smith_handlers_ready, memory_order_relaxed)) return nullptr;
+    return smith_handlers_scheduler_get();
+}
+
+SmithScheduler *smith_handlers_set_scheduler(SmithScheduler *scheduler) {
+    SmithScheduler *previous = smith_handlers_tab()->scheduler;
+    smith_handlers_tab()->scheduler = scheduler;
+    if (previous == nullptr && scheduler != nullptr) atomic_fetch_add(&smith_handlers_scheduler_active, 1);
+    if (previous != nullptr && scheduler == nullptr) atomic_fetch_sub(&smith_handlers_scheduler_active, 1);
+    return previous;
+}
+
+SmithScheduler *smith_handlers_scheduler(void) {
+    return smith_handlers_scheduler_current();
+}
+
+// True when a scheduler took the request: its result is then the call's, with errno set as the real call would set it.
+// The counter is read here, so a thread with no scheduler pays one load.
+static bool smith_handlers_route(SmithIoRequest *request) {
+    if (atomic_load_explicit(&smith_handlers_scheduler_active, memory_order_relaxed) == 0) return false;
+    SmithScheduler *scheduler = smith_handlers_scheduler_current();
+    if (scheduler == nullptr || scheduler->io == nullptr) return false;
+    scheduler->io(scheduler, request);
+    if (request->result < 0) errno = request->error;
+    return true;
+}
+
 static bool smith_handlers_has(int flags, int bit) {
     return ((unsigned)flags & (unsigned)bit) != 0;
 }
@@ -429,14 +468,64 @@ static ssize_t smith_handlers_read(int fd, void *buffer, size_t size) {
     SmithConsoleHandler *console = fd == 0 ? smith_handlers_console_current() : nullptr;
     if (console != nullptr) return console->read(console, buffer, size);
     SmithFileHandler *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
-    return files != nullptr ? files->read(files, fd, buffer, size) : read(fd, buffer, size);
+    if (files != nullptr) return files->read(files, fd, buffer, size);
+    SmithIoRequest request = {.operation = SmithIoOperation_Read, .fd = fd, .buffer = buffer, .size = size};
+    return smith_handlers_route(&request) ? request.result : read(fd, buffer, size);
 }
 
 static ssize_t smith_handlers_write(int fd, const void *buffer, size_t size) {
     SmithConsoleHandler *console = fd == 1 || fd == 2 ? smith_handlers_console_current() : nullptr;
     if (console != nullptr) return console->write(console, fd, buffer, size);
     SmithFileHandler *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
-    return files != nullptr ? files->write(files, fd, buffer, size) : write(fd, buffer, size);
+    if (files != nullptr) return files->write(files, fd, buffer, size);
+    SmithIoRequest request = {.operation = SmithIoOperation_Write, .fd = fd, .source = buffer, .size = size};
+    return smith_handlers_route(&request) ? request.result : write(fd, buffer, size);
+}
+
+static ssize_t smith_handlers_pread(int fd, void *buffer, size_t size, off_t offset) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Pread, .fd = fd, .buffer = buffer, .size = size, .offset = offset};
+    return smith_handlers_route(&request) ? request.result : pread(fd, buffer, size, offset);
+}
+
+static ssize_t smith_handlers_pwrite(int fd, const void *buffer, size_t size, off_t offset) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Pwrite, .fd = fd, .source = buffer, .size = size, .offset = offset};
+    return smith_handlers_route(&request) ? request.result : pwrite(fd, buffer, size, offset);
+}
+
+static ssize_t smith_handlers_readv(int fd, const struct iovec *vectors, int count) {
+    SmithIoRequest request = {.operation = SmithIoOperation_Readv, .fd = fd, .vectors = vectors, .count = count};
+    return smith_handlers_route(&request) ? request.result : readv(fd, vectors, count);
+}
+
+static ssize_t smith_handlers_writev(int fd, const struct iovec *vectors, int count) {
+    SmithIoRequest request = {.operation = SmithIoOperation_Writev, .fd = fd, .vectors = vectors, .count = count};
+    return smith_handlers_route(&request) ? request.result : writev(fd, vectors, count);
+}
+
+static ssize_t smith_handlers_send(int fd, const void *buffer, size_t size, int flags) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Send, .fd = fd, .source = buffer, .size = size, .flags = flags};
+    return smith_handlers_route(&request) ? request.result : send(fd, buffer, size, flags);
+}
+
+static ssize_t smith_handlers_recv(int fd, void *buffer, size_t size, int flags) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Recv, .fd = fd, .buffer = buffer, .size = size, .flags = flags};
+    return smith_handlers_route(&request) ? request.result : recv(fd, buffer, size, flags);
+}
+
+static int smith_handlers_accept(int fd, struct sockaddr *address, socklen_t *address_length) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Accept, .fd = fd, .address = address, .address_length = address_length};
+    return smith_handlers_route(&request) ? (int)request.result : accept(fd, address, address_length);
+}
+
+static int smith_handlers_connect(int fd, const struct sockaddr *peer, socklen_t peer_length) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Connect, .fd = fd, .peer = peer, .peer_length = peer_length};
+    return smith_handlers_route(&request) ? (int)request.result : connect(fd, peer, peer_length);
 }
 
 static int smith_handlers_close(int fd) {
@@ -746,6 +835,14 @@ __attribute__((used, section("__DATA,__interpose"))) static const SmithInterpose
     {(uintptr_t)&smith_handlers_open, (uintptr_t)&open},
     {(uintptr_t)&smith_handlers_read, (uintptr_t)&read},
     {(uintptr_t)&smith_handlers_write, (uintptr_t)&write},
+    {(uintptr_t)&smith_handlers_pread, (uintptr_t)&pread},
+    {(uintptr_t)&smith_handlers_pwrite, (uintptr_t)&pwrite},
+    {(uintptr_t)&smith_handlers_readv, (uintptr_t)&readv},
+    {(uintptr_t)&smith_handlers_writev, (uintptr_t)&writev},
+    {(uintptr_t)&smith_handlers_send, (uintptr_t)&send},
+    {(uintptr_t)&smith_handlers_recv, (uintptr_t)&recv},
+    {(uintptr_t)&smith_handlers_accept, (uintptr_t)&accept},
+    {(uintptr_t)&smith_handlers_connect, (uintptr_t)&connect},
     {(uintptr_t)&smith_handlers_close, (uintptr_t)&close},
     {(uintptr_t)&smith_handlers_syscall, (uintptr_t)&syscall},
     {(uintptr_t)&smith_handlers_fwrite, (uintptr_t)&fwrite},
@@ -859,6 +956,14 @@ typedef void (*SmithHandlersFunction)(void);
 [[gnu::weak]] extern void ___interceptor_open(void);
 [[gnu::weak]] extern void ___interceptor_read(void);
 [[gnu::weak]] extern void ___interceptor_write(void);
+[[gnu::weak]] extern void ___interceptor_pread(void);
+[[gnu::weak]] extern void ___interceptor_pwrite(void);
+[[gnu::weak]] extern void ___interceptor_readv(void);
+[[gnu::weak]] extern void ___interceptor_writev(void);
+[[gnu::weak]] extern void ___interceptor_send(void);
+[[gnu::weak]] extern void ___interceptor_recv(void);
+[[gnu::weak]] extern void ___interceptor_accept(void);
+[[gnu::weak]] extern void ___interceptor_connect(void);
 [[gnu::weak]] extern void ___interceptor_close(void);
 [[gnu::weak]] extern void ___interceptor_syscall(void);
 [[gnu::weak]] extern void ___interceptor_fwrite(void);
@@ -915,6 +1020,14 @@ static SmithHandlersFunction smith_handlers_find(SmithHandlersNext *next) {
 static SmithHandlersNext smith_handlers_next_open = {"open", ___interceptor_open, nullptr};
 static SmithHandlersNext smith_handlers_next_read = {"read", ___interceptor_read, nullptr};
 static SmithHandlersNext smith_handlers_next_write = {"write", ___interceptor_write, nullptr};
+static SmithHandlersNext smith_handlers_next_pread = {"pread", ___interceptor_pread, nullptr};
+static SmithHandlersNext smith_handlers_next_pwrite = {"pwrite", ___interceptor_pwrite, nullptr};
+static SmithHandlersNext smith_handlers_next_readv = {"readv", ___interceptor_readv, nullptr};
+static SmithHandlersNext smith_handlers_next_writev = {"writev", ___interceptor_writev, nullptr};
+static SmithHandlersNext smith_handlers_next_send = {"send", ___interceptor_send, nullptr};
+static SmithHandlersNext smith_handlers_next_recv = {"recv", ___interceptor_recv, nullptr};
+static SmithHandlersNext smith_handlers_next_accept = {"accept", ___interceptor_accept, nullptr};
+static SmithHandlersNext smith_handlers_next_connect = {"connect", ___interceptor_connect, nullptr};
 static SmithHandlersNext smith_handlers_next_getenv = {"getenv", ___interceptor_getenv, nullptr};
 static SmithHandlersNext smith_handlers_next_getentropy = {"getentropy", nullptr, nullptr};
 static SmithHandlersNext smith_handlers_next_clock_gettime = {"clock_gettime", ___interceptor_clock_gettime, nullptr};
@@ -1047,14 +1160,80 @@ ssize_t read(int fd, void *buffer, size_t size) {
     SmithConsoleHandler *console = fd == 0 ? smith_handlers_console_current() : nullptr;
     if (console != nullptr) return console->read(console, buffer, size);
     SmithFileHandler *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
-    return files != nullptr ? files->read(files, fd, buffer, size) : smith_handlers_raw_read(fd, buffer, size);
+    if (files != nullptr) return files->read(files, fd, buffer, size);
+    SmithIoRequest request = {.operation = SmithIoOperation_Read, .fd = fd, .buffer = buffer, .size = size};
+    return smith_handlers_route(&request) ? request.result : smith_handlers_raw_read(fd, buffer, size);
 }
 
 ssize_t write(int fd, const void *buffer, size_t size) {
     SmithConsoleHandler *console = fd == 1 || fd == 2 ? smith_handlers_console_current() : nullptr;
     if (console != nullptr) return console->write(console, fd, buffer, size);
     SmithFileHandler *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
-    return files != nullptr ? files->write(files, fd, buffer, size) : smith_handlers_raw_write(fd, buffer, size);
+    if (files != nullptr) return files->write(files, fd, buffer, size);
+    SmithIoRequest request = {.operation = SmithIoOperation_Write, .fd = fd, .source = buffer, .size = size};
+    return smith_handlers_route(&request) ? request.result : smith_handlers_raw_write(fd, buffer, size);
+}
+
+ssize_t pread(int fd, void *buffer, size_t size, off_t offset) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Pread, .fd = fd, .buffer = buffer, .size = size, .offset = offset};
+    if (smith_handlers_route(&request)) return request.result;
+    return ((ssize_t (*)(int, void *, size_t, off_t))smith_handlers_find(&smith_handlers_next_pread))(fd, buffer, size,
+                                                                                                      offset);
+}
+
+ssize_t pwrite(int fd, const void *buffer, size_t size, off_t offset) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Pwrite, .fd = fd, .source = buffer, .size = size, .offset = offset};
+    if (smith_handlers_route(&request)) return request.result;
+    return ((ssize_t (*)(int, const void *, size_t, off_t))smith_handlers_find(&smith_handlers_next_pwrite))(
+        fd, buffer, size, offset);
+}
+
+ssize_t readv(int fd, const struct iovec *vectors, int count) {
+    SmithIoRequest request = {.operation = SmithIoOperation_Readv, .fd = fd, .vectors = vectors, .count = count};
+    if (smith_handlers_route(&request)) return request.result;
+    return ((ssize_t (*)(int, const struct iovec *, int))smith_handlers_find(&smith_handlers_next_readv))(fd, vectors,
+                                                                                                          count);
+}
+
+ssize_t writev(int fd, const struct iovec *vectors, int count) {
+    SmithIoRequest request = {.operation = SmithIoOperation_Writev, .fd = fd, .vectors = vectors, .count = count};
+    if (smith_handlers_route(&request)) return request.result;
+    return ((ssize_t (*)(int, const struct iovec *, int))smith_handlers_find(&smith_handlers_next_writev))(fd, vectors,
+                                                                                                           count);
+}
+
+ssize_t send(int fd, const void *buffer, size_t size, int flags) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Send, .fd = fd, .source = buffer, .size = size, .flags = flags};
+    if (smith_handlers_route(&request)) return request.result;
+    return ((ssize_t (*)(int, const void *, size_t, int))smith_handlers_find(&smith_handlers_next_send))(fd, buffer,
+                                                                                                         size, flags);
+}
+
+ssize_t recv(int fd, void *buffer, size_t size, int flags) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Recv, .fd = fd, .buffer = buffer, .size = size, .flags = flags};
+    if (smith_handlers_route(&request)) return request.result;
+    return ((ssize_t (*)(int, void *, size_t, int))smith_handlers_find(&smith_handlers_next_recv))(fd, buffer, size,
+                                                                                                   flags);
+}
+
+int accept(int fd, struct sockaddr *address, socklen_t *address_length) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Accept, .fd = fd, .address = address, .address_length = address_length};
+    if (smith_handlers_route(&request)) return (int)request.result;
+    return ((int (*)(int, struct sockaddr *, socklen_t *))smith_handlers_find(&smith_handlers_next_accept))(
+        fd, address, address_length);
+}
+
+int connect(int fd, const struct sockaddr *peer, socklen_t peer_length) {
+    SmithIoRequest request = {
+        .operation = SmithIoOperation_Connect, .fd = fd, .peer = peer, .peer_length = peer_length};
+    if (smith_handlers_route(&request)) return (int)request.result;
+    return ((int (*)(int, const struct sockaddr *, socklen_t))smith_handlers_find(&smith_handlers_next_connect))(
+        fd, peer, peer_length);
 }
 
 int close(int fd) {
