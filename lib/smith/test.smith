@@ -11,7 +11,6 @@ import smith::clock;
 import smith::console;
 import smith::env;
 import smith::files;
-import smith::process;
 import smith::math;
 import smith::mem;
 import smith::random;
@@ -2940,24 +2939,10 @@ f64 parse_ps_time(const char *text) {
 // The processes of the machine into ps_rows: pid, parent, CPU seconds and command.
 void list_processes() {
     ps_count = 0;
-    const char *const argv[_] = {"ps", "-axo", "pid=,ppid=,time=,command=", nullptr};
-    process::OutputResult result = process::run(argv);
-    const char *line = "";
-    char *listing = nullptr;
-    if (result == .ok) {
-        listing = (char *)mem::alloc_raw(countof(result.ok.output) + 1, 1);
-        __builtin_memcpy(listing, result.ok.output.data, countof(result.ok.output));
-        listing[countof(result.ok.output)] = '\0';
-        line = listing;
-    }
-    while (*line != '\0' && ps_count < ps_rows_max) {
-        const char *end = c::strchr(line, '\n');
-        usize length = end != nullptr ? (usize)(end - line) : c::strlen(line);
-        char text[512];
-        usize kept = length < sizeof text - 1 ? length : sizeof text - 1;
-        __builtin_memcpy(text, line, kept);
-        text[kept] = '\0';
-        line += length + (end != nullptr ? 1 : 0);
+    c::FILE *listing = c::popen("ps -axo pid=,ppid=,time=,command=", "r"); // NOLINT(smith-effects): the runner's own
+    if (listing == nullptr) return;
+    char text[512];
+    while (ps_count < ps_rows_max && c::fgets(text, sizeof text, listing) != nullptr) {
         char *rest = nullptr;
         i64 pid = c::strtol(text, &rest, 10);
         i64 parent = c::strtol(rest, &rest, 10);
@@ -2966,15 +2951,13 @@ void list_processes() {
         char *word_end = c::strchr(rest, ' ');
         if (pid <= 0 || word_end == nullptr) continue;
         *word_end = '\0';
+        char *newline = c::strchr(word_end + 1, '\n');
+        if (newline != nullptr) *newline = '\0';
         PsRow *row = &ps_rows[ps_count++];
         *row = (PsRow){.pid = (c::pid_t)pid, .parent = (c::pid_t)parent, .cpu = parse_ps_time(rest)};
         __builtin_snprintf(row->command, sizeof row->command, "%s", word_end + 1);
     }
-    if (result == .ok) {
-        mem::free(result.ok.output.data);
-        mem::free(result.ok.errors.data);
-        mem::free(listing);
-    }
+    c::pclose(listing);
 }
 
 // Marks the rows below `root` (the worker, which is one) with their depth; returns how many there are.
@@ -3662,11 +3645,21 @@ void say_written() {
     }
 }
 
+// How many tests may run at once: the share of a slot (SMITH_CORES, runtime/slots.c) or the machine's logical cores.
+// (smith::process has this too; its object's coverage data is malformed, so the runner, which `smith test --changed`
+// instruments, does not link it.)
+usize cores() {
+    env::Value given = env::get("SMITH_CORES");
+    i64 count = given == .some && countof(given.some) > 0 ? c::strtol(given.some.data, nullptr, 10) : 0;
+    if (count <= 0) count = c::sysconf(processors_online);
+    return count > 0 ? (usize)count : 1;
+}
+
 // The options before the command line is read.
 static Options default_options(Runner *runner) {
     Options options = {
         .seed_count = seeds_default,
-        .jobs = process::cores(),
+        .jobs = cores(),
         .timeout = 10,
         .shrink = true,
         .shrink_seconds = shrink_seconds_default,

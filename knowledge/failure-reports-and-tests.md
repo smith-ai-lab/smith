@@ -16,7 +16,7 @@ the debug map of the binary (its object files), not a dSYM: a failure costs abou
 may touch** (issue #45): `void test_x(void)` is pure, `void test_x(random::Key key)` a property test (the key from the
 run's seed), a test takes no io (the world is the direct libraries and their fakes, the working directory the project root). The runner is `smith::test`'s `main`; its own
 effects (forked workers, pipes, signals, shared memory) are calls in the module, which defines the `Runner` capability,
-and it prints, times and lists processes through `console`, `clock` and `process`. The shrinking hook is a field of the key (`random::Key.tap`),
+and it prints, times and lists processes through `console`, `clock` and `env`. The shrinking hook is a field of the key (`random::Key.tap`),
 not a global.
 
 **The values of the failing line are read from the stopped test, not captured** (issue #17). A check that prints no

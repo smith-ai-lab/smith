@@ -89,7 +89,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   whose implementation is the module, so the forked workers, their pipes and sockets, the signals they catch and the
   memory they share are the module's own calls, and `smith lint` (smith-effects) checks them like any other module's:
   every exported function that reaches one takes the `Runner`. The runner prints the report through `console`, times the tests with
-  `clock`, reads `$NO_COLOR` with `env` and lists processes with `process`, called directly. The checks reach the running test's state (the shared block the runner reads after the test)
+  `clock`, reads `$NO_COLOR` with `env` and lists processes with `popen`. The checks reach the running test's state (the shared block the runner reads after the test)
   through module variables, since a check takes no context parameter; they are the only state a test can reach.
 - **The shrinking hook is a field of the key.** `random::Key` has a `tap` (`nullptr` for every key a program makes) and
   `random::split` copies it. The runner gives the keys of its shrinking worker a tap whose `word` records each
