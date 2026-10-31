@@ -103,6 +103,7 @@
     "./.agents/skills/smith-lang-reflection/",
     "./.agents/skills/smith-lang-reflection-field/",
     "./.agents/skills/smith-lang-affine/",
+    "./.agents/skills/smith-lang-lambda-param/",
     "./.agents/skills/smith-lang-lambdas/",
     "./.agents/skills/smith-lang-modules/",
     "./.agents/skills/smith-lang-modules-errors/",

@@ -33,7 +33,7 @@ Called as `pick::larger(3, 5)` (an `i32`), `pick::larger(2.5f, 1.0f)` (an `f32`)
 - **`constexpr usize i`** (any integer type) takes a number the compiler knows (a literal, a `constexpr`, a `for constexpr` variable; else an error at the call naming the argument): one instance for each value, and `i` in the body is that number, so `constexpr Field f = fields(T)[i];` works.
 - A bare `type T` that the head uses as a type is an error; a bare `type t` that is only a value is a type value (`smith-lang-type-values`).
 - **Instances** are weak, hidden definitions at the end of the file (`always_inline` for an `inline` generic), named `pick_larger__i32` with the symbol `_pick::larger(int)`, so copies from other files fold at link time. The debugger calls it `pick::larger<i32>` at the generic's own file and lines.
-- `constexpr auto f` (a function as an argument), a computed result type, nesting, private names, C and no compiler: `smith-lang-generics-more`. `auto... rest`: `smith-lang-rest`.
+- `lambda(F) f` (code to run, one instance per lambda: `smith-lang-lambda-param`), `constexpr auto f` (a function as an argument), a computed result type, nesting, private names, C and no compiler: `smith-lang-generics-more`. `auto... rest`: `smith-lang-rest`.
 
 ## Errors
 

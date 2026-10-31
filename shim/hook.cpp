@@ -696,8 +696,8 @@ class SmithHook final : public TokenHook, public NameSource {
         lowered.resize(smith_lang_capitals_lower(buffer.data(), buffer.size(), lowered.data(), true));
         const StringRef scan = lowered;
         host.maybe_main = scan.contains("main");
-        host.maybe_generic =
-            scan.contains("type ") || scan.contains("auto ") || scan.contains("auto...") || namesConcept(scan);
+        host.maybe_generic = scan.contains("type ") || scan.contains("auto ") || scan.contains("auto...") ||
+                             scan.contains("lambda(") || namesConcept(scan);
         host.maybe_if_constexpr = hasIfConstexpr(scan);
         host.maybe_local_tag = hasNestedTag(scan);
         host.maybe_slice = hasSlice(scan) || hasStr(scan);

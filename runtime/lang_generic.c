@@ -450,6 +450,22 @@ static bool smith_lang_param_is_function(const SmithLangParam *param) {
            first[2].kind == SmithTokenKind_Identifier && first[2].special == SmithLangGen_Plain;
 }
 
+// Whether the parameter is `lambda(F) name` (#957): `lambda`, a parenthesized function type F, and the name. The
+// argument is a lambda or a function known at compile time, and each distinct one is an instance (a slot like
+// `constexpr auto`).
+static bool smith_lang_param_is_lambda(const SmithLangParam *param) {
+    const SmithLangGenToken *first = &smith_lang_gt.tokens[param->start];
+    const SmithLangGenToken *last = &smith_lang_gt.tokens[param->end - 1];
+    return param->end - param->start >= 5 && smith_lang_gt_is(first, SmithTokenKind_Identifier, "lambda") &&
+           smith_lang_gt_punct(first + 1, "(") && smith_lang_gt_punct(last - 1, ")") &&
+           last->kind == SmithTokenKind_Identifier && last->special == SmithLangGen_Plain;
+}
+
+// The token that names a compile-time parameter of the kinds `constexpr type T`, `constexpr auto f` and `lambda(F) f`.
+static const SmithLangGenToken *smith_lang_param_name_token(const SmithLangParam *param) {
+    return &smith_lang_gt.tokens[smith_lang_param_is_lambda(param) ? param->end - 1 : param->start + 2];
+}
+
 // Whether the parameter is `constexpr usize i`: `constexpr`, an integer type (one or more words) and the name. The
 // argument is a constant expression, and each distinct value is an instance.
 static bool smith_lang_param_is_number(const SmithLangParam *param) {
@@ -490,11 +506,12 @@ static size_t smith_lang_generic_params(const SmithLangGeneric *generic, SmithLa
         start = at + 1;
     }
     for (size_t i = 0; i < count; i++) { // `constexpr type T`, `constexpr auto f`, `auto x`, `auto... rest`
-        const SmithLangGenToken *first = &smith_lang_gt.tokens[out[i].start];
         out[i].kind = SmithLangSlot_Plain;
-        if (smith_lang_param_is_type(&out[i]) || smith_lang_param_is_function(&out[i])) {
+        if (smith_lang_param_is_type(&out[i]) || smith_lang_param_is_function(&out[i]) ||
+            smith_lang_param_is_lambda(&out[i])) {
+            const SmithLangGenToken *name = smith_lang_param_name_token(&out[i]);
             out[i].kind = smith_lang_param_is_type(&out[i]) ? SmithLangSlot_Type : SmithLangSlot_Function;
-            out[i].type_index = (int8_t)smith_lang_param_named(generic, smith_lang_gt_str(first + 2), first[2].length);
+            out[i].type_index = (int8_t)smith_lang_param_named(generic, smith_lang_gt_str(name), name->length);
         } else if (smith_lang_param_is_auto(&out[i]) || smith_lang_param_shape(&out[i], &(SmithLangShape){})) {
             out[i].kind = SmithLangSlot_Auto;
         } else if (smith_lang_param_is_pack(&out[i])) {
@@ -666,6 +683,10 @@ static bool smith_lang_parameter_generic_at(SmithLang *lang, const SmithHost *ho
         return true; // `auto x`, `constexpr auto f`, `auto... rest`, `const auto xs[:]`, `auto *p`
     }
     const SmithToken *after = smith_lang_peek(lang, host, index + 1, false);
+    if (starts_parameter && smith_lang_ident(token, "lambda") && smith_lang_punct(after, "(") &&
+        host->lookup(host->context, token->text, token->length, SmithLookup_Type).kind == SmithLookup_None) {
+        return true; // `lambda(F) f`: the code to run, one instance for each (issue #957)
+    }
     if (starts_parameter && smith_lang_ident(token, "constexpr") && after->kind == SmithTokenKind_Identifier &&
         !smith_lang_ident(after, "type") && !smith_lang_ident(after, "auto")) {
         return true; // `constexpr usize i`: a number known at compile time (C has no `constexpr` parameter)
@@ -773,6 +794,23 @@ static void smith_lang_generic_mark_values(const SmithLangGeneric *generic) {
     }
 }
 
+// A `constexpr auto f`, `lambda(F) f` or `auto... rest` parameter, the `i`th of `count`: its slot. A message, or null.
+static const char *smith_lang_scan_function(SmithLangGeneric *generic, const SmithLangParam *param, size_t i,
+                                            size_t count) {
+    if (generic->type_count >= smith_lang_type_params_max)
+        return "a generic function has at most 32 `constexpr type`, `constexpr auto` and `auto` parameters";
+    if (param->kind == SmithLangSlot_Pack && i + 1 != count)
+        return "`auto...` is the last parameter: the arguments that remain have no other parameter after them";
+    const SmithLangGenToken *name = smith_lang_param_name_token(param);
+    generic->type_token[generic->type_count] = (uint8_t)(name - &smith_lang_gt.tokens[generic->first]);
+    if (smith_lang_param_named(generic, smith_lang_gt_str(name), name->length) >= 0)
+        return "two compile-time parameters have the same name";
+    generic->type_position[generic->type_count] = (uint8_t)i;
+    generic->type_kind[generic->type_count] = param->kind;
+    generic->type_count += 1;
+    return nullptr;
+}
+
 // The type parameters of the head just recorded: `constexpr type T`, their names and which parameter each is. A
 // message, or null.
 static const char *smith_lang_generic_scan(SmithLangGeneric *generic) {
@@ -813,16 +851,8 @@ static const char *smith_lang_generic_scan(SmithLangGeneric *generic) {
             continue;
         }
         if (params[i].kind == SmithLangSlot_Function || params[i].kind == SmithLangSlot_Pack) {
-            if (generic->type_count >= smith_lang_type_params_max)
-                return "a generic function has at most 32 `constexpr type`, `constexpr auto` and `auto` parameters";
-            if (params[i].kind == SmithLangSlot_Pack && i + 1 != count)
-                return "`auto...` is the last parameter: the arguments that remain have no other parameter after them";
-            if (smith_lang_param_named(generic, smith_lang_gt_str(first + 2), first[2].length) >= 0)
-                return "two compile-time parameters have the same name";
-            generic->type_token[generic->type_count] = (uint8_t)(params[i].start + 2 - generic->first);
-            generic->type_position[generic->type_count] = (uint8_t)i;
-            generic->type_kind[generic->type_count] = (uint8_t)params[i].kind;
-            generic->type_count += 1;
+            const char *problem = smith_lang_scan_function(generic, &params[i], i, count);
+            if (problem != nullptr) return problem;
             continue;
         }
         if (params[i].kind != SmithLangSlot_Type) continue;
@@ -1719,6 +1749,19 @@ static void smith_lang_instance_names(const SmithLang *lang, const SmithHost *ho
         smith_lang_it_spelling(first[k], count[k], names->spelling[k], sizeof names->spelling[k]);
         smith_lang_it_written(lang, first[k], count[k], names->written[k], sizeof names->written[k]);
         SmithTypeQuery query = {};
+        if (smith_lang_entry_kind(generic, k) == SmithLangSlot_Function && count[k] > 1) { // a lambda (#957)
+            uint64_t hash = 14695981039346656037ULL;
+            for (uint32_t i = 0; i < count[k]; i++) { // every token of it: the identity
+                const SmithLangGenToken *token = &smith_lang_it.tokens[first[k] + i];
+                const char *text = smith_lang_pool_text(&smith_lang_it, token);
+                for (uint32_t c = 0; c < token->length; c++)
+                    hash = (hash ^ (uint8_t)text[c]) * 1099511628211ULL;
+                hash = (hash ^ 0x1f) * 1099511628211ULL;
+            }
+            snprintf(names->canonical[k], sizeof names->canonical[k], "lambda#%016llx", (unsigned long long)hash);
+            snprintf(names->written[k], sizeof names->written[k], "lambda");
+            continue;
+        }
         if (smith_lang_entry_kind(generic, k) != SmithLangSlot_Function &&
             smith_lang_entry_kind(generic, k) != SmithLangSlot_Number && host->type_query != nullptr &&
             host->type_query(host->context, names->spelling[k], (uint32_t)strlen(names->spelling[k]), &query) &&
@@ -1931,6 +1974,12 @@ static void smith_lang_gen_put_arg(SmithLang *lang, const SmithHost *host, const
     bool function = param < generic->type_count && generic->type_kind[param] == SmithLangSlot_Function;
     bool wrap = !function && smith_lang_it_has_paren(first, count);
     uint32_t location = smith_lang_it.tokens[first].location;
+    if (function && count > 1) { // a lambda: the function the instance wrote for it (#957)
+        char function_name[smith_lang_name_max];
+        snprintf(function_name, sizeof function_name, "%s__arg%u", smith_lang_str(instance->cname), param);
+        smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, function_name, location, instance_id);
+        return;
+    }
     if (function && count == 1 &&
         smith_lang_generic_of(lang, host, smith_lang_pool_text(&smith_lang_it, &smith_lang_it.tokens[first]),
                               smith_lang_it.tokens[first].length) >= 0) {
@@ -2770,6 +2819,12 @@ static void smith_lang_callee_name(const SmithLang *lang, const char *module, si
 #include "lang_constexpr.c"
 
 static void smith_lang_generic_poison(SmithLang *lang, const SmithHost *host, uint32_t location);
+// runtime/lang_nested.c: a lambda passed to `lambda(F)`
+static bool smith_lang_argl_slot(const SmithLangGeneric *generic, size_t slot, uint32_t *from, uint32_t *to);
+static bool smith_lang_argl_check(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic, size_t slot,
+                                  SmithLangSpan span, uint32_t place);
+static void smith_lang_argl_write(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                  const SmithLangInstance *instance, uint32_t location, uint32_t id);
 
 // ---- Argument lists: `auto... rest`
 // ------------------------------------------------------------------------------------------------------
@@ -3481,6 +3536,19 @@ static bool smith_lang_infer_function(SmithLang *lang, const SmithHost *host, Sm
     uint32_t place = smith_lang_infer_place(host, replay, span, location);
     SmithLangArgType type = {};
     const char *why = nullptr;
+    bool is_lambda_slot = smith_lang_argl_slot(generic, slot, &(uint32_t){}, &(uint32_t){});
+    bool is_lambda_arg = span.end > span.start + 1 && smith_lang_gt_punct(&smith_lang_gt.tokens[span.start], "[");
+    if (is_lambda_arg && !is_lambda_slot) {
+        smith_lang_error(lang, host, place,
+                         "the argument `%s` of `%s` is a lambda, but the parameter `%.*s` is `constexpr auto`: a "
+                         "lambda goes to a `lambda(F)` parameter",
+                         shown, smith_lang_str(generic->member), (int)parameter->length, smith_lang_gt_str(parameter));
+        return false;
+    }
+    if (is_lambda_arg) { // a lambda: its tokens are the argument
+        return smith_lang_argl_check(lang, host, generic, slot, span, place) &&
+               smith_lang_stage_type(span, replay->instance, location, first, count) && *count > 1;
+    }
     // a generic function, or a `constexpr auto` parameter of the instance that holds one (forwarded): its calls make
     // the instances
     if (smith_lang_generic_named(lang, host, span) >= 0 ||
@@ -5422,6 +5490,7 @@ static void smith_lang_instance_emit(SmithLang *lang, const SmithHost *host, siz
     smith_lang_instance_define_enums(lang, host, generic, instance, location, id);
     smith_lang_replay_begin(&smith_lang_replay, generic, instance, id, location);
     (void)smith_lang_nested_write(lang, host, &smith_lang_replay, instance, location, id);
+    smith_lang_argl_write(lang, host, &smith_lang_replay, instance, location, id);
     smith_lang_gen_declaration(lang, host, generic, instance, location, id);
     static const SmithLangPiece weak[] = {{SmithTokenKind_Punctuator, "["},    {SmithTokenKind_Punctuator, "["},
                                           {SmithTokenKind_Identifier, "gnu"},  {SmithTokenKind_Punctuator, "::"},

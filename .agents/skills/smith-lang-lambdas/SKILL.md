@@ -55,6 +55,6 @@ export void defer(Slot *slot, constexpr auto f, auto... rest) {
 }
 ```
 
-- A run-time parameter of the generic used in the lambda is the captures error (`typeof(x)`, `countof(rest)`, `a->[rest]` are not uses). No `-> T`: the type is the first `return`'s, read at the instance. A lambda in such a lambda is an error; at most 8 in a generic.
+- A run-time parameter of the generic used in the lambda is the captures error. No `-> T`: the type is the first `return`'s. A lambda in such a lambda is an error; at most 8 in a generic.
 
-Overview: `smith-lang`. Reference: [knowledge/smith-lambdas.md](../../../knowledge/smith-lambdas.md).
+Overview: `smith-lang`; as a parameter, `lambda(F)`: `smith-lang-lambda-param`. Reference: [knowledge/smith-lambdas.md](../../../knowledge/smith-lambdas.md).
