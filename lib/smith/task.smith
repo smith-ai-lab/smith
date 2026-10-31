@@ -514,14 +514,13 @@ struct Worker {
 
 Worker workers[workers_max];
 usize worker_count;
-bool active;                     // the workers exist
-bool stopping;                   // they are to exit
-usize live;                      // tasks spawned and not ended
-usize busy;                      // workers running a task right now
-usize ready_total;               // tasks in all the queues
-usize io_total;                  // tasks waiting in a kqueue, on any worker
-usize worker_limit;              // at most this many workers (0: one per core); see limit_workers
-c::SmithHandlers empty_handlers; // the table a real call runs under: no scheduler, so it is not routed again
+bool active;        // the workers exist
+bool stopping;      // they are to exit
+usize live;         // tasks spawned and not ended
+usize busy;         // workers running a task right now
+usize ready_total;  // tasks in all the queues
+usize io_total;     // tasks waiting in a kqueue, on any worker
+usize worker_limit; // at most this many workers (0: one per core); see limit_workers
 usize page_bytes;
 c::pthread_mutex_t sched_lock;
 Task *waiters; // tasks waiting for a group
@@ -791,6 +790,8 @@ void run_ready(Worker *worker) {
 // (a regular file moves off the worker with the pool ticket; a terminal's flags are shared with the shell, so they stay
 // blocking). The code that called is a plain blocking call.
 if constexpr (target::os == target::macos) {
+    c::SmithHandlers empty_handlers; // the table a real call runs under: no scheduler, so it is not routed again
+
     // NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
     constexpr i32 get_flags = c::F_GETFL;
     constexpr i32 set_flags = c::F_SETFL;
@@ -1005,8 +1006,6 @@ void stop_workers() {
     home = nullptr;
 }
 
-Scheduler *default_scheduler();
-
 // Starts no more than `count` workers the next time they start (0: one per core). For tests that need tasks on one
 // worker; call it while no task is alive.
 export void limit_workers(usize count) {
@@ -1016,14 +1015,14 @@ export void limit_workers(usize count) {
 
 // The default scheduler's spawn: the task is queued on the least loaded worker (ties to the spawner's own) and runs
 // there, never anywhere else.
-void default_spawn([[maybe_unused]] Scheduler *self, Group *group, void (*entry)(void *context), void *context) {
+void default_spawn(Scheduler *self, Group *group, void (*entry)(void *context), void *context) {
     contract::requires(group != nullptr && entry != nullptr);
     if (!active) start_workers();
     contract::requires(home != nullptr);
     Task *task = record_take();
     init_task(task, group, entry, context);
     task->managed = true;
-    if (task->handlers.scheduler == nullptr) task->handlers.scheduler = default_scheduler(); // its I/O reaches `io`
+    if (task->handlers.scheduler == nullptr) task->handlers.scheduler = self; // its I/O reaches `io`
     lock_scheduler();
     Worker *target = home;
     for (usize i = 0; i < worker_count; i++) {
