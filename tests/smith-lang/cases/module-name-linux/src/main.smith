@@ -1,0 +1,11 @@
+module main;
+
+import <stdio.h>;
+import demo::linux;
+
+// In a module the names `linux`, `unix` and `i386` are the program's own, whatever the target defines for C.
+i32 main() {
+    i32 unix = 42;
+    (void)c::printf("%d %d %d\n", unix, linux::unix, linux::i386());
+    return 0;
+}

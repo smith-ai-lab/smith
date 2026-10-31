@@ -82,6 +82,8 @@ is compiled for.
   better written with a `static_assert`; the branches must be blocks; `else if` after `if constexpr` must be `else if
   constexpr`.
 
+- **Predefined macros in a module (#382):** clang predefines `linux 1` and `unix 1` (and `i386`) in gnu mode on Linux, which would replace a module name or a variable of those names with `1`. A file whose first word is `module` has the predefined macros with a plain name (not starting with `_`) undefined by the hook before the line is read (`undefineTargetMacros`, `shim/hook.cpp`); `__linux__` and the command line's macros stay. A module-less file keeps C's meaning. Compiling modules as `-std=c23` was refused: it would change what valid C means.
+
 ## Decisions
 
 - `if constexpr` works at file scope around any declarations, imports included; the branch not taken is never read (owner, 2026-10-25).

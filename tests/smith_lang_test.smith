@@ -1693,6 +1693,10 @@ export void test_module_main() {
     corpus_case("module-main");
 }
 
+export void test_module_name_linux() {
+    corpus_case("module-name-linux");
+}
+
 export void test_module_names() {
     corpus_case("module-names");
 }
