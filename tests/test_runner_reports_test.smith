@@ -49,6 +49,25 @@ export void test_runner_reports_a_sigsegv_without_the_sanitizers_is_named() {
     }
 }
 
+// The runner is built with -fdebug-compilation-dir=. , which LLVM joins to the file name as `./tests/x`; the report
+// names the source as the project does (shim/symbolize.cpp drops the `./`, #782).
+export void test_runner_reports_a_source_is_named_relative_to_the_project_without_a_dot_slash() {
+    scratch::Project p = reports_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!runner::can_symbolize(&p)) return;
+    for (usize mode = 0; mode < 2; mode++) {
+        const char *iso = runner::flag(mode);
+        const char *traced = runner::symbolized(&p, iso, "--test check_fails");
+        scratch::expect_contains(runner::label(iso, "path: the source is named from the project"), traced,
+                                 " at tests/test_reports.smith:");
+        scratch::expect_lacks(runner::label(iso, "path: ... never with a leading ./"), traced, "./tests/");
+    }
+}
+
 export void test_runner_reports_the_plain_function_checks_print_a_raw_trace_with_the_values() {
     scratch::Project p = reports_project();
     defer scratch::clean(&p);
