@@ -45,3 +45,16 @@ export void test_runner_platform_a_run_runs_only_its_half(io::Io *io) {
     scratch::Run other = runner::tests(&p, "", "--skip-macos");
     scratch::expect_contains("platform: --skip-macos runs its 2", other.out, "2 passed, 0 failed");
 }
+
+// A filter that names only the other half's tests (a pull request's --changed selection on the Mac part) runs nothing
+// and passes; a filter that names no test at all is still an error.
+export void test_runner_platform_a_filter_of_only_the_other_half_runs_nothing_and_passes(io::Io *io) {
+    scratch::Project p = platform_project(io);
+    scratch::Run other = runner::tests(&p, "", "--macos-only --test plain_1");
+    scratch::expect_status("platform: only the other half's tests: exit 0", 0, &other);
+    scratch::expect_contains("platform: ... and says so", other.out,
+                             "no test of --macos-only matches \"plain_1\": nothing to run");
+    scratch::Run none = runner::tests(&p, "", "--macos-only --test nothing_like_this");
+    scratch::expect_status("platform: a filter that matches no test is still an error", 1, &none);
+    scratch::expect_contains("platform: ... and says so", none.out, "no test matches \"nothing_like_this\"");
+}
