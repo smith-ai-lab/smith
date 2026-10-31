@@ -1993,6 +1993,10 @@ export void test_generic_fields_doc() {
     corpus_case("generic-fields-doc");
 }
 
+export void test_reflection_doc_if_constexpr() {
+    corpus_case("reflection-doc-if-constexpr");
+}
+
 export void test_typetag_run() {
     corpus_case("typetag-run");
 }

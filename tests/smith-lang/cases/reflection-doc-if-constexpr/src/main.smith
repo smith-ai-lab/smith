@@ -1,0 +1,31 @@
+module main;
+
+import <stdio.h>;
+
+typedef struct {
+    /// Port to listen on.
+    u16 port;
+    u16 plain; // a plain comment is no doc comment
+    /// Backlog.
+    u16 backlog;
+} Options;
+
+// A condition reads the same doc the code does.
+void show(constexpr type T) {
+    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+        constexpr Field f = fields(T)[i];
+        if constexpr (f.doc.count[0] > 0) {
+            c::printf("%s: [%s]\n", f.name.data, f.doc.data);
+        } else {
+            c::printf("%s: undocumented\n", f.name.data);
+        }
+        if constexpr (fields(T)[i].doc.data[0] == 'B') {
+            c::printf("%s: the doc begins with B\n", f.name.data);
+        }
+    }
+}
+
+i32 main() {
+    show(Options);
+    return 0;
+}
