@@ -45,7 +45,8 @@ const char *joined(auto... pieces) {
 
 // The header of a module (`t/body` is t/body.smith) written to include/t/body.h; flags are extra compiler flags.
 static void make_header(const scratch::Project *p, const char *module, const char *flags) {
-    scratch::Run run = scratch::sh(p, joined("smith cc --smith-header ", module, ".smith -o include/", module, ".h ", flags));
+    scratch::Run run =
+        scratch::sh(p, joined("smith cc --smith-header ", module, ".smith -o include/", module, ".h ", flags));
     scratch::expect_status(joined(module, ": the header is written"), 0, &run);
 }
 
@@ -398,8 +399,7 @@ export void test_modules_in_a_folder_above_and_beside_are_included_relative() {
     const char *labels[2] = {"c", "c++"};
     const char *modes[2] = {"-x c -std=gnu23", "-x c++ -std=c++23"};
     for (usize i = 0; i < 2; i++) {
-        scratch::Run run =
-            scratch::sh(&p, joined("smith cc -fsyntax-only ", modes[i], " include/u/deep/farther.h"));
+        scratch::Run run = scratch::sh(&p, joined("smith cc -fsyntax-only ", modes[i], " include/u/deep/farther.h"));
         scratch::expect_status(joined("u/deep/farther.h compiles with no include path (", labels[i], ")"), 0, &run);
     }
 }
@@ -420,11 +420,10 @@ export void test_a_generic_with_its_type_written_in_a_body_does_not_stop_the_hea
 // The files chain/m0 to chain/m19, each importing the next.
 static void write_chain(const scratch::Project *p) {
     for (usize i = 0; i < chain_length; i++) {
-        const char *text =
-            i + 1 < chain_length
-                ? joined("module chain::m", i, ";\nimport chain::m", i + 1, ";\nexport u32 m", i, "(void) { return m",
-                         i + 1, "::m", i + 1, "() + 1; }\n")
-                : joined("module chain::m", i, ";\nexport u32 m", i, "(void) { return 1; }\n");
+        const char *text = i + 1 < chain_length
+                               ? joined("module chain::m", i, ";\nimport chain::m", i + 1, ";\nexport u32 m", i,
+                                        "(void) { return m", i + 1, "::m", i + 1, "() + 1; }\n")
+                               : joined("module chain::m", i, ";\nexport u32 m", i, "(void) { return 1; }\n");
         scratch::write(p, joined("chain/m", i, ".smith"), text);
     }
 }
@@ -432,8 +431,8 @@ static void write_chain(const scratch::Project *p) {
 // The headers of the chain from the last to the second, as a build makes them.
 static void make_chain_headers(const scratch::Project *p) {
     for (usize i = chain_length; i-- > 1;) {
-        scratch::Run run =
-            scratch::sh(p, joined("smith cc --smith-header chain/m", i, ".smith -o include/chain/m", i, ".h -I include"));
+        scratch::Run run = scratch::sh(
+            p, joined("smith cc --smith-header chain/m", i, ".smith -o include/chain/m", i, ".h -I include"));
         scratch::expect_status("chain: a header of the chain", 0, &run);
     }
 }
@@ -485,9 +484,9 @@ export void test_more_modules_than_the_limit_is_an_error_that_names_it() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     for (usize i = 0; i < deep_length; i++) {
-        const char *text = i + 1 < deep_length
-                               ? joined("module deep::m", i, ";\nimport deep::m", i + 1, ";\nexport u32 m", i, "(void);\n")
-                               : joined("module deep::m", i, ";\nexport u32 m", i, "(void);\n");
+        const char *text = i + 1 < deep_length ? joined("module deep::m", i, ";\nimport deep::m", i + 1,
+                                                        ";\nexport u32 m", i, "(void);\n")
+                                               : joined("module deep::m", i, ";\nexport u32 m", i, "(void);\n");
         scratch::write(&p, joined("deep/m", i, ".smith"), text);
     }
     scratch::Run run = scratch::sh(&p, "smith cc --smith-header deep/m0.smith -o deep.h");

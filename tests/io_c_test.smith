@@ -50,8 +50,8 @@ const char *joined(auto... pieces) {
 // has the program and no sources, as the program is the shared one.
 static void compile(const scratch::Project *p, const char *name) {
     const char *extra = c::strcmp(name, "asan") == 0 ? "-O0 -g -fsanitize=address,undefined" : "-O2";
-    scratch::Run built = scratch::sh(
-        p, joined("NAME=", name, "; FLAGS='", extra, "'; WARN='", warn, "'; SOURCES='", sources, "'; ", program_script));
+    scratch::Run built = scratch::sh(p, joined("NAME=", name, "; FLAGS='", extra, "'; WARN='", warn, "'; SOURCES='",
+                                               sources, "'; ", program_script));
     if (built.status != 0) test::note("%s", built.out);
     scratch::expect_status(joined("the ", name, " program builds"), 0, &built);
 }
@@ -250,8 +250,8 @@ export void test_io_c_console_a_line_longer_than_the_buffer() {
     const char *line = scratch::capture(&p, "head -c 100000 /dev/zero | tr '\\0' x");
     scratch::Run result = scratch::sh(&p, "head -c 100000 /dev/zero | tr '\\0' x | ./fast lines");
     scratch::expect_status("console: a line longer than the buffer", 0, &result);
-    scratch::expect_text("console: a line longer than the buffer (the line)",
-                         joined("1 lines, last=", line), result.out);
+    scratch::expect_text("console: a line longer than the buffer (the line)", joined("1 lines, last=", line),
+                         result.out);
 }
 
 // The same loop ends when stdin is a regular file, which kqueue never reports readable at its end, however it is fed.

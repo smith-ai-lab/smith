@@ -51,8 +51,9 @@ static scratch::Project units_project() {
 
 // The project built in a mode.
 static void build_in_mode(const scratch::Project *p, const char *mode) {
-    scratch::Run built = scratch::build(p, joined("-DMODE=", mode, " -DLIBS=arena,random,text,json,inflate -DTEST=",
-                                                  json.path, ",", text.path, ",", inflate.path));
+    scratch::Run built =
+        scratch::build(p, joined("-DMODE=", mode, " -DLIBS=arena,random,text,json,inflate -DTEST=", json.path, ",",
+                                 text.path, ",", inflate.path));
     scratch::expect_status(joined(mode, ": the tests build"), 0, &built);
 }
 
@@ -101,9 +102,7 @@ static const char *json_suite(const scratch::Project *p) {
                            "sha256:32ab2fb37cc26679dbd9164dbb7053bcef10134643d53cb0cef45de7680dcdcc"))
         return "";
     const char *folder = scratch::capture(p, "sed -n 's/^smith: .* is in //p' fetch.txt");
-    return fetched.status == 0 && scratch::exists(p, "fetch.txt")
-               ? joined(folder, "/test_parsing")
-               : "";
+    return fetched.status == 0 && scratch::exists(p, "fetch.txt") ? joined(folder, "/test_parsing") : "";
 }
 
 // What was done with the suite: the counts, and each implementation-defined case. Skipped with no network. Runs on the
@@ -217,10 +216,9 @@ static void names_no_libc_function(const char *source, const char *allowed) {
                                "\"$SMITH_REPO/.smith/include\" -c ",
                                source, " -o library.o"));
     scratch::expect_status("the library compiles freestanding", 0, &built);
-    scratch::expect_text(
-        "library: names no libc function", "",
-        scratch::capture(&p, joined("nm -u library.o | awk '{print $NF}' | sed 's/^_//' | grep -v -x ", allowed,
-                                    " | sort | tr '\\n' ' '")));
+    scratch::expect_text("library: names no libc function", "",
+                         scratch::capture(&p, joined("nm -u library.o | awk '{print $NF}' | sed 's/^_//' | grep -v -x ",
+                                                     allowed, " | sort | tr '\\n' ' '")));
 }
 
 export void test_library_modes_json_compiles_as_c23() {
@@ -251,7 +249,12 @@ export void test_library_modes_text_names_no_libc_function() {
 // lib/http.c compiled under the warnings of a new project (its behavior is lib/http_test.smith), from tests/http.sh.
 static void http_compiles(const char *standard, const char *extra, const char *name) {
     scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
     scratch::copy_tree(&p, "lib", "lib");
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run built = scratch::sh(
         &p, joined("smith cc -std=", standard,
                    " -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
