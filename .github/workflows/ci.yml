@@ -36,6 +36,7 @@ jobs:
       linux: ${{ steps.linux.outputs.linux }}
       # where the macOS jobs run (knowledge/ci-hosted.md): the owner's Mac when one of its runners is online, else
       # hosted macos-26; picked per run by the step `Pick the macOS runner`
+      pack: ${{ steps.pack.outputs.build }}
       mac: ${{ steps.mac.outputs.mac }}
       # SMITH_CORES of a macOS job: the Mac's 16 cores shared by its 3 runners; a hosted runner has 3
       cores: ${{ steps.mac.outputs.cores }}
@@ -47,24 +48,26 @@ jobs:
           fetch-depth: 0
       - name: Pick the macOS runner
         id: mac
+        uses: ./.github/actions/pick-mac
+        with:
+          token: ${{ secrets.RUNNER_STATUS_TOKEN }}
+          fork: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+      - name: Is there a pack for this LLVM configuration
+        id: pack
+        # a change of patches/ bumps the configuration name, whose pack no release holds yet: the `pack` job builds
+        # and publishes it before anything that needs LLVM runs (#1064). Not for a fork, which cannot publish.
         env:
-          RUNNER_STATUS_TOKEN: ${{ secrets.RUNNER_STATUS_TOKEN }}
           FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
-          # the owner's Mac if at least one runner labelled self-hosted, macOS and ARM64 is online right now, else a
-          # hosted macos-26: a Mac that is off never stalls the run. No token, a fork, or a failed call: hosted.
-          mac='"macos-26"'; cores=3; why="no secret"
-          if [ "$FORK" = true ]; then why="fork pull request"
-          elif [ -n "$RUNNER_STATUS_TOKEN" ]; then
-            if online=$(GH_TOKEN=$RUNNER_STATUS_TOKEN gh api "repos/$GITHUB_REPOSITORY/actions/runners" --paginate --jq \
-              '.runners[] | select(.status == "online") | select([.labels[].name] | contains(["self-hosted", "macOS", "ARM64"])) | .name' 2>/dev/null); then
-              if [ -n "$online" ]; then mac='["self-hosted","macOS","ARM64"]'; cores=5; why="online: $(printf '%s' "$online" | tr '\n' ' ')"
-              else why="no Mac runner online"; fi
-            else why="runners call failed"; fi
+          name=$(sed -n 's/.*"SMITH_LLVM_NAME", "\([^"]*\)".*/\1/p' build.c | head -1)
+          build=false
+          if [ "$FORK" != true ] && [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            for tag in "llvm-$name-darwin-arm64" "llvm-$name-linux-x86_64"; do
+              gh release view "$tag" >/dev/null 2>&1 || build=true
+            done
           fi
-          echo "mac=$mac" >>"$GITHUB_OUTPUT"
-          echo "cores=$cores" >>"$GITHUB_OUTPUT"
-          echo "macOS jobs run on $mac ($why)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "build=$build" >>"$GITHUB_OUTPUT"
+          echo "LLVM pack $name: built by this run: $build" >>"$GITHUB_STEP_SUMMARY"
       - name: Scope
         id: scope
         env:
@@ -119,13 +122,23 @@ jobs:
           echo "matrix={\"include\":[{\"os\":\"macos-26\",\"shard\":1,\"count\":1,\"flags\":\"$macflags\"}]}" >>"$GITHUB_OUTPUT"
           echo "tests: $count Linux parts, one macOS part ($macflags)" >>"$GITHUB_STEP_SUMMARY"
 
+  pack:
+    # the LLVM pack of a configuration no release holds yet, built and published by llvm.yml (#1064) before the jobs
+    # that need it start; it runs on the Mac only when the Mac is online and idle, else on hosted runners
+    needs: changes
+    if: needs.changes.outputs.pack == 'true'
+    uses: ./.github/workflows/llvm.yml
+    permissions:
+      contents: write # gh release create
+    secrets: inherit
+
   build:
     # smith built once for the run (#798): the stage0 release and the LLVM pack come from the cache (or the release),
     # compiles from the step cache main saved, then the tests are built too. Every job after this one unpacks the
     # result instead of compiling smith again.
-    needs: changes
+    needs: [changes, pack]
     # macOS only: the Linux shards build smith themselves. A push to main builds nothing here (the release does).
-    if: needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs'
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs') }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
     timeout-minutes: 40
     env:
@@ -262,8 +275,8 @@ jobs:
   test-linux:
     # Linux carries the tests (required): 6 hosted shards of `--skip-macos`, each builds smith itself (a hosted
     # runner is free, and no ~1 GB artifact travels: storage egress), so none waits for `build`
-    needs: changes
-    if: needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'release'
+    needs: [changes, pack]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'release') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -353,7 +366,7 @@ jobs:
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too (the failing job cancels the run): red at once.
-    needs: [changes, build, mechanical, test, test-linux, docs]
+    needs: [changes, pack, build, mechanical, test, test-linux, docs]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
