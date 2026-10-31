@@ -12,11 +12,13 @@ import smith::mem;
 
 constexpr usize memory_size = (usize)1 << 20; // 1 MiB
 
-// The developer folders on this machine that answer `xcrun --show-sdk-path`: the first two, one per line.
+// The developer folders on this machine whose SDK paths differ (two folders can answer with the same SDK): the first
+// two, one per line.
 constexpr char folders_script[_] =
     "for d in \"$(xcode-select -p 2>/dev/null)\" /Applications/Xcode*.app/Contents/Developer "
-    "/Library/Developer/CommandLineTools; do [ -d \"$d\" ] && DEVELOPER_DIR=$d /usr/bin/xcrun --show-sdk-path "
-    ">/dev/null 2>&1 && echo \"$d\"; done | awk '!seen[$0]++' | head -2";
+    "/Library/Developer/CommandLineTools; do [ -d \"$d\" ] || continue; "
+    "s=$(DEVELOPER_DIR=$d /usr/bin/xcrun --show-sdk-path 2>/dev/null) && [ -n \"$s\" ] && "
+    "printf '%s\\t%s\\n' \"$d\" \"$s\"; done | awk -F'\\t' '!seen[$2]++ { print $1 }' | head -2";
 
 // The text of a line, 1-based, of a command's output.
 static const char *line_of(arena::Arena *arena, const char *text, usize number) {
@@ -55,7 +57,7 @@ export void test_macos_sdk_cache_follows_developer_dir() {
     const char *first = line_of(arena, folders, 1);
     const char *second = line_of(arena, folders, 2);
     if (second[0] == '\0') {
-        test::note("fewer than two developer folders with an SDK on this machine: nothing to switch between");
+        test::note("fewer than two developer folders with different SDKs on this machine: nothing to switch between");
         return;
     }
     scratch::copy_tree(&p, "tests/stub.c", "tests/stub.c");
