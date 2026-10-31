@@ -1,5 +1,5 @@
 // The corpus of the .smith language (tests/smith-lang/cases), run through the smith under test, which must have clang
-// inside with the token hook. A case is a folder, and is one test here (`corpus_case(io, "name")`; a case added to the
+// inside with the token hook. A case is a folder, and is one test here (`corpus_case("name")`; a case added to the
 // folder needs a test: `test_every_case_has_a_test` says which):
 //   src/             the sources; module a.b is src/a/b.smith; src/main.smith (or main.c, main.cpp), if there, is
 //   linked with
@@ -35,7 +35,7 @@ module smith_lang_test;
 
 import smith::arena;
 import smith::format;
-import smith::io;
+import smith::files;
 import smith::test;
 import <string.h>;
 import scratch;
@@ -44,7 +44,7 @@ import target;
 import <smith_core.h>;
 
 typedef struct {
-    io::Io *io;
+    arena::Arena *arena;
     const char *name;
     const scratch::Project *project;
 } Case;
@@ -76,16 +76,16 @@ static typeof(const char[:]) slice_of(const char *text) {
     return text[0:c::strlen(text)];
 }
 
-static const char *join(const Case *kase, const char *a, const char *b, const char *c, const char *d) {
-    return format::push(&kase->io->arena, a, b, c, d).data;
+static const char *join(const char *a, const char *b, const char *c, const char *d) {
+    return format::push(a, b, c, d).data;
 }
 
 // The next line of text, copied (a zero ends it), or nullptr at the end. `*at` moves past it.
-static const char *next_line(io::Io *io, const char **at) {
+static const char *next_line(arena::Arena *arena, const char **at) {
     if (**at == '\0') return nullptr;
     const char *end = c::strchr(*at, '\n');
     usize length = end != nullptr ? (usize)(end - *at) : c::strlen(*at);
-    char *copy = arena::push_slice(&io->arena, char, length + 1).data;
+    char *copy = arena::push_slice(arena, char, length + 1).data;
     const char *line = *at;
     mem::copy(copy[0:length], line[0:length]);
     *at += length + (end != nullptr ? 1 : 0);
@@ -93,28 +93,28 @@ static const char *next_line(io::Io *io, const char **at) {
 }
 
 // `a/b.smith` as the module `a.b`, `a/b` the stem.
-static const char *module_of(io::Io *io, const char *file) {
+static const char *module_of(arena::Arena *arena, const char *file) {
     usize length = c::strlen(file);
     if (length > 6 && c::strcmp(file + length - 6, ".smith") == 0) length -= 6;
-    char *copy = arena::push_slice(&io->arena, char, length + 1).data;
+    char *copy = arena::push_slice(arena, char, length + 1).data;
     for (usize i = 0; i < length; i++) {
         copy[i] = file[i] == '/' ? '.' : file[i];
     }
     return copy;
 }
 
-static const char *stem_of(io::Io *io, const char *file) {
+static const char *stem_of(arena::Arena *arena, const char *file) {
     usize length = c::strlen(file);
     if (length > 6 && c::strcmp(file + length - 6, ".smith") == 0) length -= 6;
-    char *copy = arena::push_slice(&io->arena, char, length + 1).data;
+    char *copy = arena::push_slice(arena, char, length + 1).data;
     mem::copy(copy[0:length], file[0:length]);
     return copy;
 }
 
 // The object of a file that is not a module: its path with the dots for slashes.
-static const char *object_of(io::Io *io, const char *file) {
+static const char *object_of(arena::Arena *arena, const char *file) {
     usize length = c::strlen(file);
-    char *copy = arena::push_slice(&io->arena, char, length + 1).data;
+    char *copy = arena::push_slice(arena, char, length + 1).data;
     for (usize i = 0; i < length; i++) {
         copy[i] = file[i] == '/' ? '.' : file[i];
     }
@@ -132,7 +132,7 @@ static const char *text_of(const Case *kase, const char *name) {
     usize length = c::strlen(text);
     while (length > 0 && text[length - 1] == '\n')
         length--;
-    char *copy = arena::push_slice(&kase->io->arena, char, length + 1).data;
+    char *copy = arena::push_slice(kase->arena, char, length + 1).data;
     mem::copy(copy[0:length], text[0:length]);
     copy[length] = '\0';
     return copy;
@@ -149,10 +149,10 @@ static bool ends_with(const char *text, const char *suffix) {
 
 // The files below a folder of the case (`from`, "src" or "expect/generics") whose names end in `suffix_a` or `suffix_b`
 // (every file when both are nullptr), as paths relative to it, in the order of LC_ALL=C sort, one a line. It does what
-// `cd src && find . -name '*.smith' | LC_ALL=C sort` did, through io, in place of a process for each.
+// `cd src && find . -name '*.smith' | LC_ALL=C sort` did, through smith::files, in place of a process for each.
 static const char *found(const Case *kase, const char *from, const char *suffix_a, const char *suffix_b,
                          bool files_only_here) {
-    io::Io *io = kase->io;
+    arena::Arena *arena = kase->arena;
     const char *names[found_max];
     usize count = 0;
     const char *folders[found_folders_max]; // relative to `from`; "" is `from` itself
@@ -160,21 +160,22 @@ static const char *found(const Case *kase, const char *from, const char *suffix_
     folders[0] = "";
     for (usize head = 0; head < tail; head++) {
         const char *where = folders[head][0] == '\0'
-                                ? join(kase, kase->project->dir, "/", from, "")
-                                : join(kase, kase->project->dir, "/", from, join(kase, "/", folders[head], "", ""));
-        io::FileList list = io::files_list(&io->files, &io->arena, where);
-        if (list.error.code != 0) continue;
-        for (usize i = 0; i < list.count; i++) {
-            const char *relative = folders[head][0] == '\0' ? list.entries[i].name
-                                                            : join(kase, folders[head], "/", list.entries[i].name, "");
-            if (list.entries[i].folder && !list.entries[i].link && !files_only_here) {
+                                ? join(kase->project->dir, "/", from, "")
+                                : join(kase->project->dir, "/", from, join("/", folders[head], "", ""));
+        files::EntriesResult list = files::list(where[0:c::strlen(where)]);
+        files::Entries entries = {};
+        if (list == .ok) entries = list.ok;
+        for (usize i = 0; i < countof(entries); i++) {
+            const char *entry = entries[i].name.data;
+            const char *relative = folders[head][0] == '\0' ? entry : join(folders[head], "/", entry, "");
+            if (entries[i].folder && !files_only_here) {
                 test::check_less(tail, found_folders_max);
                 folders[tail++] = relative;
                 continue;
             }
-            bool wanted = (suffix_a == nullptr && suffix_b == nullptr) || ends_with(list.entries[i].name, suffix_a) ||
-                          ends_with(list.entries[i].name, suffix_b);
-            if (!wanted || (list.entries[i].folder && !list.entries[i].link)) {
+            bool wanted = (suffix_a == nullptr && suffix_b == nullptr) || ends_with(entry, suffix_a) ||
+                          ends_with(entry, suffix_b);
+            if (!wanted || entries[i].folder) {
                 continue;
             }
             test::check_less(count, found_max);
@@ -188,101 +189,104 @@ static const char *found(const Case *kase, const char *from, const char *suffix_
     }
     const char *lines = "";
     for (usize i = 0; i < count; i++)
-        lines = join(kase, lines, names[i], "\n", "");
+        lines = join(lines, names[i], "\n", "");
     return lines;
 }
 
 // The header of a module, made in process into out/include, with the errors it reports added to out/stderr.
 static void write_header(const Case *kase, const char *file, const char *stem) {
-    io::Io *io = kase->io;
+    arena::Arena *arena = kase->arena;
     const scratch::Project *p = kase->project;
-    const char *source = format::push(&io->arena, "src/", file).data;
+    const char *source = format::push("src/", file).data;
     bool made =
         c::smith_core_header(p->dir, source, nullptr, header_text, header_capacity, report_text, report_capacity);
     if (report_text[0] != '\0') {
         const u8 *bytes = (const u8 *)report_text;
-        io::Error added = io::files_write(&io->files, format::push(&io->arena, p->dir, "/out/stderr").data,
-                                          bytes[0:c::strlen(report_text)], io::Append);
-        test::check_equal(added.code, 0);
+        const char *errors = format::push(p->dir, "/out/stderr").data;
+        files::CountResult added =
+            files::write_file(errors[0:c::strlen(errors)], bytes[0:c::strlen(report_text)], files::Append);
+        test::check(added == .ok);
     }
     if (!made) return;
-    const char *path = format::push(&io->arena, p->dir, "/out/include/", stem, ".h").data;
+    const char *path = format::push(p->dir, "/out/include/", stem, ".h").data;
     const char *slash = c::strrchr(path, '/');
-    char *folder = arena::push_slice(&io->arena, char, (usize)(slash - path) + 1).data;
+    char *folder = arena::push_slice(arena, char, (usize)(slash - path) + 1).data;
     mem::copy(folder[0:(usize)(slash - path)], path[0:(usize)(slash - path)]);
     folder[slash - path] = '\0';
-    test::check_equal(io::files_make_folder(&io->files, folder).code, 0);
+    files::DoneResult folder_made = files::make_folder(folder[0:(usize)(slash - path)]);
+    test::check(folder_made == .ok);
     const u8 *header = (const u8 *)header_text;
-    io::Error written = io::files_write(&io->files, path, header[0:c::strlen(header_text)], io::Replace);
-    test::check_equal(written.code, 0);
+    files::CountResult written =
+        files::write_file(path[0:c::strlen(path)], header[0:c::strlen(header_text)], files::Replace);
+    test::check(written == .ok);
 }
 
 // Every compile of the case, into out/.
 static Built build_sources(const Case *kase) {
-    io::Io *io = kase->io;
+    arena::Arena *arena = kase->arena;
     const scratch::Project *p = kase->project;
-    const char *flags = format::push(&io->arena, scratch::exists(p, "nostd") ? "" : "-std=gnu23",
+    const char *flags = format::push(scratch::exists(p, "nostd") ? "" : "-std=gnu23",
                                      " -g0 -fno-color-diagnostics -Wno-unused-function -I out/include ",
                                      scratch::exists(p, "flags") ? text_of(kase, "flags") : "")
                             .data;
     const char *sources = found(kase, "src", ".smith", nullptr, false);
     Built built = {.status = 0, .objects = ""};
-    for (const char *at = sources, *file = next_line(io, &at); file != nullptr; file = next_line(io, &at)) {
+    for (const char *at = sources, *file = next_line(arena, &at); file != nullptr; file = next_line(arena, &at)) {
         // the headers first, as the build will: no compile waits on another
-        const char *stem = stem_of(io, file);
+        const char *stem = stem_of(arena, file);
         if (header_by_command(kase->name)) {
-            const char *command = format::push(&io->arena, "mkdir -p \"out/include/$(dirname ", file,
-                                               ")\" && smith cc --smith-header src/", file, " -o out/include/", stem,
-                                               ".h 2>>out/stderr; [ -f out/include/", stem, ".h ] && cp out/include/",
-                                               stem, ".h out/header/", module_of(io, file), ".h")
-                                      .data;
+            const char *command =
+                format::push("mkdir -p \"out/include/$(dirname ", file, ")\" && smith cc --smith-header src/", file,
+                             " -o out/include/", stem, ".h 2>>out/stderr; [ -f out/include/", stem,
+                             ".h ] && cp out/include/", stem, ".h out/header/", module_of(arena, file), ".h")
+                    .data;
             (void)scratch::sh(p, command);
         } else {
             write_header(kase, file, stem);
         }
     }
     const char *ask = scratch::exists(p, "ask") ? text_of(kase, "ask") : "";
-    for (const char *at = sources, *file = next_line(io, &at); file != nullptr; file = next_line(io, &at)) {
-        const char *module = module_of(io, file);
+    for (const char *at = sources, *file = next_line(arena, &at); file != nullptr; file = next_line(arena, &at)) {
+        const char *module = module_of(arena, file);
         const char *compile =
-            format::push(&io->arena, "SMITH_LANG_GENERICS=out/generics/", module, ".c SMITH_LANG_ASK='", ask,
-                         "' smith cc ", flags, " -c src/", file, " -o out/obj/", module, ".o 2>>out/stderr")
+            format::push("SMITH_LANG_GENERICS=out/generics/", module, ".c SMITH_LANG_ASK='", ask, "' smith cc ", flags,
+                         " -c src/", file, " -o out/obj/", module, ".o 2>>out/stderr")
                 .data;
         if (scratch::sh(p, compile).status != 0) built.status = 1;
-        built.objects = format::push(&io->arena, built.objects, " out/obj/", module, ".o").data;
+        built.objects = format::push(built.objects, " out/obj/", module, ".o").data;
     }
     return built;
 }
 
 // The sources that are not modules (C and C++), compiled beside them, and the link and the run.
 static void build_others(const Case *kase, Built *built) {
-    io::Io *io = kase->io;
+    arena::Arena *arena = kase->arena;
     const scratch::Project *p = kase->project;
-    const char *flags = format::push(&io->arena, scratch::exists(p, "nostd") ? "" : "-std=gnu23",
+    const char *flags = format::push(scratch::exists(p, "nostd") ? "" : "-std=gnu23",
                                      " -g0 -fno-color-diagnostics -Wno-unused-function -I out/include ",
                                      scratch::exists(p, "flags") ? text_of(kase, "flags") : "")
                             .data;
     const char *others = found(kase, "src", ".c", ".cpp", false);
     const char *linker = "cc"; // the verb that links: C++ needs smith c++
-    for (const char *at = others, *file = next_line(io, &at); file != nullptr; file = next_line(io, &at)) {
-        const char *object = format::push(&io->arena, "out/obj/", object_of(io, file), ".o").data;
+    for (const char *at = others, *file = next_line(arena, &at); file != nullptr; file = next_line(arena, &at)) {
+        const char *object = format::push("out/obj/", object_of(arena, file), ".o").data;
         bool cpp = c::strcmp(file + c::strlen(file) - 4, ".cpp") == 0;
         const char *compile =
-            cpp ? format::push(&io->arena, "smith c++ -std=c++20 -g0 -fno-color-diagnostics -I out/include -c src/",
-                               file, " -o ", object, " 2>>out/stderr")
+            cpp ? format::push("smith c++ -std=c++20 -g0 -fno-color-diagnostics -I out/include -c src/", file, " -o ",
+                               object, " 2>>out/stderr")
                       .data
-                : format::push(&io->arena, "smith cc ", flags, " -c src/", file, " -o ", object, " 2>>out/stderr").data;
+                : format::push("smith cc ", flags, " -c src/", file, " -o ", object, " 2>>out/stderr").data;
         if (scratch::sh(p, compile).status != 0) built->status = 1;
         if (cpp) linker = "c++";
-        built->objects = format::push(&io->arena, built->objects, " ", object).data;
+        built->objects = format::push(built->objects, " ", object).data;
     }
     scratch::write(p, "out/stdout", "");
     bool has_main =
         scratch::exists(p, "src/main.smith") || scratch::exists(p, "src/main.c") || scratch::exists(p, "src/main.cpp");
     if (built->status != 0 || !has_main) return;
     // -lm: glibc keeps libm apart; macOS's is in libSystem, which links anyway
-    scratch::Run linked = scratch::sh(
-        p, format::push(&io->arena, "smith ", linker, built->objects, " -lm -o out/program 2>>out/stderr").data);
+    scratch::Run linked =
+        scratch::sh(p, format::push("smith ", linker, built->objects, " -lm -o out/program 2>>out/stderr").data);
     if (linked.status != 0) {
         built->status = 1;
         return;
@@ -296,11 +300,10 @@ static Built build_command(const Case *kase) {
     Built built = {.status = 0, .objects = ""};
     // smith's generated headers are a build output, not a file of the tree: they stay where the build wrote them
     scratch::Run run = scratch::sh(
-        p,
-        format::push(&kase->io->arena, "arguments=$(sed \"s|@OUT@|$PWD/out|g; s|@REPO@/.smith/|$SMITH_REPO/.smith/|g; ",
-                     "s|@REPO@/tests/smith-lang/cases/", kase->name, "/|$PWD/|g; s|@REPO@|$PWD/mirror|g\" cmd); ",
-                     "(cd src && smith cc -fno-color-diagnostics $arguments) 2>>out/stderr")
-            .data);
+        p, format::push("arguments=$(sed \"s|@OUT@|$PWD/out|g; s|@REPO@/.smith/|$SMITH_REPO/.smith/|g; ",
+                        "s|@REPO@/tests/smith-lang/cases/", kase->name, "/|$PWD/|g; s|@REPO@|$PWD/mirror|g\" cmd); ",
+                        "(cd src && smith cc -fno-color-diagnostics $arguments) 2>>out/stderr")
+               .data);
     if (run.status != 0) built.status = 1;
     scratch::write(p, "out/stdout", "");
     if (built.status == 0 && scratch::exists(p, "out/program")) {
@@ -316,11 +319,11 @@ static void golden_at(const Case *kase, const char *relative, const char *actual
     const char *shown = relative;
     if constexpr (target::os != target::macos) { // not `target::linux`: clang defines `linux` as 1 there (#382)
         if (c::strncmp(relative, "expect/", 7) == 0) {
-            const char *variant = join(kase, "expect-linux/", relative + 7, "", "");
+            const char *variant = join("expect-linux/", relative + 7, "", "");
             if (scratch::exists(kase->project, variant)) shown = variant;
         }
     }
-    test::golden(kase->io, slice_of(join(kase, "tests/smith-lang/cases/", kase->name, "/", shown)), slice_of(actual));
+    test::golden(slice_of(join("tests/smith-lang/cases/", kase->name, "/", shown)), slice_of(actual));
 }
 
 static usize digits_at(const char *line, usize at) {
@@ -347,16 +350,16 @@ constexpr usize errors_max = 512;
 // without duplicates: what `sed -n 's/^\([^ :]*:[0-9]*:[0-9]*\): error: \(.*\)$/\1: \2/p' | LC_ALL=C sort -u` made of
 // the file, read here in place of a process.
 static const char *errors_of(const Case *kase, const char *file) {
-    io::Io *io = kase->io;
+    arena::Arena *arena = kase->arena;
     const char *text = scratch::read(kase->project, file);
     const char *lines[errors_max];
     usize count = 0;
-    for (const char *at = text, *line = next_line(io, &at); line != nullptr; line = next_line(io, &at)) {
+    for (const char *at = text, *line = next_line(arena, &at); line != nullptr; line = next_line(arena, &at)) {
         usize position = error_position(line);
         if (position == 0) {
             continue;
         }
-        const char *error = format::push(&io->arena, line[0:position], ": ", line + position + 9).data;
+        const char *error = format::push(line[0:position], ": ", line + position + 9).data;
         usize place = 0;
         while (place < count && c::strcmp(lines[place], error) < 0)
             place++;
@@ -371,7 +374,7 @@ static const char *errors_of(const Case *kase, const char *file) {
     }
     const char *sorted = "";
     for (usize k = 0; k < count; k++)
-        sorted = join(kase, sorted, lines[k], "\n", "");
+        sorted = join(sorted, lines[k], "\n", "");
     return sorted;
 }
 
@@ -410,18 +413,18 @@ static void check_outputs(const Case *kase, bool update) {
 
 // The files the case holds in expect/<folder>, as `<folder>/<name>` one a line.
 static const char *held(const Case *kase, const char *folder) {
-    io::Io *io = kase->io;
-    const char *names = found(kase, join(kase, "expect/", folder, "", ""), nullptr, nullptr, true);
+    arena::Arena *arena = kase->arena;
+    const char *names = found(kase, join("expect/", folder, "", ""), nullptr, nullptr, true);
     const char *lines = "";
-    for (const char *at = names, *name = next_line(io, &at); name != nullptr; name = next_line(io, &at))
-        lines = join(kase, lines, folder, "/", join(kase, name, "\n", "", ""));
+    for (const char *at = names, *name = next_line(arena, &at); name != nullptr; name = next_line(arena, &at))
+        lines = join(lines, folder, "/", join(name, "\n", "", ""));
     return lines;
 }
 
 // The generated headers of the cases in `header_by_command` and what the compile wrote for generics, as the case holds
 // them. A run to update takes the files a successful build made as the expectation.
 static void check_files(const Case *kase, const Built *built, bool update) {
-    io::Io *io = kase->io;
+    arena::Arena *arena = kase->arena;
     const char *files;
     if (update && built->status != 0) return;
     if (update && fresh(kase->project)) { // a new case: what the build made, each file that is not empty
@@ -431,11 +434,10 @@ static void check_files(const Case *kase, const Built *built, bool update) {
     } else { // the files the case holds, which an update rewrites (the lowering and most headers are checked in
              // process)
         const char *generics = held(kase, "generics");
-        files = header_by_command(kase->name) ? join(kase, held(kase, "header"), generics, "", "") : generics;
+        files = header_by_command(kase->name) ? join(held(kase, "header"), generics, "", "") : generics;
     }
-    for (const char *at = files, *file = next_line(io, &at); file != nullptr; file = next_line(io, &at)) {
-        golden_at(kase, join(kase, "expect/", file, "", ""),
-                  scratch::read(kase->project, join(kase, "out/", file, "", "")));
+    for (const char *at = files, *file = next_line(arena, &at); file != nullptr; file = next_line(arena, &at)) {
+        golden_at(kase, join("expect/", file, "", ""), scratch::read(kase->project, join("out/", file, "", "")));
     }
 }
 
@@ -446,7 +448,7 @@ static void check_asked_and_symbols(const Case *kase, const Built *built) {
     }
     if (scratch::exists(p, "expect/symbols")) {
         const char *command =
-            format::push(&kase->io->arena, "for object in", built->objects,
+            format::push("for object in", built->objects,
                          "; do nm -g \"$object\" 2>/dev/null; done | grep -v ' U ' | awk '{print $2, $3}' | "
                          // the goldens are Mach-O's: C names have a leading underscore, a weak definition is T and
                          // zero-filled data is S
@@ -459,23 +461,29 @@ static void check_asked_and_symbols(const Case *kase, const Built *built) {
     }
 }
 
-static const char *join_name(io::Io *io, const char *name) {
-    return format::push(&io->arena, "cases/", name).data;
-}
-
-static void corpus_case(io::Io *io, const char *name) {
+static void corpus_case(const char *name) {
     // The folder is cases/<name>, as in the corpus, so that a case names a sibling as ../../<other>/src/main.smith.
-    scratch::Project p = scratch::project(io, join_name(io, name), nullptr);
-    Case kase = {.io = io, .name = name, .project = &p};
-    scratch::copy_tree(&p, join(&kase, "tests/smith-lang/cases/", name, "", ""), "");
+    char folder_name[256];
+    (void)format::to(folder_name, sizeof folder_name, "cases/", name);
+    scratch::Project p = scratch::make(folder_name, nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Case kase = {.arena = &memory, .name = name, .project = &p};
+    scratch::copy_tree(&p, join("tests/smith-lang/cases/", name, "", ""), "");
     // A case that names the files of another (../../target-facts/src/main.smith) finds them beside its own folder.
     if (c::strncmp(name, "target-facts-", 13) == 0) {
         scratch::copy_tree(&p, "tests/smith-lang/cases/target-facts", "../target-facts");
     }
-    // The folders of the output and its empty error file, through io: a process for them cost as much as a compile.
+    // The folders of the output and its empty error file, in process: a process for them cost as much as a compile.
     const char *folders[5] = {"out", "out/include", "out/header", "out/generics", "out/obj"};
-    for (usize i = 0; i < countof(folders); i++)
-        test::check_equal(io::files_make_folder(&io->files, join(&kase, p.dir, "/", folders[i], "")).code, 0);
+    for (usize i = 0; i < countof(folders); i++) {
+        const char *folder = join(p.dir, "/", folders[i], "");
+        files::DoneResult made = files::make_folder(folder[0:c::strlen(folder)]);
+        test::check(made == .ok);
+    }
     scratch::write(&p, "out/stderr", "");
     if (scratch::exists(&p, "cmd")) { // the files of smith's own that a command may name, as @REPO@
         scratch::copy_tree(&p, "lib/smith/contract.smith", "mirror/lib/smith/contract.smith");
@@ -497,1493 +505,1658 @@ static void corpus_case(io::Io *io, const char *name) {
     check_asked_and_symbols(&kase, &built);
 }
 
-// A case added to tests/smith-lang/cases needs a test here: the folder is listed and this file read through io.
-export void test_every_case_has_a_test(io::Io *io) {
+// A case added to tests/smith-lang/cases needs a test here: the folder is listed and this file read.
+export void test_every_case_has_a_test() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::expect_text("cases of tests/smith-lang/cases with no test", "",
-                         scratch::untested_names(io, "tests/smith-lang/cases", "tests/smith_lang_test.smith",
-                                                 "corpus_case(io, ", nullptr, nullptr));
+                         scratch::untested_names("tests/smith-lang/cases", "tests/smith_lang_test.smith",
+                                                 "corpus_case(", nullptr, nullptr));
 }
 
-export void test_array_param(io::Io *io) {
-    corpus_case(io, "array-param");
+export void test_array_param() {
+    corpus_case("array-param");
 }
 
-export void test_array_param_unused(io::Io *io) {
-    corpus_case(io, "array-param-unused");
+export void test_array_param_unused() {
+    corpus_case("array-param-unused");
 }
 
-export void test_generic_fields_helper(io::Io *io) {
-    corpus_case(io, "generic-fields-helper");
+export void test_generic_fields_helper() {
+    corpus_case("generic-fields-helper");
 }
 
-export void test_array_param_export(io::Io *io) {
-    corpus_case(io, "array-param-export");
+export void test_array_param_export() {
+    corpus_case("array-param-export");
 }
 
-export void test_array_param_plain(io::Io *io) {
-    corpus_case(io, "array-param-plain");
+export void test_array_param_plain() {
+    corpus_case("array-param-plain");
 }
 
-export void test_attribute_c_names(io::Io *io) {
-    corpus_case(io, "attribute-c-names");
+export void test_attribute_c_names() {
+    corpus_case("attribute-c-names");
 }
 
-export void test_c_array_bound(io::Io *io) {
-    corpus_case(io, "c-array-bound");
+export void test_c_array_bound() {
+    corpus_case("c-array-bound");
 }
 
-export void test_c_macro_argument(io::Io *io) {
-    corpus_case(io, "c-macro-argument");
+export void test_c_macro_argument() {
+    corpus_case("c-macro-argument");
 }
 
-export void test_c_name(io::Io *io) {
-    corpus_case(io, "c-name");
+export void test_c_name() {
+    corpus_case("c-name");
 }
 
-export void test_c_sized_names(io::Io *io) {
-    corpus_case(io, "c-sized-names");
+export void test_c_sized_names() {
+    corpus_case("c-sized-names");
 }
 
-export void test_compile_alone_by_path(io::Io *io) {
-    corpus_case(io, "compile-alone-by-path");
+export void test_compile_alone_by_path() {
+    corpus_case("compile-alone-by-path");
 }
 
-export void test_constexpr_c(io::Io *io) {
-    corpus_case(io, "constexpr-c");
+export void test_constexpr_c() {
+    corpus_case("constexpr-c");
 }
 
-export void test_constexpr_c_pedantic(io::Io *io) {
-    corpus_case(io, "constexpr-c-pedantic");
+export void test_constexpr_c_pedantic() {
+    corpus_case("constexpr-c-pedantic");
 }
 
-export void test_constexpr_import(io::Io *io) {
-    corpus_case(io, "constexpr-import");
+export void test_constexpr_import() {
+    corpus_case("constexpr-import");
 }
 
-export void test_constexpr_import_header(io::Io *io) {
-    corpus_case(io, "constexpr-import-header");
+export void test_constexpr_import_header() {
+    corpus_case("constexpr-import-header");
 }
 
-export void test_constexpr_import_result_type(io::Io *io) {
-    corpus_case(io, "constexpr-import-result-type");
+export void test_constexpr_import_result_type() {
+    corpus_case("constexpr-import-result-type");
 }
 
-export void test_constexpr_modules(io::Io *io) {
-    corpus_case(io, "constexpr-modules");
+export void test_constexpr_import_slice_u8() {
+    corpus_case("constexpr-import-slice-u8");
 }
 
-export void test_constexpr_pointers(io::Io *io) {
-    corpus_case(io, "constexpr-pointers");
+export void test_constexpr_modules() {
+    corpus_case("constexpr-modules");
 }
 
-export void test_countof_fixed_array(io::Io *io) {
-    corpus_case(io, "countof-fixed-array");
+export void test_constexpr_pointers() {
+    corpus_case("constexpr-pointers");
 }
 
-export void test_countof_fixed_array_plain(io::Io *io) {
-    corpus_case(io, "countof-fixed-array-plain");
+export void test_countof_fixed_array() {
+    corpus_case("countof-fixed-array");
 }
 
-export void test_cycle_by_source(io::Io *io) {
-    corpus_case(io, "cycle-by-source");
+export void test_countof_fixed_array_plain() {
+    corpus_case("countof-fixed-array-plain");
 }
 
-export void test_defer_run(io::Io *io) {
-    corpus_case(io, "defer-run");
+export void test_cycle_by_source() {
+    corpus_case("cycle-by-source");
 }
 
-export void test_error_range_for(io::Io *io) {
-    corpus_case(io, "error-range-for");
+export void test_defer_run() {
+    corpus_case("defer-run");
 }
 
-export void test_generic_for_range(io::Io *io) {
-    corpus_case(io, "generic-for-range");
+export void test_error_range_for() {
+    corpus_case("error-range-for");
 }
 
-export void test_generic_for_range_error(io::Io *io) {
-    corpus_case(io, "generic-for-range-error");
+export void test_generic_for_range() {
+    corpus_case("generic-for-range");
 }
 
-export void test_range_for(io::Io *io) {
-    corpus_case(io, "range-for");
+export void test_generic_for_range_error() {
+    corpus_case("generic-for-range-error");
 }
 
-export void test_range_for_generic(io::Io *io) {
-    corpus_case(io, "range-for-generic");
+export void test_range_for() {
+    corpus_case("range-for");
 }
 
-export void test_try_run(io::Io *io) {
-    corpus_case(io, "try-run");
+export void test_range_for_generic() {
+    corpus_case("range-for-generic");
 }
 
-export void test_try_return_value(io::Io *io) {
-    corpus_case(io, "try-return-value");
+export void test_try_run() {
+    corpus_case("try-run");
 }
 
-export void test_enum_convert(io::Io *io) {
-    corpus_case(io, "enum-convert");
+export void test_try_return_value() {
+    corpus_case("try-return-value");
 }
 
-export void test_error_enum_convert(io::Io *io) {
-    corpus_case(io, "error-enum-convert");
+export void test_enum_convert() {
+    corpus_case("enum-convert");
 }
 
-export void test_void_pointer_cast(io::Io *io) {
-    corpus_case(io, "void-pointer-cast");
+export void test_enum_convert_gaps() {
+    corpus_case("enum-convert-gaps");
 }
 
-export void test_void_pointer_plain(io::Io *io) {
-    corpus_case(io, "void-pointer-plain");
+export void test_error_enum_convert() {
+    corpus_case("error-enum-convert");
 }
 
-export void test_error_void_pointer(io::Io *io) {
-    corpus_case(io, "error-void-pointer");
+export void test_void_pointer_cast() {
+    corpus_case("void-pointer-cast");
 }
 
-export void test_try_generic(io::Io *io) {
-    corpus_case(io, "try-generic");
+export void test_void_pointer_plain() {
+    corpus_case("void-pointer-plain");
 }
 
-export void test_error_try_generic_kind(io::Io *io) {
-    corpus_case(io, "error-try-generic-kind");
+export void test_error_void_pointer() {
+    corpus_case("error-void-pointer");
 }
 
-export void test_errdefer_run(io::Io *io) {
-    corpus_case(io, "errdefer-run");
+export void test_try_generic() {
+    corpus_case("try-generic");
 }
 
-export void test_braceless_for_generic_with_enums(io::Io *io) {
-    corpus_case(io, "braceless-for-generic-with-enums");
+export void test_error_try_generic_kind() {
+    corpus_case("error-try-generic-kind");
 }
 
-export void test_enum_builtin_option_result(io::Io *io) {
-    corpus_case(io, "enum-builtin-option-result");
+export void test_errdefer_run() {
+    corpus_case("errdefer-run");
 }
 
-export void test_enum_body_from_file_scope(io::Io *io) {
-    corpus_case(io, "enum-body-from-file-scope");
+export void test_braceless_for_generic_with_enums() {
+    corpus_case("braceless-for-generic-with-enums");
 }
 
-export void test_enum_body_sibling_blocks(io::Io *io) {
-    corpus_case(io, "enum-body-sibling-blocks");
+export void test_enum_builtin_option_result() {
+    corpus_case("enum-builtin-option-result");
 }
 
-export void test_enum_body_nested_blocks(io::Io *io) {
-    corpus_case(io, "enum-body-nested-blocks");
+export void test_enum_body_from_file_scope() {
+    corpus_case("enum-body-from-file-scope");
 }
 
-export void test_enum_body_result_generic(io::Io *io) {
-    corpus_case(io, "enum-body-result-generic");
+export void test_enum_body_sibling_blocks() {
+    corpus_case("enum-body-sibling-blocks");
 }
 
-export void test_enum_builtin_lone_module(io::Io *io) {
-    corpus_case(io, "enum-builtin-lone-module");
+export void test_enum_body_nested_blocks() {
+    corpus_case("enum-body-nested-blocks");
 }
 
-export void test_enum_c_rule(io::Io *io) {
-    corpus_case(io, "enum-c-rule");
+export void test_enum_body_result_generic() {
+    corpus_case("enum-body-result-generic");
 }
 
-export void test_enum_generic_return(io::Io *io) {
-    corpus_case(io, "enum-generic-return");
+export void test_enum_builtin_lone_module() {
+    corpus_case("enum-builtin-lone-module");
 }
 
-export void test_enum_payload_lowering(io::Io *io) {
-    corpus_case(io, "enum-payload-lowering");
+export void test_enum_c_rule() {
+    corpus_case("enum-c-rule");
 }
 
-export void test_enum_payload_module(io::Io *io) {
-    corpus_case(io, "enum-payload-module");
+export void test_enum_generic_return() {
+    corpus_case("enum-generic-return");
 }
 
-export void test_enum_payload_run(io::Io *io) {
-    corpus_case(io, "enum-payload-run");
+export void test_enum_generic_derived_result() {
+    corpus_case("enum-generic-derived-result");
 }
 
-export void test_enum_type_function(io::Io *io) {
-    corpus_case(io, "enum-type-function");
+export void test_enum_generic_import_in_function() {
+    corpus_case("enum-generic-import-in-function");
 }
 
-export void test_enum_type_function_export(io::Io *io) {
-    corpus_case(io, "enum-type-function-export");
+export void test_enum_option_slice() {
+    corpus_case("enum-option-slice");
+    corpus_case("enum-option-slice-assign");
 }
 
-export void test_enum_type_function_generic(io::Io *io) {
-    corpus_case(io, "enum-type-function-generic");
+export void test_enum_payload_lowering() {
+    corpus_case("enum-payload-lowering");
 }
 
-export void test_enum_type_function_module(io::Io *io) {
-    corpus_case(io, "enum-type-function-module");
+export void test_enum_payload_module() {
+    corpus_case("enum-payload-module");
 }
 
-export void test_error_array_param_index(io::Io *io) {
-    corpus_case(io, "error-array-param-index");
+export void test_enum_payload_run() {
+    corpus_case("enum-payload-run");
 }
 
-export void test_error_array_param_modify(io::Io *io) {
-    corpus_case(io, "error-array-param-modify");
+export void test_enum_type_function() {
+    corpus_case("enum-type-function");
 }
 
-export void test_error_array_param_shape(io::Io *io) {
-    corpus_case(io, "error-array-param-shape");
+export void test_enum_type_function_export() {
+    corpus_case("enum-type-function-export");
 }
 
-export void test_error_array_param_sizeof(io::Io *io) {
-    corpus_case(io, "error-array-param-sizeof");
+export void test_enum_type_function_generic() {
+    corpus_case("enum-type-function-generic");
 }
 
-export void test_error_array_param_unsized(io::Io *io) {
-    corpus_case(io, "error-array-param-unsized");
+export void test_enum_type_function_module() {
+    corpus_case("enum-type-function-module");
 }
 
-export void test_error_c_name(io::Io *io) {
-    corpus_case(io, "error-c-name");
+export void test_error_array_param_index() {
+    corpus_case("error-array-param-index");
 }
 
-export void test_error_c_name_function(io::Io *io) {
-    corpus_case(io, "error-c-name-function");
+export void test_error_array_param_modify() {
+    corpus_case("error-array-param-modify");
 }
 
-export void test_error_c_name_macro(io::Io *io) {
-    corpus_case(io, "error-c-name-macro");
+export void test_error_array_param_shape() {
+    corpus_case("error-array-param-shape");
 }
 
-export void test_error_c_name_tag(io::Io *io) {
-    corpus_case(io, "error-c-name-tag");
+export void test_error_array_param_sizeof() {
+    corpus_case("error-array-param-sizeof");
 }
 
-export void test_error_constexpr_c(io::Io *io) {
-    corpus_case(io, "error-constexpr-c");
+export void test_error_array_param_unsized() {
+    corpus_case("error-array-param-unsized");
 }
 
-export void test_error_constexpr_c_asm(io::Io *io) {
-    corpus_case(io, "error-constexpr-c-asm");
+export void test_error_c_name() {
+    corpus_case("error-c-name");
 }
 
-export void test_error_constexpr_contract(io::Io *io) {
-    corpus_case(io, "error-constexpr-contract");
+export void test_error_c_name_function() {
+    corpus_case("error-c-name-function");
 }
 
-export void test_error_constexpr_contract_deep(io::Io *io) {
-    corpus_case(io, "error-constexpr-contract-deep");
+export void test_error_c_name_macro() {
+    corpus_case("error-c-name-macro");
 }
 
-export void test_error_constexpr_import_state(io::Io *io) {
-    corpus_case(io, "error-constexpr-import-state");
+export void test_error_c_name_tag() {
+    corpus_case("error-c-name-tag");
 }
 
-export void test_error_constexpr_pointers(io::Io *io) {
-    corpus_case(io, "error-constexpr-pointers");
+export void test_error_constexpr_c() {
+    corpus_case("error-constexpr-c");
 }
 
-export void test_error_countof_pointer(io::Io *io) {
-    corpus_case(io, "error-countof-pointer");
+export void test_error_constexpr_c_asm() {
+    corpus_case("error-constexpr-c-asm");
 }
 
-export void test_unused_run(io::Io *io) {
-    corpus_case(io, "unused-run");
+export void test_error_constexpr_contract() {
+    corpus_case("error-constexpr-contract");
 }
 
-export void test_error_unused_read_name(io::Io *io) {
-    corpus_case(io, "error-unused-read-name");
+export void test_error_constexpr_contract_deep() {
+    corpus_case("error-constexpr-contract-deep");
 }
 
-export void test_error_unused_read_underscore(io::Io *io) {
-    corpus_case(io, "error-unused-read-underscore");
+export void test_error_constexpr_import_state() {
+    corpus_case("error-constexpr-import-state");
 }
 
-export void test_error_unused_discard_braces(io::Io *io) {
-    corpus_case(io, "error-unused-discard-braces");
+export void test_error_constexpr_pointers() {
+    corpus_case("error-constexpr-pointers");
 }
 
-export void test_array_infer_run(io::Io *io) {
-    corpus_case(io, "array-infer-run");
+export void test_error_constexpr_unread_private() {
+    corpus_case("error-constexpr-unread-private");
 }
 
-export void test_error_array_empty(io::Io *io) {
-    corpus_case(io, "error-array-empty");
+export void test_error_countof_pointer() {
+    corpus_case("error-countof-pointer");
 }
 
-export void test_error_array_infer(io::Io *io) {
-    corpus_case(io, "error-array-infer");
+export void test_unused_run() {
+    corpus_case("unused-run");
 }
 
-export void test_error_defer_name(io::Io *io) {
-    corpus_case(io, "error-defer-name");
+export void test_error_unused_read_name() {
+    corpus_case("error-unused-read-name");
 }
 
-export void test_error_try_expression(io::Io *io) {
-    corpus_case(io, "error-try-expression");
+export void test_error_unused_read_underscore() {
+    corpus_case("error-unused-read-underscore");
 }
 
-export void test_error_try_kind(io::Io *io) {
-    corpus_case(io, "error-try-kind");
+export void test_error_unused_discard_braces() {
+    corpus_case("error-unused-discard-braces");
 }
 
-export void test_error_try_error_type(io::Io *io) {
-    corpus_case(io, "error-try-error-type");
+export void test_array_infer_run() {
+    corpus_case("array-infer-run");
 }
 
-export void test_error_try_plain_function(io::Io *io) {
-    corpus_case(io, "error-try-plain-function");
+export void test_error_array_empty() {
+    corpus_case("error-array-empty");
 }
 
-export void test_error_errdefer_plain(io::Io *io) {
-    corpus_case(io, "error-errdefer-plain");
+export void test_error_array_infer() {
+    corpus_case("error-array-infer");
 }
 
-export void test_error_enum_generic_dot(io::Io *io) {
-    corpus_case(io, "error-enum-generic-dot");
+export void test_error_defer_name() {
+    corpus_case("error-defer-name");
 }
 
-export void test_error_enum_payload(io::Io *io) {
-    corpus_case(io, "error-enum-payload");
+export void test_error_try_expression() {
+    corpus_case("error-try-expression");
 }
 
-export void test_error_enum_builtin_redeclare(io::Io *io) {
-    corpus_case(io, "error-enum-builtin-redeclare");
+export void test_error_try_kind() {
+    corpus_case("error-try-kind");
 }
 
-export void test_error_enum_type_function(io::Io *io) {
-    corpus_case(io, "error-enum-type-function");
+export void test_error_try_error_type() {
+    corpus_case("error-try-error-type");
 }
 
-export void test_error_enum_type_function_export(io::Io *io) {
-    corpus_case(io, "error-enum-type-function-export");
+export void test_error_try_plain_function() {
+    corpus_case("error-try-plain-function");
 }
 
-export void test_error_enum_type_function_generic(io::Io *io) {
-    corpus_case(io, "error-enum-type-function-generic");
+export void test_error_errdefer_plain() {
+    corpus_case("error-errdefer-plain");
 }
 
-export void test_error_export_no_module(io::Io *io) {
-    corpus_case(io, "error-export-no-module");
+export void test_error_enum_generic_dot() {
+    corpus_case("error-enum-generic-dot");
 }
 
-export void test_error_export_private_type(io::Io *io) {
-    corpus_case(io, "error-export-private-type");
+export void test_error_enum_payload() {
+    corpus_case("error-enum-payload");
 }
 
-export void test_error_export_static(io::Io *io) {
-    corpus_case(io, "error-export-static");
+export void test_error_enum_builtin_redeclare() {
+    corpus_case("error-enum-builtin-redeclare");
 }
 
-export void test_error_export_two_names(io::Io *io) {
-    corpus_case(io, "error-export-two-names");
+export void test_error_enum_type_function() {
+    corpus_case("error-enum-type-function");
 }
 
-export void test_error_filescope_if(io::Io *io) {
-    corpus_case(io, "error-filescope-if");
+export void test_error_enum_type_function_export() {
+    corpus_case("error-enum-type-function-export");
 }
 
-export void test_error_generic_auto_const(io::Io *io) {
-    corpus_case(io, "error-generic-auto-const");
+export void test_error_enum_type_function_generic() {
+    corpus_case("error-enum-type-function-generic");
 }
 
-export void test_error_generic_auto_element(io::Io *io) {
-    corpus_case(io, "error-generic-auto-element");
+export void test_error_export_no_module() {
+    corpus_case("error-export-no-module");
 }
 
-export void test_error_generic_element_convert(io::Io *io) {
-    corpus_case(io, "error-generic-element-convert");
+export void test_error_export_private_type() {
+    corpus_case("error-export-private-type");
 }
 
-export void test_generic_element_convert(io::Io *io) {
-    corpus_case(io, "generic-element-convert");
+export void test_error_export_static() {
+    corpus_case("error-export-static");
 }
 
-export void test_error_concept_notes(io::Io *io) {
-    corpus_case(io, "error-concept-notes");
+export void test_error_export_two_names() {
+    corpus_case("error-export-two-names");
 }
 
-export void test_error_generic_concept_element(io::Io *io) {
-    corpus_case(io, "error-generic-concept-element");
+export void test_error_filescope_if() {
+    corpus_case("error-filescope-if");
 }
 
-export void test_error_generic_concept_local(io::Io *io) {
-    corpus_case(io, "error-generic-concept-local");
+export void test_error_generic_auto_const() {
+    corpus_case("error-generic-auto-const");
 }
 
-export void test_error_generic_concept_param(io::Io *io) {
-    corpus_case(io, "error-generic-concept-param");
+export void test_error_generic_auto_element() {
+    corpus_case("error-generic-auto-element");
 }
 
-export void test_error_generic_number_parameter(io::Io *io) {
-    corpus_case(io, "error-generic-number-parameter");
+export void test_error_generic_element_convert() {
+    corpus_case("error-generic-element-convert");
 }
 
-export void test_error_generic_private_generic(io::Io *io) {
-    corpus_case(io, "error-generic-private-generic");
+export void test_generic_element_convert() {
+    corpus_case("generic-element-convert");
 }
 
-export void test_error_generic_private_name(io::Io *io) {
-    corpus_case(io, "error-generic-private-name");
+export void test_error_concept_notes() {
+    corpus_case("error-concept-notes");
 }
 
-export void test_error_generic_return_type(io::Io *io) {
-    corpus_case(io, "error-generic-return-type");
+export void test_error_generic_concept_element() {
+    corpus_case("error-generic-concept-element");
 }
 
-export void test_error_if_constexpr(io::Io *io) {
-    corpus_case(io, "error-if-constexpr");
+export void test_error_generic_concept_local() {
+    corpus_case("error-generic-concept-local");
 }
 
-export void test_error_import_broken_module(io::Io *io) {
-    corpus_case(io, "error-import-broken-module");
+export void test_error_generic_concept_param() {
+    corpus_case("error-generic-concept-param");
 }
 
-export void test_error_import_c_header_named_like_module(io::Io *io) {
-    corpus_case(io, "error-import-c-header-named-like-module");
+export void test_error_generic_number_parameter() {
+    corpus_case("error-generic-number-parameter");
 }
 
-export void test_error_import_cycle(io::Io *io) {
-    corpus_case(io, "error-import-cycle");
+export void test_error_generic_private_generic() {
+    corpus_case("error-generic-private-generic");
 }
 
-export void test_error_import_eof(io::Io *io) {
-    corpus_case(io, "error-import-eof");
+export void test_error_generic_private_name() {
+    corpus_case("error-generic-private-name");
 }
 
-export void test_error_import_order(io::Io *io) {
-    corpus_case(io, "error-import-order");
+export void test_error_generic_return_type() {
+    corpus_case("error-generic-return-type");
 }
 
-export void test_error_import_self(io::Io *io) {
-    corpus_case(io, "error-import-self");
+export void test_if_constexpr_file_scope_for_constexpr() {
+    corpus_case("if-constexpr-file-scope-for-constexpr");
 }
 
-export void test_error_keyword_after_type(io::Io *io) {
-    corpus_case(io, "error-keyword-after-type");
+export void test_error_if_constexpr() {
+    corpus_case("error-if-constexpr");
 }
 
-export void test_error_keyword_function(io::Io *io) {
-    corpus_case(io, "error-keyword-function");
+export void test_error_import_broken_module() {
+    corpus_case("error-import-broken-module");
 }
 
-export void test_error_keyword_module(io::Io *io) {
-    corpus_case(io, "error-keyword-module");
+export void test_error_import_c_header_named_like_module() {
+    corpus_case("error-import-c-header-named-like-module");
 }
 
-export void test_error_keyword_plain(io::Io *io) {
-    corpus_case(io, "error-keyword-plain");
+export void test_error_import_cycle() {
+    corpus_case("error-import-cycle");
 }
 
-export void test_error_main_io_make(io::Io *io) {
-    corpus_case(io, "error-main-io-make");
+export void test_error_import_eof() {
+    corpus_case("error-import-eof");
 }
 
-export void test_error_module_first(io::Io *io) {
-    corpus_case(io, "error-module-first");
+export void test_error_import_order() {
+    corpus_case("error-import-order");
 }
 
-export void test_error_module_missing(io::Io *io) {
-    corpus_case(io, "error-module-missing");
+export void test_error_import_self() {
+    corpus_case("error-import-self");
 }
 
-export void test_error_module_name(io::Io *io) {
-    corpus_case(io, "error-module-name");
+export void test_error_keyword_after_type() {
+    corpus_case("error-keyword-after-type");
 }
 
-export void test_error_module_syntax(io::Io *io) {
-    corpus_case(io, "error-module-syntax");
+export void test_error_keyword_function() {
+    corpus_case("error-keyword-function");
 }
 
-export void test_error_plain_c_macro(io::Io *io) {
-    corpus_case(io, "error-plain-c-macro");
+export void test_error_keyword_module() {
+    corpus_case("error-keyword-module");
 }
 
-export void test_error_plain_c_name(io::Io *io) {
-    corpus_case(io, "error-plain-c-name");
+export void test_error_keyword_plain() {
+    corpus_case("error-keyword-plain");
 }
 
-export void test_error_plain_c_tag(io::Io *io) {
-    corpus_case(io, "error-plain-c-tag");
+export void test_error_main_io_make() {
+    corpus_case("error-main-io-make");
 }
 
-export void test_error_slice_const_discards(io::Io *io) {
-    corpus_case(io, "error-slice-const-discards");
+export void test_error_module_first() {
+    corpus_case("error-module-first");
 }
 
-export void test_error_slice_const_write(io::Io *io) {
-    corpus_case(io, "error-slice-const-write");
+export void test_error_module_missing() {
+    corpus_case("error-module-missing");
 }
 
-export void test_error_slice_dims_across_rows(io::Io *io) {
-    corpus_case(io, "error-slice-dims-across-rows");
+export void test_error_module_name() {
+    corpus_case("error-module-name");
 }
 
-export void test_error_slice_dims_fixed_slice(io::Io *io) {
-    corpus_case(io, "error-slice-dims-fixed-slice");
+export void test_error_module_syntax() {
+    corpus_case("error-module-syntax");
 }
 
-export void test_error_slice_dims_group(io::Io *io) {
-    corpus_case(io, "error-slice-dims-group");
+export void test_error_plain_c_macro() {
+    corpus_case("error-plain-c-macro");
 }
 
-export void test_error_slice_dims_shape(io::Io *io) {
-    corpus_case(io, "error-slice-dims-shape");
+export void test_error_plain_c_name() {
+    corpus_case("error-plain-c-name");
 }
 
-export void test_error_slice_initializer(io::Io *io) {
-    corpus_case(io, "error-slice-initializer");
+export void test_error_plain_c_tag() {
+    corpus_case("error-plain-c-tag");
 }
 
-export void test_error_slice_initializer_unread(io::Io *io) {
-    corpus_case(io, "error-slice-initializer-unread");
+export void test_error_slice_const_discards() {
+    corpus_case("error-slice-const-discards");
 }
 
-export void test_error_slice_negative(io::Io *io) {
-    corpus_case(io, "error-slice-negative");
+export void test_error_slice_const_write() {
+    corpus_case("error-slice-const-write");
 }
 
-export void test_error_slice_not_sliceable(io::Io *io) {
-    corpus_case(io, "error-slice-not-sliceable");
+export void test_error_slice_dims_across_rows() {
+    corpus_case("error-slice-dims-across-rows");
 }
 
-export void test_error_slice_pointer_argument(io::Io *io) {
-    corpus_case(io, "error-slice-pointer-argument");
+export void test_error_slice_dims_fixed_slice() {
+    corpus_case("error-slice-dims-fixed-slice");
 }
 
-export void test_error_slice_pointer_bounds(io::Io *io) {
-    corpus_case(io, "error-slice-pointer-bounds");
+export void test_error_slice_dims_group() {
+    corpus_case("error-slice-dims-group");
 }
 
-export void test_error_slice_pointer_discards(io::Io *io) {
-    corpus_case(io, "error-slice-pointer-discards");
+export void test_error_slice_dims_shape() {
+    corpus_case("error-slice-dims-shape");
 }
 
-export void test_error_slice_qualifier_bracket(io::Io *io) {
-    corpus_case(io, "error-slice-qualifier-bracket");
+export void test_error_slice_initializer() {
+    corpus_case("error-slice-initializer");
 }
 
-export void test_error_slice_step(io::Io *io) {
-    corpus_case(io, "error-slice-step");
+export void test_error_slice_initializer_unread() {
+    corpus_case("error-slice-initializer-unread");
 }
 
-export void test_error_stale_header(io::Io *io) {
-    corpus_case(io, "error-stale-header");
+export void test_error_slice_negative() {
+    corpus_case("error-slice-negative");
 }
 
-export void test_error_standard_type(io::Io *io) {
-    corpus_case(io, "error-standard-type");
+export void test_error_slice_not_sliceable() {
+    corpus_case("error-slice-not-sliceable");
 }
 
-export void test_error_str_array(io::Io *io) {
-    corpus_case(io, "error-str-array");
+export void test_error_slice_pointer_argument() {
+    corpus_case("error-slice-pointer-argument");
 }
 
-export void test_error_str_name(io::Io *io) {
-    corpus_case(io, "error-str-name");
+export void test_error_slice_pointer_bounds() {
+    corpus_case("error-slice-pointer-bounds");
 }
 
-export void test_error_target_fact(io::Io *io) {
-    corpus_case(io, "error-target-fact");
+export void test_error_slice_pointer_discards() {
+    corpus_case("error-slice-pointer-discards");
 }
 
-export void test_error_tuple_empty(io::Io *io) {
-    corpus_case(io, "error-tuple-empty");
+export void test_error_slice_qualifier_bracket() {
+    corpus_case("error-slice-qualifier-bracket");
 }
 
-export void test_error_tuple_field(io::Io *io) {
-    corpus_case(io, "error-tuple-field");
+export void test_error_slice_step() {
+    corpus_case("error-slice-step");
 }
 
-export void test_error_tuple_generic(io::Io *io) {
-    corpus_case(io, "error-tuple-generic");
+export void test_error_stale_header() {
+    corpus_case("error-stale-header");
 }
 
-export void test_error_tuple_index(io::Io *io) {
-    corpus_case(io, "error-tuple-index");
+export void test_error_standard_type() {
+    corpus_case("error-standard-type");
 }
 
-export void test_error_tuple_typedef_distinct(io::Io *io) {
-    corpus_case(io, "error-tuple-typedef-distinct");
+export void test_error_str_name() {
+    corpus_case("error-str-name");
 }
 
-export void test_error_type_function_pointee(io::Io *io) {
-    corpus_case(io, "error-type-function-pointee");
+export void test_error_target_fact() {
+    corpus_case("error-target-fact");
 }
 
-export void test_error_type_value_import(io::Io *io) {
-    corpus_case(io, "error-type-value-import");
+export void test_error_tuple_empty() {
+    corpus_case("error-tuple-empty");
 }
 
-export void test_error_type_value_runtime(io::Io *io) {
-    corpus_case(io, "error-type-value-runtime");
+export void test_error_tuple_field() {
+    corpus_case("error-tuple-field");
 }
 
-export void test_error_type_value_slice_bounds(io::Io *io) {
-    corpus_case(io, "error-type-value-slice-bounds");
+export void test_error_tuple_generic() {
+    corpus_case("error-tuple-generic");
 }
 
-export void test_error_value_query(io::Io *io) {
-    corpus_case(io, "error-value-query");
+export void test_error_tuple_index() {
+    corpus_case("error-tuple-index");
 }
 
-export void test_export_inline(io::Io *io) {
-    corpus_case(io, "export-inline");
+export void test_error_tuple_typedef_distinct() {
+    corpus_case("error-tuple-typedef-distinct");
 }
 
-export void test_export_inline_attributes(io::Io *io) {
-    corpus_case(io, "export-inline-attributes");
+export void test_error_type_function_pointee() {
+    corpus_case("error-type-function-pointee");
 }
 
-export void test_exported_variable_declared(io::Io *io) {
-    corpus_case(io, "exported-variable-declared");
+export void test_error_type_value_import() {
+    corpus_case("error-type-value-import");
 }
 
-export void test_filescope_if_dropped_macro(io::Io *io) {
-    corpus_case(io, "filescope-if-dropped-macro");
+export void test_error_type_value_runtime() {
+    corpus_case("error-type-value-runtime");
 }
 
-export void test_filescope_if_header(io::Io *io) {
-    corpus_case(io, "filescope-if-header");
+export void test_error_type_value_slice_bounds() {
+    corpus_case("error-type-value-slice-bounds");
 }
 
-export void test_filescope_if_imports(io::Io *io) {
-    corpus_case(io, "filescope-if-imports");
+export void test_exported_constexpr_unread() {
+    corpus_case("exported-constexpr-unread");
 }
 
-export void test_filescope_if_reflect(io::Io *io) {
-    corpus_case(io, "filescope-if-reflect");
+export void test_error_value_query() {
+    corpus_case("error-value-query");
 }
 
-export void test_filescope_if_run(io::Io *io) {
-    corpus_case(io, "filescope-if-run");
+export void test_export_inline() {
+    corpus_case("export-inline");
 }
 
-export void test_filescope_if_type_function(io::Io *io) {
-    corpus_case(io, "filescope-if-type-function");
+export void test_export_inline_attributes() {
+    corpus_case("export-inline-attributes");
 }
 
-export void test_foreign_extern(io::Io *io) {
-    corpus_case(io, "foreign-extern");
+export void test_exported_variable_declared() {
+    corpus_case("exported-variable-declared");
 }
 
-export void test_function_pointer_typedef_result(io::Io *io) {
-    corpus_case(io, "function-pointer-typedef-result");
+export void test_filescope_if_dropped_macro() {
+    corpus_case("filescope-if-dropped-macro");
 }
 
-export void test_generic_argument_names(io::Io *io) {
-    corpus_case(io, "generic-argument-names");
+export void test_filescope_if_header() {
+    corpus_case("filescope-if-header");
 }
 
-export void test_generic_array_pointer(io::Io *io) {
-    corpus_case(io, "generic-array-pointer");
+export void test_filescope_if_imports() {
+    corpus_case("filescope-if-imports");
 }
 
-export void test_generic_auto(io::Io *io) {
-    corpus_case(io, "generic-auto");
+export void test_filescope_if_reflect() {
+    corpus_case("filescope-if-reflect");
 }
 
-export void test_generic_auto_arguments(io::Io *io) {
-    corpus_case(io, "generic-auto-arguments");
+export void test_filescope_if_run() {
+    corpus_case("filescope-if-run");
 }
 
-export void test_generic_auto_cast(io::Io *io) {
-    corpus_case(io, "generic-auto-cast");
+export void test_filescope_if_type_function() {
+    corpus_case("filescope-if-type-function");
 }
 
-export void test_generic_auto_compiler(io::Io *io) {
-    corpus_case(io, "generic-auto-compiler");
+export void test_foreign_extern() {
+    corpus_case("foreign-extern");
 }
 
-export void test_generic_auto_constants(io::Io *io) {
-    corpus_case(io, "generic-auto-constants");
+export void test_function_pointer_typedef_result() {
+    corpus_case("function-pointer-typedef-result");
 }
 
-export void test_generic_auto_constants_error(io::Io *io) {
-    corpus_case(io, "generic-auto-constants-error");
+export void test_generic_argument_names() {
+    corpus_case("generic-argument-names");
 }
 
-export void test_generic_auto_const(io::Io *io) {
-    corpus_case(io, "generic-auto-const");
+export void test_generic_array_pointer() {
+    corpus_case("generic-array-pointer");
 }
 
-export void test_generic_auto_element(io::Io *io) {
-    corpus_case(io, "generic-auto-element");
+export void test_generic_auto() {
+    corpus_case("generic-auto");
 }
 
-export void test_generic_auto_error(io::Io *io) {
-    corpus_case(io, "generic-auto-error");
+export void test_generic_auto_arguments() {
+    corpus_case("generic-auto-arguments");
 }
 
-export void test_generic_auto_lower_error(io::Io *io) {
-    corpus_case(io, "generic-auto-lower-error");
+export void test_generic_auto_cast() {
+    corpus_case("generic-auto-cast");
 }
 
-export void test_generic_auto_module_body(io::Io *io) {
-    corpus_case(io, "generic-auto-module-body");
+export void test_generic_auto_compiler() {
+    corpus_case("generic-auto-compiler");
 }
 
-export void test_generic_auto_typeof(io::Io *io) {
-    corpus_case(io, "generic-auto-typeof");
+export void test_generic_auto_constants() {
+    corpus_case("generic-auto-constants");
 }
 
-export void test_generic_auto_vector(io::Io *io) {
-    corpus_case(io, "generic-auto-vector");
+export void test_generic_auto_constants_error() {
+    corpus_case("generic-auto-constants-error");
 }
 
-export void test_generic_auto_written(io::Io *io) {
-    corpus_case(io, "generic-auto-written");
+export void test_generic_auto_const() {
+    corpus_case("generic-auto-const");
 }
 
-export void test_generic_bare_type(io::Io *io) {
-    corpus_case(io, "generic-bare-type");
+export void test_generic_auto_element() {
+    corpus_case("generic-auto-element");
 }
 
-export void test_generic_bare_type_then_code(io::Io *io) {
-    corpus_case(io, "generic-bare-type-then-code");
+export void test_generic_auto_error() {
+    corpus_case("generic-auto-error");
 }
 
-export void test_generic_braceless(io::Io *io) {
-    corpus_case(io, "generic-braceless");
+export void test_generic_auto_lower_error() {
+    corpus_case("generic-auto-lower-error");
 }
 
-export void test_generic_braceless_head(io::Io *io) {
-    corpus_case(io, "generic-braceless-head");
+export void test_generic_auto_module_body() {
+    corpus_case("generic-auto-module-body");
 }
 
-export void test_generic_built_list_error(io::Io *io) {
-    corpus_case(io, "generic-built-list-error");
+export void test_generic_auto_typeof() {
+    corpus_case("generic-auto-typeof");
 }
 
-export void test_generic_call(io::Io *io) {
-    corpus_case(io, "generic-call");
+export void test_generic_auto_vector() {
+    corpus_case("generic-auto-vector");
 }
 
-export void test_generic_call_in_call_names(io::Io *io) {
-    corpus_case(io, "generic-call-in-call-names");
+export void test_generic_auto_written() {
+    corpus_case("generic-auto-written");
 }
 
-export void test_generic_call_too_deep(io::Io *io) {
-    corpus_case(io, "generic-call-too-deep");
+export void test_generic_bare_type() {
+    corpus_case("generic-bare-type");
 }
 
-export void test_generic_call_unclosed(io::Io *io) {
-    corpus_case(io, "generic-call-unclosed");
+export void test_generic_bare_type_then_code() {
+    corpus_case("generic-bare-type-then-code");
 }
 
-export void test_generic_call_unclosed_statement(io::Io *io) {
-    corpus_case(io, "generic-call-unclosed-statement");
+export void test_generic_braceless() {
+    corpus_case("generic-braceless");
 }
 
-export void test_generic_concept_element(io::Io *io) {
-    corpus_case(io, "generic-concept-element");
+export void test_generic_braceless_head() {
+    corpus_case("generic-braceless-head");
 }
 
-export void test_generic_concept_local(io::Io *io) {
-    corpus_case(io, "generic-concept-local");
+export void test_generic_built_list_error() {
+    corpus_case("generic-built-list-error");
 }
 
-export void test_generic_concept_param(io::Io *io) {
-    corpus_case(io, "generic-concept-param");
+export void test_generic_call() {
+    corpus_case("generic-call");
 }
 
-export void test_generic_countof_member(io::Io *io) {
-    corpus_case(io, "generic-countof-member");
+export void test_generic_call_in_call_names() {
+    corpus_case("generic-call-in-call-names");
 }
 
-export void test_generic_error_instance(io::Io *io) {
-    corpus_case(io, "generic-error-instance");
+export void test_generic_call_too_deep() {
+    corpus_case("generic-call-too-deep");
 }
 
-export void test_generic_field_element(io::Io *io) {
-    corpus_case(io, "generic-field-element");
+export void test_generic_call_unclosed() {
+    corpus_case("generic-call-unclosed");
 }
 
-export void test_generic_fields(io::Io *io) {
-    corpus_case(io, "generic-fields");
+export void test_generic_call_unclosed_statement() {
+    corpus_case("generic-call-unclosed-statement");
 }
 
-export void test_generic_fields_error(io::Io *io) {
-    corpus_case(io, "generic-fields-error");
+export void test_generic_concept_element() {
+    corpus_case("generic-concept-element");
 }
 
-export void test_generic_fields_import(io::Io *io) {
-    corpus_case(io, "generic-fields-import");
+export void test_generic_concept_local() {
+    corpus_case("generic-concept-local");
 }
 
-export void test_generic_fields_index(io::Io *io) {
-    corpus_case(io, "generic-fields-index");
+export void test_generic_concept_param() {
+    corpus_case("generic-concept-param");
 }
 
-export void test_generic_fields_index_error(io::Io *io) {
-    corpus_case(io, "generic-fields-index-error");
+export void test_generic_countof_member() {
+    corpus_case("generic-countof-member");
 }
 
-export void test_generic_fields_pointee(io::Io *io) {
-    corpus_case(io, "generic-fields-pointee");
+export void test_generic_error_instance() {
+    corpus_case("generic-error-instance");
 }
 
-export void test_generic_fields_star(io::Io *io) {
-    corpus_case(io, "generic-fields-star");
+export void test_generic_field_element() {
+    corpus_case("generic-field-element");
 }
 
-export void test_generic_fields_values(io::Io *io) {
-    corpus_case(io, "generic-fields-values");
+export void test_generic_fields() {
+    corpus_case("generic-fields");
 }
 
-export void test_generic_for_constexpr_error(io::Io *io) {
-    corpus_case(io, "generic-for-constexpr-error");
+export void test_generic_fields_error() {
+    corpus_case("generic-fields-error");
 }
 
-export void test_generic_function(io::Io *io) {
-    corpus_case(io, "generic-function");
+export void test_generic_fields_import() {
+    corpus_case("generic-fields-import");
 }
 
-export void test_generic_function_error(io::Io *io) {
-    corpus_case(io, "generic-function-error");
+export void test_generic_fields_index() {
+    corpus_case("generic-fields-index");
 }
 
-export void test_generic_function_forward(io::Io *io) {
-    corpus_case(io, "generic-function-forward");
+export void test_generic_fields_index_error() {
+    corpus_case("generic-fields-index-error");
 }
 
-export void test_generic_function_generic(io::Io *io) {
-    corpus_case(io, "generic-function-generic");
+export void test_generic_fields_pointee() {
+    corpus_case("generic-fields-pointee");
 }
 
-export void test_generic_function_generic_error(io::Io *io) {
-    corpus_case(io, "generic-function-generic-error");
+export void test_generic_fields_star() {
+    corpus_case("generic-fields-star");
 }
 
-export void test_generic_gradient_shape(io::Io *io) {
-    corpus_case(io, "generic-gradient-shape");
+export void test_generic_fields_values() {
+    corpus_case("generic-fields-values");
 }
 
-export void test_generic_if_constexpr(io::Io *io) {
-    corpus_case(io, "generic-if-constexpr");
+export void test_generic_for_constexpr_error() {
+    corpus_case("generic-for-constexpr-error");
 }
 
-export void test_generic_if_constexpr_analyzer(io::Io *io) {
-    corpus_case(io, "generic-if-constexpr-analyzer");
+export void test_generic_function() {
+    corpus_case("generic-function");
 }
 
-export void test_generic_if_constexpr_c_type(io::Io *io) {
-    corpus_case(io, "generic-if-constexpr-c-type");
+export void test_generic_function_error() {
+    corpus_case("generic-function-error");
 }
 
-export void test_generic_if_constexpr_error(io::Io *io) {
-    corpus_case(io, "generic-if-constexpr-error");
+export void test_generic_function_forward() {
+    corpus_case("generic-function-forward");
 }
 
-export void test_generic_if_constexpr_target(io::Io *io) {
-    corpus_case(io, "generic-if-constexpr-target");
+export void test_generic_function_generic() {
+    corpus_case("generic-function-generic");
 }
 
-export void test_generic_many_parameters(io::Io *io) {
-    corpus_case(io, "generic-many-parameters");
+export void test_generic_function_generic_error() {
+    corpus_case("generic-function-generic-error");
 }
 
-export void test_generic_nested(io::Io *io) {
-    corpus_case(io, "generic-nested");
+export void test_generic_gradient_shape() {
+    corpus_case("generic-gradient-shape");
 }
 
-export void test_generic_nested_argument(io::Io *io) {
-    corpus_case(io, "generic-nested-argument");
+export void test_generic_if_constexpr() {
+    corpus_case("generic-if-constexpr");
 }
 
-export void test_generic_number_parameter(io::Io *io) {
-    corpus_case(io, "generic-number-parameter");
+export void test_generic_if_constexpr_analyzer() {
+    corpus_case("generic-if-constexpr-analyzer");
 }
 
-export void test_generic_own_names(io::Io *io) {
-    corpus_case(io, "generic-own-names");
+export void test_generic_if_constexpr_c_type() {
+    corpus_case("generic-if-constexpr-c-type");
 }
 
-export void test_generic_pack(io::Io *io) {
-    corpus_case(io, "generic-pack");
+export void test_generic_if_constexpr_error() {
+    corpus_case("generic-if-constexpr-error");
 }
 
-export void test_generic_pack_error(io::Io *io) {
-    corpus_case(io, "generic-pack-error");
+export void test_generic_if_constexpr_target() {
+    corpus_case("generic-if-constexpr-target");
 }
 
-export void test_generic_pack_expand(io::Io *io) {
-    corpus_case(io, "generic-pack-expand");
+export void test_generic_many_parameters() {
+    corpus_case("generic-many-parameters");
 }
 
-export void test_generic_pack_expand_error(io::Io *io) {
-    corpus_case(io, "generic-pack-expand-error");
+export void test_generic_nested() {
+    corpus_case("generic-nested");
 }
 
-export void test_generic_pack_expand_typed(io::Io *io) {
-    corpus_case(io, "generic-pack-expand-typed");
+export void test_generic_nested_argument() {
+    corpus_case("generic-nested-argument");
 }
 
-export void test_generic_print(io::Io *io) {
-    corpus_case(io, "generic-print");
+export void test_generic_number_parameter() {
+    corpus_case("generic-number-parameter");
 }
 
-export void test_generic_print_error(io::Io *io) {
-    corpus_case(io, "generic-print-error");
+export void test_generic_own_names() {
+    corpus_case("generic-own-names");
 }
 
-export void test_generic_private_generic(io::Io *io) {
-    corpus_case(io, "generic-private-generic");
+export void test_generic_pack() {
+    corpus_case("generic-pack");
 }
 
-export void test_generic_private_names(io::Io *io) {
-    corpus_case(io, "generic-private-names");
+export void test_generic_pack_error() {
+    corpus_case("generic-pack-error");
 }
 
-export void test_generic_rest(io::Io *io) {
-    corpus_case(io, "generic-rest");
+export void test_generic_pack_expand() {
+    corpus_case("generic-pack-expand");
 }
 
-export void test_generic_rest_error(io::Io *io) {
-    corpus_case(io, "generic-rest-error");
+export void test_generic_pack_expand_error() {
+    corpus_case("generic-pack-expand-error");
 }
 
-export void test_generic_return_type(io::Io *io) {
-    corpus_case(io, "generic-return-type");
+export void test_generic_pack_expand_typed() {
+    corpus_case("generic-pack-expand-typed");
 }
 
-export void test_generic_sized_result_sizeof(io::Io *io) {
-    corpus_case(io, "generic-sized-result-sizeof");
+export void test_generic_print() {
+    corpus_case("generic-print");
 }
 
-export void test_generic_call_statement_after_braceless_if(io::Io *io) {
-    corpus_case(io, "generic-call-statement-after-braceless-if");
+export void test_generic_print_error() {
+    corpus_case("generic-print-error");
 }
 
-export void test_generic_slice(io::Io *io) {
-    corpus_case(io, "generic-slice");
+export void test_generic_private_generic() {
+    corpus_case("generic-private-generic");
 }
 
-export void test_generic_slice_const(io::Io *io) {
-    corpus_case(io, "generic-slice-const");
+export void test_generic_private_included_first() {
+    corpus_case("generic-private-included-first");
 }
 
-export void test_generic_slice_qualifiers_auto(io::Io *io) {
-    corpus_case(io, "generic-slice-qualifiers-auto");
+export void test_generic_private_names() {
+    corpus_case("generic-private-names");
 }
 
-export void test_generic_slice_pointer_auto(io::Io *io) {
-    corpus_case(io, "generic-slice-pointer-auto");
+export void test_generic_rest() {
+    corpus_case("generic-rest");
 }
 
-export void test_generic_slice_derived(io::Io *io) {
-    corpus_case(io, "generic-slice-derived");
+export void test_generic_rest_error() {
+    corpus_case("generic-rest-error");
 }
 
-export void test_generic_slice_typedef(io::Io *io) {
-    corpus_case(io, "generic-slice-typedef");
+export void test_generic_return_type() {
+    corpus_case("generic-return-type");
 }
 
-export void test_generic_option_slice_of(io::Io *io) {
-    corpus_case(io, "generic-option-slice-of");
+export void test_generic_sized_result_sizeof() {
+    corpus_case("generic-sized-result-sizeof");
 }
 
-export void test_enum_some_first(io::Io *io) {
-    corpus_case(io, "enum-some-first");
+export void test_generic_call_statement_after_braceless_if() {
+    corpus_case("generic-call-statement-after-braceless-if");
 }
 
-export void test_generic_slice_convert(io::Io *io) {
-    corpus_case(io, "generic-slice-convert");
+export void test_slice_literal_initializers() {
+    corpus_case("slice-literal-initializers");
 }
 
-export void test_generic_slice_convert_error(io::Io *io) {
-    corpus_case(io, "generic-slice-convert-error");
+export void test_generic_slice() {
+    corpus_case("generic-slice");
 }
 
-export void test_generic_slice_init(io::Io *io) {
-    corpus_case(io, "generic-slice-init");
+export void test_generic_slice_const() {
+    corpus_case("generic-slice-const");
 }
 
-export void test_generic_slice_init_error(io::Io *io) {
-    corpus_case(io, "generic-slice-init-error");
+export void test_generic_slice_qualifiers_auto() {
+    corpus_case("generic-slice-qualifiers-auto");
 }
 
-export void test_generic_slice_local(io::Io *io) {
-    corpus_case(io, "generic-slice-local");
+export void test_generic_slice_pointer_auto() {
+    corpus_case("generic-slice-pointer-auto");
 }
 
-export void test_generic_slice_type_argument(io::Io *io) {
-    corpus_case(io, "generic-slice-type-argument");
+export void test_generic_slice_pointer_result() {
+    corpus_case("generic-slice-pointer-result");
 }
 
-export void test_generic_static_assert(io::Io *io) {
-    corpus_case(io, "generic-static-assert");
+export void test_generic_slice_derived() {
+    corpus_case("generic-slice-derived");
 }
 
-export void test_generic_two_keyword_params(io::Io *io) {
-    corpus_case(io, "generic-two-keyword-params");
+export void test_generic_slice_typedef() {
+    corpus_case("generic-slice-typedef");
 }
 
-export void test_header_conditional(io::Io *io) {
-    corpus_case(io, "header-conditional");
+export void test_generic_option_slice_of() {
+    corpus_case("generic-option-slice-of");
 }
 
-export void test_header_conditional_define(io::Io *io) {
-    corpus_case(io, "header-conditional-define");
+export void test_enum_some_first() {
+    corpus_case("enum-some-first");
 }
 
-export void test_header_docs(io::Io *io) {
-    corpus_case(io, "header-docs");
+export void test_generic_slice_convert() {
+    corpus_case("generic-slice-convert");
 }
 
-export void test_header_in_memory(io::Io *io) {
-    corpus_case(io, "header-in-memory");
+export void test_generic_slice_convert_error() {
+    corpus_case("generic-slice-convert-error");
 }
 
-export void test_header_include_chain(io::Io *io) {
-    corpus_case(io, "header-include-chain");
+export void test_generic_slice_init() {
+    corpus_case("generic-slice-init");
 }
 
-export void test_if_constexpr(io::Io *io) {
-    corpus_case(io, "if-constexpr");
+export void test_generic_slice_init_error() {
+    corpus_case("generic-slice-init-error");
 }
 
-export void test_import_c_header(io::Io *io) {
-    corpus_case(io, "import-c-header");
+export void test_generic_slice_local() {
+    corpus_case("generic-slice-local");
 }
 
-export void test_header_c_name_after_generic_call(io::Io *io) {
-    corpus_case(io, "header-c-name-after-generic-call");
+export void test_generic_slice_type_argument() {
+    corpus_case("generic-slice-type-argument");
 }
 
-export void test_import_smith_module(io::Io *io) {
-    corpus_case(io, "import-smith-module");
+export void test_generic_static_assert() {
+    corpus_case("generic-static-assert");
 }
 
-export void test_import_two_headers_with_modules(io::Io *io) {
-    corpus_case(io, "import-two-headers-with-modules");
+export void test_generic_two_keyword_params() {
+    corpus_case("generic-two-keyword-params");
 }
 
-export void test_in_memory_imported_c_names(io::Io *io) {
-    corpus_case(io, "in-memory-imported-c-names");
+export void test_header_conditional() {
+    corpus_case("header-conditional");
 }
 
-export void test_include_keeps_c_names(io::Io *io) {
-    corpus_case(io, "include-keeps-c-names");
+export void test_header_conditional_define() {
+    corpus_case("header-conditional-define");
 }
 
-export void test_inline_if_constexpr(io::Io *io) {
-    corpus_case(io, "inline-if-constexpr");
+export void test_header_nolint_pair() {
+    corpus_case("header-nolint-pair");
 }
 
-export void test_inline_if_constexpr_memory(io::Io *io) {
-    corpus_case(io, "inline-if-constexpr-memory");
+export void test_header_docs() {
+    corpus_case("header-docs");
 }
 
-export void test_keyword_after_comment(io::Io *io) {
-    corpus_case(io, "keyword-after-comment");
+export void test_header_in_memory() {
+    corpus_case("header-in-memory");
 }
 
-export void test_keyword_names_fine(io::Io *io) {
-    corpus_case(io, "keyword-names-fine");
+export void test_header_include_chain() {
+    corpus_case("header-include-chain");
 }
 
-export void test_library_smith_text(io::Io *io) {
-    corpus_case(io, "library-smith-text");
+export void test_if_constexpr() {
+    corpus_case("if-constexpr");
 }
 
-export void test_lowered_directives(io::Io *io) {
-    corpus_case(io, "lowered-directives");
+export void test_import_c_header() {
+    corpus_case("import-c-header");
 }
 
-export void test_main(io::Io *io) {
-    corpus_case(io, "main");
+export void test_header_c_name_after_generic_call() {
+    corpus_case("header-c-name-after-generic-call");
 }
 
-export void test_main_args(io::Io *io) {
-    corpus_case(io, "main-args");
+export void test_import_smith_module() {
+    corpus_case("import-smith-module");
 }
 
-export void test_main_io(io::Io *io) {
-    corpus_case(io, "main-io");
+export void test_import_two_headers_with_modules() {
+    corpus_case("import-two-headers-with-modules");
 }
 
-export void test_main_io_module(io::Io *io) {
-    corpus_case(io, "main-io-module");
+export void test_in_memory_imported_c_names() {
+    corpus_case("in-memory-imported-c-names");
 }
 
-export void test_main_io_two_forms(io::Io *io) {
-    corpus_case(io, "main-io-two-forms");
+export void test_include_keeps_c_names() {
+    corpus_case("include-keeps-c-names");
 }
 
-export void test_member_after_dot_is_not_a_macro(io::Io *io) {
-    corpus_case(io, "member-after-dot-is-not-a-macro");
+export void test_inline_if_constexpr() {
+    corpus_case("inline-if-constexpr");
 }
 
-export void test_module_basic(io::Io *io) {
-    corpus_case(io, "module-basic");
+export void test_inline_if_constexpr_memory() {
+    corpus_case("inline-if-constexpr-memory");
 }
 
-export void test_module_c_caller(io::Io *io) {
-    corpus_case(io, "module-c-caller");
+export void test_keyword_after_comment() {
+    corpus_case("keyword-after-comment");
 }
 
-export void test_module_c_features(io::Io *io) {
-    corpus_case(io, "module-c-features");
+export void test_keyword_names_fine() {
+    corpus_case("keyword-names-fine");
 }
 
-export void test_module_cpp_callers(io::Io *io) {
-    corpus_case(io, "module-cpp-callers");
+export void test_unused_name_library() {
+    corpus_case("unused-name-library");
 }
 
-export void test_module_enum_c_names(io::Io *io) {
-    corpus_case(io, "module-enum-c-names");
+export void test_library_smith_text() {
+    corpus_case("library-smith-text");
 }
 
-export void test_module_export_extern(io::Io *io) {
-    corpus_case(io, "module-export-extern");
+export void test_lowered_directives() {
+    corpus_case("lowered-directives");
 }
 
-export void test_module_header_conditionals(io::Io *io) {
-    corpus_case(io, "module-header-conditionals");
+export void test_main() {
+    corpus_case("main");
 }
 
-export void test_main_old_form_error(io::Io *io) {
-    corpus_case(io, "main-old-form-error");
+export void test_main_args() {
+    corpus_case("main-args");
 }
 
-export void test_module_main(io::Io *io) {
-    corpus_case(io, "module-main");
+export void test_member_after_dot_is_not_a_macro() {
+    corpus_case("member-after-dot-is-not-a-macro");
 }
 
-export void test_module_names(io::Io *io) {
-    corpus_case(io, "module-names");
+export void test_module_basic() {
+    corpus_case("module-basic");
 }
 
-export void test_module_shadow_names(io::Io *io) {
-    corpus_case(io, "module-shadow-names");
+export void test_module_c_caller() {
+    corpus_case("module-c-caller");
 }
 
-export void test_module_three(io::Io *io) {
-    corpus_case(io, "module-three");
+export void test_module_c_features() {
+    corpus_case("module-c-features");
 }
 
-export void test_nested_compile_alone(io::Io *io) {
-    corpus_case(io, "nested-compile-alone");
+export void test_module_cpp_callers() {
+    corpus_case("module-cpp-callers");
 }
 
-export void test_nested_module_by_path(io::Io *io) {
-    corpus_case(io, "nested-module-by-path");
+export void test_module_enum_c_names() {
+    corpus_case("module-enum-c-names");
 }
 
-export void test_one_command_three_modules(io::Io *io) {
-    corpus_case(io, "one-command-three-modules");
+export void test_module_export_extern() {
+    corpus_case("module-export-extern");
 }
 
-export void test_param_names(io::Io *io) {
-    corpus_case(io, "param-names");
+export void test_module_header_conditionals() {
+    corpus_case("module-header-conditionals");
 }
 
-export void test_plain_hello(io::Io *io) {
-    corpus_case(io, "plain-hello");
+export void test_main_old_form_error() {
+    corpus_case("main-old-form-error");
 }
 
-export void test_plain_import_c(io::Io *io) {
-    corpus_case(io, "plain-import-c");
+export void test_module_main() {
+    corpus_case("module-main");
 }
 
-export void test_plain_include_keeps_c_names(io::Io *io) {
-    corpus_case(io, "plain-include-keeps-c-names");
+export void test_module_name_linux() {
+    corpus_case("module-name-linux");
 }
 
-export void test_plain_names(io::Io *io) {
-    corpus_case(io, "plain-names");
+export void test_module_names() {
+    corpus_case("module-names");
 }
 
-export void test_plain_sized_shadow(io::Io *io) {
-    corpus_case(io, "plain-sized-shadow");
+export void test_module_shadow_names() {
+    corpus_case("module-shadow-names");
 }
 
-export void test_reflect_questions(io::Io *io) {
-    corpus_case(io, "reflect-questions");
+export void test_module_three() {
+    corpus_case("module-three");
 }
 
-export void test_session_keyword_name(io::Io *io) {
-    corpus_case(io, "session-keyword-name");
+export void test_nested_compile_alone() {
+    corpus_case("nested-compile-alone");
 }
 
-export void test_session_missing_module(io::Io *io) {
-    corpus_case(io, "session-missing-module");
+export void test_nested_module_by_path() {
+    corpus_case("nested-module-by-path");
 }
 
-export void test_session_two_modules(io::Io *io) {
-    corpus_case(io, "session-two-modules");
+export void test_one_command_three_modules() {
+    corpus_case("one-command-three-modules");
 }
 
-export void test_sized_c_header_typedef(io::Io *io) {
-    corpus_case(io, "sized-c-header-typedef");
+export void test_param_names() {
+    corpus_case("param-names");
 }
 
-export void test_sized_error_message(io::Io *io) {
-    corpus_case(io, "sized-error-message");
+export void test_plain_hello() {
+    corpus_case("plain-hello");
 }
 
-export void test_sized_header_conflict(io::Io *io) {
-    corpus_case(io, "sized-header-conflict");
+export void test_plain_import_c() {
+    corpus_case("plain-import-c");
 }
 
-export void test_sized_no_leak_into_c(io::Io *io) {
-    corpus_case(io, "sized-no-leak-into-c");
+export void test_plain_include_keeps_c_names() {
+    corpus_case("plain-include-keeps-c-names");
 }
 
-export void test_sized_own_typedef(io::Io *io) {
-    corpus_case(io, "sized-own-typedef");
+export void test_plain_names() {
+    corpus_case("plain-names");
 }
 
-export void test_sized_types(io::Io *io) {
-    corpus_case(io, "sized-types");
+export void test_plain_sized_shadow() {
+    corpus_case("plain-sized-shadow");
 }
 
-export void test_slice_dims_lowering(io::Io *io) {
-    corpus_case(io, "slice-dims-lowering");
+export void test_reflect_questions() {
+    corpus_case("reflect-questions");
 }
 
-export void test_slice_dims_run(io::Io *io) {
-    corpus_case(io, "slice-dims-run");
+export void test_session_keyword_name() {
+    corpus_case("session-keyword-name");
 }
 
-export void test_slice_export_sanitize(io::Io *io) {
-    corpus_case(io, "slice-export-sanitize");
+export void test_session_missing_module() {
+    corpus_case("session-missing-module");
 }
 
-export void test_slice_initializer_run(io::Io *io) {
-    corpus_case(io, "slice-initializer-run");
+export void test_session_two_modules() {
+    corpus_case("session-two-modules");
 }
 
-export void test_slice_lowering(io::Io *io) {
-    corpus_case(io, "slice-lowering");
+export void test_sized_c_header_typedef() {
+    corpus_case("sized-c-header-typedef");
 }
 
-export void test_slice_module_type_argument(io::Io *io) {
-    corpus_case(io, "slice-module-type-argument");
+export void test_sized_error_message() {
+    corpus_case("sized-error-message");
 }
 
-export void test_slice_pointer_lowering(io::Io *io) {
-    corpus_case(io, "slice-pointer-lowering");
+export void test_sized_header_conflict() {
+    corpus_case("sized-header-conflict");
 }
 
-export void test_slice_pointer_run(io::Io *io) {
-    corpus_case(io, "slice-pointer-run");
+export void test_sized_no_leak_into_c() {
+    corpus_case("sized-no-leak-into-c");
 }
 
-export void test_slice_qualifiers_lowering(io::Io *io) {
-    corpus_case(io, "slice-qualifiers-lowering");
+export void test_sized_own_typedef() {
+    corpus_case("sized-own-typedef");
 }
 
-export void test_slice_qualifiers_run(io::Io *io) {
-    corpus_case(io, "slice-qualifiers-run");
+export void test_sized_types() {
+    corpus_case("sized-types");
 }
 
-export void test_slice_run(io::Io *io) {
-    corpus_case(io, "slice-run");
+export void test_slice_dims_lowering() {
+    corpus_case("slice-dims-lowering");
 }
 
-export void test_slice_text_in_comment(io::Io *io) {
-    corpus_case(io, "slice-text-in-comment");
+export void test_slice_dims_run() {
+    corpus_case("slice-dims-run");
 }
 
-export void test_slice_text_in_library(io::Io *io) {
-    corpus_case(io, "slice-text-in-library");
+export void test_slice_export_sanitize() {
+    corpus_case("slice-export-sanitize");
 }
 
-export void test_std_default_c2y(io::Io *io) {
-    corpus_case(io, "std-default-c2y");
+export void test_slice_initializer_run() {
+    corpus_case("slice-initializer-run");
 }
 
-export void test_str_c_rule(io::Io *io) {
-    corpus_case(io, "str-c-rule");
+export void test_slice_lowering() {
+    corpus_case("slice-lowering");
 }
 
-export void test_str_lowering(io::Io *io) {
-    corpus_case(io, "str-lowering");
+export void test_slice_module_type_argument() {
+    corpus_case("slice-module-type-argument");
 }
 
-export void test_str_module(io::Io *io) {
-    corpus_case(io, "str-module");
+export void test_slice_pointer_lowering() {
+    corpus_case("slice-pointer-lowering");
 }
 
-export void test_str_run(io::Io *io) {
-    corpus_case(io, "str-run");
+export void test_slice_pointer_run() {
+    corpus_case("slice-pointer-run");
 }
 
-export void test_str_typedef_lowering(io::Io *io) {
-    corpus_case(io, "str-typedef-lowering");
+export void test_slice_qualifiers_lowering() {
+    corpus_case("slice-qualifiers-lowering");
 }
 
-export void test_str_typedef_module(io::Io *io) {
-    corpus_case(io, "str-typedef-module");
+export void test_slice_qualifiers_run() {
+    corpus_case("slice-qualifiers-run");
 }
 
-export void test_str_typedef_run(io::Io *io) {
-    corpus_case(io, "str-typedef-run");
+export void test_slice_run() {
+    corpus_case("slice-run");
 }
 
-export void test_target_facts(io::Io *io) {
-    corpus_case(io, "target-facts");
+export void test_slice_text_in_comment() {
+    corpus_case("slice-text-in-comment");
 }
 
-export void test_target_facts_address_undefined(io::Io *io) {
-    corpus_case(io, "target-facts-address-undefined");
+export void test_slice_text_in_library() {
+    corpus_case("slice-text-in-library");
 }
 
-export void test_target_facts_ndebug(io::Io *io) {
-    corpus_case(io, "target-facts-ndebug");
+export void test_std_default_c2y() {
+    corpus_case("std-default-c2y");
 }
 
-export void test_target_facts_thread(io::Io *io) {
-    corpus_case(io, "target-facts-thread");
+export void test_str_c_rule() {
+    corpus_case("str-c-rule");
 }
 
-export void test_tuple_basic(io::Io *io) {
-    corpus_case(io, "tuple-basic");
+export void test_str_lowering() {
+    corpus_case("str-lowering");
 }
 
-export void test_tuple_c(io::Io *io) {
-    corpus_case(io, "tuple-c");
+export void test_str_module() {
+    corpus_case("str-module");
 }
 
-export void test_tuple_import_index(io::Io *io) {
-    corpus_case(io, "tuple-import-index");
+export void test_str_run() {
+    corpus_case("str-run");
 }
 
-export void test_tuple_modules(io::Io *io) {
-    corpus_case(io, "tuple-modules");
+export void test_str_typedef_lowering() {
+    corpus_case("str-typedef-lowering");
 }
 
-export void test_tuple_spelling(io::Io *io) {
-    corpus_case(io, "tuple-spelling");
+export void test_str_typedef_module() {
+    corpus_case("str-typedef-module");
 }
 
-export void test_type_function_after_c_name(io::Io *io) {
-    corpus_case(io, "type-function-after-c-name");
+export void test_str_typedef_run() {
+    corpus_case("str-typedef-run");
 }
 
-export void test_type_function_pointee(io::Io *io) {
-    corpus_case(io, "type-function-pointee");
+export void test_target_facts() {
+    corpus_case("target-facts");
 }
 
-export void test_type_function_private(io::Io *io) {
-    corpus_case(io, "type-function-private");
+export void test_target_facts_address_undefined() {
+    corpus_case("target-facts-address-undefined");
 }
 
-export void test_type_function_sized(io::Io *io) {
-    corpus_case(io, "type-function-sized");
+export void test_target_facts_ndebug() {
+    corpus_case("target-facts-ndebug");
 }
 
-export void test_type_function_typeof(io::Io *io) {
-    corpus_case(io, "type-function-typeof");
+export void test_target_facts_thread() {
+    corpus_case("target-facts-thread");
 }
 
-export void test_type_plain_name(io::Io *io) {
-    corpus_case(io, "type-plain-name");
+export void test_tuple_basic() {
+    corpus_case("tuple-basic");
 }
 
-export void test_type_query(io::Io *io) {
-    corpus_case(io, "type-query");
+export void test_tuple_c() {
+    corpus_case("tuple-c");
 }
 
-export void test_type_value(io::Io *io) {
-    corpus_case(io, "type-value");
+export void test_tuple_import_index() {
+    corpus_case("tuple-import-index");
 }
 
-export void test_type_value_declarator(io::Io *io) {
-    corpus_case(io, "type-value-declarator");
+export void test_tuple_modules() {
+    corpus_case("tuple-modules");
 }
 
-export void test_type_value_header(io::Io *io) {
-    corpus_case(io, "type-value-header");
+export void test_tuple_pointer_param() {
+    corpus_case("tuple-pointer-param");
 }
 
-export void test_type_value_generic(io::Io *io) {
-    corpus_case(io, "type-value-generic");
+export void test_tuple_spelling() {
+    corpus_case("tuple-spelling");
 }
 
-export void test_type_value_import(io::Io *io) {
-    corpus_case(io, "type-value-import");
+export void test_type_function_after_c_name() {
+    corpus_case("type-function-after-c-name");
 }
 
-export void test_type_value_main_only(io::Io *io) {
-    corpus_case(io, "type-value-main-only");
+export void test_type_function_pointee() {
+    corpus_case("type-function-pointee");
 }
 
-export void test_type_value_module_variable(io::Io *io) {
-    corpus_case(io, "type-value-module-variable");
+export void test_type_function_private() {
+    corpus_case("type-function-private");
 }
 
-export void test_type_value_nouns(io::Io *io) {
-    corpus_case(io, "type-value-nouns");
+export void test_type_function_sized() {
+    corpus_case("type-function-sized");
 }
 
-export void test_type_value_slice(io::Io *io) {
-    corpus_case(io, "type-value-slice");
+export void test_type_function_typeof() {
+    corpus_case("type-function-typeof");
 }
 
-export void test_type_value_use(io::Io *io) {
-    corpus_case(io, "type-value-use");
+export void test_type_plain_name() {
+    corpus_case("type-plain-name");
 }
 
-export void test_type_value_windows(io::Io *io) {
-    corpus_case(io, "type-value-windows");
+export void test_type_query() {
+    corpus_case("type-query");
 }
 
-export void test_value_query(io::Io *io) {
-    corpus_case(io, "value-query");
+export void test_type_value() {
+    corpus_case("type-value");
 }
 
-export void test_value_query_for(io::Io *io) {
-    corpus_case(io, "value-query-for");
+export void test_type_value_declarator() {
+    corpus_case("type-value-declarator");
 }
 
-export void test_value_query_if(io::Io *io) {
-    corpus_case(io, "value-query-if");
+export void test_type_value_header() {
+    corpus_case("type-value-header");
 }
 
-export void test_value_query_plain(io::Io *io) {
-    corpus_case(io, "value-query-plain");
+export void test_type_value_generic() {
+    corpus_case("type-value-generic");
 }
 
-export void test_value_query_windows(io::Io *io) {
-    corpus_case(io, "value-query-windows");
+export void test_type_value_import() {
+    corpus_case("type-value-import");
 }
 
-export void test_error_fields_enum_member(io::Io *io) {
-    corpus_case(io, "error-fields-enum-member");
+export void test_type_value_main_only() {
+    corpus_case("type-value-main-only");
 }
 
-export void test_generic_fields_doc(io::Io *io) {
-    corpus_case(io, "generic-fields-doc");
+export void test_type_value_module_variable() {
+    corpus_case("type-value-module-variable");
 }
 
-export void test_typetag_run(io::Io *io) {
-    corpus_case(io, "typetag-run");
+export void test_type_value_nouns() {
+    corpus_case("type-value-nouns");
 }
 
-export void test_typetag_module(io::Io *io) {
-    corpus_case(io, "typetag-module");
+export void test_type_value_slice() {
+    corpus_case("type-value-slice");
 }
 
-export void test_error_typetag_collision(io::Io *io) {
-    corpus_case(io, "error-typetag-collision");
+export void test_type_value_use() {
+    corpus_case("type-value-use");
 }
 
-export void test_error_typetag_collision_reverse(io::Io *io) {
-    corpus_case(io, "error-typetag-collision-reverse");
+export void test_type_value_windows() {
+    corpus_case("type-value-windows");
 }
 
-export void test_generic_slice_restrict(io::Io *io) {
-    corpus_case(io, "generic-slice-restrict");
+export void test_value_query() {
+    corpus_case("value-query");
 }
 
-export void test_generic_slice_option_typedef(io::Io *io) {
-    corpus_case(io, "generic-slice-option-typedef");
+export void test_value_query_for() {
+    corpus_case("value-query-for");
 }
 
-export void test_generic_some_operand(io::Io *io) {
-    corpus_case(io, "generic-some-operand");
+export void test_value_query_if() {
+    corpus_case("value-query-if");
 }
 
-export void test_generic_some_operand_derived(io::Io *io) {
-    corpus_case(io, "generic-some-operand-derived");
+export void test_value_query_plain() {
+    corpus_case("value-query-plain");
 }
 
-export void test_postfix_after_compound_literal(io::Io *io) {
-    corpus_case(io, "postfix-after-compound-literal");
+export void test_value_query_windows() {
+    corpus_case("value-query-windows");
+}
+
+export void test_error_fields_enum_member() {
+    corpus_case("error-fields-enum-member");
+}
+
+export void test_error_lambda_capture_to_pointer() {
+    corpus_case("error-lambda-capture-to-pointer");
+}
+
+export void test_error_lambda_capture_not_local() {
+    corpus_case("error-lambda-capture-not-local");
+}
+
+export void test_error_lambda_capture_no_module() {
+    corpus_case("error-lambda-capture-no-module");
+}
+
+export void test_error_lambda_capture_generic() {
+    corpus_case("error-lambda-capture-generic");
+}
+
+export void test_lambda_capture_list_not_a_lambda() {
+    corpus_case("lambda-capture-list-not-a-lambda");
+}
+
+export void test_lambda_basic() {
+    corpus_case("lambda-basic");
+}
+
+export void test_lambda_no_parameters() {
+    corpus_case("lambda-no-parameters");
+}
+
+export void test_lambda_qsort() {
+    corpus_case("lambda-qsort");
+}
+
+export void test_lambda_two() {
+    corpus_case("lambda-two");
+}
+
+export void test_lambda_static() {
+    corpus_case("lambda-static");
+}
+
+export void test_lambda_generic_type() {
+    corpus_case("lambda-generic-type");
+}
+
+export void test_lambda_generic_handler() {
+    corpus_case("lambda-generic-handler");
+}
+
+export void test_lambda_generic_table() {
+    corpus_case("lambda-generic-table");
+}
+
+export void test_lambda_generic_infer() {
+    corpus_case("lambda-generic-infer");
+}
+
+export void test_lambda_generic_spawn() {
+    corpus_case("lambda-generic-spawn");
+}
+
+export void test_error_lambda_generic_runtime_capture() {
+    corpus_case("error-lambda-generic-runtime-capture");
+}
+
+export void test_error_lambda_generic_return_type() {
+    corpus_case("error-lambda-generic-return-type");
+}
+
+export void test_error_lambda_generic_nested() {
+    corpus_case("error-lambda-generic-nested");
+}
+
+export void test_lambda_nested() {
+    corpus_case("lambda-nested");
+}
+
+export void test_lambda_param() {
+    corpus_case("lambda-param");
+}
+
+export void test_lambda_param_element() {
+    corpus_case("lambda-param-element");
+}
+
+export void test_lambda_param_two() {
+    corpus_case("lambda-param-two");
+}
+
+export void test_error_lambda_wrong_signature() {
+    corpus_case("error-lambda-wrong-signature");
+}
+
+export void test_error_lambda_param_count() {
+    corpus_case("error-lambda-param-count");
+}
+
+export void test_error_lambda_param_untyped() {
+    corpus_case("error-lambda-param-untyped");
+}
+
+export void test_lambda_plain() {
+    corpus_case("lambda-plain");
+}
+
+export void test_error_lambda_captures_local() {
+    corpus_case("error-lambda-captures-local");
+}
+
+export void test_error_lambda_returns_disagree() {
+    corpus_case("error-lambda-returns-disagree");
+}
+
+export void test_generic_fields_doc() {
+    corpus_case("generic-fields-doc");
+}
+
+export void test_reflection_doc_if_constexpr() {
+    corpus_case("reflection-doc-if-constexpr");
+}
+
+export void test_typetag_run() {
+    corpus_case("typetag-run");
+}
+
+export void test_typetag_module() {
+    corpus_case("typetag-module");
+}
+
+export void test_error_typetag_collision() {
+    corpus_case("error-typetag-collision");
+}
+
+export void test_error_typetag_collision_reverse() {
+    corpus_case("error-typetag-collision-reverse");
+}
+
+export void test_generic_slice_restrict() {
+    corpus_case("generic-slice-restrict");
+}
+
+export void test_generic_slice_option_typedef() {
+    corpus_case("generic-slice-option-typedef");
+}
+
+export void test_generic_some_operand() {
+    corpus_case("generic-some-operand");
+}
+
+export void test_generic_some_operand_derived() {
+    corpus_case("generic-some-operand-derived");
+}
+
+export void test_postfix_after_compound_literal() {
+    corpus_case("postfix-after-compound-literal");
 }

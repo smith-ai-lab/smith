@@ -15,7 +15,6 @@ Checks: >
   smith-bounded-loop,
   smith-c23,
   smith-constexpr,
-  smith-effects,
   smith-mem,
   smith-module,
   smith-module-library,
@@ -26,11 +25,8 @@ WarningsAsErrors: '*'
 # Diagnostics come from smith's own files, never from system headers or the generated protocol code (runtime/protocol/
 # dap and mcp, which keep the schemas' names). A test that includes a source by tests/../ names it that way, and the
 # source is linted by the file that includes it for real.
-HeaderFilterRegex: '(^|/)(smith\.c|runtime/[^/]*|runtime/protocol/protocol\.[ch]|tests/[^.].*)$'
+HeaderFilterRegex: '^(?!(.*/)?\.smith/).*(^|/)(smith\.c|runtime/[^/]*|runtime/protocol/protocol\.[ch]|tests/[^.].*)$'
 CheckOptions:
-  # smith's C is being ported to .smith (issue #45) and each ported module must be clean from the day it lands, so the
-  # check reads .smith files only. Set it true to list what the C files still do.
-  smith-effects.CFiles: false
   bugprone-assert-side-effect.AssertMacros: SMITH_ASSERT
   # Positive literals such as 1 << 0 are never the hazard the check exists for.
   bugprone-signed-bitwise.IgnorePositiveIntegerLiterals: true

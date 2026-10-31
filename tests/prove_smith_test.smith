@@ -6,14 +6,17 @@
 // tests/prove_test.smith for the proofs' cache and budget.
 module prove_smith_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 import prove_cases;
 
-static scratch::Project fresh(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "prove_cases");
+// The fixture with tests/prove copied in, made before the test's arena is the current allocator: scratch::clean,
+// deferred first, runs after the allocator is put back and frees what make holds (issue #240).
+static scratch::Project fresh() {
+    scratch::Project p = scratch::make("p", "prove_cases");
     scratch::copy_tree(&p, "tests/prove", "cases");
     return p;
 }
@@ -41,25 +44,40 @@ static void has(const char *name, const scratch::Run *run, const char *needle) {
 
 // A command in a project folder of the fixture (`cd folder && smith prove ...`), both streams together.
 static scratch::Run in_folder(const scratch::Project *p, const char *folder, const char *arguments) {
-    return scratch::sh(p, format::push(&p->io->arena, "cd ", folder, " && smith prove ", arguments, " 2>&1").data);
+    return scratch::sh(p, format::push("cd ", folder, " && smith prove ", arguments, " 2>&1").data);
 }
 
 // 8. checkers' move generator, with the contracts of the issue: the fixed one is proved within the budget, and the one
 // before the fixes (else-if, col > 1) fails with a counterexample.
-export void test_prove_checkers_the_fixed_get_valid_diagonals_is_proved_in_the_budget(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_checkers_the_fixed_get_valid_diagonals_is_proved_in_the_budget() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     proved(&p, "checkers: the fixed get_valid_diagonals is proved in the budget",
            "--function=get_valid_diagonals \"$c/diagonals.c\"");
 }
 
-export void test_prove_checkers_the_append_the_move_generator_uses_is_proved(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_checkers_the_append_the_move_generator_uses_is_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     proved(&p, "checkers: the append the move generator uses is proved, so its contract can be used",
            "--function=push_move \"$c/diagonals_prefix.c\"");
 }
 
-export void test_prove_checkers_the_one_before_its_fixes_fails_on_the_legal_moves_it_misses(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_checkers_the_one_before_its_fixes_fails_on_the_legal_moves_it_misses() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, "checkers: the one before its fixes fails",
                                "--function=get_valid_diagonals \"$c/diagonals_prefix.c\"");
     has("checkers: ... on the legal moves it misses", &run, "added_every_legal_step");
@@ -67,23 +85,38 @@ export void test_prove_checkers_the_one_before_its_fixes_fails_on_the_legal_move
 }
 
 // 9. Nothing to prove, and the counts of a run.
-export void test_prove_no_contract_nothing_is_proved_and_that_is_a_success(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_no_contract_nothing_is_proved_and_that_is_a_success() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "plain.c", "int main(void) { return 0; }\n");
     scratch::Run run = proved(&p, "no contract: and that is a success", "plain.c");
     has("no contract: nothing is proved, and it says so", &run, "nothing to prove: no function with smith_requires");
 }
 
-export void test_prove_function_that_matches_nothing_says_so_and_fails(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_function_that_matches_nothing_says_so_and_fails() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "plain.c", "int main(void) { return 0; }\n");
     scratch::Run run = refuted(&p, "--function that matches nothing fails", "--function=nothing plain.c");
     has("--function that matches nothing says so", &run, "by that name");
 }
 
 // 10. A --function that names no function the prover read is an error, never a skip.
-export void test_prove_function_of_an_unemitted_static_fails_with_the_cause_and_the_fix(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_function_of_an_unemitted_static_fails_with_the_cause_and_the_fix() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, "--function of an unemitted static: fails",
                                "--function=harness_kept --function=harness_dropped \"$c/static_harness.c\"");
     has("... and names it", &run, "--function=harness_dropped: no function by that name");
@@ -91,13 +124,23 @@ export void test_prove_function_of_an_unemitted_static_fails_with_the_cause_and_
     has("... and the fix", &run, "[[gnu::used]]");
 }
 
-export void test_prove_function_of_a_kept_static_is_proved(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_function_of_a_kept_static_is_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     proved(&p, "--function of a kept static: proved", "--function=harness_kept \"$c/static_harness.c\"");
 }
 
-export void test_prove_function_of_a_function_with_no_contract_fails_saying_there_is_nothing_to_prove(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_function_of_a_function_with_no_contract_fails_saying_there_is_nothing_to_prove() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, "--function of a function with no contract: fails",
                                "--function=no_contract \"$c/static_harness.c\"");
     has("... says there is nothing to prove", &run, "so there is nothing to prove");
@@ -105,16 +148,26 @@ export void test_prove_function_of_a_function_with_no_contract_fails_saying_ther
 
 // 11. A module written in .smith is compiled as `smith cc` compiles it, and its functions are named as written
 // (geometry::box::clamp, never geometry_box_clamp), in the report, in -v and in --function.
-export void test_prove_smith_module_a_contract_in_a_smith_function_is_proved_and_named_as_written(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_smith_module_a_contract_in_a_smith_function_is_proved_and_named_as_written() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = proved(&p, "smith module: a contract in a .smith function is proved",
                               "-v --function=geometry::box::clamp \"$c/geometry/box.smith\"");
     has("smith module: ... named as written, with its line", &run, "ok    geometry::box::clamp  (");
     has("smith module: ... with its line", &run, "geometry/box.smith:5)");
 }
 
-export void test_prove_smith_module_a_contract_that_is_false_fails_at_the_smith_line_with_the_values(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_smith_module_a_contract_that_is_false_fails_at_the_smith_line_with_the_values() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, "smith module: a contract that is false fails",
                                "--function=geometry::box::clamp_wrong \"$c/geometry/box.smith\"");
     has("smith module: ... named as written", &run, "FAIL  geometry::box::clamp_wrong");
@@ -123,15 +176,25 @@ export void test_prove_smith_module_a_contract_that_is_false_fails_at_the_smith_
     has("smith module: ... with the values", &run, "counterexample: high = ");
 }
 
-export void test_prove_smith_module_undefined_behaviour_is_at_the_smith_line(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_smith_module_undefined_behaviour_is_at_the_smith_line() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = prove(&p, "--function=geometry::box::add_unchecked \"$c/geometry/box.smith\"");
     has("smith module: undefined behaviour is at the .smith line", &run,
         "geometry/box.smith:21: undefined behaviour: signed integer addition overflow");
 }
 
-export void test_prove_smith_module_a_caller_that_breaks_a_contract_names_the_callee_as_written(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_smith_module_a_caller_that_breaks_a_contract_names_the_callee_as_written() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = prove(&p, "--function=geometry::box::caller \"$c/geometry/box.smith\"");
     has("smith module: a caller that breaks a contract names the callee as written", &run,
         "the call of geometry::box::clamp may break smith_requires(low <= high)");
@@ -139,27 +202,47 @@ export void test_prove_smith_module_a_caller_that_breaks_a_contract_names_the_ca
         "geometry::box::clamp.low = 10 geometry::box::clamp.high = 5");
 }
 
-export void test_prove_smith_module_all_of_them(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_smith_module_all_of_them() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = prove(&p, "\"$c/geometry/box.smith\"");
     has("smith module: all of them", &run, "1 proved, 3 failed");
 }
 
 // 11a. A parameter written as an array in a module is N objects (#81): an index in range needs no other contract.
-export void test_prove_smith_module_xs_i_of_an_array_parameter_is_proved_with_only_i_below_4(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_smith_module_xs_i_of_an_array_parameter_is_proved_with_only_i_below_4() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     proved(&p, "smith module: xs[i] of an array parameter xs[4] is proved with only i < 4",
            "--function=geometry::rows::pick \"$c/geometry/rows.smith\"");
 }
 
-export void test_prove_smith_module_m_row_1_of_an_array_parameter_is_proved_with_only_row_below_3(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_smith_module_m_row_1_of_an_array_parameter_is_proved_with_only_row_below_3() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     proved(&p, "smith module: m[row][1] of an array parameter m[3][2] is proved with only row < 3",
            "--function=geometry::rows::corner \"$c/geometry/rows.smith\"");
 }
 
-export void test_prove_smith_module_an_index_that_may_be_past_the_array_is_refused(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_smith_module_an_index_that_may_be_past_the_array_is_refused() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     refuted(&p, "smith module: an index that may be past the array is refused",
             "--function=geometry::rows::unchecked \"$c/geometry/rows.smith\"");
 }
@@ -167,46 +250,115 @@ export void test_prove_smith_module_an_index_that_may_be_past_the_array_is_refus
 // 11a2. A `T xs[:]` parameter points at countof(xs) elements (#106): an index in range needs no contract, one that may
 // be out of range fails at the index, a loop over it is bounded by a requires on countof, and a view of a pointer is
 // held to what the pointer is known to point at.
-export void test_prove_smith_slice_indexes_in_range_are_proved(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_smith_slice_indexes_in_range_are_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     prove_cases::each_proved(&p, "smith slice: at total last_of_tail first_of_one of_four are proved",
                              "\"$c/geometry/slices.smith\"",
                              "geometry::slices::", "at total last_of_tail first_of_one of_four");
 }
 
-export void test_prove_smith_slice_an_index_that_may_be_past_the_count_is_refused_at_its_line(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_smith_slice_an_index_that_may_be_past_the_count_is_refused_at_its_line() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, "smith slice: an index that may be past the count is refused",
                                "--function=geometry::slices::unchecked \"$c/geometry/slices.smith\"");
     has("smith slice: ... as an index out of range, at its line", &run,
         "slices.smith:14: assert(an index or a slice is in range) may fail");
 }
 
-export void test_prove_smith_slice_a_view_of_two_elements_of_a_pointer_to_one_is_refused(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_smith_slice_a_view_of_two_elements_of_a_pointer_to_one_is_refused() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     refuted(&p, "smith slice: a view of two elements of a pointer to one is refused",
             "--function=geometry::slices::second_of_one \"$c/geometry/slices.smith\"");
 }
 
 // 11a3. A count of what a caller's memory holds, under a requires on its bound, is proved (#187), and a false bound
 // still fails.
-export void test_prove_smith_counting_a_count_under_a_requires_on_its_bound_is_proved(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_smith_counting_a_count_under_a_requires_on_its_bound_is_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     prove_cases::each_proved(&p, "smith counting: positives positives_of_slice are proved",
                              "\"$c/geometry/counting.smith\"", "geometry::counting::", "positives positives_of_slice");
 }
 
-export void test_prove_smith_counting_a_bound_that_is_too_small_fails_at_its_line(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_smith_counting_a_bound_that_is_too_small_fails_at_its_line() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, "smith counting: a bound that is too small fails",
                                "--function=geometry::counting::positives_wrong \"$c/geometry/counting.smith\"");
     has("smith counting: ... at its line", &run, "counting.smith:33: smith_ensures(hits <= 3) may be false");
 }
 
+// 11a4. A lemma is a function (#1053): calling it gives its `ensures` to the prover once its `requires` is proved at
+// the call, and a function called inside a contract is read through its body, so the claim is about its result.
+export void test_prove_smith_lemmas_a_called_lemma_and_a_claim_about_a_call_are_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prove_cases::each_proved(
+        &p, "smith lemmas: the lemmas and the claims about a call are proved", "\"$c/geometry/lemmas.smith\"",
+        "geometry::lemmas::", "square_is_nonnegative square small_square_fits use_small twice_is_double");
+}
+
+export void test_prove_smith_lemmas_a_lemma_called_where_its_requires_may_be_false_is_refused_at_the_call() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = refuted(&p, "smith lemmas: a lemma called outside its requires is refused",
+                               "--function=geometry::lemmas::use_small_wrong \"$c/geometry/lemmas.smith\"");
+    has("smith lemmas: ... at the call", &run,
+        "lemmas.smith:37: the call of geometry::lemmas::small_square_fits may break");
+}
+
+export void test_prove_smith_lemmas_a_claim_about_a_call_with_the_wrong_body_fails_with_a_counterexample() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = refuted(&p, "smith lemmas: a claim about a call with the wrong body fails",
+                               "--function=geometry::lemmas::thrice_is_double \"$c/geometry/lemmas.smith\"");
+    has("smith lemmas: ... with a counterexample", &run, "counterexample: n = ");
+}
+
 // 11b. The project verb proves .smith sources too (issue #42): a convention project, no build file, with a contract in
 // a module and a trusted function written with c::smith_trusted().
-export void test_prove_project_a_smith_projects_contracts_are_proved_as_written(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_project_a_smith_projects_contracts_are_proved_as_written() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = in_folder(&p, "primes", "-v --emit-ir=../project-ir.ll");
     scratch::expect_status("project: a .smith project's contracts are proved", 0, &run);
     has("project: ... as written", &run, "ok    primes::sum  (primes.smith:14)");
@@ -219,8 +371,13 @@ export void test_prove_project_a_smith_projects_contracts_are_proved_as_written(
     scratch::expect_contains("project: ... and of the first", ir, "; primes::sum (");
 }
 
-export void test_prove_project_a_wrong_contract_in_a_smith_module_is_refuted_at_the_smith_line(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_project_a_wrong_contract_in_a_smith_module_is_refuted_at_the_smith_line() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run edited = scratch::sh(&p, "sed -i.bak 's/total <= 28/total <= 27/' primes/primes.smith");
     scratch::expect_status("project: the contract is made wrong", 0, &edited);
     scratch::Run run = in_folder(&p, "primes", "");
@@ -230,8 +387,13 @@ export void test_prove_project_a_wrong_contract_in_a_smith_module_is_refuted_at_
     has("project: ... counterexample", &run, "counterexample: count = 5");
 }
 
-export void test_prove_project_the_provers_options_are_the_projects_too(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_project_the_provers_options_are_the_projects_too() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = in_folder(&p, "primes", "--budget=30 -v");
     has("project: the prover's options are the project's too (-v, --budget=)", &run, "ok    primes::shown_sum");
 }
@@ -239,8 +401,13 @@ export void test_prove_project_the_provers_options_are_the_projects_too(io::Io *
 // 11c. A project's proof reads smith's libraries for their contracts (issue #66): a proved function may call a library
 // export, whatever the library marks it with, and is proved against the library's contract. The library's own functions
 // are not proved there.
-export void test_prove_libraries_a_call_of_a_library_export_is_proved_against_its_contract(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_libraries_a_call_of_a_library_export_is_proved_against_its_contract() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = in_folder(&p, "libs", "-v");
     scratch::expect_status("libraries: a proved function that calls a library export is proved", 0, &run);
     has("libraries: ... against the library's contract", &run, "ok    libs::pick  (");
@@ -252,8 +419,13 @@ export void test_prove_libraries_a_call_of_a_library_export_is_proved_against_it
 
 // 11d. A slice in a project links the trace library, whose smith_failure has a body: the check's failure is still the
 // proof point (issue #151), a guarded index is proved and an unguarded one is refuted, never "a call of pthread_self".
-export void test_prove_slices_in_a_project_the_unguarded_index_is_refuted_and_the_guarded_one_proved(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_slices_in_a_project_the_unguarded_index_is_refuted_and_the_guarded_one_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = in_folder(&p, "slices", "-v");
     scratch::expect_status("slices in a project: the unguarded index is refuted", 1, &run);
     has("slices in a project: a guarded index is proved", &run, "ok    stats::first  (");
@@ -267,8 +439,13 @@ export void test_prove_slices_in_a_project_the_unguarded_index_is_refuted_and_th
 
 // 11e. The messages (issue #155): an instance is named as written in smith (clamp<i32>), and the note that a callee
 // "may write memory it was not given" is only for a function that does, never a pure generic.
-export void test_prove_messages_an_instance_is_named_as_written(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_messages_an_instance_is_named_as_written() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = in_folder(&p, "clamp", "-v");
     scratch::expect_status("messages: a call that breaks a requires fails", 1, &run);
     has("messages: the failure names the instance as written", &run,
@@ -279,8 +456,13 @@ export void test_prove_messages_an_instance_is_named_as_written(io::Io *io) {
 }
 
 // 11f. The note about memory a callee may write (issue #155) names what LLVM found in the body.
-export void test_prove_write_note_a_callee_that_stores_to_a_global_says_so(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_write_note_a_callee_that_stores_to_a_global_says_so() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = prove(&p, "-v \"$c/global_writer.c\"");
     has("write note: a callee that stores to a global is said to write memory it was not given", &run,
         "bump may write memory it was not given (LLVM found a store to the global counter at line 8 in the body)");
@@ -315,8 +497,13 @@ constexpr char printing_main[_] = "module main;\n"
                                   "    return 0;\n"
                                   "}\n";
 
-export void test_prove_a_program_that_prints_proves_a_module_with_contracts(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_prove_a_program_that_prints_proves_a_module_with_contracts() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "stats.smith", printing_stats);
     scratch::write(&p, "main.smith", printing_main);
     scratch::Run run = scratch::sh(&p, "smith prove 2>&1");

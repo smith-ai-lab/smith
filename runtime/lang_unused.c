@@ -135,6 +135,10 @@ static void smith_lang_brackets_empty(SmithLang *lang, const SmithHost *host, co
         lang->decl.in_params) {
         return;
     }
+    if (smith_lang_capturing(lang)) { // `[](...) {...}` in the arguments of a generic's call: a lambda (#957)
+        const SmithToken *after = smith_lang_peek(lang, host, 0, false);
+        if (smith_lang_punct(after, "(") || smith_lang_punct(after, "{") || smith_lang_punct(after, "->")) return;
+    }
     bool literal = false;
     bool declared_extern = smith_lang_brackets_extern_seen;
     const char *message =
@@ -188,7 +192,8 @@ static bool smith_lang_unused_token(SmithLang *lang, const SmithHost *host, cons
         return smith_lang_brackets_inferred(lang, host, token, &own2);
     }
     if (token->length > 1) {
-        if (host->lookup == nullptr ||
+        // a parameter declares: a `_t` of an earlier function (or of the module's own header) is no variable in scope
+        if (lang->decl.in_params || host->lookup == nullptr ||
             host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind == SmithLookup_None) {
             const SmithToken *after = smith_lang_peek(lang, host, 0, false);
             bool variable =

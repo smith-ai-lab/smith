@@ -5,12 +5,18 @@
 // under test writes.
 module header_tool_test;
 
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import scratch;
 
-export void test_the_standalone_writer_builds_with_the_host_compiler(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_the_standalone_writer_builds_with_the_host_compiler() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "scripts/header_tool.c", "scripts/header_tool.c");
     scratch::copy_tree(&p, "runtime", "runtime");
     scratch::Run run =
@@ -18,8 +24,13 @@ export void test_the_standalone_writer_builds_with_the_host_compiler(io::Io *io)
     scratch::expect_status("scripts/header_tool.c compiles with the host cc, with no warning", 0, &run);
 }
 
-export void test_the_standalone_writer_writes_the_bytes_smith_writes(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_the_standalone_writer_writes_the_bytes_smith_writes() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "scripts/header_tool.c", "scripts/header_tool.c");
     scratch::copy_tree(&p, "runtime", "runtime");
     scratch::copy_tree(&p, "lib/smith", "lib/smith");

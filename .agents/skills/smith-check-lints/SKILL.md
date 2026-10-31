@@ -1,13 +1,9 @@
 ---
 name: smith-check-lints
-description: "smith's own clang-tidy checks and what each reports: smith-effects, smith-preprocessor, smith-sized-types, smith-module-library, smith-module, smith-bounded-loop, smith-c23, smith-constexpr, smith-unsafe. Load on a finding named smith-* from smith lint or the editor."
+description: "smith's own clang-tidy checks and what each reports: smith-preprocessor, smith-sized-types, smith-module-library, smith-module, smith-bounded-loop, smith-c23, smith-constexpr, smith-unsafe. Load on a finding named smith-* from smith lint or the editor."
 ---
 
 # The smith checks
-
-## smith-effects
-
-smith's default `.clang-tidy` lists the check `smith-effects` beside bugprone, misc-no-recursion, readability-function-size and readability-identifier-naming: a program may touch the world only through capabilities (`io::Io` and its parts) that `main` passes down, so `printf`, `fopen`, `time`, `malloc` and the like are reported with the capability to take instead (`io::Console *`, `io::Files *`, `io::Clock *`, `arena::Arena *`; `SmithConsole *` and the like in C). `smith lint` and the editor both run it, on `.smith` files with names as written (`c::fopen`). `smith lint --dump-config > .clang-tidy` shows it; a project that does not want it deletes it from `Checks`, and `smith-effects.CFiles: false` makes it read `.smith` files only. The rules, how to mark a project's own capability and how to fix each finding are in [smith-effects](../smith-effects/SKILL.md).
 
 ## smith-preprocessor
 
@@ -15,7 +11,7 @@ smith's default `.clang-tidy` also lists `smith-preprocessor`: **a `.smith` file
 
 ## smith-mem
 
-`smith-mem` (in the default `.clang-tidy`; `.smith` files with a `module` line only): **a module does not call C's raw memory functions.** `c::memcpy`, `c::memmove`, `c::memset`, `c::memcmp`, `__builtin_memcpy` and the others are reported with the typed replacement of `smith::mem`: ``` `memcpy` is unchecked ...: use `mem::copy(dst, src)` (import smith::mem;), or mark the function `contract::trusted()` if it implements a wrapper ```. `smith lint --fix` rewrites `memset(&x, 0, sizeof x)` and `memset(p, 0, sizeof *p)` to `mem::zero(&x)` and `mem::zero(p)`; the others turn their pointer and count into slices by hand (`dst[0:n]`, `mem::copy(dst[0:n], src[0:n])`). A function that calls `contract::trusted()` (`smith_trusted()` in C) is skipped: it is the edge that implements a wrapper. The list is one table in `shim/mem.h`, a row for each wrapped C function, so a later wrapper joins by a row. A `.c` file and a `.smith` file with no `module` line are left alone; `// NOLINT(smith-mem)` opts a line out ([smith-mem](../smith-mem/SKILL.md)).
+`smith-mem` (in the default `.clang-tidy`; `.smith` files with a `module` line only): **a module does not call C's raw memory functions.** `c::memcpy`, `c::memmove`, `c::memset`, `c::memcmp`, `__builtin_memcpy` and the others, and `c::malloc`, `c::calloc`, `c::aligned_alloc`, `c::posix_memalign`, `c::realloc` and `c::free`, are reported with the typed replacement of `smith::mem`: ``` `memcpy` is unchecked ...: use `mem::copy(dst, src)` (import smith::mem;), or mark the function `contract::trusted()` if it implements a wrapper ```. `smith lint --fix` rewrites `memset(&x, 0, sizeof x)` and `memset(p, 0, sizeof *p)` to `mem::zero(&x)` and `mem::zero(p)`, `malloc(sizeof(T))` to `mem::alloc(T)` and `free(p)` to `mem::free(p)`; the others turn their pointer and count into slices by hand (`dst[0:n]`, `mem::copy(dst[0:n], src[0:n])`). A function that calls `contract::trusted()` (`smith_trusted()` in C) is skipped: it is the edge that implements a wrapper. The list is one table in `shim/mem.h`, a row for each wrapped C function, so a later wrapper joins by a row. A `.c` file and a `.smith` file with no `module` line are left alone; `// NOLINT(smith-mem)` opts a line out ([smith-mem](../smith-mem/SKILL.md)).
 
 ## The idiom checks
 

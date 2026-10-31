@@ -696,15 +696,15 @@ class SmithHook final : public TokenHook, public NameSource {
         lowered.resize(smith_lang_capitals_lower(buffer.data(), buffer.size(), lowered.data(), true));
         const StringRef scan = lowered;
         host.maybe_main = scan.contains("main");
-        host.maybe_generic =
-            scan.contains("type ") || scan.contains("auto ") || scan.contains("auto...") || namesConcept(scan);
+        host.maybe_generic = scan.contains("type ") || scan.contains("auto ") || scan.contains("auto...") ||
+                             scan.contains("lambda(") || namesConcept(scan);
         host.maybe_if_constexpr = hasIfConstexpr(scan);
         host.maybe_local_tag = hasNestedTag(scan);
         host.maybe_slice = hasSlice(scan) || hasStr(scan);
-        host.maybe_brackets = hasEmptyBrackets(scan);
+        host.maybe_brackets = hasEmptyBrackets(scan) || hasLambda(scan);
         host.maybe_shape = hasShapeCall(scan);
-        host.maybe_tuple =
-            host.maybe_slice || hasTuple(scan) || hasPayloadEnum(scan) || host.maybe_shape || hasTryWord(scan);
+        host.maybe_tuple = host.maybe_slice || hasTuple(scan) || hasPayloadEnum(scan) || host.maybe_shape ||
+                           hasTryWord(scan) || hasLambda(scan);
         host.maybe_field = hasFieldsUse(scan);
         host.import_lines = countImportLines(scan);
         host.type_values = &SmithHook::typeValues;
@@ -823,6 +823,15 @@ class SmithHook final : public TokenHook, public NameSource {
     // (`i32 double(i32 x)`), and is reported as that, once, at the name. The hook is offered everything for as long as
     // the look lasts, and what it would not have been offered is passed over.
     bool offer(Token &tok) {
+        if (!targetMacrosUndefined) {
+            // The `module` line's own name may be one (`module demo::linux;`), and the line is not known to be one
+            // until it is read: the first word of the file is enough, since C has no declaration that starts with it.
+            if (tok.is(tok::identifier) && tok.getIdentifierInfo()->getName() == "module" &&
+                spelledInMain(tok.getLocation()) && !seenFirstToken) {
+                undefineTargetMacros(tok.getLocation());
+            }
+            if (spelledInMain(tok.getLocation()) && !tok.is(tok::eof)) seenFirstToken = true;
+        }
         const IdentifierInfo *capitalBefore = nullptr;
         lowerCapital(tok, PP.getHookPrevious(1, capitalBefore));
         lastKind = tok.getKind();
@@ -1007,7 +1016,6 @@ class SmithHook final : public TokenHook, public NameSource {
         if (declaredByProgram(info)) return Fast::No; // the program's own u32, perhaps
         if (mayEndType(before)) return Fast::No;
         if (enumConstantHere(before)) return Fast::Kept; // an enum's constant is the program's name
-        if (!body && smith_lang_io_import(lang) && info->getName() == "i32") return Fast::No; // `i32 main(io::Io *io)`
         ensureSized(sized->second, tok.getLocation());
         return Fast::Kept;
     }
@@ -1507,6 +1515,19 @@ class SmithHook final : public TokenHook, public NameSource {
                                SourceLocation::getFromRawEncoding(definition)};
     }
 
+    // The place a file of the hook's own (the types buffer, a module's source) is included from: the start of the main
+    // file. A declaration whose first token is in such a file and whose last is in the main file has two places that
+    // reach a common file, so the coverage mapping of an unused function ends instead of climbing for good (#845).
+    SourceLocation placedFrom() {
+        return SM.getLocForStartOfFile(MainFile);
+    }
+
+    // The file of an entry as the program placed it: the one the source manager holds, else a new one placedFrom.
+    FileID placedFile(FileEntryRef entry) {
+        FileID known = SM.translateFile(entry);
+        return known.isValid() ? known : SM.createFileID(entry, placedFrom(), SrcMgr::C_User);
+    }
+
     // The file of a module's source, as the text the module has (a module found by its source is given to the file
     // manager as its interface, which has not the bodies of generics).
     FileID fileFor(const std::string &path) {
@@ -1515,13 +1536,14 @@ class SmithHook final : public TokenHook, public NameSource {
         FileID id;
         for (auto &[name, entry] : interfaces) {
             if (entry.ok && entry.source == path) {
-                id = SM.createFileID(llvm::MemoryBuffer::getMemBufferCopy(entry.content, path), SrcMgr::C_User);
+                id = SM.createFileID(llvm::MemoryBuffer::getMemBufferCopy(entry.content, path), SrcMgr::C_User, 0, 0,
+                                     placedFrom());
                 break;
             }
         }
         if (id.isInvalid()) {
             if (auto file = PP.getFileManager().getFileRef(path)) {
-                id = SM.getOrCreateFileID(*file, SrcMgr::C_User);
+                id = placedFile(*file);
             } else {
                 llvm::consumeError(file.takeError());
             }
@@ -1737,8 +1759,7 @@ class SmithHook final : public TokenHook, public NameSource {
             llvm::consumeError(found.takeError());
             return SourceLocation();
         }
-        return SM.translateLineCol(SM.getOrCreateFileID(*found, SrcMgr::C_User), place->second.first,
-                                   place->second.second);
+        return SM.translateLineCol(placedFile(*found), place->second.first, place->second.second);
     }
 
     void enterHeader(const Action &action) {
@@ -1813,6 +1834,32 @@ class SmithHook final : public TokenHook, public NameSource {
         return consumed;
     }
 
+    // In a module the macros the target predefines under a plain name (`linux`, `unix`, `i386`) are undefined from the
+    // `module` line on: a module has no preprocessor and reads the target through `target::`, so they would only
+    // replace a name of the program's (`import smith::clock::linux;`, a local `unix`) with 1 (issue #382). The reserved
+    // spellings (`__linux__`) and the macros of the command line stay; a file with no `module` line keeps C's meaning.
+    void undefineTargetMacros(SourceLocation at) {
+        targetMacrosUndefined = true;
+        const SourceManager &sources = PP.getSourceManager();
+        const auto &asked = PP.getPreprocessorOpts().Macros;
+        auto named = [&](StringRef name) {
+            for (const auto &[text, undefine] : asked) {
+                if (StringRef(text).split('=').first == name) return true;
+            }
+            return false;
+        };
+        std::vector<IdentifierInfo *> plain;
+        for (auto &entry : PP.macros()) {
+            IdentifierInfo *info = const_cast<IdentifierInfo *>(entry.first);
+            const MacroInfo *macro = PP.getMacroInfo(info);
+            if (macro == nullptr || macro->isBuiltinMacro() || info->getName().starts_with("_")) continue;
+            if (named(info->getName())) continue; // the command line's `-DFAST` is the program's, in the same buffer
+            if (sources.getBufferName(macro->getDefinitionLoc()) == "<built-in>") plain.push_back(info);
+        }
+        for (IdentifierInfo *info : plain)
+            PP.appendMacroDirective(info, new (PP.getPreprocessorAllocator()) UndefMacroDirective(at));
+    }
+
     // The identifier `countof` of the lowering's output, as the keyword `_Countof`, unless it names a member
     // (`x.countof`) or something the program declared.
     // In a module `defer` is the keyword of C2y's defer TS, `_Defer` to the compiler (issue #210); it names nothing
@@ -1877,7 +1924,8 @@ class SmithHook final : public TokenHook, public NameSource {
         made.clearFlag(Token::DisableExpand);
         if (token->line_start) made.setFlag(Token::StartOfLine);
         if (token->space_before) made.setFlag(Token::LeadingSpace);
-        if ((!token->expand || named) && made.getIdentifierInfo() != nullptr) made.setFlag(Token::DisableExpand);
+        if ((!token->expand || named) && !made.isAnnotation() && made.getIdentifierInfo() != nullptr)
+            made.setFlag(Token::DisableExpand);
         // Replayed (see there): what stands for a token of the source, where the source has it.
         // A `c::name` that is no macro stays a plain name in the main file, so that tools see the name the source has
         // there; a macro is expanded from a stream of its own, which they do not.
@@ -2942,6 +2990,55 @@ class SmithHook final : public TokenHook, public NameSource {
         return false;
     }
 
+    // Whether the `[` at `at` follows what an expression can follow: `=`, `(`, `,`, `?`, `:`, `{`, `&&`, `||` or
+    // `return`.
+    static bool expressionBefore(StringRef text, size_t at) {
+        size_t before = at;
+        while (before > 0 && isWhitespace(text[before - 1]))
+            before -= 1;
+        if (before == 0) return true;
+        char c = text[before - 1];
+        if (c == '=' || c == '(' || c == ',' || c == '?' || c == ':' || c == '{' || c == '&' || c == '|') return true;
+        return before >= 6 && text.substr(before - 6, 6) == "return" &&
+               (before == 6 || !isAsciiIdentifierContinue(text[before - 7]));
+    }
+
+    // `[](`, `[x, y]{` or `[]->`: a lambda, its capture list names only (runtime/lang_lambda.c). The lowering is
+    // offered every token of the file, since a lambda's `[` is found among the tokens of a body.
+    static bool hasLambda(StringRef text) {
+        for (size_t at = 0; at < text.size(); at++) {
+            size_t after = skipLiteral(text, at);
+            if (after != at) {
+                at = after - 1;
+                continue;
+            }
+            if (text[at] != '[') continue;
+            size_t next = at + 1;
+            bool empty = true;
+            bool word = false; // inside a name: a name starts with a letter or `_`, a number is a subscript
+            while (next < text.size() &&
+                   (isWhitespace(text[next]) || text[next] == ',' || isAsciiIdentifierContinue(text[next]))) {
+                if (isWhitespace(text[next]) || text[next] == ',') {
+                    word = false;
+                } else if (!word && !isAsciiIdentifierStart(text[next])) {
+                    break;
+                } else {
+                    word = true;
+                }
+                empty = empty && (isWhitespace(text[next]));
+                next += 1; // a capture list: `[]`, `[x]`, `[x, y]`
+            }
+            if (next >= text.size() || text[next] != ']') continue;
+            if (!empty && !expressionBefore(text, at)) continue; // `xs[i]->p` and `f(x)[i]` are subscripts
+            next += 1;
+            while (next < text.size() && isWhitespace(text[next]))
+                next += 1;
+            if (next < text.size() && (text[next] == '(' || text[next] == '{')) return true;
+            if (next + 1 < text.size() && text[next] == '-' && text[next + 1] == '>') return true;
+        }
+        return false;
+    }
+
     static bool hasSliceBrackets(StringRef text) {
         for (size_t at = 0; at < text.size(); at++) {
             size_t after = skipLiteral(text, at);
@@ -3200,12 +3297,12 @@ class SmithHook final : public TokenHook, public NameSource {
     }
 
     FileID typesFile;
-    // A place that is no file of the program: the start of a buffer of its own (issue #107).
+    // A place that is no file of the program: the start of a buffer of its own (issue #107), included from placedFrom.
     static uint32_t typesPlace(void *context) {
         auto *self = static_cast<SmithHook *>(context);
         if (!self->typesFile.isValid()) {
             auto buffer = llvm::MemoryBuffer::getMemBufferCopy(" ", "<smith-types>");
-            self->typesFile = self->SM.createFileID(std::move(buffer), SrcMgr::C_User);
+            self->typesFile = self->SM.createFileID(std::move(buffer), SrcMgr::C_User, 0, 0, self->placedFrom());
         }
         return self->SM.getLocForStartOfFile(self->typesFile).getRawEncoding();
     }
@@ -3776,7 +3873,9 @@ class SmithHook final : public TokenHook, public NameSource {
 
   private:
     bool checked = false;
-    bool moduleFile = false; // the file has a `module` line: its array parameters keep their shape
+    bool seenFirstToken = false;        // a token of the main file went by
+    bool targetMacrosUndefined = false; // a module's undefining of the target's plain macros is done
+    bool moduleFile = false;            // the file has a `module` line: its array parameters keep their shape
 
     // The lowering goes back to the next file; what it knew of this one stays.
     void giveBack() {
@@ -3803,11 +3902,6 @@ bool debugName(const NamedDecl *decl, std::string &scope, std::string &name) {
     if (!object && !isa<TypedefNameDecl>(decl) && !isa<TagDecl>(decl)) return false;
     const IdentifierInfo *identifier = decl->getIdentifier();
     smith::WrittenName written;
-    if (identifier != nullptr && identifier->getName() == "smith_user_main") { // `i32 main(io::Io *io)`, as written
-        scope = "";
-        name = "main";
-        return true;
-    }
     if (identifier == nullptr || !hook->writtenName(identifier->getName(), written) || written.module.empty())
         return false;
     scope = object ? "" : written.module;

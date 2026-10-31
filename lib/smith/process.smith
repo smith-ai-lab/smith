@@ -1,6 +1,6 @@
-// smith::process, <smith/process.h>: child processes by direct calls, with no `io::Io` value: run a program and capture
-// its output, spawn one and wait for it, or start one with pipes to its stdin and from its stdout and talk to it, and
-// the sockets to a child are these pipes (a child's stdio, #240). Its C API is the generated header
+// smith::process, <smith/process.h>: child processes by direct calls, with no capability value to pass: run a program
+// and capture its output, spawn one and wait for it, or start one with pipes to its stdin and from its stdout and talk
+// to it, and the sockets to a child are these pipes (a child's stdio, #240). Its C API is the generated header
 // include/smith/process.h (committed; `smith build headers` regenerates it); the names follow the rule of arena.smith
 // with one difference: the C functions are `smith_process_*` and the types `SmithProcess*`, beside io's
 // `smith_processes_*` and `smith_child_*`, which stay until io goes.

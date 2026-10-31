@@ -5,8 +5,9 @@
 // token hook.
 module build_lang_test;
 
+import smith::arena;
+import smith::mem;
 import smith::format;
-import smith::io;
 import smith::test;
 import scratch;
 
@@ -18,16 +19,23 @@ constexpr char compiled_command[_] =
     "smith build -v 2>&1 | sed -n 's/.* -c \\(src\\/[^ ]*\\) -o .*/\\1/p' | sort | tr '\\n' ' '";
 
 // Copies the corpus case's sources and the program that builds them, with a smith-cc of its own next to them.
-static scratch::Project lang_project(io::Io *io, const char *source) {
-    scratch::Project p = scratch::project(io, "p", "lang_project");
+static scratch::Project lang_project(const char *source) {
+    scratch::Project p = scratch::make("p", "lang_project");
     (void)scratch::sh(
         &p, "mkdir bin && { cp -c \"$SMITH_SELF\" bin/smith-cc 2>/dev/null || cp \"$SMITH_SELF\" bin/smith-cc; }");
-    scratch::copy_tree(&p, format::push(&io->arena, "tests/smith-lang/cases/", source, "/src").data, "src");
+    char cases[256];
+    (void)format::to(cases, sizeof cases, "tests/smith-lang/cases/", source, "/src");
+    scratch::copy_tree(&p, cases, "src");
     return p;
 }
 
-export void test_build_lang_a_project_of_three_modules_and_a_c_file(io::Io *io) {
-    scratch::Project p = lang_project(io, "module-three");
+export void test_build_lang_a_project_of_three_modules_and_a_c_file() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = lang_project("module-three");
+    defer scratch::clean(&p);
     scratch::Run built = scratch::build(&p, "");
     scratch::expect_status("modules: a project of three modules and a C file builds", 0, &built);
     scratch::expect_text("modules: and runs", expected_output, scratch::sh(&p, "./build/app 2>&1").out);
@@ -83,8 +91,13 @@ export void test_build_lang_a_project_of_three_modules_and_a_c_file(io::Io *io) 
 }
 
 // An import cycle is found from the headers, before any compile starts, and named.
-export void test_build_lang_an_import_cycle_fails_the_build(io::Io *io) {
-    scratch::Project p = lang_project(io, "module-three");
+export void test_build_lang_an_import_cycle_fails_the_build() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = lang_project("module-three");
+    defer scratch::clean(&p);
     (void)scratch::sh(&p, "rm -rf src");
     scratch::copy_tree(&p, "tests/smith-lang/cases/error-import-cycle/src/cycle", "src/cycle");
     scratch::Run run = scratch::build(&p, "");
@@ -96,8 +109,13 @@ export void test_build_lang_an_import_cycle_fails_the_build(io::Io *io) {
 }
 
 // A module whose name does not match its path is found once, when build.c runs.
-export void test_build_lang_a_module_that_does_not_match_its_path_fails_the_build(io::Io *io) {
-    scratch::Project p = lang_project(io, "module-three");
+export void test_build_lang_a_module_that_does_not_match_its_path_fails_the_build() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = lang_project("module-three");
+    defer scratch::clean(&p);
     scratch::write(&p, "src/wrong.smith", "module right::name;\n\nexport int f(void) { return 1; }\n");
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_failure("modules: a module that does not match its path fails the build", &run);
@@ -106,8 +124,13 @@ export void test_build_lang_a_module_that_does_not_match_its_path_fails_the_buil
 }
 
 // A plain .smith file (no module line) compiles with the same flags and needs no header.
-export void test_build_lang_a_plain_smith_file_builds_with_no_header(io::Io *io) {
-    scratch::Project p = lang_project(io, "module-three");
+export void test_build_lang_a_plain_smith_file_builds_with_no_header() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = lang_project("module-three");
+    defer scratch::clean(&p);
     (void)scratch::sh(&p, "rm -rf src");
     scratch::copy_tree(&p, "tests/smith-lang/cases/sized-types/src/main.smith", "src/main.smith");
     scratch::Run run = scratch::build(&p, "");
@@ -126,8 +149,8 @@ constexpr char body_other[_] = "module other;\n\nexport i32 twice(i32 n) {\n    
 constexpr char body_main[_] = "module main;\n\nimport calc;\n\nstatic_assert(calc::fib(5) == 11);\n\n"
                               "i32 main(void) {\n    return calc::fib(3) - 7;\n}\n";
 
-static scratch::Project body_project(io::Io *io) {
-    scratch::Project p = lang_project(io, "module-three");
+static scratch::Project body_project() {
+    scratch::Project p = lang_project("module-three");
     // A link, as the installed smith-cc is: a copy named smith-cc would run its bodies' compiles as a C compiler.
     (void)scratch::sh(&p, "rm -rf src bin/smith-cc && mkdir src && ln -s \"$SMITH_SELF\" bin/smith-cc");
     scratch::write(&p, "src/calc.smith", body_calc);
@@ -136,8 +159,13 @@ static scratch::Project body_project(io::Io *io) {
     return p;
 }
 
-export void test_build_lang_a_depfile_names_the_body_files_a_compile_read(io::Io *io) {
-    scratch::Project p = body_project(io);
+export void test_build_lang_a_depfile_names_the_body_files_a_compile_read() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = body_project();
+    defer scratch::clean(&p);
     (void)scratch::sh(&p,
                       "mkdir -p .smith/include && smith cc --smith-header src/other.smith -o .smith/include/other.h "
                       "&& smith cc --smith-header src/calc.smith -I .smith/include -o .smith/include/calc.h");
@@ -150,8 +178,13 @@ export void test_build_lang_a_depfile_names_the_body_files_a_compile_read(io::Io
     scratch::expect_contains("body files: and the source of that module", depfile, "src/other.smith");
 }
 
-export void test_build_lang_an_edit_to_what_a_body_imports_rebuilds_the_importer(io::Io *io) {
-    scratch::Project p = body_project(io);
+export void test_build_lang_an_edit_to_what_a_body_imports_rebuilds_the_importer() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = body_project();
+    defer scratch::clean(&p);
     scratch::Run first = scratch::build(&p, "");
     scratch::expect_status("body files: the project builds", 0, &first);
     // The compile that made the body files started before them, so (ninja's rule) the next build runs it once more.
@@ -172,8 +205,13 @@ export void test_build_lang_an_edit_to_what_a_body_imports_rebuilds_the_importer
 // A module's header names the types of the modules it imports, so its header step waits for their headers and runs
 // again when one changes (#781: it ran only for an edit to its own source, so a rebuild after main moved left a header
 // naming `smith_random_Key`): game::replay holds a lib::text type, which only lib::text's edit renames in C.
-export void test_build_lang_a_header_is_written_again_when_a_module_it_imports_renames_a_type(io::Io *io) {
-    scratch::Project p = lang_project(io, "module-three");
+export void test_build_lang_a_header_is_written_again_when_a_module_it_imports_renames_a_type() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = lang_project("module-three");
+    defer scratch::clean(&p);
     (void)scratch::build(&p, "");
     scratch::expect_contains("headers: the importer's header names the type as lib::text first wrote it",
                              scratch::read(&p, ".smith/include/game/replay.h"), "lib_text_Text name;");
@@ -192,8 +230,13 @@ export void test_build_lang_a_header_is_written_again_when_a_module_it_imports_r
 constexpr char headers_marked[_] = "rm -rf marked && cp -R \"$SMITH_HEADERS_FROM\" marked && "
                                    "printf '// marker\\n' >>marked/arena.h && ";
 
-export void test_build_lang_headers_from_a_folder_are_copied(io::Io *io) {
-    scratch::Project p = lang_project(io, "module-three");
+export void test_build_lang_headers_from_a_folder_are_copied() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = lang_project("module-three");
+    defer scratch::clean(&p);
     char command[512];
     __builtin_snprintf(command, sizeof command,
                        "%sSMITH_HEADERS_FROM=$PWD/marked smith build >/dev/null 2>&1; "
@@ -202,8 +245,13 @@ export void test_build_lang_headers_from_a_folder_are_copied(io::Io *io) {
     scratch::expect_text("headers: copied from the folder", "1", scratch::sh(&p, command).out);
 }
 
-export void test_build_lang_headers_are_generated_without_the_folder(io::Io *io) {
-    scratch::Project p = lang_project(io, "module-three");
+export void test_build_lang_headers_are_generated_without_the_folder() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = lang_project("module-three");
+    defer scratch::clean(&p);
     char command[512];
     __builtin_snprintf(command, sizeof command,
                        "%sunset SMITH_HEADERS_FROM; smith build >/dev/null 2>&1; "
@@ -213,8 +261,13 @@ export void test_build_lang_headers_are_generated_without_the_folder(io::Io *io)
 }
 
 // The helpers are under the compiler; the top level is only verbs.
-export void test_build_lang_the_helpers_are_under_the_compiler(io::Io *io) {
-    scratch::Project p = lang_project(io, "module-three");
+export void test_build_lang_the_helpers_are_under_the_compiler() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = lang_project("module-three");
+    defer scratch::clean(&p);
     scratch::Run header =
         scratch::sh(&p, "smith cc --smith-header src/lib/text.smith -o header.h; echo \"$? $(sed -n 3p header.h)\"");
     scratch::expect_text("modules: smith cc --smith-header writes a header", "0 // smith-module: lib::text",

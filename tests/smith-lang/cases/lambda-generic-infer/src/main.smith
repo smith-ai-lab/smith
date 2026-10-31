@@ -1,0 +1,16 @@
+module main;
+
+import <stdio.h>;
+
+// The return type is inferred from the first `return`, with the instance's types.
+export T sum(constexpr type T, T a, T b) {
+    T (*add)(T, T) = [](T x, T y) { return x + y; };
+    void (*nothing)(void) = [] { };
+    nothing();
+    return add(a, b);
+}
+
+i32 main() {
+    c::printf("%d %.1f\n", sum(i32, 2, 3), sum(f64, 1.5, 2.0));
+    return 0;
+}

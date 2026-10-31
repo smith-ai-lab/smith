@@ -1,36 +1,73 @@
 // Fixed-size caps that used to drop input silently (issue #604): a count beyond the old cap is read whole.
 module caps_test;
 
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import scratch;
 
+// What a test's commands print goes to an arena of the runner's (test::memory), the current allocator from start to
+// finish, so the test frees none of it; the project is made and cleaned inside it.
+constexpr usize memory_size = 1U << 24;
+static arena::Arena memory;
+static arena::ArenaAllocator allocator;
+static mem::Allocator *outside;
+
+static scratch::Project start(const char *fixture) {
+    memory = test::memory(memory_size);
+    allocator = arena::allocator(&memory);
+    outside = mem::set_allocator(&allocator.base);
+    return scratch::make("p", fixture);
+}
+
+static void finish(scratch::Project *p) {
+    scratch::clean(p);
+    mem::set_allocator(outside);
+}
+
+// The output of a command as $(...) gives it, without trailing newlines (scratch::capture reads a project's io).
+static const char *captured(const scratch::Project *p, const char *command) {
+    const char *out = scratch::sh(p, command).out;
+    usize length = 0;
+    while (out[length] != '\0')
+        length++;
+    while (length > 0 && out[length - 1] == '\n')
+        length--;
+    char *text = arena::push_slice(&memory, char, length + 1).data;
+    mem::copy(text[0:length], out[0:length]);
+    text[length] = '\0';
+    return text;
+}
+
 // build.info kept 8192 lines of each kind, so `smith run` saw no program for a default that came after them.
-export void test_caps_run_reads_every_program_of_build_info(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "verbs_many");
+export void test_caps_run_reads_every_program_of_build_info() {
+    scratch::Project p = start("verbs_many");
+    defer finish(&p);
     scratch::Run run = scratch::sh(&p, "smith run");
     scratch::expect_status("caps: smith run with 8200 programs", 0, &run);
     scratch::expect_contains("caps: ... runs the last program, past the old cap", run.out, "many");
     scratch::expect_text("caps: ... build.info holds all of them", "8200",
-                         scratch::capture(&p, "grep -c '^program' .smith/build.info"));
+                         captured(&p, "grep -c '^program' .smith/build.info"));
 }
 
 // smith fmt gave up smith's defaults (and -i) for 4089 or more arguments, and printed each file instead.
-export void test_caps_fmt_formats_more_than_4089_files(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_caps_fmt_formats_more_than_4089_files() {
+    scratch::Project p = start(nullptr);
+    defer finish(&p);
     (void)scratch::sh(&p, "for i in $(seq 1 4100); do echo \"int   f$i( void ){return   $i;}\" > f$i.c; done");
     scratch::Run run = scratch::sh(&p, "smith fmt f*.c");
     scratch::expect_status("caps: smith fmt with 4100 files", 0, &run);
     scratch::expect_text("caps: ... the first file is formatted in place, with smith's four spaces",
-                         "int f1(void) {\n    return 1;\n}", scratch::capture(&p, "cat f1.c"));
+                         "int f1(void) {\n    return 1;\n}", captured(&p, "cat f1.c"));
     scratch::expect_text("caps: ... so is the last", "int f4100(void) {\n    return 4100;\n}",
-                         scratch::capture(&p, "cat f4100.c"));
+                         captured(&p, "cat f4100.c"));
     scratch::expect_text("caps: ... and nothing was printed", "", run.out);
 }
 
 // SMITH_LANG_INPUTS and SMITH_LANG_FLAGS were cut at 8192 bytes; a stub compiler reports what it was given.
-export void test_caps_smith_inputs_and_flags_reach_the_compiler_whole(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_caps_smith_inputs_and_flags_reach_the_compiler_whole() {
+    scratch::Project p = start(nullptr);
+    defer finish(&p);
     scratch::write(&p, "stub.sh",
                    "#!/bin/sh\n"
                    "echo \"inputs=$(printf %s \"$SMITH_LANG_INPUTS\" | wc -l | tr -d ' ')\"\n"
@@ -48,4 +85,61 @@ export void test_caps_smith_inputs_and_flags_reach_the_compiler_whole(io::Io *io
                              "inputs=61");
     scratch::expect_contains("caps: ... and the 400 -I flags, about 14000 bytes, are in SMITH_LANG_FLAGS", run.out,
                              "flags=whole");
+}
+
+// More than 32 `$(MAKE) -C` sub-makes dropped the rest with no word. runtime/make_sub.c now reports the 33rd, but the
+// reader's 2 GiB pool (runtime/make.c, outside this slice) runs out at about 32 sub-makes first: the translation stops
+// with an error, never a build.c that lacks sub-makes.
+export void test_caps_make_stops_at_32_sub_makes() {
+    scratch::Project p = start(nullptr);
+    defer finish(&p);
+    (void)scratch::sh(
+        &p, "{ echo 'all:'; for i in $(seq 1 33); do mkdir d$i; "
+            "printf 'all:\\n\\ttrue\\n' > d$i/Makefile; printf '\\t$(MAKE) -C d%s\\n' $i; done; } > Makefile");
+    scratch::Run run = scratch::sh(&p, "smith build --dump-config 2>&1");
+    scratch::expect_contains("caps: 33 sub-makes stop the translation with an error", run.out,
+                             "the Makefile is too large to translate");
+}
+
+// More than 65536 prerequisites in one list were cut at 65536 with no word. runtime/make_class.c now reports it, but
+// the reader's expansion buffer (runtime/make.c) is crossed first, and stops the translation.
+export void test_caps_make_stops_at_65536_prerequisites() {
+    scratch::Project p = start(nullptr);
+    defer finish(&p);
+    (void)scratch::sh(&p, "{ printf 'app: main.o'; for i in $(seq 1 65540); do printf ' x%s.h' $i; done; "
+                          "printf '\\n\\ttrue\\n'; printf 'main.o: main.c\\n\\ttrue\\n'; } > Makefile; "
+                          "echo 'int main(void) { return 0; }' > main.c");
+    scratch::Run run = scratch::sh(&p, "smith build --dump-config 2>&1");
+    scratch::expect_contains("caps: 65541 prerequisites stop the translation with an error", run.out,
+                             "an expansion is too long");
+}
+
+// `smith check` listed the first 1024 promises and stopped counting; past the limit it stops with a message.
+export void test_caps_check_stops_past_the_promise_limit() {
+    scratch::Project p = start(nullptr);
+    defer finish(&p);
+    (void)scratch::sh(&p, "mkdir -p .smith/effects; i=1; "
+                          "while [ $i -le 8200 ]; do printf 'P\\tk\\ts%s\\tf.c:%s:1\\tn%s\\n' $i $i $i; "
+                          "i=$((i + 1)); done > .smith/effects/f.fx");
+    scratch::Run run = scratch::sh(&p, "smith check 2>&1");
+    scratch::expect_contains("caps: 8200 promises name the limit", run.out, "more than 8192 promises (the limit)");
+}
+
+// Program arguments past 64 and breakpoints past 16 were dropped by `launch`; it now refuses, naming the limit.
+export void test_caps_mcp_launch_names_its_limits() {
+    scratch::Project p = start(nullptr);
+    defer finish(&p);
+    (void)scratch::sh(
+        &p, "args=$(printf '\"a\",%.0s' $(seq 1 65)); "
+            "bps=$(printf '{\"file\":\"p.c\",\"line\":1},%.0s' $(seq 1 17)); "
+            "{ printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"launch\","
+            "\"arguments\":{\"program\":\"prog\",\"args\":[%s\"z\"]}}}\\n' \"$args\"; "
+            "printf '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"launch\","
+            "\"arguments\":{\"program\":\"prog\",\"breakpoints\":[%s{\"file\":\"p.c\",\"line\":1}]}}}\\n' "
+            "\"$bps\"; } > in.jsonl");
+    scratch::Run run = scratch::sh(&p, "smith mcp <in.jsonl 2>&1");
+    scratch::expect_contains("caps: 66 program arguments name the limit", run.out,
+                             "launch: 66 program arguments given, at most 64 (the limit)");
+    scratch::expect_contains("caps: 18 breakpoints name the limit", run.out,
+                             "launch: 18 breakpoints given, at most 16 (the limit)");
 }

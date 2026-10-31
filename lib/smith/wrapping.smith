@@ -1,0 +1,35 @@
+// smith-build: header
+// smith::wrapping, <smith/wrapping.h>: signed arithmetic that wraps in two's complement, the explicit way out of a
+// module's overflow checks (issue #351). In a module `a + b` on a signed type fails its task when it overflows;
+// `wrapping::add(a, b)` keeps the low bits instead, as unsigned arithmetic does.
+//
+//   i32 next = wrapping::add(hash, 1);
+module smith::wrapping;
+
+// a + b, wrapped to the type of a.
+export typeof(a) add(integer a, typeof(a) b) {
+    typeof(a) result = 0;
+    __builtin_add_overflow(a, b, &result);
+    return result;
+}
+
+// a - b, wrapped to the type of a.
+export typeof(a) sub(integer a, typeof(a) b) {
+    typeof(a) result = 0;
+    __builtin_sub_overflow(a, b, &result);
+    return result;
+}
+
+// a * b, wrapped to the type of a.
+export typeof(a) mul(integer a, typeof(a) b) {
+    typeof(a) result = 0;
+    __builtin_mul_overflow(a, b, &result);
+    return result;
+}
+
+// -a, wrapped: the minimum of a signed type negates to itself.
+export typeof(a) neg(integer a) {
+    typeof(a) result = 0;
+    __builtin_sub_overflow((typeof(a))0, a, &result);
+    return result;
+}

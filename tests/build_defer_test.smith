@@ -2,12 +2,13 @@
 // becomes a step), and the parallel build of 80 sources that share Clang modules (section 11c).
 module build_defer_test;
 
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import scratch;
 
-static scratch::Project defer_project(io::Io *io) {
-    return scratch::project(io, "p", "defer");
+static scratch::Project defer_project() {
+    return scratch::make("p", "defer");
 }
 
 // The sorted names in a file, on one line, as the shell's `sort file | tr '\n' ' '` gives them.
@@ -33,8 +34,13 @@ static void fresh_tree(const scratch::Project *p) {
 
 // Four tests of one project: each used to make a project of its own, and each of those spent about 2 CPU-s building
 // the build program. Each step starts from a fresh tree. The assertions are the same.
-export void test_build_defer_stage_2_on_a_fresh_tree_a_d_option_and_clean(io::Io *io) {
-    scratch::Project p = defer_project(io);
+export void test_build_defer_stage_2_on_a_fresh_tree_a_d_option_and_clean() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = defer_project();
+    defer scratch::clean(&p);
     scratch::Run first = scratch::build(&p, "");
     scratch::expect_text(
         "defer: a fresh tree builds every output in one smith build", "0 a.out b.out",
@@ -74,8 +80,13 @@ export void test_build_defer_stage_2_on_a_fresh_tree_a_d_option_and_clean(io::Io
 // writes the manifest `smith build` wrote, byte for byte: the decision is an argument of the program, not the
 // environment. Two tests of one project: each used to make a project of its own, and each of those spent about 2 CPU-s
 // building the build program. The assertions are the same.
-export void test_build_defer_with_a_compile_settles_and_the_regeneration_writes_the_same_manifest(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "defer_compile");
+export void test_build_defer_with_a_compile_settles_and_the_regeneration_writes_the_same_manifest() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "defer_compile");
+    defer scratch::clean(&p);
     scratch::Run first = scratch::build(&p, "");
     scratch::expect_text("defer compile: the first build passes", "0 ok", status_and(&first, "ok"));
     scratch::Run second = scratch::build(&p, "");
@@ -94,8 +105,13 @@ export void test_build_defer_with_a_compile_settles_and_the_regeneration_writes_
 // A ThinLTO compile writes its effect summary like any other (the manifest names it as an output, and a step whose
 // output is never written is never up to date), so the second run has no work: the release profile of every project
 // compiles with -flto=thin (#271).
-export void test_build_a_thin_lto_compile_settles(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "lto_compile");
+export void test_build_a_thin_lto_compile_settles() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "lto_compile");
+    defer scratch::clean(&p);
     scratch::Run first = scratch::build(&p, "");
     scratch::expect_text("lto: the first build passes", "0 ok", status_and(&first, "ok"));
     scratch::Run second = scratch::build(&p, "");
@@ -104,8 +120,13 @@ export void test_build_a_thin_lto_compile_settles(io::Io *io) {
 
 // A manifest that never settles stops after its tries and says what was out of date, so the cause is not a guess: here
 // the step that should make `list` does not (#271).
-export void test_build_defer_an_unsettled_manifest_names_what_is_out_of_date(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "defer_unsettled");
+export void test_build_defer_an_unsettled_manifest_names_what_is_out_of_date() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "defer_unsettled");
+    defer scratch::clean(&p);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_contains("unsettled: the build stops", run.err, "is still out of date after");
     scratch::expect_contains("unsettled: and names the output that does not exist", run.err,
@@ -113,8 +134,13 @@ export void test_build_defer_an_unsettled_manifest_names_what_is_out_of_date(io:
 }
 
 // A chained defer: more defers on an output of a step it added.
-export void test_build_defer_a_chained_defer_builds_the_whole_chain(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "defer_chain");
+export void test_build_defer_a_chained_defer_builds_the_whole_chain() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "defer_chain");
+    defer scratch::clean(&p);
     scratch::Run built = scratch::build(&p, "");
     scratch::expect_text("defer: a chained defer builds the whole chain in one smith build", "0 a",
                          status_and(&built, scratch::read(&p, "final")));
@@ -122,15 +148,25 @@ export void test_build_defer_a_chained_defer_builds_the_whole_chain(io::Io *io) 
     scratch::expect_contains("defer: the chain has no work next", again.out, "no work to do");
 }
 
-export void test_build_lines_three_lines_a_final_newline_and_an_empty_one(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "lines_three");
+export void test_build_lines_three_lines_a_final_newline_and_an_empty_one() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "lines_three");
+    defer scratch::clean(&p);
     scratch::Run three = scratch::build(&p, "");
     scratch::expect_text("lines: three lines, a final newline and an empty one between", "0 3[one][][three]",
                          status_and(&three, scratch::read(&p, "result")));
 }
 
-export void test_build_lines_no_final_newline_still_gives_the_line(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "lines_one");
+export void test_build_lines_no_final_newline_still_gives_the_line() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "lines_one");
+    defer scratch::clean(&p);
     scratch::Run one = scratch::build(&p, "");
     scratch::expect_text("lines: no final newline still gives the line", "0 x",
                          status_and(&one, scratch::read(&p, "result")));
@@ -138,8 +174,13 @@ export void test_build_lines_no_final_newline_still_gives_the_line(io::Io *io) {
 
 // An empty file, a missing one and one over 16 MiB: three builds of one project, which used to be two tests with a
 // project each (each spent about 2 CPU-s building the build program). The assertions are the same.
-export void test_build_lines_an_empty_file_a_missing_one_and_one_over_16_mib(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "lines_empty");
+export void test_build_lines_an_empty_file_a_missing_one_and_one_over_16_mib() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "lines_empty");
+    defer scratch::clean(&p);
     scratch::Run empty = scratch::build(&p, "");
     scratch::expect_text("lines: an empty file is an empty list", "0 empty",
                          status_and(&empty, scratch::read(&p, "result")));
@@ -154,8 +195,13 @@ export void test_build_lines_an_empty_file_a_missing_one_and_one_over_16_mib(io:
 }
 
 // 11c. Modules: the parallel build, ten clean builds in a row, 80 sources sharing the modules.
-export void test_build_modules_clean_parallel_builds_with_a_cold_cache_succeed(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "modules_parallel");
+export void test_build_modules_clean_parallel_builds_with_a_cold_cache_succeed() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "modules_parallel");
+    defer scratch::clean(&p);
     scratch::own_cache(&p);
     (void)scratch::sh(
         &p,

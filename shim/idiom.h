@@ -1,5 +1,5 @@
 // The deterministic idiom checks of issue #47 (and smith-module, issue #60), clang-tidy checks registered by
-// shim/tidy.cpp beside smith-effects and smith-preprocessor (so `smith lint` and smith lsp's built-in checks, since
+// shim/tidy.cpp beside smith-preprocessor (so `smith lint` and smith lsp's built-in checks, since
 // their names start with smith-). Each message names the fix. They are on in smith's default `.clang-tidy`; the skill
 // is smith-idiom.
 //

@@ -588,3 +588,50 @@ static size_t smith_rec_check_folder(const char *folder) {
     closedir(dir);
     return smith_rec_result_count;
 }
+
+#ifdef SMITH_CORE
+#include "smith_core_coverage.h"
+
+// Forgets what an earlier call read or wrote, so the next starts from nothing (each `smith test` is a process).
+static void smith_rec_reset(void) {
+    smith_rec_source_path[0] = '\0';
+    smith_rec_source_ok = false;
+    smith_rec_line_count = 0;
+    smith_rec_seen_count = 0;
+    smith_rec_queue_count = 0;
+    smith_rec_touched_count = 0;
+    smith_rec_ignored_input = nullptr;
+    smith_rec_named_used = 0;
+    smith_rec_result_count = 0;
+    smith_rec_outside_count = 0;
+    memset(smith_rec_mentions, 0, sizeof smith_rec_mentions);
+    smith_cov_pool_used = 0; // the names above were copied there
+    smith_cov_file_count = 0;
+    smith_cov_function_count = 0;
+    smith_cov_overflow = false;
+}
+
+// include/smith_core_coverage.h: the record of a test that ran `ran`, written as `smith test --coverage merge` does.
+bool smith_core_coverage_record(const char *folder, const char *test, bool pass, const SmithCoreFunction *ran,
+                                size_t count) {
+    smith_rec_reset();
+    smith_cov_cpu_seconds = 0;
+    snprintf(smith_cov_root, sizeof smith_cov_root, "%s", folder);
+    bool ok = count <= smith_cov_functions_max;
+    for (size_t i = 0; ok && i < count; i++) { // bounded by the argument
+        int file = smith_cov_file_index(ran[i].path);
+        ok = file >= 0;
+        if (!ok) break;
+        smith_cov_function_run[smith_cov_function_count] = true;
+        smith_cov_functions[smith_cov_function_count++] =
+            (SmithCovFunction){(uint32_t)file, ran[i].first, ran[i].last, smith_cov_copy(ran[i].name)};
+    }
+    char clean[256];
+    char dir[PATH_MAX];
+    smith_cov_clean_name(test, clean, sizeof clean);
+    snprintf(dir, sizeof dir, "%s/.smith/cov", folder);
+    ok = ok && !smith_cov_overflow && smith_rec_write(dir, test, clean, pass);
+    smith_rec_reset();
+    return ok;
+}
+#endif

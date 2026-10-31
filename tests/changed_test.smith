@@ -1,15 +1,251 @@
 // Tests of `smith test --changed` (issue #441, runtime/changed.c, knowledge/changed-tests.md): which tests a change
-// selects, on a scratch git repository with a few modules and tests (never this checkout). Each case commits the files,
-// changes some, and reads `smith test --changed --dry-run`, which names the tests and why.
+// selects, and why. The selection rules run in process (issue #646) through `smith_core_changed_select`
+// (include/smith_core_changed.h, smith.c compiled as a library by tests/units/build.c): the repository is a few modules
+// and tests written into a scratch folder, its file list and its changes are texts, and the answer is the text
+// `smith test --changed --dry-run` prints. No git and no smith starts. What needs git or the verb (build.c judged by
+// the functions of its diff, the listing of thousands of tests, `--list`, the refusal of `--dry-run` alone) is a
+// scratch test on a scratch git repository.
 module changed_test;
 
+import smith::arena;
+import smith::files;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
+import <smith_core.h>;
+import <smith_core_changed.h>;
+import <string.h>;
 
-// A repository: a module a, tests of it, a test of b that imports a, a test of c that imports nothing, a test that runs
-// smith and a test that lists the tree. Committed on main.
+// What a test's commands print, and the texts made from it, go to an arena of the runner's (test::memory), the
+// current allocator from enter to leave, so the test frees none of it; its projects are made and cleaned inside it.
+constexpr usize memory_size = 1U << 24;
+static arena::Arena memory;
+static arena::ArenaAllocator allocator;
+static mem::Allocator *outside;
+
+static void enter() {
+    memory = test::memory(memory_size);
+    allocator = arena::allocator(&memory);
+    outside = mem::set_allocator(&allocator.base);
+}
+
+static void leave() {
+    mem::set_allocator(outside);
+}
+
+typedef struct {
+    const char *path;
+    const char *text;
+} Source;
+
+// The repository, committed on main: a module a, tests of it, a test of b that imports a, a test of c that imports
+// nothing, a test that runs smith and a test that lists the tree.
+constexpr Source base[_] = {
+    {"lib/a.smith", "module a;\nexport i32 one() { return 1; }\n"},
+    {"lib/a_test.smith", "module a_test;\nimport a;\nexport void test_one() {}\n"},
+    {"lib/b.smith", "module b;\nimport a;\nexport i32 two() { return 2; }\n"},
+    {"lib/b_test.smith", "module b_test;\nimport b;\nexport void test_two() {}\n"},
+    {"lib/c_test.smith", "module c_test;\nexport void test_three() {}\n"},
+    {"src/lone.smith", "module lone;\nexport i32 four() { return 4; }\n"},
+    {"tests/runs_test.smith", "module runs_test;\nimport scratch;\nexport void test_runs() { scratch::sh(); }\n"},
+    {"tests/scratch.smith", "module scratch;\n"},
+    {"tests/tree_test.smith", "module tree_test;\nexport void test_tree() { sh(\"find $SMITH_REPO -name x.c\"); }\n"},
+    {"tests/docs_test.smith",
+     "module docs_test;\nexport void test_docs() { read(\"README.md\"); read(\"docs/guide.txt\"); }\n"},
+    {"tests/old.c", "int main(void) { return 0; }\n"},
+    {"README.md", "text\n"},
+    {"docs/guide.txt", "text\n"},
+    {"runtime/docs.c", "int x;\n"},
+};
+
+static void write(const char *folder, Source file) {
+    const char *path = format::push(folder, "/", file.path).data;
+    const char *slash = c::strrchr(path, '/');
+    files::DoneResult made = files::make_folder(path[0:(usize)(slash - path)]);
+    test::check_condition(made == .ok);
+    const u8 *bytes = (const u8 *)file.text;
+    files::CountResult written =
+        files::write_file(path[0:c::strlen(path)], bytes[0:c::strlen(file.text)], files::Replace);
+    test::check_condition(written == .ok);
+}
+
+// What `smith test --changed --dry-run` prints for `changes` (`A`, `M` or `D`, a tab and a path a line) on the
+// repository with the files `extra` added to it (or replaced in it).
+static const char *changed(const Source *extra, usize count, const char *changes) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    const char *names = "";
+    for (usize i = 0; i < countof(base); i++) {
+        write(p.dir, base[i]);
+        names = format::push(names, base[i].path, "\n").data;
+    }
+    for (usize i = 0; i < count; i++) {
+        write(p.dir, extra[i]);
+        bool known = false;
+        for (usize j = 0; j < countof(base); j++)
+            known = known || c::strcmp(base[j].path, extra[i].path) == 0;
+        if (!known) names = format::push(names, extra[i].path, "\n").data;
+    }
+    constexpr usize capacity = 1U << 16;
+    char *out = mem::alloc_slice(char, capacity).data;
+    bool done = c::smith_core_changed_select(p.dir, names, changes, out, capacity);
+    test::check_equal(done, true);
+    return out;
+}
+
+static const char *changed_files(const char *changes) {
+    return changed(nullptr, 0, changes);
+}
+
+// A change to a module selects its tests, and the tests of the modules that import it, and no others.
+export void test_a_module_selects_its_tests_and_those_of_its_importers() {
+    enter();
+    defer leave();
+    const char *out = changed_files("M\tlib/a.smith");
+    scratch::expect_contains("the test of a", out, "lib/a_test.smith: it depends on lib/a.smith");
+    scratch::expect_contains("the test of b, which imports a", out, "lib/b_test.smith: it depends on lib/b.smith");
+    scratch::expect_lacks("the test of c", out, "c_test");
+    scratch::expect_contains("the filter", out, "--test a_test::,b_test::");
+}
+
+// A test file that changed is selected.
+export void test_a_changed_test_file_is_selected() {
+    enter();
+    defer leave();
+    const char *out = changed_files("M\tlib/c_test.smith");
+    scratch::expect_contains("the test", out, "lib/c_test.smith: it changed");
+    scratch::expect_contains("the filter", out, "--test c_test::");
+    scratch::expect_lacks("a_test", out, "a_test");
+}
+
+// A source nothing imports is unknown too.
+export void test_a_source_nothing_imports_selects_every_test() {
+    enter();
+    defer leave();
+    const char *out = changed_files("M\tsrc/lone.smith");
+    scratch::expect_contains("every test", out, "src/lone.smith is an input of no test");
+}
+
+// A path the graph does not know (a new .c nothing includes, a text file) selects every test: unknown means run it.
+export void test_a_file_the_graph_does_not_know_selects_every_test() {
+    enter();
+    defer leave();
+    const Source added[_] = {{"tests/new.c", "int y;\n"}};
+    const char *out = changed(added, countof(added), "A\ttests/new.c");
+    scratch::expect_contains("the path", out, "tests/new.c is an input of no test the graph knows, so every test runs");
+    scratch::expect_contains("the dry run", out, "every test runs");
+    const Source unread[_] = {{"docs/unread.txt", "more\n"}};
+    out = changed(unread, countof(unread), "A\tdocs/unread.txt");
+    scratch::expect_contains("a text file", out, "docs/unread.txt is an input of no test");
+}
+
+// A test that links smith's core as a library (include/smith_core.h, issue #646) runs smith's sources in its process:
+// any source of smith selects it, as it selects a test that starts smith.
+export void test_a_test_of_the_core_is_selected_by_a_source_of_smith() {
+    enter();
+    defer leave();
+    const Source core[_] = {
+        {"tests/core_test.smith", "module core_test;\nimport <smith_core.h>;\nexport void test_core() {}\n"}};
+    const char *out = changed(core, countof(core), "M\truntime/docs.c");
+    scratch::expect_contains("the test of the core", out,
+                             "tests/core_test.smith: it runs smith, and runtime/docs.c is part of smith");
+    scratch::expect_lacks("a pure test", out, "c_test");
+}
+
+// A data file that a test names (a fixture, a corpus) selects the tests that name it, not every test; a workflow
+// likewise (.github/ no longer selects the whole suite).
+export void test_a_data_file_selects_the_tests_that_name_it() {
+    enter();
+    defer leave();
+    const char *out = changed_files("M\tdocs/guide.txt");
+    scratch::expect_contains("the reader", out, "tests/docs_test.smith: it names docs/guide.txt, and it changed");
+    scratch::expect_lacks("not every test", out, "every test runs");
+    scratch::expect_lacks("a pure test", out, "c_test");
+    const Source workflow[_] = {
+        {".github/workflows/check.yml", "b\n"},
+        {"tests/ci_test.smith", "module ci_test;\nexport void test_ci() { read(\"check.yml\"); }\n"}};
+    out = changed(workflow, countof(workflow), "M\t.github/workflows/check.yml");
+    scratch::expect_contains("the workflow's reader", out, "tests/ci_test.smith: it names .github/workflows/check.yml");
+    scratch::expect_lacks("not every test", out, "selects the whole suite");
+    scratch::expect_lacks("a pure test", out, "c_test");
+}
+
+// A workflow that no test names is CI's own configuration: it selects no test (the workflow is exercised by CI itself).
+export void test_a_workflow_no_test_names_selects_no_test() {
+    enter();
+    defer leave();
+    const Source other[_] = {{".github/workflows/other.yml", "b\n"}};
+    const char *out = changed(other, countof(other), "A\t.github/workflows/other.yml");
+    scratch::expect_contains("no test file", out, "0 of 6 test files selected");
+    scratch::expect_lacks("not unknown", out, "an input of no test");
+}
+
+// A Markdown file selects the tests that name Markdown files, not every test.
+export void test_a_markdown_file_selects_the_tests_that_read_markdown() {
+    enter();
+    defer leave();
+    const char *out = changed_files("M\tREADME.md");
+    scratch::expect_contains("the reader", out, "tests/docs_test.smith: it reads Markdown, and README.md changed");
+    scratch::expect_lacks("a pure test", out, "c_test");
+    scratch::expect_lacks("not every test", out, "every test runs");
+}
+
+// An include selects the test that includes the changed header, through a header that includes it.
+export void test_a_header_selects_the_tests_that_include_it_transitively() {
+    enter();
+    defer leave();
+    const Source headers[_] = {{"tests/h_test.c", "#include <mid.h>\n"},
+                               {"tests/mid.h", "#include <base.h>\n"},
+                               {"tests/base.h", "int z;\nint w;\n"}};
+    const char *out = changed(headers, countof(headers), "M\ttests/base.h");
+    scratch::expect_contains("the test", out, "tests/h_test.c: it depends on tests/mid.h");
+}
+
+// #417: a change to what smith is made of selects the tests that run smith, and not the pure ones.
+export void test_a_change_to_smith_selects_the_tests_that_run_smith() {
+    enter();
+    defer leave();
+    const char *out = changed_files("M\truntime/docs.c");
+    scratch::expect_contains("the test that runs smith", out,
+                             "tests/runs_test.smith: it runs smith, and runtime/docs.c");
+    scratch::expect_lacks("a pure test", out, "c_test");
+}
+
+// The files on the full-check list select the whole suite.
+export void test_the_full_check_list_selects_the_whole_suite() {
+    enter();
+    defer leave();
+    const Source patch[_] = {{"patches/x.patch", "x\n"}};
+    const char *out = changed(patch, countof(patch), "A\tpatches/x.patch");
+    scratch::expect_contains("the list", out, "selects the whole suite");
+}
+
+// The driver and the lowering are no whole-suite files (#638): they are part of smith like the rest of runtime/, so the
+// tests that run smith are selected (and with records, the tests that ran the changed function).
+export void test_the_lowering_is_judged_like_the_rest_of_smith() {
+    enter();
+    defer leave();
+    const Source lowering[_] = {{"runtime/lang_x.c", "int y;\n"}, {"smith.c", "// x\n"}};
+    const char *out = changed(lowering, countof(lowering), "A\truntime/lang_x.c\nA\tsmith.c");
+    scratch::expect_lacks("not the whole suite", out, "selects the whole suite");
+    scratch::expect_contains("the test that runs smith", out,
+                             "tests/runs_test.smith: it runs smith, and runtime/lang_x.c is part of smith");
+    scratch::expect_lacks("a pure test", out, "c_test");
+}
+
+// The same selection twice in one process is the same text: the second call forgets the first.
+export void test_a_selection_twice_in_one_process_is_the_same() {
+    enter();
+    defer leave();
+    const char *first = changed_files("M\tlib/a.smith");
+    const char *second = changed_files("M\tlib/a.smith");
+    scratch::expect_text("the same text", first, second);
+}
+
+// The same repository as a git repository (the base array above is its files), committed on main: a module a, tests of
+// it, a test of b that imports a, a test of c that imports nothing, a test that runs smith and a test that lists the
+// tree. Committed on main.
 constexpr char repository[_] =
     "export SMITH_OUTPUT=full; git init -q -b main . && "
     "mkdir -p lib tests docs runtime src && "
@@ -30,83 +266,16 @@ constexpr char repository[_] =
     "printf 'text\\n' > docs/guide.txt && printf 'int x;\\n' > runtime/docs.c && "
     "git add -A && git -c user.name=t -c user.email=t@t commit -q -m base; ";
 
-static const char *changed(io::Io *io, const char *edit) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(
-        &p, format::push(&io->arena, repository, edit, "; smith test --changed --base HEAD --dry-run 2>&1").data);
+static const char *changed_by_git(const char *edit) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::Run run =
+        scratch::sh(&p, format::push(repository, edit, "; smith test --changed --base HEAD --dry-run 2>&1").data);
     scratch::expect_status("the dry run ends", 0, &run);
     return run.out;
 }
 
-// A change to a module selects its tests, and the tests of the modules that import it, and no others.
-export void test_a_module_selects_its_tests_and_those_of_its_importers(io::Io *io) {
-    const char *out = changed(io, "echo '// x' >> lib/a.smith");
-    scratch::expect_contains("the test of a", out, "lib/a_test.smith: it depends on lib/a.smith");
-    scratch::expect_contains("the test of b, which imports a", out, "lib/b_test.smith: it depends on lib/b.smith");
-    scratch::expect_lacks("the test of c", out, "c_test");
-    scratch::expect_contains("the filter", out, "--test a_test::,b_test::");
-}
-
-// A test file that changed is selected.
-export void test_a_changed_test_file_is_selected(io::Io *io) {
-    const char *out = changed(io, "echo '// x' >> lib/c_test.smith");
-    scratch::expect_contains("the test", out, "lib/c_test.smith: it changed");
-    scratch::expect_contains("the filter", out, "--test c_test::");
-    scratch::expect_lacks("a_test", out, "a_test");
-}
-
-// A source nothing imports is unknown too.
-export void test_a_source_nothing_imports_selects_every_test(io::Io *io) {
-    const char *out = changed(io, "echo '// x' >> src/lone.smith");
-    scratch::expect_contains("every test", out, "src/lone.smith is an input of no test");
-}
-
-// A path the graph does not know (a new .c nothing includes, a text file) selects every test: unknown means run it.
-export void test_a_file_the_graph_does_not_know_selects_every_test(io::Io *io) {
-    const char *out = changed(io, "echo 'int y;' > tests/new.c");
-    scratch::expect_contains("the path", out, "tests/new.c is an input of no test the graph knows, so every test runs");
-    scratch::expect_contains("the dry run", out, "every test runs");
-    out = changed(io, "echo more >> docs/unread.txt");
-    scratch::expect_contains("a text file", out, "docs/unread.txt is an input of no test");
-}
-
-// A test that links smith's core as a library (runtime/smith_core.h, issue #646) runs smith's sources in its process:
-// any source of smith selects it, as it selects a test that starts smith. (A scratch test, since the selection is read
-// from a scratch repository by `smith test --changed`; a unit test cannot show the CLI's output.)
-export void test_a_test_of_the_core_is_selected_by_a_source_of_smith(io::Io *io) {
-    const char *out =
-        changed(io, "printf 'module core_test;\\nimport <smith_core.h>;\\nexport void test_core() {}\\n' > "
-                    "tests/core_test.smith; git add -A; git -c user.name=t -c user.email=t@t commit -q -m core; "
-                    "echo 'int z;' >> runtime/docs.c");
-    scratch::expect_contains("the test of the core", out,
-                             "tests/core_test.smith: it runs smith, and runtime/docs.c is part of smith");
-    scratch::expect_lacks("a pure test", out, "c_test");
-}
-
-// A data file that a test names (a fixture, a corpus) selects the tests that name it, not every test; a workflow
-// likewise (.github/ no longer selects the whole suite).
-export void test_a_data_file_selects_the_tests_that_name_it(io::Io *io) {
-    const char *out = changed(io, "echo more >> docs/guide.txt");
-    scratch::expect_contains("the reader", out, "tests/docs_test.smith: it names docs/guide.txt, and it changed");
-    scratch::expect_lacks("not every test", out, "every test runs");
-    scratch::expect_lacks("a pure test", out, "c_test");
-    out = changed(io,
-                  "mkdir -p .github/workflows; echo a > .github/workflows/check.yml; "
-                  "printf 'module ci_test;\\nexport void test_ci() { read(\"check.yml\"); }\\n' > tests/ci_test.smith; "
-                  "git add -A; git -c user.name=t -c user.email=t@t commit -q -m ci; "
-                  "echo b >> .github/workflows/check.yml");
-    scratch::expect_contains("the workflow's reader", out, "tests/ci_test.smith: it names .github/workflows/check.yml");
-    scratch::expect_lacks("not every test", out, "selects the whole suite");
-    scratch::expect_lacks("a pure test", out, "c_test");
-}
-
-// A workflow that no test names is CI's own configuration: it selects no test (the workflow is exercised by CI itself).
-export void test_a_workflow_no_test_names_selects_no_test(io::Io *io) {
-    const char *out = changed(io, "mkdir -p .github/workflows; echo b > .github/workflows/other.yml");
-    scratch::expect_contains("no test file", out, "0 of 6 test files selected");
-    scratch::expect_lacks("not unknown", out, "an input of no test");
-}
-
+// (A scratch test: build.c is judged by the functions of its diff, which asks git for the diff.)
 // A build.c with one task whose step is a function, and the registering function (committed in the case).
 constexpr char build_file[_] =
     "build_c() { printf 'static int build_chore(SmithRun *run) {\\n    return %s;\\n}\\n"
@@ -118,108 +287,113 @@ constexpr char build_file[_] =
 
 // build.c is read by function: a change in the function a task's step runs selects only the tests that name the task;
 // a change in the function that registers (every build runs it) selects every test.
-export void test_a_build_file_change_in_a_task_function_selects_the_tests_that_name_it(io::Io *io) {
-    const char *out = changed(io, format::push(&io->arena, build_file, "build_c 1 unused").data);
+export void test_a_build_file_change_in_a_task_function_selects_the_tests_that_name_it() {
+    enter();
+    defer leave();
+    const char *out = changed_by_git(format::push(build_file, "build_c 1 unused").data);
     scratch::expect_contains("local", out, "build.c changed only in 2 names no test runs (build_chore");
     scratch::expect_contains("the test that names the task", out,
                              "tests/chore_test.smith: it names chore, which build.c changed");
     scratch::expect_lacks("not the others", out, "c_test.smith:");
-    out = changed(io, format::push(&io->arena, build_file, "build_c 0 other").data);
+    out = changed_by_git(format::push(build_file, "build_c 0 other").data);
     scratch::expect_contains("the registering function", out,
                              "build.c changed outside the functions of tasks no test runs, so every test runs");
 }
 
+// (A scratch test: the verb's arguments and a real git repository, which a unit test cannot show.)
 // The selection has no size at which it becomes `*`: three thousand tests in one file are listed one by one (far past
 // the 8 KiB filter and the 1.5 KiB per-file buffer of #456), and a run says when the names are longer than one
 // argument instead of silently running everything.
-export void test_a_selection_of_thousands_of_tests_is_listed_whole(io::Io *io) {
+export void test_a_selection_of_thousands_of_tests_is_listed_whole() {
+    enter();
+    defer leave();
     const char *big = "printf '#include <base.h>\\n' > tests/big_test.c; i=0; while [ $i -lt 3000 ]; do "
                       "echo \"void test_a_long_name_for_the_overflow_check_number_$i(void) {}\" >> tests/big_test.c; "
                       "i=$((i+1)); done; echo 'int z;' > tests/base.h; git add -A; "
                       "git -c user.name=t -c user.email=t@t commit -q -m big; echo 'int w;' >> tests/base.h; ";
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(&p, format::push(&io->arena, repository, big,
-                                                    "smith test --changed --list HEAD 2>/dev/null | wc -l | tr -d ' '")
-                                           .data);
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::Run run = scratch::sh(
+        &p, format::push(repository, big, "smith test --changed --list HEAD 2>/dev/null | wc -l | tr -d ' '").data);
     scratch::expect_text("every test of the file is listed", "3000", run.out);
-    scratch::Project q = scratch::project(io, "q", nullptr);
-    run = scratch::sh(&q, format::push(&io->arena, repository, big, "smith test --changed --dry-run 2>&1").data);
+    scratch::Project q = scratch::make("q", nullptr);
+    defer scratch::clean(&q);
+    run = scratch::sh(&q, format::push(repository, big, "smith test --changed --dry-run 2>&1").data);
     scratch::expect_contains("the names are longer than an argument", run.out,
                              "longer than one argument, so every test runs");
 }
 
+// (A scratch test: the verb's wiring.)
 // `--list` says on stderr, without -v, what it selected.
-export void test_list_says_what_it_selected_on_stderr(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(&p, format::push(&io->arena, repository,
-                                                    "echo '// x' >> lib/c_test.smith; smith test --changed --list HEAD "
-                                                    "2>&1 >/dev/null")
-                                           .data);
+export void test_list_says_what_it_selected_on_stderr() {
+    enter();
+    defer leave();
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::Run run =
+        scratch::sh(&p, format::push(repository, "echo '// x' >> lib/c_test.smith; smith test --changed --list HEAD "
+                                                 "2>&1 >/dev/null")
+                            .data);
     scratch::expect_contains("the summary", run.out, "selects the tests listed on stdout");
     scratch::expect_contains("the count", run.out, "1 entries");
 }
 
-// A Markdown file selects the tests that name Markdown files, not every test.
-export void test_a_markdown_file_selects_the_tests_that_read_markdown(io::Io *io) {
-    const char *out = changed(io, "echo more >> README.md");
-    scratch::expect_contains("the reader", out, "tests/docs_test.smith: it reads Markdown, and README.md changed");
-    scratch::expect_lacks("a pure test", out, "c_test");
-    scratch::expect_lacks("not every test", out, "every test runs");
-}
-
-// An include selects the test that includes the changed header, through a header that includes it.
-export void test_a_header_selects_the_tests_that_include_it_transitively(io::Io *io) {
-    const char *out = changed(io, "printf '#include <mid.h>\\n' > tests/h_test.c; "
-                                  "printf '#include <base.h>\\n' > tests/mid.h; echo 'int z;' > tests/base.h; "
-                                  "git add -A; git -c user.name=t -c user.email=t@t commit -q -m h; "
-                                  "echo 'int w;' >> tests/base.h");
-    scratch::expect_contains("the test", out, "tests/h_test.c: it depends on tests/mid.h");
-}
-
-// #417: a change to what smith is made of selects the tests that run smith, and not the pure ones.
-export void test_a_change_to_smith_selects_the_tests_that_run_smith(io::Io *io) {
-    const char *out = changed(io, "echo '// x' >> runtime/docs.c");
-    scratch::expect_contains("the test that runs smith", out,
-                             "tests/runs_test.smith: it runs smith, and runtime/docs.c");
-    scratch::expect_lacks("a pure test", out, "c_test");
-}
-
-// The files on the full-check list select the whole suite.
-export void test_the_full_check_list_selects_the_whole_suite(io::Io *io) {
-    const char *out = changed(io, "mkdir -p patches; echo x > patches/x.patch");
-    scratch::expect_contains("the list", out, "selects the whole suite");
-}
-
-// The driver and the lowering are no whole-suite files (#638): they are part of smith like the rest of runtime/, so the
-// tests that run smith are selected (and with records, the tests that ran the changed function).
-export void test_the_lowering_is_judged_like_the_rest_of_smith(io::Io *io) {
-    const char *out = changed(io, "echo 'int y;' > runtime/lang_x.c; echo '// x' >> smith.c");
-    scratch::expect_lacks("not the whole suite", out, "selects the whole suite");
-    scratch::expect_contains("the test that runs smith", out,
-                             "tests/runs_test.smith: it runs smith, and runtime/lang_x.c is part of smith");
-    scratch::expect_lacks("a pure test", out, "c_test");
-}
-
+// (A scratch test: git's base..head ranges.)
 // `--list` prints the selected tests one per line on stdout and runs nothing; with two refs it reads the diff of
 // base..head, so a commit already made is judged as well as the working tree.
-export void test_list_prints_the_selected_tests_one_per_line(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_list_prints_the_selected_tests_one_per_line() {
+    enter();
+    defer leave();
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
     const char *edit = "echo '// x' >> lib/a.smith; smith test --changed --list HEAD 2>/dev/null";
-    scratch::Run run = scratch::sh(&p, format::push(&io->arena, repository, edit).data);
+    scratch::Run run = scratch::sh(&p, format::push(repository, edit).data);
     scratch::expect_status("the list ends", 0, &run);
     scratch::expect_text("one test file per line", "a_test::\nb_test::\nruns_test::\n",
                          run.out); // lib/ is part of smith
     const char *commit = "echo '// x' >> lib/c_test.smith; git add -A; git -c user.name=t -c user.email=t@t commit -q "
                          "-m c; smith test --changed --list HEAD~1 HEAD 2>/dev/null";
-    scratch::Project q = scratch::project(io, "q", nullptr);
-    run = scratch::sh(&q, format::push(&io->arena, repository, commit).data);
+    scratch::Project q = scratch::make("q", nullptr);
+    defer scratch::clean(&q);
+    run = scratch::sh(&q, format::push(repository, commit).data);
     scratch::expect_text("the range", "c_test::\n", run.out);
 }
 
 // --dry-run and --base go with --changed.
-export void test_dry_run_without_changed_is_refused(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_dry_run_without_changed_is_refused() {
+    enter();
+    defer leave();
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
     scratch::Run run = scratch::sh(&p, "SMITH_OUTPUT=full smith test --dry-run 2>&1");
     scratch::expect_contains("the message", run.out, "--dry-run and --base go with --changed");
     scratch::expect_failure("exit status", &run);
+}
+
+// What `smith lint --changed` chooses (issue #1076), in process through `smith_core_changed_lint`: the files that
+// changed and those that import one that did. Called twice in one process, the second forgets the first.
+export void test_lint_chooses_the_changed_files_and_their_importers_twice() {
+    enter();
+    defer leave();
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    const char *names = "";
+    for (usize i = 0; i < countof(base); i++) {
+        write(p.dir, base[i]);
+        names = format::push(names, base[i].path, "\n").data;
+    }
+    constexpr usize capacity = 1U << 16;
+    char *out = mem::alloc_slice(char, capacity).data;
+    test::check_equal(c::smith_core_changed_lint(p.dir, names, "M\tlib/a.smith\n", out, capacity), true);
+    scratch::expect_contains("a", out, "lib/a.smith\n");
+    scratch::expect_contains("its test", out, "lib/a_test.smith\n");
+    scratch::expect_contains("b, which imports a", out, "lib/b.smith\n");
+    scratch::expect_contains("the test of b", out, "lib/b_test.smith\n");
+    scratch::expect_lacks("c", out, "c_test");
+    scratch::expect_contains("the line", out,
+                             "smith lint --changed: 1 changed file since HEAD: 4 of 14 files to lint\n");
+    char *again = mem::alloc_slice(char, capacity).data;
+    test::check_equal(c::smith_core_changed_lint(p.dir, names, "M\tlib/c_test.smith\n", again, capacity), true);
+    scratch::expect_text(
+        "only c", "lib/c_test.smith\nsmith lint --changed: 1 changed file since HEAD: 1 of 14 files to lint\n", again);
 }

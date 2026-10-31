@@ -4,33 +4,51 @@
 // only to a build in that folder.
 module build_step_cache_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 
-static scratch::Project made(io::Io *io, const char *name) {
-    scratch::Project p = scratch::project(io, name, "step_cache");
+constexpr usize memory_size = (usize)4 << 20; // 4 MiB
+
+// A project with a cache of its own, which `sibling` projects share.
+static scratch::Project made(const char *name) {
+    scratch::Project p = scratch::make(name, "step_cache");
     scratch::own_cache(&p);
     return p;
 }
 
+// Another folder of the same fixture next to `a`, with a's cache; `a` removes both folders and frees the cache.
+static scratch::Project sibling(const scratch::Project *a, const char *name) {
+    scratch::Project p = *a;
+    p.root = nullptr;
+    p.dir = format::push(a->root, "/", name).data;
+    scratch::copy_tree(&p, "tests/build_fixtures/step_cache", "");
+    return p;
+}
+
 // `smith build release` with its progress lines kept: the compiles it ran, and how many of them the cache served.
-static const char *built(const scratch::Project *p, const char *before) {
-    return format::push(&p->io->arena, "env SMITH_STEP_CACHE=1 ", before, "smith build release 2>&1").data;
+static const char *built(const char *before) {
+    return format::push("env SMITH_STEP_CACHE=1 ", before, "smith build release 2>&1").data;
 }
 
 static const char *count(const scratch::Project *p, const char *build, const char *pattern) {
-    return scratch::capture(p, format::push(&p->io->arena, build, " | grep -c '", pattern, "'; true").data);
+    return scratch::capture(p, format::push(build, " | grep -c '", pattern, "'; true").data);
 }
 
 // 1. The second folder runs no compile, and its objects are the first's, byte for byte.
-export void test_build_step_cache_a_second_folder_runs_no_compile(io::Io *io) {
-    scratch::Project a = made(io, "a");
-    scratch::Project b = made(io, "b");
+export void test_build_step_cache_a_second_folder_runs_no_compile() {
+    scratch::Project a = made("a");
+    defer scratch::clean(&a);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project b = sibling(&a, "b");
     scratch::expect_text("cache: the first folder compiles all three", "3",
-                         count(&a, built(&a, ""), "^\\[[0-9/]*\\] compile [a-z]*[.]c$"));
-    const char *second = built(&b, "");
+                         count(&a, built(""), "^\\[[0-9/]*\\] compile [a-z]*[.]c$"));
+    const char *second = built("");
     scratch::expect_text("cache: the second folder is served all three", "3", count(&b, second, "[.]c (cached)$"));
     scratch::Run same =
         scratch::sh(&b, "for f in main other util; do cmp build/release/$f.o ../a/build/release/$f.o || exit 1; done");
@@ -40,27 +58,37 @@ export void test_build_step_cache_a_second_folder_runs_no_compile(io::Io *io) {
 }
 
 // 2. A header changed: the files that include it compile again, the others are up to date.
-export void test_build_step_cache_a_changed_header_recompiles_its_includers(io::Io *io) {
-    scratch::Project a = made(io, "a");
-    (void)scratch::sh(&a, built(&a, ""));
+export void test_build_step_cache_a_changed_header_recompiles_its_includers() {
+    scratch::Project a = made("a");
+    defer scratch::clean(&a);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    (void)scratch::sh(&a, built(""));
     scratch::write(&a, "util.h", "int util(void);\nint more(void);\n");
-    const char *again = built(&a, "");
+    const char *again = built("");
     scratch::Run run = scratch::sh(&a, again);
     scratch::expect_contains("header: main.c, which includes it, compiles again", run.out, "compile main.c");
     scratch::expect_contains("header: and so does util.c", run.out, "compile util.c");
     scratch::expect_lacks("header: other.c does not", run.out, "other.c");
     scratch::expect_lacks("header: and neither is served, for the header is new", run.out, "(cached)");
     scratch::write(&a, "util.h", "int util(void);\n");
-    scratch::Run back = scratch::sh(&a, built(&a, ""));
+    scratch::Run back = scratch::sh(&a, built(""));
     scratch::expect_contains("header: the old header's compiles are served again", back.out, "compile util.c (cached)");
 }
 
 // 3. A hit is what a rebuild makes.
-export void test_build_step_cache_a_hit_equals_a_rebuild(io::Io *io) {
-    scratch::Project a = made(io, "a");
-    scratch::Project b = made(io, "b");
-    (void)scratch::sh(&a, built(&a, ""));
-    (void)scratch::sh(&b, built(&b, ""));
+export void test_build_step_cache_a_hit_equals_a_rebuild() {
+    scratch::Project a = made("a");
+    defer scratch::clean(&a);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project b = sibling(&a, "b");
+    (void)scratch::sh(&a, built(""));
+    (void)scratch::sh(&b, built(""));
     (void)scratch::sh(&b,
                       "mkdir -p hit && cp build/release/*.o hit/ && rm -rf build .smith/.smith_log .smith/.smith_deps");
     scratch::Run forced = scratch::sh(&b, "SMITH_STEP_CACHE=0 smith build release 2>&1");
@@ -70,38 +98,52 @@ export void test_build_step_cache_a_hit_equals_a_rebuild(io::Io *io) {
 }
 
 // 4. The folder is a token in what is kept: the second folder's depfile log names its own files.
-export void test_build_step_cache_the_second_folders_log_names_its_own_paths(io::Io *io) {
-    scratch::Project a = made(io, "a");
-    scratch::Project b = made(io, "b");
-    (void)scratch::sh(&a, built(&a, ""));
-    scratch::Run second = scratch::sh(&b, built(&b, ""));
+export void test_build_step_cache_the_second_folders_log_names_its_own_paths() {
+    scratch::Project a = made("a");
+    defer scratch::clean(&a);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project b = sibling(&a, "b");
+    (void)scratch::sh(&a, built(""));
+    scratch::Run second = scratch::sh(&b, built(""));
     scratch::expect_contains("paths: the second folder is served", second.out, "(cached)");
-    scratch::expect_text(
-        "paths: its depfile log holds nothing of the first folder", "0",
-        scratch::capture(&b, format::push(&io->arena, "grep -c '", a.dir, "' .smith/.smith_deps; true").data));
+    scratch::expect_text("paths: its depfile log holds nothing of the first folder", "0",
+                         scratch::capture(&b, format::push("grep -c '", a.dir, "' .smith/.smith_deps; true").data));
     scratch::expect_text("paths: and it names the headers", "yes",
                          scratch::capture(&b, "grep -q '^util[.]h$' .smith/.smith_deps && echo yes"));
 }
 
 // 5. SMITH_STEP_CACHE=0 turns the cache off.
-export void test_build_step_cache_can_be_turned_off(io::Io *io) {
-    scratch::Project a = made(io, "a");
-    scratch::Project b = made(io, "b");
-    (void)scratch::sh(&a, built(&a, ""));
-    scratch::Run second = scratch::sh(&b, built(&b, "SMITH_STEP_CACHE=0 "));
+export void test_build_step_cache_can_be_turned_off() {
+    scratch::Project a = made("a");
+    defer scratch::clean(&a);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project b = sibling(&a, "b");
+    (void)scratch::sh(&a, built(""));
+    scratch::Run second = scratch::sh(&b, built("SMITH_STEP_CACHE=0 "));
     scratch::expect_lacks("off: nothing is served", second.out, "(cached)");
     scratch::expect_contains("off: the compiles run", second.out, "compile main.c");
 }
 
 // 6. The cap of the caches (SMITH_CACHE_MAX, #618) applies: over it, the least recently used results go at the next
 // build's start, once an hour.
-export void test_build_step_cache_results_over_the_cap_are_removed(io::Io *io) {
-    scratch::Project a = made(io, "a");
-    scratch::Project b = made(io, "b");
-    (void)scratch::sh(&a, built(&a, ""));
+export void test_build_step_cache_results_over_the_cap_are_removed() {
+    scratch::Project a = made("a");
+    defer scratch::clean(&a);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project b = sibling(&a, "b");
+    (void)scratch::sh(&a, built(""));
     // an old time in the form both touches read (GNU's -d '2 hours ago' is an error on macOS)
     (void)scratch::sh(&a, "touch -t 200001010000 \"$XDG_CACHE_HOME/smith/steps/prune.timestamp\"");
-    scratch::Run capped = scratch::sh(&b, built(&b, "SMITH_CACHE_MAX=1 "));
+    scratch::Run capped = scratch::sh(&b, built("SMITH_CACHE_MAX=1 "));
     scratch::expect_lacks("cap: nothing is left to serve", capped.out, "(cached)");
     scratch::expect_contains("cap: the compiles run", capped.out, "compile main.c");
 }
@@ -117,8 +159,13 @@ constexpr char pch_build[_] =
     "    smith_default(b, header.step.outputs);\n"
     "}\n";
 
-export void test_build_step_cache_a_precompiled_header_is_compiled_again(io::Io *io) {
-    scratch::Project a = made(io, "a");
+export void test_build_step_cache_a_precompiled_header_is_compiled_again() {
+    scratch::Project a = made("a");
+    defer scratch::clean(&a);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&a, "build.c", pch_build);
     const char *build = "env SMITH_STEP_CACHE=1 smith build 2>&1";
     scratch::Run first = scratch::sh(&a, build);
@@ -137,15 +184,36 @@ export void test_build_step_cache_a_precompiled_header_is_compiled_again(io::Io 
 // stores no result of its own. (SMITH_VERBOSE would show the compiles, but a compile that prints is never stored.)
 constexpr char results[_] = "find \"$XDG_CACHE_HOME/smith/steps/r\" -mindepth 2 -maxdepth 2 | wc -l | tr -d ' '";
 
-export void test_build_step_cache_serves_the_build_program_to_a_second_folder(io::Io *io) {
-    scratch::Project a = made(io, "a");
-    scratch::Project b = made(io, "b");
-    (void)scratch::sh(&a, built(&a, ""));
+export void test_build_step_cache_serves_the_build_program_to_a_second_folder() {
+    scratch::Project a = made("a");
+    defer scratch::clean(&a);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project b = sibling(&a, "b");
+    (void)scratch::sh(&a, built(""));
     const char *first = scratch::capture(&a, results);
     scratch::expect_text("program: the first folder stores the program's compiles and the project's", "yes",
-                         scratch::capture(&a, format::push(&io->arena, "[ ", first, " -ge 10 ] && echo yes").data));
-    (void)scratch::sh(&b, built(&b, ""));
+                         scratch::capture(&a, format::push("[ ", first, " -ge 10 ] && echo yes").data));
+    (void)scratch::sh(&b, built(""));
     scratch::expect_text("program: the second folder stores nothing of its own", first, scratch::capture(&b, results));
     scratch::Run same = scratch::sh(&b, "cmp .smith/build-program/runtime.o ../a/.smith/build-program/runtime.o");
     scratch::expect_status("program: and its objects are the first's", 0, &same);
+}
+
+// 2. Objects restored from the cache are not older than their inputs: the next build has nothing to do (#816).
+export void test_build_step_cache_a_restored_build_settles() {
+    scratch::Project a = made("a");
+    defer scratch::clean(&a);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project b = sibling(&a, "b");
+    scratch::expect_text("settle: the first folder compiles all three", "3",
+                         count(&a, built(""), "^\\[[0-9/]*\\] compile [a-z]*[.]c$"));
+    scratch::expect_text("settle: the second folder is served all three", "3", count(&b, built(""), "[.]c (cached)$"));
+    scratch::expect_text("settle: and its next build has no work to do", "1",
+                         count(&b, built(""), "^smith: no work to do[.]$"));
 }

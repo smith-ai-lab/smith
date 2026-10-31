@@ -4,8 +4,9 @@
 // mechanically. A scratch project (tests/build_fixtures/mem_check) with one check on.
 module mem_check_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 
@@ -13,13 +14,21 @@ constexpr char prelude[_] = "flags=\"-std=gnu2y -I. -I.smith/include -I$SMITH_RE
                             "run() { smith lint --quiet --checks='-*,smith-mem' \"$@\" -- $flags 2>&1; }; ";
 
 static scratch::Run lint(const scratch::Project *p, const char *body) {
-    return scratch::sh(p, format::push(&p->io->arena, prelude, body).data);
+    char command[1024];
+    format::Written written = format::to(command, sizeof command, prelude, body);
+    test::check_condition(written.fits);
+    return scratch::sh(p, command);
 }
 
-export void test_mem_check_names_the_replacement_of_each_raw_call_in_a_module(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "mem_check");
+export void test_mem_check_names_the_replacement_of_each_raw_call_in_a_module() {
+    scratch::Project p = scratch::make("p", "mem_check");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = lint(&p, "run sample.smith >out.txt; grep -c 'is unchecked, since' out.txt; cat out.txt");
-    scratch::expect_contains("six calls are findings", run.out, "6\n");
+    scratch::expect_contains("eleven calls are findings", run.out, "11\n");
     scratch::expect_contains("memset", run.out, "`memset` is unchecked");
     scratch::expect_contains("memset", run.out, "`mem::zero(xs)` or `mem::zero(&x)`");
     scratch::expect_contains("memcpy", run.out, "use `mem::copy(dst, src)`");
@@ -27,23 +36,46 @@ export void test_mem_check_names_the_replacement_of_each_raw_call_in_a_module(io
     scratch::expect_contains("memcmp", run.out, "use `mem::equal(a, b)`");
     scratch::expect_contains("the marker", run.out,
                              "mark the function `contract::trusted()` if it implements a wrapper");
+    scratch::expect_contains("malloc", run.out, "`malloc` is unchecked");
+    scratch::expect_contains("malloc", run.out, "`mem::alloc(T)` for one value, `mem::alloc_slice(T, n)` for n");
+    scratch::expect_contains("calloc", run.out, "`calloc` is unchecked");
+    scratch::expect_contains("aligned_alloc", run.out, "`aligned_alloc` is unchecked");
+    scratch::expect_contains("realloc", run.out, "`realloc` is unchecked");
+    scratch::expect_contains("realloc", run.out, "`mem::realloc(xs, n)` on a slice");
+    scratch::expect_contains("free", run.out, "`free` is unchecked");
+    scratch::expect_contains("free", run.out, "use `mem::free(p)`");
+    scratch::expect_lacks("mem::free", run.out, "sample.smith:33");
+    scratch::expect_lacks("the trusted release", run.out, "sample.smith:39");
 }
 
-export void test_mem_check_skips_a_trusted_function_a_c_file_and_a_file_with_no_module(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "mem_check");
+export void test_mem_check_skips_a_trusted_function_a_c_file_and_a_file_with_no_module() {
+    scratch::Project p = scratch::make("p", "mem_check");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = lint(
         &p, "run sample.smith plain.c nomodule.smith >out.txt; grep -c 'is unchecked, since' out.txt; cat out.txt");
-    scratch::expect_contains("still six findings", run.out, "6\n");
-    scratch::expect_lacks("the trusted wrapper", run.out, "sample.smith:23");
+    scratch::expect_contains("still eleven findings", run.out, "11\n");
+    scratch::expect_lacks("the trusted wrapper", run.out, "sample.smith:25");
     scratch::expect_lacks("the C file", run.out, "plain.c:");
     scratch::expect_lacks("the file with no module", run.out, "nomodule.smith:");
 }
 
-export void test_mem_check_fix_rewrites_a_memset_of_zero_to_mem_zero(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "mem_check");
+export void test_mem_check_fix_rewrites_a_memset_of_zero_to_mem_zero() {
+    scratch::Project p = scratch::make("p", "mem_check");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run fixed = lint(&p, "run --fix sample.smith");
     scratch::expect_contains("the fix is applied", scratch::read(&p, "sample.smith"), "    mem::zero(p);\n");
     scratch::expect_contains("the fix is applied", scratch::read(&p, "sample.smith"), "    mem::zero(&q);\n");
+    scratch::expect_contains("malloc of a type", scratch::read(&p, "sample.smith"), "(Pair *)mem::alloc(Pair);");
+    scratch::expect_contains("free", scratch::read(&p, "sample.smith"), "    mem::free(one);\n");
     scratch::expect_contains("the others stay", scratch::read(&p, "sample.smith"), "c::memset(buf, 7, n);");
+    scratch::expect_contains("calloc stays", scratch::read(&p, "sample.smith"), "c::calloc(n, sizeof(Pair))");
     (void)fixed;
 }

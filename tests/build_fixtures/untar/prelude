@@ -99,10 +99,13 @@ flip() { # file, offset, output
 
 # tests/untar.c under AddressSanitizer and UndefinedBehaviorSanitizer, as ./untar.
 build_untar() {
+    # the handlers runtime (the libraries call its getters and setters) is built as the library is everywhere
+    smith cc -std=gnu23 -O2 -fPIC -I "$SMITH_REPO/.smith/include" -c "$here/lib/handlers.c" -o "$PWD/handlers.o" || return 1
     smith cc -std=gnu23 -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined -Wall -Wextra -Werror \
         -Wno-unused-function -I "$SMITH_REPO/.smith/include" "$here/tests/untar.c" "$here/lib/smith/arena.smith" \
-        "$here/lib/smith/contract.smith" "$here/lib/smith/inflate.smith" "$here/lib/smith/io.smith" \
-        "$here/lib/smith/random.smith" -o "$PWD/untar"
+        "$here/lib/smith/contract.smith" "$here/lib/smith/env.smith" "$here/lib/smith/files.smith" \
+        "$here/lib/smith/inflate.smith" "$here/lib/smith/mem.smith" \
+        "$here/lib/smith/net.smith" "$here/lib/smith/random.smith" "$PWD/handlers.o" -o "$PWD/untar"
 }
 
 # The sanitized untar and the seeds, made once and shared by every test of the run and of the runs after it (#639: ten
@@ -119,8 +122,9 @@ shared_untar() {
     if [ "$(uname -s)" = Darwin ]; then statfmt='-f %N_%m_%z'; else statfmt='-c %n_%Y_%s'; fi
     key=$({ stat $statfmt "${SMITH_SELF:-$(command -v smith)}" 2>/dev/null
         cat "$here/tests/untar.c" "$here"/runtime/*.c "$here"/runtime/*.h "$here/lib/smith/arena.smith" \
-            "$here/lib/smith/contract.smith" "$here/lib/smith/inflate.smith" "$here/lib/smith/io.smith" \
-            "$here/lib/smith/random.smith" "$here/prelude"; } | shasum -a 256 | cut -c1-16)
+            "$here/lib/smith/contract.smith" "$here/lib/smith/inflate.smith" \
+            "$here/lib/smith/random.smith" "$here/lib/smith/env.smith" "$here/lib/smith/files.smith" \
+            "$here/lib/smith/mem.smith" "$here/lib/smith/net.smith" "$here/lib/handlers.c" "$here/prelude"; } | shasum -a 256 | cut -c1-16)
     dir=$base/$key
     if [ ! -e "$dir/done" ]; then
         find "$base" -maxdepth 1 -name "lock-$key" -mmin +20 -exec rmdir {} + 2>/dev/null

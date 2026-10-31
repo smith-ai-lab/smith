@@ -52,7 +52,6 @@
     "./.agents/skills/smith-debug/",
     "./.agents/skills/smith-docs/",
     "./.agents/skills/smith-docs-check/",
-    "./.agents/skills/smith-effects/",
     "./.agents/skills/smith-failing/",
     "./.agents/skills/smith-files/",
     "./.agents/skills/smith-entropy/",
@@ -65,15 +64,6 @@
     "./.agents/skills/smith-inflate/",
     "./.agents/skills/smith-inflate-sink/",
     "./.agents/skills/smith-http/",
-    "./.agents/skills/smith-io/",
-    "./.agents/skills/smith-io-async/",
-    "./.agents/skills/smith-io-c/",
-    "./.agents/skills/smith-io-capabilities/",
-    "./.agents/skills/smith-io-errors/",
-    "./.agents/skills/smith-io-fake/",
-    "./.agents/skills/smith-io-files/",
-    "./.agents/skills/smith-io-net/",
-    "./.agents/skills/smith-io-processes/",
     "./.agents/skills/smith-json/",
     "./.agents/skills/smith-json-pull-write/",
     "./.agents/skills/smith-lang/",
@@ -103,6 +93,8 @@
     "./.agents/skills/smith-lang-reflection/",
     "./.agents/skills/smith-lang-reflection-field/",
     "./.agents/skills/smith-lang-affine/",
+    "./.agents/skills/smith-lang-lambda-param/",
+    "./.agents/skills/smith-lang-lambdas/",
     "./.agents/skills/smith-lang-modules/",
     "./.agents/skills/smith-lang-modules-errors/",
     "./.agents/skills/smith-lang-tools/",
@@ -148,7 +140,8 @@
     "./.agents/skills/smith-text/",
     "./.agents/skills/smith-text-c/",
     "./.agents/skills/smith-text-numbers/",
-    "./.agents/skills/smith-trace/"
+    "./.agents/skills/smith-trace/",
+    "./.agents/skills/smith-wrapping/"
   ],
   "lspServers": {
     "smith": {

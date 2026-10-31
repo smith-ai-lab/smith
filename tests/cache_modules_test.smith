@@ -4,42 +4,76 @@
 // tests/build_fixtures/cache_modules/prelude count the cache's modules.
 module cache_modules_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 
-static scratch::Project modules_project(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "cache_modules");
+// What a test's commands print, and the texts made from it, go to an arena of the runner's (test::memory), the
+// current allocator from start to finish, so the test frees none of it; the project is made and cleaned inside it.
+constexpr usize memory_size = 1U << 24;
+static arena::Arena memory;
+static arena::ArenaAllocator allocator;
+static mem::Allocator *outside;
+
+static scratch::Project start(const char *fixture) {
+    memory = test::memory(memory_size);
+    allocator = arena::allocator(&memory);
+    outside = mem::set_allocator(&allocator.base);
+    return scratch::make("p", fixture);
+}
+
+static void finish(scratch::Project *p) {
+    scratch::clean(p);
+    mem::set_allocator(outside);
+}
+
+// The output of a command as $(...) gives it, without trailing newlines (scratch::capture reads a project's io).
+static const char *captured(const scratch::Project *p, const char *command) {
+    const char *out = scratch::sh(p, command).out;
+    usize length = 0;
+    while (out[length] != '\0')
+        length++;
+    while (length > 0 && out[length - 1] == '\n')
+        length--;
+    char *text = arena::push_slice(&memory, char, length + 1).data;
+    mem::copy(text[0:length], out[0:length]);
+    text[length] = '\0';
+    return text;
+}
+
+static scratch::Project modules_project() {
+    scratch::Project p = start("cache_modules");
     scratch::own_cache(&p);
     return p;
 }
 
 static const char *text(const scratch::Project *p, const char *body) {
-    return scratch::capture(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+    return captured(p, format::push(". ./prelude; ", body).data);
 }
 
 // Builds a folder beside the project and says what its program prints.
 static void builds_and_runs(const scratch::Project *p, const char *folder, const char *name, const char *output) {
-    scratch::Run built = scratch::sh(p, format::push(&p->io->arena, "cd ../", folder, " && smith build").data);
+    scratch::Run built = scratch::sh(p, format::push("cd ../", folder, " && smith build").data);
     scratch::expect_status(name, 0, &built);
-    scratch::expect_text(name, output,
-                         scratch::capture(p, format::push(&p->io->arena, "cd ../", folder, " && ./build/app").data));
+    scratch::expect_text(name, output, captured(p, format::push("cd ../", folder, " && ./build/app").data));
 }
 
-export void test_cache_modules_the_second_clone_does_not_rebuild_the_sdk_modules(io::Io *io) {
-    scratch::Project p = modules_project(io);
+export void test_cache_modules_the_second_clone_does_not_rebuild_the_sdk_modules() {
+    scratch::Project p = modules_project();
+    defer finish(&p);
     scratch::Run cloned = scratch::sh(&p, "cp -R . ../two");
     scratch::expect_status("the clone of the project", 0, &cloned);
     scratch::Run first = scratch::build(&p, "");
     scratch::expect_status("modules: the first project builds with a cold cache", 0, &first);
     scratch::expect_text("modules: the first project builds with a cold cache (it runs)", "7",
-                         scratch::capture(&p, "./build/app"));
+                         captured(&p, "./build/app"));
     scratch::expect_text("modules: the cache is the shared one and holds modules", "yes",
                          text(&p, "[ \"$(count_modules)\" -gt 0 ] && echo yes || echo no"));
     scratch::Run listed = scratch::sh(&p, "smith cache");
     scratch::expect_contains("modules: smith cache counts its entries", listed.out,
-                             format::push(&io->arena, "modules: ", p.cache, "/smith/modules").data);
+                             format::push("modules: ", p.cache, "/smith/modules").data);
     const char *before = text(&p, "sdk_signature");
     builds_and_runs(&p, "two", "modules: the second clone builds", "7");
     scratch::expect_text("modules: clang keeps its pruning timestamp in the shared cache", "yes",
@@ -49,8 +83,9 @@ export void test_cache_modules_the_second_clone_does_not_rebuild_the_sdk_modules
                          before, text(&p, "sdk_signature"));
 }
 
-export void test_cache_modules_worktrees_with_different_headers_do_not_collide(io::Io *io) {
-    scratch::Project p = modules_project(io);
+export void test_cache_modules_worktrees_with_different_headers_do_not_collide() {
+    scratch::Project p = modules_project();
+    defer finish(&p);
     scratch::Run cloned = scratch::sh(&p, "cp -R . ../two && cp -R . ../three");
     scratch::expect_status("the clones of the project", 0, &cloned);
     scratch::Run first = scratch::build(&p, "");
@@ -62,21 +97,22 @@ export void test_cache_modules_worktrees_with_different_headers_do_not_collide(i
     scratch::expect_status("the worktree with another header", 0, &changed);
     scratch::Run third = scratch::sh(&p, "cd ../three && smith build");
     scratch::expect_status("modules: a worktree with a different inc/v.h builds", 0, &third);
-    scratch::expect_text("modules: and runs its own code", "9", scratch::capture(&p, "cd ../three && ./build/app"));
+    scratch::expect_text("modules: and runs its own code", "9", captured(&p, "cd ../three && ./build/app"));
     scratch::Run again = scratch::build(&p, "");
     scratch::expect_status("modules: the first still builds after it", 0, &again);
-    scratch::expect_text("modules: and still runs its own code", "7", scratch::capture(&p, "./build/app"));
+    scratch::expect_text("modules: and still runs its own code", "7", captured(&p, "./build/app"));
     scratch::Run second = scratch::sh(&p, "cd ../two && rm -rf build && smith build");
     scratch::expect_status("modules: a clean build of the second still works", 0, &second);
     scratch::expect_text("modules: a clean build of the second still works (it runs)", "7",
-                         scratch::capture(&p, "cd ../two && ./build/app"));
+                         captured(&p, "cd ../two && ./build/app"));
 }
 
 // Two smiths that share one cache (issue #575): the module cache is a folder of each smith's LC_UUID, so neither reads
 // the modules the other built (a stddef.h of another resource folder is not this one's). The second smith is a copy of
 // the first with its LC_UUID changed and the signature made again.
-export void test_cache_modules_two_smiths_sharing_a_cache_use_a_folder_each(io::Io *io) {
-    scratch::Project p = modules_project(io);
+export void test_cache_modules_two_smiths_sharing_a_cache_use_a_folder_each() {
+    scratch::Project p = modules_project();
+    defer finish(&p);
     // The identity is the LC_UUID on macOS (dwarfdump, then the signature made again) and the ELF build-id on Linux
     // (readelf); the 16 bytes are replaced in the copy.
     scratch::Run second = scratch::sh(
@@ -95,7 +131,7 @@ export void test_cache_modules_two_smiths_sharing_a_cache_use_a_folder_each(io::
     scratch::expect_status("two smiths: the first smith builds", 0, &first_build);
     scratch::Run other_build = scratch::sh(&p, "rm -rf build .smith && ../other/smith build");
     scratch::expect_status("two smiths: the second smith builds into the same cache", 0, &other_build);
-    scratch::expect_text("two smiths: and the program runs", "7", scratch::capture(&p, "./build/app"));
+    scratch::expect_text("two smiths: and the program runs", "7", captured(&p, "./build/app"));
     scratch::expect_text("two smiths: one module folder each", "2",
                          text(&p, "ls -d \"$modules\"/*/ | wc -l | tr -d ' '"));
     scratch::expect_text("two smiths: each folder holds modules", "2",
@@ -106,8 +142,9 @@ export void test_cache_modules_two_smiths_sharing_a_cache_use_a_folder_each(io::
 // Pruning on use (issue #575): of the folders of other smiths the three most recently used stay, the others go once
 // idle for a day, and a folder a running smith holds stays whatever its age. Hours ago: r1 1, f1 30, f2 50, f3 70, f4
 // 90, f5 110 (f5 held by a process that has its lock).
-export void test_cache_modules_old_folders_of_other_smiths_are_pruned_on_use(io::Io *io) {
-    scratch::Project p = modules_project(io);
+export void test_cache_modules_old_folders_of_other_smiths_are_pruned_on_use() {
+    scratch::Project p = modules_project();
+    defer finish(&p);
     scratch::Run made = scratch::sh(
         &p, "m=$XDG_CACHE_HOME/smith/modules; mkdir -p $m; ago() { touch -t \"$(date -v-$1H +%Y%m%d%H%M 2>/dev/null "
             "|| date -d \"$1 hours ago\" +%Y%m%d%H%M)\" \"$2\"; }; for f in r1:1 f1:30 f2:50 f3:70 f4:90 f5:110; do "
@@ -116,18 +153,18 @@ export void test_cache_modules_old_folders_of_other_smiths_are_pruned_on_use(io:
             "holder=$!; sleep 1; smith build >/dev/null 2>&1; echo \"built $?\"; kill $holder");
     scratch::expect_text("pruning: the build runs while the lock is held", "built 0\n", made.out);
     scratch::expect_text("pruning: the recent three and the held one stay, the rest go", "f1 f2 f5 r1",
-                         scratch::capture(&p, "cd $XDG_CACHE_HOME/smith/modules && ls -d */ | tr -d "
-                                              "/ | grep -v '^[0-9a-f]\\{32\\}$' | tr '\\n' ' ' | sed 's/ $//'"));
-    scratch::expect_text(
-        "pruning: this smith's folder is there", "1",
-        scratch::capture(&p, "ls -d $XDG_CACHE_HOME/smith/modules/*/ | grep -c '/[0-9a-f]\\{32\\}/$'"));
+                         captured(&p, "cd $XDG_CACHE_HOME/smith/modules && ls -d */ | tr -d "
+                                      "/ | grep -v '^[0-9a-f]\\{32\\}$' | tr '\\n' ' ' | sed 's/ $//'"));
+    scratch::expect_text("pruning: this smith's folder is there", "1",
+                         captured(&p, "ls -d $XDG_CACHE_HOME/smith/modules/*/ | grep -c '/[0-9a-f]\\{32\\}/$'"));
 }
 
 // Stable hashes (issue #618): clang puts a module in a folder named by the hash of the compile's flags, so builds whose
 // flags are the same share one folder, whatever folder the project is in. Two clones of one project, built from two
 // folders of the scratch folder, leave one context-hash folder in this smith's folder, not one for each.
-export void test_cache_modules_builds_in_different_folders_share_one_context_hash_folder(io::Io *io) {
-    scratch::Project p = modules_project(io);
+export void test_cache_modules_builds_in_different_folders_share_one_context_hash_folder() {
+    scratch::Project p = modules_project();
+    defer finish(&p);
     scratch::Run cloned = scratch::sh(&p, "cp -R . ../two && cp -R . ../three");
     scratch::expect_status("the clones of the project", 0, &cloned);
     scratch::Run first = scratch::build(&p, "");
@@ -141,8 +178,9 @@ export void test_cache_modules_builds_in_different_folders_share_one_context_has
 // The cap on the folders (issue #618): four folders of other smiths of 400 kB, the oldest (100 hours; held by a running
 // smith too: 300) and a build with SMITH_CACHE_MAX=1000k. The least recently used goes, the one a process holds stays,
 // and so do the younger.
-export void test_cache_cap_the_least_recently_used_folder_goes_and_one_in_use_stays(io::Io *io) {
-    scratch::Project p = modules_project(io);
+export void test_cache_cap_the_least_recently_used_folder_goes_and_one_in_use_stays() {
+    scratch::Project p = modules_project();
+    defer finish(&p);
     scratch::Run made = scratch::sh(
         &p, ". ./prelude; m=$modules; mkdir -p $m; for f in a:100 b:50 c:2 h:300; do mkdir -p $m/${f%:*}; "
             "head -c 400000 /dev/zero >$m/${f%:*}/x.pcm; : >$m/${f%:*}/.used; ago ${f#*:} $m/${f%:*}/.used; done; "
@@ -150,14 +188,15 @@ export void test_cache_cap_the_least_recently_used_folder_goes_and_one_in_use_st
             "holder=$!; sleep 1; SMITH_CACHE_MAX=1000k smith build >/dev/null 2>&1; echo \"built $?\"; kill $holder");
     scratch::expect_text("cap: the build runs while the lock is held", "built 0\n", made.out);
     scratch::expect_text("cap: the least recently used folder is gone, the held and the younger stay", "b c h",
-                         scratch::capture(&p, "cd $XDG_CACHE_HOME/smith/modules && ls -d */ | tr -d / | "
-                                              "grep -v '^[0-9a-f]\\{32\\}$' | tr '\\n' ' ' | sed 's/ $//'"));
+                         captured(&p, "cd $XDG_CACHE_HOME/smith/modules && ls -d */ | tr -d / | "
+                                      "grep -v '^[0-9a-f]\\{32\\}$' | tr '\\n' ' ' | sed 's/ $//'"));
 }
 
 // The cap on this smith's own folder: when the folders of others cannot make room, its module files go, least recently
 // used first, but never one used in the last hour (a build's own).
-export void test_cache_cap_this_smiths_old_module_files_go_when_the_cache_is_over_the_cap(io::Io *io) {
-    scratch::Project p = modules_project(io);
+export void test_cache_cap_this_smiths_old_module_files_go_when_the_cache_is_over_the_cap() {
+    scratch::Project p = modules_project();
+    defer finish(&p);
     scratch::Run first = scratch::build(&p, "");
     scratch::expect_status("cap: the first build fills the folder", 0, &first);
     scratch::Run second = scratch::sh(
@@ -182,9 +221,11 @@ constexpr char make_tree[_] =
     "echo x >$d/build/big; mkdir -p c/smith/enzyme/0.0.303-23.1.3-${n%:*}/lib; done; "
     "smith cc -std=c23 scripts/llvm_prune.c -o prune && echo made";
 
-export void test_llvm_prune_keeps_the_new_build_and_the_previous_releases_and_removes_the_rest(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::copy_tree(&p, "scripts/llvm_prune.c", "scripts/llvm_prune.c");
+export void test_llvm_prune_keeps_the_new_build_and_the_previous_releases_and_removes_the_rest() {
+    scratch::Project p = start(nullptr);
+    defer finish(&p);
+    scratch::Run copied = scratch::sh(&p, "mkdir -p scripts && cp \"$SMITH_REPO/scripts/llvm_prune.c\" scripts/");
+    scratch::expect_status("prune: the tool's source is copied", 0, &copied);
     scratch::own_cache(&p);
     scratch::Run made = scratch::sh(&p, make_tree);
     scratch::expect_text("prune: the tree and the tool are made", "made", made.out);
@@ -193,20 +234,22 @@ export void test_llvm_prune_keeps_the_new_build_and_the_previous_releases_and_re
     scratch::expect_contains("prune: it says what it removed", pruned.out, "23.1.3-r9");
     scratch::expect_text("prune: the new build, the previous release's and one with no id (in progress) stay",
                          "23.1.3-r10 23.1.3-r11 23.1.3-r8",
-                         scratch::capture(&p, "ls c/smith/llvm | tr '\\n' ' ' | sed 's/ $//'"));
+                         captured(&p, "ls c/smith/llvm | tr '\\n' ' ' | sed 's/ $//'"));
     scratch::expect_text("prune: Enzyme of a removed build goes, the others stay",
                          "0.0.303-23.1.3-r10 0.0.303-23.1.3-r11 0.0.303-23.1.3-r8",
-                         scratch::capture(&p, "ls c/smith/enzyme | tr '\\n' ' ' | sed 's/ $//'"));
+                         captured(&p, "ls c/smith/enzyme | tr '\\n' ' ' | sed 's/ $//'"));
 }
 
-export void test_llvm_prune_without_a_previous_identity_keeps_only_the_new_build(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::copy_tree(&p, "scripts/llvm_prune.c", "scripts/llvm_prune.c");
+export void test_llvm_prune_without_a_previous_identity_keeps_only_the_new_build() {
+    scratch::Project p = start(nullptr);
+    defer finish(&p);
+    scratch::Run copied = scratch::sh(&p, "mkdir -p scripts && cp \"$SMITH_REPO/scripts/llvm_prune.c\" scripts/");
+    scratch::expect_status("prune: the tool's source is copied", 0, &copied);
     scratch::own_cache(&p);
     scratch::Run made = scratch::sh(&p, make_tree);
     scratch::expect_text("prune: the tree and the tool are made", "made", made.out);
     scratch::Run pruned = scratch::sh(&p, "./prune $PWD/c/smith/llvm 23.1.3-r11 ''");
     scratch::expect_status("prune: the tool runs", 0, &pruned);
     scratch::expect_text("prune: the new build and the one with no id stay", "23.1.3-r11 23.1.3-r8",
-                         scratch::capture(&p, "ls c/smith/llvm | tr '\\n' ' ' | sed 's/ $//'"));
+                         captured(&p, "ls c/smith/llvm | tr '\\n' ' ' | sed 's/ $//'"));
 }

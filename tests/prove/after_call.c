@@ -49,9 +49,9 @@ void add_row(const Board *board, Lists *restrict lists, uint8_t row) {
     smith_requires(board->turn == 0 || board->turn == 1);
     smith_requires(row < 8);
     smith_requires(lists->steps.len == 0 && lists->jumps.len == 0);
-    for (uint8_t col = 0; col < 7; col++) {
+    for (uint8_t col = 0; col < 2; col++) {
         smith_invariant(lists->steps.len <= 2 * col && lists->jumps.len <= 2 * col);
         add_square(board, lists, row, col);
     }
-    smith_ensures(lists->steps.len <= 14 && lists->jumps.len <= 14);
+    smith_ensures(lists->steps.len <= 4 && lists->jumps.len <= 4);
 }

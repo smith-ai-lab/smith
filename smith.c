@@ -314,10 +314,36 @@ static void smith_show_command(const char *verb, const char *program, char *cons
     fputc('\n', stderr);
 }
 
+#ifdef SMITH_CORE
+// smith_core_route (the end of this file) runs a route in a child of the test runner and has it stop where it would
+// start a program: with a file set here the program and its arguments are written to it, and the child ends.
+static FILE *smith_route_capture;
+static const char *const *smith_route_show; // the environment variables the record names, ended by nullptr
+
+static void smith_route_record(const char *kind, const char *program, int count, char *const *args) {
+    if (smith_route_capture == nullptr) return;
+    fprintf(smith_route_capture, "%s %s", kind, program);
+    for (int i = 1; i < count; i++) // args[0] is the program
+        fprintf(smith_route_capture, "\n[%s]", args[i]);
+    for (size_t i = 0; smith_route_show != nullptr && smith_route_show[i] != nullptr; i++) {
+        const char *value = getenv(smith_route_show[i]);
+        fprintf(smith_route_capture, "\nenv %s=%s", smith_route_show[i], value != nullptr ? value : "(unset)");
+    }
+    fflush(nullptr);
+    _exit(0);
+}
+#endif
+
 static void smith_run(const char *program, char *const *args) {
     SMITH_ASSERT(program != nullptr && args != nullptr);
     SMITH_ASSERT(args[0] == program); // the compiler is handed its own full path as argv[0]
     if (getenv("SMITH_VERBOSE") != nullptr) smith_show_command("exec", program, args);
+#ifdef SMITH_CORE
+    int count = 0;
+    while (args[count] != nullptr) // args ends with nullptr
+        count++;
+    smith_route_record("exec", program, count, args);
+#endif
     execv(program, args);
     smith_die(smith_exit_missing, "cannot execute", program);
 }
@@ -393,6 +419,12 @@ static int smith_route_metal(int count, char **args, bool which, const char *sel
 #include "runtime/platform_linux.c"
 #endif
 
+#ifdef SMITH_CORE // the units runner embeds no pack (runtime/pack_data.c is the program's): a route ends before it
+                  // reads one
+const unsigned char smith_clang_resource[] = {0};
+const size_t smith_clang_resource_size = 0;
+#endif
+
 static unsigned char smith_resource_chunk[smith_pack_chunk_max];
 
 static SmithPackHeader smith_resource_header(void) {
@@ -464,7 +496,7 @@ static size_t smith_resource_write(const char *root, size_t offset) {
     int written = snprintf(path, sizeof path, "%s/%.*s", root, (int)file.path_length,
                            (const char *)smith_clang_resource + offset);
     SMITH_ASSERT(written > 0 && (size_t)written < sizeof path);
-    SMITH_ASSERT(strstr(path, "/../") == nullptr);
+    SMITH_ASSERT(strstr(path + strlen(root), "/../") == nullptr); // the pack's own part; the root may hold ".."
     offset += file.path_length;
     const unsigned char *data = smith_clang_resource + offset;
     if (file.stored == file.size) {
@@ -651,6 +683,17 @@ static void smith_programs_make(const char *runtime, const char *programs, const
         snprintf(path, sizeof path, "%s/bin/%s", temporary, names[i]);
         if (!smith_platform_clone(self, path)) smith_die(smith_exit_usage, "cannot link", path);
     }
+#ifdef __APPLE__
+    // The clones are linked with the handlers runtime like every program (-lsmith_handlers, an @executable_path rpath),
+    // so its dylib is beside them: a clone of the one beside the running smith.
+    char dylib[PATH_MAX];
+    snprintf(dylib, sizeof dylib, "%s", self);
+    char *last = strrchr(dylib, '/');
+    SMITH_ASSERT(last != nullptr);
+    snprintf(last + 1, sizeof dylib - (size_t)(last + 1 - dylib), "libsmith_handlers.dylib");
+    snprintf(path, sizeof path, "%s/bin/libsmith_handlers.dylib", temporary);
+    if (!smith_platform_clone(dylib, path)) smith_die(smith_exit_usage, "cannot link", path);
+#endif
     char target[PATH_MAX];
     snprintf(target, sizeof target, "%s/lib", runtime);
     snprintf(path, sizeof path, "%s/lib", temporary);
@@ -846,7 +889,12 @@ static int smith_route_linker(int argc, char **argv) {
         if (status > 0) return status;
     }
 #endif
+#ifdef SMITH_CORE // the units runner links no linker
+    smith_route_record("in-process", "ld", argc, argv);
+    return smith_exit_missing;
+#else
     return smith_lld_main(argc, argv);
+#endif
 }
 
 // Whether clang runs in this process: unless the caller's variable names an external clang to run instead.
@@ -856,6 +904,12 @@ static bool smith_runs_in_process(const char *override_name) {
 }
 
 static int smith_route_in_process(int argc, char **argv, int first, bool which, bool plus, const char *self) {
+#ifdef SMITH_CORE // the units runner links neither the compiler nor the pack: the route ends at the program's name
+    smith_route_record("in-process", plus ? "clang++" : "clang", argc - first + 1, argv + first - 1);
+    (void)which;
+    (void)self;
+    return smith_exit_missing;
+#else
     char folder[PATH_MAX];
     char programs[PATH_MAX];
     char program[PATH_MAX];
@@ -879,6 +933,7 @@ static int smith_route_in_process(int argc, char **argv, int first, bool which, 
 #endif
     if (getenv("SMITH_VERBOSE") != nullptr) smith_show_command("in-process", program, argv + first - 1);
     return smith_clang_main(program, argc - first + 1, argv + first - 1, !smith_has_linker_override(), resource);
+#endif
 }
 
 #include "runtime/lang.h"
@@ -1060,10 +1115,6 @@ static constexpr unsigned char smith_inflate_source[] = {
 #embed "lib/smith/inflate.smith"
 };
 
-static constexpr unsigned char smith_io_source[] = {
-#embed "lib/smith/io.smith"
-};
-
 static constexpr unsigned char smith_json_header[] = {
 #embed "include/smith/json.h"
 };
@@ -1128,6 +1179,12 @@ static constexpr unsigned char smith_categorical_source[] = {
 };
 static constexpr unsigned char smith_slice_source[] = {
 #embed "lib/smith/slice.smith"
+};
+static constexpr unsigned char smith_wrapping_source[] = {
+#embed "lib/smith/wrapping.smith"
+};
+static constexpr unsigned char smith_task_source[] = {
+#embed "lib/smith/task.smith"
 };
 
 static constexpr unsigned char smith_handlers_header[] = {
@@ -1201,7 +1258,6 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(format, true),
     SMITH_LIBRARY(handlers, false),
     SMITH_LIBRARY(inflate, true),
-    SMITH_LIBRARY(io, true),
     SMITH_LIBRARY(json, false),
     SMITH_LIBRARY(math, true),
     SMITH_LIBRARY(mem, true),
@@ -1209,6 +1265,8 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(net, true),
     SMITH_LIBRARY_FLAGS(random, true, "-ffp-contract=off\n"),
     SMITH_LIBRARY(slice, true),
+    SMITH_LIBRARY(wrapping, true),
+    SMITH_LIBRARY(task, true),
     SMITH_LIBRARY(test, true),
     SMITH_LIBRARY(text, true),
     SMITH_LIBRARY(trace, false),
@@ -1220,6 +1278,8 @@ static const SmithLibrary smith_libraries[] = {
 // `smith --smith-explain`: the values of a failed check, read from the stopped test with lldb.
 #include "runtime/explain.c"
 // Packages, shared with the build runtime: the cache, the download and SHA-256.
+#include <runtime/io.h>
+
 #include "runtime/package.c"
 // `smith cache`, and the lock a build holds on the caches.
 #include "runtime/cache.c"
@@ -1442,7 +1502,8 @@ static SmithBuildFile smith_build_file(void) {
 // The libraries the build program links, .smith modules that the smith doing the build compiles whatever compiler
 // compiles build.c itself (an external SMITH_CLANG knows no .smith): the runtime's package.c and the executor use them
 // through their headers. random declares -ffp-contract=off.
-static const char *const smith_build_program_libraries[] = {"arena", "contract", "inflate", "io", "random"};
+static const char *const smith_build_program_libraries[] = {"arena",   "contract", "env", "files",
+                                                            "inflate", "mem",      "net", "random"};
 
 // The compiles are `-MD` and name the debug info's folder `.`, so the step cache serves them to every project whose
 // build file and libraries are the same (executor.md, "The step cache"): -MMD is refused by it, and a `-g` object
@@ -1501,6 +1562,15 @@ static size_t smith_build_program_manifest(char *out, size_t capacity, const cha
         SMITH_ASSERT(more > 0 && (size_t)more < sizeof objects - objects_length);
         objects_length += (size_t)more;
     }
+    // The libraries call the handlers' getters and setters (smith::mem, files, net), so the runtime is linked as an
+    // object (on macOS too, where it interposes nothing in the program that holds it: only its functions are used).
+    int handlers = snprintf(out + written, capacity - (size_t)written,
+                            "build .smith/build-program/handlers.o: cc .smith/lib/handlers.c\n");
+    SMITH_ASSERT(handlers > 0 && (size_t)handlers < capacity - (size_t)written);
+    written += handlers;
+    int more_objects =
+        snprintf(objects + objects_length, sizeof objects - objects_length, " .smith/build-program/handlers.o");
+    SMITH_ASSERT(more_objects > 0 && (size_t)more_objects < sizeof objects - objects_length);
     int linked = snprintf(out + written, capacity - (size_t)written, "build .smith/program: link %s\n", objects);
     SMITH_ASSERT(linked > 0 && (size_t)linked < capacity - (size_t)written);
     return (size_t)written + (size_t)linked;
@@ -1688,7 +1758,7 @@ typedef struct {
     char source[PATH_MAX];
     char header[PATH_MAX];
     char scratch[PATH_MAX + 32];
-    char name[64];             // the module's name: `io` for smith::io, the header's basename
+    char name[64];             // the module's name: `arena` for smith::arena, the header's basename
     const unsigned char *text; // the module's source, where its imports are found
     size_t text_size;
     bool skip; // the header is written already (or copied): no process
@@ -2296,9 +2366,7 @@ static int smith_fetch_main(int count, char **args) {
     char folder[PATH_MAX];
     char hash[smith_package_hash_size];
     SmithPackageFault error;
-    SmithIo io = smith_io_make(0, nullptr);
-    bool fetched = smith_package_ensure(&io, args[0], nullptr, false, folder, hash, &error);
-    smith_io_close(&io);
+    bool fetched = smith_package_ensure(args[0], nullptr, false, folder, hash, &error);
     if (!fetched) smith_die(smith_exit_usage, "fetch failed:", error.text);
     printf(".hash = \"%s\",\n", hash);
     fflush(stdout);
@@ -2346,9 +2414,6 @@ static constexpr unsigned char smith_new_gitignore[] = {
 };
 static constexpr unsigned char smith_new_claude_settings[] = {
 #embed "templates/new/claude-settings.json"
-};
-static constexpr unsigned char smith_new_agents[] = {
-#embed "templates/new/agents.md"
 };
 static constexpr unsigned char smith_new_knowledge_index[] = {
 #embed "templates/new/knowledge-index.md"
@@ -2403,7 +2468,6 @@ static const SmithNewFile smith_new_files[] = {
     SMITH_NEW_ONLY("primes_test.c", smith_new_primes_test_c, SmithNewLanguage_C, false),
     SMITH_NEW_FILE(".gitignore", smith_new_gitignore, false, false, false),
     SMITH_NEW_FILE(".claude/settings.json", smith_new_claude_settings, false, false, false),
-    SMITH_NEW_FILE("AGENTS.md", smith_new_agents, true, false, false),
     SMITH_NEW_FILE("knowledge/index.md", smith_new_knowledge_index, true, false, true),
     SMITH_NEW_ONLY("knowledge/program.md", smith_new_knowledge_program, SmithNewLanguage_Smith, true),
     SMITH_NEW_ONLY("knowledge/program.md", smith_new_knowledge_program_c, SmithNewLanguage_C, true),
@@ -2839,6 +2903,7 @@ static void smith_debugserver_environment(const char *self) {
 }
 #endif
 
+#ifndef SMITH_CORE // the units runner links no shim: smith_core_route stops at the tool
 static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, const char *self) {
     char folder[PATH_MAX];
     char programs[PATH_MAX];
@@ -2864,6 +2929,7 @@ static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, c
 #endif
     return smith_clangd_main(argc, argv);
 }
+#endif
 
 // ---- smith's defaults for a project with no config file (issue #43, part 1)
 //
@@ -3185,6 +3251,7 @@ static void smith_lsp_headers(const char *self) {
 // project has no .clang-format or .clang-tidy, as `smith fmt` and `smith lint` do
 // (patches/smith-editor-defaults.patch). A project's file wins whole, and clangd's own --fallback-style wins over
 // smith's style.
+#ifndef SMITH_CORE
 static void smith_lsp_defaults(void) {
     static char style[PATH_MAX];
     static char tidy[PATH_MAX];
@@ -3192,6 +3259,7 @@ static void smith_lsp_defaults(void) {
     smith_defaults_path(smith_defaults_clang_tidy, sizeof smith_defaults_clang_tidy, "clang-tidy", tidy);
     smith_clangd_defaults(style, tidy);
 }
+#endif
 
 // argv is main's, with argv[1] the command; the tool gets argv[1 ..] with the command replaced by its own path, so its
 // arguments are unchanged.
@@ -3199,9 +3267,15 @@ static int smith_tool_launch(const SmithTool *tool, int argc, char **argv, const
     SMITH_ASSERT(tool != nullptr && argc >= 2 && argv[0] != nullptr);
 #ifdef __APPLE__
     smith_sdk_environment(self); // clangd, and clang-tidy's compiles, find the SDK as the compiler does
-    if (strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0) smith_debugserver_environment();
+#endif
+#ifndef SMITH_CORE // the debug server is found in the pack, which the units runner has none of
+    if (strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0) {
+#ifdef __APPLE__
+        smith_debugserver_environment();
 #else
-    if (strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0) smith_debugserver_environment(self);
+        smith_debugserver_environment(self);
+#endif
+    }
 #endif
     bool crash = strcmp(tool->command, "dbg") == 0 && argc >= 3 &&
                  (strcmp(argv[2], "--crash") == 0 || strcmp(argv[2], "--at") == 0);
@@ -3209,11 +3283,16 @@ static int smith_tool_launch(const SmithTool *tool, int argc, char **argv, const
     const char *override = getenv(tool->override);
     bool debugger = strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0;
     if ((override == nullptr || *override == '\0') && (!debugger || smith_has_lldb)) {
+#ifdef SMITH_CORE
+        smith_route_record("in-process", tool->tool, argc - 1, argv + 1);
+        return smith_exit_missing;
+#else
         if (strcmp(tool->command, "lsp") == 0) {
             smith_lsp_headers(self);
             smith_lsp_defaults();
         }
         return smith_tool_in_process(tool, argc - 1, argv + 1, self);
+#endif
     }
     char program[PATH_MAX];
     smith_find_clang(tool->tool, tool->override, self, program);
@@ -3416,7 +3495,7 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
     return true;
 }
 
-// `smith docs`: the check of AGENTS.md, knowledge/ and the skills, with the types knowledge/index.md declares.
+// `smith docs`: the check of knowledge/ and the skills, with the types knowledge/index.md declares.
 #include "runtime/docs.c"
 
 // `smith mcp`: the debugger server of issue #22. A feature of the full smith (-DSMITH_MCP, which `smith build` passes
@@ -3451,7 +3530,7 @@ typedef enum {
     SmithVerb_New,
     SmithVerb_Fetch,
     SmithVerb_Cache,
-    SmithVerb_Docs,          // smith docs: checks AGENTS.md, knowledge/ and skills
+    SmithVerb_Docs,          // smith docs: checks knowledge/ and skills
     SmithVerb_Symbolize,     // smith symbolize: stack traces turned into lines
     SmithVerb_Version,       // smith version: the version line and the commit smith was built from
     SmithVerb_Mcp,           // smith mcp: the debugger as an MCP server (the full smith)
@@ -3565,7 +3644,7 @@ static void smith_usage(FILE *out) {
           "  lsp                     clangd\n"
           "  dbg, dap                lldb, and lldb-dap (the Debug Adapter Protocol server)\n"
           "  mcp                     the debugger as an MCP server over stdio (agents: launch, breakpoint, stack...)\n"
-          "  docs                    check AGENTS.md, knowledge/ and the skills of the project\n"
+          "  docs                    check knowledge/ and the skills of the project\n"
           "  new, fetch, cache       start a project, fetch a package, show and clean the caches\n"
           "  version                 the version and the commit smith was built from\n",
           out);
@@ -3585,13 +3664,10 @@ static void smith_usage(FILE *out) {
     exit(smith_exit_usage);
 }
 
-#ifndef SMITH_CORE // the units runner links this file as a library (runtime/core.h), without the program's main
-int main(int argc, char **argv) {
+// What main does with the arguments once smith knows its own path: the name it is run as, then the verb. The units
+// runner calls it through smith_core_route (the end of this file).
+static int smith_main_route(int argc, char **argv, const char *self) {
     SMITH_ASSERT(argc >= 1 && argv[0] != nullptr);
-    smith_account_start();
-    char self[PATH_MAX];
-    if (!smith_self_path(self)) smith_die(smith_exit_missing, "cannot determine the path of this executable", nullptr);
-
     const char *name = smith_base_name(argv[0]);
     if (strcmp(name, "ld") == 0) return smith_route_linker(argc, argv);
     if (strcmp(name, "lldb-argdumper") == 0) return smith_argdumper(argc, argv);
@@ -3639,5 +3715,95 @@ int main(int argc, char **argv) {
     else if (smith_slots_verb(verb->name))
         smith_slots_arm(verb->name);
     return smith_dispatch(verb, argc, argv, self);
+}
+
+#ifndef SMITH_CORE // the units runner links this file as a library (runtime/core.h), without the program's main
+int main(int argc, char **argv) {
+    SMITH_ASSERT(argc >= 1 && argv[0] != nullptr);
+    smith_account_start();
+    char self[PATH_MAX];
+    if (!smith_self_path(self)) smith_die(smith_exit_missing, "cannot determine the path of this executable", nullptr);
+    return smith_main_route(argc, argv, self);
+}
+#endif
+
+#ifdef SMITH_CORE
+#include "smith_core_route.h"
+
+constexpr int smith_route_arguments_max = 4096;
+static char *smith_route_arguments[smith_route_arguments_max + 1];
+
+// The route runs in a child of the caller: it sets environment variables, changes folder, and ends the process where
+// smith would start a program or refuse (smith_die), none of which a caller could take back in its own process.
+static void smith_route_child(const SmithCoreRoute *route, FILE *record, FILE *out, FILE *err) {
+    if (route->folder != nullptr && chdir(route->folder) != 0) _exit(smith_exit_missing);
+    for (size_t i = 0; route->environment != nullptr && route->environment[i] != nullptr; i++) { // ended by nullptr
+        const char *entry = route->environment[i];
+        if (entry[0] == '-') {
+            unsetenv(entry + 1);
+        } else {
+            const char *equals = strchr(entry, '=');
+            SMITH_ASSERT(equals != nullptr && equals != entry);
+            char name[256];
+            SMITH_ASSERT((size_t)(equals - entry) < sizeof name);
+            smith_copy_bytes(name, entry, (size_t)(equals - entry));
+            name[equals - entry] = '\0';
+            setenv(name, equals + 1, 1);
+        }
+    }
+    int argc = 0;
+    while (route->arguments[argc] != nullptr) { // ended by nullptr
+        SMITH_ASSERT(argc < smith_route_arguments_max);
+        smith_route_arguments[argc] = (char *)route->arguments[argc];
+        argc++;
+    }
+    smith_route_arguments[argc] = nullptr;
+    SMITH_ASSERT(argc >= 1);
+    smith_route_capture = record;
+    smith_route_show = route->show;
+    dup2(fileno(out), 1);
+    dup2(fileno(err), 2);
+    int status = smith_main_route(argc, smith_route_arguments, route->self);
+    fflush(nullptr);
+    _exit(status);
+}
+
+// Everything the file holds, NUL-terminated. False when it does not fit.
+static bool smith_route_read(FILE *file, char *text, size_t size) {
+    rewind(file);
+    size_t got = fread(text, 1, size - 1, file);
+    text[got] = '\0';
+    return fgetc(file) == EOF;
+}
+
+// include/smith_core_route.h: the routing of the compiler verbs and links, the tools and the bare arguments, in
+// process.
+bool smith_core_route(const SmithCoreRoute *route, SmithCoreRouted *routed) {
+    SMITH_ASSERT(route != nullptr && routed != nullptr && route->arguments != nullptr && route->self != nullptr);
+    FILE *record = tmpfile();
+    FILE *out = tmpfile();
+    FILE *err = tmpfile();
+    bool ok = record != nullptr && out != nullptr && err != nullptr;
+    pid_t pid = -1;
+    if (ok) {
+        fflush(nullptr); // what is buffered would be written twice
+        pid = fork();
+        ok = pid >= 0;
+    }
+    if (ok && pid == 0) smith_route_child(route, record, out, err);
+    int wait_status = 0;
+    pid_t waited = -1;
+    for (int tries = 0; ok && tries < 1000 && waited < 0; tries++) // bounded; a signal
+        waited = waitpid(pid, &wait_status, 0);
+    ok = ok && waited == pid && WIFEXITED(wait_status);
+    if (ok) {
+        routed->status = WEXITSTATUS(wait_status);
+        ok = smith_route_read(record, routed->exec, sizeof routed->exec) &&
+             smith_route_read(out, routed->out, sizeof routed->out) &&
+             smith_route_read(err, routed->err, sizeof routed->err);
+    }
+    for (FILE *file = record; file != nullptr; file = file == record ? out : file == out ? err : nullptr)
+        fclose(file);
+    return ok;
 }
 #endif

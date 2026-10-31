@@ -1,5 +1,5 @@
 // Scratch projects for the tests that start smith (tests/build_*_test.smith): a folder in the test's scratch folder
-// (removed when the test passes), a fixture copied into it, and commands run there through io's processes with the
+// (removed when the test passes), a fixture copied into it, and commands run there through the process module with the
 // smith under test first on PATH. The smith under test is the one running the tests, `$SMITH_SELF` (set by
 // `smith test`; set it to run a runner by hand). Each test is a process of its own, so the environment it sets is its.
 // NOLINTBEGIN(smith-mem): #421: importing smith::mem breaks every test that imports scratch; convert to mem:: after it
@@ -10,22 +10,20 @@ import smith::clock;
 import smith::env;
 import smith::files;
 import smith::format;
-import smith::io;
 import smith::mem;
 import smith::process;
 import smith::test;
 import <smith_core.h>;
 import <string.h>;
 
-// The bytes of a buffer, for the calls of io that take a slice.
-static typeof(const u8[:]) test_io_bytes(const void *data, usize size) {
+// The bytes of a buffer, for the calls of files that take a slice.
+static typeof(const u8[:]) bytes_of(const void *data, usize size) {
     const u8 *bytes = (const u8 *)data;
     return bytes[0:size];
 }
 
 export typedef struct {
-    io::Io *io;         // nullptr in a project made by scratch::make: a test with no io (issue #815)
-    const char *root;   // scratch::make only: the folder it made, which scratch::clean removes
+    const char *root;   // the folder scratch::make made, which scratch::clean removes
     const char *dir;    // where commands run
     const char *tested; // a folder with smith, smith-cc and smith-c++ for PATH
     const char *cache;  // XDG_CACHE_HOME of the commands
@@ -37,20 +35,13 @@ export typedef struct {
     const char *err;
 } Run;
 
-constexpr u64 nanoseconds = 1'000'000'000;
-
-// The text of a process's pipe, which io leaves unterminated when empty.
-static const char *text_of(const char *data) {
-    return data != nullptr ? data : "";
-}
-
-// ---------------------------------------------------------------- no io (issue #815, #240)
+// ---------------------------------------------------------------- memory
 // Returned memory is the caller's to free: what scratch::make holds for itself (the project's paths) is freed by
 // scratch::clean, and the text a Run, scratch::read or scratch::capture returns to a test is malloc'd and belongs to
 // the test, which frees it (`defer scratch::release(run.out);`). A test that does not fails with `memory leaked`, at
 // the line that allocated it.
 
-// Gives back a text that scratch returned (a Run's out and err, `read`, `capture` of a project with no io).
+// Gives back a text that scratch returned (a Run's out and err, `read`, `capture`).
 export void release(const char *text) {
     mem::free((void *)(usize)text);
 }
@@ -73,7 +64,7 @@ static const char *join_free(const char *a, const char *b, const char *c) {
     return text;
 }
 
-// The run of a command with no io: the process module's output is copied into texts of the caller's and what the
+// The run of a command: the process module's output is copied into texts of the caller's and what the
 // process module allocated is given back.
 static Run run_free(const char *const argv[:]) {
     process::OutputResult done = process::run(argv);
@@ -93,7 +84,7 @@ static Run run_free(const char *const argv[:]) {
     return (Run){};
 }
 
-// Runs `sh -c script arg0 arg1` with no io and returns what it printed, to free; the status must be 0.
+// Runs `sh -c script arg0 arg1` and returns what it printed, to free; the status must be 0.
 static const char *script_free(const char *script, const char *arg0, const char *arg1) {
     const char *const argv[_] = {"sh", "-c", script, arg0, arg1, nullptr};
     Run run = run_free(argv[0:5]);
@@ -139,155 +130,43 @@ constexpr char setup_script[_] =
 // (never the real one) and the repository as $SMITH_REPO (where the runner was started). Nothing is set in this
 // process: the environment is made by the shell that runs the command.
 static Run run_in(const Project *p, const char *command) {
-    if (p->io == nullptr) {
-        const char *const free_argv[_] = {"sh", "-c", run_script, p->dir, command, p->tested, p->cache, nullptr};
-        return run_free(free_argv[0:7]);
-    }
-    const char *argv[_] = {"sh", "-c", run_script, p->dir, command, p->tested, p->cache, nullptr};
-    io::ProcessResult result = io::processes_run(&p->io->processes, &p->io->arena, argv);
-    test::check_equal(result.error.code, 0);
-    return (Run){
-        .status = result.signal != 0 ? 128 + result.signal : result.exit_status,
-        .out = text_of(result.output),
-        .err = text_of(result.errors),
-    };
+    const char *const argv[_] = {"sh", "-c", run_script, p->dir, command, p->tested, p->cache, nullptr};
+    return run_free(argv[0:7]);
+}
+
+// The pieces as text on `arena`, which is the allocator while it is pushed: what a test builds in its arena goes back
+// with the arena, so no text is freed one at a time.
+export format::Chars push(arena::Arena *arena, auto... args) {
+    arena::ArenaAllocator allocator = arena::allocator(arena);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    return format::push(args...);
 }
 
 static const char *path_in(const Project *p, const char *name) {
-    if (p->io == nullptr) return join_free(p->dir, "/", name); // the caller frees
-    return format::push(&p->io->arena, p->dir, "/", name).data;
+    return join_free(p->dir, "/", name); // the caller frees
 }
 
-static const char *join(io::Io *io, const char *folder, const char *name) {
-    return format::push(&io->arena, folder, "/", name).data;
-}
-
-constexpr usize copy_folders_max = 4096;
-static const char *copy_from[copy_folders_max];
-static const char *copy_to[copy_folders_max];
-
-static void copy_file(const Project *p, const char *from, const char *to) {
-    io::Error copied = io::files_copy(&p->io->files, from, to);
-    if (copied.code != 0) {
-        test::note("%s could not be copied", from);
-    }
-    test::check_equal(copied.code, 0);
-}
-
-// The copy with no io: the source is a folder (its contents) or a file; a link stays a link.
+// The copy: the source is a folder (its contents) or a file; a link stays a link.
 constexpr char copy_script[_] =
     "src=\"${SMITH_REPO:-.}/$1\"; if [ -d \"$src\" ]; then mkdir -p \"$0\" && cp -PR \"$src/.\" \"$0\"; "
     "else mkdir -p \"$(dirname \"$0\")\" && cp -PR \"$src\" \"$0\"; fi";
 
 // Copies a file or a folder of the repository (`source`, relative to $SMITH_REPO) into the project as `name`: a file
 // becomes the file `name`, a folder's contents go into the folder `name` ("" is the project itself), like `cp -R
-// source/. name`; a symbolic link in a folder stays a link. The copy is made through io, so every file it opens and
-// every folder it lists is in the record of the test (SMITH_READS_LOG, issue #739): a corpus case changed in the
-// repository selects the test that copied it. A test that hands a repository file to a process copies it first and
-// gives the process the copy; no command reads the repository in place.
+// source/. name`; a symbolic link in a folder stays a link. A test that hands a repository file to a process copies it
+// first and gives the process the copy; no command reads the repository in place.
 export void copy_tree(const Project *p, const char *source, const char *name) {
-    if (p->io == nullptr) { // no io (issue #843): cp -PR, a link stays a link; the process module runs it
-        const char *to = name[0] == '\0' ? join_free(p->dir, "", "") : path_in(p, name);
-        const char *const argv[_] = {"sh", "-c", copy_script, to, source, nullptr};
-        Run run = run_free(argv[0:5]);
-        if (run.status != 0) {
-            test::note("%s could not be copied: %s", source, run.err);
-        }
-        test::check_equal(run.status, 0);
-        release(run.out);
-        release(run.err);
-        release(to);
-        return;
+    const char *to = name[0] == '\0' ? join_free(p->dir, "", "") : path_in(p, name);
+    const char *const argv[_] = {"sh", "-c", copy_script, to, source, nullptr};
+    Run run = run_free(argv[0:5]);
+    if (run.status != 0) {
+        test::note("%s could not be copied: %s", source, run.err);
     }
-    const char *repo = io::args_env(&p->io->args, "SMITH_REPO");
-    const char *from = format::push(&p->io->arena, repo != nullptr ? repo : ".", "/", source).data;
-    const char *to = name[0] == '\0' ? p->dir : path_in(p, name);
-    io::FileInfo info = io::files_info(&p->io->files, from);
-    if (info.error.code != 0) {
-        test::note("%s is not in the repository", source);
-    }
-    test::check_equal(info.error.code, 0);
-    if (!info.folder) {
-        const char *slash = c::strrchr(to, '/');
-        char *parent = arena::push_slice(&p->io->arena, char, (usize)(slash - to) + 1).data;
-        mem::copy(parent[0:(usize)(slash - to)], to[0:(usize)(slash - to)]);
-        parent[slash - to] = '\0';
-        test::check_equal(io::files_make_folder(&p->io->files, parent).code, 0);
-        copy_file(p, from, to);
-        return;
-    }
-    usize tail = 1;
-    copy_from[0] = from;
-    copy_to[0] = to;
-    for (usize head = 0; head < tail; head++) { // the folders still to copy; at most copy_folders_max
-        test::check_equal(io::files_make_folder(&p->io->files, copy_to[head]).code, 0);
-        io::FileList list = io::files_list(&p->io->files, &p->io->arena, copy_from[head]);
-        test::check_equal(list.error.code, 0);
-        for (usize i = 0; i < list.count; i++) {
-            const char *entry_from = join(p->io, copy_from[head], list.entries[i].name);
-            const char *entry_to = join(p->io, copy_to[head], list.entries[i].name);
-            if (!list.entries[i].folder || list.entries[i].link) { // a link stays a link
-                copy_file(p, entry_from, entry_to);
-                continue;
-            }
-            test::check(tail < copy_folders_max);
-            copy_from[tail] = entry_from;
-            copy_to[tail] = entry_to;
-            tail++;
-        }
-    }
-}
-
-// The text of a file of the repository (`path`, relative to $SMITH_REPO), read through io; the test fails when it is
-// not there.
-export const char *repo_text(io::Io *io, const char *path) {
-    const char *repo = io::args_env(&io->args, "SMITH_REPO");
-    io::Read file =
-        io::files_read(&io->files, &io->arena, format::push(&io->arena, repo != nullptr ? repo : ".", "/", path).data);
-    if (file.error.code != 0) {
-        test::note("%s is not in the repository", path);
-    }
-    test::check_equal(file.error.code, 0);
-    return text_of((const char *)file.data.data);
-}
-
-// The names in a folder of the repository (`path`, relative to $SMITH_REPO), listed through io, one a line.
-export const char *repo_names(io::Io *io, const char *path) {
-    const char *repo = io::args_env(&io->args, "SMITH_REPO");
-    io::FileList list =
-        io::files_list(&io->files, &io->arena, format::push(&io->arena, repo != nullptr ? repo : ".", "/", path).data);
-    test::check_equal(list.error.code, 0);
-    const char *names = "";
-    for (usize i = 0; i < list.count; i++)
-        names = format::push(&io->arena, names, list.entries[i].name, "\n").data;
-    return names;
-}
-
-// The characters from `from` up to `to` of a text, as a text of their own.
-static const char *piece(io::Io *io, const char *text, usize from, usize to) {
-    char *copy = arena::push_slice(&io->arena, char, to - from + 1).data;
-    mem::copy(copy[0:to - from], text[from:to]);
-    copy[to - from] = '\0';
-    return copy;
-}
-
-// Whether `path` (relative to $SMITH_REPO) is there: the folder that holds it is listed through io, so that the record
-// of the test names the listing, and a file added or removed there selects the test.
-export bool repo_has(io::Io *io, const char *path) {
-    const char *repo = io::args_env(&io->args, "SMITH_REPO");
-    const char *base = repo != nullptr ? repo : ".";
-    usize length = c::strlen(path);
-    while (length > 1 && path[length - 1] == '/')
-        length--;
-    usize slash = length;
-    while (slash > 0 && path[slash - 1] != '/')
-        slash--;
-    const char *name = piece(io, path, slash, length);
-    const char *parent = slash == 0 ? base : format::push(&io->arena, base, "/", piece(io, path, 0, slash - 1)).data;
-    io::FileList list = io::files_list(&io->files, &io->arena, parent);
-    for (usize i = 0; list.error.code == 0 && i < list.count; i++)
-        if (c::strcmp(list.entries[i].name, name) == 0) return true;
-    return false;
+    test::check_equal(run.status, 0);
+    release(run.out);
+    release(run.err);
+    release(to);
 }
 
 static bool ends_with(const char *text, const char *suffix) {
@@ -296,33 +175,12 @@ static bool ends_with(const char *text, const char *suffix) {
     return length >= tail && c::strcmp(text + length - tail, suffix) == 0;
 }
 
-// The names in a folder of the repository that the source of a test file never calls as `<call>"<name>")`: the ones
-// that end in `suffix_a` or `suffix_b` (every name when both are nullptr). A table of cases whose test file must name
-// each of them uses it; the repository is read through io, so a case added to the folder selects the test.
-export const char *untested_names(io::Io *io, const char *folder, const char *test_source, const char *call,
-                                  const char *suffix_a, const char *suffix_b) {
-    const char *source = repo_text(io, test_source);
-    const char *repo = io::args_env(&io->args, "SMITH_REPO");
-    io::FileList list = io::files_list(&io->files, &io->arena,
-                                       format::push(&io->arena, repo != nullptr ? repo : ".", "/", folder).data);
-    test::check_equal(list.error.code, 0);
-    const char *missing = "";
-    for (usize i = 0; i < list.count; i++) {
-        const char *name = list.entries[i].name;
-        bool wanted = (suffix_a == nullptr && suffix_b == nullptr) ||
-                      (suffix_a != nullptr && ends_with(name, suffix_a)) ||
-                      (suffix_b != nullptr && ends_with(name, suffix_b));
-        if (wanted && c::strstr(source, format::push(&io->arena, call, "\"", name, "\")").data) == nullptr) {
-            missing = format::push(&io->arena, missing, name, "\n").data;
-        }
-    }
-    return missing;
-}
-
-// The same with no io (issue #843): the folder and the source are read through smith::files, and the text returned (""
-// when nothing is missing) belongs to the caller. The name carries `_free` while untested_names takes the io.
-export const char *untested_names_free(const char *folder, const char *test_source, const char *call,
-                                       const char *suffix_a, const char *suffix_b) {
+// The names in a folder of the repository (`folder`, relative to $SMITH_REPO) that the source of a test file never
+// calls as `<call>"<name>")`: the ones that end in `suffix_a` or `suffix_b` (every name when both are nullptr). A table
+// of cases whose test file must name each of them uses it. The folder and the source are read through smith::files,
+// and the text returned ("" when nothing is missing) belongs to the caller.
+export const char *untested_names(const char *folder, const char *test_source, const char *call, const char *suffix_a,
+                                  const char *suffix_b) {
     env::Value repo = env::get("SMITH_REPO");
     const char *base = repo == .some ? repo.some.data : ".";
     const char *source_path = join_free(base, "/", test_source);
@@ -374,28 +232,12 @@ export const char *untested_names_free(const char *folder, const char *test_sour
     return missing;
 }
 
-// A project: a folder `name` in the test's scratch folder, with the files of tests/build_fixtures/<fixture> in it
-// (none when `fixture` is nullptr). Links named smith, smith-cc and smith-c++ to the smith under test, which is the one
-// running the tests ($SMITH_SELF), are in a folder that is first on PATH for its commands. The fixtures' `cc` is a C23
-// clang, as macOS's is; on Linux, where it is GCC, that folder has a `cc` that runs the smith-cc under test.
-export Project project(io::Io *io, const char *name, const char *fixture) {
-    const char *scratch = test::scratch(io);
-    Project p = {.io = io, .dir = join(io, scratch, name), .tested = join(io, scratch, "tested"), .cache = ""};
-    const char *argv[_] = {"sh", "-c", setup_script, scratch, p.dir, nullptr};
-    io::ProcessResult made = io::processes_run(&io->processes, &io->arena, argv);
-    if (made.exit_status != 0) {
-        test::note("the project could not be made: %s", text_of(made.errors));
-    }
-    test::check_equal(made.exit_status, 0);
-    if (fixture != nullptr) {
-        copy_tree(&p, format::push(&io->arena, "tests/build_fixtures/", fixture).data, "");
-    }
-    return p;
-}
-
-// The same project for a test with no io (issue #815): a folder from `mktemp -d` under $TMPDIR, the files of the
+// A project: a folder from `mktemp -d` under $TMPDIR, the files of the
 // fixture in it, and the commands run through the process module. The project's paths are malloc'd; `scratch::clean`
 // frees them and removes the folder (`defer scratch::clean(&p);` after the make). A test that fails keeps the folder.
+// Links named smith, smith-cc and smith-c++ to the smith under test ($SMITH_SELF) are in a folder that is first on PATH
+// for its commands; the fixtures' `cc` is a C23 clang, as macOS's is, and on Linux, where it is GCC, that folder has a
+// `cc` that runs the smith-cc under test.
 export Project make(const char *name, const char *fixture) {
     const char *made =
         script_free("d=${TMPDIR:-/tmp}; [ -d \"$d\" ] || d=/tmp; mktemp -d \"$d/smith-scratch-XXXXXX\"", "", "");
@@ -407,11 +249,8 @@ export Project make(const char *name, const char *fixture) {
     mem::copy(folder[0:length], made[0:length]);
     folder[length] = '\0';
     release(made);
-    Project p = {.io = nullptr,
-                 .root = folder,
-                 .dir = join_free(folder, "/", name),
-                 .tested = join_free(folder, "/", "tested"),
-                 .cache = ""};
+    Project p = {
+        .root = folder, .dir = join_free(folder, "/", name), .tested = join_free(folder, "/", "tested"), .cache = ""};
     const char *const argv[_] = {"sh", "-c", setup_script, folder, p.dir, nullptr};
     Run set_up = run_free(argv[0:5]);
     test::check_equal(set_up.status, 0);
@@ -435,11 +274,7 @@ export void clean(Project *p) {
 
 // The project gets a cache of its own, empty, for a test of the cache or of what a cold one does.
 export void own_cache(Project *p) {
-    if (p->io == nullptr) {
-        p->cache = join_free(p->root, "/", "xdg-cache"); // clean frees it
-        return;
-    }
-    p->cache = join(p->io, test::scratch(p->io), "xdg-cache");
+    p->cache = join_free(p->root, "/", "xdg-cache"); // clean frees it
 }
 
 // Runs a shell command in the project: `smith build -v`, `./build/app`, `cp a b`. `smith` is the smith under test.
@@ -449,25 +284,16 @@ export Run sh(const Project *p, const char *command) {
 
 // `smith build` with the arguments in a string.
 export Run build(const Project *p, const char *arguments) {
-    if (p->io == nullptr) {
-        const char *command = join_free("smith build ", arguments, "");
-        Run run = run_in(p, command);
-        release(command);
-        return run;
-    }
-    return run_in(p, format::push(&p->io->arena, "smith build ", arguments).data);
+    const char *command = join_free("smith build ", arguments, "");
+    Run run = run_in(p, command);
+    release(command);
+    return run;
 }
 
 export void write(const Project *p, const char *name, const char *text) {
-    if (p->io == nullptr) {
-        const char *path = path_in(p, name);
-        release(script_free("printf %s \"$1\" > \"$0\"", path, text));
-        release(path);
-        return;
-    }
-    io::Error written =
-        io::files_write(&p->io->files, path_in(p, name), test_io_bytes(text, c::strlen(text)), io::Replace);
-    test::check_equal(written.code, 0);
+    const char *path = path_in(p, name);
+    release(script_free("printf %s \"$1\" > \"$0\"", path, text));
+    release(path);
 }
 
 constexpr usize lowered_capacity = 1U << 23;
@@ -477,30 +303,41 @@ static char lowered_errors[lowered_errors_capacity];
 
 // A file of the project, in a folder made for it.
 static void write_in_new_folder(const Project *p, const char *name, const char *text) {
-    const char *slash = c::strrchr(name, '/');
-    if (slash != nullptr) {
-        usize length = (usize)(slash - name);
-        char *folder = arena::push_slice(&p->io->arena, char, length + 1).data;
-        mem::copy(folder[0:length], name[0:length]);
-        folder[length] = '\0';
-        io::Error made = io::files_make_folder(&p->io->files, path_in(p, folder));
-        test::check_equal(made.code, 0);
-    }
-    write(p, name, text);
+    // through smith::files: a lowered text is larger than one argument of a command may be
+    const char *path = path_in(p, name);
+    const char *slash = c::strrchr(path, '/');
+    files::DoneResult made = files::make_folder(path[0:(usize)(slash - path)]);
+    test::check_condition(made == .ok);
+    files::CountResult written =
+        files::write_file(path[0:c::strlen(path)], bytes_of(text, c::strlen(text)), files::Replace);
+    test::check_condition(written == .ok);
+    release(path);
 }
 
-// The in-process lowering reads its source in C, outside io: the file is opened through io first, so that the record of
-// the test names it (the modules it imports are not named).
-static void open_source(const Project *p, const char *folder, const char *source) {
-    io::Read file = io::files_read(&p->io->files, &p->io->arena, format::push(&p->io->arena, folder, "/", source).data);
-    test::check_equal(file.error.code, 0);
+// The in-process lowering reads its source in C: the file is read through smith::files first, so that a source that
+// cannot be read fails the test with its path (the modules it imports are not named).
+static void open_source(const char *folder, const char *source) {
+    const char *path = join_free(folder, "/", source);
+    files::BytesResult file = files::read_file(path[0:c::strlen(path)]);
+    if (file == .error) {
+        test::note("%s cannot be read", path);
+    }
+    release(path);
+    test::check_condition(file == .ok);
+    if (file == .ok && file.ok.data != nullptr) mem::free(file.ok.data);
+}
+
+// $SMITH_REPO, where the runner was started; "." when it is not set.
+static const char *repo_of() {
+    env::Value repo = env::get("SMITH_REPO");
+    return repo == .some ? repo.some.data : ".";
 }
 
 // The raw lowering of `$SMITH_REPO/<source>` (what `smith cc --smith-lower` prints) written to `name` in the project,
 // made in process (issue #646) where the test only needs the text. A lowering that reports an error fails the test.
 export void write_lowered(const Project *p, const char *source, const char *name) {
-    const char *repo = io::args_env(&p->io->args, "SMITH_REPO");
-    open_source(p, repo, source);
+    const char *repo = repo_of();
+    open_source(repo, source);
     bool done = c::smith_core_lower(repo, source, nullptr, lowered_text, lowered_capacity, lowered_errors,
                                     lowered_errors_capacity);
     if (!done) {
@@ -513,7 +350,7 @@ export void write_lowered(const Project *p, const char *source, const char *name
 static char header_buffer[1U << 21];
 
 static void header_to(const Project *p, const char *folder, const char *source, const char *name) {
-    open_source(p, folder, source);
+    open_source(folder, source);
     bool done = c::smith_core_header(folder, source, nullptr, header_buffer, sizeof header_buffer, lowered_errors,
                                      lowered_errors_capacity);
     if (!done) {
@@ -527,63 +364,53 @@ static void header_to(const Project *p, const char *folder, const char *source, 
 // as `smith cc --smith-header` writes it, made in process. It is the text of the header pass, which does not ask the
 // compiler which import declared a C name: a module with two C imports takes the command.
 export void write_header(const Project *p, const char *module) {
-    header_to(p, p->dir, format::push(&p->io->arena, module, ".smith").data,
-              format::push(&p->io->arena, "include/", module, ".h").data);
+    const char *source = join_free(module, ".smith", "");
+    const char *name = join_free("include/", module, ".h");
+    header_to(p, p->dir, source, name);
+    release(source);
+    release(name);
 }
 
 // The same for `$SMITH_REPO/<source>`, written to `name` in the project.
 export void write_header_of(const Project *p, const char *source, const char *name) {
-    header_to(p, io::args_env(&p->io->args, "SMITH_REPO"), source, name);
+    header_to(p, repo_of(), source, name);
 }
 
 // The file's text, or "" when it is absent.
 export const char *read(const Project *p, const char *name) {
-    if (p->io == nullptr) { // always a text of its own, "" when the file is absent; the caller frees it
-        const char *path = path_in(p, name);
-        const char *const argv[_] = {"sh", "-c", "cat \"$0\" 2>/dev/null; exit 0", path, nullptr};
-        Run run = run_free(argv[0:4]);
-        release(run.err);
-        release(path);
-        return run.out;
-    }
-    io::Read file = io::files_read(&p->io->files, &p->io->arena, path_in(p, name));
-    return file.error.code == 0 ? text_of((const char *)file.data.data) : "";
+    // always a text of its own, "" when the file is absent; the caller frees it
+    const char *path = path_in(p, name);
+    const char *const argv[_] = {"sh", "-c", "cat \"$0\" 2>/dev/null; exit 0", path, nullptr};
+    Run run = run_free(argv[0:4]);
+    release(run.err);
+    release(path);
+    return run.out;
 }
 
 export bool exists(const Project *p, const char *name) {
-    if (p->io == nullptr) {
-        const char *path = path_in(p, name);
-        const char *const argv[_] = {"sh", "-c", "test -e \"$0\"", path, nullptr};
-        Run run = run_free(argv[0:4]);
-        release(run.out);
-        release(run.err);
-        release(path);
-        return run.status == 0;
-    }
-    return io::files_info(&p->io->files, path_in(p, name)).error.code == 0;
+    const char *path = path_in(p, name);
+    const char *const argv[_] = {"sh", "-c", "test -e \"$0\"", path, nullptr};
+    Run run = run_free(argv[0:4]);
+    release(run.out);
+    release(run.err);
+    release(path);
+    return run.status == 0;
 }
 
 // The number of lines of a file, 0 when it is absent.
 export usize lines(const Project *p, const char *name) {
     usize count = 0;
-    if (p->io == nullptr) { // the text read is freed here
-        const char *text = read(p, name);
-        for (const char *c = text; *c != '\0'; c++)
-            count += *c == '\n' ? 1U : 0U;
-        release(text);
-        return count;
-    }
-    for (const char *c = read(p, name); *c != '\0'; c++)
+    const char *text = read(p, name); // freed here
+    for (const char *c = text; *c != '\0'; c++)
         count += *c == '\n' ? 1U : 0U;
+    release(text);
     return count;
 }
 
+// Through the clock handler of the thread: a fake clock advances and returns.
 export void sleep(const Project *p, u64 milliseconds) {
-    if (p->io == nullptr) { // through the clock handler of the thread: a fake clock advances and returns
-        clock::sleep(milliseconds * clock::millisecond);
-        return;
-    }
-    test::check_equal(io::clock_sleep(&p->io->clock, milliseconds * (nanoseconds / 1000)).code, 0);
+    (void)p;
+    clock::sleep(milliseconds * clock::millisecond);
 }
 
 export bool contains(const char *text, const char *needle) {
@@ -648,20 +475,14 @@ export void expect_count(const char *name, usize expected, usize actual) {
 
 // The output of a shell command as $(...) gives it: without trailing newlines.
 export const char *capture(const Project *p, const char *command) {
-    if (p->io == nullptr) { // a text of its own for the caller to free; the run's err is freed here
-        Run run = sh(p, command);
-        usize length = trimmed(run.out);
-        char *copy = mem::alloc_slice(char, length + 1).data;
-        mem::copy(copy[0:length], run.out[0:length]);
-        copy[length] = '\0';
-        release(run.out);
-        release(run.err);
-        return copy;
-    }
-    const char *out = sh(p, command).out;
-    usize length = trimmed(out);
-    char *copy = arena::push_slice(&p->io->arena, char, length + 1).data;
-    __builtin_memcpy(copy, out, length);
+    // a text of its own for the caller to free; the run's err is freed here
+    Run run = sh(p, command);
+    usize length = trimmed(run.out);
+    char *copy = mem::alloc_slice(char, length + 1).data;
+    mem::copy(copy[0:length], run.out[0:length]);
+    copy[length] = '\0';
+    release(run.out);
+    release(run.err);
     return copy;
 }
 // NOLINTEND(smith-mem)

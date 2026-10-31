@@ -1,5 +1,6 @@
-// smith::net, <smith/net.h>: TCP and TLS by direct calls, with no `io::Io` value: connect to a host (plain or with
-// TLS), listen on a port and accept, read and write bytes, close (#240). Its C API is the generated header
+// smith-build: link
+// smith::net, <smith/net.h>: TCP and TLS by direct calls, with no capability value to pass: connect to a host (plain or
+// with TLS), listen on a port and accept, read and write bytes, close (#240). Its C API is the generated header
 // include/smith/net.h (committed; `smith build headers` regenerates it); the names follow the rule of arena.smith with
 // one difference: the C functions are `smith_network_*` and the types `SmithNetwork*`, beside io's `smith_net_*`
 // functions and `SmithNet*` types, which stay until io goes.
@@ -30,6 +31,7 @@ import <errno.h>;
 import <fcntl.h>;
 import <netdb.h>;
 import <netinet/in.h>;
+import <poll.h>;
 import <sched.h>;
 import <signal.h>;
 import <smith/handlers.h>;
@@ -70,6 +72,7 @@ constexpr i32 eperm = c::EPERM;
 constexpr i32 epipe = c::EPIPE;
 constexpr i32 eproto = c::EPROTO;
 constexpr i32 etimedout = c::ETIMEDOUT;
+constexpr i32 pollin = c::POLLIN;
 constexpr i32 af_unspec = c::AF_UNSPEC;
 constexpr i32 af_inet = c::AF_INET;
 constexpr i32 af_inet6 = c::AF_INET6;
@@ -100,6 +103,8 @@ constexpr usize addresses_max = 16;
 constexpr usize name_max = 256;
 constexpr usize tries_max = 64;
 constexpr i32 listen_backlog = 128;
+constexpr i64 millisecond_ns = 1'000'000;
+constexpr i32 poll_wait_max = 1 << 30; // milliseconds, which poll takes as an int
 constexpr i32 tls_base = 1000; // an internal code at or above this is a TLS reason (tls_base + reason), not an errno
 export constexpr usize fake_servers_max = 16;
 export constexpr usize fake_connections_max = 32;
@@ -372,6 +377,35 @@ isize read_plain(i32 descriptor, void *buffer, usize size, i32 *code) {
     return -1;
 }
 
+// Waits until a descriptor has something to read or has ended, for at most timeout_ns: 1 when it has, 0 when the time
+// passed, -1 with the errno in *code.
+i32 wait_readable(i32 descriptor, i64 timeout_ns, i32 *code) {
+    i64 milliseconds = timeout_ns / millisecond_ns + (timeout_ns % millisecond_ns != 0 ? 1 : 0);
+    i32 wait = milliseconds > poll_wait_max ? poll_wait_max : (i32)milliseconds;
+    struct c::pollfd watched = {.fd = descriptor, .events = (i16)pollin};
+    for (usize tries = 0; tries < tries_max; tries++) { // a signal may interrupt the wait
+        i32 ready = c::poll(&watched, 1, wait);
+        if (ready >= 0) return ready > 0 ? 1 : 0;
+        if (errno_now() != eintr) {
+            *code = errno_now();
+            return -1;
+        }
+    }
+    *code = eintr;
+    return -1;
+}
+
+// Reads from a socket that has something within timeout_ns: the count (0 at the end), or -1 with the errno in *code
+// (ETIMEDOUT when nothing came).
+isize read_plain_within(i32 descriptor, void *buffer, usize size, i64 timeout_ns, i32 *code) {
+    i32 ready = wait_readable(descriptor, timeout_ns, code);
+    if (ready == 0) {
+        *code = etimedout;
+        return -1;
+    }
+    return ready < 0 ? -1 : read_plain(descriptor, buffer, size, code);
+}
+
 // Writes to a socket without raising SIGPIPE: the count or -1 with the errno in *code.
 isize write_plain(i32 descriptor, const void *buffer, usize size, i32 *code) {
     for (usize tries = 0; tries < tries_max; tries++) { // a signal may interrupt the write
@@ -455,6 +489,7 @@ if constexpr (target::os == target::macos) {
         i32 (*parameters_set_address)(void *parameters, const char *text);
         i32 (*session_connect)(void *session);
         i32 (*session_read)(void *session, void *buffer, i32 size);
+        i32 (*session_pending)(const void *session);
         i32 (*session_write)(void *session, const void *buffer, i32 size);
         i32 (*session_error)(const void *session, i32 result);
         i32 (*session_shutdown)(void *session);
@@ -529,6 +564,7 @@ if constexpr (target::os == target::macos) {
                      symbol(library, "SSL_get0_param", (void *)&api->session_parameters) &&
                      symbol(library, "SSL_connect", (void *)&api->session_connect) &&
                      symbol(library, "SSL_read", (void *)&api->session_read) &&
+                     symbol(library, "SSL_pending", (void *)&api->session_pending) &&
                      symbol(library, "SSL_write", (void *)&api->session_write) &&
                      symbol(library, "SSL_get_error", (void *)&api->session_error) &&
                      symbol(library, "SSL_shutdown", (void *)&api->session_shutdown) &&
@@ -728,8 +764,10 @@ if constexpr (target::os == target::macos) {
         return (isize)size;
     }
 
-    // Reads what has arrived (at least one byte): the count, 0 when the peer has finished, or -1 with the code.
-    isize tls_read(Connection *connection, void *buffer, usize size, i32 *code) {
+    // Reads what has arrived (at least one byte), waiting at most timeout_ns (negative: for ever): the count, 0 when
+    // the peer has finished, or -1 with the code (ETIMEDOUT when nothing came: the connection is cancelled then, since
+    // the framework cannot take a receive back, and only `close` is left to call).
+    isize tls_receive(Connection *connection, void *buffer, usize size, i64 timeout_ns, i32 *code) {
         if (connection->end) return 0;
         State *state = (State *)connection->state;
         state->taken = 0;
@@ -740,12 +778,28 @@ if constexpr (target::os == target::macos) {
                 (void)context;
                 on_received(state, connection, content, complete, error, (u8 *)buffer, size);
             });
-        c::dispatch_semaphore_wait(state->flow, forever);
+        u64 when = timeout_ns < 0 ? forever : c::dispatch_time(0, timeout_ns);
+        if (c::dispatch_semaphore_wait(state->flow, when) != 0) {
+            api_table.cancel(state->handle); // the receive's block runs with an error, and is the last to touch buffer
+            c::dispatch_semaphore_wait(state->flow, forever);
+            *code = etimedout;
+            return -1;
+        }
         if (state->failure != 0) {
             *code = state->failure;
             return -1;
         }
         return (isize)state->taken;
+    }
+
+    // Reads what has arrived (at least one byte): the count, 0 when the peer has finished, or -1 with the code.
+    isize tls_read(Connection *connection, void *buffer, usize size, i32 *code) {
+        return tls_receive(connection, buffer, size, -1, code);
+    }
+
+    // Reads like tls_read, giving up with ETIMEDOUT when nothing arrives within timeout_ns.
+    isize tls_read_within(Connection *connection, void *buffer, usize size, i64 timeout_ns, i32 *code) {
+        return tls_receive(connection, buffer, size, timeout_ns, code);
     }
 
     // Whether the TLS session is up. The last function of a branch is measured with the branch not taken after it (the
@@ -845,6 +899,21 @@ if constexpr (target::os == target::macos) {
         return -1;
     }
 
+    // Reads like tls_read, giving up with ETIMEDOUT when nothing arrives on the socket within timeout_ns. Bytes OpenSSL
+    // holds already are returned at once; a record that has arrived in part is waited for in tls_read.
+    isize tls_read_within(Connection *connection, void *buffer, usize size, i64 timeout_ns, i32 *code) {
+        const Api *api = &api_table;
+        if (api->session_pending(connection->session) == 0) {
+            i32 ready = wait_readable(connection->descriptor, timeout_ns, code);
+            if (ready == 0) {
+                *code = etimedout;
+                return -1;
+            }
+            if (ready < 0) return -1;
+        }
+        return tls_read(connection, buffer, size, code);
+    }
+
     // NOLINTBEGIN(smith-preprocessor)
     // Writes up to a record of size bytes with SIGPIPE blocked for the call and, when the write raised it, taken off
     // the thread, so a peer that has gone is the error EPIPE and never a signal: the count, or -1 with the code.
@@ -893,6 +962,7 @@ if constexpr (target::os == target::macos) {
 
 // The handler of a connection made under one: a handled connection used after its handler was taken off is a bug.
 c::SmithNetHandler *handler_of(bool handled) {
+    contract::trusted(); // the edge: it asks the handler of the thread
     c::SmithNetHandler *handler = c::smith_handlers_net();
     if (handled && handler == nullptr) misuse("net: a connection made under a handler is used with none set");
     return handler;
@@ -950,6 +1020,7 @@ void connection_open(const Connection *connection) {
 // Reads whatever has arrived, at least one byte and at most the length of the buffer: the count of bytes read; 0 means
 // the end (the peer has finished sending). It blocks until there is something.
 [[smith::c_name("smith_network_read")]] export [[nodiscard]] CountResult read(Connection *connection, u8 buffer[:]) {
+    contract::trusted(); // the edge: it calls the handler of the thread or the system
     connection_open(connection);
     contract::requires(countof(buffer) > 0);
     isize count = 0;
@@ -962,6 +1033,36 @@ void connection_open(const Connection *connection) {
         count = tls_read(connection, buffer.data, countof(buffer), &code);
     } else {
         count = read_plain(connection->descriptor, buffer.data, countof(buffer), &code);
+    }
+    if (count < 0) {
+        return {.error = error_from(code)};
+    }
+    return (usize)count;
+}
+
+// Reads like `read`, but gives up when nothing has arrived within timeout_ns nanoseconds (0 or more): the error is
+// `TimedOut`, and bytes that arrive later are read by the next call. On macOS a TLS connection that timed out is
+// cancelled (Network.framework cannot take a receive back), so only `close` is left to call on it. A handler that has
+// no deadline of its own reads without one.
+[[smith::c_name("smith_network_read_within")]] export [[nodiscard]] CountResult
+read_within(Connection *connection, u8 buffer[:], i64 timeout_ns) {
+    contract::trusted(); // the edge: it calls the handler of the thread or the system
+    connection_open(connection);
+    contract::requires(countof(buffer) > 0);
+    contract::requires(timeout_ns >= 0);
+    isize count = 0;
+    i32 code = 0;
+    c::SmithNetHandler *handler = handler_of(connection->handled);
+    if (connection->handled && handler->read_within != nullptr) {
+        count = handler->read_within(handler, connection->id, buffer.data, countof(buffer), timeout_ns);
+        code = errno_now();
+    } else if (connection->handled) {
+        count = handler->read(handler, connection->id, buffer.data, countof(buffer));
+        code = errno_now();
+    } else if (connection->tls) {
+        count = connection->end ? 0 : tls_read_within(connection, buffer.data, countof(buffer), timeout_ns, &code);
+    } else {
+        count = read_plain_within(connection->descriptor, buffer.data, countof(buffer), timeout_ns, &code);
     }
     if (count < 0) {
         return {.error = error_from(code)};
@@ -1077,7 +1178,9 @@ void connection_open(const Connection *connection) {
 
 // A scripted server of the fake: the first script that no connection has used, whose host and port a connect names, is
 // the one it gets (so two connects to one host are two scripts). A read returns `response` (in pieces of at most
-// `chunk` bytes when chunk is not 0) and then the end; what the program writes is recorded (`fake_sent`). With `fails`
+// `chunk` bytes when chunk is not 0; `response_size` is its length when it holds NUL bytes) and then the end, or, with
+// `stalls`, silence: the connection stays open, so `read_within` times out where `read` would wait for ever, or with
+// `resets`, a read that fails with `Reset`; what the program writes is recorded (`fake_sent`). With `fails`
 // the connect fails with `error` instead (a TLS error stands for a refused certificate).
 [[smith::c_name("SmithNetworkServer")]] export typedef struct {
     const char *host;
@@ -1086,6 +1189,9 @@ void connection_open(const Connection *connection) {
     usize chunk;
     bool fails;
     Error error;
+    usize response_size; // the length of `response` when it is binary (it holds a NUL); 0: the length of its text
+    bool resets;         // after the response a read fails with `Reset` instead of ending
+    bool stalls; // after the response the connection stays open and silent instead of ending (`read_within` times out)
 } Server;
 
 // A growing block of the current allocator; the old blocks stay in the region.
@@ -1102,6 +1208,7 @@ void connection_open(const Connection *connection) {
     bool closed;
     bool peer_closed;
     bool scripted;
+    bool resets;
     i32 peer; // the index + 1 of the other end of a pair, 0 for a scripted server
     usize chunk;
     usize read_position;
@@ -1134,6 +1241,7 @@ void fake_fail(i32 code) {
 
 // Appends bytes to a block, which grows from the current allocator.
 void block_append(Block *block, const void *data, usize count) {
+    contract::trusted(); // the fake's recording: it grows a block by doubling
     if (block->size + count > countof(block->data)) {
         usize capacity = countof(block->data) == 0 ? tries_max * 64 : countof(block->data) * 2;
         while (capacity < block->size + count) {
@@ -1245,9 +1353,13 @@ i32 fake_script(Fake *fake, usize index, i32 *reason) {
     if (slot < 0) return -1;
     FakeConnection *connection = &fake->connections[slot];
     connection->scripted = true;
-    connection->peer_closed = true; // the end follows the response
+    connection->peer_closed = !script->stalls; // the end follows the response
     connection->chunk = script->chunk;
-    if (script->response != nullptr) block_append(&connection->inbox, script->response, c::strlen(script->response));
+    connection->resets = script->resets;
+    if (script->response != nullptr) {
+        usize length = script->response_size != 0 ? script->response_size : c::strlen(script->response);
+        block_append(&connection->inbox, script->response, length);
+    }
     return slot + 1;
 }
 
@@ -1314,16 +1426,43 @@ i32 fake_accept(c::SmithNetHandler *self, i32 id) {
     return server;
 }
 
-isize fake_read(c::SmithNetHandler *self, i32 id, void *buffer, usize size) {
-    FakeConnection *connection = fake_connection((Fake *)self, id);
-    if (connection == nullptr) return -1;
+// Moves what the connection has to read into the buffer: how many bytes (0 when it has none).
+usize fake_take(FakeConnection *connection, void *buffer, usize size) {
     usize count = connection->inbox.size - connection->read_position;
     if (count > size) count = size;
     if (connection->chunk != 0 && count > connection->chunk) count = connection->chunk;
     if (count > 0) {
         put(buffer, connection->inbox.data.data + connection->read_position, count);
         connection->read_position += count;
-        return (isize)count;
+    }
+    return count;
+}
+
+// Like fake_read, but a connection with nothing more to give that has not ended is a timeout at once: the fake never
+// waits.
+isize fake_read_within(c::SmithNetHandler *self, i32 id, void *buffer, usize size, i64 timeout_ns) {
+    (void)timeout_ns;
+    FakeConnection *connection = fake_connection((Fake *)self, id);
+    if (connection == nullptr) return -1;
+    usize count = fake_take(connection, buffer, size);
+    if (count > 0) return (isize)count;
+    if (connection->resets) {
+        fake_fail(econnreset);
+        return -1;
+    }
+    if (connection->peer_closed) return 0;
+    fake_fail(etimedout);
+    return -1;
+}
+
+isize fake_read(c::SmithNetHandler *self, i32 id, void *buffer, usize size) {
+    FakeConnection *connection = fake_connection((Fake *)self, id);
+    if (connection == nullptr) return -1;
+    usize count = fake_take(connection, buffer, size);
+    if (count > 0) return (isize)count;
+    if (connection->resets) {
+        fake_fail(econnreset);
+        return -1;
     }
     if (connection->peer_closed) return 0;
     misuse("net fake: a read that would wait for ever (the peer has sent nothing more and has not closed: write to the "
@@ -1377,6 +1516,7 @@ i32 fake_close(c::SmithNetHandler *self, i32 id) {
         .read = fake_read,
         .write = fake_write,
         .close = fake_close,
+        .read_within = fake_read_within,
     };
     return result;
 }
@@ -1391,6 +1531,7 @@ i32 fake_close(c::SmithNetHandler *self, i32 id) {
 
 // What the program wrote to the connection of the id (a connection's `id`, still open or closed), as bytes.
 [[smith::c_name("smith_network_fake_sent")]] export [[nodiscard]] Bytes fake_sent(const Fake *fake, i32 id) {
+    contract::trusted(); // a view of the recording
     contract::requires(id >= 1 && (usize)id <= fake_connections_max);
     return fake->connections[(usize)id - 1].sent.data[0:fake->connections[(usize)id - 1].sent.size];
 }

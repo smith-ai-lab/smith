@@ -1,0 +1,8 @@
+module mid;
+
+import scale;
+
+// Its header includes scale's plainly: an importer of both reads scale's section after that.
+export scale::Key make() {
+    return (scale::Key){7};
+}

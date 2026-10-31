@@ -2,7 +2,6 @@
 name: smith-idiom-after
 description: "The rolls module as idiomatic Smith: the module, its main, and how each C habit became sized types, c:: names, arena::push and contracts. Load when porting C to .smith or reviewing a port."
 ---
-
 # The same module as Smith
 
 ```smith
@@ -10,7 +9,8 @@ description: "The rolls module as idiomatic Smith: the module, its main, and how
 module rolls;
 
 import smith::arena;
-import smith::io;
+import smith::console;
+import smith::format;
 import smith::random;
 
 constexpr i64 sides = 6;
@@ -37,22 +37,22 @@ export f64 mean(const Rolls *rolls) {
     return rolls->count == 0 ? 0 : (f64)sum / (f64)rolls->count;
 }
 
-export void print(io::Console *console, const Rolls *rolls) {
-    for (usize i = 0; i < rolls->count; i++) (void)io::console_printf(console, "%u ", rolls->faces[i]);
-    (void)io::console_printf(console, "(mean %.2f)\n", mean(rolls));
+export void print(const Rolls *rolls) {
+    for (usize i = 0; i < rolls->count; i++) (void)console::print(rolls->faces[i], " ");
+    (void)console::print("(mean ", format::fixed(mean(rolls), 2), ")\n");
 }
 ```
 
 ```smith
 // main.smith
 module main;
-
 import rolls;
-import smith::io;
-
-i32 main(io::Io *io) {
-    rolls::Rolls dice = rolls::make(&io->arena, io->key, 10);
-    rolls::print(&io->console, &dice);
+import smith::arena;
+import smith::entropy;
+i32 main() {
+    arena::Arena a = arena::growing(1 << 20, nullptr);
+    rolls::Rolls dice = rolls::make(&a, entropy::seed(), 10);
+    rolls::print(&dice);
     return 0;
 }
 ```

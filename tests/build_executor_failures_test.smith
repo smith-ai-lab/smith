@@ -2,16 +2,16 @@
 // reads the same language as ninja and behaves as ninja did. A failed job and -k, the options, depfiles and restat.
 module build_executor_failures_test;
 
+import smith::mem;
 import smith::arena;
 import smith::format;
-import smith::io;
 import smith::test;
 import scratch;
 
 // The text with its newlines as spaces, for the order in which words were printed.
-static const char *flat(io::Io *io, const char *text) {
+static const char *flat(arena::Arena *memory, const char *text) {
     usize length = __builtin_strlen(text);
-    char *copy = arena::push_slice(&io->arena, char, length + 1).data;
+    char *copy = arena::push_slice(memory, char, length + 1).data;
     for (usize i = 0; i < length; i++)
         copy[i] = text[i] == '\n' ? ' ' : text[i];
     copy[length] = '\0';
@@ -19,7 +19,9 @@ static const char *flat(io::Io *io, const char *text) {
 }
 
 static scratch::Run exec(const scratch::Project *p, const char *arguments) {
-    return scratch::sh(p, format::push(&p->io->arena, "smith --smith-exec build.ninja ", arguments).data);
+    char command[1024];
+    (void)format::to(command, sizeof command, "smith --smith-exec build.ninja ", arguments);
+    return scratch::sh(p, command);
 }
 
 static const char *yes_no(const scratch::Project *p, const char *name) {
@@ -27,13 +29,18 @@ static const char *yes_no(const scratch::Project *p, const char *name) {
 }
 
 // 14a. A failed job: the status, the outputs, the command and what it printed; the first failure stops the build.
-export void test_build_executor_a_failed_job_says_why_and_stops_the_build(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_failure");
+export void test_build_executor_a_failed_job_says_why_and_stops_the_build() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_failure");
+    defer scratch::clean(&p);
     scratch::Run run = exec(&p, "-j1");
     scratch::expect_status("failure: the build fails", 1, &run);
     scratch::expect_contains("failure: FAILED names the status and the output", run.out, "FAILED: [code=3] bad ");
     scratch::expect_contains("failure: then the command", run.out, "echo to-out; echo to-err >&2; exit 3");
-    scratch::expect_contains("failure: then what it printed, stdout and stderr in order", flat(io, run.out),
+    scratch::expect_contains("failure: then what it printed, stdout and stderr in order", flat(&memory, run.out),
                              "to-out to-err");
     scratch::expect_contains("failure: the build says why it stopped", run.err, "build stopped: subcommand failed.");
     char state[16];
@@ -41,8 +48,13 @@ export void test_build_executor_a_failed_job_says_why_and_stops_the_build(io::Io
     scratch::expect_text("failure: the first failure stops the others", "no no", state);
 }
 
-export void test_build_executor_keep_going_builds_what_does_not_depend_on_the_failure(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_failure");
+export void test_build_executor_keep_going_builds_what_does_not_depend_on_the_failure() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_failure");
+    defer scratch::clean(&p);
     scratch::Run keep = exec(&p, "-j1 -k 0");
     scratch::expect_status("keep going: the build still fails", 1, &keep);
     scratch::expect_text("keep going: -k 0 builds what does not depend on the failure", "G", scratch::read(&p, "good"));
@@ -51,23 +63,38 @@ export void test_build_executor_keep_going_builds_what_does_not_depend_on_the_fa
                              "cannot make progress due to previous errors.");
 }
 
-export void test_build_executor_keep_going_after_two_failures_stops_at_the_only_one(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_failure");
+export void test_build_executor_keep_going_after_two_failures_stops_at_the_only_one() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_failure");
+    defer scratch::clean(&p);
     (void)exec(&p, "-j1 -k 2");
     scratch::expect_text("keep going: -k 2 stops after the second failure, there is only one", "G",
                          scratch::read(&p, "good"));
 }
 
-export void test_build_executor_options_are_checked(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_failure");
+export void test_build_executor_options_are_checked() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_failure");
+    defer scratch::clean(&p);
     scratch::expect_contains("options: -j needs a number", exec(&p, "-j").err, "needs a value");
     scratch::expect_contains("options: -jx is not a number", exec(&p, "-jx").err, "needs a number");
     scratch::expect_contains("options: an unknown flag is refused", exec(&p, "--bogus").err, "unknown option");
 }
 
 // 14b. Depfiles: what the command read is kept, and the file is removed.
-export void test_build_executor_a_depfile_is_read_and_removed(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_depfile");
+export void test_build_executor_a_depfile_is_read_and_removed() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_depfile");
+    defer scratch::clean(&p);
     (void)exec(&p, "");
     scratch::expect_count("depfile: the first build runs", 1, scratch::lines(&p, "runs"));
     scratch::expect_text("depfile: the depfile is removed once read", "no", yes_no(&p, "obj.d"));
@@ -77,8 +104,13 @@ export void test_build_executor_a_depfile_is_read_and_removed(io::Io *io) {
     scratch::expect_contains("depfile: an unchanged tree has no work", exec(&p, "").out, "no work to do");
 }
 
-export void test_build_executor_a_changed_header_reruns_the_step(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_depfile");
+export void test_build_executor_a_changed_header_reruns_the_step() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_depfile");
+    defer scratch::clean(&p);
     (void)exec(&p, "");
     scratch::sleep(&p, 50);
     (void)scratch::sh(&p, "touch hdr");
@@ -95,8 +127,13 @@ export void test_build_executor_a_changed_header_reruns_the_step(io::Io *io) {
     scratch::expect_count("depfile: a header that is gone reruns the step once", 4, scratch::lines(&p, "runs"));
 }
 
-export void test_build_executor_a_depfile_that_names_another_output_fails_the_step(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_depfile_wrong");
+export void test_build_executor_a_depfile_that_names_another_output_fails_the_step() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_depfile_wrong");
+    defer scratch::clean(&p);
     scratch::Run run = exec(&p, "");
     scratch::expect_failure("depfile: a depfile that names another output fails the step", &run);
     scratch::expect_contains("depfile: and says what it expected", run.out,
@@ -111,8 +148,13 @@ static void counts(const scratch::Project *p, const char *name, const char *expe
 }
 
 // 14c. restat: an output that did not change cleans what depended on it, and the time kept is the input's.
-export void test_build_executor_restat_cleans_what_an_unchanged_output_feeds(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_restat");
+export void test_build_executor_restat_cleans_what_an_unchanged_output_feeds() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_restat");
+    defer scratch::clean(&p);
     (void)exec(&p, "");
     counts(&p, "restat: the first build runs the chain", "1 1 1");
     scratch::sleep(&p, 50);
@@ -125,8 +167,13 @@ export void test_build_executor_restat_cleans_what_an_unchanged_output_feeds(io:
     counts(&p, "restat: a changed output reruns everything after it", "3 2 2");
 }
 
-export void test_build_executor_a_dry_run_lists_the_steps_and_runs_nothing(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_restat");
+export void test_build_executor_a_dry_run_lists_the_steps_and_runs_nothing() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_restat");
+    defer scratch::clean(&p);
     (void)exec(&p, "");
     scratch::expect_contains("dry run: a settled tree says so", exec(&p, "-n").out, "no work to do");
     (void)scratch::sh(&p, "touch seed");
@@ -136,8 +183,13 @@ export void test_build_executor_a_dry_run_lists_the_steps_and_runs_nothing(io::I
     scratch::expect_count("dry run: and runs nothing", 1, scratch::lines(&p, "gen.log"));
 }
 
-export void test_build_executor_restat_checks_an_input_touched_after_the_output(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "exec_restat");
+export void test_build_executor_restat_checks_an_input_touched_after_the_output() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_restat");
+    defer scratch::clean(&p);
     (void)exec(&p, "");
     scratch::sleep(&p, 50);
     (void)scratch::sh(&p, "touch seed");

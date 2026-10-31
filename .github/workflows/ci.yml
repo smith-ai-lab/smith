@@ -1,6 +1,6 @@
 name: ci
 
-# The full check (#798, knowledge/ci-hosted.md): Linux carries the tests (6 hosted shards, each building smith itself,
+# The full check (#798, knowledge/ci-hosted.md): Linux carries the tests (8 hosted shards, each building smith itself,
 # no artifact travels) and the owner's Mac runs what only macOS can (`build`, `mechanical`, the `--macos-only` tests);
 # the one job `ci` gathers them, so the ruleset and the merge queue name a single required check. The first job that
 # fails cancels the run. A push to main (a commit the queue checked) also publishes the release and saves the cache.
@@ -36,6 +36,7 @@ jobs:
       linux: ${{ steps.linux.outputs.linux }}
       # where the macOS jobs run (knowledge/ci-hosted.md): the owner's Mac when one of its runners is online, else
       # hosted macos-26; picked per run by the step `Pick the macOS runner`
+      pack: ${{ steps.pack.outputs.build }}
       mac: ${{ steps.mac.outputs.mac }}
       # SMITH_CORES of a macOS job: the Mac's 16 cores shared by its 3 runners; a hosted runner has 3
       cores: ${{ steps.mac.outputs.cores }}
@@ -47,24 +48,26 @@ jobs:
           fetch-depth: 0
       - name: Pick the macOS runner
         id: mac
+        uses: ./.github/actions/pick-mac
+        with:
+          token: ${{ secrets.RUNNER_STATUS_TOKEN }}
+          fork: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+      - name: Is there a pack for this LLVM configuration
+        id: pack
+        # a change of patches/ bumps the configuration name, whose pack no release holds yet: the `pack` job builds
+        # and publishes it before anything that needs LLVM runs (#1064). Not for a fork, which cannot publish.
         env:
-          RUNNER_STATUS_TOKEN: ${{ secrets.RUNNER_STATUS_TOKEN }}
           FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
-          # the owner's Mac if at least one runner labelled self-hosted, macOS and ARM64 is online right now, else a
-          # hosted macos-26: a Mac that is off never stalls the run. No token, a fork, or a failed call: hosted.
-          mac='"macos-26"'; cores=3; why="no secret"
-          if [ "$FORK" = true ]; then why="fork pull request"
-          elif [ -n "$RUNNER_STATUS_TOKEN" ]; then
-            if online=$(GH_TOKEN=$RUNNER_STATUS_TOKEN gh api "repos/$GITHUB_REPOSITORY/actions/runners" --paginate --jq \
-              '.runners[] | select(.status == "online") | select([.labels[].name] | contains(["self-hosted", "macOS", "ARM64"])) | .name' 2>/dev/null); then
-              if [ -n "$online" ]; then mac='["self-hosted","macOS","ARM64"]'; cores=5; why="online: $(printf '%s' "$online" | tr '\n' ' ')"
-              else why="no Mac runner online"; fi
-            else why="runners call failed"; fi
+          name=$(sed -n 's/.*"SMITH_LLVM_NAME", "\([^"]*\)".*/\1/p' build.c | head -1)
+          build=false
+          if [ "$FORK" != true ] && [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            for tag in "llvm-$name-darwin-arm64" "llvm-$name-linux-x86_64"; do
+              gh release view "$tag" >/dev/null 2>&1 || build=true
+            done
           fi
-          echo "mac=$mac" >>"$GITHUB_OUTPUT"
-          echo "cores=$cores" >>"$GITHUB_OUTPUT"
-          echo "macOS jobs run on $mac ($why)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "build=$build" >>"$GITHUB_OUTPUT"
+          echo "LLVM pack $name: built by this run: $build" >>"$GITHUB_STEP_SUMMARY"
       - name: Scope
         id: scope
         env:
@@ -98,32 +101,44 @@ jobs:
 
       - name: Test matrix
         id: linux
-        # Linux carries the tests: 6 shards of `--skip-macos`, each building smith itself (no artifact egress). The
-        # Mac runs the few tests only macOS can run (`--macos-only`, one part). A pull request tests what its change
-        # reaches, in one part on each. A push to main runs only the Linux shards (the Mac's work is the release).
+        # Linux carries the tests: `--skip-macos` in parts, each building smith itself (no artifact egress). The Mac
+        # runs the few tests only macOS can run (`--macos-only`, one part). A pull request tests what its change
+        # reaches, split into 4 parts (one part took 10 to 17 min); the queue and main run everything in 8. A push to
+        # main runs only the Linux parts (the Mac's work is the release).
         run: |
+          flags="--skip-macos"
+          macflags="--macos-only"
+          count=8
           if [ "${{ steps.scope.outputs.mode }}" = changed ]; then
-            flags="--changed --base ${{ steps.scope.outputs.base }}"
-            echo "linux={\"include\":[{\"shard\":1,\"count\":1,\"flags\":\"--skip-macos $flags\"}]}" >>"$GITHUB_OUTPUT"
-            echo "matrix={\"include\":[{\"os\":\"macos-26\",\"shard\":1,\"count\":1,\"flags\":\"--macos-only $flags\"}]}" >>"$GITHUB_OUTPUT"
-            echo "tests: a pull request tests only what its change reaches: one Linux part, one macOS part" >>"$GITHUB_STEP_SUMMARY"
-            exit 0
+            flags="$flags --changed --base ${{ steps.scope.outputs.base }}"
+            macflags="$macflags --changed --base ${{ steps.scope.outputs.base }}"
+            count=4
           fi
           linux=
-          for i in 1 2 3 4 5 6; do
-            linux="$linux"${linux:+,}'{"shard":'$i',"count":6,"flags":"--skip-macos"}'
+          for i in $(seq 1 "$count"); do
+            linux="$linux"${linux:+,}'{"shard":'$i',"count":'$count',"flags":"'"$flags"'"}'
           done
           echo "linux={\"include\":[$linux]}" >>"$GITHUB_OUTPUT"
-          echo 'matrix={"include":[{"os":"macos-26","shard":1,"count":1,"flags":"--macos-only"}]}' >>"$GITHUB_OUTPUT"
-          echo "tests: 6 Linux parts, one macOS part (--macos-only)" >>"$GITHUB_STEP_SUMMARY"
+          echo "matrix={\"include\":[{\"os\":\"macos-26\",\"shard\":1,\"count\":1,\"flags\":\"$macflags\"}]}" >>"$GITHUB_OUTPUT"
+          echo "tests: $count Linux parts, one macOS part ($macflags)" >>"$GITHUB_STEP_SUMMARY"
+
+  pack:
+    # the LLVM pack of a configuration no release holds yet, built and published by llvm.yml (#1064) before the jobs
+    # that need it start; it runs on the Mac only when the Mac is online and idle, else on hosted runners
+    needs: changes
+    if: needs.changes.outputs.pack == 'true'
+    uses: ./.github/workflows/llvm.yml
+    permissions:
+      contents: write # gh release create
+    secrets: inherit
 
   build:
     # smith built once for the run (#798): the stage0 release and the LLVM pack come from the cache (or the release),
     # compiles from the step cache main saved, then the tests are built too. Every job after this one unpacks the
     # result instead of compiling smith again.
-    needs: changes
+    needs: [changes, pack]
     # macOS only: the Linux shards build smith themselves. A push to main builds nothing here (the release does).
-    if: needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs'
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs') }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
     timeout-minutes: 40
     env:
@@ -237,7 +252,10 @@ jobs:
           } >>"$GITHUB_STEP_SUMMARY"
           # a failure names its test: the line `FAIL <name>` of the runner, as an annotation and in the summary
           if [ "$rc" -ne 0 ]; then
-            { echo '```'; grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 60; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+            # each failed test's name and the lines under it (where the check failed, its error), kept for the
+            # `Fail fast` step, which prints them last, before it cancels the other shards
+            grep -hE -A6 '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" 2>/dev/null | grep -vE '^--$' | head -n 80 >"$RUNNER_TEMP/failed.txt" || true
+            { echo '```'; cat "$RUNNER_TEMP/failed.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
             grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 20 |
               while IFS= read -r line; do echo "::error::$line"; done
           fi
@@ -255,13 +273,19 @@ jobs:
           retention-days: 7
       - name: Fail fast
         if: failure()
-        run: gh run cancel ${{ github.run_id }}
+        # the failed tests are the last lines of this shard's log (#1086): the run then shows only cancelled jobs
+        run: |
+          if [ -s "$RUNNER_TEMP/failed.txt" ]; then
+            echo "FAILED TESTS of this shard (the other shards are cancelled):"
+            cat "$RUNNER_TEMP/failed.txt"
+          fi
+          gh run cancel ${{ github.run_id }}
 
   test-linux:
     # Linux carries the tests (required): 6 hosted shards of `--skip-macos`, each builds smith itself (a hosted
     # runner is free, and no ~1 GB artifact travels: storage egress), so none waits for `build`
-    needs: changes
-    if: needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'release'
+    needs: [changes, pack]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'release') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -279,6 +303,14 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           tests: "true"
+      - name: Neovim 0.11+ for the editor tests (#1017)
+        # the runner's nvim is 0.9 and the plugin needs `vim.uv`: `smith build nvim` fetches the pinned release (by
+        # hash, kept in ~/.cache/smith/tools) and prints its bin/, which goes first on the PATH
+        shell: bash
+        run: |
+          bin=$("$SMITH" build nvim | tail -n 1)
+          echo "$bin" >>"$GITHUB_PATH"
+          "$bin/nvim" --version | head -n 1 | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Tests, part ${{ matrix.shard }} of ${{ matrix.count }}
         shell: bash
         run: |
@@ -295,7 +327,10 @@ jobs:
             grep -E '^[0-9]+ passed' "$RUNNER_TEMP/test.log" || true
           } >>"$GITHUB_STEP_SUMMARY"
           if [ "$rc" -ne 0 ]; then
-            { echo '```'; grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 60; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+            # each failed test's name and the lines under it (where the check failed, its error), kept for the
+            # `Fail fast` step, which prints them last, before it cancels the other shards
+            grep -hE -A6 '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" 2>/dev/null | grep -vE '^--$' | head -n 80 >"$RUNNER_TEMP/failed.txt" || true
+            { echo '```'; cat "$RUNNER_TEMP/failed.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
             grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 20 |
               while IFS= read -r line; do echo "::error::$line"; done
           fi
@@ -312,7 +347,13 @@ jobs:
           retention-days: 7
       - name: Fail fast
         if: failure()
-        run: gh run cancel ${{ github.run_id }}
+        # the failed tests are the last lines of this shard's log (#1086): the run then shows only cancelled jobs
+        run: |
+          if [ -s "$RUNNER_TEMP/failed.txt" ]; then
+            echo "FAILED TESTS of this shard (the other shards are cancelled):"
+            cat "$RUNNER_TEMP/failed.txt"
+          fi
+          gh run cancel ${{ github.run_id }}
   docs:
     # a change of the README, AGENTS.md, knowledge/ or the skills only: the docs check and the tests that read them
     # (a change that also touches code runs the full check, whose parts include both)
@@ -343,7 +384,7 @@ jobs:
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too (the failing job cancels the run): red at once.
-    needs: [changes, build, mechanical, test, test-linux, docs]
+    needs: [changes, pack, build, mechanical, test, test-linux, docs]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -364,10 +405,14 @@ jobs:
   warm:
     # a push to main (a commit the queue checked) builds smith and the tests once more only to save the step cache,
     # which every pull request and queue entry after it restores (a cache saved on a branch is seen by that branch and
-    # the ones made from it, and main's by all: so only main saves, which keeps the entries few)
+    # the ones made from it, and main's by all: so only main saves, which keeps the entries few). One for each OS: the
+    # Linux shards restored `none` until this job saved a Linux entry, and built smith from nothing in each of 6 jobs
     needs: changes
     if: needs.changes.outputs.scope == 'release'
-    runs-on: macos-26
+    strategy:
+      matrix:
+        os: [macos-26, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     env:
       GH_TOKEN: ${{ github.token }}

@@ -8,8 +8,8 @@ tags: [build, executor]
 
 `smith build` runs the manifest itself: no ninja is installed or run. The code is `runtime/executor.c` and the five files
 it includes (`executor_manifest.c`, `executor_state.c`, `executor_plan.c`, `executor_run.c`, `executor_tools.c`), which
-`smith.c` includes; it stands on the `io` module, compiled from `lib/smith/io.smith` and linked. It uses
-`smith::io` (`<smith/io.h>`, on kqueue on macOS and epoll on Linux): the manifest and the graph live in `io.arena`, the
+`smith.c` includes; it stands on smith's private io layer, compiled from `runtime/io.smith` and linked (until #888). It uses
+that layer (`<runtime/io.h>`, on kqueue on macOS and epoll on Linux): the manifest and the graph live in `io.arena`, the
 files are read and written through `io.files`, and one event loop waits for every job's process and pipe.
 
 ## Who runs the graph
@@ -73,7 +73,10 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
 - **Restoring** clones the files (FICLONE on Linux, `clonefile` on macOS, else a copy), writes the depfile as a compile
   would, and the job ends as one does: the depfile log and command log are written, `-v` shows `(cached)` after the
   step, `-d explain` says it was restored. A hit takes no core of the host's pool. Stores and restores are a temporary
-  file and a rename, so builds in other worktrees can share the folder.
+  file and a rename, so builds in other worktrees can share the folder. A restored output gets the time of the restore, not
+  the cached file's old one, so it is not older than its inputs; a step that is not restat also re-reads the time of its outputs when it
+  ends, so a restat step that reads them records a time that is not older than they are, and a tree just built settles (#816). A header
+  step run by a bare-named compiler waits for `.smith/compiler/<hash>` (the compiler's identity), not for its file (the runtime swaps the input).
 - **The build program is served too.** `smith build` compiles `build.c`, the embedded runtime and the libraries it links
   into `.smith/program` through the executor, and those compiles are cacheable: `-MD` (not `-MMD`, which the cache
   refuses) and `-fdebug-compilation-dir=.`, so the `-g` objects hold no folder and a fresh project with the same build

@@ -43,6 +43,7 @@ struct Point {
     int induction_loop = -1;                  // a loop proved by induction: its index in Unit::loops
     bool induction_step = false;              // ... and this is its check at the back edge (else: on entry)
     bool contract_check = false; // an ensures, invariant or assert call: a run-time check the lowering can omit
+    unsigned trap_id = ~0u;      // a Kind::Trap: the id of its llvm.ubsantrap (clang's SanitizerHandler order)
 };
 
 // A call of a function whose contract replaced it.
@@ -118,7 +119,7 @@ struct Options {
     // queries that run side by side, the longest of them or all of them divided by `solver_threads`, whichever is more.
     // Each of those is a CPU time, which does not depend on what else the machine runs. Bitwuzla runs the queries of a
     // proof on that many threads at most, on every machine.
-    double budget_seconds = 30; // 10 again once hosted CI is in place (owner, 2026-10-29)
+    double budget_seconds = 10;
     // The most memory one function's proof may use (its process's physical footprint, compressed pages included), in
     // bytes. macOS enforces no RLIMIT_AS or RLIMIT_DATA, so the parent watches the process and stops it. A proof of a
     // function that fits its budget uses well under 1 GB; a query that blows up used 37 GB, and with several functions

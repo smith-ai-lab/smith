@@ -1,11 +1,11 @@
 ---
 name: smith-mem
-description: "Using smith::mem (import smith::mem; mem::alloc, alloc_slice, try_alloc, set_allocator): memory from the allocator in force on the thread, never null. Load when code imports smith::mem or includes <smith/mem.h>, or on swapping the allocator around code with defer."
+description: "Using smith::mem (import smith::mem; mem::alloc, alloc_slice, realloc, try_alloc, set_allocator): memory from the allocator in force on the thread, never null. Load when code imports smith::mem or includes <smith/mem.h>, or on swapping the allocator around code with defer."
 ---
 
 # Memory from the allocator in force: smith::mem
 
-`mem::alloc(T)` is a zeroed `T *` from the allocator of the calling thread: the system's by default, an arena or a fake after `mem::set_allocator`. It is never null: a refusal (the OS out of memory, a fixed arena's budget) is a checked failure naming the size, which aborts for now (with tasks, #324, it fails the task and unwinds through `defer`). Code that can do something about a refusal calls `mem::try_alloc`, which returns an `option`. `malloc` keeps C's contract (null when refused).
+`mem::alloc(T)` is a zeroed `T *` from the allocator of the calling thread: the system's by default, an arena or a fake after `mem::set_allocator`. It is never null: a refusal (the OS out of memory, a fixed arena's budget) is a checked failure naming the size, which aborts for now (with tasks, #324, it fails the task and unwinds through `defer`). Code that can do something about a refusal calls `mem::try_alloc` or `mem::try_alloc_slice`, which return an `option`. `malloc` keeps C's contract (null when refused).
 
 ```smith
 module scratch;
@@ -30,7 +30,7 @@ export void fill(arena::Arena *a) {
 }
 ```
 
-- The calls: `mem::alloc(T)`, `mem::alloc_slice(T, sizes...)` (as `arena::push_slice`), `mem::try_alloc(T)`, `mem::free(p)`, `mem::set_allocator(a)` (returns the previous; null is the system's) and `mem::allocator()`. For C and sizes known at run time: `mem::alloc_raw(size, align)` (`smith_mem_alloc`), `alloc_array_raw`, `try_alloc_raw` (null when refused).
+- The calls: `mem::alloc(T)`, `mem::alloc_slice(T, sizes...)` (as `arena::push_slice`), `mem::try_alloc(T)`, `mem::try_alloc_slice(T, sizes...)` (the zeroed slice of `alloc_slice` as an `option`: `.none` when the allocator refuses or the size overflows, nothing allocated), `xs = mem::realloc(xs, n)` (resizes a one-dimension slice: the first `min(count, n)` elements stay, a grown tail is zeroed, never null; `mem::try_realloc(xs, n)` is `.none` when the allocator refuses or the size overflows and `xs` is then untouched; `n == 0` frees and gives the empty slice; an empty `xs` is a fresh allocation; free the result with `mem::free(xs.data)`), `mem::free(p)`, `mem::set_allocator(a)` (returns the previous; null is the system's) and `mem::allocator()`. For C and sizes known at run time: `mem::alloc_raw(size, align)` (`smith_mem_alloc`), `alloc_array_raw`, `try_alloc_raw` (null when refused).
 - An `Allocator` is a struct whose first member is a `SmithAllocator` (`alloc`, `realloc`, `free`, `owns`, optional `size`, `<smith/handlers.h>`); the setter is per thread. `arena::allocator` makes one over an arena (a growing arena never refuses until its backing does); how `malloc` reaches it is in knowledge/handlers.md. 
 
 ## Finding mistakes: mem::checked
@@ -56,4 +56,4 @@ export bool demo(u8 dst[:], const u8 src[:]) {
 
 - `mem::copy(dst, src)`, `mem::move(dst, src)` (overlap allowed), `mem::zero(xs)` or `mem::zero(&x)`, `mem::fill(xs, v)`, `mem::equal(a, b)` (a `bool`; bytes, so a NaN equals itself and `0.0` differs from `-0.0`), `mem::bytes(&x)` (`u8[:]`; `mem::read_bytes(&x)` is `const u8[:]`). An element type that differs is a compile error; a length that differs is a checked failure in every build. They lower to the C functions: no cost beyond the checks.
 - Bytes become a typed slice in one place: `mem::can_view(raw, f32)` asks (a whole number of elements, aligned), `mem::view(raw, f32)` returns `f32[:]` and is a checked failure when `can_view` is false (`raw` is a `u8[:]`; an `option` of a slice cannot be written in a generic yet, #408).
-- **In a file with a `module` line the raw functions are a `smith-mem` finding** (`c::memcpy`, `c::memmove`, `c::memset`, `c::memcmp`, `__builtin_memcpy` and the others): the message names the replacement, and `smith lint --fix` rewrites `memset(&x, 0, sizeof x)` to `mem::zero(&x)`. A function that implements a wrapper over the raw function says `contract::trusted()` (`smith_trusted()` in C) and the check skips it. A `.c` file, or a `.smith` file with no `module` line, is untouched (smith-check-lints).
+- **In a file with a `module` line the raw functions are a `smith-mem` finding** (`c::memcpy`, `c::memmove`, `c::memset`, `c::memcmp`, `__builtin_memcpy` and the others, and the allocator's `c::malloc`, `c::calloc`, `c::aligned_alloc`, `c::posix_memalign`, `c::realloc` and `c::free`): the message names the replacement (`mem::alloc(T)`, `mem::alloc_slice(T, n)`, `mem::realloc(xs, n)`, `mem::free(p)`), and `smith lint --fix` rewrites `memset(&x, 0, sizeof x)` to `mem::zero(&x)`, `malloc(sizeof(T))` to `mem::alloc(T)` and `free(p)` to `mem::free(p)`. A function that implements a wrapper over the raw function says `contract::trusted()` (`smith_trusted()` in C) and the check skips it. A `.c` file, or a `.smith` file with no `module` line, is untouched (smith-check-lints).

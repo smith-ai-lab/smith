@@ -15,9 +15,9 @@
 module untar_readers_test;
 
 import smith::arena;
+import smith::files;
 import smith::format;
 import smith::inflate;
-import smith::io;
 import smith::mem;
 import smith::test;
 import scratch;
@@ -49,18 +49,49 @@ constexpr char source_tree[_] = "bin d\n"
 
 constexpr char random_tree[_] = "random.bin f 0644 4000 e144e5c0 1000000000\n";
 
-// ---- Bytes: the fixtures, a buffer to write archives into, and damage
+// ---- A case: its scratch folder and its memory
 
-static const char *join(io::Io *io, const char *a, const char *b) {
-    return format::push(&io->arena, a, b).data;
+// A test's own folder to extract into (scratch::make) and its arena, which everything a case builds comes from and
+// which the runner gives back after the test, so no test frees.
+typedef struct {
+    scratch::Project project;
+    const char *folder;
+    arena::Arena memory;
+} Case;
+
+constexpr usize case_memory = 64U << 20;
+
+static Case start() {
+    scratch::Project p = scratch::make("untar", nullptr);
+    return (Case){.project = p, .folder = p.dir, .memory = test::memory(case_memory)};
 }
 
-static Bytes fixture(io::Io *io, const char *name) {
-    const char *path =
-        format::push(&io->arena, io::args_env(&io->args, "SMITH_REPO"), "/tests/fixtures/untar/", name).data;
-    io::Read file = io::files_read(&io->files, &io->arena, path);
-    test::check_equal(file.error.code, 0);
-    return file.data;
+static void finish(Case *t) {
+    scratch::clean(&t->project);
+}
+
+// ---- Bytes: the fixtures, a buffer to write archives into, and damage
+
+static const char *join(Case *t, const char *a, const char *b) {
+    return scratch::push(&t->memory, a, b).data;
+}
+
+// A fixture's bytes, in the case's arena: read_file allocates through the current allocator, which is the arena's
+// while it reads.
+static Bytes fixture(Case *t, const char *name) {
+    const char *path = scratch::push(&t->memory, "tests/fixtures/untar/", name).data;
+    arena::ArenaAllocator allocator = arena::allocator(&t->memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::BytesResult file = files::read_file(path[0:c::strlen(path)]);
+    switch (file) {
+    case .ok:
+        return file.ok;
+    case .error:
+        test::note("cannot read %s", path);
+        test::check_condition(false); // ends the test
+        return (Bytes){};
+    }
 }
 
 typedef struct {
@@ -68,8 +99,8 @@ typedef struct {
     usize used;
 } Buffer;
 
-static Buffer buffer(io::Io *io) {
-    return (Buffer){.data = arena::push_slice(&io->arena, u8, buffer_capacity).data, .used = 0};
+static Buffer buffer(Case *t) {
+    return (Buffer){.data = arena::push_slice(&t->memory, u8, buffer_capacity).data, .used = 0};
 }
 
 static void put(Buffer *b, const u8 *bytes, usize size) {
@@ -104,26 +135,26 @@ static Bytes part(Bytes from, usize start, usize end) {
 }
 
 // A copy with the byte at `at` (from the end when negative) changed, so that only a check can notice.
-static Bytes flip(io::Io *io, Bytes bytes, isize at) {
+static Bytes flip(Case *t, Bytes bytes, isize at) {
     usize size = countof(bytes);
     usize where = at < 0 ? size - (usize)(-at) : (usize)at;
     test::check_less(where, size);
-    Buffer b = buffer(io);
+    Buffer b = buffer(t);
     put_bytes(&b, bytes);
     b.data[where] = (u8)(b.data[where] + 1);
     return bytes_of(&b);
 }
 
-static Bytes concat(io::Io *io, Bytes a, Bytes b) {
-    Buffer joined = buffer(io);
+static Bytes concat(Case *t, Bytes a, Bytes b) {
+    Buffer joined = buffer(t);
     put_bytes(&joined, a);
     put_bytes(&joined, b);
     return bytes_of(&joined);
 }
 
 // Bytes that do not compress, the same on every run.
-static Bytes noise(io::Io *io, usize size) {
-    u8 *data = arena::push_slice(&io->arena, u8, size).data;
+static Bytes noise(Case *t, usize size) {
+    u8 *data = arena::push_slice(&t->memory, u8, size).data;
     u32 state = 646;
     for (usize i = 0; i < size; i++) {
         state ^= state << 13;
@@ -198,8 +229,8 @@ static void tar_add(Buffer *tar, Entry entry) {
     put_zeros(tar, (512 - entry.size % 512) % 512);
 }
 
-static Bytes tar_of(io::Io *io, const Entry *entries, usize count) {
-    Buffer tar = buffer(io);
+static Bytes tar_of(Case *t, const Entry *entries, usize count) {
+    Buffer tar = buffer(t);
     for (usize i = 0; i < count; i++)
         tar_add(&tar, entries[i]);
     put_zeros(&tar, 1024);
@@ -213,8 +244,8 @@ static void put_le32(Buffer *b, u32 value) {
     put(b, four, 4);
 }
 
-static Bytes gzip_stored(io::Io *io, Bytes data) {
-    Buffer gz = buffer(io);
+static Bytes gzip_stored(Case *t, Bytes data) {
+    Buffer gz = buffer(t);
     const u8 header[10] = {0x1F, 0x8B, 8, 0, 0, 0, 0, 0, 0, 3};
     put(&gz, header, 10);
     usize size = countof(data);
@@ -249,9 +280,9 @@ static void put_vli(Buffer *b, u64 value) {
     }
 }
 
-static Bytes xz_stored(io::Io *io, Bytes data, u8 check) {
+static Bytes xz_stored(Case *t, Bytes data, u8 check) {
     usize size = countof(data);
-    Buffer xz = buffer(io);
+    Buffer xz = buffer(t);
     const u8 flags[2] = {0, check};
     const u8 magic[6] = {0xFD, '7', 'z', 'X', 'Z', 0};
     put(&xz, magic, 6);
@@ -302,23 +333,23 @@ typedef struct {
     const char *tree; // the listing of the package
 } Extracted;
 
-static const char *folder_for_name(io::Io *io, const char *name) {
-    return join(io, join(io, test::scratch(io), "/"), name);
+static const char *folder_for_name(Case *t, const char *name) {
+    return join(t, join(t, t->folder, "/"), name);
 }
 
-static const char *folder_for(io::Io *io, const char *name) {
-    const char *folder = folder_for_name(io, name);
-    io::Error made = io::files_make_folder(&io->files, folder);
-    test::check_equal(made.code, 0);
+static const char *folder_for(Case *t, const char *name) {
+    const char *folder = folder_for_name(t, name);
+    files::DoneResult made = files::make_folder(folder[0:c::strlen(folder)]);
+    test::check_condition(made == .ok);
     return folder;
 }
 
 // The archive extracted into a new folder of the test's scratch folder, named `name`.
-static Extracted extract_from(io::Io *io, const char *name, Bytes archive, const char *url) {
-    const char *folder = folder_for(io, name);
-    char *contents = arena::push_slice(&io->arena, char, path_capacity).data;
-    char *error = arena::push_slice(&io->arena, char, text_capacity).data;
-    char *tree = arena::push_slice(&io->arena, char, text_capacity).data;
+static Extracted extract_from(Case *t, const char *name, Bytes archive, const char *url) {
+    const char *folder = folder_for(t, name);
+    char *contents = arena::push_slice(&t->memory, char, path_capacity).data;
+    char *error = arena::push_slice(&t->memory, char, text_capacity).data;
+    char *tree = arena::push_slice(&t->memory, char, text_capacity).data;
     bool ok = c::smith_core_extract(archive.data, countof(archive), url, folder, contents, path_capacity, error,
                                     text_capacity);
     if (ok) {
@@ -328,123 +359,157 @@ static Extracted extract_from(io::Io *io, const char *name, Bytes archive, const
     return (Extracted){.ok = ok, .contents = contents, .error = error, .tree = tree};
 }
 
-static Extracted extract(io::Io *io, const char *name, Bytes archive) {
-    return extract_from(io, name, archive, "file:///package.tar");
+static Extracted extract(Case *t, const char *name, Bytes archive) {
+    return extract_from(t, name, archive, "file:///package.tar");
 }
 
 // The archive extracts to the listing.
-static void is_tree(io::Io *io, const char *name, const Extracted *r, const char *listing) {
-    scratch::expect_text(join(io, name, ": extracts"), "", r->ok ? "" : r->error);
-    scratch::expect_text(join(io, name, ": the tree, modes and bytes"), listing, r->tree);
+static void is_tree(Case *t, const char *name, const Extracted *r, const char *listing) {
+    scratch::expect_text(join(t, name, ": extracts"), "", r->ok ? "" : r->error);
+    scratch::expect_text(join(t, name, ": the tree, modes and bytes"), listing, r->tree);
 }
 
 // The archive is refused with the reason, and its URL begins the message.
-static void is_refused(io::Io *io, const char *name, const Extracted *r, const char *url, const char *reason) {
-    scratch::expect_text(join(io, name, ": is refused"), "refused", r->ok ? "extracted" : "refused");
-    scratch::expect_contains(join(io, name, ": says why"), r->error, reason);
-    scratch::expect_contains(join(io, name, ": names the archive"), r->error,
-                             format::push(&io->arena, "cannot extract ", url).data);
+static void is_refused(Case *t, const char *name, const Extracted *r, const char *url, const char *reason) {
+    scratch::expect_text(join(t, name, ": is refused"), "refused", r->ok ? "extracted" : "refused");
+    scratch::expect_contains(join(t, name, ": says why"), r->error, reason);
+    scratch::expect_contains(join(t, name, ": names the archive"), r->error,
+                             scratch::push(&t->memory, "cannot extract ", url).data);
 }
 
-static void refuses(io::Io *io, const char *name, Bytes archive, const char *reason) {
-    Extracted r = extract(io, "refused", archive);
-    is_refused(io, name, &r, "file:///package.tar", reason);
+static void refuses(Case *t, const char *name, Bytes archive, const char *reason) {
+    Extracted r = extract(t, "refused", archive);
+    is_refused(t, name, &r, "file:///package.tar", reason);
 }
 
-static void same_tree(io::Io *io, const char *name, const char *archive, const char *listing) {
-    Extracted r = extract(io, "same", fixture(io, archive));
-    is_tree(io, name, &r, listing);
+static void same_tree(Case *t, const char *name, const char *archive, const char *listing) {
+    Extracted r = extract(t, "same", fixture(t, archive));
+    is_tree(t, name, &r, listing);
 }
 
 // ---- 1. The source tree and each format of its archive
 
-export void test_untar_tar_ustar(io::Io *io) {
-    same_tree(io, "tar (ustar)", "a.tar", source_tree);
+export void test_untar_tar_ustar() {
+    Case t = start();
+    defer finish(&t);
+    same_tree(&t, "tar (ustar)", "a.tar", source_tree);
 }
 
-export void test_untar_tar_pax(io::Io *io) {
-    same_tree(io, "tar (pax)", "pax.tar", source_tree);
+export void test_untar_tar_pax() {
+    Case t = start();
+    defer finish(&t);
+    same_tree(&t, "tar (pax)", "pax.tar", source_tree);
 }
 
-export void test_untar_tar_gnu(io::Io *io) {
-    same_tree(io, "tar (gnu)", "gnu.tar", source_tree);
+export void test_untar_tar_gnu() {
+    Case t = start();
+    defer finish(&t);
+    same_tree(&t, "tar (gnu)", "gnu.tar", source_tree);
 }
 
-export void test_untar_tar_gz(io::Io *io) {
-    same_tree(io, "tar.gz", "a.tar.gz", source_tree);
+export void test_untar_tar_gz() {
+    Case t = start();
+    defer finish(&t);
+    same_tree(&t, "tar.gz", "a.tar.gz", source_tree);
 }
 
-export void test_untar_tar_gz_gzip_1(io::Io *io) {
-    same_tree(io, "tar.gz (gzip -1)", "fast.tar.gz", source_tree);
+export void test_untar_tar_gz_gzip_1() {
+    Case t = start();
+    defer finish(&t);
+    same_tree(&t, "tar.gz (gzip -1)", "fast.tar.gz", source_tree);
 }
 
-export void test_untar_tar_gz_gzip_9(io::Io *io) {
-    same_tree(io, "tar.gz (gzip -9)", "best.tar.gz", source_tree);
+export void test_untar_tar_gz_gzip_9() {
+    Case t = start();
+    defer finish(&t);
+    same_tree(&t, "tar.gz (gzip -9)", "best.tar.gz", source_tree);
 }
 
-export void test_untar_tgz_with_the_file_name_in_its_header(io::Io *io) {
-    same_tree(io, "tgz with the file name in its header", "named.tgz", source_tree);
+export void test_untar_tgz_with_the_file_name_in_its_header() {
+    Case t = start();
+    defer finish(&t);
+    same_tree(&t, "tgz with the file name in its header", "named.tgz", source_tree);
 }
 
 // xz makes CRC-64 by default.
-export void test_untar_tar_xz_crc64(io::Io *io) {
-    same_tree(io, "tar.xz (CRC-64)", "a.tar.xz", source_tree);
+export void test_untar_tar_xz_crc64() {
+    Case t = start();
+    defer finish(&t);
+    same_tree(&t, "tar.xz (CRC-64)", "a.tar.xz", source_tree);
 }
 
-export void test_untar_tar_xz_crc32(io::Io *io) {
-    same_tree(io, "tar.xz (CRC-32)", "crc32.tar.xz", source_tree);
+export void test_untar_tar_xz_crc32() {
+    Case t = start();
+    defer finish(&t);
+    same_tree(&t, "tar.xz (CRC-32)", "crc32.tar.xz", source_tree);
 }
 
-export void test_untar_tar_xz_sha256(io::Io *io) {
-    same_tree(io, "tar.xz (SHA-256)", "sha256.tar.xz", source_tree);
+export void test_untar_tar_xz_sha256() {
+    Case t = start();
+    defer finish(&t);
+    same_tree(&t, "tar.xz (SHA-256)", "sha256.tar.xz", source_tree);
 }
 
-export void test_untar_tar_xz_no_check(io::Io *io) {
-    same_tree(io, "tar.xz (no check)", "none.tar.xz", source_tree);
+export void test_untar_tar_xz_no_check() {
+    Case t = start();
+    defer finish(&t);
+    same_tree(&t, "tar.xz (no check)", "none.tar.xz", source_tree);
 }
 
 // 8 blocks of 4096 bytes (xz -T2 --block-size=4096).
-export void test_untar_tar_xz_many_blocks(io::Io *io) {
-    same_tree(io, "tar.xz (many blocks)", "blocks.tar.xz", source_tree);
+export void test_untar_tar_xz_many_blocks() {
+    Case t = start();
+    defer finish(&t);
+    same_tree(&t, "tar.xz (many blocks)", "blocks.tar.xz", source_tree);
 }
 
 // A gzip of a tar is still a tar, and a tar split anywhere in a gzip is read as one.
-export void test_untar_a_gz_of_a_tar_is_still_a_tar(io::Io *io) {
-    Extracted r = extract(io, "stored", gzip_stored(io, fixture(io, "a.tar")));
-    is_tree(io, "a gz of a tar", &r, source_tree);
+export void test_untar_a_gz_of_a_tar_is_still_a_tar() {
+    Case t = start();
+    defer finish(&t);
+    Extracted r = extract(&t, "stored", gzip_stored(&t, fixture(&t, "a.tar")));
+    is_tree(&t, "a gz of a tar", &r, source_tree);
 }
 
 // Members and streams one after the other: cat a.gz b.gz, and xz streams with the padding xz allows between them.
-export void test_untar_tar_gz_of_two_members(io::Io *io) {
-    Bytes tar = fixture(io, "a.tar");
-    Bytes two = concat(io, gzip_stored(io, part(tar, 0, 10240)), gzip_stored(io, part(tar, 10240, countof(tar))));
-    Extracted r = extract(io, "two", two);
-    is_tree(io, "tar.gz of two members", &r, source_tree);
+export void test_untar_tar_gz_of_two_members() {
+    Case t = start();
+    defer finish(&t);
+    Bytes tar = fixture(&t, "a.tar");
+    Bytes two = concat(&t, gzip_stored(&t, part(tar, 0, 10240)), gzip_stored(&t, part(tar, 10240, countof(tar))));
+    Extracted r = extract(&t, "two", two);
+    is_tree(&t, "tar.gz of two members", &r, source_tree);
 }
 
-export void test_untar_tar_xz_of_two_streams_with_padding(io::Io *io) {
-    Buffer joined = buffer(io);
-    put_bytes(&joined, fixture(io, "part1.xz"));
+export void test_untar_tar_xz_of_two_streams_with_padding() {
+    Case t = start();
+    defer finish(&t);
+    Buffer joined = buffer(&t);
+    put_bytes(&joined, fixture(&t, "part1.xz"));
     put_zeros(&joined, 4);
-    put_bytes(&joined, fixture(io, "part2.xz"));
-    Extracted r = extract(io, "two", bytes_of(&joined));
-    is_tree(io, "tar.xz of two streams with padding", &r, source_tree);
+    put_bytes(&joined, fixture(&t, "part2.xz"));
+    Extracted r = extract(&t, "two", bytes_of(&joined));
+    is_tree(&t, "tar.xz of two streams with padding", &r, source_tree);
 }
 
-export void test_untar_tar_gz_with_zero_padding_after_it(io::Io *io) {
-    Buffer padded = buffer(io);
-    put_bytes(&padded, fixture(io, "a.tar.gz"));
+export void test_untar_tar_gz_with_zero_padding_after_it() {
+    Case t = start();
+    defer finish(&t);
+    Buffer padded = buffer(&t);
+    put_bytes(&padded, fixture(&t, "a.tar.gz"));
     put_zeros(&padded, 7);
-    Extracted r = extract(io, "padded", bytes_of(&padded));
-    is_tree(io, "tar.gz with zero padding after it", &r, source_tree);
+    Extracted r = extract(&t, "padded", bytes_of(&padded));
+    is_tree(&t, "tar.gz with zero padding after it", &r, source_tree);
 }
 
-export void test_untar_tar_xz_with_zero_padding_after_it(io::Io *io) {
-    Buffer padded = buffer(io);
-    put_bytes(&padded, fixture(io, "a.tar.xz"));
+export void test_untar_tar_xz_with_zero_padding_after_it() {
+    Case t = start();
+    defer finish(&t);
+    Buffer padded = buffer(&t);
+    put_bytes(&padded, fixture(&t, "a.tar.xz"));
     put_zeros(&padded, 8);
-    Extracted r = extract(io, "padded", bytes_of(&padded));
-    is_tree(io, "tar.xz with zero padding after it", &r, source_tree);
+    Extracted r = extract(&t, "padded", bytes_of(&padded));
+    is_tree(&t, "tar.xz with zero padding after it", &r, source_tree);
 }
 
 // Data that does not compress is stored: gzip's stored blocks (more than one: 65535 bytes at most), and LZMA2's
@@ -453,60 +518,70 @@ static Entry random_file(Bytes data) {
     return (Entry){.name = "pkg-1.0/random.bin", .type = '0', .data = data.data, .size = countof(data), .mode = 0o644};
 }
 
-static const char *random_listing(io::Io *io, Bytes data) {
-    return format::push(&io->arena, "random.bin f 0644 ", countof(data), " ",
-                        format::hex(inflate::crc32(0, data.data, countof(data)), 8), " 1000000000\n")
+static const char *random_listing(Case *t, Bytes data) {
+    return scratch::push(&t->memory, "random.bin f 0644 ", countof(data), " ",
+                         format::hex(inflate::crc32(0, data.data, countof(data)), 8), " 1000000000\n")
         .data;
 }
 
-export void test_untar_tar_gz_of_random_data_stored_blocks(io::Io *io) {
-    Bytes data = noise(io, 150000); // three blocks
+export void test_untar_tar_gz_of_random_data_stored_blocks() {
+    Case t = start();
+    defer finish(&t);
+    Bytes data = noise(&t, 150000); // three blocks
     Entry entries[2] = {folder_of("pkg-1.0/"), random_file(data)};
-    Extracted r = extract(io, "stored", gzip_stored(io, tar_of(io, entries, 2)));
-    is_tree(io, "random data in stored blocks", &r, random_listing(io, data));
+    Extracted r = extract(&t, "stored", gzip_stored(&t, tar_of(&t, entries, 2)));
+    is_tree(&t, "random data in stored blocks", &r, random_listing(&t, data));
 }
 
 // The unchanged archives of the cases below, so that a refusal there is the changed byte's.
-export void test_untar_tar_xz_of_random_data_under_each_check(io::Io *io) {
-    same_tree(io, "tar.xz of random data (CRC-32)", "rand-crc32.tar.xz", random_tree);
-    same_tree(io, "tar.xz of random data (CRC-64)", "rand-crc64.tar.xz", random_tree);
-    same_tree(io, "tar.xz of random data (SHA-256)", "rand-sha256.tar.xz", random_tree);
+export void test_untar_tar_xz_of_random_data_under_each_check() {
+    Case t = start();
+    defer finish(&t);
+    same_tree(&t, "tar.xz of random data (CRC-32)", "rand-crc32.tar.xz", random_tree);
+    same_tree(&t, "tar.xz of random data (CRC-64)", "rand-crc64.tar.xz", random_tree);
+    same_tree(&t, "tar.xz of random data (SHA-256)", "rand-sha256.tar.xz", random_tree);
 }
 
-export void test_untar_tar_xz_of_random_data_uncompressed_chunks(io::Io *io) {
-    Bytes data = noise(io, 150000); // three chunks
+export void test_untar_tar_xz_of_random_data_uncompressed_chunks() {
+    Case t = start();
+    defer finish(&t);
+    Bytes data = noise(&t, 150000); // three chunks
     Entry entries[2] = {folder_of("pkg-1.0/"), random_file(data)};
     for (u8 check = 0; check < 2; check++) {
-        Extracted r = extract(io, "stored", xz_stored(io, tar_of(io, entries, 2), check));
-        is_tree(io,
+        Extracted r = extract(&t, "stored", xz_stored(&t, tar_of(&t, entries, 2), check));
+        is_tree(&t,
                 check == 0 ? "random data in uncompressed chunks (no check)"
                            : "random data in uncompressed chunks (CRC-32)",
-                &r, random_listing(io, data));
+                &r, random_listing(&t, data));
     }
 }
 
 // File times are kept, to the second.
-export void test_untar_a_file_keeps_its_modification_time(io::Io *io) {
-    Extracted r = extract(io, "times", fixture(io, "a.tar.gz"));
+export void test_untar_a_file_keeps_its_modification_time() {
+    Case t = start();
+    defer finish(&t);
+    Extracted r = extract(&t, "times", fixture(&t, "a.tar.gz"));
     scratch::expect_contains("times: a file keeps its modification time", r.tree,
                              "hello.txt f 0644 14 7f26afeb 1000000000\n");
 }
 
 // Several top-level entries: the package is the extraction folder, as it was with tar.
-export void test_untar_several_top_level_folders_are_kept_under_their_names(io::Io *io) {
+export void test_untar_several_top_level_folders_are_kept_under_their_names() {
+    Case t = start();
+    defer finish(&t);
     Entry entries[4] = {folder_of("one/"), file_of("one/a", "1\n"), folder_of("two/"), file_of("two/b", "2\n")};
-    Extracted r = extract(io, "multi", gzip_stored(io, tar_of(io, entries, 4)));
+    Extracted r = extract(&t, "multi", gzip_stored(&t, tar_of(&t, entries, 4)));
     scratch::expect_text("several top-level folders: the package is the extraction folder",
-                         folder_for_name(io, "multi"), r.contents);
-    is_tree(io, "several top-level folders: both are kept under their names", &r,
+                         folder_for_name(&t, "multi"), r.contents);
+    is_tree(&t, "several top-level folders: both are kept under their names", &r,
             "one d\none/a f 0644 2 6751fc53 1000000000\ntwo d\ntwo/b f 0644 2 4c7caf90 1000000000\n");
 }
 
 // ---- 2. Long names: a ustar name split over its prefix and name fields, a pax path, a GNU long name, and non-ASCII
 // names
 
-static const char *repeat(io::Io *io, char letter, usize count) {
-    char *text = arena::push_slice(&io->arena, char, count + 1).data;
+static const char *repeat(Case *t, char letter, usize count) {
+    char *text = arena::push_slice(&t->memory, char, count + 1).data;
     for (usize i = 0; i < count; i++)
         text[i] = letter;
     text[count] = '\0';
@@ -514,158 +589,200 @@ static const char *repeat(io::Io *io, char letter, usize count) {
 }
 
 // The listing of the long tree (pkg-1.0/aaaa.../bbbb.../cccc.../file.txt and pkg-1.0/ü/é.txt).
-static const char *long_tree(io::Io *io) {
-    const char *first = repeat(io, 'a', 80);
-    const char *second = repeat(io, 'b', 80);
-    const char *third = repeat(io, 'c', 80);
-    return format::push(&io->arena, first, " d\n", first, "/", second, " d\n", first, "/", second, "/", third, " d\n",
-                        first, "/", second, "/", third,
-                        "/file.txt f 0644 5 279eb882 1000000000\n\xc3\xbc d\n\xc3\xbc/\xc3\xa9.txt f 0644 7 05685cb1 "
-                        "1000000000\n")
+static const char *long_tree(Case *t) {
+    const char *first = repeat(t, 'a', 80);
+    const char *second = repeat(t, 'b', 80);
+    const char *third = repeat(t, 'c', 80);
+    return scratch::push(&t->memory, first, " d\n", first, "/", second, " d\n", first, "/", second, "/", third, " d\n",
+                         first, "/", second, "/", third,
+                         "/file.txt f 0644 5 279eb882 1000000000\n\xc3\xbc d\n\xc3\xbc/\xc3\xa9.txt f 0644 7 05685cb1 "
+                         "1000000000\n")
         .data;
 }
 
-export void test_untar_long_names_pax(io::Io *io) {
-    Extracted r = extract(io, "long", fixture(io, "long-pax.tar"));
-    is_tree(io, "long names (pax)", &r, long_tree(io));
+export void test_untar_long_names_pax() {
+    Case t = start();
+    defer finish(&t);
+    Extracted r = extract(&t, "long", fixture(&t, "long-pax.tar"));
+    is_tree(&t, "long names (pax)", &r, long_tree(&t));
 }
 
-export void test_untar_long_names_gnu(io::Io *io) {
-    Extracted r = extract(io, "long", fixture(io, "long-gnu.tar"));
-    is_tree(io, "long names (gnu)", &r, long_tree(io));
+export void test_untar_long_names_gnu() {
+    Case t = start();
+    defer finish(&t);
+    Extracted r = extract(&t, "long", fixture(&t, "long-gnu.tar"));
+    is_tree(&t, "long names (gnu)", &r, long_tree(&t));
 }
 
-export void test_untar_long_names_pax_gzip(io::Io *io) {
-    Extracted r = extract(io, "long", fixture(io, "long-pax.tar.gz"));
-    is_tree(io, "long names (pax, gzip)", &r, long_tree(io));
+export void test_untar_long_names_pax_gzip() {
+    Case t = start();
+    defer finish(&t);
+    Extracted r = extract(&t, "long", fixture(&t, "long-pax.tar.gz"));
+    is_tree(&t, "long names (pax, gzip)", &r, long_tree(&t));
 }
 
-export void test_untar_long_names_gnu_xz(io::Io *io) {
-    Extracted r = extract(io, "long", fixture(io, "long-gnu.tar.xz"));
-    is_tree(io, "long names (gnu, xz)", &r, long_tree(io));
+export void test_untar_long_names_gnu_xz() {
+    Case t = start();
+    defer finish(&t);
+    Extracted r = extract(&t, "long", fixture(&t, "long-gnu.tar.xz"));
+    is_tree(&t, "long names (gnu, xz)", &r, long_tree(&t));
 }
 
-export void test_untar_long_names_ustar_prefix_field(io::Io *io) {
-    const char *p = repeat(io, 'p', 90);
-    const char *q = repeat(io, 'q', 90);
-    Extracted r = extract(io, "prefix", fixture(io, "prefix.tar"));
+export void test_untar_long_names_ustar_prefix_field() {
+    Case t = start();
+    defer finish(&t);
+    const char *p = repeat(&t, 'p', 90);
+    const char *q = repeat(&t, 'q', 90);
+    Extracted r = extract(&t, "prefix", fixture(&t, "prefix.tar"));
     is_tree(
-        io, "long names (ustar prefix field)", &r,
-        format::push(&io->arena, p, " d\n", p, "/", q, " d\n", p, "/", q, "/file f 0644 9 6a0d1daa 1000000000\n").data);
+        &t, "long names (ustar prefix field)", &r,
+        scratch::push(&t.memory, p, " d\n", p, "/", q, " d\n", p, "/", q, "/file f 0644 9 6a0d1daa 1000000000\n").data);
 }
 
 // ---- 3. Hostile archives, which no tar program writes: each is refused with the reason, and nothing is written
 // outside the extraction folder.
 
-static void hostile(io::Io *io, const char *name, Entry entry, const char *reason) {
+static void hostile(Case *t, const char *name, Entry entry, const char *reason) {
     Entry entries[2] = {folder_of("pkg-1.0/"), entry};
-    refuses(io, name, tar_of(io, entries, 2), reason);
+    refuses(t, name, tar_of(t, entries, 2), reason);
 }
 
-export void test_untar_refuses_traversal(io::Io *io) {
-    hostile(io, "traversal", file_of("../evil", "x\n"), "goes up out of the package");
+export void test_untar_refuses_traversal() {
+    Case t = start();
+    defer finish(&t);
+    hostile(&t, "traversal", file_of("../evil", "x\n"), "goes up out of the package");
 }
 
-export void test_untar_refuses_traversal_inside_a_path(io::Io *io) {
-    hostile(io, "traversal inside a path", file_of("pkg-1.0/x/../../../evil", "x\n"), "goes up out of the package");
+export void test_untar_refuses_traversal_inside_a_path() {
+    Case t = start();
+    defer finish(&t);
+    hostile(&t, "traversal inside a path", file_of("pkg-1.0/x/../../../evil", "x\n"), "goes up out of the package");
 }
 
-export void test_untar_refuses_a_name_that_is_dotdot(io::Io *io) {
-    hostile(io, "a name that is ..", file_of("..", "x\n"), "goes up out of the package");
+export void test_untar_refuses_a_name_that_is_dotdot() {
+    Case t = start();
+    defer finish(&t);
+    hostile(&t, "a name that is ..", file_of("..", "x\n"), "goes up out of the package");
 }
 
-export void test_untar_refuses_an_absolute_path(io::Io *io) {
-    hostile(io, "an absolute path", file_of("/tmp/smith-abs-evil", "x\n"), "absolute path");
+export void test_untar_refuses_an_absolute_path() {
+    Case t = start();
+    defer finish(&t);
+    hostile(&t, "an absolute path", file_of("/tmp/smith-abs-evil", "x\n"), "absolute path");
 }
 
-export void test_untar_refuses_a_symlink_out_of_the_package(io::Io *io) {
-    hostile(io, "a symlink out of the package", link_of("pkg-1.0/escape", '2', "../../outside"),
+export void test_untar_refuses_a_symlink_out_of_the_package() {
+    Case t = start();
+    defer finish(&t);
+    hostile(&t, "a symlink out of the package", link_of("pkg-1.0/escape", '2', "../../outside"),
             "points outside the package");
 }
 
-export void test_untar_refuses_an_absolute_symlink(io::Io *io) {
-    hostile(io, "an absolute symlink", link_of("pkg-1.0/absolute", '2', "/etc/passwd"), "absolute path");
+export void test_untar_refuses_an_absolute_symlink() {
+    Case t = start();
+    defer finish(&t);
+    hostile(&t, "an absolute symlink", link_of("pkg-1.0/absolute", '2', "/etc/passwd"), "absolute path");
 }
 
-export void test_untar_refuses_a_symlink_that_goes_up_after_going_down(io::Io *io) {
-    hostile(io, "a symlink that goes up after going down", link_of("pkg-1.0/dotdot", '2', "a/../b"),
+export void test_untar_refuses_a_symlink_that_goes_up_after_going_down() {
+    Case t = start();
+    defer finish(&t);
+    hostile(&t, "a symlink that goes up after going down", link_of("pkg-1.0/dotdot", '2', "a/../b"),
             "goes up after going down");
 }
 
-export void test_untar_refuses_a_symlink_far_above(io::Io *io) {
-    hostile(io, "a symlink far above", link_of("pkg-1.0/far", '2', "../../../../../x"), "points outside the package");
+export void test_untar_refuses_a_symlink_far_above() {
+    Case t = start();
+    defer finish(&t);
+    hostile(&t, "a symlink far above", link_of("pkg-1.0/far", '2', "../../../../../x"), "points outside the package");
 }
 
-export void test_untar_refuses_a_file_written_through_a_symlink(io::Io *io) {
+export void test_untar_refuses_a_file_written_through_a_symlink() {
+    Case t = start();
+    defer finish(&t);
     Entry entries[3] = {folder_of("pkg-1.0/"), link_of("pkg-1.0/self", '2', "."), file_of("pkg-1.0/self/under", "x\n")};
-    refuses(io, "a file written through a symlink", tar_of(io, entries, 3), "through a symlink");
+    refuses(&t, "a file written through a symlink", tar_of(&t, entries, 3), "through a symlink");
 }
 
-export void test_untar_refuses_a_fifo(io::Io *io) {
-    hostile(io, "a FIFO", link_of("pkg-1.0/fifo", '6', nullptr), "special file");
+export void test_untar_refuses_a_fifo() {
+    Case t = start();
+    defer finish(&t);
+    hostile(&t, "a FIFO", link_of("pkg-1.0/fifo", '6', nullptr), "special file");
 }
 
-export void test_untar_refuses_a_device(io::Io *io) {
-    hostile(io, "a device", link_of("pkg-1.0/null", '3', nullptr), "special file");
+export void test_untar_refuses_a_device() {
+    Case t = start();
+    defer finish(&t);
+    hostile(&t, "a device", link_of("pkg-1.0/null", '3', nullptr), "special file");
 }
 
-static bool exists(io::Io *io, const char *path) {
-    io::FileInfo info = io::files_info(&io->files, path);
-    return info.error.code == 0;
+static bool exists(const char *path) {
+    files::InfoResult info = files::info(path[0:c::strlen(path)]);
+    return info == .ok;
 }
 
 // Nothing is written beside the extraction folder, whichever of them is extracted: not above it, not at an absolute
 // path, and not through a symlink.
-export void test_untar_hostile_archives_write_nothing_beside_the_extraction_folder(io::Io *io) {
-    const char *scratch_folder = test::scratch(io);
+export void test_untar_hostile_archives_write_nothing_beside_the_extraction_folder() {
+    Case t = start();
+    defer finish(&t);
+    const char *scratch_folder = t.folder;
     const char *absolute =
         "/tmp/smith-untar-abs-evil"; // a name field holds 100 bytes, which the scratch folder's is not
     Entry up[1] = {file_of("../evil", "x\n")};
     Entry deep[1] = {file_of("pkg-1.0/x/../../../evil", "x\n")};
     Entry away[1] = {file_of(absolute, "x\n")};
     Entry through[3] = {folder_of("pkg-1.0/"), link_of("pkg-1.0/self", '2', "."), file_of("pkg-1.0/self/under", "x\n")};
-    test::check_equal(extract(io, "h-up", tar_of(io, up, 1)).ok, false);
-    test::check_equal(extract(io, "h-deep", tar_of(io, deep, 1)).ok, false);
-    test::check_equal(extract(io, "h-away", tar_of(io, away, 1)).ok, false);
-    test::check_equal(extract(io, "h-through", tar_of(io, through, 3)).ok, false);
-    test::check_equal(exists(io, join(io, scratch_folder, "/evil")), false);
-    test::check_equal(exists(io, join(io, scratch_folder, "/h-deep/evil")), false);
-    test::check_equal(exists(io, absolute), false);
-    test::check_equal(exists(io, join(io, folder_for_name(io, "h-through"), "/pkg-1.0/under")), false);
+    test::check_equal(extract(&t, "h-up", tar_of(&t, up, 1)).ok, false);
+    test::check_equal(extract(&t, "h-deep", tar_of(&t, deep, 1)).ok, false);
+    test::check_equal(extract(&t, "h-away", tar_of(&t, away, 1)).ok, false);
+    test::check_equal(extract(&t, "h-through", tar_of(&t, through, 3)).ok, false);
+    test::check_equal(exists(join(&t, scratch_folder, "/evil")), false);
+    test::check_equal(exists(join(&t, scratch_folder, "/h-deep/evil")), false);
+    test::check_equal(exists(absolute), false);
+    test::check_equal(exists(join(&t, folder_for_name(&t, "h-through"), "/pkg-1.0/under")), false);
 }
 
 // A symlink that stays in its top-level folder is fine, and one that reaches the folder above it is refused only when
 // the package is that one folder, since it then leaves the package.
-export void test_untar_symlinks_one_inside_the_package_is_kept(io::Io *io) {
+export void test_untar_symlinks_one_inside_the_package_is_kept() {
+    Case t = start();
+    defer finish(&t);
     Entry entries[4] = {folder_of("pkg-1.0/a/"), folder_of("pkg-1.0/a/b/"), file_of("pkg-1.0/a/data", "data\n"),
                         link_of("pkg-1.0/a/b/inside", '2', "../data")};
-    Extracted r = extract(io, "inside", tar_of(io, entries, 4));
+    Extracted r = extract(&t, "inside", tar_of(&t, entries, 4));
     scratch::expect_text("symlinks: the archive extracts", "", r.ok ? "" : r.error);
     scratch::expect_contains("symlinks: one inside the package is kept", r.tree, "a/b/inside l -> ../data\n");
 }
 
-export void test_untar_symlinks_one_that_leaves_the_single_top_level_folder_is_refused(io::Io *io) {
+export void test_untar_symlinks_one_that_leaves_the_single_top_level_folder_is_refused() {
+    Case t = start();
+    defer finish(&t);
     Entry entries[4] = {folder_of("pkg-1.0/a/"), folder_of("pkg-1.0/a/b/"), file_of("pkg-1.0/a/data", "data\n"),
                         link_of("pkg-1.0/a/b/sibling", '2', "../../../other")};
-    refuses(io, "symlinks: one that leaves the single top-level folder", tar_of(io, entries, 4),
+    refuses(&t, "symlinks: one that leaves the single top-level folder", tar_of(&t, entries, 4),
             "points outside the package folder");
 }
 
-export void test_untar_symlinks_the_same_link_beside_a_second_top_level_entry_is_kept(io::Io *io) {
+export void test_untar_symlinks_the_same_link_beside_a_second_top_level_entry_is_kept() {
+    Case t = start();
+    defer finish(&t);
     Entry entries[5] = {folder_of("pkg-1.0/a/"), folder_of("pkg-1.0/a/b/"),
                         link_of("pkg-1.0/a/b/sibling", '2', "../../../other"), folder_of("other/"),
                         file_of("other/x", "x\n")};
-    Extracted r = extract(io, "second", tar_of(io, entries, 5));
+    Extracted r = extract(&t, "second", tar_of(&t, entries, 5));
     scratch::expect_text("symlinks: the archive extracts", "", r.ok ? "" : r.error);
     scratch::expect_contains("symlinks: the same link beside a second top-level entry is kept", r.tree,
                              "pkg-1.0/a/b/sibling l -> ../../../other\n");
 }
 
 // Hard links to an earlier entry.
-export void test_untar_hard_links_both_names_have_the_bytes(io::Io *io) {
+export void test_untar_hard_links_both_names_have_the_bytes() {
+    Case t = start();
+    defer finish(&t);
     Entry entries[3] = {folder_of("pkg-1.0/"), file_of("pkg-1.0/one", "shared\n"),
                         link_of("pkg-1.0/two", '1', "pkg-1.0/one")};
-    Extracted r = extract(io, "hard", tar_of(io, entries, 3));
+    Extracted r = extract(&t, "hard", tar_of(&t, entries, 3));
     scratch::expect_text("hard links: both names have the bytes",
                          "one f 0644 7 6e77e063 1000000000\n"
                          "two f 0644 7 6e77e063 1000000000\n",
@@ -675,7 +792,7 @@ export void test_untar_hard_links_both_names_have_the_bytes(io::Io *io) {
 // macOS tar writes extended attributes as "._name" entries in the AppleDouble format and bsdtar turns them back into
 // attributes, so they never become files, and the package is still one folder. smith drops them too, by the format's
 // magic number; a "._" file of anything else is a file like any other.
-static Bytes apple_tar(io::Io *io) {
+static Bytes apple_tar(Case *t) {
     const u8 magic[26] = {0x00, 0x05, 0x16, 0x07, 0x00, 0x02, 0x00, 0x00}; // the AppleDouble header, 26 bytes
     Entry entries[7] = {folder_of("pkg-1.0/"),
                         file_of("pkg-1.0/a", "first\n"),
@@ -684,222 +801,290 @@ static Bytes apple_tar(io::Io *io) {
                         {.name = "pkg-1.0/._b", .type = '0', .data = magic, .size = 26, .mode = 0o644},
                         file_of("pkg-1.0/._plain", "a plain file that only has a name like metadata\n"),
                         file_of("pkg-1.0/._tiny", "tiny\n")};
-    return tar_of(io, entries, 7);
+    return tar_of(t, entries, 7);
 }
 
-static const char *apple_listing(io::Io *io) {
+static const char *apple_listing(Case *t) {
     const char *plain = "a plain file that only has a name like metadata\n";
-    return format::push(&io->arena, "._plain f 0644 ", c::strlen(plain), " ",
-                        format::hex(inflate::crc32(0, (const u8 *)plain, c::strlen(plain)), 8),
-                        " 1000000000\n._tiny f 0644 5 ", format::hex(inflate::crc32(0, (const u8 *)"tiny\n", 5), 8),
-                        " 1000000000\na f 0644 6 ", format::hex(inflate::crc32(0, (const u8 *)"first\n", 6), 8),
-                        " 1000000000\nb f 0644 7 ", format::hex(inflate::crc32(0, (const u8 *)"second\n", 7), 8),
-                        " 1000000000\n")
+    return scratch::push(&t->memory, "._plain f 0644 ", c::strlen(plain), " ",
+                         format::hex(inflate::crc32(0, (const u8 *)plain, c::strlen(plain)), 8),
+                         " 1000000000\n._tiny f 0644 5 ", format::hex(inflate::crc32(0, (const u8 *)"tiny\n", 5), 8),
+                         " 1000000000\na f 0644 6 ", format::hex(inflate::crc32(0, (const u8 *)"first\n", 6), 8),
+                         " 1000000000\nb f 0644 7 ", format::hex(inflate::crc32(0, (const u8 *)"second\n", 7), 8),
+                         " 1000000000\n")
         .data;
 }
 
-export void test_untar_appledouble_entries_become_no_files(io::Io *io) {
-    Extracted r = extract(io, "apple", apple_tar(io));
-    is_tree(io, "AppleDouble entries become no files, and the package is still one folder", &r, apple_listing(io));
+export void test_untar_appledouble_entries_become_no_files() {
+    Case t = start();
+    defer finish(&t);
+    Extracted r = extract(&t, "apple", apple_tar(&t));
+    is_tree(&t, "AppleDouble entries become no files, and the package is still one folder", &r, apple_listing(&t));
 }
 
-export void test_untar_appledouble_entries_in_a_tar_gz(io::Io *io) {
-    Extracted r = extract(io, "apple", gzip_stored(io, apple_tar(io)));
-    is_tree(io, "AppleDouble entries in a tar.gz: the same tree, modes and bytes", &r, apple_listing(io));
+export void test_untar_appledouble_entries_in_a_tar_gz() {
+    Case t = start();
+    defer finish(&t);
+    Extracted r = extract(&t, "apple", gzip_stored(&t, apple_tar(&t)));
+    is_tree(&t, "AppleDouble entries in a tar.gz: the same tree, modes and bytes", &r, apple_listing(&t));
 }
 
 // ---- 4. Damaged archives
 
-export void test_untar_refuses_not_an_archive(io::Io *io) {
-    refuses(io, "not an archive", text_bytes("hello package\n"), "not a tar, tar.gz, tar.xz or gzip archive");
+export void test_untar_refuses_not_an_archive() {
+    Case t = start();
+    defer finish(&t);
+    refuses(&t, "not an archive", text_bytes("hello package\n"), "not a tar, tar.gz, tar.xz or gzip archive");
 }
 
-export void test_untar_refuses_an_empty_file(io::Io *io) {
-    Bytes nothing = fixture(io, "a.tar")[0:0];
-    refuses(io, "an empty file", nothing, "the archive is empty");
+export void test_untar_refuses_an_empty_file() {
+    Case t = start();
+    defer finish(&t);
+    Bytes nothing = fixture(&t, "a.tar")[0:0];
+    refuses(&t, "an empty file", nothing, "the archive is empty");
 }
 
-export void test_untar_refuses_a_zip(io::Io *io) {
-    refuses(io, "a zip", text_bytes("PK\x03\x04 and the rest of it"), "zip archives are not supported");
+export void test_untar_refuses_a_zip() {
+    Case t = start();
+    defer finish(&t);
+    refuses(&t, "a zip", text_bytes("PK\x03\x04 and the rest of it"), "zip archives are not supported");
 }
 
-export void test_untar_refuses_a_bzip2(io::Io *io) {
-    refuses(io, "a bzip2", text_bytes("BZh91AY&SY and the rest of it"), "bzip2 archives are not supported");
+export void test_untar_refuses_a_bzip2() {
+    Case t = start();
+    defer finish(&t);
+    refuses(&t, "a bzip2", text_bytes("BZh91AY&SY and the rest of it"), "bzip2 archives are not supported");
 }
 
-export void test_untar_refuses_a_zstd(io::Io *io) {
-    refuses(io, "a zstd", text_bytes("\x28\xB5\x2F\xFD and the rest of it"), "zstd archives are not supported");
+export void test_untar_refuses_a_zstd() {
+    Case t = start();
+    defer finish(&t);
+    refuses(&t, "a zstd", text_bytes("\x28\xB5\x2F\xFD and the rest of it"), "zstd archives are not supported");
 }
 
-export void test_untar_refuses_a_truncated_gzip(io::Io *io) {
-    Bytes gz = fixture(io, "a.tar.gz");
-    refuses(io, "a truncated gzip", part(gz, 0, countof(gz) / 2), "gzip:");
+export void test_untar_refuses_a_truncated_gzip() {
+    Case t = start();
+    defer finish(&t);
+    Bytes gz = fixture(&t, "a.tar.gz");
+    refuses(&t, "a truncated gzip", part(gz, 0, countof(gz) / 2), "gzip:");
 }
 
-export void test_untar_refuses_a_gzip_without_its_trailer(io::Io *io) {
-    Bytes gz = fixture(io, "a.tar.gz");
-    refuses(io, "a gzip without its trailer", part(gz, 0, countof(gz) - 4), "the data is cut off");
+export void test_untar_refuses_a_gzip_without_its_trailer() {
+    Case t = start();
+    defer finish(&t);
+    Bytes gz = fixture(&t, "a.tar.gz");
+    refuses(&t, "a gzip without its trailer", part(gz, 0, countof(gz) - 4), "the data is cut off");
 }
 
-export void test_untar_refuses_a_truncated_xz(io::Io *io) {
-    Bytes xz = fixture(io, "a.tar.xz");
-    refuses(io, "a truncated xz", part(xz, 0, countof(xz) / 2), "xz:");
+export void test_untar_refuses_a_truncated_xz() {
+    Case t = start();
+    defer finish(&t);
+    Bytes xz = fixture(&t, "a.tar.xz");
+    refuses(&t, "a truncated xz", part(xz, 0, countof(xz) / 2), "xz:");
 }
 
-export void test_untar_refuses_an_xz_without_its_footer(io::Io *io) {
-    Bytes xz = fixture(io, "a.tar.xz");
-    refuses(io, "an xz without its footer", part(xz, 0, countof(xz) - 6), "footer");
+export void test_untar_refuses_an_xz_without_its_footer() {
+    Case t = start();
+    defer finish(&t);
+    Bytes xz = fixture(&t, "a.tar.xz");
+    refuses(&t, "an xz without its footer", part(xz, 0, countof(xz) - 6), "footer");
 }
 
-export void test_untar_refuses_a_truncated_tar(io::Io *io) {
-    refuses(io, "a truncated tar", part(fixture(io, "a.tar"), 0, 3000), "cut off");
+export void test_untar_refuses_a_truncated_tar() {
+    Case t = start();
+    defer finish(&t);
+    refuses(&t, "a truncated tar", part(fixture(&t, "a.tar"), 0, 3000), "cut off");
 }
 
 // A .gz of one file that is no tar (a release binary, as tree-sitter's): the package is a folder holding that file,
 // named after the URL without ".gz", with the bytes as they were and mode 0644. The mtime is the time of writing.
-static void single_gz_extracts(io::Io *io, const char *name, Bytes content, const char *url, const char *file) {
-    const char *label = join(io, "single gz ", name);
-    Extracted r = extract_from(io, "single", gzip_stored(io, content), url);
-    scratch::expect_text(join(io, label, ": extracts"), "", r.ok ? "" : r.error);
-    scratch::expect_text(join(io, label, ": the package is the extraction folder"), folder_for_name(io, "single"),
+static void single_gz_extracts(Case *t, const char *name, Bytes content, const char *url, const char *file) {
+    const char *label = join(t, "single gz ", name);
+    Extracted r = extract_from(t, "single", gzip_stored(t, content), url);
+    scratch::expect_text(join(t, label, ": extracts"), "", r.ok ? "" : r.error);
+    scratch::expect_text(join(t, label, ": the package is the extraction folder"), folder_for_name(t, "single"),
                          r.contents);
-    const char *line = format::push(&io->arena, file, " f 0644 ", countof(content), " ",
-                                    format::hex(inflate::crc32(0, content.data, countof(content)), 8), " ")
+    const char *line = scratch::push(&t->memory, file, " f 0644 ", countof(content), " ",
+                                     format::hex(inflate::crc32(0, content.data, countof(content)), 8), " ")
                            .data;
-    scratch::expect_contains(join(io, label, ": one file, named without .gz, mode 0644, the same bytes"), r.tree, line);
-    scratch::expect_text(join(io, label, ": and nothing else"), "", c::strchr(r.tree, '\n') + 1);
+    scratch::expect_contains(join(t, label, ": one file, named without .gz, mode 0644, the same bytes"), r.tree, line);
+    scratch::expect_text(join(t, label, ": and nothing else"), "", c::strchr(r.tree, '\n') + 1);
 }
 
-export void test_untar_single_gz_tool_bin(io::Io *io) {
-    single_gz_extracts(io, "tool-bin", noise(io, 100000), "file:///releases/tool-bin.gz", "tool-bin");
+export void test_untar_single_gz_tool_bin() {
+    Case t = start();
+    defer finish(&t);
+    single_gz_extracts(&t, "tool-bin", noise(&t, 100000), "file:///releases/tool-bin.gz", "tool-bin");
 }
 
-export void test_untar_single_gz_text(io::Io *io) {
-    single_gz_extracts(io, "text", text_bytes("line 1 of a text that repeats\n"), "https://h/p/text.gz", "text");
+export void test_untar_single_gz_text() {
+    Case t = start();
+    defer finish(&t);
+    single_gz_extracts(&t, "text", text_bytes("line 1 of a text that repeats\n"), "https://h/p/text.gz", "text");
 }
 
-export void test_untar_single_gz_tiny(io::Io *io) {
-    single_gz_extracts(io, "tiny", text_bytes("tiny\n"), "https://h/p/tiny.gz", "tiny");
+export void test_untar_single_gz_tiny() {
+    Case t = start();
+    defer finish(&t);
+    single_gz_extracts(&t, "tiny", text_bytes("tiny\n"), "https://h/p/tiny.gz", "tiny");
 }
 
-export void test_untar_single_gz_nothing(io::Io *io) {
-    single_gz_extracts(io, "nothing", text_bytes(""), "https://h/p/nothing.gz", "nothing");
+export void test_untar_single_gz_nothing() {
+    Case t = start();
+    defer finish(&t);
+    single_gz_extracts(&t, "nothing", text_bytes(""), "https://h/p/nothing.gz", "nothing");
 }
 
-export void test_untar_single_gz_with_no_gz_in_its_name_keeps_the_name(io::Io *io) {
-    single_gz_extracts(io, "noext", text_bytes("abc\n"), "https://h/p/noext", "noext");
+export void test_untar_single_gz_with_no_gz_in_its_name_keeps_the_name() {
+    Case t = start();
+    defer finish(&t);
+    single_gz_extracts(&t, "noext", text_bytes("abc\n"), "https://h/p/noext", "noext");
 }
 
-export void test_untar_single_gz_name_ends_before_the_query_and_the_fragment(io::Io *io) {
-    single_gz_extracts(io, "query", text_bytes("abc\n"), "https://h/p/tool.gz?token=1#top", "tool");
+export void test_untar_single_gz_name_ends_before_the_query_and_the_fragment() {
+    Case t = start();
+    defer finish(&t);
+    single_gz_extracts(&t, "query", text_bytes("abc\n"), "https://h/p/tool.gz?token=1#top", "tool");
 }
 
-static Bytes tool_bin_gz(io::Io *io) {
-    return gzip_stored(io, noise(io, 100000));
+static Bytes tool_bin_gz(Case *t) {
+    return gzip_stored(t, noise(t, 100000));
 }
 
-export void test_untar_refuses_a_truncated_single_gz(io::Io *io) {
-    Bytes gz = tool_bin_gz(io);
-    refuses(io, "a truncated single gz", part(gz, 0, countof(gz) / 2), "gzip:");
+export void test_untar_refuses_a_truncated_single_gz() {
+    Case t = start();
+    defer finish(&t);
+    Bytes gz = tool_bin_gz(&t);
+    refuses(&t, "a truncated single gz", part(gz, 0, countof(gz) / 2), "gzip:");
 }
 
-export void test_untar_refuses_a_single_gz_without_its_trailer(io::Io *io) {
-    Bytes gz = tool_bin_gz(io);
-    refuses(io, "a single gz without its trailer", part(gz, 0, countof(gz) - 4), "the data is cut off");
+export void test_untar_refuses_a_single_gz_without_its_trailer() {
+    Case t = start();
+    defer finish(&t);
+    Bytes gz = tool_bin_gz(&t);
+    refuses(&t, "a single gz without its trailer", part(gz, 0, countof(gz) - 4), "the data is cut off");
 }
 
-export void test_untar_refuses_a_single_gz_with_a_wrong_crc(io::Io *io) {
-    Bytes gz = tool_bin_gz(io);
-    Buffer bad = buffer(io);
+export void test_untar_refuses_a_single_gz_with_a_wrong_crc() {
+    Case t = start();
+    defer finish(&t);
+    Bytes gz = tool_bin_gz(&t);
+    Buffer bad = buffer(&t);
     put_bytes(&bad, part(gz, 0, countof(gz) - 8));
     const u8 four[4] = {1, 2, 3, 4};
     put(&bad, four, 4);
     put_bytes(&bad, part(gz, countof(gz) - 4, countof(gz)));
-    refuses(io, "a single gz with a wrong CRC", bytes_of(&bad), "checksum of the data does not match");
+    refuses(&t, "a single gz with a wrong CRC", bytes_of(&bad), "checksum of the data does not match");
 }
 
-export void test_untar_refuses_a_single_gz_with_a_wrong_size(io::Io *io) {
-    Bytes gz = tool_bin_gz(io);
-    Buffer bad = buffer(io);
+export void test_untar_refuses_a_single_gz_with_a_wrong_size() {
+    Case t = start();
+    defer finish(&t);
+    Bytes gz = tool_bin_gz(&t);
+    Buffer bad = buffer(&t);
     put_bytes(&bad, part(gz, 0, countof(gz) - 4));
     const u8 four[4] = {1, 2, 3, 4};
     put(&bad, four, 4);
-    refuses(io, "a single gz with a wrong size", bytes_of(&bad), "size of the data");
+    refuses(&t, "a single gz with a wrong size", bytes_of(&bad), "size of the data");
 }
 
 // A byte changed at a place that only a check can notice: gzip's CRC-32 and size, and xz's check of each kind. Random
 // data is stored, so a changed byte in the middle is still well-formed LZMA2 or DEFLATE.
-export void test_untar_refuses_a_gzip_with_a_wrong_crc32(io::Io *io) {
-    refuses(io, "a gzip with a wrong CRC-32", flip(io, fixture(io, "a.tar.gz"), -8),
+export void test_untar_refuses_a_gzip_with_a_wrong_crc32() {
+    Case t = start();
+    defer finish(&t);
+    refuses(&t, "a gzip with a wrong CRC-32", flip(&t, fixture(&t, "a.tar.gz"), -8),
             "checksum of the data does not match");
 }
 
-export void test_untar_refuses_a_gzip_with_a_wrong_size(io::Io *io) {
-    refuses(io, "a gzip with a wrong size", flip(io, fixture(io, "a.tar.gz"), -4), "size of the data does not match");
+export void test_untar_refuses_a_gzip_with_a_wrong_size() {
+    Case t = start();
+    defer finish(&t);
+    refuses(&t, "a gzip with a wrong size", flip(&t, fixture(&t, "a.tar.gz"), -4), "size of the data does not match");
 }
 
-export void test_untar_refuses_a_gzip_with_a_changed_byte_in_a_stored_block(io::Io *io) {
-    Bytes data = noise(io, 200000);
+export void test_untar_refuses_a_gzip_with_a_changed_byte_in_a_stored_block() {
+    Case t = start();
+    defer finish(&t);
+    Bytes data = noise(&t, 200000);
     Entry entries[2] = {folder_of("pkg-1.0/"), random_file(data)};
-    refuses(io, "a gzip with a changed byte in a stored block",
-            flip(io, gzip_stored(io, tar_of(io, entries, 2)), 100000), "checksum of the data does not match");
+    refuses(&t, "a gzip with a changed byte in a stored block",
+            flip(&t, gzip_stored(&t, tar_of(&t, entries, 2)), 100000), "checksum of the data does not match");
 }
 
 // A one-block xz ends with the block's check, an index of 12 bytes and the footer of 12: the check is flipped at its
 // first byte. (Real xz compresses these tars, so there is no stored chunk to change; the next test has one.)
-static void xz_check_changed(io::Io *io, const char *check, isize from_end) {
-    Bytes xz = fixture(io, join(io, join(io, "rand-", check), ".tar.xz"));
-    refuses(io, join(io, "an xz with a changed check under ", check), flip(io, xz, from_end),
+static void xz_check_changed(Case *t, const char *check, isize from_end) {
+    Bytes xz = fixture(t, join(t, join(t, "rand-", check), ".tar.xz"));
+    refuses(t, join(t, "an xz with a changed check under ", check), flip(t, xz, from_end),
             "check does not match its data");
 }
 
-export void test_untar_refuses_an_xz_with_a_changed_check_under_crc32(io::Io *io) {
-    xz_check_changed(io, "crc32", -28);
+export void test_untar_refuses_an_xz_with_a_changed_check_under_crc32() {
+    Case t = start();
+    defer finish(&t);
+    xz_check_changed(&t, "crc32", -28);
 }
 
-export void test_untar_refuses_an_xz_with_a_changed_check_under_crc64(io::Io *io) {
-    xz_check_changed(io, "crc64", -32);
+export void test_untar_refuses_an_xz_with_a_changed_check_under_crc64() {
+    Case t = start();
+    defer finish(&t);
+    xz_check_changed(&t, "crc64", -32);
 }
 
-export void test_untar_refuses_an_xz_with_a_changed_check_under_sha256(io::Io *io) {
-    xz_check_changed(io, "sha256", -56);
+export void test_untar_refuses_an_xz_with_a_changed_check_under_sha256() {
+    Case t = start();
+    defer finish(&t);
+    xz_check_changed(&t, "sha256", -56);
 }
 
 // A changed byte in an uncompressed LZMA2 chunk is still well-formed LZMA2: only the check notices.
-export void test_untar_refuses_an_xz_with_a_changed_byte_in_an_uncompressed_chunk(io::Io *io) {
-    Bytes data = noise(io, 100000);
+export void test_untar_refuses_an_xz_with_a_changed_byte_in_an_uncompressed_chunk() {
+    Case t = start();
+    defer finish(&t);
+    Bytes data = noise(&t, 100000);
     Entry entries[2] = {folder_of("pkg-1.0/"), random_file(data)};
-    refuses(io, "an xz with a changed byte in an uncompressed chunk",
-            flip(io, xz_stored(io, tar_of(io, entries, 2), 1), 70000), "check does not match its data");
+    refuses(&t, "an xz with a changed byte in an uncompressed chunk",
+            flip(&t, xz_stored(&t, tar_of(&t, entries, 2), 1), 70000), "check does not match its data");
 }
 
-export void test_untar_refuses_an_xz_with_a_damaged_stream_header(io::Io *io) {
-    refuses(io, "an xz with a damaged stream header", flip(io, fixture(io, "a.tar.xz"), 7), "stream header");
+export void test_untar_refuses_an_xz_with_a_damaged_stream_header() {
+    Case t = start();
+    defer finish(&t);
+    refuses(&t, "an xz with a damaged stream header", flip(&t, fixture(&t, "a.tar.xz"), 7), "stream header");
 }
 
-export void test_untar_refuses_an_xz_with_a_damaged_block_header(io::Io *io) {
-    refuses(io, "an xz with a damaged block header", flip(io, fixture(io, "a.tar.xz"), 13), "block header");
+export void test_untar_refuses_an_xz_with_a_damaged_block_header() {
+    Case t = start();
+    defer finish(&t);
+    refuses(&t, "an xz with a damaged block header", flip(&t, fixture(&t, "a.tar.xz"), 13), "block header");
 }
 
-export void test_untar_refuses_an_xz_with_a_damaged_index(io::Io *io) {
-    refuses(io, "an xz with a damaged index", flip(io, fixture(io, "a.tar.xz"), -14), "index");
+export void test_untar_refuses_an_xz_with_a_damaged_index() {
+    Case t = start();
+    defer finish(&t);
+    refuses(&t, "an xz with a damaged index", flip(&t, fixture(&t, "a.tar.xz"), -14), "index");
 }
 
-export void test_untar_refuses_a_tar_with_a_damaged_header(io::Io *io) {
+export void test_untar_refuses_a_tar_with_a_damaged_header() {
+    Case t = start();
+    defer finish(&t);
     // In the second header, since the first decides that this is a tar.
-    refuses(io, "a tar with a damaged header", flip(io, fixture(io, "a.tar"), 522), "checksum does not match");
+    refuses(&t, "a tar with a damaged header", flip(&t, fixture(&t, "a.tar"), 522), "checksum does not match");
 }
 
 // ---- The readers keep no state from one extraction to the next (include/smith_core.h)
 
-export void test_an_extraction_does_not_remember_the_last(io::Io *io) {
-    Bytes xz = fixture(io, "blocks.tar.xz");
-    Extracted first = extract(io, "again-1", xz);
-    Extracted refused = extract(io, "again-2", flip(io, xz, -14));
-    Extracted gz = extract(io, "again-3", fixture(io, "a.tar.gz"));
-    Extracted second = extract(io, "again-4", xz);
+export void test_an_extraction_does_not_remember_the_last() {
+    Case t = start();
+    defer finish(&t);
+    Bytes xz = fixture(&t, "blocks.tar.xz");
+    Extracted first = extract(&t, "again-1", xz);
+    Extracted refused = extract(&t, "again-2", flip(&t, xz, -14));
+    Extracted gz = extract(&t, "again-3", fixture(&t, "a.tar.gz"));
+    Extracted second = extract(&t, "again-4", xz);
     test::check_equal(refused.ok, false);
-    is_tree(io, "an extraction after another", &first, source_tree);
-    is_tree(io, "an extraction after a refusal", &second, source_tree);
-    is_tree(io, "a gzip between them", &gz, source_tree);
+    is_tree(&t, "an extraction after another", &first, source_tree);
+    is_tree(&t, "an extraction after a refusal", &second, source_tree);
+    is_tree(&t, "a gzip between them", &gz, source_tree);
 }

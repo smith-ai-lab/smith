@@ -5,36 +5,36 @@ module corpus;
 
 import smith::arena;
 import smith::format;
-import smith::io;
+import smith::files;
+import smith::mem;
 import smith::test;
 import <string.h>;
 
 constexpr usize shown_width = 60; // each side of a differing line is cut here
 
-// `count` bytes of `from` copied to `to` (smith::mem is not imported: #421, importing it breaks the tests that
-// import this module).
+// `count` bytes of `from` copied to `to`.
 static void copy_bytes(char *to, const char *from, usize count) {
     for (usize i = 0; i < count; i++)
         to[i] = from[i];
 }
 
 // The line of `text` that starts at `at`, cut at shown_width, in the arena.
-static const char *line_at(io::Io *io, const char *text, usize at) {
+static const char *line_at(arena::Arena *arena, const char *text, usize at) {
     usize length = 0;
     while (text[at + length] != '\0' && text[at + length] != '\n')
         length += 1;
     bool cut = length > shown_width;
     usize kept = cut ? shown_width : length;
-    char *copy = arena::push_slice(&io->arena, char, kept + 1).data;
+    char *copy = arena::push_slice(arena, char, kept + 1).data;
     copy_bytes(copy, text + at, kept);
     copy[kept] = '\0';
-    return cut ? format::push(&io->arena, copy, "...").data : copy;
+    return cut ? format::push(copy, "...").data : copy;
 }
 
 // Nothing when `actual` is `expected`; else a line that names `what` and the first line that differs, with both
 // sides. `expected` is null when the file is missing.
-export const char *difference(io::Io *io, const char *what, const char *expected, const char *actual) {
-    if (expected == nullptr) return format::push(&io->arena, what, ": no file; run smith test --update\n").data;
+export const char *difference(arena::Arena *arena, const char *what, const char *expected, const char *actual) {
+    if (expected == nullptr) return format::push(what, ": no file; run smith test --update\n").data;
     if (c::strcmp(expected, actual) == 0) return nullptr;
     usize at = 0;
     usize line = 1;
@@ -46,33 +46,34 @@ export const char *difference(io::Io *io, const char *what, const char *expected
         }
         at += 1;
     }
-    char number[24];
-    (void)c::snprintf(number, sizeof number, "%zu", line);
-    return format::push(&io->arena, what, ": line ", number, ": expected `", line_at(io, expected, start),
-                        "` but got `", line_at(io, actual, start), "`\n")
+    return format::push(what, ": line ", line, ": expected `", line_at(arena, expected, start), "` but got `",
+                        line_at(arena, actual, start), "`\n")
         .data;
 }
 
-// The file at `path`, or null.
-export const char *read_file(io::Io *io, const char *path) {
-    io::Read file = io::files_read(&io->files, &io->arena, path);
-    if (file.error.code != 0) return nullptr;
-    usize size = countof(file.data);
-    char *text = arena::push_slice(&io->arena, char, size + 1).data;
-    if (size > 0) copy_bytes(text, (const char *)file.data.data, size);
+// The file at `path` (read through smith::files), in the arena, or null.
+export const char *read_file(arena::Arena *arena, const char *path) {
+    files::BytesResult file = files::read_file(path[0:c::strlen(path)]);
+    files::Bytes bytes = {};
+    if (file == .ok) bytes = file.ok;
+    if (file != .ok) return nullptr;
+    usize size = countof(bytes);
+    char *text = arena::push_slice(arena, char, size + 1).data;
+    if (size > 0) copy_bytes(text, (const char *)bytes.data, size);
     text[size] = '\0';
+    if (bytes.data != nullptr) mem::free(bytes.data);
     return text;
 }
 
 // `actual` against the golden file at `path`: appended to `differing` when it differs. Under `smith test --update`
 // the file is written by test::golden, which passes.
-export void golden(io::Io *io, const char **differing, const char *path, const char *actual) {
+export void golden(arena::Arena *arena, const char **differing, const char *path, const char *actual) {
     if (test::updating()) {
-        test::golden(io, path[0:c::strlen(path)], actual[0:c::strlen(actual)]);
+        test::golden(path[0:c::strlen(path)], actual[0:c::strlen(actual)]);
         return;
     }
-    const char *found = difference(io, path, read_file(io, path), actual);
-    if (found != nullptr) *differing = format::push(&io->arena, *differing, found).data;
+    const char *found = difference(arena, path, read_file(arena, path), actual);
+    if (found != nullptr) *differing = format::push(*differing, found).data;
 }
 
 // The end of the test: it fails once when any case differed, listing them all.
@@ -84,8 +85,8 @@ export void finish(const char *differing) {
 
 // A file of sections, each opened by a line `==> name <==`: the section of `text` named `name` (its body, up to the
 // next header or the end), or null.
-static const char *section_of(io::Io *io, const char *text, const char *name) {
-    const char *header = format::push(&io->arena, "==> ", name, " <==\n").data;
+static const char *section_of(arena::Arena *arena, const char *text, const char *name) {
+    const char *header = format::push("==> ", name, " <==\n").data;
     const char *at = c::strstr(text, header);
     while (at != nullptr && at != text && at[-1] != '\n')
         at = c::strstr(at + 1, header);
@@ -93,7 +94,7 @@ static const char *section_of(io::Io *io, const char *text, const char *name) {
     const char *body = at + c::strlen(header);
     const char *next = c::strstr(body, "\n==> ");
     usize length = next != nullptr ? (usize)(next - body) + 1 : c::strlen(body);
-    char *copy = arena::push_slice(&io->arena, char, length + 1).data;
+    char *copy = arena::push_slice(arena, char, length + 1).data;
     copy_bytes(copy, body, length);
     copy[length] = '\0';
     return copy;
@@ -101,14 +102,14 @@ static const char *section_of(io::Io *io, const char *text, const char *name) {
 
 // A golden file of sections, one per case, against `actual`: each section that differs, is missing or is new is
 // appended to `differing` under its case's name.
-export void golden_sections(io::Io *io, const char **differing, const char *path, const char *actual) {
+export void golden_sections(arena::Arena *arena, const char **differing, const char *path, const char *actual) {
     if (test::updating()) {
-        test::golden(io, path[0:c::strlen(path)], actual[0:c::strlen(actual)]);
+        test::golden(path[0:c::strlen(path)], actual[0:c::strlen(actual)]);
         return;
     }
-    const char *expected = read_file(io, path);
+    const char *expected = read_file(arena, path);
     if (expected == nullptr) {
-        *differing = format::push(&io->arena, *differing, path, ": no file; run smith test --update\n").data;
+        *differing = format::push(*differing, path, ": no file; run smith test --update\n").data;
         return;
     }
     for (const char *at = actual; at != nullptr; at = c::strstr(at + 1, "\n==> ")) {
@@ -117,13 +118,13 @@ export void golden_sections(io::Io *io, const char **differing, const char *path
         const char *end = c::strstr(header, " <==\n");
         if (end == nullptr) continue;
         usize length = (usize)(end - header) - 4;
-        char *name = arena::push_slice(&io->arena, char, length + 1).data;
+        char *name = arena::push_slice(arena, char, length + 1).data;
         copy_bytes(name, header + 4, length);
         name[length] = '\0';
-        const char *wanted = section_of(io, expected, name);
-        const char *found = wanted == nullptr ? format::push(&io->arena, name, ": not in ", path, "\n").data
-                                              : difference(io, name, wanted, section_of(io, actual, name));
-        if (found != nullptr) *differing = format::push(&io->arena, *differing, found).data;
+        const char *wanted = section_of(arena, expected, name);
+        const char *found = wanted == nullptr ? format::push(name, ": not in ", path, "\n").data
+                                              : difference(arena, name, wanted, section_of(arena, actual, name));
+        if (found != nullptr) *differing = format::push(*differing, found).data;
     }
     for (const char *at = expected; at != nullptr; at = c::strstr(at + 1, "\n==> ")) {
         const char *header = at == expected ? at : at + 1;
@@ -131,10 +132,10 @@ export void golden_sections(io::Io *io, const char **differing, const char *path
         const char *end = c::strstr(header, " <==\n");
         if (end == nullptr) continue;
         usize length = (usize)(end - header) - 4;
-        char *name = arena::push_slice(&io->arena, char, length + 1).data;
+        char *name = arena::push_slice(arena, char, length + 1).data;
         copy_bytes(name, header + 4, length);
         name[length] = '\0';
-        if (section_of(io, actual, name) == nullptr)
-            *differing = format::push(&io->arena, *differing, name, ": expected, but no longer formatted\n").data;
+        if (section_of(arena, actual, name) == nullptr)
+            *differing = format::push(*differing, name, ": expected, but no longer formatted\n").data;
     }
 }

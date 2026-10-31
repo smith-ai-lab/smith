@@ -21,10 +21,6 @@ void test_sorted_stays_sorted(SmithKey key) {      // a property test: runs on 1
     size_t count = (size_t)smith_uniform_int64_sample(parts[0], (SmithUniformInt64){.low = 0, .high = 100});
     smith_test_note("count %zu", count);           // printed under a failure
 }
-
-void test_reads_a_fixture(SmithIo *io) {           // a real io, in a scratch folder
-    smith_check(smith_test_scratch(io) != nullptr);
-}
 ```
 
 Code under test that is still C is reached from a `.smith` test with `import <smith/json.h>;` and `c::` names, or `import "v2.h";` and `c::v2_normalize(...)`, and becomes `v2::normalize` when that file is a module.

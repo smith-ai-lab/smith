@@ -180,7 +180,7 @@ static void smith_lang_reset_declaration(SmithLang *lang) {
 // ---- `main` in a module
 // ----------------------------------------------------------------------------------------------------
 //
-// In a file with a `module` line `main` is `i32 main()` or `i32 main(str args[:])` (the io form is lang_head.c). The
+// In a file with a `module` line `main` is `i32 main()` or `i32 main(str args[:])`. The
 // first is `int main(void)`. The second is `int main(int argc, char **argv)` whose body begins with the statements that
 // make `args`: a stack array of argc slices that point into argv's own characters (nothing is allocated or copied, a
 // slice's count is its strlen), written as source, so the rest of the lowering reads them like the program's own.
@@ -367,7 +367,6 @@ static void smith_lang_module_main_begin(SmithLang *lang, const SmithHost *host,
     if (!returns && !smith_lang_ident(first, "void")) return;
     const SmithToken *name = smith_lang_peek(lang, host, 0, false);
     if (!smith_lang_ident(name, "main") || !smith_lang_punct(smith_lang_peek(lang, host, 1, false), "(")) return;
-    if (smith_lang_io_main_ahead(lang, host, first)) return; // the io form, until the io is gone
     if (!returns) {
         smith_lang_error(lang, host, first->location, "smith-main: main returns i32: write i32 main()");
         return;
@@ -391,14 +390,7 @@ static void smith_lang_begin_declaration(SmithLang *lang, const SmithHost *host,
     lang->generic_result_call = false;
     lang->generic_plain = false;
     lang->generic_next = smith_lang_generic_candidate(lang, host, token) && smith_lang_generic_ahead(lang, host, token);
-    SmithToken shown = *token;
     smith_lang_module_main_begin(lang, host, token);
-    if (smith_lang_io_main_begin(lang, host, token) && !lang->is_module) { // a file's own functions are not static
-        smith_lang_emit(lang, host, smith_lang_static_keyword(token));
-        shown.line_start = false;
-        shown.space_before = true;
-        token = &shown;
-    }
     // A module with private names that have a symbol holds every head (as an export's), to know which is one of them.
     if (lang->is_module && host->previous != nullptr && !lang->pending_export && !lang->generic_next &&
         lang->linked_count == 0) {
@@ -907,21 +899,21 @@ static void smith_lang_assemble_header(SmithLang *lang, const char *main_file) {
     smith_lang_priv_resolve(lang); // before the includes: what the section names through imports
     used += smith_lang_assemble_meta(lang, out + used, capacity - used);
     used = smith_lang_append(out, capacity, used, "// clang-format on\n");
-    used = smith_lang_append(out, capacity, used, "#pragma once\n");
+    used = smith_lang_priv_open(lang, out, capacity, used);
     used += smith_lang_assemble_includes(lang, out + used, capacity - used, true);
     lang->header_target_used &= ~lang->include_prelude; // the include lines defined these above
     used = smith_lang_target_header_prelude(lang, out, capacity, used);
     used = smith_lang_append(out, capacity, used, "#ifdef __cplusplus\nextern \"C\" {\n#endif\n");
     smith_lang_tuple_hoist(smith_lang_header_body, &lang->header_used, smith_lang_header_max);
     used = smith_lang_append(out, capacity, used, "%.*s\n", (int)lang->header_used, smith_lang_header_body);
-    used = smith_lang_priv_section(lang, out, capacity, used);
     used = smith_lang_append(out, capacity, used, "#ifdef __cplusplus\n}\n#endif\n");
-    lang->header_full_used = used;
+    used = smith_lang_priv_close(lang, out, capacity, used);
+    lang->header_full_used = smith_lang_priv_section(lang, out, capacity, used, true);
 }
 
 // The interface an importer reads when it finds the module by its source (runtime/lang_lex.c): the declarations on
-// the lines the module has them (the first line is `#pragma once`), with no other line. The includes it needs and the
-// comment lines are the host's to use, apart from it.
+// the lines the module has them (the first line is `#pragma once`, or `#ifndef` of the guard), with no other line. The
+// includes it needs and the comment lines are the host's to use, apart from it.
 static void smith_lang_assemble_aligned(SmithLang *lang) {
     // An exported inline function whose `if constexpr` asks the target needs the facts defined above its #if lines.
     // They take the blank lines before the first declaration (the comments and the imports of the module's top), so the
@@ -935,11 +927,13 @@ static void smith_lang_assemble_aligned(SmithLang *lang) {
     while (blank < lang->header_used && smith_lang_header_body[blank] == '\n')
         blank += 1;
     size_t skip = blank >= lines ? lines : 0;
-    lang->header_full_used =
-        smith_lang_append(smith_lang_header_full, sizeof smith_lang_header_full, 0, "#pragma once\n%.*s%.*s\n",
-                          (int)prelude_used, prelude, (int)(lang->header_used - skip), smith_lang_header_body + skip);
-    lang->header_full_used =
-        smith_lang_priv_section(lang, smith_lang_header_full, sizeof smith_lang_header_full, lang->header_full_used);
+    char *full = smith_lang_header_full;
+    size_t capacity = sizeof smith_lang_header_full;
+    size_t used = smith_lang_priv_open(lang, full, capacity, 0); // one line, as the declarations' lines count
+    used = smith_lang_append(full, capacity, used, "%.*s%.*s\n", (int)prelude_used, prelude,
+                             (int)(lang->header_used - skip), smith_lang_header_body + skip);
+    used = smith_lang_priv_close(lang, full, capacity, used);
+    lang->header_full_used = smith_lang_priv_section(lang, full, capacity, used, false);
 }
 
 static void smith_lang_write_file(const char *path, const char *bytes, size_t length) {
@@ -1144,9 +1138,8 @@ static void smith_lang_end_of_file(SmithLang *lang, const SmithHost *host, const
     }
     if (lang->due_count > 0) smith_lang_typedefs_write(lang, host);
     smith_lang_body_note(lang);
-    lang->body_closed = true; // what follows is the instances and the io main: not sections
+    lang->body_closed = true; // what follows is the instances: not sections
     smith_lang_generic_instances(lang, host);
-    smith_lang_finish_io_main(lang, host);
     smith_lang_ask(lang, host);
     smith_lang_finish(lang);
     smith_lang_emit_kept(lang, host, token);
@@ -1253,17 +1246,25 @@ static bool smith_lang_slice_process(SmithLang *lang, const SmithHost *host, con
         lang->slice.armed[0] = 0;
         lang->slice.typeof_tag[0] = 0;
     }
-    bool at_start = lang->slice.after_boundary;
+    bool at_start = lang->slice.after_boundary || (lang->pending_export && lang->state == SmithLangState_Start);
     lang->slice.after_boundary = smith_lang_slice_boundary(token);
     if (lang->enums_seen && smith_lang_enum_token(lang, host, token)) return true;
     if (smith_lang_slice_str(lang, host, token)) return true;
     if (at_start && smith_lang_slice_begin(lang, host, token)) return true;
     smith_lang_slice_equals(lang, host, token);
     if (smith_lang_slice_init_compound(lang, host, token)) return true;
-    if (token->kind == SmithTokenKind_Identifier && smith_lang_ident(token, "typeof") &&
-        smith_lang_slice_typeof(lang, host, token)) {
-        return true;
+    bool is_typeof = token->kind == SmithTokenKind_Identifier && smith_lang_ident(token, "typeof");
+    // `export typeof(T[:]) f(constexpr type T)`: a declaration that begins with its result type is a generic's head
+    // before its slice is written (as after an attribute), or the slice would be written with the `T` of no instance.
+    if (is_typeof && lang->state == SmithLangState_Start && smith_lang_generic_candidate(lang, host, token) &&
+        smith_lang_generic_ahead(lang, host, token)) {
+        lang->tee = host->previous == nullptr && host->expr_type == nullptr && !lang->dump_enabled;
+        lang->generic_next = true;
+        lang->seen_declaration = true;
+        smith_lang_reset_declaration(lang);
+        lang->state = SmithLangState_Head;
     }
+    if (is_typeof && smith_lang_slice_typeof(lang, host, token)) return true;
     if (smith_lang_slice_chain(lang, host, token)) return true;
     if (!capturing && smith_lang_ident(token, "return")) smith_lang_slice_return(lang, host, token);
     return false;
@@ -1276,7 +1277,7 @@ static void smith_lang_process_token(SmithLang *lang, const SmithHost *host, con
         if (token->synthetic || !smith_lang_ty_token(lang, host, token)) smith_lang_emit_code(lang, host, *token);
         return;
     }
-    if (smith_lang_try_token(lang, host, token)) return;
+    if (smith_lang_lambda_token(lang, host, token) || smith_lang_try_token(lang, host, token)) return;
     if (smith_lang_unused_token(lang, host, token)) return;
     if ((lang->due_count > 0 || lang->local_count > 0) && smith_lang_tag_bare(lang, host, token)) return;
     if (smith_lang_enum_function(lang, host, token)) return; // before the type values: it reads `type f(...)` itself
@@ -1577,15 +1578,11 @@ bool smith_lang_c_use_allowed(const SmithLang *lang, uint32_t location) {
 }
 
 bool smith_lang_holds(const SmithLang *lang) {
-    return lang->head_count > 0;
+    return lang->head_count > 0 || lang->lambda.phase != 0 || lang->lambda.pending > 0;
 }
 
 bool smith_lang_is_module(const SmithLang *lang) {
     return lang->is_module;
-}
-
-bool smith_lang_io_import(const SmithLang *lang) {
-    return lang->io_import;
 }
 
 unsigned smith_lang_errors(const SmithLang *lang) {

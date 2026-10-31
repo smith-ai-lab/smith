@@ -1,0 +1,18 @@
+module bytes;
+
+// The copy below makes the struct of a `const u8[:]` in the body of `fill`, which an importer that runs `fill` at
+// compile time reads from this module's `.body`: the file keeps the compiler's name of the type, not `u8`.
+export void copy_bytes(auto destination, auto source) {
+    for (usize i = 0; i < countof(destination); i++) destination[i] = source[i];
+}
+
+export usize fill(usize n) {
+    u8 target[4] = {};
+    const u8 source[4] = {};
+    if (n > 4) {
+        u8 destination[:] = target[0:n];
+        const u8 from[:] = source[0:n];
+        copy_bytes(destination, from);
+    }
+    return n;
+}

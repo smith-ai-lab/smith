@@ -4,7 +4,7 @@ types: convention, architecture, contract, design
 ---
 # Knowledge
 
-What smith is and the contracts its code keeps. Read only the concepts your task needs. Skills say how; AGENTS.md holds the rules.
+What smith is and the contracts its code keeps. Read only the concepts your task needs. Skills say how; [decisions](decisions.md) lists every decision.
 
 ## Architecture
 
@@ -25,17 +25,19 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [One compiler, in smith's own process](one-compiler.md): smith ships upstream LLVM 23.1.3 linked into itself, compiles C, C++ and Objective-C in its own process, and picks other compilers only through environment variables.
 - [The platform layer](platform-layer.md): What smith does differently on macOS and Linux lives in one file per platform, runtime/platform_macos.c and runtime/platform_linux.c, with the same functions, and this table says what differs.
 - [smith prove checks LLVM IR with Alive2, Bitwuzla and Z3](prover.md): smith prove proves each function with a contract in a process of its own, assumes functions marked smith_trusted, and uses no list.
+- [smith::task, fibers, groups, one worker per core and kqueue I/O](task.md): Tasks on 256 KB mmap stacks with a guard page, switched by assembly, run by one worker thread per core, parked on sockets and pipes in the worker's kqueue (macOS), waited for in a task::Group, with the scheduler a handler (issues #241, #940, #941).
 - [smith::slice and smith::ascii replace text's slice operations](slice-library.md): A slice library generic over the element does what text did for chars, with no allocation, option for a search that may find nothing, and a character test that reads no locale.
+- [smith::wrapping is the written way out of a module's overflow checks](wrapping-arithmetic.md): Signed arithmetic that wraps in two's complement, by name, so a module can mean wrapping where the checked default would fail the task (issue #351).
 - [The .smith language](smith-language.md): A .smith file is C with modules, lowered to C as clang reads it by a token hook, with sized types, the rules, one command, and what the language does not do yet.
 
 ## Conventions
 
 - [Adopting smith is incremental from both ends](adoption-path.md): From an existing C project use smith cc, translate the Makefile, rename files one at a time, and from a new project follow conventions and generate only the files you change.
 - [Builds by convention, smith_app and smith_app_tests](build-conventions.md): A project that follows smith's conventions needs no build file, and smith_app and smith_app_tests say what the conventions do.
-- [smith::files, the direct-call files module](files.md): Files and folders as direct calls returning result(T, files::Error), over the files handler of the thread, with an in-memory fake and memory from the current allocator; the first replacement of io::Io's files (issue #240).
-- [console, env and clock are small modules called directly](direct-call-modules.md): smith::console, smith::env and smith::clock replace the console, args_env and clock parts of io::Io with typed functions called with no value threaded from main, over the console, env and clock handlers of the runtime, so a test fakes them.
-- [smith::process, the direct-call child process module](process.md): Child processes as direct calls returning result(T, process::Error) (run, spawn, start with pipes, wait, kill), over a process handler of the thread, with a scripted fake and memory from the current allocator; the third replacement of io::Io's parts (issue #240).
-- [smith::net, the direct-call TCP and TLS module](net.md): Sockets and TLS connections as direct calls returning result(T, net::Error) (connect, connect_tls, listen, accept, read, write), over a net handler of the thread, with an in-memory fake that scripts servers and pairs clients with listeners; the fourth replacement of io::Io's parts (issue #240).
+- [smith::files, the direct-call files module](files.md): Files and folders as direct calls returning result(T, files::Error), over the files handler of the thread, with an in-memory fake and memory from the current allocator.
+- [console, env and clock are small modules called directly](direct-call-modules.md): smith::console, smith::env and smith::clock are typed functions called with no value threaded from main, over the console, env and clock handlers of the runtime, so a test fakes them.
+- [smith::process, the direct-call child process module](process.md): Child processes as direct calls returning result(T, process::Error) (run, spawn, start with pipes, wait, kill), over a process handler of the thread, with a scripted fake and memory from the current allocator.
+- [smith::net, the direct-call TCP and TLS module](net.md): Sockets and TLS connections as direct calls returning result(T, net::Error) (connect, connect_tls, listen, accept, read, write), over a net handler of the thread, with an in-memory fake that scripts servers and pairs clients with listeners.
 - [The handlers runtime](handlers.md): One runtime every smith program links (a dylib with __interpose tuples on macOS, an object defining the functions on Linux) that sends malloc and its family to the allocator of the calling thread; no handler is libc's; built in steps (issue #239).
 - [The checked allocator](checked-allocator.md): mem::checked wraps an allocator and records the stack of every block, so a leak names its allocation site and a double free, a free of a foreign block and a use after free are reported; the test runner sets one around each test (issue #239, step D2a).
 - [smith's libraries are a modern standard library for C](libraries.md): smith is batteries included, so a project needs no third-party library; each library does one thing, uses standard types, defines no macros, and is compiled from source by the project through smith_library.
@@ -47,14 +49,14 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 ## Contracts
 
 - [The build API](build-api.md): Every call of <smith/build.h> with its fields, defaults and the generated manifest.
-- [smith-effects, a program touches the world only through capabilities](effects-check.md): A clang-tidy check decided function by function from the source: raw effects live only in a capability's module, and io::make is called only in main.
-- [Ownership idioms, what a returned pointer means](ownership-idioms.md): A returned pointer follows one of C's four idioms, written as [[std::returns_owned(f)]], returns_borrowed(n) or returns_internal; smith accepts, validates and records them, and judges no call site yet.
+- [Ownership idioms, what a returned pointer means](ownership-idioms.md): A returned pointer is borrowed from argument n, from static or from the current allocator, or it is an owned resource, written as [[std::returns_owned(f)]], returns_borrowed(n) or returns_static; smith accepts, validates and records them, and judges no call site yet.
 - [A module has no warnings](module-diagnostics.md): The compile of a .smith file with a module line fails on a fixed baseline of diagnostics, each with a written way to say I meant it; heuristic ones are opt-in and advisory.
 - [The idiom checks](idiom-checks.md): clang-tidy checks smith-sized-types, smith-module-library, smith-module, smith-bounded-loop, smith-c23 and smith-constexpr tell an agent what idiomatic Smith and C23 look like.
-- [A proof is fast, and fast is CPU time](proof-budget.md): Each proof has a budget of about 30 s of CPU time charged as on 8 idle cores (10 s again once hosted CI is in place), so a busy machine slows a proof and never fails it.
+- [A proof is fast, and fast is CPU time](proof-budget.md): Each proof has a budget of about 10 s of CPU time charged as on 8 idle cores, so a busy machine slows a proof and never fails it.
 - [A module's generated C header](smith-module-headers.md): A module's header includes exactly what its exports need, and C and C++ code calls a module through it.
 - [smith-preprocessor, the check that a .smith file has no directive](smith-preprocessor-check.md): A clang-tidy check reports every directive, _Pragma and C-macro c:: name in a .smith file, each with its replacement.
-- [Typed memory functions, and the raw ones are an error in a module](mem-typed-functions.md): smith::mem has copy, move, zero, fill, equal, bytes and view over slices, and the clang-tidy check smith-mem reports C's memcpy, memmove, memset and memcmp in a module.
+- [Typed memory functions, and the raw ones are an error in a module](mem-typed-functions.md): smith::mem has copy, move, zero, fill, equal, bytes and view over slices, and the clang-tidy check smith-mem reports C's memcpy, memmove, memset, memcmp, malloc, calloc, aligned_alloc, posix_memalign, realloc and free in a module.
+- [The libc map, from every libc function to smith's way](libc-map.md): Every libc and POSIX function that .smith code calls with c:: on main, grouped by header, with smith's module and function for it or a gap and its issue; the table the check that makes libc a compile error in a module reads its messages from.
 - [No preprocessor, and the target's facts](smith-target-facts.md): A .smith file has no preprocessor, import target gives the facts of the target as literals, and if constexpr picks a branch before the parser.
 
 ## Designs
@@ -85,6 +87,9 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [Sanitized processes start as fast as Apple's](sanitizer-startup.md): A two-line compiler-rt patch gives AddressSanitizer's shadow the fast mmap flag on arm64, so a sanitized process starts in 9 ms.
 - [smith is built by its previous release](smith-bootstrap.md): A clone with no smith downloads the release of its newest ancestor commit and builds with it; no committed copy of the libraries, no stage0 built by Homebrew's clang.
 - [Generic functions are lowered, not templates](smith-generics.md): constexpr type parameters and auto parameters make one weak hidden instance per list of types, chosen and written by the lowering before the parser.
+- [Lambdas that capture nothing are plain functions](smith-lambdas.md): A lambda with no captures is lifted by the lowering into a function with a generated name and is the function's address, so it converts to a function pointer; captures come later.
+- [A module in one page](module-in-one-page.md): What a module rejects, what it offers instead, and the memory, error and concurrency models, with the status of each row (built or planned); the design of a module as a whole, kept current by the lead.
+- [Every decision, in one line each](decisions.md): The owner's decisions about smith, one line each, with a link to the concept that holds the reasoning and the owner's words.
 - [How the lowering works](smith-lowering-internals.md): The lowering is a state machine on the token hook, written against runtime/lang.h, with a table of the names it made and a small interface to clang.
 - [Names as written in the editor, lint and diagnostics](smith-names-as-written.md): smith lsp and smith lint lower .smith files too, and report names, notes and fix-its as the source wrote them, never guessed from underscores.
 - [smith new writes the program and what agents need](smith-new.md): smith new writes a program, its tests and the agent documents, with no configuration, and builds and commits once.

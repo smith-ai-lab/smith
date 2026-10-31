@@ -5,47 +5,82 @@
 // lib/smith/contract_test.smith.
 module contract_header_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
+
+// What a test's commands print, and the texts made from it, go to an arena of the runner's (test::memory), the
+// current allocator from start to finish, so the test frees none of it; the project is made and cleaned inside it.
+constexpr usize memory_size = 1U << 24;
+static arena::Arena memory;
+static arena::ArenaAllocator allocator;
+static mem::Allocator *outside;
+
+static scratch::Project start(const char *fixture) {
+    memory = test::memory(memory_size);
+    allocator = arena::allocator(&memory);
+    outside = mem::set_allocator(&allocator.base);
+    return scratch::make("p", fixture);
+}
+
+static void finish(scratch::Project *p) {
+    scratch::clean(p);
+    mem::set_allocator(outside);
+}
+
+// The output of a command as $(...) gives it, without trailing newlines (scratch::capture reads a project's io).
+static const char *captured(const scratch::Project *p, const char *command) {
+    const char *out = scratch::sh(p, command).out;
+    usize length = 0;
+    while (out[length] != '\0')
+        length++;
+    while (length > 0 && out[length - 1] == '\n')
+        length--;
+    char *text = arena::push_slice(&memory, char, length + 1).data;
+    mem::copy(text[0:length], out[0:length]);
+    text[length] = '\0';
+    return text;
+}
 
 constexpr char flags[_] = "f='-std=gnu23 -Wall -Wextra -Wpedantic -Wconversion -Werror -I '$SMITH_REPO/.smith/include; "
                           "lib=lib; ";
 
-static scratch::Project programs(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "contract_programs");
-    scratch::copy_tree(&p, "lib", "lib");
+static scratch::Project programs() {
+    scratch::Project p = start("contract_programs");
+    scratch::Run copied = scratch::sh(&p, "mkdir -p lib && cp -R \"$SMITH_REPO/lib/.\" lib");
+    scratch::expect_status("contract: the library is copied", 0, &copied);
     return p;
 }
 
 // A command after `flags`, which must succeed.
 static void must(const scratch::Project *p, const char *name, const char *command) {
-    scratch::Run run = scratch::sh(p, format::push(&p->io->arena, flags, command).data);
+    scratch::Run run = scratch::sh(p, format::push(flags, command).data);
     scratch::expect_status(name, 0, &run);
 }
 
 // A program compiled with the flags and the library, the arguments `extra` first.
 static void compile(const scratch::Project *p, const char *source, const char *extra, const char *output) {
-    must(p, format::push(&p->io->arena, "contract: ", output, " compiles").data,
-         format::push(&p->io->arena, "smith cc $f ", extra, " ", source, " $lib/smith/contract.smith $lib/trace.c -o ",
-                      output)
-             .data);
+    must(p, format::push("contract: ", output, " compiles").data,
+         format::push("smith cc $f ", extra, " ", source, " $lib/smith/contract.smith $lib/trace.c -o ", output).data);
 }
 
 // ---- 1. At run time: passing contracts are silent, a failing one prints its text, file and line, then aborts.
 // ----------
 
-export void test_contract_run_true_contracts_pass(io::Io *io) {
-    scratch::Project p = programs(io);
+export void test_contract_run_true_contracts_pass() {
+    scratch::Project p = programs();
+    defer finish(&p);
     compile(&p, "clamp.c", "", "clamp");
     scratch::Run run = scratch::sh(&p, "./clamp 5 1 3");
     scratch::expect_status("contract: run: true contracts pass", 0, &run);
     scratch::expect_text("contract: run: ... and print the result", "3 6", run.out);
 }
 
-export void test_contract_run_a_false_requires_aborts(io::Io *io) {
-    scratch::Project p = programs(io);
+export void test_contract_run_a_false_requires_aborts() {
+    scratch::Project p = programs();
+    defer finish(&p);
     compile(&p, "clamp.c", "", "clamp");
     scratch::Run run = scratch::sh(&p, "./clamp 5 3 1");
     scratch::expect_status("contract: run: a false smith_requires aborts", 134, &run);
@@ -54,8 +89,9 @@ export void test_contract_run_a_false_requires_aborts(io::Io *io) {
     scratch::expect_text("contract: run: ... before anything else is printed", "", run.out);
 }
 
-export void test_contract_run_a_false_ensures_aborts(io::Io *io) {
-    scratch::Project p = programs(io);
+export void test_contract_run_a_false_ensures_aborts() {
+    scratch::Project p = programs();
+    defer finish(&p);
     compile(&p, "ensures.c", "", "ensures");
     scratch::Run run = scratch::sh(&p, "./ensures");
     scratch::expect_status("contract: run: a false smith_ensures aborts", 134, &run);
@@ -63,8 +99,9 @@ export void test_contract_run_a_false_ensures_aborts(io::Io *io) {
                              "smith-trace begin ensures failed");
 }
 
-export void test_contract_run_a_false_invariant_aborts(io::Io *io) {
-    scratch::Project p = programs(io);
+export void test_contract_run_a_false_invariant_aborts() {
+    scratch::Project p = programs();
+    defer finish(&p);
     compile(&p, "invariant.c", "", "invariant");
     scratch::Run run = scratch::sh(&p, "./invariant");
     scratch::expect_status("contract: run: a false smith_invariant aborts", 134, &run);
@@ -75,16 +112,18 @@ export void test_contract_run_a_false_invariant_aborts(io::Io *io) {
 // ---- 2. Under the sanitizers, and optimized: the checks are calls, so no optimization drops them.
 // -------------------------
 
-export void test_contract_sanitized_true_contracts_pass(io::Io *io) {
-    scratch::Project p = programs(io);
+export void test_contract_sanitized_true_contracts_pass() {
+    scratch::Project p = programs();
+    defer finish(&p);
     compile(&p, "clamp.c", "-g -fsanitize=address,undefined", "clamp_asan");
     scratch::Run run = scratch::sh(&p, "./clamp_asan 5 1 3");
     scratch::expect_status("contract: sanitized: true contracts pass", 0, &run);
     scratch::expect_text("contract: sanitized: ... and print the result", "3 6", run.out);
 }
 
-export void test_contract_optimized_a_false_requires_still_aborts(io::Io *io) {
-    scratch::Project p = programs(io);
+export void test_contract_optimized_a_false_requires_still_aborts() {
+    scratch::Project p = programs();
+    defer finish(&p);
     compile(&p, "clamp.c", "-O2", "clamp_fast");
     scratch::Run run = scratch::sh(&p, "./clamp_fast 5 3 1");
     scratch::expect_status("contract: optimized: a false smith_requires still aborts", 134, &run);
@@ -93,15 +132,17 @@ export void test_contract_optimized_a_false_requires_still_aborts(io::Io *io) {
 // ---- 3. NDEBUG changes nothing: a check runs in every build (#326); only a proof removes one.
 // ----------------------------
 
-export void test_contract_ndebug_compiles_under_the_warnings_and_still_calls_the_contract_functions(io::Io *io) {
-    scratch::Project p = programs(io);
+export void test_contract_ndebug_compiles_under_the_warnings_and_still_calls_the_contract_functions() {
+    scratch::Project p = programs();
+    defer finish(&p);
     must(&p, "contract: NDEBUG: -Wall -Wextra -Werror compile", "smith cc $f -DNDEBUG -c clamp.c -o clamp_ndebug.o");
     scratch::expect_text("contract: NDEBUG: the object still calls the contract functions", "3",
-                         scratch::capture(&p, "nm -u clamp_ndebug.o | grep -c smith_contract_"));
+                         captured(&p, "nm -u clamp_ndebug.o | grep -c smith_contract_"));
 }
 
-export void test_contract_ndebug_a_false_requires_aborts_as_in_debug(io::Io *io) {
-    scratch::Project p = programs(io);
+export void test_contract_ndebug_a_false_requires_aborts_as_in_debug() {
+    scratch::Project p = programs();
+    defer finish(&p);
     compile(&p, "clamp.c", "-DNDEBUG", "clamp_ndebug");
     scratch::Run run = scratch::sh(&p, "./clamp_ndebug 5 3 1");
     scratch::expect_status("contract: NDEBUG: a false smith_requires aborts, as in debug", 134, &run);
@@ -109,20 +150,22 @@ export void test_contract_ndebug_a_false_requires_aborts_as_in_debug(io::Io *io)
                              "smith-trace begin requires failed");
 }
 
-export void test_contract_ndebug_the_optimized_object_still_calls_the_contract_functions(io::Io *io) {
-    scratch::Project p = programs(io);
+export void test_contract_ndebug_the_optimized_object_still_calls_the_contract_functions() {
+    scratch::Project p = programs();
+    defer finish(&p);
     must(&p, "contract: NDEBUG: effect.c compiles optimized", "smith cc $f -DNDEBUG -O2 -c effect.c -o effect.o");
     scratch::expect_text("contract: NDEBUG: the optimized object still calls the contract functions", "3",
-                         scratch::capture(&p, "nm -u effect.o | grep -c smith_contract_"));
+                         captured(&p, "nm -u effect.o | grep -c smith_contract_"));
 }
 
 // ---- 4. In the IR, with no flag: a call per contract that smith prove finds by name, at -O0 and optimized.
 // ---------------
 
-static void contract_calls_in_ir(io::Io *io, const char *level) {
-    scratch::Project p = programs(io);
+static void contract_calls_in_ir(const char *level) {
+    scratch::Project p = programs();
+    defer finish(&p);
     must(&p, "contract: IR: clamp.c compiles to IR",
-         format::push(&io->arena, "smith cc $f ", level, " -S -emit-llvm clamp.c -o clamp.ll").data);
+         format::push("smith cc $f ", level, " -S -emit-llvm clamp.c -o clamp.ll").data);
     const char *ir = scratch::read(&p, "clamp.ll");
     scratch::expect_contains("contract: IR: smith_requires is a call", ir,
                              "call void @smith_contract_requires(i1 noundef zeroext");
@@ -130,70 +173,76 @@ static void contract_calls_in_ir(io::Io *io, const char *level) {
     scratch::expect_contains("contract: IR: smith_invariant is a call", ir, "call void @smith_contract_invariant(i1");
 }
 
-export void test_contract_ir_o0_has_a_call_per_contract(io::Io *io) {
-    contract_calls_in_ir(io, "-O0");
+export void test_contract_ir_o0_has_a_call_per_contract() {
+    contract_calls_in_ir("-O0");
 }
 
-export void test_contract_ir_o2_has_a_call_per_contract(io::Io *io) {
-    contract_calls_in_ir(io, "-O2");
+export void test_contract_ir_o2_has_a_call_per_contract() {
+    contract_calls_in_ir("-O2");
 }
 
-export void test_contract_ir_ndebug_keeps_the_contract_calls(io::Io *io) {
-    scratch::Project p = programs(io);
+export void test_contract_ir_ndebug_keeps_the_contract_calls() {
+    scratch::Project p = programs();
+    defer finish(&p);
     must(&p, "contract: IR NDEBUG: clamp.c compiles to IR", "smith cc $f -DNDEBUG -S -emit-llvm clamp.c -o clamp.ll");
     scratch::expect_text("contract: IR NDEBUG: the contract calls stay", "3",
-                         scratch::capture(&p, "grep -c 'call void @smith_contract_' clamp.ll"));
+                         captured(&p, "grep -c 'call void @smith_contract_' clamp.ll"));
 }
 
 // ---- 5. The library alone compiles as C23 and C2y.
 // --------------------------------------------------------------------
 
-static void library_compiles(io::Io *io, const char *standard) {
-    scratch::Project p = programs(io);
-    must(&p, format::push(&io->arena, "contract: library: compiles as ", standard).data,
-         format::push(&io->arena, "smith cc -std=", standard,
+static void library_compiles(const char *standard) {
+    scratch::Project p = programs();
+    defer finish(&p);
+    must(&p, format::push("contract: library: compiles as ", standard).data,
+         format::push("smith cc -std=", standard,
                       " -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I $SMITH_REPO/.smith/include -c "
                       "$lib/smith/contract.smith -o contract.o")
              .data);
 }
 
-export void test_contract_library_compiles_as_gnu23(io::Io *io) {
-    library_compiles(io, "gnu23");
+export void test_contract_library_compiles_as_gnu23() {
+    library_compiles("gnu23");
 }
 
-export void test_contract_library_compiles_as_gnu2y(io::Io *io) {
-    library_compiles(io, "gnu2y");
+export void test_contract_library_compiles_as_gnu2y() {
+    library_compiles("gnu2y");
 }
 
 // ---- 6. A project gets the library with smith_library, and its tests run under smith's own test library.
 // -------------------
 
-static scratch::Project test_project(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "contract_project");
-    scratch::copy_tree(&p, "lib/smith/contract_test.smith", "smith/contract_test.smith");
+static scratch::Project test_project() {
+    scratch::Project p = start("contract_project");
+    scratch::Run copied =
+        scratch::sh(&p, "mkdir -p smith && cp \"$SMITH_REPO/lib/smith/contract_test.smith\" smith/contract_test.smith");
+    scratch::expect_status("contract: the library's tests are copied", 0, &copied);
     return p;
 }
 
 // The summary line of a run of the tests, without its time, as the shell's sed gives it.
 static const char *summary(const scratch::Project *p) {
-    return scratch::capture(p, "./build/tests 2>&1 | grep ' passed, ' | sed 's/ in [0-9.]* s$//'");
+    return captured(p, "./build/tests 2>&1 | grep ' passed, ' | sed 's/ in [0-9.]* s$//'");
 }
 
 static const char *test_count(const scratch::Project *p) {
-    const char *count = scratch::capture(p, "grep -c '^export void test_' smith/contract_test.smith");
-    return format::push(&p->io->arena, count, " passed, 0 failed").data;
+    const char *count = captured(p, "grep -c '^export void test_' smith/contract_test.smith");
+    return format::push(count, " passed, 0 failed").data;
 }
 
-export void test_contract_project_the_tests_build_with_smith_library(io::Io *io) {
-    scratch::Project p = test_project(io);
+export void test_contract_project_the_tests_build_with_smith_library() {
+    scratch::Project p = test_project();
+    defer finish(&p);
     scratch::Run built = scratch::build(&p, "");
     scratch::expect_status("contract: project: the tests build with smith_library", 0, &built);
     scratch::expect_text("contract: project: all tests pass", test_count(&p), summary(&p));
     test::check_condition(scratch::exists(&p, ".smith/include/smith/contract.h"));
 }
 
-export void test_contract_project_smith_tests_links_the_contract_library_when_objects_leaves_it_out(io::Io *io) {
-    scratch::Project p = test_project(io);
+export void test_contract_project_smith_tests_links_the_contract_library_when_objects_leaves_it_out() {
+    scratch::Project p = test_project();
+    defer finish(&p);
     scratch::Run moved = scratch::sh(&p, "mv build_nocontract.c build.c");
     scratch::expect_status("contract: project: the build file without the contract library", 0, &moved);
     scratch::Run built = scratch::build(&p, "");
@@ -207,11 +256,11 @@ export void test_contract_project_smith_tests_links_the_contract_library_when_ob
 // bounds is not reported, with and without NDEBUG, and an index nothing bounds still is.
 // ----------------------------------
 
-static void analyzer_reports_only_the_unbounded_index(io::Io *io, const char *mode) {
-    scratch::Project p = programs(io);
+static void analyzer_reports_only_the_unbounded_index(const char *mode) {
+    scratch::Project p = programs();
+    defer finish(&p);
     scratch::Run run = scratch::sh(
-        &p, format::push(&io->arena,
-                         "smith lint --checks='-*,clang-analyzer-*' bounded.c -- -std=gnu2y -I "
+        &p, format::push("smith lint --checks='-*,clang-analyzer-*' bounded.c -- -std=gnu2y -I "
                          "\"$SMITH_REPO/.smith/include\" ",
                          mode,
                          " 2>&1 | grep 'ArrayBound' | sed -e 's/^[^:]*:\\([0-9]*\\):.*/\\1/' | tr '\\n' ' ' | "
@@ -220,10 +269,10 @@ static void analyzer_reports_only_the_unbounded_index(io::Io *io, const char *mo
     scratch::expect_text("contract: analyzer: only the unbounded index is reported", "20", run.out);
 }
 
-export void test_contract_analyzer_only_the_unbounded_index_is_reported(io::Io *io) {
-    analyzer_reports_only_the_unbounded_index(io, "");
+export void test_contract_analyzer_only_the_unbounded_index_is_reported() {
+    analyzer_reports_only_the_unbounded_index("");
 }
 
-export void test_contract_analyzer_only_the_unbounded_index_is_reported_with_ndebug(io::Io *io) {
-    analyzer_reports_only_the_unbounded_index(io, "-DNDEBUG");
+export void test_contract_analyzer_only_the_unbounded_index_is_reported_with_ndebug() {
+    analyzer_reports_only_the_unbounded_index("-DNDEBUG");
 }

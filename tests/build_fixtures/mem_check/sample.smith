@@ -1,6 +1,8 @@
 module sample;
 
 import <string.h>;
+import <stdlib.h>;
+import smith::mem;
 import smith::contract;
 
 export typedef struct {
@@ -21,4 +23,22 @@ export void clear(Pair *p, u8 *buf, usize n) {
 export void wrapper(u8 *dst, const u8 *src, usize n) {
     contract::trusted();
     c::memcpy(dst, src, n);
+}
+
+export void allocate(usize n) {
+    Pair *one = (Pair *)c::malloc(sizeof(Pair));
+    Pair *many = (Pair *)c::calloc(n, sizeof(Pair));
+    Pair *aligned = (Pair *)c::aligned_alloc(16, 16 * n);
+    c::free(one);
+    mem::free(many);
+    mem::free(aligned);
+}
+
+export void release(void *block) {
+    contract::trusted();
+    c::free(block);
+}
+
+export void *grow(void *block, usize n) {
+    return c::realloc(block, n);
 }

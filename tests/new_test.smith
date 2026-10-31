@@ -8,7 +8,7 @@
 module new_test;
 
 import smith::arena;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 
@@ -69,10 +69,6 @@ static const char *exists_in(const scratch::Project *p, const char *path) {
     return scratch::capture(p, text);
 }
 
-static scratch::Project fresh(io::Io *io) {
-    return scratch::project(io, "p", nullptr);
-}
-
 static void expect_exists(const scratch::Project *p, const char *label, const char *path, const char *expected) {
     scratch::expect_text(label, expected, exists_in(p, path));
 }
@@ -84,45 +80,60 @@ static const char *named(const char *format, const char *a, const char *b) {
 }
 
 constexpr char smith_files[_] =
-    ".agents/skills/hello-docs/SKILL.md .claude/settings.json .claude/skills .gitignore AGENTS.md knowledge/index.md "
+    ".agents/skills/hello-docs/SKILL.md .claude/settings.json .claude/skills .gitignore knowledge/index.md "
     "knowledge/program.md main.smith primes.smith primes_test.smith";
 constexpr char c_files[_] =
-    ".agents/skills/hellc-docs/SKILL.md .claude/settings.json .claude/skills .gitignore AGENTS.md knowledge/index.md "
+    ".agents/skills/hellc-docs/SKILL.md .claude/settings.json .claude/skills .gitignore knowledge/index.md "
     "knowledge/program.md main.c primes.c primes.h primes_test.c";
 
-// 1. smith new hello: a .smith project, the default.
-export void test_new_hello_a_smith_project_is_written_and_committed(io::Io *io) {
-    scratch::Project p = fresh(io);
-    scratch::Run created = run(&p, "smith new hello");
-    scratch::expect_status("new hello: exits 0", 0, &created);
-    const char *files[_] = {"main.smith",         "primes.smith",          "primes_test.smith",
-                            ".gitignore",         ".claude/settings.json", "AGENTS.md",
-                            "knowledge/index.md", "knowledge/program.md",  ".agents/skills/hello-docs/SKILL.md"};
+// What smith new hello writes, and the files of the C program it leaves out.
+static void expect_the_written_files(const scratch::Project *p) {
+    const char *files[_] = {"main.smith",
+                            "primes.smith",
+                            "primes_test.smith",
+                            ".gitignore",
+                            ".claude/settings.json",
+                            "knowledge/index.md",
+                            "knowledge/program.md",
+                            ".agents/skills/hello-docs/SKILL.md"};
     for (usize i = 0; i < _Countof(files); i++) {
         char path[256];
         __builtin_snprintf(path, sizeof path, "hello/%s", files[i]);
-        expect_exists(&p, named("new hello: creates %s%s", files[i], ""), path, "yes");
+        expect_exists(p, named("new hello: creates %s%s", files[i], ""), path, "yes");
     }
     const char *absent[_] = {"build.c", "build.smith", ".clang-format", ".clang-tidy", "compile_commands.json",
                              "main.c",  "primes.c",    "primes.h"};
     for (usize i = 0; i < _Countof(absent); i++) {
         char path[256];
         __builtin_snprintf(path, sizeof path, "hello/%s", absent[i]);
-        expect_exists(&p, named("new hello: writes no %s%s", absent[i], ""), path, "no");
+        expect_exists(p, named("new hello: writes no %s%s", absent[i], ""), path, "no");
     }
+}
+
+// 1. smith new hello: a .smith project, the default.
+export void test_new_hello_a_smith_project_is_written_and_committed() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run created = run(&p, "smith new hello");
+    scratch::expect_status("new hello: exits 0", 0, &created);
+    expect_the_written_files(&p);
     scratch::expect_contains("new hello: primes.smith names the program", scratch::read(&p, "hello/primes.smith"),
-                             "io::console_print(console, \"hello from hello\\n\");");
+                             "console::print(\"hello from hello\\n\");");
     scratch::expect_text(
         "new hello: no placeholder is left", "",
         scratch::capture(
             &p, "grep -rF -e '@NAME@' -e '@KEBAB@' hello --exclude-dir=.git --exclude-dir=build --exclude-dir=.smith"));
-    scratch::write(&p, "template-names", scratch::repo_names(io, "templates/new"));
+    scratch::copy_tree(&p, "templates/new", "template");
     scratch::expect_text("new hello: the .smith template has no C or header file beside it, which an import would read",
-                         "", scratch::capture(&p, "grep -E '[.][ch]$' template-names"));
-    scratch::expect_text("new hello: .gitignore is the template", scratch::repo_text(io, "templates/new/gitignore"),
+                         "", scratch::capture(&p, "ls -A template | grep -E '[.][ch]$'"));
+    scratch::expect_text("new hello: .gitignore is the template", scratch::read(&p, "template/gitignore"),
                          scratch::read(&p, "hello/.gitignore"));
     scratch::expect_text("new hello: .claude/settings.json is the template",
-                         scratch::repo_text(io, "templates/new/claude-settings.json"),
+                         scratch::read(&p, "template/claude-settings.json"),
                          scratch::read(&p, "hello/.claude/settings.json"));
     scratch::expect_text("new hello: .claude/settings.json is exactly the plugin settings",
                          "{\n  \"enabledPlugins\": {\n    \"smith@smith\": true\n  },\n  \"extraKnownMarketplaces\": "
@@ -132,11 +143,8 @@ export void test_new_hello_a_smith_project_is_written_and_committed(io::Io *io) 
                          scratch::read(&p, "hello/.claude/settings.json"));
     scratch::expect_text("new hello: .claude/skills links to the skills", "../.agents/skills",
                          scratch::capture(&p, "readlink hello/.claude/skills"));
-    expect_exists(&p, "new hello: no CLAUDE.md, Claude Code reads AGENTS.md", "hello/CLAUDE.md", "no");
-    scratch::expect_contains("new hello: AGENTS.md says there is no build file", scratch::read(&p, "hello/AGENTS.md"),
-                             "There is no build file and no config file");
-    scratch::expect_contains("new hello: ... and how to take over a default", scratch::read(&p, "hello/AGENTS.md"),
-                             "smith fmt --dump-config > .clang-format");
+    expect_exists(&p, "new hello: no CLAUDE.md", "hello/CLAUDE.md", "no");
+    expect_exists(&p, "new hello: no AGENTS.md", "hello/AGENTS.md", "no");
     scratch::expect_contains("new hello: the concept describes the .smith program",
                              scratch::read(&p, "hello/knowledge/program.md"), "primes::sum");
     scratch::expect_contains("new hello: the summary names the plugin", created.out,
@@ -163,8 +171,13 @@ export void test_new_hello_a_smith_project_is_written_and_committed(io::Io *io) 
 }
 
 // 2. A second run creates nothing.
-export void test_new_a_second_run_creates_nothing(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_new_a_second_run_creates_nothing() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)run(&p,
               "smith new hello"); // not a copy: the bytes of a project a second run leaves alone are the ones it made
     const char *sum =
@@ -175,7 +188,7 @@ export void test_new_a_second_run_creates_nothing(io::Io *io) {
     scratch::expect_status("second run: exits 0", 0, &again);
     scratch::expect_text("second run: changes no bytes", before, scratch::capture(&p, sum));
     scratch::expect_text("second run: no new commit", "1", capture(&p, ".", "git -C hello rev-list --count HEAD"));
-    scratch::expect_contains("second run: everything is kept", again.out, "0 created, 10 kept");
+    scratch::expect_contains("second run: everything is kept", again.out, "0 created, 9 kept");
 }
 
 // The label of a check on a new project: "<label>: <what>".
@@ -329,16 +342,26 @@ static void profiles_of_a_new_project(const scratch::Project *p, const char *dir
                              capture(p, dir, "smith build -t commands build/fast/main.o"), "-DNDEBUG");
 }
 
-export void test_new_hello_the_verbs_on_a_new_smith_project(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_new_hello_the_verbs_on_a_new_smith_project() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     generated(&p, "generate hello");
     verbs_on_a_new_project(&p, "hello", "new hello", true);
 }
 
 // The template exports a function over a slice, and `smith run` compiles it in the default debug profile, which has
 // -fsanitize=function: clang overflowed its stack on that pair (issue #152).
-export void test_new_hello_runs_an_exported_slice_function_in_debug(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_new_hello_runs_an_exported_slice_function_in_debug() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     generated(&p, "generate hello");
     scratch::expect_contains("new hello: primes.smith exports a function over a slice",
                              scratch::read(&p, "hello/primes.smith"), "export i32 total(i32 xs[:])");
@@ -349,15 +372,25 @@ export void test_new_hello_runs_an_exported_slice_function_in_debug(io::Io *io) 
                              "-fsanitize=address,undefined");
 }
 
-export void test_new_hello_the_profiles_of_a_new_smith_project(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_new_hello_the_profiles_of_a_new_smith_project() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     generated(&p, "generate hello");
     profiles_of_a_new_project(&p, "hello", "new hello", true);
 }
 
 // 1a. smith new --language c hellc: a C project, the same by convention.
-export void test_new_language_c_a_c_project_is_written_and_committed(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_new_language_c_a_c_project_is_written_and_committed() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run created = run(&p, "smith new --language c hellc");
     scratch::expect_status("new --language c: exits 0", 0, &created);
     const char *files[_] = {"main.c",
@@ -366,7 +399,6 @@ export void test_new_language_c_a_c_project_is_written_and_committed(io::Io *io)
                             "primes_test.c",
                             ".gitignore",
                             ".claude/settings.json",
-                            "AGENTS.md",
                             "knowledge/index.md",
                             "knowledge/program.md",
                             ".agents/skills/hellc-docs/SKILL.md"};
@@ -383,7 +415,7 @@ export void test_new_language_c_a_c_project_is_written_and_committed(io::Io *io)
         expect_exists(&p, named("new --language c: writes no %s%s", absent[i], ""), path, "no");
     }
     scratch::expect_contains("new --language c: main.c names the program", scratch::read(&p, "hellc/main.c"),
-                             "smith_console_print(console, \"hello from hellc\\n\");");
+                             "hello from hellc\\n\", sum);");
     scratch::expect_contains("new --language c: the concept describes the C program",
                              scratch::read(&p, "hellc/knowledge/program.md"), "primes_sum");
     scratch::expect_text("new --language c: git tracks exactly the written files", c_files,
@@ -395,20 +427,35 @@ export void test_new_language_c_a_c_project_is_written_and_committed(io::Io *io)
                          scratch::capture(&p, "cd hellc && smith run | tail -n 1"));
 }
 
-export void test_new_language_c_the_verbs_on_a_new_c_project(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_new_language_c_the_verbs_on_a_new_c_project() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     generated(&p, "generate hellc --language c");
     verbs_on_a_new_project(&p, "hellc", "new --language c", false);
 }
 
-export void test_new_language_c_the_profiles_of_a_new_c_project(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_new_language_c_the_profiles_of_a_new_c_project() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     generated(&p, "generate hellc --language c");
     profiles_of_a_new_project(&p, "hellc", "new --language c", false);
 }
 
-export void test_new_the_language_flag(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_new_the_language_flag() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)run(&p, "mkdir langs");
     scratch::Run eq = run_in(&p, "langs", "smith new --language=c eq");
     scratch::expect_status("new --language=c: exits 0", 0, &eq);
@@ -432,9 +479,13 @@ export void test_new_the_language_flag(io::Io *io) {
 }
 
 // 1b. assert(false) stops debug, release and fast (#326), in a scratch copy of each generated project.
-static void assert_false_stops(io::Io *io, const char *dir, const char *language_flag, const char *extension,
-                               const char *macro) {
-    scratch::Project p = fresh(io);
+static void assert_false_stops(const char *dir, const char *language_flag, const char *extension, const char *macro) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     char command[1024];
     char label[256];
     __builtin_snprintf(command, sizeof command, "generate %s %s", dir, language_flag);
@@ -456,18 +507,23 @@ static void assert_false_stops(io::Io *io, const char *dir, const char *language
     }
 }
 
-export void test_new_assert_false_stops_every_build_in_smith(io::Io *io) {
-    assert_false_stops(io, "hello", "", "smith", "contract::assert");
+export void test_new_assert_false_stops_every_build_in_smith() {
+    assert_false_stops("hello", "", "smith", "contract::assert");
 }
 
-export void test_new_assert_false_stops_every_build_in_c(io::Io *io) {
-    assert_false_stops(io, "hellc", "--language c", "c", "smith_assert");
+export void test_new_assert_false_stops_every_build_in_c() {
+    assert_false_stops("hellc", "--language c", "c", "smith_assert");
 }
 
 // 1c. smith's libraries build under the conventions' flags (gnu2y, every warning an error) in all three profiles and
 // run, found from the #include alone.
-export void test_new_the_libraries_build_under_the_conventions_flags(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_new_the_libraries_build_under_the_conventions_flags() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     generated(
         &p,
         "generate hellc --language c && mkdir libs && cp -R hellc/primes.c hellc/primes.h hellc/primes_test.c libs/");
@@ -487,25 +543,29 @@ export void test_new_the_libraries_build_under_the_conventions_flags(io::Io *io)
 // 1d. The verbs read what the build compiles, in a git copy of the generated C project: prove proves the contracts of
 // the sources that are compiled, fmt formats what git sees (and leaves out .gitignore and .clang-format-ignore), lint
 // reports what clang-tidy finds, and check reports every part that fails.
-static scratch::Project verbs_project(io::Io *io) {
-    scratch::Project p = fresh(io);
-    generated(&p, "generate hellc --language c && mkdir verbs && (cd hellc && tar cf - --exclude .git --exclude build "
-                  "--exclude .smith .) | "
-                  "(cd verbs && tar xf -)");
-    (void)run_in(&p, "verbs", "git init -q -b main && git add -A && git commit -q -m first");
-    scratch::copy_tree(&p, "tests/prove/clamp.c", "verbs/repo-clamp.c");
+static void verbs_project(const scratch::Project *p) {
+    generated(p, "generate hellc --language c && mkdir verbs && (cd hellc && tar cf - --exclude .git --exclude build "
+                 "--exclude .smith .) | "
+                 "(cd verbs && tar xf -)");
+    (void)run_in(p, "verbs", "git init -q -b main && git add -A && git commit -q -m first");
+    scratch::copy_tree(p, "tests/prove/clamp.c", "verbs/repo-clamp.c");
     (void)run_in(
-        &p, "verbs",
+        p, "verbs",
         "printf '#pragma once\\n#include <stdint.h>\\n\\nint32_t clamp(int32_t x, int32_t low, int32_t high);\\n"
         "int32_t draw_health(int32_t health, int32_t max_health);\\nint32_t pinned(int32_t x);\\n' >clamp.h; "
         "{ printf '#include \"clamp.h\"\\n'; cat repo-clamp.c; } >clamp.c; "
         "sed 's|#include \"primes.h\"|#include \"clamp.h\"\\n#include \"primes.h\"|' main.c >main.c.new && mv "
         "main.c.new main.c; rm repo-clamp.c");
-    return p;
 }
 
-export void test_new_the_verbs_prove_the_compiled_sources(io::Io *io) {
-    scratch::Project p = verbs_project(io);
+export void test_new_the_verbs_prove_the_compiled_sources() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    verbs_project(&p);
     scratch::Run proved = run_in(&p, "verbs", "smith prove");
     if (!scratch::contains(proved.err, "has no prover")) {
         scratch::expect_status("new verbs: smith prove proves the contracts of the compiled sources", 0, &proved);
@@ -528,8 +588,14 @@ export void test_new_the_verbs_prove_the_compiled_sources(io::Io *io) {
     }
 }
 
-export void test_new_the_verbs_format_lint_and_check_what_git_sees(io::Io *io) {
-    scratch::Project p = verbs_project(io);
+export void test_new_the_verbs_format_lint_and_check_what_git_sees() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    verbs_project(&p);
     scratch::Run formatted = run_in(&p, "verbs", "smith fmt");
     scratch::expect_status("new verbs: smith fmt formats the files of a tree", 0, &formatted);
     (void)run_in(&p, "verbs",
@@ -576,8 +642,13 @@ export void test_new_the_verbs_format_lint_and_check_what_git_sees(io::Io *io) {
 
 // 1e. Two programs that link one source: each proof of it gets the full flags (the first once cut the compile's flags
 // for every later proof of the same source, which then failed to find its header).
-export void test_new_two_programs_that_link_one_source_are_each_proved_with_the_full_flags(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "new_shared");
+export void test_new_two_programs_that_link_one_source_are_each_proved_with_the_full_flags() {
+    scratch::Project p = scratch::make("p", "new_shared");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run proved = run(&p, "smith prove");
     if (!scratch::contains(proved.err, "has no prover")) {
         scratch::expect_status("new shared: smith prove proves a source two programs link, both times", 0, &proved);
@@ -590,8 +661,13 @@ export void test_new_two_programs_that_link_one_source_are_each_proved_with_the_
 }
 
 // 3. No argument: the folder's name, and its own main.c kept, with no program of the template beside it.
-export void test_new_with_no_argument_the_folders_name_and_its_own_main(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_new_with_no_argument_the_folders_name_and_its_own_main() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)run(&p, "mkdir demo && printf 'int main(void) { return 0; }\\n' >demo/main.c");
     scratch::Run created = run_in(&p, "demo", "smith new");
     scratch::expect_status("no argument: exits 0", 0, &created);
@@ -613,8 +689,13 @@ export void test_new_with_no_argument_the_folders_name_and_its_own_main(io::Io *
 }
 
 // 4. Inside an existing repository. 5. No git identity.
-export void test_new_inside_a_repository_and_with_no_git_identity(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_new_inside_a_repository_and_with_no_git_identity() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)run(&p, "mkdir outer && git -C outer init -q -b main && git -C outer commit -q --allow-empty -m first");
     scratch::Run inner = run_in(&p, "outer", "smith new inner");
     scratch::expect_status("inside a repository: exits 0", 0, &inner);
@@ -639,8 +720,13 @@ export void test_new_inside_a_repository_and_with_no_git_identity(io::Io *io) {
 }
 
 // 6. Errors.
-export void test_new_errors(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_new_errors() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run bad = run(&p, "smith new -bad");
     scratch::expect_status("bad name: exit status", 2, &bad);
     scratch::expect_text("bad name: message", "smith: -bad cannot name a program; use letters, digits, _, . and -",
@@ -660,8 +746,13 @@ export void test_new_errors(io::Io *io) {
 }
 
 // 9. An existing build.c is kept and gets no program; the first build is the project's own.
-export void test_new_an_existing_build_c_is_kept(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_new_an_existing_build_c_is_kept() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)run(&p, "mkdir has_build");
     scratch::write(&p, "has_build/build.c",
                    "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n    SmithStep stamp = {\n"
@@ -678,8 +769,13 @@ export void test_new_an_existing_build_c_is_kept(io::Io *io) {
 }
 
 // 10. Another build system: no program, no build file and no first build.
-export void test_new_another_build_system_gets_no_program(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_new_another_build_system_gets_no_program() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)run(&p, "mkdir has_make && printf 'all:\\n\\t@echo made\\n' >has_make/Makefile && "
                   "printf 'int main(void) { return 0; }\\n' >has_make/other.c");
     scratch::Run created = run(&p, "smith new has_make");
@@ -701,7 +797,7 @@ export void test_new_another_build_system_gets_no_program(io::Io *io) {
     scratch::expect_contains("Makefile: the message names the skill", created.out, "smith-build skill");
     scratch::expect_text("Makefile: commits only the files written",
                          ".agents/skills/has-make-docs/SKILL.md .claude/settings.json .claude/skills .gitignore "
-                         "AGENTS.md knowledge/index.md",
+                         "knowledge/index.md",
                          capture(&p, ".", "git -C has_make ls-files | tr '\\n' ' ' | sed 's/ $//'"));
     scratch::Run docs = run(&p, "smith docs has_make");
     scratch::expect_status("Makefile: the docs pass", 0, &docs);
@@ -713,8 +809,13 @@ export void test_new_another_build_system_gets_no_program(io::Io *io) {
 }
 
 // 11. An existing .gitignore is kept; the lines it lacks are reported. 11b. The same for .claude/settings.json.
-export void test_new_an_existing_gitignore_and_settings_are_kept(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_new_an_existing_gitignore_and_settings_are_kept() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)run(&p, "mkdir has_ignore && printf '/build/  \\nnode_modules/\\n' >has_ignore/.gitignore");
     scratch::Run created = run(&p, "smith new has_ignore");
     scratch::expect_text("gitignore: kept untouched", "/build/  \nnode_modules/",
@@ -734,15 +835,17 @@ export void test_new_an_existing_gitignore_and_settings_are_kept(io::Io *io) {
     scratch::expect_lacks("settings with the entry: no report", second.out, "lacks \"smith@smith\"");
 }
 
-// 13. Docs. The new project has knowledge, a skill and AGENTS.md, and smith docs and smith check hold them.
-export void test_new_the_docs_of_a_new_project(io::Io *io) {
-    scratch::Project p = fresh(io);
+// 13. Docs. The new project has knowledge and a skill, and smith docs and smith check hold them.
+export void test_new_the_docs_of_a_new_project() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     generated(&p, "generate hello");
-    const char *agents = scratch::read(&p, "hello/AGENTS.md");
     scratch::expect_text("docs: the skill is named for the program", "name: hello-docs",
                          scratch::capture(&p, "grep '^name:' hello/.agents/skills/hello-docs/SKILL.md"));
-    scratch::expect_contains("docs: AGENTS.md links the skill", agents, "(.agents/skills/hello-docs/SKILL.md)");
-    scratch::expect_contains("docs: AGENTS.md links the knowledge", agents, "(knowledge/index.md)");
     char expected[1024];
     __builtin_snprintf(expected, sizeof expected, "- [The program](program.md): %s",
                        scratch::capture(&p, "sed -n 's/^description: //p' hello/knowledge/program.md"));
@@ -795,8 +898,13 @@ static void broken(const scratch::Project *p, const char *name, const char *mess
     scratch::expect_contains(label, run_docs.err, message);
 }
 
-export void test_new_breaking_each_docs_rule_fails_smith_docs(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_new_breaking_each_docs_rule_fails_smith_docs() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     generated(&p, "generate hello");
     broken(&p, "a type the project does not allow",
            "knowledge/program.md: type 'poem' is not one of convention, architecture, contract, design",
@@ -824,8 +932,9 @@ export void test_new_breaking_each_docs_rule_fails_smith_docs(io::Io *io) {
            ".agents/skills/hello-docs/SKILL.md");
     broken(&p, "a skill without a description", ".agents/skills/hello-docs/SKILL.md: frontmatter lacks description",
            "grep -v '^description:' .agents/skills/hello-docs/SKILL.md >p && mv p .agents/skills/hello-docs/SKILL.md");
-    broken(&p, "a broken link", "AGENTS.md: broken link nowhere.md", "printf '[x](nowhere.md)\\n' >>AGENTS.md");
-    broken(&p, "a conflict marker", "AGENTS.md:", "printf '<<<<<<< HEAD\\n' >>AGENTS.md");
+    broken(&p, "a broken link", "knowledge/program.md: broken link nowhere.md",
+           "printf '[x](nowhere.md)\\n' >>knowledge/program.md");
+    broken(&p, "a conflict marker", "knowledge/program.md:", "printf '<<<<<<< HEAD\\n' >>knowledge/program.md");
     broken(&p, "knowledge linking a skill",
            "knowledge/program.md: links the skill ../.agents/skills/hello-docs/SKILL.md; knowledge never links skills",
            "printf '[how](../.agents/skills/hello-docs/SKILL.md)\\n' >>knowledge/program.md");
@@ -849,8 +958,7 @@ export void test_new_breaking_each_docs_rule_fails_smith_docs(io::Io *io) {
 }
 
 // 12. The template's rules stay smith's: every rule and option of smith's own files is in the template's. Allowed
-// differences: smith-only assert macro, typedef names, unity-build include check, and smith-effects.CFiles (smith's C
-// is being ported to .smith, so smith checks .smith only; the template checks C files too).
+// differences: smith-only assert macro, typedef names, and unity-build include check.
 constexpr char tidy_functions[_] =
     "tidy_items() { awk '/^Checks:/ { mode = \"checks\"; next } /^[A-Za-z]+:/ && !/^CheckOptions:/ { mode = \"\"; next "
     "} "
@@ -859,11 +967,16 @@ constexpr char tidy_functions[_] =
     "mode == \"options\" && /^  [a-zA-Z]/ { sub(/:.*/, \"\"); gsub(/ /, \"\"); print \"option \" $0 }' \"$1\"; }; "
     "missing_rules() { tidy_items \"$1\" | grep -v -e 'bugprone-suspicious-include' -e "
     "'bugprone-assert-side-effect.AssertMacros' "
-    "-e 'readability-identifier-naming.TypedefIgnoredRegexp' -e 'smith-effects.CFiles' | while read -r kind item; do "
+    "-e 'readability-identifier-naming.TypedefIgnoredRegexp' | while read -r kind item; do "
     "tidy_items \"$2\" | grep -qxF \"$kind $item\" || echo \"$kind $item\"; done; }; ";
 
-export void test_new_the_templates_rules_stay_smiths(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_new_the_templates_rules_stay_smiths() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::copy_tree(&p, ".clang-tidy", "smith-clang-tidy");
     scratch::copy_tree(&p, "templates/defaults/clang-tidy", "template-clang-tidy");
     scratch::copy_tree(&p, ".clang-format", "smith-clang-format");

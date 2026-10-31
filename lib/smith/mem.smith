@@ -1,3 +1,4 @@
+// smith-build: link
 // smith::mem, <smith/mem.h>: memory through the allocator of the current thread. Its C API is the generated header
 // include/smith/mem.h (a build output, not in git); the names follow the rule of arena.smith:
 // `mem::alloc_raw` is `smith_mem_alloc`, `mem::set_allocator` is `smith_mem_set_allocator`.
@@ -114,6 +115,92 @@ const char *allocator_name(const Allocator *allocator);
         result.count[i] = size;
     }
     result.data = alloc_array_raw(sizeof(T), total, alignof(T));
+    return result;
+}
+
+// The slice of dims over memory: the sizes in `count`, row-major, as alloc_slice builds it.
+arena::slice_of(T, countof(dims)) slice_over(constexpr type T, void *memory, auto... dims) {
+    struct smith_array_T_n result = {};
+    for constexpr (usize i = 0; i < countof(dims); i++)
+        result.count[i] = (usize)dims[i];
+    result.data = (T *)memory;
+    return result;
+}
+
+// The slice of alloc_slice, or `.none` when the allocator refuses or the size overflows (nothing is allocated then):
+// `try_alloc_slice(f32, n)` for a server that turns away a huge `n`; the size and the data travel as one. Built on
+// try_alloc_raw as try_alloc is.
+[[smith::c_name("smith_mem_try_alloc_slice_type")]] export [[nodiscard]] option(arena::slice_of(T, countof(dims)))
+    try_alloc_slice(constexpr type T, auto... dims) {
+    static_assert(countof(dims) > 0,
+                  "try_alloc_slice needs a size for each `[:]` of the result: try_alloc_slice(T, n)");
+    usize total = 1;
+    for constexpr (usize i = 0; i < countof(dims); i++) {
+        if (__builtin_mul_overflow(total, (usize)dims[i], &total)) return .none;
+    }
+    usize bytes = 0;
+    if (__builtin_mul_overflow(total, sizeof(T), &bytes)) return .none;
+    void *memory = try_alloc_raw(bytes, alignof(T));
+    if (memory == nullptr) return .none;
+    __builtin_memset(memory, 0, bytes);
+    return {.some = slice_over(T, memory, dims...)};
+}
+
+// The block of `block` resized to size bytes, or null when the allocator refuses (the old block is then untouched).
+// Libc's realloc is called, so the handlers and any swapped allocator see it whoever the caller is.
+void *realloc_block(void *block, usize size) {
+    contract::trusted();            // the allocator is the edge
+    return c::realloc(block, size); // NOLINT(smith-effects): the edge, as try_alloc_raw
+}
+
+// block resized from old items to n of size bytes, the tail zeroed; null when n * size overflows or the allocator
+// refuses (block is then untouched). n == 0 frees the block (C23 leaves `realloc(p, 0)` undefined) and gives null.
+void *resize_raw(void *block, usize old, usize n, usize size) {
+    contract::trusted(); // it writes the tail it hands out
+    if (n == 0) {
+        c::free(block); // NOLINT(smith-effects): the edge
+        return nullptr;
+    }
+    usize bytes = 0;
+    if (__builtin_mul_overflow(n, size, &bytes)) return nullptr;
+    void *memory = realloc_block(block, bytes);
+    if (memory == nullptr) return nullptr;
+    if (n > old) __builtin_memset((char *)memory + old * size, 0, (n - old) * size);
+    return memory;
+}
+
+// xs resized to n elements, or `.none` when the allocator refuses or n * sizeof(element) overflows: then xs is
+// untouched and still the caller's. `.some` holds the first min(count, n) elements of xs and a zeroed tail; the old
+// block is gone. n == 0 frees the block and gives the empty slice. An empty xs (data null) is a fresh allocation.
+// One dimension only; the result is freed with mem::free.
+[[smith::c_name("smith_mem_try_realloc_slice")]] export [[nodiscard]] option(typeof(xs)) try_realloc(auto xs, usize n) {
+    static_assert(alignof(typeof(*xs.data)) <= 16, "try_realloc: realloc aligns to 16 bytes");
+    usize old = xs.data == nullptr ? 0 : xs.count[0];
+    void *memory = resize_raw(xs.data, old, n, sizeof(*xs.data));
+    if (memory == nullptr && n != 0) {
+        return .none;
+    }
+    typeof(xs) result = {};
+    result.data = (typeof(xs.data))memory;
+    result.count[0] = n;
+    return {.some = result};
+}
+
+// xs resized to n elements, never null: the first min(count, n) elements stay, a grown tail is zeroed, `xs = mem::
+// realloc(xs, n)`. A refusal or an overflowing size is a checked failure naming the size, as alloc_slice. See
+// try_realloc for n == 0 and an empty xs.
+[[smith::c_name("smith_mem_realloc_slice")]] export [[nodiscard]] typeof(xs) realloc(auto xs, usize n) {
+    static_assert(alignof(typeof(*xs.data)) <= 16, "realloc: realloc aligns to 16 bytes");
+    usize old = xs.data == nullptr ? 0 : xs.count[0];
+    void *memory = resize_raw(xs.data, old, n, sizeof(*xs.data));
+    if (memory == nullptr && n != 0) {
+        usize bytes = 0;
+        if (__builtin_mul_overflow(n, sizeof(*xs.data), &bytes)) bytes = ~(usize)0;
+        refuse(bytes, alignof(typeof(*xs.data)));
+    }
+    typeof(xs) result = {};
+    result.data = (typeof(xs.data))memory;
+    result.count[0] = n;
     return result;
 }
 

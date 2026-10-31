@@ -29,8 +29,6 @@ constexpr size_t smith_lang_chars_max = (size_t)1 << 20;
 constexpr size_t smith_lang_scratch_max = (size_t)1 << 18;
 constexpr size_t smith_lang_head_max = 4096;
 constexpr size_t smith_lang_queue_max = 1024;
-// What `i32 main(io::Io *io)` is called once lowered (runtime/lang_head.c).
-constexpr char smith_lang_io_main_name[] = "smith_user_main";
 constexpr size_t smith_lang_batch_max = 4096;
 constexpr size_t smith_lang_call_sites_max = 2048; // calls to generics the editor can be told of
 constexpr size_t smith_lang_call_frames_max = 16;  // generic calls inside generic calls' arguments
@@ -427,8 +425,25 @@ typedef struct {
     char ret_type[256];
 } SmithLangTry;
 
+// Lambdas (runtime/lang_lambda.c): the one being read, and how much waits for the end of the function.
+typedef struct {
+    uint32_t phase; // 1: the tokens of a lambda are being kept
+    uint32_t start; // the place of its `[`
+    uint32_t count; // tokens kept
+    int32_t parens;
+    int32_t braces;
+    bool body;        // the body's `{` was read
+    uint32_t pending; // tokens of definitions written when the function ends
+    size_t text_used;
+    bool started;     // a token of the file was seen
+    uint32_t depth;   // the braces open, counted here (a file without a module line keeps no count)
+    bool after_close; // the last one ended a declaration or a function
+    SmithToken last;  // the last token seen (a name is `x`; `return` is itself)
+} SmithLangLambda;
+
 struct SmithLang {
     SmithLangTry tr;
+    SmithLangLambda lambda;
     bool broken;
     bool advance_skip; // the token just lowered took its matching bracket with it: no call counts it
                        // (runtime/lang_tuple.c)
@@ -438,12 +453,6 @@ struct SmithLang {
     bool enums_seen;    // an enum with payloads was written in this file, or an import's header has one (lang_enum.c)
     bool slices_seen;   // a slice was written in this file, or an import's header has one (runtime/lang_slice.c)
     bool tuples_seen;   // a tuple type was written in this file, or an import's header has one (runtime/lang_tuple.c)
-    bool io_import;     // the file imports smith::io: its `main` may take the io (runtime/lang_head.c)
-    bool io_main;       // `i32 main(io::Io *io)` was read: it is `smith_user_main`, and a `main` is written at the end
-    uint32_t io_main_location; // of that function's name
-    SmithLangText io_type; // how this file's lowering writes `io::Io` (SmithIo, or the module's name without a header)
-    bool io_make_seen;     // `io::make` was written somewhere in the file
-    uint32_t io_make_location; // of the first
     bool broken_reported;
     bool started;
     bool finished;
@@ -468,9 +477,10 @@ struct SmithLang {
     bool doc_pending; // an export is next and has a doc comment (doc_export_from .. doc_export_to)
     const SmithTrivia *doc_export_from;
     const SmithTrivia *doc_export_to;
-    bool export_tail;    // the header has the export's end, though export_active is off (a variable, a prototype)
-    bool tail_open;      // an export just ended in the header: a comment after it on its line follows it there
-    bool unnamed_c_name; // an export ended that took no name from its [[smith::c_name]]
+    bool export_tail;     // the header has the export's end, though export_active is off (a variable, a prototype)
+    bool tail_open;       // an export just ended in the header: a comment after it on its line follows it there
+    uint32_t nolint_open; // NOLINTBEGIN comments the header has no NOLINTEND for yet (a pair stays together)
+    bool unnamed_c_name;  // an export ended that took no name from its [[smith::c_name]]
     uint32_t unnamed_c_name_location;
     size_t c_name_count; // how many of the module's own names have a C name chosen
     SmithLangCName cnames[smith_lang_cnames_max];
@@ -1017,6 +1027,9 @@ static const char *smith_lang_str(SmithLangText text) {
 
 // `try` and `errdefer` for `result` and `option`.
 #include "lang_try.c"
+
+// Lambdas that capture nothing, lifted out of their function.
+#include "lang_lambda.c"
 
 // `_` and `_name` mean unused; `_ = expr;` discards a value.
 #include "lang_unused.c"

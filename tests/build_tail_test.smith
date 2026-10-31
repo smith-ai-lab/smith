@@ -4,15 +4,23 @@
 // gone.
 module build_tail_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 
+constexpr usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
+
 // 15. A smith without the token hook (a stage0) still writes headers; the compile says what is missing. A smith with
 // the hook has nothing to check here (tests/build_lang_test.smith builds the modules).
-export void test_build_tail_without_the_token_hook_the_build_fails_clearly(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "lang_project");
+export void test_build_tail_without_the_token_hook_the_build_fails_clearly() {
+    scratch::Project p = scratch::make("p", "lang_project");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)scratch::sh(&p, "mkdir bin && { cp -c \"$SMITH_SELF\" bin/smith-cc 2>/dev/null || cp \"$SMITH_SELF\" "
                           "bin/smith-cc; }");
     scratch::copy_tree(&p, "tests/smith-lang/cases/module-three/src", "src");
@@ -30,8 +38,13 @@ export void test_build_tail_without_the_token_hook_the_build_fails_clearly(io::I
 
 // 13z. smith_cat: a nullptr first list would end the arguments and drop the other lists, so it is an error that says
 // so.
-export void test_build_tail_smith_cat_refuses_a_nullptr_first_list(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "tail_cat_null");
+export void test_build_tail_smith_cat_refuses_a_nullptr_first_list() {
+    scratch::Project p = scratch::make("p", "tail_cat_null");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_failure("smith_cat: a nullptr first list fails", &run);
     scratch::expect_contains("smith_cat: ... as a build.c error that says why", run.err,
@@ -39,8 +52,13 @@ export void test_build_tail_smith_cat_refuses_a_nullptr_first_list(io::Io *io) {
     scratch::expect_contains("smith_cat: ... and what to write instead", run.err, "(const char *[]){nullptr}");
 }
 
-export void test_build_tail_smith_cat_with_an_empty_first_list_keeps_the_others(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "tail_cat_empty");
+export void test_build_tail_smith_cat_with_an_empty_first_list_keeps_the_others() {
+    scratch::Project p = scratch::make("p", "tail_cat_empty");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)scratch::build(&p, "");
     scratch::expect_text("smith_cat: an empty first list keeps the others", "--function=x",
                          scratch::read(&p, "joined.txt"));
@@ -48,8 +66,13 @@ export void test_build_tail_smith_cat_with_an_empty_first_list_keeps_the_others(
 
 // 13y. A compiler named smith, by name, by path or from the environment (CC=$HOME/.local/bin/smith), is refused before
 // anything runs, with the hint to use smith-cc or smith-c++.
-export void test_build_tail_cc_set_to_the_smith_path_is_refused(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "tail_compiler_smith");
+export void test_build_tail_cc_set_to_the_smith_path_is_refused() {
+    scratch::Project p = scratch::make("p", "tail_compiler_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::sh(&p, "CC=\"$SMITH_SELF\" smith build");
     const char *self = scratch::capture(&p, "printf %s \"$SMITH_SELF\"");
     char text[1024];
@@ -63,15 +86,25 @@ export void test_build_tail_cc_set_to_the_smith_path_is_refused(io::Io *io) {
                          scratch::capture(&p, "ls main.o .smith/compiler 2>/dev/null"));
 }
 
-export void test_build_tail_dcc_smith_is_refused(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "tail_compiler_smith");
+export void test_build_tail_dcc_smith_is_refused() {
+    scratch::Project p = scratch::make("p", "tail_compiler_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::build(&p, "-DCC=smith");
     scratch::expect_failure("-DCC=smith is refused", &run);
     scratch::expect_contains("-DCC=smith: ... with the hint", run.err, "use \"smith-cc\" for C");
 }
 
-export void test_build_tail_cc_smith_cc_still_builds(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "tail_compiler_smith");
+export void test_build_tail_cc_smith_cc_still_builds() {
+    scratch::Project p = scratch::make("p", "tail_compiler_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::sh(&p, "env CC=smith-cc smith build");
     scratch::expect_status("CC=smith-cc still builds", 0, &run);
 }
@@ -83,8 +116,13 @@ constexpr char own_link_setup[_] =
     "printf '#!/bin/sh\\necho %s >>\"%s/marker\"\\nexec \"%s\" cc \"$@\"\\n' \"$kind\" \"$PWD\" \"$SMITH_SELF\" "
     ">$kind/smith-cc; chmod +x $kind/smith-cc; done";
 
-export void test_build_tail_a_smith_builds_with_the_smith_cc_beside_it_not_the_one_on_path(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "tail_own_link");
+export void test_build_tail_a_smith_builds_with_the_smith_cc_beside_it_not_the_one_on_path() {
+    scratch::Project p = scratch::make("p", "tail_own_link");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run setup = scratch::sh(&p, own_link_setup);
     scratch::expect_status("own link: the setup", 0, &setup);
     scratch::Run run = scratch::sh(&p, "PATH=$PWD/other:$PATH \"$PWD/own/smith\" build >out.txt 2>err.txt");
@@ -93,10 +131,15 @@ export void test_build_tail_a_smith_builds_with_the_smith_cc_beside_it_not_the_o
                          scratch::capture(&p, "sort -u marker 2>/dev/null | tr '\\n' ' ' | sed 's/ $//'"));
 }
 
-// 13z. Naming a library is enough: smith_library(b, "contract") brings trace, and "io" brings the arena and random,
+// 13z. Naming a library is enough: smith_library(b, "contract") brings trace, and "random" brings the arena,
 // whether the project passes them to smith_program or not (smith_program adds what the libraries it links need).
-export void test_build_tail_library_contract_alone_links_and_brings_trace(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "tail_library_contract");
+export void test_build_tail_library_contract_alone_links_and_brings_trace() {
+    scratch::Project p = scratch::make("p", "tail_library_contract");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run built = scratch::build(&p, "");
     scratch::expect_status("library needs: contract alone links (trace comes with it)", 0, &built);
     scratch::expect_text("library needs: ... and brings trace's object", "build/smith/trace.o",
@@ -108,25 +151,35 @@ export void test_build_tail_library_contract_alone_links_and_brings_trace(io::Io
 
 // 13z2. A program that indexes a slice links the trace library with no line in a build file: the conventions find `[:`
 // in a .smith source (issue #82).
-export void test_build_tail_a_program_that_indexes_a_slice_links_trace(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "tail_slices");
+export void test_build_tail_a_program_that_indexes_a_slice_links_trace() {
+    scratch::Project p = scratch::make("p", "tail_slices");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run built = scratch::build(&p, "");
     scratch::expect_status("slices: a program that indexes one builds with no build file", 0, &built);
     scratch::expect_text("slices: ... and links trace", "build/debug/smith/trace.o",
                          scratch::capture(&p, "ls build/debug/smith/trace.o"));
 }
 
-export void test_build_tail_library_io_alone_links_and_brings_the_arena_and_random(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "tail_library_io");
+export void test_build_tail_library_files_alone_links_and_brings_the_arena_and_mem() {
+    scratch::Project p = scratch::make("p", "tail_library_files");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run built = scratch::build(&p, "");
-    scratch::expect_status("library needs: io alone links (arena and random come with it)", 0, &built);
+    scratch::expect_status("library needs: files alone links (arena and mem come with it)", 0, &built);
     scratch::expect_text(
-        "library needs: ... their objects are made beside io's", "build/smith/arena.o build/smith/random.o",
-        scratch::capture(&p, "ls build/smith/arena.o build/smith/random.o | tr '\\n' ' ' | sed 's/ $//'"));
+        "library needs: ... their objects are made beside files'", "build/smith/arena.o build/smith/mem.o",
+        scratch::capture(&p, "ls build/smith/arena.o build/smith/mem.o | tr '\\n' ' ' | sed 's/ $//'"));
     scratch::Run app = scratch::sh(&p, "build/app");
     char state[64];
     (void)format::to(state, sizeof state, app.status, " ", app.out);
-    scratch::expect_text("library needs: ... and the program runs", "0 seed 1", state);
+    scratch::expect_text("library needs: ... and the program runs", "0 found 1", state);
     scratch::Run second = scratch::build(&p, "");
     char both[4096];
     (void)format::to(both, sizeof both, second.out, second.err);
@@ -134,8 +187,13 @@ export void test_build_tail_library_io_alone_links_and_brings_the_arena_and_rand
 }
 
 // 13b. The progress lines say what a compile and a link do, not the whole command; -v shows the command.
-export void test_build_tail_progress_lines_say_what_a_compile_and_a_link_do(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "tail_progress");
+export void test_build_tail_progress_lines_say_what_a_compile_and_a_link_do() {
+    scratch::Project p = scratch::make("p", "tail_progress");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run built = scratch::build(&p, "");
     scratch::expect_contains("progress: a compile says what it compiles", built.out, "compile main.c");
     scratch::expect_contains("progress: a link says what it links", built.out, "link build/");

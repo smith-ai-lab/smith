@@ -1,0 +1,13 @@
+// A tuple behind a pointer parameter at -O1: its struct is defined once at file scope, not in the parameter list.
+import <stdio.h>;
+
+void scale(struct { f64, f32 } *t, f64 by) {
+    (*t)[0] *= by;
+}
+
+i32 main() {
+    struct { f64, f32 } t = {1.5, 2.0f};
+    scale(&t, 4.0);
+    c::printf("%.1f %.1f\n", t[0], (f64)t[1]);
+    return 0;
+}

@@ -10,7 +10,8 @@
 module smith_lang_c_test;
 
 import smith::format;
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import <string.h>;
 import scratch;
@@ -19,8 +20,9 @@ import scratch;
 // that is identical before it is identical after, and the cases that are about it say -O2.
 constexpr char flags[_] =
     "-std=gnu23 -O0 -g0 -Wno-builtin-macro-redefined -D'__FILE__=\"unit\"' -I include -I .smith/include";
-// smith.c alone is compared at -O1: at -O0 `query.why != nullptr ? query.why : "..."` in lang_type.c is a branch as .c
-// and a select as .smith (the same program; the optimizer makes the two one).
+// smith.c alone is compared at -O1: at -O0 `*handle == 0 ? smith_lang_ty_second_level() : ""` in lang_type.c is a
+// branch as .c and a select as .smith (the same program; the optimizer makes the two one). Code generation asks the
+// constant evaluator whether the call is cheap to run unconditionally, and with SmithConstexprC it can run (#652).
 constexpr char in_process_o1[_] = "-O1 -DSMITH_IN_PROCESS -D'SMITH_CLANG_RESOURCE=\"tests/stub.c\"' "
                                   "-D'SMITH_CLANG_ID=\"llvm-0 0\"'";
 
@@ -28,18 +30,16 @@ static typeof(const char[:]) slice_of(const char *text) {
     return text[0:c::strlen(text)];
 }
 
-static const char *text(const scratch::Project *p, const char *a, const char *b, const char *c, const char *d) {
-    return format::push(&p->io->arena, a, b, c, d).data;
+static const char *text(const char *a, const char *b, const char *c, const char *d) {
+    return format::push(a, b, c, d).data;
 }
 
 // The sources are compiled in a tree where a renamed file sits beside the original. The tree is links to the
 // repository's items (a copy of them was most of what each case cost); the folders on the way to `stem` are real
 // folders of links, and the source itself is a real file, so that the .smith written beside it is a real file too.
-static scratch::Project tree_project(io::Io *io, const char *stem) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+static void make_tree(const scratch::Project *p, const char *stem) {
     const char *command =
-        format::push(&io->arena,
-                     "mkdir tree && for item in smith.c build.c include lib runtime scripts templates tests "
+        format::push("mkdir tree && for item in smith.c build.c include lib runtime scripts templates tests "
                      "shim; do ln -s \"$SMITH_REPO/$item\" tree/$item; done && mkdir -p tree/.smith && "
                      "ln -s \"$SMITH_REPO/.smith/include\" tree/.smith/include && "
                      "dir=$(dirname ",
@@ -50,17 +50,21 @@ static scratch::Project tree_project(io::Io *io, const char *stem) {
                      "rel=\"$rel/\"; done; fi && rm tree/",
                      stem, ".c && cp \"$SMITH_REPO/", stem, ".c\" tree/", stem, ".c")
             .data;
-    scratch::Run copied = scratch::sh(&p, command);
+    scratch::Run copied = scratch::sh(p, command);
     scratch::expect_status("the tree is made", 0, &copied);
-    return p;
 }
 
 // The two files are compiled to assembly as `stem.c` and as `stem.smith` with the same flags, and must be identical.
-static void compare(io::Io *io, const char *stem, const char *extra, bool from_smith) {
-    scratch::Project p = tree_project(io, stem);
+static void compare(const char *stem, const char *extra, bool from_smith) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    make_tree(&p, stem);
     if (from_smith) {
-        scratch::Run copied =
-            scratch::sh(&p, format::push(&io->arena, "cp tree/", stem, ".smith tree/", stem, ".c").data);
+        scratch::Run copied = scratch::sh(&p, format::push("cp tree/", stem, ".smith tree/", stem, ".c").data);
         scratch::expect_status("the .smith is copied to .c", 0, &copied);
     }
     const char *base = stem;
@@ -68,11 +72,11 @@ static void compare(io::Io *io, const char *stem, const char *extra, bool from_s
         base = slash + 1;
     // The file's own name in a string is read as ".c" on the lowered side; any other ".smith" in a string is code.
     scratch::write(&p, "own.sed",
-                   format::push(&io->arena, "s|\\([^A-Za-z0-9_/.-]\\)", base, "\\.smith\"|\\1", base, ".c\"|g\n").data);
+                   format::push("s|\\([^A-Za-z0-9_/.-]\\)", base, "\\.smith\"|\\1", base, ".c\"|g\n").data);
     scratch::write(&p, "messages.sed", "s/\\.c\\([: ]\\)/.smith\\1/g\n");
     // The two compiles run side by side (each in its own files; the .smith is a copy removed when it is done), and
     // each writes its exit status.
-    const char *both = format::push(&io->arena, "cd tree; { smith cc ", flags, " ", extra, " -S ", stem,
+    const char *both = format::push("cd tree; { smith cc ", flags, " ", extra, " -S ", stem,
                                     ".c -o ../plain.s 2> ../plain.err; echo $? > ../plain.status; } & "
                                     "cp ",
                                     stem, ".c ", stem, ".smith && { smith cc ", flags, " ", extra, " -S ", stem,
@@ -98,152 +102,163 @@ static void compare(io::Io *io, const char *stem, const char *extra, bool from_s
     scratch::expect_status("the messages are the same", 0, &messages);
 }
 
-export void test_smith_c_compiles_the_same_as_smith(io::Io *io) {
-    compare(io, "smith", in_process_o1, false);
+export void test_smith_c_compiles_the_same_as_smith() {
+    compare("smith", in_process_o1, false);
 }
 
-export void test_build_c_compiles_the_same_as_smith(io::Io *io) {
-    compare(io, "build", "", false);
+export void test_build_c_compiles_the_same_as_smith() {
+    compare("build", "", false);
 }
 
-export void test_the_build_runtime_compiles_the_same_as_smith(io::Io *io) {
-    compare(io, "runtime/build_runtime", "", false);
+export void test_the_build_runtime_compiles_the_same_as_smith() {
+    compare("runtime/build_runtime", "", false);
 }
 
-export void test_the_stub_compiles_the_same_as_smith(io::Io *io) {
-    compare(io, "tests/stub", "-DNAME='\"stub\"'", false);
+export void test_the_stub_compiles_the_same_as_smith() {
+    compare("tests/stub", "-DNAME='\"stub\"'", false);
 }
 
-export void test_pack_compiles_the_same_as_smith(io::Io *io) {
-    compare(io, "scripts/pack", "", false);
+export void test_pack_compiles_the_same_as_smith() {
+    compare("scripts/pack", "", false);
 }
 
 // scripts/stage0.c is plain C for the system's clang; renamed to .smith it is the same program.
-export void test_stage0_compiles_the_same_as_smith(io::Io *io) {
-    compare(io, "scripts/stage0", "", false);
+export void test_stage0_compiles_the_same_as_smith() {
+    compare("scripts/stage0", "", false);
 }
 
-export void test_the_http_library_compiles_the_same_as_smith(io::Io *io) {
-    compare(io, "lib/http", "", false);
+export void test_the_http_library_compiles_the_same_as_smith() {
+    compare("lib/http", "", false);
 }
 
 // Not tests/random.c: it includes the lowering of random, and both print the name "random.c", which the compiler makes
 // one string; as random.smith it is two, so the constants after it are numbered differently. (Nothing else differs.)
-export void test_the_arena_test_compiles_the_same_as_smith(io::Io *io) {
-    compare(io, "tests/arena", "", false);
+export void test_the_arena_test_compiles_the_same_as_smith() {
+    compare("tests/arena", "", false);
 }
 
-export void test_the_io_test_compiles_the_same_as_smith(io::Io *io) {
-    compare(io, "tests/io", "", false);
+export void test_the_untar_test_compiles_the_same_as_smith() {
+    compare("tests/untar", "", false);
 }
 
-export void test_the_untar_test_compiles_the_same_as_smith(io::Io *io) {
-    compare(io, "tests/untar", "", false);
-}
-
-export void test_the_new_project_main_compiles_the_same_as_smith(io::Io *io) {
-    compare(io, "templates/new-c/main", "-std=gnu2y", false);
+export void test_the_new_project_main_compiles_the_same_as_smith() {
+    compare("templates/new-c/main", "-std=gnu2y", false);
 }
 
 // Where C does not require a constant, the evaluator that runs C functions for .smith
 // (patches/clang-constexpr-c.patch) does nothing.
-export void test_folding_compiles_the_same_as_smith(io::Io *io) {
-    compare(io, "tests/smith-lang-c/folding", "", false);
+export void test_folding_compiles_the_same_as_smith() {
+    compare("tests/smith-lang-c/folding", "", false);
 }
 
-export void test_folding_at_o2_compiles_the_same_as_smith(io::Io *io) {
-    compare(io, "tests/smith-lang-c/folding", "-O2 -Wall -Wpedantic -Wvla -Wgnu-folding-constant", false);
+export void test_folding_at_o2_compiles_the_same_as_smith() {
+    compare("tests/smith-lang-c/folding", "-O2 -Wall -Wpedantic -Wvla -Wgnu-folding-constant", false);
 }
 
-export void test_folding_in_c17_compiles_the_same_as_smith(io::Io *io) {
-    compare(io, "tests/smith-lang-c/folding", "-std=c17", false);
+export void test_folding_in_c17_compiles_the_same_as_smith() {
+    compare("tests/smith-lang-c/folding", "-std=c17", false);
 }
 
 // A program that prints: the same output as .c and as .smith, and the one in its .out file.
-static void behave(io::Io *io, const char *name) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::copy_tree(&p, format::push(&io->arena, "tests/smith-lang-c/", name, ".c").data,
-                       format::push(&io->arena, name, ".c").data);
-    scratch::Run copied = scratch::sh(&p, format::push(&io->arena, "cp ", name, ".c ", name, ".smith").data);
+static void behave(const char *name) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, format::push("tests/smith-lang-c/", name, ".c").data, format::push(name, ".c").data);
+    scratch::Run copied = scratch::sh(&p, format::push("cp ", name, ".c ", name, ".smith").data);
     scratch::expect_status("the program is copied", 0, &copied);
     const char *kinds[2] = {"c", "smith"};
     for (usize i = 0; i < 2; i++) {
-        const char *build = format::push(&io->arena,
-                                         "smith cc -std=gnu23 -O1 -g0 -Wno-builtin-macro-redefined "
+        const char *build = format::push("smith cc -std=gnu23 -O1 -g0 -Wno-builtin-macro-redefined "
                                          "-D'__FILE__=\"unit\"' -I \"$SMITH_REPO/.smith/include\" -w ",
                                          name, ".", kinds[i], " -o ", name, ".", kinds[i], ".bin")
                                 .data;
         scratch::Run built = scratch::sh(&p, build);
-        scratch::expect_status(text(&p, "the .", kinds[i], " builds", ""), 0, &built);
-        scratch::Run ran = scratch::sh(&p, format::push(&io->arena, "./", name, ".", kinds[i], ".bin 2>&1").data);
-        test::golden(io, slice_of(format::push(&io->arena, "tests/smith-lang-c/", name, ".out").data),
-                     slice_of(ran.out));
+        scratch::expect_status(text("the .", kinds[i], " builds", ""), 0, &built);
+        scratch::Run ran = scratch::sh(&p, format::push("./", name, ".", kinds[i], ".bin 2>&1").data);
+        test::golden(slice_of(format::push("tests/smith-lang-c/", name, ".out").data), slice_of(ran.out));
     }
 }
 
-export void test_arrays_print_the_same_as_c(io::Io *io) {
-    behave(io, "arrays");
+export void test_arrays_print_the_same_as_c() {
+    behave("arrays");
 }
 
-export void test_a_defer_name_prints_the_same_as_c(io::Io *io) {
-    behave(io, "defer_name");
+export void test_a_defer_name_prints_the_same_as_c() {
+    behave("defer_name");
 }
 
-export void test_try_and_errdefer_names_print_the_same_as_c(io::Io *io) {
-    behave(io, "try_name");
+export void test_try_and_errdefer_names_print_the_same_as_c() {
+    behave("try_name");
 }
 
-export void test_the_languages_words_as_names_print_the_same_as_c(io::Io *io) {
-    behave(io, "names");
+export void test_the_languages_words_as_names_print_the_same_as_c() {
+    behave("names");
 }
 
-export void test_ordinary_constructs_print_the_same_as_c(io::Io *io) {
-    behave(io, "ordinary");
+export void test_ordinary_constructs_print_the_same_as_c() {
+    behave("ordinary");
 }
 
-export void test_loops_print_the_same_as_c(io::Io *io) {
-    behave(io, "loops");
+export void test_loops_print_the_same_as_c() {
+    behave("loops");
 }
 
-export void test_sized_names_print_the_same_as_c(io::Io *io) {
-    behave(io, "sized_names");
+export void test_brackets_print_the_same_as_c() {
+    behave("brackets");
 }
 
-export void test_slices_print_the_same_as_c(io::Io *io) {
-    behave(io, "slices");
+export void test_sized_names_print_the_same_as_c() {
+    behave("sized_names");
+}
+
+export void test_slices_print_the_same_as_c() {
+    behave("slices");
 }
 
 // Where C requires a constant, a .smith file runs the function; a .c file reports the error it always did; the target
 // is the target's own (a `long` of a Windows target is 4 bytes).
-static void constexpr_c(io::Io *io, const char *width, const char *flags_for_target) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    const char *source = format::push(&io->arena,
-                                      "static unsigned long width(void) { return sizeof(long); }\n"
+static void constexpr_c(const char *width, const char *flags_for_target) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    const char *source = format::push("static unsigned long width(void) { return sizeof(long); }\n"
                                       "static int fib(int n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); }\n"
                                       "constexpr int x = fib(10);\nstatic_assert(x == 55);\nstatic_assert(width() == ",
                                       width, ");\n")
                              .data;
     scratch::write(&p, "x.c", source);
     scratch::write(&p, "x.smith", source);
-    scratch::Run plain = scratch::sh(&p, text(&p, "smith cc -std=gnu23 -fsyntax-only ", flags_for_target, " x.c", ""));
+    scratch::Run plain = scratch::sh(&p, text("smith cc -std=gnu23 -fsyntax-only ", flags_for_target, " x.c", ""));
     scratch::expect_failure("the .c reports the error it always did", &plain);
     scratch::Run lowered =
-        scratch::sh(&p, text(&p, "smith cc -std=gnu23 -fsyntax-only ", flags_for_target, " x.smith", ""));
+        scratch::sh(&p, text("smith cc -std=gnu23 -fsyntax-only ", flags_for_target, " x.smith", ""));
     scratch::expect_status("the .smith runs the function", 0, &lowered);
 }
 
-export void test_a_constexpr_call_in_c_runs_for_the_host(io::Io *io) {
-    constexpr_c(io, "8", "");
+export void test_a_constexpr_call_in_c_runs_for_the_host() {
+    constexpr_c("8", "");
 }
 
-export void test_a_constexpr_call_in_c_runs_for_a_windows_target(io::Io *io) {
-    constexpr_c(io, "4", "--target=x86_64-pc-windows-msvc -nostdinc");
+export void test_a_constexpr_call_in_c_runs_for_a_windows_target() {
+    constexpr_c("4", "--target=x86_64-pc-windows-msvc -nostdinc");
 }
 
 // A constexpr pointer into a string literal or a constexpr object (C23 requires null) is a value in a .smith file; a .c
 // file still reports "constexpr pointer initializer is not null".
-export void test_a_constexpr_pointer_into_a_string_is_a_value_in_smith(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_a_constexpr_pointer_into_a_string_is_a_value_in_smith() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     const char *source = "constexpr char hello[] = \"hello\";\nconstexpr const char *word = \"abc\";\n"
                          "constexpr const char *inside = &hello[1];\nstatic_assert(word[1] == 'b');\n"
                          "static_assert(inside[0] == 'e');\n";
@@ -257,6 +272,6 @@ export void test_a_constexpr_pointer_into_a_string_is_a_value_in_smith(io::Io *i
 }
 
 // A module's tag is a type name; in a file with no `module` line a tag and an ordinary name of one name are separate.
-export void test_tags_and_ordinary_names_print_the_same_as_c(io::Io *io) {
-    behave(io, "tags");
+export void test_tags_and_ordinary_names_print_the_same_as_c() {
+    behave("tags");
 }

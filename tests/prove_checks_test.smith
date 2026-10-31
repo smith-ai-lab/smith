@@ -5,8 +5,9 @@
 // `SMITH_PROVED_REPORT=1`.
 module prove_checks_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 
@@ -40,30 +41,41 @@ constexpr char main_source[_] = "module main;\n"
                                 "    return edges::first(all) + edges::loose(all, 1) + edges::kept(all, 2) - 6;\n"
                                 "}\n";
 
-static scratch::Project fresh(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::write(&p, "edges.smith", edges);
-    scratch::write(&p, "main.smith", main_source);
-    scratch::Run built = scratch::build(&p, "");
+static void fresh(const scratch::Project *p) {
+    scratch::write(p, "edges.smith", edges);
+    scratch::write(p, "main.smith", main_source);
+    scratch::Run built = scratch::build(p, "");
     scratch::expect_status("the project builds", 0, &built);
-    return p;
 }
 
 // What compiling edges.smith says about its checks; `flags` says debug (-O0) or optimized (-O2).
 static const char *report(const scratch::Project *p, const char *flags) {
-    const char *command = format::push(&p->io->arena, "SMITH_PROVED_REPORT=1 smith cc -c edges.smith ", flags,
-                                       " -I .smith/include -o edges.o 2>&1")
-                              .data;
+    char command[512];
+    format::Written written = format::to(command, sizeof command, "SMITH_PROVED_REPORT=1 smith cc -c edges.smith ",
+                                         flags, " -I .smith/include -o edges.o 2>&1");
+    test::check_condition(written.fits);
     return scratch::sh(p, command).out;
 }
 
-export void test_prove_checks_nothing_is_left_out_before_a_proof(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_checks_nothing_is_left_out_before_a_proof() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fresh(&p);
     scratch::expect_contains("no proof file: every check stays", report(&p, "-O2"), "0 removed (proved), 5 kept");
 }
 
-export void test_prove_checks_a_proved_check_is_left_out_of_an_optimized_build_only(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_checks_a_proved_check_is_left_out_of_an_optimized_build_only() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fresh(&p);
     scratch::Run run = scratch::sh(&p, "smith prove 2>&1");
     scratch::expect_status("`kept` has a check it cannot prove, so the run fails", 1, &run);
     scratch::expect_contains("the proof file is written", scratch::read(&p, ".smith/proved/edges.smith.pts"),
@@ -73,8 +85,14 @@ export void test_prove_checks_a_proved_check_is_left_out_of_an_optimized_build_o
     scratch::expect_contains("debug keeps every check", report(&p, "-O0"), "0 removed (proved), 5 kept");
 }
 
-export void test_prove_checks_an_edit_puts_the_checks_back_until_it_is_proved_again(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_checks_an_edit_puts_the_checks_back_until_it_is_proved_again() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fresh(&p);
     scratch::sh(&p, "smith prove 2>&1");
     scratch::expect_contains("proved", report(&p, "-O2"), "4 removed (proved), 1 kept");
     scratch::write(&p, "edges.smith",
@@ -99,8 +117,14 @@ export void test_prove_checks_an_edit_puts_the_checks_back_until_it_is_proved_ag
     scratch::expect_contains("proved again", report(&p, "-O2"), "4 removed (proved), 1 kept");
 }
 
-export void test_prove_checks_the_proof_file_is_an_input_of_the_compile_in_a_release_build(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_checks_the_proof_file_is_an_input_of_the_compile_in_a_release_build() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fresh(&p);
     scratch::Run before = scratch::build(&p, "release");
     scratch::expect_status("release builds", 0, &before);
     scratch::Run first_debug = scratch::build(&p, "");
@@ -162,25 +186,30 @@ constexpr char user_main[_] = "module main;\n"
                               "    return user::at(all) - 2;\n"
                               "}\n";
 
-static scratch::Project across_files(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::write(&p, "bounds.smith", bounds_source);
-    scratch::write(&p, "user.smith", user_source);
-    scratch::write(&p, "main.smith", user_main);
-    scratch::Run built = scratch::build(&p, "");
+static void across_files(const scratch::Project *p) {
+    scratch::write(p, "bounds.smith", bounds_source);
+    scratch::write(p, "user.smith", user_source);
+    scratch::write(p, "main.smith", user_main);
+    scratch::Run built = scratch::build(p, "");
     scratch::expect_status("the project builds", 0, &built);
-    return p;
 }
 
 static const char *report_of(const scratch::Project *p, const char *source) {
-    const char *command =
-        format::push(&p->io->arena, "SMITH_PROVED_REPORT=1 smith cc -c ", source, " -O2 -I .smith/include -o x.o 2>&1")
-            .data;
+    char command[512];
+    format::Written written = format::to(command, sizeof command, "SMITH_PROVED_REPORT=1 smith cc -c ", source,
+                                         " -O2 -I .smith/include -o x.o 2>&1");
+    test::check_condition(written.fits);
     return scratch::sh(p, command).out;
 }
 
-export void test_prove_checks_a_changed_callee_contract_puts_the_caller_checks_back(io::Io *io) {
-    scratch::Project p = across_files(io);
+export void test_prove_checks_a_changed_callee_contract_puts_the_caller_checks_back() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    across_files(&p);
     scratch::Run run = scratch::sh(&p, "smith prove 2>&1");
     scratch::expect_status("both functions are proved", 0, &run);
     scratch::expect_contains("the proof names the callee's file", scratch::read(&p, ".smith/proved/user.smith.pts"),
@@ -192,8 +221,14 @@ export void test_prove_checks_a_changed_callee_contract_puts_the_caller_checks_b
                              report_of(&p, "user.smith"), "0 removed (proved), 2 kept");
 }
 
-export void test_prove_checks_a_changed_callee_compiles_the_caller_again(io::Io *io) {
-    scratch::Project p = across_files(io);
+export void test_prove_checks_a_changed_callee_compiles_the_caller_again() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    across_files(&p);
     scratch::sh(&p, "smith prove 2>&1");
     scratch::Run first = scratch::build(&p, "release -v");
     scratch::expect_status("release builds after a proof", 0, &first);
@@ -241,17 +276,21 @@ constexpr char contracts_main[_] = "module main;\n"
                                    "    return contracts::sure(3) + contracts::count() + contracts::unsure(1) - 10;\n"
                                    "}\n";
 
-static scratch::Project with_contracts(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::write(&p, "contracts.smith", contracts_source);
-    scratch::write(&p, "main.smith", contracts_main);
-    scratch::Run built = scratch::build(&p, "");
+static void with_contracts(const scratch::Project *p) {
+    scratch::write(p, "contracts.smith", contracts_source);
+    scratch::write(p, "main.smith", contracts_main);
+    scratch::Run built = scratch::build(p, "");
     scratch::expect_status("the project builds", 0, &built);
-    return p;
 }
 
-export void test_prove_checks_a_proved_contract_check_is_left_out_of_an_optimized_build_only(io::Io *io) {
-    scratch::Project p = with_contracts(io);
+export void test_prove_checks_a_proved_contract_check_is_left_out_of_an_optimized_build_only() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    with_contracts(&p);
     scratch::expect_contains("no proof: every check stays", report_of(&p, "contracts.smith"),
                              "0 removed (proved), 4 kept");
     scratch::Run run = scratch::sh(&p, "smith prove 2>&1");
@@ -264,10 +303,92 @@ export void test_prove_checks_a_proved_contract_check_is_left_out_of_an_optimize
     scratch::expect_contains("debug keeps every check", debug.out, "0 removed (proved), 4 kept");
 }
 
-export void test_prove_checks_an_edited_source_keeps_its_contract_checks(io::Io *io) {
-    scratch::Project p = with_contracts(io);
+export void test_prove_checks_an_edited_source_keeps_its_contract_checks() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    with_contracts(&p);
     scratch::sh(&p, "smith prove 2>&1");
-    scratch::write(&p, "contracts.smith", format::push(&p.io->arena, "// edited\n", contracts_source).data);
+    scratch::write(&p, "contracts.smith", format::push("// edited\n", contracts_source).data);
     scratch::expect_contains("stale: every check is back", report_of(&p, "contracts.smith"),
                              "0 removed (proved), 4 kept");
+}
+
+// The arithmetic checks (issue #1101, of #351) are recorded like an index: the lines of an addition, a division, a
+// remainder, a shift and a float to int conversion that a proved function can never trip are in the proof file, and the
+// same operations in a function that cannot prove them are not (`bare` fails, so its check stays).
+constexpr char arithmetic_source[_] = "module arith;\n"
+                                      "\n"
+                                      "import smith::contract;\n"
+                                      "\n"
+                                      "export i32 sum(i32 x) {\n"
+                                      "    contract::requires(x > 0 && x < 100);\n"
+                                      "    contract::ensures(true);\n"
+                                      "    return x + 1;\n"
+                                      "}\n"
+                                      "\n"
+                                      "export i32 bare(i32 x) {\n"
+                                      "    contract::ensures(true);\n"
+                                      "    return x + 1;\n"
+                                      "}\n"
+                                      "\n"
+                                      "export i32 quotient(i32 x, i32 y) {\n"
+                                      "    contract::requires(y > 0);\n"
+                                      "    contract::ensures(true);\n"
+                                      "    return x / y;\n"
+                                      "}\n"
+                                      "\n"
+                                      "export i32 remainder(i32 x, i32 y) {\n"
+                                      "    contract::requires(y > 0);\n"
+                                      "    contract::ensures(true);\n"
+                                      "    return x % y;\n"
+                                      "}\n"
+                                      "\n"
+                                      "export i32 shifted(i32 x) {\n"
+                                      "    contract::requires(x >= 0 && x < 100);\n"
+                                      "    contract::ensures(true);\n"
+                                      "    return x << 2;\n"
+                                      "}\n"
+                                      "\n"
+                                      "export i32 narrow(f32 x) {\n"
+                                      "    contract::requires(x > 0.0f && x < 100.0f);\n"
+                                      "    contract::ensures(true);\n"
+                                      "    return (i32)x;\n"
+                                      "}\n";
+
+constexpr char arithmetic_main[_] =
+    "module main;\n"
+    "\n"
+    "import arith;\n"
+    "\n"
+    "i32 main() {\n"
+    "    return arith::sum(1) + arith::bare(1) + arith::quotient(4, 2) + arith::remainder(5, 2) +\n"
+    "           arith::shifted(1) + arith::narrow(2.0f) - 15;\n"
+    "}\n";
+
+export void test_prove_checks_arithmetic_checks_are_recorded_when_proved() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "arith.smith", arithmetic_source);
+    scratch::write(&p, "main.smith", arithmetic_main);
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("the project builds", 0, &built);
+    scratch::Run run = scratch::sh(&p, "smith prove -v 2>&1");
+    scratch::expect_status("`bare` cannot prove its addition, so the run fails", 1, &run);
+    const char *pts = scratch::read(&p, ".smith/proved/arith.smith.pts");
+    scratch::expect_contains("the proved addition", pts, "\n8\n");
+    scratch::expect_lacks("the unproved addition stays a check", pts, "\n13\n");
+    scratch::expect_contains("the division", pts, "\n19\n");
+    scratch::expect_contains("the remainder", pts, "\n25\n");
+    scratch::expect_contains("the shift", pts, "\n31\n");
+    scratch::expect_contains("the float to int conversion", pts, "\n37\n");
+    scratch::expect_contains("-v counts them", run.out,
+                             "arithmetic checks (overflow, shift, division, float to int): 5 proved, 1 remain");
 }

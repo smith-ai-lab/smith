@@ -480,7 +480,8 @@ void smith_failure_detail(SmithFailureKind kind, const char *details) {
     uintptr_t frames[smith_trace_frames_max];
     size_t count = smith_trace_capture(frames, smith_trace_frames_max);
     if (smith_failure_hook != nullptr) smith_failure_hook(kind, frames, count);
-    fflush(nullptr);
+    fflush(stdout); // not every FILE: a thread blocked in a read holds stdin's lock (#573)
+    fflush(stderr);
     smith_trace_write(STDERR_FILENO, "", smith_failure_heading(kind), nullptr, details, frames, count, false, true);
     abort();
 }

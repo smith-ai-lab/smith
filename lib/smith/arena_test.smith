@@ -369,6 +369,66 @@ export void test_arena_try_push_is_none_where_a_push_would_fail() {
     test::check_equal(fixed.used, used);                        // a refusal pushes nothing
 }
 
+// try_push_slice, in functions of their own as the option tests above.
+typedef Record Records[:];
+typedef f32 Grid[:][:];
+typedef option(Records) MaybeRecords;
+typedef option(Grid) MaybeGrid;
+
+MaybeRecords try_records(arena::Arena *a, usize n) {
+    return arena::try_push_slice(a, Record, n);
+}
+
+MaybeGrid try_grid(arena::Arena *a, usize rows, usize columns) {
+    return arena::try_push_slice(a, f32, rows, columns);
+}
+
+export void test_arena_try_push_slice_is_none_where_a_fixed_arena_is_too_small() {
+    static Memory memory;
+    arena::Arena fixed = arena::fixed(memory.bytes, sizeof memory.bytes);
+    usize used = fixed.used;
+    MaybeRecords too_many = try_records(&fixed, capacity); // 16 times the arena
+    test::check_condition(too_many != .some);
+    test::check_equal(fixed.used, used); // a refusal pushes nothing
+    MaybeRecords overflow = try_records(&fixed, math::max(usize));
+    test::check_condition(overflow != .some); // the size overflows
+    test::check_equal(fixed.used, used);
+    MaybeRecords fits = try_records(&fixed, 4);
+    if (fits == .some) {
+        test::check_equal(countof(fits.some), 4);
+        test::check_equal(fits.some[3].count, 0); // zeroed
+    } else {
+        test::check_condition(false);
+    }
+}
+
+export void test_arena_try_push_slice_grows_a_growing_arena() {
+    arena::Arena a = arena::growing(chunk_first, nullptr);
+    defer arena::release(&a);
+    MaybeRecords big = try_records(&a, 4 * chunk_first / sizeof(Record));
+    test::check_condition(big == .some);
+    test::check_condition(a.grown > 0);
+    MaybeGrid grid = try_grid(&a, 3, 4);
+    if (grid == .some) {
+        test::check_equal(countof(grid.some), 3);
+        test::check_equal(countof(grid.some[0]), 4);
+        test::check_equal(grid.some[2][3], 0.0f);
+    } else {
+        test::check_condition(false);
+    }
+}
+
+export void test_arena_try_push_slice_is_none_where_the_backing_refuses() {
+    static Parent parent_memory;
+    arena::Arena parent = arena::fixed(parent_memory.bytes, 40 << 10);
+    arena::ArenaAllocator backing = arena::allocator(&parent);
+    arena::Arena refused = arena::growing(chunk_first, &backing.base);
+    usize used = refused.used;
+    test::check_condition(try_records(&refused, 8 * chunk_first / sizeof(Record)) != .some);
+    test::check_equal(refused.used, used);
+    test::check_equal(refused.grown, 0);
+}
+
 export void test_arena_try_push_takes_chunks_of_a_growing_arena() {
     arena::Arena a = arena::growing(chunk_first, nullptr);
     fill_block(&a);
@@ -403,4 +463,84 @@ export void test_arena_allocator_serves_a_growing_arena() {
     test::check_condition(!base->owns(base, &outside));
     for (usize i = 0; i < 16; i++)
         base->free(base, blocks[i]); // only the last of the current chunk goes back; none touches another chunk's
+}
+
+// The zero value is a growing arena (owner, 2026-10-26, "Embrace zero"): `Arena a = {};` takes its first chunk, from
+// the allocator in force, at its first push.
+export void test_arena_zero_value_grows_on_its_first_push() {
+    arena::Arena a = {};
+    defer arena::release(&a);
+    test::check_equal(a.capacity, 0);
+    u8 *block = (u8 *)arena::push_array_raw(&a, 1, 100, 1);
+    test::check_condition(block != nullptr);
+    test::check_condition(a.capacity > 0); // the first chunk
+    test::check_equal(a.grown, 0);         // the first chunk is not grown
+    mem::fill(block[0:100], 0x5A);
+    fill_blocks(&a, 40, 7); // more than a chunk holds
+    test::check_condition(a.grown > 0);
+    arena::release(&a);
+    test::check_equal(a.grown, 0);
+    test::check_equal(a.capacity, 0);
+    test::check_condition(arena::push_array_raw(&a, 1, 10, 1) != nullptr); // and it grows again after a release
+}
+
+typedef struct {
+    i32 id;
+    arena::Arena memory;
+} Holder;
+
+export void test_arena_zeroed_field_of_a_struct_grows() {
+    Holder holder = {};
+    defer arena::release(&holder.memory);
+    Record *r = arena::push(&holder.memory, Record);
+    test::check_condition(r != nullptr);
+    test::check_equal(r->count, 0);
+    arena::Arena *copy_target = &holder.memory;
+    Record rows[:] = arena::push_slice(copy_target, Record, 500);
+    test::check_equal(countof(rows), 500);
+    test::check_condition(holder.memory.grown > 0 || holder.memory.capacity >= 500 * sizeof(Record));
+}
+
+export void test_arena_zero_value_scopes_and_reset_behave_as_growing() {
+    arena::Arena a = {};
+    defer arena::release(&a);
+    arena::Scope outer = arena::scope_begin(&a); // begun before the first chunk exists
+    fill_blocks(&a, 40, 3);
+    arena::scope_end(outer);
+    test::check_equal(a.used, 0);
+    fill_blocks(&a, 40, 4);
+    usize chunks = a.grown;
+    arena::reset(&a);
+    test::check_equal(a.used, 0);
+    fill_blocks(&a, 40, 5);
+    test::check_equal(a.grown, chunks); // the second pass takes no chunk
+}
+
+export void test_arena_zero_value_try_push_and_fixed_stay_apart() {
+    arena::Arena a = {};
+    defer arena::release(&a);
+    test::check_condition(is_some_record(try_record(&a))); // a zero arena takes its first chunk here
+    static Memory memory;
+    arena::Arena fixed = arena::fixed(memory.bytes, sizeof memory.bytes);
+    test::check_condition(fixed.fixed);
+    test::check_condition(arena::try_push_raw(&fixed, 2 * capacity, 8) == nullptr); // still never grows
+    arena::release(&fixed);                                                         // and has nothing to give back
+    test::check_condition(arena::try_push_raw(&fixed, 8, 8) != nullptr);
+}
+
+// The chunks come from the allocator in force at the first push, and go back to it: a zero arena that is not released
+// is a live block of the checker (the test runner's own checker fails the test with `memory leaked`).
+export void test_arena_zero_value_takes_its_chunks_from_the_current_allocator() {
+    mem::Checked checker = mem::checked(nullptr);
+    defer mem::checked_release(&checker);
+    mem::Allocator *outside = mem::set_allocator(&checker.base);
+    defer mem::set_allocator(outside);
+    arena::Arena a = {};
+    test::check_equal(mem::checked_live(&checker), 0); // nothing before the first push
+    test::check_condition(arena::push_array_raw(&a, 1, 100, 1) != nullptr);
+    test::check_equal(mem::checked_live(&checker), 1);
+    fill_blocks(&a, 40, 9);
+    test::check_condition(mem::checked_live(&checker) > 1);
+    arena::release(&a);
+    test::check_equal(mem::checked_live(&checker), 0); // release gives every chunk back to it
 }

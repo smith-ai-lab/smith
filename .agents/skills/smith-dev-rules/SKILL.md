@@ -1,16 +1,16 @@
 ---
 name: smith-dev-rules
-description: "The rules every agent follows when changing smith: test the smith under test, scratch folders, no pkill, idiom, capabilities, one full check, and the friction report. Load at the start of any change to smith."
+description: "The rules every agent follows when changing smith: test the smith under test, scratch folders, no pkill, idiom, effects, one full check, and the friction report. Load at the start of any change to smith."
 ---
 
 # smith-dev-rules
 
-The decisions are in [AGENTS.md](../../../AGENTS.md); these are the habits.
+The decisions are in [decisions](../../../knowledge/decisions.md); these are the habits.
 
 - **Test the smith under test.** Run a change's tests with `build/<OS>-<arch>/smith`, not the installed `smith`, when the change is to the language, a library or the build. A test that builds a project puts the tested smith's folder (its `smith-cc` and `smith-c++`) first on `PATH`, so nothing in it compiles with the installed smith.
 - **Scratch folders are your own.** Make each with `mktemp -d` (under your scratchpad when you have one), never a fixed name such as `proj`: another agent may be using it.
 - **Write idiomatic Smith, not C renamed.** In a `.smith` file: sized types (`u64`, `usize`, `f64`), `import <h>;` with `c::` names, modules that import modules, generics where a type was passed as `sizeof` and `alignof`, and no preprocessor. Count them before and after a port: a module with a standard C type, an `#include` or an `#if` left is not done.
-- **Effects come through capabilities.** No raw call to the world outside a capability's own module (`smith-effects`); a function takes the part of `io::Io` (`SmithIo` in C) it needs as a parameter.
+- **Effects are inferred, not passed down.** A program calls the C library and smith's direct modules (`files`, `process`, `net`, `clock`, `console`, `env`) from anywhere; effects are inferred from what a function calls (#207), and tests and arenas control them through handlers (#239); no `io` value is passed down from `main`.
 - **Never signal a process that is not your own unwaited child**, and never `pkill` or `killall`: a reparented pid may already be another test's compile.
 - **`host->read_header` returns a buffer valid only until the next read**, and the lowering's own lookups read others: copy what you need before calling anything that may read a header.
 - **Edit `.c`, `.h` and `.smith` sources with Edit or Write, not shell edits (`sed`, heredocs), and read the diagnostics that come back** (Claude Code passes `smith lsp`'s diagnostics only after Edit or Write); find a symbol's definition and uses with the LSP tool (hover, goToDefinition, findReferences) or from the shell with `smith lsp def`, `refs` and `hover` (one query a line on stdin with `smith lsp -`), not grep; after an edit made outside Edit or Write, `smith lsp diag FILE`. Shell edits stay fine for generated files and expected outputs.
@@ -25,3 +25,9 @@ The decisions are in [AGENTS.md](../../../AGENTS.md); these are the habits.
 - **The git stash is shared by every worktree**: never a bare `git stash` (commit instead, or `git stash push <path>`); check that `git worktree add` printed `HEAD is now at` before working in the folder.
 - **Reach for `smith dbg --crash PROG` (or `--at FILE:LINE PROG`) before adding prints** to learn why a program crashed or what its variables hold at a line; see [smith-debug](../smith-debug/SKILL.md).
 - **Report friction when you finish, in the pull request's body under a last heading `## Friction`** (`none` when nothing; the same text in your report). Besides what you did, say what slowed you down or misled you: a skill that was wrong, missing or hard to find, an error message that did not say the fix, a rule you had to guess, a check that caught you (and whether its message was enough), a `smith lsp` or `smith dbg` answer you had to replace with grep or prints (and the issue you filed). Name the skill, message or check. Each report is how the skills and the checks get better, and whether a change to them helped shows in the next agent's report.
+- **Small Conventional Commits.** The commit that finishes an issue says `Closes #N`, a partial step `Part of #N`. Push `main` after every merge: the plugin's skills come from GitHub, so other agents learn a feature only once it is pushed.
+- **No new shell files** (owner, 2026-10-25): a test that starts a process is a `.smith` test through `scratch::`; a download or a tool's build is a task in the build file.
+- **Fix what clang-tidy reports; do not weaken `.clang-tidy`.** Generated files are build outputs, never committed; `tests/generated_files_test.smith` fails a tracked one.
+- **smith's own tools come before grep and prints:** `smith lsp` for code, `smith dbg` for a crash. When one gives wrong, missing or slow answers, keep going with grep or prints and make the tool right too: fix it when it is in your ticket's area, else file an issue naming the query, what it said and what it should have said (owner: "if they're ever not good enough, fix them.").
+- **Hand work to subagents whenever possible, on Sonnet 5.5 at medium reasoning effort.** A feature a user reaches for (a language feature, a library, a verb) gets a short README section with one example in the same PR, which `tests/readme.sh` compiles; internal changes don't.
+- **Read [module-in-one-page](../../../knowledge/module-in-one-page.md) before designing or building a module rule.**

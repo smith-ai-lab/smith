@@ -1,6 +1,8 @@
 // The checks the generated protocol tests share; protocol_support.h says what they are.
 #include "protocol_support.h"
 
+#include <smith/mem.h>
+
 #include <string.h>
 
 // A document's buffer. The largest document the random values write is about 2 KB (the most over 3000 keys), so 64 KB
@@ -28,7 +30,10 @@ struct smith_array_const_char_n protocol_test_text(SmithJsonWriter *writer) {
 const SmithJsonValue *protocol_test_parse(SmithArena *arena, struct smith_array_const_char_n text) {
     const SmithJsonValue *root = nullptr;
     SmithJsonError error = {};
-    bool parsed = smith_json_parse(arena, text, protocol_test_limits, &root, &error);
+    SmithArenaAllocator allocator = smith_arena_allocator(arena);
+    SmithAllocator *before = smith_mem_set_allocator(&allocator.base);
+    bool parsed = smith_json_parse(text, protocol_test_limits, &root, &error);
+    smith_mem_set_allocator(before);
     if (!parsed) {
         smith_test_note("the document is not JSON at byte %zu: %s", error.offset, smith_json_reason_text(error.reason));
     }

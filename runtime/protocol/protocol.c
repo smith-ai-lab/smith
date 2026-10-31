@@ -1,6 +1,7 @@
 // The hand-written half of the generated protocol code; protocol.h says what is here.
 #include "protocol.h"
 
+#include <smith/mem.h>
 #include <string.h>
 #if __has_include(<smith/contract.h>)
 #include <smith/contract.h>
@@ -393,10 +394,12 @@ static const SmithJsonValue *smith_protocol_random_tree(SmithArena *arena, Smith
     if (!finished) __builtin_trap(); // the document fits its buffer
     const SmithJsonValue *root = nullptr;
     SmithJsonError error = {};
+    SmithArenaAllocator allocator = smith_arena_allocator(arena);
+    SmithAllocator *before = smith_mem_set_allocator(&allocator.base);
     bool parsed = smith_json_parse(
-        arena, text,
-        (SmithJsonLimits){.depth = smith_protocol_random_depth + 1, .string_length = capacity, .count = capacity},
+        text, (SmithJsonLimits){.depth = smith_protocol_random_depth + 1, .string_length = capacity, .count = capacity},
         &root, &error);
+    smith_mem_set_allocator(before);
     if (!parsed) __builtin_trap(); // it is the text the writer just wrote
     (void)finished;
     (void)parsed;

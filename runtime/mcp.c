@@ -4,7 +4,7 @@
 // compact text an agent reads easily; the program's events (stopped, output, exited) are queued and come back with
 // the next call. The design, the tools and what each returns are in knowledge/mcp-server.md and the smith-debug skill.
 //
-// Everything runs on <smith/io.h>: the server's own stdin, every session's pipes and exit, and the clock are ops on
+// Everything runs on <runtime/io.h>: the server's own stdin, every session's pipes and exit, and the clock are ops on
 // one event loop in one thread, and nothing is allocated but in arenas. A tool call is a function that runs the loop
 // (smith_mcp_pump) until what it waits for has happened or its time is up; while it waits, input that arrives is
 // buffered, so a client that pipelines requests is answered in order.
@@ -24,8 +24,9 @@
 // It is included by smith.c after lib/text.c, lib/json.c and the protocol code, and compiled alone, with those linked,
 // by the tests of tests/mcp_test.smith.
 #include "mcp.h"
-#include <smith/io.h>
+#include <runtime/io.h>
 #include <smith/json.h>
+#include <smith/mem.h>
 #include "dap.h"
 
 #include <errno.h>

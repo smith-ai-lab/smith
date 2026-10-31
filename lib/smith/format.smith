@@ -1,8 +1,9 @@
-// smith::format, <smith/format.h>: formatted text into a buffer or an arena, in place of snprintf. Written in .smith
-// only: a generic function has no C spelling, so the header declares the types and C keeps snprintf.
+// smith-build: header
+// smith::format, <smith/format.h>: formatted text into a buffer or the allocator, in place of snprintf. Written in
+// .smith only: a generic function has no C spelling, so the header declares the types and C keeps snprintf.
 module smith::format;
 
-import smith::arena;
+import smith::mem;
 import smith::text;
 
 // <smith/format.h>: a type-checked formatter. There is no format string: the arguments are the pieces of the text, in
@@ -11,7 +12,7 @@ import smith::text;
 //
 //   format::Written written = format::to(buffer, sizeof buffer, "count: ", n, " of ", total, "\n");
 //   if (!written.fits) ...                                   // the text was cut; written.length is what it needed
-//   char path[:] = format::push(&arena, folder, "/", name, ".smith");       // path.data is terminated too
+//   char path[:] = format::push(folder, "/", name, ".smith");       // path.data is terminated too
 //
 // What each type is written as, with no locale and no C library function:
 //   bool                      true or false
@@ -33,7 +34,9 @@ import smith::text;
 //
 // Writing never stops. The text is cut where the buffer ends, the buffer is always terminated (when it has room for
 // the terminator), and the result says how long the whole text is, so a caller can retry with room, as snprintf does.
-// format::push asks the arena for exactly that room (a push the arena cannot serve stops, as every arena push does).
+// format::push asks the allocator in force (mem::alloc, an arena installed with the allocator handler) for exactly
+// that room and returns it: the memory belongs to the caller's region and is never freed one string at a time. To
+// print, console::print takes the same pieces.
 
 // How a write went. length is the characters of the whole text, whether or not they fit, without the terminator;
 // fits is length < capacity, that is, every character and the terminator were written.
@@ -719,11 +722,12 @@ Chars cut(char *memory, usize characters) {
     return chars;
 }
 
-// The arguments as text pushed on the arena, with a terminator after it that the slice's count does not count.
-export Chars push(arena::Arena *arena, auto... args) {
+// The arguments as text in memory of the allocator in force, with a terminator after it that the slice's count does not
+// count. A refusal of the allocator is a checked failure (mem::alloc never returns null).
+export Chars push(auto... args) {
     usize characters = length(args...);
     char *memory =
-        arena::push_array_raw(arena, sizeof(char), characters + 1, alignof(char)); // a generic's local has no type yet
+        mem::alloc_array_raw(sizeof(char), characters + 1, alignof(char)); // a generic's local has no type yet
     Written written = to(memory, characters + 1, args...);
     return cut(memory, written.length);
 }

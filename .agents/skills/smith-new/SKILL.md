@@ -11,10 +11,9 @@ description: "smith new [--language smith|c] [<name>]: starting a project with a
 | --- | --- |
 | `main.smith` (`module main;`), `primes.smith` (a module; no header), `primes_test.smith` | `main.c`, `primes.c`, `primes.h`, `primes_test.c` |
 
-Both also get:
+Both also get (no `AGENTS.md`: the plugin's skills carry what agents need):
 
 - `.gitignore`.
-- `AGENTS.md`, for the agents that will write the project: rules, one line each.
 - `knowledge/` with an `index.md` and a first concept, `program.md`, that says what the program promises.
 - `.agents/skills/<name>-docs/SKILL.md`, the project's guide to its own docs, and the `.claude/skills` link to `.agents/skills` ([smith-docs](../smith-docs/SKILL.md)).
 - `.claude/settings.json`, which enables the smith plugin and declares its marketplace, so smith's skills are not copied into the project.
@@ -23,6 +22,6 @@ It writes **no** `build.c` or `build.smith`, no `.clang-format` or `.clang-tidy`
 
 Then it runs a first build and commits on `main`. A folder that already has its own build file, a `main`, or another build system keeps its program, so `smith new` adds only what agents need.
 
-The program is the example of idiomatic Smith ([smith-idiom](../smith-idiom/SKILL.md)): a contract the prover proves, a test, and a `main` that takes the io.
+The program is the example of idiomatic Smith ([smith-idiom](../smith-idiom/SKILL.md)): a contract the prover proves, a test, and a `main` that calls the direct modules.
 
 Next: `smith run`, `smith test`, `smith check` ([smith-run-test](../smith-run-test/SKILL.md)).

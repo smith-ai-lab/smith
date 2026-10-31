@@ -1,0 +1,63 @@
+// A lemma is a function: its `requires` is the hypothesis, its `ensures` the claim, and calling it gives the claim to
+// the prover for the arguments passed (#1053). A function called inside a contract is read through its body or its
+// contract.
+module geometry::lemmas;
+import smith::contract;
+
+// The claim has no result: it is used for what it says of its arguments.
+export void square_is_nonnegative(i32 n) {
+    contract::ensures((i64)n * (i64)n >= 0);
+}
+
+// Proved from the lemma's claim at `n` and nothing else.
+export i64 square(i32 n) {
+    square_is_nonnegative(n);
+    i64 result = (i64)n * (i64)n;
+    contract::ensures(result >= 0);
+    return result;
+}
+
+// A hypothesis: the lemma holds for n below 1000 only.
+export void small_square_fits(i32 n) {
+    contract::requires(n > -1000 && n < 1000);
+    contract::ensures((i64)n * (i64)n < 1000000);
+}
+
+export i64 use_small(i32 n) {
+    contract::requires(n > -100 && n < 100);
+    small_square_fits(n);
+    i64 result = (i64)n * (i64)n;
+    contract::ensures(result < 1000000);
+    return result;
+}
+
+// False: the lemma is called where its hypothesis does not hold; refused at the call.
+export i64 use_small_wrong(i32 n) {
+    contract::requires(n > -5000 && n < 5000);
+    small_square_fits(n);
+    i64 result = (i64)n * (i64)n;
+    contract::ensures(result < 1000000);
+    return result;
+}
+
+export i32 twice(i32 n) {
+    contract::requires(n > -1000 && n < 1000);
+    return n + n;
+}
+
+// The claim is about the result of a call.
+export void twice_is_double(i32 n) {
+    contract::requires(n > -1000 && n < 1000);
+    contract::ensures(twice(n) == 2 * n);
+}
+
+export i32 thrice(i32 n) {
+    contract::requires(n > -1000 && n < 1000);
+    return n + n + n;
+}
+
+// False: the body adds three times.
+export void thrice_is_double(i32 n) {
+    contract::requires(n > -1000 && n < 1000);
+    contract::ensures(thrice(n) == 2 * n);
+}

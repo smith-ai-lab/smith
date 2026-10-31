@@ -6,14 +6,17 @@
 // See tests/prove_test.smith for the proofs' cache and budget.
 module prove_memory_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 import prove_cases;
 
-static scratch::Project fresh(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "prove_cases");
+// The fixture with tests/prove copied in, made before the test's arena is the current allocator: scratch::clean,
+// deferred first, runs after the allocator is put back and frees what make holds (issue #240).
+static scratch::Project fresh() {
+    scratch::Project p = scratch::make("p", "prove_cases");
     scratch::copy_tree(&p, "tests/prove", "cases");
     return p;
 }
@@ -40,30 +43,50 @@ static void has(const char *name, const scratch::Run *run, const char *needle) {
 }
 
 // A function that fails at a line of a file: `--function=F file`, status 1, the needle in the output.
-static void fails_at(io::Io *io, const char *name, const char *args, const char *needle) {
-    scratch::Project p = fresh(io);
+static void fails_at(const char *name, const char *args, const char *needle) {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, name, args);
     has(name, &run, needle);
 }
 
 // 7c. A caller assumes the callee's smith_ensures about the memory the callee wrote (issue #41), and nothing else.
-export void test_prove_memory_what_the_callee_promises_is_assumed(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_memory_what_the_callee_promises_is_assumed() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     prove_cases::each_proved(&p, "memory: the callee's promises are assumed", "\"$c/memory.c\"", "",
                              "five set_five three_then_bump bump two push two_through_a_pointer "
                              "uses_bump_twice_read bump_twice_read");
 }
 
-export void test_prove_memory_a_caller_that_wants_more_than_the_callee_promises_fails(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_memory_a_caller_that_wants_more_than_the_callee_promises_fails() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, "memory: a caller that wants more than the callee promises fails",
                                "--function=too_much \"$c/memory.c\"");
     has("memory: ... at its own smith_ensures", &run, "memory.c:47: smith_ensures(value == 4) may be false");
     has("memory: ... with a value the callee allows", &run, "counterexample: value = ");
 }
 
-export void test_prove_memory_relying_on_what_the_callee_does_not_promise_fails_with_a_value(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_memory_relying_on_what_the_callee_does_not_promise_fails_with_a_value() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     const char *names = "relies_on_the_body clobbered_local clobbered_parameter";
     prove_cases::each_refuted(&p, "memory: they fail with a counterexample", "\"$c/memory.c\"", "", "may be false",
                               names);
@@ -73,60 +96,95 @@ export void test_prove_memory_relying_on_what_the_callee_does_not_promise_fails_
 }
 
 // 7c2. A const pointer is not written by a call, and a callee with many blocks is used through its contract.
-export void test_prove_readonly_a_const_pointer_is_not_written_by_a_call(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_readonly_a_const_pointer_is_not_written_by_a_call() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     prove_cases::each_proved(&p, "readonly: add_if_set turn_after spread spread_then_check are proved",
                              "\"$c/readonly.c\"", "", "add_if_set turn_after spread spread_then_check");
 }
 
-export void test_prove_readonly_a_list_that_is_not_restrict_may_be_the_board_and_the_claim_fails(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_readonly_a_list_that_is_not_restrict_may_be_the_board_and_the_claim_fails() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     refuted(&p, "readonly: a list that is not restrict may be the board, and the claim fails",
             "--function=turn_after_overlapping \"$c/readonly.c\"");
 }
 
-export void test_prove_readonly_a_claim_stronger_than_the_contract_fails_with_its_line(io::Io *io) {
-    fails_at(io, "readonly: a claim stronger than the contract fails", "--function=grows_by_one \"$c/readonly.c\"",
+export void test_prove_readonly_a_claim_stronger_than_the_contract_fails_with_its_line() {
+    fails_at("readonly: a claim stronger than the contract fails", "--function=grows_by_one \"$c/readonly.c\"",
              "readonly.c:54: smith_ensures(now == old + 1) may be false");
 }
 
 // 7c2b. What a caller reads after a callee with UBSan checks and a contract is a value, not undefined behaviour (#62).
-export void test_prove_after_call_add_row_is_proved(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_after_call_add_row_is_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     proved(&p, "after_call: add_row is proved", "--function=add_row \"$c/after_call.c\"");
 }
 
-export void test_prove_after_call_a_store_through_sret_after_a_trusted_call_is_proved(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_after_call_a_store_through_sret_after_a_trusted_call_is_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "lib", "lib");
     proved(&p, "after_call: a store through sret after a trusted call with a writable pointer is proved (#74)",
            "--function=replay_make --library=lib/smith/arena.smith \"$c/arena_sret.c\"");
 }
 
 // 7c2c. A pointer returned under an smith_ensures is valid or null, proved at the return and assumed by callers (#74).
-export void test_prove_returned_pointer_a_load_through_it_is_proved_with_ensures_result_not_null(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_returned_pointer_a_load_through_it_is_proved_with_ensures_result_not_null() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     proved(&p, "returned_pointer: a load through a returned pointer is proved with ensures(result != nullptr)",
            "--function=offset_in_kind \"$c/returned_pointer.c\"");
 }
 
-export void test_prove_returned_pointer_one_past_the_end_is_refused_where_it_is_returned(io::Io *io) {
-    fails_at(io, "returned_pointer: a pointer one past the end is refused where it is returned",
+export void test_prove_returned_pointer_one_past_the_end_is_refused_where_it_is_returned() {
+    fails_at("returned_pointer: a pointer one past the end is refused where it is returned",
              "--function=past_the_end \"$c/returned_pointer.c\"", "undefined behaviour at `ret ptr");
 }
 
 // 7c2d. A program whose sources compile with different optimization levels is proved as one unit (#74: learner's hot
 // sources have -O2, the others none, and a caller could not see the body of a callee in the other group).
-export void test_prove_levels_a_caller_of_a_source_with_another_o_is_proved_against_its_body(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_levels_a_caller_of_a_source_with_another_o_is_proved_against_its_body() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::sh(&p, "cd levels && smith prove -v 2>&1");
     scratch::expect_status("levels: a caller of a source with another -O is proved", 0, &run);
     has("levels: ... against the other source's body", &run, "ok    twice  (");
 }
 
 // 7c2e. The smith_requires of an inlined function (one with no smith_ensures) is reported, not a crash (#74).
-export void test_prove_inlined_requires_a_caller_that_may_break_it_fails_at_the_requires_with_values(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_inlined_requires_a_caller_that_may_break_it_fails_at_the_requires_with_values() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, "inlined_requires: a caller that may break the requires of an inlined helper fails",
                                "--function=caller \"$c/inlined_requires.c\"");
     has("inlined_requires: ... at the requires", &run,
@@ -134,34 +192,59 @@ export void test_prove_inlined_requires_a_caller_that_may_break_it_fails_at_the_
     has("inlined_requires: ... with the values", &run, "counterexample: x = ");
 }
 
-export void test_prove_inlined_requires_a_caller_that_keeps_it_is_proved(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_inlined_requires_a_caller_that_keeps_it_is_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     proved(&p, "inlined_requires: a caller that keeps it is proved", "--function=careful \"$c/inlined_requires.c\"");
 }
 
 // 7c2f. `T p[static N]` is N objects (#74).
-export void test_prove_static_array_a_load_inside_static_4_is_proved(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_static_array_a_load_inside_static_4_is_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     proved(&p, "static_array: a load inside [static 4] is proved", "--function=third \"$c/static_array.c\"");
 }
 
-export void test_prove_static_array_a_load_past_it_is_refused(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_static_array_a_load_past_it_is_refused() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     refuted(&p, "static_array: a load past it is refused", "--function=past \"$c/static_array.c\"");
 }
 
 // 7c3. Two pointer parameters may be the same object unless the source says otherwise (issue #57): no claim rests on
 // int32_t * and uint32_t *, a struct and a pointer to its member, or two struct types being different objects;
 // `restrict` is what says it.
-export void test_prove_alias_pointers_that_may_overlap_fail_on_the_claim_that_rests_on_it(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_alias_pointers_that_may_overlap_fail_on_the_claim_that_rests_on_it() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     prove_cases::each_refuted(
         &p, "alias: same_type signed_unsigned member other_struct fail, since their pointers may overlap, on the claim",
         "\"$c/alias.c\"", "", "smith_ensures(", "same_type signed_unsigned member other_struct");
 }
 
-export void test_prove_alias_restrict_is_what_says_they_are_different(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_alias_restrict_is_what_says_they_are_different() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     prove_cases::each_proved(
         &p,
         "alias: restricted restricted_other_type reads_both are proved, restrict being what says they are different",
@@ -170,68 +253,96 @@ export void test_prove_alias_restrict_is_what_says_they_are_different(io::Io *io
 
 // 7c4. `restrict` is checked at the call (issue #65): the objects a call reaches through a restrict argument and
 // another pointer argument are apart, or the call fails naming both parameters and its line.
-export void test_prove_restrict_call_apart_arguments_are_proved(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_restrict_call_apart_arguments_are_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     prove_cases::each_proved(
         &p, "restrict call: apart_locals apart_elements apart_member reads trusted_twice returns_wide are proved",
         "\"$c/restrict_call.c\"", "", "apart_locals apart_elements apart_member reads trusted_twice returns_wide");
 }
 
-export void test_prove_restrict_call_the_same_object_fails_at_the_call_naming_both_parameters(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_restrict_call_the_same_object_fails_at_the_call_naming_both_parameters() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, "restrict call: same_object fails", "--function=same_object \"$c/restrict_call.c\"");
     has("restrict call: same_object ... at the call, naming both", &run, "restrict_call.c:48: the call of set_");
     has("restrict call: ... naming both parameters", &run, "passes `a` (restrict) and `b`");
 }
 
-export void test_prove_restrict_call_overlapping_fails_at_the_call(io::Io *io) {
-    fails_at(io, "restrict call: overlapping fails", "--function=overlapping \"$c/restrict_call.c\"",
+export void test_prove_restrict_call_overlapping_fails_at_the_call() {
+    fails_at("restrict call: overlapping fails", "--function=overlapping \"$c/restrict_call.c\"",
              "restrict_call.c:55: the call of set_");
 }
 
-export void test_prove_restrict_call_unknown_fails_at_the_call(io::Io *io) {
-    fails_at(io, "restrict call: unknown fails", "--function=unknown \"$c/restrict_call.c\"",
+export void test_prove_restrict_call_unknown_fails_at_the_call() {
+    fails_at("restrict call: unknown fails", "--function=unknown \"$c/restrict_call.c\"",
              "restrict_call.c:62: the call of set_");
 }
 
-export void test_prove_restrict_call_a_restrict_array_with_no_range_is_an_error(io::Io *io) {
-    fails_at(io, "restrict call: a restrict array with no range is an error",
-             "--function=copies \"$c/restrict_call.c\"",
+export void test_prove_restrict_call_a_restrict_array_with_no_range_is_an_error() {
+    fails_at("restrict call: a restrict array with no range is an error", "--function=copies \"$c/restrict_call.c\"",
              "restrict_call.c:77: cannot be proved: cannot check that the arguments of restrict `dst` of copy");
 }
 
 // 7c4b. A `restrict` slice carries its count, so the call proves the two ranges apart (#65): no new contract, and no
 // error at the declaration.
-export void test_prove_restrict_slice_apart_ranges_are_proved(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_restrict_slice_apart_ranges_are_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     prove_cases::each_proved(&p, "restrict slice: apart apart_arrays apart_slices reads pointer_apart are proved",
                              "\"$c/geometry/restrict_slices.smith\"",
                              "geometry::restrict_slices::", "apart apart_arrays apart_slices reads pointer_apart");
 }
 
-static void restrict_slice_fails(io::Io *io, const char *function, const char *line, const char *callee) {
-    scratch::Project p = fresh(io);
-    const char *name = format::push(&io->arena, "restrict slice: ", function, " fails").data;
-    scratch::Run run = refuted(&p, name,
-                               format::push(&io->arena, "--function=geometry::restrict_slices::", function,
-                                            " \"$c/geometry/restrict_slices.smith\"")
-                                   .data);
-    has(format::push(&io->arena, name, " at the call, naming both").data, &run,
-        format::push(&io->arena, "restrict_slices.smith:", line, ": the call of geometry::restrict_slices::", callee,
-                     " passes `")
+static void restrict_slice_fails(const char *function, const char *line, const char *callee) {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    const char *name = format::push("restrict slice: ", function, " fails").data;
+    scratch::Run run = refuted(
+        &p, name,
+        format::push("--function=geometry::restrict_slices::", function, " \"$c/geometry/restrict_slices.smith\"")
+            .data);
+    has(format::push(name, " at the call, naming both").data, &run,
+        format::push("restrict_slices.smith:", line, ": the call of geometry::restrict_slices::", callee, " passes `")
             .data);
 }
 
 // 7c4c. `restrict` on an `auto` slice parameter is in the generic's instance (#484): the call is checked as a
 // fixed-element slice's is.
-export void test_prove_restrict_generic_apart_ranges_are_proved(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_restrict_generic_apart_ranges_are_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     prove_cases::each_proved(&p, "restrict generic: apart is proved", "\"$c/geometry/restrict_generic.smith\"",
                              "geometry::restrict_generic::", "apart");
 }
 
-export void test_prove_restrict_generic_overlapping_fails_at_the_call(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_restrict_generic_overlapping_fails_at_the_call() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, "restrict generic: shifted fails",
                                "--function=geometry::restrict_generic::shifted \"$c/geometry/restrict_generic.smith\"");
     has("restrict generic: ... at the call, naming both", &run,
@@ -240,94 +351,122 @@ export void test_prove_restrict_generic_overlapping_fails_at_the_call(io::Io *io
         "passes `dst` (restrict) and `src` slices or ranges that may overlap");
 }
 
-export void test_prove_restrict_slice_shifted_fails(io::Io *io) {
-    restrict_slice_fails(io, "shifted", "34", "copy");
+export void test_prove_restrict_slice_shifted_fails() {
+    restrict_slice_fails("shifted", "34", "copy");
 }
 
-export void test_prove_restrict_slice_same_fails(io::Io *io) {
-    restrict_slice_fails(io, "same", "40", "copy");
+export void test_prove_restrict_slice_same_fails() {
+    restrict_slice_fails("same", "40", "copy");
 }
 
-export void test_prove_restrict_slice_whole_fails(io::Io *io) {
-    restrict_slice_fails(io, "whole", "45", "copy");
+export void test_prove_restrict_slice_whole_fails() {
+    restrict_slice_fails("whole", "45", "copy");
 }
 
-export void test_prove_restrict_slice_unknown_fails(io::Io *io) {
-    restrict_slice_fails(io, "unknown", "50", "copy");
+export void test_prove_restrict_slice_unknown_fails() {
+    restrict_slice_fails("unknown", "50", "copy");
 }
 
-export void test_prove_restrict_slice_pointer_inside_fails(io::Io *io) {
-    restrict_slice_fails(io, "pointer_inside", "83", "fill");
+export void test_prove_restrict_slice_pointer_inside_fails() {
+    restrict_slice_fails("pointer_inside", "83", "fill");
 }
 
 // 7c4c. A `[:][k]` and a `[:][:]` slice point at their rows (#106): an index proved in range needs no contract, an
 // inner index is checked per dimension (one past its own count is refuted at its line), the row is a `[:]` again, and
 // `restrict` on a slice of rows is read at the call as on a `[:]`.
-export void test_prove_grid_indexes_in_range_are_proved(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_grid_indexes_in_range_are_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     prove_cases::each_proved(&p, "grid: fixed_at rows_at volume_at mixed_at roundtrip are proved",
                              "\"$c/geometry/grids.smith\"",
                              "geometry::grids::", "fixed_at rows_at volume_at mixed_at roundtrip");
 }
 
-static void grid_index_fails(io::Io *io, const char *function, const char *line) {
-    scratch::Project p = fresh(io);
-    const char *name = format::push(&io->arena, "grid: ", function, " fails").data;
-    scratch::Run run = refuted(
-        &p, name,
-        format::push(&io->arena, "--function=geometry::grids::", function, " \"$c/geometry/grids.smith\"").data);
-    has(format::push(&io->arena, name, " at the line of the index").data, &run,
-        format::push(&io->arena, "grids.smith:", line, ": assert(an index or a slice is in range) may fail").data);
+static void grid_index_fails(const char *function, const char *line) {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    const char *name = format::push("grid: ", function, " fails").data;
+    scratch::Run run =
+        refuted(&p, name, format::push("--function=geometry::grids::", function, " \"$c/geometry/grids.smith\"").data);
+    has(format::push(name, " at the line of the index").data, &run,
+        format::push("grids.smith:", line, ": assert(an index or a slice is in range) may fail").data);
 }
 
-export void test_prove_grid_fixed_wide_fails_at_the_line_of_the_index(io::Io *io) {
-    grid_index_fails(io, "fixed_wide", "14");
+export void test_prove_grid_fixed_wide_fails_at_the_line_of_the_index() {
+    grid_index_fails("fixed_wide", "14");
 }
 
-export void test_prove_grid_rows_wide_fails_at_the_line_of_the_index(io::Io *io) {
-    grid_index_fails(io, "rows_wide", "26");
+export void test_prove_grid_rows_wide_fails_at_the_line_of_the_index() {
+    grid_index_fails("rows_wide", "26");
 }
 
-export void test_prove_grid_row_wide_fails_at_the_line_of_the_index(io::Io *io) {
-    grid_index_fails(io, "row_wide", "59");
+export void test_prove_grid_row_wide_fails_at_the_line_of_the_index() {
+    grid_index_fails("row_wide", "59");
 }
 
-export void test_prove_restrict_grid_apart_ranges_are_proved(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_restrict_grid_apart_ranges_are_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     prove_cases::each_proved(&p, "restrict grid: apart apart_slots are proved", "\"$c/geometry/restrict_grids.smith\"",
                              "geometry::restrict_grids::", "apart apart_slots");
 }
 
-static void restrict_grid_fails(io::Io *io, const char *function, const char *line) {
-    scratch::Project p = fresh(io);
-    const char *name = format::push(&io->arena, "restrict grid: ", function, " fails").data;
-    scratch::Run run = refuted(&p, name,
-                               format::push(&io->arena, "--function=geometry::restrict_grids::", function,
-                                            " \"$c/geometry/restrict_grids.smith\"")
-                                   .data);
-    has(format::push(&io->arena, name, " at the call, naming both").data, &run,
-        format::push(&io->arena, "restrict_grids.smith:", line,
+static void restrict_grid_fails(const char *function, const char *line) {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    const char *name = format::push("restrict grid: ", function, " fails").data;
+    scratch::Run run = refuted(
+        &p, name,
+        format::push("--function=geometry::restrict_grids::", function, " \"$c/geometry/restrict_grids.smith\"").data);
+    has(format::push(name, " at the call, naming both").data, &run,
+        format::push("restrict_grids.smith:", line,
                      ": the call of geometry::restrict_grids::copy passes `dst` (restrict) and `src`")
             .data);
 }
 
-export void test_prove_restrict_grid_overlapping_fails(io::Io *io) {
-    restrict_grid_fails(io, "overlapping", "32");
+export void test_prove_restrict_grid_overlapping_fails() {
+    restrict_grid_fails("overlapping", "32");
 }
 
-export void test_prove_restrict_grid_same_fails(io::Io *io) {
-    restrict_grid_fails(io, "same", "38");
+export void test_prove_restrict_grid_same_fails() {
+    restrict_grid_fails("same", "38");
 }
 
 // 7d. A struct passed by value holds values (issue #41); its bytes are free, never poison.
-export void test_prove_by_value_a_struct_passed_by_value_holds_values(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_by_value_a_struct_passed_by_value_holds_values() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     prove_cases::each_proved(&p, "by value: apply_move count_of bump_count is_step are proved", "\"$c/by_value.c\"", "",
                              "apply_move count_of bump_count is_step");
 }
 
-export void test_prove_by_value_a_wrong_promise_about_the_fields_fails_and_is_not_poison(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_by_value_a_wrong_promise_about_the_fields_fails_and_is_not_poison() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run =
         refuted(&p, "by value: a wrong promise about the fields fails", "--function=same_row \"$c/by_value.c\"");
     has("by value: ... as a promise that may be false", &run,
@@ -337,45 +476,70 @@ export void test_prove_by_value_a_wrong_promise_about_the_fields_fails_and_is_no
 }
 
 // 7d2. A struct returned through sret is translated (issue #74): the function, its caller, and a wrong promise.
-export void test_prove_sret_the_function_its_caller_and_its_reader_are_proved(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_sret_the_function_its_caller_and_its_reader_are_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     prove_cases::each_proved(&p, "sret: make_wide use_wide wide_from are proved", "\"$c/sret.c\"", "",
                              "make_wide use_wide wide_from");
 }
 
-export void test_prove_sret_a_wrong_promise_about_the_result_fails(io::Io *io) {
-    fails_at(io, "sret: a wrong promise about the result fails", "--function=wrong_wide \"$c/sret.c\"",
+export void test_prove_sret_a_wrong_promise_about_the_result_fails() {
+    fails_at("sret: a wrong promise about the result fails", "--function=wrong_wide \"$c/sret.c\"",
              "sret.c:34: smith_ensures(wide.b == 1) may be false");
 }
 
 // 7e. A file that does not compile is an error with clang's message, never "nothing to prove".
-export void test_prove_compile_error_fails_with_clangs_message_and_is_not_nothing_to_prove(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_compile_error_fails_with_clangs_message_and_is_not_nothing_to_prove() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "syntax_error.c", "#include <smith/contract.h>\nint f(int x) { return x +; }\n");
     scratch::Run run = refuted(&p, "compile error: fails", "syntax_error.c");
     has("compile error: ... with clang's message", &run, "syntax_error.c:2:26: error: expected expression");
     scratch::expect_lacks("compile error: is not nothing to prove", run.out, "nothing to prove");
 }
 
-export void test_prove_compile_error_in_the_second_file_fails(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_compile_error_in_the_second_file_fails() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "syntax_error.c", "#include <smith/contract.h>\nint f(int x) { return x +; }\n");
     refuted(&p, "compile error: in the second file fails", "\"$c/memory.c\" syntax_error.c");
 }
 
-export void test_prove_missing_file_fails_and_names_it(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_missing_file_fails_and_names_it() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = refuted(&p, "missing file: fails", "does-not-exist.c");
     has("missing file: ... and names it", &run, "does-not-exist.c");
 }
 
 // 7f. A function with a variable argument list does not stop the others; calling it is an error that says so.
-export void test_prove_varargs_another_function_is_proved(io::Io *io) {
-    scratch::Project p = fresh(io);
+export void test_prove_varargs_another_function_is_proved() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     proved(&p, "varargs: another function is proved", "--function=twice \"$c/varargs.c\"");
 }
 
-export void test_prove_varargs_calling_one_is_an_error_that_names_the_call(io::Io *io) {
-    fails_at(io, "varargs: calling one is an error", "--function=uses_sum \"$c/varargs.c\"",
+export void test_prove_varargs_calling_one_is_an_error_that_names_the_call() {
+    fails_at("varargs: calling one is an error", "--function=uses_sum \"$c/varargs.c\"",
              "varargs.c:25: cannot be proved: a call of sum, which takes a variable argument list");
 }

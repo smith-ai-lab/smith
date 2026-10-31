@@ -3,15 +3,20 @@
 // smith under test, `$SMITH_SELF`.
 module deployment_test;
 
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import scratch;
 import target;
 
-export void test_deployment_smith_runs_on_macos_26(io::Io *io) {
-    (void)io; // not read on Linux, where there is no minos to read
-    if constexpr (target::os == target::macos) {
-        scratch::Project p = scratch::project(io, "deployment", nullptr);
+export void test_deployment_smith_runs_on_macos_26() {
+    if constexpr (target::os == target::macos) { // on Linux there is no minos to read
+        scratch::Project p = scratch::make("deployment", nullptr);
+        defer scratch::clean(&p);
+        arena::Arena memory = test::memory((usize)1 << 20);
+        arena::ArenaAllocator allocator = arena::allocator(&memory);
+        mem::Allocator *outside = mem::set_allocator(&allocator.base);
+        defer mem::set_allocator(outside);
         scratch::expect_text("minos: the oldest macOS smith runs on", "26.0",
                              scratch::capture(&p, "otool -l \"$SMITH_SELF\" | grep -A4 LC_BUILD_VERSION | "
                                                   "sed -n 's/^ *minos //p'"));

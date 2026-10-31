@@ -211,7 +211,11 @@ int fill(const llvm::DIInliningInfo &info, SmithSymbol *out, int capacity) {
         if (name.size() > 1 && name[0] == '_' && name.find("::") != std::string::npos) name.erase(0, 1);
 #endif
         std::snprintf(symbol.function, sizeof symbol.function, "%s", name.c_str());
-        std::snprintf(symbol.file, sizeof symbol.file, "%s", frame.FileName == kBad ? "" : frame.FileName.c_str());
+        // A program built with -fdebug-compilation-dir=. names its sources `./tests/x.smith` once LLVM joins the
+        // directory and the name; the report names them as the project does, `tests/x.smith` (#782).
+        const char *file = frame.FileName == kBad ? "" : frame.FileName.c_str();
+        if (file[0] == '.' && file[1] == '/') file += 2;
+        std::snprintf(symbol.file, sizeof symbol.file, "%s", file);
         symbol.line = frame.Line;
         symbol.column = frame.Column;
     }

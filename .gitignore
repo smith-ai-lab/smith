@@ -18,13 +18,13 @@ compile_commands.json
 /include/smith/failing.h
 /include/smith/format.h
 /include/smith/inflate.h
-/include/smith/io.h
 /include/smith/math.h
 /include/smith/mem.h
 /include/smith/option.h
 /include/smith/random.h
 /include/smith/result.h
 /include/smith/slice.h
+/include/smith/task.h
 /include/smith/ascii.h
 /include/smith/test.h
 /include/smith/text.h

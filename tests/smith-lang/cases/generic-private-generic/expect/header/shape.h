@@ -8,16 +8,27 @@
 // smith-generic: shape framed shape_framed src/shape.smith -@15 1 2 5 6 | iP1w@0:8=typeof(x) iw@0:18=shape_framed p@0:24=( iP1@0:25=auto iw@0:30=x p@0:31=) pw@0:33={ iw@1:5=return B@1:12=shape::padded p@1:18=( B@1:19=shape::padded p@1:25=( i@1:26=x p@1:27=) E@1:19= p@1:28=) E@1:12= p@1:29=; p@2:1=}
 // smith-hidden: margin
 // clang-format on
-#pragma once
+#ifndef SMITH_HEADER_shape
 #include <stddef.h>
 #include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
 int32_t shape_plain(int32_t x) __asm__("_shape::plain");
-#ifdef SMITH_INSTANCES
-constexpr int32_t shape_margin = 2;
-#endif
 #ifdef __cplusplus
 }
+#endif
+#define SMITH_HEADER_shape
+#endif
+#ifdef SMITH_INSTANCES
+#ifndef SMITH_HEADER_shape_INSTANCES
+#define SMITH_HEADER_shape_INSTANCES
+#ifdef __cplusplus
+extern "C" {
+#endif
+constexpr int32_t shape_margin = 2;
+#ifdef __cplusplus
+}
+#endif
+#endif
 #endif

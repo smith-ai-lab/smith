@@ -1,0 +1,1 @@
+src/main.smith:8:18: a parameter of the lambda passed to `apply` needs a type: write `auto a` or a concept (`arithmetic a`), whose type comes from `lambda(i32 (i32))`

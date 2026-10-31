@@ -1,0 +1,9 @@
+module world_test;
+
+import std::io;
+import std::test;
+
+export void test_world_takes_an_io(io::Io *io) {
+    (void)io;
+    test::check_equal(1 + 1, 2);
+}

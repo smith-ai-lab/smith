@@ -9,9 +9,9 @@
 // sends numbered from 1, so a frame answers the request of that number), and files. The server's output is one JSON
 // message a line; `reply` finds the one answering an id and gives the text of its result. In JSON written here an
 // apostrophe stands for a double quote.
+#include <runtime/io.h>
 #include <smith/arena.h>
 #include <smith/contract.h>
-#include <smith/io.h>
 #include <smith/random.h>
 #include "../lib/json.c"
 #include "../lib/trace.c"
@@ -237,8 +237,11 @@ static const char *test_reply(int id, bool *is_error) {
         const SmithJsonValue *tree = nullptr;
         SmithJsonError json_error;
         SmithJsonLimits limits = {.depth = 32, .string_length = (size_t)1 << 20, .count = (size_t)1 << 16};
-        bool parsed = smith_json_parse(&test_view, (struct smith_array_const_char_n){.data = line, .count = {length}},
-                                       limits, &tree, &json_error);
+        SmithArenaAllocator allocator = smith_arena_allocator(&test_view);
+        SmithAllocator *before = smith_mem_set_allocator(&allocator.base);
+        bool parsed = smith_json_parse((struct smith_array_const_char_n){.data = line, .count = {length}}, limits,
+                                       &tree, &json_error);
+        smith_mem_set_allocator(before);
         SMITH_ASSERT(parsed);
         int64_t found = -1;
         const SmithJsonValue *number = smith_json_member(tree, "id");

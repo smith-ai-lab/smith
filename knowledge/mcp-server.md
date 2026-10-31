@@ -7,7 +7,7 @@ tags: [mcp, debugger]
 # smith mcp
 
 **`smith mcp` is the debugger as an MCP server over stdio** (issue #22; `runtime/mcp*.c`, [smith mcp](mcp-server.md), skill smith-debug): eleven tools
-(`launch`, `breakpoint`, `continue`, the steps, `pause`, `stack`, `variables`, `evaluate`, `stop`) over `smith dap` children, on `<smith/io.h>` and the
+(`launch`, `breakpoint`, `continue`, the steps, `pause`, `stack`, `variables`, `evaluate`, `stop`) over `smith dap` children, on smith's private io layer (`runtime/io.smith`, `<runtime/io.h>`, until #888) and the
 generated protocol types, no malloc. Only the full smith has it (`-DSMITH_MCP`); the smith plugin declares it (`mcpServers`). `tests/mcp_test.smith` runs it on the
 fake io and end to end.
 
@@ -28,7 +28,7 @@ readers of a tool's arguments), `mcp_dap.c` (a session: the child, DAP's framing
 events), `mcp_show.c` (what a stop, a stack and variables look like), `mcp_tools.c` (the tools and their table) and
 `mcp_serve.c` (MCP: the messages, the versions, the loop). smith.c includes it after the JSON, text and protocol code.
 
-- **On `<smith/io.h>` and in one thread.** The server's stdin, every session's pipes and exit, and the clock are ops on
+- **On `<runtime/io.h>` and in one thread.** The server's stdin, every session's pipes and exit, and the clock are ops on
   one event loop. A tool call is a function that runs the loop (`smith_mcp_pump`) until what it waits for has happened or
   its time is up; input that arrives meanwhile is buffered, so a client that pipelines requests is answered in order.
   Nothing is allocated but in arenas (the io's), nothing recurses, every loop has a bound.
@@ -94,8 +94,8 @@ A tool that is not given what it needs, or has no session, is a result with `isE
 
 ## Tests
 
-`tests/mcp_fake.c` runs the server on the fake io (162 checks, built three ways by `tests/mcp_test.smith`): a scripted client on
-the console and a scripted `smith dap` child (`smith_io_test_add_child`), whose frames answer the requests the server
+`tests/mcp_fake.c` runs the server on the fakes (162 checks, built three ways by `tests/mcp_test.smith`): a scripted client on
+the console and a scripted `smith dap` child (the process fake), whose frames answer the requests the server
 sends, numbered from 1. It covers the versions, the refusals, every tool, a whole session, a test launched by name, an
 adapter that exits at once or refuses, and timeouts on the fake clock. `tests/mcp_test.smith` also drives the real `smith mcp`,
 a real adapter and real programs, on a C program, a `.smith` module and a smith project's test, and checks that no

@@ -1,0 +1,2 @@
+src/main.smith:25:35: cannot tell what `main_add_one`, the argument of `route`, is: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); the parameter `handler` is `constexpr auto` and takes the name of a function
+src/main.smith:25:57: cannot tell what `main_triple`, the argument of `route`, is: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); the parameter `handler` is `constexpr auto` and takes the name of a function
