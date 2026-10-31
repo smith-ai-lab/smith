@@ -1952,6 +1952,10 @@ static void smith_write_lang_headers(const char *self) {
 // module to .smith/lib/std/<name>.smith (removing a <name>.c an older smith left, which smith_library would find
 // first).
 static void smith_build_write_libraries(void) {
+    // The folders the release before #366 wrote (lib/smith became lib/std): a module found there is found before the
+    // one in .smith/lib/std, and its header names the types of its imports wrongly.
+    smith_remove_tree(".smith/lib/smith");
+    smith_remove_tree(".smith/internal/smith");
     for (size_t i = 0; i < sizeof smith_libraries / sizeof smith_libraries[0]; i++) {
         const SmithLibrary *library = &smith_libraries[i];
         char path[PATH_MAX];
