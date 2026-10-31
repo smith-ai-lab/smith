@@ -43,6 +43,8 @@ export constexpr u32 unknown = 512;
 export constexpr u32 fails = 1024;
 // <smith/effects.h>: making memory executable (`mmap` or `mprotect` with PROT_EXEC), code smith cannot read.
 export constexpr u32 code = 2048;
+// <smith/effects.h>: starting a task; its handler is the scheduler.
+export constexpr u32 tasks = 4096;
 
 // <smith/effects.h>: whether the function `f` has no effect beyond `set`. Written in a `static_assert` (see above).
 export inline bool within(...) {
@@ -53,5 +55,6 @@ export inline bool within(...) {
 // the project that compiles the module.
 [[maybe_unused]] u32 everything() {
     (void)within(none, none);
-    return none | alloc | files | net | console | clock | process | env | entropy | globals | unknown | fails | code;
+    return none | alloc | files | net | console | clock | process | env | entropy | globals | unknown | fails | code |
+           tasks;
 }

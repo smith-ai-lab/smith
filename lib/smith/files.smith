@@ -21,6 +21,7 @@ module smith::files;
 
 import smith::arena;
 import smith::contract;
+import smith::env;
 import smith::mem;
 import target;
 import <dirent.h>;
@@ -329,6 +330,34 @@ i32 open_flags(Mode mode) {
     misuse("files: open takes Read, Replace, Append or New");
 }
 
+// `smith test --changed` (issue #739, knowledge/coverage-selection.md): with SMITH_READS_LOG set, a file this process
+// opens to read, a file it maps and a folder it lists are appended to that file, one absolute path a line (a folder's
+// ends in `/`: its listing, not what is in it), so the record of the test that ran names the data it read. Children
+// inherit the variable (read through smith::env, so a test stands in for it on its own thread). Nothing happens
+// without it, and nothing while a files handler answers: its paths are not the real file system's.
+void reads_log_append(const char *log, const char *path) {
+    if (log[0] == '\0') return;
+    char resolved[path_max];
+    if (c::realpath(path, resolved) == nullptr) return; // a path that is not there has nothing to hash
+    usize length = c::strlen(resolved);
+    if (length + 3 >= path_max) return;
+    struct c::stat status = {};
+    bool folder = c::stat(resolved, &status) == 0 && (status.st_mode & mode_kind_mask) == mode_folder;
+    if (folder) resolved[length++] = '/';
+    resolved[length++] = '\n';
+    i32 descriptor = c::open(log, open_append, file_mode);
+    if (descriptor < 0) return;
+    isize written = c::write(descriptor, resolved, length);
+    (void)written; // a line lost makes the record a path short; the next change to it is judged by the graph
+    c::close(descriptor);
+}
+
+void reads_log(const char *path) {
+    if (c::smith_handlers_files() != nullptr) return;
+    env::Value named = env::get("SMITH_READS_LOG");
+    if (named == .some) reads_log_append(named.some.data, path); // the environment's text ends with a NUL
+}
+
 // Opens the file. A mode the call does not take is a checked failure.
 [[smith::c_name("smith_fs_open")]] export [[nodiscard]] OpenResult open(const char path[:], Mode mode) {
     i32 flags = open_flags(mode);
@@ -340,6 +369,7 @@ i32 open_flags(Mode mode) {
     if (descriptor < 0) {
         return {.error = error_from(errno_now())};
     }
+    if (mode == Read) reads_log(where.text);
     return (File){.descriptor = descriptor};
 }
 
@@ -546,6 +576,7 @@ i32 entry_compare(const void *a, const void *b) {
     if (code != 0) {
         return {.error = error_from(code)};
     }
+    reads_log(where.text);
     usize total = 0;
     c::SmithFileItem item = {};
     for (usize rounds = 0; rounds < ((usize)1 << 20); rounds++) { // each round reads an entry or ends
@@ -601,6 +632,7 @@ i32 entry_compare(const void *a, const void *b) {
     if (descriptor < 0) {
         return {.error = error_from(errno_now())};
     }
+    reads_log(where.text);
     struct c::stat info_of = {};
     i32 code = c::fstat(descriptor, &info_of) == 0 ? 0 : errno_now();
     bool is_folder = code == 0 && (info_of.st_mode & mode_kind_mask) == mode_folder;
