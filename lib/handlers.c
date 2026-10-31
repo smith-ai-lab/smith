@@ -321,10 +321,24 @@ SmithScheduler *smith_handlers_scheduler(void) {
     return smith_handlers_scheduler_current();
 }
 
+// The pthread mutexes the calling thread holds (issue #938), counted only while some scheduler is set. A task never
+// switches while it holds one, so per thread is per task. A routed call made above zero is the real call: parking there
+// could leave another task of the same worker blocked on that mutex for good.
+static thread_local int smith_handlers_locks_held;
+
+static void smith_handlers_lock_taken(void) {
+    if (atomic_load_explicit(&smith_handlers_scheduler_active, memory_order_relaxed) != 0) smith_handlers_locks_held += 1;
+}
+
+static void smith_handlers_lock_given(void) {
+    if (smith_handlers_locks_held > 0) smith_handlers_locks_held -= 1;
+}
+
 // True when a scheduler took the request: its result is then the call's, with errno set as the real call would set it.
 // The counter is read here, so a thread with no scheduler pays one load.
 static bool smith_handlers_route(SmithIoRequest *request) {
     if (atomic_load_explicit(&smith_handlers_scheduler_active, memory_order_relaxed) == 0) return false;
+    if (smith_handlers_locks_held > 0) return false;
     SmithScheduler *scheduler = smith_handlers_scheduler_current();
     if (scheduler == nullptr || scheduler->io == nullptr) return false;
     scheduler->io(scheduler, request);
@@ -462,6 +476,23 @@ static int smith_handlers_open(const char *path, int flags, ...) {
     }
     SmithFileHandler *files = smith_handlers_files_current();
     return files != nullptr ? files->open(files, path, flags, mode) : open(path, flags, mode);
+}
+
+static int smith_handlers_mutex_lock(pthread_mutex_t *mutex) {
+    int result = pthread_mutex_lock(mutex);
+    if (result == 0) smith_handlers_lock_taken();
+    return result;
+}
+
+static int smith_handlers_mutex_trylock(pthread_mutex_t *mutex) {
+    int result = pthread_mutex_trylock(mutex);
+    if (result == 0) smith_handlers_lock_taken();
+    return result;
+}
+
+static int smith_handlers_mutex_unlock(pthread_mutex_t *mutex) {
+    smith_handlers_lock_given();
+    return pthread_mutex_unlock(mutex);
 }
 
 static ssize_t smith_handlers_read(int fd, void *buffer, size_t size) {
@@ -878,6 +909,9 @@ __attribute__((used, section("__DATA,__interpose"))) static const SmithInterpose
     {(uintptr_t)&smith_handlers_nanosleep, (uintptr_t)&nanosleep},
     {(uintptr_t)&smith_handlers_usleep, (uintptr_t)&usleep},
     {(uintptr_t)&smith_handlers_sleep, (uintptr_t)&sleep},
+    {(uintptr_t)&smith_handlers_mutex_lock, (uintptr_t)&pthread_mutex_lock},
+    {(uintptr_t)&smith_handlers_mutex_trylock, (uintptr_t)&pthread_mutex_trylock},
+    {(uintptr_t)&smith_handlers_mutex_unlock, (uintptr_t)&pthread_mutex_unlock},
 };
 // clang-format on
 #pragma clang diagnostic pop
@@ -1017,6 +1051,9 @@ static SmithHandlersFunction smith_handlers_find(SmithHandlersNext *next) {
     return address;
 }
 
+static SmithHandlersNext smith_handlers_next_mutex_lock = {"pthread_mutex_lock", nullptr, nullptr};
+static SmithHandlersNext smith_handlers_next_mutex_trylock = {"pthread_mutex_trylock", nullptr, nullptr};
+static SmithHandlersNext smith_handlers_next_mutex_unlock = {"pthread_mutex_unlock", nullptr, nullptr};
 static SmithHandlersNext smith_handlers_next_open = {"open", ___interceptor_open, nullptr};
 static SmithHandlersNext smith_handlers_next_read = {"read", ___interceptor_read, nullptr};
 static SmithHandlersNext smith_handlers_next_write = {"write", ___interceptor_write, nullptr};
@@ -1154,6 +1191,23 @@ int open(const char *path, int flags, ...) {
     SmithFileHandler *files = smith_handlers_files_current();
     if (files != nullptr) return files->open(files, path, flags, mode);
     return ((int (*)(const char *, int, ...))smith_handlers_find(&smith_handlers_next_open))(path, flags, mode);
+}
+
+int pthread_mutex_lock(pthread_mutex_t *mutex) {
+    int result = ((int (*)(pthread_mutex_t *))smith_handlers_find(&smith_handlers_next_mutex_lock))(mutex);
+    if (result == 0) smith_handlers_lock_taken();
+    return result;
+}
+
+int pthread_mutex_trylock(pthread_mutex_t *mutex) {
+    int result = ((int (*)(pthread_mutex_t *))smith_handlers_find(&smith_handlers_next_mutex_trylock))(mutex);
+    if (result == 0) smith_handlers_lock_taken();
+    return result;
+}
+
+int pthread_mutex_unlock(pthread_mutex_t *mutex) {
+    smith_handlers_lock_given();
+    return ((int (*)(pthread_mutex_t *))smith_handlers_find(&smith_handlers_next_mutex_unlock))(mutex);
 }
 
 ssize_t read(int fd, void *buffer, size_t size) {
