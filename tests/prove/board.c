@@ -17,10 +17,10 @@ uint8_t cell_wrong(const Board *board, uint8_t row, uint8_t col) {
     return board->cells[row][col];
 }
 
-// The same loop, with a bound the compiler can see.
+// The same loop over the first four rows, with a bound the compiler can see (all eight cost the unrolling 64 passes).
 uint32_t occupied(const Board *board) {
     uint32_t count = 0;
-    for (uint8_t row = 0; row < 8; row++) {
+    for (uint8_t row = 0; row < 4; row++) {
         for (uint8_t col = 0; col < 8; col++) {
             smith_invariant(count <= (uint32_t)row * 8 + col);
             if (board->cells[row][col] != 0) count++;

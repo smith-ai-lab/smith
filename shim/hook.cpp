@@ -1507,6 +1507,19 @@ class SmithHook final : public TokenHook, public NameSource {
                                SourceLocation::getFromRawEncoding(definition)};
     }
 
+    // The place a file of the hook's own (the types buffer, a module's source) is included from: the start of the main
+    // file. A declaration whose first token is in such a file and whose last is in the main file has two places that
+    // reach a common file, so the coverage mapping of an unused function ends instead of climbing for good (#845).
+    SourceLocation placedFrom() {
+        return SM.getLocForStartOfFile(MainFile);
+    }
+
+    // The file of an entry as the program placed it: the one the source manager holds, else a new one placedFrom.
+    FileID placedFile(FileEntryRef entry) {
+        FileID known = SM.translateFile(entry);
+        return known.isValid() ? known : SM.createFileID(entry, placedFrom(), SrcMgr::C_User);
+    }
+
     // The file of a module's source, as the text the module has (a module found by its source is given to the file
     // manager as its interface, which has not the bodies of generics).
     FileID fileFor(const std::string &path) {
@@ -1515,13 +1528,14 @@ class SmithHook final : public TokenHook, public NameSource {
         FileID id;
         for (auto &[name, entry] : interfaces) {
             if (entry.ok && entry.source == path) {
-                id = SM.createFileID(llvm::MemoryBuffer::getMemBufferCopy(entry.content, path), SrcMgr::C_User);
+                id = SM.createFileID(llvm::MemoryBuffer::getMemBufferCopy(entry.content, path), SrcMgr::C_User, 0, 0,
+                                     placedFrom());
                 break;
             }
         }
         if (id.isInvalid()) {
             if (auto file = PP.getFileManager().getFileRef(path)) {
-                id = SM.getOrCreateFileID(*file, SrcMgr::C_User);
+                id = placedFile(*file);
             } else {
                 llvm::consumeError(file.takeError());
             }
@@ -1737,8 +1751,7 @@ class SmithHook final : public TokenHook, public NameSource {
             llvm::consumeError(found.takeError());
             return SourceLocation();
         }
-        return SM.translateLineCol(SM.getOrCreateFileID(*found, SrcMgr::C_User), place->second.first,
-                                   place->second.second);
+        return SM.translateLineCol(placedFile(*found), place->second.first, place->second.second);
     }
 
     void enterHeader(const Action &action) {
@@ -3200,12 +3213,12 @@ class SmithHook final : public TokenHook, public NameSource {
     }
 
     FileID typesFile;
-    // A place that is no file of the program: the start of a buffer of its own (issue #107).
+    // A place that is no file of the program: the start of a buffer of its own (issue #107), included from placedFrom.
     static uint32_t typesPlace(void *context) {
         auto *self = static_cast<SmithHook *>(context);
         if (!self->typesFile.isValid()) {
             auto buffer = llvm::MemoryBuffer::getMemBufferCopy(" ", "<smith-types>");
-            self->typesFile = self->SM.createFileID(std::move(buffer), SrcMgr::C_User);
+            self->typesFile = self->SM.createFileID(std::move(buffer), SrcMgr::C_User, 0, 0, self->placedFrom());
         }
         return self->SM.getLocForStartOfFile(self->typesFile).getRawEncoding();
     }

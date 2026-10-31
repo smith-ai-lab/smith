@@ -7,8 +7,9 @@
 module json_test;
 
 import smith::arena;
+import smith::env;
+import smith::files;
 import smith::format;
-import smith::io;
 import smith::math;
 import smith::random;
 import smith::test;
@@ -19,8 +20,8 @@ import <stdlib.h>;
 import <string.h>;
 import smith::mem;
 
-// The bytes of a buffer, for the calls of io that take a slice.
-static typeof(const u8[:]) test_io_bytes(const void *data, usize size) {
+// The bytes of a buffer, for the calls of files that take a slice.
+static typeof(const u8[:]) test_file_bytes(const void *data, usize size) {
     const u8 *bytes = (const u8 *)data;
     return bytes[0:size];
 }
@@ -1406,59 +1407,102 @@ static const TestJsonImplementationDefined *test_json_find_listed(const char *na
 constexpr usize test_json_listing_capacity = 1 << 17;
 
 // Runs every file of the suite's test_parsing folder. The folder and where to list what was done with each case come
-// from the environment of the io (tests/library_modes_test.smith fetches the package and sets them); the files are read
-// through the io's files. Prints nothing when it passes; a failure names the file.
-export void test_json_conformance_with_jsontestsuite(io::Io *io) {
-    const char *folder = io::args_env(&io->args, "SMITH_JSON_SUITE");
-    if (folder == nullptr || folder[0] == '\0') return; // not fetched: tests/library_modes_test.smith skips it
-    const char *listing_path = io::args_env(&io->args, "SMITH_JSON_LISTING");
-    bool listing = listing_path != nullptr && listing_path[0] != '\0';
-    char *report = arena::push_slice(&io->arena, char, test_json_listing_capacity).data;
+// from the environment (tests/library_modes_test.smith fetches the package and sets them). Prints nothing when it
+// passes; a failure names the file.
+static const char *test_json_variable(const char name[:]) {
+    env::Value value = env::get(name);
+    return value == .some ? value.some.data : "";
+}
+
+static files::Entries test_json_list_suite(const char folder[:]) {
+    files::EntriesResult entries = files::list(folder);
+    switch (entries) {
+    case .ok:
+        return entries.ok;
+    case .error:
+        test::check_condition(false); // ends the test
+    }
+    return {};
+}
+
+// Whether the reader and the tree accept the file, read whole into the arena for the time of the call.
+static bool test_json_file_accepted(arena::Arena *memory, const char path[:]) {
+    arena::Scope scope = arena::scope_begin(memory);
+    defer arena::scope_end(scope);
+    files::BytesResult file = files::read_file(path);
+    switch (file) {
+    case .ok:
+        return test_json_suite_accepts(memory, ((const char *)file.ok.data)[0:countof(file.ok)]);
+    case .error:
+        test::check_condition(false); // ends the test
+    }
+    return false;
+}
+
+// What was done with one case: the counts of its kind, and a line of the listing for an implementation-defined one.
+static void test_json_count_case(TestJsonConformance *totals, const char *name, bool accepted, char *report,
+                                 usize *reported, bool listing) {
+    if (name[0] == 'y') {
+        totals->y_total += 1;
+        totals->y_accepted += accepted ? 1 : 0;
+        test::check(accepted);
+    } else if (name[0] == 'n') {
+        totals->n_total += 1;
+        totals->n_refused += accepted ? 0 : 1;
+        test::check(!accepted);
+    } else if (name[0] == 'i') {
+        const TestJsonImplementationDefined *listed = test_json_find_listed(name);
+        totals->i_total += 1;
+        if (listing)
+            *reported += format::to(report + *reported, test_json_listing_capacity - *reported,
+                                    format::left(accepted ? "accepted" : "refused", 9), " ", name, "\n")
+                             .length;
+        test::check(listed != nullptr); // a new case must be listed
+        totals->i_as_listed += listed != nullptr && listed->accepted == accepted ? 1 : 0;
+        test::check(listed->accepted == accepted);
+    }
+}
+
+static void test_json_write_listing(const char path[:], const TestJsonConformance *totals, char *report,
+                                    usize reported) {
+    reported += format::to(report + reported, test_json_listing_capacity - reported, "y_: ", totals->y_accepted, " of ",
+                           totals->y_total, " accepted; n_: ", totals->n_refused, " of ", totals->n_total,
+                           " refused; i_: ", totals->i_as_listed, " of ", totals->i_total, " as listed\n")
+                    .length;
+    files::CountResult written = files::write_file(path, test_file_bytes(report, reported), files::Replace);
+    switch (written) {
+    case .ok:
+        test::check_equal(written.ok, reported);
+        break;
+    case .error:
+        test::check_condition(false); // ends the test
+    }
+}
+
+export void test_json_conformance_with_jsontestsuite() {
+    const char *folder = test_json_variable("SMITH_JSON_SUITE");
+    if (folder[0] == '\0') return; // not fetched: tests/library_modes_test.smith skips it
+    const char *listing_path = test_json_variable("SMITH_JSON_LISTING");
+    bool listing = listing_path[0] != '\0';
+    arena::Arena memory = test::memory(1U << 25);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    char *report = arena::push_slice(&memory, char, test_json_listing_capacity).data;
     usize reported = 0;
     TestJsonConformance totals = {};
-    io::FileList names = io::files_list(&io->files, &io->arena, folder);
-    test::check_equal(names.error.code, 0);
-    for (usize i = 0; i < names.count; i++) {
-        const char *name = names.entries[i].name;
+    files::Entries names = test_json_list_suite(folder[0:c::strlen(folder)]);
+    for (usize i = 0; i < countof(names); i++) {
+        const char *name = names[i].name.data;
         usize name_length = c::strlen(name);
         if (name_length < 7 || c::strcmp(name + name_length - 5, ".json") != 0 || name[1] != '_') continue;
         char path[1024];
         (void)format::to(path, sizeof path, folder, "/", name);
         test::note("file %s", name);
-        arena::Scope scope = arena::scope_begin(&io->arena);
-        io::Read file = io::files_read(&io->files, &io->arena, path);
-        test::check_equal(file.error.code, 0);
-        const char contents[:] = ((const char *)file.data.data)[0:countof(file.data)];
-        bool accepted = test_json_suite_accepts(&io->arena, contents);
-        arena::scope_end(scope);
-        if (name[0] == 'y') {
-            totals.y_total += 1;
-            totals.y_accepted += accepted ? 1 : 0;
-            test::check(accepted);
-        } else if (name[0] == 'n') {
-            totals.n_total += 1;
-            totals.n_refused += accepted ? 0 : 1;
-            test::check(!accepted);
-        } else if (name[0] == 'i') {
-            const TestJsonImplementationDefined *listed = test_json_find_listed(name);
-            totals.i_total += 1;
-            if (listing)
-                reported += format::to(report + reported, test_json_listing_capacity - reported,
-                                       format::left(accepted ? "accepted" : "refused", 9), " ", name, "\n")
-                                .length;
-            test::check(listed != nullptr); // a new case must be listed
-            totals.i_as_listed += listed != nullptr && listed->accepted == accepted ? 1 : 0;
-            test::check(listed->accepted == accepted);
-        }
+        bool accepted = test_json_file_accepted(&memory, path[0:c::strlen(path)]);
+        test_json_count_case(&totals, name, accepted, report, &reported, listing);
     }
-    if (listing) {
-        reported += format::to(report + reported, test_json_listing_capacity - reported, "y_: ", totals.y_accepted,
-                               " of ", totals.y_total, " accepted; n_: ", totals.n_refused, " of ", totals.n_total,
-                               " refused; i_: ", totals.i_as_listed, " of ", totals.i_total, " as listed\n")
-                        .length;
-        test::check_equal(io::files_write(&io->files, listing_path, test_io_bytes(report, reported), io::Replace).code,
-                          0);
-    }
+    if (listing) test_json_write_listing(listing_path[0:c::strlen(listing_path)], &totals, report, reported);
     test::note("y %zu/%zu accepted, n %zu/%zu refused, i %zu/%zu as listed", totals.y_accepted, totals.y_total,
                totals.n_refused, totals.n_total, totals.i_as_listed, totals.i_total);
     test::check_equal(totals.y_total, totals.y_accepted);

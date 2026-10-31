@@ -9,7 +9,7 @@ tags: [new, agents]
 **`smith new [--language smith|c] [<name>]` writes the program and what agents need, and no configuration**
 (issue #43; `smith` is the default). The program is `main.smith`, `primes.smith` (a module; no header) and
 `tests/test_primes.smith`, or with `--language c` `main.c`, `primes.c`, `primes.h` and `tests/test_primes.c`; with
-`.gitignore`. For agents: `AGENTS.md`, `.claude/settings.json` (enables the smith plugin, so smith's skills are not
+`.gitignore`. For agents (no `AGENTS.md`: the plugin's skills carry what they need): `.claude/settings.json` (enables the smith plugin, so smith's skills are not
 copied), `knowledge/` (an index and a first concept) and the docs skill `.agents/skills/<name>-docs` with the
 `.claude/skills` link. The owner: "we have to assume the primary author is going to be Claude or some other agent."
 
@@ -22,7 +22,7 @@ another build system keeps its program, so `smith new` adds only what agents nee
 
 `smith new [--language smith|c] [<name>]` writes a ready project into `<name>` (or the current folder), never
 overwriting: `main.smith` (`module main;`), `primes.smith` and `tests/primes_test.smith` (`module primes_test;`, each test exported) (or `main.c`, `primes.c`, `primes.h` and
-`tests/test_primes.c`), `.gitignore`, `AGENTS.md`, `knowledge/` (an index and a first concept),
+`tests/test_primes.c`), `.gitignore`, `knowledge/` (an index and a first concept),
 `.agents/skills/<name>-docs` with the `.claude/skills` link, and `.claude/settings.json` (which enables the smith
 plugin and declares its marketplace), then builds once and commits on `main`. No build file, no config file, no
 skills copied. `tests/new_test.smith` tests it.

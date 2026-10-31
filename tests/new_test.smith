@@ -80,17 +80,22 @@ static const char *named(const char *format, const char *a, const char *b) {
 }
 
 constexpr char smith_files[_] =
-    ".agents/skills/hello-docs/SKILL.md .claude/settings.json .claude/skills .gitignore AGENTS.md knowledge/index.md "
+    ".agents/skills/hello-docs/SKILL.md .claude/settings.json .claude/skills .gitignore knowledge/index.md "
     "knowledge/program.md main.smith primes.smith primes_test.smith";
 constexpr char c_files[_] =
-    ".agents/skills/hellc-docs/SKILL.md .claude/settings.json .claude/skills .gitignore AGENTS.md knowledge/index.md "
+    ".agents/skills/hellc-docs/SKILL.md .claude/settings.json .claude/skills .gitignore knowledge/index.md "
     "knowledge/program.md main.c primes.c primes.h primes_test.c";
 
 // What smith new hello writes, and the files of the C program it leaves out.
 static void expect_the_written_files(const scratch::Project *p) {
-    const char *files[_] = {"main.smith",         "primes.smith",          "primes_test.smith",
-                            ".gitignore",         ".claude/settings.json", "AGENTS.md",
-                            "knowledge/index.md", "knowledge/program.md",  ".agents/skills/hello-docs/SKILL.md"};
+    const char *files[_] = {"main.smith",
+                            "primes.smith",
+                            "primes_test.smith",
+                            ".gitignore",
+                            ".claude/settings.json",
+                            "knowledge/index.md",
+                            "knowledge/program.md",
+                            ".agents/skills/hello-docs/SKILL.md"};
     for (usize i = 0; i < _Countof(files); i++) {
         char path[256];
         __builtin_snprintf(path, sizeof path, "hello/%s", files[i]);
@@ -138,11 +143,8 @@ export void test_new_hello_a_smith_project_is_written_and_committed() {
                          scratch::read(&p, "hello/.claude/settings.json"));
     scratch::expect_text("new hello: .claude/skills links to the skills", "../.agents/skills",
                          scratch::capture(&p, "readlink hello/.claude/skills"));
-    expect_exists(&p, "new hello: no CLAUDE.md, Claude Code reads AGENTS.md", "hello/CLAUDE.md", "no");
-    scratch::expect_contains("new hello: AGENTS.md says there is no build file", scratch::read(&p, "hello/AGENTS.md"),
-                             "There is no build file and no config file");
-    scratch::expect_contains("new hello: ... and how to take over a default", scratch::read(&p, "hello/AGENTS.md"),
-                             "smith fmt --dump-config > .clang-format");
+    expect_exists(&p, "new hello: no CLAUDE.md", "hello/CLAUDE.md", "no");
+    expect_exists(&p, "new hello: no AGENTS.md", "hello/AGENTS.md", "no");
     scratch::expect_contains("new hello: the concept describes the .smith program",
                              scratch::read(&p, "hello/knowledge/program.md"), "primes::sum");
     scratch::expect_contains("new hello: the summary names the plugin", created.out,
@@ -186,7 +188,7 @@ export void test_new_a_second_run_creates_nothing() {
     scratch::expect_status("second run: exits 0", 0, &again);
     scratch::expect_text("second run: changes no bytes", before, scratch::capture(&p, sum));
     scratch::expect_text("second run: no new commit", "1", capture(&p, ".", "git -C hello rev-list --count HEAD"));
-    scratch::expect_contains("second run: everything is kept", again.out, "0 created, 10 kept");
+    scratch::expect_contains("second run: everything is kept", again.out, "0 created, 9 kept");
 }
 
 // The label of a check on a new project: "<label>: <what>".
@@ -397,7 +399,6 @@ export void test_new_language_c_a_c_project_is_written_and_committed() {
                             "primes_test.c",
                             ".gitignore",
                             ".claude/settings.json",
-                            "AGENTS.md",
                             "knowledge/index.md",
                             "knowledge/program.md",
                             ".agents/skills/hellc-docs/SKILL.md"};
@@ -796,7 +797,7 @@ export void test_new_another_build_system_gets_no_program() {
     scratch::expect_contains("Makefile: the message names the skill", created.out, "smith-build skill");
     scratch::expect_text("Makefile: commits only the files written",
                          ".agents/skills/has-make-docs/SKILL.md .claude/settings.json .claude/skills .gitignore "
-                         "AGENTS.md knowledge/index.md",
+                         "knowledge/index.md",
                          capture(&p, ".", "git -C has_make ls-files | tr '\\n' ' ' | sed 's/ $//'"));
     scratch::Run docs = run(&p, "smith docs has_make");
     scratch::expect_status("Makefile: the docs pass", 0, &docs);
@@ -834,7 +835,7 @@ export void test_new_an_existing_gitignore_and_settings_are_kept() {
     scratch::expect_lacks("settings with the entry: no report", second.out, "lacks \"smith@smith\"");
 }
 
-// 13. Docs. The new project has knowledge, a skill and AGENTS.md, and smith docs and smith check hold them.
+// 13. Docs. The new project has knowledge and a skill, and smith docs and smith check hold them.
 export void test_new_the_docs_of_a_new_project() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
@@ -843,11 +844,8 @@ export void test_new_the_docs_of_a_new_project() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     generated(&p, "generate hello");
-    const char *agents = scratch::read(&p, "hello/AGENTS.md");
     scratch::expect_text("docs: the skill is named for the program", "name: hello-docs",
                          scratch::capture(&p, "grep '^name:' hello/.agents/skills/hello-docs/SKILL.md"));
-    scratch::expect_contains("docs: AGENTS.md links the skill", agents, "(.agents/skills/hello-docs/SKILL.md)");
-    scratch::expect_contains("docs: AGENTS.md links the knowledge", agents, "(knowledge/index.md)");
     char expected[1024];
     __builtin_snprintf(expected, sizeof expected, "- [The program](program.md): %s",
                        scratch::capture(&p, "sed -n 's/^description: //p' hello/knowledge/program.md"));
@@ -934,8 +932,9 @@ export void test_new_breaking_each_docs_rule_fails_smith_docs() {
            ".agents/skills/hello-docs/SKILL.md");
     broken(&p, "a skill without a description", ".agents/skills/hello-docs/SKILL.md: frontmatter lacks description",
            "grep -v '^description:' .agents/skills/hello-docs/SKILL.md >p && mv p .agents/skills/hello-docs/SKILL.md");
-    broken(&p, "a broken link", "AGENTS.md: broken link nowhere.md", "printf '[x](nowhere.md)\\n' >>AGENTS.md");
-    broken(&p, "a conflict marker", "AGENTS.md:", "printf '<<<<<<< HEAD\\n' >>AGENTS.md");
+    broken(&p, "a broken link", "knowledge/program.md: broken link nowhere.md",
+           "printf '[x](nowhere.md)\\n' >>knowledge/program.md");
+    broken(&p, "a conflict marker", "knowledge/program.md:", "printf '<<<<<<< HEAD\\n' >>knowledge/program.md");
     broken(&p, "knowledge linking a skill",
            "knowledge/program.md: links the skill ../.agents/skills/hello-docs/SKILL.md; knowledge never links skills",
            "printf '[how](../.agents/skills/hello-docs/SKILL.md)\\n' >>knowledge/program.md");

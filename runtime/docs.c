@@ -1,4 +1,4 @@
-// `smith docs`: checks a project's documents, AGENTS.md, knowledge/ (an OKF bundle) and .agents/skills/, and prints
+// `smith docs`: checks a project's documents, knowledge/ (an OKF bundle) and .agents/skills/, and prints
 // each problem on stderr as path: message, in the order of the rules below, then a summary on stdout. It exits 1 if
 // there was a problem. One file, included by smith.c; it allocates nothing itself (its memory is two mapped regions,
 // used as arenas). Ported from virtual-cell's docs_check; the rules, the fixtures and the skill smith-docs describe it.
@@ -16,7 +16,7 @@
 // - .claude/skills, when there are skills, is a symlink to ../.agents/skills.
 // - .claude-plugin/plugin.json, when it lists skills, lists exactly the skills that are not named <plugin>-dev or
 //   <plugin>-dev-* (the plugin's name is its "name"): those are for changing the project and never ship.
-// - Every relative link in AGENTS.md, knowledge/ and .agents/skills/ resolves to a file or folder (links inside code
+// - Every relative link in knowledge/ and .agents/skills/ resolves to a file or folder (links inside code
 //   are ignored; #anchors are not checked), and a document of knowledge/ never links a skill.
 // - No document has a merge-conflict marker.
 //
@@ -1027,10 +1027,10 @@ static void smith_docs_claude_link(SmithDocs *docs) {
 
 // ---- Documents
 
-// AGENTS.md, then every .md under knowledge/ and under .agents/skills/, each folder's sorted.
+// Every .md under knowledge/ and under .agents/skills/, each folder's sorted. A project's AGENTS.md is its own file and
+// is not checked.
 static uint32_t smith_docs_documents(SmithDocs *docs, const char **paths) {
     uint32_t count = 0;
-    if (smith_docs_exists(docs, "AGENTS.md")) paths[count++] = "AGENTS.md";
     smith_docs_collect(docs, "knowledge", paths, &count);
     smith_docs_collect(docs, ".agents/skills", paths, &count);
     return count;
@@ -1167,18 +1167,21 @@ static void smith_docs_declared(SmithDocs *docs) {
     }
 }
 
-// The project of the current folder when no root is named: the nearest folder at or above it that has an AGENTS.md,
-// looking no higher than the git root (a folder that has .git); else the current folder. So a build.c in a subfolder
-// (virtual-cell/learner) checks the docs of its repository. A relative path: "." for the current folder, else "..",
+// The project of the current folder when no root is named: the nearest folder at or above it that has a knowledge/ or
+// an .agents/skills/ folder, looking no higher than the git root (a folder that has .git); else the current folder. So
+// a build.c in a subfolder (virtual-cell/learner) checks the docs of its repository. A relative path: "." for the
+// current folder, else "..",
 // "../..".
 static const char *smith_docs_find_root(void) {
     static char root[3 * 64 + 4];
     char prefix[3 * 64 + 4] = "";
     for (size_t level = 0; level < 64; level++) { // bounded by the depth
         char file[sizeof prefix + 16];
+        char skills[sizeof prefix + 16];
         struct stat info;
-        snprintf(file, sizeof file, "%sAGENTS.md", prefix);
-        if (stat(file, &info) == 0 && S_ISREG(info.st_mode)) {
+        snprintf(file, sizeof file, "%sknowledge", prefix);
+        snprintf(skills, sizeof skills, "%s.agents/skills", prefix);
+        if ((stat(file, &info) == 0 && S_ISDIR(info.st_mode)) || (stat(skills, &info) == 0 && S_ISDIR(info.st_mode))) {
             snprintf(root, sizeof root, "%s", level == 0 ? "." : prefix);
             if (level > 0) root[strlen(root) - 1] = '\0'; // "../.." and not "../../"
             return root;

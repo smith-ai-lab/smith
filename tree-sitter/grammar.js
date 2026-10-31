@@ -47,6 +47,8 @@ module.exports = grammar(C, {
     [$.pointer_field_declarator, $.tuple_field],
     [$.type_specifier, $.payload_variant],
     [$.field_designator, $.variant_expression],
+    [$.call_expression, $.trailing_call_expression],
+    [$.expression, $.lambda_capture_list],
   ]),
 
   rules: {
@@ -68,6 +70,7 @@ module.exports = grammar(C, {
     // f(...): a generic's result type computed from its parameters has a list of them
     macro_type_specifier: ($, original) => choice(
       original,
+      $.lambda_type,
       prec.dynamic(-2, seq(field('name', choice($.identifier, $.scoped_identifier)), '(', commaSep1(field('argument', $.expression)), ')')),
     ),
 
@@ -120,6 +123,25 @@ module.exports = grammar(C, {
     // Apple blocks: ^(int x) { ... }
     block_expression: $ => prec(1, seq('^', optional(field('type', $.type_specifier)), optional($.parameter_list), $.compound_statement)),
 
+    // [x, y](i32 a) -> i32 { ... }, [](i32 a) { ... } and [] { ... } (issue #316): `[` starting an expression is
+    // invalid C, so a lambda never reads as C.
+    lambda_expression: $ => prec(1, seq(
+      $.lambda_capture_list,
+      optional($.parameter_list),
+      optional(seq('->', field('type', $.type_specifier))),
+      field('body', $.compound_statement))),
+    lambda_capture_list: $ => seq('[', commaSep($.identifier), ']'),
+
+    // f(args) { ... } and f(args) [](Person *a, Person *b) { ... }: a block or a lambda after a call's `)` is its
+    // last argument.
+    trailing_call_expression: $ => prec.dynamic(-1, prec(C.PREC.CALL, seq(
+      field('function', $.expression), field('arguments', $.argument_list),
+      choice($.compound_statement, $.lambda_expression)))),
+
+    // lambda(bool (T *, T *)): the type of a parameter that takes a lambda, with the lifetime attributes before it
+    lambda_type: $ => prec.dynamic(2, seq(
+      alias(token(prec(1, /lambda/)), 'lambda'), '(', $.type_descriptor, ')')),
+
     // module game::replay;
     module_declaration: $ => prec.dynamic(1, seq('module', $.module_path, ';')),
 
@@ -153,6 +175,8 @@ module.exports = grammar(C, {
       original,
       $.scoped_identifier,
       $.block_expression,
+      $.lambda_expression,
+      $.trailing_call_expression,
       $.variant_expression,
       alias(choice(...sized), $.identifier),
       alias(choice(...soft), $.identifier),

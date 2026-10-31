@@ -241,15 +241,17 @@ export void test_conventions_explicit_checked_allocator_off_runs_the_tests_unche
 // --- 3. smith's libraries need no declaration
 // -------------------------------------------------------------------------
 
-export void test_conventions_library_include_io_links_io() {
-    scratch::Project p = scratch::make("ioc", "conv_ioc");
+export void test_conventions_library_include_files_links_files() {
+    scratch::Project p = scratch::make("filesc", "conv_filesc");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::expect_text("library: #include <smith/io.h> links io", "seed 1", last_line(&memory, &p, "smith run"));
-    scratch::expect_text("library: ... and the libraries io needs", "arena.o contract.o io.o math.o random.o trace.o",
+    scratch::expect_text("library: #include <smith/files.h> links files", "found 1",
+                         last_line(&memory, &p, "smith run"));
+    scratch::expect_text("library: ... and the libraries files needs",
+                         "arena.o contract.o env.o files.o math.o mem.o trace.o",
                          scratch::capture(&p, "ls build/debug/smith | tr '\\n' ' ' | sed 's/ $//'"));
 }
 
@@ -263,14 +265,14 @@ export void test_conventions_library_import_smith_text_links_text() {
     scratch::expect_text("library: import smith::text links text", "42", last_line(&memory, &p, "smith run"));
 }
 
-export void test_conventions_library_import_a_header_in_a_smith_file_links_io() {
-    scratch::Project p = scratch::make("iosmith", "conv_iosmith");
+export void test_conventions_library_import_a_header_in_a_smith_file_links_files() {
+    scratch::Project p = scratch::make("filessmith", "conv_filessmith");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::expect_text("library: import <smith/io.h>; in a .smith file links io", "hello",
+    scratch::expect_text("library: import <smith/files.h>; in a .smith file links files", "hello",
                          last_line(&memory, &p, "smith run"));
 }
 
@@ -283,9 +285,9 @@ export void test_conventions_library_used_only_by_a_test_is_not_linked_into_the_
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::Run run = scratch::sh(&p, "smith test");
-    scratch::expect_status("library: a test that includes <smith/io.h> links io", 0, &run);
+    scratch::expect_status("library: a test that includes <smith/files.h> links files", 0, &run);
     scratch::Run commands = scratch::build(&p, "-t commands build/debug/tonly");
-    scratch::expect_lacks("library: ... and the program does not", commands.out, "smith/io.o");
+    scratch::expect_lacks("library: ... and the program does not", commands.out, "smith/files.o");
 }
 
 // --- 4. a folder that follows no convention

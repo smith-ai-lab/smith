@@ -214,6 +214,45 @@ export void test_macos_handlers_a_console_handler_catches_printf_puts_and_fputs_
     console_handler("release", "build release");
 }
 
+// On Linux a program built with _FORTIFY_SOURCE calls __printf_chk for printf; the runtime defines it, so the console
+// handler still sees the output, with ASan (debug) and without (release).
+static void fortified_console_handler(const char *profile, const char *target) {
+    scratch::Project p = scratch::make("fortified", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!scratch::same(scratch::capture(&p, "uname -s"), "Linux")) {
+        return;
+    }
+    scratch::copy_tree(&p, "tests/handlers/fortified.c", "main.c");
+    scratch::write(&p, "build.c",
+                   "#include <smith/build.h>\n"
+                   "void build(SmithBuild *b) {\n"
+                   "    smith_app(b, &(SmithApp){.entry = \"main.c\", .name = \"console\",\n"
+                   "                             .flags = smith_list(b, \"-O2\", \"-U_FORTIFY_SOURCE\", "
+                   "\"-D_FORTIFY_SOURCE=2\", nullptr)});\n"
+                   "}\n");
+    scratch::Run built = scratch::sh(&p, joined("smith ", target, " >build.log 2>&1"));
+    scratch::expect_status("handlers: the fortified console project builds", 0, &built);
+    scratch::expect_text("handlers: the program's object calls the fortified forms", "3",
+                         scratch::capture(&p, joined(flags, "smith cc $f -O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2 -c "
+                                                            "main.c -o fort.o && nm -u fort.o | grep -c "
+                                                            "'__printf_chk\\|__fprintf_chk\\|__dprintf_chk'")));
+    scratch::expect_text("handlers: __printf_chk, __fprintf_chk and __dprintf_chk reach the console handler",
+                         "ok captured=[x7\ny7\nz7\n]",
+                         scratch::capture(&p, joined("./build/", profile, "/console 2>&1")));
+}
+
+export void test_linux_handlers_a_fortified_printf_reaches_the_console_handler_in_release() {
+    fortified_console_handler("release", "build release");
+}
+
+export void test_linux_handlers_a_fortified_printf_reaches_the_console_handler_with_asan() {
+    fortified_console_handler("debug", "build");
+}
+
 // ASan, with the handlers linked and its puts check off, still reports an overflow, a use after free and a puts that
 // reads past a string (our puts reaches ASan's interceptor, not libc's).
 // The ASan project built, or false on another system.
