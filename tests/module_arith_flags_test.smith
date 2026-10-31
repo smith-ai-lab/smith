@@ -25,12 +25,12 @@ export void test_module_arith_flags_a_module_has_the_checks_in_each_profile() {
     scratch::expect_status("debug: a module with no overflow builds", 0, &debug);
     scratch::expect_contains("debug: the four checks are on the compile line", debug.out, checks);
     scratch::expect_contains("debug: UBSan's four are off", debug.out, off);
-    scratch::expect_text("debug: it runs", "0", scratch::capture(&p, "./build/debug/main; printf $?"));
+    scratch::expect_text("debug: it runs", "0", scratch::capture(&p, "./build/debug/p; printf $?"));
     scratch::Run release = scratch::build(&p, "release -v");
     scratch::expect_status("release: a module with no overflow builds", 0, &release);
     scratch::expect_contains("release: the four checks are on the compile line", release.out, checks);
     scratch::expect_lacks("release: no -fno-sanitize", release.out, "-fno-sanitize=signed");
-    scratch::expect_text("release: it runs", "0", scratch::capture(&p, "./build/release/main; printf $?"));
+    scratch::expect_text("release: it runs", "0", scratch::capture(&p, "./build/release/p; printf $?"));
     scratch::Run fast = scratch::build(&p, "fast -v");
     scratch::expect_status("fast: a module with no overflow builds", 0, &fast);
     scratch::expect_contains("fast: the four checks are on the compile line", fast.out, checks);

@@ -1,0 +1,76 @@
+// A failed arithmetic check in a module fails the task and reports the operation, its operands and the line (issue
+// #1103, #351): signed + - * and unary -, / and %, shifts, and a float cast out of range, in debug and release. An
+// unsigned wrap is not a failure.
+module module_arith_test;
+
+import smith::arena;
+import smith::mem;
+import smith::test;
+import scratch;
+
+// The operands come from the arguments, so that nothing is folded away: one is 1, big is INT_MAX, least is INT_MIN.
+constexpr char program[_] = "module p;\n"
+                            "\n"
+                            "i32 run(str op, i32 one) {\n"
+                            "    i32 big = 2147483647;\n"
+                            "    i32 least = -big - one;\n"
+                            "    f64 huge = 3e10 * (f64)one;\n"
+                            "    u32 top = 4294967295U;\n"
+                            "    if (op[0] == 'a') return big + one;\n"
+                            "    if (op[0] == 's') return least - one;\n"
+                            "    if (op[0] == 'm') return big * (one + one);\n"
+                            "    if (op[0] == 'n') return -least;\n"
+                            "    if (op[0] == 'd') return big / (one - one);\n"
+                            "    if (op[0] == 'e') return least / -one;\n"
+                            "    if (op[0] == 'r') return least % -one;\n"
+                            "    if (op[0] == 'l') return one << -one;\n"
+                            "    if (op[0] == 'w') return one << (one + 31);\n"
+                            "    if (op[0] == 'x') return big >> -one;\n"
+                            "    if (op[0] == 'y') return big >> (one + 31);\n"
+                            "    if (op[0] == 'f') return (i32)huge;\n"
+                            "    if (op[0] == 'u') return top + (u32)one == 0 ? 0 : 1;\n"
+                            "    return 0;\n"
+                            "}\n"
+                            "\n"
+                            "i32 main(str args[:]) {\n"
+                            "    return run(args[1], (i32)countof(args) - 1);\n"
+                            "}\n";
+
+static void expect_fails(arena::Arena *memory, const scratch::Project *p, const char *profile, const char *op,
+                         const char *report) {
+    const char *command = scratch::push(memory, "./build/", profile, "/p ", op).data;
+    scratch::Run run = scratch::sh(p, command);
+    scratch::expect_status(command, 134, &run);
+    scratch::expect_contains(command, run.err, report);
+    scratch::expect_contains(command, run.err, "main.smith:");
+}
+
+static void check_profile(arena::Arena *memory, const scratch::Project *p, const char *profile) {
+    expect_fails(memory, p, profile, "add", "signed overflow of +: 2147483647 + 1");
+    expect_fails(memory, p, profile, "sub", "signed overflow of -: -2147483648 - 1");
+    expect_fails(memory, p, profile, "mul", "signed overflow of *: 2147483647 * 2");
+    expect_fails(memory, p, profile, "neg", "signed overflow of unary -: -(-2147483648)");
+    expect_fails(memory, p, profile, "div", "division by zero: 2147483647 / 0");
+    expect_fails(memory, p, profile, "edge", "signed overflow of division: -2147483648 / -1");
+    expect_fails(memory, p, profile, "rem", "signed overflow of division: -2147483648 / -1");
+    expect_fails(memory, p, profile, "left", "shift by -1 of i32: a negative amount");
+    expect_fails(memory, p, profile, "wide", "shift by 32 of i32: the width is 32");
+    expect_fails(memory, p, profile, "xright", "shift by -1 of i32: a negative amount");
+    expect_fails(memory, p, profile, "yright", "shift by 32 of i32: the width is 32");
+    expect_fails(memory, p, profile, "float", "float 3e+10");
+    scratch::Run wrap = scratch::sh(p, scratch::push(memory, "./build/", profile, "/p unsigned").data);
+    scratch::expect_status("an unsigned wrap does not fail", 0, &wrap);
+}
+
+export void test_module_arith_each_operation_fails_with_its_report_in_debug_and_release() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    scratch::write(&p, "main.smith", program);
+    scratch::Run debug = scratch::build(&p, "");
+    scratch::expect_status("debug builds", 0, &debug);
+    check_profile(&memory, &p, "debug");
+    scratch::Run release = scratch::build(&p, "release");
+    scratch::expect_status("release builds", 0, &release);
+    check_profile(&memory, &p, "release");
+}

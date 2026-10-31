@@ -502,3 +502,267 @@ void smith_failure(SmithFailureKind kind) {
 void smith_failure_proved(SmithFailureKind kind) {
     smith_failure_detail(kind, nullptr);
 }
+
+// Arithmetic checks of module sources (issue #1103, #351). A module is compiled with clang's signed-integer-overflow,
+// shift, integer-divide-by-zero and float-cast-overflow checks in every profile, and clang calls these functions, by
+// the names and with the records of compiler-rt's UBSan, when one fails. Each reports the operation, the operands and
+// the position of the source through smith_failure_detail, so the check fails the task like a contract. The _abort
+// forms are the same function: a failed check never returns.
+
+typedef struct {
+    const char *file;
+    uint32_t line;
+    uint32_t column;
+} SmithCheckArithmeticLocation;
+
+typedef struct {
+    uint16_t kind; // 0: integer, 1: floating, 0xffff: unknown
+    uint16_t info; // integer: bit 0 is signed, the rest log2 of the width; floating: the width
+    char name[];
+} SmithCheckArithmeticType;
+
+typedef struct {
+    SmithCheckArithmeticLocation location;
+    const SmithCheckArithmeticType *type;
+} SmithCheckArithmeticData;
+
+typedef struct {
+    SmithCheckArithmeticLocation location;
+    const SmithCheckArithmeticType *left;
+    const SmithCheckArithmeticType *right;
+} SmithCheckArithmeticShiftData;
+
+typedef uintptr_t SmithCheckArithmeticValue; // an operand up to the word's width, else a pointer to it
+
+constexpr size_t smith_check_arithmetic_text_max = 64;
+
+// Declared here for -Wmissing-prototypes: clang calls them by these names, nothing includes a header of them.
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_add_overflow(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue left,
+                                 SmithCheckArithmeticValue right);
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_add_overflow_abort(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue left,
+                                       SmithCheckArithmeticValue right);
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_sub_overflow(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue left,
+                                 SmithCheckArithmeticValue right);
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_sub_overflow_abort(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue left,
+                                       SmithCheckArithmeticValue right);
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_mul_overflow(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue left,
+                                 SmithCheckArithmeticValue right);
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_mul_overflow_abort(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue left,
+                                       SmithCheckArithmeticValue right);
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_divrem_overflow(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue left,
+                                    SmithCheckArithmeticValue right);
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_divrem_overflow_abort(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue left,
+                                          SmithCheckArithmeticValue right);
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_negate_overflow(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue operand);
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_negate_overflow_abort(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue operand);
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_shift_out_of_bounds(const SmithCheckArithmeticShiftData *data, SmithCheckArithmeticValue left,
+                                        SmithCheckArithmeticValue right);
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_shift_out_of_bounds_abort(const SmithCheckArithmeticShiftData *data, SmithCheckArithmeticValue left,
+                                              SmithCheckArithmeticValue right);
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_float_cast_overflow(const SmithCheckArithmeticShiftData *data, SmithCheckArithmeticValue from);
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_float_cast_overflow_abort(const SmithCheckArithmeticShiftData *data,
+                                              SmithCheckArithmeticValue from);
+
+static unsigned smith_check_arithmetic_bits(const SmithCheckArithmeticType *type) {
+    return type->kind == 0 ? 1U << (type->info >> 1) : type->info;
+}
+
+static bool smith_check_arithmetic_signed(const SmithCheckArithmeticType *type) {
+    return type->kind == 0 && (type->info & 1U) != 0;
+}
+
+// The type's name as the compiler spells it, without its quotes ('int' is int).
+static const char *smith_check_arithmetic_type_name(const SmithCheckArithmeticType *type, char *buffer, size_t size) {
+    size_t length = strlen(type->name);
+    if (length >= 2 && type->name[0] == '\'' && type->name[length - 1] == '\'') {
+        length -= 2;
+        snprintf(buffer, size, "%.*s", (int)length, type->name + 1);
+    } else {
+        snprintf(buffer, size, "%s", type->name);
+    }
+    return buffer;
+}
+
+// The operand as text: an integer in decimal (the width of 128 bits in hex), a float with %g.
+static void smith_check_arithmetic_text(const SmithCheckArithmeticType *type, SmithCheckArithmeticValue value,
+                                        char *text, size_t size) {
+    unsigned bits = smith_check_arithmetic_bits(type);
+    if (type->kind == 0 && bits <= 64) {
+        unsigned shift = 64 - bits;
+        if (smith_check_arithmetic_signed(type))
+            snprintf(text, size, "%lld", (long long)((int64_t)((uint64_t)value << shift) >> shift));
+        else
+            snprintf(text, size, "%llu", (unsigned long long)((uint64_t)value << shift >> shift));
+    } else if (type->kind == 0) {
+        const uint64_t *words = (const uint64_t *)value;
+        snprintf(text, size, "0x%016llx%016llx", (unsigned long long)words[1], (unsigned long long)words[0]);
+    } else if (type->kind == 1 && bits == 64) {
+        double number;
+        memcpy(&number, &value, sizeof number);
+        snprintf(text, size, "%g", number);
+    } else if (type->kind == 1 && bits == 32) {
+        float number;
+        uint32_t pattern = (uint32_t)value;
+        memcpy(&number, &pattern, sizeof number);
+        snprintf(text, size, "%g", (double)number);
+    } else if (type->kind == 1 && bits == 16) {
+        _Float16 number;
+        uint16_t pattern = (uint16_t)value;
+        memcpy(&number, &pattern, sizeof number);
+        snprintf(text, size, "%g", (double)number);
+    } else if (type->kind == 1 && bits > 64 && bits == sizeof(long double) * 8U) {
+        snprintf(text, size, "%Lg", *(const long double *)value);
+    } else {
+        snprintf(text, size, "?");
+    }
+}
+
+static bool smith_check_arithmetic_negative(const SmithCheckArithmeticType *type, SmithCheckArithmeticValue value) {
+    unsigned bits = smith_check_arithmetic_bits(type);
+    if (!smith_check_arithmetic_signed(type)) return false;
+    if (bits > 64) return ((const int64_t *)value)[1] < 0;
+    return (int64_t)((uint64_t)value << (64 - bits)) < 0;
+}
+
+[[noreturn]] static void smith_check_arithmetic_fail(const SmithCheckArithmeticLocation *location, const char *format,
+                                                     ...) {
+    char what[160];
+    va_list arguments;
+    va_start(arguments, format);
+    vsnprintf(what, sizeof what, format, arguments);
+    va_end(arguments);
+    smith_failure_format(SmithFailure_Check, "%s at %s:%u:%u", what, location->file != nullptr ? location->file : "?",
+                         location->line, location->column);
+}
+
+[[noreturn]] static void smith_check_arithmetic_binary(const SmithCheckArithmeticData *data, const char *operation,
+                                                       SmithCheckArithmeticValue left,
+                                                       SmithCheckArithmeticValue right) {
+    char type[smith_check_arithmetic_text_max], a[smith_check_arithmetic_text_max], b[smith_check_arithmetic_text_max];
+    smith_check_arithmetic_type_name(data->type, type, sizeof type);
+    smith_check_arithmetic_text(data->type, left, a, sizeof a);
+    smith_check_arithmetic_text(data->type, right, b, sizeof b);
+    smith_check_arithmetic_fail(&data->location, "%s overflow of %s: %s %s %s does not fit %s",
+                                smith_check_arithmetic_signed(data->type) ? "signed" : "unsigned", operation, a,
+                                operation, b, type);
+}
+
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_add_overflow(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue left,
+                                 SmithCheckArithmeticValue right) {
+    smith_check_arithmetic_binary(data, "+", left, right);
+}
+
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_sub_overflow(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue left,
+                                 SmithCheckArithmeticValue right) {
+    smith_check_arithmetic_binary(data, "-", left, right);
+}
+
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_mul_overflow(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue left,
+                                 SmithCheckArithmeticValue right) {
+    smith_check_arithmetic_binary(data, "*", left, right);
+}
+
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_negate_overflow(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue operand) {
+    char type[smith_check_arithmetic_text_max], a[smith_check_arithmetic_text_max];
+    smith_check_arithmetic_type_name(data->type, type, sizeof type);
+    smith_check_arithmetic_text(data->type, operand, a, sizeof a);
+    smith_check_arithmetic_fail(&data->location, "signed overflow of unary -: -(%s) does not fit %s", a, type);
+}
+
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_divrem_overflow(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue left,
+                                    SmithCheckArithmeticValue right) {
+    char type[smith_check_arithmetic_text_max], a[smith_check_arithmetic_text_max], b[smith_check_arithmetic_text_max];
+    smith_check_arithmetic_type_name(data->type, type, sizeof type);
+    smith_check_arithmetic_text(data->type, left, a, sizeof a);
+    smith_check_arithmetic_text(data->type, right, b, sizeof b);
+    if (data->type->kind == 0 && strcmp(b, "0") == 0)
+        smith_check_arithmetic_fail(&data->location, "division by zero: %s / 0 of %s", a, type);
+    smith_check_arithmetic_fail(&data->location, "signed overflow of division: %s / %s does not fit %s", a, b, type);
+}
+
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_shift_out_of_bounds(const SmithCheckArithmeticShiftData *data, SmithCheckArithmeticValue left,
+                                        SmithCheckArithmeticValue right) {
+    char type[smith_check_arithmetic_text_max], a[smith_check_arithmetic_text_max], b[smith_check_arithmetic_text_max];
+    smith_check_arithmetic_type_name(data->left, type, sizeof type);
+    smith_check_arithmetic_text(data->left, left, a, sizeof a);
+    smith_check_arithmetic_text(data->right, right, b, sizeof b);
+    if (smith_check_arithmetic_negative(data->right, right))
+        smith_check_arithmetic_fail(&data->location, "shift by %s of %s: a negative amount (%s shifted)", b, type, a);
+    if (smith_check_arithmetic_bits(data->right) <= 64 && (uint64_t)right >= smith_check_arithmetic_bits(data->left))
+        smith_check_arithmetic_fail(&data->location, "shift by %s of %s: the width is %u (%s shifted)", b, type,
+                                    smith_check_arithmetic_bits(data->left), a);
+    if (smith_check_arithmetic_negative(data->left, left))
+        smith_check_arithmetic_fail(&data->location, "left shift of negative %s by %s of %s", a, b, type);
+    smith_check_arithmetic_fail(&data->location, "left shift of %s by %s overflows %s", a, b, type);
+}
+
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_float_cast_overflow(const SmithCheckArithmeticShiftData *data, SmithCheckArithmeticValue from) {
+    char from_type[smith_check_arithmetic_text_max], to_type[smith_check_arithmetic_text_max],
+        a[smith_check_arithmetic_text_max];
+    smith_check_arithmetic_type_name(data->left, from_type, sizeof from_type);
+    smith_check_arithmetic_type_name(data->right, to_type, sizeof to_type);
+    smith_check_arithmetic_text(data->left, from, a, sizeof a);
+    smith_check_arithmetic_fail(&data->location, "float %s (%s) out of %s range", a, from_type, to_type);
+}
+
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_add_overflow_abort(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue left,
+                                       SmithCheckArithmeticValue right) {
+    __ubsan_handle_add_overflow(data, left, right);
+}
+
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_sub_overflow_abort(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue left,
+                                       SmithCheckArithmeticValue right) {
+    __ubsan_handle_sub_overflow(data, left, right);
+}
+
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_mul_overflow_abort(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue left,
+                                       SmithCheckArithmeticValue right) {
+    __ubsan_handle_mul_overflow(data, left, right);
+}
+
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_negate_overflow_abort(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue operand) {
+    __ubsan_handle_negate_overflow(data, operand);
+}
+
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_divrem_overflow_abort(const SmithCheckArithmeticData *data, SmithCheckArithmeticValue left,
+                                          SmithCheckArithmeticValue right) {
+    __ubsan_handle_divrem_overflow(data, left, right);
+}
+
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_shift_out_of_bounds_abort(const SmithCheckArithmeticShiftData *data, SmithCheckArithmeticValue left,
+                                              SmithCheckArithmeticValue right) {
+    __ubsan_handle_shift_out_of_bounds(data, left, right);
+}
+
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
+void __ubsan_handle_float_cast_overflow_abort(const SmithCheckArithmeticShiftData *data,
+                                              SmithCheckArithmeticValue from) {
+    __ubsan_handle_float_cast_overflow(data, from);
+}
