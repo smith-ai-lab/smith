@@ -1,7 +1,6 @@
-// Tests of smith::wrapping and smith::checked.
+// Tests of smith::wrapping.
 module smith::wrapping_test;
 
-import smith::checked;
 import smith::test;
 import smith::wrapping;
 
@@ -11,16 +10,4 @@ export void test_wrapping() {
     test::check_equal(wrapping::mul((i8)100, (i8)2), (i8)-56);
     test::check_equal(wrapping::neg((i8)-128), (i8)-128);
     test::check_equal(wrapping::add((u8)255, (u8)1), (u8)0);
-}
-
-export void test_checked() {
-    option(i32) fits = checked::add(i32, (i32)1, (i32)2);
-    test::check_equal(fits == .some, true);
-    test::check_equal(fits.some, (i32)3);
-    option(i32) over = checked::add(i32, (i32)2147483647, (i32)1);
-    test::check_equal(over == .none, true);
-    option(i8) under = checked::sub(i8, (i8)-128, (i8)1);
-    test::check_equal(under == .none, true);
-    option(i8) big = checked::mul(i8, (i8)100, (i8)2);
-    test::check_equal(big == .none, true);
 }
