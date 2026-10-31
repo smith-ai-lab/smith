@@ -59,7 +59,23 @@ typedef struct {
 } SmithCimportRequest;
 }
 
+// lib/handlers.c, linked into smith and into every runner: `new` and `malloc` reach the allocator in force. nullptr is
+// plain malloc.
+struct SmithAllocator;
+extern "C" SmithAllocator *smith_handlers_set_allocator(SmithAllocator *allocator);
+
 namespace {
+
+// Clang and LLVM keep state for the life of the process (the real file system, registries) that the first call
+// allocates. A test or a caller puts an arena in force, and that state would then die with the arena, so the read runs
+// on plain malloc, and puts back the allocator it found. What the caller gets is only the words written into its
+// buffer.
+struct PlainAllocator {
+    SmithAllocator *before = smith_handlers_set_allocator(nullptr);
+    ~PlainAllocator() {
+        smith_handlers_set_allocator(before);
+    }
+};
 
 enum Kind : uint32_t {
     Void,
@@ -365,6 +381,7 @@ class Capture : public clang::DiagnosticConsumer {
 // Reads the header. Returns the words the result needs; when `capacity` is smaller nothing is written and the caller
 // calls again with a buffer that big.
 extern "C" size_t smith_cimport_read(const SmithCimportRequest *request, uint32_t *words, size_t capacity) {
+    PlainAllocator plain;
     std::string header = request->name;
     std::vector<std::string> flags = lines(request->flags);
     std::string code = std::string("#include ") + (request->quoted != 0 ? "\"" : "<") + header +
