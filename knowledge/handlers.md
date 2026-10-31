@@ -92,7 +92,7 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
 - **Allocation in .smith (step C2, owner 2026-10-25):** `smith::mem` (`lib/smith/mem.smith`) is the smith face of the
   allocator handler: `mem::set_allocator` returns the previous one (`defer` puts it back), `mem::alloc(T)` and
   `mem::alloc_slice(T, n)` go through whatever `malloc` reaches and never return null, `mem::try_alloc` and `mem::try_alloc_slice` return an
-  `option` for code that refuses, and the `malloc` itself keeps C's nullable contract. A refusal is a checked failure that
+  `option`, `mem::realloc(xs, n)` and `mem::try_realloc(xs, n)` resize a slice through libc's `realloc` (so the handlers see it) for code that refuses, and the `malloc` itself keeps C's nullable contract. A refusal is a checked failure that
   names the size, for the cases "if you can handle it locally it is a result or an option, otherwise you let it crash":
   allocation is the second kind.
 - **Arenas grow or are fixed.** `arena::growing(first, backing)` takes a chunk twice the current block (or what the push

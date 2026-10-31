@@ -28,7 +28,7 @@ export void test_mem_check_names_the_replacement_of_each_raw_call_in_a_module() 
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::Run run = lint(&p, "run sample.smith >out.txt; grep -c 'is unchecked, since' out.txt; cat out.txt");
-    scratch::expect_contains("ten calls are findings", run.out, "10\n");
+    scratch::expect_contains("eleven calls are findings", run.out, "11\n");
     scratch::expect_contains("memset", run.out, "`memset` is unchecked");
     scratch::expect_contains("memset", run.out, "`mem::zero(xs)` or `mem::zero(&x)`");
     scratch::expect_contains("memcpy", run.out, "use `mem::copy(dst, src)`");
@@ -40,6 +40,8 @@ export void test_mem_check_names_the_replacement_of_each_raw_call_in_a_module() 
     scratch::expect_contains("malloc", run.out, "`mem::alloc(T)` for one value, `mem::alloc_slice(T, n)` for n");
     scratch::expect_contains("calloc", run.out, "`calloc` is unchecked");
     scratch::expect_contains("aligned_alloc", run.out, "`aligned_alloc` is unchecked");
+    scratch::expect_contains("realloc", run.out, "`realloc` is unchecked");
+    scratch::expect_contains("realloc", run.out, "`mem::realloc(xs, n)` on a slice");
     scratch::expect_contains("free", run.out, "`free` is unchecked");
     scratch::expect_contains("free", run.out, "use `mem::free(p)`");
     scratch::expect_lacks("mem::free", run.out, "sample.smith:33");
@@ -55,7 +57,7 @@ export void test_mem_check_skips_a_trusted_function_a_c_file_and_a_file_with_no_
     defer mem::set_allocator(outside);
     scratch::Run run = lint(
         &p, "run sample.smith plain.c nomodule.smith >out.txt; grep -c 'is unchecked, since' out.txt; cat out.txt");
-    scratch::expect_contains("still ten findings", run.out, "10\n");
+    scratch::expect_contains("still eleven findings", run.out, "11\n");
     scratch::expect_lacks("the trusted wrapper", run.out, "sample.smith:25");
     scratch::expect_lacks("the C file", run.out, "plain.c:");
     scratch::expect_lacks("the file with no module", run.out, "nomodule.smith:");
