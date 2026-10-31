@@ -27,4 +27,4 @@ code, so nothing is written). smith infers an idiom where it can read the code a
 - **Not yet**: no inference, no table entries (`shim/effects_table.h` still lists `strdup` as `alloc` only), no check
   at a call site, no use by linear types (#438) or regions (#439). An unannotated function means what it did.
 
-Skill: smith-lang-effects. Effects the same way: [effects-check](effects-check.md).
+Skill: smith-lang-effects. Effects the same way: [effect-inference](effect-inference.md).

@@ -114,11 +114,6 @@ given (`tests/lint_smith_test.smith`).
   float, a pointer and a C object with external linkage are not), and `smith-c23` reads tokens (`NULL`, `_Bool`,
   `_Noreturn`, `<stdbool.h>`, `__attribute__((noreturn))`...) in every user file and the AST for `{0}`. The C checks
   skip C++. `tests/lint_smith_test.smith` has a passing and a failing file for each.
-- **`smith-effects`** (`shim/effects.h`, registered in the same module) is a check of smith's own: a raw call into a
-  system header is reported at the `c::` where the source wrote it, with the callee as written (`c::fopen`), a main-only
-  constructor is named as the module writes it, and the rules about capabilities (a type marked
-  `[[clang::annotate("smith::capability")]]`; the module that defines it may make raw calls) read the module's file as
-  its implementation. The skill smith-effects has the rules and how to fix each finding.
 
 ## Decisions
 

@@ -1,2 +1,0 @@
-lib/cap.c:16:6: error: `cap_leak` is exported by a capability's implementation and reaches `fputs`, but takes and returns no capability, so any caller could touch the world: take a capability, such as the `SmithConsole *` it needs, or make it static
-lib/cap.c:19:6: error: `cap_leak_deep` is exported by a capability's implementation and reaches `fputs`, but takes and returns no capability, so any caller could touch the world: take a capability, such as the `SmithConsole *` it needs, or make it static

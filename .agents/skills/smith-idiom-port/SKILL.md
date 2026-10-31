@@ -19,7 +19,7 @@ What changed, by rule:
 
 ## Porting checklist
 
-Port one file per commit. Run the counts before and after; every line but the last two should reach 0 for a module you ported, and `c:: names` and `raw calls` tell you what is left for the capabilities.
+Port one file per commit. Run the counts before and after; every line but the last two should reach 0 for a module you ported, and `c:: names` tells you what is left for the direct modules.
 
 ```sh
 files=$(git ls-files '*.smith')
@@ -37,8 +37,7 @@ Set `files` to one path to count one file. The counts are lines, comments includ
 
 - **Standard C types, `#include`, `#define`, `sizeof`/`alignof`: 0.** A `sizeof` that stays measures something that is not a type argument (`sizeof memory` of an array).
 - **`#if`: only the questions the compiler answers,** each with a comment saying which.
-- **`c::` names** are the calls into C; each should be a library's job (a capability, or `<math.h>` and `<string.h>`, which are pure). `c::` calls into the world outside the program are the next count.
-- **Raw calls: 0 outside a capability's module.** `smith lint` reports them; the count is the quick check.
+- **`c::` names** are the calls into C; each should be a library's job (a direct module, or `<math.h>` and `<string.h>`, which are pure). `c::` calls into the world outside the program are the next count.
 - Then: `smith build`, `smith test` and `smith check` as before the port, and `smith fmt` (`.smith` is formatted as C with `::`).
 - Do not claim a module is idiomatic until the counts are in your report.
 

@@ -359,10 +359,6 @@ export void test_skill_smith_env() {
     skill_case("smith-env");
 }
 
-export void test_skill_smith_effects() {
-    skill_case("smith-effects");
-}
-
 export void test_skill_smith_files() {
     skill_case("smith-files");
 }
