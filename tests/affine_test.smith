@@ -58,7 +58,7 @@ static void affine_editor(const char *file, const char *message) {
 
 export void test_every_file_has_a_test() {
     const char *untested =
-        scratch::untested_names_free("tests/affine", "tests/affine_test.smith", "affine_case(", ".c", ".smith");
+        scratch::untested_names("tests/affine", "tests/affine_test.smith", "affine_case(", ".c", ".smith");
     defer scratch::release(untested);
     scratch::expect_text("files of tests/affine with no test", "", untested);
 }

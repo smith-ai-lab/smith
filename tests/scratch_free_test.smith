@@ -28,9 +28,9 @@ export void test_scratch_free_in_an_arena_capture_lines_sleep_and_copy_tree_need
     test::check_condition(scratch::exists(&p, "copy/expected/matches.txt"));
     scratch::copy_tree(&p, "tests/build_fixtures/golden/main.smith", "single/main.smith");
     test::check_condition(scratch::exists(&p, "single/main.smith"));
-    const char *missing = scratch::untested_names_free("tests/build_fixtures/golden/expected",
-                                                       "tests/golden_test.smith", "no_such_call(", ".txt", nullptr);
-    scratch::expect_contains("untested_names_free lists every name nothing calls", missing, "matches.txt");
+    const char *missing = scratch::untested_names("tests/build_fixtures/golden/expected", "tests/golden_test.smith",
+                                                  "no_such_call(", ".txt", nullptr);
+    scratch::expect_contains("untested_names lists every name nothing calls", missing, "matches.txt");
 }
 
 export void test_scratch_free_golden_free_passes_a_matching_file() {

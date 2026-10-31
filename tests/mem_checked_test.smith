@@ -16,7 +16,7 @@ static void build_checked(const scratch::Project *p) {
 }
 
 export void test_mem_checked_a_leaking_test_fails_naming_its_allocation_site() {
-    scratch::Project p = runner::project_free("runner_base", "runner_checked");
+    scratch::Project p = runner::project("runner_base", "runner_checked");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -36,7 +36,7 @@ export void test_mem_checked_a_leaking_test_fails_naming_its_allocation_site() {
 }
 
 export void test_mem_checked_a_test_that_frees_what_it_allocates_passes() {
-    scratch::Project p = runner::project_free("runner_base", "runner_checked");
+    scratch::Project p = runner::project("runner_base", "runner_checked");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -52,7 +52,7 @@ export void test_mem_checked_a_test_that_frees_what_it_allocates_passes() {
 // Tests with no io (issue #815): the runner accepts them, and a malloc of a C library the test calls is the checked
 // allocator's like mem::alloc.
 export void test_mem_checked_a_test_with_no_io_that_leaks_through_c_malloc_fails_naming_the_site() {
-    scratch::Project p = runner::project_free("runner_base", "runner_checked");
+    scratch::Project p = runner::project("runner_base", "runner_checked");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -72,7 +72,7 @@ export void test_mem_checked_a_test_with_no_io_that_leaks_through_c_malloc_fails
 }
 
 export void test_mem_checked_a_test_that_prints_does_not_fail_for_the_c_librarys_own_blocks() {
-    scratch::Project p = runner::project_free("runner_base", "runner_checked");
+    scratch::Project p = runner::project("runner_base", "runner_checked");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -87,7 +87,7 @@ export void test_mem_checked_a_test_that_prints_does_not_fail_for_the_c_librarys
 // What a process returns to a test belongs to the test (issue #815): the test that frees it passes, the one that keeps
 // it fails with `memory leaked`.
 export void test_mem_checked_what_a_process_returns_is_the_tests_to_free() {
-    scratch::Project p = runner::project_free("runner_base", "runner_checked");
+    scratch::Project p = runner::project("runner_base", "runner_checked");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -103,7 +103,7 @@ export void test_mem_checked_what_a_process_returns_is_the_tests_to_free() {
 }
 
 export void test_mem_checked_a_double_free_is_reported_with_both_sites() {
-    scratch::Project p = runner::project_free("runner_base", "runner_checked");
+    scratch::Project p = runner::project("runner_base", "runner_checked");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -118,7 +118,7 @@ export void test_mem_checked_a_double_free_is_reported_with_both_sites() {
 }
 
 export void test_mem_checked_a_free_of_a_foreign_block_is_reported() {
-    scratch::Project p = runner::project_free("runner_base", "runner_checked");
+    scratch::Project p = runner::project("runner_base", "runner_checked");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -131,7 +131,7 @@ export void test_mem_checked_a_free_of_a_foreign_block_is_reported() {
 }
 
 export void test_mem_checked_a_use_after_free_and_an_overflow_are_sanitizer_reports() {
-    scratch::Project p = runner::project_free("runner_base", "runner_checked");
+    scratch::Project p = runner::project("runner_base", "runner_checked");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);

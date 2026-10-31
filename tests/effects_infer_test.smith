@@ -64,9 +64,9 @@ export void test_every_file_has_a_test() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::expect_text("files of tests/effects with no test", "",
-                         scratch::untested_names_free("tests/effects", "tests/effects_infer_test.smith",
-                                                      "effects_case(", ".c", ".smith"));
+    scratch::expect_text(
+        "files of tests/effects with no test", "",
+        scratch::untested_names("tests/effects", "tests/effects_infer_test.smith", "effects_case(", ".c", ".smith"));
 }
 
 // The editor: clangd shows the same error, for C and for a module.
