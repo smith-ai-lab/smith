@@ -7286,42 +7286,6 @@ export typeof(x) framed(auto x) {
 export i32 plain(i32 x) {
     return unused(x);
 }
-==> generic-private-included-first/src/main.smith <==
-module main;
-
-import mid;
-import scale;
-import <stdio.h>;
-
-int main() {
-    scale::Key key = mid::make();
-    c::printf("%d %d\n", (int)key.bits, scale::twice(2));
-    return 0;
-}
-==> generic-private-included-first/src/mid.smith <==
-module mid;
-
-import scale;
-
-// Its header includes scale's plainly: an importer of both reads scale's section after that.
-export scale::Key make() {
-    return (scale::Key){7};
-}
-==> generic-private-included-first/src/scale.smith <==
-module scale;
-
-export struct Key {
-    u64 bits;
-};
-
-static u64 derive(u64 x) {
-    return x * 2;
-}
-
-// An exported generic that uses a private name: its instance needs the header's instance section.
-export typeof(x) twice(auto x) {
-    return (typeof(x))derive(1) + x;
-}
 ==> generic-private-names/src/main.smith <==
 module main;
 
@@ -8567,26 +8531,37 @@ i32 main() {
     c::printf("%u %.1f\n", chain::length("smith"), chain::root(16.0));
     return 0;
 }
-==> header-nolint-pair/src/pair.smith <==
-module pair;
+==> if-constexpr-file-scope-for-constexpr/src/main.smith <==
+module main;
 
-// The doubled value. The region below is closed after the function, and the header keeps both comments.
-// NOLINTBEGIN(smith-c23)
-export inline i32 twice(i32 value) {
-    return value * 2;
+import <stdio.h>;
+import target;
+
+// A generic with a `for constexpr` loop inside a file-scope `if constexpr` (issue #602): the loop's braces are not the
+// block's, so the block ends at its own last brace.
+if constexpr (target::os == target::macos || target::os != target::macos) {
+    export i32 sum_fields(constexpr type T, T *x) {
+        i32 sum = 0;
+        for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+            sum += 1;
+        }
+        return sum;
+    }
+
+    struct Pair {
+        i32 a;
+        i32 b;
+    };
+
+    i32 after(Pair *p) {
+        return sum_fields(Pair, p);
+    }
 }
-// NOLINTEND(smith-c23)
 
-// A region the header has none of: nothing of it is exported.
-// NOLINTBEGIN(smith-c23)
-i32 hidden(i32 value) {
-    return value + 1;
-}
-// NOLINTEND(smith-c23)
-
-// The first value.
-export i32 first() {
-    return hidden(0);
+i32 main() {
+    Pair p = {1, 2};
+    c::printf("%d\n", after(&p));
+    return 0;
 }
 ==> if-constexpr/src/kind.smith <==
 module kind;

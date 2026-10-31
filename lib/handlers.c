@@ -882,6 +882,11 @@ typedef void (*SmithHandlersFunction)(void);
 [[gnu::weak]] extern void ___interceptor_freopen(void);
 [[gnu::weak]] extern void ___interceptor_getenv(void);
 [[gnu::weak]] extern void ___interceptor_clock_gettime(void);
+[[gnu::weak]] extern void ___interceptor___vfprintf_chk(void);
+[[gnu::weak]] extern void ___interceptor___vdprintf_chk(void);
+[[gnu::weak]] extern void ___interceptor___fgets_chk(void);
+[[gnu::weak]] extern void ___interceptor___fread_chk(void);
+[[gnu::weak]] extern void ___interceptor___read_chk(void);
 [[gnu::weak]] extern void ___interceptor_nanosleep(void);
 [[gnu::weak]] extern void ___interceptor_usleep(void);
 [[gnu::weak]] extern void ___interceptor_sleep(void);
@@ -929,6 +934,11 @@ static SmithHandlersNext smith_handlers_next_puts = {"puts", ___interceptor_puts
 static SmithHandlersNext smith_handlers_next_vfprintf = {"vfprintf", ___interceptor_vfprintf, nullptr};
 static SmithHandlersNext smith_handlers_next_vdprintf = {"vdprintf", ___interceptor_vdprintf, nullptr};
 static SmithHandlersNext smith_handlers_next_fflush = {"fflush", ___interceptor_fflush, nullptr};
+static SmithHandlersNext smith_handlers_next_vfprintf_chk = {"__vfprintf_chk", ___interceptor___vfprintf_chk, nullptr};
+static SmithHandlersNext smith_handlers_next_vdprintf_chk = {"__vdprintf_chk", ___interceptor___vdprintf_chk, nullptr};
+static SmithHandlersNext smith_handlers_next_fgets_chk = {"__fgets_chk", ___interceptor___fgets_chk, nullptr};
+static SmithHandlersNext smith_handlers_next_fread_chk = {"__fread_chk", ___interceptor___fread_chk, nullptr};
+static SmithHandlersNext smith_handlers_next_read_chk = {"__read_chk", ___interceptor___read_chk, nullptr};
 static SmithHandlersNext smith_handlers_next_fopen = {"fopen", ___interceptor_fopen, nullptr};
 static SmithHandlersNext smith_handlers_next_fclose = {"fclose", ___interceptor_fclose, nullptr};
 static SmithHandlersNext smith_handlers_next_vfscanf = {"vfscanf", ___interceptor_vfscanf, nullptr};
@@ -1204,6 +1214,70 @@ int puts(const char *text) {
     va_end(args);
     return written;
 }
+
+// ---- The fortified forms. A program built with _FORTIFY_SOURCE calls __printf_chk and its kind for the stdio
+// functions above; each does what its plain form does here, and with no handler set glibc's own _chk (ASan's when the
+// program has it), so the fortification's checks still run.
+
+// NOLINTBEGIN(bugprone-reserved-identifier,readability-identifier-naming): glibc's names
+int __vfprintf_chk(FILE *stream, int flag, const char *format, va_list args) {
+    return ((int (*)(FILE *, int, const char *, va_list))smith_handlers_find(&smith_handlers_next_vfprintf_chk))(
+        smith_handlers_map(stream), flag, format, args);
+}
+
+int __fprintf_chk(FILE *stream, int flag, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    int written = __vfprintf_chk(stream, flag, format, args);
+    va_end(args);
+    return written;
+}
+
+int __vprintf_chk(int flag, const char *format, va_list args) {
+    return __vfprintf_chk(stdout, flag, format, args);
+}
+
+int __printf_chk(int flag, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    int written = __vfprintf_chk(stdout, flag, format, args);
+    va_end(args);
+    return written;
+}
+
+int __vdprintf_chk(int fd, int flag, const char *format, va_list args) {
+    bool console = (fd == 1 || fd == 2) && smith_handlers_console_current() != nullptr;
+    if (console) return __vfprintf_chk(fd == 1 ? stdout : stderr, flag, format, args);
+    return ((int (*)(int, int, const char *, va_list))smith_handlers_find(&smith_handlers_next_vdprintf_chk))(
+        fd, flag, format, args);
+}
+
+int __dprintf_chk(int fd, int flag, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    int written = __vdprintf_chk(fd, flag, format, args);
+    va_end(args);
+    return written;
+}
+
+char *__fgets_chk(char *line, size_t length, int size, FILE *stream) {
+    return ((char *(*)(char *, size_t, int, FILE *))smith_handlers_find(&smith_handlers_next_fgets_chk))(
+        line, length, size, smith_handlers_map(stream));
+}
+
+size_t __fread_chk(void *data, size_t length, size_t size, size_t count, FILE *stream) {
+    return ((size_t (*)(void *, size_t, size_t, size_t, FILE *))smith_handlers_find(&smith_handlers_next_fread_chk))(
+        data, length, size, count, smith_handlers_map(stream));
+}
+
+// A read that overruns its buffer is glibc's to report; every other one is read.
+ssize_t __read_chk(int fd, void *buffer, size_t size, size_t length) {
+    if (size > length)
+        return ((ssize_t (*)(int, void *, size_t, size_t))smith_handlers_find(&smith_handlers_next_read_chk))(
+            fd, buffer, size, length);
+    return read(fd, buffer, size);
+}
+// NOLINTEND(bugprone-reserved-identifier,readability-identifier-naming)
 
 int fflush(FILE *stream) {
     return ((int (*)(FILE *))smith_handlers_find(&smith_handlers_next_fflush))(
