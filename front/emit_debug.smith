@@ -1,0 +1,38 @@
+// front::emit_debug: debug info for the emitter (B5, #1112). Stubs with their final signatures: B1's code calls them at
+// these points whether or not `options.debug_info` is set, so they do nothing and succeed until B5 fills them (and
+// then do nothing when `e->debug_builder` is null). Debug info that is absent is never an error.
+module front::emit_debug;
+
+import front::ast;
+import front::emit_state as state;
+import <llvm-c/Core.h>;
+
+// After the module is created and its target set, before any function is declared.
+export state::Status begin_module(state::Emitter *_) {
+    return state::success();
+}
+
+// At the start of a function's body: `e->function` is the LLVM function, `d` its declaration.
+export state::Status begin_function(state::Emitter *_, const ast::Decl *_) {
+    return state::success();
+}
+
+// Before a statement is emitted: set the builder's current location.
+export state::Status stmt_location(state::Emitter *_, const ast::Stmt *_) {
+    return state::success();
+}
+
+// Before an expression is evaluated.
+export state::Status expr_location(state::Emitter *_, const ast::Expr *_) {
+    return state::success();
+}
+
+// A parameter or local was given its slot: `address` is the alloca.
+export state::Status declare_local(state::Emitter *_, Str _, state::Ty _, c::LLVMValueRef _, ast::Span _) {
+    return state::success();
+}
+
+// After the last function, before verification.
+export state::Status finish(state::Emitter *_) {
+    return state::success();
+}

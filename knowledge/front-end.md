@@ -29,6 +29,15 @@ The syntax tree. Plain data: every type is exported with all its fields. `TypeEx
 
 **A limit for importers.** In a module that imports `front::ast`, a `case .name:` label on an ast payload enum makes the compiler read ast's body files ([body-files](body-files.md)), and that fails today (a private `typedef ExprRef ExprRefList[:]` loses its `;`, and a `mem` body says `smith_mem_allocator_name` is undeclared). Importers dispatch with `if (x->kind == .k)`. smith-enum narrowing is also lost once the node pointer is passed to a call, so read the payload fields into locals first.
 
+## front::emit (`front/emit*.smith`, #1119)
+
+Turns a `front::ast` module into an LLVM module through LLVM's C API: `emit::module(context, &m, options)` returns the verified module or an `Error` with a span. Today it emits one function with integer arithmetic (literals, names, locals, `+ - * / %`, shifts, comparisons, assignment); signed `+ - *` and negation use `llvm.*.with.overflow`, division and remainder check zero and `MIN / -1`, a shift checks its width, all branching to one `trap` block per function; unsigned wraps. `Target` and `Options` pick the triple and the layout; symbols are the module path joined with `::`, exported is external, the rest internal. The tests run the result in LLJIT (`emit_jit.smith`) and compare golden IR (`tests/front/emit/`).
+
+- **Files and owners**: `emit.smith` (passes and the walk), `emit_state.smith` (shared types, `Emitter`, stacks, helpers; a file of its own to break the import cycle), `emit_arith.smith` (this ticket's expressions), `emit_control.smith`, `emit_call.smith`, `emit_memory.smith`, `emit_debug.smith` (stubs that return `not_emitted`, one file per later ticket, no two tickets share a file), `emit_jit.smith` (test helper).
+- **The protocol** is the top comment of `front/emit.smith`; its rules in a line each: no recursion, so a work stack and a value stack; a handler pops operands and pushes one value; a node that needs a child first pushes a `then` continuation; pass 1 declares, pass 2 emits bodies; allocas go in the entry block.
+- **Handlers** dispatch with `if` chains, never `case .name:` ([#1153](body-files.md)); read payload fields into locals before any call.
+- **No arena around LLVM**: LLVM allocates with `malloc`, which smith routes to the allocator in force, so a test must not hold an arena while it emits or runs the JIT.
+
 ## front::lex and front::parse (`front/lex.smith`, `front/parse.smith`, #1128)
 
 **The tokenizer** reads the text of a file and gives all its tokens at once, ending with an `end_of_file` token. A `Token` is a `kind` and a `span`; its text is `source[span.start:span.end]` (`lex::text`), never a copy. `lex::tokenize(source)` is a `Lexed` (`Result(Tokens, LexError)`), the first error stopping it; `lex::dump(tokens, source)` writes one token a line, `line:column kind text`, which the goldens in `tests/front/lex/` hold.

@@ -1,0 +1,379 @@
+// front::emit_arith: the expressions of B1 (#1119) and the module's arithmetic rule (knowledge/wrapping-arithmetic.md).
+// Integer literals, names, unary `- + ~`, binary `+ - * / % << >> & ^ |` and assignment, plain and compound.
+//
+// The rule: signed `+ - *`, negate, `/ %` (by zero, `MIN / -1`) and shifts (by a negative amount or by the width or
+// more) are checks in every build; unsigned arithmetic wraps. A failed check branches to the function's one `trap`
+// block (`llvm.trap`, `unreachable`); the failure handler comes later. Types have no checker yet: a literal takes the
+// hint's type (the other operand's, the variable's, the function's result), both operands of a binary have one type.
+module front::emit_arith;
+
+import front::ast;
+import front::emit_state as state;
+import std::format;
+import std::mem;
+import <llvm-c/Core.h>;
+
+// ---------------------------------------------------------------------------------------------------------------
+// Checks
+
+// The function's one block that traps, made the first time a check needs it.
+static c::LLVMBasicBlockRef trap_block(state::Emitter *e) {
+    if (e->trap_block != nullptr) return e->trap_block;
+    c::LLVMBasicBlockRef here = c::LLVMGetInsertBlock(e->builder);
+    c::LLVMBasicBlockRef block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "trap");
+    c::LLVMPositionBuilderAtEnd(e->builder, block);
+    U32 id = c::LLVMLookupIntrinsicID("llvm.trap", 9);
+    c::LLVMValueRef declaration = c::LLVMGetIntrinsicDeclaration(e->module, id, nullptr, 0);
+    c::LLVMTypeRef type = c::LLVMIntrinsicGetType(e->context, id, nullptr, 0);
+    c::LLVMBuildCall2(e->builder, type, declaration, nullptr, 0, "");
+    c::LLVMBuildUnreachable(e->builder);
+    c::LLVMPositionBuilderAtEnd(e->builder, here);
+    e->trap_block = block;
+    return block;
+}
+
+// Branch to the trap block when `bad` is true; the code goes on in a new block.
+export void trap_if(state::Emitter *e, c::LLVMValueRef bad) {
+    c::LLVMBasicBlockRef trap = trap_block(e);
+    c::LLVMBasicBlockRef next = c::LLVMAppendBasicBlockInContext(e->context, e->function, "ok");
+    c::LLVMBuildCondBr(e->builder, bad, trap, next);
+    c::LLVMPositionBuilderAtEnd(e->builder, next);
+}
+
+// Leave the function by the trap block: the end of a function with a result, reached without a `return`.
+export void trap_here(state::Emitter *e) {
+    c::LLVMBuildBr(e->builder, trap_block(e));
+}
+
+// `a op b` through one of the `with.overflow` intrinsics; traps on overflow.
+static c::LLVMValueRef overflow_op(state::Emitter *e, Str intrinsic, state::Ty ty, c::LLVMValueRef a,
+                                   c::LLVMValueRef b) {
+    U32 id = c::LLVMLookupIntrinsicID(intrinsic.data, countof(intrinsic));
+    c::LLVMTypeRef types[1] = {ty.llvm};
+    c::LLVMValueRef declaration = c::LLVMGetIntrinsicDeclaration(e->module, id, types, 1);
+    c::LLVMTypeRef type = c::LLVMIntrinsicGetType(e->context, id, types, 1);
+    c::LLVMValueRef args[2] = {a, b};
+    c::LLVMValueRef pair = c::LLVMBuildCall2(e->builder, type, declaration, args, 2, "");
+    trap_if(e, c::LLVMBuildExtractValue(e->builder, pair, 1, "overflow"));
+    return c::LLVMBuildExtractValue(e->builder, pair, 0, "");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Binary arithmetic
+
+static ast::BinaryOp binary_of(ast::AssignOp op) {
+    switch (op) {
+    case .plain:
+    case .add:
+        return .add;
+    case .subtract:
+        return .subtract;
+    case .multiply:
+        return .multiply;
+    case .divide:
+        return .divide;
+    case .remainder:
+        return .remainder;
+    case .shift_left:
+        return .shift_left;
+    case .shift_right:
+        return .shift_right;
+    case .bit_and:
+        return .bit_and;
+    case .bit_xor:
+        return .bit_xor;
+    case .bit_or:
+        return .bit_or;
+    }
+}
+
+static c::LLVMValueRef zero_of(state::Ty ty) {
+    return c::LLVMConstInt(ty.llvm, 0, 0);
+}
+
+// `a / b` and `a % b`: a divisor of zero traps, and so does `MIN / -1` for a signed type.
+static c::LLVMValueRef divide(state::Emitter *e, Bool remainder, state::Value a, state::Value b) {
+    state::Ty ty = a.ty;
+    c::LLVMValueRef bad = c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, b.llvm, zero_of(ty), "zero");
+    if (ty.is_signed) {
+        U64 least = 1ULL << (ty.bits - 1);
+        c::LLVMValueRef is_least =
+            c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, a.llvm, c::LLVMConstInt(ty.llvm, least, 0), "");
+        c::LLVMValueRef is_minus_one =
+            c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, b.llvm, c::LLVMConstAllOnes(ty.llvm), "");
+        c::LLVMValueRef both = c::LLVMBuildAnd(e->builder, is_least, is_minus_one, "");
+        bad = c::LLVMBuildOr(e->builder, bad, both, "");
+    }
+    trap_if(e, bad);
+    if (ty.is_signed) {
+        if (remainder) return c::LLVMBuildSRem(e->builder, a.llvm, b.llvm, "");
+        return c::LLVMBuildSDiv(e->builder, a.llvm, b.llvm, "");
+    }
+    if (remainder) return c::LLVMBuildURem(e->builder, a.llvm, b.llvm, "");
+    return c::LLVMBuildUDiv(e->builder, a.llvm, b.llvm, "");
+}
+
+// A shift traps when the amount, read as unsigned (a negative one is huge), is the width or more.
+static void check_shift(state::Emitter *e, state::Value a, state::Value amount) {
+    c::LLVMValueRef width = c::LLVMConstInt(a.ty.llvm, a.ty.bits, 0);
+    trap_if(e, c::LLVMBuildICmp(e->builder, c::LLVMIntUGE, amount.llvm, width, "wide"));
+}
+
+// `+`, `-` and `*`: wrapping for an unsigned type, an overflow check for a signed one.
+static c::LLVMValueRef add_values(state::Emitter *e, state::Value a, state::Value b) {
+    if (a.ty.is_signed) return overflow_op(e, "llvm.sadd.with.overflow", a.ty, a.llvm, b.llvm);
+    return c::LLVMBuildAdd(e->builder, a.llvm, b.llvm, "");
+}
+
+static c::LLVMValueRef subtract_values(state::Emitter *e, state::Value a, state::Value b) {
+    if (a.ty.is_signed) return overflow_op(e, "llvm.ssub.with.overflow", a.ty, a.llvm, b.llvm);
+    return c::LLVMBuildSub(e->builder, a.llvm, b.llvm, "");
+}
+
+static c::LLVMValueRef multiply_values(state::Emitter *e, state::Value a, state::Value b) {
+    if (a.ty.is_signed) return overflow_op(e, "llvm.smul.with.overflow", a.ty, a.llvm, b.llvm);
+    return c::LLVMBuildMul(e->builder, a.llvm, b.llvm, "");
+}
+
+static c::LLVMValueRef shift_left_values(state::Emitter *e, state::Value a, state::Value b) {
+    check_shift(e, a, b);
+    return c::LLVMBuildShl(e->builder, a.llvm, b.llvm, "");
+}
+
+// Arithmetic shift for a signed type, logical for an unsigned one.
+static c::LLVMValueRef shift_right_values(state::Emitter *e, state::Value a, state::Value b) {
+    check_shift(e, a, b);
+    if (a.ty.is_signed) return c::LLVMBuildAShr(e->builder, a.llvm, b.llvm, "");
+    return c::LLVMBuildLShr(e->builder, a.llvm, b.llvm, "");
+}
+
+// The value of `left op right` for the ten arithmetic operators, null for any other.
+static c::LLVMValueRef arithmetic(state::Emitter *e, ast::BinaryOp op, state::Value left, state::Value right) {
+    if (op == .add) return add_values(e, left, right);
+    if (op == .subtract) return subtract_values(e, left, right);
+    if (op == .multiply) return multiply_values(e, left, right);
+    if (op == .divide) return divide(e, false, left, right);
+    if (op == .remainder) return divide(e, true, left, right);
+    if (op == .shift_left) return shift_left_values(e, left, right);
+    if (op == .shift_right) return shift_right_values(e, left, right);
+    if (op == .bit_and) return c::LLVMBuildAnd(e->builder, left.llvm, right.llvm, "");
+    if (op == .bit_xor) return c::LLVMBuildXor(e->builder, left.llvm, right.llvm, "");
+    if (op == .bit_or) return c::LLVMBuildOr(e->builder, left.llvm, right.llvm, "");
+    return nullptr; // comparisons and `&&`, `||` are B2's
+}
+
+// `left op right` with the checks, pushed as a Value of their type. `span` is the node's, for the errors.
+export state::Status apply_binary(state::Emitter *e, ast::BinaryOp op, state::Value left, state::Value right,
+                                  ast::Span span) {
+    if (!state::same_type(left.ty, right.ty))
+        return state::failf(span, "operands of different types: ", left.ty.name, " and ", right.ty.name);
+    if (left.ty.kind != .integer) return state::failf(span, "arithmetic on ", left.ty.name);
+    c::LLVMValueRef out = arithmetic(e, op, left, right);
+    if (out == nullptr) return state::not_emitted("comparison or logical operator", span);
+    state::push_value(e, (state::Value){.llvm = out, .ty = left.ty});
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Literals and names
+
+// Does `value` fit the integer type?
+static Bool fits(state::Ty ty, U64 value) {
+    if (ty.bits == 64 && !ty.is_signed) return true;
+    U32 usable = ty.bits;
+    if (ty.is_signed) usable -= 1;
+    return value < (1ULL << usable);
+}
+
+export state::Status integer_literal(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    if (x->kind != .integer) {
+        return state::fail("not an integer literal", x->span);
+    }
+    if (countof(x->kind.integer.suffix) > 0) return state::not_emitted("integer literal with a suffix", x->span);
+    state::Ty ty = {};
+    if (hint.present)
+        ty = hint.ty;
+    else
+        state::scalar_type(e, "I32", &ty);
+    U64 value = x->kind.integer.value;
+    if (ty.kind != .integer) return state::failf(x->span, "an integer literal where a ", ty.name, " is expected");
+    if (!fits(ty, value)) return state::failf(x->span, "integer literal ", value, " does not fit ", ty.name);
+    state::push_value(e, (state::Value){.llvm = c::LLVMConstInt(ty.llvm, value, 0), .ty = ty});
+    return state::success();
+}
+
+// The local a single-segment name says.
+static state::Status lookup(state::Emitter *e, const ast::Expr *x, state::Local *found) {
+    if (x->kind != .name) {
+        return state::fail("not a name", x->span);
+    }
+    ast::Path path = x->kind.name.path;
+    if (countof(path.segments) != 1) return state::not_emitted("qualified name", x->span);
+    Str name = path.segments[0].text;
+    if (!state::find_local(e, name, found)) return state::failf(x->span, "unknown name ", name);
+    return state::success();
+}
+
+export state::Status name_ref(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    state::Local local = {};
+    try lookup(e, x, &local);
+    c::LLVMValueRef loaded = c::LLVMBuildLoad2(e->builder, local.ty.llvm, local.address, "");
+    state::push_value(e, (state::Value){.llvm = loaded, .ty = local.ty});
+    return state::success();
+}
+
+// A name as an address: the Value is the local's slot.
+export state::Status place_name(state::Emitter *e, const ast::Expr *x) {
+    state::Local local = {};
+    try lookup(e, x, &local);
+    state::push_value(e, (state::Value){.llvm = local.address, .ty = local.ty});
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Unary
+
+static state::Status unary_finish(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .unary) {
+        return state::fail("not a unary expression", w->span);
+    }
+    state::Value operand = state::pop_value(e);
+    ast::UnaryOp op = w->expr->kind.unary.op;
+    state::Ty ty = operand.ty;
+    if (ty.kind != .integer) {
+        return state::failf(w->span, "arithmetic on ", ty.name);
+    }
+    c::LLVMValueRef out = operand.llvm;
+    switch (op) {
+    case .negate:
+        if (ty.is_signed)
+            out = overflow_op(e, "llvm.ssub.with.overflow", ty, zero_of(ty), operand.llvm);
+        else
+            out = c::LLVMBuildNeg(e->builder, operand.llvm, "");
+        break;
+    case .bit_not:
+        out = c::LLVMBuildNot(e->builder, operand.llvm, "");
+        break;
+    case .plus:
+        break;
+    case .logical_not:
+    case .address_of:
+    case .dereference:
+    case .pre_increment:
+    case .pre_decrement:
+    case .post_increment:
+    case .post_decrement:
+        return state::not_emitted("unary operator", w->span);
+    }
+    state::push_value(e, (state::Value){.llvm = out, .ty = ty});
+    return state::success();
+}
+
+// `-`, `+` and `~`.
+export state::Status unary_op(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    if (x->kind != .unary) {
+        return state::fail("not a unary expression", x->span);
+    }
+    const ast::Expr *operand = x->kind.unary.operand;
+    if (x->kind.unary.op == .negate && operand->kind == .integer && hint.present && hint.ty.is_signed &&
+        hint.ty.kind == .integer && countof(operand->kind.integer.suffix) == 0) {
+        // `-128` for an I8: the literal alone does not fit, its negation does.
+        U64 value = operand->kind.integer.value;
+        if (value == (1ULL << (hint.ty.bits - 1))) {
+            c::LLVMValueRef least = c::LLVMConstInt(hint.ty.llvm, value, 0);
+            state::push_value(e, (state::Value){.llvm = least, .ty = hint.ty});
+            return state::success();
+        }
+    }
+    state::push_then(e, (state::Work){.then = unary_finish, .expr = x, .span = x->span});
+    state::push_eval(e, operand, hint);
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Binary
+
+// The type a name stands for, as the hint of a literal beside it.
+static state::Hint hint_from_name(state::Emitter *e, const ast::Expr *x) {
+    state::Local local = {};
+    if (x->kind == .name && countof(x->kind.name.path.segments) == 1 &&
+        state::find_local(e, x->kind.name.path.segments[0].text, &local))
+        return state::hint_of(local.ty);
+    return state::no_hint();
+}
+
+static state::Status binary_finish(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .binary) {
+        return state::fail("not a binary expression", w->span);
+    }
+    state::Value right = state::pop_value(e);
+    state::Value left = state::pop_value(e);
+    return apply_binary(e, w->expr->kind.binary.op, left, right, w->span);
+}
+
+// The left operand is on the stack: the right one is evaluated as its type.
+static state::Status binary_middle(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .binary) {
+        return state::fail("not a binary expression", w->span);
+    }
+    state::Value left = state::peek_value(e);
+    state::push_then(e, (state::Work){.then = binary_finish, .expr = w->expr, .span = w->span});
+    state::push_eval(e, w->expr->kind.binary.right, state::hint_of(left.ty));
+    return state::success();
+}
+
+// `+ - * / % << >> & ^ |`. The other kinds of binary are B2's.
+export state::Status binary_op(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    if (x->kind != .binary) {
+        return state::fail("not a binary expression", x->span);
+    }
+    state::Hint left_hint = hint;
+    if (!left_hint.present && x->kind.binary.left->kind == .integer)
+        left_hint = hint_from_name(e, x->kind.binary.right);
+    state::push_then(e, (state::Work){.then = binary_middle, .expr = x, .span = x->span});
+    state::push_eval(e, x->kind.binary.left, left_hint);
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Assignment
+
+static state::Status assign_finish(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .assign) {
+        return state::fail("not an assignment", w->span);
+    }
+    state::Value value = state::pop_value(e);
+    state::Value place = state::pop_value(e);
+    if (!state::same_type(place.ty, value.ty))
+        return state::failf(w->span, "assigning ", value.ty.name, " to ", place.ty.name);
+    ast::AssignOp op = w->expr->kind.assign.op;
+    if (op != .plain) {
+        c::LLVMValueRef current = c::LLVMBuildLoad2(e->builder, place.ty.llvm, place.llvm, "");
+        try apply_binary(e, binary_of(op), (state::Value){.llvm = current, .ty = place.ty}, value, w->span);
+        value = state::pop_value(e);
+    }
+    c::LLVMBuildStore(e->builder, value.llvm, place.llvm);
+    state::push_value(e, value);
+    return state::success();
+}
+
+// The target's address is on the stack: the value is evaluated as its type.
+static state::Status assign_middle(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .assign) {
+        return state::fail("not an assignment", w->span);
+    }
+    state::Value place = state::peek_value(e);
+    state::push_then(e, (state::Work){.then = assign_finish, .expr = w->expr, .span = w->span});
+    state::push_eval(e, w->expr->kind.assign.value, state::hint_of(place.ty));
+    return state::success();
+}
+
+// `target = value` and the compound forms; the result is the assigned value.
+export state::Status assign_op(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    if (x->kind != .assign) {
+        return state::fail("not an assignment", x->span);
+    }
+    state::push_then(e, (state::Work){.then = assign_middle, .expr = x, .span = x->span});
+    state::push_place(e, x->kind.assign.target);
+    return state::success();
+}
