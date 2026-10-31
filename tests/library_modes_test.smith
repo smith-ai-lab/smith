@@ -112,7 +112,7 @@ static void json_conformance(const scratch::Project *p) {
     if (suite[0] == '\0') return; // no network
     scratch::Run run =
         scratch::sh(p, joined("env SMITH_JSON_SUITE=", suite,
-                              " SMITH_JSON_LISTING=\"$PWD/listing\" ./build/tests --test json_conformance"));
+                              " SMITH_JSON_LISTING=\"$PWD/listing\" ./build/tests --test '*json_conformance*'"));
     scratch::expect_status("the conformance test runs", 0, &run);
     scratch::expect_text("suite: every y_ accepted, every n_ refused, every i_ as listed",
                          "y_: 95 of 95 accepted; n_: 188 of 188 refused; i_: 35 of 35 as listed",
@@ -130,7 +130,7 @@ export void test_library_modes_fast() {
     defer mem::set_allocator(outside);
     all_pass_in_mode(&p, "fast");
     scratch::expect_text("full: the sweep of the float patterns, sixteen times denser", "1 passed, 0 failed",
-                         summary(&p, "./build/tests --full --test f32_sweep"));
+                         summary(&p, "./build/tests --full --test '*f32_sweep*'"));
     json_conformance(&p);
 }
 
@@ -138,7 +138,7 @@ export void test_library_modes_fast() {
 // documents.
 static void fuzz(const scratch::Project *p, const char *name) {
     scratch::expect_text(joined("fuzz: ", name, " on 5000 keys under ASan and UBSan"), "1 passed, 0 failed",
-                         summary(p, joined("./build/tests --test ", name, " --seeds 5000")));
+                         summary(p, joined("./build/tests --test '*", name, "*' --seeds 5000")));
 }
 
 // More trials for the damage, under the sanitizers: the heavy runs by hand are in the units runner's notes.
@@ -147,7 +147,7 @@ static void damaged_inflate(const scratch::Project *p) {
     for (usize i = 0; i < 5; i++) {
         scratch::expect_text(
             joined("damaged input never misbehaves (--seed ", seeds[i], ")"), "1 passed, 0 failed",
-            summary(p, joined("./build/tests --seed ", seeds[i], " --test test_inflate_survives_corrupt_input")));
+            summary(p, joined("./build/tests --seed ", seeds[i], " --test '*inflate_survives_corrupt_input'")));
     }
 }
 

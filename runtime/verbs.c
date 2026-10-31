@@ -1127,7 +1127,49 @@ static SmithTestChangedArgs smith_test_changed_args(SmithVerbArgs *split) {
     return found;
 }
 
+// `--test` takes a test file's path as well as names (issue #1156): `tests/x_test.smith` (with or without `./`) becomes
+// what selects that file's tests, as `--changed` writes it (`module::`, else the names of its `test_` functions). The
+// runner itself reads names only. False, after the message, for a path that is no file or has no test.
+static bool smith_test_expand_item(const char *item, SmithChangedBuffer *out) {
+    size_t length = strlen(item);
+    bool path = (length > 6 && strcmp(item + length - 6, ".smith") == 0) ||
+                (length > 2 && strcmp(item + length - 2, ".c") == 0);
+    if (!path) {
+        smith_changed_filter_add(out, item);
+        return true;
+    }
+    while (item[0] == '.' && item[1] == '/')
+        item += 2; // bounded by the item
+    size_t before = out->used;
+    smith_changed_filter_file(item, out);
+    if (out->used == before) {
+        fprintf(stderr,
+                "smith test: %s: no such file, or it has no tests (--test takes a test file's path or a name)\n", item);
+        return false;
+    }
+    return true;
+}
+
+static bool smith_test_expand_paths(SmithVerbArgs *split) {
+    for (size_t i = 0; i + 1 < split->own_count; i++) { // bounded by smith_build_args_max
+        if (strcmp(split->own[i], "--test") != 0) continue;
+        const char *value = split->own[i + 1];
+        if (strstr(value, ".smith") == nullptr && strstr(value, ".c") == nullptr) continue;
+        SmithChangedBuffer expanded = {};
+        char item[PATH_MAX];
+        for (const char *at = value; *at != '\0';) { // bounded by the value
+            size_t span = strcspn(at, ",");
+            snprintf(item, sizeof item, "%.*s", (int)span, at);
+            if (span > 0 && !smith_test_expand_item(item, &expanded)) return false;
+            at += span + (at[span] == ',' ? 1 : 0);
+        }
+        split->own[i + 1] = (char *)smith_changed_buffer_text(&expanded);
+    }
+    return true;
+}
+
 static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
+    if (!smith_test_expand_paths(split)) return smith_exit_usage;
     SmithChangedBuffer selection = {};
     SmithTestChangedArgs given = smith_test_changed_args(split);
     const char *base = given.base;
