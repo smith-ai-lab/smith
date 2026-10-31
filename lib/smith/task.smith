@@ -17,13 +17,18 @@
 // (macOS, Linux) and x86-64 (Linux). Each task has its own handler table (a copy of its spawner's at spawn) and its own
 // errno, both swapped at every switch. Issue #241, #940; knowledge/task.md.
 //
-// What is not here yet, in the issue: the typed `spawn(&group, f, args...)` (it waits for the language, #316), and
-// waiting on sockets and pipes.
+// Under macOS a call on a socket or a pipe parks the task, not the thread: each worker has a kqueue and sleeps in it
+// when it has nothing to run (#941). A regular file is not parked yet, and Linux has no epoll backend yet.
+//
+// What is not here yet, in the issue: the typed `spawn(&group, f, args...)` (it waits for the language, #316).
 module smith::task;
 
 import smith::contract;
 import target;
 import <errno.h>;                           // errno's location
+import <fcntl.h>;                           // fcntl: the non-blocking flag
+import <sys/stat.h>;                        // fstat: sockets and pipes park, files do not
+import <sys/socket.h>;                      // getsockopt: how a connect ended
 import <pthread.h>;                         // the worker threads, their lock and wake-ups
 import <smith/handlers.h>;                  // SmithHandlers, smith_handlers_table, smith_handlers_set_table
 import <sanitizer/asan_interface.h>;        // unpoison_memory_region
@@ -31,6 +36,9 @@ import <sanitizer/common_interface_defs.h>; // the fiber calls: start_switch_fib
 import <smith/trace.h>;                     // smith_failure_format
 import <sys/mman.h>;                        // mmap, mprotect, munmap: the stacks
 import <unistd.h>;                          // sysconf: the size of a page
+if constexpr (target::os == target::macos) {
+    import <sys/event.h>; // kqueue: a task waiting on a socket or a pipe
+}
 
 // The tasks a `wait` waits for. Start it as `task::Group group = {};` and end it with `defer task::wait(&group)`.
 [[smith::c_name("SmithTaskGroup")]] export struct Group {
@@ -80,6 +88,7 @@ struct Task {
     bool in_wait;         // it has registered as a waiter
     bool parked;          // and has switched out of its worker
     bool woken;           // the group ended before it had switched out
+    bool io_waiting;      // registered with its worker's kqueue, not ready yet
 };
 
 // The context switch: saves the callee-saved registers on the stack, stores the stack pointer in *save, takes the one
@@ -499,15 +508,19 @@ struct Worker {
     void *thread_stack;  // the mapping under the thread: it is ours, so the C library keeps nothing of the thread
     void *cache;         // stacks of finished tasks, linked through their lowest word
     usize cached;
+    i32 queue;       // macOS: the worker's kqueue; -1 elsewhere
+    usize io_parked; // tasks of this worker waiting in the kqueue
 };
 
 Worker workers[workers_max];
 usize worker_count;
-bool active;       // the workers exist
-bool stopping;     // they are to exit
-usize live;        // tasks spawned and not ended
-usize busy;        // workers running a task right now
-usize ready_total; // tasks in all the queues
+bool active;        // the workers exist
+bool stopping;      // they are to exit
+usize live;         // tasks spawned and not ended
+usize busy;         // workers running a task right now
+usize ready_total;  // tasks in all the queues
+usize io_total;     // tasks waiting in a kqueue, on any worker
+usize worker_limit; // at most this many workers (0: one per core); see limit_workers
 usize page_bytes;
 c::pthread_mutex_t sched_lock;
 Task *waiters; // tasks waiting for a group
@@ -565,6 +578,8 @@ void record_give(Task *task) {
     pool_release();
 }
 
+void wake_worker(Worker *worker); // below: a kevent on macOS, a condition variable elsewhere
+
 void push_ready(Worker *worker, Task *task) {
     task->next = nullptr;
     if (worker->tail == nullptr)
@@ -574,7 +589,7 @@ void push_ready(Worker *worker, Task *task) {
     worker->tail = task;
     worker->ready += 1;
     ready_total += 1;
-    c::pthread_cond_signal(&worker->wake); // NOLINT(smith-effects)
+    wake_worker(worker);
 }
 
 Task *pop_ready(Worker *worker) {
@@ -606,7 +621,7 @@ void wake_waiters(Group *group) {
             waiter->woken = true;
         }
     }
-    c::pthread_cond_signal(&workers[0].wake); // NOLINT(smith-effects): `main` may be waiting for it
+    wake_worker(&workers[0]); // `main` may be waiting for it
 }
 
 // A task of the default scheduler has ended: the group counts it and its waiters wake.
@@ -616,6 +631,90 @@ void finish_managed(Task *task) {
     live -= 1;
     task->worker->load -= 1;
     if (task->group->pending == 0) wake_waiters(task->group);
+    unlock_scheduler();
+}
+
+// ---- Waiting on the system: a kqueue per worker on macOS, a condition variable per worker elsewhere. ----
+//
+// macOS: an idle worker blocks in `kevent` on its own kqueue, which holds the sockets and pipes its parked tasks wait
+// on and one EVFILT_USER event that another thread triggers to wake it. A task is registered by the worker that runs it
+// and by no other, and only that worker reads the kqueue, so a task is never queued while it is still switching out.
+if constexpr (target::os == target::macos) {
+    // NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
+    constexpr i32 filter_read = c::EVFILT_READ;
+    constexpr i32 filter_write = c::EVFILT_WRITE;
+    constexpr i32 filter_user = c::EVFILT_USER;
+    constexpr i32 add_oneshot = c::EV_ADD | c::EV_ONESHOT;
+    constexpr i32 add_clear = c::EV_ADD | c::EV_CLEAR;
+    constexpr u32 trigger = c::NOTE_TRIGGER;
+    // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
+    constexpr usize events_max = 16;
+
+    void queue_open(Worker *worker) {
+        contract::trusted(); // the system's queue is the edge
+        worker->queue = c::kqueue();
+        if (worker->queue < 0) refuse("task: the system refused a kqueue");
+        struct c::kevent change = {};
+        change.ident = 0;
+        change.filter = (i16)filter_user;
+        change.flags = (u16)add_clear;
+        if (c::kevent(worker->queue, &change, 1, nullptr, 0, nullptr) != 0) refuse("task: the system refused a kevent");
+    }
+
+    void queue_close(Worker *worker) {
+        c::close(worker->queue); // NOLINT(smith-effects)
+        worker->queue = -1;
+    }
+
+    // Wakes a worker that sleeps in `kevent` (or will when it next looks: the event stays triggered until it is read).
+    void wake_worker(Worker *worker) {
+        contract::trusted(); // the system's queue is the edge
+        if (worker == home) return;
+        struct c::kevent change = {};
+        change.ident = 0;
+        change.filter = (i16)filter_user;
+        change.fflags = trigger;
+        c::kevent(worker->queue, &change, 1, nullptr, 0, nullptr); // NOLINT(smith-effects)
+    }
+
+    // Reads the worker's kqueue, waiting for it when `block` (the lock is let go while it waits), and queues the tasks
+    // whose descriptors are ready. Holds the lock; returns with it held.
+    void poll_io(Worker *worker, bool block) {
+        contract::trusted(); // the system's queue is the edge
+        struct c::kevent events[events_max] = {};
+        struct c::timespec none = {};
+        if (block) unlock_scheduler();
+        i32 count = c::kevent(worker->queue, nullptr, 0, events, (i32)events_max,
+                              block ? nullptr : &none); // NOLINT(smith-effects)
+        if (block) lock_scheduler();
+        for (i32 i = 0; i < count; i++) {
+            if (events[i].filter == (i16)filter_user) continue;
+            Task *ready = (Task *)events[i].udata;
+            ready->io_waiting = false;
+            worker->io_parked -= 1;
+            io_total -= 1;
+            if (ready->resumer != nullptr) push_ready(worker, ready); // `main` sees the flag and goes on by itself
+        }
+    }
+} else {
+    void queue_open([[maybe_unused]] Worker *worker) {}
+    void queue_close([[maybe_unused]] Worker *worker) {}
+
+    void wake_worker(Worker *worker) {
+        if (worker != home) c::pthread_cond_signal(&worker->wake); // NOLINT(smith-effects)
+    }
+
+    // Elsewhere nothing waits in a queue: a blocking poll is a sleep until woken.
+    void poll_io(Worker *worker, bool block) {
+        if (block) c::pthread_cond_wait(&worker->wake, &sched_lock); // NOLINT(smith-effects)
+    }
+}
+
+// Reads the calling worker's kqueue without waiting, when some of its tasks wait in it.
+void poll_now() {
+    if (!active || home == nullptr || home->io_parked == 0) return;
+    lock_scheduler();
+    poll_io(home, false);
     unlock_scheduler();
 }
 
@@ -662,6 +761,7 @@ void release_managed(Task *task, Worker *worker) {
 // Runs the task at the head of the worker's queue until it pauses, waits or ends. Called with the lock held, and
 // returns with it held.
 void run_ready(Worker *worker) {
+    if (worker->io_parked > 0) poll_io(worker, false); // a task that never parks does not starve the ones that wait
     Task *task = pop_ready(worker);
     busy += 1;
     unlock_scheduler();
@@ -670,8 +770,8 @@ void run_ready(Worker *worker) {
     if (ended) release_managed(task, worker);
     lock_scheduler();
     busy -= 1;
-    if (ended) return;
-    if (!task->in_wait) { // it paused
+    if (ended || task->io_waiting) return; // an ended task is gone; a waiting one is in the kqueue until it is ready
+    if (!task->in_wait) {                  // it paused
         push_ready(worker, task);
     } else if (task->woken) { // its group ended before it had switched out
         task->woken = false;
@@ -679,6 +779,149 @@ void run_ready(Worker *worker) {
         push_ready(worker, task);
     } else {
         task->parked = true; // the last task of its group queues it
+    }
+}
+
+// ---- Parking a task on a socket or a pipe (macOS). ----
+//
+// The default scheduler's `io` makes a socket or a pipe non-blocking, tries the call, and when it would block registers
+// the descriptor with the worker's kqueue and parks the task: the worker runs other tasks until the descriptor is
+// ready, then the task tries again. A regular file, a terminal and a descriptor that does not exist go to the real call
+// (a regular file moves off the worker with the pool ticket; a terminal's flags are shared with the shell, so they stay
+// blocking). The code that called is a plain blocking call.
+if constexpr (target::os == target::macos) {
+    c::SmithHandlers empty_handlers; // the table a real call runs under: no scheduler, so it is not routed again
+
+    // NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
+    constexpr i32 get_flags = c::F_GETFL;
+    constexpr i32 set_flags = c::F_SETFL;
+    constexpr i32 non_blocking = c::O_NONBLOCK;
+    constexpr i32 kind_mask = c::S_IFMT;
+    constexpr i32 kind_socket = c::S_IFSOCK;
+    constexpr i32 kind_pipe = c::S_IFIFO;
+    constexpr i32 would_block = c::EAGAIN;
+    constexpr i32 in_progress = c::EINPROGRESS;
+    constexpr i32 socket_level = c::SOL_SOCKET;
+    constexpr i32 socket_error = c::SO_ERROR;
+    // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
+
+    // One try of the request on the descriptor, under a table with no scheduler so it is the real call.
+    void attempt(c::SmithIoRequest *request) {
+        contract::trusted(); // the request names raw buffers
+        c::SmithHandlers *previous = c::smith_handlers_set_table(&empty_handlers);
+        *errno_location() = 0;
+        isize result = -1;
+        // NOLINTBEGIN(smith-effects): the system's descriptors are this module's edge
+        if (request->operation == c::SmithIoOperation_Read) {
+            result = c::read(request->fd, request->buffer, request->size);
+        } else if (request->operation == c::SmithIoOperation_Write) {
+            result = c::write(request->fd, request->source, request->size);
+        } else if (request->operation == c::SmithIoOperation_Pread) {
+            result = c::pread(request->fd, request->buffer, request->size, request->offset);
+        } else if (request->operation == c::SmithIoOperation_Pwrite) {
+            result = c::pwrite(request->fd, request->source, request->size, request->offset);
+        } else if (request->operation == c::SmithIoOperation_Readv) {
+            result = c::readv(request->fd, request->vectors, request->count);
+        } else if (request->operation == c::SmithIoOperation_Writev) {
+            result = c::writev(request->fd, request->vectors, request->count);
+        } else if (request->operation == c::SmithIoOperation_Send) {
+            result = c::send(request->fd, request->source, request->size, request->flags);
+        } else if (request->operation == c::SmithIoOperation_Recv) {
+            result = c::recv(request->fd, request->buffer, request->size, request->flags);
+        } else if (request->operation == c::SmithIoOperation_Accept) {
+            result = c::accept(request->fd, request->address, request->address_length);
+        } else if (request->operation == c::SmithIoOperation_Connect) {
+            result = c::connect(request->fd, request->peer, request->peer_length);
+        }
+        // NOLINTEND(smith-effects)
+        request->result = result;
+        request->error = *errno_location();
+        c::smith_handlers_set_table(previous);
+    }
+
+    // Whether the task may park on this descriptor. A socket or a pipe is made non-blocking (once: the flag stays).
+    bool parkable(i32 fd) {
+        contract::trusted(); // the system's descriptors are the edge
+        // NOLINTBEGIN(smith-effects)
+        i32 flags = c::fcntl(fd, get_flags);
+        if (flags < 0) return false;
+        if ((flags & non_blocking) != 0) return true;
+        struct c::stat info = {};
+        if (c::fstat(fd, &info) != 0) return false;
+        i32 kind = (i32)info.st_mode & kind_mask;
+        if (kind != kind_socket && kind != kind_pipe) return false;
+        return c::fcntl(fd, set_flags, flags | non_blocking) == 0;
+        // NOLINTEND(smith-effects)
+    }
+
+    // Registers the descriptor with the worker's kqueue and parks the calling task until it is ready. False when the
+    // system refused the registration (errno says why). `main` has no stack to leave: it runs its worker's tasks, or
+    // sleeps in the kqueue, until it is ready.
+    bool park_on(i32 fd, i32 filter) {
+        contract::trusted(); // the system's queue is the edge
+        Task *self = current();
+        Worker *worker = home;
+        struct c::kevent change = {};
+        change.ident = (usize)fd;
+        change.filter = (i16)filter;
+        change.flags = (u16)add_oneshot;
+        change.udata = self;
+        if (c::kevent(worker->queue, &change, 1, nullptr, 0, nullptr) != 0) return false; // NOLINT(smith-effects)
+        lock_scheduler();
+        self->io_waiting = true;
+        worker->io_parked += 1;
+        io_total += 1;
+        if (self->resumer == nullptr) {
+            while (self->io_waiting) { // NOLINT(smith-bounded-loop): ends when its descriptor is ready
+                if (worker->head != nullptr)
+                    run_ready(worker);
+                else
+                    poll_io(worker, true);
+            }
+            unlock_scheduler();
+            return true;
+        }
+        unlock_scheduler();
+        suspend(); // the worker's loop leaves it in the kqueue; the event queues it again
+        return true;
+    }
+
+    // A connect that returned EINPROGRESS has finished when the descriptor is writable: SO_ERROR says how.
+    void finish_connect(c::SmithIoRequest *request) {
+        contract::trusted(); // the system's descriptor is the edge
+        i32 error = 0;
+        c::socklen_t length = sizeof(error);
+        c::getsockopt(request->fd, socket_level, socket_error, &error, &length); // NOLINT(smith-effects)
+        request->result = error == 0 ? 0 : -1;
+        request->error = error;
+    }
+
+    bool waits_for_write(i32 operation) {
+        return operation == c::SmithIoOperation_Write || operation == c::SmithIoOperation_Writev ||
+               operation == c::SmithIoOperation_Send || operation == c::SmithIoOperation_Connect;
+    }
+
+    // The scheduler's `io`: a plain blocking call to the code that made it.
+    void default_io([[maybe_unused]] Scheduler *self, c::SmithIoRequest *request) {
+        bool offset =
+            request->operation == c::SmithIoOperation_Pread || request->operation == c::SmithIoOperation_Pwrite;
+        if (!active || home == nullptr || offset || !parkable(request->fd)) {
+            attempt(request);
+            return;
+        }
+        while (true) { // NOLINT(smith-bounded-loop): ends when the call completes
+            attempt(request);
+            bool connecting = request->operation == c::SmithIoOperation_Connect && request->error == in_progress;
+            if (request->result >= 0 || (request->error != would_block && !connecting)) return;
+            if (!park_on(request->fd, waits_for_write(request->operation) ? filter_write : filter_read)) {
+                request->error = *errno_location();
+                return;
+            }
+            if (connecting) {
+                finish_connect(request);
+                return;
+            }
+        }
     }
 }
 
@@ -691,7 +934,7 @@ void *worker_main(void *argument) {
         if (worker->head != nullptr) {
             run_ready(worker);
         } else {
-            c::pthread_cond_wait(&worker->wake, &sched_lock); // NOLINT(smith-effects)
+            poll_io(worker, true);
         }
     }
     unlock_scheduler();
@@ -706,12 +949,15 @@ void start_workers() {
     isize processors = c::sysconf(processors_name);
     usize count = processors < 1 ? 1 : (usize)processors;
     if (count > workers_max) count = workers_max;
+    if (worker_limit != 0 && count > worker_limit) count = worker_limit;
     c::pthread_mutex_init(&sched_lock, nullptr);
     stopping = false;
     worker_count = count;
     for (usize i = 0; i < count; i++) {
         workers[i] = (Worker){};
+        workers[i].queue = -1;
         c::pthread_cond_init(&workers[i].wake, nullptr);
+        queue_open(&workers[i]);
     }
     home = &workers[0];
     active = true;
@@ -734,7 +980,7 @@ void stop_workers() {
     // NOLINTBEGIN(smith-effects): threads are this module's process effect
     stopping = true;
     for (usize i = 1; i < worker_count; i++)
-        c::pthread_cond_signal(&workers[i].wake);
+        wake_worker(&workers[i]);
     unlock_scheduler();
     for (usize i = 1; i < worker_count; i++)
         c::pthread_join(workers[i].thread, nullptr);
@@ -745,6 +991,7 @@ void stop_workers() {
             c::munmap(region, page_bytes + stack_size);
         }
         c::pthread_cond_destroy(&workers[i].wake);
+        queue_close(&workers[i]);
         if (workers[i].thread_stack != nullptr) c::munmap(workers[i].thread_stack, page_bytes + thread_stack_size);
     }
     while (chunks != nullptr) {
@@ -759,15 +1006,23 @@ void stop_workers() {
     home = nullptr;
 }
 
+// Starts no more than `count` workers the next time they start (0: one per core). For tests that need tasks on one
+// worker; call it while no task is alive.
+export void limit_workers(usize count) {
+    contract::requires(!active);
+    worker_limit = count;
+}
+
 // The default scheduler's spawn: the task is queued on the least loaded worker (ties to the spawner's own) and runs
 // there, never anywhere else.
-void default_spawn([[maybe_unused]] Scheduler *self, Group *group, void (*entry)(void *context), void *context) {
+void default_spawn(Scheduler *self, Group *group, void (*entry)(void *context), void *context) {
     contract::requires(group != nullptr && entry != nullptr);
     if (!active) start_workers();
     contract::requires(home != nullptr);
     Task *task = record_take();
     init_task(task, group, entry, context);
     task->managed = true;
+    if (task->handlers.scheduler == nullptr) task->handlers.scheduler = self; // its I/O reaches `io`
     lock_scheduler();
     Worker *target = home;
     for (usize i = 0; i < worker_count; i++) {
@@ -795,12 +1050,12 @@ void default_wait([[maybe_unused]] Scheduler *self, Group *group) {
         while (group->pending > 0) {
             if (home->head != nullptr) {
                 run_ready(home);
-            } else if (busy == 0 && ready_total == 0) {
+            } else if (busy == 0 && ready_total == 0 && io_total == 0) {
                 unlock_scheduler();
                 c::smith_failure_format(c::SmithFailure_Memory,
                                         "task::wait: %zu tasks are waiting on nothing (a deadlock)", group->pending);
             } else {
-                c::pthread_cond_wait(&home->wake, &sched_lock); // NOLINT(smith-effects)
+                poll_io(home, true);
             }
         }
         if (live == 0) {
@@ -828,11 +1083,13 @@ void default_wait([[maybe_unused]] Scheduler *self, Group *group) {
 void default_pause([[maybe_unused]] Scheduler *self) {
     Task *self_task = current();
     if (self_task->resumer != nullptr) {
+        poll_now();
         suspend();
         return;
     }
     if (!active) return;
     lock_scheduler();
+    if (home->io_parked > 0) poll_io(home, false);
     for (usize round = home->ready; round > 0 && home->head != nullptr; round--)
         run_ready(home);
     unlock_scheduler();
@@ -841,8 +1098,11 @@ void default_pause([[maybe_unused]] Scheduler *self) {
 Scheduler default_value = {.spawn = default_spawn, .pause = default_pause, .wait = default_wait};
 
 // The default scheduler: one worker thread per core, started at the first spawn, each with its own run queue. What
-// runs when none is set.
+// runs when none is set. Under macOS its `io` parks a task on a socket or a pipe in its worker's kqueue.
 export Scheduler *default_scheduler() {
+    if constexpr (target::os == target::macos) {
+        default_value.io = default_io;
+    }
     return &default_value;
 }
 
