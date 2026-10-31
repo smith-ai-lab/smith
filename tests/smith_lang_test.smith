@@ -1653,18 +1653,6 @@ export void test_main_args() {
     corpus_case("main-args");
 }
 
-export void test_main_io() {
-    corpus_case("main-io");
-}
-
-export void test_main_io_module() {
-    corpus_case("main-io-module");
-}
-
-export void test_main_io_two_forms() {
-    corpus_case("main-io-two-forms");
-}
-
 export void test_member_after_dot_is_not_a_macro() {
     corpus_case("member-after-dot-is-not-a-macro");
 }

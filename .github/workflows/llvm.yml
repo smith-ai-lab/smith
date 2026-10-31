@@ -5,8 +5,14 @@ name: llvm
 # hosted job downloads it (`smith build llvm`) instead of building LLVM for hours. When the release of a configuration
 # exists, a run does nothing.
 #
-# Run it by hand (workflow_dispatch) the first time: nothing publishes the packs before that.
+# A pull request that changes the configuration (patches/, the scripts, the name in build.c) gets its pack built here
+# before its own CI needs it: ci.yml's `pack` job calls this workflow (workflow_call) when no release holds the
+# configuration yet, and the PR's jobs wait for it (#1064). A push to main publishes what is still missing.
+#
+# The macOS pack builds on the owner's Mac only when one of its runners is online and idle (.github/actions/pick-mac,
+# the rule ci.yml uses); otherwise on a hosted macos-26. Nothing depends on the Mac.
 on:
+  workflow_call:
   workflow_dispatch:
   push:
     branches: [main]
@@ -22,8 +28,25 @@ permissions:
   contents: write # gh release create
 
 jobs:
+  pick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mac: ${{ steps.mac.outputs.mac }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pick the macOS runner
+        id: mac
+        uses: ./.github/actions/pick-mac
+        with:
+          token: ${{ secrets.RUNNER_STATUS_TOKEN }}
+          fork: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+
   macos:
-    runs-on: macos-26
+    needs: pick
+    runs-on: ${{ fromJSON(needs.pick.outputs.mac) }}
     # the hosted job limit is 6 hours; a build that would not fit is split into chained jobs that hand the build folder on
     timeout-minutes: 350
     concurrency:
@@ -34,6 +57,10 @@ jobs:
       # smith's floor (knowledge/deployment-target.md): LLVM's objects are built for it, not for the runner's macOS
       MACOSX_DEPLOYMENT_TARGET: "26.0"
     steps:
+      # on the owner's Mac the build uses a cache of its own: the real ~/.cache/smith is never touched or pruned
+      - name: Cache folder of this run
+        run: echo "XDG_CACHE_HOME=$RUNNER_TEMP/cache" >>"$GITHUB_ENV"
+
       - uses: actions/checkout@v4
         with:
           # the bootstrap finds the stage0 release of the newest ancestor commit
@@ -78,6 +105,10 @@ jobs:
         run: |
           df -h /
           .smith/stage0-tool llvm-publish
+
+      - name: Remove the build
+        if: always()
+        run: rm -rf "$XDG_CACHE_HOME"
 
   linux:
     runs-on: ubuntu-latest
