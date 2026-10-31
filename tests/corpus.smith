@@ -46,9 +46,7 @@ export const char *difference(arena::Arena *arena, const char *what, const char 
         }
         at += 1;
     }
-    char number[24];
-    (void)c::snprintf(number, sizeof number, "%zu", line);
-    return format::push(arena, what, ": line ", number, ": expected `", line_at(arena, expected, start), "` but got `",
+    return format::push(arena, what, ": line ", line, ": expected `", line_at(arena, expected, start), "` but got `",
                         line_at(arena, actual, start), "`\n")
         .data;
 }
