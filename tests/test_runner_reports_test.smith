@@ -13,14 +13,11 @@ import target;
 import runner;
 import scratch;
 
+// A copy of the shared build of the runner (runner::built_copy): its debug information names the sources relative to
+// the project, so a report read in the copy prints `tests/test_reports.smith:N`, and no test builds a runner of its
+// own.
 static scratch::Project reports_project() {
-    return runner::project("runner_base", "runner_reports");
-}
-
-// Builds the runner of reports_project; call it once the test's arena is installed.
-static void build_reports(scratch::Project *p) {
-    scratch::Run run = runner::build(p, "-DSAN=0");
-    scratch::expect_status("reports: the runner builds", 0, &run);
+    return runner::built_copy("runner_base", "runner_reports", "-DSAN=0");
 }
 
 // What smith test prints for one test of the project (its two streams in one).
@@ -52,6 +49,25 @@ export void test_runner_reports_a_sigsegv_without_the_sanitizers_is_named() {
     }
 }
 
+// The runner is built with -fdebug-compilation-dir=. , which LLVM joins to the file name as `./tests/x`; the report
+// names the source as the project does (shim/symbolize.cpp drops the `./`, #782).
+export void test_runner_reports_a_source_is_named_relative_to_the_project_without_a_dot_slash() {
+    scratch::Project p = reports_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!runner::can_symbolize(&p)) return;
+    for (usize mode = 0; mode < 2; mode++) {
+        const char *iso = runner::flag(mode);
+        const char *traced = runner::symbolized(&p, iso, "--test check_fails");
+        scratch::expect_contains(runner::label(iso, "path: the source is named from the project"), traced,
+                                 " at tests/test_reports.smith:");
+        scratch::expect_lacks(runner::label(iso, "path: ... never with a leading ./"), traced, "./tests/");
+    }
+}
+
 export void test_runner_reports_the_plain_function_checks_print_a_raw_trace_with_the_values() {
     scratch::Project p = reports_project();
     defer scratch::clean(&p);
@@ -59,7 +75,6 @@ export void test_runner_reports_the_plain_function_checks_print_a_raw_trace_with
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_reports(&p);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run passes = runner::tests(&p, iso, "--test passes --verbose");
@@ -95,7 +110,6 @@ export void test_runner_reports_a_failed_check_and_a_failed_equal_name_their_lin
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_reports(&p);
     if (!runner::can_symbolize(&p)) return;
     usize check_line = runner::line_of(&p, "tests/test_reports.smith", "test::check(moves > 0);");
     usize equal_line = runner::line_of(&p, "tests/test_reports.smith", "test::check_equal(count, expected);");
@@ -134,7 +148,6 @@ export void test_runner_reports_an_assert_a_segfault_and_an_inlined_check_name_t
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_reports(&p);
     if (!runner::can_symbolize(&p)) return;
     usize assert_line = runner::line_of(&p, "tests/test_reports.smith", "c::assert(moves == 2);");
     usize segv_line = runner::line_of(&p, "tests/test_reports.smith", "*nothing = 7;");
@@ -214,7 +227,6 @@ export void test_macos_runner_reports_a_program_linked_by_apples_ld_has_lines_to
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_reports(&p);
     if (!runner::can_symbolize(&p)) return;
     usize line = runner::line_of(&p, "tests/test_reports.smith", "test::check(moves > 0);");
     (void)scratch::sh(&p, "rm -f build/tests");
@@ -237,7 +249,6 @@ static void check_saved_trace(const char *iso) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_reports(&p);
     if (!runner::can_symbolize(&p)) return;
     usize line = runner::line_of(&p, "tests/test_reports.smith", "test::check(moves > 0);");
     const char *wanted = at_line("  check failed at tests/test_reports.smith:", line);
@@ -269,7 +280,6 @@ static void check_changed_sources(const char *iso) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_reports(&p);
     if (!runner::can_symbolize(&p)) return;
     usize line = runner::line_of(&p, "tests/test_reports.smith", "test::check(moves > 0);");
     (void)scratch::sh(&p, format::push("build/tests ", iso, " --test check_fails --trace >trace.txt 2>&1").data);
@@ -309,7 +319,6 @@ export void test_runner_reports_smith_as_llvm_symbolizer_answers_the_sanitizers_
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_reports(&p);
     if (!runner::can_symbolize(&p)) return;
     scratch::Run linked = scratch::sh(&p, "ln -s \"$SMITH_SELF\" llvm-symbolizer");
     scratch::expect_status("protocol: the link is made", 0, &linked);
