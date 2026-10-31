@@ -50,7 +50,7 @@ static void golden(const char *name, const char *files, const char *extra) {
     defer mem::set_allocator(outside);
     const char *found = findings(&p, files, extra);
     test::golden(slice_of(format::push("tests/build_fixtures/effects_check/expected/", name, ".txt").data),
-                      slice_of(format::push(found, "\n").data));
+                 slice_of(format::push(found, "\n").data));
 }
 
 // --- rule 1: a raw effect outside a capability's module; rule 2: failure is not one ---
@@ -156,7 +156,7 @@ export void test_effects_cfiles_false_a_c_file_is_not_checked_and_a_smith_file_i
     defer mem::set_allocator(outside);
     const char *found = findings(&p, "raw.c made.c hw_main.smith", flags);
     test::golden(slice_of("tests/build_fixtures/effects_check/expected/off.txt"),
-                      slice_of(format::push(found, "\n").data));
+                 slice_of(format::push(found, "\n").data));
 }
 
 export void test_effects_cfiles_true_the_c_file_is_checked() {

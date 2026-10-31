@@ -13,6 +13,7 @@ import smith::env;
 import smith::files;
 import smith::process;
 import smith::math;
+import smith::mem;
 import smith::random;
 import target;
 import <errno.h>;
@@ -48,10 +49,10 @@ import <unistd.h>;
 //   void test_addition() { test::check_equal(2 + 2, 4); }            // pure: it touches nothing
 //   void test_sorted(random::Key key) { ... }                           // a property test: it runs on 100 keys
 //
-// There is no registration: smith_tests (build.c) finds `void test_<name>(void) {` and `void test_<name>(SmithKey key) {`
-// by name (`random::Key` in a `.smith` file), and a test that takes an io is a build error, and the runner,
-// which is this module's main, runs them in parallel, with failures printed with both values and their types. `smith
-// test` runs it; its arguments are the runner's options: --test <substring>, --seed <n>, --seeds <n>, --jobs <n>,
+// There is no registration: smith_tests (build.c) finds `void test_<name>(void) {` and `void test_<name>(SmithKey key)
+// {` by name (`random::Key` in a `.smith` file), and a test that takes an io is a build error, and the runner, which is
+// this module's main, runs them in parallel, with failures printed with both values and their types. `smith test` runs
+// it; its arguments are the runner's options: --test <substring>, --seed <n>, --seeds <n>, --jobs <n>,
 // --shrink 0|1, --shuffle <seed>, --isolate, --in-process, --full and --update (knowledge/build-tests.md). A failed
 // check or contract shows the variables of its line when smith started the runner with --explain <smith> (below);
 // --no-explain turns it off.
@@ -1415,8 +1416,8 @@ export [[nodiscard]] bool updating() {
 // tests), byte for byte. A mismatch fails the test with a unified diff, the expected file on the left (3 lines of
 // context, 40 lines at most, then how many more); a missing file fails it too, and is never made on its own. Under
 // `smith test --update` the file is written when it differs (its folders made) and the test passes; the runner lists
-// the files it wrote. The file is read and written through plain C calls: the runner's own files, as a test's golden file
-// is part of the project.
+// the files it wrote. The file is read and written through plain C calls: the runner's own files, as a test's golden
+// file is part of the project.
 void golden_check(const char path[:], const char actual[:]) {
     char file[path_capacity];
     if (countof(path) == 0 || countof(path) >= path_capacity)
@@ -1529,7 +1530,7 @@ typedef struct {
     u64 seed; // a property test's key when the test ended, or an io test's seed
     char note[note_capacity];
     char detail[detail_capacity];
-    const char *heading;         // of the stack: see Shared
+    const char *heading; // of the stack: see Shared
     usize frames[frames_max];
     usize frame_count;
     bool frames_exact;
@@ -2524,17 +2525,15 @@ void print_failure(const Test *test, const Options *options, const Run *run) {
     if (run->outcome.end == End_Check && !detailed) print_detail(run);
     if (run->shrink_leaked)
         say("    the shrunk case did not reproduce in a fresh process, so state leaked between the shrinking "
-                     "attempts; this is the failure as it was\n");
+            "attempts; this is the failure as it was\n");
     if (run->note[0] != '\0') {
         say("    note: ");
         (void)console::print(run->note);
         say("\n");
     }
     print_indented(run->output.text, run->output.kept, "    ");
-    if (run->output.total > run->output.kept)
-        say("    ... and %zu more bytes\n", run->output.total - run->output.kept);
-    if (takes_seed(test))
-        say("    rerun: smith test --test %s --seed %ju\n", test->name, (c::uintmax_t)run->seed);
+    if (run->output.total > run->output.kept) say("    ... and %zu more bytes\n", run->output.total - run->output.kept);
+    if (takes_seed(test)) say("    rerun: smith test --test %s --seed %ju\n", test->name, (c::uintmax_t)run->seed);
 }
 
 void report(const Test *test, const Options *options, const Run *run) {
@@ -2549,8 +2548,7 @@ void report(const Test *test, const Options *options, const Run *run) {
             say("%sPASS%s %s (seed %ju)\n", green, reset_color, test->name,
                 (c::uintmax_t)(options->seed_given ? options->seed : run->seed));
         else
-            say("%sPASS%s %s (%ju seeds)\n", green, reset_color, test->name,
-                (c::uintmax_t)options->seed_count);
+            say("%sPASS%s %s (%ju seeds)\n", green, reset_color, test->name, (c::uintmax_t)options->seed_count);
     }
 }
 
@@ -2947,7 +2945,7 @@ void list_processes() {
     const char *line = "";
     char *listing = nullptr;
     if (result == .ok) {
-        listing = (char *)c::smith_mem_alloc(countof(result.ok.output) + 1, 1);
+        listing = (char *)mem::alloc_raw(countof(result.ok.output) + 1, 1);
         __builtin_memcpy(listing, result.ok.output.data, countof(result.ok.output));
         listing[countof(result.ok.output)] = '\0';
         line = listing;
@@ -2973,9 +2971,9 @@ void list_processes() {
         __builtin_snprintf(row->command, sizeof row->command, "%s", word_end + 1);
     }
     if (result == .ok) {
-        c::smith_mem_free(result.ok.output.data);
-        c::smith_mem_free(result.ok.errors.data);
-        c::smith_mem_free(listing);
+        mem::free(result.ok.output.data);
+        mem::free(result.ok.errors.data);
+        mem::free(listing);
     }
 }
 
@@ -3604,9 +3602,7 @@ Plan *make_plan(const Options *options) {
     for (usize i = 0; i < table_size; i++) {
         const Test *test = &table[i];
         contract::assert(test->name != nullptr);
-        contract::assert((test->plain != nullptr) + (test->property != nullptr) +
-                             (test->with_failing != nullptr) ==
-                         1);
+        contract::assert((test->plain != nullptr) + (test->property != nullptr) + (test->with_failing != nullptr) == 1);
         if (!selects(options, test->name)) continue;
         plan->tests[plan->count] = test;
         plan->count += 1;
@@ -3729,8 +3725,7 @@ static usize report_run(const Plan *plan, const Options *options, f64 start) {
     }
     print_slowest(plan);
     say_written();
-    say("\n%zu passed, %zu failed in %.2f s\n", plan->count - failed - skipped, failed,
-        seconds() - start);
+    say("\n%zu passed, %zu failed in %.2f s\n", plan->count - failed - skipped, failed, seconds() - start);
     if (skipped > 0) say("%zu not run (--fail-fast)\n", skipped);
     say_explained(options);
     if (options->stats) say("forks: %ju\n", (c::uintmax_t)*forks);
@@ -3756,8 +3751,8 @@ static usize report_run(const Plan *plan, const Options *options, f64 start) {
     }
     if (plan->count == 0 && options.filter != nullptr) {
         if (options.macos != 0 && filter_matches_any(&options)) { // the other platform's tests only: nothing to run
-            say("no test of %s matches \"%s\": nothing to run\n",
-                options.macos == 1 ? "--macos-only" : "--skip-macos", options.filter);
+            say("no test of %s matches \"%s\": nothing to run\n", options.macos == 1 ? "--macos-only" : "--skip-macos",
+                options.filter);
             return 0;
         }
         say("no test matches \"%s\"\n", options.filter);
