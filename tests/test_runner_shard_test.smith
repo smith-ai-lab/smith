@@ -4,48 +4,61 @@
 // lists here (--list), so the processes are the runner's own.
 module test_runner_shard_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import runner;
 import scratch;
 
 // `first | second` as a shell command.
-static const char *format_pipe(io::Io *io, const char *first, const char *second) {
-    return format::push(&io->arena, first, " | ", second).data;
+static const char *format_pipe(arena::Arena *memory, const char *first, const char *second) {
+    return format::push(memory, first, " | ", second).data;
 }
 
 // The runner's arguments for one --shard value.
-static const char *format_flag(io::Io *io, const char *value) {
-    return format::push(&io->arena, "--list --shard ", value).data;
+static const char *format_flag(arena::Arena *memory, const char *value) {
+    return format::push(memory, "--list --shard ", value).data;
 }
 
-static scratch::Project shard_project(io::Io *io) {
-    return runner::built_project(io, "runner_base", "runner_shard", "");
-}
-
-export void test_runner_shard_the_parts_hold_every_test_once(io::Io *io) {
-    scratch::Project p = shard_project(io);
+export void test_runner_shard_the_parts_hold_every_test_once() {
+    scratch::Project p = runner::built_project_free("runner_base", "runner_shard", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     const char *every = "for i in 1 2 3; do build/tests --list --shard $i/3; done";
     scratch::expect_text("shard: the parts of 3 hold the 7 tests", "7",
-                         scratch::capture(&p, format_pipe(io, every, "awk 'END { print NR }'")));
-    scratch::expect_text("shard: ... none twice", "", scratch::capture(&p, format_pipe(io, every, "sort | uniq -d")));
+                         scratch::capture(&p, format_pipe(&memory, every, "awk 'END { print NR }'")));
+    scratch::expect_text("shard: ... none twice", "",
+                         scratch::capture(&p, format_pipe(&memory, every, "sort | uniq -d")));
     scratch::expect_text("shard: ... the same as the whole list", "",
                          scratch::capture(&p, "{ build/tests --list; for i in 1 2 3; do build/tests --list --shard "
                                               "$i/3; done; } | sort | uniq -c | awk '$1 != 2'"));
 }
 
-export void test_runner_shard_a_file_is_in_one_part(io::Io *io) {
-    scratch::Project p = shard_project(io);
+export void test_runner_shard_a_file_is_in_one_part() {
+    scratch::Project p = runner::built_project_free("runner_base", "runner_shard", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     const char *files = "for i in 1 2 3; do build/tests --list --shard $i/3 | sed 's/::[^:]*$//' | sort -u; done";
     scratch::expect_text("shard: no file is in two parts", "",
-                         scratch::capture(&p, format_pipe(io, files, "sort | uniq -d")));
+                         scratch::capture(&p, format_pipe(&memory, files, "sort | uniq -d")));
     scratch::expect_text("shard: ... and each of the 4 files is in a part", "4",
-                         scratch::capture(&p, format_pipe(io, files, "awk 'END { print NR }'")));
+                         scratch::capture(&p, format_pipe(&memory, files, "awk 'END { print NR }'")));
 }
 
-export void test_runner_shard_the_split_is_balanced_by_the_costs_file(io::Io *io) {
-    scratch::Project p = shard_project(io);
+export void test_runner_shard_the_split_is_balanced_by_the_costs_file() {
+    scratch::Project p = runner::built_project_free("runner_base", "runner_shard", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "costs.tsv", "cpu\t20\tshard::gamma_test::gamma_1\n");
     scratch::Run heavy = runner::tests(&p, "", "--list --shard 1/2 --costs costs.tsv");
     scratch::expect_text("shard: the costly file is alone in its part", "shard::gamma_test::gamma_1", heavy.out);
@@ -54,18 +67,28 @@ export void test_runner_shard_the_split_is_balanced_by_the_costs_file(io::Io *io
         scratch::capture(&p, "build/tests --list --shard 2/2 --costs costs.tsv | awk 'END { print NR }'"));
 }
 
-export void test_runner_shard_a_run_prints_its_part_and_runs_only_it(io::Io *io) {
-    scratch::Project p = shard_project(io);
+export void test_runner_shard_a_run_prints_its_part_and_runs_only_it() {
+    scratch::Project p = runner::built_project_free("runner_base", "runner_shard", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = runner::tests(&p, "", "--shard 1/1 --test gamma_test");
     scratch::expect_contains("shard: a run says which part it is", run.out, "shard 1 of 1: 1 tests");
     scratch::expect_contains("shard: ... and runs its tests", run.out, "1 passed, 0 failed");
 }
 
-export void test_runner_shard_a_bad_value_is_a_usage_error(io::Io *io) {
-    scratch::Project p = shard_project(io);
+export void test_runner_shard_a_bad_value_is_a_usage_error() {
+    scratch::Project p = runner::built_project_free("runner_base", "runner_shard", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     const char *values[_] = {"0/2", "3/2", "2", "a/b", "1/0", "1/2000"};
     for (usize i = 0; i < countof(values); i++) {
-        scratch::Run run = runner::tests(&p, "", format_flag(io, values[i]));
+        scratch::Run run = runner::tests(&p, "", format_flag(&memory, values[i]));
         scratch::expect_contains(values[i], run.out, "usage:");
     }
 }
