@@ -941,6 +941,10 @@ export void test_error_generic_return_type() {
     corpus_case("error-generic-return-type");
 }
 
+export void test_if_constexpr_file_scope_for_constexpr() {
+    corpus_case("if-constexpr-file-scope-for-constexpr");
+}
+
 export void test_error_if_constexpr() {
     corpus_case("error-if-constexpr");
 }
