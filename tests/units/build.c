@@ -48,12 +48,20 @@ void build(SmithBuild *b) {
                             "-I", smith_fmt(b, "%s/runtime/protocol", root), nullptr),
     };
     smith_object(b, &core);
+    // smith's private io layer (issue #903): smith.c includes its header, which this object's step writes, and the core
+    // calls it, so the object is linked.
+    SmithObject runtime_io = {
+        .compiler = "smith-cc",
+        .source = smith_fmt(b, "%s/runtime/io.smith", root),
+        .output = "build/tests_objects/runtime_io.o",
+        .flags = flags,
+    };
+    smith_object(b, &runtime_io);
     SmithTests tests = {
-        .objects = (const SmithObject *[]){&http, &core, nullptr},
-        .sources =
-            smith_glob(b, smith_list(b, smith_fmt(b, "%s/front/*.smith", root), "lib/smith/*_test.smith",
-                                     "lib/*_test.smith", "tests/*_test.smith", "tests/scratch.smith",
-                                     "tests/runner.smith", "tests/prove_cases.smith", "tests/corpus.smith", nullptr)),
+        .objects = (const SmithObject *[]){&http, &core, &runtime_io, nullptr},
+        .sources = smith_glob(b, smith_list(b, "lib/smith/*_test.smith", "lib/*_test.smith", "tests/*_test.smith",
+                                            "tests/scratch.smith", "tests/runner.smith", "tests/prove_cases.smith",
+                                            "tests/corpus.smith", nullptr)),
         .flags = flags,
         .link_flags = smith_list(b, "-fsanitize=address,undefined", nullptr),
     };

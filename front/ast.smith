@@ -124,6 +124,9 @@ export typedef enum {
     struct {
         Expr *operand;
     } type_of;
+    struct {
+        Text spelling;
+    } unsupported_c; // a C type with no smith equivalent (`long double`), as the header spells it
 } TypeKind;
 
 export struct TypeExpr {
@@ -413,6 +416,7 @@ export typedef enum {
     struct {
         Text name;
         Bool is_union;
+        Bool opaque; // an incomplete struct, usable only through a pointer
         FieldDecl fields[:];
     } record;
     struct {
@@ -449,6 +453,7 @@ export struct Decl {
     Bool is_static;
     Bool is_extern;
     Bool is_inline;
+    Bool from_c; // read from a C header; its name is reached as `c::name`
     DeclKind kind;
 };
 
@@ -1096,6 +1101,8 @@ static void type_children(Items *items, TypeExpr *t) {
     case .type_of:
         add_expr(items, t->kind.type_of.operand, false);
         break;
+    case .unsupported_c:
+        break;
     }
 }
 
@@ -1456,6 +1463,10 @@ static void type_head(Output *text, TypeExpr *t) {
     case .type_of:
         put(text, "type_of");
         break;
+    case .unsupported_c:
+        put(text, "unsupported_c ");
+        put_quoted(text, t->kind.unsupported_c.spelling);
+        break;
     }
     put_qualifiers(text, t->qualifiers);
 }
@@ -1476,6 +1487,7 @@ static void decl_head(Output *text, Decl *d) {
     case .record:
         put(text, pick(d->kind.record.is_union, "union ", "struct "));
         put(text, d->kind.record.name);
+        put_flag(text, d->kind.record.opaque, "opaque");
         break;
     case .enumeration:
         put(text, "enum ");
@@ -1505,6 +1517,7 @@ static void decl_head(Output *text, Decl *d) {
     put_flag(text, d->is_static, "static");
     put_flag(text, d->is_extern, "extern");
     put_flag(text, d->is_inline, "inline");
+    put_flag(text, d->from_c, "from_c");
 }
 
 // The head of every other node.

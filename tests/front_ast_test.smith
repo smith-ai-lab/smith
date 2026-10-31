@@ -171,6 +171,31 @@ export void test_front_ast_dump_of_types_and_if_constexpr() {
     test::golden_free("tests/front/ast/kinds.txt", ast::dump(&m));
 }
 
+// What a C header becomes: `typedef struct _IO_FILE FILE;` (opaque), `typedef int (*Handler)(int, long double);`
+// as an `Fn` applied to a function type (no function-pointer syntax) with an unsupported C type.
+export void test_front_ast_dump_of_declarations_read_from_a_c_header() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::FieldDecl none[1];
+    ast::Decl *file = ast::record_decl("FILE", none[0:0]);
+    if (file->kind == .record) file->kind.record.opaque = true;
+    file->from_c = true;
+    ast::TypeRef parameters[2] = {ast::named("c::int"), ast::make_type({.unsupported_c = {.spelling = "long double"}})};
+    ast::TypeExpr *signature =
+        ast::make_type({.function = {.params = parameters[0:2], .result = ast::named("c::int")}});
+    ast::TypeArg arguments[:] = mem::alloc_slice(ast::TypeArg, 1);
+    ast::TypeArg argument = {.type = {.type = signature}};
+    arguments[0] = argument;
+    ast::TypeExpr *handler = ast::make_type({.applied = {.name = ast::path("Fn"), .args = arguments}});
+    ast::Decl *alias = ast::type_alias("Handler", handler);
+    alias->from_c = true;
+    ast::DeclRef decls[2] = {file, alias};
+    ast::Module m = ast::new_module("c_header", decls);
+    test::golden_free("tests/front/ast/c_header.txt", ast::dump(&m));
+}
+
 export void test_front_ast_path_splits_on_double_colons() {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
