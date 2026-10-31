@@ -1508,6 +1508,10 @@ export void test_generic_slice_pointer_auto() {
     corpus_case("generic-slice-pointer-auto");
 }
 
+export void test_generic_slice_pointer_result() {
+    corpus_case("generic-slice-pointer-result");
+}
+
 export void test_generic_slice_derived() {
     corpus_case("generic-slice-derived");
 }

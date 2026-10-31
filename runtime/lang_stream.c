@@ -1255,17 +1255,25 @@ static bool smith_lang_slice_process(SmithLang *lang, const SmithHost *host, con
         lang->slice.armed[0] = 0;
         lang->slice.typeof_tag[0] = 0;
     }
-    bool at_start = lang->slice.after_boundary;
+    bool at_start = lang->slice.after_boundary || (lang->pending_export && lang->state == SmithLangState_Start);
     lang->slice.after_boundary = smith_lang_slice_boundary(token);
     if (lang->enums_seen && smith_lang_enum_token(lang, host, token)) return true;
     if (smith_lang_slice_str(lang, host, token)) return true;
     if (at_start && smith_lang_slice_begin(lang, host, token)) return true;
     smith_lang_slice_equals(lang, host, token);
     if (smith_lang_slice_init_compound(lang, host, token)) return true;
-    if (token->kind == SmithTokenKind_Identifier && smith_lang_ident(token, "typeof") &&
-        smith_lang_slice_typeof(lang, host, token)) {
-        return true;
+    bool is_typeof = token->kind == SmithTokenKind_Identifier && smith_lang_ident(token, "typeof");
+    // `export typeof(T[:]) f(constexpr type T)`: a declaration that begins with its result type is a generic's head
+    // before its slice is written (as after an attribute), or the slice would be written with the `T` of no instance.
+    if (is_typeof && lang->state == SmithLangState_Start && smith_lang_generic_candidate(lang, host, token) &&
+        smith_lang_generic_ahead(lang, host, token)) {
+        lang->tee = host->previous == nullptr && host->expr_type == nullptr && !lang->dump_enabled;
+        lang->generic_next = true;
+        lang->seen_declaration = true;
+        smith_lang_reset_declaration(lang);
+        lang->state = SmithLangState_Head;
     }
+    if (is_typeof && smith_lang_slice_typeof(lang, host, token)) return true;
     if (smith_lang_slice_chain(lang, host, token)) return true;
     if (!capturing && smith_lang_ident(token, "return")) smith_lang_slice_return(lang, host, token);
     return false;
