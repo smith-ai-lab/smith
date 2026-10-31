@@ -15,6 +15,7 @@
 // recurses nowhere either); and the types are put in dependency order.
 #include <smith/arena.h>
 #include <smith/json.h>
+#include <smith/mem.h>
 #include <smith/text.h>
 
 #include <ctype.h>
@@ -1711,8 +1712,11 @@ static void gen_prepare(Generator *g, const char *name, struct smith_array_const
     const SmithJsonValue *root = nullptr;
     SmithJsonError error = {};
     SmithJsonLimits limits = {.depth = 64, .string_length = 1 << 20, .count = 1 << 21};
-    if (!smith_json_parse(&g->arena, schema, limits, &root, &error))
-        gen_die("the schema is not JSON: byte %zu: %s", error.offset, smith_json_reason_text(error.reason));
+    SmithArenaAllocator allocator = smith_arena_allocator(&g->arena);
+    SmithAllocator *before = smith_mem_set_allocator(&allocator.base);
+    bool parsed = smith_json_parse(schema, limits, &root, &error);
+    smith_mem_set_allocator(before);
+    if (!parsed) gen_die("the schema is not JSON: byte %zu: %s", error.offset, smith_json_reason_text(error.reason));
     const SmithJsonValue *definitions = gen_get(root, "definitions");
     if (definitions == nullptr) definitions = gen_get(root, "$defs");
     if (definitions == nullptr) gen_die("the schema has no definitions or $defs");

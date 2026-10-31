@@ -185,18 +185,19 @@ constexpr size_t build_protocol_count = sizeof build_protocols / sizeof build_pr
 static constexpr char build_library_folder[] = "lib/smith"; // the libraries written in .smith
 
 // The generator is a program of smith's own C (scripts/protocol.c, on lib/json.c), built here and not shipped: like
-// scripts/pack.c, a tool of the build. arena, contract and text are the modules of smith, compiled from their sources.
-// Returns the program's step.
+// scripts/pack.c, a tool of the build. arena, contract, text and mem are the modules of smith, compiled from their
+// sources. Returns the program's step.
 static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *const sources[] = {"scripts/protocol.c",
                                    smith_fmt(b, "%s/arena.smith", build_library_folder),
                                    smith_fmt(b, "%s/contract.smith", build_library_folder),
                                    smith_fmt(b, "%s/text.smith", build_library_folder),
+                                   smith_fmt(b, "%s/mem.smith", build_library_folder),
                                    "lib/json.c",
                                    "lib/trace.c"};
-    SmithObject objects[6] = {};
-    const SmithObject *linked[7] = {};
-    for (size_t i = 0; i < 6; i++) {
+    SmithObject objects[7] = {};
+    const SmithObject *linked[8] = {};
+    for (size_t i = 0; i < 7; i++) {
         objects[i] = (SmithObject){
             .compiler = config->cc,
             .source = sources[i],
@@ -821,6 +822,9 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
 }
 
 static const char *build_test_header(SmithBuild *b, const char *source) {
+    // front/ast.smith is the module front::ast, whose header is front/ast.h: the folder stays in the name.
+    if (strncmp(source, "front/", strlen("front/")) == 0)
+        return smith_fmt(b, ".smith/include/%s.h", smith_replace_extension(b, source, ""));
     const char *root_less = source + strlen(strncmp(source, "tests/", strlen("tests/")) == 0 ? "tests/" : "lib/");
     return smith_fmt(b, ".smith/include/%s.h", smith_replace_extension(b, root_less, ""));
 }
@@ -862,14 +866,18 @@ static const char *const *build_test_modules(SmithBuild *b, const BuildConfig *c
     const char *smith_cc = smith_fmt(b, "%s/smith-cc", folder);
     const char *const *flags = build_smith_flags(b, config);
     const char *const *tests =
-        smith_glob(b, smith_list(b, "tests/*.smith", "lib/*_test.smith",
+        smith_glob(b, smith_list(b, "tests/*.smith", "front/*.smith", "lib/*_test.smith",
                                  smith_fmt(b, "%s/*_test.smith", build_library_folder), nullptr));
     const char *const *headers = build_test_header_step(b, smith_cc, flags, tests);
     for (size_t i = 0; tests[i] != nullptr; i++) {
         const char *header = headers[i];
         const char *object = smith_fmt(b, "%s/lint/%zu.o", folder, i);
+        // The front end's tests (their own runner, build_front_units) import LLVM's C API.
+        const char *const *llvm_headers =
+            smith_when(b, strncmp(tests[i], "tests/front_", strlen("tests/front_")) == 0,
+                       smith_list(b, "-I", smith_fmt(b, "%s/include", config->llvm), nullptr));
         SmithStep compile = {
-            .command = smith_cat(b, smith_list(b, smith_cc, nullptr), flags,
+            .command = smith_cat(b, smith_list(b, smith_cc, nullptr), flags, llvm_headers,
                                  smith_list(b, "-I", ".smith/include", "-c", tests[i], "-o", object, nullptr), nullptr),
             .inputs = smith_list(b, tests[i], nullptr),
             .implicit_inputs = smith_list(b, smith_cc, header, nullptr),
@@ -879,7 +887,7 @@ static const char *const *build_test_modules(SmithBuild *b, const BuildConfig *c
         smith_step(b, &compile);
         smith_compile_command(
             b, smith_cc, tests[i],
-            smith_cat(b, flags, smith_list(b, "-I", ".smith/include", "-fdefer-ts", nullptr), nullptr));
+            smith_cat(b, flags, llvm_headers, smith_list(b, "-I", ".smith/include", "-fdefer-ts", nullptr), nullptr));
     }
     return smith_cat(b, smith_list(b, smith_cc, nullptr), headers, nullptr);
 }
@@ -1031,6 +1039,48 @@ static const char *build_units(SmithBuild *b, const BuildConfig *config, const c
     return smith_fmt(b, "%s/units-project/build/tests", folder);
 }
 
+// The front end's tests (issue #1115, track B of #1112): every front/*.smith and tests/front_*_test.smith linked with
+// LLVM's C API into a second runner, beside the units runner (which would be relinked against static LLVM on every
+// test change). A project of its own like units (tests/front_units/build.c, in `<folder>/front-project`, whose `front`,
+// `tests` and `lib` are links to ours), built and run by the smith under test, with SMITH_LLVM naming the LLVM install
+// that smith links. `front-build` builds the runner, `test-front` runs it with `smith test`. Needs a smith that
+// compiles `.smith`. Returns nothing: no script waits on it.
+static void build_front_units(SmithBuild *b, const BuildConfig *config, const char *binary, const char *folder) {
+    static const char setup[] =
+        "repo=$PWD; p=$1/front-project; mkdir -p \"$p\" && ln -sfn \"$repo/tests\" \"$p/tests\" && ln -sfn "
+        "\"$repo/lib\" \"$p/lib\" && ln -sfn \"$repo/front\" \"$p/front\" && "
+        "{ cmp -s tests/front_units/build.c \"$p/build.c\" || cp tests/front_units/build.c \"$p/build.c\"; } && "
+        "cd \"$p\" && ";
+    const char *self = smith_fmt(b, "$repo/%s", binary);
+    const char *environment =
+        smith_fmt(b, "PATH=\"$repo/%s:$PATH\" SMITH_SELF=\"%s\" SMITH_REPO=\"$repo\" SMITH_LLVM=\"%s\"", folder, self,
+                  config->llvm);
+    const char *inputs[] = {binary, smith_fmt(b, "%s/smith-cc", folder), nullptr};
+    SmithStep build_step = {
+        .command =
+            (const char *[]){"sh", "-c", smith_fmt(b, "%s env %s \"%s\" build build/tests", setup, environment, self),
+                             "sh", folder, nullptr},
+        .inputs = inputs,
+    };
+    smith_task(b, "front-build", &build_step);
+    const char *const *given = smith_args(b);
+    const char *quoted[256];
+    size_t quoted_count = 0;
+    if (getenv("SMITH_TEST_STATS") != nullptr) quoted[quoted_count++] = "'--stats'";
+    for (size_t i = 0; given[i] != nullptr && quoted_count < 255; i++)
+        quoted[quoted_count++] = smith_fmt(b, "'%s'", given[i]);
+    quoted[quoted_count] = nullptr;
+    SmithStep run = {
+        .command = (const char *[]){"sh", "-c",
+                                    smith_fmt(b, "%s env %s \"%s\" test %s", setup, environment, self,
+                                              smith_join(b, quoted, " ")),
+                                    "sh", folder, nullptr},
+        .inputs = (const char *[]){"front-build", nullptr},
+        .test = true,
+    };
+    smith_task(b, "test-front", &run);
+}
+
 // The soundness harnesses of `smith prove` on 8 seeds of 50000 inputs each (issue #64): the units runner, with the
 // smith under test first on PATH and as SMITH_SELF. args are smith's path and the runner's, both relative to the root.
 static int build_prove_sound_full(SmithRun *run) {
@@ -1060,7 +1110,8 @@ static int build_prove_sound_full(SmithRun *run) {
 // variable unset (tests/run_routing_test.smith).
 static const char *const *build_test(SmithBuild *b, const BuildConfig *config, const char *binary, const char *folder) {
     const char *units = config->hook ? build_units(b, config, binary, folder) : "";
-    const char *const *tasks = smith_when(b, units[0] != '\0', smith_list(b, "test-units", nullptr));
+    if (config->hook) build_front_units(b, config, binary, folder);
+    const char *const *tasks = smith_when(b, units[0] != '\0', smith_list(b, "test-units", "test-front", nullptr));
     // Every float through the parser, against strtof: minutes on all cores, so it is not part of `test`.
     SmithStep exhaustive = {
         .command =
