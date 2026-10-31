@@ -39,6 +39,8 @@ The syntax tree. Plain data: every type is exported with all its fields. `TypeEx
 
 **The parser core** is a `Parser` (the tokens, the source, a position, the errors, the hooks) and the cursor functions every parser file uses: `peek`, `peek_at`, `advance`, `at`, `accept`, `expect(p, kind, what)` (records `expected <what>, found <text>` and takes nothing), `text`, `error`, `span_from`. Expressions (A3), statements (A4) and declarations (A5) are parsed in three files that call each other only through `Parser.hooks` (`expression`, `type`, `statement`, `declaration`, function pointers) by way of `parse::expression(p)` and its three siblings, so each is tested with stubs before the others exist and A6 wires the real ones. A hook that is not set records an error and gives null. The errors are the current allocator's, as the tree is.
 
+**Statements** (`front/parse_stmt.smith`, A4): `parse_stmt::statement(p)` is the `statement` hook. It reads every statement form (blocks, `if` / `if constexpr`, loops, `switch`, jumps, labels, `defer`, `static_assert`) and a declaration-or-expression with no symbol table. Nesting is an explicit stack of frames, never recursion; after an error the rest of the statement is skipped and an `empty` placeholder stands in, so one mistake gives one error. Tests: `tests/front_parse_stmt_test.smith` with stub hooks and goldens in `tests/front/parse_stmt/`.
+
 ## front::cimport (track C)
 
 Declarations read from C headers become these same nodes; its concept comes with #1117 (`c-header-import.md`), and links here once that file exists.
