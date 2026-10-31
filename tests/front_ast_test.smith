@@ -34,7 +34,7 @@ export void test_front_ast_dump_of_the_add_function() {
     defer mem::set_allocator(outside);
     ast::DeclRef decls[1] = {add_function()};
     ast::Module m = ast::new_module("math", decls);
-    test::golden_free("tests/front/ast/add.txt", ast::dump(&m));
+    test::golden("tests/front/ast/add.txt", ast::dump(&m));
 }
 
 // I32 count(I32 n) {
@@ -80,7 +80,7 @@ export void test_front_ast_dump_of_if_for_and_switch() {
     defer mem::set_allocator(outside);
     ast::DeclRef decls[1] = {control_flow_function()};
     ast::Module m = ast::new_module("flow", decls);
-    test::golden_free("tests/front/ast/control_flow.txt", ast::dump(&m));
+    test::golden("tests/front/ast/control_flow.txt", ast::dump(&m));
 }
 
 // struct Point { I32 x; I32 y : 3; };  union Bits { U32 word; U8 byte; };
@@ -99,7 +99,7 @@ export void test_front_ast_dump_of_a_struct_and_a_union() {
     if (bits->kind == .record) bits->kind.record.is_union = true;
     ast::DeclRef decls[2] = {point, bits};
     ast::Module m = ast::new_module("geometry", decls);
-    test::golden_free("tests/front/ast/record.txt", ast::dump(&m));
+    test::golden("tests/front/ast/record.txt", ast::dump(&m));
 }
 
 // typedef enum { Circle circle; Rect rect; empty; } Shape;  enum Color : U8 { red = 1, green };
@@ -118,7 +118,7 @@ export void test_front_ast_dump_of_a_payload_enum() {
     ast::Decl *color = ast::enumeration("Color", ast::named("U8"), colors);
     ast::DeclRef decls[2] = {shape, color};
     ast::Module m = ast::new_module("shapes", decls);
-    test::golden_free("tests/front/ast/enumeration.txt", ast::dump(&m));
+    test::golden("tests/front/ast/enumeration.txt", ast::dump(&m));
 }
 
 // import std::arena;  import <stdio.h>;  import "x.h";  export void greet() { c::printf("hi\n\"\\"); }
@@ -137,7 +137,7 @@ export void test_front_ast_dump_of_a_module_with_imports() {
     ast::DeclRef imports[4] = {ast::import_module("std::arena"), ast::import_c("stdio.h", true),
                                ast::import_c("x.h", false), greet};
     ast::Module m = ast::new_module("demo", imports);
-    test::golden_free("tests/front/ast/imports.txt", ast::dump(&m));
+    test::golden("tests/front/ast/imports.txt", ast::dump(&m));
 }
 
 // Types of every shape, a flagged declaration, an attribute and an `if constexpr` at file scope.
@@ -168,7 +168,33 @@ export void test_front_ast_dump_of_types_and_if_constexpr() {
                                                                    .else_decls = else_decls[0:1]}});
     ast::DeclRef decls[4] = {ast::type_alias("Bytes", pointer), slice_alias, ast::type_alias("Four", array), branch};
     ast::Module m = ast::new_module("kinds", decls);
-    test::golden_free("tests/front/ast/kinds.txt", ast::dump(&m));
+    test::golden("tests/front/ast/kinds.txt", ast::dump(&m));
+}
+
+// What a C header becomes: `typedef struct _IO_FILE FILE;` (opaque), `typedef int (*Handler)(int, long double);`
+// as an `Fn` applied to a function type (no function-pointer syntax) with an unsupported C type.
+export void test_front_ast_dump_of_declarations_read_from_a_c_header() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::FieldDecl none[1];
+    ast::Decl *file = ast::record_decl("FILE", none[0:0]);
+    if (file->kind == .record) file->kind.record.opaque = true;
+    file->from_c = true;
+    Str spelling = "long double";
+    ast::TypeRef parameters[2] = {ast::named("c::int"), ast::make_type({.unsupported_c = {.spelling = spelling}})};
+    ast::TypeExpr *signature =
+        ast::make_type({.function = {.params = parameters[0:2], .result = ast::named("c::int")}});
+    ast::TypeArg arguments[:] = mem::alloc_slice(ast::TypeArg, 1);
+    ast::TypeArg argument = {.type = {.type = signature}};
+    arguments[0] = argument;
+    ast::TypeExpr *handler = ast::make_type({.applied = {.name = ast::path("Fn"), .args = arguments}});
+    ast::Decl *alias = ast::type_alias("Handler", handler);
+    alias->from_c = true;
+    ast::DeclRef decls[2] = {file, alias};
+    ast::Module m = ast::new_module("c_header", decls);
+    test::golden("tests/front/ast/c_header.txt", ast::dump(&m));
 }
 
 export void test_front_ast_path_splits_on_double_colons() {
