@@ -39,6 +39,13 @@ The syntax tree. Plain data: every type is exported with all its fields. `TypeEx
 
 **The parser core** is a `Parser` (the tokens, the source, a position, the errors, the hooks) and the cursor functions every parser file uses: `peek`, `peek_at`, `advance`, `at`, `accept`, `expect(p, kind, what)` (records `expected <what>, found <text>` and takes nothing), `text`, `error`, `span_from`. Expressions (A3), statements (A4) and declarations (A5) are parsed in three files that call each other only through `Parser.hooks` (`expression`, `type`, `statement`, `declaration`, function pointers) by way of `parse::expression(p)` and its three siblings, so each is tested with stubs before the others exist and A6 wires the real ones. A hook that is not set records an error and gives null. The errors are the current allocator's, as the tree is.
 
+## front::parse_expr and front::parse_type (`front/parse_expr.smith`, `front/parse_type.smith`, #1145)
+
+`parse_expr::expression(p)` and `parse_type::type(p)` are the hooks `Parser.hooks.expression` and `.type`; a nested construct is read through `parse::expression`, `type` and `statement`, never directly. Goldens: `tests/front/parse_expr/`, `tests/front/parse_type/`.
+
+- **Expressions**: C's precedence and associativity with no comma operator (`(a, b)` and `xs[a, b]` are errors). No recursion: operators wait on two stacks. `try e` is prefix at unary precedence. A `c::` path is a value, never a cast. A lambda parameter needs a type (`[](a, b)` says to write `auto a`). `u8"..."` is a plain string; `u`, `U` and `L` strings and characters are errors.
+- **Types**: qualifiers, paths, `auto`, keyword types, `struct X`, `typeof`, `*`, `[:]`, `[N]`, applied types `Option(I32)`. `T[:][3]` is a slice of arrays. `R (P...)` inside `Fn(...)` is a function type; `I32 (*f)(I32)` is an error naming `Fn(I32 (I32))`.
+
 ## front::cimport (track C)
 
 Declarations read from C headers become these same nodes; its concept comes with #1117 (`c-header-import.md`), and links here once that file exists.
