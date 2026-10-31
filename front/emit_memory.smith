@@ -1,0 +1,88 @@
+// front::emit_memory: pointers, arrays and records for the emitter (B3b, #1112). Stubs with their final signatures:
+// B3b fills the bodies without touching front/emit.smith. The protocol is at the top of front/emit.smith. A type
+// handler gets the type node and returns the Ty; it walks nested types with a loop, not by calling itself (recursion
+// is a compile error in a module), and maps a leaf with `emit_state::scalar_type`.
+module front::emit_memory;
+
+import front::ast;
+import front::emit_state as state;
+
+// ---------------------------------------------------------------------------------------------------------------
+// Types
+
+export state::TyResult type_pointer(state::Emitter *_, const ast::TypeExpr *t) {
+    return state::ty_fail("not emitted yet: pointer type", t->span);
+}
+
+export state::TyResult type_array(state::Emitter *_, const ast::TypeExpr *t) {
+    return state::ty_fail("not emitted yet: array type", t->span);
+}
+
+// A `named` type that is not a scalar: a record declared in the module.
+export state::TyResult type_record(state::Emitter *_, const ast::TypeExpr *t) {
+    return state::ty_fail("not emitted yet: record type", t->span);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Expressions
+
+export state::Status address_of(state::Emitter *_, const ast::Expr *x, state::Hint _) {
+    return state::not_emitted("address of", x->span);
+}
+
+export state::Status dereference(state::Emitter *_, const ast::Expr *x, state::Hint _) {
+    return state::not_emitted("dereference", x->span);
+}
+
+export state::Status index(state::Emitter *_, const ast::Expr *x, state::Hint _) {
+    return state::not_emitted("index", x->span);
+}
+
+export state::Status member(state::Emitter *_, const ast::Expr *x, state::Hint _) {
+    return state::not_emitted("member", x->span);
+}
+
+export state::Status compound(state::Emitter *_, const ast::Expr *x, state::Hint _) {
+    return state::not_emitted("compound literal", x->span);
+}
+
+export state::Status cast(state::Emitter *_, const ast::Expr *x, state::Hint _) {
+    return state::not_emitted("cast", x->span);
+}
+
+export state::Status null_pointer(state::Emitter *_, const ast::Expr *x, state::Hint _) {
+    return state::not_emitted("null pointer", x->span);
+}
+
+// `sizeof`, `alignof` and `countof`.
+export state::Status query(state::Emitter *_, const ast::Expr *x, state::Hint _) {
+    return state::not_emitted("query", x->span);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Places: the address of an lvalue, pushed as a Value whose `llvm` is the address (see `Work.place`)
+
+export state::Status place_dereference(state::Emitter *_, const ast::Expr *x) {
+    return state::not_emitted("dereference as a place", x->span);
+}
+
+export state::Status place_index(state::Emitter *_, const ast::Expr *x) {
+    return state::not_emitted("index as a place", x->span);
+}
+
+export state::Status place_member(state::Emitter *_, const ast::Expr *x) {
+    return state::not_emitted("member as a place", x->span);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Declarations
+
+// `Decl.record` (file scope or a block).
+export state::Status record_decl(state::Emitter *_, const ast::Decl *d) {
+    return state::not_emitted("record declaration", d->span);
+}
+
+// `Decl.variable` at file scope: a global.
+export state::Status global_variable(state::Emitter *_, const ast::Decl *d) {
+    return state::not_emitted("global variable", d->span);
+}

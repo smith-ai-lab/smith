@@ -1,0 +1,406 @@
+// front::emit_state: the types every part of the emitter shares (#1119, B1 of #1112). front::emit has the entry point
+// and the walk and imports the handlers of the other emit_* modules; those need the emitter's state, so the state lives
+// here, in a module all of them import (a module cannot import one that imports it). front::emit re-exports the types a
+// caller names (`emit::Error`, `emit::Target`, `emit::Options`). The protocol of the walk is written at the top of
+// front/emit.smith.
+module front::emit_state;
+
+import front::ast;
+import std::contract;
+import std::arena;
+import std::mem;
+import std::format;
+import <llvm-c/Core.h>;
+import <llvm-c/DebugInfo.h>;
+import <llvm-c/Target.h>;
+
+// ---------------------------------------------------------------------------------------------------------------
+// What the entry point takes and gives
+
+// A problem in the tree, with the node's span. `message` is in the current allocator.
+export struct Error {
+    Str message;
+    ast::Span span;
+};
+
+// What the module is emitted for. The emitter never asks the host: the triple and the data layout come from here.
+// An empty `data_layout` leaves the module's unset.
+export struct Target {
+    Str triple;
+    Str data_layout;
+};
+
+export struct Options {
+    Target target;
+    Str source; // the file's text, for debug info's lines (B5)
+    Bool debug_info;
+};
+
+// What a handler returns: success, or the Error that stops the walk.
+export typedef Result(Bool, Error) Status;
+
+export Status success() {
+    return true;
+}
+
+// A message built with format::push, as the Str that fail takes.
+export Str msg(char chars[:]) {
+    return chars;
+}
+
+// Every `Error.message` is a string of the allocator in force when it was made (the caller of `emit::module` frees it
+// with `mem::free(message.data)` when it is done), never a literal: `fail` copies the text it is given.
+export Status fail(Str message, ast::Span span) {
+    Error error = {.message = msg(format::push(message)), .span = span};
+    return {.error = error};
+}
+
+// A failure whose message is the pieces `args`, as `format::push` takes them: `failf(span, "unknown name ", name)`.
+export Status failf(ast::Span span, auto... args) {
+    Error error = {.message = msg(format::push(args...)), .span = span};
+    return {.error = error};
+}
+
+// "not emitted yet: <kind>" at `span`: what a stub returns.
+export Status not_emitted(Str kind, ast::Span span) {
+    return failf(span, "not emitted yet: ", kind);
+}
+
+// Give back a string of the allocator in force: an `Error.message`, or a copy `msg` made.
+export void free_text(Str text) {
+    mem::free((char *)(usize)text.data);
+}
+
+// A copy of `text` in the current allocator with a terminator after it, for LLVM's names. Free it with `mem::free`.
+export char *cstr(Str text) {
+    return format::push(text).data;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Types and values
+
+export typedef enum {
+    integer;
+    boolean;
+    pointer;
+    array;
+    record;
+} TyKind;
+
+export struct Ty;
+
+// A type as the emitter knows it: the LLVM type and what LLVM's does not say (signedness, the name as written).
+// `element` is the pointee or element type (B3b); `count` the length of an array; `address_space` of a pointer.
+export struct Ty {
+    TyKind kind;
+    c::LLVMTypeRef llvm;
+    U32 bits; // integers and Bool
+    Bool is_signed;
+    Str name;
+    Ty *element;
+    U64 count;
+    U32 address_space;
+};
+
+// A type, or the reason there is none.
+export typedef Result(Ty, Error) TyResult;
+
+// A type that cannot be made.
+export TyResult ty_fail(Str message, ast::Span span) {
+    Error error = {.message = msg(format::push(message)), .span = span};
+    return {.error = error};
+}
+
+// The type a literal takes where it stands, when there is one.
+export struct Hint {
+    Bool present;
+    Ty ty;
+};
+
+// A value on the value stack. For a place (see `Work.place`), `llvm` is the address and `ty` the type stored there.
+export struct Value {
+    c::LLVMValueRef llvm;
+    Ty ty;
+};
+
+// A function of the module: declared in the first pass so that a call (B3a) finds any of them.
+export struct FunctionInfo {
+    Str name;   // as written
+    Str symbol; // the LLVM name, `front::test::add`
+    c::LLVMValueRef llvm;
+    c::LLVMTypeRef llvm_type;
+    Ty result;
+    Ty params[:];
+};
+
+export struct Local {
+    Str name;
+    Ty ty;
+    c::LLVMValueRef address; // the alloca
+};
+
+export struct LoopTarget {
+    c::LLVMBasicBlockRef break_block;
+    c::LLVMBasicBlockRef continue_block;
+};
+
+// A `defer`red statement, run when the block it was in ends: the scope depth is `scope_count` when it was pushed.
+export struct DeferEntry {
+    const ast::Stmt *body;
+    usize scope_depth;
+};
+
+export struct FieldInfo {
+    Str name;
+    Ty ty;
+};
+
+export struct RecordType {
+    Str name;
+    Ty ty;
+    FieldInfo fields[:];
+};
+
+// ---------------------------------------------------------------------------------------------------------------
+// The walk's work
+
+export struct Emitter;
+export struct Work;
+
+// What a `then` item runs: the state and the item itself, which carries the data its pusher stored in it.
+export typedef Status (*Continuation)(Emitter *e, const Work *w);
+
+export typedef enum {
+    eval;      // evaluate `expr` (with `hint`): the handler of its kind pushes one Value
+    place;     // evaluate `expr` as an address: pushes one Value whose `llvm` is the address
+    statement; // emit `stmt`
+    then;      // call `then(e, &item)`: a continuation, which pops what the work before it pushed
+} WorkKind;
+
+// One unit of work. Only the fields of its kind mean anything; the rest stay zero.
+export struct Work {
+    WorkKind kind;
+    const ast::Expr *expr;
+    const ast::Stmt *stmt;
+    const ast::Decl *decl;
+    Hint hint;
+    Ty ty;
+    Continuation then;
+    U64 number; // a continuation's own datum: an operator, a count
+    Bool flag;
+    c::LLVMBasicBlockRef blocks[3];
+    c::LLVMValueRef value;
+    ast::Span span;
+};
+
+// ---------------------------------------------------------------------------------------------------------------
+// The emitter
+
+// Every field the tickets after B1 need. A ticket that finds one missing escalates; it does not edit this.
+export struct Emitter {
+    c::LLVMContextRef context;
+    c::LLVMModuleRef module;
+    c::LLVMBuilderRef builder;        // where code goes
+    c::LLVMBuilderRef alloca_builder; // positioned before the entry block's branch: every alloca goes there
+    c::LLVMTargetDataRef target_data; // null when the target has no data layout
+    Options options;
+    const ast::Module *tree;
+
+    FunctionInfo functions[:]; // the module's functions, in order
+    usize function_count;
+
+    // The function being emitted.
+    c::LLVMValueRef function;
+    c::LLVMBasicBlockRef entry_block;
+    c::LLVMBasicBlockRef trap_block; // created when the first check needs it, null before
+    Ty result;                       // the function's result type
+
+    Local locals[:]; // the visible locals, newest last
+    usize local_count;
+    usize scope_marks[:]; // local_count at the start of each open scope
+    usize scope_count;
+
+    LoopTarget loops[:]; // B2: the innermost last
+    usize loop_count;
+    DeferEntry defers[:]; // B2
+    usize defer_count;
+
+    RecordType records[:]; // B3b
+    usize record_count;
+
+    Work work[:]; // the work stack, the next to run last
+    usize work_count;
+    Value values[:]; // the value stack
+    usize value_count;
+
+    // B5: null when debug info is off.
+    c::LLVMDIBuilderRef debug_builder;
+    c::LLVMMetadataRef compile_unit;
+    c::LLVMMetadataRef file;
+    c::LLVMMetadataRef scope;
+};
+
+// ---------------------------------------------------------------------------------------------------------------
+// Helpers for handlers
+
+export void push_work(Emitter *e, Work item) {
+    if (e->work_count == countof(e->work)) {
+        usize capacity = countof(e->work) * 2;
+        if (capacity < 64) capacity = 64;
+        e->work = mem::realloc(e->work, capacity);
+    }
+    e->work[e->work_count] = item;
+    e->work_count += 1;
+}
+
+// Evaluate `x` next (before the work already on the stack). `has_hint` says whether `hint` is meant.
+export void push_eval(Emitter *e, const ast::Expr *x, Hint hint) {
+    push_work(e, (Work){.kind = .eval, .expr = x, .hint = hint, .span = x->span});
+}
+
+export void push_place(Emitter *e, const ast::Expr *x) {
+    push_work(e, (Work){.kind = .place, .expr = x, .span = x->span});
+}
+
+export void push_statement(Emitter *e, const ast::Stmt *s) {
+    push_work(e, (Work){.kind = .statement, .stmt = s, .span = s->span});
+}
+
+// Run `then(e, &item)` once everything pushed after it has run. `item.kind` is set here.
+export void push_then(Emitter *e, Work item) {
+    item.kind = .then;
+    push_work(e, item);
+}
+
+export void push_value(Emitter *e, Value value) {
+    if (e->value_count == countof(e->values)) {
+        usize capacity = countof(e->values) * 2;
+        if (capacity < 64) capacity = 64;
+        e->values = mem::realloc(e->values, capacity);
+    }
+    e->values[e->value_count] = value;
+    e->value_count += 1;
+}
+
+// The newest value; a continuation pops what its pushers pushed, so the stack is never empty there.
+export Value pop_value(Emitter *e) {
+    contract::requires(e->value_count > 0);
+    e->value_count -= 1;
+    return e->values[e->value_count];
+}
+
+// The newest value, left on the stack.
+export Value peek_value(Emitter *e) {
+    contract::requires(e->value_count > 0);
+    return e->values[e->value_count - 1];
+}
+
+export Hint no_hint() {
+    return (Hint){};
+}
+
+export Hint hint_of(Ty ty) {
+    return (Hint){.present = true, .ty = ty};
+}
+
+// The same text byte for byte (a literal converts to `Str`, so `same_text(name, "I8")` is fine).
+export Bool same_text(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+// LLVM's types are unique in a context, so the same LLVM type and signedness is the same type.
+export Bool same_type(Ty a, Ty b) {
+    return a.llvm == b.llvm && a.is_signed == b.is_signed;
+}
+
+// The one place a pointer type is made, so that B3b can give it an address space.
+export c::LLVMTypeRef pointer_type(Emitter *e, U32 address_space) {
+    return c::LLVMPointerTypeInContext(e->context, address_space);
+}
+
+// A zeroed slot in the entry block.
+export c::LLVMValueRef new_alloca(Emitter *e, Ty ty, Str name) {
+    char *label = cstr(name);
+    c::LLVMValueRef slot = c::LLVMBuildAlloca(e->alloca_builder, ty.llvm, label);
+    mem::free(label);
+    return slot;
+}
+
+export void add_local(Emitter *e, Local local) {
+    if (e->local_count == countof(e->locals)) {
+        usize capacity = countof(e->locals) * 2;
+        if (capacity < 16) capacity = 16;
+        e->locals = mem::realloc(e->locals, capacity);
+    }
+    e->locals[e->local_count] = local;
+    e->local_count += 1;
+}
+
+// The newest local of that name; false when there is none.
+export Bool find_local(Emitter *e, Str name, Local *found) {
+    for (usize i = e->local_count; i > 0; i--) {
+        if (same_text(e->locals[i - 1].name, name)) {
+            *found = e->locals[i - 1];
+            return true;
+        }
+    }
+    return false;
+}
+
+export void begin_scope(Emitter *e) {
+    if (e->scope_count == countof(e->scope_marks)) {
+        usize capacity = countof(e->scope_marks) * 2;
+        if (capacity < 16) capacity = 16;
+        e->scope_marks = mem::realloc(e->scope_marks, capacity);
+    }
+    e->scope_marks[e->scope_count] = e->local_count;
+    e->scope_count += 1;
+}
+
+export void end_scope(Emitter *e) {
+    contract::requires(e->scope_count > 0);
+    e->scope_count -= 1;
+    e->local_count = e->scope_marks[e->scope_count];
+}
+
+// The type a name says, for the names of the integer types and Bool; `found` false for any other.
+export Bool scalar_type(Emitter *e, Str name, Ty *ty) {
+    U32 bits = 0;
+    Bool is_signed = false;
+    Bool is_bool = false;
+    if (same_text(name, "I8")) {
+        bits = 8;
+        is_signed = true;
+    } else if (same_text(name, "I16")) {
+        bits = 16;
+        is_signed = true;
+    } else if (same_text(name, "I32")) {
+        bits = 32;
+        is_signed = true;
+    } else if (same_text(name, "I64")) {
+        bits = 64;
+        is_signed = true;
+    } else if (same_text(name, "U8")) {
+        bits = 8;
+    } else if (same_text(name, "U16")) {
+        bits = 16;
+    } else if (same_text(name, "U32")) {
+        bits = 32;
+    } else if (same_text(name, "U64")) {
+        bits = 64;
+    } else if (same_text(name, "Bool")) {
+        bits = 1;
+        is_bool = true;
+    } else {
+        return false;
+    }
+    Ty t = {.kind = .integer, .bits = bits, .is_signed = is_signed, .name = name};
+    if (is_bool) t.kind = .boolean;
+    t.llvm = c::LLVMIntTypeInContext(e->context, bits);
+    *ty = t;
+    return true;
+}
