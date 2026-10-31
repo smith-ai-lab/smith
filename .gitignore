@@ -25,6 +25,7 @@ compile_commands.json
 /include/smith/random.h
 /include/smith/result.h
 /include/smith/slice.h
+/include/smith/task.h
 /include/smith/ascii.h
 /include/smith/test.h
 /include/smith/text.h

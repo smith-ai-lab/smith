@@ -199,5 +199,5 @@ export void test_arena_c_unknown_library_lists_the_known_names(io::Io *io) {
                              "smith: build.c: smith_library: unknown library \"nope\"; known: handlers, json, trace, "
                              "arena, ascii, autodiff, categorical, clock, console, contract, effects, entropy, env, "
                              "failing, files, format, inflate, "
-                             "io, math, mem, net, process, random, slice, test, text");
+                             "io, math, mem, net, process, random, slice, task, test, text");
 }
