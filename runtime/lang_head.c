@@ -430,7 +430,8 @@ static bool smith_lang_head_slice_struct(const SmithLang *lang, size_t at) {
     const char *name = smith_lang_scratch_str(tag->text);
     return keyword->synthetic && tag->synthetic && brace->synthetic &&
            smith_lang_equals(smith_lang_scratch_str(keyword->text), keyword->text.length, "struct") &&
-           tag->text.length > 12 && memcmp(name, "smith_array_", 12) == 0 &&
+           ((tag->text.length > 12 && memcmp(name, "smith_array_", 12) == 0) ||
+            (tag->text.length > 12 && memcmp(name, "smith_tuple_", 12) == 0)) &&
            smith_lang_equals(smith_lang_scratch_str(brace->text), brace->text.length, "{");
 }
 
