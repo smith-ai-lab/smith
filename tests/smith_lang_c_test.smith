@@ -20,11 +20,8 @@ import scratch;
 // that is identical before it is identical after, and the cases that are about it say -O2.
 constexpr char flags[_] =
     "-std=gnu23 -O0 -g0 -Wno-builtin-macro-redefined -D'__FILE__=\"unit\"' -I include -I .smith/include";
-// smith.c alone is compared at -O1: at -O0 `*handle == 0 ? smith_lang_ty_second_level() : ""` in lang_type.c is a
-// branch as .c and a select as .smith (the same program; the optimizer makes the two one). Code generation asks the
-// constant evaluator whether the call is cheap to run unconditionally, and with SmithConstexprC it can run (#652).
-constexpr char in_process_o1[_] = "-O1 -DSMITH_IN_PROCESS -D'SMITH_CLANG_RESOURCE=\"tests/stub.c\"' "
-                                  "-D'SMITH_CLANG_ID=\"llvm-0 0\"'";
+constexpr char in_process[_] = "-DSMITH_IN_PROCESS -D'SMITH_CLANG_RESOURCE=\"tests/stub.c\"' "
+                               "-D'SMITH_CLANG_ID=\"llvm-0 0\"'";
 
 static typeof(const char[:]) slice_of(const char *text) {
     return text[0:c::strlen(text)];
@@ -103,7 +100,7 @@ static void compare(const char *stem, const char *extra, bool from_smith) {
 }
 
 export void test_smith_c_compiles_the_same_as_smith() {
-    compare("smith", in_process_o1, false);
+    compare("smith", in_process, false);
 }
 
 export void test_build_c_compiles_the_same_as_smith() {
@@ -147,6 +144,11 @@ export void test_the_new_project_main_compiles_the_same_as_smith() {
 
 // Where C does not require a constant, the evaluator that runs C functions for .smith
 // (patches/clang-constexpr-c.patch) does nothing.
+// A `?:` runs one arm at -O0 too: the same code as .c, and only the chosen call happens (#1018).
+export void test_ternary_compiles_the_same_as_smith() {
+    compare("tests/smith-lang-c/ternary", "", false);
+}
+
 export void test_folding_compiles_the_same_as_smith() {
     compare("tests/smith-lang-c/folding", "", false);
 }
@@ -201,6 +203,10 @@ export void test_the_languages_words_as_names_print_the_same_as_c() {
 
 export void test_ordinary_constructs_print_the_same_as_c() {
     behave("ordinary");
+}
+
+export void test_ternary_runs_one_arm() {
+    behave("ternary");
 }
 
 export void test_loops_print_the_same_as_c() {

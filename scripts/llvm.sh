@@ -6,10 +6,10 @@
 set -eu
 src=$1 cmake=$2 python=$3 stamp=$4 ninja=$5
 # One configuration serves the compiler, the prover and `.smith` (#20): RTTI and exceptions on (Alive2 needs them), and the
-# token hook (#11). A change to either, or to a patch, is a new folder: r12 is the twelfth configuration of 23.1.3 (r12 changes no patch: Linux's pack gains the prover and Enzyme, #820) (r3 added
+# token hook (#11). A change to either, or to a patch, is a new folder: r14 is the fourteenth configuration of 23.1.3 (r14 changes `SmithCEval` only, #1018; r13 was the same fix before it found `isConstantInitializer`; r12 changes no patch: Linux's pack gains the prover and Enzyme, #820) (r3 added
 # the editor's defaults, the `.smith` source extension of clang-format's main include, and the command hook; r4 lets the editor run smith-effects; r5 adds the constant evaluator for C function bodies in `.smith` files and clang-format's tuple and slice forms; r6 adds compile-time failure annotations, the evaluator under -fmodules and constexpr pointers into literals; r7 folds a call of a C function in a constant context without -Wgnu-folding-constant, and clang-format keeps the space of `[const :]`; r8 formats payload enums like structs and spaces a variant in the dot rule; r9 lets a plugin's scoped C23 attribute take arguments, `[[smith::effects(alloc, net)]]`; r10 adds a registry through which a plugin adds sections to clangd's hover; r11 has clang-format read the branches of a file-scope `if constexpr` in a .smith file as file scope, imports included). SMITH_LLVM_NAME builds
 # into another folder (an experiment next to the shared install).
-cache=${XDG_CACHE_HOME:-$HOME/.cache}/smith/llvm/${SMITH_LLVM_NAME:-23.1.3-r12}
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/smith/llvm/${SMITH_LLVM_NAME:-23.1.3-r14}
 mkdir -p "$cache" "$(dirname "$stamp")"
 # --- step: the patches (patches/*.patch): the token hook (issue #11) and clang-format for .smith (issue #25) -------------
 # patches/clang-token-hook.patch is a token transformer on the Preprocessor, for .smith files; off unless smith installs
