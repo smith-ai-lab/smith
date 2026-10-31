@@ -38,15 +38,15 @@
         (lambda x y
           (block))))))
 
-[](a, b) { return a < b; }
+[](auto a, auto b) { return a < b; }
 (module m
   (function f
     (result (named I32))
     (block
       (return
         (lambda
-          (param a)
-          (param b)
+          (param a (auto))
+          (param b (auto))
           (block))))))
 
 slice::sort(xs, [](I32 a, I32 b) { return a < b; })

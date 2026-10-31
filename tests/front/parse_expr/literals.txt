@@ -222,10 +222,3 @@ u8"x"
     (block
       (return (string "x")))))
 
-L'a'
-(module m
-  (function f
-    (result (named I32))
-    (block
-      (return (character 97)))))
-

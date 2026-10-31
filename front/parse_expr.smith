@@ -10,8 +10,9 @@
 //
 //   primary    integer literals (decimal, hex, octal, binary, `'` separators, suffixes; the value is a U64, a literal
 //              that does not fit is an error), floating literals (decimal and hex, an F64), characters and strings
-//              (escapes decoded to UTF-8; adjacent strings joined; the prefixes `u8 u U L` are dropped), `true`,
-//              `false`, `nullptr`, a name or a path (`x`, `ascii::digit`, `c::printf`), `.variant`, `( e )`
+//              (escapes decoded to UTF-8; adjacent strings joined; `u8"..."` is a plain string, and the prefixes `u U
+//              L` are errors: wide strings are not supported yet), `true`, `false`, `nullptr`, a name or a path (`x`,
+//              `ascii::digit`, `c::printf`), `.variant`, `( e )`
 //   a type     a `type_name` token or a path that ends in one starts a type, read by `parse::type` into a
 //   as a value `type_value` (`f(I32)`, `Option(I32)`): see parse_type::starts_type
 //   postfix    call `f(a, b)`, index `xs[i]`, slice `xs[a:b]` `xs[a:]` `xs[:b]` `xs[:]`, `.name`, `->name`, `++`, `--`
@@ -21,8 +22,8 @@
 //   a compound `(Point){...}`; `{...}` alone is a `compound` with no type: items are `e`, `.x = e`, `[2] = e`, nested
 //   literal    designators `.a.b = e`, and a lone `.name` item is a variant value
 //   a lambda   `[x, y](I32 a, I32 b) -> I32 { ... }`, `[] { ... }`, `[](I32 a) { ... }`: a capture is a name, a
-//              parameter a type then a name (a lone name is a parameter with no type), the body is read by
-//              `parse::statement`
+//              parameter a type, `auto` or a concept then a name (a lone name is an error that says to write `auto a`),
+//              the body is read by `parse::statement`
 //   binary     `* / %`, `+ -`, `<< >>`, `< > <= >=`, `== !=`, `&`, `^`, `|`, `&&`, `||` left associative; `?:` and
 //              `= += -= *= /= %= <<= >>= &= ^= |=` right associative
 //
@@ -301,6 +302,14 @@ static Str quoted(Str t) {
     return t[open + 1:countof(t) - 1];
 }
 
+// Where the quote of a string or character literal is: the length of its prefix (`u8`, `u`, `U`, `L`).
+static Usize prefix_length(Str t) {
+    Usize open = 0;
+    while (open < countof(t) && t[open] != '"' && t[open] != '\'')
+        open += 1;
+    return open;
+}
+
 // The code point at the start of UTF-8 bytes, and how many bytes it took; a stray byte is its own value.
 static U32 first_code_point(Str bytes, Usize *length) {
     U32 lead = (U32)(U8)bytes[0];
@@ -344,6 +353,9 @@ static ast::Expr *floating_literal(parse::Parser *p) {
 
 static ast::Expr *character_literal(parse::Parser *p) {
     lex::Token token = parse::advance(p);
+    if (prefix_length(parse::text(p, token)) > 0) {
+        parse::error(p, token.span, "prefixed character literals are not supported in .smith yet: write 'a'");
+    }
     Str bytes = unescape(p, token.span, quoted(parse::text(p, token)));
     U32 value = 0;
     if (countof(bytes) == 0) {
@@ -362,7 +374,12 @@ static ast::Expr *string_literal(parse::Parser *p) {
     char all[:] = {};
     for (Usize i = 0; i < countof(p->tokens) && parse::at(p, lex::string); i += 1) {
         lex::Token token = parse::advance(p);
-        Str piece = unescape(p, token.span, quoted(parse::text(p, token)));
+        Str written = parse::text(p, token);
+        Usize prefix = prefix_length(written);
+        if (prefix > 0 && !(prefix == 2 && written[0] == 'u' && written[1] == '8')) {
+            parse::error(p, token.span, "wide strings are not supported in .smith yet: write \"...\" or u8\"...\"");
+        }
+        Str piece = unescape(p, token.span, quoted(written));
         all = format::push(all, piece);
     }
     Str bytes = all;
@@ -468,7 +485,10 @@ static ast::Param lambda_param(parse::Parser *p) {
     ast::Param param = {};
     lex::TokenKind after = parse::peek_at(p, 1).kind;
     if (parse::at(p, lex::name) && (after == lex::comma || after == lex::right_paren)) {
-        param.name = parse::text(p, parse::advance(p));
+        lex::Token lone = parse::advance(p);
+        param.name = parse::text(p, lone);
+        char message[:] = format::push("a lambda parameter needs a type: write `auto ", param.name, "`");
+        parse::error(p, lone.span, message);
     } else {
         param.type = parse::type(p);
         lex::Token name = parse::expect(p, lex::name, "a parameter name");

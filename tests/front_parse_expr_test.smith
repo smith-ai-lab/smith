@@ -154,7 +154,7 @@ export void test_parse_expr_literals_with_their_decoded_values() {
     check_golden("tests/front/parse_expr/literals.txt",
                  "42\n0\n0xFF\n0b1010\n0777\n1'000'000\n10u\n10UL\n0xFFull\n18446744073709551615\n1.5\n2e3\n1.5f\n"
                  ".5\n0x1.8p3\n0x10p-1\n1'0.2'5\n'a'\n'\\n'\n'\\x41'\n'\\u00e9'\n'\\0'\n'\\''\n\"hi\"\n\"a\\tb\\n\"\n"
-                 "\"a\" \"b\"\n\"\\u00e9\\x41\"\n\"q\\\"q\"\ntrue\nfalse\nnullptr\nu8\"x\"\nL'a'");
+                 "\"a\" \"b\"\n\"\\u00e9\\x41\"\n\"q\\\"q\"\ntrue\nfalse\nnullptr\nu8\"x\"");
 }
 
 export void test_parse_expr_names_and_types_as_values() {
@@ -167,14 +167,15 @@ export void test_parse_expr_names_and_types_as_values() {
 export void test_parse_expr_lambdas() {
     check_golden("tests/front/parse_expr/lambdas.txt",
                  "[] { return 1; }\n[x](I32 a) -> I32 { return a + x; }\n[](I32 a, I32 b) { }\n[x, y] { }\n"
-                 "[](a, b) { return a < b; }\nslice::sort(xs, [](I32 a, I32 b) { return a < b; })\n"
+                 "[](auto a, auto b) { return a < b; }\nslice::sort(xs, [](I32 a, I32 b) { return a < b; })\n"
                  "[](Fn(I32 (I32)) f) -> Option(I32) { }\n[](I32 a) -> I32 { { } }");
 }
 
 export void test_parse_expr_errors_in_the_dump() {
-    check_golden("tests/front/parse_expr/errors.txt",
-                 "a +\n)\n(a + b\nf(a, \nxs[1\na ? b\nx.\n.\n18446744073709551616\n\"\\q\"\n'ab'\n'\\xfff'\n(a, b)\n"
-                 "xs[a, b]\n(I32 (*)(I32))x\n[x\n[]\n[] 1\nsizeof(Point\n}\n(c::size_t)x");
+    check_golden(
+        "tests/front/parse_expr/errors.txt",
+        "a +\n)\n(a + b\nf(a, \nxs[1\na ? b\nx.\n.\n18446744073709551616\n\"\\q\"\n'ab'\n'\\xfff'\n(a, b)\n"
+        "xs[a, b]\n(I32 (*)(I32))x\n[x\n[]\n[] 1\nsizeof(Point\n}\n(c::size_t)x\n[](a, b) { }\nL\"w\"\nu'a'\nU\"x\"");
 }
 
 export void test_parse_expr_a_comma_expression_names_the_fix() {

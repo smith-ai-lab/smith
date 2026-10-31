@@ -162,3 +162,40 @@ left over: `}`
       (return (name c::size_t)))))
 left over: `x`
 
+[](a, b) { }
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (lambda
+          (param a)
+          (param b)
+          (block))))))
+error 3-4: a lambda parameter needs a type: write `auto a`
+error 6-7: a lambda parameter needs a type: write `auto b`
+
+L"w"
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (string "w")))))
+error 0-4: wide strings are not supported in .smith yet: write "..." or u8"..."
+
+u'a'
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (character 97)))))
+error 0-4: prefixed character literals are not supported in .smith yet: write 'a'
+
+U"x"
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (string "x")))))
+error 0-4: wide strings are not supported in .smith yet: write "..." or u8"..."
+
