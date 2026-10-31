@@ -4,7 +4,8 @@
 // only.
 module defer_init_test;
 
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import scratch;
 
@@ -12,19 +13,17 @@ static bool darwin(const scratch::Project *p) {
     return scratch::same(scratch::capture(p, "uname -s"), "Darwin");
 }
 
-// A project with the tool built and the three objects compiled; nullptr-free: `ok` is false off macOS.
-static scratch::Project objects(io::Io *io, bool *ok) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    *ok = darwin(&p);
-    if (!*ok) {
-        return p;
+// The tool built and the three objects compiled in the project; false off macOS, where nothing is made.
+static bool objects(const scratch::Project *p) {
+    if (!darwin(p)) {
+        return false;
     }
-    scratch::copy_tree(&p, "scripts/defer_init.c", "scripts/defer_init.c");
-    scratch::write(&p, "a.c",
+    scratch::copy_tree(p, "scripts/defer_init.c", "scripts/defer_init.c");
+    scratch::write(p, "a.c",
                    "#include <stdio.h>\n__attribute__((constructor)) static void init_a(void) { puts(\"init a\"); }\n");
-    scratch::write(&p, "b.c",
+    scratch::write(p, "b.c",
                    "#include <stdio.h>\n__attribute__((constructor)) static void init_b(void) { puts(\"init b\"); }\n");
-    scratch::write(&p, "main.c",
+    scratch::write(p, "main.c",
                    "#include <mach-o/getsect.h>\n"
                    "#include <mach-o/ldsyms.h>\n"
                    "#include <stdio.h>\n"
@@ -39,19 +38,22 @@ static scratch::Project objects(io::Io *io, bool *ok) {
                    "        table[i]();\n"
                    "    return 0;\n"
                    "}\n");
-    scratch::Run tool = scratch::sh(&p, "smith cc -std=gnu23 -Wall -Wextra -Wpedantic -Werror "
-                                        "scripts/defer_init.c -o defer_init");
+    scratch::Run tool = scratch::sh(p, "smith cc -std=gnu23 -Wall -Wextra -Wpedantic -Werror "
+                                       "scripts/defer_init.c -o defer_init");
     scratch::expect_status("defer: the tool builds under the warnings", 0, &tool);
-    scratch::Run compiled =
-        scratch::sh(&p, "for f in a b main; do smith cc -std=gnu23 -c $f.c -o $f.o || exit 1; done");
+    scratch::Run compiled = scratch::sh(p, "for f in a b main; do smith cc -std=gnu23 -c $f.c -o $f.o || exit 1; done");
     scratch::expect_status("defer: the three objects compile", 0, &compiled);
-    return p;
+    return true;
 }
 
-export void test_macos_defer_before_both_initializers_run_at_load(io::Io *io) {
-    bool ok = false;
-    scratch::Project p = objects(io, &ok);
-    if (!ok) {
+export void test_macos_defer_before_both_initializers_run_at_load() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!objects(&p)) {
         return;
     }
     scratch::Run linked = scratch::sh(&p, "smith cc main.o a.o b.o -o plain");
@@ -60,20 +62,28 @@ export void test_macos_defer_before_both_initializers_run_at_load(io::Io *io) {
                          "init a\ninit b\nmain\nsection missing, 0 entries", scratch::capture(&p, "./plain"));
 }
 
-export void test_macos_defer_the_tool_says_what_it_did(io::Io *io) {
-    bool ok = false;
-    scratch::Project p = objects(io, &ok);
-    if (!ok) {
+export void test_macos_defer_the_tool_says_what_it_did() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!objects(&p)) {
         return;
     }
     scratch::expect_text("defer: the tool says what it did", "a.o: 1 initializer section(s) deferred as __smith_demo",
                          scratch::capture(&p, "./defer_init a.o a_deferred.o demo"));
 }
 
-export void test_macos_defer_an_object_with_no_initializer_is_unchanged(io::Io *io) {
-    bool ok = false;
-    scratch::Project p = objects(io, &ok);
-    if (!ok) {
+export void test_macos_defer_an_object_with_no_initializer_is_unchanged() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!objects(&p)) {
         return;
     }
     scratch::Run made = scratch::sh(&p, "./defer_init main.o main_same.o demo >/dev/null");
@@ -83,10 +93,14 @@ export void test_macos_defer_an_object_with_no_initializer_is_unchanged(io::Io *
                          scratch::capture(&p, "shasum main_same.o | cut -d' ' -f1"));
 }
 
-export void test_macos_defer_after_nothing_runs_at_load_and_the_section_holds_both(io::Io *io) {
-    bool ok = false;
-    scratch::Project p = objects(io, &ok);
-    if (!ok) {
+export void test_macos_defer_after_nothing_runs_at_load_and_the_section_holds_both() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!objects(&p)) {
         return;
     }
     scratch::Run made = scratch::sh(&p, "./defer_init a.o a_deferred.o demo >/dev/null && "
@@ -99,10 +113,14 @@ export void test_macos_defer_after_nothing_runs_at_load_and_the_section_holds_bo
                          "main\nsection found, 2 entries\ninit a\ninit b", scratch::capture(&p, "./deferred"));
 }
 
-export void test_macos_defer_the_section_is_plain_data_and_no_mod_init_func_is_left(io::Io *io) {
-    bool ok = false;
-    scratch::Project p = objects(io, &ok);
-    if (!ok) {
+export void test_macos_defer_the_section_is_plain_data_and_no_mod_init_func_is_left() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!objects(&p)) {
         return;
     }
     scratch::Run made = scratch::sh(&p, "./defer_init a.o a_deferred.o demo >/dev/null");
@@ -115,30 +133,42 @@ export void test_macos_defer_the_section_is_plain_data_and_no_mod_init_func_is_l
                                               "yes || echo no"));
 }
 
-export void test_macos_defer_a_missing_input_fails(io::Io *io) {
-    bool ok = false;
-    scratch::Project p = objects(io, &ok);
-    if (!ok) {
+export void test_macos_defer_a_missing_input_fails() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!objects(&p)) {
         return;
     }
     scratch::Run run = scratch::sh(&p, "./defer_init missing.o x.o demo >/dev/null 2>&1");
     scratch::expect_status("defer: a missing input fails", 1, &run);
 }
 
-export void test_macos_defer_a_wrong_usage_is_2(io::Io *io) {
-    bool ok = false;
-    scratch::Project p = objects(io, &ok);
-    if (!ok) {
+export void test_macos_defer_a_wrong_usage_is_2() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!objects(&p)) {
         return;
     }
     scratch::Run run = scratch::sh(&p, "./defer_init a.o >/dev/null 2>&1");
     scratch::expect_status("defer: a wrong usage is 2", 2, &run);
 }
 
-export void test_macos_defer_a_file_that_is_no_mach_o_object_is_refused(io::Io *io) {
-    bool ok = false;
-    scratch::Project p = objects(io, &ok);
-    if (!ok) {
+export void test_macos_defer_a_file_that_is_no_mach_o_object_is_refused() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!objects(&p)) {
         return;
     }
     scratch::write(&p, "text.o", "not an object");

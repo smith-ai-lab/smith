@@ -6,8 +6,9 @@
 // lists of findings are the golden files of tests/lint-smith.
 module lint_smith_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import <string.h>;
 import scratch;
@@ -27,34 +28,39 @@ constexpr char prelude[_] =
     "-I\"$SMITH_REPO/.smith/include\" 2>&1; }; "
     "idiom_findings() { findings | sed -e 's/ \\[smith-[a-z0-9-]*,-warnings-as-errors\\]$//'; }; ";
 
-// The project: the fixture with the template's .clang-tidy. smith-module has its own tests below, so `full` is for
-// them.
-static scratch::Project prepared(io::Io *io, bool full) {
-    scratch::Project p = scratch::project(io, "p", "lint_smith");
-    scratch::copy_tree(&p, "templates/defaults/clang-tidy", full ? ".clang-tidy" : "template-clang-tidy");
+// The project's .clang-tidy, the template's. smith-module has its own tests below, so `full` is for them.
+static void prepare(const scratch::Project *p, bool full) {
+    scratch::copy_tree(p, "templates/defaults/clang-tidy", full ? ".clang-tidy" : "template-clang-tidy");
     if (!full) {
-        scratch::Run run = scratch::sh(&p, "grep -v '^  smith-module,$' template-clang-tidy >.clang-tidy && "
-                                           "rm template-clang-tidy");
+        scratch::Run run = scratch::sh(p, "grep -v '^  smith-module,$' template-clang-tidy >.clang-tidy && "
+                                          "rm template-clang-tidy");
         scratch::expect_status("the project is prepared", 0, &run);
     }
-    return p;
+}
+
+// The pieces one after another, in the current allocator (the test's arena).
+static const char *join(const char *a, const char *b, const char *c) {
+    usize length = format::length(a, b, c);
+    char *out = mem::alloc_slice(char, length + 1).data;
+    (void)format::to(out, length + 1, a, b, c);
+    return out;
 }
 
 static scratch::Run lint(const scratch::Project *p, const char *body) {
-    return scratch::sh(p, format::push(&p->io->arena, prelude, body).data);
+    return scratch::sh(p, join(prelude, body, ""));
 }
 
 static const char *lint_text(const scratch::Project *p, const char *body) {
-    return scratch::capture(p, format::push(&p->io->arena, prelude, body).data);
+    return scratch::capture(p, join(prelude, body, ""));
 }
 
-static void golden_of(io::Io *io, const char *name, const char *actual) {
-    test::golden(io, slice_of(format::push(&io->arena, "tests/lint-smith/", name, ".expected").data), slice_of(actual));
+static void golden_of(const char *name, const char *actual) {
+    test::golden_free(slice_of(join("tests/lint-smith/", name, ".expected")), slice_of(actual));
 }
 
 // The text of the findings of a run in a fixture file, as the golden file `name` holds it.
-static void findings_are(io::Io *io, const scratch::Project *p, const char *name, const char *body) {
-    golden_of(io, name, lint(p, body).out);
+static void findings_are(const scratch::Project *p, const char *name, const char *body) {
+    golden_of(name, lint(p, body).out);
 }
 
 constexpr char plain_findings[_] = "plain.c:1:5: error: invalid case style for function 'geometry_box_Odd' "
@@ -66,9 +72,15 @@ constexpr char bad_local[_] = "main.smith:5:9: error: invalid case style for var
 
 // --- a module and its importer, in memory (no generated header yet) ------------------------------------------------
 
-export void test_lint_findings_are_at_the_sources_lines_with_the_names_as_written(io::Io *io) {
-    scratch::Project p = prepared(io, false);
-    findings_are(io, &p, "box", "run geometry/box.smith main.smith >in-memory; findings <in-memory");
+export void test_lint_findings_are_at_the_sources_lines_with_the_names_as_written() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    findings_are(&p, "box", "run geometry/box.smith main.smith >in-memory; findings <in-memory");
     scratch::expect_text("the lowering's names never appear in a finding", "0",
                          lint_text(&p, "grep -c 'geometry_box_' in-memory"));
     scratch::expect_text("the importer reports nothing of the module's names", "0",
@@ -80,38 +92,59 @@ export void test_lint_findings_are_at_the_sources_lines_with_the_names_as_writte
 constexpr char make_header[_] = "mkdir -p .smith/include/geometry; "
                                 "smith cc --smith-header geometry/box.smith -o .smith/include/geometry/box.h; ";
 
-export void test_lint_the_same_findings_with_the_generated_header_on_disk(io::Io *io) {
-    scratch::Project p = prepared(io, false);
-    findings_are(
-        io, &p, "box",
-        format::push(&io->arena, make_header, "run geometry/box.smith main.smith >headers; findings <headers").data);
+export void test_lint_the_same_findings_with_the_generated_header_on_disk() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    findings_are(&p, "box", join(make_header, "run geometry/box.smith main.smith >headers; findings <headers", ""));
     scratch::expect_text("the lowering's names never appear with the header on disk", "0",
                          lint_text(&p, "grep -c 'geometry_box_' headers"));
 }
 
-export void test_lint_an_importer_alone_reports_its_own_and_nothing_in_the_modules_header(io::Io *io) {
-    scratch::Project p = prepared(io, false);
-    scratch::expect_text(
-        "an importer alone reports its own and nothing in the module's header", bad_local,
-        lint_text(&p, format::push(&io->arena, make_header, "run main.smith >importer; findings <importer").data));
+export void test_lint_an_importer_alone_reports_its_own_and_nothing_in_the_modules_header() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    scratch::expect_text("an importer alone reports its own and nothing in the module's header", bad_local,
+                         lint_text(&p, join(make_header, "run main.smith >importer; findings <importer", "")));
 }
 
 // --- the carets and the fixes are the source's ---------------------------------------------------------------------
 
-export void test_lint_a_finding_shows_the_source_line_its_fix_at_the_written_name(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_a_finding_shows_the_source_line_its_fix_at_the_written_name() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     scratch::expect_text(
         "a finding shows the source line, its fix at the written name",
         "   17 | export f32 Perimeter(Box b) {\n      |            ^~~~~~~~~\n      |            perimeter",
         lint_text(&p, "run geometry/box.smith >carets; grep -A2 ' 17 | export f32' carets"));
 }
 
-export void test_lint_fix_rewrites_the_written_names_in_the_source(io::Io *io) {
-    scratch::Project p = prepared(io, false);
-    (void)lint(&p, format::push(&io->arena, make_header,
-                                "cp geometry/box.smith box.orig; cp main.smith main.orig; "
-                                "run --fix geometry/box.smith main.smith >/dev/null")
-                       .data);
+export void test_lint_fix_rewrites_the_written_names_in_the_source() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    (void)lint(&p, join(make_header,
+                        "cp geometry/box.smith box.orig; cp main.smith main.orig; "
+                        "run --fix geometry/box.smith main.smith >/dev/null",
+                        ""));
     scratch::expect_text("--fix rewrites the written names in the source",
                          scratch::capture(&p, "sed -e 's/} bad_Type;/} BadType;/' -e 's/Perimeter/perimeter/' "
                                               "-e 's/bad_Helper/bad_helper/g' -e 's/Bad_Name/bad_name/g' box.orig"),
@@ -123,8 +156,14 @@ export void test_lint_fix_rewrites_the_written_names_in_the_source(io::Io *io) {
 
 // --- any check names things as written -----------------------------------------------------------------------------
 
-export void test_lint_another_checks_message_has_the_written_name_too(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_another_checks_message_has_the_written_name_too() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     (void)lint(&p,
                "smith lint --quiet --checks='-*,misc-no-recursion' geometry/recursive.smith -- $flags >recursion 2>&1");
     scratch::expect_text("another check's message has the written name too",
@@ -142,16 +181,28 @@ export void test_lint_another_checks_message_has_the_written_name_too(io::Io *io
 // A typedef, a struct tag, an enumerator, a constant and a parameter, each well named (quiet) and badly named (flagged
 // at the written name, never the lowering's `kinds_bad_type`).
 
-export void test_lint_every_kind_of_name_is_judged_as_written(io::Io *io) {
-    scratch::Project p = prepared(io, false);
-    findings_are(io, &p, "kinds", "run kinds.smith >kinds; findings <kinds");
+export void test_lint_every_kind_of_name_is_judged_as_written() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    findings_are(&p, "kinds", "run kinds.smith >kinds; findings <kinds");
     scratch::expect_text("... and the lowering's names never appear", "0", lint_text(&p, "grep -c 'kinds_' kinds"));
 }
 
 // --- a clean module ------------------------------------------------------------------------------------------------
 
-export void test_lint_a_module_that_follows_the_rules_reports_nothing(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_a_module_that_follows_the_rules_reports_nothing() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     scratch::expect_text("a module that follows the rules, sized types and all, reports nothing", "",
                          lint_text(&p, "run clean/ok.smith >clean.out; echo $? >status; findings <clean.out"));
     scratch::expect_text("its exit status is 0", "0", scratch::capture(&p, "cat status"));
@@ -159,8 +210,14 @@ export void test_lint_a_module_that_follows_the_rules_reports_nothing(io::Io *io
 
 // --- the lowering's own error, and clang's, through lint -----------------------------------------------------------
 
-export void test_lint_the_lowerings_error_is_at_the_source_as_written(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_the_lowerings_error_is_at_the_source_as_written() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     scratch::expect_text(
         "the lowering's error is at the source, as written",
         "bad_call.smith:4:5: error: `printf` is a C name; write `c::printf` [clang-diagnostic-error]",
@@ -169,28 +226,51 @@ export void test_lint_the_lowerings_error_is_at_the_source_as_written(io::Io *io
 
 // --- plain C is as it was ------------------------------------------------------------------------------------------
 
-export void test_lint_a_c_files_names_are_its_own_underscores_or_not(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_a_c_files_names_are_its_own_underscores_or_not() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     scratch::expect_text("a C file's names are its own, underscores or not", plain_findings,
                          lint_text(&p, "run plain.c >plain-alone; findings <plain-alone"));
 }
 
-export void test_lint_plain_c_beside_a_smith_file_in_one_run_is_reported_the_same(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_plain_c_beside_a_smith_file_in_one_run_is_reported_the_same() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     scratch::expect_text("plain C beside a .smith file in one run is reported the same",
-                         format::push(&io->arena, bad_local, "\n", plain_findings).data,
+                         join(bad_local, "\n", plain_findings),
                          lint_text(&p, "run main.smith plain.c >mixed; findings <mixed"));
 }
 
-export void test_lint_plain_c_on_both_sides_of_a_smith_file_keeps_its_names(io::Io *io) {
-    scratch::Project p = prepared(io, false);
-    findings_are(io, &p, "plain_around", "run plain.c geometry/box.smith plain2.c >around; findings <around | sort");
+export void test_lint_plain_c_on_both_sides_of_a_smith_file_keeps_its_names() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    findings_are(&p, "plain_around", "run plain.c geometry/box.smith plain2.c >around; findings <around | sort");
 }
 
 // --- `smith lint` with no arguments lints the .smith sources a build compiles --------------------------------------
 
-export void test_lint_with_no_arguments_lints_the_smith_sources_a_build_compiles(io::Io *io) {
-    scratch::Project p = scratch::project(io, "q", "lint_verb");
+export void test_lint_with_no_arguments_lints_the_smith_sources_a_build_compiles() {
+    scratch::Project p = scratch::make("q", "lint_verb");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "templates/defaults/clang-tidy", ".clang-tidy");
     scratch::Run run = scratch::sh(&p, "smith lint >verb.out 2>verb.err");
     scratch::expect_status("smith lint with no arguments fails on a finding in a .smith file the build compiles", 1,
@@ -205,8 +285,13 @@ export void test_lint_with_no_arguments_lints_the_smith_sources_a_build_compiles
 
 // A .smith source the build never compiles is linted too (with the command of the nearest compile), one that
 // `.clang-format-ignore` names is not, and the line says how many files were linted (main.smith, build.c, unbuilt).
-export void test_lint_with_no_arguments_lints_the_smith_sources_the_build_does_not_compile(io::Io *io) {
-    scratch::Project p = scratch::project(io, "r", "lint_verb");
+export void test_lint_with_no_arguments_lints_the_smith_sources_the_build_does_not_compile() {
+    scratch::Project p = scratch::make("r", "lint_verb");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "templates/defaults/clang-tidy", ".clang-tidy");
     scratch::Run prepared_run = scratch::sh(
         &p, "git init -q . && "
@@ -231,8 +316,14 @@ export void test_lint_with_no_arguments_lints_the_smith_sources_the_build_does_n
 
 // --- a call to a generic: the instance is judged as the generic's name, not `push_array<f64>` ----------------------
 
-export void test_lint_a_module_that_calls_a_generic_lints_clean(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_a_module_that_calls_a_generic_lints_clean() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     (void)lint(&p, "run generic/user.smith smith/pool.smith >generic.out; echo $? >generic.status");
     scratch::expect_text("a module that calls a generic lints clean", "0", scratch::capture(&p, "cat generic.status"));
     scratch::expect_text("... with no finding about the instance's name", "0",
@@ -242,8 +333,14 @@ export void test_lint_a_module_that_calls_a_generic_lints_clean(io::Io *io) {
 // --- tuples (issue #96): the struct a tuple lowers to and its fields `_0`, `_1` are named by the lowering
 // --------------
 
-export void test_lint_a_module_with_tuples_lints_clean(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_a_module_with_tuples_lints_clean() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     (void)lint(&p, "run tuples/pairs.smith tuples/user.smith >tuples.out; echo $? >tuples.status");
     scratch::expect_text("a module with tuples lints clean", "0", scratch::capture(&p, "cat tuples.status"));
     scratch::expect_text("... with no finding about the struct or the fields the lowering made", "0",
@@ -258,15 +355,26 @@ constexpr char preprocessor_only[_] =
     "-e 's/: \\(`[^`]*`\\) is the preprocessor, and a .smith file has none: .*/: \\1/' "
     "-e 's/: \\(`c::[a-zA-Z_]*`\\) is a C macro, and a .smith file has no preprocessor: .*/: \\1 macro/'; }; ";
 
-export void test_lint_smith_preprocessor_every_directive_and_c_macro_at_its_place(io::Io *io) {
-    scratch::Project p = prepared(io, false);
-    findings_are(
-        io, &p, "preprocessor",
-        format::push(&io->arena, preprocessor_only, "run pre/bad.smith >pre.out; preprocessor_only <pre.out").data);
+export void test_lint_smith_preprocessor_every_directive_and_c_macro_at_its_place() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    findings_are(&p, "preprocessor",
+                 join(preprocessor_only, "run pre/bad.smith >pre.out; preprocessor_only <pre.out", ""));
 }
 
-export void test_lint_smith_preprocessor_each_directive_says_what_to_write(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_smith_preprocessor_each_directive_says_what_to_write() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     (void)lint(&p, "run pre/bad.smith >pre.out");
     scratch::expect_text("smith-preprocessor: #include says import", "1",
                          scratch::capture(&p, "grep -c 'write `import <header>;`' pre.out"));
@@ -282,22 +390,40 @@ export void test_lint_smith_preprocessor_each_directive_says_what_to_write(io::I
                          scratch::capture(&p, "grep -c 'write `math::max(usize)`' pre.out"));
 }
 
-export void test_lint_smith_preprocessor_nolint_opts_a_line_out(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_smith_preprocessor_nolint_opts_a_line_out() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     (void)lint(&p, "run pre/optout.smith >pre-optout.out");
     scratch::expect_text("smith-preprocessor: NOLINT(smith-preprocessor) opts a line out", "0",
                          scratch::capture(&p, "grep -c 'smith-preprocessor' pre-optout.out"));
 }
 
-export void test_lint_smith_preprocessor_a_c_file_is_left_alone(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_smith_preprocessor_a_c_file_is_left_alone() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     (void)lint(&p, "smith lint --quiet pre/plain.c -- -std=gnu2y >pre-plain.out 2>&1");
     scratch::expect_text("smith-preprocessor: a .c file is left alone", "0",
                          scratch::capture(&p, "grep -c 'smith-preprocessor' pre-plain.out"));
 }
 
-export void test_lint_smith_preprocessor_a_module_with_contract_math_target_and_constexpr_is_clean(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_smith_preprocessor_a_module_with_contract_math_target_and_constexpr_is_clean() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     (void)lint(&p, "run pre/good.smith >pre-good.out");
     scratch::expect_text("smith-preprocessor: a module with contract, math, target and constexpr is clean", "0",
                          scratch::capture(&p, "grep -c 'smith-preprocessor' pre-good.out"));
@@ -306,9 +432,15 @@ export void test_lint_smith_preprocessor_a_module_with_contract_math_target_and_
 // --- the idiom checks (issue #47): sized types, libraries as modules, bounded loops, C23 spellings, constexpr
 // ----------- Each check alone (--checks), a failing file and a passing one, and the message that names the fix.
 
-export void test_lint_smith_sized_types_every_c_type_at_its_place_with_the_sized_type_to_write(io::Io *io) {
-    scratch::Project p = prepared(io, false);
-    findings_are(io, &p, "sized",
+export void test_lint_smith_sized_types_every_c_type_at_its_place_with_the_sized_type_to_write() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    findings_are(&p, "sized",
                  "idiom smith-sized-types idiom/sized.smith >sized.out; idiom_findings <sized.out | "
                  "sed -e 's/ (u8 u16 u32 u64, i8 i16 i32 i64, usize, isize, f32, f64)$//'");
     scratch::expect_text("smith-sized-types: char stays, and the C spelling of main is reported like any int", "2",
@@ -318,94 +450,177 @@ export void test_lint_smith_sized_types_every_c_type_at_its_place_with_the_sized
         scratch::capture(&p, "grep -c '(u8 u16 u32 u64, i8 i16 i32 i64, usize, isize, f32, f64)' sized.out"));
 }
 
-export void test_lint_smith_sized_types_sized_types_char_and_main_are_clean(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_smith_sized_types_sized_types_char_and_main_are_clean() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     scratch::expect_text("smith-sized-types: sized types, char and i32 main(str args[:]) are clean", "",
                          lint_text(&p, "idiom smith-sized-types idiom/sized_ok.smith >sized-ok.out; "
                                        "idiom_findings <sized-ok.out"));
 }
 
-export void test_lint_smith_sized_types_a_c_file_is_left_alone(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_smith_sized_types_a_c_file_is_left_alone() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     scratch::expect_text("smith-sized-types: a .c file is left alone", "",
                          lint_text(&p, "idiom smith-sized-types idiom/sized_plain.c >sized-plain.out; "
                                        "idiom_findings <sized-plain.out"));
 }
 
-export void test_lint_smith_module_library_the_import_of_a_modules_header_and_its_c_names(io::Io *io) {
-    scratch::Project p = prepared(io, false);
-    findings_are(io, &p, "library",
+export void test_lint_smith_module_library_the_import_of_a_modules_header_and_its_c_names() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    findings_are(&p, "library",
                  "idiom smith-module-library idiom/library.smith >library.out; idiom_findings <library.out");
 }
 
-export void test_lint_smith_module_library_a_named_instance_of_a_generic_points_to_the_generic(io::Io *io) {
-    scratch::Project p = prepared(io, false);
-    findings_are(io, &p, "library_test",
+export void test_lint_smith_module_library_a_named_instance_of_a_generic_points_to_the_generic() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    findings_are(&p, "library_test",
                  "idiom smith-module-library idiom/library_test.smith >library-test.out; "
                  "idiom_findings <library-test.out");
 }
 
-export void test_lint_smith_designated_init_a_positional_initializer_of_another_files_struct(io::Io *io) {
-    scratch::Project p = prepared(io, false);
-    findings_are(io, &p, "designated",
+export void test_lint_smith_designated_init_a_positional_initializer_of_another_files_struct() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    findings_are(&p, "designated",
                  "idiom smith-designated-init idiom/designated.smith >designated.out; idiom_findings <designated.out");
 }
 
-export void
-test_lint_smith_module_library_import_smith_arena_is_clean_and_so_is_a_c_header_that_is_no_module(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_smith_module_library_import_smith_arena_is_clean_and_so_is_a_c_header_that_is_no_module() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     scratch::expect_text("smith-module-library: import smith::arena is clean, and so is a C header that is no module",
                          "",
                          lint_text(&p, "idiom smith-module-library idiom/library_ok.smith idiom/library_c.smith "
                                        ">library-ok.out; idiom_findings <library-ok.out"));
 }
 
-export void test_lint_smith_bounded_loop_endless_loops_outside_main_in_c_and_smith(io::Io *io) {
-    scratch::Project p = prepared(io, false);
-    findings_are(io, &p, "loops",
+export void test_lint_smith_bounded_loop_endless_loops_outside_main_in_c_and_smith() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    findings_are(&p, "loops",
                  "idiom smith-bounded-loop idiom/loops.smith idiom/loops.c >loops.out; idiom_findings <loops.out");
 }
 
 // smith-unsafe (issue #422): setjmp and longjmp, an array parameter and a run-time-sized stack array are findings in a
 // module, and C as it is in a .c file or a .smith file with no `module` line.
-export void test_lint_smith_unsafe_in_a_module_the_three_constructs_are_findings(io::Io *io) {
-    scratch::Project p = prepared(io, false);
-    findings_are(io, &p, "unsafe", "idiom smith-unsafe idiom/unsafe.smith >unsafe.out; idiom_findings <unsafe.out");
+export void test_lint_smith_unsafe_in_a_module_the_three_constructs_are_findings() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    findings_are(&p, "unsafe", "idiom smith-unsafe idiom/unsafe.smith >unsafe.out; idiom_findings <unsafe.out");
 }
 
-export void test_lint_smith_unsafe_a_c_file_and_a_file_with_no_module_line_are_left_alone(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_smith_unsafe_a_c_file_and_a_file_with_no_module_line_are_left_alone() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     scratch::expect_text("smith-unsafe: a .c file and a .smith file with no module line are C as it is", "",
                          lint_text(&p, "idiom smith-unsafe idiom/unsafe.c idiom/unsafe_plain.smith >unsafe-ok.out; "
                                        "idiom_findings <unsafe-ok.out"));
 }
 
-export void test_lint_smith_c23_old_spellings_in_a_smith_file(io::Io *io) {
-    scratch::Project p = prepared(io, false);
-    findings_are(io, &p, "c23", "idiom smith-c23 idiom/c23.smith >c23.out; idiom_findings <c23.out");
+export void test_lint_smith_c23_old_spellings_in_a_smith_file() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    findings_are(&p, "c23", "idiom smith-c23 idiom/c23.smith >c23.out; idiom_findings <c23.out");
 }
 
-export void test_lint_smith_c23_the_c23_spellings_are_clean(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_smith_c23_the_c23_spellings_are_clean() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     scratch::expect_text("smith-c23: nullptr, bool, {}, {1} and [[noreturn]] are clean", "",
                          lint_text(&p, "idiom smith-c23 idiom/c23_ok.smith >c23-ok.out; idiom_findings <c23-ok.out"));
 }
 
-export void test_lint_smith_c23_the_same_in_a_c_file(io::Io *io) {
-    scratch::Project p = prepared(io, false);
-    findings_are(io, &p, "c23_c", "idiom smith-c23 idiom/c23.c >c23-c.out; idiom_findings <c23-c.out");
+export void test_lint_smith_c23_the_same_in_a_c_file() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    findings_are(&p, "c23_c", "idiom smith-c23 idiom/c23.c >c23-c.out; idiom_findings <c23-c.out");
 }
 
 // `(void)` as a parameter list is C's habit: in C23 `()` is no parameters. A finding with a fix in a module, none in a
 // .c file or a .smith file with no `module` line, and none on a cast or on `sizeof(void)`.
 
-export void test_lint_smith_c23_void_parameter_lists_in_a_module_and_not_a_cast_or_sizeof(io::Io *io) {
-    scratch::Project p = prepared(io, false);
-    findings_are(io, &p, "void_list", "idiom smith-c23 idiom/void_list.smith >void.out; idiom_findings <void.out");
+export void test_lint_smith_c23_void_parameter_lists_in_a_module_and_not_a_cast_or_sizeof() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    findings_are(&p, "void_list", "idiom smith-c23 idiom/void_list.smith >void.out; idiom_findings <void.out");
 }
 
-export void test_lint_smith_c23_an_empty_list_in_a_module_is_clean_and_void_in_c_is_cs_own(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_smith_c23_an_empty_list_in_a_module_is_clean_and_void_in_c_is_cs_own() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     scratch::expect_text("smith-c23: () in a module is clean, and (void) in a .c file or a .smith file with no module "
                          "line is C's own",
                          "",
@@ -413,18 +628,30 @@ export void test_lint_smith_c23_an_empty_list_in_a_module_is_clean_and_void_in_c
                                        "idiom/void_list.c >void-ok.out; idiom_findings <void-ok.out"));
 }
 
-export void test_lint_smith_c23_fix_deletes_the_void_of_each_parameter_list_and_leaves_the_casts(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_smith_c23_fix_deletes_the_void_of_each_parameter_list_and_leaves_the_casts() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     scratch::Run run = lint(&p, "mkdir -p voidfix/idiom && cp idiom/void_list.smith voidfix/idiom/void_list.smith && "
                                 "(cd voidfix && smith lint --fix --checks=\"-*,smith-c23\" idiom/void_list.smith -- "
                                 "-std=gnu2y $flags -I\"$SMITH_REPO/.smith/include\" >/dev/null 2>&1); "
                                 "cat voidfix/idiom/void_list.smith");
-    golden_of(io, "void_list_fixed", run.out);
+    golden_of("void_list_fixed", run.out);
 }
 
-export void test_lint_smith_constexpr_a_file_scope_const_with_a_constant_initializer(io::Io *io) {
-    scratch::Project p = prepared(io, false);
-    findings_are(io, &p, "consts",
+export void test_lint_smith_constexpr_a_file_scope_const_with_a_constant_initializer() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    findings_are(&p, "consts",
                  "idiom smith-constexpr idiom/consts.smith idiom/consts.c >consts.out; idiom_findings <consts.out");
 }
 
@@ -444,16 +671,28 @@ static void write_module_files(const scratch::Project *p) {
     scratch::write(p, "mod/plain.c", "unsigned helper(unsigned n) { return n; }\n");
 }
 
-export void test_lint_smith_module_a_file_with_no_module_line_gets_the_one_its_path_implies(io::Io *io) {
-    scratch::Project p = prepared(io, true);
+export void test_lint_smith_module_a_file_with_no_module_line_gets_the_one_its_path_implies() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, true);
     write_module_files(&p);
-    findings_are(io, &p, "module",
+    findings_are(&p, "module",
                  "idiom smith-module mod/loose.smith tests/loose_test.smith main.smith build.smith mod/fine.smith "
                  "mod/plain.c >module.out; idiom_findings <module.out | sort");
 }
 
-export void test_lint_smith_module_is_on_in_smiths_defaults(io::Io *io) {
-    scratch::Project p = prepared(io, true);
+export void test_lint_smith_module_is_on_in_smiths_defaults() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, true);
     write_module_files(&p);
     scratch::expect_text("smith-module: it is on in smith's defaults", "1",
                          lint_text(&p, "run mod/loose.smith >module-default.out; "
@@ -461,8 +700,14 @@ export void test_lint_smith_module_is_on_in_smiths_defaults(io::Io *io) {
 }
 
 // The idiom checks are in the template's .clang-tidy, so a .smith file gets them by default.
-export void test_lint_the_idiom_checks_are_on_in_smiths_defaults_and_a_clean_module_passes_them_all(io::Io *io) {
-    scratch::Project p = prepared(io, true);
+export void test_lint_the_idiom_checks_are_on_in_smiths_defaults_and_a_clean_module_passes_them_all() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, true);
     scratch::expect_text("the idiom checks are on in smith's defaults, and a clean module passes them all", "",
                          lint_text(&p, "run idiom/all.smith >all-ok.out; findings <all-ok.out"));
     scratch::expect_text("... and report in a default run", "1",
@@ -472,8 +717,14 @@ export void test_lint_the_idiom_checks_are_on_in_smiths_defaults_and_a_clean_mod
 
 // Objective-C: a class with ivars, properties and methods has names that are not simple identifiers (selectors); the
 // naming check skips them (it once asserted "Name is not a simple identifier", issue #115): no crash, no finding.
-export void test_lint_macos_objective_c_ivars_properties_and_methods_do_not_crash_lint(io::Io *io) {
-    scratch::Project p = prepared(io, true);
+export void test_lint_macos_objective_c_ivars_properties_and_methods_do_not_crash_lint() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, true);
     scratch::expect_text("Objective-C ivars, properties and methods: lint does not crash and reports nothing", "0 0",
                          scratch::capture(&p, "smith lint objc.m >objc.out 2>&1; s=$?; "
                                               "echo \"$s $(grep -c 'readability-identifier-naming' objc.out)\""));
@@ -482,8 +733,14 @@ export void test_lint_macos_objective_c_ivars_properties_and_methods_do_not_cras
 // --- defer: a command that says `-x c`, as every build command does, still turns the defer TS on -----------------
 // undeclared `_Defer` --------------
 
-export void test_lint_a_module_that_uses_defer_lints_clean(io::Io *io) {
-    scratch::Project p = prepared(io, false);
+export void test_lint_a_module_that_uses_defer_lints_clean() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
     (void)lint(&p, "smith lint --quiet defer/cleanup.smith -- -x c $flags >defer.out 2>&1; echo $? >defer.status");
     scratch::expect_text("a module that uses defer lints clean", "0", scratch::capture(&p, "cat defer.status"));
     scratch::expect_text("... with no finding about _Defer", "0", scratch::capture(&p, "grep -c '_Defer' defer.out"));
