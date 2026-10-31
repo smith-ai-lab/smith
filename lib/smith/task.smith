@@ -27,9 +27,13 @@ import <sys/mman.h>;                        // mmap, mprotect, munmap: the stack
 import <unistd.h>;                          // sysconf: the size of a page
 
 // The tasks a `wait` waits for. Start it as `task::Group group = {};` and end it with `defer task::wait(&group)`.
-[[smith::c_name("SmithGroup")]] export typedef struct {
-    usize pending; // tasks spawned into it that have not ended
-} Group;
+[[smith::c_name("SmithTaskGroup")]] export struct Group {
+    usize pending;                // tasks spawned into it that have not ended
+    c::SmithScheduler *scheduler; // the scheduler that spawned the last of them: its `wait` waits for them
+};
+
+// What runs the tasks and in what order: the module's name for the runtime's SmithScheduler (spawn, pause, wait, io).
+export typedef c::SmithScheduler Scheduler;
 
 // The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
 // NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
@@ -354,14 +358,74 @@ void step_parked() {
     if (!resume(task)) park(task);
 }
 
-// Starts a task of `group` that calls entry(context) on a stack of its own, and runs it at once until it ends or
-// pauses. Exported only so the module's own tests (a module of their own) can start a task; the typed `spawn(&group, f,
-// args...)` waits for the language (#316) and replaces it.
-void spawn_raw(Group *group, void (*entry)(void *context), void *context) {
+// The inline scheduler's spawn: starts a task of `group` that calls entry(context) on a stack of its own, and runs it
+// at once until it ends or pauses.
+void inline_spawn([[maybe_unused]] Scheduler *self, Group *group, void (*entry)(void *context), void *context) {
     contract::requires(group != nullptr && entry != nullptr);
     Task *task = make_task(group, entry, context);
     group->pending += 1;
     if (!resume(task)) park(task);
+}
+
+// The inline scheduler's wait: runs the paused tasks in turn until every task of `group` has ended. Tasks that wait on
+// each other and none can run are a deadlock, a checked failure.
+void inline_wait([[maybe_unused]] Scheduler *self, Group *group) {
+    contract::requires(group != nullptr);
+    while (group->pending > 0) {
+        if (parked_first == nullptr) {
+            c::smith_failure_format(c::SmithFailure_Memory, "task::wait: %zu tasks are waiting on nothing (a deadlock)",
+                                    group->pending);
+        }
+        step_parked();
+    }
+}
+
+// The inline scheduler's pause. In a task, control returns to its resumer, which queues it at the tail; in `main` it
+// runs one round of the paused tasks. With no other task, it returns at once.
+void inline_pause([[maybe_unused]] Scheduler *scheduler) {
+    Task *self = current();
+    if (self->resumer != nullptr) { // whoever resumed it queues it when control returns there
+        suspend();
+        return;
+    }
+    for (Task *last = parked_last; parked_first != nullptr;) {
+        bool stop = parked_first == last;
+        step_parked();
+        if (stop) break;
+    }
+}
+
+// The inline scheduler: spawn runs the task at once, so concurrent code runs sequentially. Its `io` is null, so a call
+// made under it reaches the real function.
+Scheduler inline_value = {.spawn = inline_spawn, .pause = inline_pause, .wait = inline_wait};
+
+// The inline scheduler, to set with `set_scheduler` or to wrap in a scheduler of your own. With none set it is the one.
+export Scheduler *inline_scheduler() {
+    return &inline_value;
+}
+
+// Makes `scheduler` the one that runs the tasks of the calling task and of the tasks it spawns, and returns the
+// previous one (null: none set). Restoring it is the caller's, with `defer`:
+//
+//   task::Scheduler *previous = task::set_scheduler(task::inline_scheduler());
+//   defer task::set_scheduler(previous);
+export Scheduler *set_scheduler(Scheduler *scheduler) {
+    return c::smith_handlers_set_scheduler(scheduler);
+}
+
+// The scheduler tasks go to now: the one set for the calling task, the inline one when none is.
+Scheduler *current_scheduler() {
+    Scheduler *set = c::smith_handlers_scheduler();
+    return set != nullptr ? set : inline_scheduler();
+}
+
+// Starts a task of `group` through the current scheduler. Exported only so the module's own tests (a module of their
+// own) can start a task; the typed `spawn(&group, f, args...)` waits for the language (#316) and replaces it.
+void spawn_raw(Group *group, void (*entry)(void *context), void *context) {
+    contract::requires(group != nullptr && entry != nullptr);
+    Scheduler *scheduler = current_scheduler();
+    group->scheduler = scheduler;
+    scheduler->spawn(scheduler, group, entry, context);
 }
 
 // Starts a task of `group` that calls f(arg) on a stack of its own and runs it at once until it ends or pauses, as the
@@ -375,31 +439,16 @@ export void spawn(Group *group, auto f, auto *arg) {
     spawn_raw(group, (void (*)(void *))address, (void *)arg);
 }
 
-// Returns when every task spawned into `group` has ended, running the paused tasks in turn. Tasks that wait on each
-// other and none can run are a deadlock, a checked failure. Use it with `defer`.
+// Returns when every task spawned into `group` has ended, going to the scheduler that spawned them. Use it with
+// `defer`.
 [[smith::c_name("smith_task_wait")]] export void wait(Group *group) {
     contract::requires(group != nullptr);
-    while (group->pending > 0) {
-        if (parked_first == nullptr) {
-            c::smith_failure_format(c::SmithFailure_Memory, "task::wait: %zu tasks are waiting on nothing (a deadlock)",
-                                    group->pending);
-        }
-        step_parked();
-    }
+    Scheduler *scheduler = group->scheduler != nullptr ? group->scheduler : current_scheduler();
+    scheduler->wait(scheduler, group);
 }
 
-// The calling task offers the thread to the other ready tasks and comes back. In a task, control returns to its
-// resumer, which queues it at the tail; in `main` it runs one round of the paused tasks. With no other task, it returns
-// at once.
+// The calling task offers the thread to the other ready tasks and comes back, through the current scheduler.
 [[smith::c_name("smith_task_pause")]] export void pause() {
-    Task *self = current();
-    if (self->resumer != nullptr) { // whoever resumed it queues it when control returns there
-        suspend();
-        return;
-    }
-    for (Task *last = parked_last; parked_first != nullptr;) {
-        bool stop = parked_first == last;
-        step_parked();
-        if (stop) break;
-    }
+    Scheduler *scheduler = current_scheduler();
+    scheduler->pause(scheduler);
 }
