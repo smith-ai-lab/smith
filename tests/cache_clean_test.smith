@@ -54,11 +54,11 @@ static scratch::Project project_with(const char *fixture) {
 }
 
 static scratch::Run run(const scratch::Project *p, const char *body) {
-    return scratch::sh(p, format::push(&memory, ". ./prelude; ", body).data);
+    return scratch::sh(p, format::push(". ./prelude; ", body).data);
 }
 
 static const char *text(const scratch::Project *p, const char *body) {
-    return captured(p, format::push(&memory, ". ./prelude; ", body).data);
+    return captured(p, format::push(". ./prelude; ", body).data);
 }
 
 // A project that has built (so the modules are cached) and fetched a package.
@@ -81,7 +81,7 @@ export void test_cache_clean_modules_removes_the_modules_and_keeps_the_packages(
     scratch::Run cleaned = scratch::sh(&p, "smith cache clean modules");
     scratch::expect_status("cache clean modules: exits 0", 0, &cleaned);
     scratch::expect_contains("cache clean modules: says what it removed", cleaned.out,
-                             format::push(&memory, "removed ", p.cache, "/smith/modules").data);
+                             format::push("removed ", p.cache, "/smith/modules").data);
     scratch::expect_text("cache clean modules: the modules are gone", "no", text(&p, "exists \"$modules\""));
     scratch::expect_text("cache clean modules: the packages stay", "yes", text(&p, "exists \"$packages\""));
 }

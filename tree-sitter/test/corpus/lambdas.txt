@@ -1,0 +1,356 @@
+================================================================================
+lambda: the full form, the short forms and a capture list (issue #316)
+================================================================================
+
+void f(i32 n) {
+    auto a = [x, y](i32 a) -> i32 { return a * x; };
+    auto b = [](i32 a) { return a * 2; };
+    auto c = [] { g(); };
+    auto d = [x] { g(x); };
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type)
+          (identifier))))
+    (compound_statement
+      (declaration
+        (auto_declaration
+          (identifier)
+          (lambda_expression
+            (lambda_capture_list
+              (identifier)
+              (identifier))
+            (parameter_list
+              (parameter_declaration
+                (primitive_type)
+                (identifier)))
+            (primitive_type)
+            (compound_statement
+              (return_statement
+                (binary_expression
+                  (identifier)
+                  (identifier)))))))
+      (declaration
+        (auto_declaration
+          (identifier)
+          (lambda_expression
+            (lambda_capture_list)
+            (parameter_list
+              (parameter_declaration
+                (primitive_type)
+                (identifier)))
+            (compound_statement
+              (return_statement
+                (binary_expression
+                  (identifier)
+                  (number_literal)))))))
+      (declaration
+        (auto_declaration
+          (identifier)
+          (lambda_expression
+            (lambda_capture_list)
+            (compound_statement
+              (expression_statement
+                (call_expression
+                  (identifier)
+                  (argument_list)))))))
+      (declaration
+        (auto_declaration
+          (identifier)
+          (lambda_expression
+            (lambda_capture_list
+              (identifier))
+            (compound_statement
+              (expression_statement
+                (call_expression
+                  (identifier)
+                  (argument_list
+                    (identifier)))))))))))
+
+================================================================================
+lambda: as an argument
+================================================================================
+
+void f(void) {
+    run([x] { g(); });
+    sort(xs, n, [](Person *a, Person *b) { return a->age < b->age; });
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type))))
+    (compound_statement
+      (expression_statement
+        (call_expression
+          (identifier)
+          (argument_list
+            (lambda_expression
+              (lambda_capture_list
+                (identifier))
+              (compound_statement
+                (expression_statement
+                  (call_expression
+                    (identifier)
+                    (argument_list))))))))
+      (expression_statement
+        (call_expression
+          (identifier)
+          (argument_list
+            (identifier)
+            (identifier)
+            (lambda_expression
+              (lambda_capture_list)
+              (parameter_list
+                (parameter_declaration
+                  (type_identifier)
+                  (pointer_declarator
+                    (identifier)))
+                (parameter_declaration
+                  (type_identifier)
+                  (pointer_declarator
+                    (identifier))))
+              (compound_statement
+                (return_statement
+                  (binary_expression
+                    (field_expression
+                      (identifier)
+                      (field_identifier))
+                    (field_expression
+                      (identifier)
+                      (field_identifier))))))))))))
+
+================================================================================
+lambda: a trailing block and a trailing lambda
+================================================================================
+
+void f(void) {
+    each(xs) { g(it); }
+    sort(xs, n) [](Person *a, Person *b) { return a->age < b->age; };
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type))))
+    (compound_statement
+      (function_definition
+        (type_identifier)
+        (parenthesized_declarator
+          (identifier))
+        (compound_statement
+          (expression_statement
+            (call_expression
+              (identifier)
+              (argument_list
+                (identifier))))))
+      (expression_statement
+        (trailing_call_expression
+          (identifier)
+          (argument_list
+            (identifier)
+            (identifier))
+          (lambda_expression
+            (lambda_capture_list)
+            (parameter_list
+              (parameter_declaration
+                (type_identifier)
+                (pointer_declarator
+                  (identifier)))
+              (parameter_declaration
+                (type_identifier)
+                (pointer_declarator
+                  (identifier))))
+            (compound_statement
+              (return_statement
+                (binary_expression
+                  (field_expression
+                    (identifier)
+                    (field_identifier))
+                  (field_expression
+                    (identifier)
+                    (field_identifier)))))))))))
+
+================================================================================
+lambda: the type of a parameter and its lifetime attributes
+================================================================================
+
+void sort(Person *xs, usize n, lambda(bool (Person *, Person *)) less);
+void each(i32 *xs, [[smith::until(g)]] lambda(void (i32)) h, [[smith::escapes]] lambda(void (void)) k);
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (declaration
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (type_identifier)
+          (pointer_declarator
+            (identifier)))
+        (parameter_declaration
+          (primitive_type)
+          (identifier))
+        (parameter_declaration
+          (macro_type_specifier
+            (lambda_type
+              (type_descriptor
+                (primitive_type)
+                (abstract_function_declarator
+                  (parameter_list
+                    (parameter_declaration
+                      (type_identifier)
+                      (abstract_pointer_declarator))
+                    (parameter_declaration
+                      (type_identifier)
+                      (abstract_pointer_declarator)))))))
+          (identifier)))))
+  (declaration
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type)
+          (pointer_declarator
+            (identifier)))
+        (parameter_declaration
+          (attribute_declaration
+            (attribute
+              (identifier)
+              (identifier)
+              (argument_list
+                (identifier))))
+          (macro_type_specifier
+            (lambda_type
+              (type_descriptor
+                (primitive_type)
+                (abstract_function_declarator
+                  (parameter_list
+                    (parameter_declaration
+                      (primitive_type)))))))
+          (identifier))
+        (parameter_declaration
+          (attribute_declaration
+            (attribute
+              (identifier)
+              (identifier)))
+          (macro_type_specifier
+            (lambda_type
+              (type_descriptor
+                (primitive_type)
+                (abstract_function_declarator
+                  (parameter_list
+                    (parameter_declaration
+                      (primitive_type)))))))
+          (identifier))))))
+
+================================================================================
+lambda: returned from a function
+================================================================================
+
+void f(void) {
+    return [] { g(); };
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type))))
+    (compound_statement
+      (return_statement
+        (lambda_expression
+          (lambda_capture_list)
+          (compound_statement
+            (expression_statement
+              (call_expression
+                (identifier)
+                (argument_list)))))))))
+
+================================================================================
+lambda: C's brackets are unchanged
+================================================================================
+
+void f(int *a, int i) {
+    a[i] = a[i + 1];
+    int b[2] = {[0] = 1, [1] = 2};
+    [[maybe_unused]] int c = 0;
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type)
+          (pointer_declarator
+            (identifier)))
+        (parameter_declaration
+          (primitive_type)
+          (identifier))))
+    (compound_statement
+      (expression_statement
+        (assignment_expression
+          (subscript_expression
+            (identifier)
+            (identifier))
+          (subscript_expression
+            (identifier)
+            (binary_expression
+              (identifier)
+              (number_literal)))))
+      (declaration
+        (primitive_type)
+        (init_declarator
+          (array_declarator
+            (identifier)
+            (number_literal))
+          (initializer_list
+            (initializer_pair
+              (subscript_designator
+                (number_literal))
+              (number_literal))
+            (initializer_pair
+              (subscript_designator
+                (number_literal))
+              (number_literal)))))
+      (declaration
+        (attribute_declaration
+          (attribute
+            (identifier)))
+        (primitive_type)
+        (init_declarator
+          (identifier)
+          (number_literal))))))

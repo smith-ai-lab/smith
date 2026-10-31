@@ -31,8 +31,8 @@ static char lowered_text[lowered_capacity];
 static char header_text[header_capacity];
 static char report_text[report_capacity];
 
-static const char *join3(arena::Arena *arena, const char *a, const char *b, const char *c) {
-    return format::push(arena, a, b, c).data;
+static const char *join3(const char *a, const char *b, const char *c) {
+    return format::push(a, b, c).data;
 }
 
 static const char *copy_text(arena::Arena *arena, const char *text) {
@@ -160,7 +160,7 @@ constexpr usize lines_max = 512;
 
 // The `.smith` files of a case's src/, as `a/b.smith`, sorted.
 static usize sources_of(arena::Arena *arena, const char *kase, const char **files, usize capacity) {
-    const char *src = join3(arena, "tests/smith-lang/cases/", kase, "/src");
+    const char *src = join3("tests/smith-lang/cases/", kase, "/src");
     const char *top[files_max];
     usize count = 0;
     usize tops = names_of(arena, src, false, top, files_max);
@@ -171,10 +171,10 @@ static usize sources_of(arena::Arena *arena, const char *kase, const char **file
     usize nested = names_of(arena, src, true, folders, files_max);
     for (usize f = 0; f < nested; f++) {
         const char *inside[files_max];
-        const char *folder = join3(arena, src, "/", folders[f]);
+        const char *folder = join3(src, "/", folders[f]);
         usize found = names_of(arena, folder, false, inside, files_max);
         for (usize i = 0; i < found && count < capacity; i++) {
-            if (ends_with(inside[i], ".smith")) files[count++] = join3(arena, folders[f], "/", inside[i]);
+            if (ends_with(inside[i], ".smith")) files[count++] = join3(folders[f], "/", inside[i]);
         }
     }
     for (usize i = 1; i < count; i++) { // sorted as a whole, as `find | sort` gives them
@@ -205,8 +205,8 @@ static bool exists(const char *path) {
 }
 
 // What a case holds to be checked: it has no `cmd`, which runs smith cc as a user does and lowers nothing by itself.
-static bool lowers(arena::Arena *arena, const char *kase) {
-    return !exists(join3(arena, "tests/smith-lang/cases/", kase, "/cmd"));
+static bool lowers(const char *kase) {
+    return !exists(join3("tests/smith-lang/cases/", kase, "/cmd"));
 }
 
 // The lines of `errors` that name an error, as `file:line:column: message`, appended to `lines`.
@@ -237,7 +237,7 @@ static usize add_errors(arena::Arena *arena, const char *errors, const char **li
 }
 
 // The lines sorted and each once, as `sort -u` gives them, as one text.
-static const char *sorted_unique(arena::Arena *arena, const char **lines, usize count) {
+static const char *sorted_unique(const char **lines, usize count) {
     for (usize i = 1; i < count; i++) {
         const char *held = lines[i];
         usize at = i;
@@ -250,7 +250,7 @@ static const char *sorted_unique(arena::Arena *arena, const char **lines, usize 
     const char *text = "";
     for (usize i = 0; i < count; i++) {
         if (i > 0 && c::strcmp(lines[i], lines[i - 1]) == 0) continue;
-        text = format::push(arena, text, lines[i], "\n").data;
+        text = format::push(text, lines[i], "\n").data;
     }
     return text;
 }
@@ -272,35 +272,34 @@ typedef enum { Pass_Files, Pass_Record, Pass_Compare } Pass;
 // case's folder; `Pass_Record` keeps the C of each file in `slots`, and `Pass_Compare` lowers again and checks it is
 // the same.
 static void check_case(arena::Arena *arena, const char *kase, Pass pass, const char **slots, const char **differing) {
-    const char *folder = join3(arena, "tests/smith-lang/cases/", kase, "");
+    const char *folder = join3("tests/smith-lang/cases/", kase, "");
     const char *files[files_max];
     usize count = sources_of(arena, kase, files, files_max);
     const char *errors[lines_max];
     usize error_count = 0;
     // new: nothing of the lowering is held yet (the build's own goldens, expect/stdout and the rest, may be: an update
     // of both tests at once writes them side by side)
-    bool fresh =
-        !exists(join3(arena, folder, "/expect/lowered", "")) && !exists(join3(arena, folder, "/expect/header", ""));
+    bool fresh = !exists(join3(folder, "/expect/lowered", "")) && !exists(join3(folder, "/expect/header", ""));
     for (usize i = 0; i < count; i++) {
-        const char *file = join3(arena, "src/", files[i], "");
+        const char *file = join3("src/", files[i], "");
         const char *module = module_of(arena, files[i]);
         (void)c::smith_core_lower(folder, file, nullptr, lowered_text, lowered_capacity, report_text, report_capacity);
         error_count = add_errors(arena, report_text, errors, error_count, lines_max);
         if (pass == Pass_Record && i < slots_per_case) slots[i] = copy_text(arena, lowered_text);
         if (pass == Pass_Compare && i < slots_per_case) test::check_equal(c::strcmp(slots[i], lowered_text), 0);
         if (pass != Pass_Files) continue;
-        const char *golden = join3(arena, folder, "/expect/lowered/", format::push(arena, module, ".c").data);
+        const char *golden = join3(folder, "/expect/lowered/", format::push(module, ".c").data);
         if (exists(golden) || (test::updating() && fresh)) corpus::golden(arena, differing, golden, lowered_text);
         // the header of the module, as `smith cc --smith-header` writes it
         if (header_by_command(kase)) continue;
         bool made =
             c::smith_core_header(folder, file, nullptr, header_text, header_capacity, report_text, report_capacity);
-        const char *header_golden = join3(arena, folder, "/expect/header/", format::push(arena, module, ".h").data);
+        const char *header_golden = join3(folder, "/expect/header/", format::push(module, ".h").data);
         if (made && (exists(header_golden) || (test::updating() && fresh)))
             corpus::golden(arena, differing, header_golden, header_text);
     }
-    const char *error_golden = join3(arena, folder, "/expect/lower-error", "");
-    const char *joined = sorted_unique(arena, errors, error_count);
+    const char *error_golden = join3(folder, "/expect/lower-error", "");
+    const char *joined = sorted_unique(errors, error_count);
     if (pass == Pass_Files && (exists(error_golden) || (test::updating() && fresh && joined[0] != '\0')))
         corpus::golden(arena, differing, error_golden, joined);
 }
@@ -316,7 +315,7 @@ static void check_shard(usize shard) {
     test::check(count > 100);
     const char *differing = "";
     for (usize i = shard; i < count; i += shards) {
-        if (lowers(arena, cases[i])) check_case(arena, cases[i], Pass_Files, nullptr, &differing);
+        if (lowers(cases[i])) check_case(arena, cases[i], Pass_Files, nullptr, &differing);
     }
     corpus::finish(differing);
 }
@@ -351,12 +350,12 @@ export void test_lowering_twice_is_the_same() {
     usize count = names_of(arena, "tests/smith-lang/cases", true, cases, cases_max);
     usize lowered = 0;
     for (usize i = 0; i < count; i++) {
-        if (!lowers(arena, cases[i])) continue;
+        if (!lowers(cases[i])) continue;
         check_case(arena, cases[i], Pass_Record, seen_lowered + i * slots_per_case, nullptr);
         lowered += 1;
     }
     for (usize i = count; i > 0; i--) {
-        if (lowers(arena, cases[i - 1]))
+        if (lowers(cases[i - 1]))
             check_case(arena, cases[i - 1], Pass_Compare, seen_lowered + (i - 1) * slots_per_case, nullptr);
     }
     test::check(lowered > 200);

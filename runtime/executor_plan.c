@@ -45,15 +45,26 @@ static uint32_t smith_plan_output(const SmithExec *exec, const SmithEdge *edge, 
     return exec->graph.ids[edge->outputs + k];
 }
 
+// Where -d explain writes: stderr, or in the units runner the text of the call in process.
+#ifdef SMITH_CORE
+static FILE *smith_plan_core_stream;
+#endif
+static FILE *smith_plan_stream(void) {
+#ifdef SMITH_CORE
+    if (smith_plan_core_stream != nullptr) return smith_plan_core_stream;
+#endif
+    return stderr;
+}
+
 // -d explain: the reason an output is out of date, on stderr.
 static void smith_plan_explain(const SmithExec *exec, const char *format, ...) __attribute__((format(printf, 2, 3)));
 static void smith_plan_explain(const SmithExec *exec, const char *format, ...) {
     if (!exec->options.explain) return;
     va_list arguments;
     va_start(arguments, format);
-    fputs("smith explain: ", stderr);
-    vfprintf(stderr, format, arguments);
-    fputc('\n', stderr);
+    fputs("smith explain: ", smith_plan_stream());
+    vfprintf(smith_plan_stream(), format, arguments);
+    fputc('\n', smith_plan_stream());
     va_end(arguments);
 }
 
@@ -67,9 +78,9 @@ static void smith_plan_reason(SmithExec *exec, const char *format, ...) {
     va_end(arguments);
     va_start(arguments, format);
     if (exec->options.explain) {
-        fputs("smith explain: ", stderr);
-        vfprintf(stderr, format, arguments);
-        fputc('\n', stderr);
+        fputs("smith explain: ", smith_plan_stream());
+        vfprintf(smith_plan_stream(), format, arguments);
+        fputc('\n', smith_plan_stream());
     }
     va_end(arguments);
 }
@@ -478,3 +489,148 @@ static bool smith_plan_build(SmithExec *exec, const uint32_t *targets, size_t co
     smith_plan_settle(exec);
     return exec->wanted > 0;
 }
+
+#ifdef SMITH_CORE
+#include "smith_core_plan.h"
+
+// Defined in executor_run.c, which this file comes before.
+static int64_t smith_run_restat(SmithExec *exec, SmithEdge *edge, int64_t started, uint32_t *stack);
+static void smith_run_make_parents(SmithExec *exec, const char *path);
+
+static bool smith_plan_core_listed(const char *const *list, const char *path) {
+    for (size_t i = 0; list != nullptr && list[i] != nullptr; i++) { // bounded by the list
+        if (strcmp(list[i], path) == 0) return true;
+    }
+    return false;
+}
+
+static void smith_plan_core_set_time(const char *path, int64_t seconds) {
+    struct timespec times[2] = {{.tv_sec = (time_t)seconds}, {.tv_sec = (time_t)seconds}};
+    (void)utimensat(AT_FDCWD, path, times, 0);
+}
+
+// The depfile of an edge as the build gave it: the names after "output: ".
+static uint32_t smith_plan_core_deps(SmithExec *exec, const SmithCorePlan *build, const char *first, const char **names,
+                                     uint32_t room) {
+    size_t length = strlen(first);
+    for (size_t i = 0; build->depends != nullptr && build->depends[i] != nullptr; i++) { // bounded by the list
+        const char *line = build->depends[i];
+        if (strncmp(line, first, length) != 0 || line[length] != ':') continue;
+        uint32_t count = 0;
+        for (const char *p = line + length + 1; *p != '\0' && count < room;) { // bounded by the line
+            while (*p == ' ')
+                p++;
+            const char *end = p;
+            while (*end != '\0' && *end != ' ')
+                end++;
+            if (end > p) names[count++] = smith_exec_copy(exec, p, (size_t)(end - p));
+            p = end;
+        }
+        return count;
+    }
+    return 0;
+}
+
+// The fake command of an edge: it makes the outputs its text names (a task that only writes a log makes none), unless
+// the build says it leaves an existing one as it is. The depfile is recorded as the executor does after a command.
+static void smith_plan_core_command(SmithExec *exec, const SmithCorePlan *build, SmithEdge *edge) {
+    for (uint32_t k = 0; k < edge->output_count; k++) {
+        const char *path = exec->graph.nodes[smith_plan_output(exec, edge, k)].path;
+        bool exists = smith_plan_stat_path(path) != 0;
+        if (strstr(edge->command, path) == nullptr || (exists && smith_plan_core_listed(build->unchanged, path)))
+            continue;
+        smith_run_make_parents(exec, path);
+        FILE *file = fopen(path, "wb");
+        if (file == nullptr) continue;
+        fputs("made\n", file);
+        fclose(file);
+        smith_plan_core_set_time(path, build->time);
+    }
+    if (!edge->has_deps) return;
+    const char *names[64];
+    const char *first = exec->graph.nodes[smith_plan_output(exec, edge, 0)].path;
+    uint32_t count = smith_plan_core_deps(exec, build, first, names, 64);
+    smith_state_record_deps(exec, edge, smith_plan_stat_path(first), names, count);
+}
+
+// The plan's commands, run one after another in the order the plan gives.
+static size_t smith_plan_core_run(SmithExec *exec, const SmithCorePlan *build, FILE *out) {
+    uint32_t *stack = smith_exec_push(exec, (exec->graph.node_count + exec->graph.link_count + 8) * sizeof(uint32_t),
+                                      alignof(uint32_t));
+    int64_t started = build->time * (int64_t)smith_exec_nanoseconds;
+    size_t ran = 0;
+    for (size_t round = 0; exec->ready_count > 0 && round <= exec->graph.edge_count * 2; round++) {
+        uint32_t number = exec->ready[--exec->ready_count];
+        SmithEdge *edge = &exec->graph.edges[number];
+        if (edge->want != SmithWant_Start) continue;
+        edge->want = SmithWant_Running;
+        smith_plan_core_command(exec, build, edge);
+        fprintf(out, "ran %s\n", exec->graph.nodes[smith_plan_output(exec, edge, 0)].path);
+        ran += 1;
+        int64_t mtime = smith_run_restat(exec, edge, started, stack);
+        smith_state_record(exec, edge, 0, 0, mtime);
+        smith_plan_done(exec, number);
+        smith_plan_settle(exec);
+    }
+    return ran;
+}
+
+bool smith_core_plan_write(const char *folder, const char *name, const char *text, int64_t time) {
+    char path[PATH_MAX];
+    if (snprintf(path, sizeof path, "%s/%s", folder, name) >= (int)sizeof path) return false;
+    char parents[PATH_MAX];
+    snprintf(parents, sizeof parents, "%s", path);
+    for (char *slash = strchr(parents + strlen(folder) + 1, '/'); slash != nullptr; slash = strchr(slash + 1, '/')) {
+        *slash = '\0';
+        (void)mkdir(parents, 0755);
+        *slash = '/';
+    }
+    FILE *file = fopen(path, "wb");
+    if (file == nullptr) return false;
+    bool whole = fputs(text, file) >= 0;
+    whole = fclose(file) == 0 && whole;
+    smith_plan_core_set_time(path, time);
+    return whole;
+}
+
+// include/smith_core_plan.h: a `smith build`'s plan and fake run, in process.
+bool smith_core_plan(const SmithCorePlan *build, char *output, size_t output_size, size_t *ran) {
+    int home = open(".", O_RDONLY);
+    FILE *out = fmemopen(output, output_size, "w");
+    if (home < 0 || out == nullptr || chdir(build->folder) != 0) {
+        if (out != nullptr) fclose(out);
+        if (home >= 0) close(home);
+        return false;
+    }
+    SmithIo io = smith_io_make(0, nullptr);
+    SmithExec *exec = smith_arena_push(&io.arena, sizeof(SmithExec), alignof(SmithExec));
+    exec->io = &io;
+    exec->arena = &io.arena;
+    exec->options.explain = true;
+    exec->manifest = build->manifest;
+    SmithArena scratch = smith_arena_carve(&io.arena, smith_exec_text_max);
+    exec->scratch = (char *)scratch.memory;
+    smith_plan_core_stream = out;
+    smith_manifest_read(exec);
+    smith_state_open(exec);
+    const char *const *names = build->targets;
+    exec->options.targets = names;
+    for (size_t i = 0; names != nullptr && names[i] != nullptr; i++)
+        exec->options.target_count = i + 1;
+    size_t room = exec->graph.node_count + exec->graph.default_count + exec->options.target_count + 1;
+    uint32_t *targets = smith_exec_push(exec, room * sizeof(uint32_t), alignof(uint32_t));
+    size_t count = smith_plan_targets(exec, targets);
+    size_t commands = 0;
+    if (smith_plan_build(exec, targets, count))
+        commands = smith_plan_core_run(exec, build, out);
+    else
+        fputs("no work to do\n", out);
+    smith_plan_core_stream = nullptr;
+    fclose(out);
+    smith_io_close(&io);
+    bool back = fchdir(home) == 0;
+    close(home);
+    *ran = commands;
+    return back;
+}
+#endif

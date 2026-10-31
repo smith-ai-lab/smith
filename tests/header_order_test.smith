@@ -83,7 +83,7 @@ static const char *read_module(arena::Arena *memory, const char *name) {
         test::check(false);
         return "";
     }
-    const char *path = format::push(memory, repo.some.data, "/lib/smith/", name, ".smith").data;
+    const char *path = format::push(repo.some.data, "/lib/smith/", name, ".smith").data;
     files::BytesResult file = files::read_file(path[0:c::strlen(path)]);
     if (file != .ok) {
         test::check(false);

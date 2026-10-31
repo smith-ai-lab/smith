@@ -4,7 +4,9 @@
 module smith::mem_test;
 
 import smith::arena;
+import smith::failing;
 import smith::mem;
+import smith::random;
 import smith::test;
 
 constexpr usize capacity = 4096;
@@ -99,6 +101,65 @@ export void test_mem_try_alloc_is_an_option() {
     test::check_equal(count_of(try_record()), 0); // some, zeroed
     test::check_condition(!is_some(try_huge()));  // 8 KB in a 4 KB arena: the allocator answers null, so none
     test::check_condition(mem::try_alloc_raw(2 * capacity, 16) == nullptr);
+}
+
+// try_alloc_slice, as the option tests above, in functions of their own.
+typedef f32 Floats[:];
+typedef f32 Grid[:][:];
+typedef option(Floats) MaybeFloats;
+typedef option(Grid) MaybeGrid;
+
+MaybeFloats try_floats(usize n) {
+    return mem::try_alloc_slice(f32, n);
+}
+
+MaybeGrid try_grid(usize rows, usize columns) {
+    return mem::try_alloc_slice(f32, rows, columns);
+}
+
+export void test_mem_try_alloc_slice_is_none_when_every_allocation_is_refused() {
+    failing::Failing f = failing::make(nullptr, random::key_make(1));
+    f.one_in = 1;
+    mem::Allocator *before = mem::set_allocator(&f.base);
+    defer mem::set_allocator(before);
+    MaybeFloats floats = try_floats(16);
+    test::check_condition(floats != .some);
+    test::check_equal(f.refused, 1); // asked once, nothing allocated: the test runner's leak check finds none
+}
+
+export void test_mem_try_alloc_slice_is_a_zeroed_slice_when_nothing_is_refused() {
+    failing::Failing f = failing::make(nullptr, random::key_make(2));
+    f.one_in = 0;
+    mem::Allocator *before = mem::set_allocator(&f.base);
+    defer mem::set_allocator(before);
+    MaybeFloats floats = try_floats(8);
+    if (floats == .some) {
+        test::check_equal(countof(floats.some), 8);
+        for (usize i = 0; i < countof(floats.some); i++)
+            test::check_equal(floats.some[i], 0.0f);
+        mem::free(floats.some.data);
+    } else {
+        test::check_condition(false);
+    }
+}
+
+export void test_mem_try_alloc_slice_with_two_sizes_is_a_grid() {
+    MaybeGrid grid = try_grid(3, 4);
+    if (grid == .some) {
+        test::check_equal(countof(grid.some), 3);
+        test::check_equal(countof(grid.some[2]), 4);
+        grid.some[2][3] = 5.0f;
+        test::check_equal(grid.some[0][0], 0.0f);
+        mem::free(grid.some.data);
+    } else {
+        test::check_condition(false);
+    }
+}
+
+export void test_mem_try_alloc_slice_with_an_overflowing_size_is_none() {
+    test::check_condition(try_floats(~(usize)0) != .some);
+    test::check_condition(try_floats(~(usize)0 / 2) != .some);
+    test::check_condition(try_grid(~(usize)0 / 2, 4) != .some);
 }
 
 // ---- copy, move, zero, fill, equal, bytes and view -----------------------------------------------------------------

@@ -520,7 +520,7 @@ static void modifies_proves(const char *name, const char *function) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    proved(&p, name, format::push(&memory, "\"$c/modifies.c\" --function=", function).data);
+    proved(&p, name, format::push("\"$c/modifies.c\" --function=", function).data);
 }
 
 export void test_prove_modifies_a_function_that_writes_only_what_it_names_proves() {

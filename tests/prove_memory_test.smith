@@ -313,14 +313,13 @@ static void restrict_slice_fails(const char *function, const char *line, const c
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *name = format::push(&memory, "restrict slice: ", function, " fails").data;
-    scratch::Run run = refuted(&p, name,
-                               format::push(&memory, "--function=geometry::restrict_slices::", function,
-                                            " \"$c/geometry/restrict_slices.smith\"")
-                                   .data);
-    has(format::push(&memory, name, " at the call, naming both").data, &run,
-        format::push(&memory, "restrict_slices.smith:", line, ": the call of geometry::restrict_slices::", callee,
-                     " passes `")
+    const char *name = format::push("restrict slice: ", function, " fails").data;
+    scratch::Run run = refuted(
+        &p, name,
+        format::push("--function=geometry::restrict_slices::", function, " \"$c/geometry/restrict_slices.smith\"")
+            .data);
+    has(format::push(name, " at the call, naming both").data, &run,
+        format::push("restrict_slices.smith:", line, ": the call of geometry::restrict_slices::", callee, " passes `")
             .data);
 }
 
@@ -394,11 +393,11 @@ static void grid_index_fails(const char *function, const char *line) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *name = format::push(&memory, "grid: ", function, " fails").data;
-    scratch::Run run = refuted(
-        &p, name, format::push(&memory, "--function=geometry::grids::", function, " \"$c/geometry/grids.smith\"").data);
-    has(format::push(&memory, name, " at the line of the index").data, &run,
-        format::push(&memory, "grids.smith:", line, ": assert(an index or a slice is in range) may fail").data);
+    const char *name = format::push("grid: ", function, " fails").data;
+    scratch::Run run =
+        refuted(&p, name, format::push("--function=geometry::grids::", function, " \"$c/geometry/grids.smith\"").data);
+    has(format::push(name, " at the line of the index").data, &run,
+        format::push("grids.smith:", line, ": assert(an index or a slice is in range) may fail").data);
 }
 
 export void test_prove_grid_fixed_wide_fails_at_the_line_of_the_index() {
@@ -431,13 +430,12 @@ static void restrict_grid_fails(const char *function, const char *line) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *name = format::push(&memory, "restrict grid: ", function, " fails").data;
-    scratch::Run run = refuted(&p, name,
-                               format::push(&memory, "--function=geometry::restrict_grids::", function,
-                                            " \"$c/geometry/restrict_grids.smith\"")
-                                   .data);
-    has(format::push(&memory, name, " at the call, naming both").data, &run,
-        format::push(&memory, "restrict_grids.smith:", line,
+    const char *name = format::push("restrict grid: ", function, " fails").data;
+    scratch::Run run = refuted(
+        &p, name,
+        format::push("--function=geometry::restrict_grids::", function, " \"$c/geometry/restrict_grids.smith\"").data);
+    has(format::push(name, " at the call, naming both").data, &run,
+        format::push("restrict_grids.smith:", line,
                      ": the call of geometry::restrict_grids::copy passes `dst` (restrict) and `src`")
             .data);
 }

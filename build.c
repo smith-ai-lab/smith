@@ -1106,7 +1106,9 @@ static void build_install(SmithBuild *b, const BuildConfig *config, const char *
     bool skip_tests = smith_option(b, "NOTESTS", "install without running the tests first (CI's install job)");
     const char *script = "mkdir -p \"$0/bin\" && cp \"$1\" \"$0/bin/smith.tmp\" && "
                          "mv \"$0/bin/smith.tmp\" \"$0/bin/smith\" && ln -sf smith \"$0/bin/smith-cc\" && "
-                         "ln -sf smith \"$0/bin/smith-c++\" && rm -f \"$0/bin/smith++\"";
+                         "ln -sf smith \"$0/bin/smith-c++\" && rm -f \"$0/bin/smith++\" && "
+                         "{ [ ! -f \"${1%/*}/libsmith_handlers.dylib\" ] || "
+                         "cp \"${1%/*}/libsmith_handlers.dylib\" \"$0/bin/\"; }";
     SmithStep install = {
         .command = (const char *[]){"sh", "-c", script, config->prefix, binary, nullptr},
         .inputs = skip_tests ? (const char *[]){binary, nullptr} : tested,
@@ -2163,10 +2165,13 @@ static const char *const *build_gate_git(SmithRun *run, const char *dir, const c
     return smith_run_status(run, argv, &lines) == 0 ? lines : nullptr;
 }
 
-// The commits since the base whose subject starts with `feat`, one line each ("hash subject"), or nullptr.
+// The commits of the branch whose subject starts with `feat`, one line each ("hash subject"). A commit whose patch is
+// already on the base (a branch merged before its squash reached main) is dropped by --cherry-pick, so it is not
+// asked for docs again. `range` is base...HEAD.
 static const char *build_gate_feat_commits(SmithRun *run, const char *dir, const char *range) {
-    const char *const *log =
-        build_gate_git(run, dir, (const char *[]){"log", "--no-merges", "--format=%h %s", range, nullptr});
+    const char *const *log = build_gate_git(
+        run, dir,
+        (const char *[]){"log", "--no-merges", "--cherry-pick", "--right-only", "--format=%h %s", range, nullptr});
     const char *found = "";
     for (size_t i = 0; log != nullptr && log[i] != nullptr; i++) {
         const char *subject = strchr(log[i], ' ');
@@ -2185,7 +2190,7 @@ static int build_gate_run(SmithRun *run, const char *dir, const char *base) {
         printf("docs gate: %s cannot be resolved here (a shallow clone or no remote): not checked\n", base);
         return 0;
     }
-    const char *feats = build_gate_feat_commits(run, dir, smith_fmt(run->b, "%s..HEAD", base));
+    const char *feats = build_gate_feat_commits(run, dir, smith_fmt(run->b, "%s...HEAD", base));
     if (feats[0] == '\0') return 0;
     const char *const *changed =
         build_gate_git(run, dir,
@@ -2259,6 +2264,26 @@ static int build_docs_gate_test(SmithRun *run) {
         failed = build_gate_fail("gate: a skill change must pass\n");
     if (failed == 0 && build_gate_run(run, dir, "nowhere") != 0)
         failed = build_gate_fail("gate: an unknown base must pass\n");
+    // A branch that merged a feat branch whose squash is already on main, and adds only a test, passes; its own feat
+    // commit without docs still fails.
+    int s = failed;
+    s = s != 0 ? s : build_gate_scratch(dir, (const char *[]){"checkout", "-q", "main", nullptr});
+    s = s != 0 ? s : build_gate_scratch(dir, (const char *[]){"checkout", "-q", "-b", "pre", nullptr});
+    s = s != 0 ? s : build_gate_commit(dir, "runtime/c.c", "feat: pre-squash");
+    s = s != 0 ? s : build_gate_scratch(dir, (const char *[]){"checkout", "-q", "main", nullptr});
+    s = s != 0 ? s : build_gate_commit(dir, "runtime/c.c", "feat: pre-squash");
+    s = s != 0 ? s : build_gate_scratch(dir, (const char *[]){"checkout", "-q", "-b", "after", "pre", nullptr});
+    s = s != 0 ? s : build_gate_commit(dir, "tests/t.smith", "test: only a test");
+    failed = failed != 0 ? failed : s;
+    if (failed == 0 && build_gate_run(run, dir, "main") != 0)
+        failed = build_gate_fail("gate: a feat already squashed on main must pass\n");
+    s = failed != 0 ? failed : build_gate_commit(dir, "runtime/d.c", "feat: own");
+    failed = failed != 0 ? failed : s;
+    if (failed == 0) {
+        fputs("(the next gate failure is the one under test)\n", stderr);
+        if (build_gate_run(run, dir, "main") == 0)
+            failed = build_gate_fail("gate: an own feat with no docs must fail\n");
+    }
     build_spawn(&(BuildSpawn){.argv = (const char *[]){"/bin/rm", "-rf", dir, nullptr}});
     return failed;
 }

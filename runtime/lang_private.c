@@ -179,18 +179,62 @@ static bool smith_lang_priv_any(const SmithLang *lang) {
     return false;
 }
 
-// The instance section: the declarations the exported generics need of the module's private code.
-static size_t smith_lang_priv_section(SmithLang *lang, char *out, size_t capacity, size_t used) {
+// The guard macro of the module's header: SMITH_HEADER_<module>, with `::` as `_`, and the one of its instance
+// section after `suffix`.
+static size_t smith_lang_priv_guard(const SmithLang *lang, char *out, size_t capacity, size_t used,
+                                    const char *suffix) {
+    used = smith_lang_append(out, capacity, used, "SMITH_HEADER_");
+    for (const char *name = smith_lang_module_name(lang); *name != 0; name++) {
+        if (*name == ':') {
+            if (name[1] == ':') name += 1;
+            used = smith_lang_append(out, capacity, used, "_");
+        } else {
+            used = smith_lang_append(out, capacity, used, "%c", *name);
+        }
+    }
+    return smith_lang_append(out, capacity, used, "%s", suffix);
+}
+
+// The first line of the header. A header with an instance section cannot be `#pragma once`: an importer includes it
+// again with SMITH_INSTANCES defined, and the section must be read then even when a plain include came first (an
+// importer of io, which includes random.h, then of random). So the declarations have an include guard, defined at
+// their end so that the opening is one line, and the section a guard of its own.
+static size_t smith_lang_priv_open(SmithLang *lang, char *out, size_t capacity, size_t used) {
+    smith_lang_priv_resolve(lang);
+    if (!smith_lang_priv_any(lang)) return smith_lang_append(out, capacity, used, "#pragma once\n");
+    used = smith_lang_append(out, capacity, used, "#ifndef ");
+    used = smith_lang_priv_guard(lang, out, capacity, used, "");
+    return smith_lang_append(out, capacity, used, "\n");
+}
+
+// The end of the declarations: the guard's define and its #endif.
+static size_t smith_lang_priv_close(SmithLang *lang, char *out, size_t capacity, size_t used) {
     smith_lang_priv_resolve(lang);
     if (!smith_lang_priv_any(lang)) return used;
-    used = smith_lang_append(out, capacity, used, "#ifdef SMITH_INSTANCES\n");
+    used = smith_lang_append(out, capacity, used, "#define ");
+    used = smith_lang_priv_guard(lang, out, capacity, used, "");
+    return smith_lang_append(out, capacity, used, "\n#endif\n");
+}
+
+// The instance section: the declarations the exported generics need of the module's private code, read at the first
+// include with SMITH_INSTANCES.
+static size_t smith_lang_priv_section(SmithLang *lang, char *out, size_t capacity, size_t used, bool c_linkage) {
+    smith_lang_priv_resolve(lang);
+    if (!smith_lang_priv_any(lang)) return used;
+    used = smith_lang_append(out, capacity, used, "#ifdef SMITH_INSTANCES\n#ifndef ");
+    used = smith_lang_priv_guard(lang, out, capacity, used, "_INSTANCES");
+    used = smith_lang_append(out, capacity, used, "\n#define ");
+    used = smith_lang_priv_guard(lang, out, capacity, used, "_INSTANCES");
+    used =
+        smith_lang_append(out, capacity, used, "\n%s", c_linkage ? "#ifdef __cplusplus\nextern \"C\" {\n#endif\n" : "");
     for (size_t i = 0; i < lang->priv_ranges_count; i++) { // in the order declared
         const SmithLangPrivRange *range = &lang->priv_ranges[i];
         if (!range->needed || smith_lang_priv_repeated(lang, i)) continue;
         used = smith_lang_append(out, capacity, used, "%.*s\n", (int)(range->to - range->from),
                                  lang->priv_text + range->from);
     }
-    return smith_lang_append(out, capacity, used, "#endif\n");
+    used = smith_lang_append(out, capacity, used, "%s", c_linkage ? "#ifdef __cplusplus\n}\n#endif\n" : "");
+    return smith_lang_append(out, capacity, used, "#endif\n#endif\n");
 }
 
 // `// smith-linked: helper counter`: the private functions and variables the section declares, which the module's own

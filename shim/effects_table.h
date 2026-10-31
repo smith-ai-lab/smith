@@ -3,8 +3,9 @@
 // system header's function is looked up here by name, and one the table does not know is `unknown` too.
 //
 // Effects are one bit each, one per kind of handler: alloc, files, net, console, clock, process, env, entropy,
-// globals (writing a global or a function-local static), unknown (code smith cannot see into), fails (a failure point).
-// A function in the "pure" list has none. Failing is an effect, `fails` (issue #325): a call that stops the task
+// globals (writing a global or a function-local static), unknown (code smith cannot see into), fails (a failure point),
+// code (making memory executable), tasks (starting a task; its handler is the scheduler). A function in the "pure" list
+// has none. Failing is an effect, `fails` (issue #325): a call that stops the task
 // (`abort`,
 // `__builtin_trap`, smith's `smith_failure` family, so a checked index, a slice bound and a contract) is a failure
 // point, and so is every caller.
@@ -32,7 +33,8 @@ enum Effect : uint32_t {
     Unknown = 1u << 9,
     Fails = 1u << 10,
     Code = 1u << 11,
-    Everything = (1u << 12) - 1,
+    Tasks = 1u << 12,
+    Everything = (1u << 13) - 1,
 };
 
 struct Name {
@@ -42,7 +44,8 @@ struct Name {
 
 inline constexpr Name names[] = {{"alloc", Alloc},     {"files", Files},     {"net", Net},     {"console", Console},
                                  {"clock", Clock},     {"process", Process}, {"env", Env},     {"entropy", Entropy},
-                                 {"globals", Globals}, {"unknown", Unknown}, {"fails", Fails}, {"code", Code}};
+                                 {"globals", Globals}, {"unknown", Unknown}, {"fails", Fails}, {"code", Code},
+                                 {"tasks", Tasks}};
 
 // The names of the bits of a set, in the order of `names`, joined by ", ": "alloc, files". "none" for the empty set.
 inline std::string describe(uint32_t set) {

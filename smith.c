@@ -651,6 +651,17 @@ static void smith_programs_make(const char *runtime, const char *programs, const
         snprintf(path, sizeof path, "%s/bin/%s", temporary, names[i]);
         if (!smith_platform_clone(self, path)) smith_die(smith_exit_usage, "cannot link", path);
     }
+#ifdef __APPLE__
+    // The clones are linked with the handlers runtime like every program (-lsmith_handlers, an @executable_path rpath),
+    // so its dylib is beside them: a clone of the one beside the running smith.
+    char dylib[PATH_MAX];
+    snprintf(dylib, sizeof dylib, "%s", self);
+    char *last = strrchr(dylib, '/');
+    SMITH_ASSERT(last != nullptr);
+    snprintf(last + 1, sizeof dylib - (size_t)(last + 1 - dylib), "libsmith_handlers.dylib");
+    snprintf(path, sizeof path, "%s/bin/libsmith_handlers.dylib", temporary);
+    if (!smith_platform_clone(dylib, path)) smith_die(smith_exit_usage, "cannot link", path);
+#endif
     char target[PATH_MAX];
     snprintf(target, sizeof target, "%s/lib", runtime);
     snprintf(path, sizeof path, "%s/lib", temporary);
@@ -2347,9 +2358,6 @@ static constexpr unsigned char smith_new_gitignore[] = {
 static constexpr unsigned char smith_new_claude_settings[] = {
 #embed "templates/new/claude-settings.json"
 };
-static constexpr unsigned char smith_new_agents[] = {
-#embed "templates/new/agents.md"
-};
 static constexpr unsigned char smith_new_knowledge_index[] = {
 #embed "templates/new/knowledge-index.md"
 };
@@ -2403,7 +2411,6 @@ static const SmithNewFile smith_new_files[] = {
     SMITH_NEW_ONLY("primes_test.c", smith_new_primes_test_c, SmithNewLanguage_C, false),
     SMITH_NEW_FILE(".gitignore", smith_new_gitignore, false, false, false),
     SMITH_NEW_FILE(".claude/settings.json", smith_new_claude_settings, false, false, false),
-    SMITH_NEW_FILE("AGENTS.md", smith_new_agents, true, false, false),
     SMITH_NEW_FILE("knowledge/index.md", smith_new_knowledge_index, true, false, true),
     SMITH_NEW_ONLY("knowledge/program.md", smith_new_knowledge_program, SmithNewLanguage_Smith, true),
     SMITH_NEW_ONLY("knowledge/program.md", smith_new_knowledge_program_c, SmithNewLanguage_C, true),
@@ -3416,7 +3423,7 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
     return true;
 }
 
-// `smith docs`: the check of AGENTS.md, knowledge/ and the skills, with the types knowledge/index.md declares.
+// `smith docs`: the check of knowledge/ and the skills, with the types knowledge/index.md declares.
 #include "runtime/docs.c"
 
 // `smith mcp`: the debugger server of issue #22. A feature of the full smith (-DSMITH_MCP, which `smith build` passes
@@ -3451,7 +3458,7 @@ typedef enum {
     SmithVerb_New,
     SmithVerb_Fetch,
     SmithVerb_Cache,
-    SmithVerb_Docs,          // smith docs: checks AGENTS.md, knowledge/ and skills
+    SmithVerb_Docs,          // smith docs: checks knowledge/ and skills
     SmithVerb_Symbolize,     // smith symbolize: stack traces turned into lines
     SmithVerb_Version,       // smith version: the version line and the commit smith was built from
     SmithVerb_Mcp,           // smith mcp: the debugger as an MCP server (the full smith)
@@ -3565,7 +3572,7 @@ static void smith_usage(FILE *out) {
           "  lsp                     clangd\n"
           "  dbg, dap                lldb, and lldb-dap (the Debug Adapter Protocol server)\n"
           "  mcp                     the debugger as an MCP server over stdio (agents: launch, breakpoint, stack...)\n"
-          "  docs                    check AGENTS.md, knowledge/ and the skills of the project\n"
+          "  docs                    check knowledge/ and the skills of the project\n"
           "  new, fetch, cache       start a project, fetch a package, show and clean the caches\n"
           "  version                 the version and the commit smith was built from\n",
           out);

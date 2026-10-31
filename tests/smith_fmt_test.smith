@@ -34,10 +34,10 @@ static const char *in_home(const char *path) {
 }
 
 // The text of `smith fmt` for this input read as a file of this name, in the style of this repository's folder.
-static const char *formatted(arena::Arena *arena, const scratch::Project *p, const char *name, const char *input) {
+static const char *formatted(const scratch::Project *p, const char *name, const char *input) {
     scratch::write(p, "input.txt", input);
     scratch::copy_tree(p, ".clang-format", ".clang-format");
-    const char *command = format::push(arena, "smith fmt --assume-filename=\"$PWD/", name, "\" < input.txt 2>&1").data;
+    const char *command = format::push("smith fmt --assume-filename=\"$PWD/", name, "\" < input.txt 2>&1").data;
     return scratch::sh(p, command).out;
 }
 
@@ -113,10 +113,10 @@ static usize same_as_c(const char *root) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    if (scratch::sh(&p, format::push(&memory, "[ -d \"", root, "\" ]").data).status != 0) return 0; // not there
+    if (scratch::sh(&p, format::push("[ -d \"", root, "\" ]").data).status != 0) return 0; // not there
     scratch::Run copied = scratch::sh(
         &p, format::push(
-                &memory, "set -f; R='", root,
+                "set -f; R='", root,
                 "'; w=\"$PWD\"; mkdir c s; "
                 "find \"$R\" \\( -name '*.c' -o -name .clang-format \\) -not -path '*/.smith/*' -not -path '*/build/*' "
                 "-not -path \"$R/.claude/*\" -not -path '*/.git/*' -not -path '*/node_modules/*' "
@@ -135,8 +135,8 @@ static usize same_as_c(const char *root) {
     for (const char *file = next_line(&memory, &listing); file != nullptr; file = next_line(&memory, &listing)) {
         usize length = c::strlen(file);
         if (length < 2 || c::strcmp(file + length - 2, ".c") != 0) continue; // a .clang-format
-        const char *as_smith = format::push(&memory, "s/", file[0:length - 2], ".smith").data;
-        const char *text_c = scratch::read(&p, format::push(&memory, "c/", file).data);
+        const char *as_smith = format::push("s/", file[0:length - 2], ".smith").data;
+        const char *text_c = scratch::read(&p, format::push("c/", file).data);
         if (c::strcmp(text_c, scratch::read(&p, as_smith)) == 0) {
             same += 1;
         } else {
@@ -177,7 +177,7 @@ export void test_a_c_name_that_is_a_cpp_keyword_stays_c() {
     defer mem::set_allocator(outside);
     scratch::expect_text("a C name that is a C++ keyword stays C",
                          "u32 f(u32 throw, u32 reach) {\n    return throw * reach;\n}",
-                         formatted(&memory, &p, "x.smith", "u32 f(u32 throw, u32 reach) {\nreturn throw*reach;\n}\n"));
+                         formatted(&p, "x.smith", "u32 f(u32 throw, u32 reach) {\nreturn throw*reach;\n}\n"));
 }
 
 export void test_a_statement_that_starts_with_a_type_named_import_is_indented() {
@@ -189,7 +189,7 @@ export void test_a_statement_that_starts_with_a_type_named_import_is_indented() 
     defer mem::set_allocator(outside);
     scratch::expect_text("a statement that starts with a type named import is indented",
                          "u32 f(void) {\n    import value = c.x + c.y;\n    return 1;\n}",
-                         formatted(&memory, &p, "x.smith", "u32 f(void) {\nimport value = c.x + c.y;\nreturn 1;\n}\n"));
+                         formatted(&p, "x.smith", "u32 f(void) {\nimport value = c.x + c.y;\nreturn 1;\n}\n"));
 }
 
 export void test_import_of_a_header_is_kept_whole() {
@@ -200,7 +200,7 @@ export void test_import_of_a_header_is_kept_whole() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::expect_text("import <h> is kept whole", "import <sys/wait.h>;",
-                         formatted(&memory, &p, "x.smith", "import   <sys/wait.h> ;\n"));
+                         formatted(&p, "x.smith", "import   <sys/wait.h> ;\n"));
 }
 
 export void test_module_and_import_lines_are_kept() {
@@ -210,10 +210,9 @@ export void test_module_and_import_lines_are_kept() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::expect_text("module and import lines",
-                         "module a::b;\nimport a::b as x;\nimport lib::text;\nimport \"local.h\";",
-                         formatted(&memory, &p, "x.smith",
-                                   "module   a::b ;\nimport a::b  as x;\nimport lib::text ;\nimport  \"local.h\" ;\n"));
+    scratch::expect_text(
+        "module and import lines", "module a::b;\nimport a::b as x;\nimport lib::text;\nimport \"local.h\";",
+        formatted(&p, "x.smith", "module   a::b ;\nimport a::b  as x;\nimport lib::text ;\nimport  \"local.h\" ;\n"));
 }
 
 export void test_paths_with_double_colons_are_kept() {
@@ -225,8 +224,7 @@ export void test_paths_with_double_colons_are_kept() {
     defer mem::set_allocator(outside);
     scratch::expect_text(
         "paths with ::", "x::Pair make(x::T *p) {\n    struct x::Pair q = {1, 2};\n    return c::EOF + x::open(p);\n}",
-        formatted(&memory, &p, "x.smith",
-                  "x::Pair make(x::T*p){\nstruct x::Pair q={1,2};\nreturn c::EOF+x::open(p);}\n"));
+        formatted(&p, "x.smith", "x::Pair make(x::T*p){\nstruct x::Pair q={1,2};\nreturn c::EOF+x::open(p);}\n"));
 }
 
 export void test_export_lines_are_laid_out() {
@@ -238,7 +236,7 @@ export void test_export_lines_are_laid_out() {
     defer mem::set_allocator(outside);
     scratch::expect_text(
         "export lines", "export u32 counter = 7;\nexport u64 checksum(const u8 *data, usize size);",
-        formatted(&memory, &p, "x.smith", "export   u32 counter=7;\nexport u64 checksum(const u8*data,usize size);\n"));
+        formatted(&p, "x.smith", "export   u32 counter=7;\nexport u64 checksum(const u8*data,usize size);\n"));
 }
 
 export void test_a_name_import_or_module_in_a_function_is_a_name() {
@@ -250,7 +248,7 @@ export void test_a_name_import_or_module_in_a_function_is_a_name() {
     defer mem::set_allocator(outside);
     scratch::expect_text("a name import or module in a function is a name",
                          "void f(void) {\n    module value;\n    import *p;\n}",
-                         formatted(&memory, &p, "x.smith", "void f(void){\nmodule value;\nimport*p;\n}\n"));
+                         formatted(&p, "x.smith", "void f(void){\nmodule value;\nimport*p;\n}\n"));
 }
 
 export void test_c_files_still_read_import_as_a_name() {
@@ -262,7 +260,7 @@ export void test_c_files_still_read_import_as_a_name() {
     defer mem::set_allocator(outside);
     scratch::expect_text(".c files still read import as a name",
                          "u32 f(void) {\n    import value = 1;\n    return value;\n}",
-                         formatted(&memory, &p, "x.c", "u32 f(void) {\nimport value = 1;\nreturn value;\n}\n"));
+                         formatted(&p, "x.c", "u32 f(void) {\nimport value = 1;\nreturn value;\n}\n"));
 }
 
 // A file's own header sorts first (patches/smith-format-source-extension.patch): `#include "foo.h"` in foo.smith, as in
@@ -276,9 +274,9 @@ export void test_a_smith_files_own_header_sorts_first_as_in_a_c_file() {
     defer mem::set_allocator(outside);
     const char *input = "#include <stdlib.h>\n#include \"foo.h\"\n";
     scratch::expect_text("a .smith file's own header sorts first, as in a .c file",
-                         "#include \"foo.h\"\n#include <stdlib.h>", formatted(&memory, &p, "foo.smith", input));
-    scratch::expect_text("... and the same in the .c file", formatted(&memory, &p, "foo.smith", input),
-                         formatted(&memory, &p, "foo.c", input));
+                         "#include \"foo.h\"\n#include <stdlib.h>", formatted(&p, "foo.smith", input));
+    scratch::expect_text("... and the same in the .c file", formatted(&p, "foo.smith", input),
+                         formatted(&p, "foo.c", input));
 }
 
 // A payload enum is laid out like a struct, and a variant in the dot rule (`case .v:`, `== .v`, `return .v;`) has an
@@ -294,6 +292,43 @@ export void test_a_payload_enum_and_the_dot_rule_are_kept_as_written() {
     scratch::copy_tree(&p, "tests/smith-fmt/payload_enum.smith", "payload_enum.smith");
     scratch::Run run = scratch::sh(&p, "smith fmt --assume-filename=\"$PWD/x.smith\" < payload_enum.smith 2>&1");
     test::golden_free("tests/smith-fmt/payload_enum.smith", slice_of(run.out));
+}
+
+// Lambdas (issue #316): clang-format lays a lambda out like its own C++ lambdas, and `[` starting an expression is
+// invalid C, so plain C is untouched.
+export void test_lambda_forms_are_laid_out_like_a_function_body() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::expect_text(
+        "the full form, the short forms, an argument and a trailing block",
+        "void f(i32 n) {\n    auto a = [x, y](i32 a) -> i32 { return a * x; };\n"
+        "    auto b = [](i32 a) { return a * 2; };\n    auto c = [] { g(); };\n"
+        "    auto d = [x] { g(x); };\n    run([x] { g(); });\n    each(xs) {\n        g(it);\n    }\n}",
+        formatted(&p, "x.smith",
+                  "void f(i32 n) {\nauto a = [x,y](i32 a)->i32{return a*x;};\nauto b=[](i32 a){return a*2;};\n"
+                  "auto c = []{ g(); };\nauto d=[x]{g(x);};\nrun([x]{ g(); });\neach(xs) {\n g(it);\n}\n}\n"));
+    scratch::expect_text(
+        "lambda(F) as a parameter type",
+        "void s(lambda(bool(typeof(xs[0]) *, typeof(xs[0]) *)) less, [[smith::until(g)]] lambda(void(i32)) h);",
+        formatted(&p, "x.smith",
+                  "void s(lambda(bool (typeof(xs[0]) *, typeof(xs[0]) *)) less, [[smith::until(g)]] lambda(void (i32)) "
+                  "h);\n"));
+}
+
+export void test_a_c_file_with_brackets_and_attributes_is_unchanged_by_the_lambda_forms() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    const char *c_file = "void f(int *a, int i) {\n    a[i] = a[i + 1];\n    int b[2] = {[0] = 1, [1] = 2};\n"
+                         "    [[maybe_unused]] int c = 0;\n}\n";
+    scratch::expect_text("plain C is unchanged", c_file, formatted(&p, "x.c", c_file));
 }
 
 // --- `smith fmt` with no arguments

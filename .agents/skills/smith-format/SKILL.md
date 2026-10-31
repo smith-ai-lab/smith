@@ -11,12 +11,12 @@ There is no format string, so none can disagree with its arguments: the argument
 
 ```smith fragment
 import smith::format;
-import smith::arena;
+import smith::mem;
 
 char out[128];
 format::Written w = format::to(out, sizeof out, "move ", dx, " ", dy, " key ", format::hex(key, 16));
 if (!w.fits) { /* cut: out is terminated, w.length is what the whole text needs */ }
-char path[:] = format::push(&arena, folder, "/", name, ".mesh");   // path.data is terminated too (not counted)
+char path[:] = format::push(folder, "/", name, ".mesh");   // path.data is terminated too (not counted)
 usize n = format::length("abc", 12345);                               // 8, writes nothing
 ```
 
@@ -40,4 +40,4 @@ usize n = format::length("abc", 12345);                               // 8, writ
 - **Up to 30 pieces** in one call (a generic takes 32 parameters).
 - **printf to pieces**: `%-34s %10u %5.1f%%` is `format::left(label, 34), " ", format::pad(a, 10), " ", format::pad(format::fixed(x, 1), 5), "%"`; `%.9g` is `format::general(x, 9)`; `%016llx` is `format::hex(x, 16)`. There is no zero-padded decimal (`%03d`): pad with `hex`, or write the zeros.
 - **C cannot call the generics.** C keeps `snprintf`, and gets the pieces `to` is made of from `<smith/format.h>`: `SmithFormatWriter w = smith_format_make(buf, cap); smith_format_put_string(&w, "n="); smith_format_put_u64(&w, n); SmithFormatWritten r = smith_format_finish(&w);` (also `put_char`, `put_bytes`, `put_i64`, `put_f64`, `put_hex`, `put_fixed`, `put_general`, `put_scientific`, `put_padded`; `smith_format_hex`, `smith_format_fixed`, `smith_format_general`, `smith_format_scientific` and `smith_format_bytes` make the wrappers).
-- **Get the library** with `smith_library(b, "format")`, plus `arena` and `text`, which it imports; a project built by convention needs nothing more.
+- **Get the library** with `smith_library(b, "format")`, plus `mem` and `text`, which it imports; a project built by convention needs nothing more.

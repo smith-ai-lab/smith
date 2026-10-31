@@ -1,0 +1,9 @@
+import <smith/files.h>;
+import <stdio.h>;
+
+int main(void) {
+    c::smith_files_InfoResult info = c::smith_fs_info((struct c::smith_array_const_char_n){".", {1}});
+    if (info.tag != c::smith_enum_result_SmithFilesInfo__SmithFilesError_tag_ok) return 1;
+    c::printf("hello\n");
+    return 0;
+}

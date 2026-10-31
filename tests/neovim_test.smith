@@ -64,15 +64,14 @@ static void nvim(const char *name, const Start *start) {
         test::note("the setup said: %s", made.err); // `smith new`'s own output, so a failure explains itself (#456)
     }
     scratch::expect_status("neovim: the scratch home is made", 0, &made);
-    const char *path =
-        start->bare ? "/usr/bin:/bin" : format::push(&memory, start->front, p.tested, ":/usr/bin:/bin").data;
+    const char *path = start->bare ? "/usr/bin:/bin" : format::push(start->front, p.tested, ":/usr/bin:/bin").data;
     const char *before =
         start->version_line == nullptr
             ? ""
-            : format::push(&memory, shim, "shim \"$PWD/shimmed\" \"smith 0.0", start->version_line, "\"; ").data;
+            : format::push(shim, "shim \"$PWD/shimmed\" \"smith 0.0", start->version_line, "\"; ").data;
     const char *command =
         format::push(
-            &memory, "nvim=$(command -v nvim); ", before, "d=$PWD; export XDG_DATA_HOME=$d/", start->data,
+            "nvim=$(command -v nvim); ", before, "d=$PWD; export XDG_DATA_HOME=$d/", start->data,
             " XDG_CONFIG_HOME=$d/config XDG_STATE_HOME=$d/state XDG_CACHE_HOME=$d/cache HOME=$d/home "
             "GIT_CONFIG_NOSYSTEM=1; ",
             "env PATH=\"", path, "\" SMITH_NVIM_TEST=", name,
@@ -89,8 +88,8 @@ static void nvim(const char *name, const Start *start) {
     if (run.status != 0 || !scratch::contains(run.out, "ok  ")) {
         test::note("%s (status %d)\n%s", name, run.status, run.out);
     }
-    scratch::expect_status(format::push(&memory, "neovim: ", name).data, 0, &run);
-    scratch::expect_contains(format::push(&memory, "neovim: ", name, " says ok").data, run.out, "ok  ");
+    scratch::expect_status(format::push("neovim: ", name).data, 0, &run);
+    scratch::expect_contains(format::push("neovim: ", name, " says ok").data, run.out, "ok  ");
 }
 
 // The usual: the smith under test first on PATH.

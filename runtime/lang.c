@@ -468,9 +468,10 @@ struct SmithLang {
     bool doc_pending; // an export is next and has a doc comment (doc_export_from .. doc_export_to)
     const SmithTrivia *doc_export_from;
     const SmithTrivia *doc_export_to;
-    bool export_tail;    // the header has the export's end, though export_active is off (a variable, a prototype)
-    bool tail_open;      // an export just ended in the header: a comment after it on its line follows it there
-    bool unnamed_c_name; // an export ended that took no name from its [[smith::c_name]]
+    bool export_tail;     // the header has the export's end, though export_active is off (a variable, a prototype)
+    bool tail_open;       // an export just ended in the header: a comment after it on its line follows it there
+    uint32_t nolint_open; // NOLINTBEGIN comments the header has no NOLINTEND for yet (a pair stays together)
+    bool unnamed_c_name;  // an export ended that took no name from its [[smith::c_name]]
     uint32_t unnamed_c_name_location;
     size_t c_name_count; // how many of the module's own names have a C name chosen
     SmithLangCName cnames[smith_lang_cnames_max];

@@ -27,8 +27,8 @@ constexpr char program[_] =
 
 // Compiles the program with coverage and merges one record for each run named in `runs` ("one" runs first, "two"
 // runs second), then joins them into cov/table.tsv.
-static const char *make_table(arena::Arena *memory, const char *runs) {
-    return format::push(memory, "set -e; r=$(pwd -P); printf '", program, "' > prog.c; ", find_tools,
+static const char *make_table(const char *runs) {
+    return format::push("set -e; r=$(pwd -P); printf '", program, "' > prog.c; ", find_tools,
                         "smith cc -fprofile-instr-generate -fcoverage-mapping \"$r/prog.c\" -o prog; "
                         "export SMITH_COVERAGE_DIR=$r/cov SMITH_COVERAGE_BINARY=$r/prog "
                         "SMITH_REPO=$r; mkdir -p cov/raw/t__one cov/raw/t__two; ",
@@ -52,7 +52,7 @@ export void test_a_record_is_the_functions_a_test_ran() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run run = scratch::sh(&p, make_table(&memory, format::push(&memory, run_one, run_two).data));
+    scratch::Run run = scratch::sh(&p, make_table(format::push(run_one, run_two).data));
     if (run.status == 77) {
         test::note("coverage: skipped, this smith has no LLVM inside");
         return;
@@ -80,7 +80,7 @@ export void test_the_report_names_the_changed_lines_no_test_ran() {
         "&& sed 's/x \\* 2/x * 3/' prog.c > next.c && mv next.c prog.c && "
         "git -c user.name=t -c user.email=t@t commit -q -am b && "
         "smith test --coverage report cov/table.tsv HEAD~1 cov/report.txt; cat cov/report.txt";
-    scratch::Run run = scratch::sh(&p, format::push(&memory, make_table(&memory, run_one), edit).data);
+    scratch::Run run = scratch::sh(&p, format::push(make_table(run_one), edit).data);
     if (run.status == 77) return;
     scratch::expect_status("the run", 0, &run);
     scratch::expect_contains("the totals", run.out, "coverage\tabc123\tlines\t");
@@ -109,9 +109,9 @@ constexpr char repository[_] =
     "git -c user.name=t -c user.email=t@t commit -q -m base; ";
 
 // Runs the program under coverage as the tests a and b, and merges a record for each; `result` is what a's run was.
-static const char *recorded(arena::Arena *memory, const char *result) {
+static const char *recorded(const char *result) {
     return format::
-        push(memory, find_tools,
+        push(find_tools,
              "r=$(pwd -P); smith cc -fprofile-instr-generate -fcoverage-mapping \"$r/runtime/prog.c\" -o .smith/prog; "
              "export SMITH_COVERAGE_DIR=$r/.smith/cov SMITH_COVERAGE_BINARY=$r/.smith/prog "
              "SMITH_REPO=$r; mkdir -p .smith/cov/raw/runs_test__a .smith/cov/raw/runs_test__b; "
@@ -123,17 +123,16 @@ static const char *recorded(arena::Arena *memory, const char *result) {
             .data;
 }
 
-static const char *changed_with(arena::Arena *memory, const scratch::Project *p, const char *result, const char *edit) {
-    scratch::Run run = scratch::sh(p, format::push(memory, repository, recorded(memory, result), edit,
-                                                   "; smith test --changed --base HEAD --dry-run 2>&1")
-                                          .data);
+static const char *changed_with(const scratch::Project *p, const char *result, const char *edit) {
+    scratch::Run run = scratch::sh(
+        p, format::push(repository, recorded(result), edit, "; smith test --changed --base HEAD --dry-run 2>&1").data);
     if (run.status == 77) return "";
     scratch::expect_status("the dry run ends", 0, &run);
     return run.out;
 }
 
-static const char *changed(arena::Arena *memory, const scratch::Project *p, const char *edit) {
-    return changed_with(memory, p, "pass", edit);
+static const char *changed(const scratch::Project *p, const char *edit) {
+    return changed_with(p, "pass", edit);
 }
 
 // A change inside a function selects the tests that ran it, and the test with no record, and not the others.
@@ -144,7 +143,7 @@ export void test_a_change_selects_the_tests_that_ran_it() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *out = changed(&memory, &p, "sed 's/x \\* 2/x * 3/' runtime/prog.c > n && mv n runtime/prog.c");
+    const char *out = changed(&p, "sed 's/x \\* 2/x * 3/' runtime/prog.c > n && mv n runtime/prog.c");
     scratch::expect_contains("the test that ran it", out, "its record is stale: runs_test::b");
     scratch::expect_contains("the filter", out, "runs_test::b,runs_test::c");
     scratch::expect_lacks("the other", out, "runs_test::a");
@@ -159,9 +158,8 @@ export void test_a_moved_function_and_a_comment_change_nothing() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *out = changed(&memory, &p,
-                              "{ printf '// a comment\\n\\n'; cat runtime/prog.c; printf '// the end\\n'; } > n && "
-                              "mv n runtime/prog.c");
+    const char *out = changed(&p, "{ printf '// a comment\\n\\n'; cat runtime/prog.c; printf '// the end\\n'; } > n && "
+                                  "mv n runtime/prog.c");
     scratch::expect_lacks("a", out, "runs_test::a");
     scratch::expect_lacks("b", out, "runs_test::b");
     scratch::expect_contains("only the test with no record", out, "no record of runs_test::c");
@@ -175,7 +173,7 @@ export void test_a_global_reruns_the_tests_that_ran_the_file() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *out = changed(&memory, &p, "printf 'int g = 1;\\n' >> runtime/prog.c");
+    const char *out = changed(&p, "printf 'int g = 1;\\n' >> runtime/prog.c");
     scratch::expect_contains("a", out, "code outside functions changed");
     scratch::expect_contains("a", out, "runs_test::a");
     scratch::expect_contains("a", out, "runs_test::a");
@@ -191,7 +189,7 @@ export void test_a_failed_test_reruns() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *out = changed_with(&memory, &p, "fail", "echo '// x' >> runtime/prog.c");
+    const char *out = changed_with(&p, "fail", "echo '// x' >> runtime/prog.c");
     scratch::expect_contains("it failed", out, "it failed last time");
     scratch::expect_contains("the filter", out, "runs_test::a");
 }
@@ -204,7 +202,7 @@ export void test_a_file_nothing_places_selects_every_test() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *out = changed(&memory, &p, "printf 'int z(void);\\n' > runtime/new.c");
+    const char *out = changed(&p, "printf 'int z(void);\\n' > runtime/new.c");
     scratch::expect_contains("the message", out, "runtime/new.c is named by no record and no file imports it");
     scratch::expect_contains("every test", out, "every test runs");
 }
@@ -218,7 +216,7 @@ export void test_a_file_the_graph_places_selects_the_tests_built_from_it() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *out = changed(&memory, &p, "printf '#define K 2\\n' > runtime/helper.h");
+    const char *out = changed(&p, "printf '#define K 2\\n' > runtime/helper.h");
     scratch::expect_contains("the reason", out, "code outside functions changed");
     scratch::expect_contains("a", out, "runs_test::a");
     scratch::expect_contains("b", out, "runs_test::b");
@@ -233,10 +231,26 @@ export void test_no_records_means_the_graph_decides() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run run = scratch::sh(&p, format::push(&memory, repository,
-                                                    "echo '// x' >> runtime/prog.c; smith test --changed --base HEAD "
-                                                    "--dry-run 2>&1")
-                                           .data);
+    scratch::Run run =
+        scratch::sh(&p, format::push(repository, "echo '// x' >> runtime/prog.c; smith test --changed --base HEAD "
+                                                 "--dry-run 2>&1")
+                            .data);
     scratch::expect_contains("the reason", run.out, "no records of tests");
     scratch::expect_contains("the graph's choice", run.out, "tests/runs_test.smith: it runs smith");
+}
+
+// A file that imports smith::arena and then declares a variable with an initializer compiles with the record build's
+// coverage flags (#845): the import's unused function over types is in the buffer `<smith-types>`, and a buffer with
+// no place in the main file left the coverage mapping of that function looping for good.
+export void test_a_file_with_an_import_and_a_variable_compiles_with_coverage() {
+    scratch::Project p = scratch::make("p", "coverage_types");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run =
+        scratch::sh(&p, "smith build >/dev/null 2>&1; smith cc -fprofile-instr-generate -fcoverage-mapping -std=gnu2y "
+                        "-I .smith/include -I . -c main.smith -o main.o");
+    scratch::expect_status("coverage: the compile finishes", 0, &run);
 }

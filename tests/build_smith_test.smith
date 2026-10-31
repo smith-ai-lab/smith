@@ -64,7 +64,7 @@ export void test_build_smith_a_build_smith_of_the_high_level_calls_builds_runs_t
     scratch::expect_text("build.smith: smith run runs the program", "12", last_line(run.out));
     scratch::Run tested = scratch::sh(&p, "smith test");
     scratch::expect_status("build.smith: smith test passes", 0, &tested);
-    scratch::expect_contains("build.smith: ... its test", format::push(&memory, tested.out, tested.err).data,
+    scratch::expect_contains("build.smith: ... its test", format::push(tested.out, tested.err).data,
                              "1 passed, 0 failed");
     scratch::Run profiles = scratch::build(&p, "release fast");
     scratch::expect_status("build.smith: the other profiles build", 0, &profiles);
@@ -86,7 +86,7 @@ export void test_build_smith_a_low_level_task_beside_the_high_level_calls() {
     scratch::Run greet = scratch::build(&p, "greet");
     scratch::expect_status("low-level: a task in a build.smith runs", 0, &greet);
     scratch::expect_contains("low-level: ... and prints", greet.out,
-                             format::push(&memory, "hello from ", scratch::capture(&p, "uname -s")).data);
+                             format::push("hello from ", scratch::capture(&p, "uname -s")).data);
     scratch::Run tested = scratch::sh(&p, "smith test");
     scratch::expect_status("low-level: the tests of the high-level calls still pass", 0, &tested);
 }
@@ -148,11 +148,11 @@ export void test_build_smith_dump_config_of_a_smith_project_is_a_build_smith() {
 
 // The dumped build.smith is the project's build file; its commands must be those of no build file.
 // The commands of no build file are returned, in the test's memory as everything scratch returns.
-static const char *dump_smith_project(const scratch::Project *p, arena::Arena *memory) {
+static const char *dump_smith_project(const scratch::Project *p) {
     const char *conventional = commands_of(p, "dump");
     scratch::Run dump = scratch::sh(p, "smith build --dump-config");
     scratch::expect_status("dump: a .smith project: status 0", 0, &dump);
-    scratch::write(p, "build.smith", format::push(memory, dump.out, "\n").data);
+    scratch::write(p, "build.smith", format::push(dump.out, "\n").data);
     (void)scratch::sh(p, "rm -rf .smith build");
     return conventional;
 }
@@ -166,7 +166,7 @@ export void test_build_smith_dump_config_gives_the_commands_of_no_build_file_and
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *conventional = dump_smith_project(&p, &memory);
+    const char *conventional = dump_smith_project(&p);
     scratch::expect_text("dump: the build.smith gives the commands of no build file", conventional,
                          commands_of(&p, "dump"));
     scratch::Run built = scratch::build(&p, "");
@@ -177,8 +177,7 @@ export void test_build_smith_dump_config_gives_the_commands_of_no_build_file_and
     scratch::Run run = scratch::sh(&p, "smith run");
     scratch::expect_text("dump: ... runs", "12", last_line(run.out));
     scratch::Run tested = scratch::sh(&p, "smith test");
-    scratch::expect_contains("dump: ... and tests", format::push(&memory, tested.out, tested.err).data,
-                             "1 passed, 0 failed");
+    scratch::expect_contains("dump: ... and tests", format::push(tested.out, tested.err).data, "1 passed, 0 failed");
     scratch::Run again = scratch::sh(&p, "smith build --dump-config");
     scratch::expect_status("dump: a project with a build.smith: status 0", 0, &again);
     scratch::expect_text("dump: ... prints nothing to stdout", "", again.out);
@@ -205,11 +204,11 @@ export void test_build_smith_dump_config_of_a_c_project_is_a_build_c() {
 }
 
 // The commands of no build file are returned, in the test's memory as everything scratch returns.
-static const char *dump_c_project(const scratch::Project *p, arena::Arena *memory) {
+static const char *dump_c_project(const scratch::Project *p) {
     const char *conventional = commands_of(p, "cdump");
     scratch::Run dump = scratch::sh(p, "smith build --dump-config");
     scratch::expect_status("dump: a C project: status 0", 0, &dump);
-    scratch::write(p, "build.c", format::push(memory, dump.out, "\n").data);
+    scratch::write(p, "build.c", format::push(dump.out, "\n").data);
     (void)scratch::sh(p, "rm -rf .smith build");
     return conventional;
 }
@@ -223,12 +222,11 @@ export void test_build_smith_dump_config_of_a_c_project_gives_the_commands_tests
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *conventional = dump_c_project(&p, &memory);
+    const char *conventional = dump_c_project(&p);
     scratch::expect_text("dump: the build.c gives the commands of no build file", conventional,
                          commands_of(&p, "cdump"));
     scratch::Run tested = scratch::sh(&p, "smith test");
-    scratch::expect_contains("dump: ... and tests", format::push(&memory, tested.out, tested.err).data,
-                             "1 passed, 0 failed");
+    scratch::expect_contains("dump: ... and tests", format::push(tested.out, tested.err).data, "1 passed, 0 failed");
     scratch::Run again = scratch::sh(&p, "smith build --dump-config");
     scratch::expect_status("dump: a project with a build.c: status 0", 0, &again);
     scratch::expect_text("dump: ... prints nothing to stdout", "", again.out);
@@ -287,8 +285,8 @@ export void test_build_smith_lint_reads_a_build_smith_as_written() {
     (void)scratch::sh(&p, "printf '\\nstatic int BadName(int x) {\\n    return x;\\n}\\n' >>build.smith");
     scratch::Run bad = scratch::sh(&p, "smith lint");
     scratch::expect_status("lint: a finding in build.smith fails", 1, &bad);
-    scratch::expect_contains("lint: ... at its line, in the name as written",
-                             format::push(&memory, bad.out, bad.err).data, "build.smith:10:12");
+    scratch::expect_contains("lint: ... at its line, in the name as written", format::push(bad.out, bad.err).data,
+                             "build.smith:10:12");
 }
 
 // smith check reads a build.smith too: with no build.c and no main, it still lints and tests.
@@ -355,7 +353,7 @@ export void test_build_smith_relaxing_a_warning_in_flags_and_a_folders_list_buil
     scratch::Run strict = scratch::build(&p, "");
     scratch::expect_status("relax: without the flags the conventions' warnings fail the build", 1, &strict);
     scratch::expect_contains("relax: the diagnostic names the flag to turn off",
-                             format::push(&memory, strict.out, strict.err).data, "[-Werror,-Wgnu-folding-constant]");
+                             format::push(strict.out, strict.err).data, "[-Werror,-Wgnu-folding-constant]");
     (void)scratch::sh(&p, "cp build.smith.relaxed build.smith");
     scratch::Run relaxed = scratch::build(&p, "");
     scratch::expect_status("relax: with -Wno-... in .flags and a folder's list it builds", 0, &relaxed);

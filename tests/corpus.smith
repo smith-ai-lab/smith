@@ -28,13 +28,13 @@ static const char *line_at(arena::Arena *arena, const char *text, usize at) {
     char *copy = arena::push_slice(arena, char, kept + 1).data;
     copy_bytes(copy, text + at, kept);
     copy[kept] = '\0';
-    return cut ? format::push(arena, copy, "...").data : copy;
+    return cut ? format::push(copy, "...").data : copy;
 }
 
 // Nothing when `actual` is `expected`; else a line that names `what` and the first line that differs, with both
 // sides. `expected` is null when the file is missing.
 export const char *difference(arena::Arena *arena, const char *what, const char *expected, const char *actual) {
-    if (expected == nullptr) return format::push(arena, what, ": no file; run smith test --update\n").data;
+    if (expected == nullptr) return format::push(what, ": no file; run smith test --update\n").data;
     if (c::strcmp(expected, actual) == 0) return nullptr;
     usize at = 0;
     usize line = 1;
@@ -46,7 +46,7 @@ export const char *difference(arena::Arena *arena, const char *what, const char 
         }
         at += 1;
     }
-    return format::push(arena, what, ": line ", line, ": expected `", line_at(arena, expected, start), "` but got `",
+    return format::push(what, ": line ", line, ": expected `", line_at(arena, expected, start), "` but got `",
                         line_at(arena, actual, start), "`\n")
         .data;
 }
@@ -73,7 +73,7 @@ export void golden(arena::Arena *arena, const char **differing, const char *path
         return;
     }
     const char *found = difference(arena, path, read_file(arena, path), actual);
-    if (found != nullptr) *differing = format::push(arena, *differing, found).data;
+    if (found != nullptr) *differing = format::push(*differing, found).data;
 }
 
 // The end of the test: it fails once when any case differed, listing them all.
@@ -86,7 +86,7 @@ export void finish(const char *differing) {
 // A file of sections, each opened by a line `==> name <==`: the section of `text` named `name` (its body, up to the
 // next header or the end), or null.
 static const char *section_of(arena::Arena *arena, const char *text, const char *name) {
-    const char *header = format::push(arena, "==> ", name, " <==\n").data;
+    const char *header = format::push("==> ", name, " <==\n").data;
     const char *at = c::strstr(text, header);
     while (at != nullptr && at != text && at[-1] != '\n')
         at = c::strstr(at + 1, header);
@@ -109,7 +109,7 @@ export void golden_sections(arena::Arena *arena, const char **differing, const c
     }
     const char *expected = read_file(arena, path);
     if (expected == nullptr) {
-        *differing = format::push(arena, *differing, path, ": no file; run smith test --update\n").data;
+        *differing = format::push(*differing, path, ": no file; run smith test --update\n").data;
         return;
     }
     for (const char *at = actual; at != nullptr; at = c::strstr(at + 1, "\n==> ")) {
@@ -122,9 +122,9 @@ export void golden_sections(arena::Arena *arena, const char **differing, const c
         copy_bytes(name, header + 4, length);
         name[length] = '\0';
         const char *wanted = section_of(arena, expected, name);
-        const char *found = wanted == nullptr ? format::push(arena, name, ": not in ", path, "\n").data
+        const char *found = wanted == nullptr ? format::push(name, ": not in ", path, "\n").data
                                               : difference(arena, name, wanted, section_of(arena, actual, name));
-        if (found != nullptr) *differing = format::push(arena, *differing, found).data;
+        if (found != nullptr) *differing = format::push(*differing, found).data;
     }
     for (const char *at = expected; at != nullptr; at = c::strstr(at + 1, "\n==> ")) {
         const char *header = at == expected ? at : at + 1;
@@ -136,6 +136,6 @@ export void golden_sections(arena::Arena *arena, const char **differing, const c
         copy_bytes(name, header + 4, length);
         name[length] = '\0';
         if (section_of(arena, actual, name) == nullptr)
-            *differing = format::push(arena, *differing, name, ": expected, but no longer formatted\n").data;
+            *differing = format::push(*differing, name, ": expected, but no longer formatted\n").data;
     }
 }

@@ -27,4 +27,4 @@ case .error: printf("error %d\n", bad.error); break;
 return 0;
 }
 extern struct smith_enum_option_usize main_first__usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n)__asm__("_main::first(__SIZE_TYPE__)");
-[[gnu::weak]][[gnu::visibility("hidden")]]struct smith_enum_option_usize main_first__usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n){if(n==0)return.none;return{.some=xs[0]};}
+[[gnu::weak]][[gnu::visibility("hidden")]]struct smith_enum_option_usize main_first__usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n){if(n==0)return(struct smith_enum_option_usize){.tag=smith_enum_option_usize_tag_none};return(struct smith_enum_option_usize){.tag=smith_enum_option_usize_tag_some,.some=xs[0]};}

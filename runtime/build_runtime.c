@@ -337,12 +337,36 @@ static void smith_check_step(const SmithStep *step) {
     if (!has_command) smith_fail("a step needs a non-empty .command");
 }
 
+static const char *smith_compiler_file(const char *compiler);
+static const char *smith_find_executable(const char *name, bool resolve);
+
+// A step run by a compiler named bare (smith-cc, found on PATH) that lists the compiler's file as an input waits for
+// the compiler's identity instead (smith_compiler_file): relinking the same smith moves the file, not the identity.
+static const char *const *smith_compiler_inputs(const SmithStep *step, const char *const *inputs) {
+    const char *compiler = step->command != nullptr ? step->command[0] : nullptr;
+    if (compiler == nullptr || strchr(compiler, '/') != nullptr) return inputs;
+    const char *found = smith_find_executable(compiler, true);
+    const char *invoked = smith_find_executable(compiler, false);
+    for (size_t i = 0; inputs != nullptr && inputs[i] != nullptr; i++) {
+        if ((found == nullptr || strcmp(inputs[i], found) != 0) &&
+            (invoked == nullptr || strcmp(inputs[i], invoked) != 0))
+            continue;
+        size_t count = smith_count(inputs);
+        const char **list = (const char **)smith_alloc((count + 1) * sizeof(const char *));
+        for (size_t k = 0; k <= count; k++)
+            list[k] = inputs[k];
+        list[i] = smith_compiler_file(compiler);
+        return list;
+    }
+    return inputs;
+}
+
 static SmithStep smith_copy_step(const SmithStep *step) {
     SmithStep copy = *step;
     copy.command = smith_copy_list(step->command);
     copy.args = smith_copy_list(step->args);
     copy.inputs = smith_copy_list(step->inputs);
-    copy.implicit_inputs = smith_copy_list(step->implicit_inputs);
+    copy.implicit_inputs = smith_compiler_inputs(step, smith_copy_list(step->implicit_inputs));
     copy.order_only_inputs = smith_copy_list(step->order_only_inputs);
     copy.outputs = smith_copy_list(step->outputs);
     if (step->depfile != nullptr) copy.depfile = smith_copy_string(step->depfile);
@@ -2581,21 +2605,12 @@ static const char *const *smith_handlers_link(SmithBuild *b, const SmithProgram 
 }
 #endif
 
-// smith's own link is the one program that is not linked with the handlers runtime: its clones (clang, ld) run from the
-// programs folder, which has no dylib beside them. Named by the file (`.../smith`), until SmithProgram has a field for
-// it (the lag rule: build.c is built by the previous release, whose header has none). On Linux, where the runtime is
-// an object, smith leaves it out the same way.
-static bool smith_is_smith_itself(const char *output) {
-    const char *slash = strrchr(output, '/');
-    return strcmp(slash != nullptr ? slash + 1 : output, "smith") == 0;
-}
-
-// The arguments that link the handlers runtime into `program` (none for smith itself), and in *files the files the
-// link waits for: on macOS the dylib of its folder (and ASan's options), on Linux the objects themselves.
+// The arguments that link the handlers runtime into `program` (smith itself too: its clones find the dylib beside them,
+// see smith_programs_make in smith.c), and in *files the files the link waits for: on macOS the dylib of its folder
+// (and ASan's options), on Linux the objects themselves.
 static const char *const *smith_program_handlers(SmithBuild *b, const SmithProgram *program,
                                                  const char *const **files) {
     *files = smith_list(b, nullptr);
-    if (smith_is_smith_itself(program->output)) return smith_list(b, nullptr);
     const char *slash = strrchr(program->output, '/');
     const char *folder = slash != nullptr ? smith_text("%.*s", (int)(slash - program->output), program->output) : ".";
     const char *const *handlers = smith_handlers_link(b, program, folder);

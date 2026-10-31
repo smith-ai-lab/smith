@@ -1,4 +1,4 @@
-main.smith:1:8: error: `import vector_check;` found `vector_check.h`, which is a C header, not the header smith writes for the module (it has no `// smith-module:` line): rename the C header or the module, or import the C header as `import "vector_check.h";`
+main.smith:1:8: error: `import vector_check;` found `vector_check.h`, which is a C header, not the header smith writes for the module `vector_check` (vector_check.smith; the C header has no `// smith-module:` line): a module and a C header of one name cannot share an include path; rename the C header or the module, or import the C header as `import "vector_check.h";`
     1 | import vector_check;
       |        ^
 1 error generated.

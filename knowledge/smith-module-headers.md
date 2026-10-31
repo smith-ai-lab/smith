@@ -73,7 +73,9 @@ What the header keeps of the source (written by the plain lexer, `runtime/lang_t
 - **Doc comments.** The comments directly above an `export` (or above the `[[smith::c_name]]` before it; no blank line
   between) are copied above its declaration, as written. Comments inside an exported declaration (a struct's fields) and a
   comment after its last token on the same line (`export u32 limit = 4; // bytes`) are kept. A comment separated by a
-  blank line from the export, and the comments of private code, are not.
+  blank line from the export, and the comments of private code, are not. A `// NOLINTBEGIN` the header keeps keeps its
+  `// NOLINTEND` too, on the line after the last declaration of the region it has (a pair is never split: clang-tidy
+  reports a begin with no end); an end whose begin is not in the header is dropped.
 - **Conditional directives.** An `#if`, `#ifdef`, `#ifndef`, `#elif`, `#else` and `#endif` around exports are copied into
   the header verbatim, with the branches before an export in it, and nothing is preprocessed at header time: the includer's
   `-D` flags choose, as for any C header. A chain with no export in it is left out. `#if 0 … #else` writes the live text
@@ -125,7 +127,10 @@ What the header keeps of the source (written by the plain lexer, `runtime/lang_t
   `#endif`, after the exports (and a `// smith-linked: helper counter` line, the functions and variables among them, and
   a `// smith-hidden:` line, all the names of the section). C, C++ and `.smith` code that is not an importer never see
   the section: `shim/hook.cpp` defines `SMITH_INSTANCES` around the `#include` of the header it enters for an
-  `import`. What the section names through imports (`c::FILE`) is included by the header, like the record of an
+  `import`. A header with a section has no `#pragma once` (an importer would skip the section when another header had
+  included it plainly first): `#ifndef SMITH_HEADER_<module>` on its first line, the `#define` at the end of the
+  declarations, and the section under a guard of its own, `SMITH_HEADER_<module>_INSTANCES`, so it is read at the first
+  include with `SMITH_INSTANCES` whatever came before (issue #761). What the section names through imports (`c::FILE`) is included by the header, like the record of an
   exported generic; an unmarked private declaration adds nothing, so the header is as wide as its exports and
   generics need. The module's own compile reads `// smith-linked:` from its header (the interface made from its source
   when there is none) and gives those functions and variables the symbol `_m::helper` instead of `static` (and drops
