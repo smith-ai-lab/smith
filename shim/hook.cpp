@@ -2990,6 +2990,19 @@ class SmithHook final : public TokenHook, public NameSource {
         return false;
     }
 
+    // Whether the `[` at `at` follows what an expression can follow: `=`, `(`, `,`, `?`, `:`, `{`, `&&`, `||` or
+    // `return`.
+    static bool expressionBefore(StringRef text, size_t at) {
+        size_t before = at;
+        while (before > 0 && isWhitespace(text[before - 1]))
+            before -= 1;
+        if (before == 0) return true;
+        char c = text[before - 1];
+        if (c == '=' || c == '(' || c == ',' || c == '?' || c == ':' || c == '{' || c == '&' || c == '|') return true;
+        return before >= 6 && text.substr(before - 6, 6) == "return" &&
+               (before == 6 || !isAsciiIdentifierContinue(text[before - 7]));
+    }
+
     // `[](`, `[x, y]{` or `[]->`: a lambda, its capture list names only (runtime/lang_lambda.c). The lowering is
     // offered every token of the file, since a lambda's `[` is found among the tokens of a body.
     static bool hasLambda(StringRef text) {
@@ -3001,10 +3014,22 @@ class SmithHook final : public TokenHook, public NameSource {
             }
             if (text[at] != '[') continue;
             size_t next = at + 1;
+            bool empty = true;
+            bool word = false; // inside a name: a name starts with a letter or `_`, a number is a subscript
             while (next < text.size() &&
-                   (isWhitespace(text[next]) || text[next] == ',' || isAsciiIdentifierContinue(text[next])))
+                   (isWhitespace(text[next]) || text[next] == ',' || isAsciiIdentifierContinue(text[next]))) {
+                if (isWhitespace(text[next]) || text[next] == ',') {
+                    word = false;
+                } else if (!word && !isAsciiIdentifierStart(text[next])) {
+                    break;
+                } else {
+                    word = true;
+                }
+                empty = empty && (isWhitespace(text[next]));
                 next += 1; // a capture list: `[]`, `[x]`, `[x, y]`
+            }
             if (next >= text.size() || text[next] != ']') continue;
+            if (!empty && !expressionBefore(text, at)) continue; // `xs[i]->p` and `f(x)[i]` are subscripts
             next += 1;
             while (next < text.size() && isWhitespace(text[next]))
                 next += 1;
