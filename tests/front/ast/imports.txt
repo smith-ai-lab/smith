@@ -1,0 +1,8 @@
+(module demo
+  (import std::arena)
+  (import_c angled stdio.h)
+  (import_c x.h)
+  (function greet exported
+    (result (named Void))
+    (block
+      (expression (call (name c::printf) (string "hi\n\"\\"))))))
