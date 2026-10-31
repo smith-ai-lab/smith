@@ -185,18 +185,19 @@ constexpr size_t build_protocol_count = sizeof build_protocols / sizeof build_pr
 static constexpr char build_library_folder[] = "lib/smith"; // the libraries written in .smith
 
 // The generator is a program of smith's own C (scripts/protocol.c, on lib/json.c), built here and not shipped: like
-// scripts/pack.c, a tool of the build. arena, contract and text are the modules of smith, compiled from their sources.
-// Returns the program's step.
+// scripts/pack.c, a tool of the build. arena, contract, text and mem are the modules of smith, compiled from their
+// sources. Returns the program's step.
 static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *const sources[] = {"scripts/protocol.c",
                                    smith_fmt(b, "%s/arena.smith", build_library_folder),
                                    smith_fmt(b, "%s/contract.smith", build_library_folder),
                                    smith_fmt(b, "%s/text.smith", build_library_folder),
+                                   smith_fmt(b, "%s/mem.smith", build_library_folder),
                                    "lib/json.c",
                                    "lib/trace.c"};
-    SmithObject objects[6] = {};
-    const SmithObject *linked[7] = {};
-    for (size_t i = 0; i < 6; i++) {
+    SmithObject objects[7] = {};
+    const SmithObject *linked[8] = {};
+    for (size_t i = 0; i < 7; i++) {
         objects[i] = (SmithObject){
             .compiler = config->cc,
             .source = sources[i],

@@ -69,8 +69,10 @@ static const SmithJsonValue *smith_mcp_tree(SmithMcpServer *server, SmithJsonWri
     const SmithJsonValue *tree = nullptr;
     SmithJsonError error;
     SmithJsonLimits limits = {.depth = 32, .string_length = (size_t)1 << 16, .count = (size_t)1 << 16};
-    bool ok =
-        smith_json_writer_finish(writer, &text) && smith_json_parse(&server->scratch, text, limits, &tree, &error);
+    SmithArenaAllocator allocator = smith_arena_allocator(&server->scratch);
+    SmithAllocator *before = smith_mem_set_allocator(&allocator.base);
+    bool ok = smith_json_writer_finish(writer, &text) && smith_json_parse(text, limits, &tree, &error);
+    smith_mem_set_allocator(before);
     SMITH_ASSERT(ok);
     return tree;
 }
@@ -127,7 +129,10 @@ static void smith_mcp_tool_make(SmithMcpServer *server, const SmithMcpToolEntry 
     const SmithJsonValue *schema = nullptr;
     SmithJsonError error;
     SmithJsonLimits limits = {.depth = 16, .string_length = (size_t)1 << 14, .count = (size_t)1 << 12};
-    bool ok = smith_json_parse(&server->scratch, smith_text_make(entry->schema), limits, &schema, &error);
+    SmithArenaAllocator allocator = smith_arena_allocator(&server->scratch);
+    SmithAllocator *before = smith_mem_set_allocator(&allocator.base);
+    bool ok = smith_json_parse(smith_text_make(entry->schema), limits, &schema, &error);
+    smith_mem_set_allocator(before);
     SMITH_ASSERT(ok && schema->kind == SmithJsonKind_Object);
     struct smith_array_const_char_n *keys =
         smith_arena_push_array(&server->scratch, sizeof(struct smith_array_const_char_n), schema->count,
@@ -234,7 +239,11 @@ static void smith_mcp_handle_line(SmithMcpServer *server, struct smith_array_con
     SmithJsonLimits limits = {.depth = 64, .string_length = smith_mcp_line_max, .count = (size_t)1 << 20};
     SmithMcpJSONRPCMessage message;
     SmithProtocolError error;
-    if (!smith_json_parse(&server->scratch, line, limits, &tree, &json_error)) {
+    SmithArenaAllocator allocator = smith_arena_allocator(&server->scratch);
+    SmithAllocator *before = smith_mem_set_allocator(&allocator.base);
+    bool parsed = smith_json_parse(line, limits, &tree, &json_error);
+    smith_mem_set_allocator(before);
+    if (!parsed) {
         smith_mcp_send_error(server, nullptr, -32700, "parse error");
     } else if (!smith_mcp_jsonrpc_message_parse(&server->scratch, tree, &message, &error)) {
         smith_mcp_send_error(server, nullptr, -32600, "invalid request");
