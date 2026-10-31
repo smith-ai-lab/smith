@@ -1,0 +1,10 @@
+module main;
+
+import <stdio.h>;
+import barrier;
+
+i32 main() {
+    barrier::wait(nullptr);
+    barrier::wait_for(nullptr, 3);
+    return 0;
+}

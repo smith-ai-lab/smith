@@ -188,7 +188,8 @@ static bool smith_lang_unused_token(SmithLang *lang, const SmithHost *host, cons
         return smith_lang_brackets_inferred(lang, host, token, &own2);
     }
     if (token->length > 1) {
-        if (host->lookup == nullptr ||
+        // a parameter declares: a `_t` of an earlier function (or of the module's own header) is no variable in scope
+        if (lang->decl.in_params || host->lookup == nullptr ||
             host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind == SmithLookup_None) {
             const SmithToken *after = smith_lang_peek(lang, host, 0, false);
             bool variable =
