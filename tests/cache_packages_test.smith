@@ -5,24 +5,58 @@
 // make three packages (file:// archives) and fetch them.
 module cache_packages_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 
-static scratch::Project cache_project(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "cache_package");
+// What a test's commands print, and the texts made from it, go to an arena of the runner's (test::memory), the
+// current allocator from start to finish, so the test frees none of it; the project is made and cleaned inside it.
+constexpr usize memory_size = 1U << 24;
+static arena::Arena memory;
+static arena::ArenaAllocator allocator;
+static mem::Allocator *outside;
+
+static scratch::Project start(const char *fixture) {
+    memory = test::memory(memory_size);
+    allocator = arena::allocator(&memory);
+    outside = mem::set_allocator(&allocator.base);
+    return scratch::make("p", fixture);
+}
+
+static void finish(scratch::Project *p) {
+    scratch::clean(p);
+    mem::set_allocator(outside);
+}
+
+// The output of a command as $(...) gives it, without trailing newlines (scratch::capture reads a project's io).
+static const char *captured(const scratch::Project *p, const char *command) {
+    const char *out = scratch::sh(p, command).out;
+    usize length = 0;
+    while (out[length] != '\0')
+        length++;
+    while (length > 0 && out[length - 1] == '\n')
+        length--;
+    char *text = arena::push_slice(&memory, char, length + 1).data;
+    mem::copy(text[0:length], out[0:length]);
+    text[length] = '\0';
+    return text;
+}
+
+static scratch::Project cache_project() {
+    scratch::Project p = start("cache_package");
     scratch::own_cache(&p);
     return p;
 }
 
 // A shell command with the functions of the prelude.
 static scratch::Run run(const scratch::Project *p, const char *body) {
-    return scratch::sh(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+    return scratch::sh(p, format::push(&memory, ". ./prelude; ", body).data);
 }
 
 static const char *text(const scratch::Project *p, const char *body) {
-    return scratch::capture(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+    return captured(p, format::push(&memory, ". ./prelude; ", body).data);
 }
 
 // A setup command that must succeed.
@@ -32,8 +66,9 @@ static void setup(const scratch::Project *p, const char *body) {
 }
 
 // The weekly check is not due, so nothing is removed.
-export void test_cache_prune_the_weekly_check_is_not_due_so_nothing_is_removed(io::Io *io) {
-    scratch::Project p = cache_project(io);
+export void test_cache_prune_the_weekly_check_is_not_due_so_nothing_is_removed() {
+    scratch::Project p = cache_project();
+    defer finish(&p);
     scratch::Run used = run(&p, "fetch3; touch -t $old \"$packages/$(hex 1).used\" \"$packages/$(hex 2).used\"; "
                                 "touch \"$packages/prune.timestamp\"; use 3");
     scratch::expect_status("prune: a build using a package succeeds", 0, &used);
@@ -49,8 +84,9 @@ static void stale_setup(const scratch::Project *p) {
         "use 1 >/dev/null 2>&1; true");
 }
 
-export void test_cache_prune_a_build_using_a_stale_package_keeps_it(io::Io *io) {
-    scratch::Project p = cache_project(io);
+export void test_cache_prune_a_build_using_a_stale_package_keeps_it() {
+    scratch::Project p = cache_project();
+    defer finish(&p);
     scratch::Run used = run(&p, "fetch3; touch -t $old \"$packages/$(hex 1).used\" \"$packages/$(hex 2).used\" "
                                 "\"$packages/prune.timestamp\"; use 1");
     scratch::expect_status("prune: a build using a stale package keeps it (the build)", 0, &used);
@@ -65,8 +101,9 @@ export void test_cache_prune_a_build_using_a_stale_package_keeps_it(io::Io *io) 
                          text(&p, "year_of \"$packages/prune.timestamp\""));
 }
 
-export void test_cache_prune_a_removed_package_is_fetched_again_by_a_build_that_may_fetch(io::Io *io) {
-    scratch::Project p = cache_project(io);
+export void test_cache_prune_a_removed_package_is_fetched_again_by_a_build_that_may_fetch() {
+    scratch::Project p = cache_project();
+    defer finish(&p);
     stale_setup(&p);
     scratch::Run offline = run(&p, "use 2");
     scratch::expect_status("prune: a removed package is simply not found offline", 2, &offline);
@@ -77,53 +114,60 @@ export void test_cache_prune_a_removed_package_is_fetched_again_by_a_build_that_
 }
 
 // Section 1: empty caches.
-export void test_cache_lists_nothing_with_nothing_cached(io::Io *io) {
-    scratch::Project p = cache_project(io);
+export void test_cache_lists_nothing_with_nothing_cached() {
+    scratch::Project p = cache_project();
+    defer finish(&p);
     scratch::Run listed = scratch::sh(&p, "smith cache");
     scratch::expect_status("cache: exits 0 with nothing cached", 0, &listed);
     scratch::expect_contains("cache: the modules path", listed.out,
-                             format::push(&io->arena, "modules: ", p.cache, "/smith/modules").data);
+                             format::push(&memory, "modules: ", p.cache, "/smith/modules").data);
     scratch::expect_contains("cache: the packages path", listed.out,
-                             format::push(&io->arena, "packages: ", p.cache, "/smith/packages").data);
+                             format::push(&memory, "packages: ", p.cache, "/smith/packages").data);
     scratch::expect_contains("cache: no entries", listed.out, "0 entries, 0 B");
     scratch::expect_contains("cache: the rule is stated", listed.out,
                              "unused for 31 days is removed, checked at most once a week");
 }
 
-export void test_cache_clean_with_nothing_cached_exits_zero(io::Io *io) {
-    scratch::Project p = cache_project(io);
+export void test_cache_clean_with_nothing_cached_exits_zero() {
+    scratch::Project p = cache_project();
+    defer finish(&p);
     scratch::Run cleaned = scratch::sh(&p, "smith cache clean");
     scratch::expect_status("cache clean: with nothing cached exits 0", 0, &cleaned);
 }
 
-export void test_cache_an_unknown_word_is_a_usage_error(io::Io *io) {
-    scratch::Project p = cache_project(io);
+export void test_cache_an_unknown_word_is_a_usage_error() {
+    scratch::Project p = cache_project();
+    defer finish(&p);
     scratch::Run bogus = scratch::sh(&p, "smith cache bogus");
     scratch::expect_status("cache: an unknown word is a usage error", 2, &bogus);
     scratch::expect_contains("cache: and the usage is shown", bogus.err, "usage: smith cache");
 }
 
-export void test_cache_clean_an_unknown_cache_is_a_usage_error(io::Io *io) {
-    scratch::Project p = cache_project(io);
+export void test_cache_clean_an_unknown_cache_is_a_usage_error() {
+    scratch::Project p = cache_project();
+    defer finish(&p);
     scratch::Run everything = scratch::sh(&p, "smith cache clean everything");
     scratch::expect_status("cache clean: an unknown cache is a usage error", 2, &everything);
 }
 
-export void test_cache_clean_too_many_arguments_are_a_usage_error(io::Io *io) {
-    scratch::Project p = cache_project(io);
+export void test_cache_clean_too_many_arguments_are_a_usage_error() {
+    scratch::Project p = cache_project();
+    defer finish(&p);
     scratch::Run extra = scratch::sh(&p, "smith cache clean modules extra");
     scratch::expect_status("cache clean: too many arguments are a usage error", 2, &extra);
 }
 
-export void test_cache_verbose_takes_nothing_else(io::Io *io) {
-    scratch::Project p = cache_project(io);
+export void test_cache_verbose_takes_nothing_else() {
+    scratch::Project p = cache_project();
+    defer finish(&p);
     scratch::Run extra = scratch::sh(&p, "smith cache -v extra");
     scratch::expect_status("cache: -v takes nothing else", 2, &extra);
 }
 
 // Section 2: listing packages.
-export void test_cache_lists_fetched_packages(io::Io *io) {
-    scratch::Project p = cache_project(io);
+export void test_cache_lists_fetched_packages() {
+    scratch::Project p = cache_project();
+    defer finish(&p);
     setup(&p, "fetch3");
     scratch::expect_text("fetch: each package has a stamp beside it", "yes yes yes",
                          text(&p, "echo \"$(exists \"$packages/$(hex 1).used\") $(exists \"$packages/$(hex 2).used\") "
@@ -133,15 +177,16 @@ export void test_cache_lists_fetched_packages(io::Io *io) {
     scratch::Run verbose = scratch::sh(&p, "smith cache -v");
     scratch::expect_contains("cache -v: lists the first package", verbose.out, text(&p, "hex 1 | cut -c1-16"));
     scratch::expect_contains("cache -v: and its last use", verbose.out,
-                             format::push(&io->arena, "last used ", text(&p, "date -u +%Y-%m-%d")).data);
+                             format::push(&memory, "last used ", text(&p, "date -u +%Y-%m-%d")).data);
     setup(&p, "touch -t 202001020304 \"$packages/$(hex 1).used\"");
     scratch::Run stamped = scratch::sh(&p, "smith cache -v");
     scratch::expect_contains("cache -v: the last use is the stamp's time", stamped.out, "last used 2020-01-02");
 }
 
 // Section 4: pruning leaves what it must, and removes what is orphaned or abandoned.
-export void test_cache_prune_a_fetch_in_progress_is_kept_and_an_abandoned_one_removed(io::Io *io) {
-    scratch::Project p = cache_project(io);
+export void test_cache_prune_a_fetch_in_progress_is_kept_and_an_abandoned_one_removed() {
+    scratch::Project p = cache_project();
+    defer finish(&p);
     setup(&p, "fetch3; mkdir \"$packages/.tmp-9999-extract\" \"$packages/.tmp-8888-extract\"; "
               ": >\"$packages/.tmp-9999-archive\"; touch -t $old \"$packages/.tmp-8888-extract\" "
               "\"$packages/prune.timestamp\"; use 3 >/dev/null 2>&1; true");
@@ -152,8 +197,9 @@ export void test_cache_prune_a_fetch_in_progress_is_kept_and_an_abandoned_one_re
                          text(&p, "exists \"$packages/.tmp-8888-extract\""));
 }
 
-export void test_cache_prune_a_package_with_no_stamp_is_kept_and_stamped_then_removed_when_stale(io::Io *io) {
-    scratch::Project p = cache_project(io);
+export void test_cache_prune_a_package_with_no_stamp_is_kept_and_stamped_then_removed_when_stale() {
+    scratch::Project p = cache_project();
+    defer finish(&p);
     setup(&p, "fetch3; mkdir \"$packages/legacy\"; echo legacy >\"$packages/legacy/file.txt\"; "
               "touch -t $old \"$packages/prune.timestamp\"; use 3 >/dev/null 2>&1; true");
     scratch::expect_text("prune: a package with no stamp is kept", "yes",
@@ -164,24 +210,27 @@ export void test_cache_prune_a_package_with_no_stamp_is_kept_and_stamped_then_re
                          text(&p, "exists \"$packages/legacy\""));
 }
 
-export void test_cache_prune_a_stale_stamp_whose_package_is_gone_is_removed(io::Io *io) {
-    scratch::Project p = cache_project(io);
+export void test_cache_prune_a_stale_stamp_whose_package_is_gone_is_removed() {
+    scratch::Project p = cache_project();
+    defer finish(&p);
     setup(&p, "fetch3; : >\"$packages/orphan.used\"; touch -t $old \"$packages/orphan.used\" "
               "\"$packages/prune.timestamp\"; use 3 >/dev/null 2>&1; true");
     scratch::expect_text("prune: a stale stamp whose package is gone is removed", "no",
                          text(&p, "exists \"$packages/orphan.used\""));
 }
 
-export void test_cache_prune_a_package_used_just_now_is_kept(io::Io *io) {
-    scratch::Project p = cache_project(io);
+export void test_cache_prune_a_package_used_just_now_is_kept() {
+    scratch::Project p = cache_project();
+    defer finish(&p);
     setup(&p, "fetch3; touch -t $old \"$packages/prune.timestamp\"; touch \"$packages/$(hex 3).used\"; "
               "use 3 >/dev/null 2>&1; true");
     scratch::expect_text("prune: a package used just now is kept", "yes",
                          text(&p, "exists \"$packages/$(hex 3)/file.txt\""));
 }
 
-export void test_cache_prune_smith_fetch_also_checks_and_keeps_what_it_fetched(io::Io *io) {
-    scratch::Project p = cache_project(io);
+export void test_cache_prune_smith_fetch_also_checks_and_keeps_what_it_fetched() {
+    scratch::Project p = cache_project();
+    defer finish(&p);
     setup(&p, "fetch3; touch -t $old \"$packages/prune.timestamp\"");
     scratch::Run fetched = run(&p, "smith fetch \"$(url 1)\"");
     scratch::expect_status("prune: smith fetch also checks, and keeps what it fetched", 0, &fetched);
@@ -192,8 +241,9 @@ export void test_cache_prune_smith_fetch_also_checks_and_keeps_what_it_fetched(i
 // The byte cap (issue #618): a fetch that leaves the packages over SMITH_CACHE_MAX removes the least recently used
 // until they fit, and never the package it just made. Three packages of 200 kB, the first used 100 hours ago and the
 // second 50.
-export void test_cache_cap_a_fetch_over_the_cap_removes_the_least_recently_used_package(io::Io *io) {
-    scratch::Project p = cache_project(io);
+export void test_cache_cap_a_fetch_over_the_cap_removes_the_least_recently_used_package() {
+    scratch::Project p = cache_project();
+    defer finish(&p);
     scratch::Run fetched =
         run(&p, "mkbig; smith fetch \"$(url 1)\" >/dev/null 2>&1; smith fetch \"$(url 2)\" >/dev/null 2>&1; "
                 "ago 100 \"$packages/$(hex 1).used\"; ago 50 \"$packages/$(hex 2).used\"; "
@@ -206,8 +256,9 @@ export void test_cache_cap_a_fetch_over_the_cap_removes_the_least_recently_used_
                                   "$(exists \"$packages/$(hex 3)/file.txt\")\""));
 }
 
-export void test_cache_cap_the_package_just_fetched_stays_even_when_alone_it_is_over_the_cap(io::Io *io) {
-    scratch::Project p = cache_project(io);
+export void test_cache_cap_the_package_just_fetched_stays_even_when_alone_it_is_over_the_cap() {
+    scratch::Project p = cache_project();
+    defer finish(&p);
     scratch::Run fetched =
         run(&p, "mkbig; smith fetch \"$(url 1)\" >/dev/null 2>&1; "
                 "ago 100 \"$packages/$(hex 1).used\"; SMITH_CACHE_MAX=1000 smith fetch \"$(url 2)\"");

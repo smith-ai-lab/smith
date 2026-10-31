@@ -1,20 +1,22 @@
 // The routing tests of smith, from tests/run.sh: against stub compilers (tests/stub.c, which reports its name and every
 // argument), so that no clang or Xcode is needed and no real build is touched. The compiler verbs and their links
 // (`smith cc` and `smith-cc`), the tools (fmt, lint, lsp, dbg, dap), the bare arguments, and the verbs that need a
-// build.
+// build. A test makes its project, then sets its own memory as the current allocator: what scratch returns to it (a
+// Run's texts, a file it reads) is given back with that memory, and scratch::clean frees what make holds.
 module run_routing_test;
 
 import smith::arena;
 import smith::format;
-import smith::io;
 import smith::test;
 import scratch;
 import <string.h>;
 import smith::mem;
 
+constexpr usize memory_size = (usize)4 << 20; // 4 MiB
+
 // The first `length` bytes of a text, terminated.
-static const char *prefix(io::Io *io, const char *text, usize length) {
-    char *copy = arena::push_slice(&io->arena, char, length + 1).data;
+static const char *prefix(arena::Arena *arena, const char *text, usize length) {
+    char *copy = arena::push_slice(arena, char, length + 1).data;
     mem::copy(copy[0:length], text[0:length]);
     copy[length] = '\0';
     return copy;
@@ -23,7 +25,8 @@ static const char *prefix(io::Io *io, const char *text, usize length) {
 // The stubs of a test: a project with the stub programs in bin/ and the links smith-cc, smith-c++, smith++, the
 // programs folder's clang and clang++ (driver/) and bin/selfclang, all to the smith under test.
 typedef struct {
-    scratch::Project p;
+    const scratch::Project *p;
+    arena::Arena *arena; // the test's memory
     const char *dir;
     const char *cl;   // the stub clang
     const char *cc;   // the compiler form: `smith cc`, or the link smith-cc
@@ -38,30 +41,29 @@ constexpr char stubs_script[_] =
     "ln -s \"$SMITH_SELF\" 'smith++' && ln -s \"$SMITH_SELF\" bin/selfclang && ln -s \"$SMITH_SELF\" driver/clang && "
     "ln -s \"$SMITH_SELF\" driver/clang++";
 
-static Rig make_rig(io::Io *io, bool link, const char *stubs) {
-    scratch::Project p = scratch::project(io, "r", nullptr);
-    scratch::copy_tree(&p, "tests/stub.c", "tests/stub.c");
-    scratch::Run made = scratch::sh(&p, format::push(&io->arena, "STUBS='", stubs, "'; ", stubs_script).data);
+static Rig make_rig(arena::Arena *arena, const scratch::Project *p, bool link, const char *stubs) {
+    scratch::copy_tree(p, "tests/stub.c", "tests/stub.c");
+    scratch::Run made = scratch::sh(p, format::push(arena, "STUBS='", stubs, "'; ", stubs_script).data);
     scratch::expect_status("the stub compilers are built", 0, &made);
-    Rig r = {.p = p, .dir = p.dir, .form = link ? "link" : "verb"};
-    r.cl = format::push(&io->arena, p.dir, "/bin/clang").data;
-    r.cc = link ? format::push(&io->arena, p.dir, "/smith-cc").data : "\"$SMITH_SELF\" cc";
-    r.plus = link ? format::push(&io->arena, p.dir, "/smith-c++").data : "\"$SMITH_SELF\" c++";
+    Rig r = {.p = p, .arena = arena, .dir = p->dir, .form = link ? "link" : "verb"};
+    r.cl = format::push(arena, p->dir, "/bin/clang").data;
+    r.cc = link ? format::push(arena, p->dir, "/smith-cc").data : "\"$SMITH_SELF\" cc";
+    r.plus = link ? format::push(arena, p->dir, "/smith-c++").data : "\"$SMITH_SELF\" c++";
     return r;
 }
 
 // A name with the form in front: `[verb] ...`.
 static const char *nm(const Rig *r, const char *what) {
-    return format::push(&r->p.io->arena, "[", r->form, "] ", what).data;
+    return format::push(r->arena, "[", r->form, "] ", what).data;
 }
 
 // Runs `env <settings> <tool> <arguments>` in the rig's folder.
 static scratch::Run go(const Rig *r, const char *settings, const char *tool, const char *arguments) {
-    return scratch::sh(&r->p, format::push(&r->p.io->arena, "env ", settings, " ", tool, " ", arguments).data);
+    return scratch::sh(r->p, format::push(r->arena, "env ", settings, " ", tool, " ", arguments).data);
 }
 
 static scratch::Run go_clang(const Rig *r, const char *settings, const char *arguments) {
-    return go(r, format::push(&r->p.io->arena, "SMITH_CLANG=", r->cl, " ", settings).data, r->cc, arguments);
+    return go(r, format::push(r->arena, "SMITH_CLANG=", r->cl, " ", settings).data, r->cc, arguments);
 }
 
 static void expect_nothing_ran(const char *name, const scratch::Run *run) {
@@ -80,26 +82,33 @@ static bool ends_with(const char *text, const char *suffix) {
 }
 
 // The first line of a text.
-static const char *first_line(io::Io *io, const char *text) {
+static const char *first_line(arena::Arena *arena, const char *text) {
     usize length = 0;
     while (text[length] != '\0' && text[length] != '\n') {
         length++;
     }
-    return prefix(io, text, length);
+    return prefix(arena, text, length);
 }
 
 static bool is_darwin(const Rig *r) {
-    return scratch::same(scratch::capture(&r->p, "uname -s"), "Darwin");
+    return scratch::same(scratch::capture(r->p, "uname -s"), "Darwin");
 }
 
 // ---- the compiler, in both forms ----
 
-static void clang_route(io::Io *io, bool link) {
-    Rig r = make_rig(io, link, "clang");
+static void clang_route(bool link) {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    Rig r = make_rig(arena, &p, link, "clang");
     scratch::Run run = go_clang(&r, "", "-c \"a b.c\" \"\" -DX=\"y z\" -o out.o");
     scratch::expect_text(
         nm(&r, "clang route forwards every argument untouched"),
-        format::push(&io->arena, "clang argv0=", r.cl, "\n[-c]\n[a b.c]\n[]\n[-DX=y z]\n[-o]\n[out.o]").data, run.out);
+        format::push(arena, "clang argv0=", r.cl, "\n[-c]\n[a b.c]\n[]\n[-DX=y z]\n[-o]\n[out.o]").data, run.out);
     scratch::expect_text(nm(&r, "clang route: stderr passes through"), "clang-stderr", run.err);
     scratch::expect_status(nm(&r, "clang route: status 0"), 0, &run);
     scratch::Run exit_seven = go_clang(&r, "STUB_EXIT=7", "-c a.c");
@@ -108,41 +117,47 @@ static void clang_route(io::Io *io, bool link) {
     scratch::expect_status(nm(&r, "death by signal is preserved (128 + 15)"), 143, &signaled);
     scratch::Run version = go_clang(&r, "", "--version");
     scratch::expect_text(nm(&r, "--version goes to the compiler"),
-                         format::push(&io->arena, "clang argv0=", r.cl, "\n[--version]").data, version.out);
+                         format::push(arena, "clang argv0=", r.cl, "\n[--version]").data, version.out);
     scratch::Run response = go_clang(&r, "", "@r.rsp a.c");
     scratch::expect_text(nm(&r, "response files are forwarded untouched"),
-                         format::push(&io->arena, "clang argv0=", r.cl, "\n[@r.rsp]\n[a.c]").data, response.out);
+                         format::push(arena, "clang argv0=", r.cl, "\n[@r.rsp]\n[a.c]").data, response.out);
     scratch::Run flag = go_clang(&r, "", "-I shaders.metal -c a.c");
     scratch::expect_text(nm(&r, "a flag value ending in .metal is not an input"),
-                         format::push(&io->arena, "clang argv0=", r.cl, "\n[-I]\n[shaders.metal]\n[-c]\n[a.c]").data,
+                         format::push(arena, "clang argv0=", r.cl, "\n[-I]\n[shaders.metal]\n[-c]\n[a.c]").data,
                          flag.out);
 }
 
-export void test_run_verb_clang_route(io::Io *io) {
-    clang_route(io, false);
+export void test_run_verb_clang_route() {
+    clang_route(false);
 }
 
-export void test_run_link_clang_route(io::Io *io) {
-    clang_route(io, true);
+export void test_run_link_clang_route() {
+    clang_route(true);
 }
 
 static const char *mixed_refusal =
     "smith: .metal and other inputs need different compilers and flags; compile the shaders in their own command";
 
-static void metal_route(io::Io *io, bool link) {
-    Rig r = make_rig(io, link, "clang xcrun metal");
-    const char *path = format::push(&io->arena, "PATH=\"", r.dir, "/bin:$PATH\"").data;
+static void metal_route(bool link) {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    Rig r = make_rig(arena, &p, link, "clang xcrun metal");
+    const char *path = format::push(arena, "PATH=\"", r.dir, "/bin:$PATH\"").data;
     scratch::Run xcrun = go(&r, path, r.cc, "-o shaders.metallib a.metal b.metal");
     scratch::expect_text(
         nm(&r, "metal route goes through xcrun -sdk macosx metal"),
-        format::push(&io->arena, "xcrun argv0=", r.dir,
+        format::push(arena, "xcrun argv0=", r.dir,
                      "/bin/xcrun\n[-sdk]\n[macosx]\n[metal]\n[-o]\n[shaders.metallib]\n[a.metal]\n[b.metal]")
             .data,
         xcrun.out);
-    scratch::Run metal = go(&r, format::push(&io->arena, "SMITH_METAL=", r.dir, "/bin/metal").data, r.cc, "-E a.metal");
+    scratch::Run metal = go(&r, format::push(arena, "SMITH_METAL=", r.dir, "/bin/metal").data, r.cc, "-E a.metal");
     scratch::expect_text(nm(&r, "SMITH_METAL replaces xcrun"),
-                         format::push(&io->arena, "metal argv0=", r.dir, "/bin/metal\n[-E]\n[a.metal]").data,
-                         metal.out);
+                         format::push(arena, "metal argv0=", r.dir, "/bin/metal\n[-E]\n[a.metal]").data, metal.out);
     scratch::Run mixed = go_clang(&r, "", "a.metal b.c");
     scratch::expect_text(nm(&r, "mixed .metal and C inputs are refused"), mixed_refusal, mixed.err);
     expect_nothing_ran(nm(&r, "mixed inputs: status 2 and nothing ran"), &mixed);
@@ -150,29 +165,36 @@ static void metal_route(io::Io *io, bool link) {
     scratch::expect_text(nm(&r, "a .smith input and a .metal input are refused"), mixed_refusal, smith_metal.err);
 }
 
-export void test_macos_run_verb_metal_route(io::Io *io) {
-    metal_route(io, false);
+export void test_macos_run_verb_metal_route() {
+    metal_route(false);
 }
 
-export void test_macos_run_link_metal_route(io::Io *io) {
-    metal_route(io, true);
+export void test_macos_run_link_metal_route() {
+    metal_route(true);
 }
 
 // A .smith input needs a smith whose clang has the token hook; any other refuses it, and does not compile it as C.
-static void smith_inputs(io::Io *io, bool link) {
-    Rig r = make_rig(io, link, "clang");
+static void smith_inputs(bool link) {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    Rig r = make_rig(arena, &p, link, "clang");
     scratch::Run which = go_clang(&r, "", "--smith-which -c a.smith");
     if (which.status == 0) {
         scratch::Run plain = go_clang(&r, "", "-c a.smith -o out.o");
         scratch::expect_text(nm(&r, "a .smith input is compiled as C, and nothing else changes"),
-                             format::push(&io->arena, "clang argv0=", r.cl,
+                             format::push(arena, "clang argv0=", r.cl,
                                           "\n[-std=gnu2y]\n[-fdefer-ts]\n[-c]\n[-x]\n[c]\n[a.smith]\n[-o]\n[out.o]")
                                  .data,
                              plain.out);
         scratch::Run mixed = go_clang(&r, "", "-c -I x.smith a.smith b.c c.smith -o out.o");
         scratch::expect_text(
             nm(&r, "the language is C for the .smith inputs only, and an option's value is no input"),
-            format::push(&io->arena, "clang argv0=", r.cl,
+            format::push(arena, "clang argv0=", r.cl,
                          "\n[-std=gnu2y]\n[-fdefer-ts]\n[-c]\n[-I]\n[x.smith]\n[-x]\n[c]\n[a.smith]\n[-x]\n[none]"
                          "\n[b.c]\n[-x]\n[c]\n[c.smith]\n[-o]\n[out.o]")
                 .data,
@@ -180,23 +202,21 @@ static void smith_inputs(io::Io *io, bool link) {
         scratch::Run standard = go_clang(&r, "", "-std=c23 -c a.smith");
         scratch::expect_text(
             nm(&r, "a .smith input is C2y unless the caller names a standard"),
-            format::push(&io->arena, "clang argv0=", r.cl, "\n[-fdefer-ts]\n[-std=c23]\n[-c]\n[-x]\n[c]\n[a.smith]")
-                .data,
+            format::push(arena, "clang argv0=", r.cl, "\n[-fdefer-ts]\n[-std=c23]\n[-c]\n[-x]\n[c]\n[a.smith]").data,
             standard.out);
         scratch::Run cplus = go_clang(&r, "", "-c a.smith b.cpp");
         scratch::expect_text(
             nm(&r, "no C standard is added beside a C++ input"),
-            format::push(&io->arena, "clang argv0=", r.cl, "\n[-c]\n[-x]\n[c]\n[a.smith]\n[-x]\n[none]\n[b.cpp]").data,
+            format::push(arena, "clang argv0=", r.cl, "\n[-c]\n[-x]\n[c]\n[a.smith]\n[-x]\n[none]\n[b.cpp]").data,
             cplus.out);
         scratch::Run language = go_clang(&r, "", "-x c++ -c a.smith");
         scratch::expect_text(nm(&r, "a language named by the caller is left alone"),
-                             format::push(&io->arena, "clang argv0=", r.cl, "\n[-x]\n[c++]\n[-c]\n[a.smith]").data,
+                             format::push(arena, "clang argv0=", r.cl, "\n[-x]\n[c++]\n[-c]\n[a.smith]").data,
                              language.out);
         scratch::Run kept = go_clang(&r, "", "-x c -c a.smith");
         scratch::expect_text(
             nm(&r, "-x c is kept, and the standard is C2y and defer is on as for any .smith input"),
-            format::push(&io->arena, "clang argv0=", r.cl, "\n[-std=gnu2y]\n[-fdefer-ts]\n[-x]\n[c]\n[-c]\n[a.smith]")
-                .data,
+            format::push(arena, "clang argv0=", r.cl, "\n[-std=gnu2y]\n[-fdefer-ts]\n[-x]\n[c]\n[-c]\n[a.smith]").data,
             kept.out);
     } else {
         scratch::Run refused = go_clang(&r, "", "-c a.smith -o out.o");
@@ -208,40 +228,52 @@ static void smith_inputs(io::Io *io, bool link) {
     }
 }
 
-export void test_run_verb_smith_inputs(io::Io *io) {
-    smith_inputs(io, false);
+export void test_run_verb_smith_inputs() {
+    smith_inputs(false);
 }
 
-export void test_run_link_smith_inputs(io::Io *io) {
-    smith_inputs(io, true);
+export void test_run_link_smith_inputs() {
+    smith_inputs(true);
 }
 
-static void plus_plus(io::Io *io, bool link) {
-    Rig r = make_rig(io, link, "clang clang++");
-    scratch::Run run =
-        go(&r, format::push(&io->arena, "SMITH_CLANGXX=", r.dir, "/bin/clang++").data, r.plus, "-c a.cpp");
+static void plus_plus(bool link) {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    Rig r = make_rig(arena, &p, link, "clang clang++");
+    scratch::Run run = go(&r, format::push(arena, "SMITH_CLANGXX=", r.dir, "/bin/clang++").data, r.plus, "-c a.cpp");
     scratch::expect_text(nm(&r, "smith++ uses clang++"),
-                         format::push(&io->arena, "clang++ argv0=", r.dir, "/bin/clang++\n[-c]\n[a.cpp]").data,
-                         run.out);
+                         format::push(arena, "clang++ argv0=", r.dir, "/bin/clang++\n[-c]\n[a.cpp]").data, run.out);
 }
 
-export void test_run_verb_smith_plus_plus(io::Io *io) {
-    plus_plus(io, false);
+export void test_run_verb_smith_plus_plus() {
+    plus_plus(false);
 }
 
-export void test_run_link_smith_plus_plus(io::Io *io) {
-    plus_plus(io, true);
+export void test_run_link_smith_plus_plus() {
+    plus_plus(true);
 }
 
 // On a smith with clang inside, the default compiler is that one, in a folder of its own; otherwise Homebrew's.
-static void in_process_default(io::Io *io, bool link) {
-    Rig r = make_rig(io, link, "clang");
+static void in_process_default(bool link) {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    Rig r = make_rig(arena, &p, link, "clang");
     if (!is_darwin(&r)) {
         test::note("not macOS: the default compiler is not checked");
         return;
     }
     scratch::Run which = go(&r, "-u SMITH_CLANG", r.cc, "--smith-which -c a.c");
-    const char *head = first_line(io, which.out);
+    const char *head = first_line(arena, which.out);
     if (starts_with(head, "clang in-process ")) {
         const char *llvm_clang = head + c::strlen("clang in-process ");
         // The program is in the folder smith makes for itself on first use, which --smith-which does not make.
@@ -256,19 +288,18 @@ static void in_process_default(io::Io *io, bool link) {
                              named ? "yes" : "identity llvm-<version> <hash>");
         scratch::Run plus = go(&r, "-u SMITH_CLANGXX", r.plus, "--smith-which -c a.cpp");
         scratch::expect_text(nm(&r, "in-process: smith++ is clang++ inside smith"),
-                             format::push(&io->arena, "clang in-process ", llvm_clang, "++").data,
-                             first_line(io, plus.out));
+                             format::push(arena, "clang in-process ", llvm_clang, "++").data,
+                             first_line(arena, plus.out));
         scratch::Run external = go_clang(&r, "", "--smith-which -c a.c");
         scratch::expect_text(nm(&r, "in-process: SMITH_CLANG still runs an external clang"),
-                             format::push(&io->arena, "clang ", r.cl).data, external.out);
-        scratch::Run other =
-            go(&r, format::push(&io->arena, "-u SMITH_CLANG SMITH_CLANGXX=", r.dir, "/bin/clang++").data, r.cc,
-               "--smith-which -c a.c");
+                             format::push(arena, "clang ", r.cl).data, external.out);
+        scratch::Run other = go(&r, format::push(arena, "-u SMITH_CLANG SMITH_CLANGXX=", r.dir, "/bin/clang++").data,
+                                r.cc, "--smith-which -c a.c");
         scratch::expect_text(nm(&r, "in-process: SMITH_CLANGXX does not affect smith"), "yes",
                              starts_with(other.out, "clang in-process /") ? "yes" : other.out);
         return;
     }
-    scratch::Run brew = scratch::sh(&r.p, "test -x /opt/homebrew/opt/llvm/bin/clang");
+    scratch::Run brew = scratch::sh(r.p, "test -x /opt/homebrew/opt/llvm/bin/clang");
     if (brew.status == 0) {
         scratch::expect_text(nm(&r, "on macOS the default is Homebrew's clang"),
                              "clang /opt/homebrew/opt/llvm/bin/clang", which.out);
@@ -277,7 +308,7 @@ static void in_process_default(io::Io *io, bool link) {
                              "clang /opt/homebrew/opt/llvm/bin/clang++", plus.out);
     }
     scratch::Run none =
-        scratch::sh(&r.p, "! test -x /opt/homebrew/opt/llvm/bin/clang && ! test -x /usr/local/opt/llvm/bin/clang");
+        scratch::sh(r.p, "! test -x /opt/homebrew/opt/llvm/bin/clang && ! test -x /usr/local/opt/llvm/bin/clang");
     if (none.status == 0) {
         scratch::Run missing = go(&r, "-u SMITH_CLANG", r.cc, "-c a.c");
         scratch::expect_text(
@@ -287,131 +318,141 @@ static void in_process_default(io::Io *io, bool link) {
     }
 }
 
-export void test_run_verb_in_process_default(io::Io *io) {
-    in_process_default(io, false);
+export void test_run_verb_in_process_default() {
+    in_process_default(false);
 }
 
-export void test_run_link_in_process_default(io::Io *io) {
-    in_process_default(io, true);
+export void test_run_link_in_process_default() {
+    in_process_default(true);
 }
 
 // The SDK is chosen through the environment, never a flag, and only for what the caller left unset.
-static void sdk_environment(io::Io *io, bool link) {
-    Rig r = make_rig(io, link, "clang xcrun");
+static void sdk_environment(bool link) {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    Rig r = make_rig(arena, &p, link, "clang xcrun");
     if (!is_darwin(&r)) {
         test::note("not macOS: the SDK is not chosen");
         return;
     }
-    const char *path = format::push(&io->arena, "PATH=\"", r.dir, "/bin:$PATH\"").data;
-    const char *clang = format::push(&io->arena, "clang argv0=", r.cl, "\n[-c]\n[a.c]").data;
+    const char *path = format::push(arena, "PATH=\"", r.dir, "/bin:$PATH\"").data;
+    const char *clang = format::push(arena, "clang argv0=", r.cl, "\n[-c]\n[a.c]").data;
     scratch::Run chosen = go(&r,
-                             format::push(&io->arena, "-u SDKROOT -u CLANG_NO_DEFAULT_CONFIG ", path,
+                             format::push(arena, "-u SDKROOT -u CLANG_NO_DEFAULT_CONFIG ", path,
                                           " STUB_SDK=/stub/sdk STUB_SHOW_ENV=1 SMITH_CLANG=", r.cl)
                                  .data,
                              r.cc, "-c a.c");
     scratch::expect_text(nm(&r, "macOS: SDKROOT comes from xcrun and the default config is off, with no flag added"),
-                         format::push(&io->arena, "env SDKROOT=/stub/sdk CLANG_NO_DEFAULT_CONFIG=1\n", clang).data,
+                         format::push(arena, "env SDKROOT=/stub/sdk CLANG_NO_DEFAULT_CONFIG=1\n", clang).data,
                          chosen.out);
     scratch::Run mine = go(&r,
-                           format::push(&io->arena, "-u CLANG_NO_DEFAULT_CONFIG SDKROOT=/mine ", path,
+                           format::push(arena, "-u CLANG_NO_DEFAULT_CONFIG SDKROOT=/mine ", path,
                                         " STUB_SDK=/stub/sdk STUB_SHOW_ENV=1 SMITH_CLANG=", r.cl)
                                .data,
                            r.cc, "-c a.c");
     scratch::expect_text(nm(&r, "macOS: the caller's SDKROOT wins, and the default config is still off"),
-                         format::push(&io->arena, "env SDKROOT=/mine CLANG_NO_DEFAULT_CONFIG=1\n", clang).data,
-                         mine.out);
+                         format::push(arena, "env SDKROOT=/mine CLANG_NO_DEFAULT_CONFIG=1\n", clang).data, mine.out);
     scratch::Run config = go(&r,
-                             format::push(&io->arena, "-u SDKROOT CLANG_NO_DEFAULT_CONFIG=0 ", path,
+                             format::push(arena, "-u SDKROOT CLANG_NO_DEFAULT_CONFIG=0 ", path,
                                           " STUB_SDK=/stub/sdk STUB_SHOW_ENV=1 SMITH_CLANG=", r.cl)
                                  .data,
                              r.cc, "-c a.c");
     scratch::expect_text(nm(&r, "macOS: the caller's CLANG_NO_DEFAULT_CONFIG wins"),
-                         format::push(&io->arena, "env SDKROOT=/stub/sdk CLANG_NO_DEFAULT_CONFIG=0\n", clang).data,
+                         format::push(arena, "env SDKROOT=/stub/sdk CLANG_NO_DEFAULT_CONFIG=0\n", clang).data,
                          config.out);
     scratch::Run failed = go(&r,
-                             format::push(&io->arena, "-u SDKROOT -u CLANG_NO_DEFAULT_CONFIG ", path,
+                             format::push(arena, "-u SDKROOT -u CLANG_NO_DEFAULT_CONFIG ", path,
                                           " STUB_SDK=/stub/sdk STUB_XCRUN_FAIL=1 STUB_SHOW_ENV=1 SMITH_CLANG=", r.cl)
                                  .data,
                              r.cc, "-c a.c");
     scratch::expect_text(nm(&r, "macOS: when xcrun fails SDKROOT stays unset"),
-                         format::push(&io->arena, "env SDKROOT=(unset) CLANG_NO_DEFAULT_CONFIG=1\n", clang).data,
+                         format::push(arena, "env SDKROOT=(unset) CLANG_NO_DEFAULT_CONFIG=1\n", clang).data,
                          failed.out);
     scratch::Run sysroot = go(&r,
-                              format::push(&io->arena, "-u SDKROOT -u CLANG_NO_DEFAULT_CONFIG ", path,
+                              format::push(arena, "-u SDKROOT -u CLANG_NO_DEFAULT_CONFIG ", path,
                                            " STUB_SDK=/stub/sdk STUB_SHOW_ENV=1 SMITH_CLANG=", r.cl)
                                   .data,
                               r.cc, "-isysroot /mine/sdk -c a.c");
     scratch::expect_text(nm(&r, "macOS: the caller's -isysroot is forwarded untouched"),
-                         format::push(&io->arena, "env SDKROOT=/stub/sdk CLANG_NO_DEFAULT_CONFIG=1\nclang argv0=", r.cl,
+                         format::push(arena, "env SDKROOT=/stub/sdk CLANG_NO_DEFAULT_CONFIG=1\nclang argv0=", r.cl,
                                       "\n[-isysroot]\n[/mine/sdk]\n[-c]\n[a.c]")
                              .data,
                          sysroot.out);
 }
 
-export void test_macos_run_verb_sdk_environment(io::Io *io) {
-    sdk_environment(io, false);
+export void test_macos_run_verb_sdk_environment() {
+    sdk_environment(false);
 }
 
-export void test_macos_run_link_sdk_environment(io::Io *io) {
-    sdk_environment(io, true);
+export void test_macos_run_link_sdk_environment() {
+    sdk_environment(true);
 }
 
 // ---- fmt, lint, lsp, dbg and dap: the tool, with the arguments untouched, as the exact first argument ----
 
-static void tool_routes(io::Io *io, const char *command, const char *program, const char *variable) {
-    Rig r = make_rig(io, false, format::push(&io->arena, "clang ", program).data);
+static void tool_routes(const char *command, const char *program, const char *variable) {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    Rig r = make_rig(arena, &p, false, format::push(arena, "clang ", program).data);
     // The folder has the project's own configuration, as the repository where the script ran has: smith adds its
     // defaults to the tool's arguments only where a project has none.
-    scratch::write(&r.p, ".clang-tidy", "");
-    scratch::write(&r.p, ".clang-format", "");
-    const char *stub = format::push(&io->arena, r.dir, "/bin/", program).data;
-    const char *var = format::push(&io->arena, variable, "=", stub).data;
+    scratch::write(r.p, ".clang-tidy", "");
+    scratch::write(r.p, ".clang-format", "");
+    const char *stub = format::push(arena, r.dir, "/bin/", program).data;
+    const char *var = format::push(arena, variable, "=", stub).data;
     scratch::Run run = go(&r, var, "\"$SMITH_SELF\"",
-                          format::push(&io->arena, command, " -i \"a b.c\" \"\" --style=file -DX=\"y z\"").data);
+                          format::push(arena, command, " -i \"a b.c\" \"\" --style=file -DX=\"y z\"").data);
     scratch::expect_text(
-        format::push(&io->arena, command, ": runs ", program, " with every argument untouched").data,
-        format::push(&io->arena, program, " argv0=", stub, "\n[-i]\n[a b.c]\n[]\n[--style=file]\n[-DX=y z]").data,
-        run.out);
-    scratch::expect_text(format::push(&io->arena, command, ": stderr passes through").data,
-                         format::push(&io->arena, program, "-stderr").data, run.err);
-    scratch::Run exited = go(&r, format::push(&io->arena, "STUB_EXIT=3 ", var).data, "\"$SMITH_SELF\"",
-                             format::push(&io->arena, command, " a.c").data);
-    scratch::expect_status(format::push(&io->arena, command, ": exit status is ", program, "'s").data, 3, &exited);
-    scratch::Run signaled = go(&r, format::push(&io->arena, "STUB_SIGNAL=15 ", var).data, "\"$SMITH_SELF\"",
-                               format::push(&io->arena, command, " a.c").data);
-    scratch::expect_status(format::push(&io->arena, command, ": death by signal is preserved (128 + 15)").data, 143,
+        format::push(arena, command, ": runs ", program, " with every argument untouched").data,
+        format::push(arena, program, " argv0=", stub, "\n[-i]\n[a b.c]\n[]\n[--style=file]\n[-DX=y z]").data, run.out);
+    scratch::expect_text(format::push(arena, command, ": stderr passes through").data,
+                         format::push(arena, program, "-stderr").data, run.err);
+    scratch::Run exited = go(&r, format::push(arena, "STUB_EXIT=3 ", var).data, "\"$SMITH_SELF\"",
+                             format::push(arena, command, " a.c").data);
+    scratch::expect_status(format::push(arena, command, ": exit status is ", program, "'s").data, 3, &exited);
+    scratch::Run signaled = go(&r, format::push(arena, "STUB_SIGNAL=15 ", var).data, "\"$SMITH_SELF\"",
+                               format::push(arena, command, " a.c").data);
+    scratch::expect_status(format::push(arena, command, ": death by signal is preserved (128 + 15)").data, 143,
                            &signaled);
-    scratch::Run missing = go(&r, format::push(&io->arena, variable, "=/nonexistent/", program).data, "\"$SMITH_SELF\"",
-                              format::push(&io->arena, command, " a.c").data);
-    scratch::expect_text(format::push(&io->arena, command, ": a missing tool is reported").data,
-                         format::push(&io->arena, "smith: not an executable: /nonexistent/", program).data,
-                         missing.err);
+    scratch::Run missing = go(&r, format::push(arena, variable, "=/nonexistent/", program).data, "\"$SMITH_SELF\"",
+                              format::push(arena, command, " a.c").data);
+    scratch::expect_text(format::push(arena, command, ": a missing tool is reported").data,
+                         format::push(arena, "smith: not an executable: /nonexistent/", program).data, missing.err);
     // Only as the exact first argument: after another argument it is a file name, for the compiler.
-    scratch::Run after = go(&r, format::push(&io->arena, "SMITH_CLANG=", r.cl, " ", var).data, "\"$SMITH_SELF\"",
-                            format::push(&io->arena, "cc -c ", command, " a.c").data);
-    scratch::expect_text(format::push(&io->arena, command, ": after another argument it goes to clang").data,
-                         format::push(&io->arena, "clang argv0=", r.cl, "\n[-c]\n[", command, "]\n[a.c]").data,
-                         after.out);
+    scratch::Run after = go(&r, format::push(arena, "SMITH_CLANG=", r.cl, " ", var).data, "\"$SMITH_SELF\"",
+                            format::push(arena, "cc -c ", command, " a.c").data);
+    scratch::expect_text(format::push(arena, command, ": after another argument it goes to clang").data,
+                         format::push(arena, "clang argv0=", r.cl, "\n[-c]\n[", command, "]\n[a.c]").data, after.out);
 }
 
-export void test_run_fmt_is_clang_format_with_the_arguments_untouched(io::Io *io) {
-    tool_routes(io, "fmt", "clang-format", "SMITH_CLANG_FORMAT");
+export void test_run_fmt_is_clang_format_with_the_arguments_untouched() {
+    tool_routes("fmt", "clang-format", "SMITH_CLANG_FORMAT");
 }
 
-export void test_run_lint_is_clang_tidy_with_the_arguments_untouched(io::Io *io) {
-    tool_routes(io, "lint", "clang-tidy", "SMITH_CLANG_TIDY");
+export void test_run_lint_is_clang_tidy_with_the_arguments_untouched() {
+    tool_routes("lint", "clang-tidy", "SMITH_CLANG_TIDY");
 }
 
-export void test_run_lsp_is_clangd_with_the_arguments_untouched(io::Io *io) {
-    tool_routes(io, "lsp", "clangd", "SMITH_CLANGD");
+export void test_run_lsp_is_clangd_with_the_arguments_untouched() {
+    tool_routes("lsp", "clangd", "SMITH_CLANGD");
 }
 
-export void test_run_dbg_is_lldb_with_the_arguments_untouched(io::Io *io) {
-    tool_routes(io, "dbg", "lldb", "SMITH_LLDB");
+export void test_run_dbg_is_lldb_with_the_arguments_untouched() {
+    tool_routes("dbg", "lldb", "SMITH_LLDB");
 }
 
-export void test_run_dap_is_lldb_dap_with_the_arguments_untouched(io::Io *io) {
-    tool_routes(io, "dap", "lldb-dap", "SMITH_LLDB_DAP");
+export void test_run_dap_is_lldb_dap_with_the_arguments_untouched() {
+    tool_routes("dap", "lldb-dap", "SMITH_LLDB_DAP");
 }
 
 // The tools are inside smith: the same LLVM as the compiler, run on the arguments, in smith's process. Only a smith
@@ -424,8 +465,15 @@ static bool tools_inside(const Rig *r) {
     return starts_with(which.out, "clang in-process ");
 }
 
-export void test_run_in_process_fmt_is_clang_format_23(io::Io *io) {
-    Rig r = make_rig(io, false, "clang");
+export void test_run_in_process_fmt_is_clang_format_23() {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    Rig r = make_rig(arena, &p, false, "clang");
     if (!tools_inside(&r)) {
         test::note("clang is not inside this smith");
         return;
@@ -433,28 +481,33 @@ export void test_run_in_process_fmt_is_clang_format_23(io::Io *io) {
     scratch::Run version = go(&r, "-u SMITH_CLANG_FORMAT", "\"$SMITH_SELF\"", "fmt --version");
     scratch::expect_text("in-process: fmt is clang-format 23", "yes",
                          starts_with(version.out, "clang-format version 23.") ? "yes" : version.out);
-    (void)scratch::sh(&r.p, "mkdir tools");
-    scratch::write(&r.p, "tools/a.c", "int   main( ){return  0;}\n");
+    (void)scratch::sh(r.p, "mkdir tools");
+    scratch::write(r.p, "tools/a.c", "int   main( ){return  0;}\n");
     scratch::Run stdin =
         go(&r, "-u SMITH_CLANG_FORMAT", "\"$SMITH_SELF\"",
-           format::push(&io->arena, "fmt --style=LLVM --assume-filename=\"", r.dir, "/tools/a.c\" <tools/a.c").data);
+           format::push(arena, "fmt --style=LLVM --assume-filename=\"", r.dir, "/tools/a.c\" <tools/a.c").data);
     scratch::expect_text("in-process: fmt formats standard input to stdout", "int main() { return 0; }", stdin.out);
-    scratch::write(&r.p, "tools/.clang-format",
+    scratch::write(r.p, "tools/.clang-format",
                    "IndentWidth: 8\nUseTab: Never\nAllowShortFunctionsOnASingleLine: None\n");
-    scratch::write(&r.p, "tools/b.c", "int main() {\nreturn 0;\n}\n");
-    scratch::Run formatted =
-        go(&r, "-u SMITH_CLANG_FORMAT", "\"$SMITH_SELF\"",
-           format::push(&io->arena, "fmt --assume-filename=\"", r.dir, "/tools/b.c\" <tools/b.c").data);
+    scratch::write(r.p, "tools/b.c", "int main() {\nreturn 0;\n}\n");
+    scratch::Run formatted = go(&r, "-u SMITH_CLANG_FORMAT", "\"$SMITH_SELF\"",
+                                format::push(arena, "fmt --assume-filename=\"", r.dir, "/tools/b.c\" <tools/b.c").data);
     scratch::expect_text("in-process: fmt reads the project's .clang-format", "int main() {\n        return 0;\n}",
                          formatted.out);
-    (void)go(&r, "-u SMITH_CLANG_FORMAT", "\"$SMITH_SELF\"",
-             format::push(&io->arena, "fmt \"", r.dir, "/tools/b.c\"").data);
+    (void)go(&r, "-u SMITH_CLANG_FORMAT", "\"$SMITH_SELF\"", format::push(arena, "fmt \"", r.dir, "/tools/b.c\"").data);
     scratch::expect_text("in-process: fmt of a named file rewrites it (as -i)", "int main() {\n        return 0;\n}",
-                         scratch::read(&r.p, "tools/b.c"));
+                         scratch::read(r.p, "tools/b.c"));
 }
 
-export void test_run_in_process_lint_is_clang_tidy_23(io::Io *io) {
-    Rig r = make_rig(io, false, "clang");
+export void test_run_in_process_lint_is_clang_tidy_23() {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    Rig r = make_rig(arena, &p, false, "clang");
     if (!tools_inside(&r)) {
         test::note("clang is not inside this smith");
         return;
@@ -466,19 +519,26 @@ export void test_run_in_process_lint_is_clang_tidy_23(io::Io *io) {
         go(&r, "-u SMITH_CLANG_TIDY", "\"$SMITH_SELF\"", "lint --list-checks --checks='-*,readability-*'");
     scratch::expect_text("in-process: lint lists clang-tidy's checks", "yes",
                          scratch::contains(listed.out, "readability-identifier-naming") ? "yes" : listed.out);
-    (void)scratch::sh(&r.p, "mkdir tools");
-    scratch::write(&r.p, "tools/.clang-tidy",
+    (void)scratch::sh(r.p, "mkdir tools");
+    scratch::write(r.p, "tools/.clang-tidy",
                    "Checks: \"-*,readability-uppercase-literal-suffix\"\nWarningsAsErrors: \"*\"\n");
-    scratch::write(&r.p, "tools/c.c", "constexpr float x = 1.0f;\n");
+    scratch::write(r.p, "tools/c.c", "constexpr float x = 1.0f;\n");
     scratch::Run linted = go(&r, "-u SMITH_CLANG_TIDY", "\"$SMITH_SELF\"",
-                             format::push(&io->arena, "lint --quiet \"", r.dir, "/tools/c.c\" -- -std=gnu23").data);
+                             format::push(arena, "lint --quiet \"", r.dir, "/tools/c.c\" -- -std=gnu23").data);
     scratch::expect_text("in-process: lint reads the project's .clang-tidy and reports", "yes",
                          scratch::contains(linted.out, "floating point literal has suffix 'f'") ? "yes" : linted.out);
     scratch::expect_status("in-process: lint exits 1 on a finding that is an error", 1, &linted);
 }
 
-export void test_run_in_process_lsp_is_clangd_23(io::Io *io) {
-    Rig r = make_rig(io, false, "clang");
+export void test_run_in_process_lsp_is_clangd_23() {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    Rig r = make_rig(arena, &p, false, "clang");
     if (!tools_inside(&r)) {
         test::note("clang is not inside this smith");
         return;
@@ -490,41 +550,55 @@ export void test_run_in_process_lsp_is_clangd_23(io::Io *io) {
 
 // ---- the refusals and --smith-which of both forms ----
 
-static void compile_tail(io::Io *io, bool link) {
-    Rig r = make_rig(io, link, "clang xcrun");
-    scratch::Run self = go(&r, format::push(&io->arena, "SMITH_CLANG=", r.dir, "/bin/selfclang").data, r.cc, "a.c");
+static void compile_tail(bool link) {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    Rig r = make_rig(arena, &p, link, "clang xcrun");
+    scratch::Run self = go(&r, format::push(arena, "SMITH_CLANG=", r.dir, "/bin/selfclang").data, r.cc, "a.c");
     scratch::expect_text(nm(&r, "a compiler that is smith itself is refused"),
-                         format::push(&io->arena, "smith: refers to smith itself: ", r.dir, "/bin/selfclang").data,
+                         format::push(arena, "smith: refers to smith itself: ", r.dir, "/bin/selfclang").data,
                          self.err);
     scratch::expect_status(nm(&r, "self refusal: status 127"), 127, &self);
     scratch::Run missing = go(&r, "SMITH_CLANG=/nonexistent/clang", r.cc, "a.c");
     scratch::expect_text(nm(&r, "a missing compiler is reported"), "smith: not an executable: /nonexistent/clang",
                          missing.err);
     scratch::Run which = go_clang(&r, "", "--smith-which -c a.c");
-    scratch::expect_text(nm(&r, "--smith-which names the clang backend"), format::push(&io->arena, "clang ", r.cl).data,
+    scratch::expect_text(nm(&r, "--smith-which names the clang backend"), format::push(arena, "clang ", r.cl).data,
                          which.out);
     scratch::Run metal =
-        go(&r, format::push(&io->arena, "PATH=\"", r.dir, "/bin:$PATH\"").data, r.cc, "--smith-which a.metal");
+        go(&r, format::push(arena, "PATH=\"", r.dir, "/bin:$PATH\"").data, r.cc, "--smith-which a.metal");
     scratch::expect_text(nm(&r, "--smith-which names the metal backend"),
-                         format::push(&io->arena, "metal ", r.dir, "/bin/xcrun -sdk macosx metal").data, metal.out);
+                         format::push(arena, "metal ", r.dir, "/bin/xcrun -sdk macosx metal").data, metal.out);
     scratch::Run verbose = go_clang(&r, "SMITH_VERBOSE=1", "-c a.c");
     scratch::expect_text(nm(&r, "SMITH_VERBOSE shows the command"),
-                         format::push(&io->arena, "smith: exec ", r.cl, " -c a.c\nclang-stderr").data, verbose.err);
+                         format::push(arena, "smith: exec ", r.cl, " -c a.c\nclang-stderr").data, verbose.err);
 }
 
-export void test_run_verb_refusals_and_which(io::Io *io) {
-    compile_tail(io, false);
+export void test_run_verb_refusals_and_which() {
+    compile_tail(false);
 }
 
-export void test_run_link_refusals_and_which(io::Io *io) {
-    compile_tail(io, true);
+export void test_run_link_refusals_and_which() {
+    compile_tail(true);
 }
 
 // ---- the top level is only verbs ----
 
-export void test_run_bare_arguments_are_an_error_with_the_hint(io::Io *io) {
-    Rig r = make_rig(io, false, "clang");
-    const char *settings = format::push(&io->arena, "SMITH_CLANG=", r.cl).data;
+export void test_run_bare_arguments_are_an_error_with_the_hint() {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    Rig r = make_rig(arena, &p, false, "clang");
+    const char *settings = format::push(arena, "SMITH_CLANG=", r.cl).data;
     scratch::Run file = go(&r, settings, "\"$SMITH_SELF\"", "foo.c -o foo");
     scratch::expect_text("bare: the compiler's arguments are an error with the hint",
                          "smith: foo.c is not a smith command; to compile, run `smith cc foo.c -o foo`", file.err);
@@ -536,68 +610,93 @@ export void test_run_bare_arguments_are_an_error_with_the_hint(io::Io *io) {
     scratch::expect_text("bare: --smith-which is a flag of the compiler verbs",
                          "smith: --smith-which is not a smith command; to compile, run `smith cc --smith-which -c a.c`",
                          which.err);
-    scratch::Run old = go(&r, settings, format::push(&io->arena, "\"", r.dir, "/smith++\"").data, "-c a.cpp");
+    scratch::Run old = go(&r, settings, format::push(arena, "\"", r.dir, "/smith++\"").data, "-c a.cpp");
     scratch::expect_text("bare: the old smith++ name is no compiler",
                          "smith: -c is not a smith command; to compile, run `smith cc -c a.cpp`", old.err);
 }
 
-export void test_run_version_and_no_arguments(io::Io *io) {
-    scratch::Project p = scratch::project(io, "r", nullptr);
+export void test_run_version_and_no_arguments() {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
     scratch::Run version = scratch::sh(&p, "out=$(\"$SMITH_SELF\" version); rc=$?; printf '%s %s\\n' \"$rc\" "
                                            "\"$(printf '%s\\n' \"$out\" | sed 's/ commit [0-9a-f]*$//')\"");
     scratch::expect_text("version: the version line, status 0", "0 smith 0.0", version.out);
     scratch::Run bare = scratch::sh(&p, "\"$SMITH_SELF\"");
     scratch::expect_text("no arguments: usage, status 2", "2 usage: smith <command> [<arguments>]",
-                         format::push(&io->arena, bare.status, " ", first_line(io, bare.err)).data);
+                         format::push(arena, bare.status, " ", first_line(arena, bare.err)).data);
 }
 
-export void test_run_smith_cc_with_no_arguments_is_clang_with_none(io::Io *io) {
-    Rig r = make_rig(io, false, "clang");
+export void test_run_smith_cc_with_no_arguments_is_clang_with_none() {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    Rig r = make_rig(arena, &p, false, "clang");
     scratch::Run run = go_clang(&r, "", "");
     scratch::expect_text("smith cc with no arguments is clang with none",
-                         format::push(&io->arena, "clang argv0=", r.cl).data, run.out);
+                         format::push(arena, "clang argv0=", r.cl).data, run.out);
 }
 
 // The driver runs its own program again with -cc1, as bin/clang and bin/clang++ of the programs folder, which are links
 // to smith: those names act as the compiler, with the arguments as clang's.
-export void test_run_the_names_clang_and_clang_plus_plus_act_as_the_compiler(io::Io *io) {
-    Rig r = make_rig(io, false, "clang clang++");
-    scratch::Run clang = go(&r, format::push(&io->arena, "SMITH_CLANG=", r.cl).data,
-                            format::push(&io->arena, r.dir, "/driver/clang").data, "-c a.c");
+export void test_run_the_names_clang_and_clang_plus_plus_act_as_the_compiler() {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    Rig r = make_rig(arena, &p, false, "clang clang++");
+    scratch::Run clang = go(&r, format::push(arena, "SMITH_CLANG=", r.cl).data,
+                            format::push(arena, r.dir, "/driver/clang").data, "-c a.c");
     scratch::expect_text("the name clang acts as smith cc",
-                         format::push(&io->arena, "clang argv0=", r.cl, "\n[-c]\n[a.c]").data, clang.out);
-    scratch::Run plus = go(&r, format::push(&io->arena, "SMITH_CLANGXX=", r.dir, "/bin/clang++").data,
-                           format::push(&io->arena, r.dir, "/driver/clang++").data, "-c a.cpp");
+                         format::push(arena, "clang argv0=", r.cl, "\n[-c]\n[a.c]").data, clang.out);
+    scratch::Run plus = go(&r, format::push(arena, "SMITH_CLANGXX=", r.dir, "/bin/clang++").data,
+                           format::push(arena, r.dir, "/driver/clang++").data, "-c a.cpp");
     scratch::expect_text("the name clang++ acts as smith c++",
-                         format::push(&io->arena, "clang++ argv0=", r.dir, "/bin/clang++\n[-c]\n[a.cpp]").data,
-                         plus.out);
+                         format::push(arena, "clang++ argv0=", r.dir, "/bin/clang++\n[-c]\n[a.cpp]").data, plus.out);
 }
 
 // ---- the verbs that read the build need a build.c ----
 
 constexpr char no_build[_] = "smith: no build.c in this folder, and no main.smith or main.c to build by convention";
 
-static void needs_a_build(io::Io *io, const char *verb) {
-    scratch::Project p = scratch::project(io, "empty", nullptr);
-    scratch::Run run = scratch::sh(&p, format::push(&io->arena, "env SMITH_OUTPUT=full smith ", verb, " -DX=1").data);
-    scratch::expect_text(format::push(&io->arena, verb, " -DX=1: the project's verb, which needs a build.c").data,
-                         no_build, first_line(io, run.err));
+static void needs_a_build(const char *verb) {
+    scratch::Project p = scratch::make("empty", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    scratch::Run run = scratch::sh(&p, format::push(arena, "env SMITH_OUTPUT=full smith ", verb, " -DX=1").data);
+    scratch::expect_text(format::push(arena, verb, " -DX=1: the project's verb, which needs a build.c").data, no_build,
+                         first_line(arena, run.err));
 }
 
-export void test_run_lint_with_an_option_needs_a_build_c(io::Io *io) {
-    needs_a_build(io, "lint");
+export void test_run_lint_with_an_option_needs_a_build_c() {
+    needs_a_build("lint");
 }
 
-export void test_run_run_with_an_option_needs_a_build_c(io::Io *io) {
-    needs_a_build(io, "run");
+export void test_run_run_with_an_option_needs_a_build_c() {
+    needs_a_build("run");
 }
 
-export void test_run_test_with_an_option_needs_a_build_c(io::Io *io) {
-    needs_a_build(io, "test");
+export void test_run_test_with_an_option_needs_a_build_c() {
+    needs_a_build("test");
 }
 
 // The first line of the failure with the seconds it took taken off: `smith lint: FAILED (status 2, 0.1 s)`.
-static const char *without_seconds(io::Io *io, const char *line) {
+static const char *without_seconds(arena::Arena *arena, const char *line) {
     usize end = c::strlen(line);
     if (end >= 3 && c::strcmp(line + end - 3, " s)") == 0) {
         end -= 3;
@@ -605,37 +704,49 @@ static const char *without_seconds(io::Io *io, const char *line) {
             end--;
         }
     }
-    return prefix(io, line, end);
+    return prefix(arena, line, end);
 }
 
 // Quiet output (#78): with SMITH_OUTPUT unset, a failing verb says it failed and still prints the error that tells the
 // user what to do, with the path of the log.
-static void quiet_failure(io::Io *io, const char *verb) {
-    scratch::Project p = scratch::project(io, "empty", nullptr);
-    scratch::Run run = scratch::sh(&p, format::push(&io->arena, "env -u SMITH_OUTPUT smith ", verb, " -DX=1").data);
-    scratch::expect_text(format::push(&io->arena, verb, " -DX=1, quiet: says it failed").data,
-                         format::push(&io->arena, "smith ", verb, ": FAILED (status 2, ").data,
-                         without_seconds(io, first_line(io, run.err)));
+static void quiet_failure(const char *verb) {
+    scratch::Project p = scratch::make("empty", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    scratch::Run run = scratch::sh(&p, format::push(arena, "env -u SMITH_OUTPUT smith ", verb, " -DX=1").data);
+    scratch::expect_text(format::push(arena, verb, " -DX=1, quiet: says it failed").data,
+                         format::push(arena, "smith ", verb, ": FAILED (status 2, ").data,
+                         without_seconds(arena, first_line(arena, run.err)));
     scratch::expect_contains(
-        format::push(&io->arena, verb, " -DX=1, quiet: ... and prints the error that says what to do").data, run.err,
+        format::push(arena, verb, " -DX=1, quiet: ... and prints the error that says what to do").data, run.err,
         no_build);
-    scratch::expect_contains(format::push(&io->arena, verb, " -DX=1, quiet: ... and the log's path").data, run.err,
-                             format::push(&io->arena, ".smith/log/", verb, ".log").data);
+    scratch::expect_contains(format::push(arena, verb, " -DX=1, quiet: ... and the log's path").data, run.err,
+                             format::push(arena, ".smith/log/", verb, ".log").data);
 }
 
-export void test_run_lint_with_an_option_says_quietly_that_it_failed(io::Io *io) {
-    quiet_failure(io, "lint");
+export void test_run_lint_with_an_option_says_quietly_that_it_failed() {
+    quiet_failure("lint");
 }
 
-export void test_run_test_with_an_option_says_quietly_that_it_failed(io::Io *io) {
-    quiet_failure(io, "test");
+export void test_run_test_with_an_option_says_quietly_that_it_failed() {
+    quiet_failure("test");
 }
 
 // fmt lists the files git sees, and the folder is no repository.
-export void test_run_fmt_outside_a_git_repository_says_to_name_the_files(io::Io *io) {
-    scratch::Project p = scratch::project(io, "empty", nullptr);
-    scratch::Run run = scratch::sh(
-        &p, format::push(&io->arena, "env GIT_CEILING_DIRECTORIES='", test::scratch(io), "' smith fmt").data);
+export void test_run_fmt_outside_a_git_repository_says_to_name_the_files() {
+    scratch::Project p = scratch::make("empty", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    scratch::Run run =
+        scratch::sh(&p, format::push(arena, "env GIT_CEILING_DIRECTORIES='", p.root, "' smith fmt").data);
     scratch::expect_text(
         "fmt: outside a git repository it says to name the files",
         "smith: this folder is not a git repository, so smith fmt has no list of files; name them: smith "
@@ -644,11 +755,16 @@ export void test_run_fmt_outside_a_git_repository_says_to_name_the_files(io::Io 
 }
 
 // check formats and checks the docs first, then needs the build for the rest.
-export void test_run_check_reports_every_part_in_order(io::Io *io) {
-    scratch::Project p = scratch::project(io, "empty", nullptr);
-    scratch::Run run = scratch::sh(&p, format::push(&io->arena, "env SMITH_OUTPUT=full GIT_CEILING_DIRECTORIES='",
-                                                    test::scratch(io), "' smith check")
-                                           .data);
+export void test_run_check_reports_every_part_in_order() {
+    scratch::Project p = scratch::make("empty", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    scratch::Run run = scratch::sh(
+        &p, format::push(arena, "env SMITH_OUTPUT=full GIT_CEILING_DIRECTORIES='", p.root, "' smith check").data);
     scratch::expect_status("check: a part that fails is reported, and the exit status is 1", 1, &run);
     const char *a = c::strstr(run.err, "smith check: fmt FAILED (status 2)");
     const char *b = a != nullptr ? c::strstr(a, "smith check: docs ok") : nullptr;
@@ -663,40 +779,45 @@ export void test_run_check_reports_every_part_in_order(io::Io *io) {
 }
 
 // A project verb is a verb, not a target of smith build.
-static void verb_is_not_a_target(io::Io *io, const char *verb) {
-    scratch::Project p = scratch::project(io, "empty", nullptr);
-    scratch::Run run = scratch::sh(&p, format::push(&io->arena, "smith build ", verb).data);
+static void verb_is_not_a_target(const char *verb) {
+    scratch::Project p = scratch::make("empty", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    scratch::Run run = scratch::sh(&p, format::push(arena, "smith build ", verb).data);
     scratch::expect_text(
-        format::push(&io->arena, "build ", verb, ": refused, with a pointer to the verb").data,
-        format::push(&io->arena, "smith: ", verb, " is a verb, not a target of smith build; run `smith ", verb, "`")
-            .data,
+        format::push(arena, "build ", verb, ": refused, with a pointer to the verb").data,
+        format::push(arena, "smith: ", verb, " is a verb, not a target of smith build; run `smith ", verb, "`").data,
         run.err);
 }
 
-export void test_run_build_run_is_refused_with_a_pointer_to_the_verb(io::Io *io) {
-    verb_is_not_a_target(io, "run");
+export void test_run_build_run_is_refused_with_a_pointer_to_the_verb() {
+    verb_is_not_a_target("run");
 }
 
-export void test_run_build_test_is_refused_with_a_pointer_to_the_verb(io::Io *io) {
-    verb_is_not_a_target(io, "test");
+export void test_run_build_test_is_refused_with_a_pointer_to_the_verb() {
+    verb_is_not_a_target("test");
 }
 
-export void test_run_build_check_is_refused_with_a_pointer_to_the_verb(io::Io *io) {
-    verb_is_not_a_target(io, "check");
+export void test_run_build_check_is_refused_with_a_pointer_to_the_verb() {
+    verb_is_not_a_target("check");
 }
 
-export void test_run_build_fmt_is_refused_with_a_pointer_to_the_verb(io::Io *io) {
-    verb_is_not_a_target(io, "fmt");
+export void test_run_build_fmt_is_refused_with_a_pointer_to_the_verb() {
+    verb_is_not_a_target("fmt");
 }
 
-export void test_run_build_lint_is_refused_with_a_pointer_to_the_verb(io::Io *io) {
-    verb_is_not_a_target(io, "lint");
+export void test_run_build_lint_is_refused_with_a_pointer_to_the_verb() {
+    verb_is_not_a_target("lint");
 }
 
-export void test_run_build_prove_is_refused_with_a_pointer_to_the_verb(io::Io *io) {
-    verb_is_not_a_target(io, "prove");
+export void test_run_build_prove_is_refused_with_a_pointer_to_the_verb() {
+    verb_is_not_a_target("prove");
 }
 
-export void test_run_build_docs_is_refused_with_a_pointer_to_the_verb(io::Io *io) {
-    verb_is_not_a_target(io, "docs");
+export void test_run_build_docs_is_refused_with_a_pointer_to_the_verb() {
+    verb_is_not_a_target("docs");
 }
