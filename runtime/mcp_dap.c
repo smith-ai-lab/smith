@@ -208,9 +208,12 @@ static void smith_mcp_dap_ingest(SmithMcpServer *server, SmithMcpSession *sessio
     SmithJsonLimits limits = {.depth = 64, .string_length = smith_mcp_frame_max, .count = (size_t)1 << 20};
     SmithDapProtocolMessage message;
     SmithProtocolError error;
-    if (smith_json_parse(arena, (struct smith_array_const_char_n){.data = copy, .count = {size}}, limits, &tree,
-                         &json_error) &&
-        smith_dap_protocol_message_parse(arena, tree, &message, &error)) {
+    SmithArenaAllocator allocator = smith_arena_allocator(arena);
+    SmithAllocator *before = smith_mem_set_allocator(&allocator.base);
+    bool parsed =
+        smith_json_parse((struct smith_array_const_char_n){.data = copy, .count = {size}}, limits, &tree, &json_error);
+    smith_mem_set_allocator(before);
+    if (parsed && smith_dap_protocol_message_parse(arena, tree, &message, &error)) {
         if (message.type.known == SmithDapProtocolMessageTypeKnown_Response) {
             SmithDapResponse response;
             if (smith_dap_response_parse(arena, tree, &response, &error))
@@ -411,9 +414,11 @@ static SmithMcpReply smith_mcp_dap_await(SmithMcpServer *server, SmithMcpSession
     SmithProtocolError error;
     SmithJsonLimits limits = {.depth = 64, .string_length = smith_mcp_frame_max, .count = (size_t)1 << 20};
     reply.status = SmithMcpReply_Bad;
-    if (!smith_json_parse(&server->scratch, text, limits, &tree, &json_error) ||
-        !smith_dap_response_parse(&server->scratch, tree, &reply.response, &error))
-        return reply;
+    SmithArenaAllocator allocator = smith_arena_allocator(&server->scratch);
+    SmithAllocator *before = smith_mem_set_allocator(&allocator.base);
+    bool parsed = smith_json_parse(text, limits, &tree, &json_error);
+    smith_mem_set_allocator(before);
+    if (!parsed || !smith_dap_response_parse(&server->scratch, tree, &reply.response, &error)) return reply;
     reply.status = reply.response.success ? SmithMcpReply_Ok : SmithMcpReply_Failed;
     if (reply.response.has_message) smith_mcp_copy(reply.message, sizeof reply.message, reply.response.message.text);
     return reply;

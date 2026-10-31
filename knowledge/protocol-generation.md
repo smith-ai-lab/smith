@@ -19,7 +19,7 @@ schemas are in git.
 
 | Path | What |
 | --- | --- |
-| `scripts/protocol.c` | the generator, a program of the build like `scripts/pack.c` (built by build.c from `lib/smith/arena.smith`, `contract.smith` and `text.smith`, and `json.c`) |
+| `scripts/protocol.c` | the generator, a program of the build like `scripts/pack.c` (built by build.c from `lib/smith/arena.smith`, `contract.smith`, `text.smith` and `mem.smith`, and `json.c`) |
 | `schemas/dap/`, `schemas/mcp/` | the vendored inputs: the schema (`debugAdapterProtocol.json`, `schema.json`) and the project's `LICENSE`, byte for byte as released |
 | `runtime/protocol/protocol.h`, `protocol.c` | hand-written: the error a parse reports, the types a schema starts from (string, integer, number, boolean, any JSON), the checks the generated code shares |
 | `.smith/protocol/dap.h`, `dap.c`, `mcp.h`, `mcp.c` | generated, not in git: a struct and four functions per type; smith.c includes `dap.c` and `mcp.c` with `-I .smith/protocol -I runtime/protocol` |
@@ -84,7 +84,7 @@ makes a value from a key. Members keep the schema's names (`threadId`, `request_
   type's parse on the tree.
 - **Not carried:** `description`, `format`, `minimum`, `maximum`, `maxItems` (a parse does not enforce them; a random value
   ignores them), and a `null` for an optional member that is not nullable reads as absent.
-- **Memory:** a parse pushes arrays, maps and extras into the arena it is given, and keeps strings without escapes as slices of the
+- **Memory:** a parse pushes arrays, maps and extras into the arena it is given (`smith_json_parse` itself takes the tree from `malloc`, so the caller puts that arena in force around it with `smith_mem_set_allocator`), and keeps strings without escapes as slices of the
   input; a failed alternative of a union leaves what it pushed (arenas have no commit).
 - **A parse that fails** returns false and writes a `SmithProtocolError`: `reason` (missing, wrong type, bad value, no alternative, arena
   full), the innermost object `type` and member `field` (schema names), and the byte `offset` of the value.

@@ -25,6 +25,13 @@ publishes the stage0 release `stage0-<commit>` ([release](release.md)). Then `in
 self-hosted runner, used for nothing else), downloads that release, checks it and puts it in `~/.local/bin`, so the
 installed smith is always main's; nobody runs `smith build install`.
 
+**Where a failure shows.** The first failing job cancels the run, so the other shards show as cancelled. The failing
+shard names its tests: the last lines of its log (the `Fail fast` step) and its job summary hold each failed test's
+`FAIL <name>` line with the check and error lines under it (#1086); look there before re-running.
+When the tests do not build, the step `Build the tests` of `setup-smith` ends with the compiler's
+`file:line:col: error:` lines and the command that failed (also in the job summary, #1118). The errors go to stdout and
+only the full output of the nested build is in `.smith/log/.smith_task_units-build.log` (a hidden file).
+
 **A red pull request** is its author's: read the failing job (`gh run view --log-failed`), fix it on the branch, push.
 A conflict with main is fixed by merging main into the branch, never by a rebase or a force-push.
 

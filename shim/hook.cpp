@@ -214,6 +214,7 @@ class Presenter final : public DiagnosticConsumer {
             // definition's (and the compiler's, which has its own, is not).
             if (origin.isValid() && level != DiagnosticsEngine::Note && !tool && !instance) {
                 dropNotes = true;
+                if (level >= DiagnosticsEngine::Error) DiagnosticConsumer::HandleDiagnostic(level, info); // still fails
                 return;
             }
             if (instance &&
@@ -701,7 +702,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.maybe_if_constexpr = hasIfConstexpr(scan);
         host.maybe_local_tag = hasNestedTag(scan);
         host.maybe_slice = hasSlice(scan) || hasStr(scan);
-        host.maybe_brackets = hasEmptyBrackets(scan);
+        host.maybe_brackets = hasEmptyBrackets(scan) || hasLambda(scan);
         host.maybe_shape = hasShapeCall(scan);
         host.maybe_tuple = host.maybe_slice || hasTuple(scan) || hasPayloadEnum(scan) || host.maybe_shape ||
                            hasTryWord(scan) || hasLambda(scan);
@@ -2990,8 +2991,21 @@ class SmithHook final : public TokenHook, public NameSource {
         return false;
     }
 
-    // `[](`, `[]{` or `[]->`: a lambda (runtime/lang_lambda.c). The lowering is offered every token of the file, since
-    // a lambda's `[` is found among the tokens of a body.
+    // Whether the `[` at `at` follows what an expression can follow: `=`, `(`, `,`, `?`, `:`, `{`, `&&`, `||` or
+    // `return`.
+    static bool expressionBefore(StringRef text, size_t at) {
+        size_t before = at;
+        while (before > 0 && isWhitespace(text[before - 1]))
+            before -= 1;
+        if (before == 0) return true;
+        char c = text[before - 1];
+        if (c == '=' || c == '(' || c == ',' || c == '?' || c == ':' || c == '{' || c == '&' || c == '|') return true;
+        return before >= 6 && text.substr(before - 6, 6) == "return" &&
+               (before == 6 || !isAsciiIdentifierContinue(text[before - 7]));
+    }
+
+    // `[](`, `[x, y]{` or `[]->`: a lambda, its capture list names only (runtime/lang_lambda.c). The lowering is
+    // offered every token of the file, since a lambda's `[` is found among the tokens of a body.
     static bool hasLambda(StringRef text) {
         for (size_t at = 0; at < text.size(); at++) {
             size_t after = skipLiteral(text, at);
@@ -3001,9 +3015,22 @@ class SmithHook final : public TokenHook, public NameSource {
             }
             if (text[at] != '[') continue;
             size_t next = at + 1;
-            while (next < text.size() && isWhitespace(text[next]))
-                next += 1;
+            bool empty = true;
+            bool word = false; // inside a name: a name starts with a letter or `_`, a number is a subscript
+            while (next < text.size() &&
+                   (isWhitespace(text[next]) || text[next] == ',' || isAsciiIdentifierContinue(text[next]))) {
+                if (isWhitespace(text[next]) || text[next] == ',') {
+                    word = false;
+                } else if (!word && !isAsciiIdentifierStart(text[next])) {
+                    break;
+                } else {
+                    word = true;
+                }
+                empty = empty && (isWhitespace(text[next]));
+                next += 1; // a capture list: `[]`, `[x]`, `[x, y]`
+            }
             if (next >= text.size() || text[next] != ']') continue;
+            if (!empty && !expressionBefore(text, at)) continue; // `xs[i]->p` and `f(x)[i]` are subscripts
             next += 1;
             while (next < text.size() && isWhitespace(text[next]))
                 next += 1;

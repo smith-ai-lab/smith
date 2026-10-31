@@ -30,5 +30,6 @@ In C this is a header, a prefix and a convention; here the symbol is `game::repl
 ## Errors
 
 - a C name that another name has (chosen, or made by the prefix, private names included); `c_name` not followed by `export`, two on one export, on an export declaring no typedef, tag, function or variable; a string that is no C identifier.
+- a private prototype of a function exported later (`T *f();` above `export T *f() {...}`): the prototype is `static`, so write `export` on both (#1110).
 - `export static`; two names in one export; `export` in a file with no `module` line.
 - an exported declaration naming a private type, or an array bound naming a private constant: export it.

@@ -2955,6 +2955,7 @@ class Normalizer {
         } else if (kind == Kind::Trap) {
             auto *number = cast<ConstantInt>(base->getArgOperand(0));
             uint64_t index = number->getZExtValue();
+            info.trap_id = static_cast<unsigned>(index);
             info.text =
                 index < sizeof trap_messages / sizeof trap_messages[0] ? trap_messages[index] : "undefined behaviour";
         } else {

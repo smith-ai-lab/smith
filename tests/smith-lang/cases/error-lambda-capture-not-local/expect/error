@@ -1,0 +1,2 @@
+src/main.smith:8:26: `limit` is not a local of the enclosing function: a capture list names locals only (to capture a computed value, write a local first)
+src/main.smith:8:60: expected expression

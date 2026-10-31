@@ -1,0 +1,8 @@
+#include <stdio.h>
+
+int main(void) {
+    int factor = 3;
+    int (*scale)(int) = [factor](int a) -> int { return a * factor; };
+    printf("%d\n", scale(2));
+    return 0;
+}
