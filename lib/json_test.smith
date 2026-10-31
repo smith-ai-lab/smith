@@ -1426,11 +1426,11 @@ export void test_json_conformance_with_jsontestsuite() {
     char *report = arena::push_slice(&memory, char, test_json_listing_capacity).data;
     usize reported = 0;
     TestJsonConformance totals = {};
-    files::EntriesResult listed = files::list(folder[0:c::strlen(folder)]);
+    files::EntriesResult entries = files::list(folder[0:c::strlen(folder)]);
     files::Entries names = {};
-    switch (listed) {
+    switch (entries) {
     case .ok:
-        names = listed.ok;
+        names = entries.ok;
         break;
     case .error:
         test::check_condition(false); // ends the test
