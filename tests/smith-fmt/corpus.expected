@@ -2987,6 +2987,50 @@ i32 main() {
     c::printf("%d\n", scale(2));
     return 0;
 }
+==> error-lambda-generic-nested/src/main.smith <==
+module main;
+
+// A lambda inside a lambda of a generic is not built.
+i32 twice(constexpr type T, T a) {
+    i32 (*f)(void) = []() -> i32 {
+        i32 (*g)(void) = []() -> i32 { return 1; };
+        return g() + (i32)sizeof(T);
+    };
+    return f() + (i32)a;
+}
+
+i32 main() {
+    return twice(i32, 1);
+}
+==> error-lambda-generic-return-type/src/main.smith <==
+module main;
+
+// The type is read from the first `return`, which must be the first statement of the body.
+i32 pick(constexpr type T, T a) {
+    i32 (*f)(T) = [](T x) {
+        T y = x;
+        return y;
+    };
+    return (i32)f(a);
+}
+
+i32 main() {
+    return pick(i32, 1);
+}
+==> error-lambda-generic-runtime-capture/src/main.smith <==
+module main;
+
+typedef i32 (*Call)(void);
+
+// `factor` is a run-time parameter of the generic: the lambda would capture it.
+Call scaled(constexpr type T, i32 factor) {
+    return []() -> i32 { return factor * (i32)sizeof(T); };
+}
+
+i32 main() {
+    Call call = scaled(i32, 3);
+    return call();
+}
 ==> error-lambda-returns-disagree/src/main.smith <==
 module main;
 
@@ -9086,6 +9130,144 @@ i32 main() {
     i32 doubled = apply([](i32 a) -> i32 { return a * 2; }, 4);
     i32 (*triple)(i32) = [](i32 a) { return a * 3; };
     c::printf("%d %d\n", doubled, triple(5));
+    return 0;
+}
+==> lambda-generic-handler/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+typedef i32 (*Call)(i32);
+
+static i32 twice(i32 x) {
+    return x * 2;
+}
+
+static i32 negate(i32 x) {
+    return -x;
+}
+
+// A lambda in a generic calls the generic's `constexpr auto handler`: it is not a capture.
+Call wrap(constexpr auto handler) {
+    return [](i32 x) -> i32 { return handler(x) + 1; };
+}
+
+i32 main() {
+    Call a = wrap(twice);
+    Call b = wrap(negate);
+    c::printf("%d %d\n", a(10), b(10));
+    return 0;
+}
+==> lambda-generic-infer/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// The return type is inferred from the first `return`, with the instance's types.
+export T sum(constexpr type T, T a, T b) {
+    T (*add)(T, T) = [](T x, T y) { return x + y; };
+    void (*nothing)(void) = [] {};
+    nothing();
+    return add(a, b);
+}
+
+i32 main() {
+    c::printf("%d %.1f\n", sum(i32, 2, 3), sum(f64, 1.5, 2.0));
+    return 0;
+}
+==> lambda-generic-spawn/src/later.smith <==
+module later;
+
+export typedef void (*Entry)(void *);
+
+export typedef struct {
+    Entry entry;
+    alignas(16) u8 data[64];
+} Slot;
+
+// The `task::spawn` shape: the entry is a lambda of the instance, the arguments are `typeof(rest)`.
+export void defer(Slot *slot, constexpr auto f, auto... rest) {
+    static_assert(sizeof(typeof(rest)) <= sizeof slot->data, "defer: too many arguments");
+    typeof(rest) args = {rest...};
+    *(typeof(rest) *)slot->data = args;
+    slot->entry = [](void *raw) {
+        typeof(rest) *a = raw;
+        f(a->[rest]...);
+    };
+}
+==> lambda-generic-spawn/src/main.smith <==
+module main;
+
+import later;
+import <stdio.h>;
+
+static void show(i32 a, i64 b) {
+    c::printf("show %d %ld\n", a, (long)b);
+}
+
+static void scale(f64 x) {
+    c::printf("scale %.1f\n", x);
+}
+
+i32 main() {
+    later::Slot a;
+    later::Slot b;
+    later::Slot c;
+    later::defer(&a, show, 3, (i64)4);
+    later::defer(&b, scale, 2.5);
+    later::defer(&c, show, 5, (i64)6); // the instance of the first call again
+    a.entry(a.data);
+    b.entry(b.data);
+    c.entry(c.data);
+    return 0;
+}
+==> lambda-generic-table/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+typedef struct {
+    const char *path;
+    i32 (*call)(i32);
+} Route;
+
+static i32 add_one(i32 x) {
+    return x + 1;
+}
+
+static i32 triple(i32 x) {
+    return x * 3;
+}
+
+// The `http::get` shape: routes with different handlers in one table, each a function pointer that knows its instance.
+Route route(const char *path, constexpr auto handler) {
+    Route r = {path, [](i32 x) -> i32 { return handler(x); }};
+    return r;
+}
+
+i32 main() {
+    Route table[2] = {route("/a", add_one), route("/b", triple)};
+    for (usize i = 0; i < 2; i++) {
+        c::printf("%s %d\n", table[i].path, table[i].call(5));
+    }
+    return 0;
+}
+==> lambda-generic-type/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+typedef i32 (*Size)(void);
+
+// A lambda in a generic uses the generic's `T`: each instance gets a function of its own.
+Size size_of_type(constexpr type T) {
+    return []() -> i32 { return (i32)sizeof(T); };
+}
+
+i32 main() {
+    Size a = size_of_type(i16);
+    Size b = size_of_type(f64);
+    c::printf("%d %d\n", a(), b());
     return 0;
 }
 ==> lambda-nested/src/main.smith <==

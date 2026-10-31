@@ -1,0 +1,1 @@
+src/main.smith:5:19: the type of this lambda is read from its first `return`, which must be the first statement of the body: write the return type, `[](...) -> T { ... }`

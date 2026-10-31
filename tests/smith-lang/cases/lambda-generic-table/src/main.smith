@@ -1,0 +1,30 @@
+module main;
+
+import <stdio.h>;
+
+typedef struct {
+    const char *path;
+    i32 (*call)(i32);
+} Route;
+
+static i32 add_one(i32 x) {
+    return x + 1;
+}
+
+static i32 triple(i32 x) {
+    return x * 3;
+}
+
+// The `http::get` shape: routes with different handlers in one table, each a function pointer that knows its instance.
+Route route(const char *path, constexpr auto handler) {
+    Route r = {path, [](i32 x) -> i32 { return handler(x); }};
+    return r;
+}
+
+i32 main() {
+    Route table[2] = {route("/a", add_one), route("/b", triple)};
+    for (usize i = 0; i < 2; i++) {
+        c::printf("%s %d\n", table[i].path, table[i].call(5));
+    }
+    return 0;
+}

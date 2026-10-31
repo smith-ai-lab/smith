@@ -1,0 +1,13 @@
+module main;
+
+typedef i32 (*Call)(void);
+
+// `factor` is a run-time parameter of the generic: the lambda would capture it.
+Call scaled(constexpr type T, i32 factor) {
+    return []() -> i32 { return factor * (i32)sizeof(T); };
+}
+
+i32 main() {
+    Call call = scaled(i32, 3);
+    return call();
+}

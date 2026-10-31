@@ -1,0 +1,3 @@
+src/main.smith:18:22: cannot tell what `main_show`, the argument of `defer`, is: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); the parameter `f` is `constexpr auto` and takes the name of a function
+src/main.smith:19:22: cannot tell what `main_scale`, the argument of `defer`, is: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); the parameter `f` is `constexpr auto` and takes the name of a function
+src/main.smith:20:22: cannot tell what `main_show`, the argument of `defer`, is: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); the parameter `f` is `constexpr auto` and takes the name of a function

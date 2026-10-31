@@ -1,0 +1,1 @@
+src/main.smith:6:26: a lambda inside a lambda in a generic is not built: the generic writes one function for each instance, so write the inner one as a function of its own
