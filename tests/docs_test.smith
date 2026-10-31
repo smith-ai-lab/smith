@@ -6,14 +6,33 @@
 module docs_test;
 
 import smith::arena;
+import smith::env;
+import smith::files;
 import smith::format;
 import smith::mem;
 import smith::test;
+import <smith_core_docs.h>;
 import <string.h>;
 import scratch;
 
 static typeof(const char[:]) slice_of(const char *text) {
     return text[0:c::strlen(text)];
+}
+
+constexpr usize check_capacity = 1U << 16;
+
+// The folder of the repository (`name`, relative to $SMITH_REPO) as a path, from the current allocator.
+static const char *in_repo(const char *name) {
+    env::Value repo = env::get("SMITH_REPO");
+    return format::push(repo == .some ? repo.some.data : ".", "/", name).data;
+}
+
+// The check of a folder of the repository, in process (smith_core_docs_check): the problems and the summary line, as
+// the verb prints them (standard error, then standard output).
+static const char *check(const char *name) {
+    char *out = mem::alloc_slice(char, check_capacity).data;
+    test::check_condition(c::smith_core_docs_check(in_repo(name), out, check_capacity));
+    return out;
 }
 
 // A scratch folder holding a copy of the fixtures (the links in them stay links); the caller cleans it.
@@ -25,18 +44,26 @@ static scratch::Project fixtures() {
 
 // --- 1. the fixtures: checked, and the output compared whole ---------------------------------------------------------
 
+// A fixture whose `args` names options (--type, --require) can only be shown through the verb; the others are checked
+// in process, and the output compared whole.
 static void fixture_case(const char *name) {
-    scratch::Project p = fixtures();
-    defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run run =
-        scratch::sh(&p, format::push("args=; [ -f ", name, "/args ] && args=$(cat ", name, "/args); smith docs $args ",
-                                     name, " >actual 2>&1; echo $? >status; cat actual")
-                            .data);
-    test::golden(slice_of(format::push("tests/docs/fixtures/", name, "/expect.txt").data), slice_of(run.out));
+    const char *folder = format::push("tests/docs/fixtures/", name).data;
+    const char *args_file = in_repo(format::push(folder, "/args").data);
+    files::BytesResult args = files::read_file(args_file[0:c::strlen(args_file)]);
+    if (args == .error) {
+        test::golden(slice_of(format::push(folder, "/expect.txt").data), slice_of(check(folder)));
+        return;
+    }
+    scratch::Project p = fixtures();
+    defer scratch::clean(&p);
+    scratch::Run run = scratch::sh(
+        &p,
+        format::push("smith docs $(cat ", name, "/args) ", name, " >actual 2>&1; echo $? >status; cat actual").data);
+    test::golden(slice_of(format::push(folder, "/expect.txt").data), slice_of(run.out));
     // The check exits 1 exactly when there are problems.
     const char *want = scratch::capture(
         &p,
@@ -96,7 +123,7 @@ export void test_docs_depfile_a_links_target_that_is_not_there_is_not_named() {
 // --- 3. the options ------------------------------------------------------------------------------------------------
 
 export void test_docs_options_a_depfile_needs_a_target() {
-    scratch::Project p = fixtures();
+    scratch::Project p = scratch::make("p", nullptr); // the command stops at its arguments: no folder is read
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -107,7 +134,7 @@ export void test_docs_options_a_depfile_needs_a_target() {
 }
 
 export void test_docs_options_a_target_needs_a_depfile() {
-    scratch::Project p = fixtures();
+    scratch::Project p = scratch::make("p", nullptr); // the command stops at its arguments: no folder is read
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -118,7 +145,7 @@ export void test_docs_options_a_target_needs_a_depfile() {
 }
 
 export void test_docs_options_type_needs_a_name() {
-    scratch::Project p = fixtures();
+    scratch::Project p = scratch::make("p", nullptr); // the command stops at its arguments: no folder is read
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -129,7 +156,7 @@ export void test_docs_options_type_needs_a_name() {
 }
 
 export void test_docs_options_require_needs_a_field() {
-    scratch::Project p = fixtures();
+    scratch::Project p = scratch::make("p", nullptr); // the command stops at its arguments: no folder is read
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -140,7 +167,7 @@ export void test_docs_options_require_needs_a_field() {
 }
 
 export void test_docs_options_require_says_what_it_takes() {
-    scratch::Project p = fixtures();
+    scratch::Project p = scratch::make("p", nullptr); // the command stops at its arguments: no folder is read
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -151,7 +178,7 @@ export void test_docs_options_require_says_what_it_takes() {
 }
 
 export void test_docs_options_require_needs_a_field_after_the_colon() {
-    scratch::Project p = fixtures();
+    scratch::Project p = scratch::make("p", nullptr); // the command stops at its arguments: no folder is read
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -162,7 +189,7 @@ export void test_docs_options_require_needs_a_field_after_the_colon() {
 }
 
 export void test_docs_options_require_needs_a_value_after_the_equals() {
-    scratch::Project p = fixtures();
+    scratch::Project p = scratch::make("p", nullptr); // the command stops at its arguments: no folder is read
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -173,7 +200,7 @@ export void test_docs_options_require_needs_a_value_after_the_equals() {
 }
 
 export void test_docs_options_an_unknown_option_is_a_usage_error() {
-    scratch::Project p = fixtures();
+    scratch::Project p = scratch::make("p", nullptr); // the command stops at its arguments: no folder is read
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -184,7 +211,7 @@ export void test_docs_options_an_unknown_option_is_a_usage_error() {
 }
 
 export void test_docs_options_two_roots_are_a_usage_error() {
-    scratch::Project p = fixtures();
+    scratch::Project p = scratch::make("p", nullptr); // the command stops at its arguments: no folder is read
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -246,28 +273,24 @@ export void test_docs_options_a_value_list_rejects_a_value_outside_it() {
 // knowledge/index.md declares in its frontmatter, and the defaults when it declares none ------------------------------
 
 export void test_docs_no_arguments_checks_the_current_folder() {
-    scratch::Project p = fixtures();
-    defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run run = scratch::sh(&p, "cd pass && smith docs");
-    scratch::expect_contains("no arguments: checks the current folder", run.out, "smith docs: 2 concepts");
+    scratch::expect_contains("no arguments: checks the folder", check("tests/docs/fixtures/pass"),
+                             "smith docs: 2 concepts");
 }
 
 export void test_docs_no_arguments_the_default_types_apply() {
-    scratch::Project p = fixtures();
-    defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run run = scratch::sh(&p, "cd pass && smith docs");
-    scratch::expect_contains("no arguments: the default types apply", run.err,
+    scratch::expect_contains("no arguments: the default types apply", check("tests/docs/fixtures/pass"),
                              "type 'dataset' is not one of convention, architecture");
 }
 
+// The exit status and the folder found are the verb's wiring, which no function shows.
 export void test_docs_no_arguments_problems_exit_1() {
     scratch::Project p = fixtures();
     defer scratch::clean(&p);
@@ -321,14 +344,12 @@ export void test_docs_subfolder_the_search_stops_at_the_git_root() {
 }
 
 export void test_docs_declared_types_the_indexs_types_and_requirements_are_the_projects() {
-    scratch::Project p = fixtures();
-    defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run run = scratch::sh(&p, "cd declared && smith docs");
-    scratch::expect_status("declared types: the index's types and requirements are the project's", 0, &run);
+    scratch::expect_contains("declared types: the index's types and requirements are the project's",
+                             check("tests/docs/fixtures/declared"), "smith docs: 2 concepts, 0 problems");
 }
 
 export void test_docs_declared_types_type_replaces_the_indexs_types() {

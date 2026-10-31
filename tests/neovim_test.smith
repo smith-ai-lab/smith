@@ -10,21 +10,44 @@ import smith::arena;
 import smith::format;
 import smith::mem;
 import smith::test;
+import <string.h>;
 import scratch;
 
-// The scratch home: the fixture (a project, a folder with a .smith file alone, and a nvim-dap that is only a table),
-// the compile database of the project, and the projects smith new writes (no build file; the plugin finds them by
-// their main): a C one that builds, a C one whose main.c does not compile, and one of the default language.
+// The scratch home: the fixture (a project, a folder with a .smith file alone, and a nvim-dap that is only a table)
+// and the compile database of the project.
 constexpr char setup[_] =
     "d=$PWD; mkdir -p data config state cache home new empty-data && "
     "printf "
     "'[{\"directory\":\"%s\",\"file\":\"main.smith\",\"arguments\":[\"smith-cc\",\"-x\",\"c\",\"-c\",\"main.smith\"]}]"
     "\\n' "
-    "\"$d/project\" >project/compile_commands.json && export HOME=$d/home GIT_CONFIG_NOSYSTEM=1 && "
+    "\"$d/project\" >project/compile_commands.json && export HOME=$d/home GIT_CONFIG_NOSYSTEM=1";
+
+// The projects smith new writes (no build file; the plugin finds them by their main), made only for the tests that
+// read them: a C one that builds (hello), a C one whose main.c does not compile (broken), and one of the default
+// language (fresh).
+constexpr char make_new[_] =
     "mk() { smith new \"$@\" >new.log 2>&1 || { echo \"smith new $*: failed\" >&2; tail -n 40 new.log >&2; return 1; "
-    "}; }; "
-    "(cd new && mk --language c hello && mk --language c broken && "
-    "printf 'this is an error\\n' >>broken/main.c && mk fresh)";
+    "}; }; ";
+
+constexpr char make_hello[_] = "(cd new && mk --language c hello)";
+constexpr char make_broken[_] = "(cd new && mk --language c broken && printf 'this is an error\\n' >>broken/main.c)";
+constexpr char make_fresh[_] = "(cd new && mk fresh)";
+
+// Whether the test `name` is `other`.
+static bool is(const char *name, const char *other) {
+    return c::strcmp(name, other) == 0;
+}
+
+// The scratch home's setup for the test `name`: the base and the projects of smith new it reads.
+static const char *setup_for(const char *name) {
+    bool a = is(name, "dap_build_program") || is(name, "dap_test_under_cursor") || is(name, "dap_main_under_cursor") ||
+             is(name, "neotest_is_test_file") || is(name, "neotest_discover_c") || is(name, "neotest_build_spec");
+    bool b = is(name, "dap_build_fails");
+    bool f = is(name, "dap_default_project");
+    return format::push(setup, a || b || f ? "; " : "", a || b || f ? make_new : "", a ? make_hello : "",
+                        a && (b || f) ? " && " : "", b ? make_broken : "", b && f ? " && " : "", f ? make_fresh : "")
+        .data;
+}
 
 // A smith that prints a commit of our choosing and is the real one otherwise.
 constexpr char shim[_] =
@@ -59,7 +82,7 @@ static void nvim(const char *name, const Start *start) {
     if (start->needs_git && scratch::sh(&p, "git -C \"$SMITH_REPO\" rev-parse HEAD >/dev/null 2>&1").status != 0) {
         return; // the version tests need a git checkout of smith
     }
-    scratch::Run made = scratch::sh(&p, setup);
+    scratch::Run made = scratch::sh(&p, setup_for(name));
     if (made.status != 0) {
         test::note("the setup said: %s", made.err); // `smith new`'s own output, so a failure explains itself (#456)
     }

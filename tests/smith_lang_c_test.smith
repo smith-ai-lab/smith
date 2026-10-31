@@ -210,6 +210,10 @@ export void test_loops_print_the_same_as_c() {
     behave("loops");
 }
 
+export void test_brackets_print_the_same_as_c() {
+    behave("brackets");
+}
+
 export void test_sized_names_print_the_same_as_c() {
     behave("sized_names");
 }

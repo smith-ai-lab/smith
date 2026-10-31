@@ -1,0 +1,11 @@
+module main;
+
+import <stdio.h>;
+
+i32 main() {
+    i32 (*add)(i32, i32) = [](i32 a, i32 b) { return a + b; };
+    i32 (*mul)(i32, i32) = [](i32 a, i32 b) { return a * b; };
+    f64 (*half)(f64) = [](f64 x) { return x / 2.0; };
+    c::printf("%d %d %.1f\n", add(2, 3), mul(2, 3), half(5.0));
+    return 0;
+}
