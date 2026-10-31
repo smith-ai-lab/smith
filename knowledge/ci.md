@@ -12,7 +12,7 @@ for what it changed, never the full check; no git hook runs anything on a push, 
 2026-10-29).
 
 **CI is GitHub's.** `.github/workflows/ci.yml` runs the full check on the pull request on hosted runners
-([ci-hosted](ci-hosted.md)); the one required check is `ci`. Nothing runs on the owner's Mac.
+([ci-hosted](ci-hosted.md)); the one required check is `ci`. The macOS jobs run on hosted `macos-26`; the owner's Mac takes them only as overflow when the hosted pool is saturated (and never needs to be on).
 
 **The merge queue merges.** When `ci` is green the pull request goes into GitHub's merge queue
 (`gh pr merge N --auto`). The queue makes a group of up to 5 entries on top of main, runs `ci` on the group
@@ -28,6 +28,9 @@ installed smith is always main's; nobody runs `smith build install`.
 **Where a failure shows.** The first failing job cancels the run, so the other shards show as cancelled. The failing
 shard names its tests: the last lines of its log (the `Fail fast` step) and its job summary hold each failed test's
 `FAIL <name>` line with the check and error lines under it (#1086); look there before re-running.
+When the tests do not build, the step `Build the tests` of `setup-smith` ends with the compiler's
+`file:line:col: error:` lines and the command that failed (also in the job summary, #1118). The errors go to stdout and
+only the full output of the nested build is in `.smith/log/.smith_task_units-build.log` (a hidden file).
 
 **A red pull request** is its author's: read the failing job (`gh run view --log-failed`), fix it on the branch, push.
 A conflict with main is fixed by merging main into the branch, never by a rebase or a force-push.
