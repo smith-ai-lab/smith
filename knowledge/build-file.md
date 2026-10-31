@@ -24,7 +24,7 @@ it. `.content_hash` is declared but not implemented. The
 - `smith build` compiles `build.c` with one fixed command of its own, runs it, and the program writes `build.ninja`.
 - smith then runs that file itself, with its own executor ([The executor](executor.md)): the scheduling, the rebuild
   decisions and the parallelism. No ninja is needed; `SMITH_NINJA=<ninja>` runs the same file with ninja instead.
-- It replaces the Makefile. It is step 2 of the three steps in [AGENTS.md](../AGENTS.md): it only describes the build, so
+- It replaces the Makefile. It is step 2 of [adopting smith](adoption-path.md): it only describes the build, so
   it changes nothing the build does.
 
 ## Principles
@@ -43,3 +43,7 @@ it. `.content_hash` is declared but not implemented. The
 - Zig 0.17.0 shows the failure of the alternative. It caches the result of running `build.zig`, and it silently missed a
   new file, a changed list and a changed environment variable whenever the read was not declared (measured: `wildcard`,
   `monad1`, `system2`). That is why v1 reruns instead of caching.
+
+## Decisions
+
+- `smith build` runs build.c, then its own executor, with no ninja (`SMITH_NINJA` is the way out).

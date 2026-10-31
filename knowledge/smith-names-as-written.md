@@ -119,3 +119,7 @@ given (`tests/lint_smith_test.smith`).
   constructor is named as the module writes it, and the rules about capabilities (a type marked
   `[[clang::annotate("smith::capability")]]`; the module that defines it may make raw calls) read the module's file as
   its implementation. The skill smith-io has the rules and how to fix each finding.
+
+## Decisions
+
+- `smith lsp` and `smith lint` handle `.smith` files as written, with no LLVM change beyond the hooks; clangd has one general hook through which smith's plugins add hover lines and code actions (owner, 2026-10-24: "add a general clangd hook for plugin hover lines (and code actions)"), never a smith feature written into clangd.

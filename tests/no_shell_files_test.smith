@@ -1,0 +1,57 @@
+// The guard of "no new shell files" (owner, 2026-10-25: "I want everything to be in Smith. I don't want any shell
+// files"; issue #906). A tracked file fails when its name ends in `.sh` or its first line is a shell `#!` line, unless
+// it is one of the shell files that exist today, each waiting for its port (#291). The fake programs of
+// tests/build_fixtures/ are data the build tests run in place of curl, gh and a compiler, and are not smith's scripts.
+// The guard is a test, so `smith check` runs it on every tree the train checks.
+module no_shell_files_test;
+
+import smith::arena;
+import smith::format;
+import smith::mem;
+import smith::test;
+import scratch;
+
+// The tracked shell files, one a line; the repository is the script's first argument.
+constexpr char guard_script[_] =
+    "cd \"$1\" || exit 97; git ls-files | grep -v -e '^scripts/llvm[.]sh$' -e '^scripts/release[.]sh$' "
+    "-e '^tests/build_fixtures/' "
+    "| while IFS= read -r f; do [ -f \"$f\" ] || continue; case \"$f\" in *.sh) printf '%s\\n' \"$f\"; continue;; "
+    "esac; "
+    "head -c 64 \"$f\" | head -n 1 | tr -d '\\000' | grep -qE "
+    "'^#![[:space:]]*(/usr/bin/env[[:space:]]+)?(/[a-z/]*/)?(sh|bash|zsh|dash|ksh)([[:space:]]|$)' "
+    "&& printf '%s\\n' \"$f\"; done | sort -u";
+
+// The shell files the guard names in the repository at `root` (a shell word).
+static const char *offenders(const scratch::Project *p, arena::Arena *memory, const char *root) {
+    scratch::write(p, "../guard.sh", guard_script);
+    const char *command = format::push(memory, "sh ../guard.sh ", root).data;
+    return scratch::capture(p, command);
+}
+
+export void test_no_tracked_file_of_smith_is_a_new_shell_file() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::expect_text("a new shell file; owner: \"I want everything to be in Smith. I don't want any shell files.\" "
+                         "Write a .smith test through scratch:: (tests/scratch.smith), or a task in the build file",
+                         "", offenders(&p, &memory, "\"$SMITH_REPO\""));
+}
+
+export void test_a_new_shell_file_fails() {
+    scratch::Project p = scratch::make("repository", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run made = scratch::sh(
+        &p, "git init -q . && mkdir -p scripts tests/build_fixtures src && printf 'echo hi\\n' > x.sh && "
+            "printf '#!/bin/bash\\necho hi\\n' > tool && printf '#!/usr/bin/env sh\\n' > src/env && "
+            "printf '#!/bin/sh\\n' > scripts/llvm.sh && printf '#!/bin/sh\\n' > tests/build_fixtures/curl && "
+            "printf '#!/usr/bin/env python3\\n' > p.py && printf 'int ok;\\n' > src/ok.c && git add -f -A");
+    scratch::expect_status("the repository is made", 0, &made);
+    scratch::expect_text("the new shell files", "src/env\ntool\nx.sh\n", offenders(&p, &memory, "."));
+}

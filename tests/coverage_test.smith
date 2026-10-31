@@ -240,3 +240,19 @@ export void test_no_records_means_the_graph_decides() {
     scratch::expect_contains("the reason", run.out, "no records of tests");
     scratch::expect_contains("the graph's choice", run.out, "tests/runs_test.smith: it runs smith");
 }
+
+// A file that imports smith::arena and then declares a variable with an initializer compiles with the record build's
+// coverage flags (#845): the import's unused function over types is in the buffer `<smith-types>`, and a buffer with
+// no place in the main file left the coverage mapping of that function looping for good.
+export void test_a_file_with_an_import_and_a_variable_compiles_with_coverage() {
+    scratch::Project p = scratch::make("p", "coverage_types");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run =
+        scratch::sh(&p, "smith build >/dev/null 2>&1; smith cc -fprofile-instr-generate -fcoverage-mapping -std=gnu2y "
+                        "-I .smith/include -I . -c main.smith -o main.o");
+    scratch::expect_status("coverage: the compile finishes", 0, &run);
+}

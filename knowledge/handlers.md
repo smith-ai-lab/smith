@@ -115,3 +115,16 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
   `entropy::seed()` (`smith::entropy`) is the one caller in smith's libraries; it has the `entropy` effect
   (`getentropy` is `entropy` in `shim/effects_table.h`), and `smith::random` stays pure. A test scripts it with
   `entropy::fake(number)`, whose `fill` writes the bytes of a number.
+
+- **One table per thread (issue #885):** the handlers of a thread are one `SmithHandlers` (`include/smith/handlers.h`: a
+  pointer per kind, `allocator`, `files`, `console`, `env`, `clock`, `entropy`, `net`, `process`). Each thread has a table
+  of its own and one `thread_local` pointer names the current table (null: its own); `smith_handlers_table()` returns it and
+  `smith_handlers_set_table(table)` makes another current and returns the previous one (null: the thread's own). Every
+  setter and getter keeps its name and meaning: it reads or writes its member of the current table, so a thread that never
+  swaps behaves as before. The per-kind counters count the non-null handlers of the tables that are current (a swap moves
+  them), so the fast path is still one relaxed load, and the thread-local is still read in a `noinline` function after
+  the counter and `ready` checks. The task runtime (#241) gives each task a table and swaps it at a task switch: one store
+  instead of eight. `tests/handlers/table.c` tests the swap and two threads; `tests/handlers/bench.c` prints the cost of a
+  malloc/free pair (Linux x86_64, -O2, best of five): no handler 11.4 ns before and 11.5 ns after; under a bump handler
+  6.2 ns before and 6.6 ns after; the bump pair under ASan 6.7 ns before and 7.0 ns after (no handler under ASan 161 ns
+  both).

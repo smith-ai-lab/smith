@@ -46,7 +46,7 @@ The owner sets a share of the weekly limit per day. Check usage hourly.
 - **The next day** resumes from the pushed branches with fresh orchestrators.
 
 ## Relay decisions
-Ask the owner, then relay the answer quoting the owner's words. Record each decision where agents will find it: on the epic or ticket it changes, in the owner's words, and one line in the project's AGENTS.md only when every agent needs it. A permission for something destructive must be given in the session that acts; don't relay it.
+Ask the owner, then relay the answer quoting the owner's words. Record each decision where agents will find it: on the epic or ticket it changes, in the owner's words, and one line in [decisions](../../../knowledge/decisions.md) with a link to its concept. A permission for something destructive must be given in the session that acts; don't relay it.
 
 ## Friction
 Every PR ends with `## Friction`. At the end of each day, read them across that day's PRs. A point that shows up in two or more becomes a ticket, fixed once in the skill, message or check that caused it.

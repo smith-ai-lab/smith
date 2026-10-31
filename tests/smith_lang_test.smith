@@ -581,6 +581,10 @@ export void test_constexpr_import_result_type() {
     corpus_case("constexpr-import-result-type");
 }
 
+export void test_constexpr_import_slice_u8() {
+    corpus_case("constexpr-import-slice-u8");
+}
+
 export void test_constexpr_modules() {
     corpus_case("constexpr-modules");
 }

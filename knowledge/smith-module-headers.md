@@ -136,3 +136,7 @@ What the header keeps of the source (written by the plain lexer, `runtime/lang_t
   array bound or initializer needs must be exported.
 - An interface read in memory (`import foo` with no header) keeps the conditionals on the module's own lines, and no
   comments (diagnostics point at the module's lines).
+
+## Decisions
+
+- A module's generated header includes exactly what its exports need.
