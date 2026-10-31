@@ -268,3 +268,19 @@ export void test_macos_handlers_asan_reports_puts_of_an_unterminated_string() {
                                                   "'heap-buffer-overflow'"));
     }
 }
+
+// The table of a thread (issue #885): a second SmithHandlers swapped in, and two threads with a handler each. On both
+// systems: the dylib on macOS, lib/handlers.c linked as the object on Linux.
+export void test_handlers_a_swapped_table_is_the_one_write_and_malloc_reach_and_threads_keep_their_own() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "tests/handlers", "tests/handlers");
+    scratch::copy_tree(&p, "lib", "lib");
+    must(&p, "handlers: the table test builds with the runtime linked in",
+         "smith cc $f $h/table.c lib/handlers.c -o t_table");
+    passes(&p, "handlers: the table test passes", "./t_table");
+}

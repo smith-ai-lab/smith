@@ -33,7 +33,53 @@
 
 static atomic_bool smith_handlers_ready;
 static atomic_uint smith_handlers_active; // threads with an allocator set: 0 is the fast path, libc with no lookup
-static thread_local SmithAllocator *smith_handlers_table;
+static atomic_uint smith_handlers_files_active;
+static atomic_uint smith_handlers_console_active;
+static atomic_uint smith_handlers_env_active;
+static atomic_uint smith_handlers_clock_active;
+static atomic_uint smith_handlers_entropy_active;
+static atomic_uint smith_handlers_net_active;
+static atomic_uint smith_handlers_process_active;
+
+// The handlers of a thread are one table (SmithHandlers). A thread has a table of its own, and a thread-local pointer
+// names the current one (null: its own); the task runtime swaps the pointer with smith_handlers_set_table. The counters
+// above count the non-null handlers of the tables that are current, so a thread that sets none costs one load.
+static thread_local SmithHandlers smith_handlers_own;
+static thread_local SmithHandlers *smith_handlers_current_table;
+
+// Inlined into the noinline functions that read it: the thread-local is still read only after the counter and ready
+// checks.
+__attribute__((always_inline)) static inline SmithHandlers *smith_handlers_tab(void) {
+    return smith_handlers_current_table != nullptr ? smith_handlers_current_table : &smith_handlers_own;
+}
+
+static void smith_handlers_count(atomic_uint *counter, const void *from, const void *to) {
+    if (from == nullptr && to != nullptr) atomic_fetch_add(counter, 1);
+    if (from != nullptr && to == nullptr) atomic_fetch_sub(counter, 1);
+}
+
+static void smith_handlers_recount(const SmithHandlers *from, const SmithHandlers *to) {
+    smith_handlers_count(&smith_handlers_active, from->allocator, to->allocator);
+    smith_handlers_count(&smith_handlers_files_active, from->files, to->files);
+    smith_handlers_count(&smith_handlers_console_active, from->console, to->console);
+    smith_handlers_count(&smith_handlers_env_active, from->env, to->env);
+    smith_handlers_count(&smith_handlers_clock_active, from->clock, to->clock);
+    smith_handlers_count(&smith_handlers_entropy_active, from->entropy, to->entropy);
+    smith_handlers_count(&smith_handlers_net_active, from->net, to->net);
+    smith_handlers_count(&smith_handlers_process_active, from->process, to->process);
+}
+
+SmithHandlers *smith_handlers_table(void) {
+    return smith_handlers_tab();
+}
+
+SmithHandlers *smith_handlers_set_table(SmithHandlers *table) {
+    SmithHandlers *previous = smith_handlers_tab();
+    SmithHandlers *next = table != nullptr ? table : &smith_handlers_own;
+    smith_handlers_recount(previous, next);
+    smith_handlers_current_table = next;
+    return previous;
+}
 
 __attribute__((constructor)) static void smith_handlers_start(void) {
     atomic_store(&smith_handlers_ready, true);
@@ -42,7 +88,7 @@ __attribute__((constructor)) static void smith_handlers_start(void) {
 // The thread-local is read in a function of its own: unoptimized code computes a thread-local's address where the
 // function starts, before the checks, and dyld calls close and write before the image's thread-local storage exists.
 __attribute__((noinline)) static SmithAllocator *smith_handlers_table_get(void) {
-    return smith_handlers_table;
+    return smith_handlers_tab()->allocator;
 }
 
 __attribute__((noinline)) static SmithAllocator *smith_handlers_current(void) {
@@ -52,8 +98,8 @@ __attribute__((noinline)) static SmithAllocator *smith_handlers_current(void) {
 }
 
 SmithAllocator *smith_handlers_set_allocator(SmithAllocator *allocator) {
-    SmithAllocator *previous = smith_handlers_table;
-    smith_handlers_table = allocator;
+    SmithAllocator *previous = smith_handlers_tab()->allocator;
+    smith_handlers_tab()->allocator = allocator;
     if (previous == nullptr && allocator != nullptr) atomic_fetch_add(&smith_handlers_active, 1);
     if (previous != nullptr && allocator == nullptr) atomic_fetch_sub(&smith_handlers_active, 1);
     return previous;
@@ -64,17 +110,13 @@ SmithAllocator *smith_handlers_allocator(void) {
 }
 
 // The files and the console, found the same way: a counter of the threads that have one, a thread-local table.
-static atomic_uint smith_handlers_files_active;
-static atomic_uint smith_handlers_console_active;
-static thread_local SmithFileHandler *smith_handlers_files_table;
-static thread_local SmithConsoleHandler *smith_handlers_console_table;
 
 __attribute__((noinline)) static SmithFileHandler *smith_handlers_files_get(void) {
-    return smith_handlers_files_table;
+    return smith_handlers_tab()->files;
 }
 
 __attribute__((noinline)) static SmithConsoleHandler *smith_handlers_console_get(void) {
-    return smith_handlers_console_table;
+    return smith_handlers_tab()->console;
 }
 
 __attribute__((noinline)) static SmithFileHandler *smith_handlers_files_current(void) {
@@ -90,8 +132,8 @@ __attribute__((noinline)) static SmithConsoleHandler *smith_handlers_console_cur
 }
 
 SmithFileHandler *smith_handlers_set_files(SmithFileHandler *files) {
-    SmithFileHandler *previous = smith_handlers_files_table;
-    smith_handlers_files_table = files;
+    SmithFileHandler *previous = smith_handlers_tab()->files;
+    smith_handlers_tab()->files = files;
     if (previous == nullptr && files != nullptr) atomic_fetch_add(&smith_handlers_files_active, 1);
     if (previous != nullptr && files == nullptr) atomic_fetch_sub(&smith_handlers_files_active, 1);
     return previous;
@@ -102,8 +144,8 @@ SmithFileHandler *smith_handlers_files(void) {
 }
 
 SmithConsoleHandler *smith_handlers_set_console(SmithConsoleHandler *console) {
-    SmithConsoleHandler *previous = smith_handlers_console_table;
-    smith_handlers_console_table = console;
+    SmithConsoleHandler *previous = smith_handlers_tab()->console;
+    smith_handlers_tab()->console = console;
     if (previous == nullptr && console != nullptr) atomic_fetch_add(&smith_handlers_console_active, 1);
     if (previous != nullptr && console == nullptr) atomic_fetch_sub(&smith_handlers_console_active, 1);
     return previous;
@@ -114,17 +156,13 @@ SmithConsoleHandler *smith_handlers_console(void) {
 }
 
 // The environment and the clock, found the same way.
-static atomic_uint smith_handlers_env_active;
-static atomic_uint smith_handlers_clock_active;
-static thread_local SmithEnvHandler *smith_handlers_env_table;
-static thread_local SmithClockHandler *smith_handlers_clock_table;
 
 __attribute__((noinline)) static SmithEnvHandler *smith_handlers_env_get(void) {
-    return smith_handlers_env_table;
+    return smith_handlers_tab()->env;
 }
 
 __attribute__((noinline)) static SmithClockHandler *smith_handlers_clock_get(void) {
-    return smith_handlers_clock_table;
+    return smith_handlers_tab()->clock;
 }
 
 __attribute__((noinline)) static SmithEnvHandler *smith_handlers_env_current(void) {
@@ -140,8 +178,8 @@ __attribute__((noinline)) static SmithClockHandler *smith_handlers_clock_current
 }
 
 SmithEnvHandler *smith_handlers_set_env(SmithEnvHandler *env) {
-    SmithEnvHandler *previous = smith_handlers_env_table;
-    smith_handlers_env_table = env;
+    SmithEnvHandler *previous = smith_handlers_tab()->env;
+    smith_handlers_tab()->env = env;
     if (previous == nullptr && env != nullptr) atomic_fetch_add(&smith_handlers_env_active, 1);
     if (previous != nullptr && env == nullptr) atomic_fetch_sub(&smith_handlers_env_active, 1);
     return previous;
@@ -152,8 +190,8 @@ SmithEnvHandler *smith_handlers_env(void) {
 }
 
 SmithClockHandler *smith_handlers_set_clock(SmithClockHandler *clock) {
-    SmithClockHandler *previous = smith_handlers_clock_table;
-    smith_handlers_clock_table = clock;
+    SmithClockHandler *previous = smith_handlers_tab()->clock;
+    smith_handlers_tab()->clock = clock;
     if (previous == nullptr && clock != nullptr) atomic_fetch_add(&smith_handlers_clock_active, 1);
     if (previous != nullptr && clock == nullptr) atomic_fetch_sub(&smith_handlers_clock_active, 1);
     return previous;
@@ -164,11 +202,9 @@ SmithClockHandler *smith_handlers_clock(void) {
 }
 
 // The entropy, found the same way.
-static atomic_uint smith_handlers_entropy_active;
-static thread_local SmithEntropyHandler *smith_handlers_entropy_table;
 
 __attribute__((noinline)) static SmithEntropyHandler *smith_handlers_entropy_get(void) {
-    return smith_handlers_entropy_table;
+    return smith_handlers_tab()->entropy;
 }
 
 __attribute__((noinline)) static SmithEntropyHandler *smith_handlers_entropy_current(void) {
@@ -178,8 +214,8 @@ __attribute__((noinline)) static SmithEntropyHandler *smith_handlers_entropy_cur
 }
 
 SmithEntropyHandler *smith_handlers_set_entropy(SmithEntropyHandler *entropy) {
-    SmithEntropyHandler *previous = smith_handlers_entropy_table;
-    smith_handlers_entropy_table = entropy;
+    SmithEntropyHandler *previous = smith_handlers_tab()->entropy;
+    smith_handlers_tab()->entropy = entropy;
     if (previous == nullptr && entropy != nullptr) atomic_fetch_add(&smith_handlers_entropy_active, 1);
     if (previous != nullptr && entropy == nullptr) atomic_fetch_sub(&smith_handlers_entropy_active, 1);
     return previous;
@@ -210,11 +246,9 @@ static int smith_handlers_clock_sleep(SmithClockHandler *clock, uint64_t nanosec
 }
 
 // The network, found the same way (no libc function is interposed: smith::net calls the handler).
-static atomic_uint smith_handlers_net_active;
-static thread_local SmithNetHandler *smith_handlers_net_table;
 
 __attribute__((noinline)) static SmithNetHandler *smith_handlers_net_get(void) {
-    return smith_handlers_net_table;
+    return smith_handlers_tab()->net;
 }
 
 __attribute__((noinline)) static SmithNetHandler *smith_handlers_net_current(void) {
@@ -224,8 +258,8 @@ __attribute__((noinline)) static SmithNetHandler *smith_handlers_net_current(voi
 }
 
 SmithNetHandler *smith_handlers_set_net(SmithNetHandler *net) {
-    SmithNetHandler *previous = smith_handlers_net_table;
-    smith_handlers_net_table = net;
+    SmithNetHandler *previous = smith_handlers_tab()->net;
+    smith_handlers_tab()->net = net;
     if (previous == nullptr && net != nullptr) atomic_fetch_add(&smith_handlers_net_active, 1);
     if (previous != nullptr && net == nullptr) atomic_fetch_sub(&smith_handlers_net_active, 1);
     return previous;
@@ -236,11 +270,9 @@ SmithNetHandler *smith_handlers_net(void) {
 }
 
 // The child processes, found the same way (no libc function is interposed: smith::process calls the handler).
-static atomic_uint smith_handlers_process_active;
-static thread_local SmithProcessHandler *smith_handlers_process_table;
 
 __attribute__((noinline)) static SmithProcessHandler *smith_handlers_process_get(void) {
-    return smith_handlers_process_table;
+    return smith_handlers_tab()->process;
 }
 
 __attribute__((noinline)) static SmithProcessHandler *smith_handlers_process_current(void) {
@@ -250,8 +282,8 @@ __attribute__((noinline)) static SmithProcessHandler *smith_handlers_process_cur
 }
 
 SmithProcessHandler *smith_handlers_set_process(SmithProcessHandler *process) {
-    SmithProcessHandler *previous = smith_handlers_process_table;
-    smith_handlers_process_table = process;
+    SmithProcessHandler *previous = smith_handlers_tab()->process;
+    smith_handlers_tab()->process = process;
     if (previous == nullptr && process != nullptr) atomic_fetch_add(&smith_handlers_process_active, 1);
     if (previous != nullptr && process == nullptr) atomic_fetch_sub(&smith_handlers_process_active, 1);
     return previous;
