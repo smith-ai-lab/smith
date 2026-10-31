@@ -842,7 +842,7 @@ if constexpr (target::os == target::macos) {
     // Whether the task may park on this descriptor. A socket or a pipe is made non-blocking (once: the flag stays).
     bool parkable(i32 fd) {
         contract::trusted(); // the system's descriptors are the edge
-        // NOLINTBEGIN(smith-effects)
+        // NOLINTBEGIN(smith-effects, bugprone-signed-bitwise): fcntl's flags and st_mode are ints OR-ed and masked
         i32 flags = c::fcntl(fd, get_flags);
         if (flags < 0) return false;
         if ((flags & non_blocking) != 0) return true;
@@ -851,7 +851,7 @@ if constexpr (target::os == target::macos) {
         i32 kind = (i32)info.st_mode & kind_mask;
         if (kind != kind_socket && kind != kind_pipe) return false;
         return c::fcntl(fd, set_flags, flags | non_blocking) == 0;
-        // NOLINTEND(smith-effects)
+        // NOLINTEND(smith-effects, bugprone-signed-bitwise)
     }
 
     // Registers the descriptor with the worker's kqueue and parks the calling task until it is ready. False when the

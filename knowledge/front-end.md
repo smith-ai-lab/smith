@@ -38,6 +38,16 @@ Turns a `front::ast` module into an LLVM module through LLVM's C API: `emit::mod
 - **Handlers** dispatch with `if` chains, never `case .name:` ([#1153](body-files.md)); read payload fields into locals before any call.
 - **No arena around LLVM**: LLVM allocates with `malloc`, which smith routes to the allocator in force, so a test must not hold an arena while it emits or runs the JIT.
 
+## front::lex and front::parse (`front/lex.smith`, `front/parse.smith`, #1128)
+
+**The tokenizer** reads the text of a file and gives all its tokens at once, ending with an `end_of_file` token. A `Token` is a `kind` and a `span`; its text is `source[span.start:span.end]` (`lex::text`), never a copy. `lex::tokenize(source)` is a `Lexed` (`Result(Tokens, LexError)`), the first error stopping it; `lex::dump(tokens, source)` writes one token a line, `line:column kind text`, which the goldens in `tests/front/lex/` hold.
+
+- **Kinds** are a plain enum (`lex::plus`, `lex::kw_if`; the dot rule does not reach a struct field today). An identifier is `type_name` when its first character is an uppercase letter and `name` otherwise: the parser needs no symbol table. Each keyword has a kind (`kw_alignas` .. `kw_countof`: C23's, `_Atomic _BitInt _Complex _Decimal32 _Decimal64 _Decimal128 _Generic _Imaginary _Noreturn`, and smith's `module import export defer try countof`); C's type keywords stay keywords. Literals are `integer`, `floating`, `character` and `string`: the tokenizer checks the form (digit separators, suffixes, prefixes `u8 u U L`, escapes) and the parser decodes the value. Punctuators are C's without `#` and `##`, plus `::`; `[:]` is three tokens, `[[` and `]]` two each; there are no trigraphs and no digraphs.
+- **Errors**: an unterminated string, character or block comment, a malformed number, a byte that starts no token, and any `#` (there is no preprocessor: the message names `constexpr` and `import`).
+- **Comments and white space** make no tokens; doc comments are a later ticket's question.
+
+**The parser core** is a `Parser` (the tokens, the source, a position, the errors, the hooks) and the cursor functions every parser file uses: `peek`, `peek_at`, `advance`, `at`, `accept`, `expect(p, kind, what)` (records `expected <what>, found <text>` and takes nothing), `text`, `error`, `span_from`. Expressions (A3), statements (A4) and declarations (A5) are parsed in three files that call each other only through `Parser.hooks` (`expression`, `type`, `statement`, `declaration`, function pointers) by way of `parse::expression(p)` and its three siblings, so each is tested with stubs before the others exist and A6 wires the real ones. A hook that is not set records an error and gives null. The errors are the current allocator's, as the tree is.
+
 ## front::cimport (track C)
 
 Declarations read from C headers become these same nodes; its concept comes with #1117 (`c-header-import.md`), and links here once that file exists.

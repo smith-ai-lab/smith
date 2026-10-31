@@ -1,0 +1,288 @@
+// Tests of the core of front::parse (#1128, A2 of track A of #1112): the cursor over a tokenized string, the text of
+// `expect`'s errors, the spans and the hooks set to stubs.
+module front_parse_test;
+
+import front::ast;
+import front::lex;
+import front::parse;
+import std::arena;
+import std::mem;
+import std::test;
+
+// A parser over the tokens of source; a lexing error fails the test.
+static parse::Parser parser_of(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    lex::Tokens tokens = {};
+    switch (lexed) {
+    case .ok:
+        tokens = lexed.ok;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    return parse::make(tokens, source);
+}
+
+// Two texts are the same.
+static void expect_text(Str actual, Str expected) {
+    test::check_equal(actual, expected);
+}
+
+// The error at index `at` is this message, from start to end.
+static void expect_error(const parse::Parser *p, Usize at, Str message, U32 start, U32 end) {
+    test::check_condition(at < countof(p->errors));
+    expect_text(p->errors[at].message, message);
+    test::check_equal(p->errors[at].span.start, start);
+    test::check_equal(p->errors[at].span.end, end);
+}
+
+export void test_parse_peek_looks_at_the_token_without_taking_it() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("a + b;");
+    test::check_equal(parse::peek(&p).kind == lex::name, true);
+    test::check_equal(parse::peek(&p).kind == lex::name, true);
+    test::check_equal(parse::peek_at(&p, 1).kind == lex::plus, true);
+    test::check_equal(parse::peek_at(&p, 2).kind == lex::name, true);
+    test::check_equal(parse::peek_at(&p, 3).kind == lex::semicolon, true);
+    test::check_equal(parse::peek_at(&p, 4).kind == lex::end_of_file, true);
+    test::check_equal(p.position, 0);
+}
+
+export void test_parse_peek_past_the_end_is_the_end_of_the_file() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("x");
+    test::check_equal(parse::peek_at(&p, 1).kind == lex::end_of_file, true);
+    test::check_equal(parse::peek_at(&p, 2).kind == lex::end_of_file, true);
+    test::check_equal(parse::peek_at(&p, 1000).kind == lex::end_of_file, true);
+    parse::Parser empty = parser_of("");
+    test::check_equal(parse::peek(&empty).kind == lex::end_of_file, true);
+}
+
+export void test_parse_advance_takes_tokens_in_order_and_stops_at_the_end() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("a + b");
+    lex::Token first = parse::advance(&p);
+    test::check_equal(first.kind == lex::name, true);
+    expect_text(parse::text(&p, first), "a");
+    test::check_equal(p.position, 1);
+    test::check_equal(parse::advance(&p).kind == lex::plus, true);
+    lex::Token last = parse::advance(&p);
+    expect_text(parse::text(&p, last), "b");
+    test::check_equal(p.position, 3);
+    test::check_equal(parse::advance(&p).kind == lex::end_of_file, true);
+    test::check_equal(p.position, 3);
+    test::check_equal(parse::advance(&p).kind == lex::end_of_file, true);
+    test::check_equal(p.position, 3);
+}
+
+export void test_parse_at_and_accept() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("return 1;");
+    test::check_equal(parse::at(&p, lex::kw_return), true);
+    test::check_equal(parse::at(&p, lex::integer), false);
+    test::check_equal(parse::accept(&p, lex::integer), false);
+    test::check_equal(p.position, 0);
+    test::check_equal(parse::accept(&p, lex::kw_return), true);
+    test::check_equal(p.position, 1);
+    test::check_equal(parse::accept(&p, lex::integer), true);
+    test::check_equal(parse::accept(&p, lex::semicolon), true);
+    test::check_equal(parse::at(&p, lex::end_of_file), true);
+    test::check_equal(parse::accept(&p, lex::end_of_file), true);
+    test::check_equal(countof(p.errors), 0);
+}
+
+export void test_parse_expect_takes_the_token_it_wants() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("f(x)");
+    lex::Token name = parse::expect(&p, lex::name, "a name");
+    expect_text(parse::text(&p, name), "f");
+    lex::Token open = parse::expect(&p, lex::left_paren, "`(`");
+    test::check_equal(open.kind == lex::left_paren, true);
+    test::check_equal(p.position, 2);
+    test::check_equal(countof(p.errors), 0);
+}
+
+export void test_parse_expect_records_what_was_expected_and_what_was_found() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("a + b");
+    parse::advance(&p);
+    lex::Token found = parse::expect(&p, lex::semicolon, "`;`");
+    test::check_equal(found.kind == lex::plus, true);
+    test::check_equal(p.position, 1);
+    test::check_equal(countof(p.errors), 1);
+    expect_error(&p, 0, "expected `;`, found `+`", 2, 3);
+    lex::Token again = parse::expect(&p, lex::right_paren, "`)`");
+    test::check_equal(again.kind == lex::plus, true);
+    test::check_equal(p.position, 1);
+    test::check_equal(countof(p.errors), 2);
+    expect_error(&p, 1, "expected `)`, found `+`", 2, 3);
+    expect_error(&p, 0, "expected `;`, found `+`", 2, 3);
+}
+
+export void test_parse_expect_at_the_end_of_the_file_says_so() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("a ");
+    parse::advance(&p);
+    lex::Token found = parse::expect(&p, lex::name, "a name");
+    test::check_equal(found.kind == lex::end_of_file, true);
+    test::check_equal(p.position, 1);
+    expect_error(&p, 0, "expected a name, found the end of the file", 2, 2);
+}
+
+export void test_parse_error_records_in_order_and_parsing_goes_on() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("one two");
+    ast::Span first = {.start = 0, .end = 3};
+    ast::Span second = {.start = 4, .end = 7};
+    parse::error(&p, first, "first");
+    parse::error(&p, second, "second");
+    parse::error(&p, first, "third");
+    test::check_equal(countof(p.errors), 3);
+    expect_error(&p, 0, "first", 0, 3);
+    expect_error(&p, 1, "second", 4, 7);
+    expect_error(&p, 2, "third", 0, 3);
+    test::check_equal(parse::advance(&p).kind == lex::name, true);
+}
+
+export void test_parse_span_from_reaches_the_end_of_the_last_token_taken() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("  alpha + beta ;");
+    U32 start = parse::peek(&p).span.start;
+    test::check_equal(start, 2);
+    ast::Span nothing = parse::span_from(&p, start);
+    test::check_equal(nothing.start, 2);
+    test::check_equal(nothing.end, 2);
+    parse::advance(&p);
+    parse::advance(&p);
+    parse::advance(&p);
+    ast::Span three = parse::span_from(&p, start);
+    test::check_equal(three.start, 2);
+    test::check_equal(three.end, 14);
+    ast::Span inner = parse::span_from(&p, 8);
+    test::check_equal(inner.start, 8);
+    test::check_equal(inner.end, 14);
+}
+
+// Stubs for the hooks: each takes one token and gives a node that spans it.
+static ast::Expr *stub_expression(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    parse::advance(p);
+    ast::Expr *node = mem::alloc(ast::Expr);
+    node->span = parse::span_from(p, start);
+    return node;
+}
+
+static ast::TypeExpr *stub_type(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    parse::advance(p);
+    ast::TypeExpr *node = mem::alloc(ast::TypeExpr);
+    node->span = parse::span_from(p, start);
+    return node;
+}
+
+static ast::Stmt *stub_statement(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    parse::advance(p);
+    ast::Stmt *node = mem::alloc(ast::Stmt);
+    node->span = parse::span_from(p, start);
+    return node;
+}
+
+static ast::Decl *stub_declaration(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    parse::advance(p);
+    ast::Decl *node = mem::alloc(ast::Decl);
+    node->span = parse::span_from(p, start);
+    return node;
+}
+
+export void test_parse_the_hooks_call_the_stubs_they_are_set_to() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("alpha beta gamma delta");
+    p.hooks.expression = stub_expression;
+    p.hooks.type = stub_type;
+    p.hooks.statement = stub_statement;
+    p.hooks.declaration = stub_declaration;
+    ast::Expr *expression = parse::expression(&p);
+    test::check_condition(expression != nullptr);
+    test::check_equal(expression->span.start, 0);
+    test::check_equal(expression->span.end, 5);
+    ast::TypeExpr *type = parse::type(&p);
+    test::check_condition(type != nullptr);
+    test::check_equal(type->span.start, 6);
+    test::check_equal(type->span.end, 10);
+    ast::Stmt *statement = parse::statement(&p);
+    test::check_condition(statement != nullptr);
+    test::check_equal(statement->span.start, 11);
+    test::check_equal(statement->span.end, 16);
+    ast::Decl *declaration = parse::declaration(&p);
+    test::check_condition(declaration != nullptr);
+    test::check_equal(declaration->span.start, 17);
+    test::check_equal(declaration->span.end, 22);
+    test::check_equal(p.position, 4);
+    test::check_equal(countof(p.errors), 0);
+}
+
+export void test_parse_a_hook_that_is_not_set_records_an_error_and_gives_null() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("alpha beta");
+    test::check_condition(parse::expression(&p) == nullptr);
+    test::check_condition(parse::type(&p) == nullptr);
+    test::check_condition(parse::statement(&p) == nullptr);
+    test::check_condition(parse::declaration(&p) == nullptr);
+    test::check_equal(p.position, 0);
+    test::check_equal(countof(p.errors), 4);
+    expect_error(&p, 0, "no parser for an expression is installed", 0, 5);
+    expect_error(&p, 1, "no parser for a type is installed", 0, 5);
+    expect_error(&p, 2, "no parser for a statement is installed", 0, 5);
+    expect_error(&p, 3, "no parser for a declaration is installed", 0, 5);
+}
+
+export void test_parse_a_stub_can_call_another_hook_through_the_core() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("one two");
+    p.hooks.expression = stub_expression;
+    ast::Expr *first = parse::expression(&p);
+    ast::Expr *second = parse::expression(&p);
+    test::check_condition(first != second);
+    test::check_equal(first->span.start, 0);
+    test::check_equal(second->span.start, 4);
+    test::check_equal(parse::at(&p, lex::end_of_file), true);
+}
