@@ -723,7 +723,7 @@ static void smith_lang_cx_callee(const SmithLang *lang, const SmithLangGenToken 
 static bool smith_lang_cx_text(const SmithLangCx *cx, uint32_t first, uint32_t last, char *text, size_t capacity) {
     size_t used = 0;
     for (uint32_t at = first; at < last; at++) { // the tokens
-        char piece[1024];
+        char piece[4096];
         int64_t number = 0;
         uint32_t taken = smith_lang_fields_cx_piece(cx, at, last, piece, sizeof piece);
         if (taken == UINT32_MAX) return false;
