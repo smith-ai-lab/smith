@@ -1,0 +1,3 @@
+status 1
+proof_only.smith:48:25: error: smith-effect: recursion in a module: loud -> loud (proof_only.smith:48) (write a loop; a call that ends the function can be `[[clang::musttail]] return f(...);`)
+proof_only.smith:58:25: error: smith-effect: recursion in a module: checked -> checked (proof_only.smith:58) (write a loop; a call that ends the function can be `[[clang::musttail]] return f(...);`)
