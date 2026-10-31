@@ -2,14 +2,13 @@
 // tests/test.sh): a project made from the fixture `runner_base` (a build.c with smith_tests, the sanitizers on unless
 // -DSAN=0) and the files of another fixture, the runner built in it, and its output read back without the timings.
 // Every case runs the runner twice, as workers (the default) and with `--isolate` (a process per test), and both must
-// give the same result. A test with no io (issue #240) uses the `_free` forms and a project from `project_free`; the
-// texts they return come from the allocator in force (a test's test::memory arena), and what they make for themselves
-// they give back.
+// give the same result. The texts the helpers
+// return come from the allocator in force (a test's test::memory arena), and what they make for themselves they give
+// back.
 module runner;
 
 import smith::arena;
 import smith::format;
-import smith::io;
 import smith::mem;
 import smith::test;
 import <string.h>;
@@ -31,15 +30,16 @@ const char *own(auto... args) {
     return memory;
 }
 
-// The arguments as a text: on the project's arena, or from the allocator in force in a project with no io.
+// The arguments as a text from the allocator in force.
 const char *text_in(const scratch::Project *p, auto... args) {
-    if (p->io != nullptr) return scratch::push(&p->io->arena, args...).data;
+    (void)p;
     return own(args...);
 }
 
-// Gives back a text from text_in (the arena keeps its own).
+// Gives back a text from text_in.
 static void done(const scratch::Project *p, const char *text) {
-    if (p->io == nullptr) scratch::release(text);
+    (void)p;
+    scratch::release(text);
 }
 
 // The output of a command run in the project, a text the caller keeps; the command is given back.
@@ -57,14 +57,8 @@ static scratch::Run run_text(const scratch::Project *p, const char *command) {
 }
 
 // A project: the build.c of `base` (runner_base, or runner_c for C only) with the files of the fixture `files` over it.
-export scratch::Project project(io::Io *io, const char *base, const char *files) {
-    scratch::Project p = scratch::project(io, "p", base);
-    scratch::copy_tree(&p, scratch::push(&io->arena, "tests/build_fixtures/", files).data, "");
-    return p;
-}
-
-// `project` with no io (issue #240): a project from scratch::make, which the test cleans (`defer scratch::clean(&p);`).
-export scratch::Project project_free(const char *base, const char *files) {
+// The project is from scratch::make, which the test cleans (`defer scratch::clean(&p);`).
+export scratch::Project project(const char *base, const char *files) {
     scratch::Project p = scratch::make("p", base);
     const char *from = own("tests/build_fixtures/", files);
     scratch::copy_tree(&p, from, "");
@@ -106,15 +100,7 @@ constexpr char copy_script[_] = "cp -Rp \"$c/proj/.\" .";
 
 // A project whose runner is built (or taken from the one an earlier test built): `project` and `build` in one, for a
 // test that only runs `build/tests`; a test that builds again, or expects a failed build, uses those two.
-export scratch::Project built_project(io::Io *io, const char *base, const char *files, const char *arguments) {
-    scratch::Project p = project(io, base, files);
-    scratch::Run run = scratch::sh(
-        &p, scratch::push(&io->arena, "ARGS='", arguments, "'; ", shared_script, link_script, " 2>&1").data);
-    scratch::expect_status("runner: the runner builds", 0, &run);
-    return p;
-}
-
-// Builds the runner of a project from project_free with `script` (link_script or copy_script) after the shared one.
+// Builds the runner of a project with `script` (link_script or copy_script) after the shared one.
 static void build_shared(const scratch::Project *p, const char *arguments, const char *script) {
     scratch::Run run = run_text(p, own("ARGS='", arguments, "'; ", shared_script, script, " 2>&1"));
     scratch::expect_status("runner: the runner builds", 0, &run);
@@ -122,26 +108,16 @@ static void build_shared(const scratch::Project *p, const char *arguments, const
     scratch::release(run.err);
 }
 
-// `built_project` with no io: the test cleans the project.
-export scratch::Project built_project_free(const char *base, const char *files, const char *arguments) {
-    scratch::Project p = project_free(base, files);
+export scratch::Project built_project(const char *base, const char *files, const char *arguments) {
+    scratch::Project p = project(base, files);
     build_shared(&p, arguments, link_script);
     return p;
 }
 
 // `built_project`, for a test that runs `smith test` in the project: the project is a copy of the built one, so the
 // build `smith test` starts with has nothing to do.
-export scratch::Project built_copy(io::Io *io, const char *base, const char *files, const char *arguments) {
-    scratch::Project p = project(io, base, files);
-    scratch::Run run = scratch::sh(
-        &p, scratch::push(&io->arena, "ARGS='", arguments, "'; ", shared_script, copy_script, " 2>&1").data);
-    scratch::expect_status("runner: the runner builds", 0, &run);
-    return p;
-}
-
-// `built_copy` with no io: the test cleans the project.
-export scratch::Project built_copy_free(const char *base, const char *files, const char *arguments) {
-    scratch::Project p = project_free(base, files);
+export scratch::Project built_copy(const char *base, const char *files, const char *arguments) {
+    scratch::Project p = project(base, files);
     build_shared(&p, arguments, copy_script);
     return p;
 }
@@ -154,16 +130,7 @@ export void add(const scratch::Project *p, const char *files) {
 }
 
 // A character repeated.
-export const char *repeated(io::Io *io, char letter, usize count) {
-    char *text = arena::push_slice(&io->arena, char, count + 1).data;
-    for (usize i = 0; i < count; i++)
-        text[i] = letter;
-    text[count] = '\0';
-    return text;
-}
-
-// `repeated` with no io.
-export const char *repeated_free(char letter, usize count) {
+export const char *repeated(char letter, usize count) {
     char *text = mem::alloc_slice(char, count + 1).data;
     for (usize i = 0; i < count; i++)
         text[i] = letter;
@@ -177,13 +144,8 @@ export const char *flag(usize mode) {
 }
 
 // A check's name, saying the mode when it is the isolated one.
-export const char *label(io::Io *io, const char *iso, const char *name) {
-    if (iso[0] == '\0') return name;
-    return scratch::push(&io->arena, name, " (", iso, ")").data;
-}
-
-// `label` with no io: a text of its own in the isolated mode, else the name itself.
-export const char *label_free(const char *iso, const char *name) {
+// A text of its own in the isolated mode, else the name itself.
+export const char *label(const char *iso, const char *name) {
     if (iso[0] == '\0') return name;
     return own(name, " (", iso, ")");
 }
@@ -236,20 +198,7 @@ export bool can_symbolize(const scratch::Project *p) {
 }
 
 // The text with every run of spaces made one space, as `tr -s ' '` does.
-export const char *squeezed(io::Io *io, const char *text) {
-    usize length = c::strlen(text);
-    char *copy = arena::push_slice(&io->arena, char, length + 1).data;
-    usize at = 0;
-    for (usize i = 0; i < length; i++) {
-        if (text[i] == ' ' && at > 0 && copy[at - 1] == ' ') continue;
-        copy[at++] = text[i];
-    }
-    copy[at] = '\0';
-    return copy;
-}
-
-// `squeezed` with no io.
-export const char *squeezed_free(const char *text) {
+export const char *squeezed(const char *text) {
     usize length = c::strlen(text);
     char *copy = mem::alloc_slice(char, length + 1).data;
     usize at = 0;
@@ -312,12 +261,8 @@ export void expect_failure_block(const scratch::Project *p, const char *iso, con
                                  " test_", test_name, "\n", extra, "\n0 passed, 1 failed");
     const char *arguments = text_in(p, "--test ", test_name);
     const char *reported = report(p, iso, arguments);
-    if (p->io != nullptr) {
-        scratch::expect_text(label(p->io, iso, name), squeezed(p->io, wanted), reported);
-        return;
-    }
-    const char *labelled = label_free(iso, name);
-    const char *squeeze = squeezed_free(wanted);
+    const char *labelled = label(iso, name);
+    const char *squeeze = squeezed(wanted);
     scratch::expect_text(labelled, squeeze, reported);
     if (labelled != name) scratch::release(labelled);
     scratch::release(squeeze);
@@ -327,24 +272,15 @@ export void expect_failure_block(const scratch::Project *p, const char *iso, con
 }
 
 // A run of the runner holds the text.
-export void expect_has(io::Io *io, const char *iso, const char *name, const scratch::Run *run, const char *needle) {
-    scratch::expect_contains(label(io, iso, name), run->out, needle);
-}
-
-export void expect_lacks(io::Io *io, const char *iso, const char *name, const scratch::Run *run, const char *needle) {
-    scratch::expect_lacks(label(io, iso, name), run->out, needle);
-}
-
-// `expect_has` with no io.
-export void expect_has_free(const char *iso, const char *name, const scratch::Run *run, const char *needle) {
-    const char *labelled = label_free(iso, name);
+export void expect_has(const char *iso, const char *name, const scratch::Run *run, const char *needle) {
+    const char *labelled = label(iso, name);
     scratch::expect_contains(labelled, run->out, needle);
     if (labelled != name) scratch::release(labelled);
 }
 
-// `expect_lacks` with no io.
-export void expect_lacks_free(const char *iso, const char *name, const scratch::Run *run, const char *needle) {
-    const char *labelled = label_free(iso, name);
+// A run of the runner lacks the text.
+export void expect_lacks(const char *iso, const char *name, const scratch::Run *run, const char *needle) {
+    const char *labelled = label(iso, name);
     scratch::expect_lacks(labelled, run->out, needle);
     if (labelled != name) scratch::release(labelled);
 }

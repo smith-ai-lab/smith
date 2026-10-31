@@ -93,11 +93,14 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
 - **Allocation in .smith (step C2, owner 2026-10-25):** `smith::mem` (`lib/smith/mem.smith`) is the smith face of the
   allocator handler: `mem::set_allocator` returns the previous one (`defer` puts it back), `mem::alloc(T)` and
   `mem::alloc_slice(T, n)` go through whatever `malloc` reaches and never return null, `mem::try_alloc` and `mem::try_alloc_slice` return an
-  `option` for code that refuses, and the `malloc` itself keeps C's nullable contract. A refusal is a checked failure that
+  `option`, `mem::realloc(xs, n)` and `mem::try_realloc(xs, n)` resize a slice through libc's `realloc` (so the handlers see it) for code that refuses, and the `malloc` itself keeps C's nullable contract. A refusal is a checked failure that
   names the size, for the cases "if you can handle it locally it is a result or an option, otherwise you let it crash":
   allocation is the second kind.
-- **Arenas grow or are fixed.** `arena::growing(first, backing)` takes a chunk twice the current block (or what the push
-  needs) from its backing (the OS through `mmap` by default, or a `SmithAllocator`) when full, so `push` and `push_slice`
+- **Arenas grow or are fixed.** `arena::Arena a = {};` is a growing arena (owner, 2026-10-26, "Embrace zero"): its first
+  push takes a chunk, and a zeroed field works the same; only `arena::fixed` sets `.fixed`. `arena::growing(first, backing)`
+  takes a chunk twice the current block (or what the push needs) from its backing (the current allocator, through
+  `aligned_alloc` and `free`, by default, or a `SmithAllocator`; owner, 2026-10-30: an arena's memory always comes from the
+  current allocator, never `mmap`) when full, so `push` and `push_slice`
   never return null; `Arena.grown` is the bytes beyond the first chunk; chunks are a list kept across `reset` and the end
   of a scope (a scope remembers the chunk it began in, ending it walks back and keeps the later ones as spares), so the
   second pass over the same work takes none; `arena::release` gives them back. `arena::fixed(memory, capacity)` never grows: a full one is the checked failure that names the capacity. `arena::try_push_raw` is the form that

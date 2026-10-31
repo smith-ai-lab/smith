@@ -1953,8 +1953,8 @@ static void smith_lang_gen_put_arg(SmithLang *lang, const SmithHost *host, const
 }
 
 // The tag of a slice of the type argument, as `T xs[:]` would name it where the instance is written.
-static void smith_lang_gen_put_slice_tag(SmithLang *lang, const SmithHost *host, const SmithLangInstance *instance,
-                                         unsigned param, uint32_t location, uint32_t instance_id) {
+static void smith_lang_gen_slice_tag_text(SmithLang *lang, const SmithHost *host, const SmithLangInstance *instance,
+                                          unsigned param, uint32_t location, char *tag, size_t capacity) {
     static SmithToken span[48];
     uint32_t first = instance->arg_first[param];
     uint32_t count = instance->arg_count[param];
@@ -1969,14 +1969,19 @@ static void smith_lang_gen_put_slice_tag(SmithLang *lang, const SmithHost *host,
         }
     }
     char spelled[512];
-    char tag[640];
     const char *problem = nullptr;
     uint32_t where = location;
     if (!smith_lang_tuple_spell(lang, span, 0, count, spelled, sizeof spelled, &problem, &where)) {
         smith_lang_error(lang, host, location, "%s", problem != nullptr ? problem : "cannot spell the slice's type");
         snprintf(spelled, sizeof spelled, "error");
     }
-    smith_lang_slice_tag(spelled, tag, sizeof tag);
+    smith_lang_slice_tag(spelled, tag, capacity);
+}
+
+static void smith_lang_gen_put_slice_tag(SmithLang *lang, const SmithHost *host, const SmithLangInstance *instance,
+                                         unsigned param, uint32_t location, uint32_t instance_id) {
+    char tag[640];
+    smith_lang_gen_slice_tag_text(lang, host, instance, param, location, tag, sizeof tag);
     smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, tag, location, instance_id);
 }
 

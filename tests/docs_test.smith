@@ -50,9 +50,9 @@ export void test_every_fixture_has_a_test() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::expect_text("folders of tests/docs/fixtures with no test", "",
-                         scratch::untested_names_free("tests/docs/fixtures", "tests/docs_test.smith", "fixture_case(",
-                                                      nullptr, nullptr));
+    scratch::expect_text(
+        "folders of tests/docs/fixtures with no test", "",
+        scratch::untested_names("tests/docs/fixtures", "tests/docs_test.smith", "fixture_case(", nullptr, nullptr));
 }
 
 // --- 2. the depfile names every file read or found, once, escaped as a compiler's -MF writes it ---------------------

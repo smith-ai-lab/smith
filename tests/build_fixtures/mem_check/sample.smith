@@ -38,3 +38,7 @@ export void release(void *block) {
     contract::trusted();
     c::free(block);
 }
+
+export void *grow(void *block, usize n) {
+    return c::realloc(block, n);
+}

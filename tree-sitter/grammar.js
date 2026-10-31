@@ -379,6 +379,12 @@ module.exports = grammar(C, {
       field('declarator', $._type_declarator), '[', repeat(choice($.type_qualifier, 'static')), field('size', ':'), ']'))),
     abstract_array_declarator: ($, original) => choice(original, prec(1, seq(
       field('declarator', optional($._abstract_declarator)), '[', repeat(choice($.type_qualifier, 'static')), field('size', ':'), ']'))),
+    // A slice written bare as a function's result, `i32[:] f(...) {...}` and `T[:] window(constexpr type T, ...)`
+    function_definition: ($, original) => choice(original, seq(
+      $._declaration_specifiers, '[', ':', ']',
+      field('declarator', $._declarator),
+      field('body', $.compound_statement),
+    )),
     subscript_expression: ($, original) => choice(original, prec(C.PREC.SUBSCRIPT, seq(
       field('argument', $.expression), '[', field('index', $.slice_range), ']'))),
     slice_range: $ => choice(

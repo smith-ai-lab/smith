@@ -22,7 +22,7 @@ static const char *format_flag(const char *value) {
 }
 
 export void test_runner_shard_the_parts_hold_every_test_once() {
-    scratch::Project p = runner::built_project_free("runner_base", "runner_shard", "");
+    scratch::Project p = runner::built_project("runner_base", "runner_shard", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -38,7 +38,7 @@ export void test_runner_shard_the_parts_hold_every_test_once() {
 }
 
 export void test_runner_shard_a_file_is_in_one_part() {
-    scratch::Project p = runner::built_project_free("runner_base", "runner_shard", "");
+    scratch::Project p = runner::built_project("runner_base", "runner_shard", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -52,7 +52,7 @@ export void test_runner_shard_a_file_is_in_one_part() {
 }
 
 export void test_runner_shard_the_split_is_balanced_by_the_costs_file() {
-    scratch::Project p = runner::built_project_free("runner_base", "runner_shard", "");
+    scratch::Project p = runner::built_project("runner_base", "runner_shard", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -67,7 +67,7 @@ export void test_runner_shard_the_split_is_balanced_by_the_costs_file() {
 }
 
 export void test_runner_shard_a_run_prints_its_part_and_runs_only_it() {
-    scratch::Project p = runner::built_project_free("runner_base", "runner_shard", "");
+    scratch::Project p = runner::built_project("runner_base", "runner_shard", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -79,7 +79,7 @@ export void test_runner_shard_a_run_prints_its_part_and_runs_only_it() {
 }
 
 export void test_runner_shard_a_bad_value_is_a_usage_error() {
-    scratch::Project p = runner::built_project_free("runner_base", "runner_shard", "");
+    scratch::Project p = runner::built_project("runner_base", "runner_shard", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);

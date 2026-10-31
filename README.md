@@ -209,6 +209,7 @@ void copy(float *dst, const float *src, size_t n) {
 ```smith project=memcopy run
 module main;
 
+import smith::arena;
 import smith::console;
 import smith::mem;
 
@@ -220,16 +221,19 @@ i32 main() {
     mem::copy(to, from); // two slices of one type and one length, checked
     bool same = mem::equal(to, from);
     mem::zero(to[0:2]);
-    console::print("same ", same, ", copy[1] ", copy[1], ", copy[3] ", copy[3], "\n");
+    f32 grown[:] = mem::alloc_slice(f32, 2);
+    grown = mem::realloc(grown, 4); // keeps the elements, zeroes the tail, never null
+    console::print("same ", same, ", copy[1] ", copy[1], ", copy[3] ", copy[3], ", grown ", countof(grown), "\n");
+    mem::free(grown.data);
     return 0;
 }
 ```
 
 ```output project=memcopy
-same true, copy[1] 0, copy[3] 4.5
+same true, copy[1] 0, copy[3] 4.5, grown 4
 ```
 
-`mem::copy`, `mem::move`, `mem::zero`, `mem::fill`, `mem::equal`, `mem::bytes(&x)` and `mem::view(bytes, f32)` take slices, so a length that does not match is a checked failure, and they lower to the C functions. In a file with a `module` line the raw `memcpy`, `memmove`, `memset`, `memcmp`, `malloc`, `calloc` and `free` are a `smith-mem` finding that names the replacement (`smith lint --fix` applies the mechanical ones); a function that implements a wrapper says `contract::trusted()`. A `.c` file is untouched. [smith-mem](.agents/skills/smith-mem/SKILL.md).
+`mem::copy`, `mem::move`, `mem::zero`, `mem::fill`, `mem::equal`, `mem::bytes(&x)` and `mem::view(bytes, f32)` take slices (`xs = mem::realloc(xs, n)` resizes one, `mem::try_realloc` returns an `option`), so a length that does not match is a checked failure, and they lower to the C functions. In a file with a `module` line the raw `memcpy`, `memmove`, `memset`, `memcmp`, `malloc`, `calloc`, `realloc` and `free` are a `smith-mem` finding that names the replacement (`smith lint --fix` applies the mechanical ones); a function that implements a wrapper says `contract::trusted()`. A `.c` file is untouched. [smith-mem](.agents/skills/smith-mem/SKILL.md).
 
 A test can make memory refuse on purpose with `smith::failing`: `failing::make(parent, key)` is an allocator that refuses one allocation in eight by a draw from a `random::Key`, so a failure replays from its seed ([smith-failing](.agents/skills/smith-failing/SKILL.md)).
 

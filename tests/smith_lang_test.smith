@@ -512,8 +512,8 @@ export void test_every_case_has_a_test() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::expect_text("cases of tests/smith-lang/cases with no test", "",
-                         scratch::untested_names_free("tests/smith-lang/cases", "tests/smith_lang_test.smith",
-                                                      "corpus_case(", nullptr, nullptr));
+                         scratch::untested_names("tests/smith-lang/cases", "tests/smith_lang_test.smith",
+                                                 "corpus_case(", nullptr, nullptr));
 }
 
 export void test_array_param() {
@@ -702,6 +702,10 @@ export void test_enum_c_rule() {
 
 export void test_enum_generic_return() {
     corpus_case("enum-generic-return");
+}
+
+export void test_enum_generic_derived_result() {
+    corpus_case("enum-generic-derived-result");
 }
 
 export void test_enum_generic_import_in_function() {
@@ -1502,6 +1506,10 @@ export void test_generic_slice_qualifiers_auto() {
 
 export void test_generic_slice_pointer_auto() {
     corpus_case("generic-slice-pointer-auto");
+}
+
+export void test_generic_slice_pointer_result() {
+    corpus_case("generic-slice-pointer-result");
 }
 
 export void test_generic_slice_derived() {

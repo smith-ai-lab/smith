@@ -763,9 +763,9 @@ if constexpr (target::os == target::macos) {
         return (isize)size;
     }
 
-    // Reads what has arrived (at least one byte), waiting at most timeout_ns (negative: for ever): the count, 0 when the
-    // peer has finished, or -1 with the code (ETIMEDOUT when nothing came: the connection is cancelled then, since the
-    // framework cannot take a receive back, and only `close` is left to call).
+    // Reads what has arrived (at least one byte), waiting at most timeout_ns (negative: for ever): the count, 0 when
+    // the peer has finished, or -1 with the code (ETIMEDOUT when nothing came: the connection is cancelled then, since
+    // the framework cannot take a receive back, and only `close` is left to call).
     isize tls_receive(Connection *connection, void *buffer, usize size, i64 timeout_ns, i32 *code) {
         if (connection->end) return 0;
         State *state = (State *)connection->state;
@@ -1039,11 +1039,10 @@ void connection_open(const Connection *connection) {
 
 // Reads like `read`, but gives up when nothing has arrived within timeout_ns nanoseconds (0 or more): the error is
 // `TimedOut`, and bytes that arrive later are read by the next call. On macOS a TLS connection that timed out is
-// cancelled (Network.framework cannot take a receive back), so only `close` is left to call on it. A handler that has no
-// deadline of its own reads without one.
-[[smith::c_name("smith_network_read_within")]] export [[nodiscard]] CountResult read_within(Connection *connection,
-                                                                                            u8 buffer[:],
-                                                                                            i64 timeout_ns) {
+// cancelled (Network.framework cannot take a receive back), so only `close` is left to call on it. A handler that has
+// no deadline of its own reads without one.
+[[smith::c_name("smith_network_read_within")]] export [[nodiscard]] CountResult
+read_within(Connection *connection, u8 buffer[:], i64 timeout_ns) {
     connection_open(connection);
     contract::requires(countof(buffer) > 0);
     contract::requires(timeout_ns >= 0);
@@ -1187,7 +1186,7 @@ void connection_open(const Connection *connection) {
     bool fails;
     Error error;
     usize response_size; // the length of `response` when it is binary (it holds a NUL); 0: the length of its text
-    bool resets; // after the response a read fails with `Reset` instead of ending
+    bool resets;         // after the response a read fails with `Reset` instead of ending
     bool stalls; // after the response the connection stays open and silent instead of ending (`read_within` times out)
 } Server;
 
