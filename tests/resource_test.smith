@@ -4,11 +4,14 @@
 // the test removes or cleans it), so the real ones are never read or changed. A smith without clang inside (the stage0)
 // has none of this, and the tests do nothing. The shell helpers below branch on `uname` where macOS and Linux differ
 // (the header and runtime names, the ld's mark, the way a copy gets another identity); a check with no meaning on Linux
-// (frameworks, ARC, libLTO) runs on macOS only, with a comment where it is.
+// (frameworks, ARC, libLTO) runs on macOS only, with a comment where it is. Each test makes its project with
+// scratch::make and has a test::memory arena as the current allocator, so what scratch returns goes back with the
+// arena.
 module resource_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 import target;
@@ -104,415 +107,506 @@ constexpr char lock_script[_] =
     "echo \"died=$(yn \"$folder_d\")\"\n"
     "echo \"binary_exists_still=$(yn \"$folder_e\")\"\n";
 
-// A project with the sources; false when this smith has no clang inside (the stage0), whose tests do nothing.
-static bool begin(io::Io *io, scratch::Project *p, bool own_cache) {
-    *p = scratch::project(io, "p", "resource");
-    if (own_cache) {
-        scratch::own_cache(p);
-    }
+// False when this smith has no clang inside (the stage0), whose tests do nothing.
+static bool begin(arena::Arena *arena, const scratch::Project *p) {
     const char *which = scratch::capture(
-        p, format::push(&io->arena, prelude, "smith cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2").data);
+        p, format::push(arena, prelude, "smith cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2").data);
     return scratch::same(which, "clang in-process");
 }
 
-static scratch::Run run(io::Io *io, const scratch::Project *p, const char *commands) {
-    return scratch::sh(p, format::push(&io->arena, prelude, commands).data);
+static scratch::Run run(arena::Arena *arena, const scratch::Project *p, const char *commands) {
+    return scratch::sh(p, format::push(arena, prelude, commands).data);
 }
 
-static scratch::Run run_after(io::Io *io, const scratch::Project *p, const char *commands) {
-    return scratch::sh(p, format::push(&io->arena, prelude, where, commands).data);
+static scratch::Run run_after(arena::Arena *arena, const scratch::Project *p, const char *commands) {
+    return scratch::sh(p, format::push(arena, prelude, where, commands).data);
 }
 
-static const char *text(io::Io *io, const scratch::Project *p, const char *commands) {
-    return scratch::capture(p, format::push(&io->arena, prelude, commands).data);
+static const char *text(arena::Arena *arena, const scratch::Project *p, const char *commands) {
+    return scratch::capture(p, format::push(arena, prelude, commands).data);
 }
 
-static const char *text_after(io::Io *io, const scratch::Project *p, const char *commands) {
-    return scratch::capture(p, format::push(&io->arena, prelude, where, commands).data);
+static const char *text_after(arena::Arena *arena, const scratch::Project *p, const char *commands) {
+    return scratch::capture(p, format::push(arena, prelude, where, commands).data);
 }
 
 // The first compile, which writes the folders.
-static void first_compile(io::Io *io, const scratch::Project *p) {
-    scratch::Run compiled = run(io, p, "\"$smith\" cc -fsyntax-only hello.c");
+static void first_compile(arena::Arena *arena, const scratch::Project *p) {
+    scratch::Run compiled = run(arena, p, "\"$smith\" cc -fsyntax-only hello.c");
     scratch::expect_status("resource: a first compile", 0, &compiled);
 }
 
 // A compile of `source` and the run of its program: "<status> <output>", and what the compiler printed.
-static const char *built(io::Io *io, const scratch::Project *p, const char *compile, const char *program) {
-    return text_after(io, p, format::push(&io->arena, compile, " 2>../err; echo \"$? $(", program, ")\"").data);
+static const char *built(arena::Arena *arena, const scratch::Project *p, const char *compile, const char *program) {
+    return text_after(arena, p, format::push(arena, compile, " 2>../err; echo \"$? $(", program, ")\"").data);
 }
 
-static const char *printed(io::Io *io, const scratch::Project *p) {
-    return text(io, p, "cat ../err");
+static const char *printed(arena::Arena *arena, const scratch::Project *p) {
+    return text(arena, p, "cat ../err");
 }
 
-export void test_resource_which_names_a_programs_folder_and_writes_nothing(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_which_names_a_programs_folder_and_writes_nothing() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
     scratch::expect_text("resource: which names a bin/clang in a folder of the programs folder",
-                         text(io, &p, "echo \"$program_folders/\""),
-                         text(io, &p,
+                         text(&memory, &p, "echo \"$program_folders/\""),
+                         text(&memory, &p,
                               "p=$(\"$smith\" cc --smith-which -c hello.c | head -n 1 | cut -d ' ' -f 3); "
                               "p=${p%/bin/clang}; echo \"${p%/*}/\""));
-    scratch::expect_text("resource: which writes nothing", "no", text(io, &p, "yn \"$XDG_DATA_HOME\""));
+    scratch::expect_text("resource: which writes nothing", "no", text(&memory, &p, "yn \"$XDG_DATA_HOME\""));
 }
 
-export void test_resource_the_first_compile_writes_the_folders(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_the_first_compile_writes_the_folders() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    scratch::Run compiled = run(io, &p, "\"$smith\" cc -fsyntax-only hello.c");
+    scratch::Run compiled = run(&memory, &p, "\"$smith\" cc -fsyntax-only hello.c");
     scratch::expect_status("resource: the first compile works", 0, &compiled);
     scratch::expect_text("resource: the resource directory is in a folder of the runtime folders",
-                         text(io, &p, "echo \"$clang_folders/\""), text_after(io, &p, "echo \"${folder%/*}/\""));
+                         text(&memory, &p, "echo \"$clang_folders/\""),
+                         text_after(&memory, &p, "echo \"${folder%/*}/\""));
     scratch::expect_text("resource: and the first compile writes the folder", "yes",
-                         text_after(io, &p, "yn \"$folder\""));
-    scratch::expect_text("resource: and the programs folder", "yes", text_after(io, &p, "yn \"$programs\""));
+                         text_after(&memory, &p, "yn \"$folder\""));
+    scratch::expect_text("resource: and the programs folder", "yes", text_after(&memory, &p, "yn \"$programs\""));
     scratch::expect_text("resource: the runtime folder holds no program", "no",
-                         text_after(io, &p, "yn \"$folder/bin\""));
+                         text_after(&memory, &p, "yn \"$folder/bin\""));
     scratch::expect_text("resource: the programs folder's lib is the runtime folder's",
-                         text_after(io, &p, "echo \"$folder/lib\""), text_after(io, &p, "readlink \"$programs/lib\""));
+                         text_after(&memory, &p, "echo \"$folder/lib\""),
+                         text_after(&memory, &p, "readlink \"$programs/lib\""));
     scratch::expect_text("resource: iOS's runtimes are not carried", "no",
-                         text_after(io, &p, "yn \"$folder/lib/clang/$major/lib/darwin/libclang_rt.ios.a\""));
+                         text_after(&memory, &p, "yn \"$folder/lib/clang/$major/lib/darwin/libclang_rt.ios.a\""));
     scratch::expect_text("resource: no half-written folder is left", "",
-                         text(io, &p, "{ ls \"$clang_folders\"; ls \"$program_folders\"; } | grep tmp"));
+                         text(&memory, &p, "{ ls \"$clang_folders\"; ls \"$program_folders\"; } | grep tmp"));
 }
 
-static void holds(io::Io *io, const scratch::Project *p, const char *file) {
+static void holds(arena::Arena *arena, const scratch::Project *p, const char *file) {
     char name[256];
     char command[256];
     (void)format::to(name, sizeof name, "resource: the folder holds ", file);
     (void)format::to(command, sizeof command, "yn \"$folder/lib/clang/$major/", file, "\"");
-    scratch::expect_text(name, "yes", text_after(io, p, command));
+    scratch::expect_text(name, "yes", text_after(arena, p, command));
 }
 
-export void test_resource_the_runtime_folder_holds_the_files(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_the_runtime_folder_holds_the_files() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
+    first_compile(&memory, &p);
     // lib/clang/<major>/ is under the folder; libLTO is beside it
-    holds(io, &p, "include/stddef.h");
-    holds(io, &p, "share/asan_ignorelist.txt");
+    holds(&memory, &p, "include/stddef.h");
+    holds(&memory, &p, "share/asan_ignorelist.txt");
     if constexpr (target::os == target::macos) {
-        holds(io, &p, "include/arm_neon.h");
-        holds(io, &p, "lib/darwin/libclang_rt.asan_osx_dynamic.dylib");
-        holds(io, &p, "lib/darwin/libclang_rt.ubsan_osx_dynamic.dylib");
-        holds(io, &p, "lib/darwin/libclang_rt.osx.a");
-        holds(io, &p, "lib/darwin/libclang_rt.profile_osx.a");
+        holds(&memory, &p, "include/arm_neon.h");
+        holds(&memory, &p, "lib/darwin/libclang_rt.asan_osx_dynamic.dylib");
+        holds(&memory, &p, "lib/darwin/libclang_rt.ubsan_osx_dynamic.dylib");
+        holds(&memory, &p, "lib/darwin/libclang_rt.osx.a");
+        holds(&memory, &p, "lib/darwin/libclang_rt.profile_osx.a");
         scratch::expect_text("resource: the folder holds lib/libLTO.dylib", "yes",
-                             text_after(io, &p, "yn \"$folder/lib/libLTO.dylib\""));
+                             text_after(&memory, &p, "yn \"$folder/lib/libLTO.dylib\""));
     } else {
         // the target's own header (immintrin.h, or arm_neon.h on arm64) and the runtimes of its triple; no libLTO
-        holds(io, &p, "include/$arch_header");
-        holds(io, &p, "lib/$triple/libclang_rt.asan.so");
-        holds(io, &p, "lib/$triple/libclang_rt.ubsan_standalone.so");
-        holds(io, &p, "lib/$triple/libclang_rt.builtins.a");
-        holds(io, &p, "lib/$triple/libclang_rt.profile.a");
+        holds(&memory, &p, "include/$arch_header");
+        holds(&memory, &p, "lib/$triple/libclang_rt.asan.so");
+        holds(&memory, &p, "lib/$triple/libclang_rt.ubsan_standalone.so");
+        holds(&memory, &p, "lib/$triple/libclang_rt.builtins.a");
+        holds(&memory, &p, "lib/$triple/libclang_rt.profile.a");
     }
 }
 
-static void is_a_copy(io::Io *io, const scratch::Project *p, const char *program) {
+static void is_a_copy(arena::Arena *arena, const scratch::Project *p, const char *program) {
     char name[256];
     char command[256];
     (void)format::to(name, sizeof name, "resource: bin/", program,
                      " is a copy of the smith that ran, with a file of its own");
     (void)format::to(command, sizeof command, "is_copy \"$programs/bin/", program,
                      "\" \"$smith\" && echo yes || echo no");
-    scratch::expect_text(name, "yes", text_after(io, p, command));
+    scratch::expect_text(name, "yes", text_after(arena, p, command));
 }
 
-export void test_resource_the_programs_are_copies_of_the_smith(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_the_programs_are_copies_of_the_smith() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
-    is_a_copy(io, &p, "clang");
-    is_a_copy(io, &p, "clang++");
-    is_a_copy(io, &p, "ld");
+    first_compile(&memory, &p);
+    is_a_copy(&memory, &p, "clang");
+    is_a_copy(&memory, &p, "clang++");
+    is_a_copy(&memory, &p, "ld");
 }
 
-export void test_resource_the_builtin_headers_come_from_the_folder(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_the_builtin_headers_come_from_the_folder() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
+    first_compile(&memory, &p);
     scratch::expect_contains("resource: the builtin headers come from the folder",
-                             text_after(io, &p, "\"$smith\" cc -M hello.c"),
-                             text_after(io, &p, "echo \"$folder/lib/clang/$major/include/stddef.h\""));
+                             text_after(&memory, &p, "\"$smith\" cc -M hello.c"),
+                             text_after(&memory, &p, "echo \"$folder/lib/clang/$major/include/stddef.h\""));
     scratch::expect_text("resource: nothing names an LLVM install", "",
-                         text(io, &p, "\"$smith\" cc -### -c hello.c 2>&1 | grep -F 'smith/llvm' | head -n 1"));
+                         text(&memory, &p, "\"$smith\" cc -### -c hello.c 2>&1 | grep -F 'smith/llvm' | head -n 1"));
 }
 
 // A second compile reads the folder and writes nothing.
-export void test_resource_a_second_compile_rewrites_no_file(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_a_second_compile_rewrites_no_file() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
+    first_compile(&memory, &p);
     // libLTO.dylib is the system ld's on macOS; Linux has none
     constexpr char files[_] = "ls -l \"$folder/lib/clang/$major/include/stddef.h\" $([ \"$os\" = Darwin ] && echo "
                               "\"$folder/lib/libLTO.dylib\")";
-    scratch::Run stamped = run_after(io, &p, format::push(&io->arena, files, " >../stamp").data);
+    scratch::Run stamped = run_after(&memory, &p, format::push(&memory, files, " >../stamp").data);
     scratch::expect_status("resource: the stamps", 0, &stamped);
     scratch::sleep(&p, 1000);
-    scratch::Run second = run(io, &p, "\"$smith\" cc -fsyntax-only hello.c");
+    scratch::Run second = run(&memory, &p, "\"$smith\" cc -fsyntax-only hello.c");
     scratch::expect_status("resource: a second compile works", 0, &second);
-    scratch::expect_text("resource: and rewrites no file", text(io, &p, "cat ../stamp"), text_after(io, &p, files));
+    scratch::expect_text("resource: and rewrites no file", text(&memory, &p, "cat ../stamp"),
+                         text_after(&memory, &p, files));
 }
 
 // smith lint and smith lsp read the same folder for the builtin headers, not the LLVM install.
-export void test_resource_lint_and_lsp_read_clangs_folder(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_lint_and_lsp_read_clangs_folder() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
+    first_compile(&memory, &p);
     scratch::Run linted =
-        run(io, &p,
+        run(&memory, &p,
             "\"$smith\" lint --quiet --checks='-*,bugprone-sizeof-expression' --extra-arg=-v hello.c -- >../lint 2>&1");
     scratch::expect_status("resource: smith lint parses a file that includes a builtin header", 0, &linted);
-    scratch::expect_contains("resource: and its builtin headers come from clang's folder", text(io, &p, "cat ../lint"),
-                             text(io, &p, "echo \"$XDG_DATA_HOME/smith/programs/\""));
+    scratch::expect_contains("resource: and its builtin headers come from clang's folder",
+                             text(&memory, &p, "cat ../lint"),
+                             text(&memory, &p, "echo \"$XDG_DATA_HOME/smith/programs/\""));
     scratch::expect_text("resource: and no LLVM install is named", "",
-                         text(io, &p, "grep -F 'smith/llvm' ../lint | head -n 1"));
-    scratch::Run set_up = run(io, &p,
+                         text(&memory, &p, "grep -F 'smith/llvm' ../lint | head -n 1"));
+    scratch::Run set_up = run(&memory, &p,
                               "printf '[{\"directory\": \"%s\", \"file\": \"hello.c\", \"arguments\": [\"smith-cc\", "
                               "\"-c\", \"hello.c\"]}]\\n' "
                               "\"$PWD\" >compile_commands.json; printf 'Checks: \"-*\"\\n' >.clang-tidy");
     scratch::expect_status("resource: the compile database", 0, &set_up);
-    scratch::Run checked = run(io, &p, "\"$smith\" lsp --check=hello.c >../lsp 2>&1");
+    scratch::Run checked = run(&memory, &p, "\"$smith\" lsp --check=hello.c >../lsp 2>&1");
     scratch::expect_status("resource: smith lsp --check works", 0, &checked);
-    scratch::expect_text("resource: and logs no error", "0", text(io, &p, "grep -c 'E\\[' ../lsp"));
+    scratch::expect_text("resource: and logs no error", "0", text(&memory, &p, "grep -c 'E\\[' ../lsp"));
     scratch::expect_contains(
         "resource: and its resource directory is in this smith's programs folder, which links clang's",
-        text(io, &p, "cat ../lsp"), text(io, &p, "echo \"-resource-dir=$XDG_DATA_HOME/smith/programs/\""));
-    scratch::expect_contains("resource: and it is lib/clang/<major>", text(io, &p, "cat ../lsp"),
-                             text_after(io, &p, "echo \"/lib/clang/$major\""));
+        text(&memory, &p, "cat ../lsp"), text(&memory, &p, "echo \"-resource-dir=$XDG_DATA_HOME/smith/programs/\""));
+    scratch::expect_contains("resource: and it is lib/clang/<major>", text(&memory, &p, "cat ../lsp"),
+                             text_after(&memory, &p, "echo \"/lib/clang/$major\""));
 }
 
 // -flto links with lld, which has LLVM inside it and so needs no libLTO.dylib; the driver still names the one in the
 // folder for a linker that does, and SMITH_LINKER=/usr/bin/ld loads it.
-export void test_resource_an_flto_link_needs_no_lib_lto(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_an_flto_link_needs_no_lib_lto() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
+    first_compile(&memory, &p);
     scratch::expect_text("resource: an -flto link works", "0 hi",
-                         built(io, &p, "\"$smith\" cc -flto hello.c -o lto", "./lto"));
-    scratch::expect_text("resource: and the linker prints nothing about libLTO", "", printed(io, &p));
+                         built(&memory, &p, "\"$smith\" cc -flto hello.c -o lto", "./lto"));
+    scratch::expect_text("resource: and the linker prints nothing about libLTO", "", printed(&memory, &p));
     // The system ld loads libLTO.dylib for -flto; Linux's ld needs LLVM's gold plugin instead, which smith does not
     // carry, so there is no such link to check there.
     if constexpr (target::os == target::macos) {
         scratch::expect_text(
             "resource: an -flto link with the system ld works", "0 hi",
-            built(io, &p, "SMITH_LINKER=/usr/bin/ld \"$smith\" cc -flto hello.c -o lto_ld", "./lto_ld"));
-        scratch::expect_text("resource: and it prints nothing", "", printed(io, &p));
+            built(&memory, &p, "SMITH_LINKER=/usr/bin/ld \"$smith\" cc -flto hello.c -o lto_ld", "./lto_ld"));
+        scratch::expect_text("resource: and it prints nothing", "", printed(&memory, &p));
     }
 }
 
 // The program the driver runs as `ld` is smith, and the link is lld's, in that process. An lld binary says so in its
 // LC_BUILD_VERSION: tool 4 (ld64's LD is 3), with LLVM's version; on Linux in its .comment, "Linker: LLD" (lld_mark
 // prints the tool, or the count of those lines).
-export void test_resource_the_link_is_lld_in_smiths_process(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_the_link_is_lld_in_smiths_process() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
+    first_compile(&memory, &p);
     scratch::expect_text("resource: a link works", "0 hi",
-                         built(io, &p, "\"$smith\" cc hello.c -o linked", "./linked"));
+                         built(&memory, &p, "\"$smith\" cc hello.c -o linked", "./linked"));
     if constexpr (target::os == target::macos) {
-        scratch::expect_text("resource: and is lld's", "4", text(io, &p, "lld_mark linked"));
+        scratch::expect_text("resource: and is lld's", "4", text(&memory, &p, "lld_mark linked"));
         scratch::expect_text("resource: and is signed, with no codesign step", "0",
-                             text(io, &p, "codesign --verify linked >/dev/null 2>&1; echo $?"));
+                             text(&memory, &p, "codesign --verify linked >/dev/null 2>&1; echo $?"));
         scratch::expect_text("resource: and is signed ad hoc by the linker", "1",
-                             text(io, &p, "codesign -dv linked 2>&1 | grep -c 'linker-signed'"));
+                             text(&memory, &p, "codesign -dv linked 2>&1 | grep -c 'linker-signed'"));
     } else {
-        scratch::expect_text("resource: and is lld's", "1", text(io, &p, "lld_mark linked")); // no signing on Linux
+        scratch::expect_text("resource: and is lld's", "1",
+                             text(&memory, &p, "lld_mark linked")); // no signing on Linux
     }
     const char *linked_by_ld = "0 hi 0"; // the count of lld's marks; macOS prints ld64's tool, 3
     if constexpr (target::os == target::macos) {
         linked_by_ld = "0 hi 3";
     }
     scratch::expect_text("resource: SMITH_LINKER=/usr/bin/ld links with ld", linked_by_ld,
-                         text_after(io, &p,
+                         text_after(&memory, &p,
                                     "SMITH_LINKER=/usr/bin/ld \"$smith\" cc hello.c -o linked_ld 2>../err; "
                                     "echo \"$? $(./linked_ld) $(lld_mark linked_ld)\""));
 }
 
-export void test_resource_a_missing_linker_and_an_undefined_symbol_fail(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_a_missing_linker_and_an_undefined_symbol_fail() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
-    scratch::Run none = run(io, &p, "SMITH_LINKER=/nonexistent/ld \"$smith\" cc hello.c -o linked_none");
+    first_compile(&memory, &p);
+    scratch::Run none = run(&memory, &p, "SMITH_LINKER=/nonexistent/ld \"$smith\" cc hello.c -o linked_none");
     scratch::expect_status("resource: a SMITH_LINKER that is not there is an error", 1, &none);
     scratch::expect_contains("resource: and says what it is", none.err, "SMITH_LINKER");
-    scratch::Run undefined = run(io, &p, "\"$smith\" cc undefined.c -o undefined");
+    scratch::Run undefined = run(&memory, &p, "\"$smith\" cc undefined.c -o undefined");
     scratch::expect_status("resource: an undefined symbol fails", 1, &undefined);
     scratch::expect_contains("resource: with lld's message", undefined.err, "undefined symbol: missing");
-    scratch::expect_text("resource: and leaves no output", "no", text(io, &p, "yn undefined"));
+    scratch::expect_text("resource: and leaves no output", "no", text(&memory, &p, "yn undefined"));
 }
 
 // What ld links today, lld links: frameworks, a dynamic library, -dead_strip, an Objective-C selector stub, a dSYM.
-export void test_macos_resource_lld_links_frameworks_arc_and_dead_strip(io::Io *io) {
+export void test_macos_resource_lld_links_frameworks_arc_and_dead_strip() {
     // Frameworks, ARC (Objective-C), -dead_strip and a dSYM are Mach-O and Apple's: Linux has no such feature to check.
     if constexpr (target::os != target::macos) {
         return;
     }
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
+    first_compile(&memory, &p);
     scratch::expect_text(
         "resource: a program with frameworks, ARC and -dead_strip", "0 7",
-        built(io, &p,
+        built(&memory, &p,
               "\"$smith\" cc -fobjc-arc -g objc.m -framework Foundation -framework AppKit -framework Metal "
               "-Wl,-dead_strip -o objc",
               "./objc 2>/dev/null"));
     scratch::expect_text("resource: and its dSYM has the debug info", "yes",
-                         text(io, &p, "[ -f objc.dSYM/Contents/Resources/DWARF/objc ] && echo yes || echo no"));
+                         text(&memory, &p, "[ -f objc.dSYM/Contents/Resources/DWARF/objc ] && echo yes || echo no"));
 }
 
-export void test_resource_lld_links_a_dynamic_library_and_a_program_against_it(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_lld_links_a_dynamic_library_and_a_program_against_it() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
+    first_compile(&memory, &p);
     // A shared library is a .dylib on macOS (-dynamiclib, @loader_path) and a .so on Linux (-shared -fPIC, $ORIGIN).
     if constexpr (target::os == target::macos) {
-        scratch::Run linked = run(io, &p, "\"$smith\" cc -dynamiclib hello.c -o libhello.dylib");
+        scratch::Run linked = run(&memory, &p, "\"$smith\" cc -dynamiclib hello.c -o libhello.dylib");
         scratch::expect_status("resource: a dynamic library links", 0, &linked);
-        scratch::Run library = run(io, &p, "\"$smith\" cc -dynamiclib lib.c -o liblib.dylib");
+        scratch::Run library = run(&memory, &p, "\"$smith\" cc -dynamiclib lib.c -o liblib.dylib");
         scratch::expect_status("resource: the library to link against", 0, &library);
         scratch::expect_text(
             "resource: and a program links against it", "0 lib",
-            built(io, &p, "\"$smith\" cc uselib.c -L. -llib -Wl,-rpath,@loader_path -o uselib", "./uselib"));
+            built(&memory, &p, "\"$smith\" cc uselib.c -L. -llib -Wl,-rpath,@loader_path -o uselib", "./uselib"));
     } else {
-        scratch::Run linked = run(io, &p, "\"$smith\" cc -shared -fPIC hello.c -o libhello.so");
+        scratch::Run linked = run(&memory, &p, "\"$smith\" cc -shared -fPIC hello.c -o libhello.so");
         scratch::expect_status("resource: a dynamic library links", 0, &linked);
-        scratch::Run library = run(io, &p, "\"$smith\" cc -shared -fPIC lib.c -o liblib.so");
+        scratch::Run library = run(&memory, &p, "\"$smith\" cc -shared -fPIC lib.c -o liblib.so");
         scratch::expect_status("resource: the library to link against", 0, &library);
         scratch::expect_text(
             "resource: and a program links against it", "0 lib",
-            built(io, &p, "\"$smith\" cc uselib.c -L. -llib '-Wl,-rpath,$ORIGIN' -o uselib", "./uselib"));
+            built(&memory, &p, "\"$smith\" cc uselib.c -L. -llib '-Wl,-rpath,$ORIGIN' -o uselib", "./uselib"));
     }
 }
 
 // Compiling and linking in one command runs the driver again with -cc1: bin/clang is smith. A copy of smith is the same
 // smith (the same LC_UUID), so it uses the same programs, and the links outlive the smith they were made from.
-export void test_resource_a_copy_of_smith_uses_the_same_programs(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_a_copy_of_smith_uses_the_same_programs() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
+    first_compile(&memory, &p);
     scratch::expect_text("resource: a compile and a link with a copy of smith", "0 hi",
-                         built(io, &p, "cp \"$smith\" ../smith2; ../smith2 cc hello.c -o prog", "./prog"));
+                         built(&memory, &p, "cp \"$smith\" ../smith2; ../smith2 cc hello.c -o prog", "./prog"));
     scratch::expect_text("resource: a copy of smith makes no programs of its own", "1",
-                         text(io, &p, "ls \"$program_folders\" | wc -l | tr -d ' '"));
-    scratch::Run removed = run(io, &p, "rm ../smith2");
+                         text(&memory, &p, "ls \"$program_folders\" | wc -l | tr -d ' '"));
+    scratch::Run removed = run(&memory, &p, "rm ../smith2");
     scratch::expect_status("resource: the copy is removed", 0, &removed);
     scratch::expect_text("resource: after the copy is removed, a compile and a link still work", "0 hi",
-                         built(io, &p, "\"$smith\" cc hello.c -o prog", "./prog"));
+                         built(&memory, &p, "\"$smith\" cc hello.c -o prog", "./prog"));
 }
 
 // Two different smiths (another LC_UUID, as a rebuild has) never share or remake each other's programs, and keep
 // working at once on the one runtime folder: each compiles and links an Objective-C program, many times, together.
-export void test_resource_two_smiths_keep_their_own_programs(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_two_smiths_keep_their_own_programs() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
-    scratch::Run made = run(io, &p, "variant smith_b ab");
+    first_compile(&memory, &p);
+    scratch::Run made = run(&memory, &p, "variant smith_b ab");
     scratch::expect_status("resource: a second smith is made", 0, &made);
     scratch::expect_text("resource: a second smith (another LC_UUID) works", "0 7",
-                         built(io, &p, "../smith_b cc $seven -o objc_b", "./objc_b"));
+                         built(&memory, &p, "../smith_b cc $seven -o objc_b", "./objc_b"));
     scratch::expect_text("resource: and has programs folder of its own", "2",
-                         text(io, &p, "ls \"$program_folders\" | wc -l | tr -d ' '"));
+                         text(&memory, &p, "ls \"$program_folders\" | wc -l | tr -d ' '"));
     scratch::expect_text(
         "resource: that hold its own copies", "yes",
-        text(io, &p,
+        text(&memory, &p,
              "for f in \"$program_folders\"/*; do is_copy \"$f/bin/ld\" ../smith_b && echo yes; done | head -n 1"));
     scratch::expect_text("resource: and the first smith's copies are still the first", "yes",
-                         text_after(io, &p, "is_copy \"$programs/bin/ld\" \"$smith\" && echo yes || echo no"));
+                         text_after(&memory, &p, "is_copy \"$programs/bin/ld\" \"$smith\" && echo yes || echo no"));
 }
 
-export void test_resource_eight_workers_of_two_smiths_all_link_and_run(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_eight_workers_of_two_smiths_all_link_and_run() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
-    scratch::Run made = run(io, &p, "variant smith_b ab");
+    first_compile(&memory, &p);
+    scratch::Run made = run(&memory, &p, "variant smith_b ab");
     scratch::expect_status("resource: a second smith is made", 0, &made);
     scratch::expect_text("resource: eight workers of two smiths, five rounds each, all link and run", "0",
-                         text(io, &p, workers));
+                         text(&memory, &p, workers));
     scratch::expect_text("resource: and the programs are still each its own", "yes",
-                         text_after(io, &p,
+                         text_after(&memory, &p,
                                     "is_copy \"$programs/bin/clang\" \"$smith\" && is_copy \"$programs/bin/ld\" "
                                     "\"$smith\" && echo yes || echo no"));
     scratch::expect_text("resource: and no half-made folder is left", "",
-                         text(io, &p, "ls \"$program_folders\" | grep tmp"));
+                         text(&memory, &p, "ls \"$program_folders\" | grep tmp"));
 }
 
 // A programs folder idle for more than 31 days is removed when a new one is made; a recent one, and the runtime folder,
 // stay.
-export void test_resource_an_idle_programs_folder_is_removed(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_an_idle_programs_folder_is_removed() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
+    first_compile(&memory, &p);
     scratch::Run staged = run_after(
-        io, &p,
+        &memory, &p,
         "variant smith_b ab; variant smith_c cd; ../smith_b cc -fsyntax-only hello.c; old=$(folder_of ../smith_b); "
         "echo \"$old\" >../old; touch -t 202001010000 \"$old\"; mkdir \"$program_folders/stale.99.tmp\"; "
         "touch -t 202001010000 \"$program_folders/stale.99.tmp\"; ../smith_c cc -fsyntax-only hello.c; "
         "echo \"$programs\" >../recent; echo \"$folder\" >../runtime");
     scratch::expect_status("resource: a new programs folder is made", 0, &staged);
     scratch::expect_text("resource: an idle programs folder is removed when a new one is made", "no",
-                         text(io, &p, "yn \"$(cat ../old)\""));
+                         text(&memory, &p, "yn \"$(cat ../old)\""));
     scratch::expect_text("resource: so is an old half-made one", "no",
-                         text(io, &p, "yn \"$program_folders/stale.99.tmp\""));
-    scratch::expect_text("resource: a recent one stays", "yes", text(io, &p, "yn \"$(cat ../recent)\""));
-    scratch::expect_text("resource: and the runtime folder", "yes", text(io, &p, "yn \"$(cat ../runtime)\""));
+                         text(&memory, &p, "yn \"$program_folders/stale.99.tmp\""));
+    scratch::expect_text("resource: a recent one stays", "yes", text(&memory, &p, "yn \"$(cat ../recent)\""));
+    scratch::expect_text("resource: and the runtime folder", "yes", text(&memory, &p, "yn \"$(cat ../runtime)\""));
 }
 
 // A programs folder records its binary (LC_UUID and path). When a new one is made, the folder of a binary that is gone
 // is removed, unless a running smith holds its lock (a long-running `smith lsp` of a deleted worktree) or it is younger
 // than an hour; one whose binary exists stays.
-export void test_resource_a_programs_folder_records_its_binary(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_a_programs_folder_records_its_binary() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    scratch::Run made = run(io, &p, "variant smith_d 11; ../smith_d cc -fsyntax-only hello.c");
+    scratch::Run made = run(&memory, &p, "variant smith_d 11; ../smith_d cc -fsyntax-only hello.c");
     scratch::expect_status("resource: a smith with a programs folder", 0, &made);
     scratch::expect_text("resource: a programs folder records its binary", "smith_d",
-                         text(io, &p, "sed -n 2p \"$(folder_of ../smith_d)/binary\" | sed 's,.*/,,'"));
+                         text(&memory, &p, "sed -n 2p \"$(folder_of ../smith_d)/binary\" | sed 's,.*/,,'"));
 }
 
-export void test_resource_a_folder_whose_smith_is_running_stays(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_a_folder_whose_smith_is_running_stays() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
-    scratch::Run staged = run_after(io, &p, lock_script);
+    first_compile(&memory, &p);
+    scratch::Run staged = run_after(&memory, &p, lock_script);
     scratch::expect_status("resource: the lock script", 0, &staged);
     scratch::expect_contains("resource: a folder whose smith is running stays when its binary is gone", staged.out,
                              "running=yes");
@@ -523,68 +617,89 @@ export void test_resource_a_folder_whose_smith_is_running_stays(io::Io *io) {
                              "binary_exists_still=yes");
 }
 
-export void test_resource_a_folder_younger_than_an_hour_stays(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_a_folder_younger_than_an_hour_stays() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
+    first_compile(&memory, &p);
     scratch::Run staged =
-        run(io, &p,
+        run(&memory, &p,
             "variant smith_e 22; ../smith_e cc -fsyntax-only hello.c; folder_e=$(folder_of ../smith_e); "
             "echo \"$folder_e\" >../young; rm ../smith_e; "
             "touch -t \"$(ago_minutes 30)\" \"$folder_e\"; variant smith_h 55; "
             "../smith_h cc -fsyntax-only hello.c");
     scratch::expect_status("resource: a young folder whose binary is gone, and a new one", 0, &staged);
     scratch::expect_text("resource: a folder younger than an hour stays even when its binary is gone", "yes",
-                         text(io, &p, "yn \"$(cat ../young)\""));
+                         text(&memory, &p, "yn \"$(cat ../young)\""));
 }
 
-export void test_resource_smith_cplusplus_compiles_and_links_cplusplus(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_smith_cplusplus_compiles_and_links_cplusplus() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
+    first_compile(&memory, &p);
     scratch::expect_text("resource: smith-c++ compiles and links C++", "0 3",
-                         built(io, &p, "ln -s \"$smith\" ../smith-c++; ../smith-c++ v.cpp -o v", "./v"));
+                         built(&memory, &p, "ln -s \"$smith\" ../smith-c++; ../smith-c++ v.cpp -o v", "./v"));
 }
 
 // A sanitized program loads its runtime from the folder, which neither smith cache clean nor pruning nor a removed
 // cache touches.
-export void test_resource_a_sanitized_program_loads_its_runtime_from_the_folder(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, true)) {
+export void test_resource_a_sanitized_program_loads_its_runtime_from_the_folder() {
+    scratch::Project p = scratch::make("p", "resource");
+    scratch::own_cache(&p); // before the arena: clean frees it
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
+    first_compile(&memory, &p);
     scratch::expect_text("resource: a sanitized program builds and runs", "0 hi",
-                         built(io, &p, "\"$smith\" cc $sanitize -g hello.c -o asan", "./asan"));
+                         built(&memory, &p, "\"$smith\" cc $sanitize -g hello.c -o asan", "./asan"));
     scratch::expect_text("resource: its rpath is the folder's runtime",
-                         text_after(io, &p, "echo \"$folder/lib/clang/$major/$runtimes\""),
-                         text(io, &p, "rpath_of asan"));
-    scratch::Run cleaned = run(io, &p, "\"$smith\" cache clean");
+                         text_after(&memory, &p, "echo \"$folder/lib/clang/$major/$runtimes\""),
+                         text(&memory, &p, "rpath_of asan"));
+    scratch::Run cleaned = run(&memory, &p, "\"$smith\" cache clean");
     scratch::expect_status("resource: smith cache clean works", 0, &cleaned);
     scratch::expect_text("resource: the folder is still there", "yes",
-                         text_after(io, &p, "yn \"$folder/lib/clang/$major/$runtimes/$asan_runtime\""));
-    scratch::expect_text("resource: the sanitized program still runs", "hi", text(io, &p, "./asan"));
-    scratch::Run removed = run(io, &p, "rm -rf \"$XDG_CACHE_HOME\"");
+                         text_after(&memory, &p, "yn \"$folder/lib/clang/$major/$runtimes/$asan_runtime\""));
+    scratch::expect_text("resource: the sanitized program still runs", "hi", text(&memory, &p, "./asan"));
+    scratch::Run removed = run(&memory, &p, "rm -rf \"$XDG_CACHE_HOME\"");
     scratch::expect_status("resource: the whole cache is removed", 0, &removed);
-    scratch::expect_text("resource: with the whole cache removed it still runs", "hi", text(io, &p, "./asan"));
-    scratch::Run bad = run(io, &p, "\"$smith\" cc -fsanitize=address ${shared_libsan:-} -g bad.c -o bad");
+    scratch::expect_text("resource: with the whole cache removed it still runs", "hi", text(&memory, &p, "./asan"));
+    scratch::Run bad = run(&memory, &p, "\"$smith\" cc -fsanitize=address ${shared_libsan:-} -g bad.c -o bad");
     scratch::expect_status("resource: a program that reads out of bounds is built", 0, &bad);
     scratch::expect_text("resource: and still finds the runtime to report an error", "AddressSanitizer",
-                         text(io, &p, "./bad 2>&1 | grep -o AddressSanitizer | head -n 1"));
+                         text(&memory, &p, "./bad 2>&1 | grep -o AddressSanitizer | head -n 1"));
 }
 
 // Processes that start together on a new data folder all work, and leave one folder.
-export void test_resource_eight_first_compiles_at_once_leave_one_folder(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_eight_first_compiles_at_once_leave_one_folder() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    first_compile(io, &p);
-    scratch::Run raced = run(io, &p,
+    first_compile(&memory, &p);
+    scratch::Run raced = run(&memory, &p,
                              "before=$(ls \"$clang_folders\"); rm -rf \"$XDG_DATA_HOME\"; "
                              "for n in 1 2 3 4 5 6 7 8; do (\"$smith\" cc -fsyntax-only hello.c 2>\"../race$n\" && "
                              "echo ok >\"../race$n.ok\") & done; "
@@ -596,16 +711,21 @@ export void test_resource_eight_first_compiles_at_once_leave_one_folder(io::Io *
     scratch::expect_contains("resource: and one programs folder", raced.out, "programs=1");
 }
 
-export void test_resource_an_unusable_data_folder_is_a_message_and_status_2(io::Io *io) {
-    scratch::Project p;
-    if (!begin(io, &p, false)) {
+export void test_resource_an_unusable_data_folder_is_a_message_and_status_2() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&memory, &p)) {
         return;
     }
-    scratch::Run relative = run(io, &p, "env -u XDG_DATA_HOME HOME=relative \"$smith\" cc -fsyntax-only hello.c");
+    scratch::Run relative = run(&memory, &p, "env -u XDG_DATA_HOME HOME=relative \"$smith\" cc -fsyntax-only hello.c");
     scratch::expect_status("resource: no usable data folder: status 2", 2, &relative);
     scratch::expect_contains("resource: and a message that names the variables", relative.err,
                              "set HOME or XDG_DATA_HOME");
-    scratch::Run unwritable = run(io, &p, "XDG_DATA_HOME=/dev/null/data \"$smith\" cc -fsyntax-only hello.c");
+    scratch::Run unwritable = run(&memory, &p, "XDG_DATA_HOME=/dev/null/data \"$smith\" cc -fsyntax-only hello.c");
     scratch::expect_status("resource: an unwritable data folder: status 2", 2, &unwritable);
     scratch::expect_contains("resource: and a message that names it", unwritable.err, "cannot create");
 }
