@@ -1022,8 +1022,8 @@ static void smith_changed_default_ref(char *ref, size_t size) {
 }
 
 // The base: the given ref, else (1) the merge-base with the branch's upstream, (2) the merge-base with
-// origin/<default branch> (origin/HEAD, else origin/main), (3) the merge-base with a local main. `smith_changed_label`
-// names the one chosen. False when none exists.
+// origin/<default branch> (origin/HEAD, else origin/main); a local main is not used (it may be stale).
+// `smith_changed_label` names the one chosen. False when none exists.
 static bool smith_changed_base(const char *given, char *base, size_t size) {
     smith_changed_label[0] = '\0';
     if (given != nullptr) {
@@ -1042,11 +1042,6 @@ static bool smith_changed_base(const char *given, char *base, size_t size) {
     const char *const origin[] = {"merge-base", "HEAD", ref, nullptr};
     if (smith_changed_first(origin, base, size)) {
         snprintf(smith_changed_label, sizeof smith_changed_label, "%s", ref);
-        return true;
-    }
-    static const char *const local[] = {"merge-base", "HEAD", "main", nullptr};
-    if (smith_changed_first(local, base, size)) {
-        snprintf(smith_changed_label, sizeof smith_changed_label, "main");
         return true;
     }
     return false;
@@ -1110,7 +1105,8 @@ static bool smith_changed_collect(const char *base_name, const char *head, bool 
                                   size_t size) {
     if (!smith_changed_base(base_name, base, size) || (head != nullptr && !smith_changed_name_ok(head))) {
         fprintf(smith_changed_out(),
-                "%s: no base: pass --base <ref> (no upstream, origin/HEAD, origin/main or main to compare with)\n",
+                "%s: no base: pass --changed=<ref> (or --base <ref>) (no upstream, origin/HEAD or origin/main to "
+                "compare with)\n",
                 who);
         return false;
     }

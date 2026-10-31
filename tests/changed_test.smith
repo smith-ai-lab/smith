@@ -264,7 +264,8 @@ constexpr char repository[_] =
     "tests/docs_test.smith && "
     "printf 'int main(void) { return 0; }\\n' > tests/old.c && printf 'text\\n' > README.md && "
     "printf 'text\\n' > docs/guide.txt && printf 'int x;\\n' > runtime/docs.c && "
-    "git add -A && git -c user.name=t -c user.email=t@t commit -q -m base; ";
+    "git add -A && git -c user.name=t -c user.email=t@t commit -q -m base && "
+    "git update-ref refs/remotes/origin/main HEAD; ";
 
 static const char *changed_by_git(const char *edit) {
     scratch::Project p = scratch::make("p", nullptr);
@@ -440,9 +441,19 @@ export void test_base_is_origin_main_when_origin_head_is_not_set() {
     scratch::expect_contains("origin/main", out, "origin/main (");
 }
 
-export void test_base_is_empty_with_nothing_to_compare_with() {
+export void test_no_base_fails_naming_the_ref_to_pass_and_a_local_main_is_not_one() {
     enter();
     defer leave();
-    const char *out = base_of("cd o && git checkout -q dev && git branch -q -D main", "o");
-    scratch::expect_text("no base", "", out);
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::Run made = scratch::sh(&p, format::push(origin_repository, "cd o && git checkout -q dev").data);
+    scratch::expect_status("the repository is made", 0, &made);
+    constexpr usize capacity = 1U << 10;
+    char *out = mem::alloc_slice(char, capacity).data;
+    test::check_equal(c::smith_core_changed_base(format::push(p.dir, "/o").data, out, capacity), true);
+    scratch::expect_text("a local main is no base", "", out);
+    scratch::Run run = scratch::sh(
+        &p, "cd o && printf 'int main(void) { return 0; }\\n' > main.c && SMITH_OUTPUT=full smith lint --changed 2>&1");
+    scratch::expect_contains("the message", run.out, "pass --changed=<ref>");
+    scratch::expect_failure("the exit", &run);
 }

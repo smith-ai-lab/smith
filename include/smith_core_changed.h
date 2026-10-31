@@ -20,6 +20,6 @@ bool smith_core_changed_select(const char *folder, const char *files, const char
 bool smith_core_changed_lint(const char *folder, const char *files, const char *changes, char *out, size_t out_size);
 
 // The base `--changed` chooses with no ref, in the git repository `folder`: the merge-base with the upstream, else with
-// origin/<default branch> (origin/HEAD, else origin/main), else with a local main; `out` has "<ref> (<12 hex>)" for the
+// origin/<default branch> (origin/HEAD, else origin/main) (never a local main); `out` has "<ref> (<12 hex>)" for the
 // ref chosen ("upstream" for the upstream), or is empty when there is none. False when the folder cannot be entered.
 bool smith_core_changed_base(const char *folder, char *out, size_t out_size);
