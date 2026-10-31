@@ -163,7 +163,9 @@ jobs:
   mechanical:
     # fmt, docs, lint and the proofs of the project (the stages of `smith check` that are not tests)
     needs: [changes, build]
-    if: needs.changes.outputs.scope == 'full'
+    # `!cancelled()` and the build's result: without a status function the implicit success() also looks at the skipped
+    # ancestor `pack` and skips this job, which left fmt, lint, prove and the macOS tests unrun from #1067 on (#1139)
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
     timeout-minutes: 40
     env:
@@ -201,7 +203,9 @@ jobs:
   test:
     # the macOS-only tests (`smith test --macos-only`, 3 of them, one part), on the Mac with the build of this run
     needs: [changes, build]
-    if: needs.changes.outputs.scope == 'full'
+    # `!cancelled()` and the build's result: without a status function the implicit success() also looks at the skipped
+    # ancestor `pack` and skips this job, which left fmt, lint, prove and the macOS tests unrun from #1067 on (#1139)
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
     timeout-minutes: 45
     strategy:
@@ -360,7 +364,7 @@ jobs:
     # a change of the README, AGENTS.md, knowledge/ or the skills only: the docs check and the tests that read them
     # (a change that also touches code runs the full check, whose parts include both)
     needs: [changes, build]
-    if: needs.changes.outputs.scope == 'docs'
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'docs' }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
     timeout-minutes: 30
     env:
