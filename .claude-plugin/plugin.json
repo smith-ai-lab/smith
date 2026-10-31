@@ -140,7 +140,8 @@
     "./.agents/skills/smith-text/",
     "./.agents/skills/smith-text-c/",
     "./.agents/skills/smith-text-numbers/",
-    "./.agents/skills/smith-trace/"
+    "./.agents/skills/smith-trace/",
+    "./.agents/skills/smith-wrapping/"
   ],
   "lspServers": {
     "smith": {
