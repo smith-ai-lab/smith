@@ -14,4 +14,5 @@ You run one lane: an ordered list of tickets whose files no other lane touches. 
 - **Keep the lane moving.** Red CI, a stuck worker or a missing log is yours to fix or to raise with the lead, never to wait on.
 - **Keep your context small.** Read workers' reports, not their work, unless a check fails. Hand over to a fresh orchestrator when your conversation grows long.
 - **Leave nothing behind.** When a ticket's PR merges or closes, its worktree and branch go. Stop every background wait you started before going idle.
+- **Message the lead only when you need the lead** (owner, 2026-10-31: "they should only message you when they need you"): a question the ticket and the recorded decisions don't settle (options and your recommendation), a scope or ticket-split choice, a file conflict with another lane that the two of you can't settle directly, a stuck lane, and the lane's end report. Merges, started workers and CI progress are on GitHub, where the lead reads them; put several non-urgent points in one message.
 - **Report when the lane ends**, briefly: what merged, what wasn't tested, open questions for the owner, and friction.
