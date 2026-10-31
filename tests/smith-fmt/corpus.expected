@@ -1081,6 +1081,31 @@ i32 main() {
     if (h == .error) c::printf("error %d\n", h.error);
     return 0;
 }
+==> enum-generic-import-in-function/src/lists.smith <==
+module lists;
+
+export option(T) first(constexpr type T, T *p, usize n) {
+    if (n == 0) {
+        return .none;
+    }
+    return {.some = p[0]};
+}
+==> enum-generic-import-in-function/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import lists;
+
+static i32 get(i32 *p, usize n) {
+    option(i32) r = lists::first(i32, p, n);
+    return r == .some ? r.some : -1;
+}
+
+i32 main(void) {
+    i32 xs[2] = {7, 8};
+    c::printf("%d %d\n", get(&xs[0], 2), get(&xs[0], 0));
+    return 0;
+}
 ==> enum-generic-return/src/find.smith <==
 module find;
 
@@ -1127,6 +1152,32 @@ i32 main(void) {
     }
     c::printf("%s %zu %s\n", b == .none ? "b none" : "b some", c == .some ? c.some : 99,
               none == .none ? "empty" : "full");
+    return 0;
+}
+==> enum-option-slice/src/main.smith <==
+module main;
+import <stdio.h>;
+import smith::arena;
+
+static option(f32[:]) first(f32 x[:]) {
+    if (countof(x) == 0) return .none;
+    return {.some = x};
+}
+
+export option(arena::slice_of(T, countof(dims))) wrap(constexpr type T, T *p, auto... dims) {
+    struct smith_array_T_n result = {};
+    result.data = p;
+    result.count[0] = (usize)dims[0];
+    return {.some = result};
+}
+
+i32 main(void) {
+    f32 buf[3] = {1, 2, 3};
+    f32 xs[:] = buf[0:3];
+    option(f32[:]) o = first(xs);
+    c::printf("%d\n", o == .some ? (i32)countof(o.some) : -1);
+    auto w = wrap(f32, buf, 3);
+    c::printf("%d\n", w == .some ? (i32)countof(w.some) : -1);
     return 0;
 }
 ==> enum-payload-lowering/src/shapes.smith <==
@@ -2074,6 +2125,15 @@ i32 main() {
     const i32 automatic[2] = {1, 2};
     constexpr const i32 *pointer = automatic;
     return *pointer;
+}
+==> error-constexpr-unread-private/src/main.smith <==
+module main;
+
+// An unexported constant nothing reads still warns (#413): only an exported one is used by definition.
+constexpr u32 spare = 8;
+
+i32 main() {
+    return 0;
 }
 ==> error-countof-pointer/src/main.smith <==
 module main;
@@ -3648,6 +3708,23 @@ export inline u32 clamp_twice(u32 x) {
 export u32 regular(u32 x) {
     return twice(x) + 1;
 }
+==> exported-constexpr-unread/src/main.smith <==
+module main;
+
+import shape::board as board;
+import <stdio.h>;
+
+i32 main() {
+    c::printf("%u %u\n", board::width, board::cells[2]);
+    return 0;
+}
+==> exported-constexpr-unread/src/shape/board.smith <==
+module shape::board;
+
+// An exported constant is used by definition: its importers read it, so a module that never does compiles with
+// -Wall -Wextra -Werror (this case's flags) and no `[[maybe_unused]]`.
+export constexpr u32 width = 8;
+export constexpr u32 cells[3] = {1, 2, 3};
 ==> exported-variable-declared/src/counter/state.smith <==
 module counter::state;
 
@@ -7286,6 +7363,42 @@ export typeof(x) framed(auto x) {
 export i32 plain(i32 x) {
     return unused(x);
 }
+==> generic-private-included-first/src/main.smith <==
+module main;
+
+import mid;
+import scale;
+import <stdio.h>;
+
+int main() {
+    scale::Key key = mid::make();
+    c::printf("%d %d\n", (int)key.bits, scale::twice(2));
+    return 0;
+}
+==> generic-private-included-first/src/mid.smith <==
+module mid;
+
+import scale;
+
+// Its header includes scale's plainly: an importer of both reads scale's section after that.
+export scale::Key make() {
+    return (scale::Key){7};
+}
+==> generic-private-included-first/src/scale.smith <==
+module scale;
+
+export struct Key {
+    u64 bits;
+};
+
+static u64 derive(u64 x) {
+    return x * 2;
+}
+
+// An exported generic that uses a private name: its instance needs the header's instance section.
+export typeof(x) twice(auto x) {
+    return (typeof(x))derive(1) + x;
+}
 ==> generic-private-names/src/main.smith <==
 module main;
 
@@ -8531,6 +8644,59 @@ i32 main() {
     c::printf("%u %.1f\n", chain::length("smith"), chain::root(16.0));
     return 0;
 }
+==> header-nolint-pair/src/pair.smith <==
+module pair;
+
+// The doubled value. The region below is closed after the function, and the header keeps both comments.
+// NOLINTBEGIN(smith-c23)
+export inline i32 twice(i32 value) {
+    return value * 2;
+}
+// NOLINTEND(smith-c23)
+
+// A region the header has none of: nothing of it is exported.
+// NOLINTBEGIN(smith-c23)
+i32 hidden(i32 value) {
+    return value + 1;
+}
+// NOLINTEND(smith-c23)
+
+// The first value.
+export i32 first() {
+    return hidden(0);
+}
+==> if-constexpr-file-scope-for-constexpr/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import target;
+
+// A generic with a `for constexpr` loop inside a file-scope `if constexpr` (issue #602): the loop's braces are not the
+// block's, so the block ends at its own last brace.
+if constexpr (target::os == target::macos || target::os != target::macos) {
+    export i32 sum_fields(constexpr type T, T *x) {
+        i32 sum = 0;
+        for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+            sum += 1;
+        }
+        return sum;
+    }
+
+    struct Pair {
+        i32 a;
+        i32 b;
+    };
+
+    i32 after(Pair *p) {
+        return sum_fields(Pair, p);
+    }
+}
+
+i32 main() {
+    Pair p = {1, 2};
+    c::printf("%d\n", after(&p));
+    return 0;
+}
 ==> if-constexpr/src/kind.smith <==
 module kind;
 
@@ -9303,6 +9469,27 @@ int main() {
     printf("main stays main\n");
     return 0;
 }
+==> module-name-linux/src/demo/linux.smith <==
+module demo::linux;
+
+// A module is named by what it is, and `linux` is a word the Linux target's compiler defines as 1 in C: not here.
+export i32 unix = 7;
+
+export i32 i386() {
+    return unix + 1;
+}
+==> module-name-linux/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import demo::linux;
+
+// In a module the names `linux`, `unix` and `i386` are the program's own, whatever the target defines for C.
+i32 main() {
+    i32 unix = 42;
+    (void)c::printf("%d %d %d\n", unix, linux::unix, linux::i386());
+    return 0;
+}
 ==> module-names/src/main.smith <==
 import names::fields as f;
 #include <stdio.h>
@@ -9848,6 +10035,38 @@ typedef Packet Alias;
 typedef struct Opaque Hidden;
 
 int main() {
+    return 0;
+}
+==> reflection-doc-if-constexpr/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+typedef struct {
+    /// Port to listen on.
+    u16 port;
+    u16 plain; // a plain comment is no doc comment
+    /// Backlog.
+    u16 backlog;
+} Options;
+
+// A condition reads the same doc the code does.
+void show(constexpr type T) {
+    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+        constexpr Field f = fields(T)[i];
+        if constexpr (f.doc.count[0] > 0) {
+            c::printf("%s: [%s]\n", f.name.data, f.doc.data);
+        } else {
+            c::printf("%s: undocumented\n", f.name.data);
+        }
+        if constexpr (fields(T)[i].doc.data[0] == 'B') {
+            c::printf("%s: the doc begins with B\n", f.name.data);
+        }
+    }
+}
+
+i32 main() {
+    show(Options);
     return 0;
 }
 ==> session-keyword-name/src/foo.smith <==
@@ -12048,6 +12267,29 @@ i32 main() {
     Local l = {.inner = 8};
     c::printf("%d %d %d %d %d %d %d %d %d %d\n", sum(&first), n.whole, (int)c, s == .circle, e == .empty,
               holder.later->count, legacy.a, bare.b, (int)q.x, l.inner);
+    return 0;
+}
+==> unused-name-library/src/barrier.smith <==
+module barrier;
+
+import <stdio.h>;
+
+// A parameter `_t` in two exported functions of a library module (issue #600): the second `_t` is a declaration, not a
+// read of the first.
+export void wait(i32 *_t) {}
+
+export void wait_for(i32 *_t, i32 n) {
+    c::printf("%d\n", n);
+}
+==> unused-name-library/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import barrier;
+
+i32 main() {
+    barrier::wait(nullptr);
+    barrier::wait_for(nullptr, 3);
     return 0;
 }
 ==> unused-run/src/main.smith <==

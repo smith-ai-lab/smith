@@ -33,7 +33,7 @@ static const char *slots_case_in(const char *pool, const char *steps, const char
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run run = scratch::sh(&p, format::push(&memory, prelude, pool, steps, script).data);
+    scratch::Run run = scratch::sh(&p, format::push(prelude, pool, steps, script).data);
     scratch::expect_status("the case ends", 0, &run);
     return run.out;
 }
@@ -112,7 +112,7 @@ export void test_the_executor_takes_its_slot_at_the_first_step_and_an_up_to_date
                          "rm free held; smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
                          "smith --smith-exec m.ninja 2>c.err >/dev/null; echo \"status $?\"; "
                          "grep -c 'waiting for a core' c.err; touch free; wait $a";
-    scratch::Run run = scratch::sh(&p, format::push(&memory, prelude, script).data);
+    scratch::Run run = scratch::sh(&p, format::push(prelude, script).data);
     scratch::expect_text("the first run waits, the second does not", "built\nstatus 0\n0\n", run.out);
 }
 
@@ -202,7 +202,7 @@ export void test_preflight_takes_its_token_at_once_and_holds_it_for_the_whole_ru
                          "ww b.err 'waiting for a core'; [ -e two/out ] && echo early; "
                          "touch free; wait $a; touch two/free; wait $b; echo done; grep -c 'waiting for a core' a.err; "
                          "[ -e out ] && echo inner-built";
-    scratch::Run run = scratch::sh(&p, format::push(&memory, prelude, script).data);
+    scratch::Run run = scratch::sh(&p, format::push(prelude, script).data);
     scratch::expect_text("the second waits, the first's inner build rides on its token", "done\n0\ninner-built\n",
                          run.out);
 }

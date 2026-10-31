@@ -54,6 +54,6 @@ export usize config_size(arena::Arena *a) {
     }
 }
 ```
-The fake's bytes come from the allocator in force when written (a test runs under `mem::checked`). While set it also answers C's `open`, `read`, `write`, `close` and `fopen`.
+The fake's bytes come from the allocator in force when written (a test runs under `mem::checked`). With `SMITH_READS_LOG` set (the test runner sets it), `open` for reading, `read_file`, `map` and `list` append the real path to that log, so `smith test --changed` selects the test when the file changes; a fake handler writes nothing. While set it also answers C's `open`, `read`, `write`, `close` and `fopen`.
 
 C names are `smith_fs_*` (io owns `smith_files_` until it goes). See also [smith-io-files](../smith-io-files/SKILL.md), [smith-mem](../smith-mem/SKILL.md), [files](../../../knowledge/files.md).

@@ -752,7 +752,7 @@ i32 main() {
 | `smith dbg`, `smith dap` | lldb, and lldb-dap for editors | [smith-debug](.agents/skills/smith-debug/SKILL.md) |
 | `smith mcp` | the debugger as tools for an agent | [smith-mcp](.agents/skills/smith-mcp/SKILL.md) |
 | `smith lsp` | clangd, for C, C++ and `.smith` | [smith-lsp](.agents/skills/smith-lsp/SKILL.md) |
-| `smith docs` | checks `AGENTS.md`, `knowledge/` and the skills | [smith-docs](.agents/skills/smith-docs/SKILL.md) |
+| `smith docs` | checks `knowledge/` and the skills | [smith-docs](.agents/skills/smith-docs/SKILL.md) |
 | `smith fetch`, `smith cache` | packages, by URL and hash, and the caches | [smith-packages](.agents/skills/smith-packages/SKILL.md) |
 
 The libraries are [arena](.agents/skills/smith-arena/SKILL.md), [io](.agents/skills/smith-io/SKILL.md),

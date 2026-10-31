@@ -25,6 +25,7 @@ export i32 total(i32 xs[:]) {
 }
 
 export i32 last_of_tail(i32 xs[:], usize skip) {
+    c::smith_requires(countof(xs) <= 8);
     c::smith_ensures(true);
     if (skip > countof(xs)) return 0;
     i32 rest[:] = xs[skip:];

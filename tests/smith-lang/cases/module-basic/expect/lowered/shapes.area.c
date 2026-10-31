@@ -3,7 +3,7 @@ struct shapes_area_Circle { double radius; };
 typedef struct shapes_area_Circle shapes_area_Circle;
 enum shapes_area_Kind { shapes_area_Kind_Square, shapes_area_Kind_Round = 5, shapes_area_Kind_Other };
 typedef enum shapes_area_Kind shapes_area_Kind;
-constexpr __UINT32_TYPE__ shapes_area_sides = 4;
+[[maybe_unused]] constexpr __UINT32_TYPE__ shapes_area_sides = 4;
 extern __UINT32_TYPE__ shapes_area_calls __asm__("_shapes::area::calls");
 __UINT32_TYPE__ shapes_area_calls __asm__("_shapes::area::calls") = 0;
 extern double shapes_area_pi __asm__("_shapes::area::pi");

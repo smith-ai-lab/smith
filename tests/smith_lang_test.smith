@@ -76,8 +76,8 @@ static typeof(const char[:]) slice_of(const char *text) {
     return text[0:c::strlen(text)];
 }
 
-static const char *join(const Case *kase, const char *a, const char *b, const char *c, const char *d) {
-    return format::push(kase->arena, a, b, c, d).data;
+static const char *join(const char *a, const char *b, const char *c, const char *d) {
+    return format::push(a, b, c, d).data;
 }
 
 // The next line of text, copied (a zero ends it), or nullptr at the end. `*at` moves past it.
@@ -160,14 +160,14 @@ static const char *found(const Case *kase, const char *from, const char *suffix_
     folders[0] = "";
     for (usize head = 0; head < tail; head++) {
         const char *where = folders[head][0] == '\0'
-                                ? join(kase, kase->project->dir, "/", from, "")
-                                : join(kase, kase->project->dir, "/", from, join(kase, "/", folders[head], "", ""));
+                                ? join(kase->project->dir, "/", from, "")
+                                : join(kase->project->dir, "/", from, join("/", folders[head], "", ""));
         files::EntriesResult list = files::list(where[0:c::strlen(where)]);
         files::Entries entries = {};
         if (list == .ok) entries = list.ok;
         for (usize i = 0; i < countof(entries); i++) {
             const char *entry = entries[i].name.data;
-            const char *relative = folders[head][0] == '\0' ? entry : join(kase, folders[head], "/", entry, "");
+            const char *relative = folders[head][0] == '\0' ? entry : join(folders[head], "/", entry, "");
             if (entries[i].folder && !files_only_here) {
                 test::check_less(tail, found_folders_max);
                 folders[tail++] = relative;
@@ -189,7 +189,7 @@ static const char *found(const Case *kase, const char *from, const char *suffix_
     }
     const char *lines = "";
     for (usize i = 0; i < count; i++)
-        lines = join(kase, lines, names[i], "\n", "");
+        lines = join(lines, names[i], "\n", "");
     return lines;
 }
 
@@ -197,18 +197,18 @@ static const char *found(const Case *kase, const char *from, const char *suffix_
 static void write_header(const Case *kase, const char *file, const char *stem) {
     arena::Arena *arena = kase->arena;
     const scratch::Project *p = kase->project;
-    const char *source = format::push(arena, "src/", file).data;
+    const char *source = format::push("src/", file).data;
     bool made =
         c::smith_core_header(p->dir, source, nullptr, header_text, header_capacity, report_text, report_capacity);
     if (report_text[0] != '\0') {
         const u8 *bytes = (const u8 *)report_text;
-        const char *errors = format::push(arena, p->dir, "/out/stderr").data;
+        const char *errors = format::push(p->dir, "/out/stderr").data;
         files::CountResult added =
             files::write_file(errors[0:c::strlen(errors)], bytes[0:c::strlen(report_text)], files::Append);
         test::check(added == .ok);
     }
     if (!made) return;
-    const char *path = format::push(arena, p->dir, "/out/include/", stem, ".h").data;
+    const char *path = format::push(p->dir, "/out/include/", stem, ".h").data;
     const char *slash = c::strrchr(path, '/');
     char *folder = arena::push_slice(arena, char, (usize)(slash - path) + 1).data;
     mem::copy(folder[0:(usize)(slash - path)], path[0:(usize)(slash - path)]);
@@ -225,7 +225,7 @@ static void write_header(const Case *kase, const char *file, const char *stem) {
 static Built build_sources(const Case *kase) {
     arena::Arena *arena = kase->arena;
     const scratch::Project *p = kase->project;
-    const char *flags = format::push(arena, scratch::exists(p, "nostd") ? "" : "-std=gnu23",
+    const char *flags = format::push(scratch::exists(p, "nostd") ? "" : "-std=gnu23",
                                      " -g0 -fno-color-diagnostics -Wno-unused-function -I out/include ",
                                      scratch::exists(p, "flags") ? text_of(kase, "flags") : "")
                             .data;
@@ -236,8 +236,8 @@ static Built build_sources(const Case *kase) {
         const char *stem = stem_of(arena, file);
         if (header_by_command(kase->name)) {
             const char *command =
-                format::push(arena, "mkdir -p \"out/include/$(dirname ", file, ")\" && smith cc --smith-header src/",
-                             file, " -o out/include/", stem, ".h 2>>out/stderr; [ -f out/include/", stem,
+                format::push("mkdir -p \"out/include/$(dirname ", file, ")\" && smith cc --smith-header src/", file,
+                             " -o out/include/", stem, ".h 2>>out/stderr; [ -f out/include/", stem,
                              ".h ] && cp out/include/", stem, ".h out/header/", module_of(arena, file), ".h")
                     .data;
             (void)scratch::sh(p, command);
@@ -249,11 +249,11 @@ static Built build_sources(const Case *kase) {
     for (const char *at = sources, *file = next_line(arena, &at); file != nullptr; file = next_line(arena, &at)) {
         const char *module = module_of(arena, file);
         const char *compile =
-            format::push(arena, "SMITH_LANG_GENERICS=out/generics/", module, ".c SMITH_LANG_ASK='", ask, "' smith cc ",
-                         flags, " -c src/", file, " -o out/obj/", module, ".o 2>>out/stderr")
+            format::push("SMITH_LANG_GENERICS=out/generics/", module, ".c SMITH_LANG_ASK='", ask, "' smith cc ", flags,
+                         " -c src/", file, " -o out/obj/", module, ".o 2>>out/stderr")
                 .data;
         if (scratch::sh(p, compile).status != 0) built.status = 1;
-        built.objects = format::push(arena, built.objects, " out/obj/", module, ".o").data;
+        built.objects = format::push(built.objects, " out/obj/", module, ".o").data;
     }
     return built;
 }
@@ -262,23 +262,23 @@ static Built build_sources(const Case *kase) {
 static void build_others(const Case *kase, Built *built) {
     arena::Arena *arena = kase->arena;
     const scratch::Project *p = kase->project;
-    const char *flags = format::push(arena, scratch::exists(p, "nostd") ? "" : "-std=gnu23",
+    const char *flags = format::push(scratch::exists(p, "nostd") ? "" : "-std=gnu23",
                                      " -g0 -fno-color-diagnostics -Wno-unused-function -I out/include ",
                                      scratch::exists(p, "flags") ? text_of(kase, "flags") : "")
                             .data;
     const char *others = found(kase, "src", ".c", ".cpp", false);
     const char *linker = "cc"; // the verb that links: C++ needs smith c++
     for (const char *at = others, *file = next_line(arena, &at); file != nullptr; file = next_line(arena, &at)) {
-        const char *object = format::push(arena, "out/obj/", object_of(arena, file), ".o").data;
+        const char *object = format::push("out/obj/", object_of(arena, file), ".o").data;
         bool cpp = c::strcmp(file + c::strlen(file) - 4, ".cpp") == 0;
         const char *compile =
-            cpp ? format::push(arena, "smith c++ -std=c++20 -g0 -fno-color-diagnostics -I out/include -c src/", file,
-                               " -o ", object, " 2>>out/stderr")
+            cpp ? format::push("smith c++ -std=c++20 -g0 -fno-color-diagnostics -I out/include -c src/", file, " -o ",
+                               object, " 2>>out/stderr")
                       .data
-                : format::push(arena, "smith cc ", flags, " -c src/", file, " -o ", object, " 2>>out/stderr").data;
+                : format::push("smith cc ", flags, " -c src/", file, " -o ", object, " 2>>out/stderr").data;
         if (scratch::sh(p, compile).status != 0) built->status = 1;
         if (cpp) linker = "c++";
-        built->objects = format::push(arena, built->objects, " ", object).data;
+        built->objects = format::push(built->objects, " ", object).data;
     }
     scratch::write(p, "out/stdout", "");
     bool has_main =
@@ -286,7 +286,7 @@ static void build_others(const Case *kase, Built *built) {
     if (built->status != 0 || !has_main) return;
     // -lm: glibc keeps libm apart; macOS's is in libSystem, which links anyway
     scratch::Run linked =
-        scratch::sh(p, format::push(arena, "smith ", linker, built->objects, " -lm -o out/program 2>>out/stderr").data);
+        scratch::sh(p, format::push("smith ", linker, built->objects, " -lm -o out/program 2>>out/stderr").data);
     if (linked.status != 0) {
         built->status = 1;
         return;
@@ -300,7 +300,7 @@ static Built build_command(const Case *kase) {
     Built built = {.status = 0, .objects = ""};
     // smith's generated headers are a build output, not a file of the tree: they stay where the build wrote them
     scratch::Run run = scratch::sh(
-        p, format::push(kase->arena, "arguments=$(sed \"s|@OUT@|$PWD/out|g; s|@REPO@/.smith/|$SMITH_REPO/.smith/|g; ",
+        p, format::push("arguments=$(sed \"s|@OUT@|$PWD/out|g; s|@REPO@/.smith/|$SMITH_REPO/.smith/|g; ",
                         "s|@REPO@/tests/smith-lang/cases/", kase->name, "/|$PWD/|g; s|@REPO@|$PWD/mirror|g\" cmd); ",
                         "(cd src && smith cc -fno-color-diagnostics $arguments) 2>>out/stderr")
                .data);
@@ -319,11 +319,11 @@ static void golden_at(const Case *kase, const char *relative, const char *actual
     const char *shown = relative;
     if constexpr (target::os != target::macos) { // not `target::linux`: clang defines `linux` as 1 there (#382)
         if (c::strncmp(relative, "expect/", 7) == 0) {
-            const char *variant = join(kase, "expect-linux/", relative + 7, "", "");
+            const char *variant = join("expect-linux/", relative + 7, "", "");
             if (scratch::exists(kase->project, variant)) shown = variant;
         }
     }
-    test::golden_free(slice_of(join(kase, "tests/smith-lang/cases/", kase->name, "/", shown)), slice_of(actual));
+    test::golden_free(slice_of(join("tests/smith-lang/cases/", kase->name, "/", shown)), slice_of(actual));
 }
 
 static usize digits_at(const char *line, usize at) {
@@ -359,7 +359,7 @@ static const char *errors_of(const Case *kase, const char *file) {
         if (position == 0) {
             continue;
         }
-        const char *error = format::push(arena, line[0:position], ": ", line + position + 9).data;
+        const char *error = format::push(line[0:position], ": ", line + position + 9).data;
         usize place = 0;
         while (place < count && c::strcmp(lines[place], error) < 0)
             place++;
@@ -374,7 +374,7 @@ static const char *errors_of(const Case *kase, const char *file) {
     }
     const char *sorted = "";
     for (usize k = 0; k < count; k++)
-        sorted = join(kase, sorted, lines[k], "\n", "");
+        sorted = join(sorted, lines[k], "\n", "");
     return sorted;
 }
 
@@ -414,10 +414,10 @@ static void check_outputs(const Case *kase, bool update) {
 // The files the case holds in expect/<folder>, as `<folder>/<name>` one a line.
 static const char *held(const Case *kase, const char *folder) {
     arena::Arena *arena = kase->arena;
-    const char *names = found(kase, join(kase, "expect/", folder, "", ""), nullptr, nullptr, true);
+    const char *names = found(kase, join("expect/", folder, "", ""), nullptr, nullptr, true);
     const char *lines = "";
     for (const char *at = names, *name = next_line(arena, &at); name != nullptr; name = next_line(arena, &at))
-        lines = join(kase, lines, folder, "/", join(kase, name, "\n", "", ""));
+        lines = join(lines, folder, "/", join(name, "\n", "", ""));
     return lines;
 }
 
@@ -434,11 +434,10 @@ static void check_files(const Case *kase, const Built *built, bool update) {
     } else { // the files the case holds, which an update rewrites (the lowering and most headers are checked in
              // process)
         const char *generics = held(kase, "generics");
-        files = header_by_command(kase->name) ? join(kase, held(kase, "header"), generics, "", "") : generics;
+        files = header_by_command(kase->name) ? join(held(kase, "header"), generics, "", "") : generics;
     }
     for (const char *at = files, *file = next_line(arena, &at); file != nullptr; file = next_line(arena, &at)) {
-        golden_at(kase, join(kase, "expect/", file, "", ""),
-                  scratch::read(kase->project, join(kase, "out/", file, "", "")));
+        golden_at(kase, join("expect/", file, "", ""), scratch::read(kase->project, join("out/", file, "", "")));
     }
 }
 
@@ -449,7 +448,7 @@ static void check_asked_and_symbols(const Case *kase, const Built *built) {
     }
     if (scratch::exists(p, "expect/symbols")) {
         const char *command =
-            format::push(kase->arena, "for object in", built->objects,
+            format::push("for object in", built->objects,
                          "; do nm -g \"$object\" 2>/dev/null; done | grep -v ' U ' | awk '{print $2, $3}' | "
                          // the goldens are Mach-O's: C names have a leading underscore, a weak definition is T and
                          // zero-filled data is S
@@ -473,7 +472,7 @@ static void corpus_case(const char *name) {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     Case kase = {.arena = &memory, .name = name, .project = &p};
-    scratch::copy_tree(&p, join(&kase, "tests/smith-lang/cases/", name, "", ""), "");
+    scratch::copy_tree(&p, join("tests/smith-lang/cases/", name, "", ""), "");
     // A case that names the files of another (../../target-facts/src/main.smith) finds them beside its own folder.
     if (c::strncmp(name, "target-facts-", 13) == 0) {
         scratch::copy_tree(&p, "tests/smith-lang/cases/target-facts", "../target-facts");
@@ -481,7 +480,7 @@ static void corpus_case(const char *name) {
     // The folders of the output and its empty error file, in process: a process for them cost as much as a compile.
     const char *folders[5] = {"out", "out/include", "out/header", "out/generics", "out/obj"};
     for (usize i = 0; i < countof(folders); i++) {
-        const char *folder = join(&kase, p.dir, "/", folders[i], "");
+        const char *folder = join(p.dir, "/", folders[i], "");
         files::DoneResult made = files::make_folder(folder[0:c::strlen(folder)]);
         test::check(made == .ok);
     }
@@ -705,6 +704,14 @@ export void test_enum_generic_return() {
     corpus_case("enum-generic-return");
 }
 
+export void test_enum_generic_import_in_function() {
+    corpus_case("enum-generic-import-in-function");
+}
+
+export void test_enum_option_slice() {
+    corpus_case("enum-option-slice");
+}
+
 export void test_enum_payload_lowering() {
     corpus_case("enum-payload-lowering");
 }
@@ -791,6 +798,10 @@ export void test_error_constexpr_import_state() {
 
 export void test_error_constexpr_pointers() {
     corpus_case("error-constexpr-pointers");
+}
+
+export void test_error_constexpr_unread_private() {
+    corpus_case("error-constexpr-unread-private");
 }
 
 export void test_error_countof_pointer() {
@@ -939,6 +950,10 @@ export void test_error_generic_private_name() {
 
 export void test_error_generic_return_type() {
     corpus_case("error-generic-return-type");
+}
+
+export void test_if_constexpr_file_scope_for_constexpr() {
+    corpus_case("if-constexpr-file-scope-for-constexpr");
 }
 
 export void test_error_if_constexpr() {
@@ -1131,6 +1146,10 @@ export void test_error_type_value_runtime() {
 
 export void test_error_type_value_slice_bounds() {
     corpus_case("error-type-value-slice-bounds");
+}
+
+export void test_exported_constexpr_unread() {
+    corpus_case("exported-constexpr-unread");
 }
 
 export void test_error_value_query() {
@@ -1441,6 +1460,10 @@ export void test_generic_private_generic() {
     corpus_case("generic-private-generic");
 }
 
+export void test_generic_private_included_first() {
+    corpus_case("generic-private-included-first");
+}
+
 export void test_generic_private_names() {
     corpus_case("generic-private-names");
 }
@@ -1537,6 +1560,10 @@ export void test_header_conditional_define() {
     corpus_case("header-conditional-define");
 }
 
+export void test_header_nolint_pair() {
+    corpus_case("header-nolint-pair");
+}
+
 export void test_header_docs() {
     corpus_case("header-docs");
 }
@@ -1591,6 +1618,10 @@ export void test_keyword_after_comment() {
 
 export void test_keyword_names_fine() {
     corpus_case("keyword-names-fine");
+}
+
+export void test_unused_name_library() {
+    corpus_case("unused-name-library");
 }
 
 export void test_library_smith_text() {
@@ -1659,6 +1690,10 @@ export void test_main_old_form_error() {
 
 export void test_module_main() {
     corpus_case("module-main");
+}
+
+export void test_module_name_linux() {
+    corpus_case("module-name-linux");
 }
 
 export void test_module_names() {
@@ -1967,6 +2002,10 @@ export void test_error_fields_enum_member() {
 
 export void test_generic_fields_doc() {
     corpus_case("generic-fields-doc");
+}
+
+export void test_reflection_doc_if_constexpr() {
+    corpus_case("reflection-doc-if-constexpr");
 }
 
 export void test_typetag_run() {

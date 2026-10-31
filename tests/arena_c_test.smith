@@ -21,13 +21,12 @@ constexpr char sources[_] = "tests/arena.c lib/smith/arena.smith "
                             "lib/smith/contract.smith lib/trace.c";
 
 // Compiles tests/arena.c into `name` in the project: "plain", "asan" (sanitized) or "fast" (NDEBUG, -O2).
-static void compile(arena::Arena *memory, const scratch::Project *p, const char *name) {
+static void compile(const scratch::Project *p, const char *name) {
     const char *extra = c::strcmp(name, "asan") == 0   ? "-g -fsanitize=address,undefined"
                         : c::strcmp(name, "fast") == 0 ? "-w -DNDEBUG -O2"
                                                        : "";
-    scratch::Run built =
-        scratch::sh(p, format::push(memory, "smith cc ", flags, " ", extra, " ", sources, " -o ", name).data);
-    scratch::expect_status(format::push(memory, "the ", name, " program builds").data, 0, &built);
+    scratch::Run built = scratch::sh(p, format::push("smith cc ", flags, " ", extra, " ", sources, " -o ", name).data);
+    scratch::expect_status(format::push("the ", name, " program builds").data, 0, &built);
 }
 
 // The files the commands compile, copied into the project: the libraries and the program of the test.
@@ -36,8 +35,8 @@ static void copy_sources(const scratch::Project *p) {
     scratch::copy_tree(p, "tests/arena.c", "tests/arena.c");
 }
 
-static scratch::Run mode(arena::Arena *memory, const scratch::Project *p, const char *program, const char *which) {
-    return scratch::sh(p, format::push(memory, "./", program, " ", which).data);
+static scratch::Run mode(const scratch::Project *p, const char *program, const char *which) {
+    return scratch::sh(p, format::push("./", program, " ", which).data);
 }
 
 export void test_arena_c_stop_is_on_in_every_build_ndebug_included() {
@@ -48,8 +47,8 @@ export void test_arena_c_stop_is_on_in_every_build_ndebug_included() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     copy_sources(&p);
-    compile(&memory, &p, "fast");
-    scratch::Run run = mode(&memory, &p, "fast", "stop");
+    compile(&p, "fast");
+    scratch::Run run = mode(&p, "fast", "stop");
     scratch::expect_status("stop: the status is abort's", 134, &run);
     scratch::expect_contains("stop: the message names the request", run.err, "push of 100 bytes");
     scratch::expect_contains("stop: the message names the capacity", run.err, "of 128 bytes used");
@@ -64,8 +63,8 @@ export void test_arena_c_asan_catches_a_write_past_a_push() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     copy_sources(&p);
-    compile(&memory, &p, "asan");
-    scratch::Run run = mode(&memory, &p, "asan", "oob");
+    compile(&p, "asan");
+    scratch::Run run = mode(&p, "asan", "oob");
     scratch::expect_contains("asan: a write past a push is caught", run.err, "AddressSanitizer");
     scratch::expect_contains("asan: it is a poisoned-region error", run.err, "use-after-poison");
 }
@@ -78,20 +77,20 @@ export void test_arena_c_lazy_poison_a_64_gib_arena_under_asan() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     copy_sources(&p);
-    compile(&memory, &p, "asan");
-    compile(&memory, &p, "plain");
-    scratch::Run big = mode(&memory, &p, "asan", "big");
+    compile(&p, "asan");
+    compile(&p, "plain");
+    scratch::Run big = mode(&p, "asan", "big");
     scratch::expect_status("lazy: a 64 GiB arena under ASan makes little memory resident", 0, &big);
     scratch::expect_contains("lazy: ... the growth is printed", big.out, "resident growth");
-    scratch::Run plain = mode(&memory, &p, "plain", "big");
+    scratch::Run plain = mode(&p, "plain", "big");
     scratch::expect_status("lazy: the same without ASan", 0, &plain);
-    scratch::Run oob = mode(&memory, &p, "asan", "bigoob");
+    scratch::Run oob = mode(&p, "asan", "bigoob");
     scratch::expect_contains("lazy: a write one byte past a push in a 64 GiB arena is caught", oob.err,
                              "AddressSanitizer");
-    scratch::Run far = mode(&memory, &p, "asan", "bigfar");
+    scratch::Run far = mode(&p, "asan", "bigfar");
     scratch::expect_contains("lazy: a write 60,000 bytes past a push is caught (inside the window)", far.err,
                              "AddressSanitizer");
-    scratch::Run stale = mode(&memory, &p, "asan", "stale");
+    scratch::Run stale = mode(&p, "asan", "stale");
     scratch::expect_contains("lazy: a read of a push after a reset is caught", stale.err, "use-after-poison");
 }
 
@@ -103,13 +102,13 @@ export void test_arena_c_carved_arena_commits_nothing_until_used() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     copy_sources(&p);
-    compile(&memory, &p, "asan");
-    compile(&memory, &p, "plain");
-    scratch::Run lazy = mode(&memory, &p, "asan", "carvelazy");
+    compile(&p, "asan");
+    compile(&p, "plain");
+    scratch::Run lazy = mode(&p, "asan", "carvelazy");
     scratch::expect_status("carve: 2 GiB carved out of a 64 GiB arena under ASan makes little memory resident", 0,
                            &lazy);
     scratch::expect_contains("carve: ... the growth is printed", lazy.out, "resident growth");
-    scratch::Run plain = mode(&memory, &p, "plain", "carvelazy");
+    scratch::Run plain = mode(&p, "plain", "carvelazy");
     scratch::expect_status("carve: the same without ASan", 0, &plain);
 }
 
@@ -121,17 +120,17 @@ export void test_arena_c_carved_arena_catches_what_any_arena_catches() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     copy_sources(&p);
-    compile(&memory, &p, "asan");
-    compile(&memory, &p, "fast");
-    scratch::Run oob = mode(&memory, &p, "asan", "carveoob");
+    compile(&p, "asan");
+    compile(&p, "fast");
+    scratch::Run oob = mode(&p, "asan", "carveoob");
     scratch::expect_contains("carve: a write one byte past a push in a carved arena is caught", oob.err,
                              "AddressSanitizer");
-    scratch::Run far = mode(&memory, &p, "asan", "carvefar");
+    scratch::Run far = mode(&p, "asan", "carvefar");
     scratch::expect_contains("carve: a write 60,000 bytes past a push is caught (inside the window)", far.err,
                              "AddressSanitizer");
-    scratch::Run stale = mode(&memory, &p, "asan", "carvestale");
+    scratch::Run stale = mode(&p, "asan", "carvestale");
     scratch::expect_contains("carve: a read of a push after a reset is caught", stale.err, "use-after-poison");
-    scratch::Run stop = mode(&memory, &p, "fast", "carvestop");
+    scratch::Run stop = mode(&p, "fast", "carvestop");
     scratch::expect_status("carve: past the parent's capacity the status is abort's", 134, &stop);
     scratch::expect_contains("carve: ... and the message names the request", stop.err, "push of 2048 bytes");
 }
@@ -145,13 +144,12 @@ static void compiles_as(const char *standard) {
     defer mem::set_allocator(outside);
     copy_sources(&p);
     scratch::Run built = scratch::sh(
-        &p, format::push(&memory, "smith cc -std=", standard,
+        &p, format::push("smith cc -std=", standard,
                          " -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -I \"$SMITH_REPO/.smith/include\" "
                          "-iquote \"$SMITH_REPO/.smith/include/smith\" -c lib/smith/arena.smith -o a.o")
                 .data);
     scratch::expect_status(
-        format::push(&memory, "library: compiles as -std=", standard, " with the new project's warnings").data, 0,
-        &built);
+        format::push("library: compiles as -std=", standard, " with the new project's warnings").data, 0, &built);
 }
 
 export void test_arena_c_library_compiles_as_c23() {

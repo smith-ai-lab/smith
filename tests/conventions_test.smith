@@ -14,8 +14,8 @@ import scratch;
 constexpr usize memory_size = (usize)16 << 20; // 16 MiB
 
 // The last line of a command's output: the program's output follows the build's.
-static const char *last_line(arena::Arena *memory, const scratch::Project *p, const char *command) {
-    return scratch::capture(p, format::push(memory, "{ ", command, "; } | tail -n 1").data);
+static const char *last_line(const scratch::Project *p, const char *command) {
+    return scratch::capture(p, format::push("{ ", command, "; } | tail -n 1").data);
 }
 
 // The files a compile of the build lists in .smith/build.info, as a line.
@@ -29,8 +29,8 @@ static const char *yes_no(bool value) {
 }
 
 // The output and the errors of a run as one text.
-static const char *both(arena::Arena *memory, const scratch::Run *run) {
-    return format::push(memory, run->out, run->err).data;
+static const char *both(const scratch::Run *run) {
+    return format::push(run->out, run->err).data;
 }
 
 // --- 1. a .smith project: main imports geometry::box, which imports geometry::scale; one more module nothing imports -
@@ -64,11 +64,11 @@ export void test_conventions_smith_project_builds_runs_tests_and_follows_a_new_i
     scratch::Run again = scratch::build(&p, "");
     scratch::expect_text("smith: a second build has nothing to do", "smith: no work to do.", again.out);
 
-    scratch::expect_text("smith run: runs the program", "12", last_line(&memory, &p, "smith run"));
+    scratch::expect_text("smith run: runs the program", "12", last_line(&p, "smith run"));
 
     scratch::Run tested = scratch::sh(&p, "smith test");
     scratch::expect_status("smith test: passes", 0, &tested);
-    scratch::expect_contains("smith test: ran the test", both(&memory, &tested), "1 passed, 0 failed");
+    scratch::expect_contains("smith test: ran the test", both(&tested), "1 passed, 0 failed");
 
     scratch::Run release_fast = scratch::build(&p, "release fast");
     scratch::expect_status("smith build release fast: builds", 0, &release_fast);
@@ -104,8 +104,7 @@ export void test_conventions_smith_project_builds_runs_tests_and_follows_a_new_i
                    "    c::printf(\"%d\\n\", volume::of(2, 3, 4));\n"
                    "    return 0;\n"
                    "}\n");
-    scratch::expect_text("smith: a new import is followed on the next build", "24",
-                         last_line(&memory, &p, "smith run"));
+    scratch::expect_text("smith: a new import is followed on the next build", "24", last_line(&p, "smith run"));
     scratch::expect_text("smith: ... through the modules it imports", "yes",
                          yes_no(scratch::exists(&p, "build/debug/geometry/scale.o")));
 }
@@ -130,11 +129,11 @@ export void test_conventions_c_builds_runs_passes_its_tests_and_skips_includes_i
                          yes_no(scratch::exists(&p, "build/debug/stray.o")));
     scratch::expect_text("c: the objects keep the folders", "yes", yes_no(scratch::exists(&p, "build/debug/deep/x.o")));
 
-    scratch::expect_text("c: runs", "42", last_line(&memory, &p, "smith run"));
+    scratch::expect_text("c: runs", "42", last_line(&p, "smith run"));
 
     scratch::Run run = scratch::sh(&p, "smith test");
     scratch::expect_status("c: the tests pass", 0, &run);
-    scratch::expect_contains("c: ... one of them", both(&memory, &run), "1 passed, 0 failed");
+    scratch::expect_contains("c: ... one of them", both(&run), "1 passed, 0 failed");
 
     // A comment is not an include, and a block comment spans lines.
     scratch::write(&p, "util.h",
@@ -241,15 +240,16 @@ export void test_conventions_explicit_checked_allocator_off_runs_the_tests_unche
 // --- 3. smith's libraries need no declaration
 // -------------------------------------------------------------------------
 
-export void test_conventions_library_include_io_links_io() {
-    scratch::Project p = scratch::make("ioc", "conv_ioc");
+export void test_conventions_library_include_files_links_files() {
+    scratch::Project p = scratch::make("filesc", "conv_filesc");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::expect_text("library: #include <smith/io.h> links io", "seed 1", last_line(&memory, &p, "smith run"));
-    scratch::expect_text("library: ... and the libraries io needs", "arena.o contract.o io.o math.o random.o trace.o",
+    scratch::expect_text("library: #include <smith/files.h> links files", "found 1", last_line(&p, "smith run"));
+    scratch::expect_text("library: ... and the libraries files needs",
+                         "arena.o contract.o env.o files.o math.o mem.o trace.o",
                          scratch::capture(&p, "ls build/debug/smith | tr '\\n' ' ' | sed 's/ $//'"));
 }
 
@@ -260,18 +260,18 @@ export void test_conventions_library_import_smith_text_links_text() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::expect_text("library: import smith::text links text", "42", last_line(&memory, &p, "smith run"));
+    scratch::expect_text("library: import smith::text links text", "42", last_line(&p, "smith run"));
 }
 
-export void test_conventions_library_import_a_header_in_a_smith_file_links_io() {
-    scratch::Project p = scratch::make("iosmith", "conv_iosmith");
+export void test_conventions_library_import_a_header_in_a_smith_file_links_files() {
+    scratch::Project p = scratch::make("filessmith", "conv_filessmith");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::expect_text("library: import <smith/io.h>; in a .smith file links io", "hello",
-                         last_line(&memory, &p, "smith run"));
+    scratch::expect_text("library: import <smith/files.h>; in a .smith file links files", "hello",
+                         last_line(&p, "smith run"));
 }
 
 // A library used only by a test is built for the tests and not linked into the program.
@@ -283,9 +283,9 @@ export void test_conventions_library_used_only_by_a_test_is_not_linked_into_the_
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::Run run = scratch::sh(&p, "smith test");
-    scratch::expect_status("library: a test that includes <smith/io.h> links io", 0, &run);
+    scratch::expect_status("library: a test that includes <smith/files.h> links files", 0, &run);
     scratch::Run commands = scratch::build(&p, "-t commands build/debug/tonly");
-    scratch::expect_lacks("library: ... and the program does not", commands.out, "smith/io.o");
+    scratch::expect_lacks("library: ... and the program does not", commands.out, "smith/files.o");
 }
 
 // --- 4. a folder that follows no convention
@@ -399,8 +399,7 @@ export void test_conventions_multi_builds_runs_tests_and_reads_the_defaults() {
     scratch::expect_text("multi: builds the project's program", "yes",
                          yes_no(scratch::exists(&p, "build/debug/multi")));
     scratch::expect_text("multi: ... and not the tool", "no", yes_no(scratch::exists(&p, "build/debug/tool")));
-    scratch::expect_text("multi: smith run runs the program, found through -I", "21",
-                         last_line(&memory, &p, "smith run"));
+    scratch::expect_text("multi: smith run runs the program, found through -I", "21", last_line(&p, "smith run"));
     scratch::expect_text("multi: ... after the file its folder's compiles wait for was made", "yes",
                          yes_no(scratch::exists(&p, "build/gen.h")));
 

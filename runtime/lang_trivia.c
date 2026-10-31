@@ -63,10 +63,33 @@ static void smith_lang_header_line(SmithLang *lang, const char *text, size_t len
     if (smith_lang_header_append(lang, text, length)) smith_lang_header_append(lang, "\n", 1);
 }
 
+// Whether the comment has `word` (NOLINTBEGIN or NOLINTEND) in it.
+static bool smith_lang_comment_has(const SmithTrivia *entry, const char *word) {
+    size_t width = strlen(word);
+    for (size_t at = 0; at + width <= entry->length; at++) {
+        if (memcmp(entry->text + at, word, width) == 0) return true;
+    }
+    return false;
+}
+
+// A comment that ends a NOLINTBEGIN region the header has the start of, which stays with it: the header keeps a
+// region's declarations only, so its end after the last of them is not a doc comment of anything and would be dropped,
+// and clang-tidy reports a NOLINTBEGIN with no NOLINTEND (an include guard around the instance section splits nothing,
+// the comments did).
+static bool smith_lang_nolint_ends(const SmithLang *lang, const SmithTrivia *entry) {
+    return lang->nolint_open > 0 && smith_lang_comment_has(entry, "NOLINTEND");
+}
+
 // A comment: above a declaration on a line of its own, or after a token on that token's line.
 static void smith_lang_header_comment(SmithLang *lang, const SmithTrivia *entry) {
     if (!lang->is_module || lang->aligned) return;
     if (entry->kind == SmithTrivia_Leading) {
+        if (smith_lang_comment_has(entry, "NOLINTEND")) {
+            if (lang->nolint_open == 0) return; // its start is not in the header
+            lang->nolint_open -= 1;
+        } else if (smith_lang_comment_has(entry, "NOLINTBEGIN")) {
+            lang->nolint_open += 1;
+        }
         smith_lang_header_line(lang, entry->text, entry->length, entry->location);
         return;
     }
@@ -267,7 +290,7 @@ static void smith_lang_trivia_apply(SmithLang *lang, const SmithTrivia *entry) {
     bool active = lang->export_active;
     if (entry->kind == SmithTrivia_Leading) {
         smith_lang_doc_note(lang, entry);
-        if (active) smith_lang_header_comment(lang, entry);
+        if (active || smith_lang_nolint_ends(lang, entry)) smith_lang_header_comment(lang, entry);
     } else if (entry->kind == SmithTrivia_Trailing) {
         if (active || lang->tail_open) smith_lang_header_comment(lang, entry);
     } else if (entry->kind == SmithTrivia_Include) {

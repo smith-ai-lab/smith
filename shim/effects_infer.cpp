@@ -211,7 +211,7 @@ struct EffectsAttr final : ParsedAttrInfo {
             if (!known) {
                 unsigned id = S.getDiagnostics().getCustomDiagID(
                     DiagnosticsEngine::Error, "smith-effect: an effect is one of alloc, files, net, console, clock, "
-                                              "process, env, entropy, globals, unknown, fails, code");
+                                              "process, env, entropy, globals, unknown, fails, code, tasks");
                 S.Diag(Attr.getLoc(), id);
                 return AttributeNotApplied;
             }

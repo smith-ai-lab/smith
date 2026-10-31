@@ -73,13 +73,13 @@ static void finish(Case *t) {
 // ---- Bytes: the fixtures, a buffer to write archives into, and damage
 
 static const char *join(Case *t, const char *a, const char *b) {
-    return format::push(&t->memory, a, b).data;
+    return scratch::push(&t->memory, a, b).data;
 }
 
 // A fixture's bytes, in the case's arena: read_file allocates through the current allocator, which is the arena's
 // while it reads.
 static Bytes fixture(Case *t, const char *name) {
-    const char *path = format::push(&t->memory, "tests/fixtures/untar/", name).data;
+    const char *path = scratch::push(&t->memory, "tests/fixtures/untar/", name).data;
     arena::ArenaAllocator allocator = arena::allocator(&t->memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
@@ -374,7 +374,7 @@ static void is_refused(Case *t, const char *name, const Extracted *r, const char
     scratch::expect_text(join(t, name, ": is refused"), "refused", r->ok ? "extracted" : "refused");
     scratch::expect_contains(join(t, name, ": says why"), r->error, reason);
     scratch::expect_contains(join(t, name, ": names the archive"), r->error,
-                             format::push(&t->memory, "cannot extract ", url).data);
+                             scratch::push(&t->memory, "cannot extract ", url).data);
 }
 
 static void refuses(Case *t, const char *name, Bytes archive, const char *reason) {
@@ -519,8 +519,8 @@ static Entry random_file(Bytes data) {
 }
 
 static const char *random_listing(Case *t, Bytes data) {
-    return format::push(&t->memory, "random.bin f 0644 ", countof(data), " ",
-                        format::hex(inflate::crc32(0, data.data, countof(data)), 8), " 1000000000\n")
+    return scratch::push(&t->memory, "random.bin f 0644 ", countof(data), " ",
+                         format::hex(inflate::crc32(0, data.data, countof(data)), 8), " 1000000000\n")
         .data;
 }
 
@@ -593,10 +593,10 @@ static const char *long_tree(Case *t) {
     const char *first = repeat(t, 'a', 80);
     const char *second = repeat(t, 'b', 80);
     const char *third = repeat(t, 'c', 80);
-    return format::push(&t->memory, first, " d\n", first, "/", second, " d\n", first, "/", second, "/", third, " d\n",
-                        first, "/", second, "/", third,
-                        "/file.txt f 0644 5 279eb882 1000000000\n\xc3\xbc d\n\xc3\xbc/\xc3\xa9.txt f 0644 7 05685cb1 "
-                        "1000000000\n")
+    return scratch::push(&t->memory, first, " d\n", first, "/", second, " d\n", first, "/", second, "/", third, " d\n",
+                         first, "/", second, "/", third,
+                         "/file.txt f 0644 5 279eb882 1000000000\n\xc3\xbc d\n\xc3\xbc/\xc3\xa9.txt f 0644 7 05685cb1 "
+                         "1000000000\n")
         .data;
 }
 
@@ -636,7 +636,7 @@ export void test_untar_long_names_ustar_prefix_field() {
     Extracted r = extract(&t, "prefix", fixture(&t, "prefix.tar"));
     is_tree(
         &t, "long names (ustar prefix field)", &r,
-        format::push(&t.memory, p, " d\n", p, "/", q, " d\n", p, "/", q, "/file f 0644 9 6a0d1daa 1000000000\n").data);
+        scratch::push(&t.memory, p, " d\n", p, "/", q, " d\n", p, "/", q, "/file f 0644 9 6a0d1daa 1000000000\n").data);
 }
 
 // ---- 3. Hostile archives, which no tar program writes: each is refused with the reason, and nothing is written
@@ -806,12 +806,12 @@ static Bytes apple_tar(Case *t) {
 
 static const char *apple_listing(Case *t) {
     const char *plain = "a plain file that only has a name like metadata\n";
-    return format::push(&t->memory, "._plain f 0644 ", c::strlen(plain), " ",
-                        format::hex(inflate::crc32(0, (const u8 *)plain, c::strlen(plain)), 8),
-                        " 1000000000\n._tiny f 0644 5 ", format::hex(inflate::crc32(0, (const u8 *)"tiny\n", 5), 8),
-                        " 1000000000\na f 0644 6 ", format::hex(inflate::crc32(0, (const u8 *)"first\n", 6), 8),
-                        " 1000000000\nb f 0644 7 ", format::hex(inflate::crc32(0, (const u8 *)"second\n", 7), 8),
-                        " 1000000000\n")
+    return scratch::push(&t->memory, "._plain f 0644 ", c::strlen(plain), " ",
+                         format::hex(inflate::crc32(0, (const u8 *)plain, c::strlen(plain)), 8),
+                         " 1000000000\n._tiny f 0644 5 ", format::hex(inflate::crc32(0, (const u8 *)"tiny\n", 5), 8),
+                         " 1000000000\na f 0644 6 ", format::hex(inflate::crc32(0, (const u8 *)"first\n", 6), 8),
+                         " 1000000000\nb f 0644 7 ", format::hex(inflate::crc32(0, (const u8 *)"second\n", 7), 8),
+                         " 1000000000\n")
         .data;
 }
 
@@ -904,8 +904,8 @@ static void single_gz_extracts(Case *t, const char *name, Bytes content, const c
     scratch::expect_text(join(t, label, ": extracts"), "", r.ok ? "" : r.error);
     scratch::expect_text(join(t, label, ": the package is the extraction folder"), folder_for_name(t, "single"),
                          r.contents);
-    const char *line = format::push(&t->memory, file, " f 0644 ", countof(content), " ",
-                                    format::hex(inflate::crc32(0, content.data, countof(content)), 8), " ")
+    const char *line = scratch::push(&t->memory, file, " f 0644 ", countof(content), " ",
+                                     format::hex(inflate::crc32(0, content.data, countof(content)), 8), " ")
                            .data;
     scratch::expect_contains(join(t, label, ": one file, named without .gz, mode 0644, the same bytes"), r.tree, line);
     scratch::expect_text(join(t, label, ": and nothing else"), "", c::strchr(r.tree, '\n') + 1);

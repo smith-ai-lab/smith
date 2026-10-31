@@ -164,22 +164,22 @@ export void test_build_tail_a_program_that_indexes_a_slice_links_trace() {
                          scratch::capture(&p, "ls build/debug/smith/trace.o"));
 }
 
-export void test_build_tail_library_io_alone_links_and_brings_the_arena_and_random() {
-    scratch::Project p = scratch::make("p", "tail_library_io");
+export void test_build_tail_library_files_alone_links_and_brings_the_arena_and_mem() {
+    scratch::Project p = scratch::make("p", "tail_library_files");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::Run built = scratch::build(&p, "");
-    scratch::expect_status("library needs: io alone links (arena and random come with it)", 0, &built);
+    scratch::expect_status("library needs: files alone links (arena and mem come with it)", 0, &built);
     scratch::expect_text(
-        "library needs: ... their objects are made beside io's", "build/smith/arena.o build/smith/random.o",
-        scratch::capture(&p, "ls build/smith/arena.o build/smith/random.o | tr '\\n' ' ' | sed 's/ $//'"));
+        "library needs: ... their objects are made beside files'", "build/smith/arena.o build/smith/mem.o",
+        scratch::capture(&p, "ls build/smith/arena.o build/smith/mem.o | tr '\\n' ' ' | sed 's/ $//'"));
     scratch::Run app = scratch::sh(&p, "build/app");
     char state[64];
     (void)format::to(state, sizeof state, app.status, " ", app.out);
-    scratch::expect_text("library needs: ... and the program runs", "0 seed 1", state);
+    scratch::expect_text("library needs: ... and the program runs", "0 found 1", state);
     scratch::Run second = scratch::build(&p, "");
     char both[4096];
     (void)format::to(both, sizeof both, second.out, second.err);

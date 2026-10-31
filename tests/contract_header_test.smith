@@ -56,16 +56,14 @@ static scratch::Project programs() {
 
 // A command after `flags`, which must succeed.
 static void must(const scratch::Project *p, const char *name, const char *command) {
-    scratch::Run run = scratch::sh(p, format::push(&memory, flags, command).data);
+    scratch::Run run = scratch::sh(p, format::push(flags, command).data);
     scratch::expect_status(name, 0, &run);
 }
 
 // A program compiled with the flags and the library, the arguments `extra` first.
 static void compile(const scratch::Project *p, const char *source, const char *extra, const char *output) {
-    must(
-        p, format::push(&memory, "contract: ", output, " compiles").data,
-        format::push(&memory, "smith cc $f ", extra, " ", source, " $lib/smith/contract.smith $lib/trace.c -o ", output)
-            .data);
+    must(p, format::push("contract: ", output, " compiles").data,
+         format::push("smith cc $f ", extra, " ", source, " $lib/smith/contract.smith $lib/trace.c -o ", output).data);
 }
 
 // ---- 1. At run time: passing contracts are silent, a failing one prints its text, file and line, then aborts.
@@ -167,7 +165,7 @@ static void contract_calls_in_ir(const char *level) {
     scratch::Project p = programs();
     defer finish(&p);
     must(&p, "contract: IR: clamp.c compiles to IR",
-         format::push(&memory, "smith cc $f ", level, " -S -emit-llvm clamp.c -o clamp.ll").data);
+         format::push("smith cc $f ", level, " -S -emit-llvm clamp.c -o clamp.ll").data);
     const char *ir = scratch::read(&p, "clamp.ll");
     scratch::expect_contains("contract: IR: smith_requires is a call", ir,
                              "call void @smith_contract_requires(i1 noundef zeroext");
@@ -197,8 +195,8 @@ export void test_contract_ir_ndebug_keeps_the_contract_calls() {
 static void library_compiles(const char *standard) {
     scratch::Project p = programs();
     defer finish(&p);
-    must(&p, format::push(&memory, "contract: library: compiles as ", standard).data,
-         format::push(&memory, "smith cc -std=", standard,
+    must(&p, format::push("contract: library: compiles as ", standard).data,
+         format::push("smith cc -std=", standard,
                       " -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I $SMITH_REPO/.smith/include -c "
                       "$lib/smith/contract.smith -o contract.o")
              .data);
@@ -230,7 +228,7 @@ static const char *summary(const scratch::Project *p) {
 
 static const char *test_count(const scratch::Project *p) {
     const char *count = captured(p, "grep -c '^export void test_' smith/contract_test.smith");
-    return format::push(&memory, count, " passed, 0 failed").data;
+    return format::push(count, " passed, 0 failed").data;
 }
 
 export void test_contract_project_the_tests_build_with_smith_library() {
@@ -262,8 +260,7 @@ static void analyzer_reports_only_the_unbounded_index(const char *mode) {
     scratch::Project p = programs();
     defer finish(&p);
     scratch::Run run = scratch::sh(
-        &p, format::push(&memory,
-                         "smith lint --checks='-*,clang-analyzer-*' bounded.c -- -std=gnu2y -I "
+        &p, format::push("smith lint --checks='-*,clang-analyzer-*' bounded.c -- -std=gnu2y -I "
                          "\"$SMITH_REPO/.smith/include\" ",
                          mode,
                          " 2>&1 | grep 'ArrayBound' | sed -e 's/^[^:]*:\\([0-9]*\\):.*/\\1/' | tr '\\n' ' ' | "

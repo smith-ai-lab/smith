@@ -42,43 +42,39 @@ static Block block_of(const char *info) {
     return c::strncmp(info, "smith", 5) == 0 ? Block_Bad : Block_Other;
 }
 
-static const char *where(arena::Arena *arena, const char *name, usize line) {
-    return format::push(arena, name, "/SKILL.md:", line).data;
+static const char *where(const char *name, usize line) {
+    return format::push(name, "/SKILL.md:", line).data;
 }
 
 // A `c` block holds no .smith.
-static void check_c_block(arena::Arena *arena, const scratch::Project *p, const char *name, usize line,
-                          const char *body) {
+static void check_c_block(const scratch::Project *p, const char *name, usize line, const char *body) {
     scratch::write(p, "raw", body);
     scratch::Run run = scratch::sh(p, "grep -nE '^(module|import) |c::' raw");
-    scratch::expect_status(
-        format::push(arena, where(arena, name, line), ": a c block holds .smith (tag it smith)").data, 1, &run);
+    scratch::expect_status(format::push(where(name, line), ": a c block holds .smith (tag it smith)").data, 1, &run);
 }
 
 // A complete `smith` block is placed in the file its module line implies (example-N.smith without one), and is not
 // C renamed.
-static void place_smith_block(arena::Arena *arena, const scratch::Project *p, const char *name, usize line,
-                              const char *body, Placed *placed) {
-    const char *label = where(arena, name, line);
+static void place_smith_block(const scratch::Project *p, const char *name, usize line, const char *body,
+                              Placed *placed) {
+    const char *label = where(name, line);
     scratch::write(p, "raw", body);
     scratch::Run renamed = scratch::sh(p, c_renamed);
-    scratch::expect_status(format::push(arena, label, ": a smith block is C renamed (see smith-idiom)").data, 1,
-                           &renamed);
+    scratch::expect_status(format::push(label, ": a smith block is C renamed (see smith-idiom)").data, 1, &renamed);
     if (renamed.status == 0) return;
     const char *module = scratch::capture(p, "sed -n 's/^module \\([A-Za-z0-9_:]*\\);.*/\\1/p' raw | head -n 1");
     const char *path =
         module[0] != '\0'
-            ? format::push(arena,
-                           scratch::capture(p, format::push(arena, "printf '%s' '", module, "' | sed 's|::|/|g'").data),
+            ? format::push(scratch::capture(p, format::push("printf '%s' '", module, "' | sed 's|::|/|g'").data),
                            ".smith")
                   .data
-            : format::push(arena, "example-", line, ".smith").data;
+            : format::push("example-", line, ".smith").data;
     bool twice = scratch::exists(p, path);
     if (twice) test::note("%s: module %s is defined by two blocks", label, module);
     test::check_condition(!twice);
     if (twice || placed->count == modules_max) return;
     scratch::Run copied =
-        scratch::sh(p, format::push(arena, "mkdir -p \"$(dirname '", path, "')\" && cp raw '", path, "'").data);
+        scratch::sh(p, format::push("mkdir -p \"$(dirname '", path, "')\" && cp raw '", path, "'").data);
     scratch::expect_status(label, 0, &copied);
     placed->paths[placed->count] = path;
     placed->lines[placed->count] = line;
@@ -118,7 +114,7 @@ static void walk_blocks(arena::Arena *arena, const scratch::Project *p, const ch
                 kind = block_of(info);
                 if (kind == Block_Bad) {
                     test::note("%s: unknown info string: must be exactly 'smith' or 'smith fragment', not '%s'",
-                               where(arena, name, number), info);
+                               where(name, number), info);
                     test::check_condition(false);
                 }
                 open = true;
@@ -128,8 +124,8 @@ static void walk_blocks(arena::Arena *arena, const scratch::Project *p, const ch
             } else {
                 open = false;
                 body[used] = '\0';
-                if (kind == Block_C) check_c_block(arena, p, name, fence, body);
-                if (kind == Block_Smith) place_smith_block(arena, p, name, fence, body, placed);
+                if (kind == Block_C) check_c_block(p, name, fence, body);
+                if (kind == Block_Smith) place_smith_block(p, name, fence, body, placed);
             }
         } else if (open) {
             usize skip = 0;
@@ -154,11 +150,10 @@ constexpr char headers_script[_] =
 
 // A file with no `module` line is a program's file or a test's: smith build declares the tests there, and a `main`
 // needs no prototype, so only a module's own functions are held to -Wmissing-prototypes.
-static void check_module(arena::Arena *arena, const scratch::Project *p, const char *name, const char *path,
-                         usize line) {
+static void check_module(const scratch::Project *p, const char *name, const char *path, usize line) {
     const char *strict = c::strncmp(path, "example-", 8) == 0 ? "-Wno-missing-prototypes" : "-Wmissing-prototypes";
     const char *command =
-        format::push(arena, "flags=\"-I $SMITH_REPO/.smith/include -I $PWD/.smith/include -I $PWD\"; ",
+        format::push("flags=\"-I $SMITH_REPO/.smith/include -I $PWD/.smith/include -I $PWD\"; ",
                      "smith cc -fsyntax-only -std=gnu2y ", strict,
                      " -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough "
                      "-Wstrict-prototypes -Wvla -Werror $flags '",
@@ -168,7 +163,7 @@ static void check_module(arena::Arena *arena, const scratch::Project *p, const c
                      path, "' -- -std=gnu2y $flags 2>&1")
             .data;
     scratch::Run run = scratch::sh(p, command);
-    scratch::expect_status(format::push(arena, where(arena, name, line), " (", path, ")").data, 0, &run);
+    scratch::expect_status(format::push(where(name, line), " (", path, ")").data, 0, &run);
 }
 
 // The test of one skill: its project, then its memory as the current allocator, so that what scratch returns (a Run's
@@ -181,18 +176,18 @@ static void skill_case(const char *name) {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     arena::Arena *arena = &memory;
-    scratch::copy_tree(&p, format::push(arena, ".agents/skills/", name, "/SKILL.md").data, "SKILL.md");
+    scratch::copy_tree(&p, format::push(".agents/skills/", name, "/SKILL.md").data, "SKILL.md");
     Placed placed = {};
     walk_blocks(arena, &p, name, &placed);
     if (placed.count == 0) return;
     for (usize i = 0; i < placed.count; i++) {
         const char *path = placed.paths[i];
-        scratch::write(&p, "modules", format::push(arena, scratch::read(&p, "modules"), path, "\n").data);
+        scratch::write(&p, "modules", format::push(scratch::read(&p, "modules"), path, "\n").data);
     }
     scratch::Run headers = scratch::sh(&p, headers_script);
     scratch::expect_status("the headers", 0, &headers);
     for (usize i = 0; i < placed.count; i++) {
-        check_module(arena, &p, name, placed.paths[i], placed.lines[i]);
+        check_module(&p, name, placed.paths[i], placed.lines[i]);
     }
 }
 
@@ -224,7 +219,7 @@ static bool has_code_block(const char *text) {
 
 // A file of the repository as a terminated text in the arena, or nullptr when it cannot be read.
 static const char *repo_file(arena::Arena *arena, const char *repo, const char *path, const char *name) {
-    const char *full = format::push(arena, repo, path, name).data;
+    const char *full = format::push(repo, path, name).data;
     files::BytesResult file = files::read_file(full[0:c::strlen(full)]);
     switch (file) {
     case .error:
@@ -248,10 +243,10 @@ export void test_every_skill_with_a_block_has_a_test() {
     defer mem::set_allocator(outside);
     arena::Arena *arena = &memory;
     env::Value variable = env::get("SMITH_REPO");
-    const char *repo = variable == .some ? format::push(arena, variable.some).data : ".";
+    const char *repo = variable == .some ? format::push(variable.some).data : ".";
     const char *tests = repo_file(arena, repo, "/tests/skills_test.smith", "");
     test::check_condition(tests != nullptr);
-    const char *folder = format::push(arena, repo, "/.agents/skills").data;
+    const char *folder = format::push(repo, "/.agents/skills").data;
     files::EntriesResult listed = files::list(folder[0:c::strlen(folder)]);
     files::Entries skills = {};
     switch (listed) {
@@ -264,11 +259,11 @@ export void test_every_skill_with_a_block_has_a_test() {
     const char *missing = "";
     for (usize i = 0; i < countof(skills); i++) {
         const char *name = skills[i].name.data;
-        const char *skill = repo_file(arena, repo, "/.agents/skills/", format::push(arena, name, "/SKILL.md").data);
+        const char *skill = repo_file(arena, repo, "/.agents/skills/", format::push(name, "/SKILL.md").data);
         if (skill == nullptr || !has_code_block(skill)) continue;
-        const char *wanted = format::push(arena, "skill_case(\"", name, "\")").data;
+        const char *wanted = format::push("skill_case(\"", name, "\")").data;
         if (c::strstr(tests, wanted) == nullptr) {
-            missing = format::push(arena, missing, name, "\n").data;
+            missing = format::push(missing, name, "\n").data;
         }
     }
     scratch::expect_text("skills with a block and no test in tests/skills_test.smith", "", missing);

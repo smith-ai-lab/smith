@@ -46,9 +46,8 @@ static const char *math_library() {
 }
 
 // Builds tests/random.c with the flags into `name`.
-static scratch::Run compile(arena::Arena *arena, const scratch::Project *p, const char *warnings, const char *flags,
-                            const char *name) {
-    return scratch::sh(p, format::push(arena, "smith cc ", warnings, " -I \"$SMITH_REPO/.smith/include\" ", flags, " ",
+static scratch::Run compile(const scratch::Project *p, const char *warnings, const char *flags, const char *name) {
+    return scratch::sh(p, format::push("smith cc ", warnings, " -I \"$SMITH_REPO/.smith/include\" ", flags, " ",
                                        sources, math_library(), " -o ", name)
                               .data);
 }
@@ -60,7 +59,7 @@ static void checks_pass(const char *name, const char *flags) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run built = compile(&memory, &p, format::push(&memory, "-std=gnu23 ", warn).data, flags, "checks");
+    scratch::Run built = compile(&p, format::push("-std=gnu23 ", warn).data, flags, "checks");
     scratch::expect_status("the checks build", 0, &built);
     scratch::Run checked = scratch::sh(&p, "./checks");
     scratch::expect_status(name, 0, &checked);
@@ -82,13 +81,12 @@ static void compiles_as(const char *standard) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run built = scratch::sh(&p, format::push(&memory, "smith cc -std=", standard, " ", warn,
+    scratch::Run built = scratch::sh(&p, format::push("smith cc -std=", standard, " ", warn,
                                                       " -I \"$SMITH_REPO/.smith/include\" -c "
                                                       "lib/smith/random.smith -o r.o")
                                              .data);
     scratch::expect_status(
-        format::push(&memory, "library: compiles as -std=", standard, " with the new project's warnings").data, 0,
-        &built);
+        format::push("library: compiles as -std=", standard, " with the new project's warnings").data, 0, &built);
 }
 
 export void test_random_c_library_compiles_as_c23() {
@@ -107,10 +105,10 @@ static void digest(const char *name, const char *flags) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run built = compile(&memory, &p, "-w", flags, "digest");
-    scratch::expect_status(format::push(&memory, "digest: ", name, " builds").data, 0, &built);
+    scratch::Run built = compile(&p, "-w", flags, "digest");
+    scratch::expect_status(format::push("digest: ", name, " builds").data, 0, &built);
     scratch::Run run = scratch::sh(&p, "./digest digest");
-    scratch::expect_text(format::push(&memory, "digest: ", name).data, expected_digest, run.out);
+    scratch::expect_text(format::push("digest: ", name).data, expected_digest, run.out);
 }
 
 export void test_random_c_digest_o0_sanitized() {
@@ -173,7 +171,7 @@ export void test_random_c_refusal_a_normal_with_deviation_0_aborts() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run built = compile(&memory, &p, format::push(&memory, "-std=gnu23 ", warn).data, "-O2", "checks");
+    scratch::Run built = compile(&p, format::push("-std=gnu23 ", warn).data, "-O2", "checks");
     scratch::expect_status("the checks build", 0, &built);
     scratch::Run run = scratch::sh(&p, "./checks assert");
     scratch::expect_status("refusal: a normal with deviation 0 aborts", 134, &run);

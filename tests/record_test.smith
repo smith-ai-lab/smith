@@ -26,11 +26,10 @@ export void test_the_first_run_makes_a_record_for_each_test() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run run =
-        scratch::sh(&p, format::push(&memory, repository,
-                                     "smith test --changed --base HEAD 2>&1; "
+    scratch::Run run = scratch::sh(
+        &p, format::push(repository, "smith test --changed --base HEAD 2>&1; "
                                      "echo ---; ls .smith/records; echo ---; cat .smith/records/add_runs.rec")
-                            .data);
+                .data);
     scratch::expect_status("the run", 0, &run);
     scratch::expect_contains("the reason", run.out, "no records yet, so every test runs once to make them");
     scratch::expect_contains("both ran", run.out, "2 passed");
@@ -54,7 +53,7 @@ export void test_a_change_reruns_the_test_that_ran_it() {
     defer mem::set_allocator(outside);
     const char *edit = "sed 's/a \\* b/a * b + 0/' ops.c > next.c && mv next.c ops.c; ";
     scratch::Run run =
-        scratch::sh(&p, format::push(&memory, repository, "smith test --changed --base HEAD >/dev/null 2>&1; ", edit,
+        scratch::sh(&p, format::push(repository, "smith test --changed --base HEAD >/dev/null 2>&1; ", edit,
                                      "smith test --changed --base HEAD --dry-run 2>&1; "
                                      "smith test --changed --base HEAD 2>&1; "
                                      "echo ---; cat .smith/records/mul_runs.rec")
@@ -86,7 +85,7 @@ export void test_a_function_of_an_included_file_selects_the_tests_that_ran_it() 
         "smith test --changed --base HEAD >/dev/null 2>&1; cat .smith/records/add_runs.rec; echo ---; ";
     const char *body = "sed 's/table\\[0\\] - 1/table[0] - 1 + 0/' more.c > next.c && mv next.c more.c; ";
     const char *entry = "git checkout -q more.c; sed 's/    2,/    3,/' more.c > next.c && mv next.c more.c; ";
-    scratch::Run run = scratch::sh(&p, format::push(&memory, repository, unit, body,
+    scratch::Run run = scratch::sh(&p, format::push(repository, unit, body,
                                                     "smith test --changed --base HEAD --dry-run 2>&1; echo ---; ",
                                                     entry, "smith test --changed --base HEAD --dry-run 2>&1")
                                            .data);
@@ -112,7 +111,7 @@ export void test_a_failed_test_reruns_and_the_rest_do_not() {
         "sed 's/return a \\* b;/return a * b + 1;/' ops.c > next.c && mv next.c ops.c; "
         "sed 's/mul 3 4 >/mul 3 4 \\&\\& false >/' tests/cli_test.c > next.c && mv next.c tests/cli_test.c; ";
     scratch::Run run =
-        scratch::sh(&p, format::push(&memory, repository, "smith test --changed --base HEAD >/dev/null 2>&1; ", edit,
+        scratch::sh(&p, format::push(repository, "smith test --changed --base HEAD >/dev/null 2>&1; ", edit,
                                      "smith test --changed --base HEAD >/dev/null 2>&1; "
                                      "git checkout -q tests/cli_test.c; "
                                      "smith test --changed --base HEAD --dry-run 2>&1")
@@ -130,8 +129,7 @@ export void test_a_plain_test_leaves_no_record() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run run =
-        scratch::sh(&p, format::push(&memory, repository, "smith test 2>&1; ls .smith/records 2>&1").data);
+    scratch::Run run = scratch::sh(&p, format::push(repository, "smith test 2>&1; ls .smith/records 2>&1").data);
     scratch::expect_contains("both ran", run.out, "2 passed");
     scratch::expect_lacks("no record", run.out, ".rec");
 }
@@ -150,7 +148,7 @@ export void test_a_changed_file_selects_the_tests_that_opened_it() {
     const char *list = "smith test --changed --list HEAD 2>/dev/null | paste -sd, -";
     const char *each = "; git checkout -q .; git clean -fdq data; ";
     scratch::Run run =
-        scratch::sh(&p, format::push(&memory, repository, "smith test --changed --base HEAD >/dev/null 2>&1; ",
+        scratch::sh(&p, format::push(repository, "smith test --changed --base HEAD >/dev/null 2>&1; ",
                                      "echo ---; cat .smith/records/reads_test__copies_a_folder.rec; echo ---; ",
                                      "echo more >> data/a.txt; echo \"file: $(", list, ")\"", each,
                                      "echo more >> data/b/y.txt; echo \"inside: $(", list, ")\"", each,

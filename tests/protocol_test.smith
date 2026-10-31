@@ -32,13 +32,13 @@ static void check_mode(const char *mode) {
     scratch::copy_tree(&p, ".smith/protocol", "generated");
     scratch::Run copied = scratch::sh(&p, setup);
     scratch::expect_status("protocol: the project is made", 0, &copied);
-    scratch::Run built = scratch::build(&p, format::push(&memory, "-DMODE=", mode).data);
-    scratch::expect_status(format::push(&memory, mode, ": the generated code and its tests build").data, 0, &built);
+    scratch::Run built = scratch::build(&p, format::push("-DMODE=", mode).data);
+    scratch::expect_status(format::push(mode, ": the generated code and its tests build").data, 0, &built);
     const char *count = scratch::capture(&p, "cat tests/test_protocol_*.c | grep -c '^void test_'");
     scratch::Run ran = scratch::sh(&p, "./build/tests 2>&1");
-    scratch::expect_status(format::push(&memory, mode, ": the tests run").data, 0, &ran);
-    scratch::expect_contains(format::push(&memory, mode, ": all ", count, " generated tests pass").data, ran.out,
-                             format::push(&memory, count, " passed, 0 failed").data);
+    scratch::expect_status(format::push(mode, ": the tests run").data, 0, &ran);
+    scratch::expect_contains(format::push(mode, ": all ", count, " generated tests pass").data, ran.out,
+                             format::push(count, " passed, 0 failed").data);
 }
 
 export void test_protocol_generated_code_passes_under_the_sanitizers() {
