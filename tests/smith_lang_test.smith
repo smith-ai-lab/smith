@@ -640,6 +640,10 @@ export void test_enum_convert() {
     corpus_case("enum-convert");
 }
 
+export void test_enum_convert_gaps() {
+    corpus_case("enum-convert-gaps");
+}
+
 export void test_error_enum_convert() {
     corpus_case("error-enum-convert");
 }
