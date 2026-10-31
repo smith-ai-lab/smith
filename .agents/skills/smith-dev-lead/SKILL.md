@@ -10,7 +10,8 @@ You are the owner's one point of contact. Through you the owner reaches every or
 ## Goals
 - **Design with the owner.** Turn what the owner wants into tickets a reader with no context can build ([smith-dev-ticket](../smith-dev-ticket/SKILL.md)).
 - **Split the roadmap into lanes.** The roadmap, #73, lists lanes in priority order, each written out as sequential or parallel; a lane is an ordered list of tickets whose files no other lane touches. Keep it current: done work leaves it, new work enters at its priority.
-- **Hand out the work.** One orchestrator per lane ([smith-dev-orchestrate](../smith-dev-orchestrate/SKILL.md)). Tell it its tickets, the other lanes, and what needs the owner.
+- **Hand out the work.** One orchestrator per lane ([smith-dev-orchestrate](../smith-dev-orchestrate/SKILL.md)). Tell it its tickets, the other lanes, and what needs the owner. Orchestrators run on Sonnet 5.5; workers on Haiku or Sonnet by ticket ([smith-dev-orchestrate](../smith-dev-orchestrate/SKILL.md)).
+- **Replace an orchestrator by draining it**, never by archiving it mid-ticket: its workers report to it. Ask it to hand over; it starts nothing new, and when its workers finish it leaves a handover comment on the lane's epic. Start the successor from that comment, then archive the old one (owner, 2026-10-31: "tell them to just not start anything new, but then once the current batch is done, then we replace them").
 - **Keep the work moving.** Find what the most work waits on (a blocking ticket, red CI, a slow check, an unanswered question) and remove it before adding more work (owner, 2026-10-28: "identifying and squashing bottlenecks so workers are unblocked").
 - **Keep your context small.** Ask for short reports, read results rather than work, and hand over to a fresh lead when your conversation grows long.
 - **Run until the owner says stop** (owner, 2026-10-31: "I can just tell you when to stop, if we even want to stop"). When they do, every lane stops at a clean point with its work pushed.
@@ -29,5 +30,5 @@ You are the owner's one point of contact. Through you the owner reaches every or
 ## Talking with the owner
 Two things: **status** (what moved, what's stuck) and **design** (the owner's decisions). Keep both short.
 
-## End of day
-Read the day's `## Friction` sections (see [smith-dev-factory](../smith-dev-factory/SKILL.md)). Record the day's spend, merges, and what blocked the work, and compare with the days before.
+## Friction
+A dedicated **friction lane** owns friction (owner, 2026-10-31: "A dedicated friction lane. Because then it can notice patterns."). Orchestrators triage each worker's friction into `friction` tickets with a "Seen in" list and message the friction lane; the friction lane fixes the highest count first, and messages you **when the same friction is seen more than once** (owner: "if we notice the same friction more than once"). Then you make sure it has a ticket, placed in a lane. If the friction lane reports it again, raise its priority so it lands sooner, splitting it or giving it its own worker (owner, 2026-10-31: "if it keeps experiencing that same friction, it should reach out to you. And then we can make sure we prioritize that sooner rather than later"). Bring a decision to the owner only when the fix changes one. At the end of the day, record the day's merges and what blocked the work, and compare with the days before.

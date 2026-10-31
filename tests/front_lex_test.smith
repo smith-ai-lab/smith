@@ -1,0 +1,522 @@
+// Tests of front::lex (#1128, A2 of track A of #1112): the kinds, the literals, the punctuators, every error, the dump
+// and the golden dumps of corpus files (tests/front/lex/*.tokens). Each test gives the current allocator an arena, so
+// the tokens and the dumps go back with it.
+module front_lex_test;
+
+import front::lex;
+import std::arena;
+import std::console;
+import std::files;
+import std::format;
+import std::mem;
+import std::slice;
+import std::test;
+
+// The tokens of source; a lexing error fails the test with its message.
+static lex::Tokens tokens_of(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    switch (lexed) {
+    case .ok:
+        return lexed.ok;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    lex::Tokens none = {};
+    return none;
+}
+
+// The error tokenizing source gives; tokens fail the test.
+static lex::LexError error_of(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    lex::LexError none = {};
+    switch (lexed) {
+    case .ok:
+        test::check_equal(countof(lexed.ok), 0);
+        break;
+    case .error:
+        return lexed.error;
+    }
+    return none;
+}
+
+// Two texts are the same.
+static void expect_text(Str actual, Str expected) {
+    test::check_equal(actual, expected);
+}
+
+// The dump of source is expected, line for line.
+static void expect_dump(Str source, Str expected) {
+    lex::Tokens tokens = tokens_of(source);
+    Str actual = lex::dump(tokens, source);
+    test::check_equal(actual, expected);
+}
+
+// source is a single token of kind and then the end of the file.
+static void expect_one(Str source, lex::TokenKind kind) {
+    lex::Tokens tokens = tokens_of(source);
+    test::check_equal(countof(tokens), 2);
+    test::check_equal(tokens[0].kind == kind, true);
+    test::check_equal(lex::text(source, tokens[0]), source);
+    test::check_equal(tokens[1].kind == lex::end_of_file, true);
+}
+
+// An error of source is expected with this message, from start to end.
+static void expect_error(Str source, Str message, U32 start, U32 end) {
+    lex::LexError failure = error_of(source);
+    test::check_equal(failure.message, message);
+    test::check_equal(failure.span.start, start);
+    test::check_equal(failure.span.end, end);
+}
+
+export void test_lex_an_empty_source_is_the_end_of_file() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    lex::Tokens tokens = tokens_of("");
+    test::check_equal(countof(tokens), 1);
+    test::check_equal(tokens[0].kind == lex::end_of_file, true);
+    expect_dump("  \n\t// nothing\n/* at all */ ", "3:14 end_of_file\n");
+}
+
+export void test_lex_a_capital_letter_makes_a_type_name_and_anything_else_a_name() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_one("I32", lex::type_name);
+    expect_one("Point", lex::type_name);
+    expect_one("Option", lex::type_name);
+    expect_one("x", lex::name);
+    expect_one("printf", lex::name);
+    expect_one("_tmp", lex::name);
+    expect_one("_Tmp", lex::name);
+    expect_one("iffy", lex::name);
+    expect_one("Iff", lex::type_name);
+    expect_one("u8x", lex::name);
+    expect_dump("c::EOF a::B", "1:1 name c\n1:2 colon_colon ::\n1:4 type_name EOF\n1:8 name a\n1:9 colon_colon "
+                               "::\n1:11 type_name B\n1:12 end_of_file\n");
+}
+
+export void test_lex_every_keyword_is_a_token_of_its_own() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Usize seen = 0;
+    for (Usize k = (Usize)lex::kw_alignas; k <= (Usize)lex::kw_countof; k++) {
+        lex::TokenKind kind = (lex::TokenKind)k;
+        test::check_equal(lex::is_keyword(kind), true);
+        expect_one(lex::kind_text(kind), kind);
+        seen += 1;
+    }
+    test::check_equal(seen, 60);
+    expect_dump("int char long unsigned",
+                "1:1 kw_int int\n1:5 kw_char char\n1:10 kw_long long\n1:15 kw_unsigned unsigned\n1:23 end_of_file\n");
+    expect_dump("module import export defer try countof",
+                "1:1 kw_module module\n1:8 kw_import import\n1:15 kw_export export\n1:22 kw_defer defer\n1:28 kw_try "
+                "try\n1:32 kw_countof countof\n1:39 end_of_file\n");
+    expect_one("Module", lex::type_name);
+    expect_one("_Atomic", lex::kw_atomic);
+    expect_one("_Generic", lex::kw_generic);
+}
+
+export void test_lex_every_punctuator_is_a_token_of_its_own() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Usize seen = 0;
+    for (Usize k = (Usize)lex::left_paren; k <= (Usize)lex::comma; k++) {
+        lex::TokenKind kind = (lex::TokenKind)k;
+        test::check_equal(lex::is_punctuator(kind), true);
+        expect_one(lex::kind_text(kind), kind);
+        seen += 1;
+    }
+    test::check_equal(seen, 47);
+    test::check_equal(lex::is_punctuator(lex::name), false);
+    test::check_equal(lex::is_keyword(lex::plus), false);
+}
+
+export void test_lex_the_longest_punctuator_wins_and_slices_are_three_tokens() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_dump("xs[:]", "1:1 name xs\n1:3 left_bracket [\n1:4 colon :\n1:5 right_bracket ]\n1:6 end_of_file\n");
+    expect_dump("a[b[0]]", "1:1 name a\n1:2 left_bracket [\n1:3 name b\n1:4 left_bracket [\n1:5 integer 0\n1:6 "
+                           "right_bracket ]\n1:7 right_bracket ]\n1:8 end_of_file\n");
+    expect_dump("[[std::pure]]", "1:1 left_bracket [\n1:2 left_bracket [\n1:3 name std\n1:6 colon_colon ::\n1:8 name "
+                                 "pure\n1:12 right_bracket ]\n1:13 right_bracket ]\n1:14 end_of_file\n");
+    expect_dump("a<<=b>>=c...->", "1:1 name a\n1:2 less_less_equal <<=\n1:5 name b\n1:6 greater_greater_equal >>=\n1:9 "
+                                  "name c\n1:10 ellipsis ...\n1:13 arrow ->\n1:15 end_of_file\n");
+    expect_dump("a+++b", "1:1 name a\n1:2 plus_plus ++\n1:4 plus +\n1:5 name b\n1:6 end_of_file\n");
+    // The digraphs are not recognized: `<:` is two tokens.
+    expect_dump("<:%>", "1:1 less <\n1:2 colon :\n1:3 percent %\n1:4 greater >\n1:5 end_of_file\n");
+}
+
+export void test_lex_integers_and_floating_constants() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_one("0", lex::integer);
+    expect_one("42", lex::integer);
+    expect_one("0x1F", lex::integer);
+    expect_one("0XdeadBEEF", lex::integer);
+    expect_one("0b1010", lex::integer);
+    expect_one("0777", lex::integer);
+    expect_one("1'000'000", lex::integer);
+    expect_one("0xFF'FF", lex::integer);
+    expect_one("10u", lex::integer);
+    expect_one("5ULL", lex::integer);
+    expect_one("7wb", lex::integer);
+    expect_one("1.5", lex::floating);
+    expect_one(".5", lex::floating);
+    expect_one("1.", lex::floating);
+    expect_one("1e10", lex::floating);
+    expect_one("1E+5", lex::floating);
+    expect_one("2.5e-3f", lex::floating);
+    expect_one("1.f", lex::floating);
+    expect_one("0x1.8p3", lex::floating);
+    expect_one("0x1p-2", lex::floating);
+    expect_one("0x.8p1", lex::floating);
+    expect_one("3.14f16", lex::floating);
+    expect_one("1e5L", lex::floating);
+    expect_dump("1+2", "1:1 integer 1\n1:2 plus +\n1:3 integer 2\n1:4 end_of_file\n");
+    expect_dump("p.x .5", "1:1 name p\n1:2 dot .\n1:3 name x\n1:5 floating .5\n1:7 end_of_file\n");
+}
+
+export void test_lex_character_and_string_literals() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_one("\"hi\"", lex::string);
+    expect_one("\"\"", lex::string);
+    expect_one("\"a\\\"b\\\\\"", lex::string);
+    expect_one("\"tab\\t\\x41\\101\\u00e9\"", lex::string);
+    expect_one("u8\"x\"", lex::string);
+    expect_one("u\"x\"", lex::string);
+    expect_one("U\"x\"", lex::string);
+    expect_one("L\"x\"", lex::string);
+    expect_one("'a'", lex::character);
+    expect_one("'\\''", lex::character);
+    expect_one("'\\n'", lex::character);
+    expect_one("u'a'", lex::character);
+    expect_one("U'a'", lex::character);
+    expect_one("L'a'", lex::character);
+    expect_one("u8'a'", lex::character);
+    expect_dump("\"// not a comment\" '#'", "1:1 string \"// not a comment\"\n1:20 character '#'\n1:23 end_of_file\n");
+    expect_dump("u8 \"x\"", "1:1 name u8\n1:4 string \"x\"\n1:7 end_of_file\n");
+}
+
+export void test_lex_comments_and_white_space_make_no_tokens() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str expected =
+        "1:1 name a\n2:1 name b\n3:15 name c\n3:22 name d\n3:28 name e\n4:2 name f\n4:5 name g\n4:6 end_of_file\n";
+    expect_dump("a // line\nb /* block\nover lines */ c /**/ d/*x*/e\r\n\tf\v\fg", expected);
+    expect_dump("a/b /c", "1:1 name a\n1:2 slash /\n1:3 name b\n1:5 slash /\n1:6 name c\n1:7 end_of_file\n");
+    expect_dump("// at the end", "1:14 end_of_file\n");
+}
+
+export void test_lex_the_dump_counts_lines_and_columns_from_one() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str expected =
+        "1:1 kw_module module\n1:8 name m\n1:9 semicolon ;\n3:1 kw_export export\n3:8 type_name I32\n3:12 name f\n3:13 "
+        "left_paren (\n3:14 kw_void void\n3:18 right_paren )\n3:20 left_brace {\n4:1 right_brace }\n5:1 end_of_file\n";
+    expect_dump("module m;\n\nexport I32 f(void) {\n}\n", expected);
+}
+
+export void test_lex_a_kind_has_the_name_a_dump_prints() {
+    expect_text(lex::kind_name(lex::end_of_file), "end_of_file");
+    expect_text(lex::kind_name(lex::type_name), "type_name");
+    expect_text(lex::kind_name(lex::kw_if), "kw_if");
+    expect_text(lex::kind_name(lex::kw_countof), "kw_countof");
+    expect_text(lex::kind_name(lex::left_paren), "left_paren");
+    expect_text(lex::kind_name(lex::colon_colon), "colon_colon");
+    expect_text(lex::kind_name(lex::comma), "comma");
+    expect_text(lex::kind_text(lex::kw_if), "if");
+    expect_text(lex::kind_text(lex::arrow), "->");
+    expect_text(lex::kind_text(lex::name), "");
+}
+
+export void test_lex_error_an_unterminated_string() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_error("x = \"abc", "unterminated string literal", 4, 8);
+    expect_error("\"abc\nnext\"", "unterminated string literal", 0, 4);
+    expect_error("u8\"abc", "unterminated string literal", 0, 6);
+    expect_error("\"abc\\", "unterminated string literal", 0, 5);
+}
+
+export void test_lex_error_an_unterminated_character() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_error("c = 'a", "unterminated character literal", 4, 6);
+    expect_error("'a\nb'", "unterminated character literal", 0, 2);
+    expect_error("''", "empty character literal", 0, 2);
+}
+
+export void test_lex_error_an_unterminated_block_comment() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_error("a /* never closed", "unterminated block comment", 2, 17);
+    expect_error("/*/", "unterminated block comment", 0, 3);
+}
+
+export void test_lex_error_a_hash_says_there_is_no_preprocessor() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    lex::LexError failure = error_of("#define N 3\n");
+    test::check_equal(failure.span.start, 0);
+    test::check_equal(failure.span.end, 1);
+    test::check_condition(failure.message[0] == 't');
+    expect_error(
+        "a ## b",
+        "there is no preprocessor in a .smith file: write `constexpr` for a constant and `import` for a header", 2, 3);
+    expect_error(
+        "x\n  #include <stdio.h>",
+        "there is no preprocessor in a .smith file: write `constexpr` for a constant and `import` for a header", 4, 5);
+}
+
+export void test_lex_error_a_byte_that_starts_no_token() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_error("a @ b", "this byte starts no token", 2, 3);
+    expect_error("$x", "this byte starts no token", 0, 1);
+    expect_error("a \\\nb", "this byte starts no token", 2, 3);
+    expect_error("`", "this byte starts no token", 0, 1);
+    expect_error("\xc3\xa9", "this byte starts no token", 0, 1);
+}
+
+export void test_lex_error_a_malformed_number() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_error("08", "an octal constant has no digit 8 or 9", 0, 2);
+    expect_error("0x", "a number prefix needs digits after it", 0, 2);
+    expect_error("0b2", "a number prefix needs digits after it", 0, 2);
+    expect_error("1e+", "the exponent of a number has no digits", 0, 3);
+    expect_error("0x1.8", "a hexadecimal floating constant needs an exponent", 0, 5);
+    expect_error("12abc", "an integer constant has an invalid suffix", 0, 5);
+    expect_error("1.5xyz", "a floating constant has an invalid suffix", 0, 6);
+}
+
+export void test_lex_a_failed_tokenize_returns_nothing_to_free() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    lex::Lexed lexed = lex::tokenize("fine tokens before @");
+    test::check_equal(lexed == .error, true);
+}
+
+// The corpus (tests/smith-lang/cases) is the specification: the text of a `.smith` file of it, or nothing.
+static format::Chars read_text(Str path) {
+    files::BytesResult read = files::read_file(path);
+    Str none = "";
+    switch (read) {
+    case .ok:
+        format::Chars text = mem::view(read.ok, char);
+        return text;
+    case .error:
+        test::check_equal(path, none);
+    }
+    format::Chars nothing = {};
+    return nothing;
+}
+
+// What tokenizing a corpus file found: whether it has a `#` (there is no preprocessor, so lines with one are not
+// tokenized: each is blanked and the rest read), and the first other error, if any.
+struct Swept {
+    Bool has_hash;
+    Bool failed;
+    lex::LexError error;
+};
+
+static Swept sweep(format::Chars source) {
+    char work[:] = mem::alloc_slice(char, countof(source));
+    for (Usize i = 0; i < countof(source); i++) {
+        work[i] = source[i];
+    }
+    Swept result = {};
+    for (Usize attempt = 0; attempt <= countof(work); attempt++) {
+        lex::Lexed lexed = lex::tokenize(work);
+        if (lexed == .ok) return result;
+        U32 at = lexed.error.span.start;
+        if (work[at] != '#') {
+            result.failed = true;
+            result.error = lexed.error;
+            return result;
+        }
+        result.has_hash = true;
+        Usize line = at;
+        while (line > 0 && work[line - 1] != '\n')
+            line -= 1;
+        for (Usize i = line; i < countof(work) && work[i] != '\n'; i++) {
+            work[i] = ' ';
+        }
+    }
+    return result;
+}
+
+// Every `.smith` file of every case of the corpus: the number of files, those with a `#` line printed, and any file
+// that has another error fails the test.
+export void test_lex_every_corpus_file_tokenizes_except_for_hash_lines() {
+    arena::Arena memory = test::memory(1U << 28);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str suffix = ".smith";
+    files::EntriesResult cases = files::list("tests/smith-lang/cases");
+    if (cases == .error) {
+        test::check_condition(false);
+        return;
+    }
+    Usize checked = 0;
+    Usize hashed = 0;
+    Usize failed = 0;
+    for (files::Entry corpus_case : cases.ok) {
+        char folder[:] = format::push("tests/smith-lang/cases/", corpus_case.name, "/src");
+        files::EntriesResult sources = files::list(folder);
+        if (sources == .error) {
+            continue;
+        }
+        for (files::Entry source : sources.ok) {
+            if (!slice::ends_with(source.name, suffix)) {
+                continue;
+            }
+            char path[:] = format::push(folder, "/", source.name);
+            Swept swept = sweep(read_text(path));
+            checked += 1;
+            if (swept.has_hash) {
+                hashed += 1;
+                console::print("has a # line: ", path, "\n");
+            }
+            if (swept.failed) {
+                failed += 1;
+                Str message = swept.error.message;
+                console::print_error(path, ": ", message, " at byte ", swept.error.span.start, "\n");
+            }
+        }
+    }
+    console::print(checked, " corpus files, ", hashed, " with a # line\n");
+    test::check_equal(failed, 0);
+    test::check_condition(checked > 500);
+}
+
+// The golden dump of a corpus file: tests/front/lex/<name>.tokens is the dump of
+// tests/smith-lang/cases/<case>/src/<file>.smith. `smith test --update` writes the files. Together they have every kind
+// of token the corpus uses (see the PR).
+static void expect_golden(Str corpus_case, Str file) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    char path[:] = format::push("tests/smith-lang/cases/", corpus_case, "/src/", file, ".smith");
+    char source[:] = read_text(path);
+    lex::Tokens tokens = tokens_of(source);
+    Str dumped = lex::dump(tokens, source);
+    char actual[:] = format::push(dumped);
+    char golden[:] = format::push("tests/front/lex/", corpus_case, "-", file, ".tokens");
+    test::golden(golden, actual);
+}
+
+export void test_lex_golden_enum_type_function_main() {
+    expect_golden("enum-type-function", "main");
+}
+
+export void test_lex_golden_type_value_import_main() {
+    expect_golden("type-value-import", "main");
+}
+
+export void test_lex_golden_range_for_main() {
+    expect_golden("range-for", "main");
+}
+
+export void test_lex_golden_error_keyword_plain_main() {
+    expect_golden("error-keyword-plain", "main");
+}
+
+export void test_lex_golden_constexpr_c_pedantic_main() {
+    expect_golden("constexpr-c-pedantic", "main");
+}
+
+export void test_lex_golden_generic_call_arena() {
+    expect_golden("generic-call", "arena");
+}
+
+export void test_lex_golden_lambda_generic_spawn_later() {
+    expect_golden("lambda-generic-spawn", "later");
+}
+
+export void test_lex_golden_generic_two_keyword_params_num() {
+    expect_golden("generic-two-keyword-params", "num");
+}
+
+export void test_lex_golden_sized_own_typedef_main() {
+    expect_golden("sized-own-typedef", "main");
+}
+
+export void test_lex_golden_error_try_error_type_main() {
+    expect_golden("error-try-error-type", "main");
+}
+
+export void test_lex_golden_defer_run_main() {
+    expect_golden("defer-run", "main");
+}
+
+export void test_lex_golden_export_inline_attributes_hint() {
+    expect_golden("export-inline-attributes", "hint");
+}
+
+export void test_lex_golden_reflect_questions_main() {
+    expect_golden("reflect-questions", "main");
+}
+
+export void test_lex_golden_keyword_after_comment_main() {
+    expect_golden("keyword-after-comment", "main");
+}
+
+export void test_lex_golden_generic_auto_error_main() {
+    expect_golden("generic-auto-error", "main");
+}
+
+export void test_lex_golden_error_array_empty_main() {
+    expect_golden("error-array-empty", "main");
+}
+
+export void test_lex_golden_slice_dims_run_main() {
+    expect_golden("slice-dims-run", "main");
+}
+
+export void test_lex_golden_exported_variable_declared_main() {
+    expect_golden("exported-variable-declared", "main");
+}
+
+export void test_lex_golden_tuple_spelling_main() {
+    expect_golden("tuple-spelling", "main");
+}
+
+export void test_lex_golden_generic_rest_arguments() {
+    expect_golden("generic-rest", "arguments");
+}
