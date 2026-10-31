@@ -170,11 +170,13 @@ export void test_task_ten_thousand_tasks_come_and_go_in_one_group() {
     test::check_equal(group.pending, (usize)0);
 }
 
-// Writes just below the end of the stack it runs on, which is the guard page.
+// Writes just below the end of the stack it runs on, which is the guard page. The address is taken from the frame
+// pointer, which is on the task's own stack, a few hundred bytes under its top: 256 KiB below is inside the guard page.
+// A local's address is not: under AddressSanitizer's stack-use-after-return a local that escapes lives in a fake stack
+// elsewhere in the heap, where 256 KiB below was sometimes mapped and the write did not fault (#1152).
 void run_overflow(u8 *unused) {
     (void)unused;
-    volatile u8 here = 0;
-    volatile u8 *below = (volatile u8 *)&here - 262144;
+    volatile u8 *below = (volatile u8 *)__builtin_frame_address(0) - 262144;
     *below = 1;
 }
 
