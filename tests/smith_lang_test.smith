@@ -705,6 +705,10 @@ export void test_enum_generic_return() {
     corpus_case("enum-generic-return");
 }
 
+export void test_enum_option_slice() {
+    corpus_case("enum-option-slice");
+}
+
 export void test_enum_payload_lowering() {
     corpus_case("enum-payload-lowering");
 }
