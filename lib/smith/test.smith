@@ -3624,10 +3624,10 @@ void suggest_files(const char *filter) {
             place--;
         if (place >= 3) continue;
         for (usize k = (found < 3 ? found : 2); k > place; k--) {
-            c::strcpy(best[k], best[k - 1]);
+            __builtin_memcpy(best[k], best[k - 1], sizeof best[k]);
             best_distance[k] = best_distance[k - 1];
         }
-        c::strcpy(best[place], file);
+        __builtin_memcpy(best[place], file, size + 1);
         best_distance[place] = d;
         if (found < 3) found++;
     }
