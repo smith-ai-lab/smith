@@ -1,14 +1,39 @@
 // The tests of @NAME@, run by `smith test`. A test is a function named test_<name>, defined as below, and its signature
-// says what it may touch: `()` is pure, `(random::Key key)` is a property test, `(io::Io *io)` gets a real io.
+// says what it may touch: `()` is pure and `(random::Key key)` is a property test.
 // This file is a module, so each test is exported (the runner calls it from outside) and is listed as
 // primes_test::<name>.
 module primes_test;
 
 import primes;
-import smith::arena;
-import smith::io;
+import smith::console;
+import smith::mem;
 import smith::test;
 import <string.h>;
+
+// A fake console: it records what is written to it, so a test reads what a function printed.
+typedef struct {
+    console::Handler base; // first: &fake.base is what set_handler takes
+    char out[256];
+    usize used;
+} Fake;
+
+isize fake_write(console::Handler *self, i32 fd, const void *buffer, usize size) {
+    Fake *fake = (Fake *)self;
+    test::check_condition(fd == 1 && fake->used + size < countof(fake->out));
+    u8 *destination = (u8 *)fake->out + fake->used;
+    const u8 *source = (const u8 *)buffer;
+    mem::copy(destination[0:size], source[0:size]);
+    fake->used += size;
+    fake->out[fake->used] = 0;
+    return (isize)size;
+}
+
+isize fake_read(console::Handler *self, void *buffer, usize size) {
+    (void)self;
+    (void)buffer;
+    (void)size;
+    return 0;
+}
 
 export void test_the_first_five_primes_add_up_to_28() {
     test::check_equal(primes::sum(5), 28);
@@ -30,11 +55,13 @@ export void test_six_primes_are_one_too_many() {
     (void)primes::sum(6);
 }
 
-// report prints through the console it is given, so a test gives it the fake one and reads what it printed.
+// report prints on the console of the thread, so a test sets the fake one and reads what it printed.
 export void test_report_prints_the_sum() {
-    arena::Arena memory = test::memory(1 << 20);
-    io::Io io = io::make_test((io::Test){.memory = memory.memory, .capacity = memory.capacity, .seed = 1});
-    primes::report(&io.console, 28);
-    const char *printed = io::test_output(&io);
-    test::check_equal(c::strcmp(printed, "the first 5 primes add up to 28\nhello from @NAME@\n"), 0);
+    Fake fake = {};
+    fake.base.write = fake_write;
+    fake.base.read = fake_read;
+    console::Handler *before = console::set_handler(&fake.base);
+    defer console::set_handler(before);
+    primes::report(28);
+    test::check_equal(c::strcmp(fake.out, "the first 5 primes add up to 28\nhello from @NAME@\n"), 0);
 }

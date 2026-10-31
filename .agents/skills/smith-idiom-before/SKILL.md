@@ -5,7 +5,7 @@ description: "A C module before porting, the rolls example: its header and sourc
 
 # A C module
 
-A module that allocates from an arena, draws random numbers and prints through io. First the C, as an agent writes it from the C API:
+A module that allocates from an arena, draws random numbers and prints to the console. First the C, as an agent writes it from the C API:
 
 ```c
 // rolls.h
@@ -14,7 +14,7 @@ A module that allocates from an arena, draws random numbers and prints through i
 #include <stddef.h>
 #include <stdint.h>
 #include <smith/arena.h>
-#include <smith/io.h>
+#include <smith/console.h>
 #include <smith/random.h>
 #define ROLLS_SIDES 6
 
@@ -25,7 +25,7 @@ typedef struct {
 
 Rolls rolls_make(SmithArena *arena, SmithKey key, size_t count);
 double rolls_mean(const Rolls *rolls);
-void rolls_print(SmithConsole *console, const Rolls *rolls);
+void rolls_print(const Rolls *rolls);
 #endif
 ```
 
@@ -33,6 +33,7 @@ void rolls_print(SmithConsole *console, const Rolls *rolls);
 // rolls.c
 #include "rolls.h"
 #include <stdalign.h>
+#include <stdio.h>
 // count rolls of a die, each from its own key split from `key`.
 Rolls rolls_make(SmithArena *arena, SmithKey key, size_t count) {
     Rolls rolls = {.faces = smith_arena_push_array(arena, sizeof(uint32_t), count, alignof(uint32_t)), .count = count};
@@ -48,12 +49,12 @@ double rolls_mean(const Rolls *rolls) {
     for (size_t i = 0; i < rolls->count; i++) sum += rolls->faces[i];
     return rolls->count == 0 ? 0 : (double)sum / (double)rolls->count;
 }
-void rolls_print(SmithConsole *console, const Rolls *rolls) {
-    for (size_t i = 0; i < rolls->count; i++) smith_console_printf(console, "%u ", rolls->faces[i]);
-    smith_console_printf(console, "(mean %.2f)\n", rolls_mean(rolls));
+void rolls_print(const Rolls *rolls) {
+    for (size_t i = 0; i < rolls->count; i++) printf("%u ", rolls->faces[i]);
+    printf("(mean %.2f)\n", rolls_mean(rolls));
 }
 ```
 
-Renamed to `rolls.smith` this compiles, and it has 13 standard C types, 7 `#include`s and 2 `#define`s. As Smith it is one file with no header:
+Renamed to `rolls.smith` this compiles, and it has 13 standard C types, 8 `#include`s and 2 `#define`s. As Smith it is one file with no header:
 
 Also in this family: [smith-idiom](../smith-idiom/SKILL.md), [smith-idiom-after](../smith-idiom-after/SKILL.md), [smith-idiom-port](../smith-idiom-port/SKILL.md).

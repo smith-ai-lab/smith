@@ -165,8 +165,15 @@ static void smith_lang_dump_token(SmithLang *lang, const SmithToken *token) {
     // one word to the compiler that reads the lowered text (`extern double`).
     bool joined = lang->dump_used > 0 && token->length > 0 &&
                   smith_lang_word_char(smith_lang_dump[lang->dump_used - 1]) && smith_lang_word_char(token->text[0]);
-    smith_lang_put(smith_lang_dump, smith_lang_dump_max, &lang->dump_used, token->text, token->length,
-                   token->line_start, token->space_before || joined);
+    // A sized name the lowering made from a type's spelling (`u8` in a slice's struct) is read as the type by the hook
+    // when the compiler gets it, but a body file is read as it is written: it keeps the compiler's name for the type.
+    const SmithLangSized *sized = token->synthetic && token->kind == SmithTokenKind_Identifier
+                                      ? smith_lang_find_sized(token->text, token->length)
+                                      : nullptr;
+    const char *text = sized != nullptr ? sized->standard : token->text;
+    size_t length = sized != nullptr ? strlen(sized->standard) : token->length;
+    smith_lang_put(smith_lang_dump, smith_lang_dump_max, &lang->dump_used, text, length, token->line_start,
+                   token->space_before || joined);
 }
 
 // runtime/lang_lex.c: the line and the column (from 1) of the source at a byte offset

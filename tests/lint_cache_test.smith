@@ -5,12 +5,14 @@
 // its own.
 module lint_cache_test;
 
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import scratch;
 
-static scratch::Project prepared(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "lint_cache");
+// The project, with a cache of its own; made before the test's memory, since scratch::clean frees what it holds.
+static scratch::Project prepared() {
+    scratch::Project p = scratch::make("p", "lint_cache");
     scratch::own_cache(&p);
     return p;
 }
@@ -25,8 +27,13 @@ static const char *counts(const scratch::Project *p) {
     return scratch::capture(p, "SMITH_OUTPUT=full smith lint 2>&1 | grep -o '[0-9]* run, [0-9]* cached'");
 }
 
-export void test_lint_a_second_time_runs_clang_tidy_on_no_file(io::Io *io) {
-    scratch::Project p = prepared(io);
+export void test_lint_a_second_time_runs_clang_tidy_on_no_file() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run first = lint(&p);
     scratch::expect_status("the first lint passes", 0, &first);
     scratch::expect_contains("... and runs clang-tidy on every file", first.out, "4 run, 0 cached");
@@ -35,8 +42,13 @@ export void test_lint_a_second_time_runs_clang_tidy_on_no_file(io::Io *io) {
     scratch::expect_contains("... and runs it on none", second.out, "0 run, 4 cached");
 }
 
-export void test_lint_with_one_file_changed_runs_only_it(io::Io *io) {
-    scratch::Project p = prepared(io);
+export void test_lint_with_one_file_changed_runs_only_it() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run first = lint(&p);
     scratch::expect_status("the first lint passes", 0, &first);
     scratch::Run edited = scratch::sh(&p, "printf '// edited\\n' >> b.c");
@@ -45,8 +57,13 @@ export void test_lint_with_one_file_changed_runs_only_it(io::Io *io) {
     scratch::expect_text("... and the next lint runs none", "0 run, 4 cached", counts(&p));
 }
 
-export void test_lint_with_a_header_changed_runs_the_files_that_include_it(io::Io *io) {
-    scratch::Project p = prepared(io);
+export void test_lint_with_a_header_changed_runs_the_files_that_include_it() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run first = lint(&p);
     scratch::expect_status("the first lint passes", 0, &first);
     scratch::Run edited = scratch::sh(&p, "printf '// edited\\n' >> common.h");
@@ -54,8 +71,13 @@ export void test_lint_with_a_header_changed_runs_the_files_that_include_it(io::I
     scratch::expect_text("a.c and b.c run, c.c does not", "2 run, 2 cached", counts(&p));
 }
 
-export void test_lint_with_a_config_changed_runs_every_file(io::Io *io) {
-    scratch::Project p = prepared(io);
+export void test_lint_with_a_config_changed_runs_every_file() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run first = lint(&p);
     scratch::expect_status("the first lint passes", 0, &first);
     scratch::Run edited = scratch::sh(&p, "printf '# edited\\n' >> .clang-tidy");
@@ -63,8 +85,13 @@ export void test_lint_with_a_config_changed_runs_every_file(io::Io *io) {
     scratch::expect_text("every file runs", "4 run, 0 cached", counts(&p));
 }
 
-export void test_lint_replays_a_finding_and_the_failing_status_from_the_cache(io::Io *io) {
-    scratch::Project p = prepared(io);
+export void test_lint_replays_a_finding_and_the_failing_status_from_the_cache() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run written =
         scratch::sh(&p, "printf 'int third(int value, int unused) {\\n    return value;\\n}\\n' > c.c");
     scratch::expect_status("c.c has an unused parameter", 0, &written);
@@ -82,8 +109,13 @@ export void test_lint_replays_a_finding_and_the_failing_status_from_the_cache(io
 
 // A failure always says which file and how clang-tidy ended (a kill or a crash prints nothing of its own): the last
 // lines name each file, the log of the file ends with the same, and a result the cache kept is named too.
-export void test_lint_names_each_file_that_failed_and_how_clang_tidy_ended(io::Io *io) {
-    scratch::Project p = prepared(io);
+export void test_lint_names_each_file_that_failed_and_how_clang_tidy_ended() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run written =
         scratch::sh(&p, "printf 'int third(int value, int unused) {\\n    return value;\\n}\\n' > c.c");
     scratch::expect_status("c.c has an unused parameter", 0, &written);
@@ -103,8 +135,13 @@ export void test_lint_names_each_file_that_failed_and_how_clang_tidy_ended(io::I
                              "smith lint:   c.c: exited with status 1");
 }
 
-export void test_lint_cache_off_runs_every_file_each_time(io::Io *io) {
-    scratch::Project p = prepared(io);
+export void test_lint_cache_off_runs_every_file_each_time() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run first = scratch::sh(&p, "SMITH_LINT_CACHE=0 SMITH_OUTPUT=full smith lint 2>&1");
     scratch::expect_contains("with SMITH_LINT_CACHE=0 every file runs", first.out, "4 run, 0 cached");
     scratch::Run second = scratch::sh(&p, "SMITH_LINT_CACHE=0 SMITH_OUTPUT=full smith lint 2>&1");
@@ -113,8 +150,13 @@ export void test_lint_cache_off_runs_every_file_each_time(io::Io *io) {
                          scratch::capture(&p, "test -e \"$XDG_CACHE_HOME/smith/lint/r\" && echo yes || echo no"));
 }
 
-export void test_cache_shows_and_cleans_the_lint_results(io::Io *io) {
-    scratch::Project p = prepared(io);
+export void test_cache_shows_and_cleans_the_lint_results() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run first = lint(&p);
     scratch::expect_status("the lint passes", 0, &first);
     scratch::Run shown = scratch::sh(&p, "smith cache");

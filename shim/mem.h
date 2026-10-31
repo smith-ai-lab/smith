@@ -36,15 +36,29 @@ namespace clang::tidy::smith_mem {
 // One row for each wrapped C function: its name, and what to write instead.
 struct Replacement {
     const char *name;
+    const char *why;
     const char *use;
 };
 
 inline const std::vector<Replacement> &replacements() {
     static const std::vector<Replacement> table = {
-        {"memcpy", "`mem::copy(dst, src)`, two slices of one element type and one length"},
-        {"memmove", "`mem::move(dst, src)`, as mem::copy and the slices may overlap"},
-        {"memset", "`mem::zero(xs)` or `mem::zero(&x)` to clear, `mem::fill(xs, value)` to set"},
-        {"memcmp", "`mem::equal(a, b)`, two slices of one element type; `mem::bytes(&x)` is the bytes of a value"},
+        {"memcpy", "its type and its length travel apart from the data",
+         "`mem::copy(dst, src)`, two slices of one element type and one length"},
+        {"memmove", "its type and its length travel apart from the data",
+         "`mem::move(dst, src)`, as mem::copy and the slices may overlap"},
+        {"memset", "its type and its length travel apart from the data",
+         "`mem::zero(xs)` or `mem::zero(&x)` to clear, `mem::fill(xs, value)` to set"},
+        {"memcmp", "its type and its length travel apart from the data",
+         "`mem::equal(a, b)`, two slices of one element type; `mem::bytes(&x)` is the bytes of a value"},
+        {"malloc", "it returns an untyped block that may be null",
+         "`mem::alloc(T)` for one value, `mem::alloc_slice(T, n)` for n, never null"},
+        {"calloc", "it returns an untyped block that may be null",
+         "`mem::alloc_slice(T, n)`, zeroed like calloc and never null"},
+        {"free", "the block it releases has no type and may come from anywhere", "`mem::free(p)`"},
+        {"aligned_alloc", "it returns an untyped block that may be null",
+         "`mem::alloc(T)` or `mem::alloc_slice(T, n)`, which align as the type does"},
+        {"posix_memalign", "it returns an untyped block through an out parameter",
+         "`mem::alloc(T)` or `mem::alloc_slice(T, n)`, which align as the type does"},
     };
     return table;
 }
@@ -97,6 +111,8 @@ class MemCheck final : public ClangTidyCheck {
         const auto *callee = Result.Nodes.getNodeAs<FunctionDecl>("callee");
         const Replacement *row = replacement_for(callee->getName());
         if (row == nullptr) return;
+        // the C library's function, not a module's own `free` (mem::free is lowered under its C name smith_mem_free)
+        if (!sm.isInSystemHeader(callee->getLocation()) && callee->getBuiltinID() == 0) return;
         const auto *call = Result.Nodes.getNodeAs<CallExpr>("call");
         SourceLocation at = sm.getExpansionLoc(call->getBeginLoc());
         if (!at.isValid() || sm.getFileID(at) != sm.getMainFileID()) return;
@@ -109,11 +125,11 @@ class MemCheck final : public ClangTidyCheck {
             }
         }
         std::string written = row->name;
-        auto report = diag(at, "`%0` is unchecked, since its type and its length travel apart from the data: use %1 "
-                               "(import smith::mem;), or mark the function `contract::trusted()` if it implements a "
-                               "wrapper")
-                      << written << llvm::StringRef(row->use);
+        auto report = diag(at, "`%0` is unchecked, since %1: use %2 (import smith::mem;), or mark the function "
+                               "`contract::trusted()` if it implements a wrapper")
+                      << written << llvm::StringRef(row->why) << llvm::StringRef(row->use);
         fix_zero(report, call, written, Result);
+        fix_alloc(report, call, written, Result);
     }
 
     void onEndOfTranslationUnit() override {
@@ -153,6 +169,45 @@ class MemCheck final : public ClangTidyCheck {
         CharSourceRange range = file_range(expr->getSourceRange(), Result);
         if (range.isInvalid()) return "";
         return Lexer::getSourceText(range, *Result.SourceManager, Result.Context->getLangOpts()).str();
+    }
+
+    // The call as written (a macro's expansion mapped back to the file), with a leading `c::` taken in; invalid when it
+    // cannot be mapped there.
+    static CharSourceRange written_call(const CallExpr *call, const ast_matchers::MatchFinder::MatchResult &Result) {
+        const SourceManager &sm = *Result.SourceManager;
+        SourceRange written = call->getSourceRange();
+        if (written.getBegin().isMacroID()) written = sm.getExpansionRange(written.getBegin()).getAsRange();
+        CharSourceRange whole = file_range(written, Result);
+        if (whole.isInvalid()) return whole;
+        SourceLocation begin = whole.getBegin();
+        llvm::StringRef before = sm.getBufferData(sm.getFileID(begin)).substr(0, sm.getFileOffset(begin));
+        if (before.ends_with("c::")) begin = begin.getLocWithOffset(-3); // `c::free(...)` as the author wrote it
+        return CharSourceRange::getCharRange(begin, whole.getEnd());
+    }
+
+    // `malloc(sizeof(T))` is `mem::alloc(T)` and `free(p)` is `mem::free(p)`; the other calls need a human for the type
+    // or the count.
+    static void fix_alloc(DiagnosticBuilder &report, const CallExpr *call, const std::string &name,
+                          const ast_matchers::MatchFinder::MatchResult &Result) {
+        std::string replacement;
+        if (name == "free" && call->getNumArgs() == 1) {
+            std::string pointer = text_of(call->getArg(0)->IgnoreParenImpCasts(), Result);
+            if (pointer.empty()) return;
+            replacement = "mem::free(" + pointer + ")";
+        } else if (name == "malloc" && call->getNumArgs() == 1) {
+            const auto *size = dyn_cast<UnaryExprOrTypeTraitExpr>(call->getArg(0)->IgnoreParenImpCasts());
+            if (size == nullptr || size->getKind() != UETT_SizeOf || !size->isArgumentType()) return;
+            // the type as the author wrote it: the lowered name of a module's type (`sample_Pair`) is not source
+            CharSourceRange type = file_range(size->getArgumentTypeInfo()->getTypeLoc().getSourceRange(), Result);
+            if (type.isInvalid()) return;
+            replacement = "mem::alloc(" +
+                          Lexer::getSourceText(type, *Result.SourceManager, Result.Context->getLangOpts()).str() + ")";
+        } else {
+            return;
+        }
+        CharSourceRange range = written_call(call, Result);
+        if (range.isInvalid()) return;
+        report << FixItHint::CreateReplacement(range, replacement);
     }
 
     // `memset(p, 0, sizeof *p)` and `memset(&x, 0, sizeof x)`: the size is the one of the object the first argument

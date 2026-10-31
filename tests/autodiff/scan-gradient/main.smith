@@ -4,7 +4,8 @@
 module main;
 
 import smith::autodiff;
-import smith::io;
+import smith::console;
+import smith::format;
 import <math.h>;
 import "base/reference_scan.h";
 
@@ -59,7 +60,7 @@ void fill(f64 *p, usize n, f64 lo, f64 hi) {
 
 f64 worst = 0.0;
 
-void compare(io::Console *console, const char *name, const f64 *got, const f64 *want, usize n) {
+void compare(const char *name, const f64 *got, const f64 *want, usize n) {
     f64 scale = 0.0;
     f64 difference = 0.0;
     for (usize i = 0; i < n; i++) {
@@ -67,11 +68,12 @@ void compare(io::Console *console, const char *name, const f64 *got, const f64 *
         difference = c::fmax(difference, c::fabs(got[i] - want[i]));
     }
     f64 relative = scale > 0.0 ? difference / scale : difference;
-    (void)io::console_printf(console, "  %-8s n=%-4zu max|ref|=%.3e  maxrel=%.3e\n", name, n, scale, relative);
+    (void)console::print("  ", format::left(name, 8), " n=", format::left(n, 4), " max|ref|=", format::scientific(scale, 3),
+                         "  maxrel=", format::scientific(relative, 3), "\n");
     worst = c::fmax(worst, relative);
 }
 
-i32 main(io::Io *io) {
+i32 main() {
     Scan scan = {};
     Seeds seeds = {};
     fill(scan.x, 36, -1.0, 1.0);
@@ -98,13 +100,14 @@ i32 main(io::Io *io) {
     c::ReferenceScanGradients hand = {h.x, h.dt, h.a, h.b, h.c, h.state0, nullptr};
     c::reference_scan_backward(&shape, &in, scan.state0, states, seeds.dy, seeds.dse, &hand);
 
-    (void)io::console_printf(&io->console, "gradient vs hand-written backward:\n");
-    compare(&io->console, "dx", g.x, h.x, 36);
-    compare(&io->console, "ddt", g.dt, h.dt, 12);
-    compare(&io->console, "da", g.a, h.a, 2);
-    compare(&io->console, "db", g.b, h.b, 24);
-    compare(&io->console, "dc", g.c, h.c, 24);
-    compare(&io->console, "dstate0", g.state0, h.state0, 48);
-    (void)io::console_printf(&io->console, "worst relative difference %.3e (tolerance %.0e)\n", worst, tolerance);
+    (void)console::print("gradient vs hand-written backward:\n");
+    compare("dx", g.x, h.x, 36);
+    compare("ddt", g.dt, h.dt, 12);
+    compare("da", g.a, h.a, 2);
+    compare("db", g.b, h.b, 24);
+    compare("dc", g.c, h.c, 24);
+    compare("dstate0", g.state0, h.state0, 48);
+    (void)console::print("worst relative difference ", format::scientific(worst, 3), " (tolerance ", format::scientific(tolerance, 0),
+                         ")\n");
     return worst <= tolerance ? 0 : 1;
 }

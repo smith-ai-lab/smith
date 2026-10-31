@@ -12,8 +12,11 @@
 //      old limit of eight is read by source and by header, up to the limit that is an error naming it.
 module headers_test;
 
+import smith::arena;
+import smith::env;
+import smith::files;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 import <string.h>;
@@ -21,25 +24,30 @@ import <string.h>;
 constexpr usize chain_length = 20;
 constexpr usize deep_length = 140;
 
-// A project of the fixture, with the folders the headers go to.
-static scratch::Project make_project(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "headers");
+// A project of the fixture, with the folders the headers go to; made before the test's memory, since scratch::clean
+// frees what it holds and the run's texts are given back here.
+static scratch::Project make_project() {
+    scratch::Project p = scratch::make("p", "headers");
     scratch::Run made = scratch::sh(&p, "mkdir -p include/t include/u/deep include/chain deep");
     scratch::expect_status("the include folders are made", 0, &made);
+    scratch::release(made.out);
+    scratch::release(made.err);
     return p;
 }
 
-static const char *join(const scratch::Project *p, const char *a, const char *b) {
-    return format::push(&p->io->arena, a, b).data;
+// The pieces as one text, in the current allocator: the test's memory, which is given back after the test.
+const char *joined(auto... pieces) {
+    usize length = format::length(pieces...);
+    char *text = mem::alloc_array_raw(sizeof(char), length + 1, alignof(char)); // a generic's local has no type yet
+    (void)format::to(text, length + 1, pieces...);
+    return text;
 }
 
 // The header of a module (`t/body` is t/body.smith) written to include/t/body.h; flags are extra compiler flags.
 static void make_header(const scratch::Project *p, const char *module, const char *flags) {
-    const char *command =
-        format::push(&p->io->arena, "smith cc --smith-header ", module, ".smith -o include/", module, ".h ", flags)
-            .data;
-    scratch::Run run = scratch::sh(p, command);
-    scratch::expect_status(join(p, module, ": the header is written"), 0, &run);
+    scratch::Run run =
+        scratch::sh(p, joined("smith cc --smith-header ", module, ".smith -o include/", module, ".h ", flags));
+    scratch::expect_status(joined(module, ": the header is written"), 0, &run);
 }
 
 // Whether a line (fixed text) is in the header, as `grep -x` finds it; the file is read in process.
@@ -56,8 +64,7 @@ static void has(const scratch::Project *p, const char *name, const char *header,
         at += length;
         if (*at == '\n') at++;
     }
-    const char *label =
-        format::push(&p->io->arena, name, ": ", line, wanted ? " is in the header" : " is not in the header").data;
+    const char *label = joined(name, ": ", line, wanted ? " is in the header" : " is not in the header");
     if (found != wanted) {
         test::note("%s", label);
     }
@@ -69,10 +76,8 @@ static void standalone(const scratch::Project *p, const char *name, const char *
     const char *labels[2] = {"c", "c++"};
     const char *modes[2] = {"-x c -std=gnu23", "-x c++ -std=c++23"};
     for (usize i = 0; i < 2; i++) {
-        const char *command =
-            format::push(&p->io->arena, "smith cc -fsyntax-only ", modes[i], " ", includes, " ", header).data;
-        scratch::Run run = scratch::sh(p, command);
-        scratch::expect_status(format::push(&p->io->arena, name, " compiles alone (", labels[i], ")").data, 0, &run);
+        scratch::Run run = scratch::sh(p, joined("smith cc -fsyntax-only ", modes[i], " ", includes, " ", header));
+        scratch::expect_status(joined(name, " compiles alone (", labels[i], ")"), 0, &run);
     }
 }
 
@@ -97,176 +102,237 @@ constexpr char generated_script[_] =
     "n=$((n + 1)); [ $n -lt 3000 ] || { echo \"timed out waiting for the headers\"; exit 1; }; "
     "perl -e 'select(undef, undef, undef, 0.2)'; done; fi; fi; echo \"$c/generated\"";
 
-static void generated(io::Io *io, const char *name) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+static void generated(const char *name) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     const char *folder = scratch::capture(&p, generated_script);
     scratch::expect_contains("the headers are written", folder, "/generated");
-    const char *header = format::push(&io->arena, folder, "/", name, ".h").data;
-    standalone(&p, join(&p, name, ".h"), header,
-               format::push(&io->arena, "-I ", folder, " -I \"$SMITH_REPO/.smith/include\"").data);
+    standalone(&p, joined(name, ".h"), joined(folder, "/", name, ".h"),
+               joined("-I ", folder, " -I \"$SMITH_REPO/.smith/include\""));
+}
+
+// The names in lib/smith of the repository, one a line, listed through smith::files so that the record of the test
+// names the listing and a module added there selects the test.
+static const char *library_names() {
+    env::Value repo = env::get("SMITH_REPO");
+    const char *folder = joined(repo == .some ? repo.some.data : ".", "/lib/smith");
+    files::EntriesResult listed = files::list(folder[0:c::strlen(folder)]);
+    files::Entries entries = {};
+    switch (listed) {
+    case .ok:
+        entries = listed.ok;
+        break;
+    case .error:
+        test::note("%s cannot be listed", folder);
+        test::check_condition(false); // ends the test
+    }
+    const char *names = "";
+    for (usize i = 0; i < countof(entries); i++) {
+        names = joined(names, entries[i].name.data, "\n");
+    }
+    return names;
 }
 
 // 1. The headers of the libraries, which are build outputs and not in git.
 
-export void test_every_library_module_has_a_header_test(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::write(&p, "names", scratch::repo_names(io, "lib/smith"));
+export void test_every_library_module_has_a_header_test() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "names", library_names());
     scratch::copy_tree(&p, "tests/headers_test.smith", "headers_test.smith");
     scratch::Run run =
         scratch::sh(&p, "for f in $(grep '[.]smith$' names | grep -v '_test.smith'); do "
-                        "grep -q \"generated(io, \\\"${f%.smith}\\\")\" headers_test.smith || echo \"$f\"; done");
+                        "grep -q \"generated(\\\"${f%.smith}\\\")\" headers_test.smith || echo \"$f\"; done");
     scratch::expect_text("library modules with no header test", "", run.out);
 }
 
 // The lowering reads the shapes of `option` and `result` from two lines it carries itself (runtime/lang_enum.c),
 // because their headers are not in git: the generated headers must say the same.
-export void test_the_shapes_the_lowering_carries_are_the_ones_the_headers_write(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_the_shapes_the_lowering_carries_are_the_ones_the_headers_write() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write_header_of(&p, "lib/smith/option.smith", "option.h");
     scratch::write_header_of(&p, "lib/smith/result.smith", "result.h");
     has(&p, "option", "option.h", "// smith-eshape: option(T) { T some ; none ; }", true);
     has(&p, "result", "result.h", "// smith-eshape: result(T,E) { T ok ; E error ; }", true);
 }
 
-export void test_the_arena_header_compiles_alone(io::Io *io) {
-    generated(io, "arena");
+export void test_the_arena_header_compiles_alone() {
+    generated("arena");
 }
 
-export void test_the_autodiff_header_compiles_alone(io::Io *io) {
-    generated(io, "autodiff");
+export void test_the_autodiff_header_compiles_alone() {
+    generated("autodiff");
 }
 
-export void test_the_build_header_compiles_alone(io::Io *io) {
-    generated(io, "build");
+export void test_the_build_header_compiles_alone() {
+    generated("build");
 }
 
-export void test_the_contract_header_compiles_alone(io::Io *io) {
-    generated(io, "contract");
+export void test_the_contract_header_compiles_alone() {
+    generated("contract");
 }
 
-export void test_the_effects_header_compiles_alone(io::Io *io) {
-    generated(io, "effects");
+export void test_the_effects_header_compiles_alone() {
+    generated("effects");
 }
 
-export void test_the_clock_header_compiles_alone(io::Io *io) {
-    generated(io, "clock");
+export void test_the_clock_header_compiles_alone() {
+    generated("clock");
 }
 
-export void test_the_console_header_compiles_alone(io::Io *io) {
-    generated(io, "console");
+export void test_the_console_header_compiles_alone() {
+    generated("console");
 }
 
-export void test_the_entropy_header_compiles_alone(io::Io *io) {
-    generated(io, "entropy");
+export void test_the_entropy_header_compiles_alone() {
+    generated("entropy");
 }
 
-export void test_the_env_header_compiles_alone(io::Io *io) {
-    generated(io, "env");
+export void test_the_env_header_compiles_alone() {
+    generated("env");
 }
 
-export void test_the_files_header_compiles_alone(io::Io *io) {
-    generated(io, "files");
+export void test_the_files_header_compiles_alone() {
+    generated("files");
 }
 
-export void test_the_process_header_compiles_alone(io::Io *io) {
-    generated(io, "process");
+export void test_the_process_header_compiles_alone() {
+    generated("process");
 }
 
-export void test_the_net_header_compiles_alone(io::Io *io) {
-    generated(io, "net");
+export void test_the_net_header_compiles_alone() {
+    generated("net");
 }
 
-export void test_the_format_header_compiles_alone(io::Io *io) {
-    generated(io, "format");
+export void test_the_format_header_compiles_alone() {
+    generated("format");
 }
 
-export void test_the_inflate_header_compiles_alone(io::Io *io) {
-    generated(io, "inflate");
+export void test_the_inflate_header_compiles_alone() {
+    generated("inflate");
 }
 
-export void test_the_io_header_compiles_alone(io::Io *io) {
-    generated(io, "io");
+export void test_the_io_header_compiles_alone() {
+    generated("io");
 }
 
-export void test_the_ascii_header_compiles_alone(io::Io *io) {
-    generated(io, "ascii");
+export void test_the_ascii_header_compiles_alone() {
+    generated("ascii");
 }
 
-export void test_the_categorical_header_compiles_alone(io::Io *io) {
-    generated(io, "categorical");
+export void test_the_categorical_header_compiles_alone() {
+    generated("categorical");
 }
 
-export void test_the_slice_header_compiles_alone(io::Io *io) {
-    generated(io, "slice");
+export void test_the_slice_header_compiles_alone() {
+    generated("slice");
 }
 
-export void test_the_math_header_compiles_alone(io::Io *io) {
-    generated(io, "math");
+export void test_the_math_header_compiles_alone() {
+    generated("math");
 }
 
-export void test_the_mem_header_compiles_alone(io::Io *io) {
-    generated(io, "mem");
+export void test_the_mem_header_compiles_alone() {
+    generated("mem");
 }
 
-export void test_the_failing_header_compiles_alone(io::Io *io) {
-    generated(io, "failing");
+export void test_the_failing_header_compiles_alone() {
+    generated("failing");
 }
 
-export void test_the_option_header_compiles_alone(io::Io *io) {
-    generated(io, "option");
+export void test_the_option_header_compiles_alone() {
+    generated("option");
 }
 
-export void test_the_random_header_compiles_alone(io::Io *io) {
-    generated(io, "random");
+export void test_the_random_header_compiles_alone() {
+    generated("random");
 }
 
-export void test_the_result_header_compiles_alone(io::Io *io) {
-    generated(io, "result");
+export void test_the_result_header_compiles_alone() {
+    generated("result");
 }
 
-export void test_the_test_header_compiles_alone(io::Io *io) {
-    generated(io, "test");
+export void test_the_test_header_compiles_alone() {
+    generated("test");
 }
 
-export void test_the_text_header_compiles_alone(io::Io *io) {
-    generated(io, "text");
+export void test_the_text_header_compiles_alone() {
+    generated("text");
 }
 
 // 2. The rule.
 
-export void test_an_import_only_a_body_uses_stays_out(io::Io *io) {
-    scratch::Project p = make_project(io);
+export void test_an_import_only_a_body_uses_stays_out() {
+    scratch::Project p = make_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write_header(&p, "t/body");
     has(&p, "body: an import only a body uses", "include/t/body.h", "#include <stdio.h>", false);
     has(&p, "every header: the sized types' headers", "include/t/body.h", "#include <stdint.h>", true);
     standalone(&p, "t/body.h", "include/t/body.h", "-I include");
 }
 
-export void test_an_import_an_exports_type_uses_goes_in(io::Io *io) {
-    scratch::Project p = make_project(io);
+export void test_an_import_an_exports_type_uses_goes_in() {
+    scratch::Project p = make_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     make_header(&p, "t/typed", "");
     has(&p, "typed: an import an export's type uses", "include/t/typed.h", "#include <stdio.h>", true);
     standalone(&p, "t/typed.h", "include/t/typed.h", "-I include");
 }
 
-export void test_an_include_never_goes_in(io::Io *io) {
-    scratch::Project p = make_project(io);
+export void test_an_include_never_goes_in() {
+    scratch::Project p = make_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     make_header(&p, "t/include", "");
     has(&p, "include: an #include", "include/t/include.h", "#include <stdio.h>", false);
     has(&p, "include: an #include", "include/t/include.h", "#include <string.h>", false);
     standalone(&p, "t/include.h", "include/t/include.h", "-I include");
 }
 
-export void test_of_two_imports_the_one_that_declares_the_name_goes_in(io::Io *io) {
-    scratch::Project p = make_project(io);
+export void test_of_two_imports_the_one_that_declares_the_name_goes_in() {
+    scratch::Project p = make_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     make_header(&p, "t/two", "");
     has(&p, "two: the import that declares the name", "include/t/two.h", "#include <stdio.h>", true);
     has(&p, "two: the one that does not", "include/t/two.h", "#include <string.h>", false);
     standalone(&p, "t/two.h", "include/t/two.h", "-I include");
 }
 
-export void test_of_two_imports_the_one_that_declares_the_tag_goes_in(io::Io *io) {
-    scratch::Project p = make_project(io);
+export void test_of_two_imports_the_one_that_declares_the_tag_goes_in() {
+    scratch::Project p = make_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     make_header(&p, "t/tag", "");
     has(&p, "tag: the import that declares the tag", "include/t/tag.h", "#include <sys/stat.h>", true);
     has(&p, "tag: the one that does not", "include/t/tag.h", "#include <stdio.h>", false);
@@ -275,8 +341,13 @@ export void test_of_two_imports_the_one_that_declares_the_tag_goes_in(io::Io *io
 
 // A module is included relative to the header that includes it, so the headers of one tree find each other with no
 // include path of their own (a stage0 compiling smith.c has none).
-export void test_an_imported_module_an_export_uses_is_included(io::Io *io) {
-    scratch::Project p = make_project(io);
+export void test_an_imported_module_an_export_uses_is_included() {
+    scratch::Project p = make_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write_header(&p, "t/point");
     scratch::write_header(&p, "t/uses");
     has(&p, "uses: an imported module an export's type uses", "include/t/uses.h", "#include \"point.h\"", true);
@@ -284,8 +355,13 @@ export void test_an_imported_module_an_export_uses_is_included(io::Io *io) {
     standalone(&p, "t/uses.h", "include/t/uses.h", "-I include");
 }
 
-export void test_an_imported_module_only_a_body_uses_is_not_included(io::Io *io) {
-    scratch::Project p = make_project(io);
+export void test_an_imported_module_only_a_body_uses_is_not_included() {
+    scratch::Project p = make_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write_header(&p, "t/point");
     scratch::write_header(&p, "t/body_module");
     has(&p, "body_module: an imported module only a body uses", "include/t/body_module.h", "#include \"point.h\"",
@@ -293,16 +369,26 @@ export void test_an_imported_module_only_a_body_uses_is_not_included(io::Io *io)
     standalone(&p, "t/body_module.h", "include/t/body_module.h", "-I include");
 }
 
-export void test_a_module_in_another_folder_is_included_relative(io::Io *io) {
-    scratch::Project p = make_project(io);
+export void test_a_module_in_another_folder_is_included_relative() {
+    scratch::Project p = make_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write_header(&p, "t/point");
     scratch::write_header(&p, "u/far");
     has(&p, "far: a module in another folder", "include/u/far.h", "#include \"../t/point.h\"", true);
     standalone(&p, "u/far.h", "include/u/far.h", "-I include");
 }
 
-export void test_modules_in_a_folder_above_and_beside_are_included_relative(io::Io *io) {
-    scratch::Project p = make_project(io);
+export void test_modules_in_a_folder_above_and_beside_are_included_relative() {
+    scratch::Project p = make_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write_header(&p, "t/point");
     scratch::write_header(&p, "u/far");
     scratch::write_header(&p, "u/deep/farther");
@@ -313,79 +399,95 @@ export void test_modules_in_a_folder_above_and_beside_are_included_relative(io::
     const char *labels[2] = {"c", "c++"};
     const char *modes[2] = {"-x c -std=gnu23", "-x c++ -std=c++23"};
     for (usize i = 0; i < 2; i++) {
-        scratch::Run run =
-            scratch::sh(&p, join(&p, "smith cc -fsyntax-only ", join(&p, modes[i], " include/u/deep/farther.h")));
-        scratch::expect_status(
-            format::push(&p.io->arena, "u/deep/farther.h compiles with no include path (", labels[i], ")").data, 0,
-            &run);
+        scratch::Run run = scratch::sh(&p, joined("smith cc -fsyntax-only ", modes[i], " include/u/deep/farther.h"));
+        scratch::expect_status(joined("u/deep/farther.h compiles with no include path (", labels[i], ")"), 0, &run);
     }
 }
 
 // 3. A generic, and a long chain of modules.
 
 // A generic called with its type written in a body needs no instance in a header: it stays a plain call.
-export void test_a_generic_with_its_type_written_in_a_body_does_not_stop_the_header(io::Io *io) {
-    scratch::Project p = make_project(io);
+export void test_a_generic_with_its_type_written_in_a_body_does_not_stop_the_header() {
+    scratch::Project p = make_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     make_header(&p, "t/typed_call", "-I \"$SMITH_REPO/.smith/include\"");
 }
 
 // The files chain/m0 to chain/m19, each importing the next.
 static void write_chain(const scratch::Project *p) {
     for (usize i = 0; i < chain_length; i++) {
-        const char *text =
-            i + 1 < chain_length
-                ? format::push(&p->io->arena, "module chain::m", i, ";\nimport chain::m", i + 1, ";\nexport u32 m", i,
-                               "(void) { return m", i + 1, "::m", i + 1, "() + 1; }\n")
-                      .data
-                : format::push(&p->io->arena, "module chain::m", i, ";\nexport u32 m", i, "(void) { return 1; }\n")
-                      .data;
-        scratch::write(p, format::push(&p->io->arena, "chain/m", i, ".smith").data, text);
+        const char *text = i + 1 < chain_length
+                               ? joined("module chain::m", i, ";\nimport chain::m", i + 1, ";\nexport u32 m", i,
+                                        "(void) { return m", i + 1, "::m", i + 1, "() + 1; }\n")
+                               : joined("module chain::m", i, ";\nexport u32 m", i, "(void) { return 1; }\n");
+        scratch::write(p, joined("chain/m", i, ".smith"), text);
     }
 }
 
 // The headers of the chain from the last to the second, as a build makes them.
 static void make_chain_headers(const scratch::Project *p) {
     for (usize i = chain_length; i-- > 1;) {
-        scratch::Run run = scratch::sh(p, format::push(&p->io->arena, "smith cc --smith-header chain/m", i,
-                                                       ".smith -o include/chain/m", i, ".h -I include")
-                                              .data);
+        scratch::Run run = scratch::sh(
+            p, joined("smith cc --smith-header chain/m", i, ".smith -o include/chain/m", i, ".h -I include"));
         scratch::expect_status("chain: a header of the chain", 0, &run);
     }
 }
 
 // A module's imports are read, and theirs: a chain longer than the old limit of eight modules, by source and by header.
-export void test_a_chain_of_twenty_modules_is_read_by_source(io::Io *io) {
-    scratch::Project p = make_project(io);
+export void test_a_chain_of_twenty_modules_is_read_by_source() {
+    scratch::Project p = make_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     write_chain(&p);
     scratch::Run run = scratch::sh(&p, "smith cc --smith-header chain/m0.smith -o chain-source.h");
     scratch::expect_status("chain: twenty modules read by source", 0, &run);
 }
 
-export void test_a_chain_of_twenty_modules_is_read_by_header(io::Io *io) {
-    scratch::Project p = make_project(io);
+export void test_a_chain_of_twenty_modules_is_read_by_header() {
+    scratch::Project p = make_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     write_chain(&p);
     make_chain_headers(&p);
     scratch::Run run = scratch::sh(&p, "smith cc --smith-header chain/m0.smith -o chain-headers.h -I include");
     scratch::expect_status("chain: twenty modules read by header", 0, &run);
 }
 
-export void test_an_import_after_twenty_others_is_still_found(io::Io *io) {
-    scratch::Project p = make_project(io);
+export void test_an_import_after_twenty_others_is_still_found() {
+    scratch::Project p = make_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     write_chain(&p);
     make_chain_headers(&p);
     scratch::Run run = scratch::sh(&p, "smith cc --smith-header chain/last.smith -o chain-last.h -I include");
     scratch::expect_status("chain: an import after twenty others is still found", 0, &run);
 }
 
-export void test_more_modules_than_the_limit_is_an_error_that_names_it(io::Io *io) {
-    scratch::Project p = make_project(io);
+export void test_more_modules_than_the_limit_is_an_error_that_names_it() {
+    scratch::Project p = make_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     for (usize i = 0; i < deep_length; i++) {
-        const char *text = i + 1 < deep_length
-                               ? format::push(&io->arena, "module deep::m", i, ";\nimport deep::m", i + 1,
-                                              ";\nexport u32 m", i, "(void);\n")
-                                     .data
-                               : format::push(&io->arena, "module deep::m", i, ";\nexport u32 m", i, "(void);\n").data;
-        scratch::write(&p, format::push(&io->arena, "deep/m", i, ".smith").data, text);
+        const char *text = i + 1 < deep_length ? joined("module deep::m", i, ";\nimport deep::m", i + 1,
+                                                        ";\nexport u32 m", i, "(void);\n")
+                                               : joined("module deep::m", i, ";\nexport u32 m", i, "(void);\n");
+        scratch::write(&p, joined("deep/m", i, ".smith"), text);
     }
     scratch::Run run = scratch::sh(&p, "smith cc --smith-header deep/m0.smith -o deep.h");
     scratch::expect_failure("deep: more modules than the limit fails", &run);
@@ -398,14 +500,19 @@ static const char *generic_source =
     "module g::gen;\n\nexport T twice(constexpr type T, T x) {\n    T y = x + x;\n    return y + \"oops\";\n}\n";
 
 // Adding lines above a generic changes no byte of its header but the one stored first line.
-export void test_lines_added_above_a_generic_change_only_its_stored_first_line(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_lines_added_above_a_generic_change_only_its_stored_first_line() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run made = scratch::sh(&p, "mkdir g");
     scratch::expect_status("the folder is made", 0, &made);
     scratch::write(&p, "g/gen.smith", generic_source);
     scratch::Run first = scratch::sh(&p, "smith cc --smith-header g/gen.smith -o first.h");
     scratch::expect_status("the first header is written", 0, &first);
-    scratch::write(&p, "g/gen.smith", format::push(&io->arena, "// one\n// two\n// three\n\n", generic_source).data);
+    scratch::write(&p, "g/gen.smith", joined("// one\n// two\n// three\n\n", generic_source));
     scratch::Run second = scratch::sh(&p, "smith cc --smith-header g/gen.smith -o second.h");
     scratch::expect_status("the second header is written", 0, &second);
     scratch::expect_text("one line differs", "1", scratch::capture(&p, "diff first.h second.h | grep -c '^<'"));
@@ -415,11 +522,16 @@ export void test_lines_added_above_a_generic_change_only_its_stored_first_line(i
 }
 
 // An error in a generic's body still points at its line of the source, whatever the lines above it.
-export void test_an_error_in_a_generic_body_points_at_its_line(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_an_error_in_a_generic_body_points_at_its_line() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run made = scratch::sh(&p, "mkdir g");
     scratch::expect_status("the folder is made", 0, &made);
-    scratch::write(&p, "g/gen.smith", format::push(&io->arena, "// one\n// two\n// three\n\n", generic_source).data);
+    scratch::write(&p, "g/gen.smith", joined("// one\n// two\n// three\n\n", generic_source));
     scratch::write(&p, "u.smith", "import g::gen;\ni32 main(void) { return gen::twice(i32, 1); }\n");
     scratch::Run header =
         scratch::sh(&p, "mkdir -p include/g && smith cc --smith-header g/gen.smith -o include/g/gen.h");
@@ -435,8 +547,13 @@ static const char *const batch_one = "module g::one;\n\nexport i32 one(void) { r
 static const char *const batch_two = "module g::two;\n\nexport i32 two(void) { return 2; }\n";
 
 // The headers of a batch are the bytes `--smith-header` writes for each, and a second run writes none of them again.
-export void test_a_batch_of_headers_is_the_bytes_of_each_header(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_a_batch_of_headers_is_the_bytes_of_each_header() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run made = scratch::sh(&p, "mkdir -p g one two");
     scratch::expect_status("the folders are made", 0, &made);
     scratch::write(&p, "g/one.smith", batch_one);
@@ -459,8 +576,13 @@ export void test_a_batch_of_headers_is_the_bytes_of_each_header(io::Io *io) {
 }
 
 // A header that fails is reported, the others of the batch are still written, and the status is not 0.
-export void test_a_batch_with_a_bad_module_fails_and_writes_the_rest(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_a_batch_with_a_bad_module_fails_and_writes_the_rest() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run made = scratch::sh(&p, "mkdir -p g out");
     scratch::expect_status("the folders are made", 0, &made);
     scratch::write(&p, "g/bad.smith", "i32 not_a_module(void) { return 0; }\n");
@@ -473,8 +595,13 @@ export void test_a_batch_with_a_bad_module_fails_and_writes_the_rest(io::Io *io)
 }
 
 // An odd list is a usage error.
-export void test_a_batch_with_an_unpaired_file_is_a_usage_error(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_a_batch_with_an_unpaired_file_is_a_usage_error() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::sh(&p, "smith cc --smith-headers -- a.smith");
     scratch::expect_failure("an odd list fails", &run);
     scratch::expect_contains("and shows the usage", run.err, "usage: smith cc --smith-headers");

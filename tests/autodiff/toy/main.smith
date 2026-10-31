@@ -2,12 +2,13 @@
 module main;
 
 import smith::autodiff;
-import smith::io;
+import smith::console;
+import smith::format;
 import toy;
 import <math.h>;
 
 // autodiff::gradient against the analytic values and the raw call: the same Enzyme call, so equal to the bit.
-i32 gradients(io::Console *console) {
+i32 gradients() {
     toy::Params p = {.w = {0.5, -1.5, 2.0}, .b = 0.3};
     toy::Batch batch = {.x = {1.0, 2.0, 3.0}, .scale = 1.5};
     toy::Params g = autodiff::gradient(toy::model, &p, &batch);
@@ -15,28 +16,28 @@ i32 gradients(io::Console *console) {
     autodiff::reverse((void *)toy::model, autodiff::dup, &p, &raw, autodiff::constant, &batch);
     i32 status = 0;
     for (usize i = 0; i < 3; i++) {
-        (void)io::console_printf(console, "gradient model dw[%zu] %.12f %.12f\n", i, g.w[i],
-                                 2.0 * batch.scale * batch.x[i] * p.w[i]);
+        (void)console::print("gradient model dw[", i, "] ", format::fixed(g.w[i], 12), " ",
+                             format::fixed(2.0 * batch.scale * batch.x[i] * p.w[i], 12), "\n");
         if (g.w[i] != raw.w[i]) {
             status = 1;
         }
     }
-    (void)io::console_printf(console, "gradient model db %.12f %.12f\n", g.b, 1.0);
+    (void)console::print("gradient model db ", format::fixed(g.b, 12), " ", format::fixed(1.0, 12), "\n");
     if (g.b != raw.b) {
         status = 1;
     }
     toy::Params one = autodiff::gradient(toy::product, &p);
-    (void)io::console_printf(console, "gradient product dw0 %.12f %.12f\n", one.w[0], p.w[1]);
-    (void)io::console_printf(console, "gradient product dw1 %.12f %.12f\n", one.w[1], p.w[0]);
+    (void)console::print("gradient product dw0 ", format::fixed(one.w[0], 12), " ", format::fixed(p.w[1], 12), "\n");
+    (void)console::print("gradient product dw1 ", format::fixed(one.w[1], 12), " ", format::fixed(p.w[0], 12), "\n");
     toy::Params readonly = autodiff::gradient(toy::first_square, &p);
-    (void)io::console_printf(console, "gradient first_square dw0 %.12f %.12f\n", readonly.w[0], 2.0 * p.w[0]);
+    (void)console::print("gradient first_square dw0 ", format::fixed(readonly.w[0], 12), " ", format::fixed(2.0 * p.w[0], 12), "\n");
     f64 s = 1.7;
     f64 cube = autodiff::gradient(toy::cube, &s);
-    (void)io::console_printf(console, "gradient cube ds %.12f %.12f\n", cube, 3.0 * s * s);
+    (void)console::print("gradient cube ds ", format::fixed(cube, 12), " ", format::fixed(3.0 * s * s, 12), "\n");
     return status;
 }
 
-i32 main(io::Io *io) {
+i32 main() {
     f64 x = 1.7;
     f64 y = 0.4;
     f64 dx = autodiff::reverse((void *)toy::f, autodiff::out, x, autodiff::out, y);
@@ -47,12 +48,12 @@ i32 main(io::Io *io) {
     autodiff::reverse((void *)toy::loss, autodiff::dup, p, dp, autodiff::constant, (usize)3);
     f64 analytic_x = 2.0 * x * c::sin(y) + 3.0 * y;
     f64 analytic_y = x * x * c::cos(y) + 3.0 * x;
-    (void)io::console_printf(&io->console, "reverse dx %.12f %.12f\n", dx, analytic_x);
-    (void)io::console_printf(&io->console, "forward dx %.12f %.12f\n", tx, analytic_x);
-    (void)io::console_printf(&io->console, "forward dy %.12f %.12f\n", ty, analytic_y);
+    (void)console::print("reverse dx ", format::fixed(dx, 12), " ", format::fixed(analytic_x, 12), "\n");
+    (void)console::print("forward dx ", format::fixed(tx, 12), " ", format::fixed(analytic_x, 12), "\n");
+    (void)console::print("forward dy ", format::fixed(ty, 12), " ", format::fixed(analytic_y, 12), "\n");
     for (usize i = 0; i < 3; i++) {
-        (void)io::console_printf(&io->console, "loss dp[%zu] %.12f %.12f\n", i, dp[i], 2.0 * (f64)(i + 1) * p[i]);
+        (void)console::print("loss dp[", i, "] ", format::fixed(dp[i], 12), " ", format::fixed(2.0 * (f64)(i + 1) * p[i], 12), "\n");
     }
-    i32 status = gradients(&io->console);
+    i32 status = gradients();
     return status;
 }

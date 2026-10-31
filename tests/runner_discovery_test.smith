@@ -2,24 +2,34 @@
 // no test is found is an error naming the file, so a test is never skipped silently.
 module runner_discovery_test;
 
+import std::arena;
 import std::format;
-import std::io;
+import std::mem;
 import std::test;
 import scratch;
 
-export void test_runner_discovery_a_test_file_written_with_std_runs(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "std_tests");
+export void test_runner_discovery_a_test_file_written_with_std_runs() {
+    scratch::Project p = scratch::make("p", "std_tests");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run tested = scratch::sh(&p, "smith test");
     scratch::expect_status("std tests: smith test passes", 0, &tested);
-    scratch::expect_contains("std tests: both tests ran", format::push(&io->arena, tested.out, tested.err).data,
+    scratch::expect_contains("std tests: both tests ran", format::push(&memory, tested.out, tested.err).data,
                              "2 passed, 0 failed");
 }
 
-export void test_runner_discovery_a_test_file_with_no_test_is_an_error(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "std_tests_empty");
+export void test_runner_discovery_a_test_file_with_no_test_is_an_error() {
+    scratch::Project p = scratch::make("p", "std_tests_empty");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run tested = scratch::sh(&p, "smith test");
     scratch::expect_failure("empty test file: smith test fails", &tested);
-    scratch::expect_contains("empty test file: ... naming the file",
-                             format::push(&io->arena, tested.out, tested.err).data,
+    scratch::expect_contains("empty test file: ... naming the file", format::push(&memory, tested.out, tested.err).data,
                              "forgotten_test.smith defines no test");
 }
