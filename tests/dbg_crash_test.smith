@@ -44,43 +44,43 @@ constexpr char shared_script[_] =
     "if [ $ONE = c ]; then cp -Rp \"$c/c/.\" \"$here\"; else mkdir -p \"$here/w/app\"; fi";
 
 // prog.c built plain and under AddressSanitizer in the project. False when this smith cannot debug here.
-static bool ready(arena::Arena *memory, const scratch::Project *p) {
+static bool ready(const scratch::Project *p) {
     scratch::Run usable = scratch::sh(
         p, "[ \"$(smith cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2)\" = 'clang in-process' ] && "
            "smith dbg --version >/dev/null 2>&1");
     if (usable.status != 0) {
         return false;
     }
-    scratch::Run built = scratch::sh(p, format::push(memory, "ONE=c; here=$PWD; ", shared_script).data);
+    scratch::Run built = scratch::sh(p, format::push("ONE=c; here=$PWD; ", shared_script).data);
     scratch::expect_status("prog.c builds", 0, &built);
     return scratch::exists(p, "debuggable");
 }
 
 // The program's standard error after `smith dbg ARGUMENTS`, which the checks read; the status is the run's.
-static void note_output(arena::Arena *memory, const scratch::Project *p, const char *folder);
+static void note_output(const scratch::Project *p, const char *folder);
 
-static scratch::Run crash(arena::Arena *memory, const scratch::Project *p, const char *arguments) {
-    scratch::Run run = scratch::sh(p, format::push(memory, "here=$PWD; cd \"$(cat .dir-c)\" && smith dbg ", arguments,
+static scratch::Run crash(const scratch::Project *p, const char *arguments) {
+    scratch::Run run = scratch::sh(p, format::push("here=$PWD; cd \"$(cat .dir-c)\" && smith dbg ", arguments,
                                                    " >\"$here/out.txt\" 2>\"$here/err.txt\"")
                                           .data);
-    note_output(memory, p, "");
+    note_output(p, "");
     return run;
 }
 
 // A failure shows the debugger's whole output, standard output and error, so that the cause is named.
-static void note_output(arena::Arena *memory, const scratch::Project *p, const char *folder) {
-    const char *out = scratch::read(p, format::push(memory, folder, "out.txt").data);
-    const char *err = scratch::read(p, format::push(memory, folder, "err.txt").data);
+static void note_output(const scratch::Project *p, const char *folder) {
+    const char *out = scratch::read(p, format::push(folder, "out.txt").data);
+    const char *err = scratch::read(p, format::push(folder, "err.txt").data);
     test::note("smith dbg standard output:\n%s\nsmith dbg standard error:\n%s", out, err);
 }
 
 // smith dbg --crash on the .smith app, with the arguments of the program.
-static scratch::Run crash_app(arena::Arena *memory, const scratch::Project *p, const char *arguments) {
-    scratch::Run run = scratch::sh(
-        p, format::push(memory, "here=$PWD; cd \"$(cat .dir-app)/w/app\" && smith dbg --crash build/debug/app ",
-                        arguments, " >\"$here/w/app/out.txt\" 2>\"$here/w/app/err.txt\"")
-               .data);
-    note_output(memory, p, "w/app/");
+static scratch::Run crash_app(const scratch::Project *p, const char *arguments) {
+    scratch::Run run =
+        scratch::sh(p, format::push("here=$PWD; cd \"$(cat .dir-app)/w/app\" && smith dbg --crash build/debug/app ",
+                                    arguments, " >\"$here/w/app/out.txt\" 2>\"$here/w/app/err.txt\"")
+                           .data);
+    note_output(p, "w/app/");
     return run;
 }
 
@@ -92,10 +92,10 @@ export void test_macos_dbg_crash_asan_report_then_frames() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    if (!ready(&memory, &p)) {
+    if (!ready(&p)) {
         return;
     }
-    scratch::Run run = crash(&memory, &p, "--crash ./prog_asan h");
+    scratch::Run run = crash(&p, "--crash ./prog_asan h");
     const char *err = scratch::read(&p, "err.txt");
     scratch::expect_status("asan: the status is 1", 1, &run);
     scratch::expect_contains("asan: the report is the program's own", err,
@@ -118,10 +118,10 @@ export void test_macos_dbg_crash_signal() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    if (!ready(&memory, &p)) {
+    if (!ready(&p)) {
         return;
     }
-    scratch::Run run = crash(&memory, &p, "--crash ./prog n");
+    scratch::Run run = crash(&p, "--crash ./prog n");
     const char *err = scratch::read(&p, "err.txt");
     scratch::expect_status("signal: the status is 128 + SIGSEGV", 139, &run);
     // The stop reason is the platform's own text: a Mach exception on macOS, the signal on Linux.
@@ -145,10 +145,10 @@ export void test_macos_dbg_crash_abort_and_frames() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    if (!ready(&memory, &p)) {
+    if (!ready(&p)) {
         return;
     }
-    scratch::Run run = crash(&memory, &p, "--crash --frames 1 ./prog a");
+    scratch::Run run = crash(&p, "--crash --frames 1 ./prog a");
     scratch::expect_status("abort: the status is 128 + SIGABRT", 134, &run);
     scratch::expect_contains("abort: the stop reason", scratch::read(&p, "err.txt"),
                              "smith dbg: stopped: signal SIGABRT");
@@ -164,10 +164,10 @@ export void test_macos_dbg_crash_a_program_that_exits() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    if (!ready(&memory, &p)) {
+    if (!ready(&p)) {
         return;
     }
-    scratch::Run run = crash(&memory, &p, "--crash ./prog e");
+    scratch::Run run = crash(&p, "--crash ./prog e");
     scratch::expect_status("exit: the status is the program's", 7, &run);
     scratch::expect_contains("exit: the program's output", scratch::read(&p, "out.txt"), "out");
     scratch::expect_contains("exit: exited 7", scratch::read(&p, "err.txt"), "smith dbg: exited 7");
@@ -181,10 +181,10 @@ export void test_macos_dbg_at_the_locals_at_a_line() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    if (!ready(&memory, &p)) {
+    if (!ready(&p)) {
         return;
     }
-    scratch::Run run = crash(&memory, &p, "--at prog.c:11 --count 2 ./prog");
+    scratch::Run run = crash(&p, "--at prog.c:11 --count 2 ./prog");
     const char *err = scratch::read(&p, "err.txt");
     scratch::expect_status("at: the status is 0", 0, &run);
     scratch::expect_text("at: two hits", "2", scratch::capture(&p, "grep -c 'smith dbg: at prog.c:11, hit' err.txt"));
@@ -195,11 +195,11 @@ export void test_macos_dbg_at_the_locals_at_a_line() {
 }
 
 // 6. A .smith program, in the project smith new writes: a slice out of range and a failed contract in debug.
-static bool ready_app(arena::Arena *memory, const scratch::Project *p) {
-    if (!ready(memory, p)) {
+static bool ready_app(const scratch::Project *p) {
+    if (!ready(p)) {
         return false;
     }
-    scratch::Run made = scratch::sh(p, format::push(memory, "ONE=app; here=$PWD; ", shared_script).data);
+    scratch::Run made = scratch::sh(p, format::push("ONE=app; here=$PWD; ", shared_script).data);
     if (made.status != 0) {
         test::note("the .smith program does not build: %s", made.out);
     }
@@ -214,10 +214,10 @@ export void test_macos_dbg_crash_a_slice_out_of_range_in_smith() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    if (!ready_app(&memory, &p)) {
+    if (!ready_app(&p)) {
         return;
     }
-    scratch::Run run = crash_app(&memory, &p, "x");
+    scratch::Run run = crash_app(&p, "x");
     const char *err = scratch::read(&p, "w/app/err.txt");
     scratch::expect_status("smith slice: the status is 128 + SIGABRT", 134, &run);
     scratch::expect_contains("smith slice: the frame as written", err, "smith dbg: main.smith:6: main::total");
@@ -233,10 +233,10 @@ export void test_macos_dbg_crash_a_failed_contract_in_smith() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    if (!ready_app(&memory, &p)) {
+    if (!ready_app(&p)) {
         return;
     }
-    crash_app(&memory, &p, "x y");
+    crash_app(&p, "x y");
     const char *err = scratch::read(&p, "w/app/err.txt");
     scratch::expect_contains("contract: the failing call's frame", err, "smith dbg: main.smith:11: main::positive");
     scratch::expect_contains("contract: its argument", err, "@ n = -1");
@@ -250,10 +250,10 @@ export void test_macos_dbg_crash_a_smith_program_that_exits() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    if (!ready_app(&memory, &p)) {
+    if (!ready_app(&p)) {
         return;
     }
-    crash_app(&memory, &p, "");
+    crash_app(&p, "");
     scratch::expect_contains("smith: a program that exits", scratch::read(&p, "w/app/err.txt"), "smith dbg: exited");
 }
 
@@ -265,9 +265,9 @@ export void test_macos_dbg_crash_a_program_that_cannot_be_debugged() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    if (!ready(&memory, &p)) {
+    if (!ready(&p)) {
         return;
     }
-    crash(&memory, &p, "--crash ./does-not-exist");
+    crash(&p, "--crash ./does-not-exist");
     scratch::expect_contains("refusal: one line saying why", scratch::read(&p, "err.txt"), "smith dbg: not debugged:");
 }

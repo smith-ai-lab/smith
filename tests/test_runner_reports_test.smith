@@ -24,13 +24,13 @@ static void build_reports(scratch::Project *p) {
 }
 
 // What smith test prints for one test of the project (its two streams in one).
-static const char *sym(arena::Arena *memory, const scratch::Project *p, const char *iso, const char *name) {
-    scratch::Run run = runner::smith_test(p, iso, format::push(memory, "-DSAN=0 --test ", name).data);
+static const char *sym(const scratch::Project *p, const char *iso, const char *name) {
+    scratch::Run run = runner::smith_test(p, iso, format::push("-DSAN=0 --test ", name).data);
     return run.out;
 }
 
-static const char *at_line(arena::Arena *memory, const char *prefix, usize line) {
-    return format::push(memory, prefix, line).data;
+static const char *at_line(const char *prefix, usize line) {
+    return format::push(prefix, line).data;
 }
 
 // Section 5. SIGSEGV without the sanitizers is named.
@@ -101,27 +101,27 @@ export void test_runner_reports_a_failed_check_and_a_failed_equal_name_their_lin
     usize equal_line = runner::line_of(&p, "tests/test_reports.smith", "test::check_equal(count, expected);");
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
-        const char *check = sym(&memory, &p, iso, "check_fails");
+        const char *check = sym(&p, iso, "check_fails");
         scratch::expect_contains(runner::label_free(iso, "report: a failed test::check names the line"), check,
-                                 at_line(&memory, "  check failed at tests/test_reports.smith:", check_line));
+                                 at_line("  check failed at tests/test_reports.smith:", check_line));
         scratch::expect_contains(runner::label_free(iso, "report: ... shows the source line"), check,
-                                 format::push(&memory, check_line, " |     test::check(moves > 0);").data);
+                                 format::push(check_line, " |     test::check(moves > 0);").data);
         scratch::expect_contains(runner::label_free(iso, "report: ... and the call chain"), check, "  called from");
         scratch::expect_contains(runner::label_free(iso, "report: ... whose first frame is the test"), check,
-                                 at_line(&memory, "tests/test_reports.smith:", check_line));
+                                 at_line("tests/test_reports.smith:", check_line));
         scratch::expect_contains(runner::label_free(iso, "report: ... and whose last is the runner"), check,
                                  "smith_test_execute");
         scratch::expect_lacks(runner::label_free(iso, "report: ... without the check machinery of smith::test"), check,
                               "smith::test::");
         scratch::expect_lacks(runner::label_free(iso, "report: ... or the raw trace"), check, "smith-trace");
 
-        const char *equal = sym(&memory, &p, iso, "equal_fails");
+        const char *equal = sym(&p, iso, "equal_fails");
         scratch::expect_contains(runner::label_free(iso, "report: a failed check_equal names the line"), equal,
-                                 at_line(&memory, "  check failed at tests/test_reports.smith:", equal_line));
+                                 at_line("  check failed at tests/test_reports.smith:", equal_line));
         scratch::expect_contains(
             runner::label_free(iso, "report: ... and prints both values under the source line, named by their text"),
             equal,
-            format::push(&memory, equal_line,
+            format::push(equal_line,
                          " |     test::check_equal(count, expected);\n            count = 3, expected = 4   (u64)\n  "
                          "called from")
                 .data);
@@ -149,37 +149,36 @@ export void test_runner_reports_an_assert_a_segfault_and_an_inlined_check_name_t
     }
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
-        const char *assert_report = sym(&memory, &p, iso, "assert_fails");
+        const char *assert_report = sym(&p, iso, "assert_fails");
         scratch::expect_contains(runner::label_free(iso, "report: an assert names the line"), assert_report,
-                                 at_line(&memory, "  aborted at tests/test_reports.smith:", assert_line));
+                                 at_line("  aborted at tests/test_reports.smith:", assert_line));
         scratch::expect_contains(runner::label_free(iso, "report: ... shows it"), assert_report,
-                                 format::push(&memory, assert_line, " |     c::assert(moves == 2);").data);
+                                 format::push(assert_line, " |     c::assert(moves == 2);").data);
         scratch::expect_contains(runner::label_free(iso, "report: ... and keeps assert's own message"), assert_report,
                                  assert_message);
         scratch::expect_lacks(runner::label_free(iso, "report: ... without libc's abort path"), assert_report,
                               "pthread_kill");
 
-        const char *segv = sym(&memory, &p, iso, "segfault");
+        const char *segv = sym(&p, iso, "segfault");
         scratch::expect_contains(runner::label_free(iso, "report: a segfault names the line"), segv,
-                                 format::push(&memory,
-                                              "FAIL segfault: killed by SIGSEGV\n  crashed at "
+                                 format::push("FAIL segfault: killed by SIGSEGV\n  crashed at "
                                               "tests/test_reports.smith:",
                                               segv_line)
                                      .data);
         scratch::expect_contains(runner::label_free(iso, "report: ... shows it"), segv,
-                                 format::push(&memory, segv_line, " |     *nothing = 7;").data);
+                                 format::push(segv_line, " |     *nothing = 7;").data);
 
-        const char *inlined = sym(&memory, &p, iso, "inlined");
+        const char *inlined = sym(&p, iso, "inlined");
         scratch::expect_contains(runner::label_free(iso, "report: an inlined check names the inlined line"), inlined,
-                                 at_line(&memory, "  check failed at tests/test_reports.smith:", inline_line));
+                                 at_line("  check failed at tests/test_reports.smith:", inline_line));
         scratch::expect_contains(runner::label_free(iso, "report: ... and the chain has the inlined function"), inlined,
                                  "check_positive");
         scratch::expect_contains(runner::label_free(iso, "report: ... and the function it was inlined into"), inlined,
-                                 at_line(&memory, "tests/test_reports.smith:", caller_line));
+                                 at_line("tests/test_reports.smith:", caller_line));
 
-        const char *ordering = sym(&memory, &p, iso, "ordering_fails");
+        const char *ordering = sym(&p, iso, "ordering_fails");
         scratch::expect_contains(runner::label_free(iso, "report: an ordering check's failure has the same report"),
-                                 ordering, at_line(&memory, "  check failed at tests/test_reports.smith:", order_line));
+                                 ordering, at_line("  check failed at tests/test_reports.smith:", order_line));
         scratch::expect_contains(runner::label_free(iso, "report: ... and its values"), ordering,
                                  "    total = 4, 3   (i32)");
     }
@@ -202,7 +201,7 @@ export void test_macos_runner_reports_a_check_inside_an_objective_c_method_names
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::smith_test(&p, iso, "-DSAN=0");
         runner::expect_has_free(iso, "objc: a check inside a method names the line", &run,
-                                at_line(&memory, "  check failed at tests/test_objc.m:", line));
+                                at_line("  check failed at tests/test_objc.m:", line));
         runner::expect_has_free(iso, "objc: ... and the method is in the chain", &run, "-[Probe requirePositive:]");
         runner::expect_has_free(iso, "objc: ... called from the test", &run, "test_objc_fails");
     }
@@ -222,12 +221,11 @@ export void test_macos_runner_reports_a_program_linked_by_apples_ld_has_lines_to
     (void)scratch::sh(&p, "rm -f build/tests");
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
-        scratch::Run run =
-            scratch::sh(&p, format::push(&memory, "env SMITH_OUTPUT=full SMITH_LINKER=/usr/bin/ld smith test ", iso,
-                                         " -DSAN=0 --test check_fails 2>&1")
-                                .data);
+        scratch::Run run = scratch::sh(&p, format::push("env SMITH_OUTPUT=full SMITH_LINKER=/usr/bin/ld smith test ",
+                                                        iso, " -DSAN=0 --test check_fails 2>&1")
+                                               .data);
         runner::expect_has_free(iso, "report: a program linked by Apple's ld has lines too", &run,
-                                at_line(&memory, "  check failed at tests/test_reports.smith:", line));
+                                at_line("  check failed at tests/test_reports.smith:", line));
         (void)scratch::sh(&p, "rm -f build/tests");
     }
 }
@@ -243,9 +241,8 @@ static void check_saved_trace(const char *iso) {
     build_reports(&p);
     if (!runner::can_symbolize(&p)) return;
     usize line = runner::line_of(&p, "tests/test_reports.smith", "test::check(moves > 0);");
-    const char *wanted = at_line(&memory, "  check failed at tests/test_reports.smith:", line);
-    (void)scratch::sh(&p,
-                      format::push(&memory, "build/tests ", iso, " --test check_fails --trace >trace.txt 2>&1").data);
+    const char *wanted = at_line("  check failed at tests/test_reports.smith:", line);
+    (void)scratch::sh(&p, format::push("build/tests ", iso, " --test check_fails --trace >trace.txt 2>&1").data);
     scratch::expect_contains(runner::label_free(iso, "symbolize: a saved trace becomes a report"),
                              scratch::sh(&p, "smith symbolize trace.txt 2>&1").out, wanted);
     scratch::expect_contains(runner::label_free(iso, "symbolize: ... from standard input too"),
@@ -276,16 +273,15 @@ static void check_changed_sources(const char *iso) {
     build_reports(&p);
     if (!runner::can_symbolize(&p)) return;
     usize line = runner::line_of(&p, "tests/test_reports.smith", "test::check(moves > 0);");
-    (void)scratch::sh(&p,
-                      format::push(&memory, "build/tests ", iso, " --test check_fails --trace >trace.txt 2>&1").data);
+    (void)scratch::sh(&p, format::push("build/tests ", iso, " --test check_fails --trace >trace.txt 2>&1").data);
     // a source newer than the program is noted
     scratch::sleep(&p, 1000);
     (void)scratch::sh(&p, "touch tests/test_reports.smith");
     const char *newer = runner::symbolized(&p, iso, "--test check_fails");
-    scratch::expect_contains(runner::label_free(iso, "newer: a source newer than the program is noted"), newer,
-                             format::push(&memory, "note: tests/test_reports.smith is newer than the program, so line ",
-                                          line, " may have changed")
-                                 .data);
+    scratch::expect_contains(
+        runner::label_free(iso, "newer: a source newer than the program is noted"), newer,
+        format::push("note: tests/test_reports.smith is newer than the program, so line ", line, " may have changed")
+            .data);
     // A trace of another program: the UUID differs, and no line is made up.
     (void)scratch::sh(&p, "printf '\\n' >>tests/test_reports.smith");
     (void)scratch::sh(&p,
@@ -330,10 +326,10 @@ export void test_runner_reports_smith_as_llvm_symbolizer_answers_the_sanitizers_
         arch = "arm64";
     }
     const char *address =
-        scratch::capture(&p, format::push(&memory, "nm build/tests | awk '$3 == \"", symbol, "\" {print $1}'").data);
+        scratch::capture(&p, format::push("nm build/tests | awk '$3 == \"", symbol, "\" {print $1}'").data);
     const char *code =
-        scratch::capture(&p, format::push(&memory, "printf 'CODE \"%s:", arch, "\" 0x%s\\n' \"$PWD/build/tests\" '",
-                                          address, "' | ./llvm-symbolizer --demangle --inlines")
+        scratch::capture(&p, format::push("printf 'CODE \"%s:", arch, "\" 0x%s\\n' \"$PWD/build/tests\" '", address,
+                                          "' | ./llvm-symbolizer --demangle --inlines")
                                  .data);
     scratch::expect_contains("protocol: a CODE request names the function", code, "test_check_fails");
     scratch::expect_contains("protocol: ... and the file, line and column", code, "tests/test_reports.smith:");
@@ -357,11 +353,11 @@ export void test_runner_reports_a_failed_contract_has_the_report_of_a_failed_che
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::smith_test(&p, iso, "-DSAN=0");
         runner::expect_has_free(iso, "contract: a failed smith_requires names its line", &run,
-                                at_line(&memory, "  requires failed at tests/test_contracts.c:", line));
+                                at_line("  requires failed at tests/test_contracts.c:", line));
         runner::expect_has_free(iso, "contract: ... shows the source", &run,
-                                format::push(&memory, line, " |     smith_requires(value % 2 == 0);").data);
+                                format::push(line, " |     smith_requires(value % 2 == 0);").data);
         runner::expect_has_free(iso, "contract: ... and the call chain, with the caller", &run,
-                                at_line(&memory, "tests/test_contracts.c:", caller));
+                                at_line("tests/test_contracts.c:", caller));
         runner::expect_has_free(
             iso, "contract: smith_test_expect_abort passes on a failed contract, and the true one passes", &run,
             "2 passed, 1 failed");
@@ -385,13 +381,12 @@ export void test_runner_reports_a_sanitizer_report_is_symbolized_by_smith() {
         const char *iso = runner::flag(mode);
         scratch::Run asan = runner::smith_test(&p, iso, "--test overflow");
         runner::expect_has_free(iso, "asan: the report's innermost user frame is named", &asan, "in read_past ");
-        runner::expect_has_free(iso, "asan: ... with its line", &asan,
-                                at_line(&memory, "tests/test_overflow.c:", read_line));
+        runner::expect_has_free(iso, "asan: ... with its line", &asan, at_line("tests/test_overflow.c:", read_line));
         runner::expect_has_free(iso, "asan: ... and the caller's", &asan, "in test_overflow ");
         runner::expect_lacks_free(iso, "asan: ... with no module offsets, which atos gives without a dSYM", &asan,
                                   "tests:arm64+0x");
         scratch::Run ubsan = runner::smith_test(&p, iso, "--test signed_overflow");
         runner::expect_has_free(iso, "ubsan: the report names the line", &ubsan,
-                                at_line(&memory, "tests/test_overflow.c:", signed_line));
+                                at_line("tests/test_overflow.c:", signed_line));
     }
 }

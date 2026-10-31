@@ -33,17 +33,15 @@ static void fixture_case(const char *name) {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::Run run =
-        scratch::sh(&p, format::push(&memory, "args=; [ -f ", name, "/args ] && args=$(cat ", name,
-                                     "/args); smith docs $args ", name, " >actual 2>&1; echo $? >status; cat actual")
+        scratch::sh(&p, format::push("args=; [ -f ", name, "/args ] && args=$(cat ", name, "/args); smith docs $args ",
+                                     name, " >actual 2>&1; echo $? >status; cat actual")
                             .data);
-    test::golden_free(slice_of(format::push(&memory, "tests/docs/fixtures/", name, "/expect.txt").data),
-                      slice_of(run.out));
+    test::golden_free(slice_of(format::push("tests/docs/fixtures/", name, "/expect.txt").data), slice_of(run.out));
     // The check exits 1 exactly when there are problems.
-    const char *want =
-        scratch::capture(&p, format::push(&memory, "case $(tail -n 1 ", name,
-                                          "/expect.txt) in *\" 0 problems\") echo 0 ;; *) echo 1 ;; esac")
-                                 .data);
-    scratch::expect_text(format::push(&memory, "fixture ", name, ": exit status").data, want,
+    const char *want = scratch::capture(
+        &p,
+        format::push("case $(tail -n 1 ", name, "/expect.txt) in *\" 0 problems\") echo 0 ;; *) echo 1 ;; esac").data);
+    scratch::expect_text(format::push("fixture ", name, ": exit status").data, want,
                          scratch::capture(&p, "cat status"));
 }
 

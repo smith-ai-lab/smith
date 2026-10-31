@@ -17,8 +17,8 @@ import <string.h>;
 constexpr usize memory_size = (usize)16 << 20; // 16 MiB
 
 // Copies tests/autodiff/<source> into the project as `name` (scratch::copy_tree).
-static void copy(arena::Arena *memory, const scratch::Project *p, const char *source, const char *name) {
-    scratch::copy_tree(p, format::push(memory, "tests/autodiff/", source).data, name);
+static void copy(const scratch::Project *p, const char *source, const char *name) {
+    scratch::copy_tree(p, format::push("tests/autodiff/", source).data, name);
 }
 
 // The project is a git repository of its own.
@@ -28,16 +28,16 @@ static void git_project(const scratch::Project *p) {
 }
 
 // The project's only file is tests/autodiff/<from>, named `to`, in a git repository of its own.
-static void file_as(arena::Arena *memory, const scratch::Project *p, const char *from, const char *to) {
-    copy(memory, p, from, to);
+static void file_as(const scratch::Project *p, const char *from, const char *to) {
+    copy(p, from, to);
     scratch::Run made = scratch::sh(p, "git init -q .");
     scratch::expect_status("autodiff: the project is made", 0, &made);
 }
 
 // The project holds the files of tests/autodiff/<folder>, in a git repository of its own.
-static void from_dir(arena::Arena *memory, const scratch::Project *p, const char *folder) {
+static void from_dir(const scratch::Project *p, const char *folder) {
     git_project(p);
-    copy(memory, p, folder, "");
+    copy(p, folder, "");
 }
 
 static void builds(const scratch::Project *p, const char *name, const char *arguments) {
@@ -59,27 +59,24 @@ export void test_autodiff_toy_runs_in_each_profile_with_derivatives_equal_to_the
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    from_dir(&memory, &p, "toy");
+    from_dir(&p, "toy");
     builds(&p, "autodiff: toy: debug builds", "");
     builds(&p, "autodiff: toy: release and fast build", "release fast");
     const char *profiles[3] = {"debug", "release", "fast"};
     for (usize i = 0; i < 3; i++) {
-        const char *program = format::push(&memory, "build/", profiles[i], "/toy").data;
+        const char *program = format::push("build/", profiles[i], "/toy").data;
         scratch::Run run = scratch::sh(&p, program);
-        scratch::expect_status(format::push(&memory, "autodiff: toy: ", profiles[i], " runs").data, 0, &run);
-        scratch::expect_text(format::push(&memory, "autodiff: toy: ", profiles[i],
-                                          " reverse and forward derivatives equal the analytic ones")
-                                 .data,
-                             "0",
-                             scratch::capture(&p, format::push(&memory, program, " 2>/dev/null | ", disagree).data));
+        scratch::expect_status(format::push("autodiff: toy: ", profiles[i], " runs").data, 0, &run);
         scratch::expect_text(
-            format::push(&memory, "autodiff: toy: ", profiles[i], " prints six lines and eight of autodiff::gradient")
+            format::push("autodiff: toy: ", profiles[i], " reverse and forward derivatives equal the analytic ones")
                 .data,
-            "14", scratch::capture(&p, format::push(&memory, program, " 2>/dev/null | wc -l | tr -d ' '").data));
+            "0", scratch::capture(&p, format::push(program, " 2>/dev/null | ", disagree).data));
         scratch::expect_text(
-            format::push(&memory, "autodiff: toy: ", profiles[i], " prints nothing of Enzyme's own to standard error")
-                .data,
-            "", scratch::capture(&p, format::push(&memory, program, " 2>&1 >/dev/null").data));
+            format::push("autodiff: toy: ", profiles[i], " prints six lines and eight of autodiff::gradient").data,
+            "14", scratch::capture(&p, format::push(program, " 2>/dev/null | wc -l | tr -d ' '").data));
+        scratch::expect_text(
+            format::push("autodiff: toy: ", profiles[i], " prints nothing of Enzyme's own to standard error").data, "",
+            scratch::capture(&p, format::push(program, " 2>&1 >/dev/null").data));
     }
 }
 
@@ -90,7 +87,7 @@ export void test_autodiff_toy_commands_have_no_passes_full_lto_and_asan_without_
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    from_dir(&memory, &p, "toy");
+    from_dir(&p, "toy");
     const char *commands =
         scratch::capture(&p, "smith build -t commands build/debug/toy build/release/toy build/fast/toy");
     scratch::expect_contains("autodiff: toy: every compile has no optimization passes", commands,
@@ -115,7 +112,7 @@ export void test_autodiff_toy_smith_test_whose_test_differentiates_passes() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    from_dir(&memory, &p, "toy");
+    from_dir(&p, "toy");
     scratch::Run run = scratch::sh(&p, "smith test 2>&1");
     scratch::expect_status("autodiff: toy: smith test, whose test differentiates, passes", 0, &run);
     scratch::expect_contains("autodiff: toy: ... and runs it", run.out, "3 passed");
@@ -128,7 +125,7 @@ export void test_autodiff_toy_smith_lint_is_clean() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    from_dir(&memory, &p, "toy");
+    from_dir(&p, "toy");
     scratch::Run run = scratch::sh(&p, "smith lint 2>&1");
     scratch::expect_status("autodiff: toy: smith lint is clean", 0, &run);
 }
@@ -166,21 +163,19 @@ static void reference_equals_backward(const char *name, const char *program, con
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     git_project(&p);
-    copy(&memory, &p, "scan/base", "base");
-    copy(&memory, &p, main_source, c::strstr(main_source, ".smith") != nullptr ? "main.smith" : "main.c");
-    builds(&p, format::push(&memory, "autodiff: ", name, ": release builds").data, "release");
-    builds(&p, format::push(&memory, "autodiff: ", name, ": debug builds").data, "");
+    copy(&p, "scan/base", "base");
+    copy(&p, main_source, c::strstr(main_source, ".smith") != nullptr ? "main.smith" : "main.c");
+    builds(&p, format::push("autodiff: ", name, ": release builds").data, "release");
+    builds(&p, format::push("autodiff: ", name, ": debug builds").data, "");
     const char *profiles[2] = {"release", "debug"};
     for (usize i = 0; i < 2; i++) {
-        scratch::Run run =
-            scratch::sh(&p, format::push(&memory, "build/", profiles[i], "/", program, " 2>/dev/null").data);
-        scratch::expect_status(format::push(&memory, "autodiff: ", name, ": ", profiles[i],
-                                            ", Enzyme equals the hand-written backward to 1e-12")
-                                   .data,
-                               0, &run);
-        scratch::expect_contains(
-            format::push(&memory, "autodiff: ", name, ": ", profiles[i], " reports the difference").data, run.out,
-            "worst relative difference");
+        scratch::Run run = scratch::sh(&p, format::push("build/", profiles[i], "/", program, " 2>/dev/null").data);
+        scratch::expect_status(
+            format::push("autodiff: ", name, ": ", profiles[i], ", Enzyme equals the hand-written backward to 1e-12")
+                .data,
+            0, &run);
+        scratch::expect_contains(format::push("autodiff: ", name, ": ", profiles[i], " reports the difference").data,
+                                 run.out, "worst relative difference");
     }
 }
 
@@ -204,21 +199,20 @@ export void test_autodiff_structs_gradients_sgd_and_adam_equal_their_references(
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     git_project(&p);
-    copy(&memory, &p, "structs/main.smith", "main.smith");
+    copy(&p, "structs/main.smith", "main.smith");
     builds(&p, "autodiff: structs: release builds", "release");
     builds(&p, "autodiff: structs: debug builds", "");
     const char *profiles[2] = {"release", "debug"};
     for (usize i = 0; i < 2; i++) {
-        scratch::Run run = scratch::sh(&p, format::push(&memory, "build/", profiles[i], "/structs 2>/dev/null").data);
-        scratch::expect_status(format::push(&memory, "autodiff: structs: ", profiles[i],
-                                            " gradients, SGD and Adam equal their references to 1e-12")
-                                   .data,
-                               0, &run);
-        scratch::expect_contains(
-            format::push(&memory, "autodiff: structs: ", profiles[i], " checks the net's gradient").data, run.out,
-            "gradient vs analytic");
-        scratch::expect_contains(format::push(&memory, "autodiff: structs: ", profiles[i], " checks Adam").data,
-                                 run.out, "map(adam) vs loop");
+        scratch::Run run = scratch::sh(&p, format::push("build/", profiles[i], "/structs 2>/dev/null").data);
+        scratch::expect_status(
+            format::push("autodiff: structs: ", profiles[i], " gradients, SGD and Adam equal their references to 1e-12")
+                .data,
+            0, &run);
+        scratch::expect_contains(format::push("autodiff: structs: ", profiles[i], " checks the net's gradient").data,
+                                 run.out, "gradient vs analytic");
+        scratch::expect_contains(format::push("autodiff: structs: ", profiles[i], " checks Adam").data, run.out,
+                                 "map(adam) vs loop");
     }
 }
 
@@ -228,8 +222,8 @@ export void test_autodiff_structs_gradients_sgd_and_adam_equal_their_references(
 constexpr char symbolizer[_] = "ln -sf \"$(command -v smith)\" llvm-symbolizer; export "
                                "ASAN_SYMBOLIZER_PATH=\"$PWD/llvm-symbolizer\"; ";
 
-static const char *oob_run(arena::Arena *memory, const scratch::Project *p, const char *command) {
-    return scratch::sh(p, format::push(memory, symbolizer, command).data).err;
+static const char *oob_run(const scratch::Project *p, const char *command) {
+    return scratch::sh(p, format::push(symbolizer, command).data).err;
 }
 
 export void test_autodiff_oob_inside_the_array_the_gradient_is_right() {
@@ -239,9 +233,9 @@ export void test_autodiff_oob_inside_the_array_the_gradient_is_right() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    from_dir(&memory, &p, "oob");
+    from_dir(&p, "oob");
     builds(&p, "autodiff: oob: debug builds", "");
-    scratch::Run run = scratch::sh(&p, format::push(&memory, symbolizer, "build/debug/oob ok").data);
+    scratch::Run run = scratch::sh(&p, format::push(symbolizer, "build/debug/oob ok").data);
     scratch::expect_status("autodiff: oob: inside the array, the gradient of debug runs", 0, &run);
     scratch::expect_contains("autodiff: oob: ... and is right", run.out, "gradient 1.000 15.000");
 }
@@ -253,9 +247,9 @@ export void test_autodiff_oob_the_primals_read_is_a_heap_buffer_overflow_in_sums
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    from_dir(&memory, &p, "oob");
+    from_dir(&p, "oob");
     builds(&p, "autodiff: oob: debug builds", "");
-    const char *err = oob_run(&memory, &p, "build/debug/oob primal");
+    const char *err = oob_run(&p, "build/debug/oob primal");
     scratch::expect_contains("autodiff: oob: the primal's read is a heap-buffer-overflow", err,
                              "ERROR: AddressSanitizer: heap-buffer-overflow");
     scratch::expect_contains("autodiff: oob: ... in sumsq at its line", err, "in sumsq ");
@@ -270,9 +264,9 @@ export void test_autodiff_oob_the_gradients_read_is_a_heap_buffer_overflow_in_th
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    from_dir(&memory, &p, "oob");
+    from_dir(&p, "oob");
     builds(&p, "autodiff: oob: debug builds", "");
-    const char *err = oob_run(&memory, &p, "build/debug/oob gradient");
+    const char *err = oob_run(&p, "build/debug/oob gradient");
     scratch::expect_contains("autodiff: oob: the gradient's read is a heap-buffer-overflow", err,
                              "ERROR: AddressSanitizer: heap-buffer-overflow");
     scratch::expect_contains("autodiff: oob: ... in the gradient at the line of the source", err, "in diffesumsq ");
@@ -286,10 +280,10 @@ export void test_autodiff_oob_release_has_no_address_sanitizer() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    from_dir(&memory, &p, "oob");
+    from_dir(&p, "oob");
     builds(&p, "autodiff: oob: release builds", "release");
-    scratch::expect_lacks("autodiff: oob: release has no AddressSanitizer",
-                          oob_run(&memory, &p, "build/release/oob primal"), "AddressSanitizer");
+    scratch::expect_lacks("autodiff: oob: release has no AddressSanitizer", oob_run(&p, "build/release/oob primal"),
+                          "AddressSanitizer");
 }
 
 // ---- 4b. AddressSanitizer through the generic instance of autodiff::gradient. ----
@@ -301,9 +295,9 @@ export void test_autodiff_oob_gradient_inside_the_array_it_runs() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    from_dir(&memory, &p, "oob-gradient");
+    from_dir(&p, "oob-gradient");
     builds(&p, "autodiff: oob gradient: debug builds", "");
-    scratch::Run run = scratch::sh(&p, format::push(&memory, symbolizer, "build/debug/oobgrad ok").data);
+    scratch::Run run = scratch::sh(&p, format::push(symbolizer, "build/debug/oobgrad ok").data);
     scratch::expect_status("autodiff: oob gradient: inside the array it runs", 0, &run);
     scratch::expect_contains("autodiff: oob gradient: ... and is right", run.out, "gradient 0.000 8.000");
 }
@@ -315,9 +309,9 @@ export void test_autodiff_oob_gradient_past_the_array_address_sanitizer_stops_it
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    from_dir(&memory, &p, "oob-gradient");
+    from_dir(&p, "oob-gradient");
     builds(&p, "autodiff: oob gradient: debug builds", "");
-    const char *err = oob_run(&memory, &p, "build/debug/oobgrad bad");
+    const char *err = oob_run(&p, "build/debug/oobgrad bad");
     scratch::expect_contains("autodiff: oob gradient: past the array, AddressSanitizer stops it", err,
                              "ERROR: AddressSanitizer: stack-buffer-overflow");
     scratch::expect_contains("autodiff: oob gradient: ... at the line of the read", err, "in diffemain_pick ");
@@ -335,17 +329,17 @@ static const char *wrong_call(const char *call) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    file_as(&memory, &p, "wrong/main.smith", "template.smith");
+    file_as(&p, "wrong/main.smith", "template.smith");
     const char *line = scratch::capture(&p, "grep -n '^    CALL' template.smith | cut -d: -f1");
-    scratch::Run made = scratch::sh(&p, format::push(&memory, "esc=$(printf '%s' '", call,
+    scratch::Run made = scratch::sh(&p, format::push("esc=$(printf '%s' '", call,
                                                      "' | sed 's/&/\\\\&/g'); sed \"s|CALL|$esc|\" template.smith "
                                                      ">main.smith && rm template.smith")
                                             .data);
     scratch::expect_status("autodiff: wrong: the program is made", 0, &made);
     scratch::Run built = scratch::sh(&p, "smith build 2>&1");
-    scratch::expect_status(format::push(&memory, "autodiff: wrong: `", call, "` is refused").data, 1, &built);
+    scratch::expect_status(format::push("autodiff: wrong: `", call, "` is refused").data, 1, &built);
     scratch::expect_contains("autodiff: wrong: ... at the call in main.smith", built.out,
-                             format::push(&memory, "main.smith:", line, ":").data);
+                             format::push("main.smith:", line, ":").data);
     scratch::expect_lacks("autodiff: wrong: ... and never reaches Enzyme", built.out, "Enzyme:");
     return built.out;
 }
@@ -377,7 +371,7 @@ export void test_autodiff_wrong_map_a_pointer_field_is_refused_at_the_call() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    file_as(&memory, &p, "wrong/map.smith", "main.smith");
+    file_as(&p, "wrong/map.smith", "main.smith");
     scratch::Run built = scratch::sh(&p, "smith build 2>&1");
     scratch::expect_status("autodiff: wrong map: a pointer field is refused", 1, &built);
     scratch::expect_contains("autodiff: wrong map: ... at the call in main.smith", built.out, "main.smith:16:");
@@ -394,7 +388,7 @@ export void test_autodiff_a_smith_with_an_external_clang_refuses_an_autodiff_pro
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    from_dir(&memory, &p, "toy");
+    from_dir(&p, "toy");
     // an external clang that reads C23 (the system's on a hosted Linux runner is older), here smith's own as a wrapper
     scratch::write(&p, "external-clang", "#!/bin/sh\nunset SMITH_CLANG\nexec smith cc \"$@\"\n");
     scratch::Run built =

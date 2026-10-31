@@ -345,6 +345,22 @@ export void test_format_push_allocates_only_through_the_current_allocator() {
     test::check(allocator.base.owns(&allocator.base, nothing.data));
 }
 
+// push on the heap (no allocator set) is the caller's to free with mem::free: the runner's leak checker fails the test
+// if the text, the empty text or a long one is left behind.
+export void test_format_push_freed_leaks_nothing() {
+    char path[:] = format::push("build/meshes/", "ship", ".mesh");
+    test::check(is(path.data, "build/meshes/ship.mesh"));
+    mem::free(path.data);
+    char nothing[:] = format::push();
+    test::check_equal(nothing.data[0], '\0');
+    mem::free(nothing.data);
+    for (usize i = 0; i < 100; i++) {
+        char number[:] = format::push((u64)i, " of ", (u64)100);
+        test::check(countof(number) >= 7);
+        mem::free(number.data);
+    }
+}
+
 // What the callers of snprintf wrote, as pieces. Each pair is the old call and the new one.
 export void test_format_callers() {
     char out[capacity];

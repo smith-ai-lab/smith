@@ -20,8 +20,8 @@ static typeof(const char[:]) slice_of(const char *text) {
     return text[0:c::strlen(text)];
 }
 
-static const char *join(arena::Arena *memory, const char *a, const char *b, const char *c, const char *d) {
-    return format::push(memory, a, b, c, d).data;
+static const char *join(const char *a, const char *b, const char *c, const char *d) {
+    return format::push(a, b, c, d).data;
 }
 
 // What a compile of the file prints, as tests/effects/<file>.expected holds it. The output goes to a file of the
@@ -35,12 +35,12 @@ static void effects_case(const char *file) {
     defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "tests/effects", "tests/effects");
     const char *command =
-        format::push(&memory, "cd tests/effects && { smith cc -std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c ", file,
+        format::push("cd tests/effects && { smith cc -std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c ", file,
                      " -o /dev/null >../../out 2>&1; echo \"status $?\"; grep -E '^[^ ]+:[0-9]+:[0-9]+: "
                      "(error|note|warning):' ../../out; }")
             .data;
     scratch::Run run = scratch::sh(&p, command);
-    test::golden_free(slice_of(format::push(&memory, "tests/effects/", file, ".expected").data), slice_of(run.out));
+    test::golden_free(slice_of(format::push("tests/effects/", file, ".expected").data), slice_of(run.out));
 }
 
 // The report-only pointer rule: the lines SMITH_EFFECTS_POINTERS gets, a call with the effects its type states.
@@ -78,8 +78,8 @@ static void effects_editor(const char *file) {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "tests/effects", "tests/effects");
-    scratch::Run run = scratch::sh(
-        &p, format::push(&memory, "timeout -s KILL 120 smith lsp --check=tests/effects/", file, " 2>&1").data);
+    scratch::Run run =
+        scratch::sh(&p, format::push("timeout -s KILL 120 smith lsp --check=tests/effects/", file, " 2>&1").data);
     scratch::expect_contains(file, run.out, "smith-effect: `bad` is [[smith::pure]]");
 }
 
@@ -502,9 +502,9 @@ export void test_the_fix_it_of_an_effects_error_replaces_the_attribute_and_the_f
     const char *flags = "-std=gnu2y -I \"$SMITH_REPO/.smith/include\" -include stdio.h -include stdlib.h";
     for (usize i = 0; i < 2; i++) {
         const char *file = i == 0 ? "c.c" : "p.c";
-        (void)scratch::sh(&p, join(&memory, "smith cc ", flags, " -Xclang -fixit -fsyntax-only ", file));
-        scratch::Run compiled = scratch::sh(&p, join(&memory, "smith cc ", flags, " -fsyntax-only ", file));
-        scratch::expect_status(join(&memory, "fix-it: ", file, " compiles", ""), 0, &compiled);
+        (void)scratch::sh(&p, join("smith cc ", flags, " -Xclang -fixit -fsyntax-only ", file));
+        scratch::Run compiled = scratch::sh(&p, join("smith cc ", flags, " -fsyntax-only ", file));
+        scratch::expect_status(join("fix-it: ", file, " compiles", ""), 0, &compiled);
     }
     scratch::Run ceiling =
         scratch::sh(&p, "grep -q '^\\[\\[smith::effects(alloc, files, globals)\\]\\] void \\*too_much' c.c");
@@ -611,13 +611,13 @@ export void test_effects_libc_null_unknown_smith() {
 }
 
 // A C file with the libc headers, compiled in the plugin's idiom mode (`SMITH_EFFECTS_IDIOMS=missing|list`).
-static scratch::Run idiom_report(const scratch::Project *p, arena::Arena *memory, const char *mode) {
+static scratch::Run idiom_report(const scratch::Project *p, const char *mode) {
     scratch::write(p, "headers.c",
                    "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <strings.h>\n"
                    "#include <time.h>\n#include <locale.h>\n#include <pwd.h>\n#include <dlfcn.h>\n"
                    "#include <dirent.h>\n#include <netdb.h>\n#include <sys/mman.h>\n#include <unistd.h>\n"
                    "#include <libgen.h>\n#include <signal.h>\n#include <errno.h>\n#include <sys/socket.h>\n");
-    return scratch::sh(p, format::push(memory, "SMITH_EFFECTS_IDIOMS=", mode,
+    return scratch::sh(p, format::push("SMITH_EFFECTS_IDIOMS=", mode,
                                        " smith cc -D_GNU_SOURCE -c headers.c -o /dev/null 2>&1 | grep smith-ownership")
                               .data);
 }
@@ -631,7 +631,7 @@ export void test_every_pointer_returning_function_of_the_table_has_an_idiom() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run run = idiom_report(&p, &memory, "missing");
+    scratch::Run run = idiom_report(&p, "missing");
     scratch::expect_text("functions of the table that return a pointer and have no idiom", "", run.out);
 }
 
@@ -642,7 +642,7 @@ export void test_the_table_records_the_idiom_of_a_returned_pointer() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run run = idiom_report(&p, &memory, "list");
+    scratch::Run run = idiom_report(&p, "list");
     scratch::expect_contains("strdup is owned, freed by free", run.out, "smith-ownership: strdup owned:free\n");
     scratch::expect_contains("strerror is internal", run.out, "smith-ownership: strerror internal\n");
     scratch::expect_contains("strchr points into argument 1", run.out, "smith-ownership: strchr borrowed:1\n");

@@ -155,11 +155,11 @@ static Run run_in(const Project *p, const char *command) {
 
 static const char *path_in(const Project *p, const char *name) {
     if (p->io == nullptr) return join_free(p->dir, "/", name); // the caller frees
-    return format::push(&p->io->arena, p->dir, "/", name).data;
+    return format::push(p->dir, "/", name).data;
 }
 
-static const char *join(io::Io *io, const char *folder, const char *name) {
-    return format::push(&io->arena, folder, "/", name).data;
+static const char *join(const char *folder, const char *name) {
+    return format::push(folder, "/", name).data;
 }
 
 constexpr usize copy_folders_max = 4096;
@@ -200,7 +200,7 @@ export void copy_tree(const Project *p, const char *source, const char *name) {
         return;
     }
     const char *repo = io::args_env(&p->io->args, "SMITH_REPO");
-    const char *from = format::push(&p->io->arena, repo != nullptr ? repo : ".", "/", source).data;
+    const char *from = format::push(repo != nullptr ? repo : ".", "/", source).data;
     const char *to = name[0] == '\0' ? p->dir : path_in(p, name);
     io::FileInfo info = io::files_info(&p->io->files, from);
     if (info.error.code != 0) {
@@ -224,8 +224,8 @@ export void copy_tree(const Project *p, const char *source, const char *name) {
         io::FileList list = io::files_list(&p->io->files, &p->io->arena, copy_from[head]);
         test::check_equal(list.error.code, 0);
         for (usize i = 0; i < list.count; i++) {
-            const char *entry_from = join(p->io, copy_from[head], list.entries[i].name);
-            const char *entry_to = join(p->io, copy_to[head], list.entries[i].name);
+            const char *entry_from = join(copy_from[head], list.entries[i].name);
+            const char *entry_to = join(copy_to[head], list.entries[i].name);
             if (!list.entries[i].folder || list.entries[i].link) { // a link stays a link
                 copy_file(p, entry_from, entry_to);
                 continue;
@@ -242,8 +242,7 @@ export void copy_tree(const Project *p, const char *source, const char *name) {
 // not there.
 export const char *repo_text(io::Io *io, const char *path) {
     const char *repo = io::args_env(&io->args, "SMITH_REPO");
-    io::Read file =
-        io::files_read(&io->files, &io->arena, format::push(&io->arena, repo != nullptr ? repo : ".", "/", path).data);
+    io::Read file = io::files_read(&io->files, &io->arena, format::push(repo != nullptr ? repo : ".", "/", path).data);
     if (file.error.code != 0) {
         test::note("%s is not in the repository", path);
     }
@@ -255,11 +254,11 @@ export const char *repo_text(io::Io *io, const char *path) {
 export const char *repo_names(io::Io *io, const char *path) {
     const char *repo = io::args_env(&io->args, "SMITH_REPO");
     io::FileList list =
-        io::files_list(&io->files, &io->arena, format::push(&io->arena, repo != nullptr ? repo : ".", "/", path).data);
+        io::files_list(&io->files, &io->arena, format::push(repo != nullptr ? repo : ".", "/", path).data);
     test::check_equal(list.error.code, 0);
     const char *names = "";
     for (usize i = 0; i < list.count; i++)
-        names = format::push(&io->arena, names, list.entries[i].name, "\n").data;
+        names = format::push(names, list.entries[i].name, "\n").data;
     return names;
 }
 
@@ -283,7 +282,7 @@ export bool repo_has(io::Io *io, const char *path) {
     while (slash > 0 && path[slash - 1] != '/')
         slash--;
     const char *name = piece(io, path, slash, length);
-    const char *parent = slash == 0 ? base : format::push(&io->arena, base, "/", piece(io, path, 0, slash - 1)).data;
+    const char *parent = slash == 0 ? base : format::push(base, "/", piece(io, path, 0, slash - 1)).data;
     io::FileList list = io::files_list(&io->files, &io->arena, parent);
     for (usize i = 0; list.error.code == 0 && i < list.count; i++)
         if (c::strcmp(list.entries[i].name, name) == 0) return true;
@@ -303,8 +302,8 @@ export const char *untested_names(io::Io *io, const char *folder, const char *te
                                   const char *suffix_a, const char *suffix_b) {
     const char *source = repo_text(io, test_source);
     const char *repo = io::args_env(&io->args, "SMITH_REPO");
-    io::FileList list = io::files_list(&io->files, &io->arena,
-                                       format::push(&io->arena, repo != nullptr ? repo : ".", "/", folder).data);
+    io::FileList list =
+        io::files_list(&io->files, &io->arena, format::push(repo != nullptr ? repo : ".", "/", folder).data);
     test::check_equal(list.error.code, 0);
     const char *missing = "";
     for (usize i = 0; i < list.count; i++) {
@@ -312,8 +311,8 @@ export const char *untested_names(io::Io *io, const char *folder, const char *te
         bool wanted = (suffix_a == nullptr && suffix_b == nullptr) ||
                       (suffix_a != nullptr && ends_with(name, suffix_a)) ||
                       (suffix_b != nullptr && ends_with(name, suffix_b));
-        if (wanted && c::strstr(source, format::push(&io->arena, call, "\"", name, "\")").data) == nullptr) {
-            missing = format::push(&io->arena, missing, name, "\n").data;
+        if (wanted && c::strstr(source, format::push(call, "\"", name, "\")").data) == nullptr) {
+            missing = format::push(missing, name, "\n").data;
         }
     }
     return missing;
@@ -380,7 +379,7 @@ export const char *untested_names_free(const char *folder, const char *test_sour
 // clang, as macOS's is; on Linux, where it is GCC, that folder has a `cc` that runs the smith-cc under test.
 export Project project(io::Io *io, const char *name, const char *fixture) {
     const char *scratch = test::scratch(io);
-    Project p = {.io = io, .dir = join(io, scratch, name), .tested = join(io, scratch, "tested"), .cache = ""};
+    Project p = {.io = io, .dir = join(scratch, name), .tested = join(scratch, "tested"), .cache = ""};
     const char *argv[_] = {"sh", "-c", setup_script, scratch, p.dir, nullptr};
     io::ProcessResult made = io::processes_run(&io->processes, &io->arena, argv);
     if (made.exit_status != 0) {
@@ -388,7 +387,7 @@ export Project project(io::Io *io, const char *name, const char *fixture) {
     }
     test::check_equal(made.exit_status, 0);
     if (fixture != nullptr) {
-        copy_tree(&p, format::push(&io->arena, "tests/build_fixtures/", fixture).data, "");
+        copy_tree(&p, format::push("tests/build_fixtures/", fixture).data, "");
     }
     return p;
 }
@@ -439,7 +438,7 @@ export void own_cache(Project *p) {
         p->cache = join_free(p->root, "/", "xdg-cache"); // clean frees it
         return;
     }
-    p->cache = join(p->io, test::scratch(p->io), "xdg-cache");
+    p->cache = join(test::scratch(p->io), "xdg-cache");
 }
 
 // Runs a shell command in the project: `smith build -v`, `./build/app`, `cp a b`. `smith` is the smith under test.
@@ -455,7 +454,7 @@ export Run build(const Project *p, const char *arguments) {
         release(command);
         return run;
     }
-    return run_in(p, format::push(&p->io->arena, "smith build ", arguments).data);
+    return run_in(p, format::push("smith build ", arguments).data);
 }
 
 export void write(const Project *p, const char *name, const char *text) {
@@ -514,7 +513,7 @@ static void open_source(const Project *p, const char *folder, const char *source
         if (file == .ok && file.ok.data != nullptr) mem::free(file.ok.data);
         return;
     }
-    io::Read file = io::files_read(&p->io->files, &p->io->arena, format::push(&p->io->arena, folder, "/", source).data);
+    io::Read file = io::files_read(&p->io->files, &p->io->arena, format::push(folder, "/", source).data);
     test::check_equal(file.error.code, 0);
 }
 
@@ -566,8 +565,7 @@ export void write_header(const Project *p, const char *module) {
         release(name);
         return;
     }
-    header_to(p, p->dir, format::push(&p->io->arena, module, ".smith").data,
-              format::push(&p->io->arena, "include/", module, ".h").data);
+    header_to(p, p->dir, format::push(module, ".smith").data, format::push("include/", module, ".h").data);
 }
 
 // The same for `$SMITH_REPO/<source>`, written to `name` in the project.
