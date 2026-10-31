@@ -47,10 +47,10 @@ main_show_float(__extension__({extern struct smith_enum_option_f64 main_maybe_tw
 return 0;
 }
 extern struct smith_enum_result_usize__i32 main_twice__usize(__SIZE_TYPE__ x,__INT32_TYPE__ n)__asm__("_main::twice(__SIZE_TYPE__)");
-[[gnu::weak]][[gnu::visibility("hidden")]]struct smith_enum_result_usize__i32 main_twice__usize(__SIZE_TYPE__ x,__INT32_TYPE__ n){errdefer puts("  errdefer twice");if(n==0)return{.error=100};__INT32_TYPE__ v=try main_step(n);return{.ok=x+(__SIZE_TYPE__)v};}
+[[gnu::weak]][[gnu::visibility("hidden")]]struct smith_enum_result_usize__i32 main_twice__usize(__SIZE_TYPE__ x,__INT32_TYPE__ n){errdefer puts("  errdefer twice");if(n==0)return(struct smith_enum_result_usize__i32){.tag=smith_enum_result_usize__i32_tag_error,.error=100};__INT32_TYPE__ v=try main_step(n);return(struct smith_enum_result_usize__i32){.tag=smith_enum_result_usize__i32_tag_ok,.ok=x+(__SIZE_TYPE__)v};}
 extern struct smith_enum_result_f64__i32 main_twice__f64(double x,__INT32_TYPE__ n)__asm__("_main::twice(double)");
-[[gnu::weak]][[gnu::visibility("hidden")]]struct smith_enum_result_f64__i32 main_twice__f64(double x,__INT32_TYPE__ n){errdefer puts("  errdefer twice");if(n==0)return{.error=100};__INT32_TYPE__ v=try main_step(n);return{.ok=x+(double)v};}
+[[gnu::weak]][[gnu::visibility("hidden")]]struct smith_enum_result_f64__i32 main_twice__f64(double x,__INT32_TYPE__ n){errdefer puts("  errdefer twice");if(n==0)return(struct smith_enum_result_f64__i32){.tag=smith_enum_result_f64__i32_tag_error,.error=100};__INT32_TYPE__ v=try main_step(n);return(struct smith_enum_result_f64__i32){.tag=smith_enum_result_f64__i32_tag_ok,.ok=x+(double)v};}
 extern struct smith_enum_option_u8 main_maybe_twice__u8(__UINT8_TYPE__ x,__INT32_TYPE__ n)__asm__("_main::maybe_twice(__UINT8_TYPE__)");
-[[gnu::weak]][[gnu::visibility("hidden")]]struct smith_enum_option_u8 main_maybe_twice__u8(__UINT8_TYPE__ x,__INT32_TYPE__ n){errdefer puts("  errdefer maybe_twice");__INT32_TYPE__ v=try main_pick(n);return{.some=x+(__UINT8_TYPE__)v};}
+[[gnu::weak]][[gnu::visibility("hidden")]]struct smith_enum_option_u8 main_maybe_twice__u8(__UINT8_TYPE__ x,__INT32_TYPE__ n){errdefer puts("  errdefer maybe_twice");__INT32_TYPE__ v=try main_pick(n);return(struct smith_enum_option_u8){.tag=smith_enum_option_u8_tag_some,.some=x+(__UINT8_TYPE__)v};}
 extern struct smith_enum_option_f64 main_maybe_twice__f64(double x,__INT32_TYPE__ n)__asm__("_main::maybe_twice(double)");
-[[gnu::weak]][[gnu::visibility("hidden")]]struct smith_enum_option_f64 main_maybe_twice__f64(double x,__INT32_TYPE__ n){errdefer puts("  errdefer maybe_twice");__INT32_TYPE__ v=try main_pick(n);return{.some=x+(double)v};}
+[[gnu::weak]][[gnu::visibility("hidden")]]struct smith_enum_option_f64 main_maybe_twice__f64(double x,__INT32_TYPE__ n){errdefer puts("  errdefer maybe_twice");__INT32_TYPE__ v=try main_pick(n);return(struct smith_enum_option_f64){.tag=smith_enum_option_f64_tag_some,.some=x+(double)v};}

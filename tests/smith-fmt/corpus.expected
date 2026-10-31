@@ -1081,6 +1081,31 @@ i32 main() {
     if (h == .error) c::printf("error %d\n", h.error);
     return 0;
 }
+==> enum-generic-import-in-function/src/lists.smith <==
+module lists;
+
+export option(T) first(constexpr type T, T *p, usize n) {
+    if (n == 0) {
+        return .none;
+    }
+    return {.some = p[0]};
+}
+==> enum-generic-import-in-function/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import lists;
+
+static i32 get(i32 *p, usize n) {
+    option(i32) r = lists::first(i32, p, n);
+    return r == .some ? r.some : -1;
+}
+
+i32 main(void) {
+    i32 xs[2] = {7, 8};
+    c::printf("%d %d\n", get(&xs[0], 2), get(&xs[0], 0));
+    return 0;
+}
 ==> enum-generic-return/src/find.smith <==
 module find;
 
