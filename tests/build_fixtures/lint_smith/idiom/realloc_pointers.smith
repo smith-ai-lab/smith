@@ -7,14 +7,15 @@ struct Node {
 };
 
 typedef Node *NodeRef;
+typedef NodeRef NodeList[:];
 
 // A list of pointers grown through the typed function (#1178): no cast to void * is written at the call.
-NodeRef grow(NodeRef xs[:], usize n) {
+NodeList grow(NodeList xs, usize n) {
     return mem::realloc(xs, n);
 }
 
 i32 main() {
-    NodeRef xs[:] = {};
+    NodeList xs = {};
     xs = grow(xs, 4);
     return (i32)countof(xs);
 }
