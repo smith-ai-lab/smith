@@ -94,7 +94,7 @@ u32 helper(void) { … }                              // private
 - **Imports** work in any `.smith` file and come before any declaration (`#include` stays allowed anywhere).
   - `import a::b::c;` binds `c`; `import a::b::c as x;` binds `x`. Members are reached with `::`: `x::open`,
     `x::Replay`, `struct x::Pair`. `x::` is always a module and `x.` always a value, so a variable may share its
-    module's name (`io::Io io = io::make();`): `io` is a binding only where `::` follows it, and never inside an
+    module's name (`arena::Arena arena = arena::growing(1 << 20, nullptr);`): `io` is a binding only where `::` follows it, and never inside an
     attribute (`[[gnu::unused]]`). This needs C23, which lexes `::` as one token.
   - `import <h>;` and `import "h";` include a header and bind `c`: `c::sinf(x)`, `c::EOF`, `c::WIFEXITED(s)`,
     `struct c::stat`. A quoted header is looked for beside the importing file first. An import always puts the
