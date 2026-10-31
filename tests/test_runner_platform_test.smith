@@ -80,3 +80,23 @@ export void test_runner_platform_a_filter_of_only_the_other_half_runs_nothing_an
     scratch::expect_status("platform: a filter that matches no test is still an error", 1, &none);
     scratch::expect_contains("platform: ... and says so", none.out, "no test matches \"nothing_like_this\"");
 }
+
+// `--partial` (#1154): the front runner is one of several runners that `smith test --changed` gives the same `--test`
+// list, so a list with none of its tests runs nothing and passes; without `--partial` the same list is an error.
+export void test_runner_partial_a_filter_of_another_runner_runs_nothing_and_passes() {
+    scratch::Project p = runner::built_project("runner_base", "runner_platform", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run other = runner::tests(&p, "", "--partial --test belongs_to_another_runner");
+    scratch::expect_status("partial: a filter that names none of this runner's tests: exit 0", 0, &other);
+    scratch::expect_contains("partial: ... and says so", other.out,
+                             "no test of this runner matches \"belongs_to_another_runner\": nothing to run");
+    scratch::Run chosen = runner::tests(&p, "", "--partial --test plain_1");
+    scratch::expect_contains("partial: a filter that names one of its tests runs it", chosen.out, "1 passed, 0 failed");
+    scratch::Run strict = runner::tests(&p, "", "--test belongs_to_another_runner");
+    scratch::expect_status("partial: without --partial the same filter is still an error", 1, &strict);
+    scratch::expect_contains("partial: ... and says so", strict.out, "no test matches \"belongs_to_another_runner\"");
+}
