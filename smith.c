@@ -496,7 +496,7 @@ static size_t smith_resource_write(const char *root, size_t offset) {
     int written = snprintf(path, sizeof path, "%s/%.*s", root, (int)file.path_length,
                            (const char *)smith_clang_resource + offset);
     SMITH_ASSERT(written > 0 && (size_t)written < sizeof path);
-    SMITH_ASSERT(strstr(path, "/../") == nullptr);
+    SMITH_ASSERT(strstr(path + strlen(root), "/../") == nullptr); // the pack's own part; the root may hold ".."
     offset += file.path_length;
     const unsigned char *data = smith_clang_resource + offset;
     if (file.stored == file.size) {
