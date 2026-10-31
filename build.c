@@ -975,35 +975,13 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
                           smith_cat(b, flags, smith_list(b, "-I", "runtime/protocol", nullptr), nullptr));
 }
 
-// One task per test script of tests/, `test-<task>`, each one of smith's tests, so `smith test` runs them side by
-// side. The scripts are independent: each works in a folder of its own (mktemp) and with caches of its own
-// (XDG_CACHE_HOME, and XDG_DATA_HOME where it starts compilers), and the one folder they may share, where a smith
-// writes the clang files and its programs on first use, is written by rename. `run` is the routing tests with stub
-// compilers (no clang or Xcode needed); the others use real ninja, clang and git. A script that takes long is several
-// rows, one per shard. Add a script by adding a row, in order.
-// `prove` starts with the others: a proof's budget is CPU time (counted as on 8 idle cores), so what else runs changes
-// how long it takes, never whether it passes.
-typedef struct {
-    const char *task;
-    const char *script;
-    const char *mode; // the script's second argument, or nullptr
-    int phase;        // 0 is a short task, 1 a long one (all start at once)
-} BuildTestScript;
-
-// clang-format off
-static const BuildTestScript build_test_scripts[] = {
-};
-// clang-format on
-
-constexpr size_t build_test_script_count = sizeof build_test_scripts / sizeof build_test_scripts[0];
-
 // smith's own tests of behavior, in `.smith` on its test runner (issue #31): every `*_test.smith` (beside the library
 // it tests in `lib/`, or in `tests/`) linked into one runner, built once under AddressSanitizer and UBSan, whose
 // workers run the tests in process, one per core, where a script starts smith for each case. It is a project of its own
 // (tests/units/build.c, in `<folder>/units-project`, whose `tests` and `lib` are links to ours) built and run by the
 // smith under test, so the libraries and headers it compiles against are that smith's, whatever smith runs this
-// build.c: adding a library needs no two-step install. `units-build` builds the runner (scripts that use it wait for
-// that), `test-units` runs it with `smith test`. Needs a smith that compiles
+// build.c: adding a library needs no two-step install. `units-build` builds the runner, `test-units` runs it with
+// `smith test`. Needs a smith that compiles
 // `.smith` (the stage0 has none). A test that needs a build or a process of its own (a stop, a sanitizer's catch) stays
 // in its script. Returns the runner's path.
 static const char *build_units(SmithBuild *b, const BuildConfig *config, const char *binary, const char *folder) {
@@ -1076,33 +1054,13 @@ static int build_prove_sound_full(SmithRun *run) {
     return smith_run_program(run, argv, environment);
 }
 
-// The task of every script, each one of smith's tests (`smith test` runs them); returns the list, which the install
-// waits for. Each script runs with SMITH_OUTPUT=full, what `smith check` and `smith test` set beneath them (#78): the
-// scripts read the full output of the smith under test, so `smith build install` (which sets nothing) runs the same
-// tests as `smith check`. The quiet form is tested with the variable unset (tests/run_routing_test.smith).
+// The tests of smith (`smith test` runs them): the units runner's `test-units`; returns the list, which the install
+// waits for. The runner's steps get SMITH_OUTPUT=full from `smith check` and `smith test` beneath them (#78), so
+// `smith build install` (which sets nothing) runs the same tests as `smith check`. The quiet form is tested with the
+// variable unset (tests/run_routing_test.smith).
 static const char *const *build_test(SmithBuild *b, const BuildConfig *config, const char *binary, const char *folder) {
     const char *units = config->hook ? build_units(b, config, binary, folder) : "";
-    const char *names[build_test_script_count + 1];
-    for (size_t i = 0; i < build_test_script_count; i++)
-        names[i] = smith_fmt(b, "test-%s", build_test_scripts[i].task);
-    for (size_t i = 0; i < build_test_script_count; i++) {
-        const BuildTestScript *row = &build_test_scripts[i];
-        const char *mode = row->mode != nullptr ? row->mode : "";
-        SmithStep step = {
-            .command = smith_cat(b,
-                                 smith_list(b, "env", smith_fmt(b, "CC=%s", config->cc),
-                                            smith_fmt(b, "UNITS=%s", units), "SMITH_OUTPUT=full", "sh",
-                                            smith_fmt(b, "tests/%s.sh", row->script), binary, nullptr),
-                                 smith_when(b, row->mode != nullptr, smith_list(b, row->mode, nullptr)), nullptr),
-            .description = smith_fmt(b, "tests/%s.sh %s", row->script, mode),
-            .inputs = (const char *[]){binary, nullptr},
-            .test = true,
-        };
-        smith_task(b, names[i], &step);
-    }
-    names[build_test_script_count] = nullptr;
-    const char *const *tasks =
-        smith_cat(b, names, smith_when(b, units[0] != '\0', smith_list(b, "test-units", nullptr)), nullptr);
+    const char *const *tasks = smith_when(b, units[0] != '\0', smith_list(b, "test-units", nullptr));
     // Every float through the parser, against strtof: minutes on all cores, so it is not part of `test`.
     SmithStep exhaustive = {
         .command =
