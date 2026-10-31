@@ -2356,9 +2356,10 @@ void smith_object(SmithBuild *b, SmithObject *object) {
     const char *const *proved_inputs = nullptr;
     const char *const *proved_flags = smith_proved_flags(b, &copy, &proved_inputs);
     copy.step = (SmithStep){
-        .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source),
-                             smith_lang_flags(b, copy.source), copy.flags, proved_flags,
-                             smith_library_flags(b, copy.source), smith_module_flags(b, copy.source, copy.flags), tail, nullptr),
+        .command =
+            smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source), smith_lang_flags(b, copy.source),
+                      copy.flags, proved_flags, smith_library_flags(b, copy.source),
+                      smith_module_flags(b, copy.source, copy.flags), tail, nullptr),
         .inputs = smith_one(copy.source),
         .implicit_inputs =
             smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)), proved_inputs, nullptr),
@@ -2749,9 +2750,9 @@ void smith_compile_command(SmithBuild *b, const char *compiler, const char *sour
     if (smith_command_row_count >= smith_objects_max) smith_too_many("compile commands", smith_objects_max);
     const char *copy = smith_copy_string(source);
     const char *const tail[] = {"-c", copy, nullptr};
-    const char *const *arguments =
-        smith_cat(b, smith_one(smith_copy_string(compiler)), smith_modules_for(b, copy), smith_lang_flags(b, copy),
-                  smith_copy_list(flags), smith_library_flags(b, copy), smith_module_flags(b, copy, flags), tail, nullptr);
+    const char *const *arguments = smith_cat(
+        b, smith_one(smith_copy_string(compiler)), smith_modules_for(b, copy), smith_lang_flags(b, copy),
+        smith_copy_list(flags), smith_library_flags(b, copy), smith_module_flags(b, copy, flags), tail, nullptr);
     smith_command_rows[smith_command_row_count++] = (SmithCommandRow){copy, arguments, nullptr};
 }
 
@@ -4183,8 +4184,10 @@ static const char *const *smith_module_arithmetic(SmithBuild *b, const char *sou
 
 static const char *const *smith_module_flags(SmithBuild *b, const char *source, const char *const *flags) {
     if (!smith_is_module_source(source)) return smith_list(b, nullptr);
-    return smith_cat(b, smith_module_arithmetic(b, source, flags), smith_module_prefixed(b, smith_module_baseline, "-Werror=",
-                                 smith_module_prefixed(b, smith_app_state.defaults.errors, "-Werror=", nullptr)),
+    return smith_cat(b, smith_module_arithmetic(b, source, flags),
+                     smith_module_prefixed(
+                         b, smith_module_baseline,
+                         "-Werror=", smith_module_prefixed(b, smith_app_state.defaults.errors, "-Werror=", nullptr)),
                      nullptr);
 }
 
