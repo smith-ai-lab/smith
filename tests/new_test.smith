@@ -117,7 +117,7 @@ export void test_new_hello_a_smith_project_is_written_and_committed() {
     scratch::expect_status("new hello: exits 0", 0, &created);
     expect_the_written_files(&p);
     scratch::expect_contains("new hello: primes.smith names the program", scratch::read(&p, "hello/primes.smith"),
-                             "io::console_print(console, \"hello from hello\\n\");");
+                             "console::print(\"hello from hello\\n\");");
     scratch::expect_text(
         "new hello: no placeholder is left", "",
         scratch::capture(

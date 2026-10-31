@@ -2,7 +2,7 @@
 module primes;
 
 import smith::contract;
-import smith::io;
+import smith::console;
 
 // The sum of the first `count` primes, which is at most five. A precondition is `requires` and a promise is `ensures`:
 // `smith prove` proves the promise from the precondition, and every caller must meet the precondition.
@@ -27,9 +27,9 @@ export i32 total(i32 xs[:]) {
     return sum;
 }
 
-// A function takes only the capability it uses, so its signature says what it can do to the world.
-// smith lint (smith-effects) reports a call like c::printf anywhere but in a capability's own module.
-export void report(io::Console *console, i32 sum) {
-    (void)io::console_printf(console, "the first 5 primes add up to %d\n", sum);
-    (void)io::console_print(console, "hello from @NAME@\n");
+// console::print takes typed pieces, as format::to does. It is called directly: what a function touches is inferred
+// from what it calls, and a test stands in for the console with a handler (console::set_handler).
+export void report(i32 sum) {
+    (void)console::print("the first 5 primes add up to ", sum, "\n");
+    (void)console::print("hello from @NAME@\n");
 }
