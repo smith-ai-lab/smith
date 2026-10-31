@@ -135,6 +135,10 @@ static void smith_lang_brackets_empty(SmithLang *lang, const SmithHost *host, co
         lang->decl.in_params) {
         return;
     }
+    if (smith_lang_capturing(lang)) { // `[](...) {...}` in the arguments of a generic's call: a lambda (#957)
+        const SmithToken *after = smith_lang_peek(lang, host, 0, false);
+        if (smith_lang_punct(after, "(") || smith_lang_punct(after, "{") || smith_lang_punct(after, "->")) return;
+    }
     bool literal = false;
     bool declared_extern = smith_lang_brackets_extern_seen;
     const char *message =

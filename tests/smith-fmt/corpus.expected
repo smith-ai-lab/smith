@@ -3031,6 +3031,26 @@ i32 main() {
     Call call = scaled(i32, 3);
     return call();
 }
+==> error-lambda-param-count/src/main.smith <==
+module main;
+
+i32 apply(lambda(i32(i32)) f, i32 x) {
+    return f(x);
+}
+
+i32 main() {
+    return apply([](i32 a, i32 b) -> i32 { return a + b; }, 4);
+}
+==> error-lambda-param-untyped/src/main.smith <==
+module main;
+
+i32 apply(lambda(i32(i32)) f, i32 x) {
+    return f(x);
+}
+
+i32 main() {
+    return apply([](a) -> i32 { return a; }, 4);
+}
 ==> error-lambda-returns-disagree/src/main.smith <==
 module main;
 
@@ -3040,6 +3060,16 @@ i32 main() {
         return 1.5;
     };
     return (i32)pick(1);
+}
+==> error-lambda-wrong-signature/src/main.smith <==
+module main;
+
+i32 apply(lambda(i32(i32)) f, i32 x) {
+    return f(x);
+}
+
+i32 main() {
+    return apply([](f64 a) -> i32 { return 0; }, 4);
 }
 ==> error-main-io-make/src/main.smith <==
 import smith::io;
@@ -9293,6 +9323,69 @@ i32 main() {
     void (*hello)() = [] { c::printf("hello\n"); };
     hello();
     c::printf("%d\n", seven());
+    return 0;
+}
+==> lambda-param-element/src/main.smith <==
+module main;
+
+import order;
+
+i32 main() {
+    i32 ints[4] = {3, 1, 2, 5};
+    i32 a[:] = ints;
+    f64 reals[3] = {0.5, 1.5, 1.0};
+    f64 b[:] = reals;
+    order::adjacent(a, [](arithmetic *x, arithmetic *y) -> bool { return *x < *y; });
+    order::adjacent(a, [](auto x, auto y) -> bool { return *x > *y; });
+    order::adjacent(b, [](arithmetic *x, arithmetic *y) -> bool { return *x < *y; });
+    return 0;
+}
+==> lambda-param-element/src/order.smith <==
+module order;
+
+import <stdio.h>;
+
+// F names the element type of the argument before it: the signature depends on the arguments.
+export void adjacent(auto xs[:], lambda(bool(typeof(xs[0]) *, typeof(xs[0]) *)) less) {
+    for (usize i = 0; i + 1 < countof(xs); i++)
+        c::printf("%d ", less(&xs[i], &xs[i + 1]) ? 1 : 0);
+    c::printf("\n");
+}
+==> lambda-param-two/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+i32 twice_call(lambda(i32(i32)) f, i32 x) {
+    return f(f(x));
+}
+
+i32 main() {
+    // two different lambdas are two instances, the same lambda written twice is one
+    c::printf("%d\n", twice_call([](i32 a) -> i32 { return a + 1; }, 1));
+    c::printf("%d\n", twice_call([](i32 a) -> i32 { return a * 3; }, 1));
+    c::printf("%d\n", twice_call([](i32 a) -> i32 { return a + 1; }, 10));
+    return 0;
+}
+==> lambda-param/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+static i32 triple(i32 x) {
+    return x * 3;
+}
+
+// `lambda(F)` takes a lambda or a plain function: one instance for each, and the call of `f` is a direct call.
+i32 apply(lambda(i32(i32)) f, i32 x) {
+    return f(x) + 1;
+}
+
+i32 main() {
+    c::printf("%d\n", apply([](i32 a) -> i32 { return a * 2; }, 4));
+    c::printf("%d\n", apply([](auto a) { return a * 5; }, 4));
+    c::printf("%d\n", apply([](arithmetic a) { return a + 1; }, 4));
+    c::printf("%d\n", apply(triple, 4));
     return 0;
 }
 ==> lambda-plain/src/main.smith <==

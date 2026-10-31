@@ -490,3 +490,312 @@ static bool smith_lang_nested_write(SmithLang *lang, const SmithHost *host, Smit
     }
     return true;
 }
+
+// ---- A lambda passed to a `lambda(F)` parameter (issue #957)
+// -----------------------------------------------------------------------------------------------------------
+//
+//   export void sort(auto xs[:], lambda(bool (typeof(xs[0]) *, typeof(xs[0]) *)) less);
+//   sort(xs, [](arithmetic *a, arithmetic *b) -> bool { return *a < *b; });
+//
+// The slot is a `constexpr auto` one: the lambda's tokens are the argument, so two lambdas that differ are two
+// instances. The instance writes the lambda as a function before itself, `static R <instance>__arg<slot>(P) {...}`,
+// with the types of the parameters written `auto` or as a concept taken from F (replayed with the instance's types)
+// and the return type from `-> R`, else from F; a `_Static_assert` says F by name when the function's type is not F.
+// A call of the parameter in the body is the function's name.
+
+constexpr size_t smith_lang_argl_max = 8;
+
+typedef struct {
+    uint32_t params_from, params_to; // the tokens between the parentheses
+    bool has_type;
+    uint32_t type_from, type_to; // `-> R`: the tokens of R
+    uint32_t body_from, body_to; // the `{` and the `}`
+} SmithLangArgl;
+
+typedef struct {
+    uint32_t ret_from, ret_to; // the tokens of F before its parameters
+    size_t count;
+    uint32_t from[smith_lang_argl_max], to[smith_lang_argl_max]; // each parameter's tokens
+} SmithLangArglF;
+
+static bool smith_lang_argl_is(const SmithLangPool *pool, const SmithLangGenToken *token, SmithTokenKind kind,
+                               const char *literal) {
+    return token->kind == kind && token->special == SmithLangGen_Plain &&
+           smith_lang_equals(smith_lang_pool_text(pool, token), token->length, literal);
+}
+
+static bool smith_lang_argl_punct(const SmithLangPool *pool, uint32_t at, const char *literal) {
+    return smith_lang_argl_is(pool, &pool->tokens[at], SmithTokenKind_Punctuator, literal);
+}
+
+// The token that closes the bracket opened at `open`, below `limit` (UINT32_MAX when none).
+static uint32_t smith_lang_argl_match(const SmithLangPool *pool, uint32_t open, uint32_t limit, const char *opener,
+                                      const char *closer) {
+    int depth = 0;
+    for (uint32_t at = open; at < limit; at++) { // bounded by the lambda
+        depth += smith_lang_argl_punct(pool, at, opener) ? 1 : 0;
+        depth -= smith_lang_argl_punct(pool, at, closer) ? 1 : 0;
+        if (depth == 0) return at;
+    }
+    return UINT32_MAX;
+}
+
+// The parts of the lambda `[](P) -> R { body }` that is exactly [from, to) of the pool.
+static bool smith_lang_argl_parse(const SmithLangPool *pool, uint32_t from, uint32_t to, SmithLangArgl *out) {
+    if (to < from + 4 || !smith_lang_argl_punct(pool, from, "[") || !smith_lang_argl_punct(pool, from + 1, "]"))
+        return false;
+    SmithLangArgl found = {.params_from = from + 2, .params_to = from + 2};
+    uint32_t at = from + 2;
+    if (smith_lang_argl_punct(pool, at, "(")) {
+        uint32_t close = smith_lang_argl_match(pool, at, to, "(", ")");
+        if (close == UINT32_MAX) return false;
+        found.params_from = at + 1;
+        found.params_to = close;
+        at = close + 1;
+    }
+    if (at < to && smith_lang_argl_punct(pool, at, "->")) {
+        found.has_type = true;
+        found.type_from = at + 1;
+        for (at = at + 1; at < to && !smith_lang_argl_punct(pool, at, "{"); at++) {
+        }
+        found.type_to = at;
+    }
+    if (at >= to || !smith_lang_argl_punct(pool, at, "{")) return false;
+    uint32_t close = smith_lang_argl_match(pool, at, to, "{", "}");
+    if (close != to - 1) return false;
+    found.body_from = at;
+    found.body_to = close;
+    *out = found;
+    return true;
+}
+
+// The declarations in [from, to) of the pool, split at the commas outside brackets: how many (SIZE_MAX: too many; a
+// lone `void` is none).
+static size_t smith_lang_argl_split_list(const SmithLangPool *pool, uint32_t from, uint32_t to,
+                                         uint32_t starts[smith_lang_argl_max], uint32_t ends[smith_lang_argl_max]) {
+    if (to == from ||
+        (to == from + 1 && smith_lang_argl_is(pool, &pool->tokens[from], SmithTokenKind_Identifier, "void")))
+        return 0;
+    size_t count = 0;
+    int depth = 0;
+    uint32_t start = from;
+    for (uint32_t at = from; at <= to; at++) { // bounded by the list
+        bool end = at == to;
+        if (!end) {
+            const SmithLangGenToken *token = &pool->tokens[at];
+            if (token->special == SmithLangGen_Plain && token->kind == SmithTokenKind_Punctuator &&
+                token->length == 1) {
+                char c = smith_lang_pool_text(pool, token)[0];
+                depth += (c == '(' || c == '[' || c == '{') ? 1 : (c == ')' || c == ']' || c == '}') ? -1 : 0;
+            }
+        }
+        if (!end && !(depth == 0 && smith_lang_argl_punct(pool, at, ","))) continue;
+        if (count >= smith_lang_argl_max) return SIZE_MAX;
+        starts[count] = start;
+        ends[count++] = at;
+        start = at + 1;
+    }
+    return count;
+}
+
+// F = `R (P0, P1)` at [from, to) of the generic's tokens.
+static bool smith_lang_argl_f_split(uint32_t from, uint32_t to, SmithLangArglF *out) {
+    if (to < from + 3 || !smith_lang_argl_punct(&smith_lang_gt, to - 1, ")")) return false;
+    int depth = 0;
+    uint32_t open = UINT32_MAX;
+    for (uint32_t at = to; at > from; at--) { // back from the last `)` to its `(`
+        depth += smith_lang_argl_punct(&smith_lang_gt, at - 1, ")") ? 1 : 0;
+        depth -= smith_lang_argl_punct(&smith_lang_gt, at - 1, "(") ? 1 : 0;
+        if (depth == 0) {
+            open = at - 1;
+            break;
+        }
+    }
+    if (open == UINT32_MAX || open == from) return false;
+    out->ret_from = from;
+    out->ret_to = open;
+    out->count = smith_lang_argl_split_list(&smith_lang_gt, open + 1, to - 1, out->from, out->to);
+    return out->count != SIZE_MAX;
+}
+
+// The tokens [*from, *to) of F in `lambda(F) name`, the parameter of slot `slot`: false when it is no such parameter.
+static bool smith_lang_argl_slot(const SmithLangGeneric *generic, size_t slot, uint32_t *from, uint32_t *to) {
+    if (slot >= generic->type_count || generic->type_kind[slot] != SmithLangSlot_Function) return false;
+    SmithLangParam params[smith_lang_call_params_max];
+    size_t count = smith_lang_generic_params(generic, params, smith_lang_call_params_max);
+    size_t at = generic->type_position[slot];
+    if (count == SIZE_MAX || at >= count || !smith_lang_param_is_lambda(&params[at])) return false;
+    *from = params[at].start + 2;
+    *to = params[at].end - 2;
+    return true;
+}
+
+// Whether the declaration [from, to) of a lambda's parameter is `auto name` or `concept name` (stars between them:
+// `auto *name`): its type comes from F, less the stars.
+static bool smith_lang_argl_from_f(const SmithLangPool *pool, uint32_t from, uint32_t to) {
+    if (to < from + 2) return false;
+    for (uint32_t at = from + 1; at + 1 < to; at++) // the tokens between the type and the name
+        if (!smith_lang_argl_punct(pool, at, "*")) return false;
+    const SmithLangGenToken *type = &pool->tokens[from];
+    if (smith_lang_argl_is(pool, type, SmithTokenKind_Identifier, "auto")) return true;
+    for (size_t i = 0; i < sizeof smith_lang_concepts / sizeof smith_lang_concepts[0]; i++) { // 11 concepts
+        if (smith_lang_argl_is(pool, type, SmithTokenKind_Identifier, smith_lang_concepts[i])) return true;
+    }
+    return false;
+}
+
+// The lambda at `span` of a call: checked against F at the call. False after the error.
+static bool smith_lang_argl_check(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic, size_t slot,
+                                  SmithLangSpan span, uint32_t place) {
+    uint32_t fa = 0;
+    uint32_t fb = 0;
+    char shown[256];
+    smith_lang_argl_slot(generic, slot, &fa, &fb);
+    smith_lang_infer_written((SmithLangSpan){fa, fb}, shown, sizeof shown);
+    SmithLangArgl code;
+    SmithLangArglF f;
+    if (!smith_lang_argl_parse(&smith_lang_gt, span.start, span.end, &code)) {
+        smith_lang_error(lang, host, place,
+                         "the argument of `%s` is not a lambda: a lambda is `[](parameters) -> type { body }`",
+                         smith_lang_str(generic->member));
+        return false;
+    }
+    if (!smith_lang_argl_f_split(fa, fb, &f)) {
+        smith_lang_error(lang, host, place, "`lambda(%s)` of `%s` is not a function type: write `lambda(R (P0, P1))`",
+                         shown, smith_lang_str(generic->member));
+        return false;
+    }
+    uint32_t starts[smith_lang_argl_max];
+    uint32_t ends[smith_lang_argl_max];
+    size_t count = smith_lang_argl_split_list(&smith_lang_gt, code.params_from, code.params_to, starts, ends);
+    if (count != f.count) {
+        smith_lang_error(
+            lang, host, place, "the lambda passed to `%s` takes %zu parameter%s, but its type `lambda(%s)` has %zu",
+            smith_lang_str(generic->member), count == SIZE_MAX ? 0 : count, count == 1 ? "" : "s", shown, f.count);
+        return false;
+    }
+    for (size_t k = 0; k < count; k++) { // `[](a, b)` has no types to take from F
+        if (ends[k] - starts[k] >= 2) continue;
+        smith_lang_error(lang, host, place,
+                         "a parameter of the lambda passed to `%s` needs a type: write `auto %.*s` or a concept "
+                         "(`arithmetic %.*s`), whose type comes from `lambda(%s)`",
+                         smith_lang_str(generic->member), (int)smith_lang_gt.tokens[starts[k]].length,
+                         smith_lang_gt_str(&smith_lang_gt.tokens[starts[k]]),
+                         (int)smith_lang_gt.tokens[starts[k]].length,
+                         smith_lang_gt_str(&smith_lang_gt.tokens[starts[k]]), shown);
+        return false;
+    }
+    return true;
+}
+
+// The name of the function that stands for the argument of slot `slot` when it is a lambda.
+static void smith_lang_argl_name(const SmithLangInstance *instance, unsigned slot, char *out, size_t capacity) {
+    snprintf(out, capacity, "%s__arg%u", smith_lang_str(instance->cname), slot);
+}
+
+// The tokens [from, to) of the instance's pool, as they are.
+static void smith_lang_argl_copy(const SmithLangNestedWriter *w, uint32_t from, uint32_t to) {
+    for (uint32_t at = from; at < to; at++) { // the lambda's tokens
+        const SmithLangGenToken *token = &smith_lang_it.tokens[at];
+        if (token->special != SmithLangGen_Plain) continue;
+        smith_lang_gen_put_token(w->lang, w->host, &smith_lang_it, token, token->location, w->id, false);
+    }
+}
+
+// The tokens [from, to) of F, written for the instance as a head is (`typeof(xs[0])` is the slice's element).
+static void smith_lang_argl_run(const SmithLangNestedWriter *w, uint32_t from, uint32_t to) {
+    smith_lang_gen_put_run(w->lang, w->host, w->replay->generic, w->instance, from, to, w->location, w->id);
+}
+
+// One slot's function and the check of its type. Written at file scope before the instance.
+static void smith_lang_argl_write_one(const SmithLangNestedWriter *w, const SmithLangGeneric *generic, size_t slot,
+                                      uint32_t fa, uint32_t fb) {
+    const SmithLangInstance *instance = w->instance;
+    uint32_t first = instance->arg_first[slot];
+    uint32_t count = instance->arg_count[slot];
+    SmithLangArglF f;
+    if (!smith_lang_argl_f_split(fa, fb, &f)) return; // reported at the call
+    char name[smith_lang_name_max];
+    smith_lang_argl_name(instance, (unsigned)slot, name, sizeof name);
+    smith_lang_gen_note_break(w->lang);
+    const SmithLangGenToken *head = &smith_lang_it.tokens[first];
+    SmithLangArgl code;
+    bool is_lambda = count > 1 && smith_lang_argl_parse(&smith_lang_it, first, first + count, &code);
+    if (count == 1 &&
+        smith_lang_generic_of(w->lang, w->host, smith_lang_pool_text(&smith_lang_it, head), head->length) >= 0)
+        return; // a generic function: its calls make the instances
+    if (is_lambda) {
+        smith_lang_nested_say(w, SmithTokenKind_Identifier, "static");
+        if (code.has_type) {
+            smith_lang_argl_copy(w, code.type_from, code.type_to);
+        } else {
+            smith_lang_argl_run(w, f.ret_from, f.ret_to);
+        }
+        smith_lang_nested_say(w, SmithTokenKind_Identifier, name);
+        smith_lang_nested_say(w, SmithTokenKind_Punctuator, "(");
+        uint32_t starts[smith_lang_argl_max];
+        uint32_t ends[smith_lang_argl_max];
+        size_t params = smith_lang_argl_split_list(&smith_lang_it, code.params_from, code.params_to, starts, ends);
+        if (params == 0 || params == SIZE_MAX) smith_lang_nested_say(w, SmithTokenKind_Identifier, "void");
+        for (size_t k = 0; params != SIZE_MAX && k < params && k < f.count; k++) { // each parameter
+            if (k > 0) smith_lang_nested_say(w, SmithTokenKind_Punctuator, ",");
+            if (smith_lang_argl_from_f(&smith_lang_it, starts[k], ends[k])) {
+                uint32_t stars = ends[k] - starts[k] - 2; // F's own stars stand for these
+                uint32_t to = f.to[k];
+                while (stars > 0 && to > f.from[k] && smith_lang_argl_punct(&smith_lang_gt, to - 1, "*")) {
+                    to -= 1;
+                    stars -= 1;
+                }
+                smith_lang_argl_run(w, f.from[k], to);
+                for (uint32_t i = f.to[k] - to; i > 0; i--) // the stars the lambda wrote, as F's
+                    smith_lang_nested_say(w, SmithTokenKind_Punctuator, "*");
+                smith_lang_argl_copy(w, ends[k] - 1, ends[k]);
+            } else {
+                smith_lang_argl_copy(w, starts[k], ends[k]);
+            }
+        }
+        smith_lang_nested_say(w, SmithTokenKind_Punctuator, ")");
+        smith_lang_argl_copy(w, code.body_from, code.body_to + 1);
+    }
+    char shown[256];
+    smith_lang_infer_written((SmithLangSpan){fa, fb}, shown, sizeof shown);
+    char message[512];
+    snprintf(message, sizeof message, "\"smith: the argument for `%s` of `%s` does not have the type of `lambda(%s)`\"",
+             smith_lang_gt_str(&smith_lang_gt.tokens[generic->first + generic->type_token[slot]]),
+             smith_lang_str(generic->member), shown);
+    for (char *c = message + 1; *c != 0 && c[1] != 0; c++) { // the text sits in a string
+        if (*c == '"' || *c == '\\') *c = '\'';
+    }
+    smith_lang_nested_say(w, SmithTokenKind_Identifier, "_Static_assert");
+    smith_lang_nested_say(w, SmithTokenKind_Punctuator, "(");
+    smith_lang_nested_say(w, SmithTokenKind_Identifier, "__builtin_types_compatible_p");
+    smith_lang_nested_say(w, SmithTokenKind_Punctuator, "(");
+    smith_lang_nested_say(w, SmithTokenKind_Identifier, "__typeof__");
+    smith_lang_nested_say(w, SmithTokenKind_Punctuator, "(");
+    if (is_lambda) {
+        smith_lang_nested_say(w, SmithTokenKind_Identifier, name);
+    } else {
+        smith_lang_argl_copy(w, first, first + count);
+    }
+    smith_lang_nested_say(w, SmithTokenKind_Punctuator, ")");
+    smith_lang_nested_say(w, SmithTokenKind_Punctuator, ",");
+    smith_lang_argl_run(w, fa, fb);
+    smith_lang_nested_say(w, SmithTokenKind_Punctuator, ")");
+    smith_lang_nested_say(w, SmithTokenKind_Punctuator, ",");
+    smith_lang_nested_say(w, SmithTokenKind_String, message);
+    smith_lang_nested_say(w, SmithTokenKind_Punctuator, ")");
+    smith_lang_nested_say(w, SmithTokenKind_Punctuator, ";");
+}
+
+// The functions of the instance's lambdas, and the check of every `lambda(F)` argument, before the instance.
+static void smith_lang_argl_write(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                  const SmithLangInstance *instance, uint32_t location, uint32_t id) {
+    const SmithLangGeneric *generic = &smith_lang_generics[instance->generic];
+    SmithLangNestedWriter writer = {lang, host, replay, instance, location, id};
+    for (size_t slot = 0; slot < generic->type_count; slot++) { // the slots
+        uint32_t fa = 0;
+        uint32_t fb = 0;
+        if (smith_lang_argl_slot(generic, slot, &fa, &fb) && instance->arg_count[slot] > 0)
+            smith_lang_argl_write_one(&writer, generic, slot, fa, fb);
+    }
+}

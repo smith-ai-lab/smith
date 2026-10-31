@@ -1,0 +1,1 @@
+src/main.smith:8:18: the lambda passed to `apply` takes 2 parameters, but its type `lambda(i32 (i32))` has 1

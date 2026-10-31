@@ -543,6 +543,10 @@ export void test_skill_smith_lang_lambdas() {
     skill_case("smith-lang-lambdas");
 }
 
+export void test_skill_smith_lang_lambda_param() {
+    skill_case("smith-lang-lambda-param");
+}
+
 export void test_skill_smith_lang_target() {
     skill_case("smith-lang-target");
 }

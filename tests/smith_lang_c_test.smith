@@ -198,6 +198,10 @@ export void test_try_and_errdefer_names_print_the_same_as_c() {
     behave("try_name");
 }
 
+export void test_lambda_is_an_ordinary_name_in_c() {
+    behave("lambda_name");
+}
+
 export void test_the_languages_words_as_names_print_the_same_as_c() {
     behave("names");
 }
