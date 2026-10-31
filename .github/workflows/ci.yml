@@ -1,6 +1,6 @@
 name: ci
 
-# The full check (#798, knowledge/ci-hosted.md): Linux carries the tests (6 hosted shards, each building smith itself,
+# The full check (#798, knowledge/ci-hosted.md): Linux carries the tests (8 hosted shards, each building smith itself,
 # no artifact travels) and the owner's Mac runs what only macOS can (`build`, `mechanical`, the `--macos-only` tests);
 # the one job `ci` gathers them, so the ruleset and the merge queue name a single required check. The first job that
 # fails cancels the run. A push to main (a commit the queue checked) also publishes the release and saves the cache.
@@ -98,24 +98,26 @@ jobs:
 
       - name: Test matrix
         id: linux
-        # Linux carries the tests: 6 shards of `--skip-macos`, each building smith itself (no artifact egress). The
-        # Mac runs the few tests only macOS can run (`--macos-only`, one part). A pull request tests what its change
-        # reaches, in one part on each. A push to main runs only the Linux shards (the Mac's work is the release).
+        # Linux carries the tests: `--skip-macos` in parts, each building smith itself (no artifact egress). The Mac
+        # runs the few tests only macOS can run (`--macos-only`, one part). A pull request tests what its change
+        # reaches, split into 4 parts (one part took 10 to 17 min); the queue and main run everything in 8. A push to
+        # main runs only the Linux parts (the Mac's work is the release).
         run: |
+          flags="--skip-macos"
+          macflags="--macos-only"
+          count=8
           if [ "${{ steps.scope.outputs.mode }}" = changed ]; then
-            flags="--changed --base ${{ steps.scope.outputs.base }}"
-            echo "linux={\"include\":[{\"shard\":1,\"count\":1,\"flags\":\"--skip-macos $flags\"}]}" >>"$GITHUB_OUTPUT"
-            echo "matrix={\"include\":[{\"os\":\"macos-26\",\"shard\":1,\"count\":1,\"flags\":\"--macos-only $flags\"}]}" >>"$GITHUB_OUTPUT"
-            echo "tests: a pull request tests only what its change reaches: one Linux part, one macOS part" >>"$GITHUB_STEP_SUMMARY"
-            exit 0
+            flags="$flags --changed --base ${{ steps.scope.outputs.base }}"
+            macflags="$macflags --changed --base ${{ steps.scope.outputs.base }}"
+            count=4
           fi
           linux=
-          for i in 1 2 3 4 5 6; do
-            linux="$linux"${linux:+,}'{"shard":'$i',"count":6,"flags":"--skip-macos"}'
+          for i in $(seq 1 "$count"); do
+            linux="$linux"${linux:+,}'{"shard":'$i',"count":'$count',"flags":"'"$flags"'"}'
           done
           echo "linux={\"include\":[$linux]}" >>"$GITHUB_OUTPUT"
-          echo 'matrix={"include":[{"os":"macos-26","shard":1,"count":1,"flags":"--macos-only"}]}' >>"$GITHUB_OUTPUT"
-          echo "tests: 6 Linux parts, one macOS part (--macos-only)" >>"$GITHUB_STEP_SUMMARY"
+          echo "matrix={\"include\":[{\"os\":\"macos-26\",\"shard\":1,\"count\":1,\"flags\":\"$macflags\"}]}" >>"$GITHUB_OUTPUT"
+          echo "tests: $count Linux parts, one macOS part ($macflags)" >>"$GITHUB_STEP_SUMMARY"
 
   build:
     # smith built once for the run (#798): the stage0 release and the LLVM pack come from the cache (or the release),
@@ -364,10 +366,14 @@ jobs:
   warm:
     # a push to main (a commit the queue checked) builds smith and the tests once more only to save the step cache,
     # which every pull request and queue entry after it restores (a cache saved on a branch is seen by that branch and
-    # the ones made from it, and main's by all: so only main saves, which keeps the entries few)
+    # the ones made from it, and main's by all: so only main saves, which keeps the entries few). One for each OS: the
+    # Linux shards restored `none` until this job saved a Linux entry, and built smith from nothing in each of 6 jobs
     needs: changes
     if: needs.changes.outputs.scope == 'release'
-    runs-on: macos-26
+    strategy:
+      matrix:
+        os: [macos-26, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     env:
       GH_TOKEN: ${{ github.token }}
