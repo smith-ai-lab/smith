@@ -36,7 +36,7 @@ static void fixture_case(const char *name) {
         scratch::sh(&p, format::push("args=; [ -f ", name, "/args ] && args=$(cat ", name, "/args); smith docs $args ",
                                      name, " >actual 2>&1; echo $? >status; cat actual")
                             .data);
-    test::golden_free(slice_of(format::push("tests/docs/fixtures/", name, "/expect.txt").data), slice_of(run.out));
+    test::golden(slice_of(format::push("tests/docs/fixtures/", name, "/expect.txt").data), slice_of(run.out));
     // The check exits 1 exactly when there are problems.
     const char *want = scratch::capture(
         &p,
@@ -66,7 +66,7 @@ export void test_docs_depfile_the_documents_the_skills_and_what_the_links_point_
     defer mem::set_allocator(outside);
     scratch::Run run = scratch::sh(&p, "smith docs --depfile pass.d --target docs.stamp $(cat pass/args) pass "
                                        ">/dev/null 2>&1; cat pass.d");
-    test::golden_free("tests/docs/fixtures/pass/expect.d", slice_of(run.out));
+    test::golden("tests/docs/fixtures/pass/expect.d", slice_of(run.out));
 }
 
 export void test_docs_depfile_is_written_when_there_are_problems_too() {

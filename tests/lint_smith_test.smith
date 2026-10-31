@@ -55,7 +55,7 @@ static const char *lint_text(const scratch::Project *p, const char *body) {
 }
 
 static void golden_of(const char *name, const char *actual) {
-    test::golden_free(slice_of(join("tests/lint-smith/", name, ".expected")), slice_of(actual));
+    test::golden(slice_of(join("tests/lint-smith/", name, ".expected")), slice_of(actual));
 }
 
 // The text of the findings of a run in a fixture file, as the golden file `name` holds it.

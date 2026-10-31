@@ -323,7 +323,7 @@ static void golden_at(const Case *kase, const char *relative, const char *actual
             if (scratch::exists(kase->project, variant)) shown = variant;
         }
     }
-    test::golden_free(slice_of(join("tests/smith-lang/cases/", kase->name, "/", shown)), slice_of(actual));
+    test::golden(slice_of(join("tests/smith-lang/cases/", kase->name, "/", shown)), slice_of(actual));
 }
 
 static usize digits_at(const char *line, usize at) {

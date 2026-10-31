@@ -17,8 +17,8 @@ export void test_runner_discovery_a_test_file_written_with_std_runs() {
     defer mem::set_allocator(outside);
     scratch::Run tested = scratch::sh(&p, "smith test");
     scratch::expect_status("std tests: smith test passes", 0, &tested);
-    scratch::expect_contains("std tests: both tests ran", format::push(tested.out, tested.err).data,
-                             "2 passed, 0 failed");
+    scratch::expect_contains("std tests: the test ran", format::push(tested.out, tested.err).data,
+                             "1 passed, 0 failed");
 }
 
 export void test_runner_discovery_a_test_file_with_no_test_is_an_error() {
@@ -32,4 +32,17 @@ export void test_runner_discovery_a_test_file_with_no_test_is_an_error() {
     scratch::expect_failure("empty test file: smith test fails", &tested);
     scratch::expect_contains("empty test file: ... naming the file", format::push(tested.out, tested.err).data,
                              "forgotten_test.smith defines no test");
+}
+
+export void test_runner_discovery_a_test_that_takes_an_io_is_an_error_naming_the_io_free_form() {
+    scratch::Project p = scratch::make("p", "std_tests_io");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run tested = scratch::sh(&p, "smith test");
+    scratch::expect_failure("io test: smith test fails", &tested);
+    scratch::expect_contains("io test: ... naming the test and the io-free form", format::push(tested.out, tested.err).data,
+                             "test_world_takes_an_io has parameters the runner does not pass; a test takes none");
 }
