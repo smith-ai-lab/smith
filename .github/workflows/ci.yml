@@ -34,17 +34,37 @@ jobs:
       base: ${{ steps.scope.outputs.base }}
       matrix: ${{ steps.linux.outputs.matrix }}
       linux: ${{ steps.linux.outputs.linux }}
-      # where the macOS jobs run (knowledge/ci-hosted.md): the owner's Mac, except a pull request from a fork, which
-      # never reaches it. To fall back to hosted runners, change the Mac's value below to '"macos-26"'.
-      mac: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && '"macos-26"' || '["self-hosted","macOS","ARM64"]' }}
+      # where the macOS jobs run (knowledge/ci-hosted.md): the owner's Mac when one of its runners is online, else
+      # hosted macos-26; picked per run by the step `Pick the macOS runner`
+      mac: ${{ steps.mac.outputs.mac }}
       # SMITH_CORES of a macOS job: the Mac's 16 cores shared by its 3 runners; a hosted runner has 3
-      cores: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && '3' || '5' }}
+      cores: ${{ steps.mac.outputs.cores }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Pick the macOS runner
+        id: mac
+        env:
+          RUNNER_STATUS_TOKEN: ${{ secrets.RUNNER_STATUS_TOKEN }}
+          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          # the owner's Mac if at least one runner labelled self-hosted, macOS and ARM64 is online right now, else a
+          # hosted macos-26: a Mac that is off never stalls the run. No token, a fork, or a failed call: hosted.
+          mac='"macos-26"'; cores=3; why="no secret"
+          if [ "$FORK" = true ]; then why="fork pull request"
+          elif [ -n "$RUNNER_STATUS_TOKEN" ]; then
+            if online=$(GH_TOKEN=$RUNNER_STATUS_TOKEN gh api "repos/$GITHUB_REPOSITORY/actions/runners" --paginate --jq \
+              '.runners[] | select(.status == "online") | select([.labels[].name] | contains(["self-hosted", "macOS", "ARM64"])) | .name' 2>/dev/null); then
+              if [ -n "$online" ]; then mac='["self-hosted","macOS","ARM64"]'; cores=5; why="online: $(printf '%s' "$online" | tr '\n' ' ')"
+              else why="no Mac runner online"; fi
+            else why="runners call failed"; fi
+          fi
+          echo "mac=$mac" >>"$GITHUB_OUTPUT"
+          echo "cores=$cores" >>"$GITHUB_OUTPUT"
+          echo "macOS jobs run on $mac ($why)" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Scope
         id: scope
         env:
@@ -434,13 +454,14 @@ jobs:
         run: sh scripts/release.sh finish "stage0-$GITHUB_SHA"
 
   install:
-    # the owner's Mac (its one self-hosted runner, ~/actions-runner) installs the release just published, so the
-    # installed smith is always main's: a download and a checksum, no build (owner, 2026-10-29)
+    # the owner's Mac installs the release just published, so the installed smith is always main's: a download and a
+    # checksum, no build (owner, 2026-10-29). Nothing needs this job (not `ci`, not the release): with the Mac off it
+    # waits, and only the newest commit's install is kept waiting, so the Mac installs once when it returns.
     needs: publish
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 10
     concurrency:
-      group: install
+      group: install-mac
       cancel-in-progress: true
     env:
       GH_TOKEN: ${{ github.token }}
