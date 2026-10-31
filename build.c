@@ -821,6 +821,9 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
 }
 
 static const char *build_test_header(SmithBuild *b, const char *source) {
+    // front/ast.smith is the module front::ast, whose header is front/ast.h: the folder stays in the name.
+    if (strncmp(source, "front/", strlen("front/")) == 0)
+        return smith_fmt(b, ".smith/include/%s.h", smith_replace_extension(b, source, ""));
     const char *root_less = source + strlen(strncmp(source, "tests/", strlen("tests/")) == 0 ? "tests/" : "lib/");
     return smith_fmt(b, ".smith/include/%s.h", smith_replace_extension(b, root_less, ""));
 }
@@ -862,7 +865,7 @@ static const char *const *build_test_modules(SmithBuild *b, const BuildConfig *c
     const char *smith_cc = smith_fmt(b, "%s/smith-cc", folder);
     const char *const *flags = build_smith_flags(b, config);
     const char *const *tests =
-        smith_glob(b, smith_list(b, "tests/*.smith", "lib/*_test.smith",
+        smith_glob(b, smith_list(b, "tests/*.smith", "front/*.smith", "lib/*_test.smith",
                                  smith_fmt(b, "%s/*_test.smith", build_library_folder), nullptr));
     const char *const *headers = build_test_header_step(b, smith_cc, flags, tests);
     for (size_t i = 0; tests[i] != nullptr; i++) {
