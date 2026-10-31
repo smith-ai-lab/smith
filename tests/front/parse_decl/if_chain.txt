@@ -1,0 +1,24 @@
+(module 
+  (if_constexpr
+    (name a)
+    (then
+      (variable x (named I32)))
+    (else
+      (if_constexpr
+        (name b)
+        (then
+          (variable y (named I32)))
+        (else
+          (variable z (named I32))))))
+  (if_constexpr
+    (name a)
+    (then
+      (if_constexpr
+        (name b)
+        (then
+          (if_constexpr
+            (name c)
+            (then
+              (variable deep (named I32))))))
+      (variable after (named I32))))
+  (variable last (named I32)))

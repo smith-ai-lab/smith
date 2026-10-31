@@ -1,0 +1,39 @@
+(module geometry::shapes
+  (import std::arena)
+  (import geometry::box)
+  (import_c angled stdio.h)
+  (import_c angled sys/stat.h)
+  (import_c x.h)
+  (static_assert "one" (integer 1))
+  (static_assert "" (integer 2))
+  (if_constexpr
+    (name flag)
+    (then
+      (import_c angled unistd.h)
+      (variable posix (named I32)))
+    (else
+      (variable other (named I32))))
+  (if_constexpr
+    (name a)
+    (then
+      (if_constexpr
+        (name b)
+        (then
+          (variable both (named I32)))
+        (else
+          (variable only_a (named I32))))))
+  (if_constexpr
+    (name a)
+    (then
+      (variable x (named I32)))
+    (else
+      (if_constexpr
+        (name b)
+        (then
+          (variable y (named I32)))
+        (else
+          (variable z (named I32))))))
+  (if_constexpr
+    (name c)
+    (then))
+  (function attributed (attribute std::pure) (param x (named I32)) (result (named I32))))

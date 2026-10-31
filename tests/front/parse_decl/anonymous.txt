@@ -1,0 +1,7 @@
+(module 
+  (enum Shape
+    (enumerator one (struct (field a (named I32))))
+    (enumerator bits (union (field word (named U32)) (field real (named F32))))
+    (enumerator empty))
+  (variable origin (struct (field x (named I32)) (field y (named I32))))
+  (variable shared exported (array (union (field word (named U32))) (integer 2))))

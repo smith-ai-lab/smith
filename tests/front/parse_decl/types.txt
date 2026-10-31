@@ -1,0 +1,41 @@
+(module 
+  (struct Point
+    (field x (named I32))
+    (field y (named I32)))
+  (struct Opaque opaque exported)
+  (union Bits
+    (field word (named U32))
+    (field byte (named U8)))
+  (struct Flags
+    (field ready (named U32) (integer 3))
+    (field mode (named U32) (integer 2))
+    (field  (named U32) (integer 3))
+    (field grid (array (named I32) (integer 4)))
+    (field rows (slice (named I32))))
+  (struct Circle
+    (field radius (named F32)))
+  (union Word
+    (field word (named U32))
+    (field byte (named U8)))
+  (struct Pair
+    (field a (named I32))
+    (field b (named I32)))
+  (enum Color
+    (enumerator red)
+    (enumerator green (integer 2))
+    (enumerator blue))
+  (enum Small
+    (named U8)
+    (enumerator low)
+    (enumerator high (integer 255)))
+  (enum Shape
+    (enumerator circle (named Circle))
+    (enumerator rect (named Rect))
+    (enumerator empty))
+  (enum Tagged
+    (named U8)
+    (enumerator circle (named Circle))
+    (enumerator empty))
+  (typedef Index exported (named I32))
+  (typedef Row (array (named I32) (integer 4)))
+  (typedef Handler (applied Fn (type_arg (function_type (named I32) (result (named I32)))))))
