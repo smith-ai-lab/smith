@@ -242,7 +242,7 @@ static const char *const *build_protocol_steps(SmithBuild *b, const BuildConfig 
 // are inputs of smith.c, which includes them. The installed smith writes the headers of its own embedded sources
 // first (`smith build` does, before this file runs), so a first build has them for build.c itself.
 static const char *const build_header_modules[] = {"ascii",  "autodiff", "build", "categorical", "effects", "failing",
-                                                   "format", "math",     "slice", "test",        nullptr};
+                                                   "format", "math",     "slice", "task",        "test",    nullptr};
 
 // The compiler's own file, which a header step lists as an input: it is the smith that writes the header.
 static const char *build_compiler_file(SmithBuild *b, const BuildConfig *config) {
@@ -642,6 +642,7 @@ static const char *const build_smith_inputs[] = {
     "lib/smith/option.smith",
     "lib/smith/result.smith",
     "lib/smith/slice.smith",
+    "lib/smith/task.smith",
     "lib/smith/categorical.smith",
     "lib/smith/ascii.smith",
     "lib/smith/text.smith",
@@ -933,6 +934,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     smith_compile_command(b, config->cc, "lib/smith/net.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/random.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/slice.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/smith/task.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/categorical.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/ascii.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/test.smith", smith_flags);

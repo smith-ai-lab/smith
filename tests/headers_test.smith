@@ -241,6 +241,10 @@ export void test_the_slice_header_compiles_alone() {
     generated("slice");
 }
 
+export void test_the_task_header_compiles_alone() {
+    generated("task");
+}
+
 export void test_the_math_header_compiles_alone() {
     generated("math");
 }

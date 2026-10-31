@@ -1,0 +1,174 @@
+// Tests of smith::task: tasks on stacks of their own, groups, pause and the inline scheduler. The spawn that starts a
+// task is private to the module until the language can type it (#316), so these tests reach it through the module's own
+// private name, `task::spawn_raw`.
+module smith::task_test;
+
+import <sys/wait.h>;
+import <unistd.h>;
+import smith::task;
+import smith::test;
+
+// What the marker tasks share: the marks they write, in order.
+struct Log {
+    char marks[64];
+    usize length;
+};
+
+struct Marker {
+    Log *log;
+    char name;
+    usize rounds;
+};
+
+void log_mark(Log *log, char mark) {
+    log->marks[log->length] = mark;
+    log->length += 1;
+}
+
+// Writes its name `rounds` times, pausing after each.
+void run_marker(Marker *marker) {
+    for (usize i = 0; i < marker->rounds; i++) {
+        log_mark(marker->log, marker->name);
+        task::pause();
+    }
+}
+
+void check_marks(const Log *log, const char *expected) {
+    test::check_equal(log->length, (usize)__builtin_strlen(expected));
+    for (usize i = 0; i < log->length; i++)
+        test::check_equal((i32)log->marks[i], (i32)expected[i]);
+}
+
+export void test_task_a_spawned_task_runs_at_once_and_wait_returns() {
+    Log log = {};
+    Marker a = {.log = &log, .name = 'a', .rounds = 1};
+    task::Group group = {};
+    task::spawn(&group, run_marker, &a);
+    test::check_equal(log.length, (usize)1); // it ran up to its first pause
+    test::check_equal(group.pending, (usize)1);
+    task::wait(&group);
+    test::check_equal(group.pending, (usize)0);
+}
+
+export void test_task_a_group_waits_for_three_tasks_that_each_pause_twice() {
+    Log log = {};
+    Marker a = {.log = &log, .name = 'a', .rounds = 2};
+    Marker b = {.log = &log, .name = 'b', .rounds = 2};
+    Marker c = {.log = &log, .name = 'c', .rounds = 2};
+    task::Group group = {};
+    task::spawn(&group, run_marker, &a);
+    task::spawn(&group, run_marker, &b);
+    task::spawn(&group, run_marker, &c);
+    check_marks(&log, "abc"); // each ran at once up to its first pause
+    task::wait(&group);
+    check_marks(&log, "abcabc"); // and the others in the order they paused
+    test::check_equal(group.pending, (usize)0);
+}
+
+export void test_task_main_pauses_and_the_others_run_a_round() {
+    Log log = {};
+    Marker a = {.log = &log, .name = 'x', .rounds = 2};
+    task::Group group = {};
+    defer task::wait(&group);
+    test::check(log.length == 0);
+    task::spawn(&group, run_marker, &a);
+    test::check_equal(log.length, (usize)1);
+    task::pause(); // main offers the thread: the paused task writes its second mark
+    test::check_equal(log.length, (usize)2);
+}
+
+export void test_task_pause_with_no_other_task_returns_at_once() {
+    task::pause();
+    task::pause();
+}
+
+struct Parent {
+    Log *log;
+    Marker *inner;
+};
+
+// A task spawns a task of its own into a group of its own and waits for it.
+void run_parent(Parent *parent) {
+    task::Group children = {};
+    defer task::wait(&children);
+    task::spawn(&children, run_marker, parent->inner);
+    log_mark(parent->log, 'p');
+}
+
+export void test_task_a_task_spawns_into_a_nested_group() {
+    Log log = {};
+    Marker inner = {.log = &log, .name = 'i', .rounds = 2};
+    Parent parent = {.log = &log, .inner = &inner};
+    task::Group group = {};
+    task::spawn(&group, run_parent, &parent);
+    task::wait(&group);
+    check_marks(&log, "ipi");
+    test::check_equal(group.pending, (usize)0);
+}
+
+struct Deep {
+    usize depth;
+    usize reached;
+};
+
+// A frame of 128 KB, half of the stack, touched at both ends.
+usize use_stack(usize n) {
+    volatile u8 big[131072];
+    big[0] = 1;
+    big[131071] = 2;
+    return n + big[0] + big[131071];
+}
+
+void run_deep(Deep *deep) {
+    deep->reached = use_stack(deep->depth);
+}
+
+export void test_task_a_task_has_a_stack_of_256_kilobytes() {
+    Deep deep = {.depth = 100};
+    task::Group group = {};
+    task::spawn(&group, run_deep, &deep);
+    task::wait(&group);
+    test::check_equal(deep.reached, (usize)103);
+}
+
+void run_count(usize *count) {
+    *count += 1;
+}
+
+// Each task ends at once, so its two mappings (guard and stack) are gone before the next is made: the count is far
+// below Linux's default vm.max_map_count of 65530, which caps the tasks that are alive at one time (about 32,000).
+export void test_task_ten_thousand_tasks_come_and_go_in_one_group() {
+    usize count = 0;
+    task::Group group = {};
+    for (usize i = 0; i < 10000; i++)
+        task::spawn(&group, run_count, &count);
+    task::wait(&group);
+    test::check_equal(count, (usize)10000);
+    test::check_equal(group.pending, (usize)0);
+}
+
+// Writes just below the end of the stack it runs on, which is the guard page.
+void run_overflow(u8 *unused) {
+    (void)unused;
+    volatile u8 here = 0;
+    volatile u8 *below = (volatile u8 *)&here - 262144;
+    *below = 1;
+}
+
+// NOLINTBEGIN(smith-effects): a forked child of the test is the only way to survive a fault
+// A child process runs the overflow and must die of it; the test process is not hurt.
+export void test_task_a_write_below_the_stack_faults() {
+    i32 child = c::fork();
+    test::check(child >= 0);
+    if (child == 0) {
+        u8 unused = 0;
+        task::Group group = {};
+        task::spawn(&group, run_overflow, &unused);
+        task::wait(&group);
+        c::_exit(0); // reached only if the write did not fault
+    }
+    i32 status = 0;
+    test::check_equal(c::waitpid(child, &status, 0), child);
+    test::check(status != 0);
+}
+// NOLINTEND(smith-effects)

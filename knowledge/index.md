@@ -25,6 +25,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [One compiler, in smith's own process](one-compiler.md): smith ships upstream LLVM 23.1.3 linked into itself, compiles C, C++ and Objective-C in its own process, and picks other compilers only through environment variables.
 - [The platform layer](platform-layer.md): What smith does differently on macOS and Linux lives in one file per platform, runtime/platform_macos.c and runtime/platform_linux.c, with the same functions, and this table says what differs.
 - [smith prove checks LLVM IR with Alive2, Bitwuzla and Z3](prover.md): smith prove proves each function with a contract in a process of its own, assumes functions marked smith_trusted, and uses no list.
+- [smith::task, fibers and groups on one thread](task.md): Tasks on 256 KB mmap stacks with a guard page, switched by assembly, waited for in a task::Group, with the inline scheduler hard-wired (issue #241, first step).
 - [smith::slice and smith::ascii replace text's slice operations](slice-library.md): A slice library generic over the element does what text did for chars, with no allocation, option for a search that may find nothing, and a character test that reads no locale.
 - [The .smith language](smith-language.md): A .smith file is C with modules, lowered to C as clang reads it by a token hook, with sized types, the rules, one command, and what the language does not do yet.
 

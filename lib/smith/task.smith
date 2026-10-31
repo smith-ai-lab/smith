@@ -1,0 +1,383 @@
+// smith::task, <smith/task.h>: tasks that run on stacks of their own (fibers) and are waited for in groups, the way an
+// arena is a scope for memory: a group is opened in a scope and closed by `defer`.
+//
+//   task::Group group = {};
+//   defer task::wait(&group);
+//
+// `main` is the first task: `wait` and `pause` work in it like in any task, there is no `task::run`, and no thread is
+// started (every task runs on the thread that spawned it). The scheduler is the inline one: a spawned task runs at once
+// until it ends or pauses, then control returns to the spawner; `wait`, and a `pause` of `main`, resume the paused
+// tasks in turn. A task has a stack of 256 KB of mapped memory above a guard page, so an overflow is a fault, not a
+// corrupted neighbour; under AddressSanitizer each switch is announced to it. The switch is assembly for arm64 (macOS,
+// Linux) and x86-64 (Linux). Issue #241; knowledge/task.md.
+//
+// What is not here yet, in the issue: the typed `spawn(&group, f, args...)` (it waits for the language, #316), the
+// handlers of a task, workers on more than one thread, and waiting on sockets and pipes.
+module smith::task;
+
+import smith::contract;
+import target;
+import <sanitizer/asan_interface.h>;        // unpoison_memory_region
+import <sanitizer/common_interface_defs.h>; // the fiber calls: start_switch_fiber, finish_switch_fiber
+import <smith/trace.h>;                     // smith_failure_format
+import <sys/mman.h>;                        // mmap, mprotect, munmap: the stacks
+import <unistd.h>;                          // sysconf: the size of a page
+
+// The tasks a `wait` waits for. Start it as `task::Group group = {};` and end it with `defer task::wait(&group)`.
+[[smith::c_name("SmithGroup")]] export typedef struct {
+    usize pending; // tasks spawned into it that have not ended
+} Group;
+
+// The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
+// NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
+constexpr i32 protect_none = c::PROT_NONE;
+constexpr i32 protect_both = c::PROT_READ | c::PROT_WRITE;
+constexpr i32 map_private_anonymous = c::MAP_PRIVATE | c::MAP_ANON;
+constexpr i32 page_size_name = c::_SC_PAGESIZE;
+// NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
+
+// The usable stack of a task: 256 KB, below a record of the task itself, above one guard page.
+constexpr usize stack_size = 262144;
+
+struct Task {
+    void *sp;      // the stack pointer while it is not running
+    Task *resumer; // the task that entered it last, which it returns to
+    Task *next;    // the queue link of the inline scheduler
+    Group *group;
+    void (*entry)(void *context);
+    void *context;
+    void *fake_stack;   // AddressSanitizer: the fake stack of this fiber while it is parked
+    const void *bottom; // the lowest address of the stack, for AddressSanitizer
+    usize size;         // the bytes of the stack
+    void *region;       // the mapping, null for a thread's first task
+    usize region_size;
+    bool finished;
+};
+
+// The context switch: saves the callee-saved registers on the stack, stores the stack pointer in *save, takes the one
+// in `to` and restores from it. A new task's stack holds a frame that "returns" into task_boot, which calls the entry
+// function with the task. One symbol each, never called from C by a name other than these two.
+// (The label of an `extern` is the symbol as written: Mach-O's underscore is part of it.)
+if constexpr (target::os == target::macos) {
+    extern void switch_stacks(void **save, void *to) __asm__("_smith_task_switch");
+    extern void boot_stub() __asm__("_smith_task_boot");
+} else {
+    extern void switch_stacks(void **save, void *to) __asm__("smith_task_switch");
+    extern void boot_stub() __asm__("smith_task_boot");
+}
+
+if constexpr (target::arch == target::aarch64 && target::os == target::macos) {
+    // x19-x30 and d8-d15 are kept (176 bytes). A new frame has x19 = the task, x20 = the entry, x30 = the boot.
+    __asm__(".text\n"
+            ".globl _smith_task_switch\n"
+            ".p2align 2\n"
+            "_smith_task_switch:\n"
+            "  sub sp, sp, #176\n"
+            "  stp x19, x20, [sp, #0]\n"
+            "  stp x21, x22, [sp, #16]\n"
+            "  stp x23, x24, [sp, #32]\n"
+            "  stp x25, x26, [sp, #48]\n"
+            "  stp x27, x28, [sp, #64]\n"
+            "  stp x29, x30, [sp, #80]\n"
+            "  stp d8, d9, [sp, #96]\n"
+            "  stp d10, d11, [sp, #112]\n"
+            "  stp d12, d13, [sp, #128]\n"
+            "  stp d14, d15, [sp, #144]\n"
+            "  mov x2, sp\n"
+            "  str x2, [x0]\n"
+            "  mov sp, x1\n"
+            "  ldp x19, x20, [sp, #0]\n"
+            "  ldp x21, x22, [sp, #16]\n"
+            "  ldp x23, x24, [sp, #32]\n"
+            "  ldp x25, x26, [sp, #48]\n"
+            "  ldp x27, x28, [sp, #64]\n"
+            "  ldp x29, x30, [sp, #80]\n"
+            "  ldp d8, d9, [sp, #96]\n"
+            "  ldp d10, d11, [sp, #112]\n"
+            "  ldp d12, d13, [sp, #128]\n"
+            "  ldp d14, d15, [sp, #144]\n"
+            "  add sp, sp, #176\n"
+            "  ret\n"
+            ".globl _smith_task_boot\n"
+            ".p2align 2\n"
+            "_smith_task_boot:\n"
+            "  mov x0, x19\n"
+            "  blr x20\n"
+            "  brk #1\n");
+} else if constexpr (target::arch == target::aarch64 && target::os == target::linux) {
+    __asm__(".text\n"
+            ".globl smith_task_switch\n"
+            ".type smith_task_switch, %function\n"
+            ".p2align 2\n"
+            "smith_task_switch:\n"
+            "  sub sp, sp, #176\n"
+            "  stp x19, x20, [sp, #0]\n"
+            "  stp x21, x22, [sp, #16]\n"
+            "  stp x23, x24, [sp, #32]\n"
+            "  stp x25, x26, [sp, #48]\n"
+            "  stp x27, x28, [sp, #64]\n"
+            "  stp x29, x30, [sp, #80]\n"
+            "  stp d8, d9, [sp, #96]\n"
+            "  stp d10, d11, [sp, #112]\n"
+            "  stp d12, d13, [sp, #128]\n"
+            "  stp d14, d15, [sp, #144]\n"
+            "  mov x2, sp\n"
+            "  str x2, [x0]\n"
+            "  mov sp, x1\n"
+            "  ldp x19, x20, [sp, #0]\n"
+            "  ldp x21, x22, [sp, #16]\n"
+            "  ldp x23, x24, [sp, #32]\n"
+            "  ldp x25, x26, [sp, #48]\n"
+            "  ldp x27, x28, [sp, #64]\n"
+            "  ldp x29, x30, [sp, #80]\n"
+            "  ldp d8, d9, [sp, #96]\n"
+            "  ldp d10, d11, [sp, #112]\n"
+            "  ldp d12, d13, [sp, #128]\n"
+            "  ldp d14, d15, [sp, #144]\n"
+            "  add sp, sp, #176\n"
+            "  ret\n"
+            ".size smith_task_switch, .-smith_task_switch\n"
+            ".globl smith_task_boot\n"
+            ".type smith_task_boot, %function\n"
+            ".p2align 2\n"
+            "smith_task_boot:\n"
+            "  mov x0, x19\n"
+            "  blr x20\n"
+            "  brk #1\n"
+            ".size smith_task_boot, .-smith_task_boot\n");
+} else if constexpr (target::arch == target::x86_64 && target::os == target::linux) {
+    // rbx, rbp and r12-r15 are kept (48 bytes, then the return address). A new frame has rbx = the task, r12 = the
+    // entry, and returns into the boot. Written from the System V ABI; this machine cannot run it.
+    __asm__(".text\n"
+            ".globl smith_task_switch\n"
+            ".type smith_task_switch, @function\n"
+            "smith_task_switch:\n"
+            "  pushq %rbp\n"
+            "  pushq %rbx\n"
+            "  pushq %r12\n"
+            "  pushq %r13\n"
+            "  pushq %r14\n"
+            "  pushq %r15\n"
+            "  movq %rsp, (%rdi)\n"
+            "  movq %rsi, %rsp\n"
+            "  popq %r15\n"
+            "  popq %r14\n"
+            "  popq %r13\n"
+            "  popq %r12\n"
+            "  popq %rbx\n"
+            "  popq %rbp\n"
+            "  ret\n"
+            ".size smith_task_switch, .-smith_task_switch\n"
+            ".globl smith_task_boot\n"
+            ".type smith_task_boot, @function\n"
+            "smith_task_boot:\n"
+            "  movq %rbx, %rdi\n"
+            "  callq *%r12\n"
+            "  ud2\n"
+            ".size smith_task_boot, .-smith_task_boot\n");
+} else {
+    static_assert(false, "smith::task has a context switch for arm64 (macOS, Linux) and x86-64 (Linux) only");
+}
+// The first task of a thread is the thread's own: it runs on the thread's stack, whose bounds AddressSanitizer learns
+// the first time another task is entered.
+thread_local Task first_task;
+thread_local Task *current_task;
+// The tasks that paused, in the order they will run.
+thread_local Task *parked_first;
+thread_local Task *parked_last;
+
+Task *current() {
+    if (current_task == nullptr) current_task = &first_task;
+    return current_task;
+}
+
+// Leaves `from` for `to`: AddressSanitizer is told, the stacks switch. Returns when something enters `from` again.
+void transfer(Task *from, Task *to) {
+    contract::trusted(); // the registers and the stack are the edge
+    current_task = to;
+    if constexpr (target::address_sanitizer) {
+        c::__sanitizer_start_switch_fiber(from->finished ? nullptr : &from->fake_stack, to->bottom, to->size);
+    }
+    switch_stacks(&from->sp, to->sp);
+    if constexpr (target::address_sanitizer) {
+        const void *bottom = nullptr;
+        usize size = 0;
+        c::__sanitizer_finish_switch_fiber(from->fake_stack, &bottom, &size);
+        if (from->resumer != nullptr && from->resumer->size == 0) {
+            from->resumer->bottom = bottom;
+            from->resumer->size = size;
+        }
+    }
+}
+
+// Calls the entry a typed `spawn` stored as `void (*)(void *)`. It was written as `void (*)(T *)`, and a pointer to any
+// object is passed the same way on every target here, so the call is right; UBSan's function-type check cannot know
+// that.
+[[clang::no_sanitize("function")]] void call_entry(Task *task) {
+    task->entry(task->context);
+}
+
+// The entry of a new task, on its own stack: runs it, then goes back to whoever resumed it, for good.
+void task_main(Task *task) {
+    if constexpr (target::address_sanitizer) {
+        const void *bottom = nullptr;
+        usize size = 0;
+        c::__sanitizer_finish_switch_fiber(nullptr, &bottom, &size);
+        if (task->resumer->size == 0) {
+            task->resumer->bottom = bottom;
+            task->resumer->size = size;
+        }
+    }
+    call_entry(task);
+    task->finished = true;
+    task->group->pending -= 1;
+    transfer(task, task->resumer);
+    c::smith_failure_format(c::SmithFailure_Memory, "a finished task was entered again"); // unreachable
+}
+
+[[noreturn]] void refuse(const char *what) {
+    c::smith_failure_format(c::SmithFailure_Capacity, "%s", what);
+}
+
+// A new task: one mapping holding a guard page, the stack and, at its top, the task's own record. Never null: the
+// system refusing the memory is a checked failure.
+Task *make_task(Group *group, void (*entry)(void *context), void *context) {
+    contract::trusted(); // it lays out raw memory and writes the first frame
+    // NOLINTBEGIN(smith-effects): the system's memory is the edge of this module
+    usize page = (usize)c::sysconf(page_size_name);
+    usize record = (sizeof(Task) + 63) / 64 * 64;
+    usize region_size = page + stack_size;
+    void *region = c::mmap(nullptr, region_size, protect_both, map_private_anonymous, -1, 0);
+    if ((usize)region == ~(usize)0) refuse("task: the system refused a stack");
+    if (c::mprotect(region, page, protect_none) != 0) refuse("task: the system refused a guard page");
+    // NOLINTEND(smith-effects)
+    u8 *base = (u8 *)region;
+    Task *task = (Task *)(base + region_size - record);
+    *task = (Task){};
+    task->region = region;
+    task->region_size = region_size;
+    task->bottom = base + page;
+    task->size = stack_size - record;
+    task->group = group;
+    task->entry = entry;
+    task->context = context;
+    usize top = (usize)(base + region_size - record) & ~(usize)15;
+    usize entry_address = (usize)task_main;
+    usize boot = (usize)boot_stub;
+    if constexpr (target::arch == target::aarch64) {
+        usize *frame = (usize *)(top - 176);
+        for (usize i = 0; i < 22; i++)
+            frame[i] = 0;
+        frame[0] = (usize)task;   // x19
+        frame[1] = entry_address; // x20
+        frame[11] = boot;         // x30
+        task->sp = frame;
+    } else {
+        usize *frame = (usize *)(top - 56);
+        for (usize i = 0; i < 7; i++)
+            frame[i] = 0;
+        frame[3] = entry_address; // r12
+        frame[4] = (usize)task;   // rbx
+        frame[6] = boot;          // the return address
+        task->sp = frame;
+    }
+    return task;
+}
+
+// Enters a task from the current one and returns when it pauses or ends. An ended task's stack is unmapped here.
+bool resume(Task *task) {
+    contract::requires(task != nullptr && !task->finished);
+    Task *self = current();
+    task->resumer = self;
+    transfer(self, task);
+    if (!task->finished) return false;
+    contract::trusted(); // the mapping is the task's own, and no one holds the task any more
+    if constexpr (target::address_sanitizer) {
+        // The frames the task left poisoned must not be poison in the next mapping that lands here.
+        c::__asan_unpoison_memory_region(task->region, task->region_size);
+    }
+    c::munmap(task->region, task->region_size); // NOLINT(smith-effects)
+    return true;
+}
+
+// The calling task gives the worker back to the one that resumed it, and returns when it is resumed.
+void suspend() {
+    Task *self = current();
+    if (self->resumer == nullptr) return;
+    transfer(self, self->resumer);
+}
+
+// The inline scheduler: paused tasks wait in one queue per thread.
+void park(Task *task) {
+    task->next = nullptr;
+    if (parked_last == nullptr)
+        parked_first = task;
+    else
+        parked_last->next = task;
+    parked_last = task;
+}
+
+Task *unpark() {
+    Task *task = parked_first;
+    if (task == nullptr) return nullptr;
+    parked_first = task->next;
+    if (parked_first == nullptr) parked_last = nullptr;
+    task->next = nullptr;
+    return task;
+}
+
+// Runs the task at the queue's head once; it goes to the queue's tail if it pauses.
+void step_parked() {
+    Task *task = unpark();
+    if (!resume(task)) park(task);
+}
+
+// Starts a task of `group` that calls entry(context) on a stack of its own, and runs it at once until it ends or
+// pauses. Exported only so the module's own tests (a module of their own) can start a task; the typed `spawn(&group, f,
+// args...)` waits for the language (#316) and replaces it.
+void spawn_raw(Group *group, void (*entry)(void *context), void *context) {
+    contract::requires(group != nullptr && entry != nullptr);
+    Task *task = make_task(group, entry, context);
+    group->pending += 1;
+    if (!resume(task)) park(task);
+}
+
+// Starts a task of `group` that calls f(arg) on a stack of its own and runs it at once until it ends or pauses, as the
+// inline scheduler does. `f` is a `void (*)(T *)` and `arg` a `T *`, any `T`; both must stay alive until `wait(group)`.
+// This form goes when the lambda form of #945 lands.
+export void spawn(Group *group, auto f, auto *arg) {
+    static_assert(__builtin_types_compatible_p(typeof(f), void (*)(typeof(arg))),
+                  "task::spawn: f must be void (*)(T *) for the T * of arg");
+    contract::trusted(); // f(arg) is called as f(void *): a pointer to any object has one representation
+    usize address = (usize)f;
+    spawn_raw(group, (void (*)(void *))address, (void *)arg);
+}
+
+// Returns when every task spawned into `group` has ended, running the paused tasks in turn. Tasks that wait on each
+// other and none can run are a deadlock, a checked failure. Use it with `defer`.
+[[smith::c_name("smith_task_wait")]] export void wait(Group *group) {
+    contract::requires(group != nullptr);
+    while (group->pending > 0) {
+        if (parked_first == nullptr) {
+            c::smith_failure_format(c::SmithFailure_Memory, "task::wait: %zu tasks are waiting on nothing (a deadlock)",
+                                    group->pending);
+        }
+        step_parked();
+    }
+}
+
+// The calling task offers the thread to the other ready tasks and comes back. In a task, control returns to its
+// resumer, which queues it at the tail; in `main` it runs one round of the paused tasks. With no other task, it returns
+// at once.
+[[smith::c_name("smith_task_pause")]] export void pause() {
+    Task *self = current();
+    if (self->resumer != nullptr) { // whoever resumed it queues it when control returns there
+        suspend();
+        return;
+    }
+    for (Task *last = parked_last; parked_first != nullptr;) {
+        bool stop = parked_first == last;
+        step_parked();
+        if (stop) break;
+    }
+}
