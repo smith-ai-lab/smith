@@ -740,9 +740,9 @@ export void test_task_an_accept_and_a_connect_in_two_tasks_on_one_worker_both_co
         Log log = {};
         Meeting meeting = {.log = &log};
         meeting.address.sun_family = unix_family;
-        c::snprintf(meeting.address.sun_path, sizeof(meeting.address.sun_path),
-                    "/tmp/smith_task_test_%d", // NOLINT(smith-effects)
-                    (i32)c::getpid());
+        const char *path = "/tmp/smith_task_test_accept"; // one test uses it, and it is removed at the end
+        for (usize i = 0; path[i] != 0; i++)
+            meeting.address.sun_path[i] = path[i];
         c::unlink(meeting.address.sun_path);                         // NOLINT(smith-effects)
         meeting.listener = c::socket(unix_family, stream_socket, 0); // NOLINT(smith-effects)
         test::check_equal(c::bind(meeting.listener, (struct c::sockaddr *)&meeting.address, sizeof(meeting.address)),
