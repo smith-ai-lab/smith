@@ -54,6 +54,11 @@ inline const std::vector<Replacement> &replacements() {
          "`mem::alloc(T)` for one value, `mem::alloc_slice(T, n)` for n, never null"},
         {"calloc", "it returns an untyped block that may be null",
          "`mem::alloc_slice(T, n)`, zeroed like calloc and never null"},
+        {"realloc",
+         "it takes a pointer and a byte count apart from the count it describes, returns null on refusal and leaves "
+         "the tail uninitialized",
+         "`mem::realloc(xs, n)` on a slice, never null and with a zeroed tail; `mem::try_realloc(xs, n)` for code that "
+         "refuses"},
         {"free", "the block it releases has no type and may come from anywhere", "`mem::free(p)`"},
         {"aligned_alloc", "it returns an untyped block that may be null",
          "`mem::alloc(T)` or `mem::alloc_slice(T, n)`, which align as the type does"},

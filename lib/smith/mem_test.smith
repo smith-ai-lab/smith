@@ -284,3 +284,109 @@ export void test_mem_view_of_misaligned_bytes_is_a_failed_check() {
     f32 floats[:] = mem::view(storage[1:9], f32);
     test::check_equal(countof(floats), 2);
 }
+
+// ---- realloc and try_realloc ---------------------------------------------------------------------------------------
+
+typedef i32 Ints[:];
+typedef option(Ints) MaybeInts;
+
+MaybeInts try_resize(Ints xs, usize n) {
+    return mem::try_realloc(xs, n);
+}
+
+Ints filled(usize n) {
+    i32 xs[:] = mem::alloc_slice(i32, n);
+    for (usize i = 0; i < n; i++)
+        xs[i] = (i32)i + 1;
+    return xs;
+}
+
+export void test_mem_realloc_grows_keeps_the_elements_and_zeroes_the_tail() {
+    i32 xs[:] = filled(3);
+    xs = mem::realloc(xs, 8);
+    test::check_equal(countof(xs), 8);
+    for (usize i = 0; i < 3; i++)
+        test::check_equal(xs[i], (i32)i + 1);
+    for (usize i = 3; i < 8; i++)
+        test::check_equal(xs[i], 0);
+    mem::free(xs.data); // the runner's checked allocator finds no leak: the old block went with the realloc
+}
+
+export void test_mem_realloc_shrinks_to_the_first_n_elements() {
+    i32 xs[:] = filled(6);
+    xs = mem::realloc(xs, 2);
+    test::check_equal(countof(xs), 2);
+    test::check_equal(xs[0], 1);
+    test::check_equal(xs[1], 2);
+    mem::free(xs.data);
+}
+
+export void test_mem_realloc_of_an_empty_slice_is_a_fresh_zeroed_allocation() {
+    i32 empty[:] = {};
+    i32 xs[:] = mem::realloc(empty, 4);
+    test::check_equal(countof(xs), 4);
+    for (usize i = 0; i < 4; i++)
+        test::check_equal(xs[i], 0);
+    mem::free(xs.data);
+}
+
+export void test_mem_realloc_to_zero_frees_and_gives_the_empty_slice() {
+    i32 xs[:] = filled(4);
+    xs = mem::realloc(xs, 0);
+    test::check_equal(countof(xs), 0);
+    test::check_condition(xs.data == nullptr);
+}
+
+export void test_mem_try_realloc_is_none_when_refused_and_the_old_slice_is_intact() {
+    static Memory memory;
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
+    arena::ArenaAllocator parent = arena::allocator(&a); // a parent that owns its blocks, so their realloc is asked
+    failing::Failing f = failing::make(&parent.base, random::key_make(3));
+    f.one_in = 0;
+    mem::Allocator *before = mem::set_allocator(&f.base);
+    defer mem::set_allocator(before);
+    i32 xs[:] = filled(3);
+    f.one_in = 1;
+    test::check_condition(try_resize(xs, 100) != .some);
+    f.one_in = 0;
+    test::check_equal(f.refused, 1);
+    test::check_equal(countof(xs), 3);
+    for (usize i = 0; i < 3; i++)
+        test::check_equal(xs[i], (i32)i + 1);
+    mem::free(xs.data);
+}
+
+export void test_mem_try_realloc_with_an_overflowing_size_is_none() {
+    i32 xs[:] = filled(2);
+    test::check_condition(try_resize(xs, ~(usize)0 / 2) != .some);
+    test::check_equal(xs[1], 2);
+    mem::free(xs.data);
+}
+
+export void test_mem_try_realloc_is_some_when_nothing_is_refused() {
+    i32 xs[:] = filled(2);
+    MaybeInts grown = try_resize(xs, 5);
+    if (grown == .some) {
+        test::check_equal(countof(grown.some), 5);
+        test::check_equal(grown.some[1], 2);
+        test::check_equal(grown.some[4], 0);
+        mem::free(grown.some.data);
+    } else {
+        test::check_condition(false);
+        mem::free(xs.data);
+    }
+}
+
+export void test_mem_realloc_reaches_the_allocator_in_force() {
+    static Memory memory;
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *before = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(before);
+    i32 xs[:] = filled(4);
+    test::check_condition(allocator.base.owns(&allocator.base, xs.data));
+    xs = mem::realloc(xs, 16);
+    test::check_condition(allocator.base.owns(&allocator.base, xs.data)); // the arena answered the realloc
+    test::check_equal(xs[3], 4);
+    test::check_equal(xs[15], 0);
+}
