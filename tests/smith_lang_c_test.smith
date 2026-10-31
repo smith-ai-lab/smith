@@ -29,17 +29,16 @@ static typeof(const char[:]) slice_of(const char *text) {
     return text[0:c::strlen(text)];
 }
 
-static const char *text(arena::Arena *arena, const char *a, const char *b, const char *c, const char *d) {
-    return format::push(arena, a, b, c, d).data;
+static const char *text(const char *a, const char *b, const char *c, const char *d) {
+    return format::push(a, b, c, d).data;
 }
 
 // The sources are compiled in a tree where a renamed file sits beside the original. The tree is links to the
 // repository's items (a copy of them was most of what each case cost); the folders on the way to `stem` are real
 // folders of links, and the source itself is a real file, so that the .smith written beside it is a real file too.
-static void make_tree(arena::Arena *arena, const scratch::Project *p, const char *stem) {
+static void make_tree(const scratch::Project *p, const char *stem) {
     const char *command =
-        format::push(arena,
-                     "mkdir tree && for item in smith.c build.c include lib runtime scripts templates tests "
+        format::push("mkdir tree && for item in smith.c build.c include lib runtime scripts templates tests "
                      "shim; do ln -s \"$SMITH_REPO/$item\" tree/$item; done && mkdir -p tree/.smith && "
                      "ln -s \"$SMITH_REPO/.smith/include\" tree/.smith/include && "
                      "dir=$(dirname ",
@@ -62,9 +61,9 @@ static void compare(const char *stem, const char *extra, bool from_smith) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    make_tree(&memory, &p, stem);
+    make_tree(&p, stem);
     if (from_smith) {
-        scratch::Run copied = scratch::sh(&p, format::push(&memory, "cp tree/", stem, ".smith tree/", stem, ".c").data);
+        scratch::Run copied = scratch::sh(&p, format::push("cp tree/", stem, ".smith tree/", stem, ".c").data);
         scratch::expect_status("the .smith is copied to .c", 0, &copied);
     }
     const char *base = stem;
@@ -72,11 +71,11 @@ static void compare(const char *stem, const char *extra, bool from_smith) {
         base = slash + 1;
     // The file's own name in a string is read as ".c" on the lowered side; any other ".smith" in a string is code.
     scratch::write(&p, "own.sed",
-                   format::push(&memory, "s|\\([^A-Za-z0-9_/.-]\\)", base, "\\.smith\"|\\1", base, ".c\"|g\n").data);
+                   format::push("s|\\([^A-Za-z0-9_/.-]\\)", base, "\\.smith\"|\\1", base, ".c\"|g\n").data);
     scratch::write(&p, "messages.sed", "s/\\.c\\([: ]\\)/.smith\\1/g\n");
     // The two compiles run side by side (each in its own files; the .smith is a copy removed when it is done), and
     // each writes its exit status.
-    const char *both = format::push(&memory, "cd tree; { smith cc ", flags, " ", extra, " -S ", stem,
+    const char *both = format::push("cd tree; { smith cc ", flags, " ", extra, " -S ", stem,
                                     ".c -o ../plain.s 2> ../plain.err; echo $? > ../plain.status; } & "
                                     "cp ",
                                     stem, ".c ", stem, ".smith && { smith cc ", flags, " ", extra, " -S ", stem,
@@ -171,21 +170,19 @@ static void behave(const char *name) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::copy_tree(&p, format::push(&memory, "tests/smith-lang-c/", name, ".c").data,
-                       format::push(&memory, name, ".c").data);
-    scratch::Run copied = scratch::sh(&p, format::push(&memory, "cp ", name, ".c ", name, ".smith").data);
+    scratch::copy_tree(&p, format::push("tests/smith-lang-c/", name, ".c").data, format::push(name, ".c").data);
+    scratch::Run copied = scratch::sh(&p, format::push("cp ", name, ".c ", name, ".smith").data);
     scratch::expect_status("the program is copied", 0, &copied);
     const char *kinds[2] = {"c", "smith"};
     for (usize i = 0; i < 2; i++) {
-        const char *build = format::push(&memory,
-                                         "smith cc -std=gnu23 -O1 -g0 -Wno-builtin-macro-redefined "
+        const char *build = format::push("smith cc -std=gnu23 -O1 -g0 -Wno-builtin-macro-redefined "
                                          "-D'__FILE__=\"unit\"' -I \"$SMITH_REPO/.smith/include\" -w ",
                                          name, ".", kinds[i], " -o ", name, ".", kinds[i], ".bin")
                                 .data;
         scratch::Run built = scratch::sh(&p, build);
-        scratch::expect_status(text(&memory, "the .", kinds[i], " builds", ""), 0, &built);
-        scratch::Run ran = scratch::sh(&p, format::push(&memory, "./", name, ".", kinds[i], ".bin 2>&1").data);
-        test::golden_free(slice_of(format::push(&memory, "tests/smith-lang-c/", name, ".out").data), slice_of(ran.out));
+        scratch::expect_status(text("the .", kinds[i], " builds", ""), 0, &built);
+        scratch::Run ran = scratch::sh(&p, format::push("./", name, ".", kinds[i], ".bin 2>&1").data);
+        test::golden_free(slice_of(format::push("tests/smith-lang-c/", name, ".out").data), slice_of(ran.out));
     }
 }
 
@@ -230,19 +227,17 @@ static void constexpr_c(const char *width, const char *flags_for_target) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *source = format::push(&memory,
-                                      "static unsigned long width(void) { return sizeof(long); }\n"
+    const char *source = format::push("static unsigned long width(void) { return sizeof(long); }\n"
                                       "static int fib(int n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); }\n"
                                       "constexpr int x = fib(10);\nstatic_assert(x == 55);\nstatic_assert(width() == ",
                                       width, ");\n")
                              .data;
     scratch::write(&p, "x.c", source);
     scratch::write(&p, "x.smith", source);
-    scratch::Run plain =
-        scratch::sh(&p, text(&memory, "smith cc -std=gnu23 -fsyntax-only ", flags_for_target, " x.c", ""));
+    scratch::Run plain = scratch::sh(&p, text("smith cc -std=gnu23 -fsyntax-only ", flags_for_target, " x.c", ""));
     scratch::expect_failure("the .c reports the error it always did", &plain);
     scratch::Run lowered =
-        scratch::sh(&p, text(&memory, "smith cc -std=gnu23 -fsyntax-only ", flags_for_target, " x.smith", ""));
+        scratch::sh(&p, text("smith cc -std=gnu23 -fsyntax-only ", flags_for_target, " x.smith", ""));
     scratch::expect_status("the .smith runs the function", 0, &lowered);
 }
 

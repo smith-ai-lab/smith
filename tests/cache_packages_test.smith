@@ -52,11 +52,11 @@ static scratch::Project cache_project() {
 
 // A shell command with the functions of the prelude.
 static scratch::Run run(const scratch::Project *p, const char *body) {
-    return scratch::sh(p, format::push(&memory, ". ./prelude; ", body).data);
+    return scratch::sh(p, format::push(". ./prelude; ", body).data);
 }
 
 static const char *text(const scratch::Project *p, const char *body) {
-    return captured(p, format::push(&memory, ". ./prelude; ", body).data);
+    return captured(p, format::push(". ./prelude; ", body).data);
 }
 
 // A setup command that must succeed.
@@ -120,9 +120,9 @@ export void test_cache_lists_nothing_with_nothing_cached() {
     scratch::Run listed = scratch::sh(&p, "smith cache");
     scratch::expect_status("cache: exits 0 with nothing cached", 0, &listed);
     scratch::expect_contains("cache: the modules path", listed.out,
-                             format::push(&memory, "modules: ", p.cache, "/smith/modules").data);
+                             format::push("modules: ", p.cache, "/smith/modules").data);
     scratch::expect_contains("cache: the packages path", listed.out,
-                             format::push(&memory, "packages: ", p.cache, "/smith/packages").data);
+                             format::push("packages: ", p.cache, "/smith/packages").data);
     scratch::expect_contains("cache: no entries", listed.out, "0 entries, 0 B");
     scratch::expect_contains("cache: the rule is stated", listed.out,
                              "unused for 31 days is removed, checked at most once a week");
@@ -177,7 +177,7 @@ export void test_cache_lists_fetched_packages() {
     scratch::Run verbose = scratch::sh(&p, "smith cache -v");
     scratch::expect_contains("cache -v: lists the first package", verbose.out, text(&p, "hex 1 | cut -c1-16"));
     scratch::expect_contains("cache -v: and its last use", verbose.out,
-                             format::push(&memory, "last used ", text(&p, "date -u +%Y-%m-%d")).data);
+                             format::push("last used ", text(&p, "date -u +%Y-%m-%d")).data);
     setup(&p, "touch -t 202001020304 \"$packages/$(hex 1).used\"");
     scratch::Run stamped = scratch::sh(&p, "smith cache -v");
     scratch::expect_contains("cache -v: the last use is the stamp's time", stamped.out, "last used 2020-01-02");

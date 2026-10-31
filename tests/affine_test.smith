@@ -34,12 +34,12 @@ static void affine_case(const char *file) {
     defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "tests/affine", "tests/affine");
     const char *command =
-        format::push(&memory, "cd tests/affine && { smith cc -std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c ", file,
+        format::push("cd tests/affine && { smith cc -std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c ", file,
                      " -o /dev/null >../../compile.out 2>&1; echo \"status $?\"; grep -E '^[^ ]+:[0-9]+:[0-9]+: "
                      "(error|note|warning):' ../../compile.out; }")
             .data;
     scratch::Run run = scratch::sh(&p, command);
-    test::golden_free(slice_of(format::push(&memory, "tests/affine/", file, ".expected").data), slice_of(run.out));
+    test::golden_free(slice_of(format::push("tests/affine/", file, ".expected").data), slice_of(run.out));
 }
 
 // The editor: clangd shows the error, for C and for `.smith`.
@@ -51,8 +51,8 @@ static void affine_editor(const char *file, const char *message) {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "tests/affine", "tests/affine");
-    scratch::Run run = scratch::sh(
-        &p, format::push(&memory, "timeout -s KILL 120 smith lsp --check=tests/affine/", file, " 2>&1").data);
+    scratch::Run run =
+        scratch::sh(&p, format::push("timeout -s KILL 120 smith lsp --check=tests/affine/", file, " 2>&1").data);
     scratch::expect_contains(file, run.out, message);
 }
 

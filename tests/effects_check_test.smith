@@ -30,8 +30,8 @@ static typeof(const char[:]) slice_of(const char *text) {
 
 // The findings of `smith lint --quiet files -- flags`, one line each, with the path of the project left off, in the
 // test's arena.
-static const char *findings(const scratch::Project *p, arena::Arena *memory, const char *files, const char *extra) {
-    const char *command = format::push(memory, "smith lint --quiet ", files, " -- ", extra,
+static const char *findings(const scratch::Project *p, const char *files, const char *extra) {
+    const char *command = format::push("smith lint --quiet ", files, " -- ", extra,
                                        " 2>&1 | grep -E '^/.*:[0-9]+:[0-9]+: (error|warning):' | sed -e "
                                        "'s|^.*/proj/||' -e 's/ \\[smith-effects,-warnings-as-errors\\]$//'")
                               .data;
@@ -48,10 +48,9 @@ static void golden(const char *name, const char *files, const char *extra) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *found = findings(&p, &memory, files, extra);
-    test::golden_free(
-        slice_of(format::push(&memory, "tests/build_fixtures/effects_check/expected/", name, ".txt").data),
-        slice_of(format::push(&memory, found, "\n").data));
+    const char *found = findings(&p, files, extra);
+    test::golden_free(slice_of(format::push("tests/build_fixtures/effects_check/expected/", name, ".txt").data),
+                      slice_of(format::push(found, "\n").data));
 }
 
 // --- rule 1: a raw effect outside a capability's module; rule 2: failure is not one ---
@@ -69,7 +68,7 @@ export void test_effects_pure_calls_and_the_failure_calls_are_allowed() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::expect_text("effects: no finding in the pure and failure functions", "0",
-                         scratch::capture(&p, format::push(&memory, "smith lint --quiet raw.c -- ", flags,
+                         scratch::capture(&p, format::push("smith lint --quiet raw.c -- ", flags,
                                                            " 2>&1 | grep -c -e 'raw.c:\\(1[7-9]\\|[2-4][0-9]\\):'")
                                                   .data));
 }
@@ -92,9 +91,8 @@ export void test_effects_src_dev_c_beside_include_proj_dev_h_is_the_implementati
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::expect_text(
-        "effects: src/dev.c beside include/proj/dev.h is the implementation of Dev", "",
-        findings(&p, &memory, "src/dev.c", "-I\"$SMITH_REPO/.smith/include\" -I. -std=gnu2y -Iinclude"));
+    scratch::expect_text("effects: src/dev.c beside include/proj/dev.h is the implementation of Dev", "",
+                         findings(&p, "src/dev.c", "-I\"$SMITH_REPO/.smith/include\" -I. -std=gnu2y -Iinclude"));
 }
 
 // --- rule 5: a main-only constructor ---
@@ -134,11 +132,10 @@ export void test_effects_smith_the_lowerings_names_never_appear_and_an_instance_
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run run = scratch::sh(
-        &p, format::push(&memory, "smith lint --quiet hw/dev.smith hw_main.smith -- ", flags, " 2>&1").data);
+    scratch::Run run =
+        scratch::sh(&p, format::push("smith lint --quiet hw/dev.smith hw_main.smith -- ", flags, " 2>&1").data);
     scratch::expect_text(".smith: the lowering's names never appear", "0",
-                         scratch::capture(&p, format::push(&memory,
-                                                           "smith lint --quiet hw/dev.smith hw_main.smith "
+                         scratch::capture(&p, format::push("smith lint --quiet hw/dev.smith hw_main.smith "
                                                            "-- ",
                                                            flags, " 2>&1 | grep -c 'hw_dev_'")
                                                   .data));
@@ -157,9 +154,9 @@ export void test_effects_cfiles_false_a_c_file_is_not_checked_and_a_smith_file_i
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *found = findings(&p, &memory, "raw.c made.c hw_main.smith", flags);
+    const char *found = findings(&p, "raw.c made.c hw_main.smith", flags);
     test::golden_free(slice_of("tests/build_fixtures/effects_check/expected/off.txt"),
-                      slice_of(format::push(&memory, found, "\n").data));
+                      slice_of(format::push(found, "\n").data));
 }
 
 export void test_effects_cfiles_true_the_c_file_is_checked() {
@@ -171,7 +168,7 @@ export void test_effects_cfiles_true_the_c_file_is_checked() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::expect_text("effects: CFiles true: the .c file is checked", "6",
-                         scratch::capture(&p, format::push(&memory, "smith lint --quiet raw.c -- ", flags,
+                         scratch::capture(&p, format::push("smith lint --quiet raw.c -- ", flags,
                                                            " 2>&1 | grep -E '^/.*:[0-9]+:[0-9]+: (error|warning):' | "
                                                            "grep -c 'raw.c'")
                                                   .data));
@@ -197,8 +194,9 @@ export void test_effects_with_no_clang_tidy_the_default_checks_report_a_raw_call
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::expect_text("effects: with no .clang-tidy the default checks report a raw call", "1",
-                         scratch::capture(&p, format::push(&memory, "smith lint --quiet raw.c -- ", flags,
-                                                           " 2>&1 | grep -c 'fopen. touches the world'")
-                                                  .data));
+    scratch::expect_text(
+        "effects: with no .clang-tidy the default checks report a raw call", "1",
+        scratch::capture(
+            &p,
+            format::push("smith lint --quiet raw.c -- ", flags, " 2>&1 | grep -c 'fopen. touches the world'").data));
 }

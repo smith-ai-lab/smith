@@ -52,7 +52,7 @@ export void test_package_checks_pass_at_o0_under_asan_and_ubsan() {
     package_project(&p);
     scratch::Run run = compile_and_run(&p, "-O0 -g -fsanitize=address,undefined", "bin/asan");
     scratch::expect_text("checks: pass at -O0 under ASan and UBSan", "0 package: all checks passed",
-                         format::push(&memory, run.status == 0 ? "0 " : "1 ", run.out).data);
+                         format::push(run.status == 0 ? "0 " : "1 ", run.out).data);
     scratch::expect_text("checks: ... and nothing was printed to stderr", "", run.err);
 }
 
@@ -66,5 +66,5 @@ export void test_package_checks_pass_at_o2() {
     package_project(&p);
     scratch::Run run = compile_and_run(&p, "-O2", "bin/fast");
     scratch::expect_text("checks: pass at -O2", "0 package: all checks passed",
-                         format::push(&memory, run.status == 0 ? "0 " : "1 ", run.out).data);
+                         format::push(run.status == 0 ? "0 " : "1 ", run.out).data);
 }

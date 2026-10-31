@@ -59,7 +59,7 @@ static const char *copy_of(arena::Arena *arena, const char *at, usize length) {
 // The words of an info string: the kind, then project=NAME, file=PATH, and the rest as flags.
 static void parse_info(arena::Arena *arena, const char *info, Block *block) {
     block->kind = "";
-    block->project = format::push(arena, "block-", block->number).data;
+    block->project = format::push("block-", block->number).data;
     block->path = nullptr;
     char *flags = arena::push_slice(arena, char, c::strlen(info) + 3).data;
     usize used = 0;
@@ -157,16 +157,14 @@ typedef struct {
 
 // The file a block is written to: file=PATH, else Makefile, c-N.c, or the path its module line implies (example-N.smith
 // without one).
-static const char *path_of(arena::Arena *arena, const scratch::Project *p, const Block *block) {
+static const char *path_of(const scratch::Project *p, const Block *block) {
     if (block->path != nullptr) return block->path;
     if (c::strcmp(block->kind, "make") == 0) return "Makefile";
-    if (c::strcmp(block->kind, "c") == 0) return format::push(arena, "c-", block->number, ".c").data;
+    if (c::strcmp(block->kind, "c") == 0) return format::push("c-", block->number, ".c").data;
     scratch::write(p, "raw", block->body);
     const char *module = scratch::capture(p, "sed -n 's/^module \\([A-Za-z0-9_:]*\\);.*/\\1/p' raw | head -n 1");
-    if (module[0] == '\0') return format::push(arena, "example-", block->number, ".smith").data;
-    return format::push(arena,
-                        scratch::capture(p, format::push(arena, "printf '%s' '", module, "' | sed 's|::|/|g'").data),
-                        ".smith")
+    if (module[0] == '\0') return format::push("example-", block->number, ".smith").data;
+    return format::push(scratch::capture(p, format::push("printf '%s' '", module, "' | sed 's|::|/|g'").data), ".smith")
         .data;
 }
 
@@ -178,16 +176,16 @@ static bool is_file_block(const Block *block) {
 // Places the blocks of a project in the folder of the project (the scratch project's own). The blocks of a project that
 // the project starts from (`base=NAME`) are placed first by a call of their own, with `files_only`: their files and
 // nothing else, so that the project's own blocks replace them.
-static void place_blocks(arena::Arena *arena, const scratch::Project *p, const Blocks *blocks, const char *name,
-                         bool files_only, Placed *placed) {
+static void place_blocks(const scratch::Project *p, const Blocks *blocks, const char *name, bool files_only,
+                         Placed *placed) {
     for (usize i = 0; i < blocks->count; i++) {
         const Block *block = &blocks->items[i];
         if (c::strcmp(block->project, name) != 0) continue;
         if (c::strcmp(block->kind, "output") == 0 && !files_only) {
-            scratch::write(p, ".expected", format::push(arena, scratch::read(p, ".expected"), block->body).data);
+            scratch::write(p, ".expected", format::push(scratch::read(p, ".expected"), block->body).data);
         }
         if (!is_file_block(block)) continue;
-        const char *path = path_of(arena, p, block);
+        const char *path = path_of(p, block);
         for (usize j = 0; j < placed->count; j++) {
             if (c::strcmp(placed->paths[j], path) == 0) {
                 test::note("README.md:%zu: %s/%s is written by two blocks", block->line, name, path);
@@ -196,18 +194,18 @@ static void place_blocks(arena::Arena *arena, const scratch::Project *p, const B
         }
         scratch::write(p, "raw", block->body);
         scratch::Run copied =
-            scratch::sh(p, format::push(arena, "mkdir -p \"$(dirname '", path, "')\" && cp raw '", path, "'").data);
+            scratch::sh(p, format::push("mkdir -p \"$(dirname '", path, "')\" && cp raw '", path, "'").data);
         scratch::expect_status(path, 0, &copied);
         if (placed->count < placed_max) placed->paths[placed->count++] = path;
     }
 }
 
 // The flags of all the blocks of a project, as ",run,test,".
-static const char *flags_of(arena::Arena *arena, const Blocks *blocks, const char *name) {
+static const char *flags_of(const Blocks *blocks, const char *name) {
     const char *flags = ",";
     for (usize i = 0; i < blocks->count; i++) {
         if (c::strcmp(blocks->items[i].project, name) == 0) {
-            flags = format::push(arena, flags, blocks->items[i].flags).data;
+            flags = format::push(flags, blocks->items[i].flags).data;
         }
     }
     return flags;
@@ -234,65 +232,62 @@ constexpr char missing_script[_] =
     "while IFS= read -r wanted; do [ -n \"$wanted\" ] || continue; "
     "grep -qF -- \"$wanted\" out || echo \"not in the output: $wanted\"; done <.expected";
 
-static void check_port(arena::Arena *arena, const scratch::Project *p, const char *label) {
+static void check_port(const scratch::Project *p, const char *label) {
     scratch::Run run =
         scratch::sh(p, "CC=smith-cc make >out 2>&1 && ./app >printed 2>&1 && smith build --dump-config >build.c "
                        "2>out && rm -f app ./*.o && smith build >out 2>&1 && ./app >stdout 2>&1 && "
                        "diff printed stdout >out; status=$?; cat out; exit $status");
-    scratch::expect_status(format::push(arena, label, ": port (make with smith-cc, --dump-config, build)").data, 0,
-                           &run);
+    scratch::expect_status(format::push(label, ": port (make with smith-cc, --dump-config, build)").data, 0, &run);
 }
 
 // The command must fail and print every line of the output block.
-static void check_fails_with_output(arena::Arena *arena, const scratch::Project *p, const char *label, const char *what,
+static void check_fails_with_output(const scratch::Project *p, const char *label, const char *what,
                                     const char *command) {
     scratch::Run run = scratch::sh(p, command);
-    scratch::expect_failure(format::push(arena, label, ": ", what).data, &run);
-    scratch::expect_text(format::push(arena, label, ": ", what, " says what the README says").data, "",
+    scratch::expect_failure(format::push(label, ": ", what).data, &run);
+    scratch::expect_text(format::push(label, ": ", what, " says what the README says").data, "",
                          scratch::capture(p, missing_script));
 }
 
-static void check_run(arena::Arena *arena, const scratch::Project *p, const char *label) {
+static void check_run(const scratch::Project *p, const char *label) {
     // smith run prints the build's progress lines ("[3/12] compile ...") before the program's own output.
     scratch::Run linted = scratch::sh(p, "smith lint --quiet 2>&1");
-    scratch::expect_status(format::push(arena, label, ": lint").data, 0, &linted);
+    scratch::expect_status(format::push(label, ": lint").data, 0, &linted);
     scratch::Run run = scratch::sh(p, "smith run >progress 2>run.err; status=$?; cat run.err; exit $status");
-    scratch::expect_status(format::push(arena, label, ": run").data, 0, &run);
+    scratch::expect_status(format::push(label, ": run").data, 0, &run);
     if (scratch::exists(p, ".expected")) {
-        scratch::expect_text(format::push(arena, label, ": run printed its output block").data,
-                             scratch::read(p, ".expected"),
+        scratch::expect_text(format::push(label, ": run printed its output block").data, scratch::read(p, ".expected"),
                              scratch::capture(p, "sed '/^\\[[0-9]*\\/[0-9]*\\] /d' progress"));
     }
 }
 
-static void check_project(arena::Arena *arena, const scratch::Project *p, const char *name, const char *flags,
-                          usize line) {
-    const char *label = format::push(arena, "README.md:", line, " (", name, ")").data;
+static void check_project(const scratch::Project *p, const char *name, const char *flags, usize line) {
+    const char *label = format::push("README.md:", line, " (", name, ")").data;
     bool checked = false;
     if (has(flags, ",port,")) {
-        check_port(arena, p, label);
+        check_port(p, label);
         return;
     }
     if (has(flags, ",rejects,")) {
-        check_fails_with_output(arena, p, label, "rejects", "smith run >out 2>&1");
+        check_fails_with_output(p, label, "rejects", "smith run >out 2>&1");
         return;
     }
     if (has(flags, ",run,")) {
-        check_run(arena, p, label);
+        check_run(p, label);
         checked = true;
     }
     if (has(flags, ",test,")) {
         scratch::Run run = scratch::sh(p, "smith test 2>&1");
-        scratch::expect_status(format::push(arena, label, ": test").data, 0, &run);
+        scratch::expect_status(format::push(label, ": test").data, 0, &run);
         checked = true;
     }
     if (has(flags, ",prove,")) {
         scratch::Run run = scratch::sh(p, "smith prove 2>&1");
-        scratch::expect_status(format::push(arena, label, ": prove").data, 0, &run);
+        scratch::expect_status(format::push(label, ": prove").data, 0, &run);
         checked = true;
     }
     if (has(flags, ",refuse,")) {
-        check_fails_with_output(arena, p, label, "refuse", "smith prove >out 2>&1");
+        check_fails_with_output(p, label, "refuse", "smith prove >out 2>&1");
         checked = true;
     }
     if (!checked) {
@@ -311,13 +306,13 @@ static void project_case(const char *name) {
     arena::Arena *arena = &memory;
     Blocks blocks = {};
     read_blocks(arena, &p, &blocks);
-    const char *flags = flags_of(arena, &blocks, name);
+    const char *flags = flags_of(&blocks, name);
     Placed placed = {};
     const char *base = base_of(arena, flags);
-    if (base != nullptr) place_blocks(arena, &p, &blocks, base, true, &placed);
+    if (base != nullptr) place_blocks(&p, &blocks, base, true, &placed);
     placed.count = 0; // the project's own blocks may replace the files of its base
-    place_blocks(arena, &p, &blocks, name, false, &placed);
-    check_project(arena, &p, name, flags, first_line_of(&blocks, name));
+    place_blocks(&p, &blocks, name, false, &placed);
+    check_project(&p, name, flags, first_line_of(&blocks, name));
 }
 
 // A project added to the README needs a test.
@@ -341,19 +336,17 @@ export void test_every_project_has_a_test() {
 // --- the blocks that are a folder of their own: compiled only --------------------------------------------------------
 
 // The headers of a module and the syntax of its file, with warnings as errors, and smith lint's checks.
-static void check_compiled_smith(arena::Arena *arena, const scratch::Project *p, const Block *block,
-                                 const char *folder) {
-    const char *path = path_of(arena, p, block);
-    const char *where = format::push(arena, folder, "/", path).data;
-    const char *label = format::push(arena, "README.md:", block->line, " (", path, ")").data;
+static void check_compiled_smith(const scratch::Project *p, const Block *block, const char *folder) {
+    const char *path = path_of(p, block);
+    const char *where = format::push(folder, "/", path).data;
+    const char *label = format::push("README.md:", block->line, " (", path, ")").data;
     scratch::write(p, "raw", block->body);
-    scratch::Run placed = scratch::sh(p, format::push(arena, "mkdir -p '", folder, "/.smith/include' \"$(dirname '",
-                                                      where, "')\" && cp raw '", where, "'")
-                                             .data);
+    scratch::Run placed = scratch::sh(
+        p, format::push("mkdir -p '", folder, "/.smith/include' \"$(dirname '", where, "')\" && cp raw '", where, "'")
+               .data);
     scratch::expect_status(label, 0, &placed);
     const char *command =
-        format::push(arena, "cd '", folder,
-                     "' && flags=\"-I $SMITH_REPO/.smith/include -I $PWD/.smith/include -I $PWD\"; ",
+        format::push("cd '", folder, "' && flags=\"-I $SMITH_REPO/.smith/include -I $PWD/.smith/include -I $PWD\"; ",
                      "module=$(sed -n 's/^module \\([A-Za-z0-9_:]*\\);.*/\\1/p' '", path, "' | head -n 1); ",
                      "if [ -n \"$module\" ]; then header=$PWD/.smith/include/$(printf '%s' \"$module\" | "
                      "sed 's|::|/|g').h; mkdir -p \"$(dirname \"$header\")\"; for pass in 1 2; do "
@@ -367,14 +360,14 @@ static void check_compiled_smith(arena::Arena *arena, const scratch::Project *p,
     scratch::expect_status(label, 0, &run);
 }
 
-static void check_compiled_c(arena::Arena *arena, const scratch::Project *p, const Block *block, const char *folder) {
-    const char *path = path_of(arena, p, block);
-    const char *label = format::push(arena, "README.md:", block->line, " (c)").data;
+static void check_compiled_c(const scratch::Project *p, const Block *block, const char *folder) {
+    const char *path = path_of(p, block);
+    const char *label = format::push("README.md:", block->line, " (c)").data;
     scratch::write(p, "raw", block->body);
-    scratch::Run run = scratch::sh(
-        p, format::push(arena, "mkdir -p '", folder, "' && cp raw '", folder, "/", path, "' && cd '", folder,
-                        "' && smith cc -fsyntax-only -std=gnu23 -Wall -Wextra -Werror '", path, "' 2>&1")
-               .data);
+    scratch::Run run =
+        scratch::sh(p, format::push("mkdir -p '", folder, "' && cp raw '", folder, "/", path, "' && cd '", folder,
+                                    "' && smith cc -fsyntax-only -std=gnu23 -Wall -Wextra -Werror '", path, "' 2>&1")
+                           .data);
     scratch::expect_status(label, 0, &run);
 }
 
@@ -390,10 +383,10 @@ export void test_readme_blocks_that_are_a_folder_of_their_own_compile() {
     usize checked = 0;
     for (usize i = 0; i < blocks.count; i++) {
         const Block *block = &blocks.items[i];
-        bool own_folder = c::strcmp(block->project, format::push(&memory, "block-", block->number).data) == 0;
+        bool own_folder = c::strcmp(block->project, format::push("block-", block->number).data) == 0;
         if (!own_folder || !is_file_block(block)) continue;
-        if (c::strcmp(block->kind, "c") == 0) check_compiled_c(&memory, &p, block, block->project);
-        if (c::strcmp(block->kind, "smith") == 0) check_compiled_smith(&memory, &p, block, block->project);
+        if (c::strcmp(block->kind, "c") == 0) check_compiled_c(&p, block, block->project);
+        if (c::strcmp(block->kind, "smith") == 0) check_compiled_smith(&p, block, block->project);
         checked++;
     }
     test::check_greater(checked, (usize)0);
@@ -414,8 +407,8 @@ export void test_readme_smith_blocks_are_what_smith_fmt_writes() {
         if (c::strcmp(blocks.items[i].kind, "smith") != 0) continue;
         scratch::write(&p, "block.smith", blocks.items[i].body);
         scratch::Run run = scratch::sh(&p, "smith fmt --dry-run --Werror block.smith 2>&1");
-        scratch::expect_status(
-            format::push(&memory, "README.md:", blocks.items[i].line, ": not what smith fmt writes").data, 0, &run);
+        scratch::expect_status(format::push("README.md:", blocks.items[i].line, ": not what smith fmt writes").data, 0,
+                               &run);
     }
 }
 
@@ -435,9 +428,8 @@ export void test_readme_smith_blocks_are_not_c_renamed() {
             &p, "grep -nE '^[[:space:]]*#[[:space:]]*(include|define)|\\<(u?int(8|16|32|64)_t|size_t|ptrdiff_t)\\>' "
                 "block.smith");
         scratch::expect_status(
-            format::push(&memory, "README.md:", blocks.items[i].line, ": a smith block is C renamed (see smith-idiom)")
-                .data,
-            1, &run);
+            format::push("README.md:", blocks.items[i].line, ": a smith block is C renamed (see smith-idiom)").data, 1,
+            &run);
     }
 }
 
@@ -453,7 +445,7 @@ static bool repo_has(arena::Arena *arena, const char *path) {
     while (slash > 0 && path[slash - 1] != '/')
         slash--;
     const char *name = copy_of(arena, path + slash, length - slash);
-    const char *parent = slash == 0 ? base : format::push(arena, base, "/", copy_of(arena, path, slash - 1)).data;
+    const char *parent = slash == 0 ? base : format::push(base, "/", copy_of(arena, path, slash - 1)).data;
     files::EntriesResult listed = files::list(parent[0:c::strlen(parent)]);
     switch (listed) {
     case .ok:
@@ -483,7 +475,7 @@ export void test_readme_every_relative_link_names_a_file_that_exists() {
         mem::copy(target[0:length], line[0:length]);
         target[length] = '\0';
         if (length > 0 && !repo_has(&memory, target)) {
-            missing = format::push(&memory, missing, "README.md links to ", target, ": no such file\n").data;
+            missing = format::push(missing, "README.md links to ", target, ": no such file\n").data;
         }
         line += line[length] == '\n' ? length + 1 : length;
     }
@@ -519,13 +511,13 @@ export void test_readme_projects_that_build_by_the_conventions() {
     const char *names[8] = {"slices", "memcopy", "refuse", "reflect", "pack", "packerror", "constcast", "ported"};
     for (usize i = 0; i < countof(names); i++) {
         empty_folder(&p);
-        const char *flags = flags_of(&memory, &blocks, names[i]);
+        const char *flags = flags_of(&blocks, names[i]);
         Placed placed = {};
         const char *base = base_of(&memory, flags);
-        if (base != nullptr) place_blocks(&memory, &p, &blocks, base, true, &placed);
+        if (base != nullptr) place_blocks(&p, &blocks, base, true, &placed);
         placed.count = 0; // the project's own blocks may replace the files of its base
-        place_blocks(&memory, &p, &blocks, names[i], false, &placed);
-        check_project(&memory, &p, names[i], flags, first_line_of(&blocks, names[i]));
+        place_blocks(&p, &blocks, names[i], false, &placed);
+        check_project(&p, names[i], flags, first_line_of(&blocks, names[i]));
     }
 }
 

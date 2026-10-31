@@ -312,7 +312,7 @@ export void test_prove_checks_an_edited_source_keeps_its_contract_checks() {
     defer mem::set_allocator(outside);
     with_contracts(&p);
     scratch::sh(&p, "smith prove 2>&1");
-    scratch::write(&p, "contracts.smith", format::push(&memory, "// edited\n", contracts_source).data);
+    scratch::write(&p, "contracts.smith", format::push("// edited\n", contracts_source).data);
     scratch::expect_contains("stale: every check is back", report_of(&p, "contracts.smith"),
                              "0 removed (proved), 4 kept");
 }

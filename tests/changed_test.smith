@@ -51,8 +51,8 @@ constexpr char repository[_] =
 static const char *changed(const char *edit) {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
-    scratch::Run run = scratch::sh(
-        &p, format::push(&memory, repository, edit, "; smith test --changed --base HEAD --dry-run 2>&1").data);
+    scratch::Run run =
+        scratch::sh(&p, format::push(repository, edit, "; smith test --changed --base HEAD --dry-run 2>&1").data);
     scratch::expect_status("the dry run ends", 0, &run);
     return run.out;
 }
@@ -153,12 +153,12 @@ constexpr char build_file[_] =
 export void test_a_build_file_change_in_a_task_function_selects_the_tests_that_name_it() {
     enter();
     defer leave();
-    const char *out = changed(format::push(&memory, build_file, "build_c 1 unused").data);
+    const char *out = changed(format::push(build_file, "build_c 1 unused").data);
     scratch::expect_contains("local", out, "build.c changed only in 2 names no test runs (build_chore");
     scratch::expect_contains("the test that names the task", out,
                              "tests/chore_test.smith: it names chore, which build.c changed");
     scratch::expect_lacks("not the others", out, "c_test.smith:");
-    out = changed(format::push(&memory, build_file, "build_c 0 other").data);
+    out = changed(format::push(build_file, "build_c 0 other").data);
     scratch::expect_contains("the registering function", out,
                              "build.c changed outside the functions of tasks no test runs, so every test runs");
 }
@@ -176,12 +176,11 @@ export void test_a_selection_of_thousands_of_tests_is_listed_whole() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     scratch::Run run = scratch::sh(
-        &p, format::push(&memory, repository, big, "smith test --changed --list HEAD 2>/dev/null | wc -l | tr -d ' '")
-                .data);
+        &p, format::push(repository, big, "smith test --changed --list HEAD 2>/dev/null | wc -l | tr -d ' '").data);
     scratch::expect_text("every test of the file is listed", "3000", run.out);
     scratch::Project q = scratch::make("q", nullptr);
     defer scratch::clean(&q);
-    run = scratch::sh(&q, format::push(&memory, repository, big, "smith test --changed --dry-run 2>&1").data);
+    run = scratch::sh(&q, format::push(repository, big, "smith test --changed --dry-run 2>&1").data);
     scratch::expect_contains("the names are longer than an argument", run.out,
                              "longer than one argument, so every test runs");
 }
@@ -192,10 +191,10 @@ export void test_list_says_what_it_selected_on_stderr() {
     defer leave();
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
-    scratch::Run run = scratch::sh(&p, format::push(&memory, repository,
-                                                    "echo '// x' >> lib/c_test.smith; smith test --changed --list HEAD "
-                                                    "2>&1 >/dev/null")
-                                           .data);
+    scratch::Run run =
+        scratch::sh(&p, format::push(repository, "echo '// x' >> lib/c_test.smith; smith test --changed --list HEAD "
+                                                 "2>&1 >/dev/null")
+                            .data);
     scratch::expect_contains("the summary", run.out, "selects the tests listed on stdout");
     scratch::expect_contains("the count", run.out, "1 entries");
 }
@@ -259,7 +258,7 @@ export void test_list_prints_the_selected_tests_one_per_line() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     const char *edit = "echo '// x' >> lib/a.smith; smith test --changed --list HEAD 2>/dev/null";
-    scratch::Run run = scratch::sh(&p, format::push(&memory, repository, edit).data);
+    scratch::Run run = scratch::sh(&p, format::push(repository, edit).data);
     scratch::expect_status("the list ends", 0, &run);
     scratch::expect_text("one test file per line", "a_test::\nb_test::\nruns_test::\n",
                          run.out); // lib/ is part of smith
@@ -267,7 +266,7 @@ export void test_list_prints_the_selected_tests_one_per_line() {
                          "-m c; smith test --changed --list HEAD~1 HEAD 2>/dev/null";
     scratch::Project q = scratch::make("q", nullptr);
     defer scratch::clean(&q);
-    run = scratch::sh(&q, format::push(&memory, repository, commit).data);
+    run = scratch::sh(&q, format::push(repository, commit).data);
     scratch::expect_text("the range", "c_test::\n", run.out);
 }
 
