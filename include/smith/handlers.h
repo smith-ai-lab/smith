@@ -192,6 +192,9 @@ struct SmithNetHandler {
     ssize_t (*write)(SmithNetHandler *self, int connection, const void *buffer, size_t size);
     // Closes a connection or a listener. Called once; the handler may refuse a second time.
     int (*close)(SmithNetHandler *self, int id);
+    // Like `read`, but gives up when nothing has arrived within timeout_ns: -1 with errno ETIMEDOUT. Null: the net
+    // uses `read` (no deadline).
+    ssize_t (*read_within)(SmithNetHandler *self, int connection, void *buffer, size_t size, int64_t timeout_ns);
 };
 
 // Sets the network of the calling thread (null: the real one), returning the one it had.
