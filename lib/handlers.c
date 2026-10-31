@@ -327,7 +327,8 @@ SmithScheduler *smith_handlers_scheduler(void) {
 static thread_local int smith_handlers_locks_held;
 
 static void smith_handlers_lock_taken(void) {
-    if (atomic_load_explicit(&smith_handlers_scheduler_active, memory_order_relaxed) != 0) smith_handlers_locks_held += 1;
+    if (atomic_load_explicit(&smith_handlers_scheduler_active, memory_order_relaxed) != 0)
+        smith_handlers_locks_held += 1;
 }
 
 static void smith_handlers_lock_given(void) {
