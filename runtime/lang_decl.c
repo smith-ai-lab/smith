@@ -383,7 +383,17 @@ static const char *smith_lang_declare(SmithLang *lang, const SmithHost *host, co
                          (int)length, name, kind == SmithLangName_Tag ? "a tag" : ordinary,
                          kind == SmithLangName_Tag ? ordinary : "a tag");
     }
-    if (known != nullptr && exported && !known->exported) known->exported = true;
+    if (known != nullptr && exported && !known->exported) {
+        // A private prototype is `static` and the export after it is not: clang's error is in the copy of the export's
+        // head, which is reported nowhere, so the lowering says it (the fix is `export` on both). The compile's pass
+        // reads the prototype's name as a value, the interface's as a function.
+        if (kind == SmithLangName_Function &&
+            (known->kind == SmithLangName_Function || known->kind == SmithLangName_Value)) {
+            smith_lang_error(lang, host, location, "`%.*s` is declared above without `export`; write `export` on both",
+                             (int)length, name);
+        }
+        known->exported = true;
+    }
     const char *prefixed = smith_lang_prefixed(lang, name, length);
     if (lang->private_active) smith_lang_priv_name(lang, name, length, prefixed, lang->tmp_length);
     return prefixed;

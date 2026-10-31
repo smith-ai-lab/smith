@@ -1,0 +1,60 @@
+// The smoke test of the front end's runner (issue #1115, track B of #1112): LLVM's C API called from a .smith file. A
+// module with `i32 answer() { return 42; }` is built with an IR builder, verified, run by Orc's LLJIT and called.
+// No AST: this only proves the runner compiles against LLVM's headers and links its libraries.
+module front_emit_test;
+
+import std::test;
+import <llvm-c/Core.h>;
+import <llvm-c/Analysis.h>;
+import <llvm-c/LLJIT.h>;
+import <llvm-c/Orc.h>;
+import <llvm-c/Target.h>;
+import <string.h>;
+import <unistd.h>;
+
+// An LLVM call that returns an error: the test fails with its message, which the call consumes.
+static void expect_success(c::LLVMErrorRef error) {
+    if (error == nullptr) return;
+    char *message = c::LLVMGetErrorMessage(error);
+    defer c::LLVMDisposeErrorMessage(message);
+    c::write(2, message, c::strlen(message));
+    test::check_equal(message == nullptr, true);
+}
+
+export void test_front_emit_jits_a_function_built_through_the_c_api() {
+    test::check_equal(c::LLVMInitializeNativeTarget(), 0);
+    test::check_equal(c::LLVMInitializeNativeAsmPrinter(), 0);
+
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    // The thread-safe context owns the context from here on.
+    c::LLVMOrcThreadSafeContextRef thread_safe_context = c::LLVMOrcCreateNewThreadSafeContextFromLLVMContext(context);
+    c::LLVMModuleRef ir_module = c::LLVMModuleCreateWithNameInContext("front", context);
+    c::LLVMTypeRef i32_type = c::LLVMInt32TypeInContext(context);
+    c::LLVMTypeRef function_type = c::LLVMFunctionType(i32_type, nullptr, 0, 0);
+    c::LLVMValueRef function = c::LLVMAddFunction(ir_module, "answer", function_type);
+    c::LLVMBasicBlockRef entry = c::LLVMAppendBasicBlockInContext(context, function, "entry");
+    c::LLVMBuilderRef builder = c::LLVMCreateBuilderInContext(context);
+    c::LLVMPositionBuilderAtEnd(builder, entry);
+    c::LLVMBuildRet(builder, c::LLVMConstInt(i32_type, 42, 0));
+    c::LLVMDisposeBuilder(builder);
+
+    char *problem = nullptr;
+    i32 broken = c::LLVMVerifyModule(ir_module, c::LLVMReturnStatusAction, &problem);
+    c::LLVMDisposeMessage(problem);
+    test::check_equal(broken, 0);
+
+    c::LLVMOrcLLJITRef jit = nullptr;
+    expect_success(c::LLVMOrcCreateLLJIT(&jit, nullptr));
+    // The thread-safe module takes the module; adding it to the JIT takes the thread-safe module.
+    c::LLVMOrcThreadSafeModuleRef thread_safe_module =
+        c::LLVMOrcCreateNewThreadSafeModule(ir_module, thread_safe_context);
+    c::LLVMOrcDisposeThreadSafeContext(thread_safe_context);
+    expect_success(c::LLVMOrcLLJITAddLLVMIRModule(jit, c::LLVMOrcLLJITGetMainJITDylib(jit), thread_safe_module));
+
+    c::LLVMOrcExecutorAddress address = 0;
+    expect_success(c::LLVMOrcLLJITLookup(jit, &address, "answer"));
+    i32 (*answer)() = (i32 (*)())(usize)address;
+    test::check_equal(answer(), 42);
+
+    expect_success(c::LLVMOrcDisposeLLJIT(jit));
+}

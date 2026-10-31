@@ -5,6 +5,7 @@
 // library added since). `tests` and `lib` there are links to the repository's.
 #include <smith/build.h>
 #include <stdlib.h>
+#include <string.h>
 
 void build(SmithBuild *b) {
     // The repository that build.c of the repository sets in SMITH_REPO.
@@ -57,11 +58,21 @@ void build(SmithBuild *b) {
         .flags = flags,
     };
     smith_object(b, &runtime_io);
+    // The front end's tests (tests/front_*_test.smith) link LLVM, so they have a runner of their own
+    // (tests/front_units/build.c): this one leaves them out.
+    const char *const *all_tests = smith_glob(b, smith_list(b, "tests/*_test.smith", nullptr));
+    const char *kept[512];
+    size_t kept_count = 0;
+    for (size_t i = 0; all_tests[i] != nullptr && kept_count < 511; i++)
+        if (strncmp(all_tests[i], "tests/front_", 12) != 0) kept[kept_count++] = all_tests[i];
+    kept[kept_count] = nullptr;
     SmithTests tests = {
         .objects = (const SmithObject *[]){&http, &core, &runtime_io, nullptr},
-        .sources = smith_glob(b, smith_list(b, "lib/std/*_test.smith", "lib/*_test.smith", "tests/*_test.smith",
-                                            "tests/scratch.smith", "tests/runner.smith", "tests/prove_cases.smith",
-                                            "tests/corpus.smith", nullptr)),
+        .sources =
+            smith_cat(b, smith_glob(b, smith_list(b, "lib/std/*_test.smith", "lib/*_test.smith", nullptr)), kept,
+                      smith_list(b, "tests/scratch.smith", "tests/runner.smith", "tests/prove_cases.smith",
+                                 "tests/corpus.smith", nullptr),
+                      nullptr),
         .flags = flags,
         .link_flags = smith_list(b, "-fsanitize=address,undefined", nullptr),
     };

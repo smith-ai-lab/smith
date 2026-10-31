@@ -1,0 +1,1 @@
+src/p.smith:9:13: `shared` is declared above without `export`; write `export` on both
