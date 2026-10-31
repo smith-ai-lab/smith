@@ -342,3 +342,97 @@ export void test_task_each_task_has_its_own_errno_across_a_switch() {
     test::check_equal(seen.a_errno, error_badf);
     test::check_equal(seen.b_errno, error_noent);
 }
+
+// A scheduler that counts what it is asked and hands each call to the inline one.
+struct Counting {
+    task::Scheduler base; // first, so a pointer to the scheduler is a pointer to the counter
+    task::Scheduler *inner;
+    i32 spawns;
+    i32 pauses;
+    i32 waits;
+};
+
+void counting_spawn(task::Scheduler *self, task::Group *group, void (*entry)(void *context), void *context) {
+    Counting *counting = (Counting *)self;
+    counting->spawns += 1;
+    counting->inner->spawn(counting->inner, group, entry, context);
+}
+
+void counting_pause(task::Scheduler *self) {
+    Counting *counting = (Counting *)self;
+    counting->pauses += 1;
+    counting->inner->pause(counting->inner);
+}
+
+void counting_wait(task::Scheduler *self, task::Group *group) {
+    Counting *counting = (Counting *)self;
+    counting->waits += 1;
+    counting->inner->wait(counting->inner, group);
+}
+
+Counting make_counting() {
+    return (Counting){.base = {.spawn = counting_spawn, .pause = counting_pause, .wait = counting_wait},
+                      .inner = task::inline_scheduler()};
+}
+
+struct Nested {
+    Log *log;
+    task::Group *group;
+};
+
+void run_nested_child(Log *log) {
+    log_mark(log, 'c');
+}
+
+void run_nested_parent(Nested *nested) {
+    log_mark(nested->log, 'p');
+    task::spawn(nested->group, run_nested_child, nested->log);
+}
+
+export void test_task_a_counting_scheduler_sees_each_spawn_pause_and_wait() {
+    Counting counting = make_counting();
+    task::Scheduler *previous = task::set_scheduler(&counting.base);
+    defer task::set_scheduler(previous);
+    Log log = {};
+    Marker a = {.log = &log, .name = 'a', .rounds = 1};
+    Marker b = {.log = &log, .name = 'b', .rounds = 1};
+    task::Group group = {};
+    task::spawn(&group, run_marker, &a);
+    task::spawn(&group, run_marker, &b);
+    task::wait(&group);
+    check_marks(&log, "ab");
+    test::check_equal(counting.spawns, 2);
+    test::check_equal(counting.waits, 1);
+    test::check_equal(counting.pauses, 2); // each marker pauses once, through the scheduler it was spawned under
+    test::check_equal(group.pending, (usize)0);
+}
+
+export void test_task_set_scheduler_returns_the_previous_and_defer_restores_it() {
+    Counting outer = make_counting();
+    Counting inner = make_counting();
+    task::Scheduler *original = task::set_scheduler(&outer.base);
+    defer task::set_scheduler(original);
+    {
+        task::Scheduler *previous = task::set_scheduler(&inner.base);
+        defer task::set_scheduler(previous);
+        test::check(previous == &outer.base);
+        test::check(c::smith_handlers_scheduler() == &inner.base);
+    }
+    test::check(c::smith_handlers_scheduler() == &outer.base);
+    task::pause();
+    test::check_equal(outer.pauses, 1);
+    test::check_equal(inner.pauses, 0);
+}
+
+export void test_task_a_task_spawned_under_a_scheduler_that_spawns_again_is_counted() {
+    Counting counting = make_counting();
+    task::Scheduler *previous = task::set_scheduler(&counting.base);
+    defer task::set_scheduler(previous);
+    Log log = {};
+    task::Group group = {};
+    Nested nested = {.log = &log, .group = &group};
+    task::spawn(&group, run_nested_parent, &nested);
+    task::wait(&group);
+    check_marks(&log, "pc");
+    test::check_equal(counting.spawns, 2);
+}
