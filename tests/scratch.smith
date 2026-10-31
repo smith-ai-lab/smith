@@ -477,6 +477,17 @@ static char lowered_errors[lowered_errors_capacity];
 
 // A file of the project, in a folder made for it.
 static void write_in_new_folder(const Project *p, const char *name, const char *text) {
+    if (p->io == nullptr) { // through smith::files: a lowered text is larger than one argument of a command may be
+        const char *path = path_in(p, name);
+        const char *slash = c::strrchr(path, '/');
+        files::DoneResult made = files::make_folder(path[0:(usize)(slash - path)]);
+        test::check_condition(made == .ok);
+        files::CountResult written =
+            files::write_file(path[0:c::strlen(path)], test_io_bytes(text, c::strlen(text)), files::Replace);
+        test::check_condition(written == .ok);
+        release(path);
+        return;
+    }
     const char *slash = c::strrchr(name, '/');
     if (slash != nullptr) {
         usize length = (usize)(slash - name);
@@ -492,14 +503,34 @@ static void write_in_new_folder(const Project *p, const char *name, const char *
 // The in-process lowering reads its source in C, outside io: the file is opened through io first, so that the record of
 // the test names it (the modules it imports are not named).
 static void open_source(const Project *p, const char *folder, const char *source) {
+    if (p->io == nullptr) { // through smith::files; what it reads is given back here
+        const char *path = join_free(folder, "/", source);
+        files::BytesResult file = files::read_file(path[0:c::strlen(path)]);
+        if (file == .error) {
+            test::note("%s cannot be read", path);
+        }
+        release(path);
+        test::check_condition(file == .ok);
+        if (file == .ok && file.ok.data != nullptr) mem::free(file.ok.data);
+        return;
+    }
     io::Read file = io::files_read(&p->io->files, &p->io->arena, format::push(&p->io->arena, folder, "/", source).data);
     test::check_equal(file.error.code, 0);
+}
+
+// $SMITH_REPO, where the runner was started; "." when it is not set.
+static const char *repo_of(const Project *p) {
+    if (p->io == nullptr) {
+        env::Value repo = env::get("SMITH_REPO");
+        return repo == .some ? repo.some.data : ".";
+    }
+    return io::args_env(&p->io->args, "SMITH_REPO");
 }
 
 // The raw lowering of `$SMITH_REPO/<source>` (what `smith cc --smith-lower` prints) written to `name` in the project,
 // made in process (issue #646) where the test only needs the text. A lowering that reports an error fails the test.
 export void write_lowered(const Project *p, const char *source, const char *name) {
-    const char *repo = io::args_env(&p->io->args, "SMITH_REPO");
+    const char *repo = repo_of(p);
     open_source(p, repo, source);
     bool done = c::smith_core_lower(repo, source, nullptr, lowered_text, lowered_capacity, lowered_errors,
                                     lowered_errors_capacity);
@@ -527,13 +558,21 @@ static void header_to(const Project *p, const char *folder, const char *source, 
 // as `smith cc --smith-header` writes it, made in process. It is the text of the header pass, which does not ask the
 // compiler which import declared a C name: a module with two C imports takes the command.
 export void write_header(const Project *p, const char *module) {
+    if (p->io == nullptr) { // the two paths are the caller's to free
+        const char *source = join_free(module, ".smith", "");
+        const char *name = join_free("include/", module, ".h");
+        header_to(p, p->dir, source, name);
+        release(source);
+        release(name);
+        return;
+    }
     header_to(p, p->dir, format::push(&p->io->arena, module, ".smith").data,
               format::push(&p->io->arena, "include/", module, ".h").data);
 }
 
 // The same for `$SMITH_REPO/<source>`, written to `name` in the project.
 export void write_header_of(const Project *p, const char *source, const char *name) {
-    header_to(p, io::args_env(&p->io->args, "SMITH_REPO"), source, name);
+    header_to(p, repo_of(p), source, name);
 }
 
 // The file's text, or "" when it is absent.
