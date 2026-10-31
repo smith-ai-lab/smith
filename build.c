@@ -1170,19 +1170,19 @@ static void build_release(SmithBuild *b, const char *binary) {
 }
 
 // The folder of the LLVM configuration under the package cache: one build of 23.1.3 with RTTI and exceptions on (Alive2
-// needs them), the token hook (#11), and the prover's libraries beside it. r13 is the thirteenth configuration
-// (patches/*.patch; r13 changes `SmithCEval` only (#1018); r12 has no new patch: it is the pack of Linux that gains the
+// needs them), the token hook (#11), and the prover's libraries beside it. r14 is the fourteenth configuration
+// (patches/*.patch; r14 changes `SmithCEval` only (#1018); r12 has no new patch: it is the pack of Linux that gains the
 // prover and Enzyme, #820); scripts/llvm.sh has the same name (SMITH_LLVM_NAME overrides both).
 static const char *build_llvm_folder(SmithBuild *b) {
     const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
-    return smith_fmt(b, "%s/smith/llvm/%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r13"));
+    return smith_fmt(b, "%s/smith/llvm/%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r14"));
 }
 
 // Enzyme beside the LLVM configurations, keyed by its version and the configuration it was built against, so that
 // building it leaves the LLVM install alone (build_enzyme_make).
 static const char *build_enzyme_folder(SmithBuild *b) {
     const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
-    return smith_fmt(b, "%s/smith/enzyme/0.0.303-%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r13"));
+    return smith_fmt(b, "%s/smith/enzyme/0.0.303-%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r14"));
 }
 
 static const char *build_cmake_package(SmithBuild *b) {

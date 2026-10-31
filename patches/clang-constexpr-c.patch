@@ -10,14 +10,16 @@
  LANGOPT(MicrosoftExt      , 1, 0, NotCompatible, "Microsoft C++ extensions")
 --- a/clang/lib/AST/ExprConstant.cpp
 +++ b/clang/lib/AST/ExprConstant.cpp
-@@ -1912,11 +1912,114 @@ void CallStackFrame::describe(raw_ostream &Out) const {
+@@ -1912,11 +1912,116 @@
    Out << ')';
  }
  
-+/// Expr::isEvaluatable is a query ("can this be folded?"), not a context where C
-+/// requires a constant: code generation asks it whether the arms of a `?:` are
-+/// cheap enough to evaluate unconditionally, and running a C function there
-+/// would run the call when C says it does not run. It sets this for its duration.
++/// Expr::isEvaluatableQuery is a question ("can this be folded?"), not a context
++/// where C requires a constant: code generation asks it whether the arms of a
++/// `?:` are cheap enough to evaluate unconditionally, and running a C function
++/// there would run the call when C says it does not run. It sets this for its
++/// duration. (Expr::isEvaluatable stays a required context: a static
++/// initializer's isConstantInitializer asks it.)
 +static thread_local bool SmithEvaluatableQuery = false;
 +
 +/// smith: a C function body runs in the constant evaluator, as C++14 constexpr
@@ -125,7 +127,7 @@
    APValue Scratch;
    if (!Evaluate(Scratch, Info, E))
      // We don't need the value, but we might have skipped a side effect here.
-@@ -4127,7 +4230,7 @@ struct CompleteObject {
+@@ -4127,7 +4232,7 @@
      // In C++14 onwards, it is permitted to read a mutable member whose
      // lifetime began within the evaluation.
      // FIXME: Should we also allow this in C++11?
@@ -134,7 +136,7 @@
          AK != AccessKinds::AK_IsWithinLifetime)
        return false;
      return lifetimeStartedInEvaluation(Info, Base, /*MutableSubobject*/true);
-@@ -4605,7 +4708,7 @@ static CompleteObject findCompleteObject(EvalInfo &Info, const Expr *E,
+@@ -4605,7 +4710,7 @@
    APValue *BaseVal = nullptr;
    QualType BaseType = getType(LVal.Base);
  
@@ -143,7 +145,7 @@
        lifetimeStartedInEvaluation(Info, LVal.Base)) {
      // This is the object whose initializer we're evaluating, so its lifetime
      // started in the current evaluation.
-@@ -4678,7 +4781,7 @@ static CompleteObject findCompleteObject(EvalInfo &Info, const Expr *E,
+@@ -4678,7 +4783,7 @@
          // Access of a parameter that's not associated with a frame isn't going
          // to work out, but we can leave it to evaluateVarDeclInit to provide a
          // suitable diagnostic.
@@ -152,7 +154,7 @@
                   lifetimeStartedInEvaluation(Info, LVal.Base)) {
          // OK, we can read and modify an object if we're in the process of
          // evaluating its initializer, because its lifetime began in this
-@@ -4864,7 +4967,7 @@ static CompleteObject findCompleteObject(EvalInfo &Info, const Expr *E,
+@@ -4864,7 +4969,7 @@
    if (llvm::isa_and_nonnull<ParmVarDecl>(
            LVal.Base.dyn_cast<const ValueDecl *>()))
      ++VisibleDepth;
@@ -161,7 +163,7 @@
         Info.EvalStatus.HasSideEffects) ||
        (isModification(AK) && VisibleDepth < Info.SpeculativeEvaluationDepth))
      return CompleteObject();
-@@ -4959,7 +5062,7 @@ static bool handleAssignment(EvalInfo &Info, const Expr *E, const LValue &LVal,
+@@ -4959,7 +5064,7 @@
    if (LVal.Designator.Invalid)
      return false;
  
@@ -170,7 +172,7 @@
      Info.FFDiag(E);
      return false;
    }
-@@ -5108,7 +5211,7 @@ static bool handleCompoundAssignment(EvalInfo &Info,
+@@ -5108,7 +5213,7 @@
    if (LVal.Designator.Invalid)
      return false;
  
@@ -179,7 +181,7 @@
      Info.FFDiag(E);
      return false;
    }
-@@ -5256,7 +5359,7 @@ static bool handleIncDec(EvalInfo &Info, const Expr *E, const LValue &LVal,
+@@ -5256,7 +5361,7 @@
    if (LVal.Designator.Invalid)
      return false;
  
@@ -188,7 +190,7 @@
      Info.FFDiag(E);
      return false;
    }
-@@ -6415,7 +6518,8 @@ static bool CheckConstexprFunction(EvalInfo &Info, SourceLocation CallLoc,
+@@ -6415,7 +6520,8 @@
  
    // Can we evaluate this function call?
    if (Definition && Body &&
@@ -198,7 +200,7 @@
                                          Definition->hasAttr<MSConstexprAttr>())))
      return true;
  
-@@ -8920,6 +9024,17 @@ public:
+@@ -8920,6 +9026,17 @@
               CallScope.destroy();
      }
  
@@ -216,7 +218,7 @@
      const FunctionDecl *Definition = nullptr;
      Stmt *Body = FD->getBody(Definition);
      SourceLocation Loc = E->getExprLoc();
-@@ -9094,7 +9209,7 @@ public:
+@@ -9094,7 +9211,7 @@
      return VisitUnaryPostIncDec(UO);
    }
    bool VisitUnaryPostIncDec(const UnaryOperator *UO) {
@@ -225,7 +227,7 @@
        return Error(UO);
  
      LValue LVal;
-@@ -9804,7 +9919,7 @@ bool LValueExprEvaluator::VisitUnaryImag(const UnaryOperator *E) {
+@@ -9804,7 +9921,7 @@
  }
  
  bool LValueExprEvaluator::VisitUnaryPreIncDec(const UnaryOperator *UO) {
@@ -234,7 +236,7 @@
      return Error(UO);
  
    if (!this->Visit(UO->getSubExpr()))
-@@ -9817,7 +9932,7 @@ bool LValueExprEvaluator::VisitUnaryPreIncDec(const UnaryOperator *UO) {
+@@ -9817,7 +9934,7 @@
  
  bool LValueExprEvaluator::VisitCompoundAssignOperator(
      const CompoundAssignOperator *CAO) {
@@ -243,7 +245,7 @@
      return Error(CAO);
  
    bool Success = true;
-@@ -9840,8 +9955,12 @@ bool LValueExprEvaluator::VisitCompoundAssignOperator(
+@@ -9840,8 +9957,12 @@
        CAO->getOpForCompoundAssignment(CAO->getOpcode()), RHS);
  }
  
@@ -257,7 +259,7 @@
      return Error(E);
  
    bool Success = true;
-@@ -19316,6 +19435,14 @@ bool RecordExprEvaluator::VisitCXXParenListInitExpr(
+@@ -19316,6 +19437,14 @@
  bool IntExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
    // We don't support assignment in C. C++ assignments don't get here because
    // assignment is an lvalue in C++.
@@ -272,7 +274,7 @@
    if (E->isAssignmentOp()) {
      Error(E);
      if (!Info.noteFailure())
-@@ -21479,7 +21606,7 @@ static bool Evaluate(APValue &Result, EvalInfo &Info, const Expr *E) {
+@@ -21479,7 +21608,7 @@
        return false;
      Result = Value;
    } else if (T->isVoidType()) {
@@ -281,21 +283,50 @@
        Info.CCEDiag(E, diag::note_constexpr_nonliteral)
          << E->getType();
      if (!EvaluateVoid(E, Info))
-@@ -21998,8 +22125,12 @@ bool Expr::isEvaluatable(const ASTContext &Ctx, SideEffectsKind SEK) const {
-          "Expression evaluator can't be called on a dependent expression.");
- 
-   EvalResult Result;
--  return EvaluateAsRValue(Result, Ctx, /* in constant context */ true) &&
--         !hasUnacceptableSideEffect(Result, SEK);
-+  bool Saved = SmithEvaluatableQuery;
-+  SmithEvaluatableQuery = true;
-+  bool Evaluated =
-+      EvaluateAsRValue(Result, Ctx, /* in constant context */ true);
-+  SmithEvaluatableQuery = Saved;
-+  return Evaluated && !hasUnacceptableSideEffect(Result, SEK);
+@@ -22002,6 +22131,15 @@
+          !hasUnacceptableSideEffect(Result, SEK);
  }
  
++bool Expr::isEvaluatableQuery(const ASTContext &Ctx,
++                              SideEffectsKind SEK) const {
++  bool Saved = SmithEvaluatableQuery;
++  SmithEvaluatableQuery = true;
++  bool Evaluated = isEvaluatable(Ctx, SEK);
++  SmithEvaluatableQuery = Saved;
++  return Evaluated;
++}
++
  APSInt Expr::EvaluateKnownConstInt(const ASTContext &Ctx) const {
+   assert(!isValueDependent() &&
+          "Expression evaluator can't be called on a dependent expression.");
+--- a/clang/include/clang/AST/Expr.h
++++ b/clang/include/clang/AST/Expr.h
+@@ -705,6 +705,14 @@
+   bool isEvaluatable(const ASTContext &Ctx,
+                      SideEffectsKind AllowSideEffects = SE_NoSideEffects) const;
+ 
++  /// smith: isEvaluatable for a question that is not a context where C requires
++  /// a constant (code generation: are both arms of a `?:` cheap enough to run
++  /// unconditionally?). A C function body is not run to answer it, so `c ? a() :
++  /// b()` runs one arm (LangOptions::SmithConstexprC).
++  bool isEvaluatableQuery(
++      const ASTContext &Ctx,
++      SideEffectsKind AllowSideEffects = SE_NoSideEffects) const;
++
+   /// HasSideEffects - This routine returns true for all those expressions
+   /// which have any effect other than producing a value. Example is a function
+   /// call, volatile variable read, or throwing an exception. If
+--- a/clang/lib/CodeGen/CGExprScalar.cpp
++++ b/clang/lib/CodeGen/CGExprScalar.cpp
+@@ -5862,7 +5862,7 @@
+ static bool isCheapEnoughToEvaluateUnconditionally(const Expr *E,
+                                                    CodeGenFunction &CGF) {
+   // Anything that is an integer or floating point constant is fine.
+-  return E->IgnoreParens()->isEvaluatable(CGF.getContext());
++  return E->IgnoreParens()->isEvaluatableQuery(CGF.getContext());
+ 
+   // Even non-volatile automatic variables can't be evaluated unconditionally.
+   // Referencing a thread_local may cause non-trivial initialization work to
 --- a/clang/lib/Sema/SemaInit.cpp
 +++ b/clang/lib/Sema/SemaInit.cpp
 @@ -8589,7 +8589,10 @@
