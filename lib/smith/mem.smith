@@ -117,6 +117,27 @@ const char *allocator_name(const Allocator *allocator);
     return result;
 }
 
+// The slice of alloc_slice, or `.none` when the allocator refuses or the size overflows (nothing is allocated then):
+// `try_alloc_slice(f32, n)` for a server that turns away a huge `n`; the size and the data travel as one. Built on
+// try_alloc_raw as try_alloc is.
+[[smith::c_name("smith_mem_try_alloc_slice_type")]] export [[nodiscard]] option(arena::slice_of(T, countof(dims)))
+    try_alloc_slice(constexpr type T, auto... dims) {
+    static_assert(countof(dims) > 0, "try_alloc_slice needs a size for each `[:]` of the result: try_alloc_slice(T, n)");
+    struct smith_array_T_n result = {};
+    usize total = 1;
+    for constexpr (usize i = 0; i < countof(dims); i++) {
+        usize size = (usize)dims[i];
+        if (__builtin_mul_overflow(total, size, &total)) return .none;
+        result.count[i] = size;
+    }
+    if (sizeof(T) > 0 && total > math::max(usize) / sizeof(T)) return .none;
+    void *memory = try_alloc_raw(sizeof(T) * total, alignof(T));
+    if (memory == nullptr) return .none;
+    __builtin_memset(memory, 0, sizeof(T) * total);
+    result.data = (T *)memory;
+    return {.some = result};
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // mem::checked: an allocator that wraps another and finds the mistakes of the code that uses it.
 //
