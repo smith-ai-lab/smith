@@ -29,7 +29,7 @@ void build(SmithBuild *b) {
   module of its own, named from its path (`src/base/math.h` is `src_base_math`). The map for a folder is
   `.smith/modules/<folder with / as _>.modulemap`. Folders may not overlap. smith's own headers
   (`.smith/include/smith/*.h`) always get a map, `.smith/modules/smith.modulemap`, as modules `smith_arena`,
-  `smith_io`, and so on.
+  `smith_text`, and so on.
 - **One module per header, not one per folder.** clang's `umbrella` directory makes the whole folder a single module,
   and the `-MD` depfile of every source then lists every header of that folder, so editing one header rebuilds every
   source that includes any header there. With one module per header (build.c's `smith_glob` finds them, so nobody lists

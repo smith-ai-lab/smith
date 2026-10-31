@@ -7,7 +7,7 @@ tags: [build, build-c]
 # smith build and build.c
 
 **`smith build` runs a project's `build.c`, which writes a ninja manifest, then runs that manifest itself, with no
-ninja.** The executor (`runtime/executor*.c`, on `<smith/io.h>`) reads the subset of ninja's language that smith
+ninja.** The executor (`runtime/executor*.c`, on smith's private runtime layer `runtime/io.smith`) reads the subset of ninja's language that smith
 writes and keeps its own state in `.smith/`; `SMITH_NINJA=<ninja>` runs the manifest with ninja instead. It is
 recognised only as the exact first argument. The header and runtime are embedded in smith with `#embed`, so the stage0 (smith without
 clang inside: no C++, no LLVM, it runs an external clang) still builds with one `cc` command. Design and API: [the build file](build-file.md).

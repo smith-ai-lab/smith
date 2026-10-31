@@ -609,7 +609,7 @@ export i32 twice(i32 x) {
 }
 ```
 
-[smith-io](.agents/skills/smith-io/SKILL.md), [smith-format](.agents/skills/smith-format/SKILL.md).
+[smith-format](.agents/skills/smith-format/SKILL.md).
 
 ### Gradients, no framework
 
@@ -759,8 +759,7 @@ i32 main() {
 | `smith docs` | checks `knowledge/` and the skills | [smith-docs](.agents/skills/smith-docs/SKILL.md) |
 | `smith fetch`, `smith cache` | packages, by URL and hash, and the caches | [smith-packages](.agents/skills/smith-packages/SKILL.md) |
 
-The libraries are [arena](.agents/skills/smith-arena/SKILL.md), [io](.agents/skills/smith-io/SKILL.md),
-[format](.agents/skills/smith-format/SKILL.md), [text](.agents/skills/smith-text/SKILL.md),
+The libraries are [arena](.agents/skills/smith-arena/SKILL.md), [format](.agents/skills/smith-format/SKILL.md), [text](.agents/skills/smith-text/SKILL.md),
 [slice](.agents/skills/smith-slice/SKILL.md), [ascii](.agents/skills/smith-ascii/SKILL.md),
 [json](.agents/skills/smith-json/SKILL.md), [random](.agents/skills/smith-random/SKILL.md),
 [math](.agents/skills/smith-math/SKILL.md), [test](.agents/skills/smith-test/SKILL.md),

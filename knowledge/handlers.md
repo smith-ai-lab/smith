@@ -123,7 +123,7 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
 - **Scheduler (issue #936, part of #241):** `SmithScheduler {spawn, pause, wait, io}` is the handler kind of whatever runs
   tasks (`smith::task`); the runtime only stores it (per thread, a setter returning the previous one, none set is today's
   behaviour). When one with `io` is set, `read`, `write`, `pread`, `pwrite`, `readv`, `writev`, `send`, `recv`, `accept`
-  and `connect` build a `SmithIoRequest` (the operation, its arguments, and on return `result` and `error`), call `io`,
+  and `connect` build a `SmithIoRequest` (the operation, its arguments, and on return `result` and `error`), call the scheduler's `io`,
   which does it and parks the calling task until it completes, and return its result with `errno` set from `error` when
   it is negative. The request is completion-shaped so a backend may be readiness (kqueue, epoll), a pool or io_uring and
   IOCP. A files or console handler that answers a call wins (a fake never reaches the scheduler); with none set, or one

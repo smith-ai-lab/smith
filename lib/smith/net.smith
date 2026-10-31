@@ -1,4 +1,4 @@
-// smith::net, <smith/net.h>: TCP and TLS by direct calls, with no `io::Io` value: connect to a host (plain or with
+// smith::net, <smith/net.h>: TCP and TLS by direct calls, with no capability value to pass: connect to a host (plain or with
 // TLS), listen on a port and accept, read and write bytes, close (#240). Its C API is the generated header
 // include/smith/net.h (committed; `smith build headers` regenerates it); the names follow the rule of arena.smith with
 // one difference: the C functions are `smith_network_*` and the types `SmithNetwork*`, beside io's `smith_net_*`

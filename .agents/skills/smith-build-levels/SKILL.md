@@ -11,7 +11,7 @@ A folder with `main.smith` or `main.c` at the root (never both) and no `build.c`
 
 - A program that imports `smith::autodiff` (or includes `<smith/autodiff.h>`) gets other flags in every profile: `-flto=full`, `-Xclang -disable-llvm-passes` and, in debug, AddressSanitizer but no UBSan (smith-autodiff). The low-level calls (`build::profile_flags`, `build::source_flags`) return the flags of a program that does not differentiate.
 - Debug is the default (`smith build`, `smith run`): `build/debug/<folder name>`, `-g -O0`, address and undefined sanitizers. `smith build release`: `build/release/`, `-O2`. `smith build fast`: `build/fast/`, `-O2 -DNDEBUG`. All three: `-std=gnu2y` with strict warnings and `-Werror`, `-ffp-contract=off`, `-mcpu=apple-m1` on Apple silicon, Clang modules.
-- What is compiled is what `main` reaches: `.smith` by `import a::b;` to `a/b.smith`, C by quoted `#include "foo.h"` to the `foo.c` beside it. smith's libraries need no declaration: `#include <smith/io.h>` or `import smith::io;` compiles and links them.
+- What is compiled is what `main` reaches: `.smith` by `import a::b;` to `a/b.smith`, C by quoted `#include "foo.h"` to the `foo.c` beside it. smith's libraries need no declaration: `#include <smith/text.h>` or `import smith::text;` compiles and links them.
 - Tests: every `*_test.smith` and `*_test.c` file below the root, run by `smith test`.
 - It does not cover: packages, a source that no header names, other flags or libraries (`-lm`, `-framework`), extra tasks, shaders. Those need level 1 or 2.
 

@@ -225,10 +225,6 @@ export void test_the_inflate_header_compiles_alone() {
     generated("inflate");
 }
 
-export void test_the_io_header_compiles_alone() {
-    generated("io");
-}
-
 export void test_the_ascii_header_compiles_alone() {
     generated("ascii");
 }

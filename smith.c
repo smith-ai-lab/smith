@@ -1071,10 +1071,6 @@ static constexpr unsigned char smith_inflate_source[] = {
 #embed "lib/smith/inflate.smith"
 };
 
-static constexpr unsigned char smith_io_source[] = {
-#embed "lib/smith/io.smith"
-};
-
 static constexpr unsigned char smith_json_header[] = {
 #embed "include/smith/json.h"
 };
@@ -1215,7 +1211,6 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(format, true),
     SMITH_LIBRARY(handlers, false),
     SMITH_LIBRARY(inflate, true),
-    SMITH_LIBRARY(io, true),
     SMITH_LIBRARY(json, false),
     SMITH_LIBRARY(math, true),
     SMITH_LIBRARY(mem, true),
@@ -1459,8 +1454,8 @@ static SmithBuildFile smith_build_file(void) {
 // The libraries the build program links, .smith modules that the smith doing the build compiles whatever compiler
 // compiles build.c itself (an external SMITH_CLANG knows no .smith): the runtime's package.c and the executor use them
 // through their headers. random declares -ffp-contract=off.
-static const char *const smith_build_program_libraries[] = {"arena", "contract", "env", "files", "inflate",
-                                                            "io",    "mem",      "net", "random"};
+static const char *const smith_build_program_libraries[] = {"arena", "contract", "env", "files",
+                                                            "inflate", "mem",    "net", "random"};
 
 // The compiles are `-MD` and name the debug info's folder `.`, so the step cache serves them to every project whose
 // build file and libraries are the same (executor.md, "The step cache"): -MMD is refused by it, and a `-g` object
@@ -1715,7 +1710,7 @@ typedef struct {
     char source[PATH_MAX];
     char header[PATH_MAX];
     char scratch[PATH_MAX + 32];
-    char name[64];             // the module's name: `io` for smith::io, the header's basename
+    char name[64];             // the module's name: `arena` for smith::arena, the header's basename
     const unsigned char *text; // the module's source, where its imports are found
     size_t text_size;
     bool skip; // the header is written already (or copied): no process

@@ -2,23 +2,28 @@
 #include "primes.h"
 
 #include <inttypes.h>
+#include <smith/console.h>
 #include <smith/contract.h>
-#include <smith/io.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 
-// A function takes only the capability it uses, so its signature says what it can do to the world.
-// smith lint (smith-effects) reports a call like printf anywhere but in a capability's own module.
-static void report(SmithConsole *console, int32_t sum) {
-    (void)smith_console_printf(console, "the first 5 primes add up to %" PRId32 "\n", sum);
-    (void)smith_console_print(console, "hello from @NAME@\n");
+// Writes the text to stdout through smith's console, which a test can stand in for with smith_console_set_handler.
+static void say(const char *text) {
+    struct smith_array_const_u8_n bytes = {(const uint8_t *)text, {strlen(text)}};
+    (void)smith_console_write(bytes);
 }
 
-// main makes the program's io once, and only main may: it passes down the parts each function needs.
-int main(int argc, char **argv) {
-    SmithIo io = smith_io_make(argc, argv);
+static void report(int32_t sum) {
+    char line[64];
+    (void)snprintf(line, sizeof line, "the first 5 primes add up to %" PRId32 "\n", sum);
+    say(line);
+    say("hello from @NAME@\n");
+}
+
+int main(void) {
     int32_t sum = primes_sum(5);
     smith_assert(sum <= 28);
-    report(&io.console, sum);
-    smith_io_close(&io);
+    report(sum);
     return 0;
 }

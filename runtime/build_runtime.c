@@ -122,8 +122,6 @@ static char smith_command_buffer[smith_command_max + 1];
 }
 
 // The package cache and SHA-256, which smith's `smith fetch` shares. smith writes it next to this file.
-#include <smith/io.h>
-
 #include "package.c"
 
 // The project's own build file, and the words of the command that compiles it. A project built by convention has
@@ -3697,7 +3695,7 @@ static void smith_app_quoted(const char *from, const char *name, bool libraries_
     if (smith_app_is_file(path)) smith_app_add(path, true);
 }
 
-// `<smith/io.h>` uses the library io.
+// `<smith/text.h>` uses the library text.
 static void smith_app_angled(const char *name, size_t length) {
     size_t folder = strlen("smith/");
     if (length > folder + 2 && strncmp(name, "smith/", folder) == 0 && strcmp(name + length - 2, ".h") == 0)

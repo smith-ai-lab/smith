@@ -208,75 +208,7 @@ becomes `#if B`). A `#define` whose body has `::` or a sized type is an error at
 compiler as written ("make it a function"). The compiler's own run needs none of this (it has preprocessed them); a
 `#pragma` such as `STDC FP_CONTRACT` reaches the hook as an annotation token and goes to the parser as it is.
 
-`i32 main(io::Io *io)` in a `.smith` file (it needs `import smith::io;`, under any name) is the program's body, with the
-io made for it: the lowering writes it as `static int32_t smith_user_main(SmithIo *io) { ... }` (the module's prefix is
-never put on it) and, at the end of the file, `int main(int argc, char **argv)` that makes `SmithIo io =
-smith_io_make(argc, argv)`, calls `smith_user_main(&io)`, runs `smith_io_close(&io)` and returns the status. It is found
-by looking ahead from the `i32` that begins a file-scope declaration (`i32`, `main`, `(`, the binding, `::`, `Io`, `*`,
-a name, `)`), in a file with a `module` line or none and in `--smith-lower`; the queued `main` is renamed, so the rest
-of the lowering sees a private function. The C `main` has the location of the name you wrote (the debugger shows
-it at your `main`'s line), the table of names says `smith_user_main` is written `main`, the debug info names it `main` (the debug-name hook of `shim/hook.cpp`, with a module line or none, `tests/dap_test.smith`), and `io::make` anywhere in the
-file is the error "main already has the io". The C forms (`i32 main(i32 argc, char **argv)` in a module, `char *argv[]` too in a file with no `module` line, and `int main(void)`) lower
-as they always did, and `.c` files are never rewritten. Tests: the cases `main-io*` and `error-main-io-make`.
-
-**Array parameters keep their size in a module** (issue #81). Valid C in a file with no `module` line means what it means in
-C, so only a file with a `module` line is changed, and each change is a rejection. A parameter `T xs[N]` is N objects:
-the lowering writes it `T xs[static N]` in the code (`smith_lang_array_size`, `runtime/lang_head.c` for a held head,
-`smith_lang_head_step` for a private one; the generated header keeps `T xs[N]`), which clang turns into a non-null,
-`dereferenceable(N * sizeof(T))` pointer that `smith prove` reads (#74's `[static N]` mechanism, no second one). A parameter
-with no size is an error at its declaration. `countof(xs)` is rewritten, in the module's bodies (`smith_lang_countof_parameter`,
-`runtime/lang_sparse.c`), to the parameter's own size tokens (kept by `smith_lang_array_token` as the head streams by,
-three dimensions of four tokens, eight parameters per function); the host watches `countof` once a function has one.
-The other rejections are about the AST, so they cannot be tokens: `ArrayParameters` (`shim/hook.cpp`) walks the functions
-the module defines when the translation unit is complete (the hook is Sema's external source and does its work when
-Sema asks for the tentative definitions, at the end of the unit: no destructor of Sema's is called with `-disable-free`),
-reading `ParmVarDecl::getOriginalType`, which clang keeps under the pointer: a constant index out of range, `++`, `--` and
-assignment of the parameter, `sizeof(xs)`, and an argument to a module's function (declared in the file or in a
-generated header; a C function takes the pointer) that is a pointer or an array of another shape. Tests: the cases
-`array-param*` and `error-array-param-*`, and the array-parameter tests of `tests/prove_smith_test.smith`. In an editor (`smith lsp`) the AST checks
-depend on clangd reaching the end of the unit.
-
-`smith_object` takes a `.smith` source like any other (knowledge/build-file.md). For each module it adds a
-step that writes the module's header (`smith-cc --smith-header src/a/b.smith -o .smith/include/a/b.h`, restat: the file
-is written only when its bytes change); every `.smith` compile gets `-I .smith/include` and waits for all the headers
-and for one check, which reads each header's `// smith-module:` and `// smith-imports:` lines and fails on an import
-cycle, naming it, before any compile starts. What an importer depends on is its depfile, which lists the headers it
-read. So an edit to a module's body recompiles that module alone, and an edit to its exports recompiles its importers.
-The rule that a module `a::b` lives in a file whose path ends in `a/b.smith` is checked once, when build.c runs.
-
-`smith_tests` finds tests in `.smith` files (`export void test_x(void) {` in a module, `void test_x(void) {` in a file with
-no `module` line), and the runner and its reports name them as written: `geometry::box_test::area`, and a failure shows the
-`.smith` line, its source and `geometry::box_test::test_area_fails` in the chain (knowledge/build-tests.md). `smith prove`
-compiles a `.smith` file as `smith cc` does and names its functions, calls and counterexample values as written
-(`geometry::box::clamp`). Frames of a library written as the modules `smith::test`, `smith::contract` and `smith::trace`
-are machinery in a report, as `smith_test_*` is. A module named `smith::test` itself writes its header to
-`.smith/include/smith/test.h`, the path of the C library's header, so the library cannot become that module until the header
-path is settled.
-
-- A header imported with `import <h>;` is included textually; the importing file's macros reach it.
-- A module's header is written without macros: a macro in an exported signature is not seen by it. An export under `#if`
-  works (the directives are copied), but `#define`s are not, and the header pass does not evaluate a condition.
-- A `c::NAME` that is a macro and an argument of another macro (`c::assert(n < c::SIZE_MAX)`) is expanded with the
-  argument, before the lowering sees it: the lowering drops the `c::` before an expansion and the macro is allowed
-  because the text before it says `c::` (`tests/smith-lang/cases/c-macro-argument`). One that expands to nothing
-  there is not understood. `static_assert`, `alignas`, `alignof`, `bool`, `true`, `false`, `nullptr` and `thread_local`
-  are keywords of C23 and need no `c::` even where a header defines them as macros (`<assert.h>` does `static_assert`).
-- Variables declared with a struct in one declaration (`export struct S {…} s;`) are not given a symbol.
-- A hover in an importer shows the declaration as the header gives it (`int32_t foo::f(int32_t x)`, from the header's
-  standard C types, where the module says `i32`); the `asm("_foo::f")` label of the symbol is left out (`shim/lsp.cpp`).
-- A rename of an exported name edits what clangd knows of (the module, and the importers its index has seen); it does
-  not edit the generated headers. Like any cross-file rename in clangd it misses an importer the index has not read yet.
-- A fix-it that a mistyped `x::name` offers puts in the member alone (`f`), so it makes `foo::f`.
-- A note into an interface read in memory (no database) shows, in `smith cc`, that interface's line under the caret.
-- `-x smith` is not a clang language: the `.smith` extension and `-x c` stand for it.
-- `clang -E` and `-Xclang -dump-tokens` print the source text under a token the lowering made or renamed (it keeps the
-  location of the token it replaces, so diagnostics, the debugger and clang-tidy's fixes point at the `.smith` text);
-  the parser, the code and the debug info are unaffected. `SMITH_LANG_DUMP` shows the macro arguments of a call after
-  the call, and `smith cc --smith-lower` is the lowering of the text as written.
-- On macOS a backtrace names an export `_game::replay::open`, since the label is used as written (the underscore is the
-  Mach-O prefix of a C symbol); `b game::replay::open` finds it.
-
-**`main` in a module** (issue #240, runtime/lang_stream.c `smith_lang_module_main_begin`): at the first token of a file-scope `i32|int|void main(` in a file with a `module` line (the `io::Io *` form is left to runtime/lang_head.c). `main()` is written `main(void)`. `main(str args[:])` replaces its head and the start of its body with source tokens that the lowering then reads like the program's: `main(int smith_argc, char **smith_argv) {`, a typedef of `str`, a VLA of `smith_argc + 1` slices, a loop that fills each with `{argv[i], {__builtin_strlen(argv[i])}}` (the characters are not copied, nothing is allocated) and `typeof(SmithMainStr[:]) args = {slots, {argc}}`, the program's own name for `args`. The compiler reads a batch only at its end, so the injected code asks it nothing (a cut `slots[0:argc]` could not be typed): everything is a plain declaration or initializer. `void main` and every other signature are errors (`smith-main:`), so C's `int main(int argc, char **argv)` in a module says to write `str args[:]`. A file with no `module` line is C's `main` (the C rule). Corpus: `main`, `main-args`, `main-old-form-error` (the `main-io*` cases stay while `io` exists).
+**`main` in a module** (issue #240, runtime/lang_stream.c `smith_lang_module_main_begin`): at the first token of a file-scope `i32|int|void main(` in a file with a `module` line . `main()` is written `main(void)`. `main(str args[:])` replaces its head and the start of its body with source tokens that the lowering then reads like the program's: `main(int smith_argc, char **smith_argv) {`, a typedef of `str`, a VLA of `smith_argc + 1` slices, a loop that fills each with `{argv[i], {__builtin_strlen(argv[i])}}` (the characters are not copied, nothing is allocated) and `typeof(SmithMainStr[:]) args = {slots, {argc}}`, the program's own name for `args`. The compiler reads a batch only at its end, so the injected code asks it nothing (a cut `slots[0:argc]` could not be typed): everything is a plain declaration or initializer. `void main` and every other signature are errors (`smith-main:`), so C's `int main(int argc, char **argv)` in a module says to write `str args[:]`. A file with no `module` line is C's `main` (the C rule). Corpus: `main`, `main-args`, `main-old-form-error`.
 
 ## Decisions
 

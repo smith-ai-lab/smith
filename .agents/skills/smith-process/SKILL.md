@@ -1,11 +1,11 @@
 ---
 name: smith-process
-description: "Using smith::process (import smith::process; process::run, spawn, start, write, read, close_input, wait, kill, close, process::fake): child processes by direct calls that return a result, with a scripted fake for tests. Load when code imports smith::process or includes <smith/process.h>, or on running a program, capturing its output or talking to a child's stdin and stdout without io::Io."
+description: "Using smith::process (import smith::process; process::run, spawn, start, write, read, close_input, wait, kill, close, process::fake): child processes by direct calls that return a result, with a scripted fake for tests. Load when code imports smith::process or includes <smith/process.h>, or on running a program, capturing its output or talking to a child's stdin and stdout."
 ---
 
 # Child processes by direct calls: smith::process
 
-No `io::Io` value: call `process::` anywhere. A call returns `result(T, process::Error)`; the error is what the world said (`NotFound`, `Denied`, `TooMany`, `Broken` for a write to a child that has gone, `Gone` for a signal to one that has, `Other`). A program is a slice of C strings, `argv[0]` found on `PATH`. Memory a call returns comes from the current allocator (smith-mem) and is the caller's region.
+Call `process::` anywhere. A call returns `result(T, process::Error)`; the error is what the world said (`NotFound`, `Denied`, `TooMany`, `Broken` for a write to a child that has gone, `Gone` for a signal to one that has, `Other`). A program is a slice of C strings, `argv[0]` found on `PATH`. Memory a call returns comes from the current allocator (smith-mem) and is the caller's region.
 
 ```smith
 module scratch;
@@ -57,4 +57,4 @@ export usize lines_built(arena::Arena *a) {
     }
 }
 ```
-A script says what a child writes (`output`, `errors`, in pieces of `chunk` bytes), when it exits (`exit_on`: `Start` at once, `InputClosed` like `cat`, `OutputRead`, `Never` until killed) and its `status`; `fake_input(&fake, n)` is what the program wrote to the n-th child's stdin; `fake_set_cores`. C names are `smith_process_*`. Sockets to a child are these pipes; async waits wait for #241. See also [smith-io-processes](../smith-io-processes/SKILL.md), [smith-files](../smith-files/SKILL.md), [process](../../../knowledge/process.md).
+A script says what a child writes (`output`, `errors`, in pieces of `chunk` bytes), when it exits (`exit_on`: `Start` at once, `InputClosed` like `cat`, `OutputRead`, `Never` until killed) and its `status`; `fake_input(&fake, n)` is what the program wrote to the n-th child's stdin; `fake_set_cores`. C names are `smith_process_*`. Sockets to a child are these pipes; async waits wait for #241. See also [smith-files](../smith-files/SKILL.md), [process](../../../knowledge/process.md).
