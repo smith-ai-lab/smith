@@ -2,13 +2,20 @@
 // changed since the merge-base with a ref and the files that include a changed header, and says what it chose. A
 // scratch git repository of the three C files and the build file of tests/build_fixtures/lint_cache (a.c and b.c
 // include common.h, c.c includes nothing; the build file is the fourth file linted), committed on main, in a cache of
-// its own, with the working tree edited after the commit.
+// its own, with the working tree edited after the commit. Which files a change chooses runs in process (issue #646)
+// through `smith_core_changed_lint` (include/smith_core_changed.h): the file list and the changes are texts, and no
+// git or smith starts. What needs git, the lint itself or a build (the base of a branch, a finding replayed, a header
+// a step makes, the verb's wiring) is a scratch test on a scratch git repository.
 module lint_changed_test;
 
 import smith::arena;
+import smith::files;
+import smith::format;
 import smith::mem;
 import smith::test;
 import scratch;
+import <smith_core.h>;
+import <smith_core_changed.h>;
 
 // The project, committed, with a cache of its own; made before the test's memory, since scratch::clean frees what it
 // holds and the run's texts are given back here.
@@ -28,6 +35,7 @@ static scratch::Run changed(const scratch::Project *p) {
     return scratch::sh(p, "SMITH_OUTPUT=full smith lint --changed=HEAD 2>&1");
 }
 
+// The verb end to end on a real git repository: git's diff, the lint and its wiring.
 export void test_lint_changed_with_one_c_file_changed_lints_only_it() {
     scratch::Project p = committed();
     defer scratch::clean(&p);
@@ -45,6 +53,7 @@ export void test_lint_changed_with_one_c_file_changed_lints_only_it() {
     scratch::expect_lacks("... not a.c", run.out, "a.c");
 }
 
+// Needs git: the base is where the branch left main.
 export void test_lint_changed_without_a_ref_compares_with_where_the_branch_left_main() {
     scratch::Project p = committed();
     defer scratch::clean(&p);
@@ -59,64 +68,72 @@ export void test_lint_changed_without_a_ref_compares_with_where_the_branch_left_
     scratch::expect_contains("only c.c is chosen", run.out, "1 of 4 files to lint");
 }
 
-export void test_lint_changed_with_a_header_changed_lints_the_files_that_include_it() {
-    scratch::Project p = committed();
+// The project of tests/build_fixtures/lint_cache in a scratch folder, and what `smith lint --changed` chooses for
+// `changes` (`A`, `M` or `D`, a tab and a path a line) on the files `names` (the repository's files, one a line).
+static const char *chosen(const char *names, const char *changes, const char *extra_path, const char *extra_text) {
+    scratch::Project p = scratch::make("p", "lint_cache");
     defer scratch::clean(&p);
+    if (extra_path != nullptr) {
+        const char *path = format::push(p.dir, "/", extra_path).data;
+        const u8 *bytes = (const u8 *)extra_text;
+        files::CountResult written =
+            files::write_file(path[0:c::strlen(path)], bytes[0:c::strlen(extra_text)], files::Replace);
+        test::check_condition(written == .ok);
+    }
+    constexpr usize capacity = 1U << 16;
+    char *out = mem::alloc_slice(char, capacity).data;
+    bool done = c::smith_core_changed_lint(p.dir, names, changes, out, capacity);
+    test::check_equal(done, true);
+    return out;
+}
+
+// The repository's files, the header among them: it is in the count (five), where the verb's four are the files it
+// lints.
+constexpr const char *project_files = "a.c\nb.c\nc.c\ncommon.h\nbuild.c\n";
+
+export void test_lint_changed_with_a_header_changed_lints_the_files_that_include_it() {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run edited = scratch::sh(&p, "printf '// edited\\n' >> common.h");
-    scratch::expect_status("common.h is edited", 0, &edited);
-    scratch::Run run = changed(&p);
-    scratch::expect_status("the lint passes", 0, &run);
-    scratch::expect_contains("a.c and b.c are chosen, c.c is not", run.out, "2 of 4 files to lint");
-    scratch::expect_contains("... and run", run.out, "linted 2 files (2 run, 0 cached");
+    const char *out = chosen(project_files, "M\tcommon.h", nullptr, nullptr);
+    scratch::expect_contains("a.c is chosen", out, "a.c\n");
+    scratch::expect_contains("b.c is chosen", out, "b.c\n");
+    scratch::expect_lacks("c.c is not", out, "c.c\n");
+    scratch::expect_contains("the header too, which the verb does not lint", out, "common.h\n");
+    scratch::expect_contains("a.c, b.c and the header are chosen, c.c is not", out, "3 of 5 files to lint");
 }
 
 export void test_lint_changed_counts_a_new_untracked_header() {
-    scratch::Project p = committed();
-    defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run edited =
-        scratch::sh(&p, "printf '#include \"extra.h\"\\n' >> c.c && printf 'int extra;\\n' > extra.h");
-    scratch::expect_status("c.c includes a new header", 0, &edited);
-    scratch::Run run = changed(&p);
-    scratch::expect_contains("two changed files, c.c lints", run.out, "2 changed files since");
-    scratch::expect_contains("... and only c.c", run.out, "1 of 4 files to lint");
+    const char *out = chosen(project_files, "M\tc.c\nA\textra.h", "extra.h", "int extra;\n");
+    scratch::expect_contains("two changed files, c.c lints", out, "2 changed files since");
+    scratch::expect_contains("... and only c.c", out, "1 of 5 files to lint");
 }
 
 export void test_lint_changed_with_a_config_changed_lints_every_file() {
-    scratch::Project p = committed();
-    defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run edited = scratch::sh(&p, "printf '# edited\\n' >> .clang-tidy");
-    scratch::expect_status(".clang-tidy is written", 0, &edited);
-    scratch::Run run = changed(&p);
-    scratch::expect_status("the lint passes", 0, &run);
-    scratch::expect_contains("it says why", run.out, ".clang-tidy changed, so every file is linted");
-    scratch::expect_contains("... and every file is linted", run.out, "linted 4 files");
+    const char *out = chosen(project_files, "M\t.clang-tidy", nullptr, nullptr);
+    scratch::expect_contains("it says why", out, ".clang-tidy changed, so every file is linted");
 }
 
 export void test_lint_changed_with_no_change_lints_nothing_and_says_so() {
-    scratch::Project p = committed();
-    defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run run = changed(&p);
-    scratch::expect_status("the lint passes", 0, &run);
-    scratch::expect_contains("it says nothing is affected", run.out, "no file is affected, so nothing is linted");
-    scratch::expect_contains("... and the count", run.out, "linted 0 files");
+    const char *out = chosen(project_files, "", nullptr, nullptr);
+    scratch::expect_contains("it says nothing is affected", out, "no file is affected, so nothing is linted");
+    scratch::expect_contains("... and the count", out, "0 of 5 files to lint");
 }
 
+// A real clang-tidy runs on the file and its finding is replayed: no function shows that.
 export void test_lint_changed_replays_a_failing_file_it_chose() {
     scratch::Project p = committed();
     defer scratch::clean(&p);
@@ -145,6 +162,7 @@ static scratch::Project generated() {
     return p;
 }
 
+// Needs a build: the header a step makes.
 export void test_lint_changed_builds_only_what_the_chosen_files_wait_for() {
     scratch::Project p = generated();
     defer scratch::clean(&p);

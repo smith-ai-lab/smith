@@ -291,6 +291,10 @@ export void test_skill_smith_ascii() {
     skill_case("smith-ascii");
 }
 
+export void test_skill_smith_wrapping() {
+    skill_case("smith-wrapping");
+}
+
 export void test_skill_smith_categorical() {
     skill_case("smith-categorical");
 }

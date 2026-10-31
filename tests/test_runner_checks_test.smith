@@ -10,13 +10,10 @@ import smith::test;
 import runner;
 import scratch;
 
+// A copy of the shared build of the runner (runner::built_copy): its debug information names the sources relative to
+// the project, so a report read in the copy prints `tests/test_checks.smith:N`, and no test builds a runner of its own.
 static scratch::Project checks_project() {
-    return runner::project("runner_base", "runner_checks");
-}
-
-static void build_checks(const scratch::Project *p) {
-    scratch::Run built = runner::build(p, "");
-    scratch::expect_status("build: the runner builds", 0, &built);
+    return runner::built_copy("runner_base", "runner_checks", "");
 }
 
 export void test_runner_checks_the_scan_writes_the_table_and_the_list_is_in_file_order() {
@@ -26,7 +23,6 @@ export void test_runner_checks_the_scan_writes_the_table_and_the_list_is_in_file
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_checks(&p);
     scratch::expect_text("build: the scan writes the prototypes", "yes",
                          scratch::exists(&p, "build/tests_list.h") ? "yes" : "no");
     scratch::expect_text("build: ... and the table", "yes", scratch::exists(&p, "build/tests_list.c") ? "yes" : "no");
@@ -49,7 +45,6 @@ export void test_runner_checks_a_passing_test_prints_its_line_and_the_summary_on
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_checks(&p);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::expect_text(runner::label(iso, "pass: the line and the summary, nothing else"),
@@ -70,7 +65,6 @@ export void test_runner_checks_the_runner_alone_prints_a_raw_trace_with_a_and_b(
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_checks(&p);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "--test compare");
@@ -91,7 +85,6 @@ export void test_runner_checks_a_failed_ordering_check_names_the_line_and_its_va
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_checks(&p);
     if (!runner::can_symbolize(&p)) return;
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
@@ -113,7 +106,6 @@ export void test_runner_checks_each_type_prints_the_way_its_kind_does() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_checks(&p);
     if (!runner::can_symbolize(&p)) return;
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
@@ -138,7 +130,6 @@ export void test_runner_checks_check_near_shows_the_values_the_tolerance_and_the
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_checks(&p);
     if (!runner::can_symbolize(&p)) return;
     usize line = runner::line_of(&p, "tests/test_checks.smith", "test::check_near(low, high, tolerance);");
     for (usize mode = 0; mode < 2; mode++) {
@@ -162,7 +153,6 @@ export void test_runner_checks_the_c_checks_print_the_same_block_named_by_their_
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_checks(&p);
     if (!runner::can_symbolize(&p)) return;
     usize near_line = runner::line_of(&p, "tests/test_checks_c.c", "smith_check_near_f64(1.0, 1.5, 0.1);");
     for (usize mode = 0; mode < 2; mode++) {
@@ -184,7 +174,6 @@ export void test_runner_checks_a_nan_fails_and_a_failed_check_ends_the_test() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_checks(&p);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run nan = runner::tests(&p, iso, "--test near_nan");
@@ -197,12 +186,7 @@ export void test_runner_checks_a_nan_fails_and_a_failed_check_ends_the_test() {
 
 // Section 4a: the checks as generic functions.
 static scratch::Project api_project() {
-    return runner::project("runner_base", "runner_api");
-}
-
-static void build_api(const scratch::Project *p) {
-    scratch::Run built = runner::build(p, "");
-    scratch::expect_status("api: the runner builds", 0, &built);
+    return runner::built_copy("runner_base", "runner_api", "");
 }
 
 export void test_runner_checks_the_api_tests_are_found_and_the_passing_ones_pass() {
@@ -212,7 +196,6 @@ export void test_runner_checks_the_api_tests_are_found_and_the_passing_ones_pass
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_api(&p);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run list = runner::tests(&p, iso, "--list");
@@ -250,7 +233,6 @@ export void test_runner_checks_the_ordering_checks_fail_with_the_values_and_thei
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_api(&p);
     if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
     for (usize mode = 0; mode < 2; mode++) {
@@ -275,7 +257,6 @@ export void test_runner_checks_a_nan_is_unordered_so_every_comparison_but_not_eq
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_api(&p);
     if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
     for (usize mode = 0; mode < 2; mode++) {
@@ -305,7 +286,6 @@ export void test_runner_checks_same_bits_tells_zero_from_minus_zero_and_shows_he
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_api(&p);
     if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
     for (usize mode = 0; mode < 2; mode++) {
@@ -326,7 +306,6 @@ export void test_runner_checks_check_near_for_f32_and_infinity_and_pointers_repo
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_api(&p);
     if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
     for (usize mode = 0; mode < 2; mode++) {
@@ -368,14 +347,12 @@ export void test_runner_checks_a_second_argument_that_loses_the_type_is_a_compil
 
 // Section 5b and 5c.
 export void test_runner_checks_a_struct_is_compared_field_by_field() {
-    scratch::Project p = runner::project("runner_base", "runner_structs");
+    scratch::Project p = runner::built_copy("runner_base", "runner_structs", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run built = runner::build(&p, "");
-    scratch::expect_status("struct: the runner builds", 0, &built);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "");
@@ -389,14 +366,12 @@ export void test_runner_checks_a_struct_is_compared_field_by_field() {
 }
 
 export void test_runner_checks_two_slices_are_compared_by_count_and_element() {
-    scratch::Project p = runner::project("runner_base", "runner_slices");
+    scratch::Project p = runner::built_copy("runner_base", "runner_slices", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run built = runner::build(&p, "");
-    scratch::expect_status("slice: the runner builds", 0, &built);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "");
