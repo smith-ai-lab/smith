@@ -801,6 +801,10 @@ export void test_error_constexpr_pointers() {
     corpus_case("error-constexpr-pointers");
 }
 
+export void test_error_constexpr_unread_private() {
+    corpus_case("error-constexpr-unread-private");
+}
+
 export void test_error_countof_pointer() {
     corpus_case("error-countof-pointer");
 }
@@ -1143,6 +1147,10 @@ export void test_error_type_value_runtime() {
 
 export void test_error_type_value_slice_bounds() {
     corpus_case("error-type-value-slice-bounds");
+}
+
+export void test_exported_constexpr_unread() {
+    corpus_case("exported-constexpr-unread");
 }
 
 export void test_error_value_query() {

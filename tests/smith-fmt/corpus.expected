@@ -2126,6 +2126,15 @@ i32 main() {
     constexpr const i32 *pointer = automatic;
     return *pointer;
 }
+==> error-constexpr-unread-private/src/main.smith <==
+module main;
+
+// An unexported constant nothing reads still warns (#413): only an exported one is used by definition.
+constexpr u32 spare = 8;
+
+i32 main() {
+    return 0;
+}
 ==> error-countof-pointer/src/main.smith <==
 module main;
 
@@ -3699,6 +3708,23 @@ export inline u32 clamp_twice(u32 x) {
 export u32 regular(u32 x) {
     return twice(x) + 1;
 }
+==> exported-constexpr-unread/src/main.smith <==
+module main;
+
+import shape::board as board;
+import <stdio.h>;
+
+i32 main() {
+    c::printf("%u %u\n", board::width, board::cells[2]);
+    return 0;
+}
+==> exported-constexpr-unread/src/shape/board.smith <==
+module shape::board;
+
+// An exported constant is used by definition: its importers read it, so a module that never does compiles with
+// -Wall -Wextra -Werror (this case's flags) and no `[[maybe_unused]]`.
+export constexpr u32 width = 8;
+export constexpr u32 cells[3] = {1, 2, 3};
 ==> exported-variable-declared/src/counter/state.smith <==
 module counter::state;
 
