@@ -4,8 +4,46 @@
 // freed by clean. This test frees everything and passes.
 module scratch_free_test;
 
+import smith::arena;
+import smith::mem;
 import smith::test;
 import scratch;
+
+// The pattern of a test file (issue #843): a project, and a test::memory arena as the current allocator around the
+// body, so everything scratch returns goes back with the arena and no call needs its own release.
+export void test_scratch_free_in_an_arena_capture_lines_sleep_and_copy_tree_need_no_release() {
+    scratch::Project p = scratch::make("proj", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "three.txt", "a\nb\nc\n");
+    scratch::expect_count("lines counts the newlines", 3, scratch::lines(&p, "three.txt"));
+    scratch::expect_count("... and 0 for an absent file", 0, scratch::lines(&p, "absent.txt"));
+    scratch::expect_text("capture drops the trailing newlines", "a\nb\nc", scratch::capture(&p, "cat three.txt"));
+    scratch::sleep(&p, 1);
+    scratch::copy_tree(&p, "tests/build_fixtures/golden", "copy");
+    test::check_condition(scratch::exists(&p, "copy/main.smith"));
+    test::check_condition(scratch::exists(&p, "copy/expected/matches.txt"));
+    scratch::copy_tree(&p, "tests/build_fixtures/golden/main.smith", "single/main.smith");
+    test::check_condition(scratch::exists(&p, "single/main.smith"));
+    const char *missing = scratch::untested_names_free("tests/build_fixtures/golden/expected",
+                                                       "tests/golden_test.smith", "no_such_call(", ".txt", nullptr);
+    scratch::expect_contains("untested_names_free lists every name nothing calls", missing, "matches.txt");
+}
+
+export void test_scratch_free_golden_free_passes_a_matching_file() {
+    scratch::Project p = scratch::make("proj", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "expected.txt", "alpha\nbeta\n");
+    const char *file = scratch::capture(&p, "printf %s \"$PWD/expected.txt\"");
+    test::golden_free(file[0:__builtin_strlen(file)], "alpha\nbeta\n");
+}
 
 export void test_scratch_free_a_project_with_no_io_runs_commands_and_keeps_files() {
     scratch::Project p = scratch::make("proj", nullptr);

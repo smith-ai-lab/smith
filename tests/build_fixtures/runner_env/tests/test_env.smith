@@ -1,0 +1,24 @@
+import <stdlib.h>;
+import <string.h>;
+import smith::io;
+import smith::test;
+
+// An io test sets TMPDIR and three more variables for its scratch folder; the plain test after it, in the same worker,
+// must see the runner's own environment (EXPECT_TMPDIR is what the runner started with).
+void test_env_1_io(c::SmithIo *io) {
+    test::check_not_equal(test::scratch(io), nullptr);
+    const char *tmp = c::getenv("TMPDIR");
+    test::check_not_equal(tmp, nullptr);
+    test::check_not_equal(c::strcmp(tmp, c::getenv("EXPECT_TMPDIR")), 0);
+}
+
+void test_env_2_plain_sees_the_runners_environment(void) {
+    const char *expected = c::getenv("EXPECT_TMPDIR");
+    test::check_not_equal(expected, nullptr);
+    const char *tmp = c::getenv("TMPDIR");
+    test::check_not_equal(tmp, nullptr);
+    test::check_equal(c::strcmp(tmp, expected), 0);
+    test::check_equal(c::getenv("SMITH_TEST_SCRATCH"), nullptr);
+    test::check_equal(c::getenv("SMITH_SLOTS_DIR"), nullptr);
+    test::check_equal(c::getenv("SMITH_CORES"), nullptr);
+}

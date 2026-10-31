@@ -6,6 +6,9 @@
 module scratch;
 
 import smith::arena;
+import smith::clock;
+import smith::env;
+import smith::files;
 import smith::format;
 import smith::io;
 import smith::mem;
@@ -171,6 +174,11 @@ static void copy_file(const Project *p, const char *from, const char *to) {
     test::check_equal(copied.code, 0);
 }
 
+// The copy with no io: the source is a folder (its contents) or a file; a link stays a link.
+constexpr char copy_script[_] =
+    "src=\"${SMITH_REPO:-.}/$1\"; if [ -d \"$src\" ]; then mkdir -p \"$0\" && cp -PR \"$src/.\" \"$0\"; "
+    "else mkdir -p \"$(dirname \"$0\")\" && cp -PR \"$src\" \"$0\"; fi";
+
 // Copies a file or a folder of the repository (`source`, relative to $SMITH_REPO) into the project as `name`: a file
 // becomes the file `name`, a folder's contents go into the folder `name` ("" is the project itself), like `cp -R
 // source/. name`; a symbolic link in a folder stays a link. The copy is made through io, so every file it opens and
@@ -178,6 +186,19 @@ static void copy_file(const Project *p, const char *from, const char *to) {
 // repository selects the test that copied it. A test that hands a repository file to a process copies it first and
 // gives the process the copy; no command reads the repository in place.
 export void copy_tree(const Project *p, const char *source, const char *name) {
+    if (p->io == nullptr) { // no io (issue #843): cp -PR, a link stays a link; the process module runs it
+        const char *to = name[0] == '\0' ? join_free(p->dir, "", "") : path_in(p, name);
+        const char *const argv[_] = {"sh", "-c", copy_script, to, source, nullptr};
+        Run run = run_free(argv[0:5]);
+        if (run.status != 0) {
+            test::note("%s could not be copied: %s", source, run.err);
+        }
+        test::check_equal(run.status, 0);
+        release(run.out);
+        release(run.err);
+        release(to);
+        return;
+    }
     const char *repo = io::args_env(&p->io->args, "SMITH_REPO");
     const char *from = format::push(&p->io->arena, repo != nullptr ? repo : ".", "/", source).data;
     const char *to = name[0] == '\0' ? p->dir : path_in(p, name);
@@ -295,6 +316,61 @@ export const char *untested_names(io::Io *io, const char *folder, const char *te
             missing = format::push(&io->arena, missing, name, "\n").data;
         }
     }
+    return missing;
+}
+
+// The same with no io (issue #843): the folder and the source are read through smith::files, and the text returned (""
+// when nothing is missing) belongs to the caller. The name carries `_free` while untested_names takes the io.
+export const char *untested_names_free(const char *folder, const char *test_source, const char *call,
+                                       const char *suffix_a, const char *suffix_b) {
+    env::Value repo = env::get("SMITH_REPO");
+    const char *base = repo == .some ? repo.some.data : ".";
+    const char *source_path = join_free(base, "/", test_source);
+    files::BytesResult source_read = files::read_file(source_path[0:c::strlen(source_path)]);
+    release(source_path);
+    files::Bytes source = {};
+    switch (source_read) {
+    case .ok:
+        source = source_read.ok;
+        break;
+    case .error:
+        test::check_condition(false);
+    }
+    const char *folder_path = join_free(base, "/", folder);
+    files::EntriesResult listed = files::list(folder_path[0:c::strlen(folder_path)]);
+    release(folder_path);
+    files::Entries entries = {};
+    switch (listed) {
+    case .ok:
+        entries = listed.ok;
+        break;
+    case .error:
+        test::check_condition(false);
+    }
+    const char *text = bytes_text(source);
+    const char *missing = join_free("", "", "");
+    for (usize i = 0; i < countof(entries); i++) {
+        const char *name = entries[i].name.data;
+        bool wanted = (suffix_a == nullptr && suffix_b == nullptr) ||
+                      (suffix_a != nullptr && ends_with(name, suffix_a)) ||
+                      (suffix_b != nullptr && ends_with(name, suffix_b));
+        if (wanted) {
+            const char *needle = join_free(call, "\"", name);
+            const char *full = join_free(needle, "\")", "");
+            release(needle);
+            bool found = c::strstr(text, full) != nullptr;
+            release(full);
+            if (!found) {
+                const char *grown = join_free(missing, name, "\n");
+                release(missing);
+                missing = grown;
+            }
+        }
+        release(name);
+    }
+    release(text);
+    if (countof(entries) > 0) mem::free(entries.data);
+    if (source.data != nullptr) mem::free(source.data);
     return missing;
 }
 
@@ -490,12 +566,23 @@ export bool exists(const Project *p, const char *name) {
 // The number of lines of a file, 0 when it is absent.
 export usize lines(const Project *p, const char *name) {
     usize count = 0;
+    if (p->io == nullptr) { // the text read is freed here
+        const char *text = read(p, name);
+        for (const char *c = text; *c != '\0'; c++)
+            count += *c == '\n' ? 1U : 0U;
+        release(text);
+        return count;
+    }
     for (const char *c = read(p, name); *c != '\0'; c++)
         count += *c == '\n' ? 1U : 0U;
     return count;
 }
 
 export void sleep(const Project *p, u64 milliseconds) {
+    if (p->io == nullptr) { // through the clock handler of the thread: a fake clock advances and returns
+        clock::sleep(milliseconds * clock::millisecond);
+        return;
+    }
     test::check_equal(io::clock_sleep(&p->io->clock, milliseconds * (nanoseconds / 1000)).code, 0);
 }
 
@@ -561,6 +648,16 @@ export void expect_count(const char *name, usize expected, usize actual) {
 
 // The output of a shell command as $(...) gives it: without trailing newlines.
 export const char *capture(const Project *p, const char *command) {
+    if (p->io == nullptr) { // a text of its own for the caller to free; the run's err is freed here
+        Run run = sh(p, command);
+        usize length = trimmed(run.out);
+        char *copy = mem::alloc_slice(char, length + 1).data;
+        mem::copy(copy[0:length], run.out[0:length]);
+        copy[length] = '\0';
+        release(run.out);
+        release(run.err);
+        return copy;
+    }
     const char *out = sh(p, command).out;
     usize length = trimmed(out);
     char *copy = arena::push_slice(&p->io->arena, char, length + 1).data;
