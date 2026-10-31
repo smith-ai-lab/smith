@@ -53,7 +53,13 @@
 //     block. Locals are `Local`s in `e->locals`, scopes bracket them (`state::begin_scope`, `end_scope`).
 //  6. Hooks B2 fills: `emit_control::end_of_block` (runs when a block ends, before its locals go) and
 //     `emit_control::before_return` (before `ret`): the pending `defer`s run there.
-//  7. A type is a `Ty` (the LLVM type and what it does not say: signedness, name, element). A pointer type is made in
+//  7. Writing handlers in today's smith (issue #1153): dispatch on a node's kind with a chain of `if (x->kind ==
+//     .name)`, never `switch`/`case`, in a file that imports front::ast: a `case .name:` label spells an export of
+//     front::ast, so the compiler reads ast's function bodies, which do not compile. Read the payload fields you need
+//     (`x->kind.call.args`) into locals right after testing the kind and before any call that is passed the node:
+//     `smith-enum` forgets the kind at such a call. A test that runs the emitter or the JIT must not have an arena set
+//     as the current allocator (LLVM allocates with `malloc` and keeps some of it between tests): see emit_jit.smith.
+//  8. A type is a `Ty` (the LLVM type and what it does not say: signedness, name, element). A pointer type is made in
 //     one place, `state::pointer_type`, which takes an address space. Sizes and alignments come from the data layout
 //     (`e->target_data`), never from the host. A handler that needs a type calls `emit::type_of`.
 module front::emit;
