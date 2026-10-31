@@ -25,3 +25,9 @@ The syntax tree. Plain data: every type is exported with all its fields. `TypeEx
 - `make_type` and `record_decl`: `type` and `record` as function names are compile-time functions. There is no generic list builder (`arena::slice_of` fails with a type from another module).
 
 **Limits of today's smith found building it.** A string literal inside a nested initializer of a payload enum is not converted to `Str` across modules (pass names as arguments); a braced initializer is not accepted as an element assignment (`xs[i] = {...}`), only in a declaration, argument or return.
+
+**A limit for importers.** In a module that imports `front::ast`, a `case .name:` label on an ast payload enum makes the compiler read ast's body files ([body-files](body-files.md)), and that fails today (a private `typedef ExprRef ExprRefList[:]` loses its `;`, and a `mem` body says `smith_mem_allocator_name` is undeclared). Importers dispatch with `if (x->kind == .k)`. smith-enum narrowing is also lost once the node pointer is passed to a call, so read the payload fields into locals first.
+
+## front::cimport (track C)
+
+Declarations read from C headers become these same nodes; its concept comes with #1117 (`c-header-import.md`), and links here once that file exists.
