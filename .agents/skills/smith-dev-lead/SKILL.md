@@ -36,10 +36,8 @@ Only two things: **status** (what moved, what's stuck, the bottleneck, the budge
 - **When a lane's phase ends,** tell the owner the result in a few lines and start a fresh orchestrator for the next phase.
 
 ## The roadmap
-The pinned roadmap issue is the plan a new lead or orchestrator works from, so it is never stale:
 - **Lanes, in priority order.** Each lane is a sequence: its items run one after another, each naming its tickets. Lanes run in parallel with each other; where two lanes meet (a shared file), say which goes first.
-- **Done work leaves it** in the turn it merges (a closed epic leaves in one line); new work enters at its priority, as a ticket, the same turn it is decided. Decisions are recorded on the epic with the owner's words, and the roadmap links them.
-- Update it at every check, not at the end of the day.
+- **Done work leaves it** in the turn it merges (a closed epic leaves in one line); new work enters at its priority, as a ticket, the same turn it is decided. It is the plan a new lead or orchestrator works from: update it at every check.
 
 ## The daily budget
 The owner sets a share of the weekly limit per day. Check usage hourly.
