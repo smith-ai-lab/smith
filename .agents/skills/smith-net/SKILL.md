@@ -27,8 +27,7 @@ export usize fetch(const u8 request[:], u8 reply[:]) {
 | Call | Does |
 |---|---|
 | `connect(host, port)` / `connect_tls(host, port)` / `close(&c)` | a `Connection`: plain TCP (every address tried) / TLS over it, the system's trust deciding with no way to turn it off / releases it |
-| `read(&c, buffer)` / `write(&c, data)` | read at least one byte (0 is the end: the peer is done); write all of the bytes (`Reset` when the peer has gone, never SIGPIPE) |
-| `read_within(&c, buffer, timeout_ns)` | `read` that gives up with `TimedOut` when nothing arrives in time (bytes that come later are read by the next call); on macOS a TLS connection that timed out is cancelled, so only `close` is left |
+| `read(&c, buffer)` / `write(&c, data)` | read at least one byte (0 is the end: the peer is done); write all of the bytes (`Reset` when the peer has gone, never SIGPIPE); `read_within(&c, buffer, timeout_ns)` is `read` that gives up with `TimedOut` (on macOS a TLS connection that timed out is cancelled: only `close` is left) |
 | `listen(host, port)` / `accept(&l)` / `stop(&l)` | a `Listener` (empty host: every address; port 0: a free one, in `l.port`); the server's `Connection`, blocking; plain TCP only |
 - **Misuse is a checked failure**: a second close or stop, a use after it, an empty read buffer, a fake that would wait for ever. On macOS only an expired or not-yet-valid certificate is told apart; any other rejection is `BadCertificate` (OpenSSL names `WrongHost` and `Untrusted`). A macOS TLS connection keeps a block of the current allocator: the region must outlive it.
 **The fake, for tests** (nothing is opened):
