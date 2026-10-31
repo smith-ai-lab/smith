@@ -2279,7 +2279,8 @@ static int build_docs_gate_test(SmithRun *run) {
     failed = failed != 0 ? failed : s;
     if (failed == 0) {
         fputs("(the next gate failure is the one under test)\n", stderr);
-        if (build_gate_run(run, dir, "main") == 0) failed = build_gate_fail("gate: an own feat with no docs must fail\n");
+        if (build_gate_run(run, dir, "main") == 0)
+            failed = build_gate_fail("gate: an own feat with no docs must fail\n");
     }
     build_spawn(&(BuildSpawn){.argv = (const char *[]){"/bin/rm", "-rf", dir, nullptr}});
     return failed;
