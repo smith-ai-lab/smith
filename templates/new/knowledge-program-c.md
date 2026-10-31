@@ -13,7 +13,6 @@ tags: [program]
   promise from the precondition, and `smith check` runs it.
 - `main.c` adds the first five and asserts that the sum is 28.
 - `main` calls `report`, which prints the sum and `hello from @NAME@`; main then returns 0.
-- Effects are the direct modules: `report` writes with `smith_console_write`, and a test installs a fake console with `smith_console_set_handler`.
-  `smith lint` (the `smith-effects` check) reports a call such as `printf` outside a capability's own module.
+- `report` calls `printf` directly; effects are inferred from what a function calls (#207), and a test controls the console with `smith_console_set_handler`.
 - The contracts and the assertion stay on in every build, `fast` included; only a proof removes one.
 - `primes_test.c` tests `primes_sum`; `smith test` runs it, and `smith check` does too.

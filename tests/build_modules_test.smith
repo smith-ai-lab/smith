@@ -103,7 +103,7 @@ export void test_build_modules_edits_rebuild_what_reaches_them_and_the_cache_is_
     scratch::expect_text("modules: and nothing is cached under .smith", "no",
                          scratch::exists(&p, ".smith/cache") ? "yes" : "no");
     if (scratch::sh(&p, "smith lsp --version").status == 0) {
-        // The sample is not what smith-effects tests; its checks are off.
+        // The sample is not what the lint tests; its checks are off.
         scratch::write(&p, ".clang-tidy", "Checks: \"-*\"\n");
         scratch::Run lsp = scratch::sh(
             &p, "smith lsp --check=\"$(pwd -P)/x.c\" 2>&1 >/dev/null | grep -v 'tweak:' | grep 'E\\[' || true");

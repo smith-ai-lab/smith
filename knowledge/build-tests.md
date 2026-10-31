@@ -87,7 +87,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
     test). Two tests with the same C name are an error that names both files.
 - **The runner's own effects are a capability.** The runner is `smith::test`'s `main`: it hands `run_tests` a `Runner` (`smith_test_run`, which holds the command line), a type marked as a capability
   whose implementation is the module, so the forked workers, their pipes and sockets, the signals they catch and the
-  memory they share are the module's own calls, and `smith lint` (smith-effects) checks them like any other module's:
+  memory they share are the module's own calls, and `smith lint` checks them like any other module's:
   every exported function that reaches one takes the `Runner`. The runner prints the report through `console`, times the tests with
   `clock`, reads `$NO_COLOR` with `env` and lists processes with `popen`. The checks reach the running test's state (the shared block the runner reads after the test)
   through module variables, since a check takes no context parameter; they are the only state a test can reach.
