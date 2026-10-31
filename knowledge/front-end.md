@@ -46,6 +46,8 @@ The syntax tree. Plain data: every type is exported with all its fields. `TypeEx
 - **Expressions**: C's precedence and associativity with no comma operator (`(a, b)` and `xs[a, b]` are errors). No recursion: operators wait on two stacks. `try e` is prefix at unary precedence. A `c::` path is a value, never a cast. A lambda parameter needs a type (`[](a, b)` says to write `auto a`). `u8"..."` is a plain string; `u`, `U` and `L` strings and characters are errors.
 - **Types**: qualifiers, paths, `auto`, keyword types, `struct X`, `typeof`, `*`, `[:]`, `[N]`, applied types `Option(I32)`. `T[:][3]` is a slice of arrays. `R (P...)` inside `Fn(...)` is a function type; `I32 (*f)(I32)` is an error naming `Fn(I32 (I32))`.
 
+**Statements** (`front/parse_stmt.smith`, A4): `parse_stmt::statement(p)` is the `statement` hook. It reads every statement form (blocks, `if` / `if constexpr`, loops, `switch`, jumps, labels, `defer`, `static_assert`) and a declaration-or-expression with no symbol table. Nesting is an explicit stack of frames, never recursion; after an error the rest of the statement is skipped and an `empty` placeholder stands in, so one mistake gives one error. Tests: `tests/front_parse_stmt_test.smith` with stub hooks and goldens in `tests/front/parse_stmt/`.
+
 ## front::cimport (track C)
 
 Declarations read from C headers become these same nodes; its concept comes with #1117 (`c-header-import.md`), and links here once that file exists.
