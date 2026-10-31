@@ -7,12 +7,12 @@ description: "The porting checklist from C to idiomatic Smith, step by step with
 
 What changed, by rule:
 - 1: `uint32_t`, `size_t`, `uint64_t`, `double` became `u32`, `usize`, `u64`, `f64`.
-- 2: no `c::` name is left: the C headers it included were smith's libraries, which are modules (`import smith::io;`, `io::Console`, `io::console_printf`, `io::Io`, `io::make`); `<smith/io.h>` is their C API for C callers, and `smith-module-library` reports it in a `.smith` file.
-- `main` takes the io (`i32 main(io::Io *io)`): smith makes it and closes it after (smith-io); `i32 main(i32 argc, char **argv)` with `io::make` is still accepted, and is what a renamed `.c` file has.
-- 3: `rolls.h` is gone; `import smith::arena;`, `import smith::io;` and `import smith::random;` replace three includes and their C names (`SmithArena` is `arena::Arena`, `SmithKey` is `random::Key`, `SmithConsole` is `io::Console`). `main` imports `rolls`.
+- 2: no `c::` name is left: the C headers it included were smith's libraries, which are modules (`import smith::console;`, `console::print`); `<smith/console.h>` is their C API for C callers, and `smith-module-library` reports it in a `.smith` file.
+- `main` is `i32 main()` or `i32 main(str args[:])`; `i32 main(i32 argc, char **argv)` is what a renamed `.c` file has.
+- 3: `rolls.h` is gone; `import smith::arena;`, `import smith::console;`, `import smith::entropy;` and `import smith::random;` replace three includes and their C names (`SmithArena` is `arena::Arena`, `SmithKey` is `random::Key`). `main` imports `rolls`.
 - 4: `smith_arena_push_array(arena, sizeof(uint32_t), count, alignof(uint32_t))` is `arena::push_slice(arena, u32, count)` (a `u32[:]`; `.data` is the `u32 *`): the size and alignment cannot disagree, and the result is typed.
 - 5: `ROLLS_SIDES` is `constexpr i64 sides`.
-- 6: `print` takes the `io::Console` and nothing more; `make` takes the arena and the key; only `main` makes the io. `smith lint` would report `c::printf` here.
+- 6: `print` takes only the rolls and calls `console::print`; `make` takes the arena and the key; `main` makes the arena and the key (`entropy::seed()`). `smith lint` would report `c::printf` here.
 - 9: `rolls_make` is `rolls::make`; the module name is the prefix.
 
 `smith build` (no build file needed: `main.smith` and `rolls.smith` in a folder) built it with the strict warnings and `smith run` printed `6 1 4 6 3 6 4 5 2 6 (mean 4.30)`; the seed is random unless `SMITH_SEED` is set.
@@ -33,7 +33,7 @@ echo "c:: names         $(n 'c::')"
 echo "raw calls         $(n 'c::(f?printf|puts|f?open|fread|fwrite|fclose|malloc|calloc|free|memcpy|memset|time|exit|rand)\(')"
 ```
 
-Set `files` to one path to count one file. The counts are lines, comments included. For the example above `rolls.c` and `rolls.h` together have 13, 7, 1, 2, 1, 0, 0 and the Smith has 0, 0, 0, 0, 0, 0, 0.
+Set `files` to one path to count one file. The counts are lines, comments included. For the example above `rolls.c` and `rolls.h` together have 13, 8, 1, 2, 1, 0, 0 and the Smith has 0, 0, 0, 0, 0, 0, 0.
 
 - **Standard C types, `#include`, `#define`, `sizeof`/`alignof`: 0.** A `sizeof` that stays measures something that is not a type argument (`sizeof memory` of an array).
 - **`#if`: only the questions the compiler answers,** each with a comment saying which.
