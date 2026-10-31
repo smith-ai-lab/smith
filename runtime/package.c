@@ -644,9 +644,10 @@ static bool smith_package_install(const char *url, const char *wanted, const Smi
 }
 
 // Makes sure the package is in the cache and puts its absolute path in folder (PATH_MAX bytes). The download goes
-// through the net handler of the calling thread (a test scripts the network with smith::net's fake). With `wanted` (the "sha256:<hex>" a build.c names) the download must match it, and a package already
-// cached is not fetched again. With nullptr (`smith fetch`) the archive is always downloaded and its hash is the
-// answer, put in `hash` either way. `offline` turns a missing package into an error that names the URL.
+// through the net handler of the calling thread (a test scripts the network with smith::net's fake). With `wanted` (the
+// "sha256:<hex>" a build.c names) the download must match it, and a package already cached is not fetched again. With
+// nullptr (`smith fetch`) the archive is always downloaded and its hash is the answer, put in `hash` either way.
+// `offline` turns a missing package into an error that names the URL.
 static bool smith_package_ensure(const char *url, const char *wanted, bool offline, char *folder,
                                  char hash[smith_package_hash_size], SmithPackageFault *error) {
     SmithPackageTemps temps;

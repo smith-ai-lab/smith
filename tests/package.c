@@ -1,7 +1,6 @@
-// Tests of packages (runtime/package.c) on a scripted network: the download is smith's HTTPS client over smith::net, and
-// its fake network, set as the thread's handler, stands in for the internet, so the cache, the files and tar are all
-// real.
-// Usage: package-test <archive.tar.gz> <scratch folder>
+// Tests of packages (runtime/package.c) on a scripted network: the download is smith's HTTPS client over smith::net,
+// and its fake network, set as the thread's handler, stands in for the internet, so the cache, the files and tar are
+// all real. Usage: package-test <archive.tar.gz> <scratch folder>
 
 #ifdef __linux__
 // runtime/package.c, included below, needs what glibc hides from C23 (nftw's FTW_PHYS), as in smith.c.
@@ -226,10 +225,9 @@ static void test_failures(void) {
     end_case(&c);
 
     start_case(&c);
-    smith_network_fake_add(&c.net, (SmithNetworkServer){.host = "pkg.example",
-                                                         .port = 443,
-                                                         .fails = true,
-                                                         .error = SmithNetworkError_Expired});
+    smith_network_fake_add(
+        &c.net,
+        (SmithNetworkServer){.host = "pkg.example", .port = 443, .fails = true, .error = SmithNetworkError_Expired});
     assert(!fetch(&c, "https://pkg.example/pkg.tar.gz", c.hash));
     assert(contains(c.error.text, "the certificate has expired"));
     check_nothing_left(&c, c.hash);
@@ -276,7 +274,8 @@ static void test_offline_and_leftovers(void) {
 int main(int argc, char **argv) {
     assert(argc == 3);
     // The fake network keeps what it sends and receives in memory from the current allocator; an arena is that memory.
-    SmithArena memory = smith_arena_growing((size_t)1 << 22, nullptr);
+    alignas(smith_arena_align_max) static unsigned char pool[(size_t)64 << 20];
+    SmithArena memory = smith_arena_fixed(pool, sizeof pool);
     SmithArenaAllocator allocator = smith_arena_allocator(&memory);
     (void)smith_mem_set_allocator(&allocator.base);
     load_archive(argv[1]);

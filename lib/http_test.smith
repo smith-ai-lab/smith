@@ -4,13 +4,13 @@
 // so tests/units/build.c links lib/http.c.
 module http_test;
 
+import <errno.h>; // first: the headers of the modules include it, and then `errno` in this line is the macro
 import smith::arena;
 import smith::files;
 import smith::format;
 import smith::mem;
 import smith::net;
 import smith::test;
-import <errno.h>;
 import <smith/http.h>;
 
 // The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
@@ -65,28 +65,39 @@ static c::SmithHttpResult get(Client *client, const char *url) {
     return c::smith_http_get(url, client->path);
 }
 
+// The file the download wrote (a zero-length slice when there is none: the test checked before).
+static files::Bytes file_of(Client *client) {
+    files::BytesResult file = files::read_file(client->path[0:__builtin_strlen(client->path)]);
+    switch (file) {
+    case .ok:
+        return file.ok;
+    case .error:
+        test::note("the downloaded file cannot be read");
+        test::check_condition(false);
+        return {};
+    }
+}
+
 // The file the download wrote, as a text in the current allocator.
 static const char *body_of(Client *client) {
-    files::BytesResult read = files::read_file(client->path[0:__builtin_strlen(client->path)]);
-    test::check_condition(read == .ok);
-    usize length = countof(read.ok);
-    char *text = mem::alloc_array_raw(sizeof(char), length + 1, alignof(char));
-    for (usize i = 0; i < length; i++) {
-        text[i] = (char)read.ok[i];
+    files::Bytes bytes = file_of(client);
+    char text[:] = mem::alloc_slice(char, countof(bytes) + 1);
+    for (usize i = 0; i < countof(bytes); i++) {
+        text[i] = (char)bytes[i];
     }
-    text[length] = '\0';
-    return text;
+    text[countof(bytes)] = '\0';
+    return text.data;
 }
 
 // What the program sent on the connection of the id (the n-th connect of the case is id n), as a text.
 static const char *request_of(Client *client, i32 id) {
     net::Bytes sent = net::fake_sent(client->net, id);
-    char *text = mem::alloc_array_raw(sizeof(char), countof(sent) + 1, alignof(char));
+    char text[:] = mem::alloc_slice(char, countof(sent) + 1);
     for (usize i = 0; i < countof(sent); i++) {
         text[i] = (char)sent[i];
     }
     text[countof(sent)] = '\0';
-    return text;
+    return text.data;
 }
 
 static bool request_starts(Client *client, i32 id, const char *prefix) {
@@ -234,8 +245,7 @@ static void check_network_failures(Client *client) {
     test::check_equal(result.error.code, econnreset);
     test::check(contains(result.error.message, "reset.example"));
 
-    net::fake_add(client->net,
-                  (net::Server){.host = "tls.example", .port = 443, .fails = true, .error = net::Expired});
+    net::fake_add(client->net, (net::Server){.host = "tls.example", .port = 443, .fails = true, .error = net::Expired});
     result = get(client, "https://tls.example/t");
     test::check_equal(result.error.code, eauth);
     test::check(contains(result.error.message, "the certificate has expired"));
@@ -271,7 +281,8 @@ static void check_urls(Client *client) {
 
 static void check_local(Client *client) {
     const u8 bytes[:] = ((const u8 *)"local bytes")[0:11];
-    files::CountResult written = files::write_file(client->source[0:__builtin_strlen(client->source)], bytes, files::Replace);
+    files::CountResult written =
+        files::write_file(client->source[0:__builtin_strlen(client->source)], bytes, files::Replace);
     test::check_condition(written == .ok);
     char url[300];
     (void)format::to(url, sizeof url, "file://", client->source);
@@ -307,11 +318,10 @@ static void check_large(Client *client) {
     c::SmithHttpResult result = get(client, "https://big.example/big");
     test::check_equal(result.error.code, 0);
     test::check_equal(result.size, body);
-    files::BytesResult read = files::read_file(client->path[0:__builtin_strlen(client->path)]);
-    test::check_condition(read == .ok);
-    test::check_equal(countof(read.ok), body);
+    files::Bytes written = file_of(client);
+    test::check_equal(countof(written), body);
     for (usize i = 0; i < body; i++) {
-        if (read.ok[i] != (u8)(i * 31 + i / 251)) {
+        if (written[i] != (u8)(i * 31 + i / 251)) {
             test::check_equal(i, body); // the first byte that differs
             break;
         }
@@ -323,11 +333,9 @@ static void check_large(Client *client) {
 // had arrived, and the file keeps the body so far.
 static void check_stall_after(Client *client, usize which, const char *answer, usize size) {
     const char *hosts[3] = {"stall1.example", "stall2.example", "stall3.example"};
-    net::fake_add(client->net, (net::Server){.host = hosts[which],
-                                             .port = 443,
-                                             .response = answer,
-                                             .response_size = size,
-                                             .stalls = true});
+    net::fake_add(
+        client->net,
+        (net::Server){.host = hosts[which], .port = 443, .response = answer, .response_size = size, .stalls = true});
     char url[64];
     (void)format::to(url, sizeof url, "https://", hosts[which], "/slow");
     c::SmithHttpResult result = get(client, url);
@@ -359,11 +367,9 @@ export void test_http_stalled_servers_time_out() {
     check_stall_after(&client, 1, "HTTP/1.1 200 OK\r\nContent-Le", 28);
     check_stall_after(&client, 2, "", 0);
     test::check(is(body_of(&client), "")); // the last one never got a body
-    net::fake_add(&fake_net, (net::Server){.host = "stall4.example",
-                                           .port = 443,
-                                           .response = partial,
-                                           .response_size = 50,
-                                           .stalls = true});
+    net::fake_add(
+        &fake_net,
+        (net::Server){.host = "stall4.example", .port = 443, .response = partial, .response_size = 50, .stalls = true});
     c::SmithHttpResult result = get(&client, "https://stall4.example/slow");
     test::check_equal(result.error.code, etimedout);
     test::check(is(body_of(&client), "0123456789"));

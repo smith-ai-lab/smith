@@ -186,7 +186,8 @@ static SmithHttpError smith_http_files_error(SmithFilesError error) {
     return result;
 }
 
-constexpr int smith_http_tls_code = 80; // EAUTH on macOS, the code of a refused certificate or handshake on both systems
+constexpr int smith_http_tls_code =
+    80; // EAUTH on macOS, the code of a refused certificate or handshake on both systems
 
 // The errno a failed network call stands for, and what to say about it.
 static int smith_http_net_code(SmithNetworkError error, const char **reason) {
@@ -503,8 +504,7 @@ static void smith_http_request(SmithHttp *http, SmithNetworkConnection *connecti
                            http->parsed.target, http->parsed.authority);
     if (written <= 0 || (size_t)written >= sizeof request) __builtin_trap(); // the url and host are capped to fit
     smith_net_CountResult sent = smith_network_write(
-        connection,
-        (struct smith_array_const_u8_n){.data = (const uint8_t *)(request), .count = {(size_t)written}});
+        connection, (struct smith_array_const_u8_n){.data = (const uint8_t *)(request), .count = {(size_t)written}});
     if (sent.tag == smith_enum_result_usize__SmithNetworkError_tag_error)
         http->result.error = smith_http_net_error(http, sent.error);
 }
@@ -683,8 +683,8 @@ SmithHttpResult smith_http_get(const char *url, const char *path) {
     http->path = path;
     http->read_buffer = smith_mem_alloc(smith_http_read_size, 1);
     http->write_buffer = smith_mem_alloc(smith_http_write_size, 1);
-    smith_files_CountResult created = smith_fs_write_file(
-        smith_http_text(path), (struct smith_array_const_u8_n){}, SmithFilesMode_Replace); // an empty file, or none
+    smith_files_CountResult created = smith_fs_write_file(smith_http_text(path), (struct smith_array_const_u8_n){},
+                                                          SmithFilesMode_Replace); // an empty file, or none
     if (created.tag == smith_enum_result_usize__SmithFilesError_tag_error)
         http->result.error = smith_http_files_error(created.error);
     if (http->result.error.code == 0) smith_http_run(http, url);
