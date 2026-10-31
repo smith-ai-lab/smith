@@ -72,14 +72,14 @@ static void finish(Case *t) {
 
 // ---- Bytes: the fixtures, a buffer to write archives into, and damage
 
-static const char *join(const char *a, const char *b) {
-    return format::push(a, b).data;
+static const char *join(Case *t, const char *a, const char *b) {
+    return scratch::push(&t->memory, a, b).data;
 }
 
 // A fixture's bytes, in the case's arena: read_file allocates through the current allocator, which is the arena's
 // while it reads.
 static Bytes fixture(Case *t, const char *name) {
-    const char *path = format::push("tests/fixtures/untar/", name).data;
+    const char *path = scratch::push(&t->memory, "tests/fixtures/untar/", name).data;
     arena::ArenaAllocator allocator = arena::allocator(&t->memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
@@ -334,7 +334,7 @@ typedef struct {
 } Extracted;
 
 static const char *folder_for_name(Case *t, const char *name) {
-    return join(join(t->folder, "/"), name);
+    return join(t, join(t, t->folder, "/"), name);
 }
 
 static const char *folder_for(Case *t, const char *name) {
@@ -364,26 +364,27 @@ static Extracted extract(Case *t, const char *name, Bytes archive) {
 }
 
 // The archive extracts to the listing.
-static void is_tree(const char *name, const Extracted *r, const char *listing) {
-    scratch::expect_text(join(name, ": extracts"), "", r->ok ? "" : r->error);
-    scratch::expect_text(join(name, ": the tree, modes and bytes"), listing, r->tree);
+static void is_tree(Case *t, const char *name, const Extracted *r, const char *listing) {
+    scratch::expect_text(join(t, name, ": extracts"), "", r->ok ? "" : r->error);
+    scratch::expect_text(join(t, name, ": the tree, modes and bytes"), listing, r->tree);
 }
 
 // The archive is refused with the reason, and its URL begins the message.
-static void is_refused(const char *name, const Extracted *r, const char *url, const char *reason) {
-    scratch::expect_text(join(name, ": is refused"), "refused", r->ok ? "extracted" : "refused");
-    scratch::expect_contains(join(name, ": says why"), r->error, reason);
-    scratch::expect_contains(join(name, ": names the archive"), r->error, format::push("cannot extract ", url).data);
+static void is_refused(Case *t, const char *name, const Extracted *r, const char *url, const char *reason) {
+    scratch::expect_text(join(t, name, ": is refused"), "refused", r->ok ? "extracted" : "refused");
+    scratch::expect_contains(join(t, name, ": says why"), r->error, reason);
+    scratch::expect_contains(join(t, name, ": names the archive"), r->error,
+                             scratch::push(&t->memory, "cannot extract ", url).data);
 }
 
 static void refuses(Case *t, const char *name, Bytes archive, const char *reason) {
     Extracted r = extract(t, "refused", archive);
-    is_refused(name, &r, "file:///package.tar", reason);
+    is_refused(t, name, &r, "file:///package.tar", reason);
 }
 
 static void same_tree(Case *t, const char *name, const char *archive, const char *listing) {
     Extracted r = extract(t, "same", fixture(t, archive));
-    is_tree(name, &r, listing);
+    is_tree(t, name, &r, listing);
 }
 
 // ---- 1. The source tree and each format of its archive
@@ -467,7 +468,7 @@ export void test_untar_a_gz_of_a_tar_is_still_a_tar() {
     Case t = start();
     defer finish(&t);
     Extracted r = extract(&t, "stored", gzip_stored(&t, fixture(&t, "a.tar")));
-    is_tree("a gz of a tar", &r, source_tree);
+    is_tree(&t, "a gz of a tar", &r, source_tree);
 }
 
 // Members and streams one after the other: cat a.gz b.gz, and xz streams with the padding xz allows between them.
@@ -477,7 +478,7 @@ export void test_untar_tar_gz_of_two_members() {
     Bytes tar = fixture(&t, "a.tar");
     Bytes two = concat(&t, gzip_stored(&t, part(tar, 0, 10240)), gzip_stored(&t, part(tar, 10240, countof(tar))));
     Extracted r = extract(&t, "two", two);
-    is_tree("tar.gz of two members", &r, source_tree);
+    is_tree(&t, "tar.gz of two members", &r, source_tree);
 }
 
 export void test_untar_tar_xz_of_two_streams_with_padding() {
@@ -488,7 +489,7 @@ export void test_untar_tar_xz_of_two_streams_with_padding() {
     put_zeros(&joined, 4);
     put_bytes(&joined, fixture(&t, "part2.xz"));
     Extracted r = extract(&t, "two", bytes_of(&joined));
-    is_tree("tar.xz of two streams with padding", &r, source_tree);
+    is_tree(&t, "tar.xz of two streams with padding", &r, source_tree);
 }
 
 export void test_untar_tar_gz_with_zero_padding_after_it() {
@@ -498,7 +499,7 @@ export void test_untar_tar_gz_with_zero_padding_after_it() {
     put_bytes(&padded, fixture(&t, "a.tar.gz"));
     put_zeros(&padded, 7);
     Extracted r = extract(&t, "padded", bytes_of(&padded));
-    is_tree("tar.gz with zero padding after it", &r, source_tree);
+    is_tree(&t, "tar.gz with zero padding after it", &r, source_tree);
 }
 
 export void test_untar_tar_xz_with_zero_padding_after_it() {
@@ -508,7 +509,7 @@ export void test_untar_tar_xz_with_zero_padding_after_it() {
     put_bytes(&padded, fixture(&t, "a.tar.xz"));
     put_zeros(&padded, 8);
     Extracted r = extract(&t, "padded", bytes_of(&padded));
-    is_tree("tar.xz with zero padding after it", &r, source_tree);
+    is_tree(&t, "tar.xz with zero padding after it", &r, source_tree);
 }
 
 // Data that does not compress is stored: gzip's stored blocks (more than one: 65535 bytes at most), and LZMA2's
@@ -517,9 +518,9 @@ static Entry random_file(Bytes data) {
     return (Entry){.name = "pkg-1.0/random.bin", .type = '0', .data = data.data, .size = countof(data), .mode = 0o644};
 }
 
-static const char *random_listing(Bytes data) {
-    return format::push("random.bin f 0644 ", countof(data), " ",
-                        format::hex(inflate::crc32(0, data.data, countof(data)), 8), " 1000000000\n")
+static const char *random_listing(Case *t, Bytes data) {
+    return scratch::push(&t->memory, "random.bin f 0644 ", countof(data), " ",
+                         format::hex(inflate::crc32(0, data.data, countof(data)), 8), " 1000000000\n")
         .data;
 }
 
@@ -529,7 +530,7 @@ export void test_untar_tar_gz_of_random_data_stored_blocks() {
     Bytes data = noise(&t, 150000); // three blocks
     Entry entries[2] = {folder_of("pkg-1.0/"), random_file(data)};
     Extracted r = extract(&t, "stored", gzip_stored(&t, tar_of(&t, entries, 2)));
-    is_tree("random data in stored blocks", &r, random_listing(data));
+    is_tree(&t, "random data in stored blocks", &r, random_listing(&t, data));
 }
 
 // The unchanged archives of the cases below, so that a refusal there is the changed byte's.
@@ -548,9 +549,10 @@ export void test_untar_tar_xz_of_random_data_uncompressed_chunks() {
     Entry entries[2] = {folder_of("pkg-1.0/"), random_file(data)};
     for (u8 check = 0; check < 2; check++) {
         Extracted r = extract(&t, "stored", xz_stored(&t, tar_of(&t, entries, 2), check));
-        is_tree(check == 0 ? "random data in uncompressed chunks (no check)"
+        is_tree(&t,
+                check == 0 ? "random data in uncompressed chunks (no check)"
                            : "random data in uncompressed chunks (CRC-32)",
-                &r, random_listing(data));
+                &r, random_listing(&t, data));
     }
 }
 
@@ -571,7 +573,7 @@ export void test_untar_several_top_level_folders_are_kept_under_their_names() {
     Extracted r = extract(&t, "multi", gzip_stored(&t, tar_of(&t, entries, 4)));
     scratch::expect_text("several top-level folders: the package is the extraction folder",
                          folder_for_name(&t, "multi"), r.contents);
-    is_tree("several top-level folders: both are kept under their names", &r,
+    is_tree(&t, "several top-level folders: both are kept under their names", &r,
             "one d\none/a f 0644 2 6751fc53 1000000000\ntwo d\ntwo/b f 0644 2 4c7caf90 1000000000\n");
 }
 
@@ -591,10 +593,10 @@ static const char *long_tree(Case *t) {
     const char *first = repeat(t, 'a', 80);
     const char *second = repeat(t, 'b', 80);
     const char *third = repeat(t, 'c', 80);
-    return format::push(first, " d\n", first, "/", second, " d\n", first, "/", second, "/", third, " d\n", first, "/",
-                        second, "/", third,
-                        "/file.txt f 0644 5 279eb882 1000000000\n\xc3\xbc d\n\xc3\xbc/\xc3\xa9.txt f 0644 7 05685cb1 "
-                        "1000000000\n")
+    return scratch::push(&t->memory, first, " d\n", first, "/", second, " d\n", first, "/", second, "/", third, " d\n",
+                         first, "/", second, "/", third,
+                         "/file.txt f 0644 5 279eb882 1000000000\n\xc3\xbc d\n\xc3\xbc/\xc3\xa9.txt f 0644 7 05685cb1 "
+                         "1000000000\n")
         .data;
 }
 
@@ -602,28 +604,28 @@ export void test_untar_long_names_pax() {
     Case t = start();
     defer finish(&t);
     Extracted r = extract(&t, "long", fixture(&t, "long-pax.tar"));
-    is_tree("long names (pax)", &r, long_tree(&t));
+    is_tree(&t, "long names (pax)", &r, long_tree(&t));
 }
 
 export void test_untar_long_names_gnu() {
     Case t = start();
     defer finish(&t);
     Extracted r = extract(&t, "long", fixture(&t, "long-gnu.tar"));
-    is_tree("long names (gnu)", &r, long_tree(&t));
+    is_tree(&t, "long names (gnu)", &r, long_tree(&t));
 }
 
 export void test_untar_long_names_pax_gzip() {
     Case t = start();
     defer finish(&t);
     Extracted r = extract(&t, "long", fixture(&t, "long-pax.tar.gz"));
-    is_tree("long names (pax, gzip)", &r, long_tree(&t));
+    is_tree(&t, "long names (pax, gzip)", &r, long_tree(&t));
 }
 
 export void test_untar_long_names_gnu_xz() {
     Case t = start();
     defer finish(&t);
     Extracted r = extract(&t, "long", fixture(&t, "long-gnu.tar.xz"));
-    is_tree("long names (gnu, xz)", &r, long_tree(&t));
+    is_tree(&t, "long names (gnu, xz)", &r, long_tree(&t));
 }
 
 export void test_untar_long_names_ustar_prefix_field() {
@@ -632,8 +634,9 @@ export void test_untar_long_names_ustar_prefix_field() {
     const char *p = repeat(&t, 'p', 90);
     const char *q = repeat(&t, 'q', 90);
     Extracted r = extract(&t, "prefix", fixture(&t, "prefix.tar"));
-    is_tree("long names (ustar prefix field)", &r,
-            format::push(p, " d\n", p, "/", q, " d\n", p, "/", q, "/file f 0644 9 6a0d1daa 1000000000\n").data);
+    is_tree(
+        &t, "long names (ustar prefix field)", &r,
+        scratch::push(&t.memory, p, " d\n", p, "/", q, " d\n", p, "/", q, "/file f 0644 9 6a0d1daa 1000000000\n").data);
 }
 
 // ---- 3. Hostile archives, which no tar program writes: each is refused with the reason, and nothing is written
@@ -734,10 +737,10 @@ export void test_untar_hostile_archives_write_nothing_beside_the_extraction_fold
     test::check_equal(extract(&t, "h-deep", tar_of(&t, deep, 1)).ok, false);
     test::check_equal(extract(&t, "h-away", tar_of(&t, away, 1)).ok, false);
     test::check_equal(extract(&t, "h-through", tar_of(&t, through, 3)).ok, false);
-    test::check_equal(exists(join(scratch_folder, "/evil")), false);
-    test::check_equal(exists(join(scratch_folder, "/h-deep/evil")), false);
+    test::check_equal(exists(join(&t, scratch_folder, "/evil")), false);
+    test::check_equal(exists(join(&t, scratch_folder, "/h-deep/evil")), false);
     test::check_equal(exists(absolute), false);
-    test::check_equal(exists(join(folder_for_name(&t, "h-through"), "/pkg-1.0/under")), false);
+    test::check_equal(exists(join(&t, folder_for_name(&t, "h-through"), "/pkg-1.0/under")), false);
 }
 
 // A symlink that stays in its top-level folder is fine, and one that reaches the folder above it is refused only when
@@ -801,14 +804,14 @@ static Bytes apple_tar(Case *t) {
     return tar_of(t, entries, 7);
 }
 
-static const char *apple_listing() {
+static const char *apple_listing(Case *t) {
     const char *plain = "a plain file that only has a name like metadata\n";
-    return format::push("._plain f 0644 ", c::strlen(plain), " ",
-                        format::hex(inflate::crc32(0, (const u8 *)plain, c::strlen(plain)), 8),
-                        " 1000000000\n._tiny f 0644 5 ", format::hex(inflate::crc32(0, (const u8 *)"tiny\n", 5), 8),
-                        " 1000000000\na f 0644 6 ", format::hex(inflate::crc32(0, (const u8 *)"first\n", 6), 8),
-                        " 1000000000\nb f 0644 7 ", format::hex(inflate::crc32(0, (const u8 *)"second\n", 7), 8),
-                        " 1000000000\n")
+    return scratch::push(&t->memory, "._plain f 0644 ", c::strlen(plain), " ",
+                         format::hex(inflate::crc32(0, (const u8 *)plain, c::strlen(plain)), 8),
+                         " 1000000000\n._tiny f 0644 5 ", format::hex(inflate::crc32(0, (const u8 *)"tiny\n", 5), 8),
+                         " 1000000000\na f 0644 6 ", format::hex(inflate::crc32(0, (const u8 *)"first\n", 6), 8),
+                         " 1000000000\nb f 0644 7 ", format::hex(inflate::crc32(0, (const u8 *)"second\n", 7), 8),
+                         " 1000000000\n")
         .data;
 }
 
@@ -816,14 +819,14 @@ export void test_untar_appledouble_entries_become_no_files() {
     Case t = start();
     defer finish(&t);
     Extracted r = extract(&t, "apple", apple_tar(&t));
-    is_tree("AppleDouble entries become no files, and the package is still one folder", &r, apple_listing());
+    is_tree(&t, "AppleDouble entries become no files, and the package is still one folder", &r, apple_listing(&t));
 }
 
 export void test_untar_appledouble_entries_in_a_tar_gz() {
     Case t = start();
     defer finish(&t);
     Extracted r = extract(&t, "apple", gzip_stored(&t, apple_tar(&t)));
-    is_tree("AppleDouble entries in a tar.gz: the same tree, modes and bytes", &r, apple_listing());
+    is_tree(&t, "AppleDouble entries in a tar.gz: the same tree, modes and bytes", &r, apple_listing(&t));
 }
 
 // ---- 4. Damaged archives
@@ -896,16 +899,16 @@ export void test_untar_refuses_a_truncated_tar() {
 // A .gz of one file that is no tar (a release binary, as tree-sitter's): the package is a folder holding that file,
 // named after the URL without ".gz", with the bytes as they were and mode 0644. The mtime is the time of writing.
 static void single_gz_extracts(Case *t, const char *name, Bytes content, const char *url, const char *file) {
-    const char *label = join("single gz ", name);
+    const char *label = join(t, "single gz ", name);
     Extracted r = extract_from(t, "single", gzip_stored(t, content), url);
-    scratch::expect_text(join(label, ": extracts"), "", r.ok ? "" : r.error);
-    scratch::expect_text(join(label, ": the package is the extraction folder"), folder_for_name(t, "single"),
+    scratch::expect_text(join(t, label, ": extracts"), "", r.ok ? "" : r.error);
+    scratch::expect_text(join(t, label, ": the package is the extraction folder"), folder_for_name(t, "single"),
                          r.contents);
-    const char *line = format::push(file, " f 0644 ", countof(content), " ",
-                                    format::hex(inflate::crc32(0, content.data, countof(content)), 8), " ")
+    const char *line = scratch::push(&t->memory, file, " f 0644 ", countof(content), " ",
+                                     format::hex(inflate::crc32(0, content.data, countof(content)), 8), " ")
                            .data;
-    scratch::expect_contains(join(label, ": one file, named without .gz, mode 0644, the same bytes"), r.tree, line);
-    scratch::expect_text(join(label, ": and nothing else"), "", c::strchr(r.tree, '\n') + 1);
+    scratch::expect_contains(join(t, label, ": one file, named without .gz, mode 0644, the same bytes"), r.tree, line);
+    scratch::expect_text(join(t, label, ": and nothing else"), "", c::strchr(r.tree, '\n') + 1);
 }
 
 export void test_untar_single_gz_tool_bin() {
@@ -1012,8 +1015,8 @@ export void test_untar_refuses_a_gzip_with_a_changed_byte_in_a_stored_block() {
 // A one-block xz ends with the block's check, an index of 12 bytes and the footer of 12: the check is flipped at its
 // first byte. (Real xz compresses these tars, so there is no stored chunk to change; the next test has one.)
 static void xz_check_changed(Case *t, const char *check, isize from_end) {
-    Bytes xz = fixture(t, join(join("rand-", check), ".tar.xz"));
-    refuses(t, join("an xz with a changed check under ", check), flip(t, xz, from_end),
+    Bytes xz = fixture(t, join(t, join(t, "rand-", check), ".tar.xz"));
+    refuses(t, join(t, "an xz with a changed check under ", check), flip(t, xz, from_end),
             "check does not match its data");
 }
 
@@ -1081,7 +1084,7 @@ export void test_an_extraction_does_not_remember_the_last() {
     Extracted gz = extract(&t, "again-3", fixture(&t, "a.tar.gz"));
     Extracted second = extract(&t, "again-4", xz);
     test::check_equal(refused.ok, false);
-    is_tree("an extraction after another", &first, source_tree);
-    is_tree("an extraction after a refusal", &second, source_tree);
-    is_tree("a gzip between them", &gz, source_tree);
+    is_tree(&t, "an extraction after another", &first, source_tree);
+    is_tree(&t, "an extraction after a refusal", &second, source_tree);
+    is_tree(&t, "a gzip between them", &gz, source_tree);
 }
