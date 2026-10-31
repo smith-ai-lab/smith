@@ -3,10 +3,16 @@
 // private name, `task::spawn_raw`.
 module smith::task_test;
 
+import <errno.h>;
+import <smith/handlers.h>;
 import <sys/wait.h>;
 import <unistd.h>;
+import smith::arena;
+import smith::console;
+import smith::mem;
 import smith::task;
 import smith::test;
+import target;
 
 // What the marker tasks share: the marks they write, in order.
 struct Log {
@@ -172,3 +178,167 @@ export void test_task_a_write_below_the_stack_faults() {
     test::check(status != 0);
 }
 // NOLINTEND(smith-effects)
+
+// A console that counts the bytes written to it, for telling whose handlers a task sees.
+struct CountingConsole {
+    console::Handler base; // first: &x.base is what set_handler takes
+    usize written;
+};
+
+isize counting_write(console::Handler *self, i32 fd, const void *buffer, usize size) {
+    (void)fd;
+    (void)buffer;
+    ((CountingConsole *)self)->written += size;
+    return (isize)size;
+}
+
+CountingConsole make_console() {
+    CountingConsole fake = {};
+    fake.base.write = counting_write;
+    return fake;
+}
+
+// NOLINTBEGIN(smith-preprocessor)
+constexpr i32 error_badf = c::EBADF;
+constexpr i32 error_noent = c::ENOENT;
+// NOLINTEND(smith-preprocessor)
+
+constexpr usize arena_bytes = 4096;
+
+struct Seen {
+    CountingConsole *console;         // A's fake
+    arena::Arena *arena;              // A's arena, under its allocator
+    mem::Allocator *thread_allocator; // the thread's own (the test runner's checker), which B must still see
+    bool a_installed;
+    bool b_saw_no_console;
+    bool b_saw_no_allocator;
+    bool b_allocated;
+    bool a_kept_console;
+    bool a_kept_allocator;
+    usize a_written;
+    bool child_inherited_console;
+    bool child_inherited_allocator;
+    bool a_kept_after_child;
+    i32 a_errno;
+    i32 b_errno;
+};
+
+// Task A installs a fake console and an arena allocator, pauses, and checks they are still its own when it resumes.
+void run_installer(Seen *seen) {
+    arena::ArenaAllocator allocator = arena::allocator(seen->arena);
+    mem::Allocator *before_allocator = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(before_allocator);
+    console::Handler *before_console = console::set_handler(&seen->console->base);
+    defer console::set_handler(before_console);
+    seen->a_installed = c::smith_handlers_console() == &seen->console->base;
+    task::pause();
+    seen->a_kept_console = c::smith_handlers_console() == &seen->console->base;
+    seen->a_kept_allocator = mem::allocator() == &allocator.base;
+    void *block = mem::alloc_raw(16, 1); // the arena's, not the thread's
+    seen->a_kept_allocator = seen->a_kept_allocator && arena::fits(seen->arena, 16, 1) && block != nullptr;
+    mem::free(block);
+    console::print("hello");
+    seen->a_written = seen->console->written;
+}
+
+// Task B shares A's thread and sees none of A's handlers: libc's console and the thread's allocator.
+void run_bystander(Seen *seen) {
+    seen->b_saw_no_console = c::smith_handlers_console() == nullptr;
+    seen->b_saw_no_allocator = mem::allocator() == seen->thread_allocator;
+    void *block = mem::alloc_raw(32, 1);
+    seen->b_allocated = block != nullptr;
+    mem::free(block);
+    task::pause();
+}
+
+export void test_task_each_task_has_its_own_handlers_across_a_switch() {
+    static u8 memory[arena_bytes];
+    arena::Arena local = arena::fixed(memory, arena_bytes);
+    CountingConsole fake = make_console();
+    Seen seen = {.console = &fake, .arena = &local, .thread_allocator = mem::allocator()};
+    task::Group group = {};
+    defer task::wait(&group);
+    task::spawn(&group, run_installer, &seen);
+    test::check(seen.a_installed);
+    test::check(c::smith_handlers_console() == nullptr); // main's table is untouched
+    task::spawn(&group, run_bystander, &seen);
+    test::check(seen.b_saw_no_console);
+    test::check(seen.b_saw_no_allocator);
+    test::check(seen.b_allocated);
+    task::wait(&group);
+    test::check(seen.a_kept_console);
+    test::check(seen.a_kept_allocator);
+    test::check_equal(seen.a_written, (usize)5);
+    test::check(c::smith_handlers_console() == nullptr);
+}
+
+void run_child(Seen *seen) {
+    seen->child_inherited_console = c::smith_handlers_console() == &seen->console->base;
+    seen->child_inherited_allocator = mem::allocator() != nullptr;
+    mem::Allocator *none = mem::set_allocator(nullptr); // what it sets stays its own
+    (void)none;
+}
+
+void run_spawner(Seen *seen) {
+    arena::ArenaAllocator allocator = arena::allocator(seen->arena);
+    mem::Allocator *before = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(before);
+    console::Handler *before_console = console::set_handler(&seen->console->base);
+    defer console::set_handler(before_console);
+    task::Group children = {};
+    task::spawn(&children, run_child, seen);
+    task::wait(&children);
+    seen->a_kept_after_child = mem::allocator() == &allocator.base;
+}
+
+export void test_task_a_spawned_task_starts_with_its_spawners_handlers() {
+    static u8 memory[arena_bytes];
+    arena::Arena local = arena::fixed(memory, arena_bytes);
+    CountingConsole fake = make_console();
+    Seen seen = {.console = &fake, .arena = &local};
+    task::Group group = {};
+    task::spawn(&group, run_spawner, &seen);
+    task::wait(&group);
+    test::check(seen.child_inherited_console);
+    test::check(seen.child_inherited_allocator);
+    test::check(seen.a_kept_after_child);
+}
+
+i32 *errno_slot() {
+    if constexpr (target::os == target::macos) {
+        return c::__error();
+    } else {
+        return c::__errno_location();
+    }
+}
+
+void set_errno(i32 code) {
+    *errno_slot() = code;
+}
+
+i32 get_errno() {
+    return *errno_slot();
+}
+
+void run_errno_a(Seen *seen) {
+    set_errno(error_badf);
+    task::pause();
+    seen->a_errno = get_errno();
+}
+
+void run_errno_b(Seen *seen) {
+    set_errno(error_noent);
+    task::pause();
+    seen->b_errno = get_errno();
+}
+
+export void test_task_each_task_has_its_own_errno_across_a_switch() {
+    Seen seen = {};
+    task::Group group = {};
+    defer task::wait(&group);
+    task::spawn(&group, run_errno_a, &seen);
+    task::spawn(&group, run_errno_b, &seen);
+    task::wait(&group);
+    test::check_equal(seen.a_errno, error_badf);
+    test::check_equal(seen.b_errno, error_noent);
+}
