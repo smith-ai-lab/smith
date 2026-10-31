@@ -12082,6 +12082,29 @@ i32 main() {
               holder.later->count, legacy.a, bare.b, (int)q.x, l.inner);
     return 0;
 }
+==> unused-name-library/src/barrier.smith <==
+module barrier;
+
+import <stdio.h>;
+
+// A parameter `_t` in two exported functions of a library module (issue #600): the second `_t` is a declaration, not a
+// read of the first.
+export void wait(i32 *_t) {}
+
+export void wait_for(i32 *_t, i32 n) {
+    c::printf("%d\n", n);
+}
+==> unused-name-library/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import barrier;
+
+i32 main() {
+    barrier::wait(nullptr);
+    barrier::wait_for(nullptr, 3);
+    return 0;
+}
 ==> unused-run/src/main.smith <==
 module main;
 

@@ -1597,6 +1597,10 @@ export void test_keyword_names_fine() {
     corpus_case("keyword-names-fine");
 }
 
+export void test_unused_name_library() {
+    corpus_case("unused-name-library");
+}
+
 export void test_library_smith_text() {
     corpus_case("library-smith-text");
 }
