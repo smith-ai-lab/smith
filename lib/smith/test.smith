@@ -1463,6 +1463,8 @@ typedef struct {
     const char
         *costs;    // --costs <file>: lines `cpu<TAB>seconds<TAB>name`; the heaviest tests start first (unknown first)
     u8 macos;      // --macos-only (1): only the macOS-only tests; --skip-macos (2): all the others; 0: every test
+    bool partial;  // --partial: this runner is one of several `smith test` runs, so a filter that selects none of its
+                   // tests is no error
     bool cheapest; // --cheapest: with --costs, the cheapest tests start first instead (a selection under --fail-fast)
     u32 idle_timeout; // wall seconds a test may use no CPU time (it and its processes), then it fails; 0 for none
     bool idle_given;  // --idle-timeout was passed
@@ -3434,6 +3436,8 @@ bool parse_options(i32 argc, char **argv, Options *options) {
             options->macos = 1;
         } else if (c::strcmp(flag, "--skip-macos") == 0) {
             options->macos = 2;
+        } else if (c::strcmp(flag, "--partial") == 0) {
+            options->partial = true;
         } else if (c::strcmp(flag, "--cheapest") == 0) {
             options->cheapest = true;
         } else if (c::strcmp(flag, "--stats") == 0) {
@@ -3860,7 +3864,7 @@ static Options default_options(Runner *runner) {
 static void say_usage(const Runner *runner) {
     complain("usage: %s [--test <substring>] [--seed <n>] [--seeds <1 to %ju>] [--jobs <1 to %zu>] "
              "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds <seconds>] "
-             "[--shuffle <seed>] [--shard <i>/<n>] [--macos-only|--skip-macos] [--isolate] "
+             "[--shuffle <seed>] [--shard <i>/<n>] [--macos-only|--skip-macos] [--partial] [--isolate] "
              "[--in-process] [--full] [--update] [--list] [--fail-fast] [--costs <file>] [--cheapest] [--idle-timeout "
              "<seconds>] [--verbose] [--stats] "
              "[--trace] [--color] "
@@ -3931,6 +3935,11 @@ static usize report_run(const Plan *plan, const Options *options, f64 start) {
         if (options.macos != 0 && filter_matches_any(&options)) { // the other platform's tests only: nothing to run
             say("no test of %s matches \"%s\": nothing to run\n", options.macos == 1 ? "--macos-only" : "--skip-macos",
                 options.filter);
+            return 0;
+        }
+        // Another runner owns the names (`smith test --changed` gives every runner the same list).
+        if (options.partial) {
+            say("no test of this runner matches \"%s\": nothing to run\n", options.filter);
             return 0;
         }
         say("no test matches \"%s\"\n", options.filter);

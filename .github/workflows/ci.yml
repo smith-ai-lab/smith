@@ -34,11 +34,11 @@ jobs:
       base: ${{ steps.scope.outputs.base }}
       matrix: ${{ steps.linux.outputs.matrix }}
       linux: ${{ steps.linux.outputs.linux }}
-      # where the macOS jobs run (knowledge/ci-hosted.md): the owner's Mac when one of its runners is online, else
-      # hosted macos-26; picked per run by the step `Pick the macOS runner`
+      # where the macOS jobs run (knowledge/ci-hosted.md): hosted macos-26, the owner's Mac only as overflow when the
+      # hosted pool is saturated; picked per run by the step `Pick the macOS runner`
       pack: ${{ steps.pack.outputs.build }}
       mac: ${{ steps.mac.outputs.mac }}
-      # SMITH_CORES of a macOS job: the Mac's 16 cores shared by its 3 runners; a hosted runner has 3
+      # SMITH_CORES of a macOS job: the Mac's 16 cores shared by its 3 runners (overflow only); a hosted runner has 3
       cores: ${{ steps.mac.outputs.cores }}
     env:
       GH_TOKEN: ${{ github.token }}
@@ -51,6 +51,7 @@ jobs:
         uses: ./.github/actions/pick-mac
         with:
           token: ${{ secrets.RUNNER_STATUS_TOKEN }}
+          github-token: ${{ github.token }}
           fork: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
       - name: Is there a pack for this LLVM configuration
         id: pack
@@ -124,12 +125,13 @@ jobs:
 
   pack:
     # the LLVM pack of a configuration no release holds yet, built and published by llvm.yml (#1064) before the jobs
-    # that need it start; it runs on the Mac only when the Mac is online and idle, else on hosted runners
+    # that need it start; it runs on the Mac only as overflow (hosted pool saturated), else on hosted runners
     needs: changes
     if: needs.changes.outputs.pack == 'true'
     uses: ./.github/workflows/llvm.yml
     permissions:
       contents: write # gh release create
+      actions: read # llvm.yml's pick-mac lists the queued and running jobs
     secrets: inherit
 
   build:
