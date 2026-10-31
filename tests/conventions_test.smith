@@ -248,8 +248,10 @@ export void test_conventions_library_include_files_links_files() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::expect_text("library: #include <smith/files.h> links files", "found 1", last_line(&memory, &p, "smith run"));
-    scratch::expect_text("library: ... and the libraries files needs", "arena.o contract.o files.o math.o mem.o trace.o",
+    scratch::expect_text("library: #include <smith/files.h> links files", "found 1",
+                         last_line(&memory, &p, "smith run"));
+    scratch::expect_text("library: ... and the libraries files needs",
+                         "arena.o contract.o files.o math.o mem.o trace.o",
                          scratch::capture(&p, "ls build/debug/smith | tr '\\n' ' ' | sed 's/ $//'"));
 }
 
