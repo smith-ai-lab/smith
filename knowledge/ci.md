@@ -12,7 +12,7 @@ for what it changed, never the full check; no git hook runs anything on a push, 
 2026-10-29).
 
 **CI is GitHub's.** `.github/workflows/ci.yml` runs the full check on the pull request on hosted runners
-([ci-hosted](ci-hosted.md)); the one required check is `ci`. Nothing runs on the owner's Mac.
+([ci-hosted](ci-hosted.md)); the one required check is `ci`. The macOS jobs run on hosted `macos-26`; the owner's Mac takes them only as overflow when the hosted pool is saturated (and never needs to be on).
 
 **The merge queue merges.** When `ci` is green the pull request goes into GitHub's merge queue
 (`gh pr merge N --auto`). The queue makes a group of up to 5 entries on top of main, runs `ci` on the group
