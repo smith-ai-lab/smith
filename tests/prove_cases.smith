@@ -5,21 +5,25 @@ module prove_cases;
 
 import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
-import <string.h>;
-import smith::mem;
+
+// The pieces as one text, from the current allocator: the test's arena, which takes it back (issue #240).
+static const char *joined(const char *a, const char *b, const char *c, const char *d, const char *e) {
+    usize length = format::length(a, b, c, d, e);
+    char *text = mem::alloc_slice(char, length + 1).data;
+    (void)format::to(text, length + 1, a, b, c, d, e);
+    return text;
+}
 
 // `smith prove args -- -I include`, both streams together. $c in args is tests/prove.
 export scratch::Run prove(const scratch::Project *p, const char *args) {
-    return scratch::sh(
-        p,
-        format::push(&p->io->arena, "c=cases; smith prove ", args, " -- -I \"$SMITH_REPO/.smith/include\" 2>&1").data);
+    return scratch::sh(p, joined("c=cases; smith prove ", args, " -- -I \"$SMITH_REPO/.smith/include\" 2>&1", "", ""));
 }
 
 // The word number `index` of a text separated by spaces, or nullptr when there are fewer.
-static const char *word(io::Io *io, const char *text, usize index) {
+static const char *word(const char *text, usize index) {
     usize at = 0;
     for (usize n = 0; n <= index; n++) {
         while (text[at] == ' ') {
@@ -31,7 +35,7 @@ static const char *word(io::Io *io, const char *text, usize index) {
             at++;
         }
         if (n == index) {
-            char *copy = arena::push_slice(&io->arena, char, at - start + 1).data;
+            char *copy = mem::alloc_slice(char, at - start + 1).data;
             mem::copy(copy[0:at - start], text[start:start + at - start]);
             copy[at - start] = '\0';
             return copy;
@@ -41,7 +45,7 @@ static const char *word(io::Io *io, const char *text, usize index) {
 }
 
 static scratch::Run function(const scratch::Project *p, const char *file, const char *prefix, const char *name) {
-    return prove(p, format::push(&p->io->arena, "--function=", prefix, name, " ", file).data);
+    return prove(p, joined("--function=", prefix, name, " ", file));
 }
 
 // Every function of `names` (separated by spaces), with `prefix` before each, is proved in `file` (a shell word such as
@@ -49,8 +53,8 @@ static scratch::Run function(const scratch::Project *p, const char *file, const 
 export void each_proved(const scratch::Project *p, const char *what, const char *file, const char *prefix,
                         const char *names) {
     bool failed = false;
-    for (usize i = 0; word(p->io, names, i) != nullptr; i++) {
-        const char *name = word(p->io, names, i);
+    for (usize i = 0; word(names, i) != nullptr; i++) {
+        const char *name = word(names, i);
         scratch::Run run = function(p, file, prefix, name);
         if (run.status != 0) {
             test::note("%s: %s is not proved (status %d)\n%s", what, name, run.status, run.out);
@@ -64,8 +68,8 @@ export void each_proved(const scratch::Project *p, const char *what, const char 
 export void each_refuted(const scratch::Project *p, const char *what, const char *file, const char *prefix,
                          const char *needle, const char *names) {
     bool failed = false;
-    for (usize i = 0; word(p->io, names, i) != nullptr; i++) {
-        const char *name = word(p->io, names, i);
+    for (usize i = 0; word(names, i) != nullptr; i++) {
+        const char *name = word(names, i);
         scratch::Run run = function(p, file, prefix, name);
         if (run.status != 1 || !scratch::contains(run.out, needle)) {
             test::note("%s: %s is not refuted with `%s` (status %d)\n%s", what, name, needle, run.status, run.out);
@@ -80,8 +84,8 @@ export void each_refuted(const scratch::Project *p, const char *what, const char
 export void each_value_counterexample(const scratch::Project *p, const char *what, const char *file,
                                       const char *names) {
     bool failed = false;
-    for (usize i = 0; word(p->io, names, i) != nullptr; i++) {
-        const char *name = word(p->io, names, i);
+    for (usize i = 0; word(names, i) != nullptr; i++) {
+        const char *name = word(names, i);
         scratch::Run run = function(p, file, "", name);
         if (scratch::contains(run.out, "poison") || scratch::contains(run.out, "undefined behaviour")) {
             test::note("%s: %s names poison or undefined behaviour\n%s", what, name, run.out);
