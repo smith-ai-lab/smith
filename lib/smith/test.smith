@@ -1327,7 +1327,49 @@ void diff_render(Diff *diff, const Edit *edits, usize count, const Row *old_rows
 
 // The bytes of the file in the test's memory (a zero after them), or nullptr when it cannot be read. The files effect
 // is a real io made for the call from the runner's make_io, as run_io makes a test's.
+const char *golden_read_free(const char *path, usize *size) {
+    i32 descriptor = c::open(path, c::O_RDONLY); // NOLINT(smith-preprocessor)
+    if (descriptor < 0) return nullptr;
+    isize end = c::lseek(descriptor, 0, c::SEEK_END); // NOLINT(smith-preprocessor)
+    c::lseek(descriptor, 0, c::SEEK_SET);             // NOLINT(smith-preprocessor)
+    usize count = end > 0 ? (usize)end : 0;
+    arena::Arena memory_arena = memory(count + 1);
+    char *buffer = arena::push_slice(&memory_arena, char, count + 1).data;
+    usize filled = 0;
+    while (filled < count) {
+        isize got = c::read(descriptor, buffer + filled, count - filled);
+        if (got <= 0) break;
+        filled += (usize)got;
+    }
+    c::close(descriptor);
+    buffer[filled] = '\0';
+    *size = filled;
+    return buffer;
+}
+
+// The same file written with no io, its folders made. False when it cannot be.
+bool golden_write_free(const char *path, const char *text, usize size) {
+    char folder[path_capacity];
+    __builtin_snprintf(folder, sizeof folder, "%s", path);
+    for (char *slash = c::strchr(folder + 1, '/'); slash != nullptr; slash = c::strchr(slash + 1, '/')) {
+        *slash = '\0';
+        c::mkdir(folder, 493); // 0755; one that is there already is fine
+        *slash = '/';
+    }
+    i32 descriptor = c::open(path, c::O_WRONLY | c::O_CREAT | c::O_TRUNC, 420); // NOLINT(smith-preprocessor)
+    if (descriptor < 0) return false;
+    usize done = 0;
+    while (done < size) {
+        isize put = c::write(descriptor, text + done, size - done);
+        if (put <= 0) break;
+        done += (usize)put;
+    }
+    c::close(descriptor);
+    return done == size;
+}
+
 const char *golden_read(io::Io *io, const char *path, usize *size) {
+    if (io == nullptr) return golden_read_free(path, size);
     io::Read file = io::files_read(&io->files, &io->arena, path);
     const char *result = nullptr;
     if (file.error.code == 0) {
@@ -1342,6 +1384,7 @@ const char *golden_read(io::Io *io, const char *path, usize *size) {
 
 // The file written whole, its folders made. False when it cannot be.
 bool golden_write(io::Io *io, const char *path, const char *text, usize size) {
+    if (io == nullptr) return golden_write_free(path, text, size);
     char folder[path_capacity];
     __builtin_snprintf(folder, sizeof folder, "%s", path);
     char *slash = c::strrchr(folder, '/');
@@ -1419,7 +1462,7 @@ export [[nodiscard]] bool updating() {
 // `smith test --update` the file is written when it differs (its folders made) and the test passes; the runner lists
 // the files it wrote. The file is read and written through the files of the io the test takes, as any test that touches
 // files does.
-export void golden(io::Io *io, const char path[:], const char actual[:]) {
+void golden_check(io::Io *io, const char path[:], const char actual[:]) {
     char file[path_capacity];
     if (countof(path) == 0 || countof(path) >= path_capacity)
         golden_fail("the golden path is empty or too long", "", "");
@@ -1438,6 +1481,17 @@ export void golden(io::Io *io, const char path[:], const char actual[:]) {
     }
     if (expected == nullptr) golden_fail("no file ", file, "; run smith test --update to write it");
     golden_differ(file, expected, size, actual_text, actual_size);
+}
+
+export void golden(io::Io *io, const char path[:], const char actual[:]) {
+    golden_check(io, path, actual);
+}
+
+// The same with no io (issue #843): the file is read and written through smith::files, with the same diff on a mismatch
+// and the same `smith test --update` behavior. The name carries `_free` while test::golden takes the io; #240 removes
+// that parameter and the name with it.
+export void golden_free(const char path[:], const char actual[:]) { // NOLINT(smith-effects): a test's files, until #240
+    golden_check(nullptr, path, actual);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
