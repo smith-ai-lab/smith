@@ -1,1 +1,0 @@
-src/main.smith:6:20: a slice member in an array of slices is not read in an initializer list yet: assign the slice after the declaration (an unread value would leave it empty)
