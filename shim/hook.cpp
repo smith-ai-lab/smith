@@ -3200,12 +3200,16 @@ class SmithHook final : public TokenHook, public NameSource {
     }
 
     FileID typesFile;
-    // A place that is no file of the program: the start of a buffer of its own (issue #107).
+    // A place that is no file of the program: the start of a buffer of its own (issue #107). The buffer is included
+    // from the start of the main file: a declaration whose first token is here and whose last is in the main file
+    // (a function's `}` takes the place of the token after it) has two places that reach a common file, so the coverage
+    // mapping of an unused function ends instead of climbing for good (issue #845).
     static uint32_t typesPlace(void *context) {
         auto *self = static_cast<SmithHook *>(context);
         if (!self->typesFile.isValid()) {
             auto buffer = llvm::MemoryBuffer::getMemBufferCopy(" ", "<smith-types>");
-            self->typesFile = self->SM.createFileID(std::move(buffer), SrcMgr::C_User);
+            self->typesFile = self->SM.createFileID(std::move(buffer), SrcMgr::C_User, 0, 0,
+                                                    self->SM.getLocForStartOfFile(self->MainFile));
         }
         return self->SM.getLocForStartOfFile(self->typesFile).getRawEncoding();
     }
