@@ -252,7 +252,10 @@ jobs:
           } >>"$GITHUB_STEP_SUMMARY"
           # a failure names its test: the line `FAIL <name>` of the runner, as an annotation and in the summary
           if [ "$rc" -ne 0 ]; then
-            { echo '```'; grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 60; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+            # each failed test's name and the lines under it (where the check failed, its error), kept for the
+            # `Fail fast` step, which prints them last, before it cancels the other shards
+            grep -hE -A6 '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" 2>/dev/null | grep -vE '^--$' | head -n 80 >"$RUNNER_TEMP/failed.txt" || true
+            { echo '```'; cat "$RUNNER_TEMP/failed.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
             grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 20 |
               while IFS= read -r line; do echo "::error::$line"; done
           fi
@@ -270,7 +273,13 @@ jobs:
           retention-days: 7
       - name: Fail fast
         if: failure()
-        run: gh run cancel ${{ github.run_id }}
+        # the failed tests are the last lines of this shard's log (#1086): the run then shows only cancelled jobs
+        run: |
+          if [ -s "$RUNNER_TEMP/failed.txt" ]; then
+            echo "FAILED TESTS of this shard (the other shards are cancelled):"
+            cat "$RUNNER_TEMP/failed.txt"
+          fi
+          gh run cancel ${{ github.run_id }}
 
   test-linux:
     # Linux carries the tests (required): 6 hosted shards of `--skip-macos`, each builds smith itself (a hosted
@@ -318,7 +327,10 @@ jobs:
             grep -E '^[0-9]+ passed' "$RUNNER_TEMP/test.log" || true
           } >>"$GITHUB_STEP_SUMMARY"
           if [ "$rc" -ne 0 ]; then
-            { echo '```'; grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 60; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+            # each failed test's name and the lines under it (where the check failed, its error), kept for the
+            # `Fail fast` step, which prints them last, before it cancels the other shards
+            grep -hE -A6 '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" 2>/dev/null | grep -vE '^--$' | head -n 80 >"$RUNNER_TEMP/failed.txt" || true
+            { echo '```'; cat "$RUNNER_TEMP/failed.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
             grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 20 |
               while IFS= read -r line; do echo "::error::$line"; done
           fi
@@ -335,7 +347,13 @@ jobs:
           retention-days: 7
       - name: Fail fast
         if: failure()
-        run: gh run cancel ${{ github.run_id }}
+        # the failed tests are the last lines of this shard's log (#1086): the run then shows only cancelled jobs
+        run: |
+          if [ -s "$RUNNER_TEMP/failed.txt" ]; then
+            echo "FAILED TESTS of this shard (the other shards are cancelled):"
+            cat "$RUNNER_TEMP/failed.txt"
+          fi
+          gh run cancel ${{ github.run_id }}
   docs:
     # a change of the README, AGENTS.md, knowledge/ or the skills only: the docs check and the tests that read them
     # (a change that also touches code runs the full check, whose parts include both)
