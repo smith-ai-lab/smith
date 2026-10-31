@@ -391,8 +391,8 @@ void run_nested_parent(Nested *nested) {
 
 export void test_task_a_counting_scheduler_sees_each_spawn_pause_and_wait() {
     Counting counting = make_counting();
-    task::Scheduler *previous = task::set_scheduler(&counting.base);
-    defer task::set_scheduler(previous);
+    task::Scheduler *previous = task::use(&counting.base);
+    defer task::use(previous);
     Log log = {};
     Marker a = {.log = &log, .name = 'a', .rounds = 1};
     Marker b = {.log = &log, .name = 'b', .rounds = 1};
@@ -407,14 +407,14 @@ export void test_task_a_counting_scheduler_sees_each_spawn_pause_and_wait() {
     test::check_equal(group.pending, (usize)0);
 }
 
-export void test_task_set_scheduler_returns_the_previous_and_defer_restores_it() {
+export void test_task_use_returns_the_previous_and_defer_restores_it() {
     Counting outer = make_counting();
     Counting inner = make_counting();
-    task::Scheduler *original = task::set_scheduler(&outer.base);
-    defer task::set_scheduler(original);
+    task::Scheduler *original = task::use(&outer.base);
+    defer task::use(original);
     {
-        task::Scheduler *previous = task::set_scheduler(&inner.base);
-        defer task::set_scheduler(previous);
+        task::Scheduler *previous = task::use(&inner.base);
+        defer task::use(previous);
         test::check(previous == &outer.base);
         test::check(c::smith_handlers_scheduler() == &inner.base);
     }
@@ -426,8 +426,8 @@ export void test_task_set_scheduler_returns_the_previous_and_defer_restores_it()
 
 export void test_task_a_task_spawned_under_a_scheduler_that_spawns_again_is_counted() {
     Counting counting = make_counting();
-    task::Scheduler *previous = task::set_scheduler(&counting.base);
-    defer task::set_scheduler(previous);
+    task::Scheduler *previous = task::use(&counting.base);
+    defer task::use(previous);
     Log log = {};
     task::Group group = {};
     Nested nested = {.log = &log, .group = &group};

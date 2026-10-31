@@ -399,7 +399,7 @@ void inline_pause([[maybe_unused]] Scheduler *scheduler) {
 // made under it reaches the real function.
 Scheduler inline_value = {.spawn = inline_spawn, .pause = inline_pause, .wait = inline_wait};
 
-// The inline scheduler, to set with `set_scheduler` or to wrap in a scheduler of your own. With none set it is the one.
+// The inline scheduler, to set with `use` or to wrap in a scheduler of your own. With none set it is the one.
 export Scheduler *inline_scheduler() {
     return &inline_value;
 }
@@ -407,9 +407,9 @@ export Scheduler *inline_scheduler() {
 // Makes `scheduler` the one that runs the tasks of the calling task and of the tasks it spawns, and returns the
 // previous one (null: none set). Restoring it is the caller's, with `defer`:
 //
-//   task::Scheduler *previous = task::set_scheduler(task::inline_scheduler());
-//   defer task::set_scheduler(previous);
-export Scheduler *set_scheduler(Scheduler *scheduler) {
+//   task::Scheduler *previous = task::use(task::inline_scheduler());
+//   defer task::use(previous);
+export Scheduler *use(Scheduler *scheduler) {
     return c::smith_handlers_set_scheduler(scheduler);
 }
 
