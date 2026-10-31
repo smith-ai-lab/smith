@@ -1106,7 +1106,9 @@ static void build_install(SmithBuild *b, const BuildConfig *config, const char *
     bool skip_tests = smith_option(b, "NOTESTS", "install without running the tests first (CI's install job)");
     const char *script = "mkdir -p \"$0/bin\" && cp \"$1\" \"$0/bin/smith.tmp\" && "
                          "mv \"$0/bin/smith.tmp\" \"$0/bin/smith\" && ln -sf smith \"$0/bin/smith-cc\" && "
-                         "ln -sf smith \"$0/bin/smith-c++\" && rm -f \"$0/bin/smith++\"";
+                         "ln -sf smith \"$0/bin/smith-c++\" && rm -f \"$0/bin/smith++\" && "
+                         "{ [ ! -f \"${1%/*}/libsmith_handlers.dylib\" ] || "
+                         "cp \"${1%/*}/libsmith_handlers.dylib\" \"$0/bin/\"; }";
     SmithStep install = {
         .command = (const char *[]){"sh", "-c", script, config->prefix, binary, nullptr},
         .inputs = skip_tests ? (const char *[]){binary, nullptr} : tested,

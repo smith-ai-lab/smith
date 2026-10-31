@@ -40,6 +40,9 @@ package() {
     stage=$(mktemp -d)
     mkdir -p "$stage/bin" "$out"
     cp "$smith" "$stage/bin/smith"
+    # macOS: the handlers runtime smith is linked with (-lsmith_handlers) travels beside it
+    dylib=$(dirname "$smith")/libsmith_handlers.dylib
+    [ ! -f "$dylib" ] || cp "$dylib" "$stage/bin/"
     ln -s smith "$stage/bin/smith-cc"
     ln -s smith "$stage/bin/smith-c++"
     if tar --version | grep -q bsdtar; then # macOS's
