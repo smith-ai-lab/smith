@@ -2248,6 +2248,8 @@ static size_t smith_lang_slice_init_slice(SmithLang *lang, const SmithHost *host
 }
 
 static bool smith_lang_slice_init_holds(const SmithHost *host, const char *type, bool *anonymous);
+static bool smith_lang_enum_member(SmithLang *lang, const SmithHost *host, const char *spelling,
+                                   const SmithToken *tokens, size_t count, SmithLangSliceCur *cur);
 static void smith_lang_slice_init_unread(SmithLang *lang, const SmithHost *host, const SmithToken *open,
                                          const char *why);
 
@@ -2271,6 +2273,15 @@ static size_t smith_lang_slice_init_value(SmithLang *lang, const SmithHost *host
         }
     }
     if (member.slice) return smith_lang_slice_init_slice(lang, host, init, at, member.tag, cur);
+    if (known && !frame->array && lang->enums_seen) { // an enum member: `.v = 5` is `.some = 5`, `.none` is its own
+        size_t end = smith_lang_slice_init_value_end(init->tokens, at, init->count);
+        SmithLangSliceCur piece = {};
+        if (smith_lang_enum_member(lang, host, info.type, init->tokens + at, end - at, &piece) && !piece.overflow) {
+            smith_lang_slice_add(cur, piece.tokens, piece.count);
+            cur->changed = true;
+            return end;
+        }
+    }
     if (smith_lang_punct(&init->tokens[at], "{") && init->depth < smith_lang_slice_init_depth) {
         SmithLangSliceInitFrame *inner = &init->frames[init->depth++];
         *inner = (SmithLangSliceInitFrame){};
@@ -2327,7 +2338,8 @@ static bool smith_lang_slice_init_walk(SmithLang *lang, const SmithHost *host, c
     }
     smith_lang_slice_add(cur, tokens, 1);
     size_t at = 1;
-    bool start = true; // a value, or a designator, begins here
+    bool start = true;  // a value, or a designator, begins here
+    bool value = false; // after `.name =`: what follows is the value, even when it begins with a `.` (`.none`)
     for (size_t guard = 0; guard < count && at < count && init.depth > 0 && !cur->overflow; guard++) {
         const SmithToken *token = &tokens[at];
         if (smith_lang_punct(token, "}")) {
@@ -2339,7 +2351,7 @@ static bool smith_lang_slice_init_walk(SmithLang *lang, const SmithHost *host, c
             smith_lang_slice_add(cur, token, 1);
             at += 1;
             start = true;
-        } else if (start && smith_lang_punct(token, ".") && at + 2 < count &&
+        } else if (start && !value && smith_lang_punct(token, ".") && at + 2 < count &&
                    smith_lang_punct(&tokens[at + 2], "=")) { // `.name = value`
             SmithLangSliceInitFrame *frame = &init.frames[init.depth - 1];
             uint32_t member = frame->type[0] != 0 && !frame->array
@@ -2348,13 +2360,15 @@ static bool smith_lang_slice_init_walk(SmithLang *lang, const SmithHost *host, c
             if (member != UINT32_MAX) frame->next = member;
             smith_lang_slice_add(cur, token, 3);
             at += 3;
-        } else if (start && (smith_lang_punct(token, ".") || smith_lang_punct(token, "["))) {
+            value = true;
+        } else if (start && !value && (smith_lang_punct(token, ".") || smith_lang_punct(token, "["))) {
             smith_lang_slice_init_designator(lang, host, &init, at);
             smith_lang_slice_add(cur, token, 1);
             at += 1;
             start = false;
         } else if (start) {
             size_t was = init.depth;
+            value = false;
             at = smith_lang_slice_init_value(lang, host, &init, at, cur);
             start = init.depth > was; // a nested brace opened: its first value follows
         } else {

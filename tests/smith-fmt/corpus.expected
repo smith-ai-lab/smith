@@ -1030,6 +1030,52 @@ int main() {
     printf("%d %d %d %d %d\n", pick(Red), pick(Blue), p.first, p.second, level == Low);
     return 0;
 }
+==> enum-convert-gaps/src/main.smith <==
+module main;
+import <stdio.h>;
+
+typedef option(i32) Number;
+typedef result(i32, u8) Checked;
+
+struct Box {
+    Number v;
+    Number w;
+};
+
+// Issue #371: a value converts to `.ok` and `.some` in a struct member initializer, in a generic's body and where a
+// `for` body is one unbraced statement.
+static Number position(const i32 *xs, usize n, i32 v) {
+    for (usize i = 0; i < n; i++)
+        if (xs[i] == v) return (i32)i;
+    return .none;
+}
+
+Number generic_find(auto xs, usize n, auto v) {
+    for (usize i = 0; i < n; i++) {
+        if (xs[i] == v) return 7;
+    }
+    return .none;
+}
+
+Checked generic_check(auto n) {
+    if (n < 0) {
+        return {.error = 1};
+    }
+    return n * 2;
+}
+
+i32 main() {
+    struct Box b = {.v = 5, .w = .none};
+    i32 items[3] = {4, 5, 6};
+    Number p = position(items, 3, 6);
+    Number q = position(items, 3, 9);
+    Number g = generic_find(items, 3, 5);
+    Checked c = generic_check(21);
+    c::printf("%d %d\n", b.v == .some ? b.v.some : -1, b.w == .some ? b.w.some : -1);
+    c::printf("%d %d %d %d\n", p == .some ? p.some : -1, q == .some ? q.some : -1, g == .some ? g.some : -1,
+              c == .ok ? c.ok : -1);
+    return 0;
+}
 ==> enum-convert/src/main.smith <==
 module main;
 import <stdio.h>;

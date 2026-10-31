@@ -472,6 +472,19 @@ static bool smith_lang_enum_equals(SmithLang *lang, const SmithHost *host) {
     return smith_lang_tuple_replace(lang, count, converted.tokens, converted.count);
 }
 
+// The value of a member of a struct's initializer (`{.v = 5, .w = .none}`) whose type is a payload enum: the tokens of
+// the value, written as the member's initializer. False (nothing written) when the member is no such enum.
+static bool smith_lang_enum_member(SmithLang *lang, const SmithHost *host, const char *spelling,
+                                   const SmithToken *tokens, size_t count, SmithLangSliceCur *cur) {
+    SmithExprType found = {};
+    SmithLangEnumType type;
+    if (count == 0 || !smith_lang_slice_spelled(host, spelling, &found) ||
+        !smith_lang_enum_type(host, found.canonical, &type)) {
+        return false;
+    }
+    return smith_lang_enum_value(lang, host, &type, tokens, count, false, cur);
+}
+
 // `return .v;` and `return {.v = ...};`: the type is the function's result.
 static bool smith_lang_enum_return(SmithLang *lang, const SmithHost *host) {
     const SmithToken *first = smith_lang_peek(lang, host, 0, false);
@@ -717,7 +730,17 @@ static bool smith_lang_enum_result(SmithLang *lang, const SmithHost *host, const
         snprintf(canonical, sizeof canonical, "struct smith_enum_%s", resolved);
     }
     (void)name;
-    return smith_lang_enum_type(host, canonical, type);
+    if (smith_lang_enum_type(host, canonical, type)) return true;
+    if (host->expr_type == nullptr) return false;
+    // A name of a `typedef option(T) Name;` or `typedef result(T, E) Name;`: the compiler prints the struct under it.
+    char resolved[smith_lang_name_max];
+    char text[smith_lang_name_max + 16];
+    SmithExprType found = {};
+    smith_lang_tuple_resolve(lang, span, 0, count, resolved, sizeof resolved);
+    int length = snprintf(text, sizeof text, "(\x1f%s\x1f)\x1f{\x1f}", resolved);
+    return length > 0 && (size_t)length < sizeof text &&
+           host->expr_type(host->context, text, (uint32_t)length, &found) &&
+           smith_lang_enum_type(host, found.canonical, type);
 }
 
 // The words of `return .name ;` and `return { .name = payload }` at the `return` token `at`: `lead ( T ) { . tag = C
