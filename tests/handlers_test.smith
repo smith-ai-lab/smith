@@ -5,8 +5,9 @@
 // The C programs are tests/handlers/*.c and print one `ok` or `FAIL` line per check.
 module handlers_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 import <string.h>;
@@ -14,40 +15,51 @@ import <string.h>;
 constexpr char flags[_] = "f='-std=gnu23 -Wall -Wextra -Wpedantic -Werror -I '$SMITH_REPO/.smith/include; "
                           "h=tests/handlers; ";
 
+// The pieces as one text, in the current allocator: the test's memory, which is given back after the test.
+const char *joined(auto... pieces) {
+    usize length = format::length(pieces...);
+    char *text = mem::alloc_array_raw(sizeof(char), length + 1, alignof(char)); // a generic's local has no type yet
+    (void)format::to(text, length + 1, pieces...);
+    return text;
+}
+
 static bool darwin(const scratch::Project *p) {
     return scratch::same(scratch::capture(p, "uname -s"), "Darwin");
 }
 
 // A command run after `flags`, which must succeed.
 static void must(const scratch::Project *p, const char *name, const char *command) {
-    scratch::Run run = scratch::sh(p, format::push(&p->io->arena, flags, command).data);
+    scratch::Run run = scratch::sh(p, joined(flags, command));
     scratch::expect_status(name, 0, &run);
 }
 
-// A project with the runtime built as a dylib under the warnings, or a project on another system (`ok` is false).
-static scratch::Project runtime(io::Io *io, const char *name, bool *ok) {
-    scratch::Project p = scratch::project(io, name, nullptr);
-    *ok = darwin(&p);
-    if (*ok) {
-        scratch::copy_tree(&p, "tests/handlers", "tests/handlers");
-        scratch::copy_tree(&p, "lib", "lib");
-        must(&p, "handlers: the runtime builds as a dylib under -Wall -Wextra -Wpedantic -Werror",
-             "smith cc $f -dynamiclib lib/handlers.c -o libsmith_handlers.dylib");
+// The runtime built as a dylib under the warnings in the project, or false on another system.
+static bool runtime(const scratch::Project *p) {
+    if (!darwin(p)) {
+        return false;
     }
-    return p;
+    scratch::copy_tree(p, "tests/handlers", "tests/handlers");
+    scratch::copy_tree(p, "lib", "lib");
+    must(p, "handlers: the runtime builds as a dylib under -Wall -Wextra -Wpedantic -Werror",
+         "smith cc $f -dynamiclib lib/handlers.c -o libsmith_handlers.dylib");
+    return true;
 }
 
 // Runs a program that prints `ok` and `FAIL` lines: it passes with no FAIL line and a zero status.
 static void passes(const scratch::Project *p, const char *name, const char *program) {
-    scratch::Run run = scratch::sh(p, format::push(&p->io->arena, program, " 2>&1").data);
+    scratch::Run run = scratch::sh(p, joined(program, " 2>&1"));
     scratch::expect_lacks(name, run.out, "FAIL");
     scratch::expect_status(name, 0, &run);
 }
 
-export void test_macos_handlers_the_program_passes_from_itself_a_linked_library_and_a_dlopened_one(io::Io *io) {
-    bool ok = false;
-    scratch::Project p = runtime(io, "p", &ok);
-    if (!ok) {
+export void test_macos_handlers_the_program_passes_from_itself_a_linked_library_and_a_dlopened_one() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!runtime(&p)) {
         return;
     }
     must(&p, "handlers: the foreign library builds", "smith cc $f -dynamiclib $h/foreign.c -o libforeign.dylib");
@@ -56,10 +68,14 @@ export void test_macos_handlers_the_program_passes_from_itself_a_linked_library_
     passes(&p, "handlers: the program passes, from itself, a linked library and a dlopened one", "./t_handlers");
 }
 
-export void test_macos_handlers_an_arena_set_as_the_allocator_serves_the_c_allocator_functions(io::Io *io) {
-    bool ok = false;
-    scratch::Project p = runtime(io, "p", &ok);
-    if (!ok) {
+export void test_macos_handlers_an_arena_set_as_the_allocator_serves_the_c_allocator_functions() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!runtime(&p)) {
         return;
     }
     must(&p, "handlers: the arena library builds", "smith cc $f -c lib/smith/arena.smith -o arena.o");
@@ -71,14 +87,18 @@ export void test_macos_handlers_an_arena_set_as_the_allocator_serves_the_c_alloc
 
 // The files and console handlers: fakes set on the thread are reached by read, write, open, close, syscall, the stdio
 // functions and fopen, fdopen and freopen; with none set they are libc's.
-static void io_handlers(io::Io *io, const char *optimize) {
-    bool ok = false;
-    scratch::Project p = runtime(io, "p", &ok);
-    if (!ok) {
+static void io_handlers(const char *optimize) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!runtime(&p)) {
         return;
     }
     must(&p, "handlers: the io test builds",
-         format::push(&io->arena, "smith cc $f ", optimize, " $h/io.c libsmith_handlers.dylib -o t_io").data);
+         joined("smith cc $f ", optimize, " $h/io.c libsmith_handlers.dylib -o t_io"));
     scratch::Run run = scratch::sh(&p, "./t_io 2>&1");
     scratch::expect_status("handlers: the io test passes (the fakes are reached, libc's without them)", 0, &run);
     scratch::expect_lacks("handlers: the io test has no failing check", run.out, "FAIL");
@@ -86,25 +106,28 @@ static void io_handlers(io::Io *io, const char *optimize) {
                          scratch::capture(&p, "./t_io 2>&1 | grep -c '^ok  '"));
 }
 
-export void test_macos_handlers_the_io_test_at_o0(io::Io *io) {
-    io_handlers(io, "-O0");
+export void test_macos_handlers_the_io_test_at_o0() {
+    io_handlers("-O0");
 }
 
-export void test_macos_handlers_the_io_test_at_o2(io::Io *io) {
-    io_handlers(io, "-O2");
+export void test_macos_handlers_the_io_test_at_o2() {
+    io_handlers("-O2");
 }
 
 // The env and clock handlers: getenv is answered by the env handler, and clock_gettime, nanosleep, usleep and sleep by
 // the clock handler (a fake sleeps by advancing its time); with none set they are libc's.
-static void env_clock_handlers(io::Io *io, const char *optimize) {
-    bool ok = false;
-    scratch::Project p = runtime(io, "p", &ok);
-    if (!ok) {
+static void env_clock_handlers(const char *optimize) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!runtime(&p)) {
         return;
     }
     must(&p, "handlers: the env and clock test builds",
-         format::push(&io->arena, "smith cc $f ", optimize, " $h/envclock.c libsmith_handlers.dylib -o t_envclock")
-             .data);
+         joined("smith cc $f ", optimize, " $h/envclock.c libsmith_handlers.dylib -o t_envclock"));
     scratch::Run run = scratch::sh(&p, "./t_envclock 2>&1");
     scratch::expect_status("handlers: the env and clock test passes", 0, &run);
     scratch::expect_lacks("handlers: the env and clock test has no failing check", run.out, "FAIL");
@@ -112,34 +135,36 @@ static void env_clock_handlers(io::Io *io, const char *optimize) {
                          scratch::capture(&p, "./t_envclock 2>&1 | grep -c '^ok  '"));
 }
 
-export void test_macos_handlers_the_env_and_clock_test_at_o0(io::Io *io) {
-    env_clock_handlers(io, "-O0");
+export void test_macos_handlers_the_env_and_clock_test_at_o0() {
+    env_clock_handlers("-O0");
 }
 
-export void test_macos_handlers_the_env_and_clock_test_at_o2(io::Io *io) {
-    env_clock_handlers(io, "-O2");
+export void test_macos_handlers_the_env_and_clock_test_at_o2() {
+    env_clock_handlers("-O2");
 }
 
 // A project built by the conventions links the runtime by itself, in each profile: a handler set in main is reached.
-static void project_links_runtime(io::Io *io, const char *profile, const char *target) {
-    scratch::Project p = scratch::project(io, "project", nullptr);
+static void project_links_runtime(const char *profile, const char *target) {
+    scratch::Project p = scratch::make("project", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     if (!darwin(&p)) {
         return;
     }
     scratch::copy_tree(&p, "tests/handlers/project.c", "main.c");
-    scratch::Run built = scratch::sh(&p, format::push(&io->arena, "smith ", target, " >build.log 2>&1").data);
+    scratch::Run built = scratch::sh(&p, joined("smith ", target, " >build.log 2>&1"));
     scratch::expect_status("handlers: the project builds and links the runtime", 0, &built);
-    const char *program = format::push(&io->arena, "./build/", profile, "/project").data;
+    const char *program = joined("./build/", profile, "/project");
     scratch::expect_text("handlers: the handler is reached by malloc", "handler 1, before 0, after 0, allocs 1",
-                         scratch::capture(&p, format::push(&io->arena, program, " 2>&1").data));
+                         scratch::capture(&p, joined(program, " 2>&1")));
     scratch::expect_text("handlers: the runtime is a dylib beside the program", "1",
-                         scratch::capture(&p, format::push(&io->arena, "otool -L build/", profile,
-                                                           "/project | grep -c '@rpath/libsmith_handlers.dylib'")
-                                                  .data));
-    scratch::expect_text(
-        "handlers: the program does not contain the runtime", "0",
-        scratch::capture(&p,
-                         format::push(&io->arena, "nm -U build/", profile, "/project | grep -c smith_handlers").data));
+                         scratch::capture(&p, joined("otool -L build/", profile,
+                                                     "/project | grep -c '@rpath/libsmith_handlers.dylib'")));
+    scratch::expect_text("handlers: the program does not contain the runtime", "0",
+                         scratch::capture(&p, joined("nm -U build/", profile, "/project | grep -c smith_handlers")));
     if (c::strcmp(profile, "debug") == 0) {
         scratch::expect_text("handlers: debug: ASan is linked before the runtime (after the line that names the "
                              "program)",
@@ -149,26 +174,31 @@ static void project_links_runtime(io::Io *io, const char *profile, const char *t
     }
 }
 
-export void test_macos_handlers_a_project_links_the_runtime_in_debug(io::Io *io) {
-    project_links_runtime(io, "debug", "build");
+export void test_macos_handlers_a_project_links_the_runtime_in_debug() {
+    project_links_runtime("debug", "build");
 }
 
-export void test_macos_handlers_a_project_links_the_runtime_in_release(io::Io *io) {
-    project_links_runtime(io, "release", "build release");
+export void test_macos_handlers_a_project_links_the_runtime_in_release() {
+    project_links_runtime("release", "build release");
 }
 
 // A console handler also catches puts, with ASan's start-up check about puts off (the build writes
 // __asan_default_options).
-static void console_handler(io::Io *io, const char *profile, const char *target) {
-    scratch::Project p = scratch::project(io, "console", nullptr);
+static void console_handler(const char *profile, const char *target) {
+    scratch::Project p = scratch::make("console", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     if (!darwin(&p)) {
         return;
     }
     scratch::copy_tree(&p, "tests/handlers/console.c", "main.c");
-    scratch::Run built = scratch::sh(&p, format::push(&io->arena, "smith ", target, " >build.log 2>&1").data);
+    scratch::Run built = scratch::sh(&p, joined("smith ", target, " >build.log 2>&1"));
     scratch::expect_status("handlers: the console project builds", 0, &built);
     scratch::expect_text("handlers: printf, puts and fputs reach the console handler", "ok captured=[x\ny\nz\n]",
-                         scratch::capture(&p, format::push(&io->arena, "./build/", profile, "/console 2>&1").data));
+                         scratch::capture(&p, joined("./build/", profile, "/console 2>&1")));
     if (c::strcmp(profile, "release") == 0) {
         scratch::expect_text("handlers: release: the optimizer turned the printf of a literal into puts (no printf is "
                              "imported)",
@@ -176,50 +206,62 @@ static void console_handler(io::Io *io, const char *profile, const char *target)
     }
 }
 
-export void test_macos_handlers_a_console_handler_catches_printf_puts_and_fputs_in_debug(io::Io *io) {
-    console_handler(io, "debug", "build");
+export void test_macos_handlers_a_console_handler_catches_printf_puts_and_fputs_in_debug() {
+    console_handler("debug", "build");
 }
 
-export void test_macos_handlers_a_console_handler_catches_printf_puts_and_fputs_in_release(io::Io *io) {
-    console_handler(io, "release", "build release");
+export void test_macos_handlers_a_console_handler_catches_printf_puts_and_fputs_in_release() {
+    console_handler("release", "build release");
 }
 
 // ASan, with the handlers linked and its puts check off, still reports an overflow, a use after free and a puts that
 // reads past a string (our puts reaches ASan's interceptor, not libc's).
-static scratch::Project asan_project(io::Io *io, bool *ok) {
-    scratch::Project p = scratch::project(io, "bad", nullptr);
-    *ok = darwin(&p);
-    if (*ok) {
-        scratch::copy_tree(&p, "tests/handlers/asan.c", "main.c");
-        scratch::Run built = scratch::sh(&p, "smith build >build.log 2>&1");
-        scratch::expect_status("handlers: the ASan project builds", 0, &built);
+// The ASan project built, or false on another system.
+static bool asan_project(const scratch::Project *p) {
+    if (!darwin(p)) {
+        return false;
     }
-    return p;
+    scratch::copy_tree(p, "tests/handlers/asan.c", "main.c");
+    scratch::Run built = scratch::sh(p, "smith build >build.log 2>&1");
+    scratch::expect_status("handlers: the ASan project builds", 0, &built);
+    return true;
 }
 
-export void test_macos_handlers_asan_reports_a_write_past_a_malloced_block(io::Io *io) {
-    bool ok = false;
-    scratch::Project p = asan_project(io, &ok);
-    if (ok) {
+export void test_macos_handlers_asan_reports_a_write_past_a_malloced_block() {
+    scratch::Project p = scratch::make("bad", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (asan_project(&p)) {
         scratch::expect_text("handlers: debug: a write past a malloc'd block is a heap-buffer-overflow",
                              "heap-buffer-overflow",
                              scratch::capture(&p, "./build/debug/bad 2>&1 | grep -m1 -o 'heap-buffer-overflow'"));
     }
 }
 
-export void test_macos_handlers_asan_reports_a_read_after_free(io::Io *io) {
-    bool ok = false;
-    scratch::Project p = asan_project(io, &ok);
-    if (ok) {
+export void test_macos_handlers_asan_reports_a_read_after_free() {
+    scratch::Project p = scratch::make("bad", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (asan_project(&p)) {
         scratch::expect_text("handlers: debug: a read after free is a heap-use-after-free", "heap-use-after-free",
                              scratch::capture(&p, "./build/debug/bad one 2>&1 | grep -m1 -o 'heap-use-after-free'"));
     }
 }
 
-export void test_macos_handlers_asan_reports_puts_of_an_unterminated_string(io::Io *io) {
-    bool ok = false;
-    scratch::Project p = asan_project(io, &ok);
-    if (ok) {
+export void test_macos_handlers_asan_reports_puts_of_an_unterminated_string() {
+    scratch::Project p = scratch::make("bad", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (asan_project(&p)) {
         scratch::expect_text("handlers: debug: puts of an unterminated string is a heap-buffer-overflow read",
                              "heap-buffer-overflow",
                              scratch::capture(&p, "./build/debug/bad one two 2>&1 | grep -m1 -o "
