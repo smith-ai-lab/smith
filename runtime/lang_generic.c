@@ -794,6 +794,23 @@ static void smith_lang_generic_mark_values(const SmithLangGeneric *generic) {
     }
 }
 
+// A `constexpr auto f`, `lambda(F) f` or `auto... rest` parameter, the `i`th of `count`: its slot. A message, or null.
+static const char *smith_lang_scan_function(SmithLangGeneric *generic, const SmithLangParam *param, size_t i,
+                                            size_t count) {
+    if (generic->type_count >= smith_lang_type_params_max)
+        return "a generic function has at most 32 `constexpr type`, `constexpr auto` and `auto` parameters";
+    if (param->kind == SmithLangSlot_Pack && i + 1 != count)
+        return "`auto...` is the last parameter: the arguments that remain have no other parameter after them";
+    const SmithLangGenToken *name = smith_lang_param_name_token(param);
+    generic->type_token[generic->type_count] = (uint8_t)(name - &smith_lang_gt.tokens[generic->first]);
+    if (smith_lang_param_named(generic, smith_lang_gt_str(name), name->length) >= 0)
+        return "two compile-time parameters have the same name";
+    generic->type_position[generic->type_count] = (uint8_t)i;
+    generic->type_kind[generic->type_count] = param->kind;
+    generic->type_count += 1;
+    return nullptr;
+}
+
 // The type parameters of the head just recorded: `constexpr type T`, their names and which parameter each is. A
 // message, or null.
 static const char *smith_lang_generic_scan(SmithLangGeneric *generic) {
@@ -834,17 +851,8 @@ static const char *smith_lang_generic_scan(SmithLangGeneric *generic) {
             continue;
         }
         if (params[i].kind == SmithLangSlot_Function || params[i].kind == SmithLangSlot_Pack) {
-            if (generic->type_count >= smith_lang_type_params_max)
-                return "a generic function has at most 32 `constexpr type`, `constexpr auto` and `auto` parameters";
-            if (params[i].kind == SmithLangSlot_Pack && i + 1 != count)
-                return "`auto...` is the last parameter: the arguments that remain have no other parameter after them";
-            const SmithLangGenToken *name = smith_lang_param_name_token(&params[i]);
-            if (smith_lang_param_named(generic, smith_lang_gt_str(name), name->length) >= 0)
-                return "two compile-time parameters have the same name";
-            generic->type_token[generic->type_count] = (uint8_t)(name - &smith_lang_gt.tokens[generic->first]);
-            generic->type_position[generic->type_count] = (uint8_t)i;
-            generic->type_kind[generic->type_count] = (uint8_t)params[i].kind;
-            generic->type_count += 1;
+            const char *problem = smith_lang_scan_function(generic, &params[i], i, count);
+            if (problem != nullptr) return problem;
             continue;
         }
         if (params[i].kind != SmithLangSlot_Type) continue;

@@ -707,6 +707,42 @@ static void smith_lang_argl_run(const SmithLangNestedWriter *w, uint32_t from, u
     smith_lang_gen_put_run(w->lang, w->host, w->replay->generic, w->instance, from, to, w->location, w->id);
 }
 
+// The lambda `code` as the function `name`: the return type of `-> R`, else F's, and the parameters.
+static void smith_lang_argl_put_function(const SmithLangNestedWriter *w, const SmithLangArglF *f,
+                                         const SmithLangArgl *code, const char *name) {
+    smith_lang_nested_say(w, SmithTokenKind_Identifier, "static");
+    if (code->has_type) {
+        smith_lang_argl_copy(w, code->type_from, code->type_to);
+    } else {
+        smith_lang_argl_run(w, f->ret_from, f->ret_to);
+    }
+    smith_lang_nested_say(w, SmithTokenKind_Identifier, name);
+    smith_lang_nested_say(w, SmithTokenKind_Punctuator, "(");
+    uint32_t starts[smith_lang_argl_max];
+    uint32_t ends[smith_lang_argl_max];
+    size_t params = smith_lang_argl_split_list(&smith_lang_it, code->params_from, code->params_to, starts, ends);
+    if (params == 0 || params == SIZE_MAX) smith_lang_nested_say(w, SmithTokenKind_Identifier, "void");
+    for (size_t k = 0; params != SIZE_MAX && k < params && k < f->count; k++) { // each parameter
+        if (k > 0) smith_lang_nested_say(w, SmithTokenKind_Punctuator, ",");
+        if (smith_lang_argl_from_f(&smith_lang_it, starts[k], ends[k])) {
+            uint32_t stars = ends[k] - starts[k] - 2; // F's own stars stand for these
+            uint32_t to = f->to[k];
+            while (stars > 0 && to > f->from[k] && smith_lang_argl_punct(&smith_lang_gt, to - 1, "*")) {
+                to -= 1;
+                stars -= 1;
+            }
+            smith_lang_argl_run(w, f->from[k], to);
+            for (uint32_t i = f->to[k] - to; i > 0; i--) // the stars the lambda wrote, as F's
+                smith_lang_nested_say(w, SmithTokenKind_Punctuator, "*");
+            smith_lang_argl_copy(w, ends[k] - 1, ends[k]);
+        } else {
+            smith_lang_argl_copy(w, starts[k], ends[k]);
+        }
+    }
+    smith_lang_nested_say(w, SmithTokenKind_Punctuator, ")");
+    smith_lang_argl_copy(w, code->body_from, code->body_to + 1);
+}
+
 // One slot's function and the check of its type. Written at file scope before the instance.
 static void smith_lang_argl_write_one(const SmithLangNestedWriter *w, const SmithLangGeneric *generic, size_t slot,
                                       uint32_t fa, uint32_t fb) {
@@ -724,39 +760,7 @@ static void smith_lang_argl_write_one(const SmithLangNestedWriter *w, const Smit
     if (count == 1 &&
         smith_lang_generic_of(w->lang, w->host, smith_lang_pool_text(&smith_lang_it, head), head->length) >= 0)
         return; // a generic function: its calls make the instances
-    if (is_lambda) {
-        smith_lang_nested_say(w, SmithTokenKind_Identifier, "static");
-        if (code.has_type) {
-            smith_lang_argl_copy(w, code.type_from, code.type_to);
-        } else {
-            smith_lang_argl_run(w, f.ret_from, f.ret_to);
-        }
-        smith_lang_nested_say(w, SmithTokenKind_Identifier, name);
-        smith_lang_nested_say(w, SmithTokenKind_Punctuator, "(");
-        uint32_t starts[smith_lang_argl_max];
-        uint32_t ends[smith_lang_argl_max];
-        size_t params = smith_lang_argl_split_list(&smith_lang_it, code.params_from, code.params_to, starts, ends);
-        if (params == 0 || params == SIZE_MAX) smith_lang_nested_say(w, SmithTokenKind_Identifier, "void");
-        for (size_t k = 0; params != SIZE_MAX && k < params && k < f.count; k++) { // each parameter
-            if (k > 0) smith_lang_nested_say(w, SmithTokenKind_Punctuator, ",");
-            if (smith_lang_argl_from_f(&smith_lang_it, starts[k], ends[k])) {
-                uint32_t stars = ends[k] - starts[k] - 2; // F's own stars stand for these
-                uint32_t to = f.to[k];
-                while (stars > 0 && to > f.from[k] && smith_lang_argl_punct(&smith_lang_gt, to - 1, "*")) {
-                    to -= 1;
-                    stars -= 1;
-                }
-                smith_lang_argl_run(w, f.from[k], to);
-                for (uint32_t i = f.to[k] - to; i > 0; i--) // the stars the lambda wrote, as F's
-                    smith_lang_nested_say(w, SmithTokenKind_Punctuator, "*");
-                smith_lang_argl_copy(w, ends[k] - 1, ends[k]);
-            } else {
-                smith_lang_argl_copy(w, starts[k], ends[k]);
-            }
-        }
-        smith_lang_nested_say(w, SmithTokenKind_Punctuator, ")");
-        smith_lang_argl_copy(w, code.body_from, code.body_to + 1);
-    }
+    if (is_lambda) smith_lang_argl_put_function(w, &f, &code, name);
     char shown[256];
     smith_lang_infer_written((SmithLangSpan){fa, fb}, shown, sizeof shown);
     char message[512];
