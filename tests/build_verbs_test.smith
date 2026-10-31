@@ -244,6 +244,10 @@ static void says_there_is_no_detailed_help(const char *verb) {
     scratch::expect_contains("verbs: ... names the verb", help.out, "smith ");
     scratch::expect_contains("verbs: ... and says there is no detailed help", help.out, "no detailed help yet");
     scratch::expect_text("verbs: ... the same for both forms", help.out, flag.out);
+    (void)format::to(command, sizeof command, "smith ", verb, " -h");
+    scratch::Run dash = runs_in_a_bare_folder(command);
+    scratch::expect_status("verbs: smith <verb> -h exits 0", 0, &dash);
+    scratch::expect_text("verbs: ... and prints the same", help.out, dash.out);
 }
 
 // `smith run --help` and the others would build, run or fail: they print their line and run nothing.

@@ -3758,7 +3758,8 @@ static int smith_main_route(int argc, char **argv, const char *self) {
     if (strcmp(argv[1], "--smith-slots") == 0) return smith_slots_main(argc - 2, argv + 2);
     const SmithVerb *verb = smith_find_verb(argv[1]);
     if (verb == nullptr) smith_bare_arguments(argc, argv);
-    if (argc > 2 && strcmp(argv[2], "--help") == 0 && smith_verb_lacks_usage(verb->name))
+    if (argc > 2 && (strcmp(argv[2], "--help") == 0 || strcmp(argv[2], "-h") == 0) &&
+        smith_verb_lacks_usage(verb->name))
         return smith_print_summary(verb); // before anything builds or runs
     // `smith build preflight` takes its base token at once and holds it for the whole check: its build, fmt, lint and
     // test are children that ride on it (SMITH_SLOT_HELD) and take tokens only for their further workers, so a
