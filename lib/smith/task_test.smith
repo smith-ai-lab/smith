@@ -6,7 +6,6 @@ module smith::task_test;
 
 import <dirent.h>;
 import <errno.h>;
-import <pthread.h>;
 import <smith/handlers.h>;
 import <time.h>;
 import <sys/wait.h>;
@@ -536,18 +535,20 @@ export void test_task_eight_tasks_that_spin_run_on_every_core() {
     test::check(elapsed < 300000000U); // eight in series would be 400 ms; four at a time is about 100
 }
 
+// The address of this is different on every thread: it names the thread a task is running on.
+thread_local u8 thread_marker;
+
 struct Home {
-    c::pthread_t began[1];
+    const u8 *began; // the thread marker where the task began
     bool same_thread;
 };
 
 void run_stay(Home *home) {
-    home->began[0] = c::pthread_self(); // NOLINT(smith-effects)
+    home->began = &thread_marker;
     home->same_thread = true;
     for (usize round = 0; round < 5; round++) {
         task::pause();
-        // NOLINTNEXTLINE(smith-effects)
-        if (c::pthread_equal(home->began[0], c::pthread_self()) == 0) home->same_thread = false;
+        if (home->began != &thread_marker) home->same_thread = false;
     }
 }
 
