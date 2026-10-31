@@ -216,6 +216,9 @@ CountingConsole make_console() {
 // NOLINTBEGIN(smith-preprocessor)
 constexpr i32 error_badf = c::EBADF;
 constexpr i32 error_noent = c::ENOENT;
+if constexpr (target::os == target::macos) {
+    constexpr i32 process_task_info = c::PROC_PIDTASKINFO;
+}
 // NOLINTEND(smith-preprocessor)
 
 constexpr usize arena_bytes = 4096;
@@ -459,7 +462,7 @@ usize thread_count() {
     // NOLINTBEGIN(smith-effects): the system is asked, which is the point
     if constexpr (target::os == target::macos) {
         struct c::proc_taskinfo info = {};
-        c::proc_pidinfo(c::getpid(), c::PROC_PIDTASKINFO, 0, &info, (i32)sizeof(info));
+        c::proc_pidinfo(c::getpid(), process_task_info, 0, &info, (i32)sizeof(info));
         return (usize)info.pti_threadnum;
     } else {
         c::DIR *folder = c::opendir("/proc/self/task");
