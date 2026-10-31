@@ -206,7 +206,7 @@ export void test_runner_checks_the_api_tests_are_found_and_the_passing_ones_pass
             "same_bits_zero_fails\nsame_bits_f32_fails\npointer_passes\npointer_null_fails\npointer_not_null_fails\n"
             "typed_passes\nexpressions_pass\nmemory_passes\nmemory_stops",
             list.out);
-        scratch::Run run = runner::tests(&p, iso, "--verbose --test _pass");
+        scratch::Run run = runner::tests(&p, iso, "--verbose --test '*_pass*'");
         runner::expect_has(iso, "api: the ordering checks pass on ordered values of every type", &run,
                            "PASS ordering_passes");
         runner::expect_has(iso, "api: ... not_equal passes on a NaN, which equals nothing", &run, "PASS nan_ne_passes");

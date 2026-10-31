@@ -254,7 +254,7 @@ static void verbs_on_a_new_project(const scratch::Project *p, const char *dir, c
     scratch::expect_status(say(label, "smith test passes out of the box"), 0, &tested);
     scratch::expect_contains(say(label, "... on the tests of the template"), tested.out,
                              smith_language ? "5 passed, 0 failed" : "2 passed, 0 failed");
-    scratch::Run one = run_in(p, dir, "smith test --test no_primes");
+    scratch::Run one = run_in(p, dir, "smith test --test 'no_primes*'");
     scratch::expect_contains(say(label, "smith test --test runs one test"), one.out, "1 passed, 0 failed");
     prove_the_template(p, dir, label, main_file);
     __builtin_snprintf(both, sizeof both, "sed 's/sum(5), 28/sum(5), 27/' %s >%s.new && mv %s.new %s", test_file,
