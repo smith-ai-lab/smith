@@ -30,6 +30,11 @@ static void smith_mcp_tool_begin(SmithMcpServer *server, SmithMcpSession *sessio
     smith_mcp_pump(server, 1); // looks at what has arrived
     SmithMcpEvent stop = {};
     SmithMcpTake taken = smith_mcp_events_take(session, out, &stop);
+    if (session->events_dropped > 0) {
+        smith_mcp_text_add(out, "%zu events of the adapter were dropped: the queue holds %zu and none was output to make room\n",
+                           session->events_dropped, smith_mcp_events_max);
+        session->events_dropped = 0;
+    }
     if (taken == SmithMcpTake_Stopped) smith_mcp_show_stop(server, session, &stop, out);
     if (taken == SmithMcpTake_Finished) smith_mcp_show_finished(session, out);
 }
@@ -264,7 +269,7 @@ static size_t smith_mcp_program_arguments(SmithMcpServer *server, const SmithJso
     }
     const SmithJsonValue *array = smith_mcp_argument(arguments, "args", SmithJsonKind_Array);
     for (size_t i = 0; array != nullptr && i < array->count && count < smith_mcp_program_arguments_max;
-         i++) { // bounded
+         i++) { // bounded; smith_mcp_tool_launch refused more than the limit before this
         if (array->items[i]->kind == SmithJsonKind_String)
             list[count++] = smith_mcp_cstring(&server->scratch, array->items[i]->text);
     }
@@ -277,7 +282,7 @@ static bool smith_mcp_launch_breakpoints(SmithMcpServer *server, SmithMcpSession
                                          const SmithJsonValue *arguments, const char **paths, size_t *path_count,
                                          SmithMcpText *out) {
     const SmithJsonValue *array = smith_mcp_argument(arguments, "breakpoints", SmithJsonKind_Array);
-    for (size_t i = 0; array != nullptr && i < array->count && i < smith_mcp_launch_breakpoints_max; i++) { // bounded
+    for (size_t i = 0; array != nullptr && i < array->count; i++) { // bounded by the check above
         const SmithJsonValue *item = array->items[i];
         const char *file = smith_mcp_argument_string(&server->scratch, item, "file");
         int64_t line = smith_mcp_argument_integer(item, "line", 0);
@@ -358,6 +363,26 @@ static bool smith_mcp_launch_configure(SmithMcpServer *server, SmithMcpSession *
     return true;
 }
 
+// False, with the limit named, for a launch with more program arguments or breakpoints than the arrays that hold them.
+static bool smith_mcp_launch_within_limits(const SmithJsonValue *arguments, bool test, SmithMcpText *out) {
+    const SmithJsonValue *given = smith_mcp_argument(arguments, "args", SmithJsonKind_Array);
+    size_t wanted = (given != nullptr ? given->count : 0) + (test ? 3 : 0);
+    if (wanted > smith_mcp_program_arguments_max) {
+        smith_mcp_text_add(out, "launch: %zu program arguments given, at most %zu (the limit)\n", wanted,
+                           smith_mcp_program_arguments_max);
+        return false;
+    }
+    const SmithJsonValue *array = smith_mcp_argument(arguments, "breakpoints", SmithJsonKind_Array);
+    if (array != nullptr && array->count > smith_mcp_launch_breakpoints_max) {
+        smith_mcp_text_add(out,
+                           "launch: %zu breakpoints given, at most %zu (the limit) can be set at launch; set the "
+                           "rest with the breakpoint tool\n",
+                           array->count, smith_mcp_launch_breakpoints_max);
+        return false;
+    }
+    return true;
+}
+
 static bool smith_mcp_tool_launch(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
     const char *program = smith_mcp_argument_string(&server->scratch, arguments, "program");
     const char *test = smith_mcp_argument_string(&server->scratch, arguments, "test");
@@ -368,6 +393,7 @@ static bool smith_mcp_tool_launch(SmithMcpServer *server, const SmithJsonValue *
             out, "launch needs `program` (a program to run) or `test` (the name of a test of the project), not both\n");
         return false;
     }
+    if (!smith_mcp_launch_within_limits(arguments, test != nullptr, out)) return false;
     program = test != nullptr ? smith_mcp_runner(server, arguments, folder, out)
                               : smith_mcp_absolute(&server->scratch, folder, program);
     if (program == nullptr) return false;

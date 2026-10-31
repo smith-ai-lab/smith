@@ -86,9 +86,14 @@ static size_t smith_account_read(const char *path) {
     if (file == nullptr) return 0;
     size_t count = 0;
     char line[512];
-    for (size_t guard = 0; count < smith_account_tasks_max && guard < smith_account_tasks_max * 2 &&
-                           fgets(line, sizeof line, file) != nullptr;
+    for (size_t guard = 0; guard < smith_account_tasks_max * 2 + 2 && fgets(line, sizeof line, file) != nullptr;
          guard++) {
+        if (count >= smith_account_tasks_max) {
+            fprintf(stderr, "smith: %s has more than %zu tasks (the limit), so the slowest list and the totals would be wrong; "
+                            "raise smith_account_tasks_max in runtime/account.c\n",
+                    path, smith_account_tasks_max);
+            exit(smith_exit_usage);
+        }
         SmithAccountTask *task = &smith_account_tasks[count];
         char *cursor = strchr(line, '\t');
         if (cursor == nullptr || (size_t)(cursor - line) >= sizeof task->name) continue;
