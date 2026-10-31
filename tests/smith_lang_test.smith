@@ -2000,6 +2000,42 @@ export void test_error_fields_enum_member() {
     corpus_case("error-fields-enum-member");
 }
 
+export void test_lambda_basic() {
+    corpus_case("lambda-basic");
+}
+
+export void test_lambda_no_parameters() {
+    corpus_case("lambda-no-parameters");
+}
+
+export void test_lambda_qsort() {
+    corpus_case("lambda-qsort");
+}
+
+export void test_lambda_two() {
+    corpus_case("lambda-two");
+}
+
+export void test_lambda_static() {
+    corpus_case("lambda-static");
+}
+
+export void test_lambda_nested() {
+    corpus_case("lambda-nested");
+}
+
+export void test_lambda_plain() {
+    corpus_case("lambda-plain");
+}
+
+export void test_error_lambda_captures_local() {
+    corpus_case("error-lambda-captures-local");
+}
+
+export void test_error_lambda_returns_disagree() {
+    corpus_case("error-lambda-returns-disagree");
+}
+
 export void test_generic_fields_doc() {
     corpus_case("generic-fields-doc");
 }

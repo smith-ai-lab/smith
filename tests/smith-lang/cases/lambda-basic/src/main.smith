@@ -1,0 +1,14 @@
+module main;
+
+import <stdio.h>;
+
+i32 apply(i32 (*f)(i32), i32 x) {
+    return f(x);
+}
+
+i32 main() {
+    i32 doubled = apply([](i32 a) -> i32 { return a * 2; }, 4);
+    i32 (*triple)(i32) = [](i32 a) { return a * 3; };
+    c::printf("%d %d\n", doubled, triple(5));
+    return 0;
+}

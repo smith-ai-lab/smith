@@ -1,0 +1,2 @@
+src/main.smith:7:55: `factor` belongs to the enclosing function: a lambda that uses it would capture it, and a lambda converts to a function pointer only when it captures nothing (a function pointer can't carry captures)
+src/main.smith:7:55: use of undeclared identifier 'factor'

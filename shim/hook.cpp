@@ -703,8 +703,8 @@ class SmithHook final : public TokenHook, public NameSource {
         host.maybe_slice = hasSlice(scan) || hasStr(scan);
         host.maybe_brackets = hasEmptyBrackets(scan);
         host.maybe_shape = hasShapeCall(scan);
-        host.maybe_tuple =
-            host.maybe_slice || hasTuple(scan) || hasPayloadEnum(scan) || host.maybe_shape || hasTryWord(scan);
+        host.maybe_tuple = host.maybe_slice || hasTuple(scan) || hasPayloadEnum(scan) || host.maybe_shape ||
+                           hasTryWord(scan) || hasLambda(scan);
         host.maybe_field = hasFieldsUse(scan);
         host.import_lines = countImportLines(scan);
         host.type_values = &SmithHook::typeValues;
@@ -1925,7 +1925,8 @@ class SmithHook final : public TokenHook, public NameSource {
         made.clearFlag(Token::DisableExpand);
         if (token->line_start) made.setFlag(Token::StartOfLine);
         if (token->space_before) made.setFlag(Token::LeadingSpace);
-        if ((!token->expand || named) && made.getIdentifierInfo() != nullptr) made.setFlag(Token::DisableExpand);
+        if ((!token->expand || named) && !made.isAnnotation() && made.getIdentifierInfo() != nullptr)
+            made.setFlag(Token::DisableExpand);
         // Replayed (see there): what stands for a token of the source, where the source has it.
         // A `c::name` that is no macro stays a plain name in the main file, so that tools see the name the source has
         // there; a macro is expanded from a stream of its own, which they do not.
@@ -2986,6 +2987,29 @@ class SmithHook final : public TokenHook, public NameSource {
                 continue;
             }
             if (text[at] == '[' && emptyBrackets(text, at)) return true;
+        }
+        return false;
+    }
+
+    // `[](`, `[]{` or `[]->`: a lambda (runtime/lang_lambda.c). The lowering is offered every token of the file, since
+    // a lambda's `[` is found among the tokens of a body.
+    static bool hasLambda(StringRef text) {
+        for (size_t at = 0; at < text.size(); at++) {
+            size_t after = skipLiteral(text, at);
+            if (after != at) {
+                at = after - 1;
+                continue;
+            }
+            if (text[at] != '[') continue;
+            size_t next = at + 1;
+            while (next < text.size() && isWhitespace(text[next]))
+                next += 1;
+            if (next >= text.size() || text[next] != ']') continue;
+            next += 1;
+            while (next < text.size() && isWhitespace(text[next]))
+                next += 1;
+            if (next < text.size() && (text[next] == '(' || text[next] == '{')) return true;
+            if (next + 1 < text.size() && text[next] == '-' && text[next + 1] == '>') return true;
         }
         return false;
     }
