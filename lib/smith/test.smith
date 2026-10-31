@@ -2939,8 +2939,24 @@ f64 parse_ps_time(const char *text) {
 // The processes of the machine into ps_rows: pid, parent, CPU seconds and command.
 void list_processes() {
     ps_count = 0;
-    c::FILE *listing = c::popen("ps -axo pid=,ppid=,time=,command=", "r"); // NOLINT(smith-effects): the runner's own
-    if (listing == nullptr) return;
+    i32 ends[2];
+    if (c::pipe(ends) != 0) return;
+    c::pid_t child = c::fork();
+    if (child == 0) {
+        c::dup2(ends[1], stdout_fd);
+        c::close(ends[0]);
+        c::close(ends[1]);
+        char *const argv[_] = {(char *)"ps", (char *)"-axo", (char *)"pid=,ppid=,time=,command=", nullptr};
+        c::execvp("ps", argv);
+        c::_exit(127);
+    }
+    c::close(ends[1]);
+    c::FILE *listing = c::fdopen(ends[0], "r");
+    if (child < 0 || listing == nullptr) {
+        c::close(ends[0]);
+        if (child > 0) c::waitpid(child, nullptr, 0);
+        return;
+    }
     char text[512];
     while (ps_count < ps_rows_max && c::fgets(text, sizeof text, listing) != nullptr) {
         char *rest = nullptr;
@@ -2957,7 +2973,8 @@ void list_processes() {
         *row = (PsRow){.pid = (c::pid_t)pid, .parent = (c::pid_t)parent, .cpu = parse_ps_time(rest)};
         __builtin_snprintf(row->command, sizeof row->command, "%s", word_end + 1);
     }
-    c::pclose(listing);
+    c::fclose(listing);
+    c::waitpid(child, nullptr, 0);
 }
 
 // Marks the rows below `root` (the worker, which is one) with their depth; returns how many there are.
