@@ -81,3 +81,7 @@ is compiled for.
   type (`sizeof(int) == 4`, `is_integer(T)`) is allowed in a compile and not in the raw lowering, outside a generic it is
   better written with a `static_assert`; the branches must be blocks; `else if` after `if constexpr` must be `else if
   constexpr`.
+
+## Decisions
+
+- `if constexpr` works at file scope around any declarations, imports included; the branch not taken is never read (owner, 2026-10-25).

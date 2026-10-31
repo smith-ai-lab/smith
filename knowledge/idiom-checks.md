@@ -15,3 +15,7 @@ smith::arena;`) and `smith-module` (issue #60: a file with no `module` line is t
 record type, internal linkage in C: `constexpr`). smith's own C passes the C-side ones.
 
 **`smith-unsafe`** (issue #422, `shim/unsafe.h`): in a `.smith` file with a `module` line (a `.c` file and a module-less `.smith` file are C as it is; a module may reject valid C), `setjmp`/`longjmp` and kin (the jump skips every `defer`; a function that calls `smith_trusted()` is exempt, which the test runner is until #324), a run-time-sized stack array and `alloca` (unchecked stack growth, breaks compile-time stack sizes), and an array parameter the lowering does not check. `i32 xs[4]` is checked in a module (`xs[static 4]`, [smith-language](smith-language.md)), so it is no finding; the check reads the lowered type: a bound that is no constant expression (`i32 a[n]`), and the forms left a plain pointer (`i32 a[const 4]`, `i32 a[restrict 4]`, a typedef'd array, a function type's parameter) are reported. Skill `smith-check-lints`.
+
+## Decisions
+
+- The idiom checks and `smith-effects` are clang-tidy checks, on in smith's default `.clang-tidy`; a program touches the world only through capabilities passed down from `main`.

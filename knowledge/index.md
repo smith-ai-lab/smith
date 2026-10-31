@@ -4,7 +4,7 @@ types: convention, architecture, contract, design
 ---
 # Knowledge
 
-What smith is and the contracts its code keeps. Read only the concepts your task needs. Skills say how; AGENTS.md holds the rules.
+What smith is and the contracts its code keeps. Read only the concepts your task needs. Skills say how; [decisions](decisions.md) lists every decision.
 
 ## Architecture
 
@@ -85,6 +85,8 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [Sanitized processes start as fast as Apple's](sanitizer-startup.md): A two-line compiler-rt patch gives AddressSanitizer's shadow the fast mmap flag on arm64, so a sanitized process starts in 9 ms.
 - [smith is built by its previous release](smith-bootstrap.md): A clone with no smith downloads the release of its newest ancestor commit and builds with it; no committed copy of the libraries, no stage0 built by Homebrew's clang.
 - [Generic functions are lowered, not templates](smith-generics.md): constexpr type parameters and auto parameters make one weak hidden instance per list of types, chosen and written by the lowering before the parser.
+- [A module in one page](module-in-one-page.md): What a module rejects, what it offers instead, and the memory, error and concurrency models, with the status of each row (built or planned); the design of a module as a whole, kept current by the lead.
+- [Every decision, in one line each](decisions.md): The owner's decisions about smith, one line each, with a link to the concept that holds the reasoning and the owner's words.
 - [How the lowering works](smith-lowering-internals.md): The lowering is a state machine on the token hook, written against runtime/lang.h, with a table of the names it made and a small interface to clang.
 - [Names as written in the editor, lint and diagnostics](smith-names-as-written.md): smith lsp and smith lint lower .smith files too, and report names, notes and fix-its as the source wrote them, never guessed from underscores.
 - [smith new writes the program and what agents need](smith-new.md): smith new writes a program, its tests and the agent documents, with no configuration, and builds and commits once.
