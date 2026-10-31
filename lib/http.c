@@ -1,11 +1,16 @@
 #include <smith/http.h>
 
 #include <errno.h>
+#include <stdalign.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <smith/files.h>
+#include <smith/mem.h>
+#include <smith/net.h>
 
 constexpr size_t smith_http_url_max = 2048;
 constexpr size_t smith_http_host_max = 256;
@@ -28,9 +33,6 @@ typedef struct {
 
 // Everything one download uses, so that the steps below take one argument.
 typedef struct {
-    SmithIo *io;
-    SmithNet *net;
-    SmithFiles *files;
     size_t received; // bytes received, head and body
     const char *path;
     char url[smith_http_url_max]; // the URL being fetched now (after redirects)
@@ -43,8 +45,15 @@ typedef struct {
     SmithHttpResult result;
 } SmithHttp;
 
+// What one receive gave: the bytes, the end of the response, or the error.
+typedef struct {
+    SmithHttpError error;
+    size_t count;
+    bool end;
+} SmithHttpRead;
+
 [[gnu::format(printf, 3, 4)]] static void smith_http_fail(SmithHttp *http, int code, const char *format, ...) {
-    SmithError error = {.code = code};
+    SmithHttpError error = {.code = code};
     va_list arguments;
     va_start(arguments, format);
     [[maybe_unused]] int written = vsnprintf(error.message, sizeof error.message, format, arguments);
@@ -135,15 +144,118 @@ static bool smith_http_resolve(const SmithHttpUrl *base, const char *location, c
     return written > 0 && (size_t)written < capacity;
 }
 
+// ---------------------------------------------------------------- the world's errors
+
+static struct smith_array_const_char_n smith_http_text(const char *text) {
+    return (struct smith_array_const_char_n){.data = text, .count = {strlen(text)}};
+}
+
+// The errno of a failed file call.
+static int smith_http_files_code(SmithFilesError error) {
+    switch (error) {
+    case SmithFilesError_NotFound:
+        return ENOENT;
+    case SmithFilesError_Exists:
+        return EEXIST;
+    case SmithFilesError_Denied:
+        return EACCES;
+    case SmithFilesError_IsFolder:
+        return EISDIR;
+    case SmithFilesError_NotFolder:
+        return ENOTDIR;
+    case SmithFilesError_NotEmpty:
+        return ENOTEMPTY;
+    case SmithFilesError_NameTooLong:
+        return ENAMETOOLONG;
+    case SmithFilesError_NoSpace:
+        return ENOSPC;
+    case SmithFilesError_ReadOnly:
+        return EROFS;
+    case SmithFilesError_TooManyOpen:
+        return EMFILE;
+    case SmithFilesError_Other:
+        return EIO;
+    }
+    return EIO;
+}
+
+// A failed file call as the result's error: the errno and its text.
+static SmithHttpError smith_http_files_error(SmithFilesError error) {
+    SmithHttpError result = {.code = smith_http_files_code(error)};
+    snprintf(result.message, sizeof result.message, "%s", strerror(result.code));
+    return result;
+}
+
+constexpr int smith_http_tls_code = 80; // EAUTH on macOS, the code of a refused certificate or handshake on both systems
+
+// The errno a failed network call stands for, and what to say about it.
+static int smith_http_net_code(SmithNetworkError error, const char **reason) {
+    switch (error) {
+    case SmithNetworkError_NotFound:
+        *reason = "the host name does not resolve";
+        return ENOENT;
+    case SmithNetworkError_Refused:
+        *reason = "connection refused";
+        return ECONNREFUSED;
+    case SmithNetworkError_Unreachable:
+        *reason = "no route to the host";
+        return EHOSTUNREACH;
+    case SmithNetworkError_TimedOut:
+        *reason = "timed out";
+        return ETIMEDOUT;
+    case SmithNetworkError_Reset:
+        *reason = "connection reset";
+        return ECONNRESET;
+    case SmithNetworkError_Expired:
+        *reason = "the certificate has expired";
+        return smith_http_tls_code;
+    case SmithNetworkError_NotYetValid:
+        *reason = "the certificate is not valid yet";
+        return smith_http_tls_code;
+    case SmithNetworkError_WrongHost:
+        *reason = "the certificate is not for this host";
+        return smith_http_tls_code;
+    case SmithNetworkError_Untrusted:
+        *reason = "the certificate is not trusted";
+        return smith_http_tls_code;
+    case SmithNetworkError_BadCertificate:
+        *reason = "the certificate was rejected";
+        return smith_http_tls_code;
+    case SmithNetworkError_HandshakeFailed:
+        *reason = "the TLS handshake failed";
+        return smith_http_tls_code;
+    case SmithNetworkError_Unsupported:
+        *reason = "TLS is not available on this system";
+        return ENOSYS;
+    case SmithNetworkError_InUse:
+    case SmithNetworkError_Denied:
+    case SmithNetworkError_TooMany:
+    case SmithNetworkError_Other:
+        break;
+    }
+    *reason = "the network call failed";
+    return EIO;
+}
+
+// A failed network call as the result's error, naming the URL being fetched.
+static SmithHttpError smith_http_net_error(const SmithHttp *http, SmithNetworkError error) {
+    const char *reason = "";
+    SmithHttpError result = {.code = smith_http_net_code(error, &reason)};
+    snprintf(result.message, sizeof result.message, "GET %.*s: %s", (int)smith_http_shown, http->url, reason);
+    return result;
+}
+
 // ---------------------------------------------------------------- the file
 
 // Writes what is buffered to the file. Errors stay in the result and stop later writes.
 static void smith_http_flush(SmithHttp *http) {
     if (http->write_used == 0 || http->result.error.code != 0) return;
-    http->result.error = smith_files_write(
-        http->files, http->path,
+    smith_files_CountResult written = smith_fs_write_file(
+        smith_http_text(http->path),
         (struct smith_array_const_u8_n){.data = (const uint8_t *)(http->write_buffer), .count = {http->write_used}},
-        SmithWrite_Append);
+        SmithFilesMode_Append);
+    if (written.tag == smith_enum_result_usize__SmithFilesError_tag_error)
+        http->result.error = smith_http_files_error(written.error);
     http->write_used = 0;
 }
 
@@ -191,33 +303,30 @@ static bool smith_http_header(const SmithHttp *http, const char *name, char *out
 
 // ---------------------------------------------------------------- receiving
 
-// One receive, given up on when nothing arrives for smith_http_idle_ns: the connection is closed, which ends the
-// receive, and the result is ETIMEDOUT with the URL and the bytes that did arrive.
-static SmithRead smith_http_receive(SmithHttp *http, SmithConnection *connection, void *buffer, size_t capacity) {
-    constexpr size_t rounds_max = (size_t)1 << 20;
-    SmithOp receive = {};
-    smith_net_receive_async(http->net, &receive, connection,
-                            (struct smith_array_u8_n){.data = (uint8_t *)(buffer), .count = {capacity}});
-    uint64_t start = smith_clock_now(&http->io->clock);
-    for (size_t round = 0; round < rounds_max && !receive.done; round++) {
-        uint64_t waited = smith_clock_now(&http->io->clock) - start;
-        if (waited >= smith_http_idle_ns) break;
-        (void)smith_io_run(http->io, (int64_t)(smith_http_idle_ns - waited));
+// One receive, given up on when nothing arrives for smith_http_idle_ns: the result is ETIMEDOUT with the URL and the
+// bytes that did arrive.
+static SmithHttpRead smith_http_receive(SmithHttp *http, SmithNetworkConnection *connection, void *buffer,
+                                        size_t capacity) {
+    smith_net_CountResult received = smith_network_read_within(
+        connection, (struct smith_array_u8_n){.data = (uint8_t *)(buffer), .count = {capacity}},
+        (int64_t)smith_http_idle_ns);
+    SmithHttpRead read = {};
+    if (received.tag == smith_enum_result_usize__SmithNetworkError_tag_ok) {
+        read.count = received.ok;
+        read.end = received.ok == 0;
+        http->received += received.ok;
+        return read;
     }
-    if (receive.done) {
-        http->received += receive.data.count[0];
-        return (SmithRead){.error = receive.error, .data = receive.data, .end = receive.end};
+    if (received.tag == smith_enum_result_usize__SmithNetworkError_tag_error &&
+        received.error != SmithNetworkError_TimedOut) {
+        read.error = smith_http_net_error(http, received.error);
+        return read;
     }
-    SmithOp close = {};
-    smith_net_close_async(http->net, &close, connection);
-    for (size_t round = 0; round < rounds_max && !(receive.done && close.done); round++)
-        (void)smith_io_run(http->io, smith_io_forever);
-    SmithRead timed_out = {};
-    timed_out.error.code = ETIMEDOUT;
-    snprintf(timed_out.error.message, sizeof timed_out.error.message,
+    read.error.code = ETIMEDOUT;
+    snprintf(read.error.message, sizeof read.error.message,
              "GET %.*s: timed out: nothing received for %llu s, after %zu bytes", (int)smith_http_shown, http->url,
              (unsigned long long)(smith_http_idle_ns / 1'000'000'000), http->received);
-    return timed_out;
+    return read;
 }
 
 // ---------------------------------------------------------------- the body
@@ -358,18 +467,18 @@ static bool smith_http_body_mode(SmithHttp *http, SmithBody *body) {
 }
 
 // Reads the rest of the body from the connection until the framing says it is done, or the server closes it.
-static void smith_http_read_body(SmithHttp *http, SmithConnection *connection, SmithBody *body, size_t already) {
+static void smith_http_read_body(SmithHttp *http, SmithNetworkConnection *connection, SmithBody *body, size_t already) {
     smith_http_feed(http, body, http->read_buffer, already);
     for (size_t round = 0;
          round < smith_http_rounds_max && !body->done && !body->malformed && http->result.error.code == 0; round++) {
-        SmithRead read = smith_http_receive(http, connection, http->read_buffer, smith_http_read_size);
+        SmithHttpRead read = smith_http_receive(http, connection, http->read_buffer, smith_http_read_size);
         if (read.error.code != 0) {
             smith_http_flush(http); // the file keeps the body that arrived
             http->result.error = read.error;
             return;
         }
         if (read.end) break;
-        smith_http_feed(http, body, http->read_buffer, read.data.count[0]);
+        smith_http_feed(http, body, http->read_buffer, read.count);
     }
     smith_http_flush(http);
     if (http->result.error.code != 0 || body->done || body->mode == SmithBody_ToEnd) return;
@@ -386,24 +495,26 @@ static void smith_http_read_body(SmithHttp *http, SmithConnection *connection, S
 
 // ---------------------------------------------------------------- one request
 
-static void smith_http_request(SmithHttp *http, SmithConnection *connection) {
+static void smith_http_request(SmithHttp *http, SmithNetworkConnection *connection) {
     char request[smith_http_url_max + 512];
     int written = snprintf(request, sizeof request,
                            "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: smith\r\nAccept: */*\r\n"
                            "Accept-Encoding: identity\r\nConnection: close\r\n\r\n",
                            http->parsed.target, http->parsed.authority);
     if (written <= 0 || (size_t)written >= sizeof request) __builtin_trap(); // the url and host are capped to fit
-    http->result.error =
-        smith_net_send(http->net, connection,
-                       (struct smith_array_const_u8_n){.data = (const uint8_t *)(request), .count = {(size_t)written}});
+    smith_net_CountResult sent = smith_network_write(
+        connection,
+        (struct smith_array_const_u8_n){.data = (const uint8_t *)(request), .count = {(size_t)written}});
+    if (sent.tag == smith_enum_result_usize__SmithNetworkError_tag_error)
+        http->result.error = smith_http_net_error(http, sent.error);
 }
 
 // Reads until the end of the response head (a blank line). The bytes after it stay in the buffer: the return is how
 // many. SIZE_MAX means the head did not come, with the error set.
-static size_t smith_http_read_head(SmithHttp *http, SmithConnection *connection) {
+static size_t smith_http_read_head(SmithHttp *http, SmithNetworkConnection *connection) {
     http->head_size = 0;
     for (size_t round = 0; round < smith_http_head_max; round++) {
-        SmithRead read =
+        SmithHttpRead read =
             smith_http_receive(http, connection, http->head + http->head_size, smith_http_head_max - http->head_size);
         if (read.error.code != 0) {
             http->result.error = read.error;
@@ -415,7 +526,7 @@ static size_t smith_http_read_head(SmithHttp *http, SmithConnection *connection)
             return SIZE_MAX;
         }
         size_t from = http->head_size > 3 ? http->head_size - 3 : 0;
-        http->head_size += read.data.count[0];
+        http->head_size += read.count;
         http->head[http->head_size] = 0;
         const char *blank = strstr(http->head + from, "\r\n\r\n");
         if (blank != nullptr) { // the body bytes that came with the head move to the read buffer
@@ -487,50 +598,65 @@ static bool smith_http_follow(SmithHttp *http) {
     return true;
 }
 
-// One request on one connection: the response is a redirect to follow, the body written, or a failure.
-static SmithHop smith_http_hop(SmithHttp *http) {
-    SmithConnection connection = {};
-    http->result.error = smith_net_connect(http->net, &connection, http->parsed.host, http->parsed.port, true);
+// One request on a connected connection: the response is a redirect to follow, the body written, or a failure.
+static SmithHop smith_http_exchange(SmithHttp *http, SmithNetworkConnection *connection) {
     SmithHop hop = SmithHop_Failed;
-    if (http->result.error.code == 0) {
-        smith_http_request(http, &connection);
-        size_t already = http->result.error.code == 0 ? smith_http_read_head(http, &connection) : SIZE_MAX;
-        SmithBody body = {};
-        if (already != SIZE_MAX && smith_http_status(http)) {
-            int status = http->result.status;
-            if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
-                if (smith_http_follow(http)) hop = SmithHop_Redirect;
-            } else if (status < 200 || status > 299) {
-                smith_http_status_error(http);
-            } else if (smith_http_body_mode(http, &body)) {
-                smith_http_read_body(http, &connection, &body, already);
-                if (http->result.error.code == 0) hop = SmithHop_Done;
-            }
+    smith_http_request(http, connection);
+    size_t already = http->result.error.code == 0 ? smith_http_read_head(http, connection) : SIZE_MAX;
+    SmithBody body = {};
+    if (already != SIZE_MAX && smith_http_status(http)) {
+        int status = http->result.status;
+        if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
+            if (smith_http_follow(http)) hop = SmithHop_Redirect;
+        } else if (status < 200 || status > 299) {
+            smith_http_status_error(http);
+        } else if (smith_http_body_mode(http, &body)) {
+            smith_http_read_body(http, connection, &body, already);
+            if (http->result.error.code == 0) hop = SmithHop_Done;
         }
     }
-    SmithError closed = smith_net_close(http->net, &connection);
-    if (hop == SmithHop_Done && closed.code != 0) http->result.error = closed;
-    return hop == SmithHop_Done && closed.code != 0 ? SmithHop_Failed : hop;
+    return hop;
+}
+
+// One request on one connection.
+static SmithHop smith_http_hop(SmithHttp *http) {
+    SmithHop hop = SmithHop_Failed;
+    smith_net_ConnectionResult connected =
+        smith_network_connect_tls(smith_http_text(http->parsed.host), http->parsed.port);
+    if (connected.tag == smith_enum_result_SmithNetworkConnection__SmithNetworkError_tag_ok) {
+        SmithNetworkConnection connection = connected.ok;
+        hop = smith_http_exchange(http, &connection);
+        smith_network_close(&connection);
+    }
+    if (connected.tag == smith_enum_result_SmithNetworkConnection__SmithNetworkError_tag_error)
+        http->result.error = smith_http_net_error(http, connected.error);
+    return hop;
 }
 
 // ---------------------------------------------------------------- local files
 
 // file:///path: the file's bytes to the destination, in blocks, as a download would arrive.
 static void smith_http_copy_local(SmithHttp *http, const char *source) {
-    SmithFileInfo info = smith_files_info(http->files, source);
-    if (info.error.code != 0 || info.folder) {
-        smith_http_fail(http, info.error.code != 0 ? info.error.code : EISDIR, "GET %.*s: %s", (int)smith_http_shown,
-                        http->url, info.error.code != 0 ? info.error.message : "it is a folder");
+    smith_files_InfoResult info = smith_fs_info(smith_http_text(source));
+    if (info.tag == smith_enum_result_SmithFilesInfo__SmithFilesError_tag_error) {
+        int code = smith_http_files_code(info.error);
+        smith_http_fail(http, code, "GET %.*s: %s", (int)smith_http_shown, http->url, strerror(code));
         return;
     }
-    if (info.size == 0) return;
-    SmithMapped mapped = smith_files_map(http->files, source);
-    if (mapped.error.code != 0) {
-        http->result.error = mapped.error;
+    if (info.tag == smith_enum_result_SmithFilesInfo__SmithFilesError_tag_ok && info.ok.folder) {
+        smith_http_fail(http, EISDIR, "GET %.*s: %s", (int)smith_http_shown, http->url, strerror(EISDIR));
         return;
     }
-    smith_http_put(http, mapped.data, mapped.size);
-    smith_http_flush(http);
+    if (info.tag == smith_enum_result_SmithFilesInfo__SmithFilesError_tag_ok && info.ok.size == 0) return;
+    smith_files_BytesResult mapped = smith_fs_map(smith_http_text(source));
+    if (mapped.tag == smith_enum_result_smith_files_Bytes__SmithFilesError_tag_error) {
+        http->result.error = smith_http_files_error(mapped.error);
+    }
+    if (mapped.tag == smith_enum_result_smith_files_Bytes__SmithFilesError_tag_ok) {
+        smith_http_put(http, mapped.ok.data, mapped.ok.count[0]);
+        smith_http_flush(http);
+        smith_fs_unmap(mapped.ok);
+    }
 }
 
 // ---------------------------------------------------------------- the call
@@ -552,20 +678,19 @@ static void smith_http_run(SmithHttp *http, const char *url) {
     }
 }
 
-SmithHttpResult smith_http_get(SmithIo *io, const char *url, const char *path) {
-    SmithArena *arena = &io->arena;
-    SmithArenaScope scope = smith_arena_scope_begin(arena);
-    SmithHttp *http = smith_arena_push(arena, sizeof(SmithHttp), alignof(SmithHttp));
-    http->io = io;
-    http->net = &io->net;
-    http->files = &io->files;
+SmithHttpResult smith_http_get(const char *url, const char *path) {
+    SmithHttp *http = smith_mem_alloc(sizeof(SmithHttp), alignof(SmithHttp));
     http->path = path;
-    http->read_buffer = smith_arena_push(arena, smith_http_read_size, 1);
-    http->write_buffer = smith_arena_push(arena, smith_http_write_size, 1);
-    http->result.error = smith_files_write(&io->files, path, (struct smith_array_const_u8_n){},
-                                           SmithWrite_Replace); // an empty file, or none if it fails
+    http->read_buffer = smith_mem_alloc(smith_http_read_size, 1);
+    http->write_buffer = smith_mem_alloc(smith_http_write_size, 1);
+    smith_files_CountResult created = smith_fs_write_file(
+        smith_http_text(path), (struct smith_array_const_u8_n){}, SmithFilesMode_Replace); // an empty file, or none
+    if (created.tag == smith_enum_result_usize__SmithFilesError_tag_error)
+        http->result.error = smith_http_files_error(created.error);
     if (http->result.error.code == 0) smith_http_run(http, url);
     SmithHttpResult result = http->result;
-    smith_arena_scope_end(scope);
+    smith_mem_free(http->write_buffer);
+    smith_mem_free(http->read_buffer);
+    smith_mem_free(http);
     return result;
 }

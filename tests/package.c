@@ -1,5 +1,6 @@
-// Tests of packages (runtime/package.c) on a scripted network: the download is smith's HTTPS client over io.net, and a
-// real io whose network is scripted stands in for the internet, so the cache, the files and tar are all real.
+// Tests of packages (runtime/package.c) on a scripted network: the download is smith's HTTPS client over smith::net, and
+// its fake network, set as the thread's handler, stands in for the internet, so the cache, the files and tar are all
+// real.
 // Usage: package-test <archive.tar.gz> <scratch folder>
 
 #ifdef __linux__
@@ -41,24 +42,24 @@ static void fresh_cache(char packages[PATH_MAX]) {
     snprintf(packages, PATH_MAX, "%s/smith/packages", cache);
 }
 
-// The archive behind an HTTP head, as a server would send it; `claimed` is the Content-Length it announces.
-static void serve_archive(SmithIo *io, const char *host, size_t claimed, int error) {
+// The archive behind an HTTP head, as a server would send it; `claimed` is the Content-Length it announces. With
+// `reset` the connection fails with a reset after the response instead of ending.
+static void serve_archive(SmithNetworkFake *fake, const char *host, size_t claimed, bool reset) {
     static unsigned char response[test_archive_max + 256];
     int head = snprintf((char *)response, 256,
                         "HTTP/1.1 200 OK\r\nContent-Type: application/gzip\r\nContent-Length: %zu\r\n\r\n", claimed);
     memcpy(response + head, test_archive, test_archive_size);
-    SmithNetServer server = {.host = host,
-                             .port = 443,
-                             .response = response,
-                             .response_size = (size_t)head + test_archive_size,
-                             .chunk = 20000,
-                             .error = error};
-    assert(smith_io_test_add_server(io, server).code == 0);
+    SmithNetworkServer server = {.host = host,
+                                 .port = 443,
+                                 .response = (const char *)response,
+                                 .chunk = 20000,
+                                 .response_size = (size_t)head + test_archive_size,
+                                 .resets = reset};
+    smith_network_fake_add(fake, server);
 }
 
-static void serve_text(SmithIo *io, const char *host, const char *text) {
-    SmithNetServer server = {.host = host, .port = 443, .response = text, .response_size = strlen(text)};
-    assert(smith_io_test_add_server(io, server).code == 0);
+static void serve_text(SmithNetworkFake *fake, const char *host, const char *text) {
+    smith_network_fake_add(fake, (SmithNetworkServer){.host = host, .port = 443, .response = text});
 }
 
 static size_t temporaries(const char *packages) {
@@ -88,7 +89,8 @@ static void archive_hash(char hash[smith_package_hash_size]) {
 }
 
 typedef struct {
-    SmithIo io;
+    SmithNetworkFake net;
+    SmithNetHandler *outside; // the handler the case replaced
     char packages[PATH_MAX];
     char hash[smith_package_hash_size];
     char folder[PATH_MAX];
@@ -97,13 +99,33 @@ typedef struct {
 } Case;
 
 static void start_case(Case *c) {
-    *c = (Case){.io = smith_io_make(0, nullptr)};
+    *c = (Case){.net = smith_network_fake()};
+    c->outside = smith_network_set_handler(&c->net.base);
     fresh_cache(c->packages);
     archive_hash(c->hash);
 }
 
+static void end_case(Case *c) {
+    (void)smith_network_set_handler(c->outside);
+}
+
+// What the case sent on the connection of the id (the n-th connect of the case is id n), as a text.
+static const char *request(const Case *c, int id) {
+    static char text[1024];
+    struct smith_array_u8_n sent = smith_network_fake_sent(&c->net, id);
+    size_t size = sent.count[0] < sizeof text - 1 ? sent.count[0] : sizeof text - 1;
+    memcpy(text, sent.data, size);
+    text[size] = '\0';
+    return text;
+}
+
+// Whether anything was sent on the connection of the id: false when the network was never asked.
+static bool was_asked(const Case *c, int id) {
+    return smith_network_fake_sent(&c->net, id).count[0] != 0;
+}
+
 static bool fetch(Case *c, const char *url, const char *wanted) {
-    return smith_package_ensure(&c->io, url, wanted, false, c->folder, c->actual, &c->error);
+    return smith_package_ensure(url, wanted, false, c->folder, c->actual, &c->error);
 }
 
 // Nothing complete is under the hash, and no temporary file is left behind.
@@ -126,37 +148,37 @@ static void check_installed(const Case *c) {
 static void test_download(void) {
     Case c;
     start_case(&c);
-    serve_archive(&c.io, "pkg.example", test_archive_size, 0);
+    serve_archive(&c.net, "pkg.example", test_archive_size, false);
     assert(fetch(&c, "https://pkg.example/a/pkg.tar.gz", c.hash));
     check_installed(&c);
-    assert(strncmp(smith_io_test_request(&c.io, "pkg.example", 443, 0), "GET /a/pkg.tar.gz HTTP/1.1\r\n", 28) == 0);
+    assert(strncmp(request(&c, 1), "GET /a/pkg.tar.gz HTTP/1.1\r\n", 28) == 0);
     // A package in the cache is not fetched again: no server is left, and the connection would be refused.
     assert(fetch(&c, "https://pkg.example/a/pkg.tar.gz", c.hash));
-    assert(smith_io_test_request(&c.io, "pkg.example", 443, 1) == nullptr);
-    smith_io_close(&c.io);
+    assert(!was_asked(&c, 2));
+    end_case(&c);
 }
 
 static void test_fetch_without_a_hash(void) {
     Case c;
     start_case(&c);
-    serve_archive(&c.io, "pkg.example", test_archive_size, 0);
+    serve_archive(&c.net, "pkg.example", test_archive_size, false);
     assert(fetch(&c, "https://pkg.example/pkg.tar.gz", nullptr)); // smith fetch: the hash is the answer
     assert(strcmp(c.actual, c.hash) == 0);
     check_installed(&c);
-    smith_io_close(&c.io);
+    end_case(&c);
 }
 
 static void test_redirects(void) {
     Case c;
     start_case(&c);
-    serve_text(&c.io, "pkg.example",
+    serve_text(&c.net, "pkg.example",
                "HTTP/1.1 302 Found\r\nLocation: https://cdn.example/blob/1\r\nContent-Length: 0\r\n\r\n");
-    serve_text(&c.io, "cdn.example", "HTTP/1.1 301 Moved\r\nLocation: /blob/2\r\n\r\n");
-    serve_archive(&c.io, "cdn.example", test_archive_size, 0);
+    serve_text(&c.net, "cdn.example", "HTTP/1.1 301 Moved\r\nLocation: /blob/2\r\n\r\n");
+    serve_archive(&c.net, "cdn.example", test_archive_size, false);
     assert(fetch(&c, "https://pkg.example/pkg.tar.gz", c.hash));
     check_installed(&c);
-    assert(strncmp(smith_io_test_request(&c.io, "cdn.example", 443, 1), "GET /blob/2 HTTP/1.1", 20) == 0);
-    smith_io_close(&c.io);
+    assert(strncmp(request(&c, 3), "GET /blob/2 HTTP/1.1", 20) == 0);
+    end_case(&c);
 
     // A redirect to another scheme is refused: only https is followed, as for the first URL.
     const char *schemes[] = {"http://cdn.example/blob", "file:///etc/hosts"};
@@ -164,52 +186,54 @@ static void test_redirects(void) {
         start_case(&c);
         char text[256];
         snprintf(text, sizeof text, "HTTP/1.1 302 Found\r\nLocation: %s\r\nContent-Length: 0\r\n\r\n", schemes[i]);
-        serve_text(&c.io, "pkg.example", text);
-        serve_archive(&c.io, "cdn.example", test_archive_size, 0);
+        serve_text(&c.net, "pkg.example", text);
+        serve_archive(&c.net, "cdn.example", test_archive_size, false);
         assert(!fetch(&c, "https://pkg.example/pkg.tar.gz", c.hash));
         assert(contains(c.error.text, "only https") && contains(c.error.text, schemes[i]));
-        assert(smith_io_test_request(&c.io, "cdn.example", 443, 0) == nullptr); // never asked
+        assert(!was_asked(&c, 2)); // cdn.example was never asked
         check_nothing_left(&c, c.hash);
-        smith_io_close(&c.io);
+        end_case(&c);
     }
 }
 
 static void test_failures(void) {
     Case c;
     start_case(&c);
-    serve_text(&c.io, "pkg.example", "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+    serve_text(&c.net, "pkg.example", "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
     assert(!fetch(&c, "https://pkg.example/missing.tar.gz", c.hash));
     assert(contains(c.error.text, "https://pkg.example/missing.tar.gz") &&
            contains(c.error.text, "HTTP 404 Not Found"));
     check_nothing_left(&c, c.hash);
-    smith_io_close(&c.io);
+    end_case(&c);
 
     // A body shorter than it said, and a connection that breaks halfway: nothing is installed or left over.
     start_case(&c);
-    serve_archive(&c.io, "pkg.example", test_archive_size + 1000, 0);
+    serve_archive(&c.net, "pkg.example", test_archive_size + 1000, false);
     assert(!fetch(&c, "https://pkg.example/pkg.tar.gz", c.hash));
     assert(contains(c.error.text, "short body"));
     check_nothing_left(&c, c.hash);
-    smith_io_close(&c.io);
+    end_case(&c);
 
     start_case(&c);
-    serve_archive(&c.io, "pkg.example", test_archive_size, ECONNRESET);
+    serve_archive(&c.net, "pkg.example", test_archive_size, true);
     assert(fetch(&c, "https://pkg.example/pkg.tar.gz", c.hash)); // the body was whole before the reset: fine
-    smith_io_close(&c.io);
+    end_case(&c);
     start_case(&c);
-    serve_archive(&c.io, "pkg.example", test_archive_size + 10, ECONNRESET);
+    serve_archive(&c.net, "pkg.example", test_archive_size + 10, true);
     assert(!fetch(&c, "https://pkg.example/pkg.tar.gz", c.hash));
     assert(contains(c.error.text, "pkg.example"));
     check_nothing_left(&c, c.hash);
-    smith_io_close(&c.io);
+    end_case(&c);
 
     start_case(&c);
-    SmithNetServer bad = {.host = "pkg.example", .port = 443, .tls_failure = "the certificate has expired"};
-    assert(smith_io_test_add_server(&c.io, bad).code == 0);
+    smith_network_fake_add(&c.net, (SmithNetworkServer){.host = "pkg.example",
+                                                         .port = 443,
+                                                         .fails = true,
+                                                         .error = SmithNetworkError_Expired});
     assert(!fetch(&c, "https://pkg.example/pkg.tar.gz", c.hash));
     assert(contains(c.error.text, "the certificate has expired"));
     check_nothing_left(&c, c.hash);
-    smith_io_close(&c.io);
+    end_case(&c);
 }
 
 static void test_wrong_hash(void) {
@@ -217,24 +241,23 @@ static void test_wrong_hash(void) {
     start_case(&c);
     char wrong[smith_package_hash_size];
     snprintf(wrong, sizeof wrong, "sha256:%064d", 7);
-    serve_archive(&c.io, "pkg.example", test_archive_size, 0);
+    serve_archive(&c.net, "pkg.example", test_archive_size, false);
     assert(!fetch(&c, "https://pkg.example/pkg.tar.gz", wrong));
     assert(contains(c.error.text, "https://pkg.example/pkg.tar.gz") && contains(c.error.text, wrong));
     assert(contains(c.error.text, c.hash));
     check_nothing_left(&c, wrong);
     check_nothing_left(&c, c.hash);
-    smith_io_close(&c.io);
+    end_case(&c);
 }
 
 static void test_offline_and_leftovers(void) {
     Case c;
     start_case(&c);
-    serve_archive(&c.io, "pkg.example", test_archive_size, 0);
-    assert(
-        !smith_package_ensure(nullptr, "https://pkg.example/pkg.tar.gz", c.hash, true, c.folder, c.actual, &c.error));
+    serve_archive(&c.net, "pkg.example", test_archive_size, false);
+    assert(!smith_package_ensure("https://pkg.example/pkg.tar.gz", c.hash, true, c.folder, c.actual, &c.error));
     assert(contains(c.error.text, "https://pkg.example/pkg.tar.gz") && contains(c.error.text, "OFFLINE"));
-    assert(smith_io_test_request(&c.io, "pkg.example", 443, 0) == nullptr); // nothing was asked of the network
-    smith_io_close(&c.io);
+    assert(!was_asked(&c, 1)); // nothing was asked of the network
+    end_case(&c);
 
     // What a killed fetch leaves is a temporary name; the next fetch clears it and installs the package.
     start_case(&c);
@@ -244,14 +267,18 @@ static void test_offline_and_leftovers(void) {
     FILE *file = fopen(stale, "wb");
     assert(file != nullptr && fputs("half of an archive", file) >= 0);
     fclose(file);
-    serve_archive(&c.io, "pkg.example", test_archive_size, 0);
+    serve_archive(&c.net, "pkg.example", test_archive_size, false);
     assert(fetch(&c, "https://pkg.example/pkg.tar.gz", c.hash));
     check_installed(&c);
-    smith_io_close(&c.io);
+    end_case(&c);
 }
 
 int main(int argc, char **argv) {
     assert(argc == 3);
+    // The fake network keeps what it sends and receives in memory from the current allocator; an arena is that memory.
+    SmithArena memory = smith_arena_growing((size_t)1 << 22, nullptr);
+    SmithArenaAllocator allocator = smith_arena_allocator(&memory);
+    (void)smith_mem_set_allocator(&allocator.base);
     load_archive(argv[1]);
     test_scratch = argv[2];
     test_download();

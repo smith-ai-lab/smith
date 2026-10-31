@@ -1,29 +1,21 @@
-// Tests of <smith/http.h> on a scripted network, in smith's own test library: the same checks run on the fake io (files
-// in memory) and on the runner's real io with a scripted network (files on the disk, in the test's scratch folder).
-// Nothing here touches the internet. The module is C, not yet a smith library, so tests/units/build.c links lib/http.c.
+// Tests of <smith/http.h> on a scripted network and files in memory, in smith's own test library: the network is
+// smith::net's fake and the files are smith::files' fake, both set with their handlers, so nothing here touches the
+// internet or the disk, and a server that stops sending times out at once. The module is C, not yet a smith library,
+// so tests/units/build.c links lib/http.c.
 module http_test;
 
 import smith::arena;
+import smith::files;
 import smith::format;
-import smith::io;
+import smith::mem;
+import smith::net;
 import smith::test;
-import target;
 import <errno.h>;
 import <smith/http.h>;
 
-// The bytes of a buffer, for the calls of io that take a slice.
-static typeof(const u8[:]) test_io_bytes(const void *data, usize size) {
-    const u8 *bytes = (const u8 *)data;
-    return bytes[0:size];
-}
-
 // The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
 // NOLINTBEGIN(smith-preprocessor)
-if constexpr (target::os == target::macos) {
-    constexpr i32 eauth = c::EAUTH;
-} else {
-    constexpr i32 eauth = 80; // smith::io's TLS failure on Linux, which has no EAUTH: macOS's number
-}
+constexpr i32 eauth = 80; // a refused certificate or handshake: macOS's EAUTH, the code on Linux too
 constexpr i32 econnrefused = c::ECONNREFUSED;
 constexpr i32 econnreset = c::ECONNRESET;
 constexpr i32 eio = c::EIO;
@@ -35,13 +27,13 @@ constexpr i32 eprotonosupport = c::EPROTONOSUPPORT;
 constexpr i32 etimedout = c::ETIMEDOUT;
 // NOLINTEND(smith-preprocessor)
 
-constexpr usize fake_memory = 4 << 20;
+constexpr usize fake_memory = 64 << 20;
 constexpr usize large_size = 3 << 20;
 
-// An io and the two paths the checks use: the downloaded file and a local source. On the disk they are in the test's
-// scratch folder; in the fake's memory they are plain names.
+// The fakes a case runs on, and the two names the checks use: the downloaded file and a local source.
 typedef struct {
-    io::Io *io;
+    net::Fake *net;
+    files::Fake *files;
     char path[256];
     char source[256];
 } Client;
@@ -54,38 +46,51 @@ static bool is(const char *text, const char *expected) {
     return __builtin_strcmp(text, expected) == 0;
 }
 
-static void client_make(Client *client, io::Io *io, const char *folder) {
-    client->io = io;
-    const char *slash = folder[0] == 0 ? "" : "/";
-    (void)format::to(client->path, sizeof client->path, folder, slash, "download.bin");
-    (void)format::to(client->source, sizeof client->source, folder, slash, "source.bin");
+static void client_make(Client *client, net::Fake *fake_net, files::Fake *fake_files) {
+    client->net = fake_net;
+    client->files = fake_files;
+    (void)format::to(client->path, sizeof client->path, "download.bin");
+    (void)format::to(client->source, sizeof client->source, "source.bin");
 }
 
 static void serve(Client *client, const char *host, const char *response) {
-    io::NetServer server = {
-        .host = host, .port = 443, .response = response, .response_size = __builtin_strlen(response)};
-    test::check_equal(io::test_add_server(client->io, server).code, 0);
+    net::fake_add(client->net, (net::Server){.host = host, .port = 443, .response = response});
 }
 
 static void serve_chunks(Client *client, const char *host, const char *response, usize chunk) {
-    io::NetServer server = {
-        .host = host, .port = 443, .response = response, .response_size = __builtin_strlen(response), .chunk = chunk};
-    test::check_equal(io::test_add_server(client->io, server).code, 0);
+    net::fake_add(client->net, (net::Server){.host = host, .port = 443, .response = response, .chunk = chunk});
 }
 
 static c::SmithHttpResult get(Client *client, const char *url) {
-    return c::smith_http_get(client->io, url, client->path);
+    return c::smith_http_get(url, client->path);
 }
 
+// The file the download wrote, as a text in the current allocator.
 static const char *body_of(Client *client) {
-    io::Read read = io::files_read(&client->io->files, &client->io->arena, client->path);
-    test::check_equal(read.error.code, 0);
-    return (const char *)read.data.data;
+    files::BytesResult read = files::read_file(client->path[0:__builtin_strlen(client->path)]);
+    test::check_condition(read == .ok);
+    usize length = countof(read.ok);
+    char *text = mem::alloc_array_raw(sizeof(char), length + 1, alignof(char));
+    for (usize i = 0; i < length; i++) {
+        text[i] = (char)read.ok[i];
+    }
+    text[length] = '\0';
+    return text;
 }
 
-static bool request_starts(Client *client, const char *host, u16 port, usize n, const char *prefix) {
-    const char *request = io::test_request(client->io, host, port, n);
-    return request != nullptr && __builtin_strncmp(request, prefix, __builtin_strlen(prefix)) == 0;
+// What the program sent on the connection of the id (the n-th connect of the case is id n), as a text.
+static const char *request_of(Client *client, i32 id) {
+    net::Bytes sent = net::fake_sent(client->net, id);
+    char *text = mem::alloc_array_raw(sizeof(char), countof(sent) + 1, alignof(char));
+    for (usize i = 0; i < countof(sent); i++) {
+        text[i] = (char)sent[i];
+    }
+    text[countof(sent)] = '\0';
+    return text;
+}
+
+static bool request_starts(Client *client, i32 id, const char *prefix) {
+    return __builtin_strncmp(request_of(client, id), prefix, __builtin_strlen(prefix)) == 0;
 }
 
 static void check_basics(Client *client) {
@@ -96,8 +101,8 @@ static void check_basics(Client *client) {
     test::check_equal(result.size, 5);
     test::check_equal(result.redirects, 0);
     test::check(is(body_of(client), "hello"));
-    test::check(request_starts(client, "a.example", 443, 0, "GET /dir/file.txt?x=1 HTTP/1.1\r\nHost: a.example\r\n"));
-    const char *request = io::test_request(client->io, "a.example", 443, 0);
+    test::check(request_starts(client, 1, "GET /dir/file.txt?x=1 HTTP/1.1\r\nHost: a.example\r\n"));
+    const char *request = request_of(client, 1);
     test::check(contains(request, "Connection: close\r\n") && contains(request, "User-Agent: smith\r\n"));
 
     // Header names in any case, and the head split into pieces of three bytes.
@@ -106,7 +111,7 @@ static void check_basics(Client *client) {
     test::check_equal(result.error.code, 0);
     test::check_equal(result.size, 6);
     test::check(is(body_of(client), "six!!!"));
-    test::check(request_starts(client, "b.example", 443, 0, "GET / HTTP/1.1\r\nHost: b.example\r\n"));
+    test::check(request_starts(client, 2, "GET / HTTP/1.1\r\nHost: b.example\r\n"));
 }
 
 static void check_bodies_without_a_length(Client *client) {
@@ -124,13 +129,11 @@ static void check_bodies_without_a_length(Client *client) {
 
     // A port other than 443 is in the Host header.
     const char *response = "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\ne";
-    io::NetServer server = {
-        .host = "e.example", .port = 8443, .response = response, .response_size = __builtin_strlen(response)};
-    test::check_equal(io::test_add_server(client->io, server).code, 0);
+    net::fake_add(client->net, (net::Server){.host = "e.example", .port = 8443, .response = response});
     result = get(client, "https://e.example:8443/e");
     test::check_equal(result.error.code, 0);
     test::check(is(body_of(client), "e"));
-    test::check(contains(io::test_request(client->io, "e.example", 8443, 0), "Host: e.example:8443\r\n"));
+    test::check(contains(request_of(client, 5), "Host: e.example:8443\r\n"));
 }
 
 static void check_chunked(Client *client) {
@@ -170,10 +173,10 @@ static void check_redirects_followed(Client *client) {
     test::check_equal(result.redirects, 4);
     test::check_equal(result.status, 200);
     test::check(is(body_of(client), "done"));
-    test::check(contains(io::test_request(client->io, "r2.example", 443, 0), "GET /moved/file?q=2 HTTP/1.1"));
-    test::check(contains(io::test_request(client->io, "r2.example", 443, 1), "GET /moved/dir/other HTTP/1.1"));
-    test::check(contains(io::test_request(client->io, "r2.example", 443, 2), "GET /moved/dir/sibling.txt HTTP/1.1"));
-    test::check(contains(io::test_request(client->io, "r3.example", 443, 0), "GET /last HTTP/1.1"));
+    test::check(contains(request_of(client, 2), "GET /moved/file?q=2 HTTP/1.1"));
+    test::check(contains(request_of(client, 3), "GET /moved/dir/other HTTP/1.1"));
+    test::check(contains(request_of(client, 4), "GET /moved/dir/sibling.txt HTTP/1.1"));
+    test::check(contains(request_of(client, 5), "GET /last HTTP/1.1"));
 }
 
 static void check_redirects_refused(Client *client) {
@@ -225,18 +228,14 @@ static void check_statuses_and_short_bodies(Client *client) {
 
 static void check_network_failures(Client *client) {
     const char *partial = "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n01234";
-    io::NetServer reset = {.host = "reset.example",
-                           .port = 443,
-                           .response = partial,
-                           .response_size = __builtin_strlen(partial),
-                           .error = econnreset};
-    test::check_equal(io::test_add_server(client->io, reset).code, 0);
+    net::fake_add(client->net,
+                  (net::Server){.host = "reset.example", .port = 443, .response = partial, .resets = true});
     c::SmithHttpResult result = get(client, "https://reset.example/r");
     test::check_equal(result.error.code, econnreset);
     test::check(contains(result.error.message, "reset.example"));
 
-    io::NetServer bad_tls = {.host = "tls.example", .port = 443, .tls_failure = "the certificate has expired"};
-    test::check_equal(io::test_add_server(client->io, bad_tls).code, 0);
+    net::fake_add(client->net,
+                  (net::Server){.host = "tls.example", .port = 443, .fails = true, .error = net::Expired});
     result = get(client, "https://tls.example/t");
     test::check_equal(result.error.code, eauth);
     test::check(contains(result.error.message, "the certificate has expired"));
@@ -271,8 +270,9 @@ static void check_urls(Client *client) {
 }
 
 static void check_local(Client *client) {
-    test::check_equal(
-        io::files_write(&client->io->files, client->source, test_io_bytes("local bytes", 11), io::Replace).code, 0);
+    const u8 bytes[:] = ((const u8 *)"local bytes")[0:11];
+    files::CountResult written = files::write_file(client->source[0:__builtin_strlen(client->source)], bytes, files::Replace);
+    test::check_condition(written == .ok);
     char url[300];
     (void)format::to(url, sizeof url, "file://", client->source);
     c::SmithHttpResult result = get(client, url);
@@ -283,7 +283,7 @@ static void check_local(Client *client) {
     result = get(client, url);
     test::check_equal(result.error.code, enoent);
     // The error message is a fixed buffer, and a message shows only the first 100 characters of a url
-    // (smith_http_shown), which a long scratch path reaches.
+    // (smith_http_shown).
     constexpr usize shown = 100;
     if (c::strlen(url) > shown) {
         url[shown] = '\0';
@@ -291,8 +291,7 @@ static void check_local(Client *client) {
     test::check(contains(result.error.message, url));
 }
 
-// A body of several blocks, in the order the writes land: the file has every byte, the arena gets back what the call
-// used, and the body was never all in memory at once (the arena of the real io is big, so this checks the accounting).
+// A body of several blocks, in the order the writes land: the file has every byte.
 static void check_large(Client *client) {
     static u8 response[large_size];
     usize body = sizeof response - 128;
@@ -300,36 +299,37 @@ static void check_large(Client *client) {
     for (usize i = 0; i < body; i++) {
         response[head + i] = (u8)(i * 31 + i / 251);
     }
-    io::NetServer server = {
-        .host = "big.example", .port = 443, .response = response, .response_size = head + body, .chunk = 100000};
-    test::check_equal(io::test_add_server(client->io, server).code, 0);
-    usize used = client->io->arena.used;
+    net::fake_add(client->net, (net::Server){.host = "big.example",
+                                             .port = 443,
+                                             .response = (const char *)response,
+                                             .chunk = 100000,
+                                             .response_size = head + body});
     c::SmithHttpResult result = get(client, "https://big.example/big");
     test::check_equal(result.error.code, 0);
     test::check_equal(result.size, body);
-    test::check_equal(client->io->arena.used, used);
-    io::Read read = io::files_read(&client->io->files, &client->io->arena, client->path);
-    test::check_equal(read.error.code, 0);
-    test::check_equal(countof(read.data), body);
+    files::BytesResult read = files::read_file(client->path[0:__builtin_strlen(client->path)]);
+    test::check_condition(read == .ok);
+    test::check_equal(countof(read.ok), body);
     for (usize i = 0; i < body; i++) {
-        if (read.data[i] != (u8)(i * 31 + i / 251)) {
+        if (read.ok[i] != (u8)(i * 31 + i / 251)) {
             test::check_equal(i, body); // the first byte that differs
             break;
         }
     }
 }
 
-// A server that sends part of its answer and then says nothing: the download fails after smith_http_idle_ns of the
-// io's clock, which the fake io lets pass. The message names the URL and what had arrived, and the file keeps the body
-// so far.
+// A server that sends part of its answer and then says nothing: the download fails with ETIMEDOUT at the first read
+// that finds nothing (the fake answers a read_within with nothing to give at once). The message names the URL and what
+// had arrived, and the file keeps the body so far.
 static void check_stall_after(Client *client, usize which, const char *answer, usize size) {
     const char *hosts[3] = {"stall1.example", "stall2.example", "stall3.example"};
-    io::NetServer server = {
-        .host = hosts[which], .port = 443, .response = answer, .response_size = size, .stall = true};
-    test::check_equal(io::test_add_server(client->io, server).code, 0);
+    net::fake_add(client->net, (net::Server){.host = hosts[which],
+                                             .port = 443,
+                                             .response = answer,
+                                             .response_size = size,
+                                             .stalls = true});
     char url[64];
     (void)format::to(url, sizeof url, "https://", hosts[which], "/slow");
-    u64 before = io::clock_now(&client->io->clock);
     c::SmithHttpResult result = get(client, url);
     test::check_equal(result.error.code, etimedout);
     test::check(contains(result.error.message, url));
@@ -337,115 +337,151 @@ static void check_stall_after(Client *client, usize which, const char *answer, u
     (void)format::to(shown, sizeof shown, "after ", size, " bytes");
     test::check(contains(result.error.message, shown));
     test::check(contains(result.error.message, "nothing received for 60 s"));
-    test::check(io::clock_now(&client->io->clock) - before >= c::smith_http_idle_ns);
 }
 
-export void test_http_stalled_servers_time_out_on_the_io_clock() {
-    alignas(arena::align_max) static u8 memory[fake_memory];
-    io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
+// ---------------------------------------------------------------- the cases
+
+export void test_http_stalled_servers_time_out() {
+    arena::Arena memory = test::memory(fake_memory);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    net::Fake fake_net = net::fake();
+    files::Fake fake_files = files::fake();
+    net::Handler *net_before = net::set_handler(&fake_net.base);
+    defer net::set_handler(net_before);
+    files::Handler *files_before = files::set_handler(&fake_files.base);
+    defer files::set_handler(files_before);
     Client client = {};
-    client_make(&client, &fake, "");
+    client_make(&client, &fake_net, &fake_files);
     const char *partial = "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n0123456789";
     check_stall_after(&client, 0, partial, __builtin_strlen(partial));
     check_stall_after(&client, 1, "HTTP/1.1 200 OK\r\nContent-Le", 28);
     check_stall_after(&client, 2, "", 0);
     test::check(is(body_of(&client), "")); // the last one never got a body
-    io::NetServer server = {
-        .host = "stall4.example", .port = 443, .response = partial, .response_size = 50, .stall = true};
-    test::check_equal(io::test_add_server(client.io, server).code, 0);
+    net::fake_add(&fake_net, (net::Server){.host = "stall4.example",
+                                           .port = 443,
+                                           .response = partial,
+                                           .response_size = 50,
+                                           .stalls = true});
     c::SmithHttpResult result = get(&client, "https://stall4.example/slow");
     test::check_equal(result.error.code, etimedout);
     test::check(is(body_of(&client), "0123456789"));
 }
 
-// ---------------------------------------------------------------- on the fake io
-
-export void test_http_fake_basics() {
-    alignas(arena::align_max) static u8 memory[fake_memory];
-    io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
+export void test_http_basics() {
+    arena::Arena memory = test::memory(fake_memory);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    net::Fake fake_net = net::fake();
+    files::Fake fake_files = files::fake();
+    net::Handler *net_before = net::set_handler(&fake_net.base);
+    defer net::set_handler(net_before);
+    files::Handler *files_before = files::set_handler(&fake_files.base);
+    defer files::set_handler(files_before);
     Client client = {};
-    client_make(&client, &fake, "");
+    client_make(&client, &fake_net, &fake_files);
     check_basics(&client);
     check_bodies_without_a_length(&client);
 }
 
-export void test_http_fake_chunked() {
-    alignas(arena::align_max) static u8 memory[fake_memory];
-    io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
+export void test_http_chunked() {
+    arena::Arena memory = test::memory(fake_memory);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    net::Fake fake_net = net::fake();
+    files::Fake fake_files = files::fake();
+    net::Handler *net_before = net::set_handler(&fake_net.base);
+    defer net::set_handler(net_before);
+    files::Handler *files_before = files::set_handler(&fake_files.base);
+    defer files::set_handler(files_before);
     Client client = {};
-    client_make(&client, &fake, "");
+    client_make(&client, &fake_net, &fake_files);
     check_chunked(&client);
 }
 
-export void test_http_fake_redirects() {
-    alignas(arena::align_max) static u8 memory[fake_memory];
-    io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
+export void test_http_redirects() {
+    arena::Arena memory = test::memory(fake_memory);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    net::Fake fake_net = net::fake();
+    files::Fake fake_files = files::fake();
+    net::Handler *net_before = net::set_handler(&fake_net.base);
+    defer net::set_handler(net_before);
+    files::Handler *files_before = files::set_handler(&fake_files.base);
+    defer files::set_handler(files_before);
     Client client = {};
-    client_make(&client, &fake, "");
+    client_make(&client, &fake_net, &fake_files);
     check_redirects_followed(&client);
     check_redirects_refused(&client);
+}
+
+export void test_http_redirect_loop() {
+    arena::Arena memory = test::memory(fake_memory);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    net::Fake fake_net = net::fake();
+    files::Fake fake_files = files::fake();
+    net::Handler *net_before = net::set_handler(&fake_net.base);
+    defer net::set_handler(net_before);
+    files::Handler *files_before = files::set_handler(&fake_files.base);
+    defer files::set_handler(files_before);
+    Client client = {};
+    client_make(&client, &fake_net, &fake_files);
     check_redirect_loop(&client);
 }
 
-export void test_http_fake_failures() {
-    alignas(arena::align_max) static u8 memory[fake_memory];
-    io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
+export void test_http_failures() {
+    arena::Arena memory = test::memory(fake_memory);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    net::Fake fake_net = net::fake();
+    files::Fake fake_files = files::fake();
+    net::Handler *net_before = net::set_handler(&fake_net.base);
+    defer net::set_handler(net_before);
+    files::Handler *files_before = files::set_handler(&fake_files.base);
+    defer files::set_handler(files_before);
     Client client = {};
-    client_make(&client, &fake, "");
+    client_make(&client, &fake_net, &fake_files);
     check_statuses_and_short_bodies(&client);
     check_network_failures(&client);
     check_bad_responses(&client);
 }
 
-export void test_http_fake_urls_and_local_files() {
-    alignas(arena::align_max) static u8 memory[fake_memory];
-    io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
+export void test_http_urls_and_local_files() {
+    arena::Arena memory = test::memory(fake_memory);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    net::Fake fake_net = net::fake();
+    files::Fake fake_files = files::fake();
+    net::Handler *net_before = net::set_handler(&fake_net.base);
+    defer net::set_handler(net_before);
+    files::Handler *files_before = files::set_handler(&fake_files.base);
+    defer files::set_handler(files_before);
     Client client = {};
-    client_make(&client, &fake, "");
+    client_make(&client, &fake_net, &fake_files);
     check_urls(&client);
     check_local(&client);
 }
 
-// ---------------------------------------------------------------- on the runner's real io (files on the disk)
-
-export void test_http_real_basics(io::Io *io) {
+export void test_http_large_body() {
+    arena::Arena memory = test::memory(fake_memory);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    net::Fake fake_net = net::fake();
+    files::Fake fake_files = files::fake();
+    net::Handler *net_before = net::set_handler(&fake_net.base);
+    defer net::set_handler(net_before);
+    files::Handler *files_before = files::set_handler(&fake_files.base);
+    defer files::set_handler(files_before);
     Client client = {};
-    client_make(&client, io, test::scratch(io));
-    check_basics(&client);
-    check_bodies_without_a_length(&client);
-}
-
-export void test_http_real_chunked(io::Io *io) {
-    Client client = {};
-    client_make(&client, io, test::scratch(io));
-    check_chunked(&client);
-}
-
-export void test_http_real_redirects(io::Io *io) {
-    Client client = {};
-    client_make(&client, io, test::scratch(io));
-    check_redirects_followed(&client);
-    check_redirects_refused(&client);
-    check_redirect_loop(&client);
-}
-
-export void test_http_real_failures(io::Io *io) {
-    Client client = {};
-    client_make(&client, io, test::scratch(io));
-    check_statuses_and_short_bodies(&client);
-    check_network_failures(&client);
-    check_bad_responses(&client);
-}
-
-export void test_http_real_urls_and_local_files(io::Io *io) {
-    Client client = {};
-    client_make(&client, io, test::scratch(io));
-    check_urls(&client);
-    check_local(&client);
-}
-
-export void test_http_real_large_body(io::Io *io) {
-    Client client = {};
-    client_make(&client, io, test::scratch(io));
+    client_make(&client, &fake_net, &fake_files);
     check_large(&client);
 }

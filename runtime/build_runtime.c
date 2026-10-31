@@ -122,6 +122,8 @@ static char smith_command_buffer[smith_command_max + 1];
 }
 
 // The package cache and SHA-256, which smith's `smith fetch` shares. smith writes it next to this file.
+#include <smith/io.h>
+
 #include "package.c"
 
 // The project's own build file, and the words of the command that compiles it. A project built by convention has
@@ -1273,16 +1275,14 @@ smith_build_PackageResult smith_package(SmithBuild *b, const SmithPackage *packa
     char hash[smith_package_hash_size];
     SmithPackageFault error;
     // A package already in the cache is only looked up; a fetch prints a line first, since a download can be slow.
-    if (smith_package_ensure(nullptr, package->url, package->hash, true, folder, hash, &error)) {
+    if (smith_package_ensure(package->url, package->hash, true, folder, hash, &error)) {
         return (smith_build_PackageResult){.tag = smith_enum_result_const_char_ptr__SmithPackageError_tag_ok,
                                            .ok = smith_copy_string(folder)};
     }
     if (offline) return smith_package_failed(SmithPackageKind_Offline, error.text);
     fprintf(stderr, "smith: fetching %s\n", package->url);
     fflush(stderr);
-    SmithIo io = smith_io_make(0, nullptr);
-    bool fetched = smith_package_ensure(&io, package->url, package->hash, false, folder, hash, &error);
-    smith_io_close(&io);
+    bool fetched = smith_package_ensure(package->url, package->hash, false, folder, hash, &error);
     if (!fetched) {
         return smith_package_failed(error.wrong_hash ? SmithPackageKind_Hash : SmithPackageKind_Fetch, error.text);
     }

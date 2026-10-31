@@ -35,7 +35,6 @@
 
 #include <smith/arena.h>
 #include <smith/contract.h>
-#include <smith/io.h>
 #include <smith/random.h>
 #ifdef SMITH_CORE // the units runner links these two as objects of its own (include/smith_core.h)
 #include <smith/http.h>
@@ -228,9 +227,8 @@ static void smith_package_remove(const char *path) {
 
 // The only place a package is downloaded: smith's HTTP client, https only (and file:// for tests), also after a
 // redirect. The body goes to the destination as it arrives. A failure's message is the client's, naming the URL.
-static bool smith_package_download(SmithIo *io, const char *url, const char *destination, SmithPackageFault *error) {
-    SMITH_ASSERT(io != nullptr);
-    SmithHttpResult result = smith_http_get(io, url, destination);
+static bool smith_package_download(const char *url, const char *destination, SmithPackageFault *error) {
+    SmithHttpResult result = smith_http_get(url, destination);
     if (result.error.code == 0) return true;
     return smith_package_fail(error, "cannot download %s\n  %s", url, result.error.message);
 }
@@ -645,12 +643,11 @@ static bool smith_package_install(const char *url, const char *wanted, const Smi
     return true;
 }
 
-// Makes sure the package is in the cache and puts its absolute path in folder (PATH_MAX bytes). The io is what the
-// download uses (smith_io_make, or a test's io with a scripted network); with `offline` nothing is downloaded, so it
-// may be nullptr. With `wanted` (the "sha256:<hex>" a build.c names) the download must match it, and a package already
+// Makes sure the package is in the cache and puts its absolute path in folder (PATH_MAX bytes). The download goes
+// through the net handler of the calling thread (a test scripts the network with smith::net's fake). With `wanted` (the "sha256:<hex>" a build.c names) the download must match it, and a package already
 // cached is not fetched again. With nullptr (`smith fetch`) the archive is always downloaded and its hash is the
 // answer, put in `hash` either way. `offline` turns a missing package into an error that names the URL.
-static bool smith_package_ensure(SmithIo *io, const char *url, const char *wanted, bool offline, char *folder,
+static bool smith_package_ensure(const char *url, const char *wanted, bool offline, char *folder,
                                  char hash[smith_package_hash_size], SmithPackageFault *error) {
     SmithPackageTemps temps;
     if (!smith_package_root(temps.packages, error)) return false;
@@ -676,7 +673,7 @@ static bool smith_package_ensure(SmithIo *io, const char *url, const char *wante
     }
     if (wanted == nullptr) smith_package_prune(temps.packages);
     smith_package_temps(&temps);
-    bool ok = smith_package_download(io, url, temps.download, error) &&
+    bool ok = smith_package_download(url, temps.download, error) &&
               smith_package_install(url, wanted != nullptr ? expected : nullptr, &temps, folder, hash, error);
     smith_package_remove(temps.download);
     smith_package_remove(temps.extract);
