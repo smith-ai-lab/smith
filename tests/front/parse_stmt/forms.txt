@@ -1,0 +1,52 @@
+(module m
+  (function f
+    (result (named Void))
+    (block
+      (empty)
+      (expression (name x))
+      (return)
+      (return (name 1))
+      (goto done)
+      (labeled done
+        (expression (name x)))
+      (defer
+        (expression (name f(x))))
+      (static_assert "why" (name x))
+      (static_assert "" (name y))
+      (break)
+      (continue)
+      (while
+        (name x)
+        (expression (name y)))
+      (do_while
+        (expression (name y))
+        (name x))
+      (for
+        (declaration
+          (variable i (named I32) (name 0)))
+        (name i)
+        (name i)
+        (expression (name z)))
+      (for
+        (absent)
+        (absent)
+        (absent)
+        (empty))
+      (for
+        (expression (name x))
+        (name y)
+        (name z)
+        (block))
+      (for constexpr
+        (declaration
+          (variable i (named I32) (name 0)))
+        (name i)
+        (name i)
+        (expression (name z)))
+      (if
+        (name x)
+        (expression (name y))
+        (expression (name z)))
+      (if constexpr
+        (name x)
+        (expression (name y))))))

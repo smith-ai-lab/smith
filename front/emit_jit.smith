@@ -1,0 +1,86 @@
+// front::emit_jit: the helper every emitter test uses (#1119). It takes an LLVM module, JITs it with LLJIT, looks a
+// symbol up and gives its address, and tells the host's Target from the JIT (the emitter itself never asks the host).
+// Not part of the compiler: it lives with the tests' tooling and is linked only into the front end's runner.
+module front::emit_jit;
+
+import front::emit;
+import front::emit_state as state;
+import std::format;
+import std::mem;
+import <llvm-c/Core.h>;
+import <llvm-c/Error.h>;
+import <llvm-c/LLJIT.h>;
+import <llvm-c/Orc.h>;
+import <llvm-c/Target.h>;
+import <string.h>;
+
+export struct Jit;
+
+export struct Jit {
+    c::LLVMOrcLLJITRef handle;
+    emit::Target target; // the host's triple and data layout, in the allocator in force
+};
+
+export typedef Result(Jit, emit::Error) JitResult;
+export typedef Result(usize, emit::Error) AddressResult;
+export typedef Result(Bool, emit::Error) BoolResult;
+
+// An LLVM error as its message (consumed), in the allocator in force.
+static emit::Error message_of(c::LLVMErrorRef error) {
+    char *text = c::LLVMGetErrorMessage(error);
+    Str message = state::msg(format::push((const char *)text));
+    c::LLVMDisposeErrorMessage(text);
+    return (emit::Error){.message = message};
+}
+
+// LLVM allocates with `malloc`, which reaches the allocator in force: a test calls these (and `emit::module`) with the
+// system's allocator in force, never an arena it frees at the end of the test, since LLVM keeps allocations of its own
+// from one test to the next.
+
+// A JIT for the host. Its triple and data layout are in `target`.
+export JitResult start() {
+    c::LLVMInitializeNativeTarget();
+    c::LLVMInitializeNativeAsmPrinter();
+    c::LLVMOrcLLJITRef handle = nullptr;
+    c::LLVMErrorRef error = c::LLVMOrcCreateLLJIT(&handle, nullptr);
+    const char *triple = nullptr;
+    const char *layout = nullptr;
+    if (error == nullptr) {
+        triple = c::LLVMOrcLLJITGetTripleString(handle);
+        layout = c::LLVMOrcLLJITGetDataLayoutStr(handle);
+    }
+    if (error != nullptr) return {.error = message_of(error)};
+    Str triple_text = state::msg(format::push(triple));
+    Str layout_text = state::msg(format::push(layout));
+    Jit jit = {.handle = handle, .target = (emit::Target){.triple = triple_text, .data_layout = layout_text}};
+    return jit;
+}
+
+// Hand `module` to the JIT, with the `context` it was made in: both belong to the JIT from here.
+export BoolResult add(Jit *jit, c::LLVMContextRef context, c::LLVMModuleRef module) {
+    c::LLVMOrcThreadSafeContextRef owner = c::LLVMOrcCreateNewThreadSafeContextFromLLVMContext(context);
+    c::LLVMOrcThreadSafeModuleRef wrapped = c::LLVMOrcCreateNewThreadSafeModule(module, owner);
+    c::LLVMOrcDisposeThreadSafeContext(owner);
+    c::LLVMErrorRef error =
+        c::LLVMOrcLLJITAddLLVMIRModule(jit->handle, c::LLVMOrcLLJITGetMainJITDylib(jit->handle), wrapped);
+    if (error != nullptr) return {.error = message_of(error)};
+    return true;
+}
+
+// The address of the symbol `name` (a function's LLVM name, `front::test::add`).
+export AddressResult lookup(Jit *jit, Str name) {
+    char *symbol = format::push(name).data;
+    c::LLVMOrcExecutorAddress address = 0;
+    c::LLVMErrorRef error = c::LLVMOrcLLJITLookup(jit->handle, &address, symbol);
+    if (error != nullptr) return {.error = message_of(error)};
+    usize found = (usize)address;
+    return found;
+}
+
+// Dispose of the JIT and every module in it.
+export void stop(Jit *jit) {
+    state::free_text(jit->target.triple);
+    state::free_text(jit->target.data_layout);
+    c::LLVMErrorRef error = c::LLVMOrcDisposeLLJIT(jit->handle);
+    if (error != nullptr) c::LLVMConsumeError(error);
+}

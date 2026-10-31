@@ -1,0 +1,21 @@
+(module 
+  (function first exported
+    (param a (named I32))
+    (param b (named I32))
+    (result (named I32))
+    (block
+      (return (name a))))
+  (function proto (param  (named I32)) (param b (named I32)) (result (named Void)))
+  (function count (result (named I32)))
+  (function none (result (named I32)))
+  (function sum (param xs (array (named I32) (integer 4))) (param ys (slice (named I32))) (param m (slice (array (named I32) (integer 2)))) (result (named I32)))
+  (function generic (param T constexpr (named Type)) (param x (named T)) (param rest rest (auto)) (result (named Void)))
+  (function printf_like variadic (param format (named Str)) (result (named I32)))
+  (function tagged (param x (attribute std::maybe_unused) (named I32)) (param y (attribute std::maybe_unused) (named I32)) (result (named Void)))
+  (function twice static inline
+    (param x (named I32))
+    (result (named I32))
+    (block
+      (return (name x))))
+  (function pure (attribute std::pure) (param x (named I32)) (result (named I32)))
+  (function pick (param f (applied Fn (type_arg (function_type (named I32) (result (named I32)))))) (result (applied Fn (type_arg (function_type (named I32) (result (named I32))))))))

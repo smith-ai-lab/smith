@@ -176,7 +176,7 @@ void *resize_raw(void *block, usize old, usize n, usize size) {
 [[std::c_name("smith_mem_try_realloc_slice")]] export [[nodiscard]] option(typeof(xs)) try_realloc(auto xs, usize n) {
     static_assert(alignof(typeof(*xs.data)) <= 16, "try_realloc: realloc aligns to 16 bytes");
     usize old = xs.data == nullptr ? 0 : xs.count[0];
-    void *memory = resize_raw(xs.data, old, n, sizeof(*xs.data));
+    void *memory = resize_raw((void *)xs.data, old, n, sizeof(*xs.data));
     if (memory == nullptr && n != 0) {
         return .none;
     }
@@ -192,7 +192,7 @@ void *resize_raw(void *block, usize old, usize n, usize size) {
 [[std::c_name("smith_mem_realloc_slice")]] export [[nodiscard]] typeof(xs) realloc(auto xs, usize n) {
     static_assert(alignof(typeof(*xs.data)) <= 16, "realloc: realloc aligns to 16 bytes");
     usize old = xs.data == nullptr ? 0 : xs.count[0];
-    void *memory = resize_raw(xs.data, old, n, sizeof(*xs.data));
+    void *memory = resize_raw((void *)xs.data, old, n, sizeof(*xs.data));
     if (memory == nullptr && n != 0) {
         usize bytes = 0;
         if (__builtin_mul_overflow(n, sizeof(*xs.data), &bytes)) bytes = ~(usize)0;

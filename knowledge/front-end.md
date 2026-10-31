@@ -29,6 +29,15 @@ The syntax tree. Plain data: every type is exported with all its fields. `TypeEx
 
 **A limit for importers.** In a module that imports `front::ast`, a `case .name:` label on an ast payload enum makes the compiler read ast's body files ([body-files](body-files.md)), and that fails today (a private `typedef ExprRef ExprRefList[:]` loses its `;`, and a `mem` body says `smith_mem_allocator_name` is undeclared). Importers dispatch with `if (x->kind == .k)`. smith-enum narrowing is also lost once the node pointer is passed to a call, so read the payload fields into locals first.
 
+## front::emit (`front/emit*.smith`, #1119)
+
+Turns a `front::ast` module into an LLVM module through LLVM's C API: `emit::module(context, &m, options)` returns the verified module or an `Error` with a span. Today it emits one function with integer arithmetic (literals, names, locals, `+ - * / %`, shifts, comparisons, assignment); signed `+ - *` and negation use `llvm.*.with.overflow`, division and remainder check zero and `MIN / -1`, a shift checks its width, all branching to one `trap` block per function; unsigned wraps. `Target` and `Options` pick the triple and the layout; symbols are the module path joined with `::`, exported is external, the rest internal. The tests run the result in LLJIT (`emit_jit.smith`) and compare golden IR (`tests/front/emit/`).
+
+- **Files and owners**: `emit.smith` (passes and the walk), `emit_state.smith` (shared types, `Emitter`, stacks, helpers; a file of its own to break the import cycle), `emit_arith.smith` (this ticket's expressions), `emit_control.smith`, `emit_call.smith`, `emit_memory.smith`, `emit_debug.smith` (stubs that return `not_emitted`, one file per later ticket, no two tickets share a file), `emit_jit.smith` (test helper).
+- **The protocol** is the top comment of `front/emit.smith`; its rules in a line each: no recursion, so a work stack and a value stack; a handler pops operands and pushes one value; a node that needs a child first pushes a `then` continuation; pass 1 declares, pass 2 emits bodies; allocas go in the entry block.
+- **Handlers** dispatch with `if` chains, never `case .name:` ([#1153](body-files.md)); read payload fields into locals before any call.
+- **No arena around LLVM**: LLVM allocates with `malloc`, which smith routes to the allocator in force, so a test must not hold an arena while it emits or runs the JIT.
+
 ## front::lex and front::parse (`front/lex.smith`, `front/parse.smith`, #1128)
 
 **The tokenizer** reads the text of a file and gives all its tokens at once, ending with an `end_of_file` token. A `Token` is a `kind` and a `span`; its text is `source[span.start:span.end]` (`lex::text`), never a copy. `lex::tokenize(source)` is a `Lexed` (`Result(Tokens, LexError)`), the first error stopping it; `lex::dump(tokens, source)` writes one token a line, `line:column kind text`, which the goldens in `tests/front/lex/` hold.
@@ -38,6 +47,16 @@ The syntax tree. Plain data: every type is exported with all its fields. `TypeEx
 - **Comments and white space** make no tokens; doc comments are a later ticket's question.
 
 **The parser core** is a `Parser` (the tokens, the source, a position, the errors, the hooks) and the cursor functions every parser file uses: `peek`, `peek_at`, `advance`, `at`, `accept`, `expect(p, kind, what)` (records `expected <what>, found <text>` and takes nothing), `text`, `error`, `span_from`. Expressions (A3), statements (A4) and declarations (A5) are parsed in three files that call each other only through `Parser.hooks` (`expression`, `type`, `statement`, `declaration`, function pointers) by way of `parse::expression(p)` and its three siblings, so each is tested with stubs before the others exist and A6 wires the real ones. A hook that is not set records an error and gives null. The errors are the current allocator's, as the tree is.
+
+## front::parse_decl (`front/parse_decl.smith`, #1147)
+
+Declarations and whole files. `parse_decl::declaration(p)` is the hook `parse::Hooks.declaration`: it reads one declaration and consumes its own trailing `;` (a function with a body has none), so callers never expect one; it gives null after an error, with the parser past the bad declaration. `parse_decl::file(p, file)` reads an optional `module x::y;` (recorded in `Module.name` until the keyword is the switch) and declarations to the end of the file. Types come from `parse::type`, initializers from `parse::expression`, bodies from `parse::statement`.
+
+- **Reads**: prefixes in any order (attributes, `export static extern inline constexpr thread_local`); a variable (a type, one name, array suffixes after the name, the first suffix the outermost, `= init`); a function (parameters with array suffixes and attributes, `constexpr Type T`, `auto... rest`, `...`, `()` or `(void)`); `struct`, `union` (bit-fields `U32 flags : 3;`), plain and payload `enum` (`typedef enum { Circle circle; empty; } Shape;`, `enum Small : U8 {...}`), `typedef`; `import` in its three forms; `static_assert`; and `if constexpr (c) { decls } else { decls }`, nested and chained, read with an explicit stack of open blocks (no recursion).
+- **Anonymous records**: `struct { ... }` and `union { ... }` as a payload variant or the type of a variable are a `TypeKind.record`. One nested in a field is the type hook's to read, since this module may not recurse.
+- **Errors that name the fix**: several names in one declaration, C's function-pointer declarator (`Fn(I32 (I32)) f`), K&R parameters, implicit `int`, an array with no size, and a tag spelled as C does. After one, the declaration is skipped to its `;` or closing `}` and the parse goes on.
+
+**Statements** (`front/parse_stmt.smith`, A4): `parse_stmt::statement(p)` is the `statement` hook. It reads every statement form (blocks, `if` / `if constexpr`, loops, `switch`, jumps, labels, `defer`, `static_assert`) and a declaration-or-expression with no symbol table. Nesting is an explicit stack of frames, never recursion; after an error the rest of the statement is skipped and an `empty` placeholder stands in, so one mistake gives one error. Tests: `tests/front_parse_stmt_test.smith` with stub hooks and goldens in `tests/front/parse_stmt/`.
 
 ## front::cimport (track C)
 

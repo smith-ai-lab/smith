@@ -1,0 +1,83 @@
+// front::emit_control: control flow for the emitter (B2, #1112). Every handler is a stub with its final signature: it
+// returns "not emitted yet" with the node's span, and B2 fills the bodies without touching front/emit.smith. The
+// protocol (work stack, value stack, continuations) is at the top of front/emit.smith.
+//
+// Statements: if, while, do-while, for, break, continue, switch, goto, labeled, defer. Expressions: comparisons
+// (`binary` with a comparison operator), `logical_and` and `logical_or`, `logical_not`, `conditional`, `boolean`.
+module front::emit_control;
+
+import front::ast;
+import front::emit_state as state;
+
+export state::Status if_stmt(state::Emitter *_, const ast::Stmt *s) {
+    return state::not_emitted("if", s->span);
+}
+
+export state::Status while_stmt(state::Emitter *_, const ast::Stmt *s) {
+    return state::not_emitted("while", s->span);
+}
+
+export state::Status do_while(state::Emitter *_, const ast::Stmt *s) {
+    return state::not_emitted("do while", s->span);
+}
+
+export state::Status for_stmt(state::Emitter *_, const ast::Stmt *s) {
+    return state::not_emitted("for", s->span);
+}
+
+export state::Status break_stmt(state::Emitter *_, const ast::Stmt *s) {
+    return state::not_emitted("break", s->span);
+}
+
+export state::Status continue_stmt(state::Emitter *_, const ast::Stmt *s) {
+    return state::not_emitted("continue", s->span);
+}
+
+export state::Status switch_stmt(state::Emitter *_, const ast::Stmt *s) {
+    return state::not_emitted("switch", s->span);
+}
+
+export state::Status goto_stmt(state::Emitter *_, const ast::Stmt *s) {
+    return state::not_emitted("goto", s->span);
+}
+
+export state::Status labeled(state::Emitter *_, const ast::Stmt *s) {
+    return state::not_emitted("label", s->span);
+}
+
+export state::Status defer_stmt(state::Emitter *_, const ast::Stmt *s) {
+    return state::not_emitted("defer", s->span);
+}
+
+// `binary` with `less`, `greater`, `less_equal`, `greater_equal`, `equal` or `not_equal`.
+export state::Status comparison(state::Emitter *_, const ast::Expr *x, state::Hint _) {
+    return state::not_emitted("comparison", x->span);
+}
+
+// `binary` with `logical_and` or `logical_or`.
+export state::Status logical(state::Emitter *_, const ast::Expr *x, state::Hint _) {
+    return state::not_emitted("logical operator", x->span);
+}
+
+// `unary` with `logical_not`.
+export state::Status logical_not(state::Emitter *_, const ast::Expr *x, state::Hint _) {
+    return state::not_emitted("logical not", x->span);
+}
+
+export state::Status conditional(state::Emitter *_, const ast::Expr *x, state::Hint _) {
+    return state::not_emitted("conditional expression", x->span);
+}
+
+export state::Status boolean(state::Emitter *_, const ast::Expr *x, state::Hint _) {
+    return state::not_emitted("boolean", x->span);
+}
+
+// Called when a block ends, before its locals go out of scope: B2 runs the `defer`s of that scope here.
+export state::Status end_of_block(state::Emitter *_, ast::Span _) {
+    return state::success();
+}
+
+// Called by `return` before it returns: B2 runs the pending `defer`s here. Nothing to do before B2.
+export state::Status before_return(state::Emitter *_, ast::Span _) {
+    return state::success();
+}
