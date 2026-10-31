@@ -1,8 +1,0 @@
-// Throwaway (#1086): fails on purpose to show the shard's log; reverted before merge.
-module zz_throwaway_fail_test;
-
-import smith::test;
-
-export void test_deliberate_failure_1086() {
-    test::check(1 + 1 == 3);
-}
