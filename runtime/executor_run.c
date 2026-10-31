@@ -364,8 +364,16 @@ static int64_t smith_run_newest_input(const SmithExec *exec, const SmithEdge *ed
 // stamps a file from a coarse clock (Linux: a tick, up to 10 ms behind the one the start was read from), so an input
 // written after the step ended can carry a time before its start, and would then look as old as the output.
 static int64_t smith_run_restat(SmithExec *exec, SmithEdge *edge, int64_t started, uint32_t *stack) {
-    if (!edge->restat && !edge->generator) return started;
     SmithGraph *graph = &exec->graph;
+    if (!edge->restat && !edge->generator) {
+        // The outputs are new: a restat step that reads them as inputs records the time they have now, not the one the
+        // graph saw before they were made (that left it older than the output, and dirty at the next build).
+        for (uint32_t k = 0; k < edge->output_count; k++) {
+            uint32_t number = smith_plan_output(exec, edge, k);
+            graph->nodes[number].mtime = smith_plan_stat_path(graph->nodes[number].path);
+        }
+        return started;
+    }
     int64_t newest = started;
     bool cleaned = false;
     for (uint32_t k = 0; k < edge->output_count; k++) {
