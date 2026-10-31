@@ -1,8 +1,8 @@
 // Package downloads on a scripted network, from tests/package.sh (issue #292): redirects, a cross-scheme redirect
 // refused, 404, a truncated body, a broken connection, a wrong hash, a TLS failure and a killed fetch's leftovers.
-// tests/package.c holds the checks; the cache and tar are real, the network is io's scripted one. It is compiled with
-// smith's cc against the repository ($SMITH_REPO) and run on a tar.gz made here, once at -O0 under ASan and UBSan, once
-// at -O2.
+// tests/package.c holds the checks; the cache and tar are real, the network is smith::net's scripted one. It is
+// compiled with smith's cc against the repository ($SMITH_REPO) and run on a tar.gz made here, once at -O0 under ASan
+// and UBSan, once at -O2.
 module package_checks_test;
 
 import smith::arena;
@@ -15,8 +15,10 @@ import scratch;
 constexpr char compile_prefix[_] =
     "smith cc -std=gnu23 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
     "-Wstrict-prototypes -Wvla -Werror -Wno-unused-function -I \"$SMITH_REPO/.smith/include\" ";
-constexpr char libraries[_] = " lib/smith/arena.smith lib/smith/contract.smith "
-                              "lib/smith/inflate.smith lib/smith/io.smith lib/smith/random.smith";
+constexpr char libraries[_] =
+    " lib/smith/arena.smith lib/smith/contract.smith lib/smith/env.smith lib/smith/files.smith "
+    "lib/smith/inflate.smith lib/smith/io.smith lib/smith/mem.smith lib/smith/net.smith "
+    "lib/smith/random.smith bin/handlers.o";
 
 static void package_project(const scratch::Project *p) {
     scratch::copy_tree(p, "lib", "lib");
@@ -32,7 +34,15 @@ static void package_project(const scratch::Project *p) {
 // Compiles tests/package.c with the flags, and runs it on the archive in a scratch folder of its own.
 static scratch::Run compile_and_run(const scratch::Project *p, const char *flags, const char *program) {
     char command[1024];
+    // The handlers runtime (the libraries call its getters and setters) is the library's own C: built with the flags
+    // it is built with everywhere, not this test's warnings.
     format::Written written =
+        format::to(command, sizeof command, "smith cc -std=gnu23 -O2 -fPIC -I \"$SMITH_REPO/.smith/include\" ",
+                   "-c lib/handlers.c -o bin/handlers.o");
+    test::check_condition(written.fits);
+    scratch::Run runtime = scratch::sh(p, command);
+    scratch::expect_status("lib/handlers.c compiles", 0, &runtime);
+    written =
         format::to(command, sizeof command, compile_prefix, flags, " tests/package.c", libraries, " -o ", program);
     test::check_condition(written.fits);
     scratch::Run compiled = scratch::sh(p, command);

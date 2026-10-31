@@ -1231,6 +1231,8 @@ static const SmithLibrary smith_libraries[] = {
 // `smith --smith-explain`: the values of a failed check, read from the stopped test with lldb.
 #include "runtime/explain.c"
 // Packages, shared with the build runtime: the cache, the download and SHA-256.
+#include <smith/io.h>
+
 #include "runtime/package.c"
 // `smith cache`, and the lock a build holds on the caches.
 #include "runtime/cache.c"
@@ -1453,7 +1455,8 @@ static SmithBuildFile smith_build_file(void) {
 // The libraries the build program links, .smith modules that the smith doing the build compiles whatever compiler
 // compiles build.c itself (an external SMITH_CLANG knows no .smith): the runtime's package.c and the executor use them
 // through their headers. random declares -ffp-contract=off.
-static const char *const smith_build_program_libraries[] = {"arena", "contract", "inflate", "io", "random"};
+static const char *const smith_build_program_libraries[] = {"arena", "contract", "env", "files", "inflate",
+                                                            "io",    "mem",      "net", "random"};
 
 // The compiles are `-MD` and name the debug info's folder `.`, so the step cache serves them to every project whose
 // build file and libraries are the same (executor.md, "The step cache"): -MMD is refused by it, and a `-g` object
@@ -1512,6 +1515,15 @@ static size_t smith_build_program_manifest(char *out, size_t capacity, const cha
         SMITH_ASSERT(more > 0 && (size_t)more < sizeof objects - objects_length);
         objects_length += (size_t)more;
     }
+    // The libraries call the handlers' getters and setters (smith::mem, files, net), so the runtime is linked as an
+    // object (on macOS too, where it interposes nothing in the program that holds it: only its functions are used).
+    int handlers = snprintf(out + written, capacity - (size_t)written,
+                            "build .smith/build-program/handlers.o: cc .smith/lib/handlers.c\n");
+    SMITH_ASSERT(handlers > 0 && (size_t)handlers < capacity - (size_t)written);
+    written += handlers;
+    int more_objects =
+        snprintf(objects + objects_length, sizeof objects - objects_length, " .smith/build-program/handlers.o");
+    SMITH_ASSERT(more_objects > 0 && (size_t)more_objects < sizeof objects - objects_length);
     int linked = snprintf(out + written, capacity - (size_t)written, "build .smith/program: link %s\n", objects);
     SMITH_ASSERT(linked > 0 && (size_t)linked < capacity - (size_t)written);
     return (size_t)written + (size_t)linked;
@@ -2307,9 +2319,7 @@ static int smith_fetch_main(int count, char **args) {
     char folder[PATH_MAX];
     char hash[smith_package_hash_size];
     SmithPackageFault error;
-    SmithIo io = smith_io_make(0, nullptr);
-    bool fetched = smith_package_ensure(&io, args[0], nullptr, false, folder, hash, &error);
-    smith_io_close(&io);
+    bool fetched = smith_package_ensure(args[0], nullptr, false, folder, hash, &error);
     if (!fetched) smith_die(smith_exit_usage, "fetch failed:", error.text);
     printf(".hash = \"%s\",\n", hash);
     fflush(stdout);

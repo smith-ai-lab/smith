@@ -961,6 +961,7 @@ if constexpr (target::os == target::macos) {
 
 // The handler of a connection made under one: a handled connection used after its handler was taken off is a bug.
 c::SmithNetHandler *handler_of(bool handled) {
+    contract::trusted(); // the edge: it asks the handler of the thread
     c::SmithNetHandler *handler = c::smith_handlers_net();
     if (handled && handler == nullptr) misuse("net: a connection made under a handler is used with none set");
     return handler;
@@ -1018,6 +1019,7 @@ void connection_open(const Connection *connection) {
 // Reads whatever has arrived, at least one byte and at most the length of the buffer: the count of bytes read; 0 means
 // the end (the peer has finished sending). It blocks until there is something.
 [[smith::c_name("smith_network_read")]] export [[nodiscard]] CountResult read(Connection *connection, u8 buffer[:]) {
+    contract::trusted(); // the edge: it calls the handler of the thread or the system
     connection_open(connection);
     contract::requires(countof(buffer) > 0);
     isize count = 0;
@@ -1043,6 +1045,7 @@ void connection_open(const Connection *connection) {
 // no deadline of its own reads without one.
 [[smith::c_name("smith_network_read_within")]] export [[nodiscard]] CountResult
 read_within(Connection *connection, u8 buffer[:], i64 timeout_ns) {
+    contract::trusted(); // the edge: it calls the handler of the thread or the system
     connection_open(connection);
     contract::requires(countof(buffer) > 0);
     contract::requires(timeout_ns >= 0);
@@ -1237,6 +1240,7 @@ void fake_fail(i32 code) {
 
 // Appends bytes to a block, which grows from the current allocator.
 void block_append(Block *block, const void *data, usize count) {
+    contract::trusted(); // the fake's recording: it grows a block by doubling
     if (block->size + count > countof(block->data)) {
         usize capacity = countof(block->data) == 0 ? tries_max * 64 : countof(block->data) * 2;
         while (capacity < block->size + count) {
@@ -1526,6 +1530,7 @@ i32 fake_close(c::SmithNetHandler *self, i32 id) {
 
 // What the program wrote to the connection of the id (a connection's `id`, still open or closed), as bytes.
 [[smith::c_name("smith_network_fake_sent")]] export [[nodiscard]] Bytes fake_sent(const Fake *fake, i32 id) {
+    contract::trusted(); // a view of the recording
     contract::requires(id >= 1 && (usize)id <= fake_connections_max);
     return fake->connections[(usize)id - 1].sent.data[0:fake->connections[(usize)id - 1].sent.size];
 }

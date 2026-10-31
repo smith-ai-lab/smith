@@ -269,6 +269,7 @@ typedef struct {
 } Lister;
 
 i32 lister_open(Lister *lister, const char *folder) {
+    contract::trusted(); // the edge: it asks the handler of the thread and opens the folder
     lister->handler = c::smith_handlers_files();
     lister->folder = folder;
     lister->index = 0;
@@ -285,6 +286,7 @@ i32 lister_open(Lister *lister, const char *folder) {
 
 // 1 when item is filled, 0 past the last entry, -1 on an error (the errno is in `code`).
 i32 lister_next(Lister *lister, c::SmithFileItem *item, i32 *code) {
+    contract::trusted(); // the edge: it calls the handler's list or readdir
     if (lister->handler != nullptr) {
         i32 found = lister->handler->list(lister->handler, lister->folder, lister->index++, item);
         if (found < 0) *code = errno_now();
@@ -308,6 +310,7 @@ i32 lister_next(Lister *lister, c::SmithFileItem *item, i32 *code) {
 }
 
 void lister_close(Lister *lister) {
+    contract::trusted(); // the edge: it calls the handler's list or closedir
     if (lister->directory != nullptr) c::closedir(lister->directory);
 }
 
@@ -353,6 +356,7 @@ void reads_log_append(const char *log, const char *path) {
 }
 
 void reads_log(const char *path) {
+    contract::trusted(); // the edge: it asks the handler of the thread and the environment
     if (c::smith_handlers_files() != nullptr) return;
     env::Value named = env::get("SMITH_READS_LOG");
     if (named == .some) reads_log_append(named.some.data, path); // the environment's text ends with a NUL
@@ -375,6 +379,7 @@ void reads_log(const char *path) {
 
 // Reads up to the length of the buffer into it and returns how many bytes it read: 0 is the end of the file.
 [[smith::c_name("smith_fs_read")]] export [[nodiscard]] CountResult read(File file, u8 buffer[:]) {
+    contract::trusted(); // the edge: it calls the system's read
     if (countof(buffer) == 0) return (usize)0;
     for (usize tries = 0; tries < 64; tries++) { // a signal may interrupt the read
         isize count = c::read(file.descriptor, buffer.data, countof(buffer));
@@ -415,6 +420,7 @@ void reads_log(const char *path) {
 
 // Reads the open file to its end into a block of the current allocator; hint is the size to start with.
 BytesResult read_open(File file, usize hint) {
+    contract::trusted(); // reads to the end of the file: its passes are the file's size
     u8 buffer[:] = mem::alloc_slice(u8, hint);
     usize filled = 0;
     bool ended = false;
@@ -567,6 +573,7 @@ i32 entry_compare(const void *a, const void *b) {
 
 // What is in a folder, sorted by name, without "." and "..". The entries and their names are in the current allocator.
 [[smith::c_name("smith_fs_list")]] export [[nodiscard]] EntriesResult list(const char folder[:]) {
+    contract::trusted(); // the edge: it lists a folder and sorts the names with qsort
     Path where = path_make(folder);
     if (!where.fits) {
         return {.error = NameTooLong};
