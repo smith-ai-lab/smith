@@ -281,6 +281,14 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           tests: "true"
+      - name: Neovim 0.11+ for the editor tests (#1017)
+        # the runner's nvim is 0.9 and the plugin needs `vim.uv`: `smith build nvim` fetches the pinned release (by
+        # hash, kept in ~/.cache/smith/tools) and prints its bin/, which goes first on the PATH
+        shell: bash
+        run: |
+          bin=$("$SMITH" build nvim | tail -n 1)
+          echo "$bin" >>"$GITHUB_PATH"
+          "$bin/nvim" --version | head -n 1 | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Tests, part ${{ matrix.shard }} of ${{ matrix.count }}
         shell: bash
         run: |
