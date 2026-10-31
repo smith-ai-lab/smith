@@ -1182,6 +1182,32 @@ i32 main(void) {
               none == .none ? "empty" : "full");
     return 0;
 }
+==> enum-option-slice-assign/src/main.smith <==
+module main;
+import <stdio.h>;
+
+typedef const char Text[:];
+typedef option(Text) MaybeText; // names the struct once, as the first mention of `.none` needs
+
+static usize first_len(Text word, bool b) {
+    option(Text) found = .none;
+    if (b) found = word[0:1];
+    if (found == .none) return 9;
+    return countof(found.some);
+}
+
+static usize typeof_len(Text word) {
+    option(typeof(const char[:])) found = word[0:2];
+    if (found == .none) return 0;
+    return countof(found.some);
+}
+
+i32 main(void) {
+    const char s[4] = {'a', 'b', 'c', 'd'};
+    Text w = s[0:4];
+    c::printf("%d %d %d\n", (i32)first_len(w, true), (i32)first_len(w, false), (i32)typeof_len(w));
+    return 0;
+}
 ==> enum-option-slice/src/main.smith <==
 module main;
 import <stdio.h>;

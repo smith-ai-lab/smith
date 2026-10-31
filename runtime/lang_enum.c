@@ -364,8 +364,11 @@ static bool smith_lang_enum_wrap(SmithLang *lang, const SmithHost *host, const S
     }
     char text[smith_lang_slice_text_max];
     SmithExprType given = {};
-    if (!smith_lang_slice_text(lang, tokens, count, text, sizeof text) ||
-        !host->expr_type(host->context, text, (uint32_t)strlen(text), &given)) {
+    SmithLangSliceType cut = {};
+    if (smith_lang_slice_cut_type(lang, host, tokens, count, &cut)) { // `xs[a:b]` has no C type until it is lowered
+        snprintf(given.canonical, sizeof given.canonical, "struct %s", cut.tag);
+    } else if (!smith_lang_slice_text(lang, tokens, count, text, sizeof text) ||
+               !host->expr_type(host->context, text, (uint32_t)strlen(text), &given)) {
         return false;
     }
     SmithLangEnumType same;
@@ -1356,6 +1359,21 @@ static void smith_lang_eshape_slice_args(SmithLang *lang, const SmithLangEnumSha
         size_t begin = call->begin[p - 1];
         size_t end = call->end[p - 1];
         call->slice_elems[p - 1] = 0;
+        if (end >= begin + 7 && smith_lang_ident(&call->tokens[begin], "typeof") &&
+            smith_lang_punct(&call->tokens[begin + 1], "(") && smith_lang_punct(&call->tokens[end - 1], ")") &&
+            smith_lang_punct(&call->tokens[end - 2], "]") && smith_lang_punct(&call->tokens[end - 3], ":") &&
+            smith_lang_punct(&call->tokens[end - 4], "[")) { // `typeof(T[:])` is the slice type `T[:]`
+            memmove(&call->tokens[end - 1], &call->tokens[end], (call->count - end) * sizeof call->tokens[0]);
+            call->count -= 1; // the `)`
+            memmove(&call->tokens[begin], &call->tokens[begin + 2], (call->count - begin - 2) * sizeof call->tokens[0]);
+            call->count -= 2; // the `typeof (`
+            end -= 3;
+            call->end[p - 1] = end;
+            for (size_t q = p; q < shape->param_count; q++) {
+                call->begin[q] -= 3;
+                call->end[q] -= 3;
+            }
+        }
         if (end < begin + 4 || !smith_lang_punct(&call->tokens[end - 3], "[") ||
             !smith_lang_punct(&call->tokens[end - 2], ":") || !smith_lang_punct(&call->tokens[end - 1], "]") ||
             end - begin - 3 > smith_lang_eshape_elem_max) {
@@ -1771,7 +1789,15 @@ static bool smith_lang_eshape_dependent(SmithLang *lang, const SmithHost *host, 
     for (size_t at = open + 1; close != 0 && at < close; at++) {
         const SmithToken *token = smith_lang_eshape_at(lang, host, first, at);
         if (token->kind != SmithTokenKind_Identifier) continue;
-        if (smith_lang_ident(token, "typeof") || smith_lang_ident(token, "__typeof__")) return true;
+        if (smith_lang_ident(token, "typeof") || smith_lang_ident(token, "__typeof__")) {
+            size_t end = smith_lang_eshape_close(lang, host, first, at + 1, "(", ")");
+            bool slice = end != 0 && end >= at + 6 &&
+                         smith_lang_punct(smith_lang_eshape_at(lang, host, first, end - 1), "]") &&
+                         smith_lang_punct(smith_lang_eshape_at(lang, host, first, end - 2), ":") &&
+                         smith_lang_punct(smith_lang_eshape_at(lang, host, first, end - 3), "[");
+            if (!slice) return true; // `typeof(T[:])` is a slice type: its parts decide, like `T[:]`
+            continue;
+        }
         const SmithToken *before = smith_lang_eshape_at(lang, host, first, at - 1);
         const SmithToken *after = smith_lang_eshape_at(lang, host, first, at + 1);
         if (smith_lang_word(token->text, token->length) != SmithLangWord_Other ||

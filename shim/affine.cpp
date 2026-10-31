@@ -609,6 +609,37 @@ bool conditionFact(const Expr *cond, bool wanted, ASTContext &context, Key &plac
     return false;
 }
 
+// What `cond` being `wanted` says by exclusion: `x.tag != K` true or `x.tag == K` false leaves every variant but K, and
+// when that is one variant (an `option`: not `none` is `some`) the place holds it. `if (x == .none) return;` narrows
+// the rest of the block this way.
+bool conditionRemainder(const Expr *cond, bool wanted, ASTContext &context, Key &place, std::string &variant) {
+    cond = cond->IgnoreParenImpCasts();
+    if (const auto *unary = dyn_cast<UnaryOperator>(cond))
+        return unary->getOpcode() == UO_LNot &&
+               conditionRemainder(unary->getSubExpr(), !wanted, context, place, variant);
+    const auto *binary = dyn_cast<BinaryOperator>(cond);
+    if (binary == nullptr || (binary->getOpcode() != BO_EQ && binary->getOpcode() != BO_NE)) return false;
+    if ((binary->getOpcode() == BO_EQ) == wanted) return false; // that is a variant known, conditionFact's
+    for (int side = 0; side < 2; side++) {
+        const Expr *tag = side == 0 ? binary->getLHS() : binary->getRHS();
+        const Expr *constant = side == 0 ? binary->getRHS() : binary->getLHS();
+        place = Key();
+        std::string excluded;
+        if (!tagPlace(tag, place) || !variantConstant(tag, constant, context, excluded)) continue;
+        const auto *member = cast<MemberExpr>(tag->IgnoreParenImpCasts());
+        const auto *type = member->getType()->getAs<EnumType>();
+        std::vector<std::string> left;
+        for (const EnumConstantDecl *each : type->getDecl()->enumerators()) {
+            std::string name = variantOf(tagOwner(member), each);
+            if (name != excluded) left.push_back(name);
+        }
+        if (left.size() != 1) return false;
+        variant = left[0];
+        return true;
+    }
+    return false;
+}
+
 enum class NarrowAction { Read, Kill };
 
 struct NarrowSite {
@@ -768,7 +799,10 @@ class NarrowFlow {
         if (block.succ_size() != 2 || block.empty()) return;
         std::optional<CFGStmt> last = block.back().getAs<CFGStmt>();
         const auto *cond = last ? dyn_cast<Expr>(last->getStmt()) : nullptr;
-        if (cond != nullptr && conditionFact(cond, index == 0, context, place, variant)) state[place] = variant;
+        if (cond == nullptr) return;
+        if (conditionFact(cond, index == 0, context, place, variant) ||
+            conditionRemainder(cond, index == 0, context, place, variant))
+            state[place] = variant;
     }
 
     static bool within(const Key &prefix, const Key &key) {
