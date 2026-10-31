@@ -1,16 +1,22 @@
-// The routing tests of smith, from tests/run.sh: against stub compilers (tests/stub.c, which reports its name and every
-// argument), so that no clang or Xcode is needed and no real build is touched. The compiler verbs and their links
-// (`smith cc` and `smith-cc`), the tools (fmt, lint, lsp, dbg, dap), the bare arguments, and the verbs that need a
-// build. A test makes its project, then sets its own memory as the current allocator: what scratch returns to it (a
-// Run's texts, a file it reads) is given back with that memory, and scratch::clean frees what make holds.
+// The routing tests of smith: the compiler verbs and their links (`smith cc` and `smith-cc`), the tools (fmt, lint,
+// lsp, dbg, dap), the bare arguments, and the verbs that need a build. The routes are functions in process (issue #716,
+// part of #646): `smith_core_route` (include/smith_core_route.h) returns the program and the arguments smith would
+// run, so no compiler and no stub starts. What needs a process (the exec itself, a status, a signal, the real tools,
+// the verbs that read a build) stays a `scratch::` test against the stub compilers of tests/stub.c, which report their
+// name and every argument. A test makes its project, then sets its own memory as the current allocator: what scratch
+// returns to it (a Run's texts, a file it reads) is given back with that memory, and scratch::clean frees what make
+// holds.
 module run_routing_test;
 
 import smith::arena;
+import smith::env;
 import smith::format;
 import smith::test;
 import scratch;
+import <smith_core_route.h>;
 import <string.h>;
 import smith::mem;
+import target;
 
 constexpr usize memory_size = (usize)4 << 20; // 4 MiB
 
@@ -66,11 +72,6 @@ static scratch::Run go_clang(const Rig *r, const char *settings, const char *arg
     return go(r, format::push("SMITH_CLANG=", r->cl, " ", settings).data, r->cc, arguments);
 }
 
-static void expect_nothing_ran(const char *name, const scratch::Run *run) {
-    scratch::expect_status(name, 2, run);
-    scratch::expect_text(name, "", run->out);
-}
-
 static bool starts_with(const char *text, const char *prefix) {
     return c::strncmp(text, prefix, c::strlen(prefix)) == 0;
 }
@@ -94,7 +95,118 @@ static bool is_darwin(const Rig *r) {
     return scratch::same(scratch::capture(r->p, "uname -s"), "Darwin");
 }
 
-// ---- the compiler, in both forms ----
+// ---- the routes, in process (smith_core_route) ----
+//
+// A route is a function of the name smith is run as, its arguments and its environment: the program and the arguments
+// it would start, what it prints and its status. smith_core_route runs it in a child of the runner and stops where
+// smith would exec, so the stubs here are files that exist, never programs that run.
+
+// The unit-test rig: a project with the files a route looks for, and the smith under test, which a compiler may not
+// be a link to.
+typedef struct {
+    const scratch::Project *p;
+    arena::Arena *arena; // the test's memory
+    const char *dir;
+    const char *cl;   // the stub clang
+    const char *self; // the smith under test ($SMITH_SELF)
+    bool link;        // the links smith-cc and smith-c++, or the verbs cc and c++
+    const char *form; // verb or link
+} Unit;
+
+static const char *self_path() {
+    env::Value self = env::get("SMITH_SELF");
+    test::check_condition(self == .some);
+    return self == .some ? self.some.data : "";
+}
+
+// Stub files in bin/ (`stubs` are their names) and bin/selfclang, a link to the smith under test.
+static Unit make_unit(arena::Arena *arena, const scratch::Project *p, bool link, const char *stubs) {
+    const char *script = format::push("mkdir -p bin && for n in ", stubs,
+                                      "; do printf '#!/bin/sh\\n[ -n \"$STUB_XCRUN_FAIL\" ] && exit 1\\necho "
+                                      "\"$STUB_SDK\"\\n' > bin/$n && chmod +x bin/$n || exit 1; done; ln -s "
+                                      "\"$SMITH_SELF\" bin/selfclang")
+                             .data;
+    scratch::Run made = scratch::sh(p, script);
+    scratch::expect_status("the stub files are made", 0, &made);
+    Unit u = {.p = p, .arena = arena, .dir = p->dir, .self = self_path(), .link = link, .form = link ? "link" : "verb"};
+    u.cl = format::push(p->dir, "/bin/clang").data;
+    return u;
+}
+
+static const char *um(const Unit *u, const char *what) {
+    return format::push("[", u->form, "] ", what).data;
+}
+
+// A text in a vector: arena::push_slice of a pointer type would be a multilevel pointer conversion.
+typedef struct {
+    const char *text;
+} Field;
+
+// `a|b||c` is the three arguments a, b, "" and c; "" is none. The vector ends with nullptr and starts with `first`
+// and `second` (when it is not null).
+static const char *const *split(arena::Arena *arena, const char *first, const char *second, const char *text) {
+    usize length = c::strlen(text);
+    usize count = length > 0 ? 1 : 0;
+    for (usize i = 0; i < length; i++) {
+        count += text[i] == '|' ? 1 : 0;
+    }
+    usize head = (first != nullptr ? 1 : 0) + (second != nullptr ? 1 : 0);
+    Field *vector = arena::push_slice(arena, Field, head + count + 1).data;
+    char *copy = arena::push_slice(arena, char, length + 1).data;
+    mem::copy(copy[0:length], text[0:length]);
+    copy[length] = '\0';
+    usize used = 0;
+    if (first != nullptr) {
+        vector[used++].text = first;
+    }
+    if (second != nullptr) {
+        vector[used++].text = second;
+    }
+    char *start = copy;
+    for (usize i = 0; length > 0 && i <= length; i++) {
+        if (copy[i] == '|' || copy[i] == '\0') {
+            copy[i] = '\0';
+            vector[used++].text = start;
+            start = copy + i + 1;
+        }
+    }
+    vector[used].text = nullptr;
+    return (const char *const *)vector;
+}
+
+// The route of `name second arguments` under `environment` (`A=b|-C`: set A, unset C).
+static c::SmithCoreRouted *route_command(const Unit *u, const char *name, const char *second, const char *environment,
+                                         const char *arguments, const char *const *show) {
+    c::SmithCoreRouted *routed = arena::push(u->arena, c::SmithCoreRouted);
+    c::SmithCoreRoute route = {.folder = u->dir,
+                               .arguments = split(u->arena, name, second, arguments),
+                               .self = u->self,
+                               .environment = split(u->arena, nullptr, nullptr, environment),
+                               .show = show};
+    test::check_condition(c::smith_core_route(&route, routed));
+    return routed;
+}
+
+// `smith cc` or `smith-cc` (`plus`: c++) with SMITH_CLANG the stub clang, in both forms.
+static c::SmithCoreRouted *route_compiler(const Unit *u, bool plus, const char *environment, const char *arguments) {
+    const char *name = u->link ? format::push(u->dir, plus ? "/smith-c++" : "/smith-cc").data : "smith";
+    const char *second = u->link ? nullptr : (plus ? "c++" : "cc");
+    return route_command(u, name, second, environment, arguments, nullptr);
+}
+
+static c::SmithCoreRouted *route_clang(const Unit *u, const char *environment, const char *arguments) {
+    const char *settings = format::push("SMITH_CLANG=", u->cl, environment[0] != '\0' ? "|" : "", environment).data;
+    return route_compiler(u, false, settings, arguments);
+}
+
+static void expect_status_is(const char *name, usize expected, const c::SmithCoreRouted *routed) {
+    scratch::expect_count(name, expected, (usize)routed->status);
+}
+
+static void expect_nothing_ran(const char *name, usize status, const c::SmithCoreRouted *routed) {
+    expect_status_is(name, status, routed);
+    scratch::expect_text(name, "", &routed->exec[0]);
+}
 
 static void clang_route(bool link) {
     scratch::Project p = scratch::make("r", nullptr);
@@ -103,27 +215,21 @@ static void clang_route(bool link) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    arena::Arena *arena = &memory;
-    Rig r = make_rig(arena, &p, link, "clang");
-    scratch::Run run = go_clang(&r, "", "-c \"a b.c\" \"\" -DX=\"y z\" -o out.o");
-    scratch::expect_text(nm(&r, "clang route forwards every argument untouched"),
-                         format::push("clang argv0=", r.cl, "\n[-c]\n[a b.c]\n[]\n[-DX=y z]\n[-o]\n[out.o]").data,
-                         run.out);
-    scratch::expect_text(nm(&r, "clang route: stderr passes through"), "clang-stderr", run.err);
-    scratch::expect_status(nm(&r, "clang route: status 0"), 0, &run);
-    scratch::Run exit_seven = go_clang(&r, "STUB_EXIT=7", "-c a.c");
-    scratch::expect_status(nm(&r, "exit status is preserved"), 7, &exit_seven);
-    scratch::Run signaled = go_clang(&r, "STUB_SIGNAL=15", "-c a.c");
-    scratch::expect_status(nm(&r, "death by signal is preserved (128 + 15)"), 143, &signaled);
-    scratch::Run version = go_clang(&r, "", "--version");
-    scratch::expect_text(nm(&r, "--version goes to the compiler"),
-                         format::push("clang argv0=", r.cl, "\n[--version]").data, version.out);
-    scratch::Run response = go_clang(&r, "", "@r.rsp a.c");
-    scratch::expect_text(nm(&r, "response files are forwarded untouched"),
-                         format::push("clang argv0=", r.cl, "\n[@r.rsp]\n[a.c]").data, response.out);
-    scratch::Run flag = go_clang(&r, "", "-I shaders.metal -c a.c");
-    scratch::expect_text(nm(&r, "a flag value ending in .metal is not an input"),
-                         format::push("clang argv0=", r.cl, "\n[-I]\n[shaders.metal]\n[-c]\n[a.c]").data, flag.out);
+    Unit u = make_unit(&memory, &p, link, "clang");
+    c::SmithCoreRouted *run = route_clang(&u, "", "-c|a b.c||-DX=y z|-o|out.o");
+    scratch::expect_text(um(&u, "clang route forwards every argument untouched"),
+                         format::push("exec ", u.cl, "\n[-c]\n[a b.c]\n[]\n[-DX=y z]\n[-o]\n[out.o]").data,
+                         &run->exec[0]);
+    expect_status_is(um(&u, "clang route: status 0"), 0, run);
+    c::SmithCoreRouted *version = route_clang(&u, "", "--version");
+    scratch::expect_text(um(&u, "--version goes to the compiler"), format::push("exec ", u.cl, "\n[--version]").data,
+                         &version->exec[0]);
+    c::SmithCoreRouted *response = route_clang(&u, "", "@r.rsp|a.c");
+    scratch::expect_text(um(&u, "response files are forwarded untouched"),
+                         format::push("exec ", u.cl, "\n[@r.rsp]\n[a.c]").data, &response->exec[0]);
+    c::SmithCoreRouted *flag = route_clang(&u, "", "-I|shaders.metal|-c|a.c");
+    scratch::expect_text(um(&u, "a flag value ending in .metal is not an input"),
+                         format::push("exec ", u.cl, "\n[-I]\n[shaders.metal]\n[-c]\n[a.c]").data, &flag->exec[0]);
 }
 
 export void test_run_verb_clang_route() {
@@ -135,7 +241,12 @@ export void test_run_link_clang_route() {
 }
 
 static const char *mixed_refusal =
-    "smith: .metal and other inputs need different compilers and flags; compile the shaders in their own command";
+    "smith: .metal and other inputs need different compilers and flags; compile the shaders in their own command\n";
+
+static const char *path_with(const Unit *u) {
+    env::Value path = env::get("PATH");
+    return format::push("PATH=", u->dir, "/bin:", path == .some ? path.some.data : "").data;
+}
 
 static void metal_route(bool link) {
     scratch::Project p = scratch::make("r", nullptr);
@@ -144,31 +255,30 @@ static void metal_route(bool link) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    arena::Arena *arena = &memory;
-    Rig r = make_rig(arena, &p, link, "clang xcrun metal");
-    const char *path = format::push("PATH=\"", r.dir, "/bin:$PATH\"").data;
-    scratch::Run xcrun = go(&r, path, r.cc, "-o shaders.metallib a.metal b.metal");
+    Unit u = make_unit(&memory, &p, link, "clang xcrun metal");
+    c::SmithCoreRouted *xcrun = route_compiler(&u, false, path_with(&u), "-o|shaders.metallib|a.metal|b.metal");
     scratch::expect_text(
-        nm(&r, "metal route goes through xcrun -sdk macosx metal"),
-        format::push("xcrun argv0=", r.dir,
+        um(&u, "metal route goes through xcrun -sdk macosx metal"),
+        format::push("exec ", u.dir,
                      "/bin/xcrun\n[-sdk]\n[macosx]\n[metal]\n[-o]\n[shaders.metallib]\n[a.metal]\n[b.metal]")
             .data,
-        xcrun.out);
-    scratch::Run metal = go(&r, format::push("SMITH_METAL=", r.dir, "/bin/metal").data, r.cc, "-E a.metal");
-    scratch::expect_text(nm(&r, "SMITH_METAL replaces xcrun"),
-                         format::push("metal argv0=", r.dir, "/bin/metal\n[-E]\n[a.metal]").data, metal.out);
-    scratch::Run mixed = go_clang(&r, "", "a.metal b.c");
-    scratch::expect_text(nm(&r, "mixed .metal and C inputs are refused"), mixed_refusal, mixed.err);
-    expect_nothing_ran(nm(&r, "mixed inputs: status 2 and nothing ran"), &mixed);
-    scratch::Run smith_metal = go_clang(&r, "", "a.smith b.metal");
-    scratch::expect_text(nm(&r, "a .smith input and a .metal input are refused"), mixed_refusal, smith_metal.err);
+        &xcrun->exec[0]);
+    c::SmithCoreRouted *metal =
+        route_compiler(&u, false, format::push("SMITH_METAL=", u.dir, "/bin/metal").data, "-E|a.metal");
+    scratch::expect_text(um(&u, "SMITH_METAL replaces xcrun"),
+                         format::push("exec ", u.dir, "/bin/metal\n[-E]\n[a.metal]").data, &metal->exec[0]);
+    c::SmithCoreRouted *mixed = route_clang(&u, "", "a.metal|b.c");
+    scratch::expect_text(um(&u, "mixed .metal and C inputs are refused"), mixed_refusal, &mixed->err[0]);
+    expect_nothing_ran(um(&u, "mixed inputs: status 2 and nothing ran"), 2, mixed);
+    c::SmithCoreRouted *smith_metal = route_clang(&u, "", "a.smith|b.metal");
+    scratch::expect_text(um(&u, "a .smith input and a .metal input are refused"), mixed_refusal, &smith_metal->err[0]);
 }
 
-export void test_macos_run_verb_metal_route() {
+export void test_run_verb_metal_route() {
     metal_route(false);
 }
 
-export void test_macos_run_link_metal_route() {
+export void test_run_link_metal_route() {
     metal_route(true);
 }
 
@@ -180,48 +290,45 @@ static void smith_inputs(bool link) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    arena::Arena *arena = &memory;
-    Rig r = make_rig(arena, &p, link, "clang");
-    scratch::Run which = go_clang(&r, "", "--smith-which -c a.smith");
-    if (which.status == 0) {
-        scratch::Run plain = go_clang(&r, "", "-c a.smith -o out.o");
-        scratch::expect_text(nm(&r, "a .smith input is compiled as C, and nothing else changes"),
-                             format::push("clang argv0=", r.cl,
-                                          "\n[-std=gnu2y]\n[-fdefer-ts]\n[-c]\n[-x]\n[c]\n[a.smith]\n[-o]\n[out.o]")
-                                 .data,
-                             plain.out);
-        scratch::Run mixed = go_clang(&r, "", "-c -I x.smith a.smith b.c c.smith -o out.o");
+    Unit u = make_unit(&memory, &p, link, "clang");
+    c::SmithCoreRouted *which = route_clang(&u, "", "--smith-which|-c|a.smith");
+    if (which->status == 0) {
+        c::SmithCoreRouted *plain = route_clang(&u, "", "-c|a.smith|-o|out.o");
         scratch::expect_text(
-            nm(&r, "the language is C for the .smith inputs only, and an option's value is no input"),
-            format::push("clang argv0=", r.cl,
+            um(&u, "a .smith input is compiled as C, and nothing else changes"),
+            format::push("exec ", u.cl, "\n[-std=gnu2y]\n[-fdefer-ts]\n[-c]\n[-x]\n[c]\n[a.smith]\n[-o]\n[out.o]").data,
+            &plain->exec[0]);
+        c::SmithCoreRouted *mixed = route_clang(&u, "", "-c|-I|x.smith|a.smith|b.c|c.smith|-o|out.o");
+        scratch::expect_text(
+            um(&u, "the language is C for the .smith inputs only, and an option's value is no input"),
+            format::push("exec ", u.cl,
                          "\n[-std=gnu2y]\n[-fdefer-ts]\n[-c]\n[-I]\n[x.smith]\n[-x]\n[c]\n[a.smith]\n[-x]\n[none]"
                          "\n[b.c]\n[-x]\n[c]\n[c.smith]\n[-o]\n[out.o]")
                 .data,
-            mixed.out);
-        scratch::Run standard = go_clang(&r, "", "-std=c23 -c a.smith");
+            &mixed->exec[0]);
+        c::SmithCoreRouted *standard = route_clang(&u, "", "-std=c23|-c|a.smith");
+        scratch::expect_text(um(&u, "a .smith input is C2y unless the caller names a standard"),
+                             format::push("exec ", u.cl, "\n[-fdefer-ts]\n[-std=c23]\n[-c]\n[-x]\n[c]\n[a.smith]").data,
+                             &standard->exec[0]);
+        c::SmithCoreRouted *cplus = route_clang(&u, "", "-c|a.smith|b.cpp");
+        scratch::expect_text(um(&u, "no C standard is added beside a C++ input"),
+                             format::push("exec ", u.cl, "\n[-c]\n[-x]\n[c]\n[a.smith]\n[-x]\n[none]\n[b.cpp]").data,
+                             &cplus->exec[0]);
+        c::SmithCoreRouted *language = route_clang(&u, "", "-x|c++|-c|a.smith");
+        scratch::expect_text(um(&u, "a language named by the caller is left alone"),
+                             format::push("exec ", u.cl, "\n[-x]\n[c++]\n[-c]\n[a.smith]").data, &language->exec[0]);
+        c::SmithCoreRouted *kept = route_clang(&u, "", "-x|c|-c|a.smith");
         scratch::expect_text(
-            nm(&r, "a .smith input is C2y unless the caller names a standard"),
-            format::push("clang argv0=", r.cl, "\n[-fdefer-ts]\n[-std=c23]\n[-c]\n[-x]\n[c]\n[a.smith]").data,
-            standard.out);
-        scratch::Run cplus = go_clang(&r, "", "-c a.smith b.cpp");
-        scratch::expect_text(
-            nm(&r, "no C standard is added beside a C++ input"),
-            format::push("clang argv0=", r.cl, "\n[-c]\n[-x]\n[c]\n[a.smith]\n[-x]\n[none]\n[b.cpp]").data, cplus.out);
-        scratch::Run language = go_clang(&r, "", "-x c++ -c a.smith");
-        scratch::expect_text(nm(&r, "a language named by the caller is left alone"),
-                             format::push("clang argv0=", r.cl, "\n[-x]\n[c++]\n[-c]\n[a.smith]").data, language.out);
-        scratch::Run kept = go_clang(&r, "", "-x c -c a.smith");
-        scratch::expect_text(
-            nm(&r, "-x c is kept, and the standard is C2y and defer is on as for any .smith input"),
-            format::push("clang argv0=", r.cl, "\n[-std=gnu2y]\n[-fdefer-ts]\n[-x]\n[c]\n[-c]\n[a.smith]").data,
-            kept.out);
+            um(&u, "-x c is kept, and the standard is C2y and defer is on as for any .smith input"),
+            format::push("exec ", u.cl, "\n[-std=gnu2y]\n[-fdefer-ts]\n[-x]\n[c]\n[-c]\n[a.smith]").data,
+            &kept->exec[0]);
     } else {
-        scratch::Run refused = go_clang(&r, "", "-c a.smith -o out.o");
-        scratch::expect_text(nm(&r, "a .smith input is refused by a smith without the token hook"),
+        c::SmithCoreRouted *refused = route_clang(&u, "", "-c|a.smith|-o|out.o");
+        scratch::expect_text(um(&u, "a .smith input is refused by a smith without the token hook"),
                              "smith: .smith files need a smith whose clang has the token hook "
-                             "(patches/clang-token-hook.patch, applied by `smith build llvm`); this one has none",
-                             refused.err);
-        expect_nothing_ran(nm(&r, "a .smith input is refused: status 2 and nothing ran"), &refused);
+                             "(patches/clang-token-hook.patch, applied by `smith build llvm`); this one has none\n",
+                             &refused->err[0]);
+        expect_nothing_ran(um(&u, "a .smith input is refused: status 2 and nothing ran"), 2, refused);
     }
 }
 
@@ -240,11 +347,11 @@ static void plus_plus(bool link) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    arena::Arena *arena = &memory;
-    Rig r = make_rig(arena, &p, link, "clang clang++");
-    scratch::Run run = go(&r, format::push("SMITH_CLANGXX=", r.dir, "/bin/clang++").data, r.plus, "-c a.cpp");
-    scratch::expect_text(nm(&r, "smith++ uses clang++"),
-                         format::push("clang++ argv0=", r.dir, "/bin/clang++\n[-c]\n[a.cpp]").data, run.out);
+    Unit u = make_unit(&memory, &p, link, "clang clang++");
+    c::SmithCoreRouted *run =
+        route_compiler(&u, true, format::push("SMITH_CLANGXX=", u.dir, "/bin/clang++").data, "-c|a.cpp");
+    scratch::expect_text(um(&u, "smith++ uses clang++"),
+                         format::push("exec ", u.dir, "/bin/clang++\n[-c]\n[a.cpp]").data, &run->exec[0]);
 }
 
 export void test_run_verb_smith_plus_plus() {
@@ -255,8 +362,328 @@ export void test_run_link_smith_plus_plus() {
     plus_plus(true);
 }
 
-// On a smith with clang inside, the default compiler is that one, in a folder of its own; otherwise Homebrew's.
+// On a smith with clang inside, the default compiler is that one, run in smith's own process; SMITH_CLANG runs another.
 static void in_process_default(bool link) {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Unit u = make_unit(&memory, &p, link, "clang");
+    c::SmithCoreRouted *run = route_compiler(&u, false, "-SMITH_CLANG", "-c|a.c");
+    scratch::expect_text(um(&u, "in-process: the default is clang inside smith"), "in-process clang\n[-c]\n[a.c]",
+                         &run->exec[0]);
+    c::SmithCoreRouted *plus = route_compiler(&u, true, "-SMITH_CLANGXX", "-c|a.cpp");
+    scratch::expect_text(um(&u, "in-process: smith++ is clang++ inside smith"), "in-process clang++\n[-c]\n[a.cpp]",
+                         &plus->exec[0]);
+    c::SmithCoreRouted *other =
+        route_compiler(&u, false, format::push("-SMITH_CLANG|SMITH_CLANGXX=", u.dir, "/bin/clang++").data, "-c|a.c");
+    scratch::expect_text(um(&u, "in-process: SMITH_CLANGXX does not affect smith"), "in-process clang\n[-c]\n[a.c]",
+                         &other->exec[0]);
+}
+
+export void test_run_verb_in_process_default() {
+    in_process_default(false);
+}
+
+export void test_run_link_in_process_default() {
+    in_process_default(true);
+}
+
+// The SDK is chosen through the environment, never a flag, and only for what the caller left unset.
+static void sdk_environment(bool link) {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Unit u = make_unit(&memory, &p, link, "clang xcrun");
+    if constexpr (target::os != target::macos) {
+        test::note("not macOS: the SDK is not chosen");
+        return;
+    }
+    static const char *const names[_] = {"SDKROOT", "CLANG_NO_DEFAULT_CONFIG", nullptr};
+    const char *clang = format::push("exec ", u.cl, "\n[-c]\n[a.c]").data;
+    const char *base =
+        format::push("-SDKROOT|-CLANG_NO_DEFAULT_CONFIG|", path_with(&u), "|STUB_SDK=/stub/sdk|SMITH_CLANG=", u.cl)
+            .data;
+    const char *name = u.link ? format::push(u.dir, "/smith-cc").data : "smith";
+    const char *second = u.link ? nullptr : "cc";
+    c::SmithCoreRouted *chosen = route_command(&u, name, second, base, "-c|a.c", names);
+    scratch::expect_text(um(&u, "macOS: SDKROOT comes from xcrun and the default config is off, with no flag added"),
+                         format::push(clang, "\nenv SDKROOT=/stub/sdk\nenv CLANG_NO_DEFAULT_CONFIG=1").data,
+                         &chosen->exec[0]);
+    c::SmithCoreRouted *mine = route_command(
+        &u, name, second,
+        format::push("-CLANG_NO_DEFAULT_CONFIG|SDKROOT=/mine|", path_with(&u), "|STUB_SDK=/stub/sdk|SMITH_CLANG=", u.cl)
+            .data,
+        "-c|a.c", names);
+    scratch::expect_text(um(&u, "macOS: the caller's SDKROOT wins, and the default config is still off"),
+                         format::push(clang, "\nenv SDKROOT=/mine\nenv CLANG_NO_DEFAULT_CONFIG=1").data,
+                         &mine->exec[0]);
+    c::SmithCoreRouted *config = route_command(
+        &u, name, second,
+        format::push("-SDKROOT|CLANG_NO_DEFAULT_CONFIG=0|", path_with(&u), "|STUB_SDK=/stub/sdk|SMITH_CLANG=", u.cl)
+            .data,
+        "-c|a.c", names);
+    scratch::expect_text(um(&u, "macOS: the caller's CLANG_NO_DEFAULT_CONFIG wins"),
+                         format::push(clang, "\nenv SDKROOT=/stub/sdk\nenv CLANG_NO_DEFAULT_CONFIG=0").data,
+                         &config->exec[0]);
+    c::SmithCoreRouted *failed =
+        route_command(&u, name, second, format::push(base, "|STUB_XCRUN_FAIL=1").data, "-c|a.c", names);
+    scratch::expect_text(um(&u, "macOS: when xcrun fails SDKROOT stays unset"),
+                         format::push(clang, "\nenv SDKROOT=(unset)\nenv CLANG_NO_DEFAULT_CONFIG=1").data,
+                         &failed->exec[0]);
+    c::SmithCoreRouted *sysroot = route_command(&u, name, second, base, "-isysroot|/mine/sdk|-c|a.c", names);
+    scratch::expect_text(um(&u, "macOS: the caller's -isysroot is forwarded untouched"),
+                         format::push("exec ", u.cl, "\n[-isysroot]\n[/mine/sdk]\n[-c]\n[a.c]",
+                                      "\nenv SDKROOT=/stub/sdk\nenv CLANG_NO_DEFAULT_CONFIG=1")
+                             .data,
+                         &sysroot->exec[0]);
+}
+
+export void test_macos_run_verb_sdk_environment() {
+    sdk_environment(false);
+}
+
+export void test_macos_run_link_sdk_environment() {
+    sdk_environment(true);
+}
+
+// ---- fmt, lint, lsp, dbg and dap: the tool, with the arguments untouched, as the exact first argument ----
+
+static void tool_routes(const char *command, const char *program, const char *variable) {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Unit u = make_unit(&memory, &p, false, format::push("clang ", program).data);
+    // The folder has the project's own configuration, as the repository where the script ran has: smith adds its
+    // defaults to the tool's arguments only where a project has none.
+    scratch::write(u.p, ".clang-tidy", "");
+    scratch::write(u.p, ".clang-format", "");
+    const char *stub = format::push(u.dir, "/bin/", program).data;
+    const char *var = format::push(variable, "=", stub).data;
+    c::SmithCoreRouted *run = route_command(&u, "smith", command, var, "-i|a b.c||--style=file|-DX=y z", nullptr);
+    scratch::expect_text(format::push(command, ": runs ", program, " with every argument untouched").data,
+                         format::push("exec ", stub, "\n[-i]\n[a b.c]\n[]\n[--style=file]\n[-DX=y z]").data,
+                         &run->exec[0]);
+    c::SmithCoreRouted *missing =
+        route_command(&u, "smith", command, format::push(variable, "=/nonexistent/", program).data, "a.c", nullptr);
+    scratch::expect_text(format::push(command, ": a missing tool is reported").data,
+                         format::push("smith: not an executable: /nonexistent/", program, "\n").data, &missing->err[0]);
+    expect_status_is(format::push(command, ": a missing tool is status 127").data, 127, missing);
+    // Only as the exact first argument: after another argument it is a file name, for the compiler.
+    c::SmithCoreRouted *after = route_command(&u, "smith", "cc", format::push("SMITH_CLANG=", u.cl, "|", var).data,
+                                              format::push("-c|", command, "|a.c").data, nullptr);
+    scratch::expect_text(format::push(command, ": after another argument it goes to clang").data,
+                         format::push("exec ", u.cl, "\n[-c]\n[", command, "]\n[a.c]").data, &after->exec[0]);
+}
+
+export void test_run_fmt_is_clang_format_with_the_arguments_untouched() {
+    tool_routes("fmt", "clang-format", "SMITH_CLANG_FORMAT");
+}
+
+export void test_run_lint_is_clang_tidy_with_the_arguments_untouched() {
+    tool_routes("lint", "clang-tidy", "SMITH_CLANG_TIDY");
+}
+
+export void test_run_lsp_is_clangd_with_the_arguments_untouched() {
+    tool_routes("lsp", "clangd", "SMITH_CLANGD");
+}
+
+export void test_run_dbg_is_lldb_with_the_arguments_untouched() {
+    tool_routes("dbg", "lldb", "SMITH_LLDB");
+}
+
+export void test_run_dap_is_lldb_dap_with_the_arguments_untouched() {
+    tool_routes("dap", "lldb-dap", "SMITH_LLDB_DAP");
+}
+
+// ---- the refusals and --smith-which of both forms ----
+
+static void compile_tail(bool link) {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Unit u = make_unit(&memory, &p, link, "clang xcrun");
+    c::SmithCoreRouted *self =
+        route_compiler(&u, false, format::push("SMITH_CLANG=", u.dir, "/bin/selfclang").data, "a.c");
+    scratch::expect_text(um(&u, "a compiler that is smith itself is refused"),
+                         format::push("smith: refers to smith itself: ", u.dir, "/bin/selfclang\n").data,
+                         &self->err[0]);
+    expect_status_is(um(&u, "self refusal: status 127"), 127, self);
+    c::SmithCoreRouted *missing = route_compiler(&u, false, "SMITH_CLANG=/nonexistent/clang", "a.c");
+    scratch::expect_text(um(&u, "a missing compiler is reported"), "smith: not an executable: /nonexistent/clang\n",
+                         &missing->err[0]);
+    c::SmithCoreRouted *which = route_clang(&u, "", "--smith-which|-c|a.c");
+    scratch::expect_text(um(&u, "--smith-which names the clang backend"), format::push("clang ", u.cl, "\n").data,
+                         &which->out[0]);
+    c::SmithCoreRouted *metal = route_compiler(&u, false, path_with(&u), "--smith-which|a.metal");
+    scratch::expect_text(um(&u, "--smith-which names the metal backend"),
+                         format::push("metal ", u.dir, "/bin/xcrun -sdk macosx metal\n").data, &metal->out[0]);
+    c::SmithCoreRouted *verbose = route_clang(&u, "SMITH_VERBOSE=1", "-c|a.c");
+    scratch::expect_text(um(&u, "SMITH_VERBOSE shows the command"),
+                         format::push("smith: exec ", u.cl, " -c a.c\n").data, &verbose->err[0]);
+}
+
+export void test_run_verb_refusals_and_which() {
+    compile_tail(false);
+}
+
+export void test_run_link_refusals_and_which() {
+    compile_tail(true);
+}
+
+// ---- the top level is only verbs ----
+
+export void test_run_bare_arguments_are_an_error_with_the_hint() {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Unit u = make_unit(&memory, &p, false, "clang");
+    const char *settings = format::push("SMITH_CLANG=", u.cl).data;
+    c::SmithCoreRouted *file = route_command(&u, "smith", "foo.c", settings, "-o|foo", nullptr);
+    scratch::expect_text("bare: the compiler's arguments are an error with the hint",
+                         "smith: foo.c is not a smith command; to compile, run `smith cc foo.c -o foo`\n",
+                         &file->err[0]);
+    expect_nothing_ran("bare: status 2 and nothing ran", 2, file);
+    c::SmithCoreRouted *flag = route_command(&u, "smith", "-c", settings, "a.c", nullptr);
+    scratch::expect_text("bare: a flag first gets the same hint",
+                         "smith: -c is not a smith command; to compile, run `smith cc -c a.c`\n", &flag->err[0]);
+    c::SmithCoreRouted *which = route_command(&u, "smith", "--smith-which", settings, "-c|a.c", nullptr);
+    scratch::expect_text(
+        "bare: --smith-which is a flag of the compiler verbs",
+        "smith: --smith-which is not a smith command; to compile, run `smith cc --smith-which -c a.c`\n",
+        &which->err[0]);
+    c::SmithCoreRouted *old = route_command(&u, format::push(u.dir, "/smith++").data, "-c", settings, "a.cpp", nullptr);
+    scratch::expect_text("bare: the old smith++ name is no compiler",
+                         "smith: -c is not a smith command; to compile, run `smith cc -c a.cpp`\n", &old->err[0]);
+}
+
+export void test_run_version_and_no_arguments() {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Unit u = make_unit(&memory, &p, false, "clang");
+    c::SmithCoreRouted *version = route_command(&u, "smith", "version", "", "", nullptr);
+    expect_status_is("version: status 0", 0, version);
+    // `smith 0.0`, then ` commit <hash>` when the commit is known.
+    bool line = starts_with(&version->out[0], "smith 0.0") &&
+                (version->out[9] == '\n' || starts_with(&version->out[9], " commit "));
+    scratch::expect_text("version: the version line", "yes", line ? "yes" : &version->out[0]);
+    c::SmithCoreRouted *bare = route_command(&u, "smith", nullptr, "", "", nullptr);
+    expect_status_is("no arguments: status 2", 2, bare);
+    scratch::expect_text("no arguments: usage", "usage: smith <command> [<arguments>]",
+                         first_line(&memory, &bare->err[0]));
+}
+
+export void test_run_smith_cc_with_no_arguments_is_clang_with_none() {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Unit u = make_unit(&memory, &p, false, "clang");
+    c::SmithCoreRouted *run = route_clang(&u, "", "");
+    scratch::expect_text("smith cc with no arguments is clang with none", format::push("exec ", u.cl).data,
+                         &run->exec[0]);
+}
+
+// The driver runs its own program again with -cc1, as bin/clang and bin/clang++ of the programs folder, which are links
+// to smith: those names act as the compiler, with the arguments as clang's.
+export void test_run_the_names_clang_and_clang_plus_plus_act_as_the_compiler() {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Unit u = make_unit(&memory, &p, false, "clang clang++");
+    c::SmithCoreRouted *clang = route_command(&u, format::push(u.dir, "/driver/clang").data, nullptr,
+                                              format::push("SMITH_CLANG=", u.cl).data, "-c|a.c", nullptr);
+    scratch::expect_text("the name clang acts as smith cc", format::push("exec ", u.cl, "\n[-c]\n[a.c]").data,
+                         &clang->exec[0]);
+    c::SmithCoreRouted *plus =
+        route_command(&u, format::push(u.dir, "/driver/clang++").data, nullptr,
+                      format::push("SMITH_CLANGXX=", u.dir, "/bin/clang++").data, "-c|a.cpp", nullptr);
+    scratch::expect_text("the name clang++ acts as smith c++",
+                         format::push("exec ", u.dir, "/bin/clang++\n[-c]\n[a.cpp]").data, &plus->exec[0]);
+}
+
+// ---- the wiring, with a process: what a unit test cannot show ----
+// The routes above stop where smith would exec. What happens at the exec (the program is replaced, its status and its
+// death by a signal become smith's, its standard error passes through) and the links by their names are the wiring.
+
+static void wiring_of_the_compiler(bool link) {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    Rig r = make_rig(arena, &p, link, "clang");
+    scratch::Run run = go_clang(&r, "", "-c \"a b.c\" -o out.o");
+    scratch::expect_text(nm(&r, "wiring: the stub clang runs with the arguments"),
+                         format::push("clang argv0=", r.cl, "\n[-c]\n[a b.c]\n[-o]\n[out.o]").data, run.out);
+    scratch::expect_text(nm(&r, "wiring: stderr passes through"), "clang-stderr", run.err);
+    scratch::expect_status(nm(&r, "wiring: status 0"), 0, &run);
+    scratch::Run exit_seven = go_clang(&r, "STUB_EXIT=7", "-c a.c");
+    scratch::expect_status(nm(&r, "wiring: exit status is preserved"), 7, &exit_seven);
+    scratch::Run signaled = go_clang(&r, "STUB_SIGNAL=15", "-c a.c");
+    scratch::expect_status(nm(&r, "wiring: death by signal is preserved (128 + 15)"), 143, &signaled);
+}
+
+export void test_run_verb_wiring_of_the_compiler() {
+    wiring_of_the_compiler(false);
+}
+
+export void test_run_link_wiring_of_the_compiler() {
+    wiring_of_the_compiler(true);
+}
+
+// fmt stands for the tools: the same wiring (clang-format, clang-tidy, clangd, lldb and lldb-dap differ in a name).
+export void test_run_tool_wiring_of_fmt() {
+    scratch::Project p = scratch::make("r", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    arena::Arena *arena = &memory;
+    Rig r = make_rig(arena, &p, false, "clang clang-format");
+    scratch::write(r.p, ".clang-tidy", "");
+    scratch::write(r.p, ".clang-format", "");
+    const char *stub = format::push(r.dir, "/bin/clang-format").data;
+    const char *var = format::push("SMITH_CLANG_FORMAT=", stub).data;
+    scratch::Run run = go(&r, var, "\"$SMITH_SELF\"", "fmt -i \"a b.c\" --style=file");
+    scratch::expect_text("fmt wiring: runs clang-format with the arguments",
+                         format::push("clang-format argv0=", stub, "\n[-i]\n[a b.c]\n[--style=file]").data, run.out);
+    scratch::expect_text("fmt wiring: stderr passes through", "clang-format-stderr", run.err);
+    scratch::Run exited = go(&r, format::push("STUB_EXIT=3 ", var).data, "\"$SMITH_SELF\"", "fmt a.c");
+    scratch::expect_status("fmt wiring: exit status is clang-format's", 3, &exited);
+    scratch::Run signaled = go(&r, format::push("STUB_SIGNAL=15 ", var).data, "\"$SMITH_SELF\"", "fmt a.c");
+    scratch::expect_status("fmt wiring: death by signal is preserved (128 + 15)", 143, &signaled);
+}
+
+// --smith-which names the clang inside, which only the real smith has (the units runner links none): the program's
+// folder and identity, and Homebrew's clang for a smith without one.
+static void in_process_which(bool link) {
     scratch::Project p = scratch::make("r", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
@@ -314,141 +741,17 @@ static void in_process_default(bool link) {
     }
 }
 
-export void test_run_verb_in_process_default() {
-    in_process_default(false);
+export void test_run_verb_in_process_which() {
+    in_process_which(false);
 }
 
-export void test_run_link_in_process_default() {
-    in_process_default(true);
-}
-
-// The SDK is chosen through the environment, never a flag, and only for what the caller left unset.
-static void sdk_environment(bool link) {
-    scratch::Project p = scratch::make("r", nullptr);
-    defer scratch::clean(&p);
-    arena::Arena memory = test::memory(memory_size);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    arena::Arena *arena = &memory;
-    Rig r = make_rig(arena, &p, link, "clang xcrun");
-    if (!is_darwin(&r)) {
-        test::note("not macOS: the SDK is not chosen");
-        return;
-    }
-    const char *path = format::push("PATH=\"", r.dir, "/bin:$PATH\"").data;
-    const char *clang = format::push("clang argv0=", r.cl, "\n[-c]\n[a.c]").data;
-    scratch::Run chosen = go(&r,
-                             format::push("-u SDKROOT -u CLANG_NO_DEFAULT_CONFIG ", path,
-                                          " STUB_SDK=/stub/sdk STUB_SHOW_ENV=1 SMITH_CLANG=", r.cl)
-                                 .data,
-                             r.cc, "-c a.c");
-    scratch::expect_text(nm(&r, "macOS: SDKROOT comes from xcrun and the default config is off, with no flag added"),
-                         format::push("env SDKROOT=/stub/sdk CLANG_NO_DEFAULT_CONFIG=1\n", clang).data, chosen.out);
-    scratch::Run mine = go(&r,
-                           format::push("-u CLANG_NO_DEFAULT_CONFIG SDKROOT=/mine ", path,
-                                        " STUB_SDK=/stub/sdk STUB_SHOW_ENV=1 SMITH_CLANG=", r.cl)
-                               .data,
-                           r.cc, "-c a.c");
-    scratch::expect_text(nm(&r, "macOS: the caller's SDKROOT wins, and the default config is still off"),
-                         format::push("env SDKROOT=/mine CLANG_NO_DEFAULT_CONFIG=1\n", clang).data, mine.out);
-    scratch::Run config = go(&r,
-                             format::push("-u SDKROOT CLANG_NO_DEFAULT_CONFIG=0 ", path,
-                                          " STUB_SDK=/stub/sdk STUB_SHOW_ENV=1 SMITH_CLANG=", r.cl)
-                                 .data,
-                             r.cc, "-c a.c");
-    scratch::expect_text(nm(&r, "macOS: the caller's CLANG_NO_DEFAULT_CONFIG wins"),
-                         format::push("env SDKROOT=/stub/sdk CLANG_NO_DEFAULT_CONFIG=0\n", clang).data, config.out);
-    scratch::Run failed = go(&r,
-                             format::push("-u SDKROOT -u CLANG_NO_DEFAULT_CONFIG ", path,
-                                          " STUB_SDK=/stub/sdk STUB_XCRUN_FAIL=1 STUB_SHOW_ENV=1 SMITH_CLANG=", r.cl)
-                                 .data,
-                             r.cc, "-c a.c");
-    scratch::expect_text(nm(&r, "macOS: when xcrun fails SDKROOT stays unset"),
-                         format::push("env SDKROOT=(unset) CLANG_NO_DEFAULT_CONFIG=1\n", clang).data, failed.out);
-    scratch::Run sysroot = go(&r,
-                              format::push("-u SDKROOT -u CLANG_NO_DEFAULT_CONFIG ", path,
-                                           " STUB_SDK=/stub/sdk STUB_SHOW_ENV=1 SMITH_CLANG=", r.cl)
-                                  .data,
-                              r.cc, "-isysroot /mine/sdk -c a.c");
-    scratch::expect_text(nm(&r, "macOS: the caller's -isysroot is forwarded untouched"),
-                         format::push("env SDKROOT=/stub/sdk CLANG_NO_DEFAULT_CONFIG=1\nclang argv0=", r.cl,
-                                      "\n[-isysroot]\n[/mine/sdk]\n[-c]\n[a.c]")
-                             .data,
-                         sysroot.out);
-}
-
-export void test_macos_run_verb_sdk_environment() {
-    sdk_environment(false);
-}
-
-export void test_macos_run_link_sdk_environment() {
-    sdk_environment(true);
-}
-
-// ---- fmt, lint, lsp, dbg and dap: the tool, with the arguments untouched, as the exact first argument ----
-
-static void tool_routes(const char *command, const char *program, const char *variable) {
-    scratch::Project p = scratch::make("r", nullptr);
-    defer scratch::clean(&p);
-    arena::Arena memory = test::memory(memory_size);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    arena::Arena *arena = &memory;
-    Rig r = make_rig(arena, &p, false, format::push("clang ", program).data);
-    // The folder has the project's own configuration, as the repository where the script ran has: smith adds its
-    // defaults to the tool's arguments only where a project has none.
-    scratch::write(r.p, ".clang-tidy", "");
-    scratch::write(r.p, ".clang-format", "");
-    const char *stub = format::push(r.dir, "/bin/", program).data;
-    const char *var = format::push(variable, "=", stub).data;
-    scratch::Run run =
-        go(&r, var, "\"$SMITH_SELF\"", format::push(command, " -i \"a b.c\" \"\" --style=file -DX=\"y z\"").data);
-    scratch::expect_text(format::push(command, ": runs ", program, " with every argument untouched").data,
-                         format::push(program, " argv0=", stub, "\n[-i]\n[a b.c]\n[]\n[--style=file]\n[-DX=y z]").data,
-                         run.out);
-    scratch::expect_text(format::push(command, ": stderr passes through").data, format::push(program, "-stderr").data,
-                         run.err);
-    scratch::Run exited =
-        go(&r, format::push("STUB_EXIT=3 ", var).data, "\"$SMITH_SELF\"", format::push(command, " a.c").data);
-    scratch::expect_status(format::push(command, ": exit status is ", program, "'s").data, 3, &exited);
-    scratch::Run signaled =
-        go(&r, format::push("STUB_SIGNAL=15 ", var).data, "\"$SMITH_SELF\"", format::push(command, " a.c").data);
-    scratch::expect_status(format::push(command, ": death by signal is preserved (128 + 15)").data, 143, &signaled);
-    scratch::Run missing = go(&r, format::push(variable, "=/nonexistent/", program).data, "\"$SMITH_SELF\"",
-                              format::push(command, " a.c").data);
-    scratch::expect_text(format::push(command, ": a missing tool is reported").data,
-                         format::push("smith: not an executable: /nonexistent/", program).data, missing.err);
-    // Only as the exact first argument: after another argument it is a file name, for the compiler.
-    scratch::Run after = go(&r, format::push("SMITH_CLANG=", r.cl, " ", var).data, "\"$SMITH_SELF\"",
-                            format::push("cc -c ", command, " a.c").data);
-    scratch::expect_text(format::push(command, ": after another argument it goes to clang").data,
-                         format::push("clang argv0=", r.cl, "\n[-c]\n[", command, "]\n[a.c]").data, after.out);
-}
-
-export void test_run_fmt_is_clang_format_with_the_arguments_untouched() {
-    tool_routes("fmt", "clang-format", "SMITH_CLANG_FORMAT");
-}
-
-export void test_run_lint_is_clang_tidy_with_the_arguments_untouched() {
-    tool_routes("lint", "clang-tidy", "SMITH_CLANG_TIDY");
-}
-
-export void test_run_lsp_is_clangd_with_the_arguments_untouched() {
-    tool_routes("lsp", "clangd", "SMITH_CLANGD");
-}
-
-export void test_run_dbg_is_lldb_with_the_arguments_untouched() {
-    tool_routes("dbg", "lldb", "SMITH_LLDB");
-}
-
-export void test_run_dap_is_lldb_dap_with_the_arguments_untouched() {
-    tool_routes("dap", "lldb-dap", "SMITH_LLDB_DAP");
+export void test_run_link_in_process_which() {
+    in_process_which(true);
 }
 
 // The tools are inside smith: the same LLVM as the compiler, run on the arguments, in smith's process. Only a smith
-// with clang inside has them (the default compiler says which), as on macOS.
+// with clang inside has them (the default compiler says which), as on macOS. These run the real tool, so a unit test
+// cannot show them.
 static bool tools_inside(const Rig *r) {
     if (!is_darwin(r)) {
         return false;
@@ -539,122 +842,6 @@ export void test_run_in_process_lsp_is_clangd_23() {
     scratch::expect_text("in-process: lsp is clangd 23", "yes",
                          starts_with(version.out, "clangd version 23.") ? "yes" : version.out);
 }
-
-// ---- the refusals and --smith-which of both forms ----
-
-static void compile_tail(bool link) {
-    scratch::Project p = scratch::make("r", nullptr);
-    defer scratch::clean(&p);
-    arena::Arena memory = test::memory(memory_size);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    arena::Arena *arena = &memory;
-    Rig r = make_rig(arena, &p, link, "clang xcrun");
-    scratch::Run self = go(&r, format::push("SMITH_CLANG=", r.dir, "/bin/selfclang").data, r.cc, "a.c");
-    scratch::expect_text(nm(&r, "a compiler that is smith itself is refused"),
-                         format::push("smith: refers to smith itself: ", r.dir, "/bin/selfclang").data, self.err);
-    scratch::expect_status(nm(&r, "self refusal: status 127"), 127, &self);
-    scratch::Run missing = go(&r, "SMITH_CLANG=/nonexistent/clang", r.cc, "a.c");
-    scratch::expect_text(nm(&r, "a missing compiler is reported"), "smith: not an executable: /nonexistent/clang",
-                         missing.err);
-    scratch::Run which = go_clang(&r, "", "--smith-which -c a.c");
-    scratch::expect_text(nm(&r, "--smith-which names the clang backend"), format::push("clang ", r.cl).data, which.out);
-    scratch::Run metal = go(&r, format::push("PATH=\"", r.dir, "/bin:$PATH\"").data, r.cc, "--smith-which a.metal");
-    scratch::expect_text(nm(&r, "--smith-which names the metal backend"),
-                         format::push("metal ", r.dir, "/bin/xcrun -sdk macosx metal").data, metal.out);
-    scratch::Run verbose = go_clang(&r, "SMITH_VERBOSE=1", "-c a.c");
-    scratch::expect_text(nm(&r, "SMITH_VERBOSE shows the command"),
-                         format::push("smith: exec ", r.cl, " -c a.c\nclang-stderr").data, verbose.err);
-}
-
-export void test_run_verb_refusals_and_which() {
-    compile_tail(false);
-}
-
-export void test_run_link_refusals_and_which() {
-    compile_tail(true);
-}
-
-// ---- the top level is only verbs ----
-
-export void test_run_bare_arguments_are_an_error_with_the_hint() {
-    scratch::Project p = scratch::make("r", nullptr);
-    defer scratch::clean(&p);
-    arena::Arena memory = test::memory(memory_size);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    arena::Arena *arena = &memory;
-    Rig r = make_rig(arena, &p, false, "clang");
-    const char *settings = format::push("SMITH_CLANG=", r.cl).data;
-    scratch::Run file = go(&r, settings, "\"$SMITH_SELF\"", "foo.c -o foo");
-    scratch::expect_text("bare: the compiler's arguments are an error with the hint",
-                         "smith: foo.c is not a smith command; to compile, run `smith cc foo.c -o foo`", file.err);
-    expect_nothing_ran("bare: status 2 and nothing ran", &file);
-    scratch::Run flag = go(&r, settings, "\"$SMITH_SELF\"", "-c a.c");
-    scratch::expect_text("bare: a flag first gets the same hint",
-                         "smith: -c is not a smith command; to compile, run `smith cc -c a.c`", flag.err);
-    scratch::Run which = go(&r, settings, "\"$SMITH_SELF\"", "--smith-which -c a.c");
-    scratch::expect_text("bare: --smith-which is a flag of the compiler verbs",
-                         "smith: --smith-which is not a smith command; to compile, run `smith cc --smith-which -c a.c`",
-                         which.err);
-    scratch::Run old = go(&r, settings, format::push("\"", r.dir, "/smith++\"").data, "-c a.cpp");
-    scratch::expect_text("bare: the old smith++ name is no compiler",
-                         "smith: -c is not a smith command; to compile, run `smith cc -c a.cpp`", old.err);
-}
-
-export void test_run_version_and_no_arguments() {
-    scratch::Project p = scratch::make("r", nullptr);
-    defer scratch::clean(&p);
-    arena::Arena memory = test::memory(memory_size);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    arena::Arena *arena = &memory;
-    scratch::Run version = scratch::sh(&p, "out=$(\"$SMITH_SELF\" version); rc=$?; printf '%s %s\\n' \"$rc\" "
-                                           "\"$(printf '%s\\n' \"$out\" | sed 's/ commit [0-9a-f]*$//')\"");
-    scratch::expect_text("version: the version line, status 0", "0 smith 0.0", version.out);
-    scratch::Run bare = scratch::sh(&p, "\"$SMITH_SELF\"");
-    scratch::expect_text("no arguments: usage, status 2", "2 usage: smith <command> [<arguments>]",
-                         format::push(bare.status, " ", first_line(arena, bare.err)).data);
-}
-
-export void test_run_smith_cc_with_no_arguments_is_clang_with_none() {
-    scratch::Project p = scratch::make("r", nullptr);
-    defer scratch::clean(&p);
-    arena::Arena memory = test::memory(memory_size);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    arena::Arena *arena = &memory;
-    Rig r = make_rig(arena, &p, false, "clang");
-    scratch::Run run = go_clang(&r, "", "");
-    scratch::expect_text("smith cc with no arguments is clang with none", format::push("clang argv0=", r.cl).data,
-                         run.out);
-}
-
-// The driver runs its own program again with -cc1, as bin/clang and bin/clang++ of the programs folder, which are links
-// to smith: those names act as the compiler, with the arguments as clang's.
-export void test_run_the_names_clang_and_clang_plus_plus_act_as_the_compiler() {
-    scratch::Project p = scratch::make("r", nullptr);
-    defer scratch::clean(&p);
-    arena::Arena memory = test::memory(memory_size);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    arena::Arena *arena = &memory;
-    Rig r = make_rig(arena, &p, false, "clang clang++");
-    scratch::Run clang =
-        go(&r, format::push("SMITH_CLANG=", r.cl).data, format::push(r.dir, "/driver/clang").data, "-c a.c");
-    scratch::expect_text("the name clang acts as smith cc", format::push("clang argv0=", r.cl, "\n[-c]\n[a.c]").data,
-                         clang.out);
-    scratch::Run plus = go(&r, format::push("SMITH_CLANGXX=", r.dir, "/bin/clang++").data,
-                           format::push(r.dir, "/driver/clang++").data, "-c a.cpp");
-    scratch::expect_text("the name clang++ acts as smith c++",
-                         format::push("clang++ argv0=", r.dir, "/bin/clang++\n[-c]\n[a.cpp]").data, plus.out);
-}
-
 // ---- the verbs that read the build need a build.c ----
 
 constexpr char no_build[_] = "smith: no build.c in this folder, and no main.smith or main.c to build by convention";
