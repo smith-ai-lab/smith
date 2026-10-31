@@ -61,7 +61,8 @@ export void test_lint_changed_without_a_ref_compares_with_where_the_branch_left_
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run edited = scratch::sh(&p, "git checkout -q -b work && printf '// edited\\n' >> c.c");
+    scratch::Run edited = scratch::sh(&p, "git update-ref refs/remotes/origin/main HEAD && git checkout -q -b work && "
+                                          "printf '// edited\\n' >> c.c");
     scratch::expect_status("c.c is edited on a branch", 0, &edited);
     scratch::Run run = scratch::sh(&p, "SMITH_OUTPUT=full smith lint --changed 2>&1");
     scratch::expect_status("the lint passes", 0, &run);

@@ -67,6 +67,28 @@ export void test_a_change_reruns_the_test_that_ran_it() {
     scratch::expect_contains("the record names the new run", run.out, "fn\tops.c\tops_mul");
 }
 
+// The selection of `--changed` names tests of every runner (units, front), so the verb gives the runner `--partial`
+// (#1154): a runner that owns none of the names has nothing to run and passes. A hand-typed `--test` does not get it,
+// so a name no runner knows still fails (the runner's side is tests/test_runner_platform_test.smith).
+export void test_a_changed_selection_is_given_to_the_runner_as_partial() {
+    scratch::Project p = scratch::make("p", "record_project");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    const char *edit = "sed 's/a \\* b/a * b + 0/' ops.c > next.c && mv next.c ops.c; ";
+    scratch::Run run = scratch::sh(
+        &p,
+        format::push(repository, "smith test --changed --base HEAD >/dev/null 2>&1; ", edit,
+                     "echo changed; smith test --changed --base HEAD 2>&1 | grep -c -e '--arg --partial --arg --test "
+                     "--arg mul_runs'; "
+                     "echo typed; smith test --test mul_runs 2>&1 | grep -c -e '--partial'")
+            .data);
+    scratch::expect_contains("the selection is partial", run.out, "changed\n1\n");
+    scratch::expect_contains("a typed --test is not", run.out, "typed\n0");
+}
+
 // A .c file that another includes (smith.c includes runtime/lang.c and the rest) is judged by function, not as a whole
 // input (#638): a change inside the function one test ran selects that test, and a change to a line of a table selects
 // every test that ran the program.

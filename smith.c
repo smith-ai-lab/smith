@@ -3548,28 +3548,29 @@ typedef struct {
     const char *name;
     SmithVerbKind kind;
     int (*project)(int count, char **args, const char *self); // what the verb does for the project itself
+    const char *summary;                                      // a few words, for `smith help <verb>`
 } SmithVerb;
 
 static const SmithVerb smith_verbs[] = {
-    {"cc", SmithVerb_Cc, nullptr},
-    {"c++", SmithVerb_Cxx, nullptr},
-    {"build", SmithVerb_Build, nullptr},
-    {"new", SmithVerb_New, nullptr},
-    {"fetch", SmithVerb_Fetch, nullptr},
-    {"cache", SmithVerb_Cache, nullptr},
-    {"symbolize", SmithVerb_Symbolize, nullptr},
-    {"docs", SmithVerb_Docs, nullptr},
-    {"version", SmithVerb_Version, nullptr},
-    {"fmt", SmithVerb_ToolOrProject, smith_fmt_verb},
-    {"lint", SmithVerb_ToolOrProject, smith_lint_project},
-    {"lsp", SmithVerb_Tool, nullptr},
-    {"run", SmithVerb_Project, smith_run_project},
-    {"test", SmithVerb_Project, smith_test_project},
-    {"check", SmithVerb_ProjectBare, smith_check_project},
-    {"prove", SmithVerb_ToolOrProject, smith_prove_project},
-    {"dbg", SmithVerb_Tool, nullptr},
-    {"dap", SmithVerb_Tool, nullptr},
-    {"mcp", SmithVerb_Mcp, nullptr},
+    {"cc", SmithVerb_Cc, nullptr, "compile and link as clang does"},
+    {"c++", SmithVerb_Cxx, nullptr, "compile and link C++ as clang does"},
+    {"build", SmithVerb_Build, nullptr, "build the project from its build.c"},
+    {"new", SmithVerb_New, nullptr, "start a project"},
+    {"fetch", SmithVerb_Fetch, nullptr, "fetch a package"},
+    {"cache", SmithVerb_Cache, nullptr, "show and clean the caches"},
+    {"symbolize", SmithVerb_Symbolize, nullptr, "turn stack traces into lines"},
+    {"docs", SmithVerb_Docs, nullptr, "check knowledge/ and the skills of the project"},
+    {"version", SmithVerb_Version, nullptr, "the version and the commit smith was built from"},
+    {"fmt", SmithVerb_ToolOrProject, smith_fmt_verb, "format the project (clang-format with arguments)"},
+    {"lint", SmithVerb_ToolOrProject, smith_lint_project, "lint the project (clang-tidy with arguments)"},
+    {"lsp", SmithVerb_Tool, nullptr, "clangd"},
+    {"run", SmithVerb_Project, smith_run_project, "run the project's program"},
+    {"test", SmithVerb_Project, smith_test_project, "build and run the project's tests"},
+    {"check", SmithVerb_ProjectBare, smith_check_project, "run all the project's checks"},
+    {"prove", SmithVerb_ToolOrProject, smith_prove_project, "prove the project's contracts"},
+    {"dbg", SmithVerb_Tool, nullptr, "lldb"},
+    {"dap", SmithVerb_Tool, nullptr, "lldb-dap, the Debug Adapter Protocol server"},
+    {"mcp", SmithVerb_Mcp, nullptr, "the debugger as an MCP server over stdio"},
 };
 
 static const SmithVerb *smith_find_verb(const char *name) {
@@ -3650,8 +3651,56 @@ static void smith_usage(FILE *out) {
           "  mcp                     the debugger as an MCP server over stdio (agents: launch, breakpoint, stack...)\n"
           "  docs                    check knowledge/ and the skills of the project\n"
           "  new, fetch, cache       start a project, fetch a package, show and clean the caches\n"
-          "  version                 the version and the commit smith was built from\n",
+          "  version                 the version and the commit smith was built from (also --version)\n"
+          "  help [<verb>]           this list, or the usage of one verb (also --help, -h)\n",
           out);
+}
+
+// Whether the name is in the list (ended by nullptr).
+static bool smith_name_in(const char *name, const char *const *names) {
+    for (size_t i = 0; names[i] != nullptr; i++) { // bounded by the list
+        if (strcmp(name, names[i]) == 0) return true;
+    }
+    return false;
+}
+
+// The verbs whose `--help` is a tool's or the verb's own usage; the others have none yet and print a line (#1138).
+static bool smith_verb_forwards_help(const char *name) {
+    static const char *const names[] = {"cc", "c++", "new", "fmt", "lint", "lsp", "dbg", "dap", nullptr};
+    return smith_name_in(name, names);
+}
+
+// The verbs that would run, build or fail on `--help`: it prints the line instead and runs nothing.
+static bool smith_verb_lacks_usage(const char *name) {
+    static const char *const names[] = {"run",   "build", "check",     "prove", "fetch",
+                                        "cache", "docs",  "symbolize", nullptr};
+    return smith_name_in(name, names);
+}
+
+static int smith_print_summary(const SmithVerb *verb) {
+    printf("smith %s: %s\nno detailed help yet\n", verb->name, verb->summary);
+    return 0;
+}
+
+// `smith help [<verb>]`: the list of verbs, or the usage of one, as `smith <verb> --help` prints it (the tool's own
+// for the tool verbs). A verb with no usage text of its own prints its one line and says so.
+static int smith_help_main(int count, char **args, const char *self) {
+    if (count == 0) {
+        smith_usage(stdout);
+        return 0;
+    }
+    const SmithVerb *verb = smith_find_verb(args[0]);
+    if (verb == nullptr) {
+        fprintf(stderr, "smith: %s is not a smith verb; `smith help` lists them\n", args[0]);
+        return smith_exit_usage;
+    }
+    if (strcmp(verb->name, "test") == 0) {
+        fputs(smith_test_usage, stdout);
+        return 0;
+    }
+    if (!smith_verb_forwards_help(verb->name)) return smith_print_summary(verb);
+    char *forward[] = {(char *)"smith", (char *)verb->name, (char *)"--help", nullptr};
+    return smith_dispatch(verb, 3, forward, self);
 }
 
 // `smith foo.c -o foo` has no meaning: the top level is only verbs. The compiler is `smith cc`.
@@ -3690,10 +3739,12 @@ static int smith_main_route(int argc, char **argv, const char *self) {
         smith_usage(stderr);
         return smith_exit_usage;
     }
-    if (strcmp(argv[1], "--help") == 0) {
+    if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
         smith_usage(stdout);
         return 0;
     }
+    if (strcmp(argv[1], "help") == 0) return smith_help_main(argc - 2, argv + 2, self);
+    if (strcmp(argv[1], "--version") == 0 && argc == 2) return smith_version_main(); // tools probe a program with it
     if (strcmp(argv[1], "--smith-sha256") == 0) return smith_sha256_main(argc - 2, argv + 2);
     if (strcmp(argv[1], "--smith-explain") == 0) {
 #ifdef __APPLE__
@@ -3711,6 +3762,9 @@ static int smith_main_route(int argc, char **argv, const char *self) {
     if (strcmp(argv[1], "--smith-slots") == 0) return smith_slots_main(argc - 2, argv + 2);
     const SmithVerb *verb = smith_find_verb(argv[1]);
     if (verb == nullptr) smith_bare_arguments(argc, argv);
+    if (argc > 2 && (strcmp(argv[2], "--help") == 0 || strcmp(argv[2], "-h") == 0) &&
+        smith_verb_lacks_usage(verb->name))
+        return smith_print_summary(verb); // before anything builds or runs
     // `smith build preflight` takes its base token at once and holds it for the whole check: its build, fmt, lint and
     // test are children that ride on it (SMITH_SLOT_HELD) and take tokens only for their further workers, so a
     // preflight waits for the machine once, at its start, not between its steps.

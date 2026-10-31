@@ -16,6 +16,8 @@ smith is a C toolchain written in C: clang, clang-format, clang-tidy, clangd, ll
 
 ## The verbs
 
+`smith --version` prints the version, `smith --help` (`-h`, `help`) lists the verbs, `smith help <verb>` prints one verb's usage; any other top-level flag is an error.
+
 | Verb | Load |
 | --- | --- |
 | `smith cc`, `smith c++`, `smith-cc`, `smith-c++` | [smith-cc](../smith-cc/SKILL.md); shaders [smith-metal](../smith-metal/SKILL.md) |

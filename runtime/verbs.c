@@ -1164,7 +1164,10 @@ static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
         fputs("smith test --changed: no test is affected\n", stderr);
         return 0;
     }
-    if (result == SmithChanged_Some && split->own_count + 2 <= smith_build_args_max) {
+    // The selection names tests of every runner (units, front), so a runner that owns none of them has nothing to
+    // run, which is no error: --partial (#1154). A hand-typed --test keeps the error for a name no runner knows.
+    if (result == SmithChanged_Some && split->own_count + 3 <= smith_build_args_max) {
+        split->own[split->own_count++] = (char *)"--partial";
         split->own[split->own_count++] = (char *)"--test";
         split->own[split->own_count++] = (char *)filter;
     }
