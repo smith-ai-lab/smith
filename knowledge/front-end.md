@@ -29,6 +29,14 @@ The syntax tree. Plain data: every type is exported with all its fields. `TypeEx
 
 **A limit for importers.** In a module that imports `front::ast`, a `case .name:` label on an ast payload enum makes the compiler read ast's body files ([body-files](body-files.md)), and that fails today (a private `typedef ExprRef ExprRefList[:]` loses its `;`, and a `mem` body says `smith_mem_allocator_name` is undeclared). Importers dispatch with `if (x->kind == .k)`. smith-enum narrowing is also lost once the node pointer is passed to a call, so read the payload fields into locals first.
 
+## front::parse_decl (`front/parse_decl.smith`, #1147)
+
+Declarations and whole files. `parse_decl::declaration(p)` is the hook `parse::Hooks.declaration`: it reads one declaration and consumes its own trailing `;` (a function with a body has none), so callers never expect one; it gives null after an error, with the parser past the bad declaration. `parse_decl::file(p, file)` reads an optional `module x::y;` (recorded in `Module.name` until the keyword is the switch) and declarations to the end of the file. Types come from `parse::type`, initializers from `parse::expression`, bodies from `parse::statement`.
+
+- **Reads**: prefixes in any order (attributes, `export static extern inline constexpr thread_local`); a variable (a type, one name, array suffixes after the name, the first suffix the outermost, `= init`); a function (parameters with array suffixes and attributes, `constexpr Type T`, `auto... rest`, `...`, `()` or `(void)`); `struct`, `union` (bit-fields `U32 flags : 3;`), plain and payload `enum` (`typedef enum { Circle circle; empty; } Shape;`, `enum Small : U8 {...}`), `typedef`; `import` in its three forms; `static_assert`; and `if constexpr (c) { decls } else { decls }`, nested and chained, read with an explicit stack of open blocks (no recursion).
+- **Anonymous records**: `struct { ... }` and `union { ... }` as a payload variant or the type of a variable are a `TypeKind.record`. One nested in a field is the type hook's to read, since this module may not recurse.
+- **Errors that name the fix**: several names in one declaration, C's function-pointer declarator (`Fn(I32 (I32)) f`), K&R parameters, implicit `int`, an array with no size, and a tag spelled as C does. After one, the declaration is skipped to its `;` or closing `}` and the parse goes on.
+
 ## front::cimport (track C)
 
 Declarations read from C headers become these same nodes; its concept comes with #1117 (`c-header-import.md`), and links here once that file exists.

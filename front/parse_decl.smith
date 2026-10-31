@@ -27,8 +27,8 @@
 // Nothing here recurses: a nested `if constexpr` is read with an explicit stack of open blocks; nested types and
 // bodies are the hooks'.
 //
-// A payload variant that is an anonymous struct (`struct { I32 a; } one;`) has no node in front::ast (`TypeKind` has no
-// record), so it is reported as an error until the tree has one (a question on the pull request of #1147).
+// An anonymous `struct { ... }` or `union { ... }` is a type (`TypeKind.record`): a payload variant, or the type of a
+// variable. The types of its fields come from the type hook, so a record nested in one is the hook's to read.
 module front::parse_decl;
 
 import front::ast;
@@ -444,9 +444,13 @@ static ParamList parse_params(parse::Parser *p, Bool *variadic) {
     return params;
 }
 
-// The type of a variable or function: `auto`, or the type hook's.
+static Bool at_anonymous_record(const parse::Parser *p);
+static ast::TypeExpr *parse_anonymous_record(parse::Parser *p);
+
+// The type of a variable or function: `auto`, an anonymous record, or the type hook's.
 static ast::TypeExpr *declared_type(parse::Parser *p) {
     if (parse::at(p, lex::kw_auto)) return auto_type(parse::advance(p).span);
+    if (at_anonymous_record(p)) return parse_anonymous_record(p);
     return parse::type(p);
 }
 
@@ -597,6 +601,26 @@ static FieldList parse_fields(parse::Parser *p) {
     return fields;
 }
 
+// `struct {` or `union {`: an anonymous record used as a type.
+static Bool at_anonymous_record(const parse::Parser *p) {
+    lex::TokenKind kind = parse::peek(p).kind;
+    return (kind == lex::kw_struct || kind == lex::kw_union) && parse::peek_at(p, 1).kind == lex::left_brace;
+}
+
+// `struct { fields }` or `union { fields }` as a type: a payload variant, or the type of a variable. Its fields' own
+// types come from the type hook, so a nest of anonymous records is the hook's, not a recursion here.
+static ast::TypeExpr *parse_anonymous_record(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    Bool is_union = parse::advance(p).kind == lex::kw_union;
+    parse::expect(p, lex::left_brace, "`{`");
+    FieldList fields = parse_fields(p);
+    parse::expect(p, lex::right_brace, "`}`");
+    ast::TypeKind kind = {.record = {.fields = fields, .is_union = is_union}};
+    ast::TypeExpr node = {.span = parse::span_from(p, start)};
+    node.kind = kind;
+    return ast::new_type(node);
+}
+
 // `struct Name { fields }` or `union`, the position at the keyword. A `typedef struct {...} Name;` has no tag name: the
 // caller gives it.
 static ast::DeclKind record_kind(parse::Parser *p) {
@@ -625,11 +649,10 @@ static Bool ends_variant(lex::TokenKind kind) {
 static ast::Enumerator parse_enumerator(parse::Parser *p) {
     ast::Enumerator item = {};
     U32 start = parse::peek(p).span.start;
-    if (parse::at(p, lex::kw_struct) || parse::at(p, lex::kw_union)) {
-        parse::error(p, parse::peek(p).span, "an anonymous struct payload has no form in the tree yet (see #1147)");
-        parse::advance(p);
-        if (parse::at(p, lex::left_brace)) skip_braces(p);
-        if (parse::at(p, lex::name)) parse::advance(p);
+    if (at_anonymous_record(p)) {
+        item.payload = parse_anonymous_record(p);
+        lex::Token name = parse::expect(p, lex::name, "a variant name");
+        if (name.kind == lex::name) item.name = parse::text(p, name);
     } else if (parse::at(p, lex::name) && ends_variant(parse::peek_at(p, 1).kind)) {
         item.name = parse::text(p, parse::advance(p));
         if (parse::accept(p, lex::equal)) item.value = parse::expression(p);
@@ -792,7 +815,8 @@ static ast::Decl *parse_simple(parse::Parser *p) {
     if (kind == lex::kw_import) return parse_import(p, &pre, start);
     if (kind == lex::kw_static_assert) return parse_static_assert(p, &pre, start);
     if (kind == lex::kw_typedef) return parse_typedef(p, &pre, start);
-    if (kind == lex::kw_struct || kind == lex::kw_union || kind == lex::kw_enum) return parse_tag(p, &pre, start);
+    Bool is_tag = kind == lex::kw_struct || kind == lex::kw_union || kind == lex::kw_enum;
+    if (is_tag && !at_anonymous_record(p)) return parse_tag(p, &pre, start);
     return parse_typed(p, &pre, start);
 }
 

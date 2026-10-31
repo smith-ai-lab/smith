@@ -440,11 +440,13 @@ export void test_parse_decl_error_a_missing_end() {
     expect_text(first_error("if (a) { I32 x; }"), not_constexpr);
 }
 
-export void test_parse_decl_error_an_anonymous_struct_payload() {
+export void test_parse_decl_anonymous_records() {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str expected = "an anonymous struct payload has no form in the tree yet (see #1147)";
-    expect_text(first_error("typedef enum { struct { I32 a; } one; empty; } Shape;"), expected);
+    Str source = "typedef enum { struct { I32 a; } one; union { U32 word; F32 real; } bits; empty; } Shape;\n"
+                 "struct { I32 x; I32 y; } origin;\n"
+                 "export union { U32 word; } shared[2];\n";
+    test::golden("tests/front/parse_decl/anonymous.txt", dump_of(source));
 }
