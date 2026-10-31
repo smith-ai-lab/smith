@@ -9,10 +9,44 @@
 // against it.
 module compare_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
+
+// What a test's commands print, and the texts made from it, go to an arena of the runner's (test::memory), the
+// current allocator from start to finish, so the test frees none of it; the project is made and cleaned inside it.
+constexpr usize memory_size = 1U << 24;
+static arena::Arena memory;
+static arena::ArenaAllocator allocator;
+static mem::Allocator *outside;
+
+static scratch::Project start(const char *fixture) {
+    memory = test::memory(memory_size);
+    allocator = arena::allocator(&memory);
+    outside = mem::set_allocator(&allocator.base);
+    return scratch::make("p", fixture);
+}
+
+static void finish(scratch::Project *p) {
+    scratch::clean(p);
+    mem::set_allocator(outside);
+}
+
+// The output of a command as $(...) gives it, without trailing newlines (scratch::capture reads a project's io).
+static const char *captured(const scratch::Project *p, const char *command) {
+    const char *out = scratch::sh(p, command).out;
+    usize length = 0;
+    while (out[length] != '\0')
+        length++;
+    while (length > 0 && out[length - 1] == '\n')
+        length--;
+    char *text = arena::push_slice(&memory, char, length + 1).data;
+    mem::copy(text[0:length], out[0:length]);
+    text[length] = '\0';
+    return text;
+}
 
 // $real: $SMITH_REAL, else the install smith links; empty when there is none.
 constexpr char find_real[_] =
@@ -132,14 +166,15 @@ constexpr char compare_case[_] =
     "fi\n";
 
 // One invocation `smith cc <arguments>` against the real compiler: through `smith cc` and through the link smith-cc.
-static void compared(io::Io *io, const char *arguments) {
-    scratch::Project p = scratch::project(io, "p", "compare");
+static void compared(const char *arguments) {
+    scratch::Project p = start("compare");
+    defer finish(&p);
     // The two assembly sources differ only in the case of their name, so on a case-insensitive disk they are one file,
     // the second.
     scratch::Run made = scratch::sh(&p, "printf '.text\\n.globl _f\\n_f:\\n ret\\n' >src.s; printf '#define R "
                                         "ret\\n.text\\n.globl _g\\n_g:\\n R\\n' >src.S");
     scratch::expect_status("compare: the sources are made", 0, &made);
-    const char *real = scratch::capture(&p, find_real);
+    const char *real = captured(&p, find_real);
     if (*real == '\0') {
         test::note("compare: skipped, no real clang (set SMITH_REAL)");
         return;
@@ -152,142 +187,142 @@ static void compared(io::Io *io, const char *arguments) {
     scratch::expect_text(name, "ok", run.out);
 }
 
-export void test_compare_version(io::Io *io) {
-    compared(io, "--version");
+export void test_compare_version() {
+    compared("--version");
 }
 
-export void test_compare_preprocess(io::Io *io) {
-    compared(io, "-E hello.c");
+export void test_compare_preprocess() {
+    compared("-E hello.c");
 }
 
-export void test_compare_compile_with_a_depfile(io::Io *io) {
-    compared(io, "-c hello.c -o out.o -MMD -MF out.d");
+export void test_compare_compile_with_a_depfile() {
+    compared("-c hello.c -o out.o -MMD -MF out.d");
 }
 
-export void test_compare_a_syntax_error_in_a_file_that_is_missing_a_symbol(io::Io *io) {
-    compared(io, "-fsyntax-only bad.c");
+export void test_compare_a_syntax_error_in_a_file_that_is_missing_a_symbol() {
+    compared("-fsyntax-only bad.c");
 }
 
-export void test_compare_a_missing_input(io::Io *io) {
-    compared(io, "nonexistent.c");
+export void test_compare_a_missing_input() {
+    compared("nonexistent.c");
 }
 
-export void test_compare_compile_standard_input(io::Io *io) {
-    compared(io, "-c -x c - -o stdin.o < hello.c");
+export void test_compare_compile_standard_input() {
+    compared("-c -x c - -o stdin.o < hello.c");
 }
 
-export void test_compare_preprocess_standard_input(io::Io *io) {
-    compared(io, "-E -x c - < hello.c");
+export void test_compare_preprocess_standard_input() {
+    compared("-E -x c - < hello.c");
 }
 
-export void test_compare_a_response_file(io::Io *io) {
-    compared(io, "@opts.rsp");
+export void test_compare_a_response_file() {
+    compared("@opts.rsp");
 }
 
-export void test_compare_the_commands_of_a_compile(io::Io *io) {
-    compared(io, "-### -c hello.c");
+export void test_compare_the_commands_of_a_compile() {
+    compared("-### -c hello.c");
 }
 
-export void test_compare_print_search_dirs(io::Io *io) {
-    compared(io, "-print-search-dirs");
+export void test_compare_print_search_dirs() {
+    compared("-print-search-dirs");
 }
 
-export void test_compare_print_resource_dir(io::Io *io) {
-    compared(io, "-print-resource-dir");
+export void test_compare_print_resource_dir() {
+    compared("-print-resource-dir");
 }
 
-export void test_compare_print_file_name_of_a_runtime(io::Io *io) {
-    compared(io, "-print-file-name=libclang_rt.asan_osx_dynamic.dylib");
+export void test_compare_print_file_name_of_a_runtime() {
+    compared("-print-file-name=libclang_rt.asan_osx_dynamic.dylib");
 }
 
-export void test_compare_verbose_compile(io::Io *io) {
-    compared(io, "-v -c hello.c -o out.o");
+export void test_compare_verbose_compile() {
+    compared("-v -c hello.c -o out.o");
 }
 
-export void test_compare_optimized_compile_with_warnings_and_debug_info(io::Io *io) {
-    compared(io, "-c -O2 -g -Wall -Wextra -std=gnu23 hello.c -o out.o");
+export void test_compare_optimized_compile_with_warnings_and_debug_info() {
+    compared("-c -O2 -g -Wall -Wextra -std=gnu23 hello.c -o out.o");
 }
 
-export void test_compare_compile_with_sanitizers(io::Io *io) {
-    compared(io, "-c -O1 -fsanitize=address,undefined -g hello.c -o out.o");
+export void test_compare_compile_with_sanitizers() {
+    compared("-c -O1 -fsanitize=address,undefined -g hello.c -o out.o");
 }
 
-export void test_compare_assembly(io::Io *io) {
-    compared(io, "-S hello.c -o out_a.s");
+export void test_compare_assembly() {
+    compared("-S hello.c -o out_a.s");
 }
 
-export void test_compare_llvm_ir(io::Io *io) {
-    compared(io, "-S -emit-llvm -O1 hello.c -o out_a.ll");
+export void test_compare_llvm_ir() {
+    compared("-S -emit-llvm -O1 hello.c -o out_a.ll");
 }
 
-export void test_compare_two_sources_to_objects(io::Io *io) {
-    compared(io, "-c hello.c other.c");
+export void test_compare_two_sources_to_objects() {
+    compared("-c hello.c other.c");
 }
 
-export void test_compare_assemble_s(io::Io *io) {
-    compared(io, "-c src.s -o out.o");
+export void test_compare_assemble_s() {
+    compared("-c src.s -o out.o");
 }
 
-export void test_compare_assemble_capital_s(io::Io *io) {
-    compared(io, "-c src.S -o out.o");
+export void test_compare_assemble_capital_s() {
+    compared("-c src.S -o out.o");
 }
 
-export void test_compare_dependencies(io::Io *io) {
-    compared(io, "-M hello.c");
+export void test_compare_dependencies() {
+    compared("-M hello.c");
 }
 
-export void test_compare_user_dependencies_with_a_target(io::Io *io) {
-    compared(io, "-MM -MG -MT t hello.c");
+export void test_compare_user_dependencies_with_a_target() {
+    compared("-MM -MG -MT t hello.c");
 }
 
-export void test_compare_preprocess_without_line_markers_with_definitions(io::Io *io) {
-    compared(io, "-E -P -dD hello.c");
+export void test_compare_preprocess_without_line_markers_with_definitions() {
+    compared("-E -P -dD hello.c");
 }
 
-export void test_compare_every_warning(io::Io *io) {
-    compared(io, "-fsyntax-only -Weverything hello.c");
+export void test_compare_every_warning() {
+    compared("-fsyntax-only -Weverything hello.c");
 }
 
-export void test_compare_colored_diagnostics(io::Io *io) {
-    compared(io, "-fsyntax-only -fcolor-diagnostics syntax.c");
+export void test_compare_colored_diagnostics() {
+    compared("-fsyntax-only -fcolor-diagnostics syntax.c");
 }
 
-export void test_compare_always_colored_diagnostics_as_errors(io::Io *io) {
-    compared(io, "-fsyntax-only -fdiagnostics-color=always -Werror bad.c");
+export void test_compare_always_colored_diagnostics_as_errors() {
+    compared("-fsyntax-only -fdiagnostics-color=always -Werror bad.c");
 }
 
-export void test_compare_cplusplus_syntax(io::Io *io) {
-    compared(io, "-x c++ -std=c++20 -fsyntax-only lib.cpp");
+export void test_compare_cplusplus_syntax() {
+    compared("-x c++ -std=c++20 -fsyntax-only lib.cpp");
 }
 
-export void test_compare_cplusplus_object(io::Io *io) {
-    compared(io, "-x c++ -c lib.cpp -o out.o");
+export void test_compare_cplusplus_object() {
+    compared("-x c++ -c lib.cpp -o out.o");
 }
 
-export void test_compare_objective_c_with_arc(io::Io *io) {
-    compared(io, "-c -x objective-c -fobjc-arc obj.m -o out.o");
+export void test_compare_objective_c_with_arc() {
+    compared("-c -x objective-c -fobjc-arc obj.m -o out.o");
 }
 
-export void test_compare_link_one_source(io::Io *io) {
-    compared(io, "hello.c -o prog");
+export void test_compare_link_one_source() {
+    compared("hello.c -o prog");
 }
 
-export void test_compare_link_two_sources(io::Io *io) {
-    compared(io, "hello.c other.c -o prog");
+export void test_compare_link_two_sources() {
+    compared("hello.c other.c -o prog");
 }
 
-export void test_compare_link_with_debug_info(io::Io *io) {
-    compared(io, "-g hello.c -o prog");
+export void test_compare_link_with_debug_info() {
+    compared("-g hello.c -o prog");
 }
 
-export void test_compare_link_with_sanitizers(io::Io *io) {
-    compared(io, "-fsanitize=address,undefined -g hello.c -o prog");
+export void test_compare_link_with_sanitizers() {
+    compared("-fsanitize=address,undefined -g hello.c -o prog");
 }
 
-export void test_compare_lto_object(io::Io *io) {
-    compared(io, "-O2 -flto -c hello.c -o out.o");
+export void test_compare_lto_object() {
+    compared("-O2 -flto -c hello.c -o out.o");
 }
 
-export void test_compare_a_file_prefix_map(io::Io *io) {
-    compared(io, "-c -g -ffile-prefix-map=/ignored=/mapped hello.c -o out.o");
+export void test_compare_a_file_prefix_map() {
+    compared("-c -g -ffile-prefix-map=/ignored=/mapped hello.c -o out.o");
 }

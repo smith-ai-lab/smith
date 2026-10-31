@@ -9,7 +9,6 @@
 module make_test;
 
 import smith::arena;
-import smith::io;
 import smith::test;
 import scratch;
 import <string.h>;
@@ -30,13 +29,13 @@ static const char *out_of(const scratch::Project *p, const char *command) {
     return scratch::capture(p, text);
 }
 
-static scratch::Project project(io::Io *io, const char *fixture) {
-    return scratch::project(io, "p", fixture);
+static scratch::Project project(const char *fixture) {
+    return scratch::make("p", fixture);
 }
 
 // main.c prints R1 .. R<count> (strings, or "unset"), which the Makefile gives as -DRn='"value"'.
 static void printer(const scratch::Project *p, i32 count) {
-    char *text = arena::push_slice(&p->io->arena, char, 65536).data;
+    char *text = mem::alloc_slice(char, 65536).data;
     usize used = (usize)__builtin_snprintf(text, 65536, "#include <stdio.h>\n");
     for (i32 i = 1; i <= count; i++)
         used +=
@@ -243,7 +242,7 @@ static void add_command(Commands *commands, char *line) {
 }
 
 // The canonical commands of the text of a build: only the lines of the compiler.
-static void canonical(io::Io *io, const char *text, Commands *commands) {
+static void canonical(const char *text, Commands *commands) {
     *commands = (Commands){};
     usize start = 0;
     while (text[start] != '\0') {
@@ -252,13 +251,13 @@ static void canonical(io::Io *io, const char *text, Commands *commands) {
             end++;
         }
         if (end - start < command_capacity) {
-            char *line = arena::push_slice(&io->arena, char, command_capacity).data;
+            char *line = mem::alloc_slice(char, command_capacity).data;
             mem::copy(line[0:end - start], text[start:start + end - start]);
             line[end - start] = '\0';
             name_the_compiler(line);
             drop_dependency_flags(line);
             if (c::strncmp(line, "CC ", 3) == 0 || c::strncmp(line, "CXX ", 4) == 0) {
-                char *words = arena::push_slice(&io->arena, char, command_capacity).data;
+                char *words = mem::alloc_slice(char, command_capacity).data;
                 add_command(commands, unquote(line, words, command_capacity) ? words : line);
             }
         }
@@ -319,8 +318,8 @@ static void drop_handlers(Commands *commands) {
     commands->count = kept;
 }
 
-static const char *joined(io::Io *io, const Commands *commands) {
-    char *text = arena::push_slice(&io->arena, char, command_capacity * 8).data;
+static const char *joined(const Commands *commands) {
+    char *text = mem::alloc_slice(char, command_capacity * 8).data;
     usize used = 0;
     for (usize i = 0; i < commands->count; i++) {
         usize length = c::strlen(commands->lines[i]);
@@ -335,7 +334,7 @@ static const char *joined(io::Io *io, const Commands *commands) {
 
 // The commands of `smith build -t commands`: a line `sh .smith/command/<file>` stands for the commands in the file.
 static const char *expand_commands(const scratch::Project *p, const char *raw) {
-    char *text = arena::push_slice(&p->io->arena, char, command_capacity * 8).data;
+    char *text = mem::alloc_slice(char, command_capacity * 8).data;
     usize used = 0;
     usize start = 0;
     while (raw[start] != '\0') {
@@ -360,19 +359,24 @@ static void same_commands(const scratch::Project *p, const char *name, const cha
     char label[256];
     Commands made;
     Commands smith;
-    canonical(p->io, run(p, "make -n -B 2>/dev/null").out, &made);
+    canonical(run(p, "make -n -B 2>/dev/null").out, &made);
     __builtin_snprintf(command, sizeof command, "smith build -t commands %s 2>/dev/null", targets);
-    canonical(p->io, expand_commands(p, run(p, command).out), &smith);
+    canonical(expand_commands(p, run(p, command).out), &smith);
     drop_handlers(&smith);
     __builtin_snprintf(label, sizeof label, "%s: the same compile and link commands as make", name);
-    scratch::expect_text(label, joined(p->io, &made), joined(p->io, &smith));
+    scratch::expect_text(label, joined(&made), joined(&smith));
     __builtin_snprintf(label, sizeof label, "%s: and some", name);
-    scratch::expect_contains(label, joined(p->io, &smith), "CC");
+    scratch::expect_contains(label, joined(&smith), "CC");
 }
 
 // 1. Variables: their flavors, expansion, += and ?=, substitution references, ${X}, override.
-export void test_make_variables(io::Io *io) {
-    scratch::Project p = project(io, "make_01");
+export void test_make_variables() {
+    scratch::Project p = project("make_01");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     printer(&p, 12);
     (void)translate(&p, "1");
     same_output(&p, "variables", "prog", "", "1");
@@ -381,8 +385,13 @@ export void test_make_variables(io::Io *io) {
 
 // 3. Rules: explicit and pattern rules, order-only prerequisites, the automatic variables, a recipe that is not a
 // compile.
-export void test_make_rules(io::Io *io) {
-    scratch::Project p = project(io, "make_03");
+export void test_make_rules() {
+    scratch::Project p = project("make_03");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     printer(&p, 1);
     (void)run(&p, "echo one >a.in; echo two >b.in");
     (void)translate(&p, "3");
@@ -396,8 +405,13 @@ export void test_make_rules(io::Io *io) {
 }
 
 // 4. Recipes: @ and -, line continuations, several lines.
-export void test_make_recipes(io::Io *io) {
-    scratch::Project p = project(io, "make_04");
+export void test_make_recipes() {
+    scratch::Project p = project("make_04");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)translate(&p, "4");
     (void)run(&p, "make >/dev/null 2>&1; cp out.txt make.out; rm out.txt; smith build >/dev/null 2>&1");
     scratch::expect_text("recipes: the lines run in order, - ignores a failure, a continuation joins",
@@ -405,8 +419,13 @@ export void test_make_recipes(io::Io *io) {
 }
 
 // 5. Phony targets, the default goal, and the names of smith's verbs.
-export void test_make_phony_targets_and_the_default_goal(io::Io *io) {
-    scratch::Project p = project(io, "make_05");
+export void test_make_phony_targets_and_the_default_goal() {
+    scratch::Project p = project("make_05");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     printer(&p, 1);
     (void)translate(&p, "5");
     (void)run(&p, "smith build >/dev/null 2>&1");
@@ -418,16 +437,26 @@ export void test_make_phony_targets_and_the_default_goal(io::Io *io) {
 }
 
 // 8. A test of the platform keeps both branches, as an if on b->os and b->arch.
-export void test_make_platform(io::Io *io) {
-    scratch::Project p = project(io, "make_08");
+export void test_make_platform() {
+    scratch::Project p = project("make_08");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     printer(&p, 5);
     (void)translate(&p, "8");
     same_output(&p, "platform", "prog", "", "8");
 }
 
 // 9. Command-line knobs are -D options of the build file.
-export void test_make_knobs(io::Io *io) {
-    scratch::Project p = project(io, "make_09");
+export void test_make_knobs() {
+    scratch::Project p = project("make_09");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     printer(&p, 3);
     (void)translate(&p, "9");
     same_output(&p, "knobs: the defaults", "prog", "", "9");
@@ -436,8 +465,13 @@ export void test_make_knobs(io::Io *io) {
 }
 
 // 11. An archive is a step, and the program that links it names it a library.
-export void test_make_archive(io::Io *io) {
-    scratch::Project p = project(io, "make_11");
+export void test_make_archive() {
+    scratch::Project p = project("make_11");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     printer(&p, 1);
     scratch::write(&p, "lib.c", "const char *name(void) { return \"lib\"; }\n");
     (void)translate(&p, "11");
@@ -445,8 +479,13 @@ export void test_make_archive(io::Io *io) {
 }
 
 // 12. Recursive make: a goal of the same Makefile, and -C another folder.
-export void test_make_recursive_make(io::Io *io) {
-    scratch::Project p = project(io, "make_12");
+export void test_make_recursive_make() {
+    scratch::Project p = project("make_12");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     printer(&p, 1);
     scratch::write(&p, "sub/lib.c", "const char *name(void) { return \"sub\"; }\n");
     (void)translate(&p, "12");
@@ -457,8 +496,13 @@ export void test_make_recursive_make(io::Io *io) {
 
 // 13. What is outside the subset is reported, and the rest still translates (what is said is in
 // tests/make_translate_test.smith): the build.c still builds.
-export void test_make_what_is_outside_the_subset_is_reported(io::Io *io) {
-    scratch::Project p = project(io, "make_13");
+export void test_make_what_is_outside_the_subset_is_reported() {
+    scratch::Project p = project("make_13");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     printer(&p, 1);
     (void)run(&p, "echo other >other");
     expect_zero("reported: the translation still exits 0", translate(&p, "13"));
@@ -466,8 +510,13 @@ export void test_make_what_is_outside_the_subset_is_reported(io::Io *io) {
 }
 
 // 14. The same commands as make for a small project with a flags variable and a pattern rule.
-export void test_make_the_same_commands_as_make(io::Io *io) {
-    scratch::Project p = project(io, "make_14");
+export void test_make_the_same_commands_as_make() {
+    scratch::Project p = project("make_14");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     printer(&p, 1);
     (void)run(&p, "cp main.c second.c; sed -i.bak 's/int main(void) {/int second_main(void) {/' second.c");
     (void)translate(&p, "14");
@@ -476,16 +525,26 @@ export void test_make_the_same_commands_as_make(io::Io *io) {
 }
 
 // 15. A rule under a test of the platform is a step that build.c declares only there; two that differ are reported.
-export void test_make_a_rule_under_a_test_of_the_platform(io::Io *io) {
-    scratch::Project p = project(io, "make_15");
+export void test_make_a_rule_under_a_test_of_the_platform() {
+    scratch::Project p = project("make_15");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)translate(&p, "15");
     (void)run(&p, "smith build >/dev/null 2>&1");
     scratch::expect_text("guarded rule: and the build.c builds it", "here", scratch::read(&p, "here.txt"));
 }
 
 // A wildcard of a command-line variable is read at its default, and said so.
-export void test_make_a_wildcard_of_an_option_is_read_at_its_default(io::Io *io) {
-    scratch::Project p = project(io, "make_16");
+export void test_make_a_wildcard_of_an_option_is_read_at_its_default() {
+    scratch::Project p = project("make_16");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)run(&p, "echo font >font.bdf");
     (void)translate(&p, "16");
     (void)run(&p, "smith build >/dev/null 2>&1");
@@ -493,8 +552,13 @@ export void test_make_a_wildcard_of_an_option_is_read_at_its_default(io::Io *io)
 }
 
 // 16. A folder with a build file is not translated (which Makefile comes first is in tests/make_translate_test.smith).
-export void test_make_which_makefile_and_when(io::Io *io) {
-    scratch::Project p = project(io, "make_17");
+export void test_make_which_makefile_and_when() {
+    scratch::Project p = project("make_17");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "build.c", "#include <smith/build.h>\nvoid build(SmithBuild *b) { (void)b; }\n");
     (void)run(&p, "smith build --dump-config >dumped.txt 2>&1");
     scratch::expect_lacks("files: a folder with a build.c is not translated", scratch::read(&p, "dumped.txt"),
@@ -503,8 +567,13 @@ export void test_make_which_makefile_and_when(io::Io *io) {
 
 // 17. A Makefile and a main, and no build file: --dump-config translates the Makefile, and nothing builds by
 // convention.
-export void test_make_a_makefile_and_a_main_and_no_build_file(io::Io *io) {
-    scratch::Project p = project(io, "make_18");
+export void test_make_a_makefile_and_a_main_and_no_build_file() {
+    scratch::Project p = project("make_18");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::write(&p, "main.c", "int main(void) { return 0; }\n");
     scratch::Run dump = run(&p, "smith build --dump-config");
     scratch::expect_status("makefile and main: --dump-config exits 0", 0, &dump);
@@ -524,8 +593,13 @@ export void test_make_a_makefile_and_a_main_and_no_build_file(io::Io *io) {
     scratch::expect_contains("no Makefile: the conventions are dumped", conventions.out, "smith_app");
 }
 
-static void empty_build_file_is_none(io::Io *io, const char *file) {
-    scratch::Project p = project(io, nullptr);
+static void empty_build_file_is_none(const char *file) {
+    scratch::Project p = project(nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     char text[256];
     char label[256];
     scratch::write(&p, "main.c", "int main(void) { return 0; }\n");
@@ -547,18 +621,23 @@ static void empty_build_file_is_none(io::Io *io, const char *file) {
 }
 
 // 18. An empty build file is none, for build.c and for build.smith, in the translator and in the conventions.
-export void test_make_an_empty_build_c_is_none(io::Io *io) {
-    empty_build_file_is_none(io, "build.c");
+export void test_make_an_empty_build_c_is_none() {
+    empty_build_file_is_none("build.c");
 }
 
-export void test_make_an_empty_build_smith_is_none(io::Io *io) {
-    empty_build_file_is_none(io, "build.smith");
+export void test_make_an_empty_build_smith_is_none() {
+    empty_build_file_is_none("build.smith");
 }
 
 // 19. A Makefile too big for one function of 70 lines: build.c is a function for each run of targets, the variables are
 // statics, and it still passes lint and fmt (translate checks) and builds.
-export void test_make_a_makefile_too_big_for_one_function(io::Io *io) {
-    scratch::Project p = project(io, nullptr);
+export void test_make_a_makefile_too_big_for_one_function() {
+    scratch::Project p = project(nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     (void)run(&p, "i=1; while [ \"$i\" -le 45 ]; do : >\"src$i.dat\"; i=$((i + 1)); done; "
                   "{ echo 'DATA := $(sort $(wildcard src*.dat))'; echo 'PREFIX ?= out'; i=1; "
                   "while [ \"$i\" -le 30 ]; do printf 'step%s: $(DATA)\\n\\t@touch $(PREFIX)%s.txt $(DATA)\\n' \"$i\" "

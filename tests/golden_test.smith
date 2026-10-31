@@ -2,25 +2,41 @@
 // goldens pass, differ, are too long to show, are missing, or are empty. Each test here is its own project.
 module golden_test;
 
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import scratch;
 
-export void test_golden_a_text_equal_to_its_file_passes(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "golden");
+export void test_golden_a_text_equal_to_its_file_passes() {
+    scratch::Project p = scratch::make("p", "golden");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::sh(&p, "env SMITH_OUTPUT=full smith test --test sample_test::matches");
     scratch::expect_status("golden: a match passes", 0, &run);
     scratch::expect_contains("golden: and the run says so", run.out, "1 passed, 0 failed");
 }
 
-export void test_golden_an_empty_text_equals_an_empty_file(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "golden");
+export void test_golden_an_empty_text_equals_an_empty_file() {
+    scratch::Project p = scratch::make("p", "golden");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::sh(&p, "env SMITH_OUTPUT=full smith test --test empty_file_and_text");
     scratch::expect_status("golden: empty and empty", 0, &run);
 }
 
-export void test_golden_a_mismatch_fails_with_the_diff(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "golden");
+export void test_golden_a_mismatch_fails_with_the_diff() {
+    scratch::Project p = scratch::make("p", "golden");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::sh(&p, "env SMITH_OUTPUT=full smith test --test sample_test::differs");
     scratch::expect_failure("golden: a mismatch fails", &run);
     scratch::expect_contains("golden: the expected file is on the left", run.out,
@@ -38,8 +54,13 @@ export void test_golden_a_mismatch_fails_with_the_diff(io::Io *io) {
                          scratch::read(&p, "expected/differs.txt"));
 }
 
-export void test_golden_a_long_diff_stops_at_forty_lines(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "golden");
+export void test_golden_a_long_diff_stops_at_forty_lines() {
+    scratch::Project p = scratch::make("p", "golden");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::sh(&p, "env SMITH_OUTPUT=full smith test --test sample_test::long");
     scratch::expect_failure("golden: a long diff fails", &run);
     scratch::expect_contains("golden: it shows the lines up to the limit", run.out, "-old 39");
@@ -49,8 +70,13 @@ export void test_golden_a_long_diff_stops_at_forty_lines(io::Io *io) {
                              "run smith test --update to accept");
 }
 
-export void test_golden_a_missing_file_fails_and_is_not_made(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "golden");
+export void test_golden_a_missing_file_fails_and_is_not_made() {
+    scratch::Project p = scratch::make("p", "golden");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::sh(&p, "env SMITH_OUTPUT=full smith test --test sample_test::missing");
     scratch::expect_failure("golden: a missing file fails", &run);
     scratch::expect_contains("golden: the message names the file and the way to write it", run.out,
@@ -58,8 +84,13 @@ export void test_golden_a_missing_file_fails_and_is_not_made(io::Io *io) {
     test::check(!scratch::exists(&p, "expected/made/new.txt"));
 }
 
-export void test_golden_update_writes_the_files_and_passes(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "golden");
+export void test_golden_update_writes_the_files_and_passes() {
+    scratch::Project p = scratch::make("p", "golden");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run run = scratch::sh(&p, "env SMITH_OUTPUT=full smith test --update");
     scratch::expect_status("golden: --update passes", 0, &run);
     scratch::expect_contains("golden: it lists a file it made", run.out, "wrote expected/made/new.txt");
