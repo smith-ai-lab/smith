@@ -125,12 +125,13 @@ jobs:
 
   pack:
     # the LLVM pack of a configuration no release holds yet, built and published by llvm.yml (#1064) before the jobs
-    # that need it start; it runs on the Mac only when the Mac is online and idle, else on hosted runners
+    # that need it start; it runs on the Mac only as overflow (hosted pool saturated), else on hosted runners
     needs: changes
     if: needs.changes.outputs.pack == 'true'
     uses: ./.github/workflows/llvm.yml
     permissions:
       contents: write # gh release create
+      actions: read # llvm.yml's pick-mac lists the queued and running jobs
     secrets: inherit
 
   build:
