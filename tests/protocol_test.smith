@@ -8,8 +8,9 @@
 // 500-key run under the sanitizers is by hand: `./build/tests --seeds 500` in the asan build.
 module protocol_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 
@@ -19,26 +20,31 @@ constexpr char setup[_] = "mkdir -p tests && cp generated/*.c generated/*.h prot
                           "&& cp generated/test_protocol_*.c tests/ && rm -rf generated";
 
 // The generated code and its tests build in a mode and every test of them passes.
-static void check_mode(io::Io *io, const char *mode) {
-    scratch::Project p = scratch::project(io, "protocol", "protocol");
+static void check_mode(const char *mode) {
+    scratch::Project p = scratch::make("protocol", "protocol");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "runtime/protocol", "protocol");
     scratch::copy_tree(&p, "tests/protocol", "protocol");
     scratch::copy_tree(&p, ".smith/protocol", "generated");
     scratch::Run copied = scratch::sh(&p, setup);
     scratch::expect_status("protocol: the project is made", 0, &copied);
-    scratch::Run built = scratch::build(&p, format::push(&io->arena, "-DMODE=", mode).data);
-    scratch::expect_status(format::push(&io->arena, mode, ": the generated code and its tests build").data, 0, &built);
+    scratch::Run built = scratch::build(&p, format::push(&memory, "-DMODE=", mode).data);
+    scratch::expect_status(format::push(&memory, mode, ": the generated code and its tests build").data, 0, &built);
     const char *count = scratch::capture(&p, "cat tests/test_protocol_*.c | grep -c '^void test_'");
     scratch::Run ran = scratch::sh(&p, "./build/tests 2>&1");
-    scratch::expect_status(format::push(&io->arena, mode, ": the tests run").data, 0, &ran);
-    scratch::expect_contains(format::push(&io->arena, mode, ": all ", count, " generated tests pass").data, ran.out,
-                             format::push(&io->arena, count, " passed, 0 failed").data);
+    scratch::expect_status(format::push(&memory, mode, ": the tests run").data, 0, &ran);
+    scratch::expect_contains(format::push(&memory, mode, ": all ", count, " generated tests pass").data, ran.out,
+                             format::push(&memory, count, " passed, 0 failed").data);
 }
 
-export void test_protocol_generated_code_passes_under_the_sanitizers(io::Io *io) {
-    check_mode(io, "asan");
+export void test_protocol_generated_code_passes_under_the_sanitizers() {
+    check_mode("asan");
 }
 
-export void test_protocol_generated_code_passes_optimized_without_assertions(io::Io *io) {
-    check_mode(io, "ndebug");
+export void test_protocol_generated_code_passes_optimized_without_assertions() {
+    check_mode("ndebug");
 }
