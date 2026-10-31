@@ -47,6 +47,8 @@ Declarations and whole files. `parse_decl::declaration(p)` is the hook `parse::H
 - **Anonymous records**: `struct { ... }` and `union { ... }` as a payload variant or the type of a variable are a `TypeKind.record`. One nested in a field is the type hook's to read, since this module may not recurse.
 - **Errors that name the fix**: several names in one declaration, C's function-pointer declarator (`Fn(I32 (I32)) f`), K&R parameters, implicit `int`, an array with no size, and a tag spelled as C does. After one, the declaration is skipped to its `;` or closing `}` and the parse goes on.
 
+**Statements** (`front/parse_stmt.smith`, A4): `parse_stmt::statement(p)` is the `statement` hook. It reads every statement form (blocks, `if` / `if constexpr`, loops, `switch`, jumps, labels, `defer`, `static_assert`) and a declaration-or-expression with no symbol table. Nesting is an explicit stack of frames, never recursion; after an error the rest of the statement is skipped and an `empty` placeholder stands in, so one mistake gives one error. Tests: `tests/front_parse_stmt_test.smith` with stub hooks and goldens in `tests/front/parse_stmt/`.
+
 ## front::cimport (track C)
 
 Declarations read from C headers become these same nodes; its concept comes with #1117 (`c-header-import.md`), and links here once that file exists.

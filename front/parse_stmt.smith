@@ -1,0 +1,698 @@
+// front::parse_stmt, the statements of smith's own front end (#1112, A4 of track A; internal, not wired into `smith
+// cc`).
+//
+// `parse_stmt::statement(p)` reads one statement into `ast::Stmt`; it is the hook, `p.hooks.statement =
+// parse_stmt::statement`. Expressions, types and declarations come through the other hooks (`parse::expression`,
+// `parse::declaration`); there is no symbol table, a capitalized name is a type and any other name is a value.
+//
+//   { ... }                    a block
+//   if (c) s else s            `if constexpr (c) ...` sets `is_constexpr`; an `else` binds to the nearest `if`
+//   while (c) s                `do s while (c);`
+//   for (init; cond; step) s   `init` is a declaration (one name; the declaration takes its own `;`), an expression
+//                              or nothing, `step` one expression (no comma operator); `for constexpr (...)`
+//   switch (v) { case 1: case 2: ...; case .circle: ...; default: ... }
+//                              consecutive labels join one `SwitchCase`; the statements up to the next label are its
+//                              body
+//   break; continue; return; return e; goto l; l: s; defer s; static_assert(c, "m"); ;
+//   an expression statement, or a declaration (below)
+//
+// A statement starts a declaration, and goes to `parse::declaration`, when it starts with a `type_name`, a path whose
+// last name is a `type_name` (`geometry::Box b`), a type or storage keyword (`const`, `static`, `auto`, `struct`,
+// `int`...), an attribute `[[`, or a `c::` path in the shape of a declaration (`c::size_t n;`, `c::stat *s;`); anything
+// else is an expression statement. The `c::` rule is the orchestrator's recommendation, kept in `c_path_declaration`.
+//
+// There is no recursion: the constructs that hold a statement (blocks, branches, loops, labels, `defer`, `switch`) are
+// frames of an explicit stack, so a deeply nested statement costs memory and never the call stack. A finished statement
+// is handed to the frame under it (`deliver`), which either takes it or closes and hands its own up.
+//
+// Recovery: after an error inside a statement, the rest of it is skipped (to the next `;` at the same depth, or to the
+// `}` that ends the block) and the statement is an `empty` placeholder, so one mistake gives one error and the next
+// statement parses. A broken `(...)` header is skipped as a whole and the body still parses.
+module front::parse_stmt;
+
+import front::ast;
+import front::lex;
+import front::parse;
+import std::mem;
+
+// What an open construct waits for.
+// NOLINTBEGIN(readability-identifier-naming)
+enum FrameKind {
+    block_frame,  // statements up to `}`
+    if_then,      // the then branch
+    if_else,      // the else branch
+    while_body,   // the body of a while
+    do_body,      // the body of a do, then `while (c);`
+    for_body,     // the body of a for
+    switch_frame, // labels and statements up to `}`
+    label_body,   // the statement after `l:`
+    defer_body,   // the statement after `defer`
+};
+// NOLINTEND(readability-identifier-naming)
+
+// An open construct. One struct for all kinds, so the stack is one slice; each kind uses the fields it needs.
+struct Frame {
+    FrameKind kind;
+    U32 start;
+    ast::Expr *condition;
+    ast::Stmt *init;
+    ast::Expr *step;
+    ast::Stmt *first; // the then branch while the else is read
+    Bool is_constexpr;
+    Str label;
+    ast::StmtRef items[:]; // a block's statements: the first `item_count` of the slice are in use
+    Usize item_count;
+    ast::SwitchCase cases[:];
+    ast::ExprRef values[:]; // the open case of a switch: the first `value_count` of the slice
+    Usize value_count;
+    ast::StmtRef body[:]; // and its statements, the first `body_count`
+    Usize body_count;
+    Bool case_open;
+    Bool case_default;
+    U32 case_start;
+};
+
+struct Stack {
+    Frame frames[:];
+    Usize depth;
+};
+
+static void push(Stack *stack, Frame frame) {
+    if (stack->depth == countof(stack->frames)) {
+        stack->frames = mem::realloc(stack->frames, stack->depth * 2 + 8);
+    }
+    stack->frames[stack->depth] = frame;
+    stack->depth += 1;
+}
+
+typedef typeof(ast::StmtRef[:]) StmtList;
+typedef typeof(ast::ExprRef[:]) ExprList;
+
+// A list of statements (or expressions) with room for one more after the first `count`. The room doubles, so a long
+// block is read in linear time. Not mem::alloc_slice: its instance for a pointer element draws the lint of a multilevel
+// conversion (as in ast.smith).
+static StmtList room_for_statement(StmtList list, Usize count) {
+    if (count < countof(list)) return list;
+    Usize capacity = count * 2 + 4;
+    ast::StmtRef *block = (ast::StmtRef *)mem::alloc_array_raw(sizeof(ast::StmtRef), capacity, alignof(ast::StmtRef));
+    for (Usize i = 0; i < count; i++)
+        block[i] = list[i];
+    StmtList bigger = block[0:capacity];
+    return bigger;
+}
+
+static ExprList room_for_expression(ExprList list, Usize count) {
+    if (count < countof(list)) return list;
+    Usize capacity = count * 2 + 4;
+    ast::ExprRef *block = (ast::ExprRef *)mem::alloc_array_raw(sizeof(ast::ExprRef), capacity, alignof(ast::ExprRef));
+    for (Usize i = 0; i < count; i++)
+        block[i] = list[i];
+    ExprList bigger = block[0:capacity];
+    return bigger;
+}
+
+static Frame *top(Stack *stack) {
+    return &stack->frames[stack->depth - 1];
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Recovery
+
+static Bool opens(lex::TokenKind kind) {
+    return kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace;
+}
+
+static Bool closes(lex::TokenKind kind) {
+    return kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace;
+}
+
+// Skips the rest of a broken statement: past the next `;` at the same depth, or up to the `}` that ends the block.
+static void skip_statement(parse::Parser *p) {
+    Usize depth = 0;
+    while (!parse::at(p, lex::end_of_file)) {
+        lex::TokenKind kind = parse::peek(p).kind;
+        if (depth == 0 && kind == lex::right_brace) return;
+        if (depth == 0 && kind == lex::semicolon) {
+            parse::advance(p);
+            return;
+        }
+        if (opens(kind))
+            depth += 1;
+        else if (closes(kind) && depth > 0)
+            depth -= 1;
+        parse::advance(p);
+    }
+}
+
+// Goes back to the `(` at `open` and skips the whole group, so a broken header gives its one error and the body parses.
+// Without a `(` there, the rest of the statement is skipped.
+static void skip_group(parse::Parser *p, Usize open) {
+    p->position = open;
+    if (!parse::at(p, lex::left_paren)) {
+        skip_statement(p);
+        return;
+    }
+    Usize depth = 0;
+    while (!parse::at(p, lex::end_of_file)) {
+        lex::TokenKind kind = parse::advance(p).kind;
+        if (opens(kind)) depth += 1;
+        if (closes(kind) && depth > 0) depth -= 1;
+        if (depth == 0) return;
+    }
+}
+
+// Skips a broken case label to its `:`.
+static void skip_label(parse::Parser *p) {
+    while (!parse::at(p, lex::end_of_file) && !parse::at(p, lex::semicolon) && !parse::at(p, lex::right_brace)) {
+        if (parse::advance(p).kind == lex::colon) return;
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Pieces
+
+// An expression through the hook; null, with an error recorded, when there is none.
+static ast::Expr *expression(parse::Parser *p) {
+    Usize before = countof(p->errors);
+    ast::Expr *value = parse::expression(p);
+    if (value == nullptr && countof(p->errors) == before) {
+        parse::error(p, parse::peek(p).span, "expected an expression");
+    }
+    return value;
+}
+
+// A statement node of the kind, in the current allocator.
+static ast::Stmt *new_stmt(ast::StmtKind kind) {
+    return ast::new_stmt((ast::Stmt){.kind = kind});
+}
+
+static ast::Stmt *empty_stmt() {
+    ast::StmtKind kind = .empty;
+    return new_stmt(kind);
+}
+
+static ast::StmtKind break_kind() {
+    return .break_stmt;
+}
+
+static ast::StmtKind continue_kind() {
+    return .continue_stmt;
+}
+
+// The statement `node` with its span from `start` to the last token taken.
+static ast::Stmt *spanned(const parse::Parser *p, U32 start, ast::Stmt *node) {
+    node->span = parse::span_from(p, start);
+    return node;
+}
+
+// What a leaf statement gives: the statement, or after an error the rest skipped and an `empty` placeholder.
+static ast::Stmt *settle(parse::Parser *p, U32 start, Usize before, ast::Stmt *built) {
+    if (countof(p->errors) > before) {
+        skip_statement(p);
+        built = empty_stmt();
+    }
+    return spanned(p, start, built);
+}
+
+// The condition of a header `( expression )`; `ok` is false when something was wrong (the group is then skipped).
+struct Header {
+    ast::Expr *condition;
+    Bool ok;
+};
+
+static Header header(parse::Parser *p) {
+    Header result = {};
+    Usize open = p->position;
+    Usize before = countof(p->errors);
+    parse::expect(p, lex::left_paren, "`(`");
+    if (countof(p->errors) == before) {
+        result.condition = expression(p);
+        parse::expect(p, lex::right_paren, "`)`");
+    }
+    result.ok = countof(p->errors) == before;
+    if (!result.ok) skip_group(p, open);
+    return result;
+}
+
+// Whether the keyword starts a declaration: a type or a storage class.
+static Bool declaration_keyword(lex::TokenKind kind) {
+    switch (kind) {
+    case lex::kw_alignas:
+    case lex::kw_atomic:
+    case lex::kw_auto:
+    case lex::kw_bit_int:
+    case lex::kw_bool:
+    case lex::kw_char:
+    case lex::kw_complex:
+    case lex::kw_const:
+    case lex::kw_constexpr:
+    case lex::kw_decimal32:
+    case lex::kw_decimal64:
+    case lex::kw_decimal128:
+    case lex::kw_double:
+    case lex::kw_enum:
+    case lex::kw_extern:
+    case lex::kw_float:
+    case lex::kw_imaginary:
+    case lex::kw_inline:
+    case lex::kw_int:
+    case lex::kw_long:
+    case lex::kw_noreturn:
+    case lex::kw_register:
+    case lex::kw_restrict:
+    case lex::kw_short:
+    case lex::kw_signed:
+    case lex::kw_static:
+    case lex::kw_struct:
+    case lex::kw_thread_local:
+    case lex::kw_typedef:
+    case lex::kw_typeof:
+    case lex::kw_typeof_unqual:
+    case lex::kw_union:
+    case lex::kw_unsigned:
+    case lex::kw_void:
+    case lex::kw_volatile:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Whether the path of `last + 1` names starting at the position, `c::name` or `c::name::more`, is the `c::` path of a
+// declaration. After `c::` case means nothing, so the shape decides: any `*`s, a name, then `=`, `;` or `[`. This is
+// the one place the rule lives (the lead may still change it).
+static Bool c_path_declaration(const parse::Parser *p, Usize last) {
+    Usize at = last + 1;
+    while (parse::peek_at(p, at).kind == lex::star)
+        at += 1;
+    lex::TokenKind named = parse::peek_at(p, at).kind;
+    if (named != lex::name && named != lex::type_name) return false;
+    lex::TokenKind after = parse::peek_at(p, at + 1).kind;
+    return after == lex::equal || after == lex::semicolon || after == lex::left_bracket;
+}
+
+// Whether a statement that starts with a name (a value's, as the case says) is a declaration: a path ending in a type
+// name, or a `c::` path in the shape of one.
+static Bool path_declaration(const parse::Parser *p) {
+    Usize last = 0;
+    while (parse::peek_at(p, last + 1).kind == lex::colon_colon) {
+        lex::TokenKind next = parse::peek_at(p, last + 2).kind;
+        if (next != lex::name && next != lex::type_name) break;
+        last += 2;
+    }
+    if (last == 0) return false;
+    Str c_name = "c";
+    if (mem::equal(parse::text(p, parse::peek(p)), c_name)) return c_path_declaration(p, last);
+    return parse::peek_at(p, last).kind == lex::type_name;
+}
+
+// Declaration or expression at the start of a statement, with no symbol table.
+static Bool starts_declaration(const parse::Parser *p) {
+    lex::TokenKind kind = parse::peek(p).kind;
+    if (kind == lex::type_name || declaration_keyword(kind)) return true;
+    if (kind == lex::left_bracket) return parse::peek_at(p, 1).kind == lex::left_bracket;
+    if (kind == lex::name) return path_declaration(p);
+    return false;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Leaf statements
+
+static ast::Stmt *declaration_statement(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    Usize before = countof(p->errors);
+    ast::Decl *decl = parse::declaration(p);
+    if (decl == nullptr && countof(p->errors) == before) {
+        parse::error(p, parse::peek(p).span, "expected a declaration");
+    }
+    return settle(p, start, before, new_stmt({.declaration = {.decl = decl}}));
+}
+
+static ast::Stmt *expression_statement(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    Usize before = countof(p->errors);
+    ast::Expr *value = expression(p);
+    if (countof(p->errors) == before) parse::expect(p, lex::semicolon, "`;`");
+    return settle(p, start, before, new_stmt({.expression = {.value = value}}));
+}
+
+// `break;` and `continue;`.
+static ast::Stmt *jump(parse::Parser *p, ast::StmtKind kind) {
+    U32 start = parse::advance(p).span.start;
+    Usize before = countof(p->errors);
+    parse::expect(p, lex::semicolon, "`;`");
+    return settle(p, start, before, new_stmt(kind));
+}
+
+static ast::Stmt *return_statement(parse::Parser *p) {
+    U32 start = parse::advance(p).span.start;
+    Usize before = countof(p->errors);
+    ast::Expr *value = nullptr;
+    if (!parse::at(p, lex::semicolon)) value = expression(p);
+    if (countof(p->errors) == before) parse::expect(p, lex::semicolon, "`;`");
+    return settle(p, start, before, new_stmt({.return_stmt = {.value = value}}));
+}
+
+static ast::Stmt *goto_statement(parse::Parser *p) {
+    U32 start = parse::advance(p).span.start;
+    Usize before = countof(p->errors);
+    lex::Token label = parse::expect(p, lex::name, "a label");
+    if (countof(p->errors) == before) parse::expect(p, lex::semicolon, "`;`");
+    return settle(p, start, before, new_stmt({.goto_stmt = {.label = parse::text(p, label)}}));
+}
+
+// The text of a string literal token without its quotes.
+static Str unquoted(const parse::Parser *p, lex::Token token) {
+    Str whole = parse::text(p, token);
+    if (countof(whole) < 2) return whole;
+    return whole[1:countof(whole) - 1];
+}
+
+// `static_assert(c, "m");`, the message optional.
+static ast::Stmt *static_assert_statement(parse::Parser *p) {
+    U32 start = parse::advance(p).span.start;
+    Usize before = countof(p->errors);
+    parse::expect(p, lex::left_paren, "`(`");
+    ast::Expr *condition = nullptr;
+    Str message = "";
+    if (countof(p->errors) == before) condition = expression(p);
+    if (countof(p->errors) == before && parse::accept(p, lex::comma)) {
+        lex::Token text = parse::expect(p, lex::string, "a message string");
+        message = unquoted(p, text);
+    }
+    if (countof(p->errors) == before) parse::expect(p, lex::right_paren, "`)`");
+    if (countof(p->errors) == before) parse::expect(p, lex::semicolon, "`;`");
+    ast::Stmt *built = new_stmt({.static_assert_stmt = {.condition = condition, .message = message}});
+    return settle(p, start, before, built);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Opening a construct
+
+// `{`, `if`, `while`, `do`, `defer` and `l:` open a frame; they read their header and give the frame.
+static Frame open_block(parse::Parser *p) {
+    Frame frame = {.kind = block_frame, .start = parse::advance(p).span.start};
+    return frame;
+}
+
+static Frame open_if(parse::Parser *p) {
+    Frame frame = {.kind = if_then, .start = parse::advance(p).span.start};
+    frame.is_constexpr = parse::accept(p, lex::kw_constexpr);
+    frame.condition = header(p).condition;
+    return frame;
+}
+
+static Frame open_while(parse::Parser *p) {
+    Frame frame = {.kind = while_body, .start = parse::advance(p).span.start};
+    frame.condition = header(p).condition;
+    return frame;
+}
+
+static Frame open_simple(parse::Parser *p, FrameKind kind) {
+    Frame frame = {.kind = kind, .start = parse::advance(p).span.start};
+    return frame;
+}
+
+static Frame open_label(parse::Parser *p) {
+    Frame frame = {.kind = label_body, .start = parse::peek(p).span.start};
+    frame.label = parse::text(p, parse::advance(p));
+    parse::advance(p);
+    return frame;
+}
+
+// `for [constexpr] (init; cond; step)`. A broken header is skipped as a whole.
+static Frame open_for(parse::Parser *p) {
+    Frame frame = {.kind = for_body, .start = parse::advance(p).span.start};
+    frame.is_constexpr = parse::accept(p, lex::kw_constexpr);
+    Usize open = p->position;
+    Usize before = countof(p->errors);
+    parse::expect(p, lex::left_paren, "`(`");
+    if (countof(p->errors) == before && !parse::accept(p, lex::semicolon)) {
+        if (starts_declaration(p)) {
+            frame.init = declaration_statement(p);
+        } else {
+            U32 start = parse::peek(p).span.start;
+            ast::Expr *value = expression(p);
+            parse::expect(p, lex::semicolon, "`;`");
+            frame.init = spanned(p, start, new_stmt({.expression = {.value = value}}));
+        }
+    }
+    if (countof(p->errors) == before) {
+        if (!parse::at(p, lex::semicolon)) frame.condition = expression(p);
+        parse::expect(p, lex::semicolon, "`;`");
+    }
+    if (countof(p->errors) == before) {
+        if (!parse::at(p, lex::right_paren)) frame.step = expression(p);
+        parse::expect(p, lex::right_paren, "`)`");
+    }
+    if (countof(p->errors) > before) skip_group(p, open);
+    return frame;
+}
+
+// `switch (v) {`; null, with the rest skipped, when the `{` is missing.
+static ast::Stmt *open_switch(parse::Parser *p, Stack *stack) {
+    U32 start = parse::advance(p).span.start;
+    Frame frame = {.kind = switch_frame, .start = start};
+    frame.condition = header(p).condition;
+    Usize before = countof(p->errors);
+    parse::expect(p, lex::left_brace, "`{`");
+    if (countof(p->errors) > before) return settle(p, start, before, empty_stmt());
+    push(stack, frame);
+    return nullptr;
+}
+
+// The statement at the position: a finished leaf, or null after opening a frame.
+static ast::Stmt *start(parse::Parser *p, Stack *stack) {
+    switch (parse::peek(p).kind) {
+    case lex::left_brace:
+        push(stack, open_block(p));
+        return nullptr;
+    case lex::kw_if:
+        push(stack, open_if(p));
+        return nullptr;
+    case lex::kw_while:
+        push(stack, open_while(p));
+        return nullptr;
+    case lex::kw_do:
+        push(stack, open_simple(p, do_body));
+        return nullptr;
+    case lex::kw_defer:
+        push(stack, open_simple(p, defer_body));
+        return nullptr;
+    case lex::kw_for:
+        push(stack, open_for(p));
+        return nullptr;
+    case lex::kw_switch:
+        return open_switch(p, stack);
+    case lex::kw_break:
+        return jump(p, break_kind());
+    case lex::kw_continue:
+        return jump(p, continue_kind());
+    case lex::kw_return:
+        return return_statement(p);
+    case lex::kw_goto:
+        return goto_statement(p);
+    case lex::kw_static_assert:
+        return static_assert_statement(p);
+    case lex::semicolon:
+        parse::advance(p);
+        return spanned(p, parse::peek(p).span.start, empty_stmt());
+    default:
+        break;
+    }
+    if (parse::at(p, lex::name) && parse::peek_at(p, 1).kind == lex::colon) {
+        push(stack, open_label(p));
+        return nullptr;
+    }
+    if (starts_declaration(p)) return declaration_statement(p);
+    return expression_statement(p);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Closing a construct
+
+// The open case of a switch frame goes to its list of cases.
+static void flush_case(const parse::Parser *p, Frame *frame) {
+    if (!frame->case_open) return;
+    ast::SwitchCase one = {.values = frame->values[0:frame->value_count],
+                           .is_default = frame->case_default,
+                           .body = frame->body[0:frame->body_count],
+                           .span = parse::span_from(p, frame->case_start)};
+    frame->cases = mem::realloc(frame->cases, countof(frame->cases) + 1);
+    frame->cases[countof(frame->cases) - 1] = one;
+    ast::ExprRef no_values[:] = {};
+    ast::StmtRef no_body[:] = {};
+    frame->values = no_values;
+    frame->value_count = 0;
+    frame->body = no_body;
+    frame->body_count = 0;
+    frame->case_open = false;
+    frame->case_default = false;
+}
+
+static void append(Frame *frame, ast::Stmt *done) {
+    if (frame->kind == switch_frame) {
+        frame->body = room_for_statement(frame->body, frame->body_count);
+        frame->body[frame->body_count] = done;
+        frame->body_count += 1;
+        return;
+    }
+    frame->items = room_for_statement(frame->items, frame->item_count);
+    frame->items[frame->item_count] = done;
+    frame->item_count += 1;
+}
+
+// `}` of a block or a switch: the construct is complete.
+static ast::Stmt *close_braces(parse::Parser *p, Frame frame) {
+    flush_case(p, &frame);
+    parse::expect(p, lex::right_brace, "`}`");
+    if (frame.kind == switch_frame) {
+        return spanned(p, frame.start, new_stmt({.switch_stmt = {.value = frame.condition, .cases = frame.cases}}));
+    }
+    return spanned(p, frame.start, new_stmt({.block = {.items = frame.items[0:frame.item_count]}}));
+}
+
+// `while (c);` after the body of a do.
+static ast::Stmt *close_do(parse::Parser *p, Frame frame, ast::Stmt *done) {
+    Usize before = countof(p->errors);
+    parse::expect(p, lex::kw_while, "`while`");
+    ast::Expr *condition = nullptr;
+    if (countof(p->errors) == before) condition = header(p).condition;
+    if (countof(p->errors) == before) parse::expect(p, lex::semicolon, "`;`");
+    ast::Stmt *built = new_stmt({.do_while = {.body = done, .condition = condition}});
+    if (countof(p->errors) > before) skip_statement(p);
+    return spanned(p, frame.start, built);
+}
+
+// A frame that holds one statement is complete with it; the statement it makes. (Not blocks and switches, `else`.)
+static ast::Stmt *close_one(parse::Parser *p, Frame frame, ast::Stmt *done) {
+    ast::Stmt *built = nullptr;
+    switch (frame.kind) {
+    case if_then:
+        built = new_stmt(
+            {.if_stmt = {.condition = frame.condition, .then_branch = done, .is_constexpr = frame.is_constexpr}});
+        break;
+    case if_else:
+        built = new_stmt({.if_stmt = {.condition = frame.condition,
+                                      .then_branch = frame.first,
+                                      .else_branch = done,
+                                      .is_constexpr = frame.is_constexpr}});
+        break;
+    case while_body:
+        built = new_stmt({.while_stmt = {.condition = frame.condition, .body = done}});
+        break;
+    case for_body:
+        built = new_stmt({.for_stmt = {.init = frame.init,
+                                       .condition = frame.condition,
+                                       .step = frame.step,
+                                       .body = done,
+                                       .is_constexpr = frame.is_constexpr}});
+        break;
+    case label_body:
+        built = new_stmt({.labeled = {.label = frame.label, .body = done}});
+        break;
+    case defer_body:
+        built = new_stmt({.defer_stmt = {.body = done}});
+        break;
+    default:
+        return close_do(p, frame, done);
+    }
+    return spanned(p, frame.start, built);
+}
+
+// Hands a finished statement to the frame under it. A block or a switch takes it and goes on; an `if` with an `else`
+// next takes it as its then branch; any other frame is complete with it and hands its own statement up. Gives the
+// statement of the whole parse once no frame is left, and null while a frame still wants more.
+static ast::Stmt *deliver(parse::Parser *p, Stack *stack, ast::Stmt *done) {
+    while (stack->depth > 0) {
+        Frame *frame = top(stack);
+        if (frame->kind == block_frame || frame->kind == switch_frame) {
+            append(frame, done);
+            return nullptr;
+        }
+        if (frame->kind == if_then && parse::accept(p, lex::kw_else)) {
+            frame->first = done;
+            frame->kind = if_else;
+            return nullptr;
+        }
+        Frame closed = *frame;
+        stack->depth -= 1;
+        done = close_one(p, closed, done);
+    }
+    return done;
+}
+
+// A `case` or `default` label of the switch on top of the stack.
+static void take_label(parse::Parser *p, Stack *stack) {
+    Frame *frame = top(stack);
+    lex::Token token = parse::advance(p);
+    if (frame->case_open && frame->body_count > 0) flush_case(p, frame);
+    if (!frame->case_open) {
+        frame->case_open = true;
+        frame->case_start = token.span.start;
+    }
+    Usize before = countof(p->errors);
+    if (token.kind == lex::kw_default) {
+        frame->case_default = true;
+    } else {
+        ast::Expr *value = expression(p);
+        if (value != nullptr) {
+            frame->values = room_for_expression(frame->values, frame->value_count);
+            frame->values[frame->value_count] = value;
+            frame->value_count += 1;
+        }
+    }
+    if (countof(p->errors) == before) parse::expect(p, lex::colon, "`:`");
+    if (countof(p->errors) > before) skip_label(p);
+}
+
+// One step of the loop: what the position and the frame on top ask for. A statement that is complete is given.
+static ast::Stmt *step(parse::Parser *p, Stack *stack) {
+    bool at_end = parse::at(p, lex::right_brace) || parse::at(p, lex::end_of_file);
+    if (stack->depth > 0) {
+        Frame *frame = top(stack);
+        if (frame->kind == block_frame && at_end) {
+            Frame closed = *frame;
+            stack->depth -= 1;
+            return close_braces(p, closed);
+        }
+        if (frame->kind == switch_frame) {
+            if (at_end) {
+                Frame closed = *frame;
+                stack->depth -= 1;
+                return close_braces(p, closed);
+            }
+            if (parse::at(p, lex::kw_case) || parse::at(p, lex::kw_default)) {
+                take_label(p, stack);
+                return nullptr;
+            }
+            if (!frame->case_open) {
+                parse::error(p, parse::peek(p).span, "expected `case` or `default` before a statement in a switch");
+                skip_statement(p);
+                return nullptr;
+            }
+        }
+    }
+    return start(p, stack);
+}
+
+// Reads one statement. After an error it is an `empty` placeholder and the parser stands at the next statement.
+export ast::Stmt *statement(parse::Parser *p) {
+    if (parse::at(p, lex::right_brace)) {
+        Usize before = countof(p->errors);
+        parse::error(p, parse::peek(p).span, "expected a statement, found `}`");
+        parse::advance(p);
+        return settle(p, parse::peek(p).span.start, before, empty_stmt());
+    }
+    Stack stack = {};
+    // Every step takes a token or closes a frame the tokens opened, so a count of eight steps to a token is a bound.
+    Usize steps_max = 8 * countof(p->tokens) + 16;
+    for (Usize steps = 0; steps < steps_max; steps++) {
+        ast::Stmt *done = step(p, &stack);
+        if (done == nullptr) continue;
+        done = deliver(p, &stack, done);
+        if (done != nullptr) return done;
+    }
+    parse::error(p, parse::peek(p).span, "the statement does not end");
+    return empty_stmt();
+}

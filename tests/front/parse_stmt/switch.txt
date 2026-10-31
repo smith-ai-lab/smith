@@ -1,0 +1,21 @@
+(module m
+  (function f
+    (result (named Void))
+    (block
+      (switch
+        (name v)
+        (case
+          (name 1)
+          (name 2)
+          (expression (name a))
+          (expression (name b)))
+        (case
+          (name .circle)
+          (return (name 1)))
+        (default
+          (name .square)
+          (if
+            (name x)
+            (block
+              (expression (name y))))))
+      (switch (name w)))))
