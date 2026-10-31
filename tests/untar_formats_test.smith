@@ -7,14 +7,13 @@ module untar_formats_test;
 
 import smith::arena;
 import smith::format;
-import smith::io;
 import smith::test;
 import scratch;
 import <string.h>;
 import smith::mem;
 
-static scratch::Project untar_project(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "untar");
+static scratch::Project untar_project() {
+    scratch::Project p = scratch::make("p", "untar");
     scratch::copy_tree(&p, "tests/untar.c", "tests/untar.c");
     scratch::copy_tree(&p, "tests/xz.py", "tests/xz.py");
     scratch::copy_tree(&p, "lib", "lib");
@@ -22,54 +21,61 @@ static scratch::Project untar_project(io::Io *io) {
     return p;
 }
 
-static scratch::Run run(const scratch::Project *p, const char *body) {
-    return scratch::sh(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+static scratch::Run run(arena::Arena *memory, const scratch::Project *p, const char *body) {
+    return scratch::sh(p, format::push(memory, ". ./prelude; ", body).data);
 }
 
-static const char *text(const scratch::Project *p, const char *body) {
-    return scratch::capture(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+static const char *text(arena::Arena *memory, const scratch::Project *p, const char *body) {
+    return scratch::capture(p, format::push(memory, ". ./prelude; ", body).data);
 }
 
 // A setup command that must succeed.
-static void setup(const scratch::Project *p, const char *body) {
-    scratch::Run made = run(p, body);
+static void setup(arena::Arena *memory, const scratch::Project *p, const char *body) {
+    scratch::Run made = run(memory, p, body);
     scratch::expect_status("the setup of the case", 0, &made);
 }
 
-static const char *join(const scratch::Project *p, const char *a, const char *b) {
-    return format::push(&p->io->arena, a, b).data;
+static const char *join(arena::Arena *memory, const char *a, const char *b) {
+    return format::push(memory, a, b).data;
 }
 
 // Fetches an archive (a path in the project) into a cache of its own; the package folder is in *package, or
 // "/nonexistent" when it failed.
-static scratch::Run fetch(const scratch::Project *p, const char *cache, const char *archive, const char **package) {
-    scratch::Run fetched = run(p, format::push(&p->io->arena, "XDG_CACHE_HOME=\"$PWD/cache-", cache,
-                                               "\" smith fetch \"file://$PWD/", archive, "\"")
-                                      .data);
+static scratch::Run fetch(arena::Arena *memory, const scratch::Project *p, const char *cache, const char *archive,
+                          const char **package) {
+    scratch::Run fetched =
+        run(memory, p,
+            format::push(memory, "XDG_CACHE_HOME=\"$PWD/cache-", cache, "\" smith fetch \"file://$PWD/", archive, "\"")
+                .data);
     *package = "/nonexistent";
     const char *start = fetched.status == 0 ? c::strstr(fetched.out, "\"sha256:") : nullptr;
     if (start != nullptr) {
-        char *hash = arena::push_slice(&p->io->arena, char, 65).data;
+        char *hash = arena::push_slice(memory, char, 65).data;
         mem::copy(hash[0:64], start[8:8 + 64]);
         hash[64] = '\0';
-        *package = format::push(&p->io->arena, p->dir, "/cache-", cache, "/smith/packages/", hash).data;
+        *package = format::push(memory, p->dir, "/cache-", cache, "/smith/packages/", hash).data;
     }
     return fetched;
 }
 
 // An archive that must extract to the same tree as the source folder.
-static void same(const scratch::Project *p, const char *name, const char *cache, const char *archive,
-                 const char *folder) {
+static void same(arena::Arena *memory, const scratch::Project *p, const char *name, const char *cache,
+                 const char *archive, const char *folder) {
     const char *package = nullptr;
-    scratch::Run fetched = fetch(p, cache, archive, &package);
-    scratch::expect_status(join(p, name, ": extracts"), 0, &fetched);
-    scratch::expect_text(join(p, name, ": the same tree, modes and bytes"),
-                         text(p, format::push(&p->io->arena, "listing \"", folder, "\"").data),
-                         text(p, format::push(&p->io->arena, "listing \"", package, "\" 2>/dev/null").data));
+    scratch::Run fetched = fetch(memory, p, cache, archive, &package);
+    scratch::expect_status(join(memory, name, ": extracts"), 0, &fetched);
+    scratch::expect_text(join(memory, name, ": the same tree, modes and bytes"),
+                         text(memory, p, format::push(memory, "listing \"", folder, "\"").data),
+                         text(memory, p, format::push(memory, "listing \"", package, "\" 2>/dev/null").data));
 }
 
-export void test_untar_tar_gz(io::Io *io) {
-    scratch::Project p = untar_project(io);
-    setup(&p, "make_a_tar; gzip -c \"$arc/a.tar\" >\"$arc/a.tar.gz\"");
-    same(&p, "tar.gz", "a", "arc/a.tar.gz", "src/pkg-1.0");
+export void test_untar_tar_gz() {
+    scratch::Project p = untar_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    setup(&memory, &p, "make_a_tar; gzip -c \"$arc/a.tar\" >\"$arc/a.tar.gz\"");
+    same(&memory, &p, "tar.gz", "a", "arc/a.tar.gz", "src/pkg-1.0");
 }

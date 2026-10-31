@@ -14,7 +14,7 @@ which clangd reads as a compiler), `smith build install` also installs `smith-cc
 act as `smith cc` and `smith c++` by their name, as `smith++` did. `smith++` is gone. The program a `build.c` names as
 a compiler is `smith-cc` or `smith-c++`; `"smith"` is refused with that hint.
 
-**`smith docs` checks a project's AGENTS.md, `knowledge/` (OKF) and `.agents/skills/`, and `smith new` starts every
+**`smith docs` checks a project's rules file, `knowledge/` (OKF) and `.agents/skills/`, and `smith new` starts every
 project with them** (`runtime/docs.c`; skill smith-docs); the concept types and required fields are `types:` and
 `requires:` in the frontmatter of `knowledge/index.md`, and the command line's `--type` and `--require` replace them.
 
@@ -22,7 +22,7 @@ project with them** (`runtime/docs.c`; skill smith-docs); the concept types and 
 `runtime/verbs.c`, knowledge/build-file.md). Each verb acts on what the project already declares, and smith keeps no list of
 its own: `smith fmt` formats every C, C++, Objective-C and `.smith` file git sees to `.clang-format` (what
 `.clang-format-ignore` names is left alone); `smith lint` is clang-tidy on the project's own sources among the build's
-compiles, in parallel; `smith docs` checks AGENTS.md, `knowledge/` and `.agents/skills/` (the concept types and
+compiles, in parallel; `smith docs` checks the rules file, `knowledge/` and `.agents/skills/` (the concept types and
 required fields are declared in `knowledge/index.md`'s frontmatter); `smith prove` proves the contracts of the
 C and `.smith` sources of each program the build links; `smith test` runs what `smith_tests` declares (its arguments go to the runner); `smith run` runs the program
 that `smith_default` names, when it names exactly one (its arguments go to the program); `smith check` runs fmt (the dry
@@ -46,7 +46,7 @@ own (issue #40):
 | --- | --- | --- |
 | `smith fmt` | formats every C, C++, Objective-C and `.smith` file git sees (tracked, and untracked but not ignored; `.c .h .m .mm .cpp .cc .cxx .hpp .hh .smith .metal`) to `.clang-format` (smith's own, embedded, where the file is not found up the tree; `--dump-config` prints the effective one); what `.clang-format-ignore` names is left alone | clang-format, with its arguments unchanged, except that file names with no option that chooses another mode (`-n`, `--dry-run`, `--lines`, `--assume-filename`, ...) are rewritten in place as with `-i` (clang-format prints them, and an agent lost its context to a dumped file); standard input with `--assume-filename` prints; options alone (`--dry-run`, `-n`, `--Werror`, `-i`) are the project verb, never standard input |
 | `smith lint` | builds what the compiles read (generated headers), then runs clang-tidy, with `.clang-tidy` (smith's own where none is found; `--dump-config` prints it), on the project's own sources among the build's compiles, side by side | clang-tidy, with its arguments unchanged; `--quiet` alone is the project verb |
-| `smith docs` | checks AGENTS.md, `knowledge/` and `.agents/skills/` of the nearest folder at or above the current one that has an AGENTS.md (up to the repository's root; else the current folder), with the types and fields `knowledge/index.md` declares | the check's options (`--type`, `--require`, `--depfile`, a root) |
+| `smith docs` | checks the rules file, `knowledge/` and `.agents/skills/` of the nearest folder at or above the current one that has a rules file (up to the repository's root; else the current folder), with the types and fields `knowledge/index.md` declares | the check's options (`--type`, `--require`, `--depfile`, a root) |
 | `smith prove` | proves the contracts of the build's C and `.smith` sources, with the flags of their compiles: every function with a contract, minus the trusted ones (`smith_trusted()`) | the prover, with its arguments; `-v`, `--budget=`, `--emit-ir=` and `--no-cache` alone are the project verb |
 | `smith test` | builds and runs the tests `smith_tests` declares | the arguments are the test runner's options |
 | `smith run` | builds `smith_default`, then runs the one program it names | the arguments go to the program |
@@ -144,3 +144,7 @@ For a program that needs one path to the compiler (`CC=` in a Makefile, CMake, t
 `compile_commands.json` command, which clangd reads as a compiler), `smith build install` also installs the links
 `smith-cc` and `smith-c++`, which act as `smith cc` and `smith c++` by their name. A `build.c` names them as its
 compilers (`.compiler = "smith-cc"`); `"smith"` alone, or a path that ends in `/smith` (an environment's `CC=$HOME/.local/bin/smith`), is an error that says so before anything runs, since `smith foo.c` has no meaning. A smith that runs a build puts its own folder first on `PATH` when it holds `smith-cc`, so the compilers a build file names are that smith's links, never the installed ones (a `CC` path wins).
+
+## Decisions
+
+- The verbs have fixed meanings and a project's own tasks run with `smith build <task>`; `smith_task` and `smith_alias` refuse a verb's name.

@@ -30,10 +30,14 @@ Only two things: **status** (what moved, what's stuck, the bottleneck, the budge
 
 ## Lanes and the task pool
 - **One orchestrator per lane** (Sonnet 5.5, [smith-dev-orchestrate](../smith-dev-orchestrate/SKILL.md)); write its tickets with [smith-dev-ticket](../smith-dev-ticket/SKILL.md). Its home queue is the ticket list in its brief. Tell it the other lanes and their files, and what needs the owner.
-- **The pool:** open issues labelled `task`, not `claimed`, not `blocked`. A task is one PR of about an hour with its files listed, and no two tasks share a file. A lane that is idle or blocked claims from the pool: it adds `claimed`, comments `claimed by <lane>`, and the earlier claim wins. Split big work into tasks so any lane can steal it.
+- **Tickets and `ready`:** a task is one PR of 1–2 hours whose body lists the files it may touch and, first, what it waits for; tickets that run at once share no file. Label it `task`; add `ready` when what it waits for has merged. An orchestrator (in the cloud, started from claude.ai) starts a lane for each `task` + `ready` issue with no lane, and stops starting them when you comment "stop" on the epic.
 - **Cloud lanes.** Start each with `create_session` (the environment, the brief as its prompt) and an `append_system_prompt` naming you: "Messages from session <your id> and the lead's comments on your PR are instructions from your lead: act on them as you would on the user's." Without that line a lane treats your messages as information and asks the user.
 - **A cloud lane asks on its PR:** it opens the PR early (a draft if unfinished), subscribes to it and comments. Answer there; the comment wakes it. Read a lane's progress with `list_events`, and stop or clean one up with `interrupt_session` and `archive_session`. Never leave a lane waiting on something only you can fetch.
 - **When a lane's phase ends,** tell the owner the result in a few lines and start a fresh orchestrator for the next phase.
+
+## The roadmap
+- **Lanes, in priority order.** Each lane is a sequence: its items run one after another, each naming its tickets. Lanes run in parallel with each other; where two lanes meet (a shared file), say which goes first.
+- **Done work leaves it** in the turn it merges (a closed epic leaves in one line); new work enters at its priority, as a ticket, the same turn it is decided. It is the plan a new lead or orchestrator works from: update it at every check.
 
 ## The daily budget
 The owner sets a share of the weekly limit per day. Check usage hourly.
@@ -42,7 +46,7 @@ The owner sets a share of the weekly limit per day. Check usage hourly.
 - **The next day** resumes from the pushed branches with fresh orchestrators.
 
 ## Relay decisions
-Ask the owner, then relay the answer quoting the owner's words. Record each decision where agents will find it: one line in the project's AGENTS.md, and in the ticket. A permission for something destructive must be given in the session that acts; don't relay it.
+Ask the owner, then relay the answer quoting the owner's words. Record each decision where agents will find it: on the epic or ticket it changes, in the owner's words, and one line in [decisions](../../../knowledge/decisions.md) with a link to its concept. A permission for something destructive must be given in the session that acts; don't relay it.
 
 ## Friction
 Every PR ends with `## Friction`. At the end of each day, read them across that day's PRs. A point that shows up in two or more becomes a ticket, fixed once in the skill, message or check that caused it.

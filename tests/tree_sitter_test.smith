@@ -11,8 +11,9 @@
 module tree_sitter_test;
 
 import smith::arena;
+import smith::env;
+import smith::files;
 import smith::format;
-import smith::io;
 import smith::test;
 import scratch;
 import smith::mem;
@@ -23,30 +24,30 @@ import <string.h>;
 constexpr char runtime_url[_] = "https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.27.1.tar.gz";
 constexpr char runtime_hash[_] = "sha256:982cd3d4d9eb7be18c243240a622423fd2e4ecb4bec2cd98832c2f3fa1f0f333";
 
-// The driver and the runtime, compiled by smith into ./driver (the driver loads the parser by
+constexpr usize memory_size = 1U << 22;
+
+// The driver and the runtime, compiled by smith into ./driver in the project (the driver loads the parser by
 // `smith cc --smith-tree-sitter`). False when the runtime is not available.
-static bool make_driver(io::Io *io, scratch::Project *p) {
-    *p = scratch::project(io, "ts", nullptr);
+static bool make_driver(arena::Arena *memory, const scratch::Project *p) {
     scratch::copy_tree(p, "tests/tree_sitter.c", "tests/tree_sitter.c");
     scratch::copy_tree(p, "tree-sitter/test/corpus", "tree-sitter/test/corpus");
     scratch::copy_tree(p, "tests/tree_sitter_cases", "tests/tree_sitter_cases");
-    scratch::Run fetched = scratch::sh(p, format::push(&io->arena, "smith fetch ", runtime_url, " 2>&1").data);
+    scratch::Run fetched = scratch::sh(p, format::push(memory, "smith fetch ", runtime_url, " 2>&1").data);
     if (!scratch::contains(fetched.out, runtime_hash)) {
         return false;
     }
     const char *runtime =
         format::push(
-            &io->arena,
+            memory,
             scratch::capture(
-                p,
-                format::push(&io->arena, "smith fetch ", runtime_url, " 2>&1 | sed -n 's/^smith: .* is in //p'").data),
+                p, format::push(memory, "smith fetch ", runtime_url, " 2>&1 | sed -n 's/^smith: .* is in //p'").data),
             "/lib")
             .data;
-    const char *driver = format::push(&io->arena, "smith cc -std=gnu23 -O1 -g -Wall -Wextra -Wpedantic -Werror -I ",
+    const char *driver = format::push(memory, "smith cc -std=gnu23 -O1 -g -Wall -Wextra -Wpedantic -Werror -I ",
                                       runtime, "/include -c tests/tree_sitter.c -o driver.o")
                              .data;
     const char *library =
-        format::push(&io->arena, "smith cc -std=gnu11 -O2 -w -D_POSIX_C_SOURCE=200112L -D_DEFAULT_SOURCE -I ", runtime,
+        format::push(memory, "smith cc -std=gnu11 -O2 -w -D_POSIX_C_SOURCE=200112L -D_DEFAULT_SOURCE -I ", runtime,
                      "/include -I ", runtime, "/src -c ", runtime, "/src/lib.c -o runtime.o")
             .data;
     scratch::Run run = scratch::sh(p, driver);
@@ -119,9 +120,14 @@ static void check_language_corpus(const scratch::Project *p) {
 }
 
 // The corpus, the samples and the language corpus, with one driver.
-export void test_tree_sitter_the_grammar_parses_its_corpus_and_samples(io::Io *io) {
-    scratch::Project p;
-    if (!make_driver(io, &p)) {
+export void test_tree_sitter_the_grammar_parses_its_corpus_and_samples() {
+    scratch::Project p = scratch::make("ts", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!make_driver(&memory, &p)) {
         return;
     }
     check_corpus(&p);
@@ -148,25 +154,30 @@ static bool left_out(const char *name) {
     return false;
 }
 
-// The top level of the repository, copied through io into own/ (the listing below runs there).
-static void copy_own_files(io::Io *io, const scratch::Project *p) {
-    const char *names = scratch::repo_names(io, ".");
-    for (const char *line = names; *line != '\0';) { // each name: a line
-        usize length = c::strcspn(line, "\n");
-        char *name = arena::push_slice(&io->arena, char, length + 1).data;
-        mem::copy(name[0:length], line[0:length]);
-        name[length] = '\0';
-        if (!left_out(name)) scratch::copy_tree(p, name, format::push(&io->arena, "own/", name).data);
-        line += length + 1;
+// The top level of the repository, listed through smith::files and copied into own/ (the listing below runs there).
+static void copy_own_files(arena::Arena *memory, const scratch::Project *p) {
+    env::Value repo = env::get("SMITH_REPO");
+    const char *base = repo == .some ? repo.some.data : ".";
+    files::EntriesResult listed = files::list(base[0:c::strlen(base)]);
+    test::check_condition(listed == .ok);
+    if (listed != .ok) return;
+    for (usize i = 0; i < countof(listed.ok); i++) {
+        const char *name = listed.ok[i].name.data;
+        if (!left_out(name)) scratch::copy_tree(p, name, format::push(memory, "own/", name).data);
     }
 }
 
-export void test_tree_sitter_smiths_own_c_parses_without_error_nodes(io::Io *io) {
-    scratch::Project p;
-    if (!make_driver(io, &p)) {
+export void test_tree_sitter_smiths_own_c_parses_without_error_nodes() {
+    scratch::Project p = scratch::make("ts", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!make_driver(&memory, &p)) {
         return;
     }
-    copy_own_files(io, &p);
+    copy_own_files(&memory, &p);
     scratch::Run listed = scratch::sh(&p, own_c_files);
     scratch::expect_status("smith's own C: the files are listed", 0, &listed);
     scratch::expect_text("smith's own C: there are files", "yes",
@@ -186,8 +197,13 @@ constexpr char loader_source[_] = "#include <dlfcn.h>\n#include <stdio.h>\n"
                                   "    return entry ? 0 : 1;\n"
                                   "}\n";
 
-export void test_tree_sitter_smith_cc_prints_the_path_of_the_parser(io::Io *io) {
-    scratch::Project p = scratch::project(io, "query", nullptr);
+export void test_tree_sitter_smith_cc_prints_the_path_of_the_parser() {
+    scratch::Project p = scratch::make("query", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run query = scratch::sh(&p, "smith cc --smith-tree-sitter > path.txt 2> errors.txt");
     scratch::expect_status("the query succeeds", 0, &query);
     scratch::expect_text("it prints one line and says nothing else", "1 0",

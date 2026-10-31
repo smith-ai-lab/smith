@@ -18,3 +18,7 @@ Apple's current `ld` writes; lld writes `objc_msgSend$` stubs per selector.
 
 **The system's other tools stay the system's**, found on `PATH`: `dsymutil` (Apple's; its output is the same size
 as LLVM's in `compare`), `libtool`, `xcrun`.
+
+## Decisions
+
+- The linker is lld in smith's process; the system's other tools (`dsymutil`, `libtool`, `xcrun`) stay the system's.

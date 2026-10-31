@@ -4,7 +4,7 @@ types: convention, architecture, contract, design
 ---
 # Knowledge
 
-What smith is and the contracts its code keeps. Read only the concepts your task needs. Skills say how; AGENTS.md holds the rules.
+What smith is and the contracts its code keeps. Read only the concepts your task needs. Skills say how; [decisions](decisions.md) lists every decision.
 
 ## Architecture
 
@@ -54,7 +54,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [A proof is fast, and fast is CPU time](proof-budget.md): Each proof has a budget of about 30 s of CPU time charged as on 8 idle cores (10 s again once hosted CI is in place), so a busy machine slows a proof and never fails it.
 - [A module's generated C header](smith-module-headers.md): A module's header includes exactly what its exports need, and C and C++ code calls a module through it.
 - [smith-preprocessor, the check that a .smith file has no directive](smith-preprocessor-check.md): A clang-tidy check reports every directive, _Pragma and C-macro c:: name in a .smith file, each with its replacement.
-- [Typed memory functions, and the raw ones are an error in a module](mem-typed-functions.md): smith::mem has copy, move, zero, fill, equal, bytes and view over slices, and the clang-tidy check smith-mem reports C's memcpy, memmove, memset and memcmp in a module.
+- [Typed memory functions, and the raw ones are an error in a module](mem-typed-functions.md): smith::mem has copy, move, zero, fill, equal, bytes and view over slices, and the clang-tidy check smith-mem reports C's memcpy, memmove, memset, memcmp, malloc, calloc, aligned_alloc, posix_memalign and free in a module.
 - [No preprocessor, and the target's facts](smith-target-facts.md): A .smith file has no preprocessor, import target gives the facts of the target as literals, and if constexpr picks a branch before the parser.
 
 ## Designs
@@ -85,6 +85,8 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [Sanitized processes start as fast as Apple's](sanitizer-startup.md): A two-line compiler-rt patch gives AddressSanitizer's shadow the fast mmap flag on arm64, so a sanitized process starts in 9 ms.
 - [smith is built by its previous release](smith-bootstrap.md): A clone with no smith downloads the release of its newest ancestor commit and builds with it; no committed copy of the libraries, no stage0 built by Homebrew's clang.
 - [Generic functions are lowered, not templates](smith-generics.md): constexpr type parameters and auto parameters make one weak hidden instance per list of types, chosen and written by the lowering before the parser.
+- [A module in one page](module-in-one-page.md): What a module rejects, what it offers instead, and the memory, error and concurrency models, with the status of each row (built or planned); the design of a module as a whole, kept current by the lead.
+- [Every decision, in one line each](decisions.md): The owner's decisions about smith, one line each, with a link to the concept that holds the reasoning and the owner's words.
 - [How the lowering works](smith-lowering-internals.md): The lowering is a state machine on the token hook, written against runtime/lang.h, with a table of the names it made and a small interface to clang.
 - [Names as written in the editor, lint and diagnostics](smith-names-as-written.md): smith lsp and smith lint lower .smith files too, and report names, notes and fix-its as the source wrote them, never guessed from underscores.
 - [smith new writes the program and what agents need](smith-new.md): smith new writes a program, its tests and the agent documents, with no configuration, and builds and commits once.
