@@ -1426,7 +1426,7 @@ static int smith_check_project(int count, char **args, const char *self) {
         static SmithVerbArgs test_split;
         test_split = *split;
         test_split.options[test_split.option_count++] = (char *)"--skip-macos";
-        fprintf(stderr, "smith check: the macOS-only tests are skipped on this host\n");
+        fprintf(stderr, "smith check: the macOS-only tests do not run on this host\n");
         smith_check_run(self, "test", &test_split, loud, failed, &failed_count);
 #endif
         if (smith_has_prover()) {
