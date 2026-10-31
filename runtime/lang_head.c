@@ -428,11 +428,11 @@ static bool smith_lang_head_slice_struct(const SmithLang *lang, size_t at) {
     const SmithLangHeld *tag = &lang->head[at + 1];
     const SmithLangHeld *brace = &lang->head[at + 2];
     const char *name = smith_lang_scratch_str(tag->text);
-    return keyword->synthetic && tag->synthetic && brace->synthetic &&
-           smith_lang_equals(smith_lang_scratch_str(keyword->text), keyword->text.length, "struct") &&
-           ((tag->text.length > 12 && memcmp(name, "smith_array_", 12) == 0) ||
-            (tag->text.length > 12 && memcmp(name, "smith_tuple_", 12) == 0)) &&
-           smith_lang_equals(smith_lang_scratch_str(brace->text), brace->text.length, "{");
+    bool brace_open = smith_lang_equals(smith_lang_scratch_str(brace->text), brace->text.length, "{");
+    bool keyword_struct = smith_lang_equals(smith_lang_scratch_str(keyword->text), keyword->text.length, "struct");
+    if (!tag->synthetic || !brace_open || !keyword_struct || tag->text.length <= 12) return false;
+    if (memcmp(name, "smith_tuple_", 12) == 0) return true; // a tuple's `struct` and `{` are the source's own
+    return keyword->synthetic && brace->synthetic && memcmp(name, "smith_array_", 12) == 0;
 }
 
 // An exported function's prototype and its definition both define a slice's struct in their parameter lists: two

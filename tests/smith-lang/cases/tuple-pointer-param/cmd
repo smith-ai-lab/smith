@@ -1,0 +1,1 @@
+main.smith -O1 -o @OUT@/program
