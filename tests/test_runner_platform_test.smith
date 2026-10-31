@@ -81,7 +81,7 @@ export void test_runner_platform_a_filter_of_only_the_other_half_runs_nothing_an
     scratch::expect_contains("platform: ... and says so", none.out, "no test matches \"nothing_like_this\"");
 }
 
-// `--partial` (#1145): the front runner is one of several runners that `smith test --changed` gives the same `--test`
+// `--partial` (#1154): the front runner is one of several runners that `smith test --changed` gives the same `--test`
 // list, so a list with none of its tests runs nothing and passes; without `--partial` the same list is an error.
 export void test_runner_partial_a_filter_of_another_runner_runs_nothing_and_passes() {
     scratch::Project p = runner::built_project("runner_base", "runner_platform", "");
