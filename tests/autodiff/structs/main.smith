@@ -8,7 +8,9 @@ module main;
 import <math.h>;
 import smith::arena;
 import smith::autodiff;
-import smith::io;
+import smith::console;
+import smith::format;
+import smith::mem;
 
 typedef struct {
     f32 m;
@@ -62,7 +64,7 @@ f64 tolerance = 1e-12;
 f64 worst = 0.0;
 bool ok = true;
 
-void report(io::Console *console, const char *name, const f64 *got, const f64 *want, usize n, f64 limit) {
+void report(const char *name, const f64 *got, const f64 *want, usize n, f64 limit) {
     f64 scale = 0.0;
     f64 difference = 0.0;
     for (usize i = 0; i < n; i++) {
@@ -70,7 +72,8 @@ void report(io::Console *console, const char *name, const f64 *got, const f64 *w
         difference = c::fmax(difference, c::fabs(got[i] - want[i]));
     }
     f64 relative = scale > 0.0 ? difference / scale : difference;
-    (void)io::console_printf(console, "  %-22s n=%-3zu maxrel=%.3e limit=%.0e\n", name, n, relative, limit);
+    (void)console::print("  ", format::left(name, 22), " n=", format::left(n, 3), " maxrel=", format::scientific(relative, 3), " limit=",
+                         format::scientific(limit, 0), "\n");
     if (limit <= tolerance) {
         worst = c::fmax(worst, relative);
     }
@@ -96,12 +99,12 @@ usize flatten(const Net *p, f64 *out) {
 constexpr usize numbers = 3 + 2 + 1 + 4 + 1 + 1 + 2;
 
 // A net with layers of 3, 4 and 2 weights and given numbers; no value is special.
-Net make_net(arena::Arena *arena, f64 seed) {
+Net make_net(f64 seed) {
     Net p = {
-        .layers = arena::push_slice(arena, Layer, 3), .scale = {1.5 + seed, -0.5 + seed}, .tag = 0.75f, .steps = 7};
+        .layers = mem::alloc_slice(Layer, 3), .scale = {1.5 + seed, -0.5 + seed}, .tag = 0.75f, .steps = 7};
     usize sizes[3] = {3, 4, 2};
     for (usize j = 0; j < 3; j++) {
-        p.layers[j].w = arena::push_slice(arena, f64, sizes[j]);
+        p.layers[j].w = mem::alloc_slice(f64, sizes[j]);
         for (usize i = 0; i < sizes[j]; i++) {
             p.layers[j].w[i] = 0.3 * (f64)(j + 1) - 0.17 * (f64)i + seed;
         }
@@ -154,9 +157,12 @@ f64 learning_rate = 0.05;
 f64 beta1 = 0.9;
 f64 beta2 = 0.999;
 
-i32 main(io::Io *io) {
-    io::Console *console = &io->console;
-    arena::Arena *arena = &io->arena;
+i32 main() {
+    arena::Arena memory = arena::growing((usize)1 << 20, nullptr);
+    defer arena::release(&memory);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
 
     // 1. A model of two f32 numbers: the gradient of sum (m x + b - y)^2, nothing but numbers to allocate.
     Model model = {.m = 0.5f, .b = -0.25f};
@@ -169,14 +175,14 @@ i32 main(io::Io *io) {
         dm += 2.0f * r * points.x[i];
         db += 2.0f * r;
     }
-    (void)io::console_printf(console, "model:\n");
+    (void)console::print("model:\n");
     f64 mgot[2] = {(f64)mg.m, (f64)mg.b};
     f64 mwant[2] = {(f64)dm, (f64)db};
-    report(console, "dm, db", mgot, mwant, 2, 1e-5);
+    report("dm, db", mgot, mwant, 2, 1e-5);
 
     // 2. A net: the gradient against the analytic one; the integer comes back zero, every array has the length of its
     // own.
-    Net net = make_net(arena, 0.0);
+    Net net = make_net(0.0);
     f64 data[2] = {1.25, -0.75};
     Batch batch = {};
     batch.x = data;
@@ -197,17 +203,17 @@ i32 main(io::Io *io) {
     want[n++] = sum_b * net.scale[0];
     f64 got[numbers] = {};
     usize count = flatten(&g, got);
-    (void)io::console_printf(console, "net gradient:\n");
+    (void)console::print("net gradient:\n");
     if (count != numbers || g.layers[1].w.count[0] != 4 || g.steps != 0) {
         ok = false;
     }
-    report(console, "gradient vs analytic", got, want, numbers, tolerance);
+    report("gradient vs analytic", got, want, numbers, tolerance);
     f64 tag_got[1] = {(f64)g.tag};
     f64 tag_want[1] = {2.0 * (f64)net.tag};
-    report(console, "d tag (f32)", tag_got, tag_want, 1, 1e-6);
+    report("d tag (f32)", tag_got, tag_want, 1, 1e-6);
 
     // 3. SGD with map against a loop over the flattened numbers.
-    Net p = make_net(arena, 0.0);
+    Net p = make_net(0.0);
     f64 before[numbers] = {};
     f64 flat_g[numbers] = {};
     (void)flatten(&p, before);
@@ -219,17 +225,17 @@ i32 main(io::Io *io) {
     }
     f64 sgd_got[numbers] = {};
     (void)flatten(&p, sgd_got);
-    (void)io::console_printf(console, "sgd:\n");
-    report(console, "map(sgd) vs loop", sgd_got, sgd_want, numbers, tolerance);
+    (void)console::print("sgd:\n");
+    report("map(sgd) vs loop", sgd_got, sgd_want, numbers, tolerance);
     f64 tag_sgd[1] = {(f64)p.tag};
     f64 tag_sgd_want[1] = {0.75 - learning_rate * (f64)g.tag};
-    report(console, "f32 leaf", tag_sgd, tag_sgd_want, 1, 1e-6);
+    report("f32 leaf", tag_sgd, tag_sgd_want, 1, 1e-6);
     if (p.steps != 7) {
         ok = false;
     }
 
     // 4. Adam, five steps, with the gradient of the current parameters each time; the loop keeps its own moments.
-    Net q = make_net(arena, 0.0);
+    Net q = make_net(0.0);
     Net m = autodiff::zeros(q);
     Net v = autodiff::zeros(q);
     f64 ref[numbers] = {};
@@ -253,18 +259,18 @@ i32 main(io::Io *io) {
     }
     f64 adam_got[numbers] = {};
     (void)flatten(&q, adam_got);
-    (void)io::console_printf(console, "adam, five steps:\n");
-    report(console, "map(adam) vs loop", adam_got, ref, numbers, tolerance);
+    (void)console::print("adam, five steps:\n");
+    report("map(adam) vs loop", adam_got, ref, numbers, tolerance);
 
     // 5. One to six walked inputs and two numbers, against a loop: out = a * (sum of the inputs) + b.
     Net in[6] = {};
     f64 flat[6][numbers] = {};
     for (usize j = 0; j < 6; j++) {
-        in[j] = make_net(arena, 0.1 * (f64)(j + 1));
+        in[j] = make_net(0.1 * (f64)(j + 1));
         (void)flatten(&in[j], flat[j]);
     }
     Net o = autodiff::zeros(in[0]);
-    (void)io::console_printf(console, "map with 1 to 6 inputs and 2 numbers:\n");
+    (void)console::print("map with 1 to 6 inputs and 2 numbers:\n");
     for (usize inputs = 1; inputs <= 6; inputs++) {
         if (inputs == 1) autodiff::map(sum1, &o, &in[0], 2.0, 0.5);
         if (inputs == 2) autodiff::map(sum2, &o, &in[0], &in[1], 2.0, 0.5);
@@ -282,9 +288,10 @@ i32 main(io::Io *io) {
             }
             want_sum[i] = 2.0 * total + 0.5;
         }
-        report(console, "map(sum) vs loop", got_sum, want_sum, numbers, tolerance);
+        report("map(sum) vs loop", got_sum, want_sum, numbers, tolerance);
     }
 
-    (void)io::console_printf(console, "worst relative difference %.3e (tolerance %.0e)\n", worst, tolerance);
+    (void)console::print("worst relative difference ", format::scientific(worst, 3), " (tolerance ", format::scientific(tolerance, 0),
+                         ")\n");
     return ok ? 0 : 1;
 }

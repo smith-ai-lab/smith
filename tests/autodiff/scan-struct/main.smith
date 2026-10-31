@@ -4,8 +4,10 @@
 module main;
 
 import smith::arena;
+import smith::mem;
 import smith::autodiff;
-import smith::io;
+import smith::console;
+import smith::format;
 import <math.h>;
 import "base/reference_scan.h";
 
@@ -61,7 +63,7 @@ void fill(f64 *p, usize n, f64 lo, f64 hi) {
 
 f64 worst = 0.0;
 
-void compare(io::Console *console, const char *name, const f64 *got, const f64 *want, usize n) {
+void compare(const char *name, const f64 *got, const f64 *want, usize n) {
     f64 scale = 0.0;
     f64 difference = 0.0;
     for (usize i = 0; i < n; i++) {
@@ -69,20 +71,25 @@ void compare(io::Console *console, const char *name, const f64 *got, const f64 *
         difference = c::fmax(difference, c::fabs(got[i] - want[i]));
     }
     f64 relative = scale > 0.0 ? difference / scale : difference;
-    (void)io::console_printf(console, "  %-8s n=%-4zu max|ref|=%.3e  maxrel=%.3e\n", name, n, scale, relative);
+    (void)console::print("  ", format::left(name, 8), " n=", format::left(n, 4), " max|ref|=", format::scientific(scale, 3),
+                         "  maxrel=", format::scientific(relative, 3), "\n");
     worst = c::fmax(worst, relative);
 }
 
-i32 main(io::Io *io) {
-    arena::Arena *arena = &io->arena;
-    Scan scan = {.x = arena::push_slice(arena, f64, 36),
-                 .dt = arena::push_slice(arena, f64, 12),
-                 .a = arena::push_slice(arena, f64, 2),
-                 .b = arena::push_slice(arena, f64, 24),
-                 .c = arena::push_slice(arena, f64, 24),
-                 .keep = arena::push_slice(arena, f64, 6),
-                 .state0 = arena::push_slice(arena, f64, 48)};
-    Seeds seeds = {.dy = arena::push_slice(arena, f64, 36), .dse = arena::push_slice(arena, f64, 48)};
+i32 main() {
+    arena::Arena memory = arena::growing((usize)1 << 20, nullptr);
+    defer arena::release(&memory);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Scan scan = {.x = mem::alloc_slice(f64, 36),
+                 .dt = mem::alloc_slice(f64, 12),
+                 .a = mem::alloc_slice(f64, 2),
+                 .b = mem::alloc_slice(f64, 24),
+                 .c = mem::alloc_slice(f64, 24),
+                 .keep = mem::alloc_slice(f64, 6),
+                 .state0 = mem::alloc_slice(f64, 48)};
+    Seeds seeds = {.dy = mem::alloc_slice(f64, 36), .dse = mem::alloc_slice(f64, 48)};
     fill(scan.x.data, 36, -1.0, 1.0);
     fill(scan.dt.data, 12, 0.01, 0.5);
     fill(scan.a.data, 2, -2.0, -0.1);
@@ -112,13 +119,14 @@ i32 main(io::Io *io) {
     c::ReferenceScanGradients hand = {hx, hdt, ha, hb, hc, hstate0, nullptr};
     c::reference_scan_backward(&shape, &in, scan.state0.data, states, seeds.dy.data, seeds.dse.data, &hand);
 
-    (void)io::console_printf(&io->console, "gradient vs hand-written backward (a struct of slices):\n");
-    compare(&io->console, "dx", g.x.data, hx, 36);
-    compare(&io->console, "ddt", g.dt.data, hdt, 12);
-    compare(&io->console, "da", g.a.data, ha, 2);
-    compare(&io->console, "db", g.b.data, hb, 24);
-    compare(&io->console, "dc", g.c.data, hc, 24);
-    compare(&io->console, "dstate0", g.state0.data, hstate0, 48);
-    (void)io::console_printf(&io->console, "worst relative difference %.3e (tolerance %.0e)\n", worst, tolerance);
+    (void)console::print("gradient vs hand-written backward (a struct of slices):\n");
+    compare("dx", g.x.data, hx, 36);
+    compare("ddt", g.dt.data, hdt, 12);
+    compare("da", g.a.data, ha, 2);
+    compare("db", g.b.data, hb, 24);
+    compare("dc", g.c.data, hc, 24);
+    compare("dstate0", g.state0.data, hstate0, 48);
+    (void)console::print("worst relative difference ", format::scientific(worst, 3), " (tolerance ", format::scientific(tolerance, 0),
+                         ")\n");
     return worst <= tolerance ? 0 : 1;
 }
