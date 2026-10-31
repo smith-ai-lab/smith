@@ -325,16 +325,17 @@ export void test_an_indexed_for_each_makes_a_record() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::Run run = scratch::sh(
-        &p, format::push("set -e; r=$(pwd -P); ", find_tools,
-                         "printf 'module main;\\ni32 sum(i32 xs[:]) {\\n    i32 total = 0;\\n    for (usize i, i32 x : xs) {\\n"
-                         "        total += (i32)i + x;\\n    }\\n    return total;\\n}\\n"
-                         "i32 main() {\\n    i32 xs[3] = {1, 2, 3};\\n    return sum(xs) > 100;\\n}\\n' > main.smith; "
-                         "smith cc -fprofile-instr-generate -fcoverage-mapping -c main.smith -o prog.o; "
-                         "smith cc -fprofile-instr-generate -fcoverage-mapping prog.o -o prog; "
-                         "export SMITH_COVERAGE_DIR=$r/cov SMITH_COVERAGE_BINARY=$r/prog.o SMITH_REPO=$r; "
-                         "mkdir -p cov/raw/t__one; ",
-                         run_one, "echo \"raw: $(find cov -name '*.profraw' | wc -l | tr -d ' ')\"")
-            .data);
+        &p, format::push(
+                "set -e; r=$(pwd -P); ", find_tools,
+                "printf 'module main;\\ni32 sum(i32 xs[:]) {\\n    i32 total = 0;\\n    for (usize i, i32 x : xs) {\\n"
+                "        total += (i32)i + x;\\n    }\\n    return total;\\n}\\n"
+                "i32 main() {\\n    i32 xs[3] = {1, 2, 3};\\n    return sum(xs) > 100;\\n}\\n' > main.smith; "
+                "smith cc -fprofile-instr-generate -fcoverage-mapping -c main.smith -o prog.o; "
+                "smith cc -fprofile-instr-generate -fcoverage-mapping prog.o -o prog; "
+                "export SMITH_COVERAGE_DIR=$r/cov SMITH_COVERAGE_BINARY=$r/prog.o SMITH_REPO=$r; "
+                "mkdir -p cov/raw/t__one; ",
+                run_one, "echo \"raw: $(find cov -name '*.profraw' | wc -l | tr -d ' ')\"")
+                .data);
     if (run.status == 77) {
         test::note("coverage: skipped, this smith has no LLVM inside");
         return;

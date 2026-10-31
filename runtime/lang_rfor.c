@@ -293,6 +293,16 @@ static bool smith_lang_rfor(SmithLang *lang, const SmithHost *host, const SmithT
         smith_lang_rfor_empty(lang, token, replaced - 1);
         return true;
     }
+    if (parts.has_index && form == SmithLangRfor_Slice) { // the index is spelled once: its other places are copies,
+                                                          // which the source's order skips (#1008)
+        bool first = true;
+        for (size_t at = 0; at < made; at++) {
+            const SmithToken *index = &smith_lang_rfor_out[at];
+            if (index->synthetic || index->location != parts.index.tokens[0].location) continue;
+            if (!first) smith_lang_rfor_out[at].synthetic = smith_lang_rfor_out[at].copy = true;
+            first = false;
+        }
+    }
     smith_lang_rfor_out[0].space_before = token->space_before;
     smith_lang_rfor_out[0].line_start = token->line_start;
     smith_lang_slice_cover(smith_lang_rfor_out, made);
