@@ -1414,6 +1414,71 @@ static const char *test_json_variable(const char name[:]) {
     return value == .some ? value.some.data : "";
 }
 
+static files::Entries test_json_list_suite(const char folder[:]) {
+    files::EntriesResult entries = files::list(folder);
+    switch (entries) {
+    case .ok:
+        return entries.ok;
+    case .error:
+        test::check_condition(false); // ends the test
+    }
+    return {};
+}
+
+// Whether the reader and the tree accept the file, read whole into the arena for the time of the call.
+static bool test_json_file_accepted(arena::Arena *memory, const char path[:]) {
+    arena::Scope scope = arena::scope_begin(memory);
+    defer arena::scope_end(scope);
+    files::BytesResult file = files::read_file(path);
+    switch (file) {
+    case .ok:
+        return test_json_suite_accepts(memory, ((const char *)file.ok.data)[0:countof(file.ok)]);
+    case .error:
+        test::check_condition(false); // ends the test
+    }
+    return false;
+}
+
+// What was done with one case: the counts of its kind, and a line of the listing for an implementation-defined one.
+static void test_json_count_case(TestJsonConformance *totals, const char *name, bool accepted, char *report,
+                                 usize *reported, bool listing) {
+    if (name[0] == 'y') {
+        totals->y_total += 1;
+        totals->y_accepted += accepted ? 1 : 0;
+        test::check(accepted);
+    } else if (name[0] == 'n') {
+        totals->n_total += 1;
+        totals->n_refused += accepted ? 0 : 1;
+        test::check(!accepted);
+    } else if (name[0] == 'i') {
+        const TestJsonImplementationDefined *listed = test_json_find_listed(name);
+        totals->i_total += 1;
+        if (listing)
+            *reported += format::to(report + *reported, test_json_listing_capacity - *reported,
+                                    format::left(accepted ? "accepted" : "refused", 9), " ", name, "\n")
+                             .length;
+        test::check(listed != nullptr); // a new case must be listed
+        totals->i_as_listed += listed != nullptr && listed->accepted == accepted ? 1 : 0;
+        test::check(listed->accepted == accepted);
+    }
+}
+
+static void test_json_write_listing(const char path[:], const TestJsonConformance *totals, char *report,
+                                    usize reported) {
+    reported += format::to(report + reported, test_json_listing_capacity - reported, "y_: ", totals->y_accepted, " of ",
+                           totals->y_total, " accepted; n_: ", totals->n_refused, " of ", totals->n_total,
+                           " refused; i_: ", totals->i_as_listed, " of ", totals->i_total, " as listed\n")
+                    .length;
+    files::CountResult written = files::write_file(path, test_file_bytes(report, reported), files::Replace);
+    switch (written) {
+    case .ok:
+        test::check_equal(written.ok, reported);
+        break;
+    case .error:
+        test::check_condition(false); // ends the test
+    }
+}
+
 export void test_json_conformance_with_jsontestsuite() {
     const char *folder = test_json_variable("SMITH_JSON_SUITE");
     if (folder[0] == '\0') return; // not fetched: tests/library_modes_test.smith skips it
@@ -1426,15 +1491,7 @@ export void test_json_conformance_with_jsontestsuite() {
     char *report = arena::push_slice(&memory, char, test_json_listing_capacity).data;
     usize reported = 0;
     TestJsonConformance totals = {};
-    files::EntriesResult entries = files::list(folder[0:c::strlen(folder)]);
-    files::Entries names = {};
-    switch (entries) {
-    case .ok:
-        names = entries.ok;
-        break;
-    case .error:
-        test::check_condition(false); // ends the test
-    }
+    files::Entries names = test_json_list_suite(folder[0:c::strlen(folder)]);
     for (usize i = 0; i < countof(names); i++) {
         const char *name = names[i].name.data;
         usize name_length = c::strlen(name);
@@ -1442,53 +1499,10 @@ export void test_json_conformance_with_jsontestsuite() {
         char path[1024];
         (void)format::to(path, sizeof path, folder, "/", name);
         test::note("file %s", name);
-        arena::Scope scope = arena::scope_begin(&memory);
-        files::BytesResult file = files::read_file(path[0:c::strlen(path)]);
-        const char contents[:] = {};
-        switch (file) {
-        case .ok:
-            contents = ((const char *)file.ok.data)[0:countof(file.ok)];
-            break;
-        case .error:
-            test::check_condition(false); // ends the test
-        }
-        bool accepted = test_json_suite_accepts(&memory, contents);
-        arena::scope_end(scope);
-        if (name[0] == 'y') {
-            totals.y_total += 1;
-            totals.y_accepted += accepted ? 1 : 0;
-            test::check(accepted);
-        } else if (name[0] == 'n') {
-            totals.n_total += 1;
-            totals.n_refused += accepted ? 0 : 1;
-            test::check(!accepted);
-        } else if (name[0] == 'i') {
-            const TestJsonImplementationDefined *listed = test_json_find_listed(name);
-            totals.i_total += 1;
-            if (listing)
-                reported += format::to(report + reported, test_json_listing_capacity - reported,
-                                       format::left(accepted ? "accepted" : "refused", 9), " ", name, "\n")
-                                .length;
-            test::check(listed != nullptr); // a new case must be listed
-            totals.i_as_listed += listed != nullptr && listed->accepted == accepted ? 1 : 0;
-            test::check(listed->accepted == accepted);
-        }
+        bool accepted = test_json_file_accepted(&memory, path[0:c::strlen(path)]);
+        test_json_count_case(&totals, name, accepted, report, &reported, listing);
     }
-    if (listing) {
-        reported += format::to(report + reported, test_json_listing_capacity - reported, "y_: ", totals.y_accepted,
-                               " of ", totals.y_total, " accepted; n_: ", totals.n_refused, " of ", totals.n_total,
-                               " refused; i_: ", totals.i_as_listed, " of ", totals.i_total, " as listed\n")
-                        .length;
-        files::CountResult written = files::write_file(listing_path[0:c::strlen(listing_path)],
-                                                       test_file_bytes(report, reported), files::Replace);
-        switch (written) {
-        case .ok:
-            test::check_equal(written.ok, reported);
-            break;
-        case .error:
-            test::check_condition(false); // ends the test
-        }
-    }
+    if (listing) test_json_write_listing(listing_path[0:c::strlen(listing_path)], &totals, report, reported);
     test::note("y %zu/%zu accepted, n %zu/%zu refused, i %zu/%zu as listed", totals.y_accepted, totals.y_total,
                totals.n_refused, totals.n_total, totals.i_as_listed, totals.i_total);
     test::check_equal(totals.y_total, totals.y_accepted);
