@@ -15,4 +15,4 @@ You do one ticket. The ticket is the whole brief.
 - **End the PR with `## Friction`:** what slowed or misled you, or `none`.
 
 ## Report
-Briefly: what now works, what you ran and its results, what isn't tested, your commits. Details go on the ticket, not in the report.
+Briefly: what now works, what you ran and its results, what isn't tested, your commits, and **your friction** (the same bullets as the PR's `## Friction`, or `none`). Details go on the ticket, not in the report. If something small in your area slowed you (a line in a skill, an unclear message), fix it in your PR as well as reporting it.

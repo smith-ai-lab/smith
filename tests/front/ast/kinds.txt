@@ -1,0 +1,10 @@
+(module kinds
+  (typedef Bytes (pointer const (named U8)))
+  (typedef Files static (slice (named c::FILE)))
+  (typedef Four (array (named I32) (integer 4)))
+  (if_constexpr
+    (name target::linux)
+    (then
+      (typedef Maybe (applied Option (type_arg (named I32)))))
+    (else
+      (function f (attribute std::pure) (result (named Void))))))

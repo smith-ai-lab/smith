@@ -1,0 +1,7 @@
+(module math
+  (function add exported
+    (param a (named I32))
+    (param b (named I32))
+    (result (named I32))
+    (block
+      (return (binary add (name a) (name b))))))
