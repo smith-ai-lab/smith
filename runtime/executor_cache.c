@@ -923,7 +923,8 @@ static bool smith_stepcache_put(const char *source, const char *destination, boo
              smith_stepcache_expand(smith_stepcache_text_in, size, &out) &&
              smith_stepcache_write(temporary, out.data, out.size);
     }
-    // A clone keeps the cached file's old time, which would leave the output older than its inputs and dirty at the next build.
+    // A clone keeps the cached file's old time, which would leave the output older than its inputs and dirty at the
+    // next build.
     if (ok && utimes(temporary, nullptr) != 0) ok = false;
     if (ok && rename(temporary, destination) != 0) ok = false;
     if (!ok) unlink(temporary);
