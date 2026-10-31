@@ -180,7 +180,7 @@ static void smith_lang_reset_declaration(SmithLang *lang) {
 // ---- `main` in a module
 // ----------------------------------------------------------------------------------------------------
 //
-// In a file with a `module` line `main` is `i32 main()` or `i32 main(str args[:])` (the io form is lang_head.c). The
+// In a file with a `module` line `main` is `i32 main()` or `i32 main(str args[:])`. The
 // first is `int main(void)`. The second is `int main(int argc, char **argv)` whose body begins with the statements that
 // make `args`: a stack array of argc slices that point into argv's own characters (nothing is allocated or copied, a
 // slice's count is its strlen), written as source, so the rest of the lowering reads them like the program's own.
@@ -367,7 +367,6 @@ static void smith_lang_module_main_begin(SmithLang *lang, const SmithHost *host,
     if (!returns && !smith_lang_ident(first, "void")) return;
     const SmithToken *name = smith_lang_peek(lang, host, 0, false);
     if (!smith_lang_ident(name, "main") || !smith_lang_punct(smith_lang_peek(lang, host, 1, false), "(")) return;
-    if (smith_lang_io_main_ahead(lang, host, first)) return; // the io form, until the io is gone
     if (!returns) {
         smith_lang_error(lang, host, first->location, "smith-main: main returns i32: write i32 main()");
         return;
@@ -391,14 +390,7 @@ static void smith_lang_begin_declaration(SmithLang *lang, const SmithHost *host,
     lang->generic_result_call = false;
     lang->generic_plain = false;
     lang->generic_next = smith_lang_generic_candidate(lang, host, token) && smith_lang_generic_ahead(lang, host, token);
-    SmithToken shown = *token;
     smith_lang_module_main_begin(lang, host, token);
-    if (smith_lang_io_main_begin(lang, host, token) && !lang->is_module) { // a file's own functions are not static
-        smith_lang_emit(lang, host, smith_lang_static_keyword(token));
-        shown.line_start = false;
-        shown.space_before = true;
-        token = &shown;
-    }
     // A module with private names that have a symbol holds every head (as an export's), to know which is one of them.
     if (lang->is_module && host->previous != nullptr && !lang->pending_export && !lang->generic_next &&
         lang->linked_count == 0) {
@@ -1146,9 +1138,8 @@ static void smith_lang_end_of_file(SmithLang *lang, const SmithHost *host, const
     }
     if (lang->due_count > 0) smith_lang_typedefs_write(lang, host);
     smith_lang_body_note(lang);
-    lang->body_closed = true; // what follows is the instances and the io main: not sections
+    lang->body_closed = true; // what follows is the instances: not sections
     smith_lang_generic_instances(lang, host);
-    smith_lang_finish_io_main(lang, host);
     smith_lang_ask(lang, host);
     smith_lang_finish(lang);
     smith_lang_emit_kept(lang, host, token);
@@ -1592,10 +1583,6 @@ bool smith_lang_holds(const SmithLang *lang) {
 
 bool smith_lang_is_module(const SmithLang *lang) {
     return lang->is_module;
-}
-
-bool smith_lang_io_import(const SmithLang *lang) {
-    return lang->io_import;
 }
 
 unsigned smith_lang_errors(const SmithLang *lang) {
