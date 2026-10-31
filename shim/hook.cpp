@@ -701,7 +701,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.maybe_if_constexpr = hasIfConstexpr(scan);
         host.maybe_local_tag = hasNestedTag(scan);
         host.maybe_slice = hasSlice(scan) || hasStr(scan);
-        host.maybe_brackets = hasEmptyBrackets(scan);
+        host.maybe_brackets = hasEmptyBrackets(scan) || hasLambda(scan);
         host.maybe_shape = hasShapeCall(scan);
         host.maybe_tuple = host.maybe_slice || hasTuple(scan) || hasPayloadEnum(scan) || host.maybe_shape ||
                            hasTryWord(scan) || hasLambda(scan);
@@ -2990,8 +2990,8 @@ class SmithHook final : public TokenHook, public NameSource {
         return false;
     }
 
-    // `[](`, `[]{` or `[]->`: a lambda (runtime/lang_lambda.c). The lowering is offered every token of the file, since
-    // a lambda's `[` is found among the tokens of a body.
+    // `[](`, `[x, y]{` or `[]->`: a lambda, its capture list names only (runtime/lang_lambda.c). The lowering is
+    // offered every token of the file, since a lambda's `[` is found among the tokens of a body.
     static bool hasLambda(StringRef text) {
         for (size_t at = 0; at < text.size(); at++) {
             size_t after = skipLiteral(text, at);
@@ -3001,8 +3001,9 @@ class SmithHook final : public TokenHook, public NameSource {
             }
             if (text[at] != '[') continue;
             size_t next = at + 1;
-            while (next < text.size() && isWhitespace(text[next]))
-                next += 1;
+            while (next < text.size() &&
+                   (isWhitespace(text[next]) || text[next] == ',' || isAsciiIdentifierContinue(text[next])))
+                next += 1; // a capture list: `[]`, `[x]`, `[x, y]`
             if (next >= text.size() || text[next] != ']') continue;
             next += 1;
             while (next < text.size() && isWhitespace(text[next]))

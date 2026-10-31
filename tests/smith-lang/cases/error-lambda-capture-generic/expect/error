@@ -1,0 +1,1 @@
+src/main.smith:9:18: the lambda passed to `apply` captures `factor`: the capture list is read, but captures are not lowered yet (#1074)
