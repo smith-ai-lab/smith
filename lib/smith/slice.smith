@@ -1,3 +1,4 @@
+// smith-build: header
 // smith::slice, <smith/slice.h>: what a program does with a slice that is not an element access: compare, search, copy,
 // fill, reverse and cut one. Every export is a generic function, so it has no C spelling (the header holds only its
 // record). Nothing allocates: a result is a cut of an input, an index, or is written into a slice the caller passes.

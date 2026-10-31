@@ -1,3 +1,4 @@
+// smith-build: header
 // smith::ascii, <smith/ascii.h>: tests of one character, ASCII only and no locale, so they answer the same on every
 // machine. Every export is a function of a `char`, which is what a predicate of `slice` is.
 module smith::ascii;

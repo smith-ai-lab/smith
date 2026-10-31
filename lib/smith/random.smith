@@ -1,3 +1,4 @@
+// smith-build: link
 // smith::random, <smith/random.h>: random numbers from keys. Its C API is the generated header include/smith/random.h
 // (a build output, not in git). Every export has a short name here and a C name (the attribute
 // before it): `random::key_make` is `smith_key_make`, `random::Key` is `SmithKey`. The comments above an export are the

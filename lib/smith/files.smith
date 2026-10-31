@@ -1,3 +1,4 @@
+// smith-build: link
 // smith::files, <smith/files.h>: files and folders by direct calls, with no capability value to pass: open, read, write
 // and close a file, read or write a whole one, ask about a path, list a folder, make, remove and rename, map a file.
 // Its C API is the generated header include/smith/files.h (committed; `smith build headers` regenerates it); the names

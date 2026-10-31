@@ -1,3 +1,4 @@
+// smith-build: header
 // smith::task, <smith/task.h>: tasks that run on stacks of their own (fibers) and are waited for in groups, the way an
 // arena is a scope for memory: a group is opened in a scope and closed by `defer`.
 //
