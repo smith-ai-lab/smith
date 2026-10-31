@@ -378,7 +378,7 @@ export void test_conventions_compile_commands_of_a_project_with_no_build_file_is
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
     constexpr c::SmithJsonLimits limits = {.depth = 64, .string_length = 1 << 20, .count = 1 << 20};
-    bool valid = c::smith_json_parse(&memory, input, limits, &root, &error);
+    bool valid = c::smith_json_parse(input, limits, &root, &error);
     test::note("json: the file is:\n%s", document);
     test::check(valid);
     bool found = false;
