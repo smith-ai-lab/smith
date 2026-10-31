@@ -6,10 +6,12 @@
 module smith::files_test;
 
 import smith::arena;
+import smith::env;
 import smith::files;
 import smith::mem;
 import smith::test;
 import scratch;
+import <string.h>;
 
 typedef struct {
     arena::Arena memory;
@@ -390,4 +392,125 @@ export void test_files_the_real_file_system_in_a_scratch_folder() {
     test::check_condition(check20 == .ok);
     files::BytesResult gone = files::read_file(path[0:__builtin_strlen(path)]);
     test::check_condition(gone == .error && gone.error == files::NotFound);
+}
+
+// An environment that has the one variable the reads log names, on the test's thread: the process's is not changed,
+// which another test spawning a child at the same time would read.
+typedef struct {
+    env::Handler base; // first: &fake.base is what set_handler takes
+    char *log;
+} LogEnv;
+
+char *log_env_get(env::Handler *self, const char *name) {
+    LogEnv *fake = (LogEnv *)self;
+    if (c::strcmp(name, "SMITH_READS_LOG") == 0) return fake->log;
+    return nullptr;
+}
+
+LogEnv log_env(char *log) {
+    LogEnv fake = {};
+    fake.base.get = log_env_get;
+    fake.log = log;
+    return fake;
+}
+
+// A whole text of the log, or "" when there is none: read with the variable not set, since a read is logged too.
+const char *log_text(const char *log) {
+    files::BytesResult text = files::read_file(log[0:__builtin_strlen(log)]);
+    files::Bytes got = value_bytes(text);
+    char *copy = mem::alloc_slice(char, countof(got) + 1).data;
+    for (usize i = 0; i < countof(got); i++)
+        copy[i] = (char)got[i];
+    copy[countof(got)] = 0;
+    return copy;
+}
+
+// Whether the log has a line ending so (a path of the scratch folder, then the tail and a newline).
+bool has_line(const char *text, const char *tail) {
+    char line[64];
+    __builtin_snprintf(line, sizeof line, "%s\n", tail);
+    return __builtin_strstr(text, line) != nullptr;
+}
+
+// How many lines the log has.
+usize line_count(const char *text) {
+    usize lines = 0;
+    for (usize i = 0; text[i] != 0; i++)
+        lines += text[i] == '\n' ? 1 : 0;
+    return lines;
+}
+
+// With SMITH_READS_LOG set, a file opened to read, a folder listed and a file mapped are in the log, one path a line
+// and a folder's ending in `/` (issue #739); a write and `info` are not (the record is of what the test read).
+export void test_files_the_reads_log_names_what_a_test_read() {
+    scratch::Project p = scratch::make("files", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena a = test::memory(1 << 16);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_condition(p.dir != nullptr);
+    char folder[1024];
+    __builtin_snprintf(folder, sizeof folder, "%s/data", p.dir);
+    char path[1100];
+    __builtin_snprintf(path, sizeof path, "%s/a.txt", folder);
+    char other[1100];
+    __builtin_snprintf(other, sizeof other, "%s/b.txt", folder);
+    char log[1100];
+    __builtin_snprintf(log, sizeof log, "%s/reads.log", p.dir);
+    files::DoneResult made = files::make_folder(folder[0:__builtin_strlen(folder)]);
+    test::check_condition(made == .ok);
+    test::check_equal(put_text(path, "one", 3, files::Replace), -1);
+    test::check_equal(put_text(other, "two", 3, files::Replace), -1);
+
+    LogEnv logging = log_env(log);
+    env::Handler *before = env::set_handler(&logging.base);
+    files::BytesResult whole = files::read_file(path[0:__builtin_strlen(path)]);
+    files::EntriesResult listed = files::list(folder[0:__builtin_strlen(folder)]);
+    files::BytesResult mapped = files::map(other[0:__builtin_strlen(other)]);
+    files::InfoResult about = files::info(other[0:__builtin_strlen(other)]);
+    test::check_equal(put_text(other, "three", 5, files::Replace), -1);
+    env::set_handler(before);
+    test::check_condition(whole == .ok && listed == .ok && mapped == .ok && about == .ok);
+    files::unmap(value_bytes(mapped));
+
+    const char *text = log_text(log);
+    test::check_condition(has_line(text, "/data/a.txt"));
+    test::check_condition(has_line(text, "/data/"));
+    test::check_condition(has_line(text, "/data/b.txt"));
+    test::check_equal(line_count(text), 3); // the write and the info are not in it
+}
+
+// Without the variable nothing is written, and over the fake nothing is, even with it: its paths are not real.
+export void test_files_the_reads_log_is_not_written_without_the_variable_or_over_the_fake() {
+    scratch::Project p = scratch::make("files", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena a = test::memory(1 << 16);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_condition(p.dir != nullptr);
+    char path[1100];
+    __builtin_snprintf(path, sizeof path, "%s/a.txt", p.dir);
+    char log[1100];
+    __builtin_snprintf(log, sizeof log, "%s/reads.log", p.dir);
+    test::check_equal(put_text(path, "one", 3, files::Replace), -1);
+
+    files::BytesResult plain = files::read_file(path[0:__builtin_strlen(path)]); // no variable
+    test::check_condition(plain == .ok);
+    LogEnv logging = log_env(log);
+    env::Handler *before_env = env::set_handler(&logging.base);
+    {
+        files::Fake fake = files::fake();
+        files::Handler *before = files::set_handler(&fake.base);
+        defer files::set_handler(before);
+        files::fake_add(&fake, path[0:__builtin_strlen(path)], bytes_of("fake")[0:4]);
+        files::BytesResult over = files::read_file(path[0:__builtin_strlen(path)]);
+        test::check_condition(over == .ok && is_text(over.ok, "fake"));
+        files::EntriesResult listed = files::list(p.dir[0:__builtin_strlen(p.dir)]);
+        test::check_condition(listed == .ok);
+    }
+    env::set_handler(before_env);
+    files::InfoResult none = files::info(log[0:__builtin_strlen(log)]);
+    test::check_condition(none == .error);
 }

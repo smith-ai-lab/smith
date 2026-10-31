@@ -1,1 +1,1 @@
-docs.stamp: pass/knowledge/index.md pass/knowledge/alpha.md pass/knowledge/data.md pass/.agents/skills/make/SKILL.md pass/.agents/skills pass/.claude/skills pass/AGENTS.md pass/knowledge/log.md pass/.agents/skills/make/../../../knowledge/alpha.md pass/.agents/skills/make/references/a\ b\#c$$d.md
+docs.stamp: pass/knowledge/index.md pass/knowledge/alpha.md pass/knowledge/data.md pass/.agents/skills/make/SKILL.md pass/.agents/skills pass/.claude/skills pass/knowledge/log.md pass/.agents/skills/make/../../../knowledge/alpha.md pass/.agents/skills/make/references/a\ b\#c$$d.md
