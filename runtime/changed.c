@@ -1004,24 +1004,59 @@ static void smith_changed_on_base(char *text) {
     snprintf(smith_changed_text, 256, "%s", text);
 }
 
-// The base: the given ref, else where the branch left origin/main (or main).
+// What the base was called, for the line that says which one was chosen ("origin/main", "@{upstream}").
+static char smith_changed_label[256];
+
+// The first line git prints for `commands` into `base`; false when git fails or prints nothing.
+static bool smith_changed_first(const char *const *commands, char *base, size_t size) {
+    smith_changed_text[0] = '\0';
+    if (!smith_changed_git(commands, smith_changed_on_base) || smith_changed_text[0] == '\0') return false;
+    snprintf(base, size, "%.255s", smith_changed_text);
+    return true;
+}
+
+// The ref origin/HEAD points to ("origin/main"), or "origin/main" when it is not set.
+static void smith_changed_default_ref(char *ref, size_t size) {
+    static const char *const head[] = {"symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD", nullptr};
+    if (!smith_changed_first(head, ref, size)) snprintf(ref, size, "origin/main");
+}
+
+// The base: the given ref, else (1) the merge-base with the branch's upstream, (2) the merge-base with
+// origin/<default branch> (origin/HEAD, else origin/main), (3) the merge-base with a local main. `smith_changed_label`
+// names the one chosen. False when none exists.
 static bool smith_changed_base(const char *given, char *base, size_t size) {
+    smith_changed_label[0] = '\0';
     if (given != nullptr) {
         if (!smith_changed_name_ok(given)) return false;
         snprintf(base, size, "%s", given);
+        snprintf(smith_changed_label, sizeof smith_changed_label, "%s", given);
         return true;
     }
-    static const char *const origin[] = {"merge-base", "HEAD", "origin/main", nullptr};
+    char ref[256];
+    static const char *const upstream[] = {"merge-base", "HEAD", "@{upstream}", nullptr};
+    if (smith_changed_first(upstream, base, size)) {
+        snprintf(smith_changed_label, sizeof smith_changed_label, "upstream");
+        return true;
+    }
+    smith_changed_default_ref(ref, sizeof ref);
+    const char *const origin[] = {"merge-base", "HEAD", ref, nullptr};
+    if (smith_changed_first(origin, base, size)) {
+        snprintf(smith_changed_label, sizeof smith_changed_label, "%s", ref);
+        return true;
+    }
     static const char *const local[] = {"merge-base", "HEAD", "main", nullptr};
-    const char *const *commands[] = {origin, local};
-    for (size_t i = 0; i < 2; i++) {
-        smith_changed_text[0] = '\0';
-        if (smith_changed_git(commands[i], smith_changed_on_base) && smith_changed_text[0] != '\0') {
-            snprintf(base, size, "%.255s", smith_changed_text);
-            return true;
-        }
+    if (smith_changed_first(local, base, size)) {
+        snprintf(smith_changed_label, sizeof smith_changed_label, "main");
+        return true;
     }
     return false;
+}
+
+// What the "N changed files since ..." line calls the base: the ref chosen and where it is.
+static const char *smith_changed_named(const char *base, char *text, size_t size) {
+    if (smith_changed_label[0] == '\0' || strcmp(smith_changed_label, base) == 0) return base;
+    snprintf(text, size, "%s (%.12s)", smith_changed_label, base);
+    return text;
 }
 
 static size_t smith_changed_full_path(void) {
@@ -1034,9 +1069,10 @@ static size_t smith_changed_full_path(void) {
 }
 
 static void smith_changed_report(size_t selected, size_t tests, const char *base) {
-    fprintf(smith_changed_out(),
-            "smith test --changed: %zu changed file%s since %.12s: %zu of %zu test files selected\n",
-            smith_changed_path_count, smith_changed_path_count == 1 ? "" : "s", base, selected, tests);
+    char text[300];
+    fprintf(smith_changed_out(), "smith test --changed: %zu changed file%s since %s: %zu of %zu test files selected\n",
+            smith_changed_path_count, smith_changed_path_count == 1 ? "" : "s",
+            smith_changed_named(base, text, sizeof text), selected, tests);
     for (size_t i = 0; i < smith_changed_file_count; i++) {
         if (smith_changed_chosen[i])
             fprintf(smith_changed_out(), "smith test --changed:   %s: %s\n", smith_changed_files[i],
@@ -1073,7 +1109,9 @@ static bool smith_changed_build_c_gate(const char *base, const char *head) {
 static bool smith_changed_collect(const char *base_name, const char *head, bool relative, const char *who, char *base,
                                   size_t size) {
     if (!smith_changed_base(base_name, base, size) || (head != nullptr && !smith_changed_name_ok(head))) {
-        fprintf(smith_changed_out(), "%s: no base: pass --base <ref> (no origin/main or main to compare with)\n", who);
+        fprintf(smith_changed_out(),
+                "%s: no base: pass --base <ref> (no upstream, origin/HEAD, origin/main or main to compare with)\n",
+                who);
         return false;
     }
     static const char *const list[] = {"ls-files", "--cached", "--others", "--exclude-standard", nullptr};
@@ -1226,8 +1264,9 @@ static void smith_changed_lint_says_all(const char *why) {
 
 static void smith_changed_lint_says(size_t kept, size_t count, const char *base) {
     size_t changed = smith_changed_lint_paths();
-    fprintf(smith_changed_out(), "smith lint --changed: %zu changed file%s since %.12s: %zu of %zu files to lint\n",
-            changed, changed == 1 ? "" : "s", base, kept, count);
+    char text[300];
+    fprintf(smith_changed_out(), "smith lint --changed: %zu changed file%s since %s: %zu of %zu files to lint\n",
+            changed, changed == 1 ? "" : "s", smith_changed_named(base, text, sizeof text), kept, count);
     if (kept == 0) fputs("smith lint --changed: no file is affected, so nothing is linted\n", smith_changed_out());
 }
 
@@ -1241,6 +1280,7 @@ static void smith_changed_reset(void) {
     smith_changed_edge_count = 0;
     smith_changed_path_count = 0;
     smith_changed_overflow = false;
+    smith_changed_label[0] = '\0';
     memset(smith_changed_hit, 0, sizeof smith_changed_hit);
     memset(smith_changed_chosen, 0, sizeof smith_changed_chosen);
     memset(smith_changed_why, 0, sizeof smith_changed_why);
@@ -1323,6 +1363,23 @@ bool smith_core_changed_lint(const char *folder, const char *files, const char *
         ok = fchdir(home) == 0;
     }
     if (log != nullptr) fclose(log);
+    if (home >= 0) close(home);
+    return ok;
+}
+
+// include/smith_core_changed.h: the base `--changed` chooses with no ref, in the git repository `folder`.
+bool smith_core_changed_base(const char *folder, char *out, size_t out_size) {
+    int home = open(".", O_RDONLY);
+    bool ok = home >= 0 && chdir(folder) == 0;
+    if (ok) {
+        char base[256];
+        char text[300];
+        smith_changed_reset();
+        out[0] = '\0';
+        if (smith_changed_base(nullptr, base, sizeof base))
+            snprintf(out, out_size, "%s", smith_changed_named(base, text, sizeof text));
+        ok = fchdir(home) == 0;
+    }
     if (home >= 0) close(home);
     return ok;
 }

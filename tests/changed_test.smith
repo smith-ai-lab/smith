@@ -397,3 +397,52 @@ export void test_lint_chooses_the_changed_files_and_their_importers_twice() {
     scratch::expect_text(
         "only c", "lib/c_test.smith\nsmith lint --changed: 1 changed file since HEAD: 1 of 14 files to lint\n", again);
 }
+
+// A git repository in a folder of the project with a main and a dev branch ahead of it, to clone.
+constexpr char origin_repository[_] =
+    "export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t; "
+    "git init -q -b main o && cd o && echo 1 > f && git add f && git commit -q -m one && "
+    "git checkout -q -b dev && echo 2 > f && git commit -q -am two && git checkout -q main && cd .. && ";
+
+// The base `--changed` chooses with no ref (issue #1126), in process through `smith_core_changed_base`, on one case per
+// path: the upstream's merge-base, origin/<default branch> from origin/HEAD, origin/main when origin/HEAD is not set,
+// and nothing at all (the caller then names `--changed=<ref>`).
+static const char *base_of(const char *setup, const char *folder) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::Run run = scratch::sh(&p, format::push(origin_repository, setup).data);
+    scratch::expect_status("the repository is made", 0, &run);
+    constexpr usize capacity = 1U << 10;
+    char *out = mem::alloc_slice(char, capacity).data;
+    test::check_equal(c::smith_core_changed_base(format::push(p.dir, "/", folder).data, out, capacity), true);
+    return out;
+}
+
+export void test_base_is_the_upstreams_merge_base_when_the_branch_has_an_upstream() {
+    enter();
+    defer leave();
+    const char *out = base_of("git clone -q o a && cd a && git checkout -q -b feat origin/dev", "a");
+    scratch::expect_contains("the upstream", out, "upstream (");
+}
+
+export void test_base_is_origin_head_in_a_detached_clone() {
+    enter();
+    defer leave();
+    const char *out = base_of("git clone -q o a && cd a && git checkout -q --detach", "a");
+    scratch::expect_contains("origin/main by origin/HEAD", out, "origin/main (");
+}
+
+export void test_base_is_origin_main_when_origin_head_is_not_set() {
+    enter();
+    defer leave();
+    const char *out =
+        base_of("git clone -q o a && cd a && git remote set-head origin -d && git checkout -q --detach", "a");
+    scratch::expect_contains("origin/main", out, "origin/main (");
+}
+
+export void test_base_is_empty_with_nothing_to_compare_with() {
+    enter();
+    defer leave();
+    const char *out = base_of("cd o && git checkout -q dev && git branch -q -D main", "o");
+    scratch::expect_text("no base", "", out);
+}
