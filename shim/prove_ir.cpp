@@ -168,8 +168,8 @@ unsigned owner_id(const Instruction &instruction) {
     return id_of(instruction.getMetadata("smith.owner"));
 }
 
-// A function with no body in the module that its header marks [[clang::annotate("smith::edge")]] (a library's edge exports)
-// is the edge of the program, as a trusted function is, with no contract: it gets the attribute "smith.edge".
+// A function with no body in the module that its header marks [[clang::annotate("smith::edge")]] (a library's edge
+// exports) is the edge of the program, as a trusted function is, with no contract: it gets the attribute "smith.edge".
 void mark_edges(Module &module) {
     GlobalVariable *annotations = module.getGlobalVariable("llvm.global.annotations");
     if (annotations == nullptr || !annotations->hasInitializer()) return;
