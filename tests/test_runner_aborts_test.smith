@@ -3,270 +3,329 @@
 // runs as workers and with --isolate. Fixtures: tests/build_fixtures/runner_*.
 module test_runner_aborts_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import runner;
 import scratch;
 
-static scratch::Project built(io::Io *io, const char *base, const char *files, const char *arguments) {
-    scratch::Project p = runner::project(io, base, files);
+static scratch::Project built(const char *base, const char *files, const char *arguments) {
+    scratch::Project p = runner::project_free(base, files);
     scratch::Run run = runner::build(&p, arguments);
     scratch::expect_status("the runner builds", 0, &run);
+    scratch::release(run.out);
+    scratch::release(run.err);
     return p;
 }
 
-export void test_runner_aborts_an_expected_abort_passes_and_hides_the_childs_output(io::Io *io) {
-    scratch::Project p = built(io, "runner_base", "runner_aborts", "");
+export void test_runner_aborts_an_expected_abort_passes_and_hides_the_childs_output() {
+    scratch::Project p = built("runner_base", "runner_aborts", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run assert_run = runner::tests(&p, iso, "--test abort_assert --verbose");
-        runner::expect_has(io, iso, "aborts: an abort passes", &assert_run, "PASS abort_assert");
-        runner::expect_lacks(io, iso, "aborts: ... and the child's output is hidden", &assert_run, "child noise");
+        runner::expect_has_free(iso, "aborts: an abort passes", &assert_run, "PASS abort_assert");
+        runner::expect_lacks_free(iso, "aborts: ... and the child's output is hidden", &assert_run, "child noise");
         scratch::Run arena = runner::tests(&p, iso, "--test abort_arena --verbose");
-        runner::expect_has(io, iso, "aborts: the arena's capacity stop passes", &arena, "PASS abort_arena");
+        runner::expect_has_free(iso, "aborts: the arena's capacity stop passes", &arena, "PASS abort_arena");
         scratch::Run abort = runner::tests(&p, iso, "--test abort_abort --verbose");
-        runner::expect_has(io, iso, "aborts: abort_abort passes", &abort, "PASS abort_abort");
+        runner::expect_has_free(iso, "aborts: abort_abort passes", &abort, "PASS abort_abort");
         scratch::Run trap = runner::tests(&p, iso, "--test abort_trap --verbose");
-        runner::expect_has(io, iso, "aborts: abort_trap passes", &trap, "PASS abort_trap");
+        runner::expect_has_free(iso, "aborts: abort_trap passes", &trap, "PASS abort_trap");
         scratch::Run twice = runner::tests(&p, iso, "--test abort_twice --verbose");
-        runner::expect_has(io, iso, "aborts: a second call is harmless", &twice, "PASS abort_twice");
+        runner::expect_has_free(iso, "aborts: a second call is harmless", &twice, "PASS abort_twice");
         scratch::Run after = runner::tests(&p, iso, "--test abort_after_check --verbose");
-        runner::expect_has(io, iso, "aborts: checks before the call run as always", &after, "PASS abort_after_check");
+        runner::expect_has_free(iso, "aborts: checks before the call run as always", &after, "PASS abort_after_check");
     }
 }
 
-export void test_runner_aborts_a_sanitizer_report_is_a_failure_not_an_expected_stop(io::Io *io) {
-    scratch::Project p = built(io, "runner_base", "runner_aborts", "");
+export void test_runner_aborts_a_sanitizer_report_is_a_failure_not_an_expected_stop() {
+    scratch::Project p = built("runner_base", "runner_aborts", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run read = runner::tests(&p, iso, "--test sanitized_read");
-        runner::expect_has(io, iso, "aborts: an ASan report fails", &read, "FAIL sanitized_read");
-        runner::expect_has(io, iso, "aborts: ... saying it was a sanitizer report", &read,
-                           "stopped by a sanitizer report, which is a bug, not the stop the test expected");
-        runner::expect_has(io, iso, "aborts: ... and shows the child's output", &read,
-                           "AddressSanitizer: heap-buffer-overflow");
+        runner::expect_has_free(iso, "aborts: an ASan report fails", &read, "FAIL sanitized_read");
+        runner::expect_has_free(iso, "aborts: ... saying it was a sanitizer report", &read,
+                                "stopped by a sanitizer report, which is a bug, not the stop the test expected");
+        runner::expect_has_free(iso, "aborts: ... and shows the child's output", &read,
+                                "AddressSanitizer: heap-buffer-overflow");
         scratch::Run overflow = runner::tests(&p, iso, "--test sanitized_overflow");
-        runner::expect_has(io, iso, "aborts: a UBSan error fails", &overflow,
-                           "stopped by a sanitizer report, which is a bug, not the stop the test expected");
-        runner::expect_has(io, iso, "aborts: ... and shows the child's output", &overflow,
-                           "runtime error: signed integer overflow");
+        runner::expect_has_free(iso, "aborts: a UBSan error fails", &overflow,
+                                "stopped by a sanitizer report, which is a bug, not the stop the test expected");
+        runner::expect_has_free(iso, "aborts: ... and shows the child's output", &overflow,
+                                "runtime error: signed integer overflow");
     }
 }
 
-export void test_runner_aborts_an_exit_a_return_and_a_failed_check_are_not_aborts(io::Io *io) {
-    scratch::Project p = built(io, "runner_base", "runner_aborts", "");
+export void test_runner_aborts_an_exit_a_return_and_a_failed_check_are_not_aborts() {
+    scratch::Project p = built("runner_base", "runner_aborts", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     usize call = runner::line_of(&p, "tests/test_aborts.smith", "c::printf(\"child output\\n\");") - 1;
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run exit = runner::tests(&p, iso, "--test abort_exit");
-        runner::expect_has(io, iso, "aborts: exit(3) fails", &exit, "it exited with status 3");
+        runner::expect_has_free(iso, "aborts: exit(3) fails", &exit, "it exited with status 3");
         scratch::Run returns = runner::tests(&p, iso, "--test abort_returns");
-        runner::expect_has(io, iso, "aborts: returning fails", &returns, "FAIL abort_returns");
-        runner::expect_has(io, iso, "aborts: ... saying it returned", &returns, "expected an abort; the test returned");
-        runner::expect_has(io, iso, "aborts: ... and shows the test's output", &returns, "child output");
+        runner::expect_has_free(iso, "aborts: returning fails", &returns, "FAIL abort_returns");
+        runner::expect_has_free(iso, "aborts: ... saying it returned", &returns,
+                                "expected an abort; the test returned");
+        runner::expect_has_free(iso, "aborts: ... and shows the test's output", &returns, "child output");
         if (runner::can_symbolize(&p)) {
             const char *traced = runner::symbolized(&p, iso, "--test abort_returns");
-            scratch::expect_contains(runner::label(io, iso, "aborts: ... at the call's line"), traced,
-                                     format::push(&io->arena, "  check failed at tests/test_aborts.smith:", call).data);
-            scratch::expect_contains(runner::label(io, iso, "aborts: ... showing the call"), traced,
-                                     format::push(&io->arena, call, " |     test::expect_abort();").data);
+            scratch::expect_contains(runner::label_free(iso, "aborts: ... at the call's line"), traced,
+                                     format::push(&memory, "  check failed at tests/test_aborts.smith:", call).data);
+            scratch::expect_contains(runner::label_free(iso, "aborts: ... showing the call"), traced,
+                                     format::push(&memory, call, " |     test::expect_abort();").data);
         }
         scratch::Run inside = runner::tests(&p, iso, "--test abort_check_inside");
-        runner::expect_has(io, iso, "aborts: a check that fails after the call is not an abort", &inside,
-                           "expected an abort; a check failed, which is not an abort");
+        runner::expect_has_free(iso, "aborts: a check that fails after the call is not an abort", &inside,
+                                "expected an abort; a check failed, which is not an abort");
         scratch::Run before = runner::tests(&p, iso, "--test abort_before");
-        runner::expect_has(io, iso, "aborts: an abort before the call is an ordinary failure", &before,
-                           "FAIL abort_before: killed by SIGABRT");
-        runner::expect_lacks(io, iso, "aborts: ... not an expected one", &before, "expected an abort");
-        runner::expect_has(io, iso, "aborts: ... showing what it printed", &before, "aborting early");
+        runner::expect_has_free(iso, "aborts: an abort before the call is an ordinary failure", &before,
+                                "FAIL abort_before: killed by SIGABRT");
+        runner::expect_lacks_free(iso, "aborts: ... not an expected one", &before, "expected an abort");
+        runner::expect_has_free(iso, "aborts: ... showing what it printed", &before, "aborting early");
     }
 }
 
-export void test_runner_aborts_jobs_one_gives_the_same_results_as_the_default(io::Io *io) {
-    scratch::Project p = built(io, "runner_base", "runner_aborts", "");
+export void test_runner_aborts_jobs_one_gives_the_same_results_as_the_default() {
+    scratch::Project p = built("runner_base", "runner_aborts", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         // the addresses of the trace differ per run
         const char *filter = " 2>&1 | sed -e '/^slowest:/,/^$/d' -e 's/ in [0-9.]* s$//' | grep -v 'smith-trace "
                              "\\(image\\|frame\\)'";
         const char *all =
-            scratch::capture(&p, format::push(&io->arena, "build/tests ", iso, " --test abort", filter).data);
+            scratch::capture(&p, format::push(&memory, "build/tests ", iso, " --test abort", filter).data);
         const char *one =
-            scratch::capture(&p, format::push(&io->arena, "build/tests ", iso, " --test abort --jobs 1", filter).data);
-        scratch::expect_text(runner::label(io, iso, "jobs: --jobs 1 gives the same results"), all, one);
+            scratch::capture(&p, format::push(&memory, "build/tests ", iso, " --test abort --jobs 1", filter).data);
+        scratch::expect_text(runner::label_free(iso, "jobs: --jobs 1 gives the same results"), all, one);
     }
 }
 
 // A crash without the sanitizers, in a project of its own.
-static void case_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_rest_still_run(io::Io *io, usize mode) {
-    scratch::Project p = built(io, "runner_base", "runner_crash", "-DSAN=0");
+static void case_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_rest_still_run(usize mode) {
+    scratch::Project p = built("runner_base", "runner_crash", "-DSAN=0");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
 
     const char *iso = runner::flag(mode);
     scratch::Run segv = runner::tests(&p, iso, "--test abort_segv");
-    runner::expect_has(io, iso, "aborts: a SIGSEGV fails", &segv, "FAIL abort_segv");
-    runner::expect_has(io, iso, "aborts: ... saying it crashed", &segv, "it crashed with SIGSEGV");
-    runner::expect_has(io, iso, "aborts: ... and showing what it printed first", &segv, "before the crash");
+    runner::expect_has_free(iso, "aborts: a SIGSEGV fails", &segv, "FAIL abort_segv");
+    runner::expect_has_free(iso, "aborts: ... saying it crashed", &segv, "it crashed with SIGSEGV");
+    runner::expect_has_free(iso, "aborts: ... and showing what it printed first", &segv, "before the crash");
     // wall time on purpose: these test the backstop
     scratch::Run hangs = runner::tests(&p, iso, "--test abort_hangs --wall-timeout 1");
-    runner::expect_has(io, iso, "aborts: a hang is reported as a hang", &hangs, "FAIL abort_hangs: hung after 1.");
+    runner::expect_has_free(iso, "aborts: a hang is reported as a hang", &hangs, "FAIL abort_hangs: hung after 1.");
     scratch::Run zero = runner::tests(&p, iso, "--test abort_exits_zero");
-    runner::expect_has(io, iso, "aborts: exit(0) is a return, not an abort", &zero,
-                       "expected an abort; the test returned");
+    runner::expect_has_free(iso, "aborts: exit(0) is a return, not an abort", &zero,
+                            "expected an abort; the test returned");
     scratch::Run every = runner::tests(&p, iso, "--test abort_ --wall-timeout 1");
-    runner::expect_has(io, iso, "aborts: the tests after a crash, a hang and an exit still run", &every,
-                       "1 passed, 3 failed");
+    runner::expect_has_free(iso, "aborts: the tests after a crash, a hang and an exit still run", &every,
+                            "1 passed, 3 failed");
 }
 
-export void test_runner_aborts_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_rest_still_run_workers(io::Io *io) {
-    case_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_rest_still_run(io, 0);
+export void test_runner_aborts_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_rest_still_run_workers() {
+    case_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_rest_still_run(0);
 }
 
-export void test_runner_aborts_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_rest_still_run_isolated(io::Io *io) {
-    case_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_rest_still_run(io, 1);
+export void test_runner_aborts_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_rest_still_run_isolated() {
+    case_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_rest_still_run(1);
 }
 
 // The three profiles. debug is the runners above (sanitizers on). release is -O2 with assertions on, and fast is -O2
 // -DNDEBUG, where an assert is gone: abort() and __builtin_trap() still stop, and a test that expects an assert to stop
 // it returns.
-static scratch::Project profile_project(io::Io *io, const char *flags) {
-    scratch::Project p = runner::project(io, "runner_c", "runner_profile");
+static void build_profile(scratch::Project *p, arena::Arena *memory, const char *flags) {
     const char *edit =
-        format::push(&io->arena, "sed -i.bak 's/\"-Wconversion\",/\"-Wconversion\", ", flags, ",/' build.c").data;
-    scratch::Run edited = scratch::sh(&p, edit);
+        format::push(memory, "sed -i.bak 's/\"-Wconversion\",/\"-Wconversion\", ", flags, ",/' build.c").data;
+    scratch::Run edited = scratch::sh(p, edit);
     scratch::expect_status("profiles: the flags are set", 0, &edited);
-    scratch::Run run = runner::build(&p, "-DSAN=0");
+    scratch::Run run = runner::build(p, "-DSAN=0");
     scratch::expect_status("profiles: the runner builds", 0, &run);
-    return p;
 }
 
-export void test_runner_aborts_the_release_profile_keeps_asserts(io::Io *io) {
-    scratch::Project p = profile_project(io, "\"-O2\"");
+export void test_runner_aborts_the_release_profile_keeps_asserts() {
+    scratch::Project p = runner::project_free("runner_c", "runner_profile");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_profile(&p, &memory, "\"-O2\"");
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "--test profile_ --verbose");
-        runner::expect_has(io, iso, "profiles: release: abort() passes", &run, "PASS profile_abort");
-        runner::expect_has(io, iso, "profiles: release: __builtin_trap() passes", &run, "PASS profile_trap");
-        runner::expect_has(io, iso, "profiles: release: an assert passes", &run, "PASS profile_assert");
-        runner::expect_has(io, iso, "profiles: release: 3 passed, 3 failed", &run, "3 passed, 3 failed");
-        runner::expect_has(io, iso, "profiles: release: returning fails", &run, "FAIL profile_returns");
-        runner::expect_has(io, iso, "profiles: release: ... saying so", &run, "expected an abort; the test returned");
-        runner::expect_has(io, iso, "profiles: release: an abort before the call is an ordinary failure", &run,
-                           "FAIL profile_before: killed by SIGABRT");
-        runner::expect_has(io, iso, "profiles: release: a SIGSEGV fails", &run, "it crashed with SIGSEGV");
+        runner::expect_has_free(iso, "profiles: release: abort() passes", &run, "PASS profile_abort");
+        runner::expect_has_free(iso, "profiles: release: __builtin_trap() passes", &run, "PASS profile_trap");
+        runner::expect_has_free(iso, "profiles: release: an assert passes", &run, "PASS profile_assert");
+        runner::expect_has_free(iso, "profiles: release: 3 passed, 3 failed", &run, "3 passed, 3 failed");
+        runner::expect_has_free(iso, "profiles: release: returning fails", &run, "FAIL profile_returns");
+        runner::expect_has_free(iso, "profiles: release: ... saying so", &run, "expected an abort; the test returned");
+        runner::expect_has_free(iso, "profiles: release: an abort before the call is an ordinary failure", &run,
+                                "FAIL profile_before: killed by SIGABRT");
+        runner::expect_has_free(iso, "profiles: release: a SIGSEGV fails", &run, "it crashed with SIGSEGV");
     }
 }
 
-export void test_runner_aborts_the_fast_profile_loses_asserts_so_that_test_returns(io::Io *io) {
-    scratch::Project p = profile_project(io, "\"-O2\", \"-DNDEBUG\"");
+export void test_runner_aborts_the_fast_profile_loses_asserts_so_that_test_returns() {
+    scratch::Project p = runner::project_free("runner_c", "runner_profile");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    build_profile(&p, &memory, "\"-O2\", \"-DNDEBUG\"");
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "--test profile_ --verbose");
-        runner::expect_has(io, iso, "profiles: fast: abort() passes", &run, "PASS profile_abort");
-        runner::expect_has(io, iso, "profiles: fast: __builtin_trap() passes", &run, "PASS profile_trap");
-        runner::expect_has(io, iso, "profiles: fast: an assert is gone, so the test returns", &run,
-                           "FAIL profile_assert");
-        runner::expect_has(io, iso, "profiles: fast: 2 passed, 4 failed", &run, "2 passed, 4 failed");
-        runner::expect_has(io, iso, "profiles: fast: returning fails", &run, "FAIL profile_returns");
-        runner::expect_has(io, iso, "profiles: fast: ... saying so", &run, "expected an abort; the test returned");
-        runner::expect_has(io, iso, "profiles: fast: an abort before the call is an ordinary failure", &run,
-                           "FAIL profile_before: killed by SIGABRT");
-        runner::expect_has(io, iso, "profiles: fast: a SIGSEGV fails", &run, "it crashed with SIGSEGV");
+        runner::expect_has_free(iso, "profiles: fast: abort() passes", &run, "PASS profile_abort");
+        runner::expect_has_free(iso, "profiles: fast: __builtin_trap() passes", &run, "PASS profile_trap");
+        runner::expect_has_free(iso, "profiles: fast: an assert is gone, so the test returns", &run,
+                                "FAIL profile_assert");
+        runner::expect_has_free(iso, "profiles: fast: 2 passed, 4 failed", &run, "2 passed, 4 failed");
+        runner::expect_has_free(iso, "profiles: fast: returning fails", &run, "FAIL profile_returns");
+        runner::expect_has_free(iso, "profiles: fast: ... saying so", &run, "expected an abort; the test returned");
+        runner::expect_has_free(iso, "profiles: fast: an abort before the call is an ordinary failure", &run,
+                                "FAIL profile_before: killed by SIGABRT");
+        runner::expect_has_free(iso, "profiles: fast: a SIGSEGV fails", &run, "it crashed with SIGSEGV");
     }
 }
 
 // Section 3. Isolation: a crash, a sanitizer report and a timeout each fail one test and the rest still run.
-export void test_runner_aborts_a_sanitizer_report_an_exit_and_a_later_test_are_isolated(io::Io *io) {
-    scratch::Project p = built(io, "runner_base", "runner_isolation", "");
+export void test_runner_aborts_a_sanitizer_report_an_exit_and_a_later_test_are_isolated() {
+    scratch::Project p = built("runner_base", "runner_isolation", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run overflow = runner::tests(&p, iso, "--test overflow");
-        runner::expect_has(io, iso, "isolation: an ASan report is shown", &overflow,
-                           "AddressSanitizer: heap-buffer-overflow");
-        runner::expect_has(io, iso, "isolation: ... under the test's FAIL line", &overflow,
-                           "FAIL overflow: killed by SIGABRT");
-        runner::expect_has(io, iso, "isolation: ... with the note", &overflow, "    note: index 8");
+        runner::expect_has_free(iso, "isolation: an ASan report is shown", &overflow,
+                                "AddressSanitizer: heap-buffer-overflow");
+        runner::expect_has_free(iso, "isolation: ... under the test's FAIL line", &overflow,
+                                "FAIL overflow: killed by SIGABRT");
+        runner::expect_has_free(iso, "isolation: ... with the note", &overflow, "    note: index 8");
         scratch::Run exits = runner::tests(&p, iso, "--test exits");
-        runner::expect_has(io, iso, "isolation: an exit status is reported", &exits,
-                           "FAIL exits: exited with status 3");
+        runner::expect_has_free(iso, "isolation: an exit status is reported", &exits,
+                                "FAIL exits: exited with status 3");
         scratch::Run after = runner::tests(&p, iso, "--test ok_after --verbose");
-        runner::expect_has(io, iso, "isolation: a test after the others still runs", &after, "PASS ok_after");
+        runner::expect_has_free(iso, "isolation: a test after the others still runs", &after, "PASS ok_after");
     }
 }
 
 // The cases of the hang test run side by side (each waits its second of wall time): `part` 0 is a hang and a busy test,
 // 1 a blocked test, 2 an alarm.
-static void case_a_hang_a_busy_test_and_an_alarm_is_reported(io::Io *io, usize mode, usize part) {
-    scratch::Project p = built(io, "runner_base", "runner_isolation", "");
+static void case_a_hang_a_busy_test_and_an_alarm_is_reported(usize mode, usize part) {
+    scratch::Project p = built("runner_base", "runner_isolation", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     const char *iso = runner::flag(mode);
     // wall time on purpose: a test of the backstop
     if (part == 0) {
         scratch::Run sleeps = runner::tests(&p, iso, "--test sleeps --wall-timeout 1");
-        runner::expect_has(io, iso, "isolation: a hang is reported", &sleeps, "FAIL sleeps: hung after 1.");
+        runner::expect_has_free(iso, "isolation: a hang is reported", &sleeps, "FAIL sleeps: hung after 1.");
         scratch::Run spins = runner::tests(&p, iso, "--test spins --timeout 1 --wall-timeout 600");
-        runner::expect_has(io, iso, "isolation: a busy test is over its CPU time limit", &spins,
-                           "FAIL spins: over its CPU time limit of 1 s (");
-        runner::expect_has(io, iso, "isolation: ... and says the wall time, since threads add CPU time", &spins,
-                           "s of wall time passed; threads add CPU time)");
+        runner::expect_has_free(iso, "isolation: a busy test is over its CPU time limit", &spins,
+                                "FAIL spins: over its CPU time limit of 1 s (");
+        runner::expect_has_free(iso, "isolation: ... and says the wall time, since threads add CPU time", &spins,
+                                "s of wall time passed; threads add CPU time)");
     }
     if (part == 1) {
         scratch::Run naps = runner::tests(&p, iso, "--test naps --timeout 1 --verbose");
-        runner::expect_has(io, iso, "isolation: a blocked test spends no CPU time, so the CPU limit does not end it",
-                           &naps, "PASS naps");
+        runner::expect_has_free(iso, "isolation: a blocked test spends no CPU time, so the CPU limit does not end it",
+                                &naps, "PASS naps");
         scratch::Run napped = runner::tests(&p, iso, "--test naps --timeout 1 --wall-timeout 1");
-        runner::expect_has(io, iso, "isolation: ... and the wall-clock backstop (a hang, wall time on purpose) does",
-                           &napped, "FAIL naps: hung after 1.");
+        runner::expect_has_free(iso, "isolation: ... and the wall-clock backstop (a hang, wall time on purpose) does",
+                                &napped, "FAIL naps: hung after 1.");
     }
     if (part == 2) {
         scratch::Run alarm = runner::tests(&p, iso, "--test alarm_hangs");
-        runner::expect_has(io, iso, "isolation: a test's own alarm ends it as a hang, with the measured time", &alarm,
-                           "FAIL alarm_hangs: hung after 1.");
+        runner::expect_has_free(iso, "isolation: a test's own alarm ends it as a hang, with the measured time", &alarm,
+                                "FAIL alarm_hangs: hung after 1.");
     }
 }
 
-export void test_runner_aborts_a_hang_and_a_busy_test_are_reported_workers(io::Io *io) {
-    case_a_hang_a_busy_test_and_an_alarm_is_reported(io, 0, 0);
+export void test_runner_aborts_a_hang_and_a_busy_test_are_reported_workers() {
+    case_a_hang_a_busy_test_and_an_alarm_is_reported(0, 0);
 }
 
-export void test_runner_aborts_a_hang_and_a_busy_test_are_reported_isolated(io::Io *io) {
-    case_a_hang_a_busy_test_and_an_alarm_is_reported(io, 1, 0);
+export void test_runner_aborts_a_hang_and_a_busy_test_are_reported_isolated() {
+    case_a_hang_a_busy_test_and_an_alarm_is_reported(1, 0);
 }
 
-export void test_runner_aborts_a_blocked_test_is_reported_workers(io::Io *io) {
-    case_a_hang_a_busy_test_and_an_alarm_is_reported(io, 0, 1);
+export void test_runner_aborts_a_blocked_test_is_reported_workers() {
+    case_a_hang_a_busy_test_and_an_alarm_is_reported(0, 1);
 }
 
-export void test_runner_aborts_a_blocked_test_is_reported_isolated(io::Io *io) {
-    case_a_hang_a_busy_test_and_an_alarm_is_reported(io, 1, 1);
+export void test_runner_aborts_a_blocked_test_is_reported_isolated() {
+    case_a_hang_a_busy_test_and_an_alarm_is_reported(1, 1);
 }
 
-export void test_runner_aborts_an_alarm_is_reported_workers(io::Io *io) {
-    case_a_hang_a_busy_test_and_an_alarm_is_reported(io, 0, 2);
+export void test_runner_aborts_an_alarm_is_reported_workers() {
+    case_a_hang_a_busy_test_and_an_alarm_is_reported(0, 2);
 }
 
-export void test_runner_aborts_an_alarm_is_reported_isolated(io::Io *io) {
-    case_a_hang_a_busy_test_and_an_alarm_is_reported(io, 1, 2);
+export void test_runner_aborts_an_alarm_is_reported_isolated() {
+    case_a_hang_a_busy_test_and_an_alarm_is_reported(1, 2);
 }
 
-export void test_runner_aborts_a_note_shows_in_full_up_to_four_kib(io::Io *io) {
-    scratch::Project p = built(io, "runner_base", "runner_isolation", "");
+export void test_runner_aborts_a_note_shows_in_full_up_to_four_kib() {
+    scratch::Project p = built("runner_base", "runner_isolation", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run board = runner::tests(&p, iso, "--test board_note");
-        runner::expect_has(io, iso, "note: several lines show in full", &board,
-                           "    note: board\n  . x .\n  x . x\n  . x .\nend");
-        runner::expect_lacks(io, iso, "note: ... without the mark", &board, "…");
+        runner::expect_has_free(iso, "note: several lines show in full", &board,
+                                "    note: board\n  . x .\n  x . x\n  . x .\nend");
+        runner::expect_lacks_free(iso, "note: ... without the mark", &board, "…");
         scratch::Run long_note = runner::tests(&p, iso, "--test long_note");
-        runner::expect_has(io, iso, "note: an overlong one ends with the mark", &long_note, "aaa…");
-        runner::expect_lacks(io, iso, "note: ... and holds no more than 4 KiB", &long_note,
-                             runner::repeated(io, 'a', 4100));
+        runner::expect_has_free(iso, "note: an overlong one ends with the mark", &long_note, "aaa…");
+        runner::expect_lacks_free(iso, "note: ... and holds no more than 4 KiB", &long_note,
+                                  runner::repeated_free('a', 4100));
     }
 }
 
 // A worker stopped by a timer before it armed its clocks did not run the test (a left-over timer fired, SIGPROF with
 // the test not started): the test gets a fresh worker, three times, and is never reported as over its CPU time limit.
-export void test_runner_aborts_a_test_whose_worker_was_lost_gets_a_fresh_one(io::Io *io) {
-    scratch::Project p = built(io, "runner_base", "runner_isolation", "");
+export void test_runner_aborts_a_test_whose_worker_was_lost_gets_a_fresh_one() {
+    scratch::Project p = built("runner_base", "runner_isolation", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::Run twice =
         scratch::sh(&p, "env SMITH_TEST_KILL_WORKERS=2 build/tests --test ok_after --jobs 1 --verbose 2>&1");
     scratch::expect_contains("lost workers: a test whose worker was stopped twice before it began passes in the third",
@@ -278,73 +337,91 @@ export void test_runner_aborts_a_test_whose_worker_was_lost_gets_a_fresh_one(io:
     scratch::expect_lacks("lost workers: ... and does not blame the test", never.out, "over its CPU time limit");
 }
 
-static void case_the_whole_run_reports_every_test_and_a_bad_option_exits_two(io::Io *io, usize mode) {
-    scratch::Project p = built(io, "runner_base", "runner_isolation", "");
+static void case_the_whole_run_reports_every_test_and_a_bad_option_exits_two(usize mode) {
+    scratch::Project p = built("runner_base", "runner_isolation", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
 
     const char *iso = runner::flag(mode);
     scratch::Run whole = runner::tests(&p, iso, "--wall-timeout 1");
-    runner::expect_has(io, iso, "isolation: the whole run reports every test", &whole, "failed in");
-    scratch::expect_count(runner::label(io, iso, "isolation: ... and exits 1"), 1, (usize)whole.status);
+    runner::expect_has_free(iso, "isolation: the whole run reports every test", &whole, "failed in");
+    scratch::expect_count(runner::label_free(iso, "isolation: ... and exits 1"), 1, (usize)whole.status);
     scratch::Run jobs = runner::tests(&p, iso, "--jobs 0");
-    scratch::expect_count(runner::label(io, iso, "options: a bad option exits 2"), 2, (usize)jobs.status);
-    runner::expect_has(io, iso, "options: ... and prints the usage", &jobs, "usage:");
+    scratch::expect_count(runner::label_free(iso, "options: a bad option exits 2"), 2, (usize)jobs.status);
+    runner::expect_has_free(iso, "options: ... and prints the usage", &jobs, "usage:");
     scratch::Run none = runner::tests(&p, iso, "--test nothing_like_this");
-    scratch::expect_count(runner::label(io, iso, "options: no matching test exits 1"), 1, (usize)none.status);
-    runner::expect_has(io, iso, "options: ... and says no test matches", &none,
-                       "no test matches \"nothing_like_this\"");
+    scratch::expect_count(runner::label_free(iso, "options: no matching test exits 1"), 1, (usize)none.status);
+    runner::expect_has_free(iso, "options: ... and says no test matches", &none,
+                            "no test matches \"nothing_like_this\"");
 }
 
-export void test_runner_aborts_the_whole_run_reports_every_test_and_a_bad_option_exits_two_workers(io::Io *io) {
-    case_the_whole_run_reports_every_test_and_a_bad_option_exits_two(io, 0);
+export void test_runner_aborts_the_whole_run_reports_every_test_and_a_bad_option_exits_two_workers() {
+    case_the_whole_run_reports_every_test_and_a_bad_option_exits_two(0);
 }
 
-export void test_runner_aborts_the_whole_run_reports_every_test_and_a_bad_option_exits_two_isolated(io::Io *io) {
-    case_the_whole_run_reports_every_test_and_a_bad_option_exits_two(io, 1);
+export void test_runner_aborts_the_whole_run_reports_every_test_and_a_bad_option_exits_two_isolated() {
+    case_the_whole_run_reports_every_test_and_a_bad_option_exits_two(1);
 }
 
 // Section 4. Running: --test filters, --seeds counts, --jobs 1 gives the same results.
-static scratch::Project properties_project(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_properties");
+static scratch::Project properties_project() {
+    scratch::Project p = runner::project_free("runner_base", "runner_properties");
     runner::add(&p, "runner_checks");
     runner::add(&p, "runner_isolation");
     scratch::Run run = runner::build(&p, "");
     scratch::expect_status("properties: the runner builds", 0, &run);
+    scratch::release(run.out);
+    scratch::release(run.err);
     return p;
 }
 
-export void test_runner_aborts_a_property_test_runs_on_keys_and_the_seed_options_count_them(io::Io *io) {
-    scratch::Project p = properties_project(io);
+export void test_runner_aborts_a_property_test_runs_on_keys_and_the_seed_options_count_them() {
+    scratch::Project p = properties_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run keys = runner::tests(&p, iso, "--test prop_ok --verbose");
-        runner::expect_has(io, iso, "properties: a property test runs on 100 keys", &keys, "PASS prop_ok (100 seeds)");
+        runner::expect_has_free(iso, "properties: a property test runs on 100 keys", &keys, "PASS prop_ok (100 seeds)");
         scratch::Run seeds = runner::tests(&p, iso, "--test prop_ok --seeds 7 --verbose");
-        runner::expect_has(io, iso, "seeds: --seeds sets the count", &seeds, "PASS prop_ok (7 seeds)");
+        runner::expect_has_free(iso, "seeds: --seeds sets the count", &seeds, "PASS prop_ok (7 seeds)");
         scratch::Run seed = runner::tests(&p, iso, "--test prop_ok --seed 5 --verbose");
-        runner::expect_has(io, iso, "seeds: --seed runs one seed", &seed, "PASS prop_ok (seed 5)");
+        runner::expect_has_free(iso, "seeds: --seed runs one seed", &seed, "PASS prop_ok (seed 5)");
     }
 }
 
-export void test_runner_aborts_smith_test_runs_the_runner_and_passes_its_options_on(io::Io *io) {
-    scratch::Project p = properties_project(io);
+export void test_runner_aborts_smith_test_runs_the_runner_and_passes_its_options_on() {
+    scratch::Project p = properties_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run plain_run = runner::smith_test(&p, iso, "--test prop_ok --seeds 3");
-        scratch::expect_status(runner::label(io, iso, "task: smith test runs the runner"), 0, &plain_run);
+        scratch::expect_status(runner::label_free(iso, "task: smith test runs the runner"), 0, &plain_run);
         scratch::Run keep = runner::smith_test(&p, iso, "--test prop_ok --seeds 3 -k");
-        scratch::expect_status(runner::label(io, iso, "task: -k is the build's (keep going), not the runner's"), 0,
+        scratch::expect_status(runner::label_free(iso, "task: -k is the build's (keep going), not the runner's"), 0,
                                &keep);
         scratch::Run keep_n = runner::smith_test(&p, iso, "--test prop_ok --seeds 3 -k 2");
-        scratch::expect_status(runner::label(io, iso, "task: -k N too"), 0, &keep_n);
+        scratch::expect_status(runner::label_free(iso, "task: -k N too"), 0, &keep_n);
         scratch::Run bad = runner::smith_test(&p, iso, "--test prop_ok --seeds x");
         scratch::expect_failure(
-            runner::label(io, iso, "task: a bad option reaches the runner's usage, and fails the task"), &bad);
-        runner::expect_has(io, iso, "task: ... which says so", &bad, "usage:");
+            runner::label_free(iso, "task: a bad option reaches the runner's usage, and fails the task"), &bad);
+        runner::expect_has_free(iso, "task: ... which says so", &bad, "usage:");
         scratch::Run filtered = runner::smith_test(&p, iso, "--test ok_after --jobs 1");
-        scratch::expect_status(runner::label(io, iso, "task: --test filters, and a passing run exits 0"), 0, &filtered);
+        scratch::expect_status(runner::label_free(iso, "task: --test filters, and a passing run exits 0"), 0,
+                               &filtered);
         scratch::Run failing = runner::smith_test(&p, iso, "--test stops");
-        runner::expect_has(io, iso, "task: a failing test is printed", &failing, "FAIL stops");
-        scratch::expect_count(runner::label(io, iso, "task: ... and the task fails"), 1, (usize)failing.status);
+        runner::expect_has_free(iso, "task: a failing test is printed", &failing, "FAIL stops");
+        scratch::expect_count(runner::label_free(iso, "task: ... and the task fails"), 1, (usize)failing.status);
     }
 }
 
@@ -354,29 +431,34 @@ constexpr char digest[_] =
     " | sed -n '/^FAIL prop_fails/,/rerun/p' | grep -E '^FAIL|^ +[ax] = |rerun' | sed -e 's/^ *//' "
     "-e 's/^[ax] = \\([0-9]*\\).*/first \\1/'";
 
-export void test_runner_aborts_a_failure_names_its_seed_and_the_rerun_line_reproduces_it(io::Io *io) {
-    scratch::Project p = properties_project(io);
+export void test_runner_aborts_a_failure_names_its_seed_and_the_rerun_line_reproduces_it() {
+    scratch::Project p = properties_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run failed = runner::tests(&p, iso, "--test prop_fails --shrink 0");
         scratch::write(&p, "failed.txt", failed.out);
         const char *seed =
             scratch::capture(&p, "sed -n 's/^FAIL prop_fails with seed \\([0-9]*\\).*/\\1/p' failed.txt");
-        scratch::expect_count(runner::label(io, iso, "properties: a failure names its seed"), 1,
+        scratch::expect_count(runner::label_free(iso, "properties: a failure names its seed"), 1,
                               (usize)(seed[0] != '\0'));
-        runner::expect_has(io, iso, "properties: ... and a rerun line", &failed,
-                           format::push(&io->arena, "    rerun: smith test --test prop_fails --seed ", seed).data);
-        const char *first = scratch::capture(&p, format::push(&io->arena, "cat failed.txt", digest).data);
+        runner::expect_has_free(iso, "properties: ... and a rerun line", &failed,
+                                format::push(&memory, "    rerun: smith test --test prop_fails --seed ", seed).data);
+        const char *first = scratch::capture(&p, format::push(&memory, "cat failed.txt", digest).data);
         const char *second =
-            scratch::capture(&p, format::push(&io->arena, "env SMITH_OUTPUT=full smith test ", iso,
+            scratch::capture(&p, format::push(&memory, "env SMITH_OUTPUT=full smith test ", iso,
                                               " --test prop_fails --seed ", seed, " --shrink 0 2>&1", digest)
                                      .data);
-        scratch::expect_text(runner::label(io, iso, "properties: the rerun line reproduces the failure"), first,
+        scratch::expect_text(runner::label_free(iso, "properties: the rerun line reproduces the failure"), first,
                              second);
         const char *third =
-            scratch::capture(&p, format::push(&io->arena, "build/tests ", iso, " --test prop_fails --seed ", seed,
+            scratch::capture(&p, format::push(&memory, "build/tests ", iso, " --test prop_fails --seed ", seed,
                                               " --shrink 0 2>&1", digest)
                                      .data);
-        scratch::expect_text(runner::label(io, iso, "properties: --seed reproduces it too"), first, third);
+        scratch::expect_text(runner::label_free(iso, "properties: --seed reproduces it too"), first, third);
     }
 }
