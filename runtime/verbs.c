@@ -16,7 +16,8 @@ constexpr size_t smith_verbs_files_max = 16384;
 constexpr size_t smith_verbs_names_max = 16U << 20;
 constexpr size_t smith_verbs_batch = 128;
 constexpr size_t smith_verbs_info_max = 64U << 20; // .smith/build.info; bss, so only the pages a project fills are used
-constexpr size_t smith_verbs_lines_max = 131072; // lines of one kind; twice smith_objects_max, which `smith build` enforces
+constexpr size_t smith_verbs_lines_max =
+    131072; // lines of one kind; twice smith_objects_max, which `smith build` enforces
 // (smith_too_many), so a build.info it wrote cannot cross it; one written by hand that does stops with a message
 // (smith_info_add, smith_info_too_many).
 constexpr size_t smith_verbs_targets_max = 1024;

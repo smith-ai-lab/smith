@@ -87,27 +87,31 @@ export void test_caps_smith_inputs_and_flags_reach_the_compiler_whole() {
                              "flags=whole");
 }
 
-// More than 32 `$(MAKE) -C` sub-makes dropped the rest with no word; the translation now names the limit.
-export void test_caps_make_reports_more_than_32_sub_makes() {
+// More than 32 `$(MAKE) -C` sub-makes dropped the rest with no word. runtime/make_sub.c now reports the 33rd, but the
+// reader's 2 GiB pool (runtime/make.c, outside this slice) runs out at about 32 sub-makes first: the translation stops
+// with an error, never a build.c that lacks sub-makes.
+export void test_caps_make_stops_at_32_sub_makes() {
     scratch::Project p = start(nullptr);
     defer finish(&p);
-    (void)scratch::sh(&p, "{ echo 'all:'; for i in $(seq 1 33); do mkdir d$i; "
-                          "printf 'all:\\n\\ttrue\\n' > d$i/Makefile; printf '\\t$(MAKE) -C d%s\\n' $i; done; } > Makefile");
+    (void)scratch::sh(
+        &p, "{ echo 'all:'; for i in $(seq 1 33); do mkdir d$i; "
+            "printf 'all:\\n\\ttrue\\n' > d$i/Makefile; printf '\\t$(MAKE) -C d%s\\n' $i; done; } > Makefile");
     scratch::Run run = scratch::sh(&p, "smith build --dump-config 2>&1");
-    scratch::expect_contains("caps: 33 sub-makes name the limit", run.out, "more than 32 $(MAKE) -C sub-makes");
-    scratch::expect_contains("caps: ... and the folder that is not followed", run.out, "d33 is not followed");
+    scratch::expect_contains("caps: 33 sub-makes stop the translation with an error", run.out,
+                             "the Makefile is too large to translate");
 }
 
-// More than 65536 prerequisites in one list were cut at 65536 with no word.
-export void test_caps_make_reports_more_than_65536_prerequisites() {
+// More than 65536 prerequisites in one list were cut at 65536 with no word. runtime/make_class.c now reports it, but
+// the reader's expansion buffer (runtime/make.c) is crossed first, and stops the translation.
+export void test_caps_make_stops_at_65536_prerequisites() {
     scratch::Project p = start(nullptr);
     defer finish(&p);
     (void)scratch::sh(&p, "{ printf 'app: main.o'; for i in $(seq 1 65540); do printf ' x%s.h' $i; done; "
                           "printf '\\n\\ttrue\\n'; printf 'main.o: main.c\\n\\ttrue\\n'; } > Makefile; "
                           "echo 'int main(void) { return 0; }' > main.c");
     scratch::Run run = scratch::sh(&p, "smith build --dump-config 2>&1");
-    scratch::expect_contains("caps: 65541 prerequisites name the limit", run.out,
-                             "more than 65536 prerequisites in one list (the limit)");
+    scratch::expect_contains("caps: 65541 prerequisites stop the translation with an error", run.out,
+                             "an expansion is too long");
 }
 
 // `smith check` listed the first 1024 promises and stopped counting; past the limit it stops with a message.
@@ -125,13 +129,14 @@ export void test_caps_check_stops_past_the_promise_limit() {
 export void test_caps_mcp_launch_names_its_limits() {
     scratch::Project p = start(nullptr);
     defer finish(&p);
-    (void)scratch::sh(&p, "args=$(printf '\"a\",%.0s' $(seq 1 65)); "
-                          "bps=$(printf '{\"file\":\"p.c\",\"line\":1},%.0s' $(seq 1 17)); "
-                          "{ printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"launch\","
-                          "\"arguments\":{\"program\":\"prog\",\"args\":[%s\"z\"]}}}\\n' \"$args\"; "
-                          "printf '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"launch\","
-                          "\"arguments\":{\"program\":\"prog\",\"breakpoints\":[%s{\"file\":\"p.c\",\"line\":1}]}}}\\n' "
-                          "\"$bps\"; } > in.jsonl");
+    (void)scratch::sh(
+        &p, "args=$(printf '\"a\",%.0s' $(seq 1 65)); "
+            "bps=$(printf '{\"file\":\"p.c\",\"line\":1},%.0s' $(seq 1 17)); "
+            "{ printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"launch\","
+            "\"arguments\":{\"program\":\"prog\",\"args\":[%s\"z\"]}}}\\n' \"$args\"; "
+            "printf '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"launch\","
+            "\"arguments\":{\"program\":\"prog\",\"breakpoints\":[%s{\"file\":\"p.c\",\"line\":1}]}}}\\n' "
+            "\"$bps\"; } > in.jsonl");
     scratch::Run run = scratch::sh(&p, "smith mcp <in.jsonl 2>&1");
     scratch::expect_contains("caps: 66 program arguments name the limit", run.out,
                              "launch: 66 program arguments given, at most 64 (the limit)");

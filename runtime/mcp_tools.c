@@ -31,8 +31,9 @@ static void smith_mcp_tool_begin(SmithMcpServer *server, SmithMcpSession *sessio
     SmithMcpEvent stop = {};
     SmithMcpTake taken = smith_mcp_events_take(session, out, &stop);
     if (session->events_dropped > 0) {
-        smith_mcp_text_add(out, "%zu events of the adapter were dropped: the queue holds %zu and none was output to make room\n",
-                           session->events_dropped, smith_mcp_events_max);
+        smith_mcp_text_add(
+            out, "%zu events of the adapter were dropped: the queue holds %zu and none was output to make room\n",
+            session->events_dropped, smith_mcp_events_max);
         session->events_dropped = 0;
     }
     if (taken == SmithMcpTake_Stopped) smith_mcp_show_stop(server, session, &stop, out);
