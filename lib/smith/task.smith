@@ -9,14 +9,17 @@
 // until it ends or pauses, then control returns to the spawner; `wait`, and a `pause` of `main`, resume the paused
 // tasks in turn. A task has a stack of 256 KB of mapped memory above a guard page, so an overflow is a fault, not a
 // corrupted neighbour; under AddressSanitizer each switch is announced to it. The switch is assembly for arm64 (macOS,
-// Linux) and x86-64 (Linux). Issue #241; knowledge/task.md.
+// Linux) and x86-64 (Linux). Each task has its own handler table (a copy of its spawner's at spawn) and its own errno,
+// both swapped at every switch. Issue #241; knowledge/task.md.
 //
-// What is not here yet, in the issue: the typed `spawn(&group, f, args...)` (it waits for the language, #316), the
-// handlers of a task, workers on more than one thread, and waiting on sockets and pipes.
+// What is not here yet, in the issue: the typed `spawn(&group, f, args...)` (it waits for the language, #316),
+// workers on more than one thread, and waiting on sockets and pipes.
 module smith::task;
 
 import smith::contract;
 import target;
+import <errno.h>;                           // errno's location
+import <smith/handlers.h>;                  // SmithHandlers, smith_handlers_table, smith_handlers_set_table
 import <sanitizer/asan_interface.h>;        // unpoison_memory_region
 import <sanitizer/common_interface_defs.h>; // the fiber calls: start_switch_fiber, finish_switch_fiber
 import <smith/trace.h>;                     // smith_failure_format
@@ -52,6 +55,9 @@ struct Task {
     void *region;       // the mapping, null for a thread's first task
     usize region_size;
     bool finished;
+    c::SmithHandlers handlers; // the handlers this task sees; a copy of its spawner's at spawn
+    c::SmithHandlers *table;   // what smith_handlers_set_table gets when it is entered: &handlers, null for the first
+    i32 saved_errno;           // its errno while it is not running
 };
 
 // The context switch: saves the callee-saved registers on the stack, stores the stack pointer in *save, takes the one
@@ -191,10 +197,24 @@ Task *current() {
     return current_task;
 }
 
-// Leaves `from` for `to`: AddressSanitizer is told, the stacks switch. Returns when something enters `from` again.
+// The calling thread's errno.
+i32 *errno_location() {
+    contract::trusted(); // the address of a libc variable
+    if constexpr (target::os == target::macos) {
+        return c::__error();
+    } else {
+        return c::__errno_location();
+    }
+}
+
+// Leaves `from` for `to`: errno is saved into `from` and the one of `to` restored, the handlers of the thread become
+// `to`'s table (one store), AddressSanitizer is told, the stacks switch. Returns when something enters `from` again.
 void transfer(Task *from, Task *to) {
     contract::trusted(); // the registers and the stack are the edge
     current_task = to;
+    from->saved_errno = *errno_location();
+    *errno_location() = to->saved_errno;
+    c::smith_handlers_set_table(to->table);
     if constexpr (target::address_sanitizer) {
         c::__sanitizer_start_switch_fiber(from->finished ? nullptr : &from->fake_stack, to->bottom, to->size);
     }
@@ -261,6 +281,8 @@ Task *make_task(Group *group, void (*entry)(void *context), void *context) {
     task->group = group;
     task->entry = entry;
     task->context = context;
+    task->handlers = *c::smith_handlers_table(); // the spawner's handlers, as of now
+    task->table = &task->handlers;
     usize top = (usize)(base + region_size - record) & ~(usize)15;
     usize entry_address = (usize)task_main;
     usize boot = (usize)boot_stub;
