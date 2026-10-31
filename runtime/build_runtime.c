@@ -351,7 +351,8 @@ static const char *const *smith_compiler_inputs(const SmithStep *step, const cha
             continue;
         size_t count = smith_count(inputs);
         const char **list = (const char **)smith_alloc((count + 1) * sizeof(const char *));
-        for (size_t k = 0; k <= count; k++) list[k] = inputs[k];
+        for (size_t k = 0; k <= count; k++)
+            list[k] = inputs[k];
         list[i] = smith_compiler_file(compiler);
         return list;
     }
