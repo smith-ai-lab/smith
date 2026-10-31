@@ -1,0 +1,183 @@
+// front::parse, the core of the parser of smith's own front end (#1112, A2 of track A; internal, not wired into
+// `smith cc`).
+//
+// A `Parser` is the tokens of one file (front::lex), the text they lie in, a position and the errors found so far. The
+// cursor functions are all the parsers of the other files need to read tokens:
+//
+//   parse::make(tokens, source)         a parser at the first token, with no errors and no hooks
+//   parse::peek(p), peek_at(p, n)       the token at the position, or n after it (the end of the file past the end)
+//   parse::advance(p)                   takes the token at the position and moves past it (never past the end of file)
+//   parse::at(p, kind)                  whether the token at the position has this kind
+//   parse::accept(p, kind)              takes it and says true when it has, else does nothing
+//   parse::expect(p, kind, what)        takes it when it has; else records `expected <what>, found <text>` and takes
+//   nothing parse::text(p, token)               the source text of a token parse::error(p, span, message)      records
+//   an error; parsing goes on parse::span_from(p, start)          from a start offset to the end of the last token
+//   taken
+//
+// Expressions, statements and declarations are parsed in three other files (A3, A4, A5) that call each other only
+// through the four hooks of the parser, so each can be tested with stubs before the others exist and one module wires
+// the real ones in (A6): a test or the wiring sets `p.hooks.expression` and its three siblings, and
+// `parse::expression(p)`, `parse::type(p)`, `parse::statement(p)` and `parse::declaration(p)` call them. A hook that is
+// not set records the error `no parser for an expression is installed` and gives a null pointer. The hooks are
+// scaffolding of the parser's own code, not a feature of the language: in the language a function value is `Fn(F)`.
+//
+// The errors are the allocator's, as the tree is: a caller that sets an arena as the current allocator frees both with
+// it.
+module front::parse;
+
+import front::ast;
+import front::lex;
+import std::arena;
+import std::format;
+import std::mem;
+
+// The four entry points. Each reads one construct from the parser and gives its node, or null after recording an error.
+export struct Parser;
+
+export typedef struct {
+    ast::Expr *(*expression)(Parser *);
+    ast::TypeExpr *(*type)(Parser *);
+    ast::Stmt *(*statement)(Parser *);
+    ast::Decl *(*declaration)(Parser *);
+} Hooks;
+
+// What went wrong and where.
+export typedef struct {
+    ast::Span span;
+    Str message;
+} ParseError;
+
+export typedef typeof(ParseError[:]) Errors;
+
+// The state of a parse: the tokens (ending with an `end_of_file` token), the text they lie in, the position of the next
+// one, and the errors recorded so far (in the order they were found).
+export struct Parser {
+    lex::Tokens tokens;
+    Str source;
+    Usize position;
+    Errors errors;
+    Hooks hooks;
+};
+
+// A parser at the first token with no errors and no hooks. The tokens must end with the end of the file, as
+// lex::tokenize gives them.
+export Parser make(lex::Tokens tokens, Str source) {
+    Parser parser = {.tokens = tokens, .source = source};
+    return parser;
+}
+
+// The token `offset` places after the position; past the end of the tokens, the last one, the end of the file.
+export lex::Token peek_at(const Parser *p, Usize offset) {
+    Usize last = countof(p->tokens) - 1;
+    Usize at_offset = p->position + offset;
+    return p->tokens[at_offset < last ? at_offset : last];
+}
+
+// The token at the position.
+export lex::Token peek(const Parser *p) {
+    return peek_at(p, 0);
+}
+
+// Takes the token at the position and moves past it; at the end of the file the position stays.
+export lex::Token advance(Parser *p) {
+    lex::Token token = peek(p);
+    if (token.kind != lex::end_of_file) p->position += 1;
+    return token;
+}
+
+// Whether the token at the position has this kind.
+export Bool at(const Parser *p, lex::TokenKind kind) {
+    return peek(p).kind == kind;
+}
+
+// Takes the token when it has this kind and says so; else does nothing.
+export Bool accept(Parser *p, lex::TokenKind kind) {
+    if (!at(p, kind)) return false;
+    advance(p);
+    return true;
+}
+
+// The source text of a token.
+export Str text(const Parser *p, lex::Token token) {
+    return lex::text(p->source, token);
+}
+
+// Records an error. Parsing goes on: it is the caller's job to recover.
+export void error(Parser *p, ast::Span span, Str message) {
+    p->errors = mem::realloc(p->errors, countof(p->errors) + 1);
+    ParseError failure = {.span = span, .message = message};
+    p->errors[countof(p->errors) - 1] = failure;
+}
+
+// Takes the token when it has this kind. Else it records `expected <what>, found <text>` at the token (`found the end
+// of the file` at the end) and takes nothing: the token at the position is returned either way.
+export lex::Token expect(Parser *p, lex::TokenKind kind, Str what) {
+    lex::Token token = peek(p);
+    if (token.kind == kind) return advance(p);
+    Str found = text(p, token);
+    if (token.kind == lex::end_of_file) {
+        char message[:] = format::push("expected ", what, ", found the end of the file");
+        error(p, token.span, message);
+    } else {
+        char message[:] = format::push("expected ", what, ", found `", found, "`");
+        error(p, token.span, message);
+    }
+    return token;
+}
+
+// From a start offset to the end of the last token taken (the start itself when none was taken since).
+export ast::Span span_from(const Parser *p, U32 start) {
+    ast::Span span = {.start = start, .end = start};
+    if (p->position > 0) {
+        U32 end = p->tokens[p->position - 1].span.end;
+        if (end > start) span.end = end;
+    }
+    return span;
+}
+
+// Reads an expression through the hook of A3.
+export ast::Expr *expression(Parser *p) {
+    if (p->hooks.expression == nullptr) {
+        Str message = "no parser for an expression is installed";
+        error(p, peek(p).span, message);
+        return nullptr;
+    }
+    return p->hooks.expression(p);
+}
+
+// The error of a type hook that is not set. It is a function of its own because the body of a function named `type`
+// is read as a type function's by today's smith (a string literal does not convert to `Str` in it): the name is free
+// when types are rewritten to `Type` (#366).
+static void missing_type(Parser *p) {
+    Str message = "no parser for a type is installed";
+    error(p, peek(p).span, message);
+}
+
+// Reads a type through the hook of A5.
+export ast::TypeExpr *type(Parser *p) {
+    if (p->hooks.type == nullptr) {
+        missing_type(p);
+        return nullptr;
+    }
+    return p->hooks.type(p);
+}
+
+// Reads a statement through the hook of A4.
+export ast::Stmt *statement(Parser *p) {
+    if (p->hooks.statement == nullptr) {
+        Str message = "no parser for a statement is installed";
+        error(p, peek(p).span, message);
+        return nullptr;
+    }
+    return p->hooks.statement(p);
+}
+
+// Reads a declaration through the hook of A5.
+export ast::Decl *declaration(Parser *p) {
+    if (p->hooks.declaration == nullptr) {
+        Str message = "no parser for a declaration is installed";
+        error(p, peek(p).span, message);
+        return nullptr;
+    }
+    return p->hooks.declaration(p);
+}
