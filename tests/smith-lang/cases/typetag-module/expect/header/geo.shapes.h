@@ -15,7 +15,8 @@
 extern "C" {
 #endif
 struct geo_shapes_Point {
-float x, y;
+float x;
+float y;
 };
 typedef struct geo_shapes_Point geo_shapes_Point;
 

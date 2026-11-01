@@ -1,0 +1,751 @@
+// Tests of front::types_expr (#1220, J1b): the type of an expression, up (`infer`) and down (`check`). Trees are built
+// by hand with the constructors of front::ast; each test builds in an arena it sets as the current allocator. One test
+// per error message, each checking that the message names the expected type and what to write.
+module front_types_expr_test;
+
+import front::ast;
+import front::types;
+import front::types_expr;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Bool says(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+static void expect(U64 got, U64 want) {
+    test::check_equal(got, want);
+}
+
+static types::Checked fresh() {
+    ast::DeclRef none[1] = {};
+    ast::Module m = ast::new_module("sample", none[0:0]);
+    return types::check(&m, (types::Options){.target = types::lp64()});
+}
+
+static types::TypeRef ty(types::Checked *r, Str name) {
+    return types::builtin(&r->table, name);
+}
+
+static void declare(types::Checked *r, Str name, types::SymbolKind kind, types::TypeRef type, Bool is_const) {
+    types::Symbol s = {.name = name, .kind = kind, .type = type, .is_const = is_const};
+    types::declare(&r->scopes, s);
+}
+
+static void var(types::Checked *r, Str name, Str type) {
+    declare(r, name, .variable, ty(r, type), false);
+}
+
+static ast::Expr *unary(ast::UnaryOp op, ast::Expr *operand) {
+    ast::ExprKind kind = {.unary = {.op = op, .operand = operand}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *binary(ast::BinaryOp op, ast::Expr *l, ast::Expr *r) {
+    return ast::binary(op, l, r);
+}
+
+static ast::Expr *num(U64 value) {
+    return ast::integer(value);
+}
+
+static ast::Expr *suffixed(U64 value, Str suffix) {
+    ast::ExprKind kind = {.integer = {.value = value, .suffix = suffix}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *real(F64 value) {
+    ast::ExprKind kind = {.floating = {.value = value}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *flag(Bool value) {
+    ast::ExprKind kind = {.boolean = {.value = value}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *nothing() {
+    ast::ExprKind kind = .null_pointer;
+    return ast::expr(kind);
+}
+
+static ast::Expr *variant(Str name) {
+    ast::ExprKind kind = {.variant = {.name = name}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *member(ast::Expr *base, Str name, Bool arrow) {
+    ast::ExprKind kind = {.member = {.base = base, .name = name, .arrow = arrow}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *at(ast::Expr *base, ast::Expr *index) {
+    ast::ExprKind kind = {.index = {.base = base, .index = index}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *cast(Str type, ast::Expr *operand) {
+    ast::ExprKind kind = {.cast = {.type = ast::named(type), .operand = operand}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *conditional(ast::Expr *c, ast::Expr *a, ast::Expr *b) {
+    ast::ExprKind kind = {.conditional = {.condition = c, .then_value = a, .else_value = b}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *assign(ast::AssignOp op, ast::Expr *target, ast::Expr *value) {
+    ast::ExprKind kind = {.assign = {.op = op, .target = target, .value = value}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *query(ast::QueryOp op, ast::Expr *operand) {
+    ast::ExprKind kind = {.query = {.op = op, .operand = operand}};
+    return ast::expr(kind);
+}
+
+static ast::Initializer positional(ast::Expr *value) {
+    return (ast::Initializer){.value = value};
+}
+
+static ast::Initializer field_item(Str name, ast::Expr *value) {
+    ast::Designator d = {.field = {.name = name}};
+    ast::Designator list[:] = mem::alloc_slice(ast::Designator, 1);
+    list[0] = d;
+    return (ast::Initializer){.designators = list, .value = value};
+}
+
+static ast::Expr *list(ast::TypeExpr *type, ast::Initializer items[:]) {
+    ast::Initializer copy[:] = mem::alloc_slice(ast::Initializer, countof(items));
+    for (Usize i = 0; i < countof(items); i++) {
+        copy[i] = items[i];
+    }
+    ast::ExprKind kind = {.compound = {.type = type, .items = copy}};
+    return ast::expr(kind);
+}
+
+static types::Slot slot(Str name, types::TypeRef type) {
+    return (types::Slot){.name = name, .type = type};
+}
+
+// `struct Point { I32 x; I32 y; }`, declared as a type and as the variable `p` and a pointer `pp`.
+static types::TypeRef point(types::Checked *r) {
+    types::Ty *p = types::new_record(&r->table, "Point", false);
+    types::Slot fields[:] = mem::alloc_slice(types::Slot, 2);
+    fields[0] = slot("x", ty(r, "I32"));
+    fields[1] = slot("y", ty(r, "I32"));
+    types::set_fields(p, fields);
+    declare(r, "Point", .type_name, p, false);
+    declare(r, "p", .variable, p, false);
+    declare(r, "pp", .variable, types::pointer_to(&r->table, p, false), false);
+    return p;
+}
+
+static Str shown(types::Checked *r, ast::Expr *e) {
+    return types::show(types::type_of(r, e));
+}
+
+static Str last(types::Checked *r) {
+    return r->errors[r->error_count - 1].message;
+}
+
+export void test_front_types_expr_literals_have_their_types() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    ast::Expr *small = num(7);
+    ast::Expr *big = num(5000000000);
+    ast::Expr *huge = num(~(U64)0);
+    ast::Expr *wide = suffixed(7, "ll");
+    ast::Expr *unsigned_literal = suffixed(7, "u");
+    ast::Expr *half = real(1.5);
+    ast::Expr *text = ast::string("hi");
+    types_expr::infer(&r, small);
+    types_expr::infer(&r, big);
+    types_expr::infer(&r, huge);
+    types_expr::infer(&r, wide);
+    types_expr::infer(&r, unsigned_literal);
+    types_expr::infer(&r, half);
+    types_expr::infer(&r, text);
+    types_expr::infer(&r, flag(true));
+    ast::Expr *none = nothing();
+    types_expr::infer(&r, none);
+    test::check_condition(says(shown(&r, small), "I32"));
+    test::check_condition(says(shown(&r, big), "I64"));
+    test::check_condition(says(shown(&r, huge), "U64"));
+    test::check_condition(says(shown(&r, wide), "I64"));
+    test::check_condition(says(shown(&r, unsigned_literal), "U32"));
+    test::check_condition(says(shown(&r, half), "F64"));
+    test::check_condition(says(shown(&r, text), "Str"));
+    test::check_condition(says(shown(&r, none), "Null"));
+    expect(r.error_count, 0);
+}
+
+export void test_front_types_expr_a_literal_takes_the_expected_type_when_it_fits() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    ast::Expr *small = num(200);
+    test::check_condition(types_expr::check(&r, small, ty(&r, "U8")) == ty(&r, "U8"));
+    test::check_condition(says(shown(&r, small), "U8"));
+    ast::Expr *minimum = unary(.negate, num(128));
+    test::check_condition(types_expr::check(&r, minimum, ty(&r, "I8")) == ty(&r, "I8"));
+    ast::Expr *single = real(2.5);
+    test::check_condition(types_expr::check(&r, single, ty(&r, "F32")) == ty(&r, "F32"));
+    ast::Expr *pointer_null = nothing();
+    types::TypeRef bytes = types::pointer_to(&r.table, ty(&r, "U8"), false);
+    test::check_condition(types_expr::check(&r, pointer_null, bytes) == bytes);
+    expect(r.error_count, 0);
+}
+
+export void test_front_types_expr_a_literal_that_does_not_fit_names_the_type_and_the_range() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::TypeRef byte = ty(&r, "U8");
+    test::check_condition(types_expr::check(&r, num(300), byte) == r.table.invalid);
+    expect(r.error_count, 1);
+    test::check_condition(
+        says(last(&r), "300 does not fit U8 (0 to 255); write a value from 0 to 255, or give it a wider type"));
+    types_expr::check(&r, unary(.negate, num(129)), ty(&r, "I8"));
+    test::check_condition(
+        says(last(&r), "-129 does not fit I8 (-128 to 127); write a value from -128 to 127, or give it a wider type"));
+    types_expr::check(&r, unary(.negate, num(1)), byte);
+    test::check_condition(
+        says(last(&r), "-1 does not fit U8 (0 to 255); write a value from 0 to 255, or give it a wider type"));
+    expect(r.error_count, 3);
+}
+
+export void test_front_types_expr_a_mismatch_names_the_expected_type_and_what_to_write() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    var(&r, "s", "Str");
+    ast::Expr *name = ast::name("s");
+    test::check_condition(types_expr::check(&r, name, ty(&r, "I32")) == r.table.invalid);
+    test::check_condition(says(
+        last(&r),
+        "expected `I32`, found `Str`; write a value of type `I32`, or convert it with a cast such as `(I32)value`"));
+    expect(r.error_count, 1);
+    test::check_condition(types_expr::check(&r, ast::name("s"), ty(&r, "Str")) == ty(&r, "Str"));
+    expect(r.error_count, 1);
+}
+
+static Bool allow_all(types::Checked *_, const ast::Expr *_, types::TypeRef _, types::TypeRef _) {
+    return true;
+}
+
+export void test_front_types_expr_the_convert_hook_decides_what_converts() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    var(&r, "n", "I32");
+    types_expr::set_hooks((types_expr::Hooks){.convert = allow_all});
+    defer types_expr::set_hooks((types_expr::Hooks){});
+    ast::Expr *name = ast::name("n");
+    test::check_condition(types_expr::check(&r, name, ty(&r, "F64")) == ty(&r, "I32"));
+    expect(r.error_count, 0);
+}
+
+export void test_front_types_expr_names_and_operators_take_their_operands_type() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::TypeRef p = point(&r);
+    var(&r, "x", "U8");
+    var(&r, "y", "U8");
+    var(&r, "f", "F64");
+    var(&r, "b", "Bool");
+    ast::Expr *sum = binary(.add, ast::name("x"), ast::name("y"));
+    ast::Expr *one = num(1);
+    ast::Expr *plus_one = binary(.add, ast::name("x"), one);
+    ast::Expr *scaled = binary(.multiply, ast::name("f"), real(2.5));
+    ast::Expr *less = binary(.less, num(10), ast::name("x"));
+    ast::Expr *both = binary(.logical_and, ast::name("b"), less);
+    ast::Expr *shifted = binary(.shift_left, ast::name("x"), num(2));
+    ast::Expr *masked = binary(.bit_and, ast::name("x"), ast::name("y"));
+    ast::Expr *ahead = binary(.add, ast::name("pp"), num(1));
+    ast::Expr *between = binary(.subtract, ast::name("pp"), ast::name("pp"));
+    ast::Expr *same = binary(.equal, ast::name("pp"), nothing());
+    test::check_condition(types_expr::infer(&r, sum) == ty(&r, "U8"));
+    test::check_condition(types_expr::infer(&r, plus_one) == ty(&r, "U8"));
+    test::check_condition(types::type_of(&r, one) == ty(&r, "U8"));
+    test::check_condition(types_expr::infer(&r, scaled) == ty(&r, "F64"));
+    test::check_condition(types_expr::infer(&r, both) == r.table.bool_type);
+    test::check_condition(types::type_of(&r, less) == r.table.bool_type);
+    test::check_condition(types_expr::infer(&r, shifted) == ty(&r, "U8"));
+    test::check_condition(types_expr::infer(&r, masked) == ty(&r, "U8"));
+    test::check_condition(says(types::show(types_expr::infer(&r, ahead)), "Point *"));
+    test::check_condition(types_expr::infer(&r, between) == ty(&r, "Isize"));
+    test::check_condition(types_expr::infer(&r, same) == r.table.bool_type);
+    ast::Expr *two = binary(.add, num(1), num(2));
+    test::check_condition(types_expr::check(&r, two, ty(&r, "U8")) == ty(&r, "U8"));
+    test::check_condition(types::type_of(&r, two) == ty(&r, "U8"));
+    test::check_condition(p != nullptr);
+    expect(r.error_count, 0);
+}
+
+export void test_front_types_expr_operand_errors_name_the_types_and_what_to_write() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    var(&r, "a", "I32");
+    var(&r, "c", "U8");
+    var(&r, "s", "Str");
+    var(&r, "f", "F64");
+    types_expr::infer(&r, binary(.add, ast::name("a"), ast::name("c")));
+    test::check_condition(says(
+        last(&r),
+        "the operands of `+` have different types, `I32` and `U8`; make both `I32` with a cast, for example `(I32)y`"));
+    types_expr::infer(&r, binary(.logical_and, ast::name("a"), flag(true)));
+    test::check_condition(says(last(&r), "`&&` needs Bool operands, found `I32`; write a comparison such as `x != 0`"));
+    types_expr::infer(&r, binary(.add, ast::name("s"), ast::name("s")));
+    test::check_condition(says(last(&r), "`+` needs a number, found `Str`; write an integer or floating value"));
+    types_expr::infer(&r, binary(.equal, ast::name("s"), ast::name("s")));
+    test::check_condition(
+        says(last(&r), "`==` does not compare two `Str`; compare their bytes with `mem::equal(a, b)`"));
+    types_expr::infer(&r, binary(.remainder, ast::name("f"), real(2.0)));
+    test::check_condition(says(last(&r), "`%` needs integers, found `F64`; write an integer such as `U32` or `I64`"));
+    types_expr::infer(&r, binary(.add, ast::name("c"), num(300)));
+    test::check_condition(
+        says(last(&r), "300 does not fit U8 (0 to 255); write a value from 0 to 255, or give it a wider type"));
+    expect(r.error_count, 6);
+    types_expr::infer(&r, binary(.add, ast::name("nope"), num(1)));
+    expect(r.error_count, 7);
+    types_expr::infer(&r, binary(.add, binary(.add, ast::name("nope"), num(1)), num(2)));
+    expect(r.error_count, 8);
+}
+
+export void test_front_types_expr_unary_operators_and_their_errors() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    point(&r);
+    var(&r, "x", "U8");
+    var(&r, "b", "Bool");
+    declare(&r, "k", .variable, ty(&r, "I32"), true);
+    test::check_condition(types_expr::infer(&r, unary(.negate, ast::name("x"))) == ty(&r, "U8"));
+    test::check_condition(types_expr::infer(&r, unary(.logical_not, ast::name("b"))) == r.table.bool_type);
+    test::check_condition(types_expr::infer(&r, unary(.bit_not, ast::name("x"))) == ty(&r, "U8"));
+    test::check_condition(says(types::show(types_expr::infer(&r, unary(.address_of, ast::name("x")))), "U8 *"));
+    test::check_condition(says(types::show(types_expr::infer(&r, unary(.address_of, ast::name("k")))), "const I32 *"));
+    test::check_condition(says(types::show(types_expr::infer(&r, unary(.dereference, ast::name("pp")))), "Point"));
+    test::check_condition(types_expr::infer(&r, unary(.post_increment, ast::name("x"))) == ty(&r, "U8"));
+    expect(r.error_count, 0);
+    types_expr::infer(&r, unary(.logical_not, ast::name("x")));
+    test::check_condition(says(last(&r), "`!` needs a Bool, found `U8`; write a comparison such as `x == 0`"));
+    types_expr::infer(&r, unary(.dereference, ast::name("x")));
+    test::check_condition(says(last(&r), "`*` needs a pointer, found `U8`; write a pointer such as `U8 *`"));
+    types_expr::infer(&r, unary(.address_of, num(1)));
+    test::check_condition(says(
+        last(&r),
+        "cannot take the address of a value that is not a place; store it in a variable first and write `&variable`"));
+    types_expr::infer(&r, unary(.post_increment, ast::name("k")));
+    test::check_condition(
+        says(last(&r), "cannot change `k`, it is declared const; remove `const` from its declaration"));
+    types_expr::infer(&r, unary(.bit_not, ast::name("b")));
+    test::check_condition(
+        says(last(&r), "`~` needs an integer, found `Bool`; write an integer such as `U32` or `I64`"));
+    expect(r.error_count, 5);
+}
+
+export void test_front_types_expr_assignment_checks_the_value_against_the_target() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    var(&r, "x", "U8");
+    var(&r, "s", "Str");
+    declare(&r, "k", .variable, ty(&r, "U8"), true);
+    ast::Expr *value = num(5);
+    test::check_condition(types_expr::infer(&r, assign(.plain, ast::name("x"), value)) == ty(&r, "U8"));
+    test::check_condition(types::type_of(&r, value) == ty(&r, "U8"));
+    test::check_condition(types_expr::infer(&r, assign(.add, ast::name("x"), num(1))) == ty(&r, "U8"));
+    expect(r.error_count, 0);
+    types_expr::infer(&r, assign(.plain, ast::name("x"), ast::name("s")));
+    test::check_condition(
+        says(last(&r),
+             "expected `U8`, found `Str`; write a value of type `U8`, or convert it with a cast such as `(U8)value`"));
+    types_expr::infer(&r, assign(.plain, num(1), ast::name("x")));
+    test::check_condition(says(
+        last(&r),
+        "cannot assign to this expression, it is not a place; write a variable, a field, an element or `*pointer`"));
+    types_expr::infer(&r, assign(.plain, ast::name("k"), num(1)));
+    test::check_condition(
+        says(last(&r), "cannot assign to `k`, it is declared const; remove `const` from its declaration"));
+    types_expr::infer(&r, assign(.add, ast::name("x"), num(300)));
+    test::check_condition(
+        says(last(&r), "300 does not fit U8 (0 to 255); write a value from 0 to 255, or give it a wider type"));
+    expect(r.error_count, 4);
+}
+
+export void test_front_types_expr_members_and_indexes() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    point(&r);
+    types::TypeRef int32 = ty(&r, "I32");
+    declare(&r, "xs", .variable, types::array_of(&r.table, int32, 3, false), false);
+    declare(&r, "ys", .variable, types::slice_of(&r.table, int32, false), false);
+    var(&r, "s", "Str");
+    var(&r, "x", "U8");
+    test::check_condition(types_expr::infer(&r, member(ast::name("p"), "x", false)) == int32);
+    test::check_condition(types_expr::infer(&r, member(ast::name("pp"), "y", true)) == int32);
+    test::check_condition(types_expr::infer(&r, at(ast::name("xs"), num(2))) == int32);
+    test::check_condition(types_expr::infer(&r, at(ast::name("ys"), ast::name("x"))) == int32);
+    test::check_condition(types_expr::infer(&r, at(ast::name("s"), num(0))) == ty(&r, "U8"));
+    ast::ExprKind cut = {.slice_of = {.base = ast::name("xs"), .start = num(1), .end = nullptr}};
+    test::check_condition(says(types::show(types_expr::infer(&r, ast::expr(cut))), "I32[:]"));
+    expect(r.error_count, 0);
+    types_expr::infer(&r, member(ast::name("pp"), "x", false));
+    test::check_condition(says(last(&r), "`.` needs a record, found the pointer `Point *`; write `->` instead"));
+    types_expr::infer(&r, member(ast::name("p"), "x", true));
+    test::check_condition(says(last(&r), "`->` needs a pointer to a record, found `Point`; write `.` instead"));
+    types_expr::infer(&r, member(ast::name("p"), "z", false));
+    test::check_condition(says(last(&r), "`Point` has no field `z`; write one of its fields, such as `x`"));
+    types_expr::infer(&r, at(ast::name("xs"), num(5)));
+    test::check_condition(
+        says(last(&r), "index 5 is out of range for `I32[3]`, which has 3 elements; write an index below 3"));
+    types_expr::infer(&r, at(ast::name("xs"), ast::name("p")));
+    test::check_condition(
+        says(last(&r), "an index is an integer, found `Point`; write an integer expression such as `i`"));
+    types_expr::infer(&r, at(ast::name("x"), num(0)));
+    test::check_condition(
+        says(last(&r), "cannot index a value of type `U8`; index an array, a slice, a `Str` or a typed pointer"));
+    expect(r.error_count, 6);
+}
+
+export void test_front_types_expr_calls_use_the_callees_function_type() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::TypeRef int32 = ty(&r, "I32");
+    types::Slot params[2] = {};
+    params[0] = slot("", int32);
+    params[1] = slot("", ty(&r, "U8"));
+    types::TypeRef signature = types::function_of(&r.table, params, r.table.bool_type, false);
+    declare(&r, "add", .function_symbol, signature, false);
+    declare(&r, "callback", .variable, types::fn_value_of(&r.table, signature), false);
+    var(&r, "s", "Str");
+    var(&r, "x", "U8");
+    ast::ExprRef args[2] = {num(1), num(200)};
+    ast::Expr *good = ast::call(ast::name("add"), args);
+    test::check_condition(types_expr::infer(&r, good) == r.table.bool_type);
+    test::check_condition(types::type_of(&r, args[1]) == ty(&r, "U8"));
+    ast::Expr *through = ast::call(ast::name("callback"), args);
+    test::check_condition(types_expr::infer(&r, through) == r.table.bool_type);
+    expect(r.error_count, 0);
+    ast::ExprRef few[1] = {num(1)};
+    types_expr::infer(&r, ast::call(ast::name("add"), few));
+    test::check_condition(says(
+        last(&r),
+        "this call passes 1 argument but the function takes 2 arguments, `Bool (I32, U8)`; write exactly 2 arguments"));
+    ast::ExprRef wrong[2] = {ast::name("s"), num(1)};
+    types_expr::infer(&r, ast::call(ast::name("add"), wrong));
+    test::check_condition(says(
+        last(&r),
+        "expected `I32`, found `Str`; write a value of type `I32`, or convert it with a cast such as `(I32)value`"));
+    ast::ExprRef big[2] = {num(1), num(256)};
+    types_expr::infer(&r, ast::call(ast::name("add"), big));
+    test::check_condition(
+        says(last(&r), "256 does not fit U8 (0 to 255); write a value from 0 to 255, or give it a wider type"));
+    ast::ExprRef one[1] = {num(1)};
+    types_expr::infer(&r, ast::call(ast::name("x"), one));
+    test::check_condition(says(
+        last(&r), "cannot call a value of type `U8`, it is not a function; call a function or an `Fn(...)` value"));
+    expect(r.error_count, 4);
+}
+
+export void test_front_types_expr_casts_and_queries() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    declare(&r, "xs", .variable, types::array_of(&r.table, ty(&r, "I32"), 3, false), false);
+    var(&r, "x", "U8");
+    test::check_condition(types_expr::infer(&r, cast("I64", ast::name("x"))) == ty(&r, "I64"));
+    test::check_condition(types_expr::infer(&r, query(.size_of, ast::name("x"))) == ty(&r, "Usize"));
+    test::check_condition(types_expr::infer(&r, query(.count_of, ast::name("xs"))) == ty(&r, "Usize"));
+    expect(r.error_count, 0);
+    types_expr::infer(&r, query(.count_of, ast::name("x")));
+    test::check_condition(
+        says(last(&r), "countof takes an array or a slice, found `U8`; write the name of an array or a slice"));
+    types_expr::infer(&r, cast("Nope", ast::name("x")));
+    test::check_condition(says(
+        last(&r), "unknown type `Nope`; declare it before it is used, and write a type name with a capital letter"));
+    expect(r.error_count, 2);
+}
+
+export void test_front_types_expr_a_conditional_gives_the_expected_type_to_both_branches() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    var(&r, "b", "Bool");
+    var(&r, "x", "U8");
+    var(&r, "s", "Str");
+    var(&r, "n", "I32");
+    ast::Expr *from_literal = conditional(ast::name("b"), num(1), num(2));
+    test::check_condition(types_expr::infer(&r, from_literal) == ty(&r, "I32"));
+    ast::Expr *narrow = conditional(ast::name("b"), num(1), num(200));
+    test::check_condition(types_expr::check(&r, narrow, ty(&r, "U8")) == ty(&r, "U8"));
+    ast::Expr *mixed = conditional(ast::name("b"), ast::name("x"), num(3));
+    test::check_condition(types_expr::infer(&r, mixed) == ty(&r, "U8"));
+    expect(r.error_count, 0);
+    types_expr::infer(&r, conditional(ast::name("n"), num(1), num(2)));
+    test::check_condition(says(
+        last(&r),
+        "expected `Bool`, found `I32`; write a value of type `Bool`, or convert it with a cast such as `(Bool)value`"));
+    types_expr::infer(&r, conditional(ast::name("b"), ast::name("x"), ast::name("s")));
+    test::check_condition(
+        says(last(&r),
+             "expected `U8`, found `Str`; write a value of type `U8`, or convert it with a cast such as `(U8)value`"));
+    expect(r.error_count, 2);
+}
+
+export void test_front_types_expr_variants_are_typed_by_the_expected_type() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::Ty *color = types::new_enumeration(&r.table, "Color", ty(&r, "U8"));
+    types::Slot items[:] = mem::alloc_slice(types::Slot, 2);
+    items[0] = slot("red", ty(&r, "U8"));
+    items[1] = slot("green", ty(&r, "U8"));
+    types::set_fields(color, items);
+    types::TypeRef maybe = types::option_of(&r.table, ty(&r, "I32"));
+    test::check_condition(types_expr::check(&r, variant("none"), maybe) == maybe);
+    test::check_condition(types_expr::check(&r, variant("green"), color) == color);
+    expect(r.error_count, 0);
+    types_expr::check(&r, variant("purple"), color);
+    test::check_condition(
+        says(last(&r), "`Color` has no enumerator `purple`; write one of its enumerators, such as `.red`"));
+    types_expr::infer(&r, variant("none"));
+    test::check_condition(says(last(&r), "`.none` needs a type to say what it is; give the variable a type before `=`, "
+                                         "or pass it where a parameter has the type"));
+    types_expr::check(&r, variant("none"), ty(&r, "U8"));
+    test::check_condition(says(last(&r), "`.none` is not a value of `U8`; write a value of type `U8`"));
+    expect(r.error_count, 3);
+}
+
+export void test_front_types_expr_lists_are_typed_by_the_expected_type() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::TypeRef p = point(&r);
+    types::TypeRef int32 = ty(&r, "I32");
+    ast::Initializer pair[2] = {positional(num(1)), positional(num(2))};
+    ast::Expr *written = list(ast::named("Point"), pair);
+    test::check_condition(types_expr::infer(&r, written) == p);
+    ast::Initializer named[2] = {field_item("y", num(3)), field_item("x", num(4))};
+    test::check_condition(types_expr::check(&r, list(nullptr, named), p) == p);
+    types::TypeRef three = types::array_of(&r.table, ty(&r, "U8"), 3, false);
+    ast::Initializer numbers[3] = {positional(num(1)), positional(num(2)), positional(num(255))};
+    ast::Expr *array = list(nullptr, numbers);
+    test::check_condition(types_expr::check(&r, array, three) == three);
+    types::TypeRef maybe = types::option_of(&r.table, int32);
+    ast::Initializer some[1] = {field_item("some", num(3))};
+    test::check_condition(types_expr::check(&r, list(nullptr, some), maybe) == maybe);
+    expect(r.error_count, 0);
+    ast::Initializer extra[3] = {positional(num(1)), positional(num(2)), positional(num(3))};
+    types_expr::check(&r, list(nullptr, extra), p);
+    test::check_condition(says(last(&r), "too many values for `Point`, which has 2 fields; remove the extra value"));
+    ast::Initializer unknown[1] = {field_item("z", num(1))};
+    types_expr::check(&r, list(nullptr, unknown), p);
+    test::check_condition(says(last(&r), "`Point` has no field `z`; write one of its fields"));
+    types_expr::infer(&r, list(nullptr, pair));
+    test::check_condition(
+        says(last(&r), "a `{...}` list needs a type; write `(T){...}` or give the variable a type before `=`"));
+    types_expr::check(&r, list(nullptr, pair), ty(&r, "U8"));
+    test::check_condition(
+        says(last(&r),
+             "a `{...}` list makes a struct, an array, an Option or a Result, not a `U8`; write a value of type `U8`"));
+    types_expr::check(&r, list(nullptr, pair), maybe);
+    test::check_condition(says(last(&r), "a `Option(I32)` is written {.some = value}, not a list of other values"));
+    ast::Initializer one_byte[1] = {positional(num(300))};
+    types_expr::check(&r, list(nullptr, one_byte), types::array_of(&r.table, ty(&r, "U8"), 1, false));
+    test::check_condition(
+        says(last(&r), "300 does not fit U8 (0 to 255); write a value from 0 to 255, or give it a wider type"));
+    expect(r.error_count, 7);
+}
+
+static Usize bodies = 0;
+static types::TypeRef body_type = nullptr;
+
+static void count_lambda(types::Checked *_, const ast::Expr *_, types::TypeRef type) {
+    bodies += 1;
+    body_type = type;
+}
+
+export void test_front_types_expr_a_lambda_takes_its_parameter_types_from_the_expected_fn() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::TypeRef int32 = ty(&r, "I32");
+    types::Slot params[2] = {};
+    params[0] = slot("", int32);
+    params[1] = slot("", int32);
+    types::TypeRef signature = types::function_of(&r.table, params, r.table.bool_type, false);
+    types::TypeRef expected = types::fn_value_of(&r.table, signature);
+    ast::Param names[2] = {ast::param("a", nullptr), ast::param("b", nullptr)};
+    ast::Param one[1] = {ast::param("a", nullptr)};
+    ast::Param typed[2] = {ast::param("a", ast::named("I32")), ast::param("b", ast::named("U8"))};
+    ast::ExprKind two_names = {.lambda = {.params = names[0:2]}};
+    ast::ExprKind one_name = {.lambda = {.params = one[0:1]}};
+    ast::ExprKind two_typed = {.lambda = {.params = typed[0:2]}};
+    ast::Expr *good = ast::expr(two_names);
+    types_expr::infer(&r, good);
+    test::check_condition(says(r.errors[0].message, "the lambda parameter `a` has no type; write its type, or pass the "
+                                                    "lambda where an `Fn(...)` type is expected"));
+    test::check_condition(says(
+        last(&r), "the lambda has no result type; write it, or pass the lambda where an `Fn(...)` type is expected"));
+    expect(r.error_count, 3);
+    types_expr::check(&r, good, expected);
+    test::check_condition(says(last(&r), "not yet typed: a lambda body"));
+    types_expr::set_hooks((types_expr::Hooks){.lambda_body = count_lambda});
+    defer types_expr::set_hooks((types_expr::Hooks){});
+    bodies = 0;
+    test::check_condition(types_expr::check(&r, good, expected) == expected);
+    expect(bodies, 1);
+    test::check_condition(body_type == expected);
+    test::check_condition(types::type_of(&r, good) == expected);
+    types::TypeRef first = body_type->element->slots[0].type;
+    test::check_condition(first == int32);
+    expect(r.error_count, 4);
+    types_expr::check(&r, ast::expr(one_name), expected);
+    test::check_condition(
+        says(last(&r), "the lambda has 1 parameters but `Bool (I32, I32)` takes 2; write 2 parameters"));
+    types_expr::check(&r, ast::expr(two_typed), expected);
+    test::check_condition(
+        says(last(&r), "the lambda parameter `b` is `U8` but `I32` is expected; write `I32` or leave the type out"));
+    types_expr::check(&r, good, int32);
+    test::check_condition(
+        says(last(&r), "a lambda has type `Fn(...)`, but `I32` is expected; write a value of type `I32`"));
+    expect(bodies, 1);
+}
+
+export void test_front_types_expr_what_is_not_typed_yet_is_reported_with_its_kind() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    var(&r, "x", "U8");
+    point(&r);
+    ast::ExprKind attempt = {.try_expr = {.operand = ast::name("x")}};
+    test::check_condition(types_expr::infer(&r, ast::expr(attempt)) == r.table.invalid);
+    test::check_condition(says(last(&r), "not yet typed: try"));
+    ast::ExprKind value = {.type_value = {.type = ast::named("U8")}};
+    types_expr::infer(&r, ast::expr(value));
+    test::check_condition(says(last(&r), "not yet typed: a type used as a value"));
+    types_expr::infer(&r, ast::name("zz"));
+    test::check_condition(says(last(&r), "unknown name `zz`; declare it before it is used, for example `I32 zz = 0;`, "
+                                         "or import the module that has it"));
+    types_expr::infer(&r, ast::name("Point"));
+    test::check_condition(
+        says(last(&r), "`Point` is a type, not a value; write a variable, a function or a constant here"));
+    declare(&r, "arena", .module_name, r.table.invalid, false);
+    types_expr::infer(&r, ast::name("arena::push"));
+    test::check_condition(says(last(&r), "not yet typed: `arena::push`, a name from another module"));
+    expect(r.error_count, 5);
+    test::check_condition(r.errors[0].span.start == 0);
+}
+
+export void test_front_types_expr_a_long_chain_needs_no_recursion() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    var(&r, "x", "I64");
+    ast::Expr *chain = ast::name("x");
+    for (Usize i = 0; i < 20000; i++) {
+        chain = binary(.add, chain, num(1));
+    }
+    test::check_condition(types_expr::infer(&r, chain) == ty(&r, "I64"));
+    expect(r.error_count, 0);
+}
+
+static Str cat(Str a, Str b) {
+    char out[:] = mem::alloc_slice(char, countof(a) + countof(b));
+    for (Usize i = 0; i < countof(a); i++) {
+        out[i] = a[i];
+    }
+    for (Usize i = 0; i < countof(b); i++) {
+        out[countof(a) + i] = b[i];
+    }
+    return out;
+}
+
+static Str row(Str text, Str label, types::Checked *r, ast::Expr *e) {
+    return cat(text, cat(label, cat(": ", cat(shown(r, e), "\n"))));
+}
+
+export void test_front_types_expr_golden_of_the_typed_expressions() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    point(&r);
+    var(&r, "x", "U8");
+    var(&r, "f", "F32");
+    ast::Expr *a = binary(.add, ast::name("x"), num(1));
+    ast::Expr *b = binary(.less, ast::name("x"), num(10));
+    ast::Expr *c = binary(.multiply, ast::name("f"), real(0.5));
+    ast::Expr *d = member(ast::name("pp"), "x", true);
+    ast::Expr *e = unary(.address_of, ast::name("p"));
+    ast::Expr *g = unary(.negate, num(128));
+    types_expr::infer(&r, a);
+    types_expr::infer(&r, b);
+    types_expr::infer(&r, c);
+    types_expr::infer(&r, d);
+    types_expr::infer(&r, e);
+    types_expr::check(&r, g, ty(&r, "I8"));
+    Str text = "";
+    text = row(text, "x + 1", &r, a);
+    text = row(text, "x < 10", &r, b);
+    text = row(text, "f * 0.5", &r, c);
+    text = row(text, "pp->x", &r, d);
+    text = row(text, "&p", &r, e);
+    text = row(text, "-128 as I8", &r, g);
+    types_expr::check(&r, num(300), ty(&r, "U8"));
+    types_expr::infer(&r, binary(.add, ast::name("x"), ast::name("f")));
+    for (Usize i = 0; i < r.error_count; i++) {
+        text = cat(text, cat("error: ", cat(r.errors[i].message, "\n")));
+    }
+    test::golden("tests/front/types_expr/typed.txt", text);
+}

@@ -13,7 +13,7 @@ export void test_deployment_smith_runs_on_macos_26() {
     if constexpr (target::os == target::macos) { // on Linux there is no minos to read
         scratch::Project p = scratch::make("deployment", nullptr);
         defer scratch::clean(&p);
-        arena::Arena memory = test::memory((usize)1 << 20);
+        arena::Arena memory = test::memory((Usize)1 << 20);
         arena::ArenaAllocator allocator = arena::allocator(&memory);
         mem::Allocator *outside = mem::set_allocator(&allocator.base);
         defer mem::set_allocator(outside);

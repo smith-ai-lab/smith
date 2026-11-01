@@ -1,5 +1,5 @@
 module std::mine;
 
-export i32 one(void) {
+export I32 one(void) {
     return 1;
 }

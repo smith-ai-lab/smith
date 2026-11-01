@@ -11,10 +11,10 @@ tags: [program]
 - `primes::sum` adds the first `count` primes. It requires the count to be at most five (`contract::requires`, the
   caller's job) and ensures the total is at most 28 (`contract::ensures`, its promise); `smith prove` proves the promise
   from the precondition, and `smith check` runs it.
-- `primes::total` adds the numbers of a slice (`i32 xs[:]`, a pointer and a count; `values[1:3]` slices an array). It is an
+- `primes::total` adds the numbers of a slice (`I32 xs[:]`, a pointer and a count; `values[1:3]` slices an array). It is an
   exported function over a slice, which `smith run` compiles in the debug profile with `-fsanitize=function`.
 - `main.smith` adds the first five and asserts that the sum is 28.
-- `main` is `i32 main()` and passes the sum to `primes::report`, which prints it and `hello from @NAME@`; main then
+- `main` is `I32 main()` and passes the sum to `primes::report`, which prints it and `hello from @NAME@`; main then
   returns 0.
 - Effects are called directly (`console::print`) and inferred from what a function calls (#207); a test stands in for
   the console with a handler (`console::set_handler`) and reads what `report` printed.

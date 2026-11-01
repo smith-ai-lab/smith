@@ -17,7 +17,7 @@ constexpr char flags[_] = "f='-std=gnu23 -Wall -Wextra -Wpedantic -Werror -I '$S
 
 // The pieces as one text, in the current allocator: the test's memory, which is given back after the test.
 const char *joined(auto... pieces) {
-    usize length = format::length(pieces...);
+    Usize length = format::length(pieces...);
     char *text = mem::alloc_array_raw(sizeof(char), length + 1, alignof(char)); // a generic's local has no type yet
     (void)format::to(text, length + 1, pieces...);
     return text;

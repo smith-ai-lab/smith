@@ -427,6 +427,12 @@ static void smith_run_report_failure(SmithExec *exec, const SmithJob *job, const
     smith_run_emit(exec, exec->scratch, used);
     smith_run_text(exec, "\n%s\n", edge->command);
     if (job->message[0] != '\0') smith_run_text(exec, "smith: %s\n", job->message);
+    if (job->signal != 0)
+        smith_run_text(exec,
+                       "smith: step %zu of %zu was killed by signal %d (%s)%s; running the same command again "
+                       "resumes from the steps that are done\n",
+                       exec->finished_edges, exec->command_edges, job->signal, strsignal(job->signal),
+                       job->signal == SIGKILL ? ", probably out of memory" : "");
 }
 
 // What a failed job printed, bounded (issue #78): a long output shows its excerpt (smith_quiet_excerpt) and the rest is
@@ -483,6 +489,9 @@ static void smith_run_finish(SmithExec *exec, SmithJob *job, uint32_t *stack) {
     if (edge->pool != smith_exec_pool_console) smith_run_progress(exec, edge, job->cached);
     if (!success) {
         smith_run_report_failure(exec, job, edge);
+        if (exec->failures == 0)
+            snprintf(exec->first_failed, sizeof exec->first_failed, "step %zu %s", exec->finished_edges,
+                     edge->description != nullptr ? edge->description : edge->command);
         exec->failures += 1;
         if (exec->failures_left > 0) exec->failures_left -= 1;
     }
@@ -667,6 +676,7 @@ static int smith_run_plan(SmithExec *exec) {
     exec->origin = smith_clock_now(&exec->io->clock);
     exec->failures_left = exec->options.failures_allowed;
     exec->failures = 0;
+    exec->first_failed[0] = '\0';
     exec->started_edges = 0;
     exec->finished_edges = 0;
     if (exec->jobs == nullptr)
@@ -688,8 +698,9 @@ static int smith_run_plan(SmithExec *exec) {
         return 128 + exec->stopped;
     }
     if (exec->failures == 0) return 0;
-    fprintf(stderr, "smith: build stopped: %s.\n",
-            exec->failures_left == 0 ? "subcommand failed" : "cannot make progress due to previous errors");
+    fprintf(stderr, "smith: build stopped: %s (%s).\n",
+            exec->failures_left == 0 ? "subcommand failed" : "cannot make progress due to previous errors",
+            exec->first_failed);
     return smith_exec_failed;
 }
 

@@ -10,11 +10,11 @@ A distribution is a function of a key built only from the public primitives, wri
 ```smith
 import std::random;
 
-f64 exponential_sample(random::Key key, f64 rate) {
+F64 exponential_sample(random::Key key, F64 rate) {
     return -random::log_double(1.0 - random::key_unit_double(key)) / rate;
 }
 
-f64 mixture_sample(random::Key key, f64 rate, f64 mean, f64 deviation, f64 weight) {
+F64 mixture_sample(random::Key key, F64 rate, F64 mean, F64 deviation, F64 weight) {
     random::Key parts[3];
     random::split(key, parts);
     if (random::bernoulli_sample(parts[0], (random::Bernoulli){.probability = weight}))

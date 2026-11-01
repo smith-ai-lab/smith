@@ -213,7 +213,7 @@ typedef struct {
     uint32_t covers;  // with `written`: how many tokens, this one included, the lowered call took
 } SmithLangGenToken;
 
-// What a compile-time parameter of a generic is: `constexpr type T`, `auto x`, `constexpr auto f` (a function known at
+// What a compile-time parameter of a generic is: `constexpr Type T`, `auto x`, `constexpr auto f` (a function known at
 // compile time), `constexpr usize i` (a number known at compile time) or `auto... rest` (the last parameter: the types
 // of the arguments that remain).
 typedef enum {
@@ -241,7 +241,7 @@ typedef struct {
     uint8_t type_token[smith_lang_type_params_max];    // the T of each `type T`: the index of its token in the head
     uint8_t type_position[smith_lang_type_params_max]; // and which parameter it is
     uint8_t type_kind[smith_lang_type_params_max];     // a SmithLangSlot
-    uint8_t type_concept[smith_lang_type_params_max];  // of an `auto` parameter written `arithmetic x`: 1 + the concept
+    uint8_t type_concept[smith_lang_type_params_max];  // of an `auto` parameter written `Num x`: 1 + the concept
     bool is_inline;
     bool exported;
     bool own;            // the module being lowered defines it (else an import's)
@@ -377,7 +377,7 @@ typedef struct {
     bool plain;        // ... a function over `type` that has no such parameter (issue #107)
     bool result_call;  // a generic's result type is a call (`slice_of(T, k) name(...)`): its `)` ends the type
     bool linked;       // a private function or variable that has a symbol: an exported generic's instance calls it
-    bool is_alias;     // `constexpr type Y = X;`: a type alias, a name of the module's types like a typedef's
+    bool is_alias;     // `constexpr Type Y = X;`: a type alias, a name of the module's types like a typedef's
     bool alias_header; // an exported alias: the header gets `typedef X Y;`, written when the declaration ends
     size_t alias_mark; // the header's length after the `typedef` keyword written for it
     char alias_name[256];
@@ -801,19 +801,19 @@ typedef struct {
 } SmithLangSized;
 
 static const SmithLangSized smith_lang_sized[] = {
-    {"f16", "_Float16", "_Float16"},
-    {"f32", "float", "float"},
-    {"f64", "double", "double"},
-    {"i16", "__INT16_TYPE__", "int16_t"},
-    {"i32", "__INT32_TYPE__", "int32_t"},
-    {"i64", "__INT64_TYPE__", "int64_t"},
-    {"i8", "__INT8_TYPE__", "int8_t"},
-    {"isize", "__PTRDIFF_TYPE__", "ptrdiff_t"},
-    {"u16", "__UINT16_TYPE__", "uint16_t"},
-    {"u32", "__UINT32_TYPE__", "uint32_t"},
-    {"u64", "__UINT64_TYPE__", "uint64_t"},
-    {"u8", "__UINT8_TYPE__", "uint8_t"},
-    {"usize", "__SIZE_TYPE__", "size_t"},
+    {"F16", "_Float16", "_Float16"},
+    {"F32", "float", "float"},
+    {"F64", "double", "double"},
+    {"I16", "__INT16_TYPE__", "int16_t"},
+    {"I32", "__INT32_TYPE__", "int32_t"},
+    {"I64", "__INT64_TYPE__", "int64_t"},
+    {"I8", "__INT8_TYPE__", "int8_t"},
+    {"Isize", "__PTRDIFF_TYPE__", "ptrdiff_t"},
+    {"U16", "__UINT16_TYPE__", "uint16_t"},
+    {"U32", "__UINT32_TYPE__", "uint32_t"},
+    {"U64", "__UINT64_TYPE__", "uint64_t"},
+    {"U8", "__UINT8_TYPE__", "uint8_t"},
+    {"Usize", "__SIZE_TYPE__", "size_t"},
 };
 
 // Whether the file has tuples (the text has one, or an import's header does): the host offers every token, and `t[0]`
@@ -880,9 +880,9 @@ static bool smith_lang_is_word(const SmithToken *token) {
 
 // ---- Capitalized type names (issue #366) --------------------------------------------------------------------------
 //
-// Types are written with a capital (`I32`, `Str`, `Type`, `Option(T)`, the concepts `Int` and `Num`) beside the old
-// lowercase names, which are the ones the lowering knows: a capitalized name is read as its lowercase one, the same
-// type, silently, until the tree is rewritten.
+// Types are written with a capital (`I32`, `Str`, `Type`, `Option(T)`, the concepts `Int` and `Num`), and the lowering
+// knows them by those names: a lowercase `i32` is the program's own name. The one exception is C's own keyword: `Bool`
+// is read as `bool`, the type C23 spells with a lowercase keyword.
 
 typedef struct {
     const char *written;
@@ -890,34 +890,7 @@ typedef struct {
 } SmithLangCapital;
 
 static const SmithLangCapital smith_lang_capitals[] = {
-    {"I8", "i8"},
-    {"I16", "i16"},
-    {"I32", "i32"},
-    {"I64", "i64"},
-    {"U8", "u8"},
-    {"U16", "u16"},
-    {"U32", "u32"},
-    {"U64", "u64"},
-    {"F16", "f16"},
-    {"F32", "f32"},
-    {"F64", "f64"},
-    {"Usize", "usize"},
-    {"Isize", "isize"},
     {"Bool", "bool"},
-    {"Str", "str"},
-    {"Type", "type"},
-    {"Option", "option"},
-    {"Result", "result"},
-    {"Int", "integer"},
-    {"Float", "floating"},
-    {"Num", "arithmetic"},
-    {"Pointer", "pointer"},
-    {"Enum", "enumeration"},
-    {"Struct", "structure"},
-    {"Array", "array"},
-    {"Slice", "slice"},
-    {"Signed", "signed_integer"},
-    {"Unsigned", "unsigned_integer"},
 };
 
 // The capitalized name number `index` and the lowercase name it stands for; false past the last.
@@ -931,7 +904,7 @@ bool smith_lang_capital_at(size_t index, const char **written, const char **name
 // The lowercase name a capitalized one stands for, or null.
 const char *smith_lang_capital_name(const char *text, size_t length) {
     if (length < 2 || length > 8 || text[0] < 'A' || text[0] > 'Z') return nullptr;
-    for (size_t i = 0; i < sizeof smith_lang_capitals / sizeof smith_lang_capitals[0]; i++) { // 28 names
+    for (size_t i = 0; i < sizeof smith_lang_capitals / sizeof smith_lang_capitals[0]; i++) { // 1 name
         if (smith_lang_equals(text, length, smith_lang_capitals[i].written)) return smith_lang_capitals[i].name;
     }
     return nullptr;
@@ -1043,7 +1016,7 @@ static const char *smith_lang_str(SmithLangText text) {
 // Enums with payloads: `typedef enum { Circle circle; empty; } Shape;`, `.empty`, `case .circle:`.
 #include "lang_enum.c"
 
-// Types as values: `constexpr type t = i32;`, a type handle, and what is asked of one.
+// Types as values: `constexpr Type t = i32;`, a type handle, and what is asked of one.
 #include "lang_type.c"
 
 // Bodies, the start and end of the file, and the entry points.

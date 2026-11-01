@@ -1,3 +1,3 @@
 module same;
-export i32 f(i32 x) { return x; }
-export i32 g(i32 m[:]) { return f((i32)countof(m)) + m[0]; }
+export I32 f(I32 x) { return x; }
+export I32 g(I32 m[:]) { return f((I32)countof(m)) + m[0]; }

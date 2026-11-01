@@ -10,9 +10,9 @@ module checks;
 
 import std::contract;
 
-export i32 first(const i32 *xs, usize count) {
+export I32 first(const I32 *xs, Usize count) {
     contract::requires(count > 0);                // the precondition: callers prove it, the body assumes it
-    i32 head = xs[0];
+    I32 head = xs[0];
     contract::assert(head == xs[0]);              // a fact in the middle that follows from what is known
     contract::ensures(head == xs[0]);             // the promise about the result, before the return
     return head;
@@ -42,13 +42,13 @@ module squares;
 
 import std::contract;
 
-export void square_is_nonnegative(i32 n) {
-    contract::ensures((i64)n * (i64)n >= 0);
+export void square_is_nonnegative(I32 n) {
+    contract::ensures((I64)n * (I64)n >= 0);
 }
 
-export i64 square(i32 n) {
+export I64 square(I32 n) {
     square_is_nonnegative(n);                  // gives the claim at n
-    i64 result = (i64)n * (i64)n;
+    I64 result = (I64)n * (I64)n;
     contract::ensures(result >= 0);
     return result;
 }

@@ -3,7 +3,7 @@ typedef struct {
 int type;
 int size;
 } Item;
-constexpr type wide = __INT64_TYPE__;
+constexpr Type wide = __INT64_TYPE__;
 static int scaled(int type, int n) {
 return (type * n + 1) * 2;
 }

@@ -3,6 +3,6 @@ module forgotten_test;
 import std::test;
 
 // No test_ function here: a test file that runs nothing must be an error, never skipped.
-static i32 helper() {
+static I32 helper() {
     return 1;
 }

@@ -1,5 +1,5 @@
 module geometry::grid;
 
-export f32 grid(f32 g[:][:], usize i) {
+export F32 grid(F32 g[:][:], Usize i) {
     return g[i][0];
 }

@@ -8,7 +8,7 @@ import <string.h>;
 
 typedef struct {
     env::Handler base; // first: &fake.base is what set_handler takes
-    usize asked;
+    Usize asked;
 } Fake;
 
 // The fake's variables: HOME is /home/ada, EMPTY is set to nothing, anything else is not set.

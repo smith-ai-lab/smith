@@ -12,10 +12,10 @@ int main() {
     Pair pair = {3, 2.5};
     Pair *pointer = &pair;
     I32 scalar = 7;
-    c::printf("%zu %zu %zu\n", sizeof(leaves::first(Pair *, Pointer)), sizeof(leaves::first(I32, scalar)),
+    c::printf("%zu %zu %zu\n", sizeof(leaves::first(Pair *, pointer)), sizeof(leaves::first(I32, scalar)),
               sizeof(leaves::first(F64 *, &pair.b)));
-    Pair *again = leaves::first(Pair **, &Pointer); // one level: the pointee of a pointer to a pointer is a pointer
-    Pair copy = leaves::first(Pair *, Pointer);
+    Pair *again = leaves::first(Pair **, &pointer); // one level: the pointee of a pointer to a pointer is a pointer
+    Pair copy = leaves::first(Pair *, pointer);
     c::printf("%d %g %d %d\n", copy.a, copy.b, leaves::first(I32, scalar), again->a);
     return 0;
 }

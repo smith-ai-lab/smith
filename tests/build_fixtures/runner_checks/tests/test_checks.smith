@@ -9,16 +9,16 @@ void test_passing(void) {
     test::check(true);
     test::check_near(0.1 + 0.2, 0.3, 1e-9);
     test::check_near(1.0f, 1.0001f, 0.001f);
-    i32 array[3] = {1, 2, 3};
+    I32 array[3] = {1, 2, 3};
     test::check_equal(array, &array[0]);
     test::expect_abort();
     c::assert(false);
 }
 
 void test_compare(void) {
-    i64 x = 7;
+    I64 x = 7;
     struct {
-        i64 high;
+        I64 high;
     } range = {6};
     c::printf("the test's output\n");
     test::note("loop %d", 3);
@@ -26,12 +26,12 @@ void test_compare(void) {
 }
 
 void test_condition(void) {
-    i32 items = 0;
+    I32 items = 0;
     test::check(items > 0);
 }
 
 void test_unsigned(void) {
-    u32 small = 3;
+    U32 small = 3;
     test::check_greater_equal(small, 4);
 }
 
@@ -50,20 +50,20 @@ void test_bool(void) {
 }
 
 void test_pointer(void) {
-    i32 value = 0;
-    i32 *pointer = &value;
+    I32 value = 0;
+    I32 *pointer = &value;
     test::check_equal(pointer, nullptr);
 }
 
 void test_near(void) {
-    f64 low = 1.0;
-    f64 high = 1.5;
-    f64 tolerance = 0.1;
+    F64 low = 1.0;
+    F64 high = 1.5;
+    F64 tolerance = 0.1;
     test::check_near(low, high, tolerance);
 }
 
 void test_near_nan(void) {
-    f64 nan = math::nan(f64);
+    F64 nan = math::nan(F64);
     test::check_near(nan, 1.0, 1e300);
 }
 

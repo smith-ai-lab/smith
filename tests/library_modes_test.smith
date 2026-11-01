@@ -30,7 +30,7 @@ static const Library inflate = {"lib/std/inflate_test.smith", "std/inflate_test.
 
 // The pieces as one text, in the current allocator: the test's memory, which is given back after the test.
 const char *joined(auto... pieces) {
-    usize length = format::length(pieces...);
+    Usize length = format::length(pieces...);
     char *memory = mem::alloc_array_raw(sizeof(char), length + 1, alignof(char)); // a generic's local has no type yet
     (void)format::to(memory, length + 1, pieces...);
     return memory;
@@ -143,7 +143,7 @@ static void fuzz(const scratch::Project *p, const char *name) {
 // More trials for the damage, under the sanitizers: the heavy runs by hand are in the units runner's notes.
 static void damaged_inflate(const scratch::Project *p) {
     const char *seeds[5] = {"1", "2", "3", "4", "5"};
-    for (usize i = 0; i < 5; i++) {
+    for (Usize i = 0; i < 5; i++) {
         scratch::expect_text(
             joined("damaged input never misbehaves (--seed ", seeds[i], ")"), "1 passed, 0 failed",
             summary(p, joined("./build/tests --seed ", seeds[i], " --test '*inflate_survives_corrupt_input'")));

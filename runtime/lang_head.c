@@ -122,7 +122,7 @@ static void smith_lang_replace_held(SmithLang *lang, SmithLangHeld *held, const 
         held->header_text = smith_lang_scratch_store(lang, lowered->header, lowered->header_length);
 }
 
-// Whether the name held at `index` is the `Y` of `constexpr type Y = X;`, a type alias: a module's type name, as a
+// Whether the name held at `index` is the `Y` of `constexpr Type Y = X;`, a type alias: a module's type name, as a
 // typedef's is.
 static bool smith_lang_alias_name(const SmithLang *lang, size_t index, const SmithToken *next) {
     if (!lang->is_module || !lang->decl.is_constexpr || lang->decl.in_params || index == 0 ||
@@ -131,7 +131,7 @@ static bool smith_lang_alias_name(const SmithLang *lang, size_t index, const Smi
     }
     const SmithLangHeld *before = &lang->head[index - 1];
     return before->kind == SmithTokenKind_Identifier &&
-           smith_lang_equals(smith_lang_scratch_str(before->original), before->original.length, "type");
+           smith_lang_equals(smith_lang_scratch_str(before->original), before->original.length, "Type");
 }
 
 static void smith_lang_resolve(SmithLang *lang, const SmithHost *host, const SmithToken *next) {
@@ -600,7 +600,7 @@ static void smith_lang_declare_variable(SmithLang *lang, const SmithHost *host, 
 
 static void smith_lang_body_note(SmithLang *lang); // runtime/lang_body.c
 
-// An exported `constexpr type Y = X;` is `typedef X Y;` in the header, so C callers see the name. What was written to
+// An exported `constexpr Type Y = X;` is `typedef X Y;` in the header, so C callers see the name. What was written to
 // the header after the `typedef` keyword is the initializer, as the lowering spelled it (`double;`, `uint8_t[16];`,
 // `void (*)(int32_t);`): the name goes where C's declarator has it, inside the `(*` of a function pointer or a pointer
 // to an array, before the `[` of an array, else after the type. An initializer that is no type (a call of a function

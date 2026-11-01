@@ -1,6 +1,6 @@
 module idiom::loops;
 
-export u32 forever(u32 n) {
+export U32 forever(U32 n) {
     for (;;) {
         n++;
         if (n > 8) break;
@@ -15,8 +15,8 @@ export u32 forever(u32 n) {
     return n;
 }
 
-export u32 bounded(u32 n) {
-    for (u32 i = 0; i < 4; i++) n += i;
+export U32 bounded(U32 n) {
+    for (U32 i = 0; i < 4; i++) n += i;
     while (n < 10) n++;
     do {
         n++;

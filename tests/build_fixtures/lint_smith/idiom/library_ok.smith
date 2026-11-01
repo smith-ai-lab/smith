@@ -3,6 +3,6 @@ module idiom::library_ok;
 import std::arena;
 
 export void use(arena::Arena *arena) {
-    u64 *value = arena::push(arena, u64);
+    U64 *value = arena::push(arena, U64);
     (void)value;
 }

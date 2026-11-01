@@ -1,5 +1,5 @@
 module declared;
 
-[[std::effects(alloc)]] i32 grab(i32 x) {
+[[std::effects(alloc)]] I32 grab(I32 x) {
     return x;
 }

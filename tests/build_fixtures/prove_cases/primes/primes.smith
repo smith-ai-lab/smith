@@ -3,7 +3,7 @@ module primes;
 import <stdio.h>;
 import <smith/contract.h>;
 
-export i32 show(i32 value) {
+export I32 show(I32 value) {
     c::smith_trusted();
     c::smith_requires(value >= 0);
     c::printf("%d\n", value);
@@ -11,21 +11,21 @@ export i32 show(i32 value) {
     return value;
 }
 
-export i32 sum(usize count) {
-    constexpr i32 first[_] = {2, 3, 5, 7, 11};
+export I32 sum(Usize count) {
+    constexpr I32 first[_] = {2, 3, 5, 7, 11};
     c::smith_requires(count <= _Countof(first));
-    i32 total = 0;
-    for (usize i = 0; i < count; i++) {
+    I32 total = 0;
+    for (Usize i = 0; i < count; i++) {
         total += first[i];
     }
     c::smith_ensures(total >= 0 && total <= 28);
     return total;
 }
 
-export i32 shown_sum(usize count) {
+export I32 shown_sum(Usize count) {
     c::smith_requires(count <= 5);
-    i32 total = sum(count);
-    i32 shown = show(total);
+    I32 total = sum(count);
+    I32 shown = show(total);
     c::smith_ensures(shown >= 0);
     return shown;
 }

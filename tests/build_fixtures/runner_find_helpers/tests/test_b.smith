@@ -1,7 +1,7 @@
-[[maybe_unused]] static i32 helper(i32 value) {
+[[maybe_unused]] static I32 helper(I32 value) {
     return value + 1;
 }
 
-[[maybe_unused]] static i32 not_a_test(i32 value) {
+[[maybe_unused]] static I32 not_a_test(I32 value) {
     return helper(value);
 }

@@ -1,0 +1,366 @@
+// Tests of front::parser (#1219, A6 of track A of #1112): the whole parser on the language corpus. Every `.smith` file
+// of every case folder of tests/smith-lang/cases (the corpus is the specification) is read with `parser::parse`, and
+// each has one outcome, written to the golden tests/front/parser/corpus.txt as one line `case/path: outcome`:
+//
+//   ok                  parsed with no error; its dump is not empty and a second parse gives the same dump
+//   error: <message> (line:column)   the parser's first error; the file must be in `allowed` (a case that is meant to
+//   fail to
+//                       parse, or a construct the plan removed), else the test fails
+//   C, out of scope     no `module` line, or a `#` line: C under the C rule, reported and not parsed
+//   skipped: <reason>   only for a decision not yet made; the reason names the issue
+//
+// The golden ends with `total N, ok N, error N, C N, skipped N`. The golden is written by running the test with the
+// environment variable FRONT_UPDATE=1 (`smith test --update` is not available for test-front yet). Cases that mix a
+// `.smith` file with other files: only the `.smith` files are read.
+module front_parser_test;
+
+import front::ast;
+import front::parser;
+import std::arena;
+import std::env;
+import std::files;
+import std::format;
+import std::mem;
+import std::slice;
+import std::test;
+
+// The files the parser rejects, in four classes, one path a line (#1219). A: a gap in the parsers of A3 to A5, reported
+// to the track A orchestrator; B: a construct the plan removed that the corpus still spells (the corpus stays: today's
+// lowering reads it); C: a construct the plan has not decided, reported to the lead; D: a case that is meant to fail.
+// An error that is in no class, or a listed file that parses, fails the test; a change to the parsers shows here and in
+// the golden.
+static Str gap_a1() {
+    return "c-array-bound/grid.smith\n"
+           "constexpr-c-pedantic/main.smith\n"
+           "constexpr-import/main.smith\n"
+           "enum-option-slice/main.smith\n"
+           "error-c-name/std/names.smith\n"
+           "error-concept-notes/main.smith\n"
+           "error-fields-enum-member/main.smith\n"
+           "error-generic-private-name/scale.smith\n"
+           "error-lambda-param-untyped/main.smith\n"
+           "error-range-for/main.smith\n"
+           "error-slice-initializer-unread/main.smith\n"
+           "error-type-value-import/main.smith\n"
+           "generic-fields-doc/docs.smith\n"
+           "generic-fields-error/main.smith\n";
+}
+static Str gap_a2() {
+    return "generic-private-names/scale.smith\n"
+           "generic-slice-restrict/pair.smith\n"
+           "module-basic/shapes/area.smith\n"
+           "module-enum-c-names/mix/modes.smith\n"
+           "tuple-modules/geo/b.smith\n"
+           "type-value-import/main.smith\n";
+}
+static Str removed_b() {
+    return "type-value-declarator/main.smith\n" // C's function-pointer type as a type value: `Fn(F)` is the spelling
+           "type-value-header/geo/units.smith\n"
+           "error-lambda-capture-not-local/main.smith\n"
+           "error-lambda-capture-to-pointer/main.smith\n"
+           "error-lambda-captures-local/main.smith\n"
+           "error-lambda-generic-nested/main.smith\n"
+           "error-lambda-generic-return-type/main.smith\n"
+           "error-lambda-generic-runtime-capture/main.smith\n"
+           "error-lambda-returns-disagree/main.smith\n"
+           "generic-for-range-error/main.smith\n"
+           "generic-function-error/main.smith\n"
+           "lambda-basic/main.smith\n"
+           "lambda-capture-list-not-a-lambda/main.smith\n"
+           "lambda-generic-handler/main.smith\n"
+           "lambda-generic-infer/main.smith\n"
+           "lambda-generic-spawn/later.smith\n"
+           "lambda-generic-table/main.smith\n"
+           "lambda-generic-type/main.smith\n"
+           "lambda-nested/main.smith\n"
+           "lambda-no-parameters/main.smith\n"
+           "lambda-static/main.smith\n"
+           "lambda-two/main.smith\n"
+           "param-names/shape/box.smith\n"
+           "str-typedef-lowering/text.smith\n"
+           "str-typedef-module/main.smith\n"
+           "str-typedef-module/text.smith\n"
+           "str-typedef-run/main.smith\n";
+}
+
+static Str undecided_c() {
+    return "attribute-c-names/log/fmt.smith\n"
+           "constexpr-import-header/shapes.smith\n"
+           "constexpr-import-result-type/main.smith\n"
+           "enum-body-result-generic/main.smith\n"
+           "enum-type-function-export/main.smith\n"
+           "enum-type-function-export/opt.smith\n"
+           "enum-type-function-export/other.smith\n"
+           "enum-type-function-generic/main.smith\n"
+           "enum-type-function-module/first.smith\n"
+           "enum-type-function-module/main.smith\n"
+           "enum-type-function-module/second.smith\n"
+           "enum-type-function/main.smith\n"
+           "errdefer-run/main.smith\n"
+           "error-enum-type-function-export/opt.smith\n"
+           "error-enum-type-function-generic/main.smith\n"
+           "error-enum-type-function/main.smith\n"
+           "error-errdefer-plain/main.smith\n"
+           "error-generic-return-type/main.smith\n"
+           "error-slice-pointer-discards/main.smith\n"
+           "error-tuple-generic/pairs.smith\n"
+           "error-type-function-pointee/main.smith\n"
+           "error-type-value-slice-bounds/main.smith\n"
+           "exported-constexpr-unread/main.smith\n"
+           "exported-variable-declared/main.smith\n"
+           "filescope-if-type-function/main.smith\n"
+           "function-pointer-typedef-result/main.smith\n"
+           "generic-bare-type-then-code/num.smith\n"
+           "generic-bare-type/num.smith\n"
+           "generic-fields-values/walk.smith\n"
+           "generic-pack-expand/expand.smith\n"
+           "generic-return-type/main.smith\n"
+           "generic-slice-option-typedef/cursor.smith\n"
+           "generic-slice-pointer-auto/cursor.smith\n"
+           "generic-slice/main.smith\n"
+           "generic-two-keyword-params/num.smith\n"
+           "if-constexpr/kind.smith\n"
+           "lambda-generic-spawn/main.smith\n"
+           "module-three/game/replay.smith\n"
+           "postfix-after-compound-literal/main.smith\n"
+           "slice-pointer-lowering/pointers.smith\n"
+           "slice-pointer-run/main.smith\n"
+           "slice-text-in-comment/hold.smith\n"
+           "str-run/main.smith\n"
+           "try-generic/main.smith\n"
+           "try-return-value/main.smith\n"
+           "tuple-c/geo/a.smith\n"
+           "tuple-import-index/geo/a.smith\n"
+           "tuple-modules/geo/a.smith\n"
+           "type-function-after-c-name/marks.smith\n"
+           "type-function-pointee/leaves.smith\n"
+           "type-function-private/shapes.smith\n"
+           "type-function-sized/sizes.smith\n"
+           "type-function-typeof/main.smith\n"
+           "type-value-module-variable/main.smith\n"
+           "type-value-slice/main.smith\n";
+}
+static Str must_fail_d() {
+    return "error-array-empty/main.smith\n"
+           "error-array-param-unsized/main.smith\n"
+           "error-c-name-tag/uses/tag.smith\n"
+           "error-defer-name/main.smith\n"
+           "error-enum-builtin-redeclare/main.smith\n"
+           "error-export-two-names/two.smith\n"
+           "error-import-broken-module/broken.smith\n"
+           "error-keyword-after-type/shapes.smith\n"
+           "error-keyword-function/foo.smith\n"
+           "error-keyword-module/shapes.smith\n"
+           "error-module-first/late.smith\n"
+           "error-module-syntax/syntax.smith\n"
+           "error-slice-qualifier-bracket/main.smith\n"
+           "error-slice-step/main.smith\n"
+           "error-str-name/main.smith\n"
+           "error-typetag-collision-reverse/main.smith\n"
+           "error-typetag-collision/main.smith\n"
+           "generic-for-constexpr-error/bad.smith\n"
+           "session-keyword-name/foo.smith\n";
+}
+
+// Whether the list has a line that is the path.
+static Bool listed_in(Str list, Str path) {
+    Usize line = 0;
+    while (line < countof(list)) {
+        Usize end = line;
+        while (end < countof(list) && list[end] != '\n')
+            end += 1;
+        if (slice::equal(list[line:end], path)) return true;
+        line = end + 1;
+    }
+    return false;
+}
+
+static Bool is_allowed(Str path) {
+    return listed_in(gap_a1(), path) || listed_in(gap_a2(), path) || listed_in(removed_b(), path) ||
+           listed_in(undecided_c(), path) || listed_in(must_fail_d(), path);
+}
+
+static Usize lines_in(Str list) {
+    Usize count = 0;
+    for (Usize i = 0; i < countof(list); i++) {
+        if (list[i] == '\n') count += 1;
+    }
+    return count;
+}
+
+// The number of paths in the four lists.
+static Usize allowed_count() {
+    return lines_in(gap_a1()) + lines_in(gap_a2()) + lines_in(removed_b()) + lines_in(undecided_c()) +
+           lines_in(must_fail_d());
+}
+
+// A file's text, or nothing when it cannot be read.
+static format::Chars read_text(Str path) {
+    files::BytesResult read = files::read_file(path);
+    format::Chars nothing = {};
+    if (read == .error) return nothing;
+    format::Chars text = mem::view(read.ok, char);
+    return text;
+}
+
+// Whether a line of the text starts (after blanks) with the prefix.
+static Bool has_line_starting(Str text, Str prefix) {
+    Usize i = 0;
+    while (i < countof(text)) {
+        while (i < countof(text) && (text[i] == ' ' || text[i] == '\t'))
+            i += 1;
+        Bool match = i + countof(prefix) <= countof(text) && slice::equal(text[i:i + countof(prefix)], prefix);
+        if (match) return true;
+        while (i < countof(text) && text[i] != '\n')
+            i += 1;
+        i += 1;
+    }
+    return false;
+}
+
+// A folder of a case still to read.
+struct Folder {
+    Str path;
+};
+
+struct Tally {
+    Usize total;
+    Usize ok;
+    Usize error;
+    Usize c;
+    Usize skipped;
+    Usize listed;   // errors that are in `allowed`
+    Usize unlisted; // errors that are not in `allowed`
+    Usize unstable; // `ok` files that dump nothing or dump differently the second time
+};
+
+// The text of the golden being built.
+struct Report {
+    arena::Arena *work; // the memory of one file's parse, reset after each file
+    mem::Allocator *work_base;
+    char text[:];
+    Usize used;
+};
+
+static void append(Report *report, Str piece) {
+    Usize room = countof(report->text) - report->used;
+    test::check_condition(countof(piece) <= room);
+    if (countof(piece) > room) return;
+    for (Usize i = 0; i < countof(piece); i++) {
+        report->text[report->used + i] = piece[i];
+    }
+    report->used += countof(piece);
+}
+
+// Reads one corpus file and writes its line.
+static void read_file_in(Report *report, Tally *tally, Str name, Str path) {
+    tally->total += 1;
+    Str source = read_text(path);
+    append(report, name);
+    if (!has_line_starting(source, "module ") || has_line_starting(source, "#")) {
+        tally->c += 1;
+        append(report, ": C, out of scope\n");
+        return;
+    }
+    parser::Parsed first = parser::parse(name, source);
+    if (countof(first.errors) > 0) {
+        tally->error += 1;
+        if (is_allowed(name))
+            tally->listed += 1;
+        else
+            tally->unlisted += 1;
+        Str message = first.errors[0].message;
+        U32 where = first.errors[0].span.start;
+        Usize row = 1;
+        Usize column = 1;
+        for (Usize i = 0; i < where && i < countof(source); i++) {
+            column = source[i] == '\n' ? 1 : column + 1;
+            row += source[i] == '\n' ? 1 : 0;
+        }
+        char line[:] = format::push(": error: ", message, " (", row, ":", column, ")\n");
+        append(report, line);
+        return;
+    }
+    Str one = ast::dump(&first.module);
+    parser::Parsed second = parser::parse(name, source);
+    Str two = ast::dump(&second.module);
+    if (countof(one) == 0 || !slice::equal(one, two) || countof(second.errors) > 0) tally->unstable += 1;
+    tally->ok += 1;
+    append(report, ": ok\n");
+}
+
+// Reads one corpus file with the memory of the file's own arena, given back when it is done.
+static void read_file(Report *report, Tally *tally, Str name, Str path) {
+    mem::Allocator *outside = mem::set_allocator(report->work_base);
+    read_file_in(report, tally, name, path);
+    mem::set_allocator(outside);
+    arena::reset(report->work);
+}
+
+// The `.smith` files of a case: a stack of folders still to read (a case has folders inside `src`).
+static void read_case(Report *report, Tally *tally, Str corpus_case) {
+    char root[:] = format::push("tests/smith-lang/cases/", corpus_case, "/src");
+    Folder pending[64];
+    Usize count = 0;
+    pending[count].path = root;
+    count += 1;
+    Str suffix = ".smith";
+    while (count > 0) {
+        count -= 1;
+        Str folder = pending[count].path;
+        files::EntriesResult listing = files::list(folder);
+        if (listing == .error) continue;
+        for (files::Entry entry : listing.ok) {
+            char path[:] = format::push(folder, "/", entry.name);
+            if (entry.folder) {
+                test::check_condition(count < 64);
+                if (count < 64) {
+                    pending[count].path = path;
+                    count += 1;
+                }
+            } else if (slice::ends_with(entry.name, suffix)) {
+                char name[:] = format::push(corpus_case, path[countof(root):countof(path)]);
+                read_file(report, tally, name, path);
+            }
+        }
+    }
+}
+
+export void test_parser_every_corpus_file_has_an_outcome_and_matches_the_golden() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::EntriesResult cases = files::list("tests/smith-lang/cases");
+    test::check_condition(cases == .ok);
+    if (cases == .error) {
+        return;
+    }
+    arena::Arena work = test::memory(1U << 27);
+    arena::ArenaAllocator work_allocator = arena::allocator(&work);
+    Report report = {.work = &work, .work_base = &work_allocator.base, .text = mem::alloc_slice(char, 1U << 20)};
+    Tally tally = {};
+    for (files::Entry corpus_case : cases.ok) {
+        read_case(&report, &tally, corpus_case.name);
+    }
+    char summary[:] = format::push("total ", tally.total, ", ok ", tally.ok, ", error ", tally.error, ", C ", tally.c,
+                                   ", skipped ", tally.skipped, "\n");
+    append(&report, summary);
+    char written[:] = report.text[0:report.used];
+    env::Value update = env::get("FRONT_UPDATE");
+    if (update == .some) {
+        U8 bytes[:] = mem::alloc_slice(U8, countof(written));
+        for (Usize i = 0; i < countof(written); i++) {
+            bytes[i] = (U8)written[i];
+        }
+        files::CountResult done = files::write_file("tests/front/parser/corpus.txt", bytes, files::Replace);
+        Bool wrote = done == .ok;
+        test::check_condition(wrote);
+    } else {
+        test::golden("tests/front/parser/corpus.txt", written);
+    }
+    test::check_equal(tally.unlisted, 0);
+    test::check_equal(tally.listed, allowed_count());
+    test::check_equal(tally.unstable, 0);
+    test::check_condition(tally.total > 500);
+}

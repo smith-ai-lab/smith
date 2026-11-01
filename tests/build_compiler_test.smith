@@ -11,7 +11,7 @@ import std::mem;
 import std::test;
 import scratch;
 
-constexpr usize memory_size = (usize)16 << 20; // 16 MiB
+constexpr Usize memory_size = (Usize)16 << 20; // 16 MiB
 
 // 13. ninja sees the same command (`smith ...`) before and after, so the objects would look up to date. Each object and
 // program depends on a file in .smith/compiler/ that says which compiler it is.

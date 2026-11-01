@@ -173,7 +173,7 @@ static void behave(const char *name) {
     scratch::Run copied = scratch::sh(&p, format::push("cp ", name, ".c ", name, ".smith").data);
     scratch::expect_status("the program is copied", 0, &copied);
     const char *kinds[2] = {"c", "smith"};
-    for (usize i = 0; i < 2; i++) {
+    for (Usize i = 0; i < 2; i++) {
         const char *build = format::push("smith cc -std=gnu23 -O1 -g0 -Wno-builtin-macro-redefined "
                                          "-D'__FILE__=\"unit\"' -I \"$SMITH_REPO/.smith/include\" -w ",
                                          name, ".", kinds[i], " -o ", name, ".", kinds[i], ".bin")

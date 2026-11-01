@@ -19,13 +19,13 @@ typedef struct {
 } Region;
 
 // The text as bytes.
-const u8 *bytes_of(const char *text) {
-    return (const u8 *)text;
+const U8 *bytes_of(const char *text) {
+    return (const U8 *)text;
 }
 
 // Unwrapping for the checks: the value of a result (a zero when it is an error: the test checked `== .ok` before) and
 // the error (a zero when it is a value).
-usize value_count(files::CountResult r) {
+Usize value_count(files::CountResult r) {
     switch (r) {
     case .ok:
         return r.ok;
@@ -89,11 +89,11 @@ files::Error failure_info(files::InfoResult r) {
 }
 
 // Whether the bytes are the text.
-bool is_text(const u8 got[:], const char *text) {
-    usize length = __builtin_strlen(text);
+bool is_text(const U8 got[:], const char *text) {
+    Usize length = __builtin_strlen(text);
     if (countof(got) != length) return false;
-    for (usize i = 0; i < length; i++) {
-        if (got[i] != (u8)text[i]) return false;
+    for (Usize i = 0; i < length; i++) {
+        if (got[i] != (U8)text[i]) return false;
     }
     return true;
 }
@@ -105,14 +105,14 @@ bool is_named(files::Entry entry, const char *name) {
 }
 
 // Writes the text to the path through the module and returns the error code (-1 for none).
-i32 put_text(const char *path, const char *text, usize length, files::Mode mode) {
+I32 put_text(const char *path, const char *text, Usize length, files::Mode mode) {
     files::CountResult written = files::write_file(path[0:__builtin_strlen(path)], bytes_of(text)[0:length], mode);
-    if (written == .error) return (i32)written.error;
+    if (written == .error) return (I32)written.error;
     return -1;
 }
 
 export void test_files_a_whole_file_round_trips_through_the_fake() {
-    const u8 hello[:] = ((const u8 *)"hello")[0:5];
+    const U8 hello[:] = ((const U8 *)"hello")[0:5];
     arena::Arena a = test::memory(1 << 16);
     arena::ArenaAllocator allocator = arena::allocator(&a);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
@@ -161,7 +161,7 @@ export void test_files_write_modes_replace_append_and_new() {
 
     test::check_equal(put_text("log.txt", "one", 3, files::New), -1);
     test::check_equal(put_text("log.txt", "two", 3, files::New),
-                      (i32)files::Exists); // New refuses a path that is taken
+                      (I32)files::Exists); // New refuses a path that is taken
     test::check_equal(put_text("log.txt", "+two", 4, files::Append), -1);
     files::BytesResult appended = files::read_file("log.txt");
     test::check_condition(appended == .ok && is_text(appended.ok, "one+two"));
@@ -176,8 +176,8 @@ export void test_files_write_modes_replace_append_and_new() {
 }
 
 export void test_files_open_read_write_and_close_by_pieces() {
-    const u8 abc[:] = ((const u8 *)"abc")[0:3];
-    const u8 defgh[:] = ((const u8 *)"defgh")[0:5];
+    const U8 abc[:] = ((const U8 *)"abc")[0:3];
+    const U8 defgh[:] = ((const U8 *)"defgh")[0:5];
     arena::Arena a = test::memory(1 << 16);
     arena::ArenaAllocator allocator = arena::allocator(&a);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
@@ -199,7 +199,7 @@ export void test_files_open_read_write_and_close_by_pieces() {
     files::OpenResult reopened = files::open("pieces.txt", files::Read);
     test::check_condition(reopened == .ok);
     files::File in = value_file(reopened);
-    u8 buffer[:] = mem::alloc_slice(u8, 3);
+    U8 buffer[:] = mem::alloc_slice(U8, 3);
     files::CountResult first = files::read(in, buffer);
     test::check_condition(first == .ok);
     test::check_equal(value_count(first), 3);
@@ -226,9 +226,9 @@ export void test_files_a_file_larger_than_a_chunk_is_read_whole() {
     files::Handler *before = files::set_handler(&fake.base);
     defer files::set_handler(before);
 
-    u8 big[:] = mem::alloc_slice(u8, 10000);
-    for (usize i = 0; i < countof(big); i++)
-        big[i] = (u8)(i % 251);
+    U8 big[:] = mem::alloc_slice(U8, 10000);
+    for (Usize i = 0; i < countof(big); i++)
+        big[i] = (U8)(i % 251);
     files::CountResult check7 = files::write_file("big.bin", big, files::Replace);
     test::check_condition(check7 == .ok);
     files::BytesResult back = files::read_file("big.bin");
@@ -305,7 +305,7 @@ export void test_files_remove_and_move() {
 }
 
 export void test_files_a_map_is_a_view_of_the_bytes() {
-    const u8 hello[:] = ((const u8 *)"hello")[0:5];
+    const U8 hello[:] = ((const U8 *)"hello")[0:5];
     arena::Arena a = test::memory(1 << 16);
     arena::ArenaAllocator allocator = arena::allocator(&a);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
@@ -325,8 +325,8 @@ export void test_files_a_map_is_a_view_of_the_bytes() {
 }
 
 export void test_files_fake_add_replaces_a_file() {
-    const u8 hello[:] = ((const u8 *)"hello")[0:5];
-    const u8 hi[:] = ((const u8 *)"hi")[0:2];
+    const U8 hello[:] = ((const U8 *)"hello")[0:5];
+    const U8 hi[:] = ((const U8 *)"hi")[0:2];
     arena::Arena a = test::memory(1 << 16);
     arena::ArenaAllocator allocator = arena::allocator(&a);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
@@ -370,7 +370,7 @@ export void test_files_the_real_file_system_in_a_scratch_folder() {
     files::DoneResult check19 = files::make_folder(folder[0:__builtin_strlen(folder)]);
     test::check_condition(check19 == .ok);
     test::check_equal(put_text(path, "real", 4, files::Replace), -1);
-    test::check_equal(put_text(path, "real", 4, files::New), (i32)files::Exists);
+    test::check_equal(put_text(path, "real", 4, files::New), (I32)files::Exists);
     test::check_equal(put_text(path, "!", 1, files::Append), -1);
     test::check_equal(put_text(path, "real!", 5, files::Atomic), -1);
 
@@ -419,7 +419,7 @@ const char *log_text(const char *log) {
     files::BytesResult text = files::read_file(log[0:__builtin_strlen(log)]);
     files::Bytes got = value_bytes(text);
     char *copy = mem::alloc_slice(char, countof(got) + 1).data;
-    for (usize i = 0; i < countof(got); i++)
+    for (Usize i = 0; i < countof(got); i++)
         copy[i] = (char)got[i];
     copy[countof(got)] = 0;
     return copy;
@@ -433,9 +433,9 @@ bool has_line(const char *text, const char *tail) {
 }
 
 // How many lines the log has.
-usize line_count(const char *text) {
-    usize lines = 0;
-    for (usize i = 0; text[i] != 0; i++)
+Usize line_count(const char *text) {
+    Usize lines = 0;
+    for (Usize i = 0; text[i] != 0; i++)
         lines += text[i] == '\n' ? 1 : 0;
     return lines;
 }

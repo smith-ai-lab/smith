@@ -1,18 +1,18 @@
 module nouns;
 
 // The kinds of types by their C-standard nouns in a generic's `if constexpr` (issue #193).
-export i32 kind_of(constexpr type T, T value) {
-    if constexpr (signed_integer(T)) {
+export I32 kind_of(constexpr Type T, T value) {
+    if constexpr (Signed(T)) {
         return 1;
-    } else if constexpr (unsigned_integer(T)) {
+    } else if constexpr (Unsigned(T)) {
         return 2;
-    } else if constexpr (floating(T)) {
+    } else if constexpr (Float(T)) {
         return 3;
-    } else if constexpr (pointer(T)) {
+    } else if constexpr (Pointer(T)) {
         return 4;
-    } else if constexpr (structure(T)) {
+    } else if constexpr (Struct(T)) {
         return 5;
-    } else if constexpr (arithmetic(T) || boolean(T) || enumeration(T) || array(T) || slice(T)) {
+    } else if constexpr (Num(T) || Enum(T) || Array(T) || Slice(T)) {
         return 6;
     } else {
         return 0;

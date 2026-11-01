@@ -76,12 +76,12 @@ static const char *chosen(const char *names, const char *changes, const char *ex
     defer scratch::clean(&p);
     if (extra_path != nullptr) {
         const char *path = format::push(p.dir, "/", extra_path).data;
-        const u8 *bytes = (const u8 *)extra_text;
+        const U8 *bytes = (const U8 *)extra_text;
         files::CountResult written =
             files::write_file(path[0:c::strlen(path)], bytes[0:c::strlen(extra_text)], files::Replace);
         test::check_condition(written == .ok);
     }
-    constexpr usize capacity = 1U << 16;
+    constexpr Usize capacity = 1U << 16;
     char *out = mem::alloc_slice(char, capacity).data;
     bool done = c::smith_core_changed_lint(p.dir, names, changes, out, capacity);
     test::check_equal(done, true);

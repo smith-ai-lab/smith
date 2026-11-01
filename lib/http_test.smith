@@ -15,20 +15,20 @@ import <smith/http.h>;
 
 // The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
 // NOLINTBEGIN(smith-preprocessor)
-constexpr i32 eauth = 80; // a refused certificate or handshake: macOS's EAUTH, the code on Linux too
-constexpr i32 econnrefused = c::ECONNREFUSED;
-constexpr i32 econnreset = c::ECONNRESET;
-constexpr i32 eio = c::EIO;
-constexpr i32 einval = c::EINVAL;
-constexpr i32 eloop = c::ELOOP;
-constexpr i32 enoent = c::ENOENT;
-constexpr i32 eproto = c::EPROTO;
-constexpr i32 eprotonosupport = c::EPROTONOSUPPORT;
-constexpr i32 etimedout = c::ETIMEDOUT;
+constexpr I32 eauth = 80; // a refused certificate or handshake: macOS's EAUTH, the code on Linux too
+constexpr I32 econnrefused = c::ECONNREFUSED;
+constexpr I32 econnreset = c::ECONNRESET;
+constexpr I32 eio = c::EIO;
+constexpr I32 einval = c::EINVAL;
+constexpr I32 eloop = c::ELOOP;
+constexpr I32 enoent = c::ENOENT;
+constexpr I32 eproto = c::EPROTO;
+constexpr I32 eprotonosupport = c::EPROTONOSUPPORT;
+constexpr I32 etimedout = c::ETIMEDOUT;
 // NOLINTEND(smith-preprocessor)
 
-constexpr usize fake_memory = 64 << 20;
-constexpr usize large_size = 3 << 20;
+constexpr Usize fake_memory = 64 << 20;
+constexpr Usize large_size = 3 << 20;
 
 // The fakes a case runs on, and the two names the checks use: the downloaded file and a local source.
 typedef struct {
@@ -57,7 +57,7 @@ static void serve(Client *client, const char *host, const char *response) {
     net::fake_add(client->net, (net::Server){.host = host, .port = 443, .response = response});
 }
 
-static void serve_chunks(Client *client, const char *host, const char *response, usize chunk) {
+static void serve_chunks(Client *client, const char *host, const char *response, Usize chunk) {
     net::fake_add(client->net, (net::Server){.host = host, .port = 443, .response = response, .chunk = chunk});
 }
 
@@ -82,7 +82,7 @@ static files::Bytes file_of(Client *client) {
 static const char *body_of(Client *client) {
     files::Bytes bytes = file_of(client);
     char text[:] = mem::alloc_slice(char, countof(bytes) + 1);
-    for (usize i = 0; i < countof(bytes); i++) {
+    for (Usize i = 0; i < countof(bytes); i++) {
         text[i] = (char)bytes[i];
     }
     text[countof(bytes)] = '\0';
@@ -90,17 +90,17 @@ static const char *body_of(Client *client) {
 }
 
 // What the program sent on the connection of the id (the n-th connect of the case is id n), as a text.
-static const char *request_of(Client *client, i32 id) {
+static const char *request_of(Client *client, I32 id) {
     net::Bytes sent = net::fake_sent(client->net, id);
     char text[:] = mem::alloc_slice(char, countof(sent) + 1);
-    for (usize i = 0; i < countof(sent); i++) {
+    for (Usize i = 0; i < countof(sent); i++) {
         text[i] = (char)sent[i];
     }
     text[countof(sent)] = '\0';
     return text.data;
 }
 
-static bool request_starts(Client *client, i32 id, const char *prefix) {
+static bool request_starts(Client *client, I32 id, const char *prefix) {
     return __builtin_strncmp(request_of(client, id), prefix, __builtin_strlen(prefix)) == 0;
 }
 
@@ -155,7 +155,7 @@ static void check_chunked(Client *client) {
     test::check_equal(result.error.code, 0);
     test::check_equal(result.size, 22);
     test::check(is(body_of(client), "hello, world0123456789"));
-    for (usize chunk = 1; chunk <= 5; chunk++) { // the framing split anywhere
+    for (Usize chunk = 1; chunk <= 5; chunk++) { // the framing split anywhere
         serve_chunks(client, "g.example", response, chunk);
         result = get(client, "https://g.example/g");
         test::check_equal(result.error.code, 0);
@@ -193,7 +193,7 @@ static void check_redirects_followed(Client *client) {
 static void check_redirects_refused(Client *client) {
     // Only https: a redirect to http, to file or to ftp is refused and nothing is requested from it.
     const char *schemes[3] = {"http://s.example/x", "file:///etc/passwd", "ftp://s.example/x"};
-    for (usize i = 0; i < 3; i++) {
+    for (Usize i = 0; i < 3; i++) {
         char response[256];
         (void)format::to(response, sizeof response, "HTTP/1.1 302 Found\r\nLocation: ", schemes[i], "\r\n\r\n");
         serve(client, "t.example", response);
@@ -209,7 +209,7 @@ static void check_redirects_refused(Client *client) {
 }
 
 static void check_redirect_loop(Client *client) {
-    for (usize i = 0; i < 12; i++) {
+    for (Usize i = 0; i < 12; i++) {
         serve(client, "loop.example", "HTTP/1.1 302 Found\r\nLocation: https://loop.example/again\r\n\r\n");
     }
     c::SmithHttpResult result = get(client, "https://loop.example/start");
@@ -272,7 +272,7 @@ static void check_bad_responses(Client *client) {
 static void check_urls(Client *client) {
     const char *refused[7] = {"http://a.example/x",    "ftp://a.example/x",        "a.example/x",          "https://",
                               "https://u@a.example/x", "https://a.example:port/x", "https://a.example/a b"};
-    for (usize i = 0; i < 7; i++) {
+    for (Usize i = 0; i < 7; i++) {
         c::SmithHttpResult result = get(client, refused[i]);
         test::check_equal(result.error.code, einval);
         test::check(contains(result.error.message, refused[i]));
@@ -280,7 +280,7 @@ static void check_urls(Client *client) {
 }
 
 static void check_local(Client *client) {
-    const u8 bytes[:] = ((const u8 *)"local bytes")[0:11];
+    const U8 bytes[:] = ((const U8 *)"local bytes")[0:11];
     files::CountResult written =
         files::write_file(client->source[0:__builtin_strlen(client->source)], bytes, files::Replace);
     test::check_condition(written == .ok);
@@ -295,7 +295,7 @@ static void check_local(Client *client) {
     test::check_equal(result.error.code, enoent);
     // The error message is a fixed buffer, and a message shows only the first 100 characters of a url
     // (smith_http_shown).
-    constexpr usize shown = 100;
+    constexpr Usize shown = 100;
     if (c::strlen(url) > shown) {
         url[shown] = '\0';
     }
@@ -304,11 +304,11 @@ static void check_local(Client *client) {
 
 // A body of several blocks, in the order the writes land: the file has every byte.
 static void check_large(Client *client) {
-    static u8 response[large_size];
-    usize body = sizeof response - 128;
-    usize head = format::to((char *)response, 128, "HTTP/1.1 200 OK\r\nContent-Length: ", body, "\r\n\r\n").length;
-    for (usize i = 0; i < body; i++) {
-        response[head + i] = (u8)(i * 31 + i / 251);
+    static U8 response[large_size];
+    Usize body = sizeof response - 128;
+    Usize head = format::to((char *)response, 128, "HTTP/1.1 200 OK\r\nContent-Length: ", body, "\r\n\r\n").length;
+    for (Usize i = 0; i < body; i++) {
+        response[head + i] = (U8)(i * 31 + i / 251);
     }
     net::fake_add(client->net, (net::Server){.host = "big.example",
                                              .port = 443,
@@ -320,8 +320,8 @@ static void check_large(Client *client) {
     test::check_equal(result.size, body);
     files::Bytes written = file_of(client);
     test::check_equal(countof(written), body);
-    for (usize i = 0; i < body; i++) {
-        if (written[i] != (u8)(i * 31 + i / 251)) {
+    for (Usize i = 0; i < body; i++) {
+        if (written[i] != (U8)(i * 31 + i / 251)) {
             test::check_equal(i, body); // the first byte that differs
             break;
         }
@@ -331,7 +331,7 @@ static void check_large(Client *client) {
 // A server that sends part of its answer and then says nothing: the download fails with ETIMEDOUT at the first read
 // that finds nothing (the fake answers a read_within with nothing to give at once). The message names the URL and what
 // had arrived, and the file keeps the body so far.
-static void check_stall_after(Client *client, usize which, const char *answer, usize size) {
+static void check_stall_after(Client *client, Usize which, const char *answer, Usize size) {
     const char *hosts[3] = {"stall1.example", "stall2.example", "stall3.example"};
     net::fake_add(
         client->net,

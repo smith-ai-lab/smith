@@ -11,7 +11,7 @@ struct Named {
     str name;
 };
 
-static usize length(str xs) {
+static Usize length(str xs) {
     return countof(xs);
 }
 
@@ -29,12 +29,12 @@ static void poke(bytes *b) {
     (*b)[0] = 'Z';
 }
 
-i32 main() {
+I32 main() {
     str s = "abc";
     c::printf("%zu %c %zu %zu\n", countof(s), s[1], length(s), length(s[1:]));
     str cut = s[0:2];
     str *p = &s;
-    usize steps = 0;
+    Usize steps = 0;
     while (next(p)) steps++;
     c::printf("%zu %zu %zu\n", countof(cut), steps, countof(s));
 

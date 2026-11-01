@@ -2,6 +2,6 @@ import std::random;
 import std::test;
 
 void test_shrink_int(random::Key key) {
-    i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
+    I64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
     test::check_less(x, 500);
 }

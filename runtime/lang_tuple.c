@@ -68,9 +68,12 @@ static const char *smith_lang_tuple_alias(const char *name) {
         {"int8_t", "i8"},       {"uint8_t", "u8"},     {"int16_t", "i16"},     {"uint16_t", "u16"},
         {"int32_t", "i32"},     {"uint32_t", "u32"},   {"int64_t", "i64"},     {"uint64_t", "u64"},
         {"ssize_t", "isize"},   {"intptr_t", "isize"}, {"ptrdiff_t", "isize"}, {"size_t", "usize"},
-        {"uintptr_t", "usize"}, {"_Bool", "bool"},     {"_Float16", "f16"},
+        {"uintptr_t", "usize"}, {"_Bool", "bool"},     {"_Float16", "f16"},    {"I8", "i8"},
+        {"U8", "u8"},           {"I16", "i16"},        {"U16", "u16"},         {"I32", "i32"},
+        {"U32", "u32"},         {"I64", "i64"},        {"U64", "u64"},         {"Isize", "isize"},
+        {"Usize", "usize"},     {"F16", "f16"},        {"F32", "f32"},         {"F64", "f64"},
     };
-    for (size_t i = 0; i < sizeof pairs / sizeof pairs[0]; i++) { // 15 entries
+    for (size_t i = 0; i < sizeof pairs / sizeof pairs[0]; i++) { // 28 entries
         if (strcmp(name, pairs[i][0]) == 0) return pairs[i][1];
     }
     return name;
@@ -430,7 +433,7 @@ static void smith_lang_tuple_begin(SmithLang *lang, const SmithHost *host, const
         span[at] = *smith_lang_peek(lang, host, at, false);
     if (close == 1) {
         smith_lang_error(lang, host, span[0].location,
-                         "a tuple has at least one field: `struct { i32, f32 }`; C has no empty struct");
+                         "a tuple has at least one field: `struct { I32, F32 }`; C has no empty struct");
         smith_lang_tuple_recover(lang, token, span, close);
         return;
     }
@@ -482,7 +485,7 @@ static void smith_lang_tuple_in_generic(SmithLang *lang, const SmithHost *host, 
     if (smith_lang_tuple_extent(lang, host) == 0) return;
     smith_lang_error(lang, host, token->location,
                      "a tuple type cannot be written in a generic function yet: name it outside the generic with a "
-                     "typedef (`typedef struct { i32, f32 } Pair;`)");
+                     "typedef (`typedef struct { I32, F32 } Pair;`)");
 }
 
 static bool smith_lang_slice_countof(SmithLang *lang, const SmithHost *host, const SmithToken *token,

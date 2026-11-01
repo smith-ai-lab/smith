@@ -850,7 +850,7 @@ class NarrowFlow {
 
 // ---- The messages --------------------------------------------------------------------------------------------------
 
-const char *const hint = "write the plain loop `for (usize i = 0; i < countof(keys); i++)` and use `keys[i]` once in "
+const char *const hint = "write the plain loop `for (Usize i = 0; i < countof(keys); i++)` and use `keys[i]` once in "
                          "its body, or reassign the value in the loop (`key = next[0];`)";
 
 class Reporter {

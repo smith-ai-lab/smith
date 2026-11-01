@@ -1,7 +1,7 @@
 module main;
 int main() {
-  i32 raw[3] = {4, 5, 6};
-  i32 xs[:] = raw;
+  I32 raw[3] = {4, 5, 6};
+  I32 xs[:] = raw;
   char name[:] = "abc";
   return (int)countof(xs) - 3 + (int)countof(name) - 3;
 }

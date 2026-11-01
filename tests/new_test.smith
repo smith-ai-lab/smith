@@ -90,10 +90,10 @@ constexpr char c_files[_] =
 // the files and the commit and prints what the command prints, with no first build. The cases below that read which
 // files it writes, with which contents, what it refuses and what it says, take it from there: no smith, no compiler.
 // What needs the built project (its first build, `smith run`, the verbs) runs the command, further down.
-constexpr usize said_capacity = 1U << 16;
+constexpr Usize said_capacity = 1U << 16;
 
 typedef struct {
-    i32 status;
+    I32 status;
     const char *out; // standard output and standard error together
 } Said;
 
@@ -104,14 +104,14 @@ typedef struct {
     const char *entries[16];
 } Saved;
 
-static void ensure_folder(const char *path, usize length) {
+static void ensure_folder(const char *path, Usize length) {
     files::DoneResult made = files::make_folder(path[0:length]);
     test::check_condition(made == .ok);
 }
 
 // The pieces one after another, from the current allocator (the test's arena).
 const char *joined(auto... pieces) {
-    usize length = format::length(pieces...);
+    Usize length = format::length(pieces...);
     char *text = mem::alloc_slice(char, length + 1).data;
     (void)format::to(text, length + 1, pieces...);
     return text;
@@ -122,7 +122,7 @@ static void git_isolate(const scratch::Project *p, bool identity, Saved *saved) 
     const char *folder = joined(p->root, "/.home");
     ensure_folder(folder, c::strlen(folder));
     (void)format::to(saved->home, sizeof saved->home, "HOME=", folder);
-    usize n = 0;
+    Usize n = 0;
     saved->entries[n++] = saved->home;
     saved->entries[n++] = "GIT_CONFIG_NOSYSTEM=1";
     if (identity) {
@@ -150,7 +150,7 @@ static Said smith_new(const scratch::Project *p, const char *in, const char *nam
     char *out = mem::alloc_slice(char, said_capacity).data;
     const char *folder = in[0] == '\0' ? p->dir : joined(p->dir, "/", in);
     const char *const *environment = saved != nullptr ? &saved->entries[0] : nullptr;
-    i32 status = c::smith_core_new(folder, name, language, environment, out, said_capacity);
+    I32 status = c::smith_core_new(folder, name, language, environment, out, said_capacity);
     return (Said){.status = status, .out = out};
 }
 
@@ -163,8 +163,8 @@ static void make_folder(const scratch::Project *p, const char *name) {
 static void put(const scratch::Project *p, const char *name, const char *text) {
     const char *path = joined(p->dir, "/", name);
     const char *slash = c::strrchr(path, '/');
-    ensure_folder(path, (usize)(slash - path));
-    const u8 *bytes = (const u8 *)text;
+    ensure_folder(path, (Usize)(slash - path));
+    const U8 *bytes = (const U8 *)text;
     files::CountResult written = files::write_file(path[0:c::strlen(path)], bytes[0:c::strlen(text)], files::Replace);
     test::check_condition(written == .ok);
 }
@@ -179,9 +179,9 @@ static const char *slurp(const scratch::Project *p, const char *name) {
     files::BytesResult file = files::read_file(path[0:c::strlen(path)]);
     test::check_condition(file == .ok);
     if (file != .ok) return "";
-    usize size = countof(file.ok);
+    Usize size = countof(file.ok);
     char *text = mem::alloc_slice(char, size + 1).data;
-    for (usize i = 0; i < size; i++) {
+    for (Usize i = 0; i < size; i++) {
         text[i] = (char)file.ok[i];
     }
     text[size] = '\0';
@@ -195,10 +195,10 @@ static void expect_present(const scratch::Project *p, const char *label, const c
 // What the program of a language is made of, in the folder `dir`, and the files its template leaves out.
 static void expect_the_written_files(const scratch::Project *p, const char *label, const char *dir,
                                      const char *const present_files[:], const char *const absent_files[:]) {
-    for (usize i = 0; i < countof(present_files); i++) {
+    for (Usize i = 0; i < countof(present_files); i++) {
         expect_present(p, joined(label, ": creates ", present_files[i]), joined(dir, "/", present_files[i]), true);
     }
-    for (usize i = 0; i < countof(absent_files); i++) {
+    for (Usize i = 0; i < countof(absent_files); i++) {
         expect_present(p, joined(label, ": writes no ", absent_files[i]), joined(dir, "/", absent_files[i]), false);
     }
 }
@@ -396,7 +396,7 @@ static void verbs_on_a_new_project(const scratch::Project *p, const char *dir, c
     char both[16384];
     in_folder(p, dir, "cp %s %s.orig", main_file, main_file, "");
     scratch::write(p, "args-main",
-                   smith_language ? "import <stdio.h>;\n\ni32 main(i32 argc, char *argv[]) {\n    for (i32 i = 1; i < "
+                   smith_language ? "import <stdio.h>;\n\nI32 main(I32 argc, char *argv[]) {\n    for (I32 i = 1; i < "
                                     "argc; i++)\n        c::puts(argv[i]);\n    return 0;\n}\n"
                                   : "#include <stdio.h>\n\nint main(int argc, char **argv) {\n    for (int i = 1; i < "
                                     "argc; i++)\n        puts(argv[i]);\n    return 0;\n}\n");
@@ -473,7 +473,7 @@ static void profiles_of_a_new_project(const scratch::Project *p, const char *dir
     scratch::Run built = run_in(p, dir, "smith build release fast");
     scratch::expect_status(say(label, "smith build release fast exits 0"), 0, &built);
     const char *modes[_] = {"debug", "release", "fast"};
-    for (usize i = 0; i < _Countof(modes); i++) {
+    for (Usize i = 0; i < _Countof(modes); i++) {
         __builtin_snprintf(command, sizeof command, "[ -e build/%s/$(basename \"$PWD\") ] && echo yes || echo no",
                            modes[i]);
         __builtin_snprintf(text, sizeof text, "the %s program exists", modes[i]);
@@ -521,7 +521,7 @@ export void test_new_hello_runs_an_exported_slice_function_in_debug() {
     defer mem::set_allocator(outside);
     generated(&p, "generate hello");
     scratch::expect_contains("new hello: primes.smith exports a function over a slice",
-                             scratch::read(&p, "hello/primes.smith"), "export i32 total(i32 xs[:])");
+                             scratch::read(&p, "hello/primes.smith"), "export I32 total(I32 xs[:])");
     scratch::Run ran = run_in(&p, "hello", "rm -rf build && smith run");
     scratch::expect_status("new hello: smith run builds the slice function in debug", 0, &ran);
     scratch::expect_contains("new hello: ... under -fsanitize=undefined",
@@ -628,7 +628,7 @@ static void assert_false_stops(const char *dir, const char *language_flag, const
     const char *modes[_] = {"debug", "release", "fast"};
     const char *statuses[_] = {"134", "134", "134"};
     const char *meanings[_] = {"debug stops", "release stops", "fast stops"};
-    for (usize i = 0; i < _Countof(modes); i++) {
+    for (Usize i = 0; i < _Countof(modes); i++) {
         __builtin_snprintf(command, sizeof command, "build/%s/%s >/dev/null 2>&1; echo $?", modes[i], dir);
         __builtin_snprintf(label, sizeof label, "assert(false) in %s: %s", extension, meanings[i]);
         scratch::expect_text(label, statuses[i], capture(&p, dir, command));
@@ -659,7 +659,7 @@ export void test_new_the_libraries_build_under_the_conventions_flags() {
     scratch::Run built = run_in(&p, "libs", "smith build && smith build release fast");
     scratch::expect_status("libraries: the three build under the conventions' flags", 0, &built);
     const char *modes[_] = {"debug", "release", "fast"};
-    for (usize i = 0; i < _Countof(modes); i++) {
+    for (Usize i = 0; i < _Countof(modes); i++) {
         char command[256];
         char label[256];
         __builtin_snprintf(command, sizeof command, "build/%s/libs", modes[i]);

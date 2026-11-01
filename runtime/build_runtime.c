@@ -1886,6 +1886,14 @@ static const char *smith_lang_slashed(const char *name) {
     return copy;
 }
 
+// The path of a module's generated header. The header of std::arena is smith/arena.h: C has no namespaces (#366). Every
+// place that turns a module name into a header (the module's own, an import's edge) uses this one, or a step does not
+// wait for the header of the module it imports (#1254: io.h written before arena.h, `unknown type name`).
+static const char *smith_lang_header_of(const char *name) {
+    if (strncmp(name, "std::", 5) == 0) return smith_text(".smith/include/smith/%s.h", smith_lang_slashed(name + 5));
+    return smith_text(".smith/include/%s.h", smith_lang_slashed(name));
+}
+
 // The module `source` declares, registered with its header's path in *header; nullptr for a file that is no module. The
 // module's path rule is checked here, once: module a::b lives in a file whose path ends in a/b.smith.
 static const char *smith_lang_register(const char *source, const char **header, bool *first) {
@@ -1894,9 +1902,7 @@ static const char *smith_lang_register(const char *source, const char **header, 
     const char *path = smith_text("%s%s", smith_lang_slashed(name), ".smith");
     bool placed = strcmp(source, path) == 0 || smith_ends_with(source, smith_text("/%s", path));
     if (!placed) smith_fail("smith_object: %s declares module %s, so its path must end in %s", source, name, path);
-    // the header of std::arena is smith/arena.h: C has no namespaces (#366)
-    *header = strncmp(name, "std::", 5) == 0 ? smith_text(".smith/include/smith/%s.h", smith_lang_slashed(name + 5))
-                                             : smith_text(".smith/include/%s.h", smith_lang_slashed(name));
+    *header = smith_lang_header_of(name);
     *first = false;
     for (size_t i = 0; i < smith_lang_module_count; i++) {
         if (strcmp(smith_lang_module_names[i], name) != 0) continue;
@@ -2254,7 +2260,7 @@ static bool *smith_lang_import_edges(SmithBuild *b, size_t n) {
     for (size_t i = 0; i < n; i++) {
         const char *const *imports = smith_lang_imports_of(b, smith_lang_header_sources[i]);
         for (size_t k = 0; imports[k] != nullptr; k++) { // bounded by the imports
-            const char *header = smith_text(".smith/include/%s.h", smith_lang_slashed(imports[k]));
+            const char *header = smith_lang_header_of(imports[k]);
             for (size_t j = 0; j < n; j++) // bounded by the steps
                 adj[i * n + j] =
                     adj[i * n + j] || (j != i && strcmp(smith_lang_header_steps[j].outputs[0], header) == 0);
@@ -2274,7 +2280,7 @@ static void smith_lang_declare_header_steps(SmithBuild *b) {
         SmithStep step = smith_lang_header_steps[i];
         const char *const *imports = smith_lang_imports_of(b, smith_lang_header_sources[i]);
         for (size_t k = 0; imports[k] != nullptr; k++) { // bounded by the imports
-            const char *header = smith_text(".smith/include/%s.h", smith_lang_slashed(imports[k]));
+            const char *header = smith_lang_header_of(imports[k]);
             if (strcmp(header, step.outputs[0]) == 0) continue;
             bool ours = false;
             bool cycle = false;

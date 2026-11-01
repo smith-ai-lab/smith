@@ -20,7 +20,7 @@ build stays quiet.
 
 | Diagnostic | Catches | Saying "I meant it" |
 |---|---|---|
-| `conversion`, `sign-conversion`, `shorten-64-to-32`, `float-conversion`, `implicit-int-float-conversion` | a lossy implicit conversion: `i64` to `i32`, `f64` to `f32`, float to integer, a sign change | a written cast (`checked::to`, #351) |
+| `conversion`, `sign-conversion`, `shorten-64-to-32`, `float-conversion`, `implicit-int-float-conversion` | a lossy implicit conversion: `I64` to `I32`, `F64` to `F32`, float to integer, a sign change | a written cast (`checked::to`, #351) |
 | `sign-compare` | `-1 < 0u` | make the types agree |
 | `parentheses` | `if (x = y)`, `a & b == c` | extra parentheses |
 | `unsequenced` | `i++ + i++` | separate statements |

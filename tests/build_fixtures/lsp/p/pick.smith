@@ -11,16 +11,16 @@ export typeof(x) apply_twice(constexpr auto f, auto x) {
 }
 
 // The arguments that remain: each has its own type.
-export usize count_args(auto x, auto... rest) {
+export Usize count_args(auto x, auto... rest) {
     (void)x;
     return countof(rest);
 }
 
 // The arguments in a `for constexpr`: the variables are written out, and the editor stays at the lines of this source.
-export i32 gathered(auto... rest) {
-    i32 total = 100;
-    for constexpr (usize i = 0; i < countof(rest); i++) {
-        total += (i32)rest[i];
+export I32 gathered(auto... rest) {
+    I32 total = 100;
+    for constexpr (Usize i = 0; i < countof(rest); i++) {
+        total += (I32)rest[i];
     }
     return total;
 }

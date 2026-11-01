@@ -3,7 +3,7 @@ module main;
 import <stdio.h>;
 import finder;
 
-// `option(usize)` is first named inside a function body, with no file-scope typedef: the struct is defined there.
+// `Option(Usize)` is first named inside a function body, with no file-scope typedef: the struct is defined there.
 
 I32 main(void) {
     Option(Usize) i = finder::find("key=value", '=');

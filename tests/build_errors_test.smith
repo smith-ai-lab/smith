@@ -10,7 +10,7 @@ import std::mem;
 
 static const char *first_line(const char *text) {
     static char line[512];
-    usize length = 0;
+    Usize length = 0;
     while (text[length] != '\0' && text[length] != '\n' && length + 1 < sizeof line) {
         length++;
     }

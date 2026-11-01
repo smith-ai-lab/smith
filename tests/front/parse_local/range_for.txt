@@ -1,0 +1,34 @@
+(module m
+  (function f
+    (param xs (slice (named I32 const)))
+    (result (named I32))
+    (block
+      (declaration
+        (variable t (named I32) (integer 0)))
+      (for
+        (declaration
+          (variable x (named I32)))
+        (absent)
+        (absent)
+        (name xs)
+        (block
+          (expression (assign add (name t) (name x)))))
+      (for
+        (declaration
+          (variable x (auto)))
+        (absent)
+        (absent)
+        (slice_of (name xs) (integer 1) (integer 3))
+        (block
+          (expression (assign add (name t) (name x)))))
+      (for
+        (declaration
+          (variable x (named I32)))
+        (absent)
+        (absent)
+        (declaration
+          (variable i (named Usize)))
+        (name xs)
+        (block
+          (expression (assign add (name t) (name x)))))
+      (return (name t)))))

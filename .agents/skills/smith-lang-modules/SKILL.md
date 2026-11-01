@@ -10,11 +10,11 @@ description: "Modules in .smith files: `module a::b;`, `import a::b::c as x;`, `
 module game::replay;                 // the path must end in game/replay.smith
 import std::text as tx;              // binds `tx`; `import std::text;` binds `text`
 export struct Replay { // the tag is the type's name: `Replay`, no typedef
-    u64 frames;
+    U64 frames;
     const char name[:];
 };
-export constexpr u32 version = 3;
-u32 helper() { // private
+export constexpr U32 version = 3;
+U32 helper() { // private
     return 1;
 }
 export Replay open(const char *path) {
@@ -40,4 +40,4 @@ C has a header, a `static` and a naming prefix for this; a module has one file, 
 ## Errors
 
 `import cycle`, `cannot find module`, `is private; export it`, a path that does not match the `module` line, `imports come before any declaration`, a stale header: `smith-lang-modules-errors` lists each with its fix. For C names (`import <h>;` puts them under `c::`), `smith-lang-c-interop`.
-- **`main` in a module** is `i32 main()` (C's `int main(void)`) or `i32 main(str args[:])`: `args` is a slice of the program's arguments, argc slices on the stack that point into argv's own characters (nothing is allocated or copied; each count is a `strlen`). `void main`, `int main(int argc, char **argv)` and any other signature are errors (`smith-main:`). A file with no `module` line keeps C's `main`.
+- **`main` in a module** is `I32 main()` (C's `int main(void)`) or `I32 main(Str args[:])`: `args` is a slice of the program's arguments, argc slices on the stack that point into argv's own characters (nothing is allocated or copied; each count is a `strlen`). `void main`, `int main(int argc, char **argv)` and any other signature are errors (`smith-main:`). A file with no `module` line keeps C's `main`.

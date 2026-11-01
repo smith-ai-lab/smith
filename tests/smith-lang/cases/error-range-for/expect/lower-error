@@ -1,4 +1,4 @@
-src/main.smith:10:5: the index of a range `for` is a `usize`, counted from 0: `for (usize i, T x : xs)`
-src/main.smith:11:5: a range `for` declares an index and an element at most: `for (usize i, T x : xs)`; C's loop walks several slices together
+src/main.smith:10:5: the index of a range `for` is a `Usize`, counted from 0: `for (Usize i, T x : xs)`
+src/main.smith:11:5: a range `for` declares an index and an element at most: `for (Usize i, T x : xs)`; C's loop walks several slices together
 src/main.smith:12:5: `auto *p` is not C: name the element's type to point at it, `T *p` (`typeof(xs[0]) *p` in a generic), or write `auto x` for a copy
 src/main.smith:9:5: the body of a range `for` is a block: `for (T x : xs) { ... }`

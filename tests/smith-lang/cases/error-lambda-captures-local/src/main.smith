@@ -4,7 +4,7 @@ import <stdio.h>;
 
 I32 main() {
     I32 factor = 3;
-    I32 (*scale)(I32) = [](I32 a) -> i32 { return a * factor; };
+    I32 (*scale)(I32) = [](I32 a) -> I32 { return a * factor; };
     c::printf("%d\n", scale(2));
     return 0;
 }

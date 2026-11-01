@@ -1,0 +1,307 @@
+// Tests of front::emit_debug (#1135, B5 of #1112): the emitted module with debug info on has a compile unit, a
+// DISubprogram per function with its linkage name, a DILocalVariable per parameter and local, and a DILocation with the
+// line and column of the node on its instructions; with it off there is no debug info at all. The trees are built by
+// hand as in front_emit_call_test.smith (which says why the tree lives in an arena and the emitter uses the system's
+// allocator) and given spans into `source`. Not here: the `.debug_info` section of an object file (B4's
+// emit_object has not merged).
+module front_emit_debug_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::emit_object;
+import front::emit_state as state;
+import std::arena;
+import std::files;
+import std::format;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <llvm-c/DebugInfo.h>;
+import <stdio.h>;
+import <string.h>;
+import <unistd.h>;
+
+// Line 1 is a comment, `add` starts on line 2 and `return a + b;` is on line 3.
+static Str add_text() {
+    return "// add\nI32 add(I32 a, I32 b) {\n    return a + b;\n}\n";
+}
+
+static Str scale_text() {
+    return "// scale\nI32 scale(I32 a, I32 b) {\n    I32 t = a * b;\n    return t;\n}\n";
+}
+
+struct TreeMemory {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    mem::Allocator *outside;
+};
+
+static void tree_begin(TreeMemory *trees) {
+    trees->memory = test::memory(1U << 22);
+    trees->allocator = arena::allocator(&trees->memory);
+    trees->outside = mem::set_allocator(&trees->allocator.base);
+}
+
+static void tree_end(TreeMemory *trees) {
+    mem::set_allocator(trees->outside);
+}
+
+// The byte offset of `needle` in `source`.
+static U32 at(Str source, Str needle) {
+    const char *found = c::strstr(source.data, needle.data);
+    test::check_equal(found != nullptr, true);
+    if (found == nullptr) return 0;
+    return (U32)(found - source.data);
+}
+
+static void put(ast::Expr *x, Str source, Str needle) {
+    x->span.start = at(source, needle);
+}
+
+// `I32 add(I32 a, I32 b) { return a + b; }` with spans into `add_text()`.
+static ast::Module add_module() {
+    ast::Expr *left = ast::name("a");
+    ast::Expr *right = ast::name("b");
+    ast::Expr *sum = ast::binary(.add, left, right);
+    put(sum, add_text(), "a + b");
+    put(left, add_text(), "a + b");
+    put(right, add_text(), "b;");
+    ast::Stmt *give = ast::return_value(sum);
+    give->span.start = at(add_text(), "return");
+    ast::StmtRef items[1] = {give};
+    ast::Param params[2] = {ast::param("a", ast::named("I32")), ast::param("b", ast::named("I32"))};
+    params[0].span.start = at(add_text(), "I32 a");
+    params[1].span.start = at(add_text(), "I32 b");
+    ast::Decl *function = ast::function("add", params, ast::named("I32"), ast::block(items));
+    function->exported = true;
+    function->span.start = at(add_text(), "I32 add");
+    ast::DeclRef decls[1] = {function};
+    ast::Module m = ast::new_module("front::test", decls);
+    Str file = "src/add.smith";
+    m.file = file;
+    return m;
+}
+
+// `I32 scale(I32 a, I32 b) { I32 t = a * b; return t; }` with spans into `scale_text()`.
+static ast::Module scale_module() {
+    ast::Expr *product = ast::binary(.multiply, ast::name("a"), ast::name("b"));
+    put(product, scale_text(), "a * b");
+    ast::Decl *variable = ast::variable("t", ast::named("I32"), product);
+    variable->span.start = at(scale_text(), "I32 t");
+    ast::StmtKind declaration = {.declaration = {.decl = variable}};
+    ast::Stmt *local = ast::stmt(declaration);
+    local->span.start = at(scale_text(), "I32 t");
+    ast::Expr *use = ast::name("t");
+    put(use, scale_text(), "t;");
+    ast::Stmt *give = ast::return_value(use);
+    give->span.start = at(scale_text(), "return");
+    ast::StmtRef items[2] = {local, give};
+    ast::Param params[2] = {ast::param("a", ast::named("I32")), ast::param("b", ast::named("I32"))};
+    params[0].span.start = at(scale_text(), "I32 a");
+    params[1].span.start = at(scale_text(), "I32 b");
+    ast::Decl *function = ast::function("scale", params, ast::named("I32"), ast::block(items));
+    function->exported = true;
+    function->span.start = at(scale_text(), "I32 scale");
+    ast::DeclRef decls[1] = {function};
+    ast::Module m = ast::new_module("front::test", decls);
+    Str file = "scale.smith";
+    m.file = file;
+    return m;
+}
+
+// The module's IR as text (the caller frees it with LLVMDisposeMessage). The module verified, debug info included.
+static char *ir_of(const ast::Module *m, Str source, Bool debug_info) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::Options options = {};
+    options.target.triple = "x86_64-unknown-linux-gnu";
+    options.source = source;
+    options.debug_info = debug_info;
+    emit::ModuleResult emitted = emit::module(context, m, options);
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        c::LLVMDisposeModule(emitted.ok);
+    }
+    c::LLVMContextDispose(context);
+    return text;
+}
+
+static Bool has(const char *text, const char *needle) {
+    return text != nullptr && c::strstr(text, needle) != nullptr;
+}
+
+export void test_front_emit_debug_a_function_has_a_subprogram_and_a_location() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Module m = add_module();
+    tree_end(&trees);
+    char *text = ir_of(&m, add_text(), true);
+    test::check_equal(has(text, "DISubprogram(name: \"add\", linkageName: \"front::test::add\""), true);
+    test::check_equal(has(text, "line: 2,"), true);
+    test::check_equal(has(text, "DICompileUnit(language: DW_LANG_C11, file: "), true);
+    test::check_equal(has(text, "producer: \"smith\""), true);
+    test::check_equal(has(text, "DIFile(filename: \"add.smith\", directory: \"src/\")"), true);
+    test::check_equal(has(text, "!{i32 2, !\"Debug Info Version\", i32 3}"), true);
+    test::check_equal(has(text, "!{i32 2, !\"Dwarf Version\", i32 5}"), true);
+    test::check_equal(has(text, "DIBasicType(name: \"I32\", size: 32, encoding: DW_ATE_signed)"), true);
+    // `return a + b;`: line 3, and the column of the expression, 1-based in bytes.
+    test::check_equal(has(text, "DILocation(line: 3, column: 12, scope: "), true);
+    test::check_equal(has(text, "add nsw i32") || has(text, "@llvm.sadd.with.overflow.i32"), true);
+    test::check_equal(has(text, "!dbg"), true);
+    c::LLVMDisposeMessage(text);
+}
+
+export void test_front_emit_debug_parameters_and_locals_have_variables() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Module m = scale_module();
+    tree_end(&trees);
+    char *text = ir_of(&m, scale_text(), true);
+    test::check_equal(has(text, "DILocalVariable(name: \"a\", arg: 1, scope: "), true);
+    test::check_equal(has(text, "DILocalVariable(name: \"b\", arg: 2, scope: "), true);
+    test::check_equal(has(text, "DILocalVariable(name: \"t\", scope: "), true);
+    test::check_equal(has(text, "#dbg_declare(ptr %a"), true);
+    test::check_equal(has(text, "#dbg_declare(ptr %t"), true);
+    // `I32 t = a * b;` is on line 3, `return t;` on line 4.
+    test::check_equal(has(text, "DILocation(line: 3, column: 5, scope: "), true);
+    test::check_equal(has(text, "DILocation(line: 4, column: 5, scope: "), true);
+    c::LLVMDisposeMessage(text);
+}
+
+export void test_front_emit_debug_off_emits_nothing() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Module m = add_module();
+    tree_end(&trees);
+    char *text = ir_of(&m, add_text(), false);
+    test::check_equal(text != nullptr, true);
+    test::check_equal(has(text, "!dbg"), false);
+    test::check_equal(has(text, "DI"), false);
+    test::check_equal(has(text, "dbg_declare"), false);
+    test::check_equal(has(text, "Debug Info Version"), false);
+    c::LLVMDisposeMessage(text);
+}
+
+// `I32 f(I32 a, I32 b) { return a + b * a; }`: the add is built by a continuation after the product's, which set the
+// location to its own.
+static Str nested_text() {
+    return "// f\nI32 f(I32 a, I32 b) {\n    return a + b * a;\n}\n";
+}
+
+static ast::Module nested_module() {
+    Str text = nested_text();
+    ast::Expr *product = ast::binary(.multiply, ast::name("b"), ast::name("a"));
+    put(product, text, "b * a");
+    ast::Expr *sum = ast::binary(.add, ast::name("a"), product);
+    put(sum, text, "a + b * a");
+    ast::Stmt *give = ast::return_value(sum);
+    give->span.start = at(text, "return");
+    ast::StmtRef items[1] = {give};
+    ast::Param params[2] = {ast::param("a", ast::named("I32")), ast::param("b", ast::named("I32"))};
+    params[0].span.start = at(text, "I32 a");
+    params[1].span.start = at(text, "I32 b");
+    ast::Decl *function = ast::function("f", params, ast::named("I32"), ast::block(items));
+    function->exported = true;
+    function->span.start = at(text, "I32 f");
+    ast::DeclRef decls[1] = {function};
+    ast::Module m = ast::new_module("front::test", decls);
+    Str file = "nested.smith";
+    m.file = file;
+    return m;
+}
+
+// The column of the first call to an intrinsic whose name contains `callee`, or 0.
+static U32 column_of_call(c::LLVMModuleRef ir, const char *callee) {
+    U32 column = 0;
+    for (c::LLVMValueRef f = c::LLVMGetFirstFunction(ir); f != nullptr; f = c::LLVMGetNextFunction(f)) {
+        for (c::LLVMBasicBlockRef b = c::LLVMGetFirstBasicBlock(f); b != nullptr; b = c::LLVMGetNextBasicBlock(b)) {
+            for (c::LLVMValueRef i = c::LLVMGetFirstInstruction(b); i != nullptr; i = c::LLVMGetNextInstruction(i)) {
+                if (c::LLVMIsACallInst(i) == nullptr) continue;
+                Usize length = 0;
+                const char *name = c::LLVMGetValueName2(c::LLVMGetCalledValue(i), &length);
+                if (column == 0 && c::strstr(name, callee) != nullptr) column = c::LLVMGetDebugLocColumn(i);
+            }
+        }
+    }
+    return column;
+}
+
+export void test_front_emit_debug_a_continuation_has_the_binary_expressions_location() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Module m = nested_module();
+    tree_end(&trees);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::Options options = {};
+    options.target.triple = "x86_64-unknown-linux-gnu";
+    options.source = nested_text();
+    options.debug_info = true;
+    emit::ModuleResult emitted = emit::module(context, &m, options);
+    test::check_equal(emitted == .ok, true);
+    if (emitted == .ok) {
+        // `b * a` starts at column 16 and `a + b * a` at column 12: the add runs after the product, and keeps its own.
+        test::check_equal(column_of_call(emitted.ok, "smul.with.overflow"), 16);
+        test::check_equal(column_of_call(emitted.ok, "sadd.with.overflow"), 12);
+        c::LLVMDisposeModule(emitted.ok);
+    }
+    c::LLVMContextDispose(context);
+}
+
+// Whether the file at `path` holds `needle` anywhere in its bytes.
+static Bool file_holds(Str path, Str needle) {
+    files::BytesResult bytes = files::read_file(path);
+    test::check_equal(bytes == .ok, true);
+    if (bytes != .ok) return false;
+    Bool found = false;
+    Usize size = countof(bytes.ok);
+    for (Usize i = 0; i + countof(needle) <= size && !found; i++) {
+        Usize j = 0;
+        while (j < countof(needle) && bytes.ok[i + j] == (U8)needle[j])
+            j += 1;
+        found = j == countof(needle);
+    }
+    mem::free(bytes.ok.data);
+    return found;
+}
+
+// An object file written from a module emitted with debug info has a debug_info section (`.debug_info` in ELF,
+// `__debug_info` in Mach-O); one emitted without it has none.
+export void test_front_emit_debug_an_object_file_has_debug_info() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    if (started != .ok) return;
+    emit_jit::Jit host = started.ok;
+    Str with = state::msg(format::push("/tmp/front_emit_debug_", (I64)c::getpid(), "_on.o"));
+    Str without = state::msg(format::push("/tmp/front_emit_debug_", (I64)c::getpid(), "_off.o"));
+    Bool states[2] = {true, false};
+    Str paths[2] = {with, without};
+    for (Usize k = 0; k < 2; k++) {
+        TreeMemory trees = {};
+        tree_begin(&trees);
+        ast::Module m = add_module();
+        tree_end(&trees);
+        c::LLVMContextRef context = c::LLVMContextCreate();
+        emit::Options options = {};
+        options.target = host.target;
+        options.source = add_text();
+        options.debug_info = states[k];
+        emit::ModuleResult emitted = emit::module(context, &m, options);
+        test::check_equal(emitted == .ok, true);
+        if (emitted == .ok) {
+            emit_object::ObjectOptions object = {.target = host.target};
+            emit_object::WriteResult written = emit_object::write(emitted.ok, object, paths[k]);
+            test::check_equal(written == .ok, true);
+            c::LLVMDisposeModule(emitted.ok);
+        }
+        c::LLVMContextDispose(context);
+    }
+    Bool on = file_holds(with, ".debug_info") || file_holds(with, "__debug_info");
+    Bool off = file_holds(without, ".debug_info") || file_holds(without, "__debug_info");
+    test::check_equal(on, true);
+    test::check_equal(off, false);
+    c::remove(with.data);
+    c::remove(without.data);
+    emit_jit::stop(&host);
+}

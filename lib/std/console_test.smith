@@ -10,27 +10,27 @@ import std::test;
 import target;
 import <string.h>;
 
-constexpr usize capacity = 16384;
+constexpr Usize capacity = 16384;
 
 typedef struct {
     console::Handler base; // first: &fake.base is what set_handler takes
     char out[capacity];
-    usize out_size;
+    Usize out_size;
     char err[capacity];
-    usize err_size;
+    Usize err_size;
     const char *input;
-    usize input_size;
-    usize input_position;
-    i32 fail_with; // not 0: every write fails with this errno
+    Usize input_size;
+    Usize input_position;
+    I32 fail_with; // not 0: every write fails with this errno
 } Fake;
 
 // NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
-constexpr i32 epipe = c::EPIPE;
-constexpr i32 enospc = c::ENOSPC;
-constexpr i32 eio = c::EIO;
+constexpr I32 epipe = c::EPIPE;
+constexpr I32 enospc = c::ENOSPC;
+constexpr I32 eio = c::EIO;
 // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
 
-void set_errno(i32 code) {
+void set_errno(I32 code) {
     if constexpr (target::os == target::macos) {
         *c::__error() = code;
     } else {
@@ -38,32 +38,32 @@ void set_errno(i32 code) {
     }
 }
 
-isize fake_write(console::Handler *self, i32 fd, const void *buffer, usize size) {
+Isize fake_write(console::Handler *self, I32 fd, const void *buffer, Usize size) {
     Fake *fake = (Fake *)self;
     if (fake->fail_with != 0) {
         set_errno(fake->fail_with);
         return -1;
     }
     char *to = fd == 1 ? fake->out : fake->err;
-    usize *used = fd == 1 ? &fake->out_size : &fake->err_size;
+    Usize *used = fd == 1 ? &fake->out_size : &fake->err_size;
     test::check_condition(*used + size < capacity);
-    u8 *destination = (u8 *)to + *used;
-    const u8 *source = (const u8 *)buffer;
+    U8 *destination = (U8 *)to + *used;
+    const U8 *source = (const U8 *)buffer;
     mem::copy(destination[0:size], source[0:size]);
     *used += size;
     to[*used] = 0;
-    return (isize)size;
+    return (Isize)size;
 }
 
-isize fake_read(console::Handler *self, void *buffer, usize size) {
+Isize fake_read(console::Handler *self, void *buffer, Usize size) {
     Fake *fake = (Fake *)self;
-    usize left = fake->input_size - fake->input_position;
-    usize n = left < size ? left : size;
-    u8 *destination = (u8 *)buffer;
-    const u8 *source = (const u8 *)fake->input + fake->input_position;
+    Usize left = fake->input_size - fake->input_position;
+    Usize n = left < size ? left : size;
+    U8 *destination = (U8 *)buffer;
+    const U8 *source = (const U8 *)fake->input + fake->input_position;
     mem::copy(destination[0:n], source[0:n]);
     fake->input_position += n;
-    return (isize)n;
+    return (Isize)n;
 }
 
 Fake make_fake(const char *input) {
@@ -103,7 +103,7 @@ export void test_console_print_error_writes_to_stderr() {
 
 export void test_console_print_has_no_4_kib_limit() {
     static char big[10001];
-    for (usize i = 0; i < 10000; i++) {
+    for (Usize i = 0; i < 10000; i++) {
         big[i] = (char)('a' + i % 26);
     }
     Fake fake = make_fake("");
@@ -118,7 +118,7 @@ export void test_console_write_takes_bytes_and_repeats_calls_in_order() {
     Fake fake = make_fake("");
     console::Handler *before = console::set_handler(&fake.base);
     defer console::set_handler(before);
-    u8 bytes[3] = {'o', 'n', 'e'};
+    U8 bytes[3] = {'o', 'n', 'e'};
     test::check_condition(succeeded(console::write(bytes[0:3])));
     test::check_condition(succeeded(console::write_error(bytes[0:2])));
     test::check_condition(succeeded(console::write(bytes[0:0]))); // nothing is a write that succeeds
@@ -142,7 +142,7 @@ export void test_console_read_answers_what_is_available_then_zero_at_the_end() {
     Fake fake = make_fake("abc");
     console::Handler *before = console::set_handler(&fake.base);
     defer console::set_handler(before);
-    u8 buffer[2] = {};
+    U8 buffer[2] = {};
     console::Count first = console::read(buffer[0:2]);
     test::check_condition(first == .ok && first.ok == 2 && buffer[0] == 'a' && buffer[1] == 'b');
     console::Count second = console::read(buffer[0:2]);
@@ -161,9 +161,9 @@ bool line_is(console::LineResult result, const char *expected, bool end) {
 }
 
 // The length of the line read, which is then given back; 0 for an error.
-usize line_length(console::LineResult result) {
+Usize line_length(console::LineResult result) {
     if (result != .ok) return 0;
-    usize length = countof(result.ok.text);
+    Usize length = countof(result.ok.text);
     mem::free(result.ok.text.data);
     return length;
 }
@@ -181,7 +181,7 @@ export void test_console_read_line_splits_lines_and_marks_the_end() {
 
 export void test_console_read_line_grows_for_a_long_line() {
     static char input[1001];
-    for (usize i = 0; i < 1000; i++) {
+    for (Usize i = 0; i < 1000; i++) {
         input[i] = 'z';
     }
     Fake fake = make_fake(input);

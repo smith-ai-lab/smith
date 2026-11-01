@@ -964,8 +964,8 @@ static bool smith_lang_try_replay_try(SmithLang *lang, const SmithHost *host, Sm
     if (!smith_lang_enum_result(lang, host, replay->generic, replay->instance, &type) ||
         smith_lang_try_kind(type.type) == SmithLangTryKind_None) {
         smith_lang_error(lang, host, place,
-                         "`try` returns the failure from the function, so the function must return a `result(T, E)` "
-                         "or an `option(T)`; this one returns something else. Test the value by hand: `if (r == "
+                         "`try` returns the failure from the function, so the function must return a `Result(T, E)` "
+                         "or an `Option(T)`; this one returns something else. Test the value by hand: `if (r == "
                          ".error) return ...;`");
         frame->pos += 1;
         return true;
@@ -1279,8 +1279,8 @@ static void smith_lang_enum_generic_dot(SmithLang *lang, const SmithHost *host, 
 // A module that declares `option` or `result` (the library's own two are the exceptions): an error naming the built-in.
 static bool smith_lang_eshape_builtin_clash(SmithLang *lang, const SmithHost *host, const SmithToken *name) {
     bool library = strcmp(lang->module, "std::option") == 0 || strcmp(lang->module, "std::result") == 0;
-    if (library || !(smith_lang_equals(name->text, name->length, "option") ||
-                     smith_lang_equals(name->text, name->length, "result"))) {
+    if (library || !(smith_lang_equals(name->text, name->length, "Option") ||
+                     smith_lang_equals(name->text, name->length, "Result"))) {
         return false;
     }
     smith_lang_error(lang, host, name->location,
@@ -1322,7 +1322,7 @@ static bool smith_lang_eshape_declare(SmithLang *lang, const SmithHost *host, co
         const SmithToken *word = smith_lang_eshape_at(lang, host, token, at);
         const SmithToken *param = smith_lang_eshape_at(lang, host, token, at + 1);
         const SmithToken *after = smith_lang_eshape_at(lang, host, token, at + 2);
-        bool good = smith_lang_ident(word, "type") && param->kind == SmithTokenKind_Identifier &&
+        bool good = smith_lang_ident(word, "Type") && param->kind == SmithTokenKind_Identifier &&
                     (at + 2 == right ? smith_lang_punct(after, ")") : smith_lang_punct(after, ",")) &&
                     shape->param_count < smith_lang_eshape_params_max;
         if (!good) {
@@ -1563,7 +1563,9 @@ static bool smith_lang_eshape_tag(SmithLang *lang, const SmithHost *host, const 
         return false;
     }
     char joined[smith_lang_tuple_name_max];
-    snprintf(joined, sizeof joined, "%s_%s", shape->name, spelled);
+    bool builtin_name = strcmp(shape->name, "Option") == 0 || strcmp(shape->name, "Result") == 0;
+    snprintf(joined, sizeof joined, "%s_%s", builtin_name ? (shape->name[0] == 'O' ? "option" : "result") : shape->name,
+             spelled); // the C names of the two built-ins stay `smith_enum_option_...`
     char hashed[smith_lang_tuple_name_max];
     smith_lang_tuple_tag(joined, hashed, sizeof hashed);
     snprintf(tag, capacity, "smith_enum_%s", hashed + sizeof smith_lang_tuple_prefix - 1);
@@ -2277,8 +2279,8 @@ static void smith_lang_eshape_import(const char *text, uint32_t length, const ch
 // `std::option` and `std::result` (lib/std/option.smith, result.smith) export. Those headers are not in git, so
 // the two lines the lowering needs of them are written here; `tests/headers_test.smith` checks that each module's
 // generated header has exactly its line.
-static constexpr char smith_option_header[] = "// smith-eshape: option(T) { T some ; none ; }\n";
-static constexpr char smith_result_header[] = "// smith-eshape: result(T,E) { T ok ; E error ; }\n";
+static constexpr char smith_option_header[] = "// smith-eshape: Option(T) { T some ; none ; }\n";
+static constexpr char smith_result_header[] = "// smith-eshape: Result(T,E) { T ok ; E error ; }\n";
 
 static void smith_lang_eshape_builtins(SmithLang *lang) {
     if (smith_lang_eshape_builtins_done || !lang->is_module) return;
@@ -2491,7 +2493,7 @@ static bool smith_lang_enum_function(SmithLang *lang, const SmithHost *host, con
     bool recording =
         lang->recording; // a generic's body: its uses are written as they are in any body, nothing is defined
     if (recording) smith_lang_enum_generic_dot(lang, host, token);
-    if (!recording && start && smith_lang_eshape_depth == 0 && smith_lang_ident(token, "type") &&
+    if (!recording && start && smith_lang_eshape_depth == 0 && smith_lang_ident(token, "Type") &&
         smith_lang_eshape_declare(lang, host, token)) {
         return true;
     }
