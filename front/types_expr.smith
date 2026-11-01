@@ -426,7 +426,7 @@ static void literal_character(types::Checked *c, Frame f) {
         }
         return;
     }
-    types::TypeRef t = types::builtin(&c->table, "U8");
+    types::TypeRef t = types::builtin(&c->table, "char");
     if (value > 255) {
         t = types::builtin(&c->table, "U32");
     }

@@ -295,6 +295,8 @@ export Table start(Target target) {
     add_number(&t, "Usize", .integer, word, false);
     add_number(&t, "F32", .floating, 32, true);
     add_number(&t, "F64", .floating, 64, true);
+    add_number(&t, "char", .integer, 8,
+               false); // C's character type, a type of its own (capitalized `Char` is undecided)
     return t;
 }
 
@@ -862,15 +864,11 @@ static Bool is_c_path(ast::Path path) {
     return countof(path.segments) > 1 && same_text(path.segments[0].text, "c");
 }
 
-// A named type: a builtin, or a type name in scope. The tree is not rewritten to the final spelling yet (#366), so the
-// two keyword types it uses, `bool` and `char`, are `Bool` and `U8` (the type of a character literal). An unknown
-// name is an error that says what to write.
+// A named type: a builtin, or a type name in scope. An unknown name is an error that says what to write.
 static TypeRef resolve_name(Checked *r, ast::Span span, ast::Path path) {
     if (countof(path.segments) == 1) {
         TypeRef known = builtin(&r->table, path.segments[0].text);
         if (known != nullptr) return known;
-        if (same_text(path.segments[0].text, "bool")) return r->table.bool_type;
-        if (same_text(path.segments[0].text, "char")) return builtin(&r->table, "U8");
         if (is_concept_name(path.segments[0].text)) {
             failf(r, span, "not yet typed: the concept `", path.segments[0].text, "`; only `Auto` is typed so far");
             return r->table.invalid;
