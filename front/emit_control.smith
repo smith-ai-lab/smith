@@ -10,7 +10,8 @@
 // starts and pops it when it ends, and the last pop gives the slice back.
 //
 // Conditions are `Bool` (the module rule): an integer where a condition is expected is an Error with the condition's
-// span, `a condition is a Bool; write `x != 0``.
+// span, "a condition is a Bool; write `x != 0`".
+module front::emit_control;
 
 import front::ast;
 import front::emit_state as state;
