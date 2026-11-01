@@ -3889,6 +3889,7 @@ int main(int argc, char **argv) {
 #endif
 
 #ifdef SMITH_CORE
+#include "smith_core_conventions.h"
 #include "smith_core_new.h"
 #include "smith_core_route.h"
 
@@ -4028,5 +4029,47 @@ int smith_core_new(const char *folder, const char *name, const char *language, c
     }
     if (text != nullptr) fclose(text);
     return status;
+}
+
+// include/smith_core_conventions.h: the choice of the build file, in a child. The child ends in the kind (10 and up)
+// or in the status of the refusal (smith_die and the refusals above end the process).
+static void smith_build_file_child(const char *folder, FILE *out) {
+    if (chdir(folder) != 0) _exit(smith_exit_missing);
+    dup2(fileno(out), 1);
+    dup2(fileno(out), 2);
+    SmithBuildFile file = smith_build_file();
+    fflush(nullptr);
+    _exit(10 + (int)file);
+}
+
+int smith_core_build_file(const char *folder, char *out, size_t out_size, int *status) {
+    SMITH_ASSERT(folder != nullptr && out != nullptr && out_size > 0);
+    out[0] = '\0';
+    if (status != nullptr) *status = -1;
+    FILE *text = tmpfile();
+    pid_t pid = -1;
+    if (text != nullptr) {
+        fflush(nullptr); // what is buffered would be written twice
+        pid = fork();
+    }
+    if (pid == 0) smith_build_file_child(folder, text);
+    int wait_status = 0;
+    pid_t waited = -1;
+    for (int tries = 0; pid > 0 && tries < 1000 && waited < 0; tries++) // bounded; a signal
+        waited = waitpid(pid, &wait_status, 0);
+    int kind = SMITH_CORE_BUILD_FILE_REFUSED;
+    if (waited == pid && WIFEXITED(wait_status)) {
+        rewind(text);
+        size_t got = fread(out, 1, out_size - 1, text);
+        out[got] = '\0';
+        int code = WEXITSTATUS(wait_status);
+        if (code >= 10) {
+            kind = code - 10;
+            code = 0;
+        }
+        if (status != nullptr) *status = code;
+    }
+    if (text != nullptr) fclose(text);
+    return kind;
 }
 #endif

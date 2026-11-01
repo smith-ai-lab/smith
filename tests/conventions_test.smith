@@ -11,6 +11,7 @@ import std::mem;
 import std::test;
 import scratch;
 import <smith/json.h>;
+import <smith_core_conventions.h>;
 import <string.h>;
 
 constexpr Usize memory_size = (Usize)16 << 20; // 16 MiB
@@ -293,6 +294,20 @@ export void test_conventions_library_used_only_by_a_test_is_not_linked_into_the_
 // --- 4. a folder that follows no convention
 // ---------------------------------------------------------------------------
 
+// The choice of the build file is a function of the folder's file names (smith_core_build_file, in process, no
+// compile; issue #1292): these tests make a folder and ask which build file it gets or why it is refused.
+struct Choice {
+    I32 kind;
+    I32 status;
+    char text[2048];
+};
+
+static Choice choose(const scratch::Project *p) {
+    Choice choice = {};
+    choice.kind = c::smith_core_build_file(p->dir, choice.text, sizeof choice.text, &choice.status);
+    return choice;
+}
+
 export void test_conventions_error_a_makefile_and_no_main() {
     scratch::Project p = scratch::make("make", "conv_make");
     defer scratch::clean(&p);
@@ -300,16 +315,19 @@ export void test_conventions_error_a_makefile_and_no_main() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run run = scratch::build(&p, "");
-    scratch::expect_status("error: a Makefile and no main: status 2", 2, &run);
-    scratch::expect_contains("error: ... says the Makefile is the build", run.err,
+    Choice choice = choose(&p);
+    test::check_condition(choice.kind == c::SMITH_CORE_BUILD_FILE_REFUSED);
+    test::check_condition(choice.status == 2);
+    scratch::expect_contains("error: ... says the Makefile is the build", choice.text,
                              "smith: this folder has a Makefile and no build.c or build.smith");
-    scratch::expect_contains("error: ... and how to translate it", run.err,
+    scratch::expect_contains("error: ... and how to translate it", choice.text,
                              "Translate it with `smith build --dump-config > build.c`");
-    scratch::expect_contains("error: ... or to build by convention", run.err, "delete it to build by convention");
+    scratch::expect_contains("error: ... or to build by convention", choice.text, "delete it to build by convention");
     scratch::expect_text("error: ... and guesses nothing", "no", yes_no(scratch::exists(&p, ".smith/program")));
 }
 
+// `smith run` and `smith test` enter the same build, whose first step is this choice (smith_build_main), so the one
+// refusal is theirs too; asking twice in a row gives the same answer (the function keeps no state between calls).
 export void test_conventions_error_run_and_test_say_the_same_for_a_makefile() {
     scratch::Project p = scratch::make("make", "conv_make");
     defer scratch::clean(&p);
@@ -317,10 +335,10 @@ export void test_conventions_error_run_and_test_say_the_same_for_a_makefile() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run run = scratch::sh(&p, "smith run");
-    scratch::expect_status("error: smith run says the same", 2, &run);
-    scratch::Run test = scratch::sh(&p, "env SMITH_OUTPUT=full smith test");
-    scratch::expect_status("error: smith test says the same", 2, &test);
+    Choice first = choose(&p);
+    Choice second = choose(&p);
+    test::check_condition(second.status == 2);
+    scratch::expect_text("error: ... with the same text", first.text, second.text);
 }
 
 export void test_conventions_error_an_empty_folder() {
@@ -330,14 +348,32 @@ export void test_conventions_error_an_empty_folder() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run run = scratch::build(&p, "");
-    scratch::expect_status("error: an empty folder: status 2", 2, &run);
-    scratch::expect_contains("error: ... says what smith looked for", run.err,
+    Choice choice = choose(&p);
+    test::check_condition(choice.kind == c::SMITH_CORE_BUILD_FILE_REFUSED);
+    test::check_condition(choice.status == 2);
+    scratch::expect_contains("error: ... says what smith looked for", choice.text,
                              "smith: no build.c in this folder, and no main.smith or main.c to build by convention");
-    scratch::expect_contains("error: ... and how to start a build file", run.err,
+    scratch::expect_contains("error: ... and how to start a build file", choice.text,
                              "Add a main.smith or main.c (`smith new` writes one)");
 }
 
+export void test_conventions_choice_a_main_and_no_build_file_is_the_conventions() {
+    scratch::Project p = scratch::make("plain", "conv_plain");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Choice choice = choose(&p);
+    test::check_condition(choice.kind == c::SMITH_CORE_BUILD_FILE_CONVENTIONS);
+    test::check_condition(choice.status == 0);
+    scratch::write(&p, "build.c", "void build(void) {}\n");
+    Choice with_file = choose(&p);
+    test::check_condition(with_file.kind == c::SMITH_CORE_BUILD_FILE_C);
+}
+
+// Stays end to end: smith_app refuses the two entry points while the build program runs (runtime/build_runtime.c,
+// smith_app_entry), after the build program is compiled, so no function of smith.c shows it.
 export void test_conventions_error_both_main_smith_and_main_c() {
     scratch::Project p = scratch::make("both", "conv_both");
     defer scratch::clean(&p);
@@ -350,6 +386,8 @@ export void test_conventions_error_both_main_smith_and_main_c() {
     scratch::expect_contains("error: ... names both", run.err, "both main.smith and main.c are here");
 }
 
+// Stays end to end: "the build declares no tests" is said by the build program's run after it compiled (smith_app_tests
+// and the runner), which a function of the choice cannot reach.
 export void test_conventions_test_a_project_with_no_tests_says_so() {
     scratch::Project p = scratch::make("plain", "conv_plain");
     defer scratch::clean(&p);
