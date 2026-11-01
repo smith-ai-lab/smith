@@ -1,0 +1,11 @@
+(module 
+  (variable a (auto) (integer 3))
+  (variable b (named i32) (integer 4))
+  (variable c mut (auto) (integer 0))
+  (variable d mut (named usize))
+  (variable e mut (pointer mut (named point)) (integer 0))
+  (variable TAU constexpr (auto) (integer 6))
+  (variable LIMIT constexpr (named i32) (integer 8))
+  (variable f pub (auto) (integer 1))
+  (variable g pub (attribute inline) (named i32) (integer 2))
+  (variable IntPair (auto) (name Pair)))
