@@ -196,14 +196,14 @@ export void test_front_types_convert_arrays_slices_and_text() {
             "write the value as the expected type");
     refused(conv(&t, three, types::slice_of(&t, named(&t, "I64"), false)), "expected I64[:]", "found I32[3]",
             "write a cast: (I64[:])x");
-    types::TypeRef chars = types::slice_of(&t, named(&t, "char"), false);
-    types::TypeRef read_chars = types::slice_of(&t, named(&t, "char"), true);
+    types::TypeRef chars = types::slice_of(&t, named(&t, "Char"), false);
+    types::TypeRef read_chars = types::slice_of(&t, named(&t, "Char"), true);
     test::check_condition(is(conv(&t, chars, t.text), types_convert::text_from_chars));
     test::check_condition(
-        is(conv(&t, types::array_of(&t, named(&t, "char"), 4, true), t.text), types_convert::text_from_chars));
+        is(conv(&t, types::array_of(&t, named(&t, "Char"), 4, true), t.text), types_convert::text_from_chars));
     test::check_condition(is(conv(&t, t.text, read_chars), types_convert::text_from_chars));
-    refused(conv(&t, t.text, chars), "expected char[:]", "found Str", "const");
-    refused(conv(&t, xs, t.text), "expected Str", "found I32[:]", "array of char");
+    refused(conv(&t, t.text, chars), "expected Char[:]", "found Str", "const");
+    refused(conv(&t, xs, t.text), "expected Str", "found I32[:]", "array of Char");
     // Bytes are not text: U8[:] and I8[:] need an explicit conversion, and a Str is never a U8 slice.
     refused(conv(&t, types::slice_of(&t, named(&t, "U8"), false), t.text), "expected Str", "found U8[:]", "(Str)xs");
     refused(conv(&t, types::slice_of(&t, named(&t, "I8"), true), t.text), "expected Str", "found const I8[:]",
@@ -211,7 +211,7 @@ export void test_front_types_convert_arrays_slices_and_text() {
     refused(conv(&t, types::array_of(&t, named(&t, "U8"), 4, true), t.text), "expected Str", "found const U8[4]",
             "(Str)xs");
     refused(conv(&t, t.text, types::slice_of(&t, named(&t, "U8"), true)), "expected const U8[:]", "found Str",
-            "const char[:]");
+            "const Char[:]");
 }
 
 export void test_front_types_convert_bytes_cast_to_text_for_free() {
@@ -346,7 +346,7 @@ export void test_front_types_convert_lossy_casts_are_checked() {
     // Nothing to lose: widening, the same width and sign, a number to a float, enumerations, Bool, pointers.
     test::check_condition(!cast(&t, int32, named(&t, "I64")).checked);
     test::check_condition(!cast(&t, named(&t, "U8"), named(&t, "I32")).checked);
-    test::check_condition(!cast(&t, named(&t, "char"), named(&t, "U8")).checked);
+    test::check_condition(!cast(&t, named(&t, "Char"), named(&t, "U8")).checked);
     test::check_condition(!cast(&t, int32, named(&t, "F64")).checked);
     test::check_condition(!cast(&t, named(&t, "F64"), named(&t, "F32")).checked);
     test::check_condition(!cast(&t, named(&t, "Bool"), int32).checked);
