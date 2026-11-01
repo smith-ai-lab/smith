@@ -1532,6 +1532,8 @@ typedef struct {
     U8 macos;      // --macos-only (1): only the macOS-only tests; --skip-macos (2): all the others; 0: every test
     bool partial;  // --partial: this runner is one of several `smith test` runs, so a filter that selects none of its
                    // tests is no error
+    const char *others; // --others <runner>: the other runner of the run; a filter that selects none of ours but some
+                        // of its tests (it is asked with --list) is no error either
     bool cheapest; // --cheapest: with --costs, the cheapest tests start first instead (a selection under --fail-fast)
     U32 idle_timeout; // wall seconds a test may use no CPU time (it and its processes), then it fails; 0 for none
     bool idle_given;  // --idle-timeout was passed
@@ -3516,6 +3518,10 @@ bool parse_value(Options *options, const char *flag, const char *value) {
         options->costs = value;
         return value[0] != '\0';
     }
+    if (c::strcmp(flag, "--others") == 0) {
+        options->others = value;
+        return value[0] != '\0';
+    }
     if (c::strcmp(flag, "--explain") == 0) {
         options->explain = value;
         return value[0] != '\0';
@@ -3832,6 +3838,26 @@ bool filter_matches_any(const Options *options) {
     return false;
 }
 
+// Whether the other runner (--others) has a test the filter selects: it lists them (`--list`) and any line says yes.
+// A path or a filter with a quote is not asked.
+bool other_runner_matches(const Options *options) {
+    if (options->others == nullptr || options->filter == nullptr) return false;
+    if (c::strchr(options->others, '\'') != nullptr || c::strchr(options->filter, '\'') != nullptr) return false;
+    char command[4096];
+    I32 length = __builtin_snprintf(command, sizeof command, "'%s' --list --test '%s'%s 2>/dev/null", options->others,
+                                    options->filter,
+                                    options->macos == 1   ? " --macos-only"
+                                    : options->macos == 2 ? " --skip-macos"
+                                                          : "");
+    if (length < 0 || (Usize)length >= sizeof command) return false;
+    c::FILE *listing = c::popen(command, "r");
+    if (listing == nullptr) return false;
+    char line[512];
+    bool found = c::fgets(line, sizeof line, listing) != nullptr;
+    c::pclose(listing);
+    return found;
+}
+
 // Fisher-Yates, drawing from the seed: the same seed gives the same order. This finds a test that passes only because
 // of what ran before it.
 void shuffle(Usize *order_of, Usize count, U64 seed) {
@@ -4063,7 +4089,7 @@ static void say_usage(const Runner *runner, bool help) {
                        "usage: %s [--test <names>] [--seed <n>] [--seeds <1 to %ju>] [--jobs <1 to %zu>] "
                        "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds "
                        "<seconds>] [--shuffle <seed>] [--shard <i>/<n>] [--macos-only|--skip-macos] [--partial] "
-                       "[--isolate] [--in-process] [--full] [--update] [--list] [--fail-fast] [--costs <file>] "
+                       "[--others <runner>] [--isolate] [--in-process] [--full] [--update] [--list] [--fail-fast] [--costs <file>] "
                        "[--cheapest] [--idle-timeout <seconds>] [--verbose] [--stats] [--trace] [--color] "
                        "[--explain <smith>] [--explain-max <n>] [--no-explain] [--unchecked] [-h|--help]\n"
                        "--test takes a test file's path, a name (x_test, x_test::name) or a * pattern (x*), not a "
@@ -4157,7 +4183,13 @@ static Usize report_run(const Plan *plan, const Options *options, F64 start) {
             say("no test of this runner matches \"%s\": nothing to run\n", options.filter);
             return 0;
         }
-        say("no test matches \"%s\"\n", options.filter);
+        // `smith test --test x*` runs two runners (units, front): a name only the other one has is its to run.
+        if (other_runner_matches(&options)) {
+            say("no test of this runner matches \"%s\": the other runner has it, nothing to run\n", options.filter);
+            return 0;
+        }
+        say("no test matches \"%s\"%s\n", options.filter,
+            options.others != nullptr ? " in this runner or the other one (units, front)" : "");
         suggest_files(options.filter);
         suggest_names(options.filter);
         say("--test takes a test file's path (tests/x_test.smith) or a name (x_test, or x_test::name); a substring "

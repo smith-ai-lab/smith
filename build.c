@@ -1068,14 +1068,24 @@ static const char *build_units(SmithBuild *b, const BuildConfig *config, const c
     for (size_t i = 0; given[i] != nullptr && quoted_count < 255; i++)
         quoted[quoted_count++] = smith_fmt(b, "'%s'", given[i]);
     quoted[quoted_count] = nullptr;
+    // A hand-typed `--test` (no --partial) may name tests only the front runner has: the units runner asks it with
+    // --others (so it waits for front-build) before it calls the filter a miss (#1260). `given` is not the verb's
+    // --partial from --changed, which already lets every runner pass.
+    bool filtered = false;
+    for (size_t i = 0; given[i] != nullptr; i++)
+        filtered = filtered || strcmp(given[i], "--test") == 0;
+    bool ask_front = filtered && config->hook;
+    const char *others =
+        ask_front ? smith_fmt(b, " '--others' \"$repo/%s/front-project/build/tests\"", folder) : "";
     SmithStep run = {
         .command = (const char *[]){"sh", "-c",
-                                    smith_fmt(b, "%s%s env %s \"%s\" test %s%s",
+                                    smith_fmt(b, "%s%s env %s \"%s\" test %s%s%s",
                                               config->coverage ? "rm -rf \"$PWD/.smith/coverage\"; " : "", setup,
                                               config->coverage ? measure : environment, self,
-                                              smith_join(b, quoted, " "), config->coverage ? join : ""),
+                                              smith_join(b, quoted, " "), others, config->coverage ? join : ""),
                                     "sh", folder, nullptr},
-        .inputs = (const char *[]){"units-build", nullptr},
+        .inputs = ask_front ? (const char *[]){"units-build", "front-build", nullptr}
+                            : (const char *[]){"units-build", nullptr},
         .test = true,
     };
     smith_task(b, "test-units", &run);
@@ -2325,6 +2335,18 @@ static const char *build_gate_feat_commits(SmithRun *run, const char *dir, const
     return found;
 }
 
+// The gate reads commits (base...HEAD), never the working tree: skill and concept files that are edited, staged or
+// untracked count only once committed. One line of "  <git status code> <path>" for each such file under
+// .agents/skills and knowledge, or "" when there is none.
+static const char *build_gate_uncommitted(SmithRun *run, const char *dir) {
+    const char *const *status = build_gate_git(
+        run, dir, (const char *[]){"status", "--porcelain", "--", ".agents/skills", "knowledge", nullptr});
+    const char *found = "";
+    for (size_t i = 0; status != nullptr && status[i] != nullptr; i++)
+        found = smith_fmt(run->b, "%s  %s\n", found, status[i]);
+    return found;
+}
+
 static int build_gate_run(SmithRun *run, const char *dir, const char *base) {
     const char *const *branch =
         build_gate_git(run, dir, (const char *[]){"rev-parse", "--abbrev-ref", "HEAD", nullptr});
@@ -2342,6 +2364,12 @@ static int build_gate_run(SmithRun *run, const char *dir, const char *base) {
                                         ".agents/skills", "knowledge", nullptr});
     if (changed != nullptr && changed[0] != nullptr) return 0;
     fprintf(stderr, "%s %s\nthe feat commits:\n%s", build_gate_message, base, feats);
+    const char *waiting = build_gate_uncommitted(run, dir);
+    if (waiting[0] != '\0')
+        fprintf(stderr,
+                "these skill and concept files are not committed, and the gate reads commits only: commit them "
+                "(or `git add` and commit):\n%s",
+                waiting);
     return 1;
 }
 
@@ -2428,6 +2456,20 @@ static int build_docs_gate_test(SmithRun *run) {
         if (build_gate_run(run, dir, "main") == 0)
             failed = build_gate_fail("gate: an own feat with no docs must fail\n");
     }
+    // A skill written but not committed is named, so the failure says what to do (#1260).
+    if (failed == 0 && build_gate_uncommitted(run, dir)[0] != '\0')
+        failed = build_gate_fail("gate: nothing is uncommitted yet\n");
+    if (failed == 0) {
+        char path[PATH_MAX];
+        snprintf(path, sizeof path, "%s/knowledge", dir);
+        mkdir(path, 0755);
+        snprintf(path, sizeof path, "%s/knowledge/new.md", dir);
+        FILE *file = fopen(path, "ab");
+        if (file == nullptr) failed = 1;
+        if (file != nullptr) fclose(file);
+    }
+    if (failed == 0 && strstr(build_gate_uncommitted(run, dir), "knowledge/new.md") == nullptr)
+        failed = build_gate_fail("gate: an untracked concept must be named as uncommitted\n");
     build_spawn(&(BuildSpawn){.argv = (const char *[]){"/bin/rm", "-rf", dir, nullptr}});
     return failed;
 }
