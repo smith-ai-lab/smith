@@ -665,7 +665,7 @@ static ast::Enumerator parse_enumerator(parse::Parser *p) {
         lex::Token name = parse::expect(p, lex::name, "a variant name");
         if (name.kind == lex::name) item.name = parse::text(p, name);
     }
-    bool ended = parse::accept(p, lex::comma) || parse::accept(p, lex::semicolon) || parse::at(p, lex::right_brace);
+    Bool ended = parse::accept(p, lex::comma) || parse::accept(p, lex::semicolon) || parse::at(p, lex::right_brace);
     if (!ended) parse::expect(p, lex::comma, "`,`, `;` or `}`");
     item.span = parse::span_from(p, start);
     return item;

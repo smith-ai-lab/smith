@@ -11,6 +11,15 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (argc < 2 || strcmp(argv[1], "build") != 0) return 2;
+    if (argc > 2 && strcmp(argv[2], "llvm") == 0) { // the LLVM step before the build: record it beside the output
+        char record[4096];
+        snprintf(record, sizeof record, "%s.llvm", getenv("STAGE0_OUT"));
+        FILE *llvm = fopen(record, "a");
+        if (llvm == nullptr) return 1;
+        for (int i = 2; i < argc; i++) fprintf(llvm, "%s%c", argv[i], i + 1 < argc ? ' ' : '\n');
+        fclose(llvm);
+        return 0;
+    }
     FILE *out = fopen(getenv("STAGE0_OUT"), "w");
     if (out == nullptr) return 1;
     fputs("build", out);

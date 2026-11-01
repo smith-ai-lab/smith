@@ -47,7 +47,7 @@ modules, which the smith under test must make). With `--changed` the build first
 (the empty target `smith_info`), then builds the `need<TAB>source<TAB>file...` lines of the chosen sources, so editing a
 `runtime/*.c` rebuilds nothing but the headers it includes (about 7 s for clang-tidy on a large file, from 50 s for the
 relink and the 116 headers); a chosen source with no such line (a `.smith` module or a C file the build only declares with
-`smith_compile_command`, unless build.c says what it reads with `smith_compile_needs`) builds `smith_needs`. Smith's own
+`smith_compile_command`, unless build.c says what it reads with `smith_compile_needs`) builds `smith_needs`. Both forms first build `smith_info`. A package that cannot be fetched (not a wrong hash) leaves its url in `.smith/unreachable` (build.c's `build_package_path`); when the build fails with the tree-sitter parser's url there, outside CI, lint builds every need but the parser's and skips the files that wait for it (`runtime/tree_sitter_data.c`, which `#embed`s the library), saying which and why; in CI (`CI` or `SMITH_PRIORITY=ci`) it fails (#1197). `smith lint FILE` with no `compile_commands.json` above the file, in a folder with a build file, stops with the command to run (`smith build smith_needs`) instead of clang-tidy's errors about missing headers (`smith_lint_needs_build`, smith.c). Smith's own
 build.c declares none yet, so its test modules and unbuilt sources do. A no-op `smith lint` after a build by the same smith builds nothing
 (0.8 s); a build by another smith (a new compiler) rebuilds every object, which is that smith's doing, not the
 executor's.

@@ -22,7 +22,7 @@ export struct Jit {
 };
 
 export typedef Result(Jit, emit::Error) JitResult;
-export typedef Result(usize, emit::Error) AddressResult;
+export typedef Result(Usize, emit::Error) AddressResult;
 export typedef Result(Bool, emit::Error) BoolResult;
 
 // An LLVM error as its message (consumed), in the allocator in force.
@@ -73,7 +73,7 @@ export AddressResult lookup(Jit *jit, Str name) {
     c::LLVMOrcExecutorAddress address = 0;
     c::LLVMErrorRef error = c::LLVMOrcLLJITLookup(jit->handle, &address, symbol);
     if (error != nullptr) return {.error = message_of(error)};
-    usize found = (usize)address;
+    Usize found = (Usize)address;
     return found;
 }
 

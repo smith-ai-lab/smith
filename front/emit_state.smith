@@ -68,7 +68,7 @@ export Status not_emitted(Str kind, ast::Span span) {
 
 // Give back a string of the allocator in force: an `Error.message`, or a copy `msg` made.
 export void free_text(Str text) {
-    mem::free((char *)(usize)text.data);
+    mem::free((char *)(Usize)text.data);
 }
 
 // A copy of `text` in the current allocator with a terminator after it, for LLVM's names. Free it with `mem::free`.
@@ -147,7 +147,7 @@ export struct LoopTarget {
 // A `defer`red statement, run when the block it was in ends: the scope depth is `scope_count` when it was pushed.
 export struct DeferEntry {
     const ast::Stmt *body;
-    usize scope_depth;
+    Usize scope_depth;
 };
 
 export struct FieldInfo {
@@ -207,7 +207,7 @@ export struct Emitter {
     const ast::Module *tree;
 
     FunctionInfo functions[:]; // the module's functions, in order
-    usize function_count;
+    Usize function_count;
 
     // The function being emitted.
     c::LLVMValueRef function;
@@ -216,22 +216,22 @@ export struct Emitter {
     Ty result;                       // the function's result type
 
     Local locals[:]; // the visible locals, newest last
-    usize local_count;
-    usize scope_marks[:]; // local_count at the start of each open scope
-    usize scope_count;
+    Usize local_count;
+    Usize scope_marks[:]; // local_count at the start of each open scope
+    Usize scope_count;
 
     LoopTarget loops[:]; // B2: the innermost last
-    usize loop_count;
+    Usize loop_count;
     DeferEntry defers[:]; // B2
-    usize defer_count;
+    Usize defer_count;
 
     RecordType records[:]; // B3b
-    usize record_count;
+    Usize record_count;
 
     Work work[:]; // the work stack, the next to run last
-    usize work_count;
+    Usize work_count;
     Value values[:]; // the value stack
-    usize value_count;
+    Usize value_count;
 
     // B5: null when debug info is off.
     c::LLVMDIBuilderRef debug_builder;
@@ -245,7 +245,7 @@ export struct Emitter {
 
 export void push_work(Emitter *e, Work item) {
     if (e->work_count == countof(e->work)) {
-        usize capacity = countof(e->work) * 2;
+        Usize capacity = countof(e->work) * 2;
         if (capacity < 64) capacity = 64;
         e->work = mem::realloc(e->work, capacity);
     }
@@ -274,7 +274,7 @@ export void push_then(Emitter *e, Work item) {
 
 export void push_value(Emitter *e, Value value) {
     if (e->value_count == countof(e->values)) {
-        usize capacity = countof(e->values) * 2;
+        Usize capacity = countof(e->values) * 2;
         if (capacity < 64) capacity = 64;
         e->values = mem::realloc(e->values, capacity);
     }
@@ -306,7 +306,7 @@ export Hint hint_of(Ty ty) {
 // The same text byte for byte (a literal converts to `Str`, so `same_text(name, "I8")` is fine).
 export Bool same_text(Str a, Str b) {
     if (countof(a) != countof(b)) return false;
-    for (usize i = 0; i < countof(a); i++) {
+    for (Usize i = 0; i < countof(a); i++) {
         if (a[i] != b[i]) return false;
     }
     return true;
@@ -332,7 +332,7 @@ export c::LLVMValueRef new_alloca(Emitter *e, Ty ty, Str name) {
 
 export void add_local(Emitter *e, Local local) {
     if (e->local_count == countof(e->locals)) {
-        usize capacity = countof(e->locals) * 2;
+        Usize capacity = countof(e->locals) * 2;
         if (capacity < 16) capacity = 16;
         e->locals = mem::realloc(e->locals, capacity);
     }
@@ -342,7 +342,7 @@ export void add_local(Emitter *e, Local local) {
 
 // The newest local of that name; false when there is none.
 export Bool find_local(Emitter *e, Str name, Local *found) {
-    for (usize i = e->local_count; i > 0; i--) {
+    for (Usize i = e->local_count; i > 0; i--) {
         if (same_text(e->locals[i - 1].name, name)) {
             *found = e->locals[i - 1];
             return true;
@@ -353,7 +353,7 @@ export Bool find_local(Emitter *e, Str name, Local *found) {
 
 export void begin_scope(Emitter *e) {
     if (e->scope_count == countof(e->scope_marks)) {
-        usize capacity = countof(e->scope_marks) * 2;
+        Usize capacity = countof(e->scope_marks) * 2;
         if (capacity < 16) capacity = 16;
         e->scope_marks = mem::realloc(e->scope_marks, capacity);
     }

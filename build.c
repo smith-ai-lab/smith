@@ -126,10 +126,24 @@ static const void *build_unwrap(SmithBuild *b, const void *value, size_t size, c
     return *(const void *const *)(bytes + sizeof(void *));
 }
 
+// A fetch that fails (not a wrong hash) leaves its url in .smith/unreachable: `smith lint` reads it to skip, by name,
+// the files that wait for a package the network does not give (a cloud sandbox), and CI, which has the network, fails.
+// The result is read by its layout, as build_unwrap does: the tag, then the error's kind and message.
+static void build_note_unreachable(const void *value, size_t size, const char *url) {
+    const char *bytes = value;
+    if (size <= sizeof(void *) || *(const int *)bytes == 0) return;
+    if (*(const int *)(bytes + sizeof(void *)) != SmithPackageKind_Fetch) return;
+    FILE *file = fopen(".smith/unreachable", "w");
+    if (file == nullptr) return;
+    fprintf(file, "%s\n", url);
+    fclose(file);
+}
+
 // The path of a package, or the build fails with the error's message: smith's own packages are fixed in this file, so
 // a fetch that fails is a failure of the build, not something to recover from.
 static const char *build_package_path(SmithBuild *b, const SmithPackage *package) {
     __auto_type found = smith_package(b, package);
+    build_note_unreachable(&found, sizeof found, package->url);
     return build_unwrap(b, &found, sizeof found, "package", package->url);
 }
 
@@ -714,10 +728,14 @@ static const char *const *build_linked_libraries(SmithBuild *b) {
 // Only the default target runs it, so `smith build llvm` works on a smith with no LLVM install.
 static const char *const *build_llvm_required(SmithBuild *b, const BuildConfig *config) {
     if (config->linkable) return smith_list(b, nullptr);
-    const char *message =
-        smith_fmt(b, "smith: no usable LLVM install at %s: run smith build llvm (9 minutes once)", config->llvm);
+    // Names the installs beside it, so a cached older pack is found: SMITH_LLVM_NAME builds with that one.
+    const char *script = "echo \"smith: no usable LLVM install at $0: run smith build llvm (9 minutes once)\" >&2; "
+                         "d=$(dirname \"$(dirname \"$0\")\"); names=$(ls \"$d\" 2>/dev/null | tr '\\n' ' '); "
+                         "if [ -n \"$names\" ]; then echo \"smith: installed under $d: $names; "
+                         "set SMITH_LLVM_NAME=<one of them> to build with that one (a smith under test for a change "
+                         "that does not touch the LLVM pack), or run smith build llvm\" >&2; fi; exit 1";
     SmithStep stop = {
-        .command = (const char *[]){"sh", "-c", "echo \"$0\" >&2; exit 1", message, nullptr},
+        .command = (const char *[]){"sh", "-c", script, config->llvm, nullptr},
         .outputs = (const char *[]){"build/llvm-required", nullptr},
     };
     smith_step(b, &stop);
@@ -2035,6 +2053,8 @@ static int build_llvm_run(SmithRun *run) {
     return smith_run_program(run, done, nullptr);
 }
 
+static int build_llvm_source(SmithRun *run);
+
 static void build_llvm(SmithBuild *b) {
     SmithStep llvm = {
         .run = build_llvm_run,
@@ -2070,6 +2090,13 @@ static void build_llvm(SmithBuild *b) {
         .description = "publishing the LLVM pack as the release llvm-<name>-<os>-<arch>",
     };
     smith_task(b, "llvm-publish", &publish);
+    SmithStep llvm_source = {
+        .run = build_llvm_source,
+        .args =
+            smith_list(b, smith_option_value(b, "source", ".smith/llvm-source", "llvm-source: the folder"), nullptr),
+        .description = "fetching the pinned LLVM sources that the patches touch (sparse git)",
+    };
+    smith_task(b, "llvm-source", &llvm_source);
     SmithStep enzyme = {
         .run = build_enzyme_only,
         .description = "building Enzyme (static, against the LLVM install)",
@@ -2078,6 +2105,26 @@ static void build_llvm(SmithBuild *b) {
     };
     smith_step(b, &enzyme);
     smith_alias(b, "enzyme", enzyme.outputs);
+}
+
+// `smith build llvm-source` (#1168): the pinned LLVM sources that smith's patches touch, for a session that has none,
+// to `git apply --check` a patch and to search callers before CI builds a pack. A sparse, blobless, depth-1 git
+// checkout of the tag (about 170 MB and 10 seconds, against the 150 MB archive that `smith build llvm` unpacks to more
+// than a gigabyte), into -Dsource (default .smith/llvm-source). Run again, it only refreshes the sparse folders.
+static int build_llvm_source(SmithRun *run) {
+    SmithBuild *b = run->b;
+    const char *out = run->args[0];
+    if (access(smith_fmt(b, "%s/.git", out), F_OK) != 0) {
+        int status = build_exec(smith_list(b, "git", "-c", "advice.detachedHead=false", "clone", "-q", "--depth", "1",
+                                           "--filter=blob:none", "--sparse", "--branch", "llvmorg-23.1.3",
+                                           "https://github.com/llvm/llvm-project", out, nullptr));
+        if (status != 0) return status;
+    }
+    int status =
+        build_exec(smith_list(b, "git", "-C", out, "sparse-checkout", "set", "clang/lib", "clang/include",
+                              "llvm/include", "clang-tools-extra/clangd", "compiler-rt/lib/sanitizer_common", nullptr));
+    if (status == 0) printf("LLVM 23.1.3 sources in %s\n", out);
+    return status;
 }
 
 // `smith build friction -Dsince=2026-10-24` (AGENTS.md, How to work): the friction sections of merged pull requests,

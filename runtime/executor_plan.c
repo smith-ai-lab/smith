@@ -304,6 +304,36 @@ typedef struct {
     uint32_t parent; // the edge that needs it, or 0
 } SmithPlanStep;
 
+// When the missing file is the LLVM install's smith-clang.id (<cache>/<name>/install/lib/smith-clang.id), says which
+// names are installed beside it and how to use one (SMITH_LLVM_NAME), or to build the pack.
+static void smith_plan_llvm_hint(const char *path) {
+    static const char tail[] = "/lib/smith-clang.id";
+    size_t length = strlen(path);
+    if (length < sizeof(tail) || strcmp(path + length - (sizeof(tail) - 1), tail) != 0) return;
+    char folder[4096];
+    if (length >= sizeof(folder)) return;
+    memcpy(folder, path, length - (sizeof(tail) - 1)); // <cache>/<name>/install
+    folder[length - (sizeof(tail) - 1)] = '\0';
+    for (int up = 0; up < 2; up++) { // bounded: install, then the name
+        char *slash = strrchr(folder, '/');
+        if (slash == nullptr) return;
+        *slash = '\0';
+    }
+    DIR *dir = opendir(folder);
+    if (dir == nullptr) return;
+    fprintf(stderr, "smith: no usable LLVM install; installed under %s:", folder);
+    int count = 0;
+    for (const struct dirent *entry = readdir(dir); entry != nullptr && count < 64; entry = readdir(dir)) {
+        if (entry->d_name[0] == '.') continue;
+        fprintf(stderr, " %s", entry->d_name);
+        count++;
+    }
+    closedir(dir);
+    fprintf(stderr,
+            "\nsmith: set SMITH_LLVM_NAME=<one of them> to build with that one (a smith under test for a change "
+            "that does not touch the LLVM pack), or run smith build llvm\n");
+}
+
 // Adds the edges a target needs to the plan: those that are not ready, each once.
 static void smith_plan_add(SmithExec *exec, uint32_t root, SmithPlanStep *stack) {
     SmithGraph *graph = &exec->graph;
@@ -315,6 +345,7 @@ static void smith_plan_add(SmithExec *exec, uint32_t root, SmithPlanStep *stack)
         const SmithNode *node = &graph->nodes[step.node];
         if (node->edge == 0) {
             if (node->dirty && !node->from_deps) {
+                smith_plan_llvm_hint(node->path);
                 if (step.parent == 0) smith_exec_fail("'%s' missing and no known rule to make it", node->path);
                 const SmithEdge *parent = &graph->edges[step.parent];
                 smith_exec_fail("'%s', needed by '%s', missing and no known rule to make it", node->path,

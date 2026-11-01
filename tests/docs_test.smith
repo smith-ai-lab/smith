@@ -510,6 +510,10 @@ export void test_docs_fixture_index() {
     fixture_case("index");
 }
 
+export void test_docs_fixture_index_order() {
+    fixture_case("index-order");
+}
+
 export void test_docs_fixture_knowledge_skill() {
     fixture_case("knowledge-skill");
 }

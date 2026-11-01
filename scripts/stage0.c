@@ -9,15 +9,18 @@
 //      cloud sessions refuse that, #829), checks its SHA-256 (scripts/sha256.h) and unpacks it with tar into
 //      .smith/stage0/;
 //   3. runs .smith/stage0/bin/smith build, with that bin/ first on PATH so that its smith-cc is the CC of the build.
-// It needs git, curl, tar, the network, and `~/.cache/smith/llvm` (`smith build llvm`, about 9 minutes once). With a
-// smith installed, `smith build` does all of this already. SMITH_STAGE0_RELEASE=<tag> names the release to use.
-// A release is one per commit holding a tarball per platform (macOS and Linux jobs add theirs, #799), so the newest
-// ancestor "with a release" is the newest one that has the asset of this platform: a ranged request for its URL says.
-// On Linux, when no release can be had (no ancestor has a Linux build yet, or the download fails), it builds smith
-// from source instead: scripts/seed_linux.c, the seed of the Linux release chain (issue #305), which takes the
-// published LLVM pack (minutes), or builds LLVM when there is none (about two hours). SMITH_STAGE0_SEED=1 asks for the
-// seed directly, and SMITH_STAGE0_SEED=0 never builds it. It compiles as strict ISO C (gcc's -std=c2x), so the POSIX
-// names it uses are asked for here.
+//   4. before that build, runs the release's `smith build llvm -Dfetch=1`: the published LLVM pack goes into
+//      `~/.cache/smith/llvm/<name>` when it is not there (about 1.6 GB, minutes). When no pack is published for the
+//      configuration it stops and says so instead of building LLVM from source (about two hours);
+//      SMITH_STAGE0_LLVM=build allows that. A first argument of llvm, enzyme or clean skips this step.
+// It needs git, curl, tar and the network. With a smith installed, `smith build` does all of this already.
+// SMITH_STAGE0_RELEASE=<tag> names the release to use. A release is one per commit holding a tarball per platform
+// (macOS and Linux jobs add theirs, #799), so the newest ancestor "with a release" is the newest one that has the asset
+// of this platform: a ranged request for its URL says. On Linux, when no release can be had (no ancestor has a Linux
+// build yet, or the download fails), it builds smith from source instead: scripts/seed_linux.c, the seed of the Linux
+// release chain (issue #305), which takes the published LLVM pack (minutes), or builds LLVM when there is none (about
+// two hours). SMITH_STAGE0_SEED=1 asks for the seed directly, and SMITH_STAGE0_SEED=0 never builds it. It compiles as
+// strict ISO C (gcc's -std=c2x), so the POSIX names it uses are asked for here.
 #ifndef __APPLE__
 #define _POSIX_C_SOURCE 200809L
 #endif
@@ -218,6 +221,28 @@ static void fetch(const char *tag, const char *folder, const char *name) {
     die("cannot run", seed_arguments[0]);
 }
 
+// Makes sure the LLVM pack is in the cache before the build needs it: `<release smith> build llvm -Dfetch=1` takes the
+// published pack for the configuration or fails (no pack published is a failure), and does nothing when it is already
+// there. It never builds LLVM from source unless SMITH_STAGE0_LLVM=build (about two hours). The tasks that care for
+// LLVM themselves (llvm, enzyme, clean) are left alone, so `.smith/stage0-tool llvm` still works.
+static void get_llvm(const char *program, int argc, char **argv) {
+    const char *task = argc > 1 ? argv[1] : "";
+    if (strcmp(task, "llvm") == 0 || strcmp(task, "enzyme") == 0 || strcmp(task, "clean") == 0) return;
+    const char *mode = getenv("SMITH_STAGE0_LLVM");
+    bool from_source = mode != nullptr && strcmp(mode, "build") == 0;
+    fputs("stage0: making sure the LLVM pack is in the cache (smith build llvm)\n", stderr);
+    fflush(stdout);
+    const char *const fetch_only[] = {program, "build", "llvm", "-Dfetch=1", nullptr};
+    const char *const any[] = {program, "build", "llvm", nullptr};
+    if (run(from_source ? any : fetch_only, false, false) == nullptr) {
+        fputs("stage0: no LLVM pack could be fetched for this configuration (none published, or the download "
+              "failed).\nstage0: building LLVM from source takes about two hours: run `smith build llvm` yourself, "
+              "or set SMITH_STAGE0_LLVM=build.\n",
+              stderr);
+        exit(1);
+    }
+}
+
 int main(int argc, char **argv) {
     // The repository: the program runs from its root, or from a folder inside it.
     const char *top = run((const char *[]){"git", "rev-parse", "--show-toplevel", nullptr}, true, true);
@@ -266,6 +291,7 @@ int main(int argc, char **argv) {
     setenv("PATH", path, 1);
     fflush(stdout); // before the child writes beside it
     if (!run((const char *[]){program, "version", nullptr}, false, false)) die("the release does not run:", program);
+    get_llvm(program, argc, argv);
     char *build[argc + 2];
     build[0] = program;
     build[1] = (char *)"build";

@@ -228,7 +228,7 @@ export void test_front_ast_path_splits_on_double_colons() {
 }
 
 typedef struct {
-    alignas(arena::align_max) u8 bytes[1U << 16];
+    alignas(arena::align_max) U8 bytes[1U << 16];
 } Memory;
 
 // A tree built and dumped with a fixed arena as the current allocator lives in that arena: a fixed arena cannot grow,

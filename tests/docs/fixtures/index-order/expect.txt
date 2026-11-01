@@ -1,0 +1,2 @@
+knowledge/index.md:9: entry alpha.md is out of order; sort the entries of each section by file name (after beta.md)
+smith docs: 3 concepts, 1 problems

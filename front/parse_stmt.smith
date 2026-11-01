@@ -648,7 +648,7 @@ static void take_label(parse::Parser *p, Stack *stack) {
 
 // One step of the loop: what the position and the frame on top ask for. A statement that is complete is given.
 static ast::Stmt *step(parse::Parser *p, Stack *stack) {
-    bool at_end = parse::at(p, lex::right_brace) || parse::at(p, lex::end_of_file);
+    Bool at_end = parse::at(p, lex::right_brace) || parse::at(p, lex::end_of_file);
     if (stack->depth > 0) {
         Frame *frame = top(stack);
         if (frame->kind == block_frame && at_end) {

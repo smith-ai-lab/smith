@@ -87,6 +87,8 @@ export void test_stage0_picks_the_newest_ancestor_and_runs_its_smith() {
     scratch::expect_text("stage0: and its smith-cc is first on PATH",
                          scratch::capture(&p, "cd repo && echo \"$(pwd -P)/.smith/stage0/bin/smith-cc\""),
                          line(scratch::read(&p, "build.out"), 2));
+    scratch::expect_text("stage0: the LLVM pack is fetched, never built, before the build", "llvm -Dfetch=1",
+                         line(scratch::read(&p, "build.out.llvm"), 1));
     scratch::expect_text("stage0: one download", "1", scratch::capture(&p, "grep -c -- '-o [^ ]*tar.xz ' gh.log"));
     scratch::Run again = tool(&p, "", "");
     __builtin_snprintf(expected, sizeof expected, "stage0: stage0-%s is already in .smith/stage0", second(&p));

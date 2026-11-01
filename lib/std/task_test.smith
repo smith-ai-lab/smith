@@ -280,7 +280,7 @@ void run_bystander(Seen *seen) {
 export void test_task_each_task_has_its_own_handlers_across_a_switch() {
     task::Scheduler *previous = task::use(task::inline_scheduler()); // the order of the marks is the inline one's
     defer task::use(previous);
-    static u8 memory[arena_bytes];
+    alignas(arena::align_max) static u8 memory[arena_bytes];
     arena::Arena local = arena::fixed(memory, arena_bytes);
     CountingConsole fake = make_console();
     Seen seen = {.console = &fake, .arena = &local, .thread_allocator = mem::allocator()};
@@ -320,7 +320,7 @@ void run_spawner(Seen *seen) {
 }
 
 export void test_task_a_spawned_task_starts_with_its_spawners_handlers() {
-    static u8 memory[arena_bytes];
+    alignas(arena::align_max) static u8 memory[arena_bytes];
     arena::Arena local = arena::fixed(memory, arena_bytes);
     CountingConsole fake = make_console();
     Seen seen = {.console = &fake, .arena = &local};
