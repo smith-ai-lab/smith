@@ -386,7 +386,7 @@ export void test_front_emit_an_unsupported_node_is_an_error_with_the_span() {
     TreeMemory trees = {};
     tree_begin(&trees);
     ast::ExprRef args[1] = {number(1)};
-    ast::Expr *call = ast::call(name("f"), args);
+    ast::Expr *call = ast::call(number(7), args); // a call of a name is B3a's; this callee is no name
     call->span = (ast::Span){.start = 4, .end = 8};
     ast::StmtRef items[1] = {give(call)};
     ast::Param params[1] = {ast::param("a", ast::named("I32"))};
