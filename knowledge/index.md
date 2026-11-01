@@ -98,3 +98,4 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [smith new writes the program and what agents need](smith-new.md): smith new writes a program, its tests and the agent documents, with no configuration, and builds and commits once.
 - [How smith build builds .smith sources](smith-sources-in-build.md): A header step per module comes first and every .smith compile waits for all of them.
 - [The test beds and the bugs checkers found](test-beds.md): checkers, learner and game are the projects smith is tried on, and checkers' tests found four bugs fixed at their source.
+- [upstream's LLVM 23.1.3 release against what smith links](upstream-llvm.md): What the llvm-project 23.1.3 release archives (macOS arm64, Linux x86_64) ship, and the gaps against scripts/llvm.sh; recommendation use it plus a small build.
