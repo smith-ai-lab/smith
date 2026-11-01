@@ -17,11 +17,11 @@ typedef enum {
     empty;                // no payload: a name
 } Shape;
 
-Shape make(bool big) {
+Shape make(Bool big) {
     if (big) return {.rect = {.w = 2, .h = 3}};   // a payload: a designated initializer
     return .empty;                                 // no payload: a leading dot
 }
-bool is_big_circle(Shape s) { return s == .circle && s.circle.radius > 1.0f; }
+Bool is_big_circle(Shape s) { return s == .circle && s.circle.radius > 1.0f; }
 F32 area(Shape s) {
     switch (s) {                                   // every variant named, no default:
     case .circle: return s.circle.radius * s.circle.radius * 3;

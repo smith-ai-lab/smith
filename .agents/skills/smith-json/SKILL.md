@@ -23,7 +23,7 @@ typeof(const char[:]) name_of(arena::Arena *a, const char input[:]) {
     c::SmithJsonLimits limits = {.depth = 32, .string_length = 1 << 16, .count = 1 << 20}; // yours, never defaults
     const c::SmithJsonValue *root;
     c::SmithJsonError error;
-    bool parsed = c::smith_json_parse(input, limits, &root, &error);
+    Bool parsed = c::smith_json_parse(input, limits, &root, &error);
     mem::set_allocator(before);
     if (!parsed) return {};
     const c::SmithJsonValue *name = c::smith_json_member(root, "name"); // the last of a repeated key, or nullptr

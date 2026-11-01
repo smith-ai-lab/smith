@@ -29,7 +29,7 @@ constexpr char prelude[_] =
     "idiom_findings() { findings | sed -e 's/ \\[smith-[a-z0-9-]*,-warnings-as-errors\\]$//'; }; ";
 
 // The project's .clang-tidy, the template's. smith-module has its own tests below, so `full` is for them.
-static void prepare(const scratch::Project *p, bool full) {
+static void prepare(const scratch::Project *p, Bool full) {
     scratch::copy_tree(p, "templates/defaults/clang-tidy", full ? ".clang-tidy" : "template-clang-tidy");
     if (!full) {
         scratch::Run run = scratch::sh(p, "grep -v '^  smith-module,$' template-clang-tidy >.clang-tidy && "

@@ -376,9 +376,27 @@ static const SmithToken *smith_lang_peek(SmithLang *lang, const SmithHost *host,
 
 static void smith_lang_trivia_taken(SmithLang *lang, const SmithHost *host, const SmithToken *token);
 
+// The host keeps a capitalized type name after `->` as written (a member is not a type), so the name that starts a
+// lambda's return type, `[](...) -> Bool`, is read here: after `) ->` it is the lowercase type (issue #1322).
+static void smith_lang_take_arrow(SmithLang *lang, SmithToken *token) {
+    if (token->kind == SmithTokenKind_Identifier && lang->taken_close == 2) {
+        const char *name = smith_lang_capital_name(token->text, token->length);
+        if (name != nullptr) {
+            token->text = name;
+            token->length = (uint32_t)strlen(name);
+        }
+    }
+    if (smith_lang_punct(token, "->")) {
+        lang->taken_close = lang->taken_close == 1 ? 2 : 0;
+    } else {
+        lang->taken_close = smith_lang_punct(token, ")") ? 1 : 0;
+    }
+}
+
 static SmithToken smith_lang_take(SmithLang *lang, const SmithHost *host) {
     smith_lang_peek(lang, host, 0, false);
     SmithToken token = lang->queue[lang->queue_head];
+    smith_lang_take_arrow(lang, &token);
     smith_lang_trivia_taken(lang, host, &token);
     lang->queue_head = (lang->queue_head + 1) % smith_lang_queue_max;
     lang->queue_count -= 1;

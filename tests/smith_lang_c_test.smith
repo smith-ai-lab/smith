@@ -52,7 +52,7 @@ static void make_tree(const scratch::Project *p, const char *stem) {
 }
 
 // The two files are compiled to assembly as `stem.c` and as `stem.smith` with the same flags, and must be identical.
-static void compare(const char *stem, const char *extra, bool from_smith) {
+static void compare(const char *stem, const char *extra, Bool from_smith) {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 24);
@@ -85,7 +85,7 @@ static void compare(const char *stem, const char *extra, bool from_smith) {
     scratch::expect_status("the compiles ran", 0, &compiled);
     const char *plain_status = scratch::read(&p, "plain.status");
     const char *lowered_status = scratch::read(&p, "lowered.status");
-    bool plain_ok = c::strcmp(plain_status, "0\n") == 0;
+    Bool plain_ok = c::strcmp(plain_status, "0\n") == 0;
     test::check(plain_ok); // the .c compiles
     if (c::strcmp(plain_status, lowered_status) != 0) {
         test::note("exit %s as .c, %s as .smith:\n%s", plain_status, lowered_status, scratch::read(&p, "lowered.err"));

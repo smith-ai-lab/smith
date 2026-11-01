@@ -9,7 +9,7 @@ typedef struct {
 [[nodiscard]] U32 compute();
 
 export U32 f(const U8 *p) {
-    bool flag = p == nullptr;
+    Bool flag = p == nullptr;
     Pair pair = {};
     Pair one = {1};
     U8 bytes[4] = {};

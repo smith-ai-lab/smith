@@ -270,7 +270,7 @@ export void test_random_permutations_are_permutations(random::Key key) {
     test::check_equal(out[0], 0);
     for (U64 i = 0; i < 100; i++) {
         random::permutation_sample(take(stream), (random::Permutation){16}, out);
-        bool seen[16] = {false};
+        Bool seen[16] = {false};
         for (Usize j = 0; j < 16; j++) {
             test::check(out[j] < 16 && !seen[out[j]]);
             seen[out[j]] = true;

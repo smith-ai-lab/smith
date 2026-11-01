@@ -89,7 +89,7 @@ files::Error failure_info(files::InfoResult r) {
 }
 
 // Whether the bytes are the text.
-bool is_text(const U8 got[:], const char *text) {
+Bool is_text(const U8 got[:], const char *text) {
     Usize length = __builtin_strlen(text);
     if (countof(got) != length) return false;
     for (Usize i = 0; i < length; i++) {
@@ -99,7 +99,7 @@ bool is_text(const U8 got[:], const char *text) {
 }
 
 // Whether the entry is named so.
-bool is_named(files::Entry entry, const char *name) {
+Bool is_named(files::Entry entry, const char *name) {
     return countof(entry.name) == __builtin_strlen(name) &&
            __builtin_strncmp(entry.name.data, name, countof(entry.name)) == 0;
 }
@@ -426,7 +426,7 @@ const char *log_text(const char *log) {
 }
 
 // Whether the log has a line ending so (a path of the scratch folder, then the tail and a newline).
-bool has_line(const char *text, const char *tail) {
+Bool has_line(const char *text, const char *tail) {
     char line[64];
     __builtin_snprintf(line, sizeof line, "%s\n", tail);
     return __builtin_strstr(text, line) != nullptr;

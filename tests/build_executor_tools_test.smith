@@ -231,7 +231,7 @@ export void test_build_executor_a_newer_input_is_built_again_and_a_newer_output_
     scratch::expect_count("state: an output newer than its input is left alone", 2, scratch::lines(&p, "runs"));
 }
 
-static bool has_ninja(const scratch::Project *p) {
+static Bool has_ninja(const scratch::Project *p) {
     return scratch::sh(p, "ninja --version").status == 0;
 }
 

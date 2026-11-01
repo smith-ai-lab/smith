@@ -17,16 +17,16 @@ import std::ascii;
 // How many runs of letters a text holds.
 export Usize word_count(const char text[:]) {
     Usize words = 0;
-    bool inside = false;
+    Bool inside = false;
     for (char c : text) {
-        bool letter = ascii::alpha(c);
+        Bool letter = ascii::alpha(c);
         if (letter && !inside) words += 1;
         inside = letter;
     }
     return words;
 }
 
-export bool blank(const char text[:]) {
+export Bool blank(const char text[:]) {
     for (char c : text) {
         if (!ascii::space(c)) return false;
     }

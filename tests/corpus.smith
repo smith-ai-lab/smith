@@ -23,7 +23,7 @@ static const char *line_at(arena::Arena *arena, const char *text, Usize at) {
     Usize length = 0;
     while (text[at + length] != '\0' && text[at + length] != '\n')
         length += 1;
-    bool cut = length > shown_width;
+    Bool cut = length > shown_width;
     Usize kept = cut ? shown_width : length;
     char *copy = arena::push_slice(arena, char, kept + 1).data;
     copy_bytes(copy, text + at, kept);

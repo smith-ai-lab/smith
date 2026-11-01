@@ -13,7 +13,7 @@ void parse(const char word[:]) {
     I64 i;
     F32 f;
     F64 d;
-    bool ok = text::parse_u64(word, &u);    // decimal digits
+    Bool ok = text::parse_u64(word, &u);    // decimal digits
     ok = text::parse_i64(word, &i);         // an optional leading -
     ok = text::parse_hex(word, &h);         // lowercase hex digits, as text::write_hex writes them
     ok = text::parse_f32(word, &f);         // -90, 0.25, .5, 5., 1e-5, 2.5E+3

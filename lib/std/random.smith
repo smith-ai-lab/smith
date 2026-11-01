@@ -750,7 +750,7 @@ F32 normal_u_float(Key key) {
 
 // ---------------------------------------------------------------------------------------------------------------
 
-[[std::c_name("smith_bernoulli_sample")]] export [[nodiscard]] bool bernoulli_sample(Key key, Bernoulli bernoulli) {
+[[std::c_name("smith_bernoulli_sample")]] export [[nodiscard]] Bool bernoulli_sample(Key key, Bernoulli bernoulli) {
     contract::requires(bernoulli.probability >= 0.0 && bernoulli.probability <= 1.0);
     U64 grid = word(&key, 0) >> 11; // the unit's grid index; reversed, so word 0 gives false
     return (F64)(((U64)1 << 53) - 1 - grid) * 0x1p-53 < bernoulli.probability;

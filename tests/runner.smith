@@ -190,7 +190,7 @@ export const char *symbolized(const scratch::Project *p, const char *iso, const 
 }
 
 // Whether this smith can symbolize (it can when it was built with its debugger and symbolizer).
-export bool can_symbolize(const scratch::Project *p) {
+export Bool can_symbolize(const scratch::Project *p) {
     scratch::Run run = scratch::sh(p, "smith symbolize --available");
     done(p, run.out);
     done(p, run.err);

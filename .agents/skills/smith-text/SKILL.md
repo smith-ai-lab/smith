@@ -15,7 +15,7 @@ Text is a `char[:]` (a pointer and a count), read-only input a `const char[:]`, 
 import std::text;
 
 // A replay: "turn -90 5" lines. Returns false at the first bad line.
-bool read_replay(const char input[:]) {
+Bool read_replay(const char input[:]) {
     const char line[:];
     const char word[:];
     while (text::take_line(&input, &line)) {         // a line without its newline, a trailing \r, or a # comment

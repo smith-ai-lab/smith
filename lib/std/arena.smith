@@ -64,7 +64,7 @@ import <stdlib.h>; // aligned_alloc and free: the current allocator, a growing a
     Chunk *chunk;  // the current chunk of a growing arena (null: a fixed arena, or one that has taken none)
     Chunk *spare;  // the chunk after the current one, kept for the next time the arena fills
     c::SmithAllocator *backing; // where a growing arena gets its chunks (null: malloc's family, the current allocator)
-    bool fixed;                 // set by arena::fixed; the zero value grows
+    Bool fixed;                 // set by arena::fixed; the zero value grows
 } Arena;
 
 // A scope: ending it returns the cursor to where it began. Scopes end in the reverse order they began, and an arena is
@@ -89,7 +89,7 @@ import <stdlib.h>; // aligned_alloc and free: the current allocator, a growing a
 // Whether this build has the sanitizer is a fact of the target (target::address_sanitizer, which the compiler's
 // preprocessor answers). Everything below is ordinary code guarded by it, so a build without the sanitizer
 // type-checks the poisoning too and the compiler drops it.
-constexpr bool sanitized = target::address_sanitizer;
+constexpr Bool sanitized = target::address_sanitizer;
 
 constexpr Usize poison_granule = 8;       // ASan tracks memory in 8-byte granules
 constexpr Usize poison_gap = 16;          // poisoned bytes left after each push
@@ -113,7 +113,7 @@ void poison_ahead(Arena *arena) {
 
 static_assert((align_max & (align_max - 1)) == 0); // a power of two
 
-[[maybe_unused]] bool align_valid(Usize align) {
+[[maybe_unused]] Bool align_valid(Usize align) {
     return align > 0 && align <= align_max && (align & (align - 1)) == 0;
 }
 
@@ -124,7 +124,7 @@ Usize effective_align(Usize align) {
 }
 
 // Whether size bytes at align fit; the bytes of padding go to *padding. Written so that no sum can overflow.
-bool measure(const Arena *arena, Usize size, Usize align, Usize *padding) {
+Bool measure(const Arena *arena, Usize size, Usize align, Usize *padding) {
     contract::requires(arena->used <= arena->capacity);
     contract::requires(align_valid(align));
     align = effective_align(align);
@@ -254,7 +254,7 @@ Usize chunk_size_for(const Arena *arena, Usize size, Usize align) {
 
 // Makes room in a growing arena for a push of size bytes at align: enters the spare chunk when it holds the push, else
 // takes a new one from the backing (kept chunks too small for it go back). False when the backing refuses.
-bool grow(Arena *arena, Usize size, Usize align) {
+Bool grow(Arena *arena, Usize size, Usize align) {
     contract::trusted();
     Usize minimum = 0;
     if (__builtin_add_overflow(size, effective_align(align) + poison_gap, &minimum)) return false;
@@ -265,7 +265,7 @@ bool grow(Arena *arena, Usize size, Usize align) {
     }
     Usize needed = chunk_size_for(arena, size, align);
     if (needed == 0) return false;
-    bool first = arena->chunk == nullptr; // the kept chunks then start with the arena's first, which `grown` leaves out
+    Bool first = arena->chunk == nullptr; // the kept chunks then start with the arena's first, which `grown` leaves out
     arena->spare = nullptr;
     if (!first) arena->chunk->next = nullptr;
     while (spare != nullptr) {
@@ -289,7 +289,7 @@ bool grow(Arena *arena, Usize size, Usize align) {
     contract::trusted(); // the first chunk comes from the backing
     contract::requires(first > 0);
     Arena arena = {.backing = backing};
-    bool overflow = first > math::max(Usize) - chunk_header - chunk_round;
+    Bool overflow = first > math::max(Usize) - chunk_header - chunk_round;
     Usize size = overflow ? 0 : (first + chunk_header + chunk_round - 1) & ~(chunk_round - 1);
     Chunk *chunk = size == 0 ? nullptr : chunk_new(&arena, size);
     if (chunk == nullptr) refuse(&arena, first);
@@ -397,7 +397,7 @@ void leave_to_first(Arena *arena) {
 
 // Whether a push of size at align would fit in the arena's current block; a growing arena takes a chunk when it does
 // not (try_push_raw says whether the backing agrees).
-[[std::c_name("smith_arena_fits")]] export [[nodiscard]] bool fits(const Arena *arena, Usize size, Usize align) {
+[[std::c_name("smith_arena_fits")]] export [[nodiscard]] Bool fits(const Arena *arena, Usize size, Usize align) {
     contract::requires(arena->used <= arena->capacity);
     contract::requires(align_valid(align));
     Usize padding = 0;
@@ -573,11 +573,11 @@ void *allocator_alloc(c::SmithAllocator *self, Usize size, Usize align) {
     return start + header;
 }
 
-bool in_block(const Arena *arena, const void *block) {
+Bool in_block(const Arena *arena, const void *block) {
     return (const U8 *)block >= arena->memory && (const U8 *)block < arena->memory + arena->capacity;
 }
 
-bool allocator_owns(c::SmithAllocator *self, const void *block) {
+Bool allocator_owns(c::SmithAllocator *self, const void *block) {
     contract::trusted();
     const Arena *arena = ((ArenaAllocator *)self)->arena;
     if (in_block(arena, block)) return true;

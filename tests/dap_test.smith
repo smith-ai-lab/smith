@@ -25,7 +25,7 @@ static scratch::Project folder(const scratch::Project *root, const char *name) {
 
 // The client built in the project of the fixture, and prog built in src. False when this smith has no lldb, or this
 // account may not debug.
-static bool ready(const scratch::Project *root) {
+static Bool ready(const scratch::Project *root) {
     scratch::Run usable = scratch::sh(
         root, "[ \"$(smith cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2)\" = 'clang in-process' ] && "
               "smith dbg --version >/dev/null 2>&1");
@@ -45,7 +45,7 @@ static bool ready(const scratch::Project *root) {
 }
 
 // Whether the smith has the token hook, so `.smith` names exist in the debugger.
-static bool has_hook(const scratch::Project *p) {
+static Bool has_hook(const scratch::Project *p) {
     return scratch::sh(p, "smith cc --smith-which -x c 2>/dev/null | grep -q 'token-hook yes'").status == 0;
 }
 
@@ -152,7 +152,7 @@ constexpr char build_lang[_] =
     "lang";
 
 // The folder lang of the project, with its program built.
-static bool lang(const scratch::Project *root, scratch::Project *p) {
+static Bool lang(const scratch::Project *root, scratch::Project *p) {
     if (!ready(root) || !has_hook(root)) {
         return false;
     }

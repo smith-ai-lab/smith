@@ -231,7 +231,7 @@ export void test_arena_push_slice_with_a_size_for_each_dimension() {
     test::check_equal(cube[1][2][3], 9.0f);
     test::check_equal(cube[0][0][0], 0.0f); // one contiguous block, row-major: no write reached its neighbors
     // The type of the result is slice_of(T, countof(dims)), computed by an ordinary function over types.
-    constexpr bool types_match = arena::slice_of(F32, 2) == typeof(matrix) &&arena::slice_of(F32[2], 1) ==
+    constexpr Bool types_match = arena::slice_of(F32, 2) == typeof(matrix) &&arena::slice_of(F32[2], 1) ==
                                  typeof(rows) &&arena::slice_of(F32, 3) == typeof(cube) &&arena::slice_of(F32, 0) ==
                                  F32;
     test::check_condition(types_match);
@@ -344,11 +344,11 @@ MaybeRecord try_record(arena::Arena *a) {
     return arena::try_push(a, Record);
 }
 
-bool record_is_zeroed(MaybeRecord record) {
+Bool record_is_zeroed(MaybeRecord record) {
     return record == .some && record.some->count == 0 && record.some->value == 0;
 }
 
-bool is_some_record(MaybeRecord record) {
+Bool is_some_record(MaybeRecord record) {
     return record == .some;
 }
 

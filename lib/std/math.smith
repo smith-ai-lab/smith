@@ -21,7 +21,7 @@ module std::math;
 //
 // They are always-inline functions of no arguments, so the optimizer folds each to the literal. A generic call is not a
 // constant expression in C: in a `static_assert` or an array size write the number or a `constexpr` of the file.
-export inline bool is_finite(auto x) {
+export inline Bool is_finite(auto x) {
     return __builtin_isfinite(x);
 }
 

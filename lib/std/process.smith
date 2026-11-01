@@ -140,11 +140,11 @@ export typedef typeof(U8[:]) Bytes;
     I32 input;         // the write end of its stdin; -1 once closed or when it has none
     I32 output;        // the read end of its stdout; -1 once closed or when it has none
     I32 errors;        // the read end of its stderr, for run's capture; -1 otherwise
-    bool group;        // it leads a group: kill signals the group
-    bool input_closed; // close_input has been called
-    bool reaped;       // wait has completed: the id may be another program's now
-    bool closed;       // close has been called
-    bool handled;      // started under a handler
+    Bool group;        // it leads a group: kill signals the group
+    Bool input_closed; // close_input has been called
+    Bool reaped;       // wait has completed: the id may be another program's now
+    Bool closed;       // close has been called
+    Bool handled;      // started under a handler
 } Child;
 
 // What a call that has nothing to return returns on success.
@@ -216,7 +216,7 @@ Exit exit_of(I32 wait_status) {
 // ---------------------------------------------------------------- the system's processes
 
 // A pipe whose ends close on exec; the child gets its copies by dup2.
-bool pipe_make(I32 ends[2]) {
+Bool pipe_make(I32 ends[2]) {
     if (c::pipe(ends) != 0) return false;
     c::fcntl(ends[0], set_descriptor_flags, fd_cloexec);
     c::fcntl(ends[1], set_descriptor_flags, fd_cloexec);
@@ -231,11 +231,11 @@ void pipe_close(I32 ends[2]) {
 }
 
 // Starts argv as the mode says: 0 on success (the child filled), else the errno.
-I32 spawn_real(const char *const *argv, I32 mode, bool leader, Child *child) {
+I32 spawn_real(const char *const *argv, I32 mode, Bool leader, Child *child) {
     I32 in[2] = {-1, -1};
     I32 out[2] = {-1, -1};
     I32 err[2] = {-1, -1};
-    bool made = true;
+    Bool made = true;
     if (mode == mode_piped) made = pipe_make(in) && pipe_make(out);
     if (mode == mode_captured) made = pipe_make(out) && pipe_make(err);
     if (!made) {
@@ -363,7 +363,7 @@ Vector vector_make(const char *const argv[:]) {
 }
 
 // Starts the program: the child, or an error.
-ChildResult start_child(const char *const argv[:], I32 mode, bool leader) {
+ChildResult start_child(const char *const argv[:], I32 mode, Bool leader) {
     Vector vector = vector_make(argv);
     Child child = {};
     c::SmithProcessHandler *handler = c::smith_handlers_process();
@@ -501,7 +501,7 @@ void child_open(const Child *child) {
     }
     c::SmithProcessHandler *handler = c::smith_handlers_process();
     I32 target_id = child->group && !child->handled ? -child->id : child->id;
-    bool sent = child->handled ? handler->kill(handler, child->id, number) == 0 : c::kill(target_id, number) == 0;
+    Bool sent = child->handled ? handler->kill(handler, child->id, number) == 0 : c::kill(target_id, number) == 0;
     if (!sent) {
         return {.error = error_from(errno_now())};
     }
@@ -552,7 +552,7 @@ void grow_room(Grow *grow) {
 }
 
 // Takes one read of a real stream into the grow: false at its end (or on an error, which ends it).
-bool grow_feed(Grow *grow, I32 descriptor) {
+Bool grow_feed(Grow *grow, I32 descriptor) {
     grow_room(grow);
     I32 code = 0;
     U8 room[:] = grow->data[grow->size:];
@@ -564,8 +564,8 @@ bool grow_feed(Grow *grow, I32 descriptor) {
 
 // Reads a real child's two pipes to their ends with poll, so neither fills while the other is read.
 void drain_real(Grow *output, I32 out_fd, Grow *errors, I32 err_fd) {
-    bool out_open = true;
-    bool err_open = true;
+    Bool out_open = true;
+    Bool err_open = true;
     for (Usize rounds = 0; (out_open || err_open) && rounds < ~(Usize)0; rounds++) { // each round reads or ends one
         struct c::pollfd watched[2] = {{.fd = out_open ? out_fd : -1, .events = poll_in},
                                        {.fd = err_open ? err_fd : -1, .events = poll_in}};
@@ -638,10 +638,10 @@ void drain_real(Grow *output, I32 out_fd, Grow *errors, I32 err_fd) {
 
 // A scripted child's state, which the fake keeps.
 [[std::c_name("SmithProcessFakeChild")]] export typedef struct {
-    bool used;
-    bool closed;
-    bool input_closed;
-    bool killed;
+    Bool used;
+    Bool closed;
+    Bool input_closed;
+    Bool killed;
     I32 signal;
     I32 mode;
     Usize output_position;
@@ -673,7 +673,7 @@ FakeChild *fake_child(Fake *fake, I32 id) {
 }
 
 // Whether the output the child's streams hold has all been read.
-bool fake_drained(const Fake *fake, const FakeChild *child) {
+Bool fake_drained(const Fake *fake, const FakeChild *child) {
     const Script *script = &fake->scripts[(Usize)(child - fake->children)];
     Usize output_left = c::strlen(script->output != nullptr ? script->output : "") - child->output_position;
     Usize errors_left = c::strlen(script->errors != nullptr ? script->errors : "") - child->errors_position;
@@ -682,7 +682,7 @@ bool fake_drained(const Fake *fake, const FakeChild *child) {
     return true;
 }
 
-bool fake_exited(const Fake *fake, const FakeChild *child) {
+Bool fake_exited(const Fake *fake, const FakeChild *child) {
     if (child->killed) return true;
     switch (fake->scripts[(Usize)(child - fake->children)].exit_on) {
     case Start:

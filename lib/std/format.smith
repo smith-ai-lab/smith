@@ -42,7 +42,7 @@ import std::text;
 // fits is length < capacity, that is, every character and the terminator were written.
 [[std::c_name("SmithFormatWritten")]] export typedef struct {
     Usize length;
-    bool fits;
+    Bool fits;
 } Written;
 
 // A number in lowercase hexadecimal, at least width digits (at most 16), zero-padded; made by hex().
@@ -139,7 +139,7 @@ void put_chars(Writer *writer, const char *begin, Usize characters) {
     put_bytes(writer, digits[0:length]);
 }
 
-bool is_finite(F64 value) {
+Bool is_finite(F64 value) {
     U64 bits = __builtin_bit_cast(U64, value);
     return ((bits >> 52) & 0x7ff) != 0x7ff;
 }
@@ -308,7 +308,7 @@ export constexpr Usize padded_capacity = 64;
     const char *begin;
     Usize length;
     U32 width;
-    bool left;
+    Bool left;
     char characters[padded_capacity];
 } Padded;
 
@@ -399,12 +399,12 @@ void significant_digits(F64 value, U32 want, char *out, I32 *exponent) {
         out[i] = i < count ? exact[i] : '0';
     }
     if (count <= want) return;
-    bool tail_zero = true;
+    Bool tail_zero = true;
     for (Usize i = want + 1; i < count; i++) {
         tail_zero = tail_zero && exact[i] == '0';
     }
     char next = exact[want];
-    bool odd = (out[want - 1] - '0') % 2 != 0;
+    Bool odd = (out[want - 1] - '0') % 2 != 0;
     if (next < '5' || (next == '5' && tail_zero && !odd)) return;
     U32 i = want;
     while (i > 0 && out[i - 1] == '9') {
@@ -438,7 +438,7 @@ void put_scientific_digits(Writer *writer, const char *digits, U32 count, I32 ex
 }
 
 // Sign and digits of a finite value: the first want significant digits (all zeros for zero) and their exponent.
-bool prepare_digits(Writer *writer, F64 value, U32 want, char *digits, I32 *exponent) {
+Bool prepare_digits(Writer *writer, F64 value, U32 want, char *digits, I32 *exponent) {
     if (!is_finite(value)) {
         put_unfinite(writer, value);
         return false;
@@ -579,7 +579,7 @@ void put(Writer *writer, auto piece, Usize count) {
 }
 
 // The piece as text, to be put in a column of width characters (on the right, or on the left when left is true).
-Padded make_padded(auto piece, U32 width, bool left) {
+Padded make_padded(auto piece, U32 width, Bool left) {
     Padded padded = {};
     padded.width = width;
     padded.left = left;

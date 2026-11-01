@@ -18,7 +18,7 @@ export scratch::Run prove(const scratch::Project *p, const char *args) {
 }
 
 // The word number `index` of a text separated by spaces copied into `out`, or false when there are fewer.
-static bool word(const char *text, Usize index, char out[:]) {
+static Bool word(const char *text, Usize index, char out[:]) {
     Usize at = 0;
     for (Usize n = 0; n <= index; n++) {
         while (text[at] == ' ') {
@@ -49,7 +49,7 @@ static scratch::Run function(const scratch::Project *p, const char *file, const 
 // "$c/memory.c").
 export void each_proved(const scratch::Project *p, const char *what, const char *file, const char *prefix,
                         const char *names) {
-    bool failed = false;
+    Bool failed = false;
     char name[256];
     for (Usize i = 0; word(names, i, name); i++) {
         scratch::Run run = function(p, file, prefix, name);
@@ -64,7 +64,7 @@ export void each_proved(const scratch::Project *p, const char *what, const char 
 // Every function of `names` fails in `file` (status 1) with `needle` in its output.
 export void each_refuted(const scratch::Project *p, const char *what, const char *file, const char *prefix,
                          const char *needle, const char *names) {
-    bool failed = false;
+    Bool failed = false;
     char name[256];
     for (Usize i = 0; word(names, i, name); i++) {
         scratch::Run run = function(p, file, prefix, name);
@@ -80,7 +80,7 @@ export void each_refuted(const scratch::Project *p, const char *what, const char
 // counterexample is a value.
 export void each_value_counterexample(const scratch::Project *p, const char *what, const char *file,
                                       const char *names) {
-    bool failed = false;
+    Bool failed = false;
     char name[256];
     for (Usize i = 0; word(names, i, name); i++) {
         scratch::Run run = function(p, file, "", name);

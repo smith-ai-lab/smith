@@ -35,7 +35,7 @@ constexpr U32 failing_one_in = 8; // the default rate: one allocation in eight
 
 // Whether the next allocation is refused. It always draws, so the decision for call n depends on the key and n alone,
 // whatever one_in was before.
-bool refuses(Failing *self) {
+Bool refuses(Failing *self) {
     contract::trusted(); // the key is split once a call: a chain, which a proof of the callers need not follow
     self->calls += 1;
     random::Key pair[2];
@@ -72,7 +72,7 @@ void failing_free(mem::Allocator *self, void *block) {
 }
 
 // A null parent is the system's, whose blocks the handlers free with libc anyway.
-bool failing_owns(mem::Allocator *self, const void *block) {
+Bool failing_owns(mem::Allocator *self, const void *block) {
     contract::trusted();
     mem::Allocator *parent = ((Failing *)self)->parent;
     return parent != nullptr && parent->owns(parent, block);

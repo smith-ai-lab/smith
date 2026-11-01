@@ -22,7 +22,7 @@ export typeof(I32[:]) middle(I32 xs[:], I32 *p, Usize n) {
     I32 mid[:] = xs[1:countof(xs) - 1];
     I32 view[:] = p[0:n];
     char word[:] = "abc";
-    bool inside = n > 0 ? true : false;
+    Bool inside = n > 0 ? true : false;
     return inside ? head : view;
 }
 

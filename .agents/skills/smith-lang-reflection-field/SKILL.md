@@ -10,7 +10,7 @@ description: "`fields(T)[i]` as a `Field` value in .smith: `constexpr Field f = 
 ```smith
 module fieldvals;
 
-[[maybe_unused]] bool is_floating(Field f) {            // ordinary C over a Field; it runs in the compiler
+[[maybe_unused]] Bool is_floating(Field f) {            // ordinary C over a Field; it runs in the compiler
     return is_float(f.type);
 }
 

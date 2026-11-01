@@ -87,7 +87,7 @@ export void test_the_report_names_the_changed_lines_no_test_ran() {
                         "inst\tprog.c\t1-10\ncov\tprog.c\t1-3,7-10\ntest\tt::one\t05\n";
     const c::SmithCoreChanged changed[_] = {{"prog.c", 5, 1}, {"prog.c", 2, 1}, {"other.c", 1, 3}};
     char *report = mem::alloc_slice(char, report_capacity).data;
-    bool done = c::smith_core_coverage_report(table, changed, countof(changed), report, report_capacity);
+    Bool done = c::smith_core_coverage_report(table, changed, countof(changed), report, report_capacity);
     test::check_equal(done, true);
     scratch::expect_contains("the totals", report, "coverage\tabc123\tlines\t7\t10\tfunctions\t2\t3");
     scratch::expect_contains("the uncovered line", report, "uncovered\tprog.c\t5\tprog.c:second");
@@ -167,14 +167,14 @@ static void write(const char *folder, Source file) {
     test::check_condition(written == .ok);
 }
 
-static void record(const char *folder, const char *test, bool pass, const c::SmithCoreFunction *ran, Usize count) {
+static void record(const char *folder, const char *test, Bool pass, const c::SmithCoreFunction *ran, Usize count) {
     test::check_equal(c::smith_core_coverage_record(folder, test, pass, ran, count), true);
 }
 
 // What `smith test --changed --base HEAD --dry-run` prints after the files `edits` are written over the repository
 // (and `changes` happened: `A`, `M` or `D`, a tab and a path a line). `records` makes the records of a and b first;
 // `result` is what a's run was.
-static const char *selected(bool records, const char *result, const Source *edits, Usize count, const char *changes) {
+static const char *selected(Bool records, const char *result, const Source *edits, Usize count, const char *changes) {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     const char *names = "";
@@ -192,7 +192,7 @@ static const char *selected(bool records, const char *result, const Source *edit
     }
     for (Usize i = 0; i < count; i++) {
         write(p.dir, edits[i]);
-        bool known = false;
+        Bool known = false;
         for (Usize j = 0; j < countof(repository); j++)
             known = known || c::strcmp(repository[j].path, edits[i].path) == 0;
         if (!known) names = format::push(names, edits[i].path, "\n").data;

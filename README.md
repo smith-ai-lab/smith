@@ -177,7 +177,7 @@ module header;
 import std::ascii;
 import std::slice;
 
-export bool is_setting(const char line[:]) {
+export Bool is_setting(const char line[:]) {
     const char prefix[:] = "#";
     return countof(line) > 0 && ascii::alpha(line[0]) && !slice::starts_with(line, prefix);
 }

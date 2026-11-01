@@ -235,16 +235,16 @@ struct Seen {
     CountingConsole *console;         // A's fake
     arena::Arena *arena;              // A's arena, under its allocator
     mem::Allocator *thread_allocator; // the thread's own (the test runner's checker), which B must still see
-    bool a_installed;
-    bool b_saw_no_console;
-    bool b_saw_no_allocator;
-    bool b_allocated;
-    bool a_kept_console;
-    bool a_kept_allocator;
+    Bool a_installed;
+    Bool b_saw_no_console;
+    Bool b_saw_no_allocator;
+    Bool b_allocated;
+    Bool a_kept_console;
+    Bool a_kept_allocator;
     Usize a_written;
-    bool child_inherited_console;
-    bool child_inherited_allocator;
-    bool a_kept_after_child;
+    Bool child_inherited_console;
+    Bool child_inherited_allocator;
+    Bool a_kept_after_child;
     I32 a_errno;
     I32 b_errno;
 };
@@ -586,7 +586,7 @@ thread_local U8 thread_marker;
 
 struct Home {
     const U8 *began; // the thread marker where the task began
-    bool same_thread;
+    Bool same_thread;
 };
 
 void run_stay(Home *home) {

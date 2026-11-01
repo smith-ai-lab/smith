@@ -11,26 +11,26 @@ export void test_equal() {
     {
         const char a[:] = "abc";
         const char b[:] = "abc";
-        bool got = slice::equal(a, b);
+        Bool got = slice::equal(a, b);
         test::check_equal(got, true);
     }
     {
         const char a[:] = "abc";
         const char b[:] = "abd";
-        bool got = slice::equal(a, b);
+        Bool got = slice::equal(a, b);
         test::check_equal(got, false);
     }
     {
         const char a[:] = "abc";
         const char b[:] = "ab";
-        bool got = slice::equal(a, b);
+        Bool got = slice::equal(a, b);
         test::check_equal(got, false);
     }
     {
         const char x[:] = "x";
         const char a[:] = x[0:0];
         const char b[:] = x[0:0];
-        bool got = slice::equal(a, b);
+        Bool got = slice::equal(a, b);
         test::check_equal(got, true);
     }
 }
@@ -72,26 +72,26 @@ export void test_starts_with() {
     {
         const char a[:] = "hello";
         const char b[:] = "he";
-        bool got = slice::starts_with(a, b);
+        Bool got = slice::starts_with(a, b);
         test::check_equal(got, true);
     }
     {
         const char a[:] = "hello";
         const char b[:] = "lo";
-        bool got = slice::starts_with(a, b);
+        Bool got = slice::starts_with(a, b);
         test::check_equal(got, false);
     }
     {
         const char a[:] = "lo";
         const char b[:] = "hello";
-        bool got = slice::starts_with(a, b);
+        Bool got = slice::starts_with(a, b);
         test::check_equal(got, false);
     }
     {
         const char a[:] = "hello";
         const char x[:] = "x";
         const char b[:] = x[0:0];
-        bool got = slice::starts_with(a, b);
+        Bool got = slice::starts_with(a, b);
         test::check_equal(got, true);
     }
 }
@@ -100,19 +100,19 @@ export void test_ends_with() {
     {
         const char a[:] = "hello";
         const char b[:] = "lo";
-        bool got = slice::ends_with(a, b);
+        Bool got = slice::ends_with(a, b);
         test::check_equal(got, true);
     }
     {
         const char a[:] = "hello";
         const char b[:] = "he";
-        bool got = slice::ends_with(a, b);
+        Bool got = slice::ends_with(a, b);
         test::check_equal(got, false);
     }
     {
         const char a[:] = "lo";
         const char b[:] = "hello";
-        bool got = slice::ends_with(a, b);
+        Bool got = slice::ends_with(a, b);
         test::check_equal(got, false);
     }
 }
@@ -123,13 +123,13 @@ export void test_find() {
     Index first = slice::find(text, '=');
     Index last = slice::find_last(text, '=');
     Index none = slice::find(plain, '=');
-    bool found = first == .some;
-    bool missing = none == .none;
+    Bool found = first == .some;
+    Bool missing = none == .none;
     Usize two = slice::count(text, '=');
     test::check_equal(found, true);
     if (first == .some) test::check_equal(first.some, 1);
     if (last == .some) test::check_equal(last.some, 3);
-    bool has_last = last == .some;
+    Bool has_last = last == .some;
     test::check_equal(has_last, true);
     test::check_equal(missing, true);
     test::check_equal(two, 2);
@@ -162,20 +162,20 @@ export void test_ascii() {
 export void test_find_if_slice() {
     const char s[:] = "  key=value ";
     Index digit_at = slice::find_if(s, ascii::digit);
-    bool no_digit = digit_at == .none;
+    Bool no_digit = digit_at == .none;
     test::check_equal(no_digit, true);
     Index alpha_at = slice::find_if(s, ascii::alpha);
     if (alpha_at == .some) test::check_equal(alpha_at.some, 2);
-    bool has_alpha = alpha_at == .some;
+    Bool has_alpha = alpha_at == .some;
     test::check_equal(has_alpha, true);
     const char needle[:] = "=val";
     Index at = slice::find_slice(s, needle);
     if (at == .some) test::check_equal(at.some, 5);
-    bool found = at == .some;
+    Bool found = at == .some;
     test::check_equal(found, true);
     const char missing[:] = "zzz";
     Index none = slice::find_slice(s, missing);
-    bool absent = none == .none;
+    Bool absent = none == .none;
     test::check_equal(absent, true);
     const char empty[:] = s[0:0];
     Index zero = slice::find_slice(s, empty);
@@ -186,26 +186,26 @@ export void test_trim() {
     const char s[:] = "  key=value \n";
     const char cut[:] = slice::trim(s, ascii::space);
     const char want[:] = "key=value";
-    bool same = slice::equal(cut, want);
+    Bool same = slice::equal(cut, want);
     test::check_equal(same, true);
     const char blank[:] = "   ";
     const char none[:] = slice::trim(blank, ascii::space);
     test::check_equal(countof(none), 0);
 }
 
-static bool positive(I32 x) {
+static Bool positive(I32 x) {
     return x > 0;
 }
 
-static bool small(U8 x) {
+static Bool small(U8 x) {
     return x < 10;
 }
 
-static bool descending(I32 a, I32 b) {
+static Bool descending(I32 a, I32 b) {
     return a > b;
 }
 
-static bool by_magnitude(F64 a, F64 b) {
+static Bool by_magnitude(F64 a, F64 b) {
     return (a < 0 ? -a : a) < (b < 0 ? -b : b);
 }
 
@@ -239,31 +239,31 @@ export void test_sort() {
     const I32 want[:] = (I32[7]){1, 2, 3, 4, 5, 6, 7};
     I32 r[:] = reversed;
     slice::sort(r);
-    bool same_r = slice::equal(r, want);
+    Bool same_r = slice::equal(r, want);
     test::check_equal(same_r, true);
     I32 dupes[6] = {3, 1, 3, 1, 2, 2};
     const I32 dupes_want[:] = (I32[6]){1, 1, 2, 2, 3, 3};
     I32 d[:] = dupes;
     slice::sort(d);
-    bool same_d = slice::equal(d, dupes_want);
+    Bool same_d = slice::equal(d, dupes_want);
     test::check_equal(same_d, true);
     I32 negative[4] = {0, -5, 7, -5};
     const I32 negative_want[:] = (I32[4]){-5, -5, 0, 7};
     I32 n[:] = negative;
     slice::sort(n);
-    bool same_n = slice::equal(n, negative_want);
+    Bool same_n = slice::equal(n, negative_want);
     test::check_equal(same_n, true);
     F64 floats[5] = {2.5, -1.0, 0.0, 9.75, -3.5};
     const F64 floats_want[:] = (F64[5]){-3.5, -1.0, 0.0, 2.5, 9.75};
     F64 f[:] = floats;
     slice::sort(f);
-    bool same_f = slice::equal(f, floats_want);
+    Bool same_f = slice::equal(f, floats_want);
     test::check_equal(same_f, true);
     U8 bytes[5] = {200, 3, 255, 0, 3};
     const U8 bytes_want[:] = (U8[5]){0, 3, 3, 200, 255};
     U8 b[:] = bytes;
     slice::sort(b);
-    bool same_b = slice::equal(b, bytes_want);
+    Bool same_b = slice::equal(b, bytes_want);
     test::check_equal(same_b, true);
     I32 empty_storage[1] = {9};
     I32 e[:] = empty_storage[0:0];
@@ -290,7 +290,7 @@ export void test_sort_random() {
     }
     I32 xs[:] = data;
     slice::sort(xs);
-    bool ordered = true;
+    Bool ordered = true;
     I64 total_after = 0;
     I64 squares_after = 0;
     for (Usize i = 0; i < 200; i++) {
@@ -313,13 +313,13 @@ export void test_sort_by() {
     const I32 want[:] = (I32[5]){9, 7, 4, 3, 1};
     I32 xs[:] = values;
     slice::sort_by(xs, descending);
-    bool same_xs = slice::equal(xs, want);
+    Bool same_xs = slice::equal(xs, want);
     test::check_equal(same_xs, true);
     F64 floats[4] = {-3.0, 1.0, -0.5, 2.0};
     const F64 floats_want[:] = (F64[4]){-0.5, 1.0, 2.0, -3.0};
     F64 fs[:] = floats;
     slice::sort_by(fs, by_magnitude);
-    bool same_fs = slice::equal(fs, floats_want);
+    Bool same_fs = slice::equal(fs, floats_want);
     test::check_equal(same_fs, true);
     I32 empty_storage[1] = {1};
     I32 e[:] = empty_storage[0:0];

@@ -42,14 +42,14 @@ static const char *copy_text(arena::Arena *arena, const char *text) {
     return copy;
 }
 
-static bool ends_with(const char *text, const char *tail) {
+static Bool ends_with(const char *text, const char *tail) {
     Usize length = c::strlen(text);
     Usize size = c::strlen(tail);
     return length >= size && c::strcmp(text + length - size, tail) == 0;
 }
 
 // A text lowered as the module `m` (a module's file ends with its name); no file is read.
-static bool lower_text(const char *text, char *errors) {
+static Bool lower_text(const char *text, char *errors) {
     return c::smith_core_lower(nullptr, "m.smith", text, lowered_text, lowered_capacity, errors, report_capacity);
 }
 
@@ -57,7 +57,7 @@ static bool lower_text(const char *text, char *errors) {
 // The functions.
 
 export void test_a_file_is_lowered_to_c() {
-    bool done = lower_text("module m;\nexport I32 twice(I32 x) { return x * 2; }\n", report_text);
+    Bool done = lower_text("module m;\nexport I32 twice(I32 x) { return x * 2; }\n", report_text);
     test::check_equal(done, true);
     test::check_equal(report_text[0], '\0');
     test::check(c::strstr(lowered_text, "twice") != nullptr);
@@ -65,13 +65,13 @@ export void test_a_file_is_lowered_to_c() {
 }
 
 export void test_an_error_is_reported_with_its_line_and_column() {
-    bool done = lower_text("module m;\n\nimport m;\n", report_text);
+    Bool done = lower_text("module m;\n\nimport m;\n", report_text);
     test::check_equal(done, false);
     test::check(c::strstr(report_text, "m.smith:3:8: error: module `m` imports itself") != nullptr);
 }
 
 export void test_a_module_has_a_header() {
-    bool done = c::smith_core_header(nullptr, "m.smith", "module m;\nexport I32 twice(I32 x) { return x * 2; }\n",
+    Bool done = c::smith_core_header(nullptr, "m.smith", "module m;\nexport I32 twice(I32 x) { return x * 2; }\n",
                                      header_text, header_capacity, report_text, report_capacity);
     test::check_equal(done, true);
     test::check(c::strstr(header_text, "// smith-module: m") != nullptr);
@@ -79,14 +79,14 @@ export void test_a_module_has_a_header() {
 }
 
 export void test_a_file_with_no_module_line_has_no_header() {
-    bool done = c::smith_core_header(nullptr, "m.smith", "I32 twice(I32 x) { return x * 2; }\n", header_text,
+    Bool done = c::smith_core_header(nullptr, "m.smith", "I32 twice(I32 x) { return x * 2; }\n", header_text,
                                      header_capacity, report_text, report_capacity);
     test::check_equal(done, false);
     test::check(c::strstr(report_text, "not a module (it has no `module` line), so it has no header") != nullptr);
 }
 
 export void test_a_file_that_is_missing_is_reported() {
-    bool done = c::smith_core_lower(nullptr, "no/such/file.smith", nullptr, lowered_text, lowered_capacity, report_text,
+    Bool done = c::smith_core_lower(nullptr, "no/such/file.smith", nullptr, lowered_text, lowered_capacity, report_text,
                                     report_capacity);
     test::check_equal(done, false);
     test::check(c::strstr(report_text, "cannot read no/such/file.smith") != nullptr);
@@ -94,7 +94,7 @@ export void test_a_file_that_is_missing_is_reported() {
 
 export void test_a_buffer_that_is_too_small_is_a_failure() {
     char small[16];
-    bool done = c::smith_core_lower(nullptr, "m.smith", "module m;\nexport I32 twice(I32 x) { return x * 2; }\n", small,
+    Bool done = c::smith_core_lower(nullptr, "m.smith", "module m;\nexport I32 twice(I32 x) { return x * 2; }\n", small,
                                     sizeof small, report_text, report_capacity);
     test::check_equal(done, false);
 }
@@ -133,7 +133,7 @@ export void test_a_failed_lowering_leaves_nothing_behind() {
 // The corpus.
 
 // The names in a folder, sorted (the order of the shell's `sort`, bytes).
-static Usize names_of(arena::Arena *arena, const char *folder, bool folders, const char **names, Usize capacity) {
+static Usize names_of(arena::Arena *arena, const char *folder, Bool folders, const char **names, Usize capacity) {
     files::EntriesResult list = files::list(folder[0:c::strlen(folder)]);
     test::check(list == .ok);
     files::Entries entries = {};
@@ -199,13 +199,13 @@ static const char *module_of(arena::Arena *arena, const char *file) {
     return copy;
 }
 
-static bool exists(const char *path) {
+static Bool exists(const char *path) {
     files::InfoResult info = files::info(path[0:c::strlen(path)]);
     return info == .ok;
 }
 
 // What a case holds to be checked: it has no `cmd`, which runs smith cc as a user does and lowers nothing by itself.
-static bool lowers(const char *kase) {
+static Bool lowers(const char *kase) {
     return !exists(join3("tests/smith-lang/cases/", kase, "/cmd"));
 }
 
@@ -217,7 +217,7 @@ static Usize add_errors(arena::Arena *arena, const char *errors, const char **li
         const char *next = at + length + (end != nullptr ? 1 : 0);
         const char *marker = c::strstr(at, ": error: ");
         if (marker != nullptr && (Usize)(marker - at) < length && used < capacity) {
-            bool plain = true; // the position has no space or second colon before the line and column
+            Bool plain = true; // the position has no space or second colon before the line and column
             for (const char *p = at; p < marker; p++)
                 plain = plain && *p != ' ';
             if (plain) {
@@ -258,7 +258,7 @@ static const char *sorted_unique(const char **lines, Usize count) {
 // The cases whose header has several C imports to choose from: `smith cc --smith-header` asks the compiler which
 // declared a name, and the function does not, so tests/smith_lang_test.smith checks their header (and the case's
 // folder is the only place that lists them).
-static bool header_by_command(const char *name) {
+static Bool header_by_command(const char *name) {
     static const char *const cases[_] = {"filescope-if-header", "filescope-if-reflect"};
     for (Usize i = 0; i < countof(cases); i++) {
         if (c::strcmp(name, cases[i]) == 0) return true;
@@ -268,7 +268,7 @@ static bool header_by_command(const char *name) {
 
 // Whether `smith test --update` may write goldens for a new case: the run has no --test, or its selection names the
 // case (its folder name, with `_` for `-`, as the case's own test is named). A shard never makes an unselected case's.
-static bool selected(const char *kase) {
+static Bool selected(const char *kase) {
     const char *selection = test::selection();
     if (selection == nullptr) return true;
     char name[96];
@@ -292,8 +292,8 @@ static void check_case(arena::Arena *arena, const char *kase, Pass pass, const c
     Usize error_count = 0;
     // new: nothing of the lowering is held yet (the build's own goldens, expect/stdout and the rest, may be: an update
     // of both tests at once writes them side by side)
-    bool fresh = !exists(join3(folder, "/expect/lowered", "")) && !exists(join3(folder, "/expect/header", ""));
-    bool creates = test::updating() && fresh && selected(kase);
+    Bool fresh = !exists(join3(folder, "/expect/lowered", "")) && !exists(join3(folder, "/expect/header", ""));
+    Bool creates = test::updating() && fresh && selected(kase);
     for (Usize i = 0; i < count; i++) {
         const char *file = join3("src/", files[i], "");
         const char *module = module_of(arena, files[i]);
@@ -306,7 +306,7 @@ static void check_case(arena::Arena *arena, const char *kase, Pass pass, const c
         if (exists(golden) || (creates)) corpus::golden(arena, differing, golden, lowered_text);
         // the header of the module, as `smith cc --smith-header` writes it
         if (header_by_command(kase)) continue;
-        bool made =
+        Bool made =
             c::smith_core_header(folder, file, nullptr, header_text, header_capacity, report_text, report_capacity);
         const char *header_golden = join3(folder, "/expect/header/", format::push(module, ".h").data);
         if (made && (exists(header_golden) || (creates))) corpus::golden(arena, differing, header_golden, header_text);

@@ -83,7 +83,7 @@ static const char *chosen(const char *names, const char *changes, const char *ex
     }
     constexpr Usize capacity = 1U << 16;
     char *out = mem::alloc_slice(char, capacity).data;
-    bool done = c::smith_core_changed_lint(p.dir, names, changes, out, capacity);
+    Bool done = c::smith_core_changed_lint(p.dir, names, changes, out, capacity);
     test::check_equal(done, true);
     return out;
 }
@@ -186,7 +186,7 @@ export void test_lint_changed_builds_only_what_the_chosen_files_wait_for() {
 
 // A project whose one file waits for a package the network does not give (tests/build_fixtures/lint_unreachable). Not
 // in CI's environment, which has the network and so must fail (#1197).
-static scratch::Run lint_unreachable(bool in_ci) {
+static scratch::Run lint_unreachable(Bool in_ci) {
     scratch::Project p = scratch::make("p", "lint_unreachable");
     defer scratch::clean(&p);
     scratch::own_cache(&p);

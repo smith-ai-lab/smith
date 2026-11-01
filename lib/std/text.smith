@@ -59,19 +59,19 @@ export constexpr Usize f32_capacity = 24;
 // this module cost the prover far more than they are worth, so a proof of a caller assumes the check held. Trusted, its
 // body is never read, so the assert is a run-time check: it writes the failure report (the line of the call and the
 // stack) in every build.
-void check(bool holds) {
+void check(Bool holds) {
     contract::trusted();
     contract::assert(holds);
     if (!holds) __builtin_trap();
 }
 
-bool is_space(char c) {
+Bool is_space(char c) {
     return c == ' ' || c == '\t';
 }
 
 // Takes the next line off text into line, without its newline, a trailing carriage return, or a # comment and the
 // spaces before it. Returns false once text is empty.
-[[std::c_name("smith_text_take_line")]] export [[nodiscard]] bool take_line(typeof(const char[:]) *text,
+[[std::c_name("smith_text_take_line")]] export [[nodiscard]] Bool take_line(typeof(const char[:]) *text,
                                                                             typeof(const char[:]) *line) {
     const char all[:] = *text; // locals: a write through `line` cannot change what the checks below read
     Usize count = countof(all);
@@ -94,7 +94,7 @@ bool is_space(char c) {
 }
 
 // Takes the next word off line, a run without spaces or tabs, into word. Returns false when only spaces are left.
-[[std::c_name("smith_text_take_word")]] export [[nodiscard]] bool take_word(typeof(const char[:]) *line,
+[[std::c_name("smith_text_take_word")]] export [[nodiscard]] Bool take_word(typeof(const char[:]) *line,
                                                                             typeof(const char[:]) *word) {
     const char rest[:] = *line;
     while (countof(rest) > 0 && is_space(rest[0])) {
@@ -111,7 +111,7 @@ bool is_space(char c) {
 }
 
 // Whether word is exactly the terminated string.
-[[std::c_name("smith_text_is")]] export [[nodiscard]] bool is(const char word[:], const char *string) {
+[[std::c_name("smith_text_is")]] export [[nodiscard]] Bool is(const char word[:], const char *string) {
     for (Usize i = 0; i < countof(word); i++) {
         if (string[i] != word[i]) return false; // a shorter string ends in its terminator, which no word has
     }
@@ -128,7 +128,7 @@ constexpr I64 i64_max = (I64)(u64_max >> 1);
 // Leading zeros of any number are fine. Each returns false for an empty word, a stray character (a +, a space, a
 // capital hex digit) or a value that doesn't fit.
 // The digits of word from start on (start is 0, or 1 after a minus sign).
-bool parse_digits(const char word[:], Usize start, U64 *value) {
+Bool parse_digits(const char word[:], Usize start, U64 *value) {
     if (start >= countof(word)) return false;
     U64 result = 0;
     for (Usize i = start; i < countof(word); i++) {
@@ -142,12 +142,12 @@ bool parse_digits(const char word[:], Usize start, U64 *value) {
     return true;
 }
 
-[[std::c_name("smith_text_parse_u64")]] export [[nodiscard]] bool parse_u64(const char word[:], U64 *value) {
+[[std::c_name("smith_text_parse_u64")]] export [[nodiscard]] Bool parse_u64(const char word[:], U64 *value) {
     return parse_digits(word, 0, value);
 }
 
-[[std::c_name("smith_text_parse_i64")]] export [[nodiscard]] bool parse_i64(const char word[:], I64 *value) {
-    bool negative = countof(word) > 0 && word[0] == '-';
+[[std::c_name("smith_text_parse_i64")]] export [[nodiscard]] Bool parse_i64(const char word[:], I64 *value) {
+    Bool negative = countof(word) > 0 && word[0] == '-';
     U64 magnitude = 0;
     if (!parse_digits(word, negative ? 1 : 0, &magnitude)) return false;
     U64 limit = negative ? (U64)i64_max + 1 : (U64)i64_max;
@@ -156,7 +156,7 @@ bool parse_digits(const char word[:], Usize start, U64 *value) {
     return true;
 }
 
-[[std::c_name("smith_text_parse_hex")]] export [[nodiscard]] bool parse_hex(const char word[:], U64 *value) {
+[[std::c_name("smith_text_parse_hex")]] export [[nodiscard]] Bool parse_hex(const char word[:], U64 *value) {
     if (countof(word) == 0) return false;
     U64 result = 0;
     for (Usize i = 0; i < countof(word); i++) {
@@ -287,7 +287,7 @@ void big_shift_right_one(Big *big) {
     }
 }
 
-bool big_at_least(const Big *a, const Big *b) {
+Bool big_at_least(const Big *a, const Big *b) {
     if (a->count != b->count) return a->count > b->count;
     for (Usize i = a->count; i-- > 0;) {
         if (a->limb[i] != b->limb[i]) return a->limb[i] > b->limb[i];
@@ -354,7 +354,7 @@ typedef struct {
     U32 chunk;
     U32 chunk_length;
     I64 exp10;
-    bool sticky; // nonzero digits were dropped past the 800th
+    Bool sticky; // nonzero digits were dropped past the 800th
 } Decimal;
 
 // An empty decimal. The limbs are left alone: only the first `count` of them are ever read, and zeroing 512 bytes
@@ -369,7 +369,7 @@ void decimal_init(Decimal *decimal) {
     decimal->sticky = false;
 }
 
-void decimal_add_digit(Decimal *decimal, U32 digit, bool in_fraction) {
+void decimal_add_digit(Decimal *decimal, U32 digit, Bool in_fraction) {
     if (decimal->significant == 0 && digit == 0) { // a leading zero adds nothing but a place
         if (in_fraction) decimal->exp10 -= 1;
         return;
@@ -392,9 +392,9 @@ void decimal_add_digit(Decimal *decimal, U32 digit, bool in_fraction) {
 }
 
 // Reads digits with at most one point from word[*index], and returns whether there was a digit.
-bool decimal_scan_mantissa(const char word[:], Usize *index, Decimal *decimal) {
-    bool in_fraction = false;
-    bool any = false;
+Bool decimal_scan_mantissa(const char word[:], Usize *index, Decimal *decimal) {
+    Bool in_fraction = false;
+    Bool any = false;
     Usize i = *index;
     for (; i < countof(word); i++) {
         char c = word[i];
@@ -412,13 +412,13 @@ bool decimal_scan_mantissa(const char word[:], Usize *index, Decimal *decimal) {
 }
 
 // Reads an optional exponent at word[*index] into exp10, and returns false for an e with no digits.
-bool decimal_scan_exponent(const char word[:], Usize *index, Decimal *decimal) {
+Bool decimal_scan_exponent(const char word[:], Usize *index, Decimal *decimal) {
     Usize i = *index;
     if (i >= countof(word)) return true;
     char marker = word[i];
     if (marker != 'e' && marker != 'E') return true;
     i += 1;
-    bool negative = i < countof(word) && word[i] == '-';
+    Bool negative = i < countof(word) && word[i] == '-';
     if (i < countof(word) && (word[i] == '-' || word[i] == '+')) i += 1;
     U64 magnitude = 0; // unsigned: at most exponent_max * 10 + 9, which no checked signed arithmetic needs to show
     Usize digits = 0;
@@ -445,7 +445,7 @@ U64 decimal_exact(const Decimal *decimal, const Format *format) {
 }
 
 // Whether the decimal is a number of at most 15 digits times an exactly represented power of ten.
-bool decimal_is_fast(const Decimal *decimal) {
+Bool decimal_is_fast(const Decimal *decimal) {
     return !decimal->sticky && decimal->significant <= fast_digits_max && decimal->exp10 >= -fast_exponent_max &&
            decimal->exp10 <= fast_exponent_max;
 }
@@ -468,7 +468,7 @@ void decimal_finish(Decimal *decimal) {
 }
 
 // The f32 for a scanned decimal, as bits, or nothing for a number that would be infinity.
-bool decimal_to_f32_bits(Decimal *decimal, U32 *bits) {
+Bool decimal_to_f32_bits(Decimal *decimal, U32 *bits) {
     if (decimal->significant == 0) {
         *bits = 0;
         return true;
@@ -483,7 +483,7 @@ bool decimal_to_f32_bits(Decimal *decimal, U32 *bits) {
     if (decimal_is_fast(decimal)) {
         F64 nearest = decimal_fast(decimal);
         U64 nearest_bits = __builtin_bit_cast(U64, nearest);
-        bool halfway = (nearest_bits & 0x1fffffff) == 0x10000000; // between two floats: look closer
+        Bool halfway = (nearest_bits & 0x1fffffff) == 0x10000000; // between two floats: look closer
         if (nearest >= (F64)__FLT_MIN__ && nearest <= 1e38 && !halfway) {
             *bits = __builtin_bit_cast(U32, (F32)nearest);
             return true;
@@ -494,7 +494,7 @@ bool decimal_to_f32_bits(Decimal *decimal, U32 *bits) {
 }
 
 // The same for a f64.
-bool decimal_to_f64_bits(Decimal *decimal, U64 *bits) {
+Bool decimal_to_f64_bits(Decimal *decimal, U64 *bits) {
     if (decimal->significant == 0) {
         *bits = 0;
         return true;
@@ -518,7 +518,7 @@ bool decimal_to_f64_bits(Decimal *decimal, U64 *bits) {
 }
 
 // Scans a whole word: a sign, digits and an exponent. Returns whether it is a number, and whether it is negative.
-bool decimal_scan(const char word[:], Decimal *decimal, bool *negative) {
+Bool decimal_scan(const char word[:], Decimal *decimal, Bool *negative) {
     Usize index = 0;
     *negative = countof(word) > 0 && word[0] == '-';
     if (countof(word) > 0 && (word[0] == '-' || word[0] == '+')) index = 1;
@@ -531,10 +531,10 @@ bool decimal_scan(const char word[:], Decimal *decimal, bool *negative) {
 // (1e-5, 2.5E+3). The result is the f32 nearest to the number, ties to even, as strtof gives in the C locale, for
 // any number of digits; "-0" is negative zero. It returns false for no digits, a stray character, or a number too
 // large for an f32 (it would round to infinity). One too small rounds to zero or to a subnormal. No inf or nan.
-[[std::c_name("smith_text_parse_f32")]] export [[nodiscard]] bool parse_f32(const char word[:], F32 *value) {
+[[std::c_name("smith_text_parse_f32")]] export [[nodiscard]] Bool parse_f32(const char word[:], F32 *value) {
     Decimal decimal;
     decimal_init(&decimal);
-    bool negative = false;
+    Bool negative = false;
     if (!decimal_scan(word, &decimal, &negative)) return false;
     U32 bits = 0;
     if (!decimal_to_f32_bits(&decimal, &bits)) return false;
@@ -545,10 +545,10 @@ bool decimal_scan(const char word[:], Decimal *decimal, bool *negative) {
 
 // The same for an f64: the f64 nearest the number, ties to even, as strtod gives in the C locale, for any number
 // of digits. It returns false for a number that would round to infinity (above about 1.7976931348623157e308).
-[[std::c_name("smith_text_parse_f64")]] export [[nodiscard]] bool parse_f64(const char word[:], F64 *value) {
+[[std::c_name("smith_text_parse_f64")]] export [[nodiscard]] Bool parse_f64(const char word[:], F64 *value) {
     Decimal decimal;
     decimal_init(&decimal);
-    bool negative = false;
+    Bool negative = false;
     if (!decimal_scan(word, &decimal, &negative)) return false;
     U64 bits = 0;
     if (!decimal_to_f64_bits(&decimal, &bits)) return false;
@@ -636,7 +636,7 @@ U64 big_divide(Big *numerator, const Big *denominator) {
 }
 
 // The quotient of m * 2^e / 10^s, rounded to the nearest integer, ties to even.
-U64 f64_scaled(U64 m, I64 e, I64 s, bool round) {
+U64 f64_scaled(U64 m, I64 e, I64 s, Bool round) {
     Big numerator = {.limb = {(U32)m, (U32)(m >> 32)}, .count = (m >> 32) != 0 ? 2U : 1U};
     Big denominator = {.limb = {1}, .count = 1};
     if (e >= 0)
@@ -650,8 +650,8 @@ U64 f64_scaled(U64 m, I64 e, I64 s, bool round) {
     U64 q = big_divide(&numerator, &denominator);
     if (!round) return q;
     big_shift_left(&numerator, 1); // twice the remainder against the divisor
-    bool above = big_at_least(&numerator, &denominator);
-    bool equal = above && big_at_least(&denominator, &numerator);
+    Bool above = big_at_least(&numerator, &denominator);
+    Bool equal = above && big_at_least(&denominator, &numerator);
     if (above && (!equal || (q & 1) != 0)) q += 1;
     return q;
 }
@@ -692,7 +692,7 @@ I64 f64_first_exponent(U64 m, I64 e) {
     return first;
 }
 
-bool f64_reads_back(U64 q, I64 s, U64 bits) {
+Bool f64_reads_back(U64 q, I64 s, U64 bits) {
     char text[number_capacity * 2];
     Usize length = write_u64(text, q);
     text[length++] = 'e';
@@ -785,7 +785,7 @@ Usize f64_write(char *out, F64 value) {
 constexpr U32 f32_digits_max = 9;
 static_assert(f32_capacity >= 1 + f64_positional_max + 2 + 5, "sign, a positional integer, a point and e-45");
 
-bool f32_reads_back(U64 q, I64 s, U32 bits) {
+Bool f32_reads_back(U64 q, I64 s, U32 bits) {
     char text[number_capacity * 2];
     Usize length = write_u64(text, q);
     text[length++] = 'e';

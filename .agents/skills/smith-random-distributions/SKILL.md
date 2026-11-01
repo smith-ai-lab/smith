@@ -19,7 +19,7 @@ void distributions(random::Key key, arena::Arena *a) {
     I64 die = random::uniform_int64_sample(k[2], (random::UniformInt64){.low = 1, .high = 6});      // [low, high], unbiased
     F32 gauss = random::normal_float_sample(k[3], (random::NormalFloat){.mean = 0, .deviation = 1});
     F64 gauss64 = random::normal_double_sample(k[4], (random::NormalDouble){.mean = 0, .deviation = 1});
-    bool coin = random::bernoulli_sample(k[5], (random::Bernoulli){.probability = 0.3});
+    Bool coin = random::bernoulli_sample(k[5], (random::Bernoulli){.probability = 0.3});
 
     Usize pick = 0;                                         // a weighted index: std::categorical (smith-categorical)
 
