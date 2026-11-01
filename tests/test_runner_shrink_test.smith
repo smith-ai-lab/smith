@@ -13,6 +13,7 @@ import scratch;
 // Each test's memory: what the helpers build and what the commands print, given back after the test.
 constexpr usize memory_size = 1U << 22;
 
+// A runner of its own build, for the cases that read symbolized paths, which a shared runner cannot give until #782.
 static scratch::Project shrink_project(const char *files, const char *arguments) {
     scratch::Project p = runner::project("runner_base", files);
     scratch::Run run = runner::build(&p, arguments);
@@ -108,7 +109,7 @@ export void test_runner_shrink_a_failure_that_moves_to_another_check_is_not_kept
 
 // The same command twice, side by side: it takes a minute under --isolate. The addresses of the trace differ per run.
 static void case_a_list_shrinks_to_its_failing_item_and_one_seed_gives_one_case(usize mode) {
-    scratch::Project p = shrink_project("runner_shrink", "");
+    scratch::Project p = runner::built_project("runner_base", "runner_shrink", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -141,7 +142,7 @@ export void test_runner_shrink_a_list_shrinks_to_its_failing_item_and_one_seed_g
 }
 
 static void case_a_normal_failure_shrinks_to_the_value_nearest_three_from_above(usize mode) {
-    scratch::Project p = shrink_project("runner_shrink", "");
+    scratch::Project p = runner::built_project("runner_base", "runner_shrink", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -171,7 +172,7 @@ export void test_runner_shrink_a_normal_failure_shrinks_to_the_value_nearest_thr
 // Shrinking does not make another test depend on it: while one test shrinks for seconds, a healthy test that writes
 // more than 64 KiB, waits a second and writes more, still passes with --timeout 2.
 static void case_a_healthy_test_is_not_disturbed_by_another_shrinking(usize mode) {
-    scratch::Project p = shrink_project("runner_alongside", "-DSAN=0");
+    scratch::Project p = runner::built_project("runner_base", "runner_alongside", "-DSAN=0");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -197,7 +198,7 @@ export void test_runner_shrink_a_healthy_test_is_not_disturbed_by_another_shrink
 // a wall deadline of the runner (a quality budget: how long to keep looking for a smaller case, not a pass/fail limit
 // of any test), so this checks that it ends and not how fast: well past 10 s, a loaded machine's slack.
 static void case_the_budget_stops_shrinking_within_1000_runs_and_ends(usize mode) {
-    scratch::Project p = shrink_project("runner_budget", "-DSAN=0");
+    scratch::Project p = runner::built_project("runner_base", "runner_budget", "-DSAN=0");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
