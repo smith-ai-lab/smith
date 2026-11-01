@@ -40,7 +40,8 @@ export void test_build_verbs_a_refusal_does_not_remember_the_last() {
     char message[512];
     test::check_condition(c::smith_core_verb_name_refused("task", "fmt", message, sizeof message));
     char first[512];
-    c::strcpy(first, message);
+    for (Usize i = 0; i < sizeof first; i++)
+        first[i] = message[i];
     test::check_condition(!c::smith_core_verb_name_refused("task", "other", message, sizeof message));
     test::check_condition(message[0] == '\0');
     test::check_condition(c::smith_core_verb_name_refused("task", "fmt", message, sizeof message));
