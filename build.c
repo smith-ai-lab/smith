@@ -985,6 +985,16 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
                           smith_cat(b, flags, smith_list(b, "-I", "runtime/protocol", nullptr), nullptr));
 }
 
+// One argument of `smith test` as SMITH_ARGS carries it: "%", ";" and newline as %25, %3B and %0A.
+static const char *build_encode_argument(SmithBuild *b, const char *argument) {
+    const char *encoded = "";
+    for (const char *at = argument; *at != '\0'; at++) {
+        const char *piece = *at == '%' ? "%25" : *at == ';' ? "%3B" : *at == '\n' ? "%0A" : smith_fmt(b, "%c", *at);
+        encoded = smith_fmt(b, "%s%s", encoded, piece);
+    }
+    return encoded;
+}
+
 // smith's own tests of behavior, in `.smith` on its test runner (issue #31): every `*_test.smith` (beside the library
 // it tests in `lib/`, or in `tests/`) linked into one runner, built once under AddressSanitizer and UBSan, whose
 // workers run the tests in process, one per core, where a script starts smith for each case. It is a project of its own
@@ -1011,15 +1021,29 @@ static const char *build_units(SmithBuild *b, const BuildConfig *config, const c
                                  "\"$(git rev-parse HEAD)\" .smith/coverage/coverage.tsv; exit $rc",
                                  self);
     const char *inputs[] = {binary, smith_fmt(b, "%s/smith-cc", folder), nullptr};
+    // The arguments of `smith test` (--test a,b from --changed, #441) go to the runner of the units project.
+    const char *const *given = smith_args(b);
+    // With a --shard, units-build compiles only that part's test files (#1200): the build there reads the arguments as
+    // `smith test` does, as the option SMITH_ARGS (each argument after a ";", with "%", ";" and newline as %25, %3B
+    // and %0A).
+    const char *shard_option = "";
+    for (size_t i = 0; given[i] != nullptr; i++) {
+        if (strcmp(given[i], "--shard") != 0) continue;
+        const char *encoded = "";
+        for (size_t k = 0; given[k] != nullptr; k++) {
+            const char *argument = build_encode_argument(b, given[k]);
+            encoded = smith_fmt(b, "%s;%s", encoded, argument);
+        }
+        shard_option = smith_fmt(b, " '-DSMITH_ARGS=%s'", encoded);
+    }
     SmithStep build_step = {
-        .command =
-            (const char *[]){"sh", "-c", smith_fmt(b, "%s env %s \"%s\" build build/tests", setup, environment, self),
-                             "sh", folder, nullptr},
+        .command = (const char *[]){"sh", "-c",
+                                    smith_fmt(b, "%s env %s \"%s\" build%s build/tests", setup, environment, self,
+                                              shard_option),
+                                    "sh", folder, nullptr},
         .inputs = inputs,
     };
     smith_task(b, "units-build", &build_step);
-    // The arguments of `smith test` (--test a,b from --changed, #441) go to the runner of the units project.
-    const char *const *given = smith_args(b);
     const char *quoted[256];
     size_t quoted_count = 0;
     // SMITH_TEST_STATS=1 (CI) adds the runner's --stats: a line for each test's CPU time, in the log (#360).
