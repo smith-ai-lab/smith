@@ -4,6 +4,8 @@
 // draws from, so a "value" is the word itself.
 module std::test_shrink_test;
 
+import std::clock;
+import std::random;
 import std::test;
 
 constexpr u64 key = 1;
@@ -16,7 +18,7 @@ static u32 at_least_500(void *context) {
 
 export void test_shrink_a_uniform_failure_shrinks_to_the_boundary() {
     test::Shrunk shrunk = test::shrink_search(at_least_500, nullptr, 3600);
-    test::check_equal(shrunk.length, 1U);
+    test::check_equal(shrunk.count, 1U);
     test::check_equal(shrunk.draws[0].word, 500ULL);
     test::check_equal(shrunk.changed, true);
     test::check_less_equal(shrunk.runs, 1000U);
@@ -48,12 +50,12 @@ static u32 list_has_big_item(void *context) {
 export void test_shrink_a_list_shrinks_to_its_failing_item_and_one_seed_gives_one_case() {
     test::Shrunk first = test::shrink_search(list_has_big_item, nullptr, 3600);
     // the length shrinks as far as the failing item allows: length = item + 1, and the item is 91
-    test::check_equal(first.length, 4U);
+    test::check_equal(first.count, 4U);
     test::check_equal(first.draws[0].word, 3ULL);
     test::check_equal(first.draws[3].word, 91ULL);
     test::Shrunk second = test::shrink_search(list_has_big_item, nullptr, 3600);
-    test::check_equal(second.length, first.length);
-    for (u32 i = 0; i < first.length; i++)
+    test::check_equal(second.count, first.count);
+    for (u32 i = 0; i < first.count; i++)
         test::check_equal(second.draws[i].word, first.draws[i].word);
 }
 
@@ -81,4 +83,65 @@ export void test_shrink_the_budget_stops_shrinking_within_1000_runs() {
     test::Shrunk shrunk = test::shrink_search(many_thresholds, nullptr, 3600);
     test::check_less_equal(shrunk.runs, 1000U);
     test::check_equal(shrunk.changed, true);
+}
+
+// A normal z < 3 fails: the key with a draw of 3 or more. Through the real normal distribution, so the words are the
+// ones a property test draws. It keeps the smallest z that failed.
+typedef struct {
+    u64 bits;
+    f64 smallest;
+} Normal;
+
+static f64 normal_of(random::Key key) {
+    return random::normal_double_sample(key, (random::NormalDouble){.mean = 0, .deviation = 1});
+}
+
+static u32 normal_at_least_three(void *context) {
+    Normal *normal = (Normal *)context;
+    f64 z = normal_of(test::shrink_key(normal->bits));
+    if (z < 3.0) return 0;
+    if (z < normal->smallest) normal->smallest = z;
+    return 1;
+}
+
+export void test_shrink_a_normal_failure_shrinks_to_the_value_nearest_three_from_above() {
+    u64 seed = 1;
+    while (normal_of(random::key_make(seed)) < 3.0) // the first seed that fails
+        seed++;
+    Normal normal = {.bits = seed, .smallest = 1e9};
+    test::Shrunk shrunk = test::shrink_search(normal_at_least_three, &normal, 3600);
+    test::check_equal(shrunk.changed, true);
+    test::check_greater_equal(normal.smallest, 3.0);
+    test::check_less(normal.smallest, 3.0000001);
+}
+
+// The time budget: every run of the predicate takes a second of a fake clock, so a search that has 10 seconds makes 10
+// runs, however many more it would need.
+typedef struct {
+    clock::Handler base; // first: &fake.base is what set_handler takes
+    u64 monotonic;
+} Fake;
+
+static i64 fake_now(clock::Handler *self, i32 which) {
+    (void)which;
+    return (i64)((Fake *)self)->monotonic;
+}
+
+static void fake_sleep(clock::Handler *self, u64 nanoseconds) {
+    ((Fake *)self)->monotonic += nanoseconds;
+}
+
+static u32 one_second_each(void *context) {
+    clock::sleep(clock::second);
+    return many_thresholds(context);
+}
+
+export void test_shrink_the_time_budget_ends_the_search() {
+    Fake fake = {};
+    fake.base.now = fake_now;
+    fake.base.sleep = fake_sleep;
+    clock::Handler *before = clock::set_handler(&fake.base);
+    defer clock::set_handler(before);
+    test::Shrunk shrunk = test::shrink_search(one_second_each, nullptr, 10);
+    test::check_equal(shrunk.runs, 10U);
 }
