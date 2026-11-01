@@ -192,12 +192,21 @@ static ast::TypeExpr *spelled(parse::Parser *p, U32 start, ast::Qualifiers q) {
     return node(start, p, q, {.named = {.path = name}});
 }
 
+// Whether the operand of `typeof` is a reflected member of a path, `T.[f]` or `T->[f]`: the path is read as a value.
+static Bool is_reflected(const parse::Parser *p) {
+    Usize last = path_last(p, 0);
+    if (last == no_path) return false;
+    lex::TokenKind next = parse::peek_at(p, last + 1).kind;
+    if (next != lex::dot && next != lex::arrow) return false;
+    return parse::peek_at(p, last + 2).kind == lex::left_bracket;
+}
+
 // `typeof(e)` or `typeof(T)`: the position is at the keyword.
 static ast::TypeExpr *type_of(parse::Parser *p, U32 start, ast::Qualifiers q) {
     parse::advance(p);
     parse::expect(p, lex::left_paren, "`(` after `typeof`");
     ast::Expr *operand = nullptr;
-    if (starts_type(p, 0)) {
+    if (starts_type(p, 0) && !is_reflected(p)) {
         ast::TypeExpr *inner = parse::type(p);
         operand = ast::expr({.type_value = {.type = inner}});
     } else {
