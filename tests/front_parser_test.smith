@@ -43,12 +43,10 @@ static Str gap_a1() {
            "error-slice-initializer-unread/main.smith\n"
            "error-type-value-import/main.smith\n"
            "generic-fields-doc/docs.smith\n"
-           "generic-fields-error/main.smith\n"
-           "generic-fields/reflect.smith\n";
+           "generic-fields-error/main.smith\n";
 }
 static Str gap_a2() {
-    return "generic-for-range/reflect.smith\n"
-           "generic-private-names/scale.smith\n"
+    return "generic-private-names/scale.smith\n"
            "generic-slice-restrict/pair.smith\n"
            "module-basic/shapes/area.smith\n"
            "module-enum-c-names/mix/modes.smith\n"
