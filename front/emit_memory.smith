@@ -44,25 +44,16 @@ static state::Ty u64_type(state::Emitter *e) {
     return ty;
 }
 
-// The blocks `Ty.element` points to, chained so `release` can free them: `ty` is first, so a block's address is the
-// element's. The head is one per process; an emitter runs one module at a time and `release` empties it.
-struct Owned {
-    state::Ty ty;
-    Owned *next;
-};
-
-static Owned *owned_head = nullptr;
-
-static state::Ty *own(state::Ty element) {
-    Owned *block = mem::alloc(Owned);
+static state::Ty *own(state::Emitter *e, state::Ty element) {
+    state::OwnedTy *block = mem::alloc(state::OwnedTy);
     block->ty = element;
-    block->next = owned_head;
-    owned_head = block;
+    block->next = e->owned;
+    e->owned = block;
     return &block->ty;
 }
 
 static state::Ty pointer_to(state::Emitter *e, state::Ty element, U32 space) {
-    state::Ty *inner = own(element);
+    state::Ty *inner = own(e, element);
     state::Ty ty = {.kind = .pointer,
                     .llvm = state::pointer_type(e, space),
                     .name = "pointer",
@@ -71,8 +62,8 @@ static state::Ty pointer_to(state::Emitter *e, state::Ty element, U32 space) {
     return ty;
 }
 
-static state::Ty array_of(state::Ty element, U64 count) {
-    state::Ty *inner = own(element);
+static state::Ty array_of(state::Emitter *e, state::Ty element, U64 count) {
+    state::Ty *inner = own(e, element);
     state::Ty ty = {.kind = .array, .llvm = c::LLVMArrayType2(element.llvm, count), .name = "array", .element = inner};
     ty.count = count;
     return ty;
@@ -155,7 +146,7 @@ static state::TyResult resolve(state::Emitter *e, const ast::TypeExpr *t) {
             const ast::Expr *count = node->kind.array.count;
             if (count == nullptr || count->kind != .integer)
                 return ty_failf(node->span, "an array length is an integer literal", "");
-            ty = array_of(ty, count->kind.integer.value);
+            ty = array_of(e, ty, count->kind.integer.value);
         }
     }
     return ty;
@@ -928,10 +919,10 @@ export state::Status global_variable(state::Emitter *e, const ast::Decl *d) {
 
 // Give back the record table, its field lists and the `Ty.element` blocks. `emit::module` calls it.
 export void release(state::Emitter *e) {
-    while (owned_head != nullptr) {
-        Owned *next = owned_head->next;
-        mem::free(owned_head);
-        owned_head = next;
+    while (e->owned != nullptr) {
+        state::OwnedTy *next = e->owned->next;
+        mem::free(e->owned);
+        e->owned = next;
     }
     for (Usize i = 0; i < e->record_count; i++)
         mem::free(e->records[i].fields.data);
