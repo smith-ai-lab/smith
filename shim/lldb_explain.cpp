@@ -174,6 +174,21 @@ extern "C" bool smith_explain_attach(long pid, const char *self, char *problem, 
     return true;
 }
 
+// The project folder of the program being debugged: its debug info names source files relative to it (#1351).
+static char project[1024];
+
+extern "C" void smith_lldb_project_of(const char *path, char *out, size_t capacity);
+
+// A source file as the debug info names it, made absolute with the project when it is relative.
+static void source_path(const lldb::SBFileSpec &spec, char *out, size_t capacity) {
+    const char *directory = spec.GetDirectory() != nullptr ? spec.GetDirectory() : "";
+    const char *name = spec.GetFilename() != nullptr ? spec.GetFilename() : "";
+    if (directory[0] == '.' && directory[1] == '\0') directory = "";
+    const char *root = directory[0] != '/' && project[0] != '\0' ? project : "";
+    std::snprintf(out, capacity, "%s%s%s%s%s", root, root[0] != '\0' ? "/" : "", directory,
+                  directory[0] != '\0' ? "/" : "", name);
+}
+
 extern "C" size_t smith_explain_frames(SmithExplainFrame *out, size_t capacity) {
     uint32_t count = thread.GetNumFrames();
     size_t used = 0;
@@ -187,7 +202,7 @@ extern "C" size_t smith_explain_frames(SmithExplainFrame *out, size_t capacity) 
         out[used].line = 0;
         if (entry.IsValid() && entry.GetFileSpec().IsValid()) {
             lldb::SBFileSpec spec = entry.GetFileSpec();
-            std::snprintf(out[used].file, sizeof out[used].file, "%s/%s", spec.GetDirectory(), spec.GetFilename());
+            source_path(spec, out[used].file, sizeof out[used].file);
             out[used].line = entry.GetLine();
         }
     }
@@ -310,6 +325,7 @@ extern "C" bool smith_crash_start(const char *self, const char *const *args, con
                                   SmithCrashStop *stop, char *problem, size_t capacity) {
     if (!start_debugger(self, problem, capacity)) return false;
     lldb::SBError error;
+    smith_lldb_project_of(args[0], project, sizeof project);
     run_target = debugger.CreateTarget(args[0], nullptr, nullptr, true, error);
     if (!error.Success() || !run_target.IsValid()) {
         std::snprintf(problem, capacity, "%s", error.GetCString() != nullptr ? error.GetCString() : "no such program");
