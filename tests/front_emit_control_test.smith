@@ -1,0 +1,623 @@
+// Tests of front::emit_control (#1131, B2 of #1112): functions with `if`, loops, `break`, `continue`, comparisons,
+// `&&`, `||`, `!` and `?:`, built by hand as front::ast trees, emitted as LLVM IR, JITted through front::emit_jit and
+// called; and the errors, each with its span. The memory rules are those of tests/front_emit_arith_test.smith: the tree
+// is built in an arena, the emitter and LLVM use the system's allocator.
+module front_emit_control_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <string.h>;
+
+typedef I32 (*UnaryI32)(I32);
+typedef I32 (*BinaryI32)(I32, I32);
+typedef I32 (*BinaryU32)(U32, U32);
+
+// ---------------------------------------------------------------------------------------------------------------
+// Building trees
+
+static ast::Expr *name(Str text) {
+    return ast::name(text);
+}
+
+static ast::Expr *number(U64 value) {
+    return ast::integer(value);
+}
+
+static ast::Expr *binary(ast::BinaryOp op, ast::Expr *left, ast::Expr *right) {
+    return ast::binary(op, left, right);
+}
+
+static ast::Expr *logical_not(ast::Expr *operand) {
+    ast::UnaryOp op = .logical_not;
+    ast::ExprKind kind = {.unary = {.op = op, .operand = operand}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *truth(Bool value) {
+    ast::ExprKind kind = {.boolean = {.value = value}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *choose(ast::Expr *condition, ast::Expr *then_value, ast::Expr *else_value) {
+    ast::ExprKind kind = {.conditional = {.condition = condition, .then_value = then_value, .else_value = else_value}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *assign(ast::AssignOp op, Str target, ast::Expr *value) {
+    ast::ExprKind kind = {.assign = {.op = op, .target = ast::name(target), .value = value}};
+    return ast::expr(kind);
+}
+
+static ast::Stmt *expression(ast::Expr *value) {
+    ast::StmtKind kind = {.expression = {.value = value}};
+    return ast::stmt(kind);
+}
+
+static ast::Stmt *declare(ast::Decl *variable) {
+    ast::StmtKind kind = {.declaration = {.decl = variable}};
+    return ast::stmt(kind);
+}
+
+static ast::Stmt *give(ast::Expr *value) {
+    return ast::return_value(value);
+}
+
+static ast::Stmt *if_else(ast::Expr *condition, ast::Stmt *then_branch, ast::Stmt *else_branch) {
+    ast::StmtKind kind = {.if_stmt = {.condition = condition, .then_branch = then_branch, .else_branch = else_branch}};
+    return ast::stmt(kind);
+}
+
+static ast::Stmt *while_loop(ast::Expr *condition, ast::Stmt *body) {
+    ast::StmtKind kind = {.while_stmt = {.condition = condition, .body = body}};
+    return ast::stmt(kind);
+}
+
+static ast::Stmt *do_loop(ast::Stmt *body, ast::Expr *condition) {
+    ast::StmtKind kind = {.do_while = {.body = body, .condition = condition}};
+    return ast::stmt(kind);
+}
+
+static ast::Stmt *for_loop(ast::Stmt *init, ast::Expr *condition, ast::Expr *step, ast::Stmt *body) {
+    ast::StmtKind kind = {.for_stmt = {.init = init, .condition = condition, .step = step, .body = body}};
+    return ast::stmt(kind);
+}
+
+static ast::Stmt *block1(ast::Stmt *a) {
+    ast::StmtRef items[1] = {a};
+    return ast::block(items);
+}
+
+static ast::Stmt *block2(ast::Stmt *a, ast::Stmt *b) {
+    ast::StmtRef items[2] = {a, b};
+    return ast::block(items);
+}
+
+static ast::Stmt *block3(ast::Stmt *a, ast::Stmt *b, ast::Stmt *c) {
+    ast::StmtRef items[3] = {a, b, c};
+    return ast::block(items);
+}
+
+// `I32 s = 0;`
+static ast::Stmt *sum_variable() {
+    return declare(ast::variable("s", ast::named("I32"), number(0)));
+}
+
+// An exported function `rtype name(ptype a, ptype b) { items }`.
+static ast::Decl *function_of(Str name, Str ptype, Str rtype, ast::StmtRef items[:]) {
+    ast::Param params[2] = {ast::param("a", ast::named(ptype)), ast::param("b", ast::named(ptype))};
+    ast::Decl *function = ast::function(name, params, ast::named(rtype), ast::block(items));
+    function->exported = true;
+    return function;
+}
+
+// `module front::test` with one function.
+static ast::Module module_of(ast::Decl *function) {
+    ast::DeclRef decls[1] = {function};
+    return ast::new_module("front::test", decls);
+}
+
+// `I32 name(I32 a, I32 b) { items }`
+static ast::Module i32_module(Str name, ast::StmtRef items[:]) {
+    return module_of(function_of(name, "I32", "I32", items));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Memory: the arena holds the tree; the system's allocator serves the emitter and LLVM
+
+struct TreeMemory {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    mem::Allocator *outside;
+};
+
+static void tree_begin(TreeMemory *trees) {
+    trees->memory = test::memory(1U << 22);
+    trees->allocator = arena::allocator(&trees->memory);
+    trees->outside = mem::set_allocator(&trees->allocator.base);
+}
+
+static void tree_end(TreeMemory *trees) {
+    mem::set_allocator(trees->outside);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Running them
+
+// A target with a triple and no data layout.
+static emit::Target target_of(Str triple) {
+    emit::Target target = {};
+    target.triple = triple;
+    return target;
+}
+
+static emit::Options options_for(emit::Target target) {
+    emit::Options options = {};
+    options.target = target;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+// The module as a JIT symbol: emit, hand over to the JIT, look up `symbol`.
+static Usize jit_function(emit_jit::Jit *host, const ast::Module *m, Str symbol) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, m, options_for(host->target));
+    test::check_equal(emitted == .ok, true);
+    Usize address = 0;
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+        emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+        test::check_equal(found == .ok, true);
+        if (found == .ok) address = found.ok;
+    }
+    return address;
+}
+
+// The IR of the module for a target, as text (LLVM's, disposed of by the caller).
+static char *ir_of(const ast::Module *m, emit::Target target) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, m, options_for(target));
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        c::LLVMDisposeModule(emitted.ok);
+    }
+    c::LLVMContextDispose(context);
+    return text;
+}
+
+static Bool contains(const char *text, Str needle) {
+    return c::strstr(text, needle.data) != nullptr; // a literal's text ends with a terminator
+}
+
+// The error of emitting the module, with the context and the half-built module gone. Its message is the caller's to
+// free.
+static emit::Error failure_of(const ast::Module *m) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, m, options_for(target_of("x86_64-unknown-linux-gnu")));
+    test::check_equal(emitted == .error, true);
+    emit::Error error = {};
+    if (emitted == .error) error = emitted.error;
+    c::LLVMContextDispose(context);
+    return error;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Tests
+
+// I32 max(I32 a, I32 b) { if (a > b) { return a; } else { return b; } }
+export void test_front_emit_control_if_else() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[1] = {
+        if_else(binary(.greater, name("a"), name("b")), block1(give(name("a"))), block1(give(name("b"))))};
+    ast::Module m = i32_module("max", items);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 max = (BinaryI32)jit_function(&host, &m, "front::test::max");
+    test::check_equal(max(3, 9), 9);
+    test::check_equal(max(9, 3), 9);
+    test::check_equal(max(-4, -5), -4);
+    test::check_equal(max(7, 7), 7);
+    emit_jit::stop(&host);
+}
+
+// I32 max(I32 a, I32 b) { if (a > b) return a; return b; }
+export void test_front_emit_control_if_without_else() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[2] = {if_else(binary(.greater, name("a"), name("b")), give(name("a")), nullptr),
+                             give(name("b"))};
+    ast::Module m = i32_module("max", items);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 max = (BinaryI32)jit_function(&host, &m, "front::test::max");
+    test::check_equal(max(3, 9), 9);
+    test::check_equal(max(9, 3), 9);
+    emit_jit::stop(&host);
+}
+
+// I32 sum(I32 a, I32 b) { I32 s = 0; I32 i = 0; while (i < a) { s += i; i += 1; } return s; }
+export void test_front_emit_control_while_sum() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[4] = {
+        sum_variable(),
+        declare(ast::variable("i", ast::named("I32"), number(0))),
+        while_loop(binary(.less, name("i"), name("a")),
+                   block2(expression(assign(.add, "s", name("i"))), expression(assign(.add, "i", number(1))))),
+        give(name("s")),
+    };
+    ast::Module m = i32_module("sum", items);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 sum = (BinaryI32)jit_function(&host, &m, "front::test::sum");
+    test::check_equal(sum(0, 0), 0);
+    test::check_equal(sum(1, 0), 0);
+    test::check_equal(sum(5, 0), 10);
+    test::check_equal(sum(100, 0), 4950);
+    emit_jit::stop(&host);
+}
+
+// I32 sum(I32 a, I32 b) { I32 s = 0; for (I32 i = 0; i < a; i += 1) { s += i; } return s; }
+export void test_front_emit_control_for_sum() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[3] = {
+        sum_variable(),
+        for_loop(declare(ast::variable("i", ast::named("I32"), number(0))), binary(.less, name("i"), name("a")),
+                 assign(.add, "i", number(1)), block1(expression(assign(.add, "s", name("i"))))),
+        give(name("s")),
+    };
+    ast::Module m = i32_module("sum", items);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 sum = (BinaryI32)jit_function(&host, &m, "front::test::sum");
+    test::check_equal(sum(0, 0), 0);
+    test::check_equal(sum(5, 0), 10);
+    test::check_equal(sum(100, 0), 4950);
+    emit_jit::stop(&host);
+}
+
+// A `for` with no condition and no step, left by `break`:
+// I32 count(I32 a, I32 b) { I32 s = 0; for (;;) { if (s >= a) break; s += 2; } return s; }
+export void test_front_emit_control_for_with_every_part_absent() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Stmt *leave = if_else(binary(.greater_equal, name("s"), name("a")), ast::stmt(.break_stmt), nullptr);
+    ast::StmtRef items[3] = {
+        sum_variable(),
+        for_loop(nullptr, nullptr, nullptr, block2(leave, expression(assign(.add, "s", number(2))))),
+        give(name("s")),
+    };
+    ast::Module m = i32_module("count", items);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 count = (BinaryI32)jit_function(&host, &m, "front::test::count");
+    test::check_equal(count(0, 0), 0);
+    test::check_equal(count(7, 0), 8);
+    emit_jit::stop(&host);
+}
+
+// I32 sum(I32 a, I32 b) { I32 s = 0; I32 i = 0; do { s += i; i += 1; } while (i < a); return s; }
+export void test_front_emit_control_do_while_runs_the_body_first() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[4] = {
+        sum_variable(),
+        declare(ast::variable("i", ast::named("I32"), number(0))),
+        do_loop(block2(expression(assign(.add, "s", name("i"))), expression(assign(.add, "i", number(1)))),
+                binary(.less, name("i"), name("a"))),
+        give(name("s")),
+    };
+    ast::Module m = i32_module("sum", items);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 sum = (BinaryI32)jit_function(&host, &m, "front::test::sum");
+    test::check_equal(sum(5, 0), 10);
+    test::check_equal(sum(0, 0), 0); // the body ran once, with i == 0
+    test::check_equal(sum(1, 0), 0);
+    emit_jit::stop(&host);
+}
+
+// The sum of the odd numbers below a, stopping before the sum would pass b:
+// I32 odd(I32 a, I32 b) {
+//     I32 s = 0;
+//     for (I32 i = 0; i < a; i += 1) { if (i % 2 == 0) continue; if (s + i > b) break; s += i; }
+//     return s;
+// }
+static I32 odd_expected(I32 a, I32 b) {
+    I32 s = 0;
+    for (I32 i = 0; i < a; i += 1) {
+        if (i % 2 == 0) continue;
+        if (s + i > b) break;
+        s += i;
+    }
+    return s;
+}
+
+export void test_front_emit_control_break_and_continue() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Expr *even = binary(.equal, binary(.remainder, name("i"), number(2)), number(0));
+    ast::Expr *over = binary(.greater, binary(.add, name("s"), name("i")), name("b"));
+    ast::Stmt *body = block3(if_else(even, ast::stmt(.continue_stmt), nullptr),
+                             if_else(over, ast::stmt(.break_stmt), nullptr), expression(assign(.add, "s", name("i"))));
+    ast::StmtRef items[3] = {
+        sum_variable(),
+        for_loop(declare(ast::variable("i", ast::named("I32"), number(0))), binary(.less, name("i"), name("a")),
+                 assign(.add, "i", number(1)), body),
+        give(name("s")),
+    };
+    ast::Module m = i32_module("odd", items);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 odd = (BinaryI32)jit_function(&host, &m, "front::test::odd");
+    test::check_equal(odd(10, 1000), odd_expected(10, 1000)); // 1 + 3 + 5 + 7 + 9 = 25
+    test::check_equal(odd(10, 8), odd_expected(10, 8));       // stops before 5: 1 + 3 = 4
+    test::check_equal(odd(10, 0), odd_expected(10, 0));
+    test::check_equal(odd(0, 5), 0);
+    emit_jit::stop(&host);
+}
+
+// `break` leaves the innermost loop only, and `continue` goes to its own step:
+// I32 nest(I32 a, I32 b) {
+//     I32 s = 0;
+//     for (I32 i = 0; i < a; i += 1) { I32 j = 0; while (true) { j += 1; if (j > b) break; s += 1; } }
+//     return s;
+// }
+export void test_front_emit_control_nested_loops() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Stmt *inner =
+        while_loop(truth(true), block3(expression(assign(.add, "j", number(1))),
+                                       if_else(binary(.greater, name("j"), name("b")), ast::stmt(.break_stmt), nullptr),
+                                       expression(assign(.add, "s", number(1)))));
+    ast::StmtRef items[3] = {
+        sum_variable(),
+        for_loop(declare(ast::variable("i", ast::named("I32"), number(0))), binary(.less, name("i"), name("a")),
+                 assign(.add, "i", number(1)),
+                 block2(declare(ast::variable("j", ast::named("I32"), number(0))), inner)),
+        give(name("s")),
+    };
+    ast::Module m = i32_module("nest", items);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 nest = (BinaryI32)jit_function(&host, &m, "front::test::nest");
+    test::check_equal(nest(3, 4), 12);
+    test::check_equal(nest(5, 0), 0);
+    emit_jit::stop(&host);
+}
+
+// I32 divides(I32 a, I32 b) { if (b != 0 && a / b > 1) return 1; return 0; }  (b == 0 does not divide)
+export void test_front_emit_control_and_does_not_run_its_right_side() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Expr *test_right = binary(.greater, binary(.divide, name("a"), name("b")), number(1));
+    ast::Expr *both = binary(.logical_and, binary(.not_equal, name("b"), number(0)), test_right);
+    ast::StmtRef items[2] = {if_else(both, give(number(1)), nullptr), give(number(0))};
+    ast::Module m = i32_module("divides", items);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 divides = (BinaryI32)jit_function(&host, &m, "front::test::divides");
+    test::check_equal(divides(10, 0), 0);
+    test::check_equal(divides(10, 2), 1);
+    test::check_equal(divides(2, 2), 0);
+    emit_jit::stop(&host);
+}
+
+// I32 divides(I32 a, I32 b) { if (b == 0 || a / b > 1) return 1; return 0; }
+export void test_front_emit_control_or_does_not_run_its_right_side() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Expr *test_right = binary(.greater, binary(.divide, name("a"), name("b")), number(1));
+    ast::Expr *either = binary(.logical_or, binary(.equal, name("b"), number(0)), test_right);
+    ast::StmtRef items[2] = {if_else(either, give(number(1)), nullptr), give(number(0))};
+    ast::Module m = i32_module("divides", items);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 divides = (BinaryI32)jit_function(&host, &m, "front::test::divides");
+    test::check_equal(divides(10, 0), 1);
+    test::check_equal(divides(10, 2), 1);
+    test::check_equal(divides(2, 2), 0);
+    emit_jit::stop(&host);
+}
+
+// I32 pick(I32 a, I32 b) { return a > b ? a : b; }, and one that divides only in the chosen branch:
+// I32 quotient(I32 a, I32 b) { return b != 0 ? a / b : 0; }
+export void test_front_emit_control_conditional_evaluates_one_side() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef pick_items[1] = {give(choose(binary(.greater, name("a"), name("b")), name("a"), name("b")))};
+    ast::Module pick_module = i32_module("pick", pick_items);
+    ast::StmtRef quotient_items[1] = {
+        give(choose(binary(.not_equal, name("b"), number(0)), binary(.divide, name("a"), name("b")), number(0)))};
+    ast::Module quotient_module = i32_module("quotient", quotient_items);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 pick = (BinaryI32)jit_function(&host, &pick_module, "front::test::pick");
+    test::check_equal(pick(2, 8), 8);
+    test::check_equal(pick(8, 2), 8);
+    BinaryI32 quotient = (BinaryI32)jit_function(&host, &quotient_module, "front::test::quotient");
+    test::check_equal(quotient(9, 3), 3);
+    test::check_equal(quotient(9, 0), 0);
+    emit_jit::stop(&host);
+}
+
+// `true`, `false` and `!`: I32 f(I32 a, I32 b) { return (true && !false) ? (!(a < b) ? 1 : 2) : 3; }
+export void test_front_emit_control_booleans_and_not() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Expr *inner = choose(logical_not(binary(.less, name("a"), name("b"))), number(1), number(2));
+    ast::Expr *outer = choose(binary(.logical_and, truth(true), logical_not(truth(false))), inner, number(3));
+    ast::StmtRef items[1] = {give(outer)};
+    ast::Module m = i32_module("f", items);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 f = (BinaryI32)jit_function(&host, &m, "front::test::f");
+    test::check_equal(f(1, 2), 2);
+    test::check_equal(f(2, 1), 1);
+    test::check_equal(f(2, 2), 1);
+    emit_jit::stop(&host);
+}
+
+// U32 and I32 compare differently: `a < b` is true for (-1, 0) as I32 and false for (0xFFFFFFFF, 0) as U32.
+// I32 less(T a, T b) { return a < b ? 1 : 0; }
+export void test_front_emit_control_signed_and_unsigned_comparison() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef signed_items[1] = {give(choose(binary(.less, name("a"), name("b")), number(1), number(0)))};
+    ast::Module signed_module = module_of(function_of("less", "I32", "I32", signed_items));
+    ast::StmtRef unsigned_items[1] = {give(choose(binary(.less, name("a"), name("b")), number(1), number(0)))};
+    ast::Module unsigned_module = module_of(function_of("less", "U32", "I32", unsigned_items));
+    ast::StmtRef at_least[1] = {give(choose(binary(.greater_equal, name("a"), name("b")), number(1), number(0)))};
+    ast::Module at_least_module = module_of(function_of("at_least", "U32", "I32", at_least));
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 less = (BinaryI32)jit_function(&host, &signed_module, "front::test::less");
+    test::check_equal(less(-1, 0), 1);
+    test::check_equal(less(0, -1), 0);
+    BinaryU32 below = (BinaryU32)jit_function(&host, &unsigned_module, "front::test::less");
+    test::check_equal(below(0xFFFFFFFFU, 0U), 0);
+    test::check_equal(below(0U, 0xFFFFFFFFU), 1);
+    BinaryU32 above = (BinaryU32)jit_function(&host, &at_least_module, "front::test::at_least");
+    test::check_equal(above(0xFFFFFFFFU, 0U), 1);
+    test::check_equal(above(3U, 3U), 1);
+    test::check_equal(above(2U, 3U), 0);
+    emit_jit::stop(&host);
+}
+
+// The end of a function reached without `return` is a trap, as the arithmetic checks are.
+export void test_front_emit_control_falling_off_the_end_traps() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[1] = {if_else(binary(.greater, name("a"), name("b")), block1(give(name("a"))), nullptr)};
+    ast::Module m = i32_module("half", items);
+    tree_end(&trees);
+    char *text = ir_of(&m, target_of("x86_64-unknown-linux-gnu"));
+    test::check_equal(contains(text, "llvm.trap"), true);
+    test::check_equal(contains(text, "icmp sgt"), true);
+    c::LLVMDisposeMessage(text);
+}
+
+// The comparison is an `i1` in registers.
+export void test_front_emit_control_a_comparison_is_an_i1() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[1] = {give(choose(binary(.less, name("a"), name("b")), number(1), number(0)))};
+    ast::Module m = i32_module("f", items);
+    tree_end(&trees);
+    char *text = ir_of(&m, target_of("x86_64-unknown-linux-gnu"));
+    test::check_equal(contains(text, "br i1"), true);
+    test::check_equal(contains(text, "phi i32"), true);
+    c::LLVMDisposeMessage(text);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Errors
+
+static void check_error(const ast::Module *m, Str message, U32 start, U32 end) {
+    emit::Error error = failure_of(m);
+    test::check_equal(contains(error.message.data, message), true);
+    test::check_equal(error.span.start, start);
+    test::check_equal(error.span.end, end);
+    emit::free_error(error);
+}
+
+export void test_front_emit_control_an_integer_condition_is_an_error() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Expr *condition = name("a");
+    condition->span = (ast::Span){.start = 12, .end = 13};
+    ast::StmtRef items[2] = {if_else(condition, give(number(1)), nullptr), give(number(0))};
+    ast::Module m = i32_module("f", items);
+    tree_end(&trees);
+    check_error(&m, "a condition is a Bool; write `x != 0`", 12U, 13U);
+}
+
+// The same inside a loop, which holds a loop target the error gives back.
+export void test_front_emit_control_an_integer_condition_in_a_loop_is_an_error() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Expr *condition = name("b");
+    condition->span = (ast::Span){.start = 20, .end = 21};
+    ast::StmtRef items[2] = {while_loop(truth(true), block1(if_else(condition, ast::stmt(.break_stmt), nullptr))),
+                             give(number(0))};
+    ast::Module m = i32_module("f", items);
+    tree_end(&trees);
+    check_error(&m, "a condition is a Bool", 20U, 21U);
+}
+
+export void test_front_emit_control_an_integer_operand_of_and_and_not_is_an_error() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Expr *left = name("a");
+    left->span = (ast::Span){.start = 3, .end = 4};
+    ast::StmtRef items[1] = {give(choose(binary(.logical_and, left, truth(true)), number(1), number(0)))};
+    ast::Module m = i32_module("f", items);
+    ast::Expr *operand = name("b");
+    operand->span = (ast::Span){.start = 30, .end = 31};
+    ast::StmtRef not_items[1] = {give(choose(logical_not(operand), number(1), number(0)))};
+    ast::Module not_module = i32_module("g", not_items);
+    ast::Expr *right = name("b");
+    right->span = (ast::Span){.start = 40, .end = 41};
+    ast::StmtRef or_items[1] = {give(choose(binary(.logical_or, truth(false), right), number(1), number(0)))};
+    ast::Module or_module = i32_module("h", or_items);
+    tree_end(&trees);
+    check_error(&m, "a condition is a Bool", 3U, 4U);
+    check_error(&not_module, "a condition is a Bool", 30U, 31U);
+    check_error(&or_module, "a condition is a Bool", 40U, 41U);
+}
+
+export void test_front_emit_control_break_and_continue_outside_a_loop_are_errors() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Stmt *leave = ast::stmt(.break_stmt);
+    leave->span = (ast::Span){.start = 5, .end = 11};
+    ast::StmtRef break_items[2] = {leave, give(number(0))};
+    ast::Module break_module = i32_module("f", break_items);
+    ast::Stmt *go_on = ast::stmt(.continue_stmt);
+    go_on->span = (ast::Span){.start = 8, .end = 17};
+    ast::StmtRef continue_items[2] = {go_on, give(number(0))};
+    ast::Module continue_module = i32_module("g", continue_items);
+    tree_end(&trees);
+    check_error(&break_module, "`break` outside a loop", 5U, 11U);
+    check_error(&continue_module, "`continue` outside a loop", 8U, 17U);
+}
+
+export void test_front_emit_control_switch_is_not_emitted_yet() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtKind kind = {.switch_stmt = {.value = name("a")}};
+    ast::Stmt *choice = ast::stmt(kind);
+    choice->span = (ast::Span){.start = 2, .end = 30};
+    ast::StmtRef items[2] = {choice, give(number(0))};
+    ast::Module m = i32_module("f", items);
+    tree_end(&trees);
+    check_error(&m, "not emitted yet: switch", 2U, 30U);
+}
+
+export void test_front_emit_control_a_constexpr_if_is_an_error() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtKind kind = {.if_stmt = {.condition = truth(true), .then_branch = give(number(1)), .is_constexpr = true}};
+    ast::Stmt *choice = ast::stmt(kind);
+    choice->span = (ast::Span){.start = 1, .end = 9};
+    ast::StmtRef items[2] = {choice, give(number(0))};
+    ast::Module m = i32_module("f", items);
+    tree_end(&trees);
+    check_error(&m, "if constexpr", 1U, 9U);
+}

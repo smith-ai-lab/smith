@@ -1,37 +1,516 @@
-// front::emit_control: control flow for the emitter (B2, #1112). Every handler is a stub with its final signature: it
-// returns "not emitted yet" with the node's span, and B2 fills the bodies without touching front/emit.smith. The
-// protocol (work stack, value stack, continuations) is at the top of front/emit.smith.
+// front::emit_control: control flow for the emitter (B2, #1131 of #1112). Statements: `if`, `while`, `do while`, `for`,
+// `break`, `continue`; expressions: comparisons, `&&`, `||` (short circuit: blocks and a phi), `!`, `?:` and `true`
+// and `false`. `switch`, `goto`, labels and `defer` are later tickets and keep their `not emitted yet`.
 //
-// Statements: if, while, do-while, for, break, continue, switch, goto, labeled, defer. Expressions: comparisons
-// (`binary` with a comparison operator), `logical_and` and `logical_or`, `logical_not`, `conditional`, `boolean`.
-module front::emit_control;
+// How it works with the walk (the protocol is at the top of front/emit.smith): a statement makes its blocks, then
+// pushes its pieces as work in reverse order, so they run as: the condition (an `eval`), `branch_on_condition`, the
+// body, a continuation that closes the loop or branch. A continuation reads the node it needs from `Work.stmt` or
+// `Work.expr` and the blocks from `Work.blocks`. A block that already ends in a terminator (after `return`, `break`)
+// gets no branch. `break` and `continue` find their blocks on `Emitter.loops`; a loop pushes its target when its body
+// starts and pops it when it ends, and the last pop gives the slice back.
+//
+// Conditions are `Bool` (the module rule): an integer where a condition is expected is an Error with the condition's
+// span, `a condition is a Bool; write `x != 0``.
 
 import front::ast;
 import front::emit_state as state;
+import std::mem;
+import <llvm-c/Core.h>;
 
-export state::Status if_stmt(state::Emitter *_, const ast::Stmt *s) {
-    return state::not_emitted("if", s->span);
+// ---------------------------------------------------------------------------------------------------------------
+// Helpers
+
+static c::LLVMBasicBlockRef new_block(state::Emitter *e, const char *name) {
+    return c::LLVMAppendBasicBlockInContext(e->context, e->function, name);
 }
 
-export state::Status while_stmt(state::Emitter *_, const ast::Stmt *s) {
-    return state::not_emitted("while", s->span);
+// Branch to `block` unless the current block already ends (a `return`, a `break`).
+static void jump(state::Emitter *e, c::LLVMBasicBlockRef block) {
+    c::LLVMBasicBlockRef here = c::LLVMGetInsertBlock(e->builder);
+    if (c::LLVMGetBasicBlockTerminator(here) == nullptr) c::LLVMBuildBr(e->builder, block);
 }
 
-export state::Status do_while(state::Emitter *_, const ast::Stmt *s) {
-    return state::not_emitted("do while", s->span);
+static void position(state::Emitter *e, c::LLVMBasicBlockRef block) {
+    c::LLVMPositionBuilderAtEnd(e->builder, block);
 }
 
-export state::Status for_stmt(state::Emitter *_, const ast::Stmt *s) {
-    return state::not_emitted("for", s->span);
+static state::Ty bool_type(state::Emitter *e) {
+    state::Ty ty = {};
+    state::scalar_type(e, "Bool", &ty);
+    return ty;
 }
 
-export state::Status break_stmt(state::Emitter *_, const ast::Stmt *s) {
-    return state::not_emitted("break", s->span);
+// The loop targets: the last pop gives the slice back (`realloc(xs, 0)` frees it and gives the empty slice).
+static void push_loop(state::Emitter *e, state::LoopTarget target) {
+    if (e->loop_count == countof(e->loops)) {
+        Usize capacity = countof(e->loops) * 2;
+        if (capacity < 4) capacity = 4;
+        e->loops = mem::realloc(e->loops, capacity);
+    }
+    e->loops[e->loop_count] = target;
+    e->loop_count += 1;
 }
 
-export state::Status continue_stmt(state::Emitter *_, const ast::Stmt *s) {
-    return state::not_emitted("continue", s->span);
+static void pop_loop(state::Emitter *e) {
+    e->loop_count -= 1;
+    if (e->loop_count == 0) e->loops = mem::realloc(e->loops, 0);
 }
+
+// An Error of this module: the walk ends, so the loop targets go back now.
+static state::Status stop(state::Emitter *e, Str message, ast::Span span) {
+    e->loop_count = 0;
+    e->loops = mem::realloc(e->loops, 0);
+    return state::fail(message, span);
+}
+
+// A condition, or an operand of `&&`, `||` and `!`, is a Bool.
+static state::Status require_bool(state::Emitter *e, state::Value value, ast::Span span) {
+    if (value.ty.kind == .boolean) return state::success();
+    return stop(e, "a condition is a Bool; write `x != 0`", span);
+}
+
+static state::Status branch_on_condition(state::Emitter *e, const state::Work *w) {
+    state::Value condition = state::pop_value(e);
+    try require_bool(e, condition, w->expr->span);
+    c::LLVMBuildCondBr(e->builder, condition.llvm, w->blocks[0], w->blocks[1]);
+    position(e, w->blocks[(Usize)w->number]);
+    return state::success();
+}
+
+// Evaluate `condition`, then branch to `yes` or `no` and go on in `yes` (`continue_in` 0) or in `no` (1).
+static void push_condition(state::Emitter *e, const ast::Expr *condition, c::LLVMBasicBlockRef yes,
+                           c::LLVMBasicBlockRef no, U64 continue_in) {
+    state::Work item = {.then = branch_on_condition, .expr = condition, .number = continue_in, .span = condition->span};
+    item.blocks[0] = yes;
+    item.blocks[1] = no;
+    state::push_then(e, item);
+    state::push_eval(e, condition, state::no_hint());
+}
+
+// The value of an expression statement is dropped.
+static state::Status discard(state::Emitter *e, const state::Work *_) {
+    _ = state::pop_value(e);
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// if
+
+// The `then` branch is done: leave for the end, and go on in the `else` block when there is one.
+static state::Status if_after_then(state::Emitter *e, const state::Work *w) {
+    jump(e, w->blocks[1]);
+    if (w->flag)
+        position(e, w->blocks[0]);
+    else
+        position(e, w->blocks[1]);
+    return state::success();
+}
+
+static state::Status if_end(state::Emitter *e, const state::Work *w) {
+    jump(e, w->blocks[0]);
+    position(e, w->blocks[0]);
+    return state::success();
+}
+
+export state::Status if_stmt(state::Emitter *e, const ast::Stmt *s) {
+    if (s->kind != .if_stmt) {
+        return state::fail("not an if", s->span);
+    }
+    const ast::Expr *condition = s->kind.if_stmt.condition;
+    const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
+    const ast::Stmt *else_branch = s->kind.if_stmt.else_branch;
+    if (s->kind.if_stmt.is_constexpr) return stop(e, "`if constexpr` belongs to the type checker", s->span);
+    Bool has_else = else_branch != nullptr;
+    c::LLVMBasicBlockRef then_block = new_block(e, "then");
+    c::LLVMBasicBlockRef else_block = nullptr;
+    if (has_else) else_block = new_block(e, "else");
+    c::LLVMBasicBlockRef end_block = new_block(e, "endif");
+    if (!has_else) else_block = end_block;
+    if (has_else) {
+        state::Work end = {.then = if_end, .span = s->span};
+        end.blocks[0] = end_block;
+        state::push_then(e, end);
+        state::push_statement(e, else_branch);
+    }
+    state::Work after = {.then = if_after_then, .flag = has_else, .span = s->span};
+    after.blocks[0] = else_block;
+    after.blocks[1] = end_block;
+    state::push_then(e, after);
+    state::push_statement(e, then_branch);
+    push_condition(e, condition, then_block, else_block, 0);
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Loops
+
+static state::Status while_end(state::Emitter *e, const state::Work *w) {
+    jump(e, w->blocks[0]);
+    pop_loop(e);
+    position(e, w->blocks[1]);
+    return state::success();
+}
+
+export state::Status while_stmt(state::Emitter *e, const ast::Stmt *s) {
+    if (s->kind != .while_stmt) {
+        return state::fail("not a while", s->span);
+    }
+    const ast::Expr *condition = s->kind.while_stmt.condition;
+    const ast::Stmt *body = s->kind.while_stmt.body;
+    c::LLVMBasicBlockRef condition_block = new_block(e, "whilecond");
+    c::LLVMBasicBlockRef body_block = new_block(e, "whilebody");
+    c::LLVMBasicBlockRef end_block = new_block(e, "endwhile");
+    jump(e, condition_block);
+    position(e, condition_block);
+    push_loop(e, (state::LoopTarget){.break_block = end_block, .continue_block = condition_block});
+    state::Work end = {.then = while_end, .span = s->span};
+    end.blocks[0] = condition_block;
+    end.blocks[1] = end_block;
+    state::push_then(e, end);
+    state::push_statement(e, body);
+    push_condition(e, condition, body_block, end_block, 0);
+    return state::success();
+}
+
+// The body is done: the condition is evaluated in its own block (`continue` jumps there), then goes on in the end.
+static state::Status do_condition(state::Emitter *e, const state::Work *w) {
+    if (w->stmt->kind != .do_while) {
+        return state::fail("not a do while", w->span);
+    }
+    const ast::Expr *condition = w->stmt->kind.do_while.condition;
+    jump(e, w->blocks[1]);
+    position(e, w->blocks[1]);
+    pop_loop(e);
+    push_condition(e, condition, w->blocks[0], w->blocks[2], 1);
+    return state::success();
+}
+
+export state::Status do_while(state::Emitter *e, const ast::Stmt *s) {
+    if (s->kind != .do_while) {
+        return state::fail("not a do while", s->span);
+    }
+    const ast::Stmt *body = s->kind.do_while.body;
+    c::LLVMBasicBlockRef body_block = new_block(e, "dobody");
+    c::LLVMBasicBlockRef condition_block = new_block(e, "docond");
+    c::LLVMBasicBlockRef end_block = new_block(e, "enddo");
+    jump(e, body_block);
+    position(e, body_block);
+    push_loop(e, (state::LoopTarget){.break_block = end_block, .continue_block = condition_block});
+    state::Work next = {.then = do_condition, .stmt = s, .span = s->span};
+    next.blocks[0] = body_block;
+    next.blocks[1] = condition_block;
+    next.blocks[2] = end_block;
+    state::push_then(e, next);
+    state::push_statement(e, body);
+    return state::success();
+}
+
+static state::Status for_back(state::Emitter *e, const state::Work *w) {
+    jump(e, w->blocks[0]);
+    return state::success();
+}
+
+// The body is done: the step runs in its own block (`continue` jumps there), then back to the condition.
+static state::Status for_step(state::Emitter *e, const state::Work *w) {
+    if (w->stmt->kind != .for_stmt) {
+        return state::fail("not a for", w->span);
+    }
+    const ast::Expr *step = w->stmt->kind.for_stmt.step;
+    jump(e, w->blocks[0]);
+    position(e, w->blocks[0]);
+    if (step == nullptr) {
+        jump(e, w->blocks[1]);
+        return state::success();
+    }
+    state::Work back = {.then = for_back, .span = w->span};
+    back.blocks[0] = w->blocks[1];
+    state::push_then(e, back);
+    state::push_then(e, (state::Work){.then = discard, .span = w->span});
+    state::push_eval(e, step, state::no_hint());
+    return state::success();
+}
+
+// The init has run: the condition block, the body and the step.
+static state::Status for_start(state::Emitter *e, const state::Work *w) {
+    if (w->stmt->kind != .for_stmt) {
+        return state::fail("not a for", w->span);
+    }
+    const ast::Expr *condition = w->stmt->kind.for_stmt.condition;
+    const ast::Stmt *body = w->stmt->kind.for_stmt.body;
+    c::LLVMBasicBlockRef end_block = w->blocks[0];
+    c::LLVMBasicBlockRef condition_block = new_block(e, "forcond");
+    c::LLVMBasicBlockRef body_block = new_block(e, "forbody");
+    c::LLVMBasicBlockRef step_block = new_block(e, "forstep");
+    jump(e, condition_block);
+    position(e, condition_block);
+    push_loop(e, (state::LoopTarget){.break_block = end_block, .continue_block = step_block});
+    state::Work next = {.then = for_step, .stmt = w->stmt, .span = w->span};
+    next.blocks[0] = step_block;
+    next.blocks[1] = condition_block;
+    state::push_then(e, next);
+    state::push_statement(e, body);
+    if (condition == nullptr) {
+        jump(e, body_block);
+        position(e, body_block);
+    } else {
+        push_condition(e, condition, body_block, end_block, 0);
+    }
+    return state::success();
+}
+
+static state::Status for_end(state::Emitter *e, const state::Work *w) {
+    pop_loop(e);
+    state::end_scope(e);
+    position(e, w->blocks[0]);
+    return state::success();
+}
+
+// `for (init; condition; step) body`: the init may declare a variable, which lives in the loop's scope; any part may
+// be absent.
+export state::Status for_stmt(state::Emitter *e, const ast::Stmt *s) {
+    if (s->kind != .for_stmt) {
+        return state::fail("not a for", s->span);
+    }
+    const ast::Stmt *init = s->kind.for_stmt.init;
+    if (s->kind.for_stmt.is_constexpr) return stop(e, "`for constexpr` belongs to the type checker", s->span);
+    state::begin_scope(e);
+    c::LLVMBasicBlockRef end_block = new_block(e, "endfor");
+    state::Work end = {.then = for_end, .span = s->span};
+    end.blocks[0] = end_block;
+    state::push_then(e, end);
+    state::Work start = {.then = for_start, .stmt = s, .span = s->span};
+    start.blocks[0] = end_block;
+    state::push_then(e, start);
+    if (init != nullptr) state::push_statement(e, init);
+    return state::success();
+}
+
+export state::Status break_stmt(state::Emitter *e, const ast::Stmt *s) {
+    if (e->loop_count == 0) return stop(e, "`break` outside a loop", s->span);
+    jump(e, e->loops[e->loop_count - 1].break_block);
+    return state::success();
+}
+
+export state::Status continue_stmt(state::Emitter *e, const ast::Stmt *s) {
+    if (e->loop_count == 0) return stop(e, "`continue` outside a loop", s->span);
+    jump(e, e->loops[e->loop_count - 1].continue_block);
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Expressions
+
+// The type a name stands for, as the hint of a literal beside it.
+static state::Hint hint_from_name(state::Emitter *e, const ast::Expr *x) {
+    state::Local local = {};
+    if (x->kind == .name && countof(x->kind.name.path.segments) == 1 &&
+        state::find_local(e, x->kind.name.path.segments[0].text, &local))
+        return state::hint_of(local.ty);
+    return state::no_hint();
+}
+
+static c::LLVMIntPredicate predicate(ast::BinaryOp op, Bool is_signed) {
+    if (op == .equal) return c::LLVMIntEQ;
+    if (op == .less) return is_signed ? c::LLVMIntSLT : c::LLVMIntULT;
+    if (op == .greater) return is_signed ? c::LLVMIntSGT : c::LLVMIntUGT;
+    if (op == .less_equal) return is_signed ? c::LLVMIntSLE : c::LLVMIntULE;
+    if (op == .greater_equal) return is_signed ? c::LLVMIntSGE : c::LLVMIntUGE;
+    return c::LLVMIntNE;
+}
+
+static state::Status compare_finish(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .binary) {
+        return state::fail("not a comparison", w->span);
+    }
+    ast::BinaryOp op = w->expr->kind.binary.op;
+    state::Value right = state::pop_value(e);
+    state::Value left = state::pop_value(e);
+    if (!state::same_type(left.ty, right.ty))
+        return state::failf(w->span, "operands of different types: ", left.ty.name, " and ", right.ty.name);
+    if (left.ty.kind != .integer && left.ty.kind != .boolean && left.ty.kind != .pointer)
+        return state::failf(w->span, "comparison of ", left.ty.name);
+    c::LLVMValueRef out = c::LLVMBuildICmp(e->builder, predicate(op, left.ty.is_signed), left.llvm, right.llvm, "");
+    state::push_value(e, (state::Value){.llvm = out, .ty = bool_type(e)});
+    return state::success();
+}
+
+// The left operand is on the stack: the right one is evaluated as its type.
+static state::Status compare_middle(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .binary) {
+        return state::fail("not a comparison", w->span);
+    }
+    const ast::Expr *right = w->expr->kind.binary.right;
+    state::Value left = state::peek_value(e);
+    state::push_then(e, (state::Work){.then = compare_finish, .expr = w->expr, .span = w->span});
+    state::push_eval(e, right, state::hint_of(left.ty));
+    return state::success();
+}
+
+// `binary` with `less`, `greater`, `less_equal`, `greater_equal`, `equal` or `not_equal`: signed or unsigned by the
+// operands' type, a Bool (an `i1`) as the result.
+export state::Status comparison(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    if (x->kind != .binary) {
+        return state::fail("not a comparison", x->span);
+    }
+    const ast::Expr *left = x->kind.binary.left;
+    const ast::Expr *right = x->kind.binary.right;
+    state::Hint left_hint = state::no_hint();
+    if (left->kind == .integer) left_hint = hint_from_name(e, right);
+    state::push_then(e, (state::Work){.then = compare_middle, .expr = x, .span = x->span});
+    state::push_eval(e, left, left_hint);
+    return state::success();
+}
+
+// The right side has run: join the two paths with a phi.
+static state::Status logical_finish(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .binary) {
+        return state::fail("not a logical operator", w->span);
+    }
+    ast::BinaryOp op = w->expr->kind.binary.op;
+    ast::Span right_span = w->expr->kind.binary.right->span;
+    state::Value right = state::pop_value(e);
+    try require_bool(e, right, right_span);
+    c::LLVMBasicBlockRef right_end = c::LLVMGetInsertBlock(e->builder);
+    c::LLVMBuildBr(e->builder, w->blocks[1]);
+    position(e, w->blocks[1]);
+    U64 skipped = 0;
+    if (op == .logical_or) skipped = 1;
+    c::LLVMValueRef phi = c::LLVMBuildPhi(e->builder, right.ty.llvm, "");
+    c::LLVMValueRef values[2] = {c::LLVMConstInt(right.ty.llvm, skipped, 0), right.llvm};
+    c::LLVMBasicBlockRef from[2] = {w->blocks[0], right_end};
+    c::LLVMAddIncoming(phi, values, from, 2);
+    state::push_value(e, (state::Value){.llvm = phi, .ty = right.ty});
+    return state::success();
+}
+
+// The left side is on the stack: `&&` goes on to the right side only when it is true, `||` only when it is false.
+static state::Status logical_middle(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .binary) {
+        return state::fail("not a logical operator", w->span);
+    }
+    ast::BinaryOp op = w->expr->kind.binary.op;
+    const ast::Expr *right = w->expr->kind.binary.right;
+    ast::Span left_span = w->expr->kind.binary.left->span;
+    state::Value left = state::pop_value(e);
+    try require_bool(e, left, left_span);
+    c::LLVMBasicBlockRef left_end = c::LLVMGetInsertBlock(e->builder);
+    c::LLVMBasicBlockRef right_block = new_block(e, "rhs");
+    c::LLVMBasicBlockRef end_block = new_block(e, "endlogic");
+    if (op == .logical_and)
+        c::LLVMBuildCondBr(e->builder, left.llvm, right_block, end_block);
+    else
+        c::LLVMBuildCondBr(e->builder, left.llvm, end_block, right_block);
+    position(e, right_block);
+    state::Work finish = {.then = logical_finish, .expr = w->expr, .span = w->span};
+    finish.blocks[0] = left_end;
+    finish.blocks[1] = end_block;
+    state::push_then(e, finish);
+    state::push_eval(e, right, state::no_hint());
+    return state::success();
+}
+
+// `binary` with `logical_and` or `logical_or`: the right side is evaluated only when it is needed.
+export state::Status logical(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    if (x->kind != .binary) {
+        return state::fail("not a logical operator", x->span);
+    }
+    const ast::Expr *left = x->kind.binary.left;
+    state::push_then(e, (state::Work){.then = logical_middle, .expr = x, .span = x->span});
+    state::push_eval(e, left, state::no_hint());
+    return state::success();
+}
+
+static state::Status not_finish(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .unary) {
+        return state::fail("not a logical not", w->span);
+    }
+    ast::Span operand_span = w->expr->kind.unary.operand->span;
+    state::Value operand = state::pop_value(e);
+    try require_bool(e, operand, operand_span);
+    state::push_value(e, (state::Value){.llvm = c::LLVMBuildNot(e->builder, operand.llvm, ""), .ty = operand.ty});
+    return state::success();
+}
+
+// `unary` with `logical_not`.
+export state::Status logical_not(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    if (x->kind != .unary) {
+        return state::fail("not a logical not", x->span);
+    }
+    const ast::Expr *operand = x->kind.unary.operand;
+    state::push_then(e, (state::Work){.then = not_finish, .expr = x, .span = x->span});
+    state::push_eval(e, operand, state::no_hint());
+    return state::success();
+}
+
+// The `else` value has run: join the two paths with a phi. The `then` value is in the item.
+static state::Status conditional_finish(state::Emitter *e, const state::Work *w) {
+    state::Value other = state::pop_value(e);
+    if (!state::same_type(w->ty, other.ty))
+        return state::failf(w->span, "the branches of ?: have different types: ", w->ty.name, " and ", other.ty.name);
+    c::LLVMBasicBlockRef other_end = c::LLVMGetInsertBlock(e->builder);
+    c::LLVMBuildBr(e->builder, w->blocks[1]);
+    position(e, w->blocks[1]);
+    c::LLVMValueRef phi = c::LLVMBuildPhi(e->builder, w->ty.llvm, "");
+    c::LLVMValueRef values[2] = {w->value, other.llvm};
+    c::LLVMBasicBlockRef from[2] = {w->blocks[0], other_end};
+    c::LLVMAddIncoming(phi, values, from, 2);
+    state::push_value(e, (state::Value){.llvm = phi, .ty = w->ty});
+    return state::success();
+}
+
+// The `then` value is on the stack: leave for the end and evaluate the `else` value as its type.
+static state::Status conditional_middle(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .conditional) {
+        return state::fail("not a conditional expression", w->span);
+    }
+    const ast::Expr *else_value = w->expr->kind.conditional.else_value;
+    state::Value chosen = state::pop_value(e);
+    c::LLVMBasicBlockRef chosen_end = c::LLVMGetInsertBlock(e->builder);
+    c::LLVMBuildBr(e->builder, w->blocks[1]);
+    position(e, w->blocks[0]);
+    state::Work finish = {.then = conditional_finish, .ty = chosen.ty, .value = chosen.llvm, .span = w->span};
+    finish.blocks[0] = chosen_end;
+    finish.blocks[1] = w->blocks[1];
+    state::push_then(e, finish);
+    state::push_eval(e, else_value, state::hint_of(chosen.ty));
+    return state::success();
+}
+
+// `condition ? a : b`: only the chosen side is evaluated.
+export state::Status conditional(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    if (x->kind != .conditional) {
+        return state::fail("not a conditional expression", x->span);
+    }
+    const ast::Expr *condition = x->kind.conditional.condition;
+    const ast::Expr *then_value = x->kind.conditional.then_value;
+    const ast::Expr *else_value = x->kind.conditional.else_value;
+    state::Hint then_hint = hint;
+    if (!then_hint.present && then_value->kind == .integer) then_hint = hint_from_name(e, else_value);
+    c::LLVMBasicBlockRef then_block = new_block(e, "qthen");
+    c::LLVMBasicBlockRef else_block = new_block(e, "qelse");
+    c::LLVMBasicBlockRef end_block = new_block(e, "qend");
+    state::Work middle = {.then = conditional_middle, .expr = x, .span = x->span};
+    middle.blocks[0] = else_block;
+    middle.blocks[1] = end_block;
+    state::push_then(e, middle);
+    state::push_eval(e, then_value, then_hint);
+    push_condition(e, condition, then_block, else_block, 0);
+    return state::success();
+}
+
+export state::Status boolean(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    if (x->kind != .boolean) {
+        return state::fail("not a boolean", x->span);
+    }
+    U64 bit = 0;
+    if (x->kind.boolean.value) bit = 1;
+    state::Ty ty = bool_type(e);
+    state::push_value(e, (state::Value){.llvm = c::LLVMConstInt(ty.llvm, bit, 0), .ty = ty});
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Later tickets: they keep their `not emitted yet`
 
 export state::Status switch_stmt(state::Emitter *_, const ast::Stmt *s) {
     return state::not_emitted("switch", s->span);
@@ -47,29 +526,6 @@ export state::Status labeled(state::Emitter *_, const ast::Stmt *s) {
 
 export state::Status defer_stmt(state::Emitter *_, const ast::Stmt *s) {
     return state::not_emitted("defer", s->span);
-}
-
-// `binary` with `less`, `greater`, `less_equal`, `greater_equal`, `equal` or `not_equal`.
-export state::Status comparison(state::Emitter *_, const ast::Expr *x, state::Hint _) {
-    return state::not_emitted("comparison", x->span);
-}
-
-// `binary` with `logical_and` or `logical_or`.
-export state::Status logical(state::Emitter *_, const ast::Expr *x, state::Hint _) {
-    return state::not_emitted("logical operator", x->span);
-}
-
-// `unary` with `logical_not`.
-export state::Status logical_not(state::Emitter *_, const ast::Expr *x, state::Hint _) {
-    return state::not_emitted("logical not", x->span);
-}
-
-export state::Status conditional(state::Emitter *_, const ast::Expr *x, state::Hint _) {
-    return state::not_emitted("conditional expression", x->span);
-}
-
-export state::Status boolean(state::Emitter *_, const ast::Expr *x, state::Hint _) {
-    return state::not_emitted("boolean", x->span);
 }
 
 // Called when a block ends, before its locals go out of scope: B2 runs the `defer`s of that scope here.
