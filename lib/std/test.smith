@@ -3042,6 +3042,12 @@ void list_processes() {
         PsRow *row = &ps_rows[ps_count++];
         *row = (PsRow){.pid = (c::pid_t)pid, .parent = (c::pid_t)parent, .cpu = parse_ps_time(rest)};
         __builtin_snprintf(row->command, sizeof row->command, "%s", word_end + 1);
+        if constexpr (target::os != target::macos) {
+            // Linux's ps counts whole seconds, so a busy test that gets under a second of CPU time in a loaded
+            // machine's window shows no growth and is reported idle (#1241): the process's own CPU clock is exact.
+            u64 exact = explain_cpu_ns(row->pid);
+            if (exact > 0) row->cpu = (f64)exact / 1e9;
+        }
     }
     c::fclose(listing);
     c::waitpid(child, nullptr, 0);
