@@ -456,6 +456,23 @@ static void add_function(state::Emitter *e, state::FunctionInfo info) {
     e->function_count += 1;
 }
 
+// `[[std::inline]]`, `[[std::noinline]]` and `[[std::cold]]` are the LLVM function attributes `alwaysinline`,
+// `noinline` and `cold` (the function index of an attribute list is all ones).
+static void add_function_attributes(state::Emitter *e, const ast::Decl *d, c::LLVMValueRef function) {
+    for (Usize i = 0; i < countof(d->attributes); i++) {
+        ast::Path name = d->attributes[i].name;
+        if (countof(name.segments) != 2 || !state::same_text(name.segments[0].text, "std")) continue;
+        Str word = name.segments[1].text;
+        Str kind = "";
+        if (state::same_text(word, "inline")) kind = "alwaysinline";
+        if (state::same_text(word, "noinline")) kind = "noinline";
+        if (state::same_text(word, "cold")) kind = "cold";
+        if (countof(kind) == 0) continue;
+        U32 id = c::LLVMGetEnumAttributeKindForName(kind.data, countof(kind));
+        c::LLVMAddAttributeAtIndex(function, 0xFFFFFFFF, c::LLVMCreateEnumAttribute(e->context, id, 0));
+    }
+}
+
 // Pass 2: the function's symbol, type and linkage.
 static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
     if (d->kind != .function) {
@@ -493,6 +510,7 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
     char *label = state::cstr(symbol);
     c::LLVMValueRef function = c::LLVMAddFunction(e->module, label, type);
     mem::free(label);
+    add_function_attributes(e, d, function);
     if (d->exported)
         c::LLVMSetLinkage(function, c::LLVMExternalLinkage);
     else
