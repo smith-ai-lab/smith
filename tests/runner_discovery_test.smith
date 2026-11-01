@@ -5,7 +5,8 @@
 // smith-covers: shim/clang.cpp shim/hook.cpp shim/lld.cpp include/smith/ lib/trace.c lib/std/test.smith
 // smith-covers: lib/std/arena.smith lib/std/random.smith lib/std/mem.smith lib/std/contract.smith lib/std/clock.smith
 // smith-covers: lib/std/console.smith lib/std/env.smith lib/std/files.smith lib/std/math.smith lib/std/failing.smith
-// smith-covers: tests/build_fixtures/std_tests/ tests/build_fixtures/std_tests_empty/ tests/build_fixtures/std_tests_io/
+// smith-covers: tests/build_fixtures/std_tests/ tests/build_fixtures/std_tests_empty/
+// smith-covers: tests/build_fixtures/std_tests_io/
 module runner_discovery_test;
 
 import std::arena;

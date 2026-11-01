@@ -10,7 +10,7 @@
 // smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
 // smith-covers: runtime/docs.c runtime/lint_cache.c shim/clang.cpp shim/format.cpp shim/tidy.cpp shim/tool.h
 // smith-covers: include/smith/ include/smith_core_route.h templates/defaults/ tests/stub.c
-// The routes (smith_core_route), the quiet verbs and smith fmt, lint, docs and check are defined in smith.c and verbs.c.
+// The routes (smith_core_route), the quiet verbs and smith fmt, lint, docs and check are in smith.c and verbs.c.
 module run_routing_test;
 
 import std::arena;
