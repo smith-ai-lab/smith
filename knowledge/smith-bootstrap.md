@@ -16,8 +16,11 @@ rule keeps it the same as a `.smith`), so Apple's clang builds it (`mkdir -p .sm
 .smith/stage0-tool [arguments of smith build]`) and the bootstrap needs no shell. It fetches the tags, walks `git rev-list HEAD` for the first commit that
 has a release `stage0-<commit>`, downloads it (`curl` over plain HTTPS from the release's public URL, a child process; no `gh`, no login, no GraphQL, #829), checks the SHA-256 (`scripts/sha256.h`, smith's own, on every platform), unpacks it with `tar` into `.smith/stage0/` and runs
 `.smith/stage0/bin/smith build` with that `bin/` first on `PATH`, so its `smith-cc` is the `CC` of the build. Nothing in
-the repository records which release to use. `~/.cache/smith/llvm` (`smith build llvm`, about 9 minutes once) must be there
-already; `smith build` says so when it is not (the default target stops, `llvm` and `clean` still work).
+the repository records which release to use. Before that build it runs the release's `smith build llvm -Dfetch=1`, which
+puts the published LLVM pack into `~/.cache/smith/llvm/<name>` when it is not there (about 1.6 GB, minutes) and does
+nothing when it is. When no pack is published for the configuration it stops and says so rather than building LLVM from
+source (about two hours); `SMITH_STAGE0_LLVM=build` allows that. A first argument of `llvm`, `enzyme` or `clean` skips
+the step.
 `SMITH_STAGE0_RELEASE=<tag>` names another release. With a smith installed, `smith build` is all it takes, and CI does that.
 
 **How the build uses it.** `CC` defaults to `smith-cc`. `build.c` compiles `lib/std/{arena,contract,inflate,io,random,text}.smith`
