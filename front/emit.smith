@@ -168,13 +168,13 @@ static state::Status dispatch_binary(state::Emitter *e, const ast::Expr *x, ast:
     }
 }
 
-// A character literal is a `char` (8 bits, unsigned) whatever the hint says; escapes were decoded by the parser.
+// A character literal is a `Char` (8 bits, unsigned) whatever the hint says; escapes were decoded by the parser.
 static state::Status character_literal(state::Emitter *e, const ast::Expr *x) {
     if (x->kind != .character) {
         return state::fail("not a character literal", x->span);
     }
     state::Ty ty = {};
-    state::scalar_type(e, "char", &ty);
+    state::scalar_type(e, "Char", &ty);
     U64 value = x->kind.character.value;
     if (value > 255) return state::failf(x->span, "character literal ", value, " does not fit char");
     state::push_value(e, (state::Value){.llvm = c::LLVMConstInt(ty.llvm, value, 0), .ty = ty});

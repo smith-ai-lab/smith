@@ -1,4 +1,4 @@
-// Tests of `char` and character literals in the emitter (K4, #1345 of #1112): `char` is an 8-bit unsigned integer in
+// Tests of `Char` and character literals in the emitter (K4, #1345 of #1112): `Char` is an 8-bit unsigned integer in
 // the IR, a character literal (escapes included, the parser decoded them) is that constant. Golden IR, and a run test:
 // a function that returns `c == ' '` and one that returns a character literal. Memory rules as in
 // tests/front_emit_memory_test.smith.
@@ -114,20 +114,20 @@ static Bool contains(const char *text, Str needle) {
 // Bool is_space(char c) { return c == ' '; }
 static ast::Decl *is_space_function() {
     ast::StmtRef items[1] = {give(binary(.equal, name("c"), letter(' ')))};
-    ast::Param params[1] = {ast::param("c", ast::named("char"))};
+    ast::Param params[1] = {ast::param("c", ast::named("Char"))};
     return function_of("is_space", params, ast::named("Bool"), items);
 }
 
 // char newline() { return '\n'; }
 static ast::Decl *newline_function() {
     ast::StmtRef items[1] = {give(letter(10))};
-    return function_of0("newline", ast::named("char"), items);
+    return function_of0("newline", ast::named("Char"), items);
 }
 
 // char top() { char c = 'z'; return c; }
 static ast::Decl *top_function() {
-    ast::StmtRef items[2] = {declare(ast::variable("c", ast::named("char"), letter('z'))), give(name("c"))};
-    return function_of0("top", ast::named("char"), items);
+    ast::StmtRef items[2] = {declare(ast::variable("c", ast::named("Char"), letter('z'))), give(name("c"))};
+    return function_of0("top", ast::named("Char"), items);
 }
 
 export void test_front_emit_char_golden_ir() {
