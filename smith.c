@@ -3396,6 +3396,46 @@ static void smith_lint_needs_build(int argc, char **argv) {
     }
 }
 
+// `smith lsp def|refs|hover|diag|symbols` in a project (a build file up the tree) that has no compile database (no
+// .smith/compile_commands.json, compile_commands.json or build/compile_commands.json in that folder): clangd would
+// parse with no flags and report the generated headers as missing, an error about the checkout and not the file. Says
+// what is missing and the command that makes it, and stops (#1252). The editor's server (no query word) is left alone.
+static void smith_lsp_needs_build(int argc, char **argv) {
+    static const char *const queries[] = {"def", "refs", "hover", "diag", "symbols", "-", nullptr};
+    bool query = false;
+    for (int k = 0; argc > 2 && queries[k] != nullptr; k++)
+        query = query || strcmp(argv[2], queries[k]) == 0;
+    for (int i = 2; i < argc; i++)
+        if (smith_defaults_is(argv[i], "compile-commands-dir")) return;
+    char folder[PATH_MAX];
+    if (!query || getcwd(folder, sizeof folder) == nullptr) return;
+    for (int depth = 0; depth < smith_defaults_depth_max; depth++) {
+        char path[PATH_MAX + 64];
+        snprintf(path, sizeof path, "%s/build.c", folder);
+        bool project = access(path, F_OK) == 0;
+        snprintf(path, sizeof path, "%s/build.smith", folder);
+        project = project || access(path, F_OK) == 0;
+        if (project) {
+            static const char *const databases[] = {"/.smith/compile_commands.json", "/compile_commands.json",
+                                                    "/build/compile_commands.json"};
+            for (size_t k = 0; k < sizeof databases / sizeof databases[0]; k++) {
+                snprintf(path, sizeof path, "%s%s", folder, databases[k]);
+                if (access(path, R_OK) == 0) return;
+            }
+            fprintf(stderr,
+                    "smith lsp: %s has no compile database (.smith/compile_commands.json), so the flags and the "
+                    "generated headers of its files are missing.\n"
+                    "smith lsp: run `smith build smith_needs` once (any `smith build` also writes it), then ask "
+                    "again.\n",
+                    folder);
+            exit(smith_exit_usage);
+        }
+        char *slash = strrchr(folder, '/');
+        if (slash == nullptr || slash == folder) return;
+        *slash = '\0';
+    }
+}
+
 // `smith lint FILE` of a front module (#1260): its imports of the other front modules are headers the front runner's
 // project writes under `build/<os>/front-project/.smith/include`, which no compile command names. When a file is named
 // and that folder exists, it is added as `--extra-arg=-I<folder>` (the first one found), unless the caller named it.
@@ -3468,6 +3508,7 @@ static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const c
     for (int i = 2; i < argc && strcmp(tool->command, "lint") == 0; i++) // bounded by the arguments
         by_project = by_project || strcmp(argv[i], "-p") == 0;
     if (strcmp(tool->command, "lint") == 0) smith_lint_needs_build(argc, argv);
+    if (strcmp(tool->command, "lsp") == 0) smith_lsp_needs_build(argc, argv);
     if (strcmp(tool->command, "lint") == 0 && !by_project) {
         (void)smith_lint_front_include(&argc, &argv);
     }

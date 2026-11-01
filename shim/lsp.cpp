@@ -971,7 +971,11 @@ class Session {
 
     // `index` is false for a query that needs no index (`diag`: the file's own parse is its answer).
     bool announce = true; // says "bringing the index up to date" only for a query that waits for it
-    bool start(bool index = true) {
+    bool stuck = false;   // a file the server never answered for: clangd may never exit, so the process must
+    // `first` is the file the query is about: the one that is opened to start the server (#1252). Opening the
+    // project's first source instead (build.c) built its AST with clang-tidy on, which crashed or hung there and
+    // so ended a query about another file.
+    bool start(bool index = true, const std::string &first = "") {
         announce = index;
         std::string root = projectRoot();
         Object workspace{{"symbol", Object{}}};
@@ -988,7 +992,10 @@ class Session {
         // The server reads the project's compile commands, and starts its background index, when the first file is
         // opened: any one of the project's sources.
         std::vector<std::string> files = projectSources();
-        if (!files.empty()) open(files[0]);
+        if (!first.empty() && open(first)) {
+        } else if (!files.empty()) {
+            open(files[0]);
+        }
         if (index) waitForIndex();
         return true;
     }
@@ -1492,6 +1499,7 @@ class Session {
             if (diagnostics.find(uri) == diagnostics.end()) {
                 std::cerr << "smith lsp diag: " << relativePath(path) << ": the server did not read it in 120 s\n";
                 status = 1;
+                stuck = true;
             }
             Published &published = diagnostics[uri];
             for (Value &entry : published.items) {
@@ -1564,7 +1572,11 @@ int runQueries(int argc, char **argv, int (*server)(int, char **)) {
     std::atomic<int> status{0};
     std::thread client([&] {
         Session session(*layer, toServer[1], fromServer[0], toUser);
-        if (!session.start(word != "diag")) {
+        bool diag = word == "diag";
+        std::string about = diag && !operands.empty() ? operands[0] : "";
+        if (!about.empty() && about[0] != '/')
+            about = workingFolder() + "/" + (StringRef(about).starts_with("./") ? about.substr(2) : about);
+        if (!session.start(!diag, about)) {
             std::cerr << "smith lsp: the language server did not start\n";
             status = 2;
         } else {
@@ -1589,6 +1601,7 @@ int runQueries(int argc, char **argv, int (*server)(int, char **)) {
             }
             session.finish();
             status = session.status;
+            if (session.stuck) _exit(1); // clangd's worker is in a parse that does not end: it would never exit
         }
         close(toServer[1]); // clangd reads the end of its input
     });

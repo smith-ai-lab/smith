@@ -38,6 +38,8 @@ smith lsp diag [FILE...]             # the editor's diagnostics, no build; statu
 printf 'def random::Key\nrefs random::split\n' | smith lsp -    # a query a line, one index load
 ```
 
+- In a project (a build file) with no compile database, a query stops with `smith lsp: <folder> has no compile database` and the command that makes it: run `smith build smith_needs` once (any `smith build` writes it), in a fresh clone or worktree too.
+- `diag FILE` opens that file first (not the project's first source), so a new, uncommitted `.smith` file works. A file whose parse never ends (today: any range `for`, `for (T x : xs)`, hangs clangd's token collector, #1252) prints `the server did not read it in 120 s` and exits 1.
 - A name is as written (`arena::push`, `box::area`, a bare `push` is every module's) or a C name (`smith_arena_push`). Output is grep's shape, paths relative to the folder, so it pipes into `grep`, `sort`, `head`.
 - It is the editor's server and index: the first query in a project waits for the index (`smith lsp: bringing the index up to date` on stderr; minutes on a big project, then seconds), a file changed since is indexed again first. Use it instead of grep for a symbol in `.smith`; **a C macro is found with grep** (it is not in the index). `smith lsp diag FILE` after an edit made outside Edit or Write.
 

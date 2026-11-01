@@ -54,6 +54,8 @@ build.c declares none yet, so its test modules and unbuilt sources do. A no-op `
 (0.8 s); a build by another smith (a new compiler) rebuilds every object, which is that smith's doing, not the
 executor's.
 
+**`smith lsp def|refs|hover|diag|symbols` in a project that has not been built stops with the same kind of message as `smith lint FILE`** (`smith_lsp_needs_build`, smith.c, #1252): no compile database means clangd parses with no flags and reports the generated headers as missing, so it names what is missing and says `smith build smith_needs`. The editor's server (no query word) is not stopped. `smith lsp diag FILE` opens FILE first to start the server (shim/lsp.cpp `Session::start`); opening the project's first source (build.c) instead built its AST with clang-tidy on, which crashed in `NotNullTerminatedResultCheck` for a new file. A parse that never ends (a range `for` hangs clangd's `TokenCollector::Builder::discard`, a clang-side bug) ends the query after 120 s with status 1.
+
 **The editor finds `.smith/compile_commands.json`:** `smith lsp` adds clangd's `--compile-commands-dir` for it when
 the project has no root or `build/` one. **The editor has smith's defaults too** (`patches/smith-editor-defaults.patch`):
 `smith lsp` sets clangd's default fallback style to `file:<smith's .clang-format>` (a fallback style may now be
