@@ -21,6 +21,10 @@ import target;
 
 if constexpr (target::os == target::macos) {
     import <libproc.h>;
+} else {
+    import <stdio.h>;
+    import <string.h>;
+import smith::format;
 }
 
 // What the marker tasks share: the marks they write, in order.
@@ -480,6 +484,33 @@ usize thread_count() {
     // NOLINTEND(smith-effects)
 }
 
+// Linux only: the macOS check counts every thread (see the test below).
+if constexpr (target::os != target::macos) {
+    // Threads of this process that are asleep, as the system reports each one: an idle worker waits on its condition
+    // and so sleeps, while a thread already joined is only the system finishing with it (it never sleeps again). Linux
+    // only.
+    usize sleeping_threads() {
+        // NOLINTBEGIN(smith-effects): the system is asked, which is the point
+        c::DIR *folder = c::opendir("/proc/self/task");
+        usize count = 0;
+        for (struct c::dirent *entry = c::readdir(folder); entry != nullptr; entry = c::readdir(folder)) {
+            if (entry->d_name[0] == '.') continue;
+            char path[64] = {};
+            format::to(path, sizeof(path), "/proc/self/task/", (const char *)entry->d_name, "/stat");
+            c::FILE *file = c::fopen(path, "r");
+            if (file == nullptr) continue; // gone already
+            char line[512] = {};
+            c::fgets(line, sizeof(line), file);
+            c::fclose(file);
+            const char *close = c::strrchr(line, ')'); // the state follows the command name
+            if (close != nullptr && close[1] == ' ' && close[2] == 'S') count += 1;
+        }
+        c::closedir(folder);
+        return count;
+        // NOLINTEND(smith-effects)
+    }
+}
+
 // NOLINTBEGIN(smith-preprocessor)
 constexpr i32 processors_name = c::_SC_NPROCESSORS_ONLN;
 constexpr i32 monotonic_clock = c::CLOCK_MONOTONIC;
@@ -511,7 +542,15 @@ export void test_task_workers_start_at_the_first_spawn_and_end_with_the_last_tas
         task::spawn(&group, run_count_threads, &seen);
     }
     test::check_equal(seen, processors()); // one thread per core, the first being main's
-    test::check_equal(thread_count(), (usize)1);
+    // `wait` has joined every worker before it returned: the library says so, with nothing to wait for.
+    test::check_equal(task::workers_running(), (usize)0);
+    if constexpr (target::os == target::macos) {
+        test::check_equal(thread_count(), (usize)1);
+    } else {
+        // Linux lets pthread_join return a moment before it drops the thread from /proc/self/task (#1172), so the
+        // count of threads can still include one that is joined. A worker that was not joined would sleep.
+        test::check_equal(sleeping_threads(), (usize)0);
+    }
 }
 
 // CPU time of the calling thread, in nanoseconds.
