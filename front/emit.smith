@@ -579,6 +579,10 @@ export ModuleResult module(c::LLVMContextRef context, const ast::Module *m, stat
     mem::free(e.scope_marks.data);
     mem::free(e.work.data);
     mem::free(e.values.data);
+    // B2's stacks: a loop or `defer` left open when another handler failed is still on them. Their last pop frees
+    // them already, so this frees what is left; mem::free of null is nothing.
+    mem::free(e.loops.data);
+    mem::free(e.defers.data);
     if (status == .error) {
         c::LLVMDisposeModule(ir);
         return {.error = status.error};
