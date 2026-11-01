@@ -2,16 +2,16 @@
 module geometry::rows;
 import <smith/contract.h>;
 
-export i32 pick(i32 xs[4], usize i) {
+export I32 pick(I32 xs[4], Usize i) {
     c::smith_requires(i < 4);
     return xs[i];
 }
 
-export f32 corner(f32 m[3][2], usize row) {
+export F32 corner(F32 m[3][2], Usize row) {
     c::smith_requires(row < 3);
     return m[row][1];
 }
 
-export i32 unchecked(i32 xs[4], usize i) {
+export I32 unchecked(I32 xs[4], Usize i) {
     return xs[i];
 }

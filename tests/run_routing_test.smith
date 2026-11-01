@@ -18,10 +18,10 @@ import <string.h>;
 import std::mem;
 import target;
 
-constexpr usize memory_size = (usize)4 << 20; // 4 MiB
+constexpr Usize memory_size = (Usize)4 << 20; // 4 MiB
 
 // The first `length` bytes of a text, terminated.
-static const char *prefix(arena::Arena *arena, const char *text, usize length) {
+static const char *prefix(arena::Arena *arena, const char *text, Usize length) {
     char *copy = arena::push_slice(arena, char, length + 1).data;
     mem::copy(copy[0:length], text[0:length]);
     copy[length] = '\0';
@@ -77,14 +77,14 @@ static bool starts_with(const char *text, const char *prefix) {
 }
 
 static bool ends_with(const char *text, const char *suffix) {
-    usize n = c::strlen(text);
-    usize m = c::strlen(suffix);
+    Usize n = c::strlen(text);
+    Usize m = c::strlen(suffix);
     return n >= m && c::strcmp(text + n - m, suffix) == 0;
 }
 
 // The first line of a text.
 static const char *first_line(arena::Arena *arena, const char *text) {
-    usize length = 0;
+    Usize length = 0;
     while (text[length] != '\0' && text[length] != '\n') {
         length++;
     }
@@ -145,17 +145,17 @@ typedef struct {
 // `a|b||c` is the three arguments a, b, "" and c; "" is none. The vector ends with nullptr and starts with `first`
 // and `second` (when it is not null).
 static const char *const *split(arena::Arena *arena, const char *first, const char *second, const char *text) {
-    usize length = c::strlen(text);
-    usize count = length > 0 ? 1 : 0;
-    for (usize i = 0; i < length; i++) {
+    Usize length = c::strlen(text);
+    Usize count = length > 0 ? 1 : 0;
+    for (Usize i = 0; i < length; i++) {
         count += text[i] == '|' ? 1 : 0;
     }
-    usize head = (first != nullptr ? 1 : 0) + (second != nullptr ? 1 : 0);
+    Usize head = (first != nullptr ? 1 : 0) + (second != nullptr ? 1 : 0);
     Field *vector = arena::push_slice(arena, Field, head + count + 1).data;
     char *copy = arena::push_slice(arena, char, length + 1).data;
     mem::copy(copy[0:length], text[0:length]);
     copy[length] = '\0';
-    usize used = 0;
+    Usize used = 0;
     if (first != nullptr) {
         vector[used++].text = first;
     }
@@ -163,7 +163,7 @@ static const char *const *split(arena::Arena *arena, const char *first, const ch
         vector[used++].text = second;
     }
     char *start = copy;
-    for (usize i = 0; length > 0 && i <= length; i++) {
+    for (Usize i = 0; length > 0 && i <= length; i++) {
         if (copy[i] == '|' || copy[i] == '\0') {
             copy[i] = '\0';
             vector[used++].text = start;
@@ -199,11 +199,11 @@ static c::SmithCoreRouted *route_clang(const Unit *u, const char *environment, c
     return route_compiler(u, false, settings, arguments);
 }
 
-static void expect_status_is(const char *name, usize expected, const c::SmithCoreRouted *routed) {
-    scratch::expect_count(name, expected, (usize)routed->status);
+static void expect_status_is(const char *name, Usize expected, const c::SmithCoreRouted *routed) {
+    scratch::expect_count(name, expected, (Usize)routed->status);
 }
 
-static void expect_nothing_ran(const char *name, usize status, const c::SmithCoreRouted *routed) {
+static void expect_nothing_ran(const char *name, Usize status, const c::SmithCoreRouted *routed) {
     expect_status_is(name, status, routed);
     scratch::expect_text(name, "", &routed->exec[0]);
 }
@@ -873,7 +873,7 @@ export void test_run_test_with_an_option_needs_a_build_c() {
 
 // The first line of the failure with the seconds it took taken off: `smith lint: FAILED (status 2, 0.1 s)`.
 static const char *without_seconds(arena::Arena *arena, const char *line) {
-    usize end = c::strlen(line);
+    Usize end = c::strlen(line);
     if (end >= 3 && c::strcmp(line + end - 3, " s)") == 0) {
         end -= 3;
         while (end > 0 && (line[end - 1] == '.' || (line[end - 1] >= '0' && line[end - 1] <= '9'))) {

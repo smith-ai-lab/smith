@@ -28,7 +28,7 @@ export void test_runner_checks_the_scan_writes_the_table_and_the_list_is_in_file
     scratch::expect_text("build: ... and the table", "yes", scratch::exists(&p, "build/tests_list.c") ? "yes" : "no");
     scratch::expect_contains("build: the table lists a test by its name", scratch::read(&p, "build/tests_list.c"),
                              "\"compare\", test_compare");
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run list = runner::tests(&p, iso, "--list");
         scratch::expect_text(runner::label(iso, "list: names, in file order"),
@@ -45,7 +45,7 @@ export void test_runner_checks_a_passing_test_prints_its_line_and_the_summary_on
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::expect_text(runner::label(iso, "pass: the line and the summary, nothing else"),
                              "PASS passing\n\n1 passed, 0 failed",
@@ -65,14 +65,14 @@ export void test_runner_checks_the_runner_alone_prints_a_raw_trace_with_a_and_b(
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "--test compare");
         runner::expect_has(iso, "raw: a failed check prints a trace block", &run, "  smith-trace begin check failed");
         runner::expect_has(iso, "raw: ... with frames", &run, "  smith-trace frame 0x");
         runner::expect_has(iso, "raw: ... and the image's UUID", &run, "  smith-trace image ");
         runner::expect_has(iso, "raw: ... both values with their type, named a and b", &run,
-                           "    a = 7   (i64)\n    b = 6   (i64)");
+                           "    a = 7   (I64)\n    b = 6   (I64)");
         runner::expect_has(iso, "raw: ... then the note and the test's output", &run,
                            "    note: loop 3\n    the test's output");
     }
@@ -86,16 +86,16 @@ export void test_runner_checks_a_failed_ordering_check_names_the_line_and_its_va
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     if (!runner::can_symbolize(&p)) return;
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         runner::expect_failure_block(&p, iso, "compare: the failure block", "compare", "tests/test_checks.smith",
-                                     "test::check_less_equal(x, range.high);", "x = 7, range.high = 6   (i64)",
+                                     "test::check_less_equal(x, range.high);", "x = 7, range.high = 6   (I64)",
                                      "    note: loop 3\n    the test's output\n");
         runner::expect_failure_block(&p, iso, "condition: the failure block", "condition", "tests/test_checks.smith",
                                      "test::check(items > 0);", "the condition is false", "");
-        runner::expect_failure_block(&p, iso, "types: a u32 prints as one, and a literal has no =", "unsigned",
+        runner::expect_failure_block(&p, iso, "types: a U32 prints as one, and a literal has no =", "unsigned",
                                      "tests/test_checks.smith", "test::check_greater_equal(small, 4);",
-                                     "small = 3, 4   (u32)", "");
+                                     "small = 3, 4   (U32)", "");
     }
 }
 
@@ -107,12 +107,12 @@ export void test_runner_checks_each_type_prints_the_way_its_kind_does() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     if (!runner::can_symbolize(&p)) return;
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         runner::expect_failure_block(
-            &p, iso, "types: an f64 prints its shortest text and its hex, so the last bit shows", "float_bits",
+            &p, iso, "types: an F64 prints its shortest text and its hex, so the last bit shows", "float_bits",
             "tests/test_checks.smith", "test::check_equal(0.1 + 0.2, 0.3);",
-            "0.1 + 0.2 = 0.30000000000000004 [0x1.3333333333334p-2], 0.3 = 0.3 [0x1.3333333333333p-2]   (f64)", "");
+            "0.1 + 0.2 = 0.30000000000000004 [0x1.3333333333334p-2], 0.3 = 0.3 [0x1.3333333333333p-2]   (F64)", "");
         runner::expect_failure_block(&p, iso, "types: a char prints as a character", "char", "tests/test_checks.smith",
                                      "test::check_equal(letter, 'b');", "letter = 'a', 'b'   (char)", "");
         runner::expect_failure_block(&p, iso, "types: a bool prints true and false", "bool", "tests/test_checks.smith",
@@ -131,18 +131,18 @@ export void test_runner_checks_check_near_shows_the_values_the_tolerance_and_the
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     if (!runner::can_symbolize(&p)) return;
-    usize line = runner::line_of(&p, "tests/test_checks.smith", "test::check_near(low, high, tolerance);");
-    for (usize mode = 0; mode < 2; mode++) {
+    Usize line = runner::line_of(&p, "tests/test_checks.smith", "test::check_near(low, high, tolerance);");
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         const char *traced = runner::symbolized(&p, iso, "--test near");
         scratch::expect_contains(runner::label(iso, "near: the failure names the line"), traced,
                                  format::push("  check failed at tests/test_checks.smith:", line).data);
-        scratch::expect_contains(runner::label(iso, "near: ... shows the first value"), traced, "= 1 [0x1p+0]   (f64)");
-        scratch::expect_contains(runner::label(iso, "near: ... the second"), traced, "= 1.5 [0x1.8p+0]   (f64)");
+        scratch::expect_contains(runner::label(iso, "near: ... shows the first value"), traced, "= 1 [0x1p+0]   (F64)");
+        scratch::expect_contains(runner::label(iso, "near: ... the second"), traced, "= 1.5 [0x1.8p+0]   (F64)");
         scratch::expect_contains(runner::label(iso, "near: ... the tolerance"), traced,
-                                 "= 0.1 [0x1.999999999999ap-4]   (f64)");
+                                 "= 0.1 [0x1.999999999999ap-4]   (F64)");
         scratch::expect_contains(runner::label(iso, "near: ... and the distance"), traced, "distance");
-        scratch::expect_contains(runner::label(iso, "near: ... which is 0.5"), traced, "= 0.5 [0x1p-1]   (f64)");
+        scratch::expect_contains(runner::label(iso, "near: ... which is 0.5"), traced, "= 0.5 [0x1p-1]   (F64)");
     }
 }
 
@@ -154,16 +154,16 @@ export void test_runner_checks_the_c_checks_print_the_same_block_named_by_their_
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     if (!runner::can_symbolize(&p)) return;
-    usize near_line = runner::line_of(&p, "tests/test_checks_c.c", "smith_check_near_f64(1.0, 1.5, 0.1);");
-    for (usize mode = 0; mode < 2; mode++) {
+    Usize near_line = runner::line_of(&p, "tests/test_checks_c.c", "smith_check_near_f64(1.0, 1.5, 0.1);");
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         runner::expect_failure_block(&p, iso, "c: smith_check_equal_i64 prints the same block, named by the text",
                                      "c_equal", "tests/test_checks_c.c", "smith_check_equal_i64(x, 6);",
-                                     "x = 7, 6   (i64)", "");
+                                     "x = 7, 6   (I64)", "");
         const char *traced = runner::symbolized(&p, iso, "--test c_near");
         scratch::expect_contains(runner::label(iso, "c: smith_check_near_f64 names its line"), traced,
                                  format::push("  check failed at tests/test_checks_c.c:", near_line).data);
-        scratch::expect_contains(runner::label(iso, "c: ... and the distance"), traced, "= 0.5 [0x1p-1]   (f64)");
+        scratch::expect_contains(runner::label(iso, "c: ... and the distance"), traced, "= 0.5 [0x1p-1]   (F64)");
     }
 }
 
@@ -174,7 +174,7 @@ export void test_runner_checks_a_nan_fails_and_a_failed_check_ends_the_test() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run nan = runner::tests(&p, iso, "--test near_nan");
         runner::expect_has(iso, "near: a NaN fails", &nan, "FAIL near_nan");
@@ -196,7 +196,7 @@ export void test_runner_checks_the_api_tests_are_found_and_the_passing_ones_pass
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run list = runner::tests(&p, iso, "--list");
         scratch::expect_text(
@@ -210,7 +210,7 @@ export void test_runner_checks_the_api_tests_are_found_and_the_passing_ones_pass
         runner::expect_has(iso, "api: the ordering checks pass on ordered values of every type", &run,
                            "PASS ordering_passes");
         runner::expect_has(iso, "api: ... not_equal passes on a NaN, which equals nothing", &run, "PASS nan_ne_passes");
-        runner::expect_has(iso, "api: ... near passes for f32 and f64 and for equal infinities", &run,
+        runner::expect_has(iso, "api: ... near passes for F32 and F64 and for equal infinities", &run,
                            "PASS near_generic_passes");
         runner::expect_has(iso, "api: ... same_bits passes for a NaN and -0 against itself", &run,
                            "PASS same_bits_passes");
@@ -235,18 +235,18 @@ export void test_runner_checks_the_ordering_checks_fail_with_the_values_and_thei
     defer mem::set_allocator(outside);
     if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         runner::expect_failure_block(&p, iso, "api: check_less fails on equal values", "lt_fails", file,
-                                     "test::check_less(a, b);", "a = 5, b = 5   (i32)", "");
-        runner::expect_failure_block(&p, iso, "api: check_less_equal fails on a greater value, and prints a u16",
-                                     "le_fails", file, "test::check_less_equal(a, b);", "a = 6, b = 5   (u16)", "");
-        runner::expect_failure_block(&p, iso, "api: check_greater fails on a smaller value, and prints an i64",
-                                     "gt_fails", file, "test::check_greater(a, b);", "a = -5, b = 5   (i64)", "");
-        runner::expect_failure_block(&p, iso, "api: check_greater_equal fails on a smaller value, and prints an i8",
-                                     "ge_fails", file, "test::check_greater_equal(a, b);", "a = -5, b = 5   (i8)", "");
+                                     "test::check_less(a, b);", "a = 5, b = 5   (I32)", "");
+        runner::expect_failure_block(&p, iso, "api: check_less_equal fails on a greater value, and prints a U16",
+                                     "le_fails", file, "test::check_less_equal(a, b);", "a = 6, b = 5   (U16)", "");
+        runner::expect_failure_block(&p, iso, "api: check_greater fails on a smaller value, and prints an I64",
+                                     "gt_fails", file, "test::check_greater(a, b);", "a = -5, b = 5   (I64)", "");
+        runner::expect_failure_block(&p, iso, "api: check_greater_equal fails on a smaller value, and prints an I8",
+                                     "ge_fails", file, "test::check_greater_equal(a, b);", "a = -5, b = 5   (I8)", "");
         runner::expect_failure_block(&p, iso, "api: check_not_equal fails on equal values", "ne_fails", file,
-                                     "test::check_not_equal(count, 5);", "count = 5, 5   (i32)", "");
+                                     "test::check_not_equal(count, 5);", "count = 5, 5   (I32)", "");
     }
 }
 
@@ -259,23 +259,23 @@ export void test_runner_checks_a_nan_is_unordered_so_every_comparison_but_not_eq
     defer mem::set_allocator(outside);
     if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         runner::expect_failure_block(&p, iso, "api: a NaN is not less than a number", "nan_lt", file,
                                      "test::check_less(not_a_number, 1.0);",
-                                     "not_a_number = nan, 1.0 = 1 [0x1p+0]   (f64)", "");
+                                     "not_a_number = nan, 1.0 = 1 [0x1p+0]   (F64)", "");
         runner::expect_failure_block(&p, iso, "api: ... nor is a number less than or equal to it", "nan_le", file,
                                      "test::check_less_equal(1.0, not_a_number);",
-                                     "1.0 = 1 [0x1p+0], not_a_number = nan   (f64)", "");
-        runner::expect_failure_block(&p, iso, "api: ... nor greater, in f32", "nan_gt", file,
+                                     "1.0 = 1 [0x1p+0], not_a_number = nan   (F64)", "");
+        runner::expect_failure_block(&p, iso, "api: ... nor greater, in F32", "nan_gt", file,
                                      "test::check_greater(not_a_number, 1.0f);",
-                                     "not_a_number = nan, 1.0f = 1 [0x1p+0]   (f32)", "");
+                                     "not_a_number = nan, 1.0f = 1 [0x1p+0]   (F32)", "");
         runner::expect_failure_block(&p, iso, "api: ... a NaN is not greater than or equal to itself", "nan_ge", file,
                                      "test::check_greater_equal(not_a_number, not_a_number);",
-                                     "not_a_number = nan, not_a_number = nan   (f32)", "");
+                                     "not_a_number = nan, not_a_number = nan   (F32)", "");
         runner::expect_failure_block(&p, iso, "api: ... and not equal to itself", "nan_eq", file,
                                      "test::check_equal(not_a_number, not_a_number);",
-                                     "not_a_number = nan, not_a_number = nan   (f64)", "");
+                                     "not_a_number = nan, not_a_number = nan   (F64)", "");
     }
 }
 
@@ -288,14 +288,14 @@ export void test_runner_checks_same_bits_tells_zero_from_minus_zero_and_shows_he
     defer mem::set_allocator(outside);
     if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         runner::expect_failure_block(&p, iso, "api: check_same_bits tells 0 from -0, in hex", "same_bits_zero_fails",
                                      file, "test::check_same_bits(zero, -0.0);",
-                                     "zero = 0 [0x0p+0], -0.0 = -0 [-0x0p+0]   (f64)", "");
-        runner::expect_failure_block(&p, iso, "api: ... and f32 values one bit apart", "same_bits_f32_fails", file,
+                                     "zero = 0 [0x0p+0], -0.0 = -0 [-0x0p+0]   (F64)", "");
+        runner::expect_failure_block(&p, iso, "api: ... and F32 values one bit apart", "same_bits_f32_fails", file,
                                      "test::check_same_bits(one, next);",
-                                     "one = 1 [0x1p+0], next = 1.0000001 [0x1.000002p+0]   (f32)", "");
+                                     "one = 1 [0x1p+0], next = 1.0000001 [0x1.000002p+0]   (F32)", "");
     }
 }
 
@@ -308,19 +308,19 @@ export void test_runner_checks_check_near_for_f32_and_infinity_and_pointers_repo
     defer mem::set_allocator(outside);
     if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         runner::expect_failure_block(&p, iso,
-                                     "api: check_near for f32 shows the values, the tolerance and the distance",
+                                     "api: check_near for F32 shows the values, the tolerance and the distance",
                                      "near_f32_fails", file, "test::check_near(a, b, tolerance);",
-                                     "a = 1 [0x1p+0]   (f32)\n           b = 1.5 [0x1.8p+0]   (f32)\n"
-                                     "           tolerance = 0.1 [0x1.99999ap-4]   (f32)\n"
-                                     "           distance = 0.5 [0x1p-1]   (f32)",
+                                     "a = 1 [0x1p+0]   (F32)\n           b = 1.5 [0x1.8p+0]   (F32)\n"
+                                     "           tolerance = 0.1 [0x1.99999ap-4]   (F32)\n"
+                                     "           distance = 0.5 [0x1p-1]   (F32)",
                                      "");
         const char *infinity = runner::symbolized(&p, iso, "--test near_infinity_fails");
         scratch::expect_contains(runner::label(iso, "api: check_near fails on an infinity against a finite value"),
                                  infinity, "check failed at tests/test_api.smith:");
-        scratch::expect_contains(runner::label(iso, "api: ... and the distance is inf"), infinity, "= inf   (f64)");
+        scratch::expect_contains(runner::label(iso, "api: ... and the distance is inf"), infinity, "= inf   (F64)");
         const char *pointer = runner::symbolized(&p, iso, "--test pointer_null_fails");
         scratch::expect_contains(
             runner::label(iso, "api: a non-null pointer against nullptr prints its address and nullptr"), pointer,
@@ -342,7 +342,7 @@ export void test_runner_checks_a_second_argument_that_loses_the_type_is_a_compil
     scratch::Run built = runner::build(&p, "");
     scratch::expect_status("conflict: two types in one check fail to build", 1, &built);
     scratch::expect_contains("conflict: ... naming the type and the cast", built.out,
-                             "converts to u32, the type of its first argument `small`");
+                             "converts to U32, the type of its first argument `small`");
 }
 
 // Section 5b and 5c.
@@ -353,15 +353,15 @@ export void test_runner_checks_a_struct_is_compared_field_by_field() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "");
         runner::expect_has(iso, "struct: equal structs pass, the other three fail", &run, "1 passed, 3 failed");
         runner::expect_has(iso, "struct: a nested field is named by its path", &run,
-                           "a.pair.b = 2.5 [0x1.4p+1]   (f32)");
-        runner::expect_has(iso, "struct: ... and the other struct's value", &run, "b.pair.b = 3.5 [0x1.cp+1]   (f32)");
-        runner::expect_has(iso, "struct: an array element is named by its index", &run, "a.values[2] = 3   (i32)");
-        runner::expect_has(iso, "struct: a bit-field is compared by its value", &run, "b.flags = 2   (i32)");
+                           "a.pair.b = 2.5 [0x1.4p+1]   (F32)");
+        runner::expect_has(iso, "struct: ... and the other struct's value", &run, "b.pair.b = 3.5 [0x1.cp+1]   (F32)");
+        runner::expect_has(iso, "struct: an array element is named by its index", &run, "a.values[2] = 3   (I32)");
+        runner::expect_has(iso, "struct: a bit-field is compared by its value", &run, "b.flags = 2   (I32)");
     }
 }
 
@@ -372,14 +372,14 @@ export void test_runner_checks_two_slices_are_compared_by_count_and_element() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "");
         runner::expect_has(iso, "slice: equal slices pass, the other three fail", &run, "1 passed, 3 failed");
-        runner::expect_has(iso, "slice: the first element that differs is named", &run, "a[1] = 2   (i32)");
-        runner::expect_has(iso, "slice: ... and the other slice's", &run, "b[1] = 5   (i32)");
+        runner::expect_has(iso, "slice: the first element that differs is named", &run, "a[1] = 2   (I32)");
+        runner::expect_has(iso, "slice: ... and the other slice's", &run, "b[1] = 5   (I32)");
         runner::expect_has(iso, "slice: a different count is named", &run, "a.count = 3");
-        runner::expect_has(iso, "slice: a row compares as a slice", &run, "a[0] = 1 [0x1p+0]     (f32)");
+        runner::expect_has(iso, "slice: a row compares as a slice", &run, "a[0] = 1 [0x1p+0]     (F32)");
     }
 }
 

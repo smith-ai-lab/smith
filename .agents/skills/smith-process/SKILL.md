@@ -5,14 +5,14 @@ description: "Using std::process (import std::process; process::run, spawn, star
 
 # Child processes by direct calls: std::process
 
-Call `process::` anywhere. A call returns `result(T, process::Error)`; the error is what the world said (`NotFound`, `Denied`, `TooMany`, `Broken` for a write to a child that has gone, `Gone` for a signal to one that has, `Other`). A program is a slice of C strings, `argv[0]` found on `PATH`. Memory a call returns comes from the current allocator (smith-mem) and is the caller's region.
+Call `process::` anywhere. A call returns `Result(T, process::Error)`; the error is what the world said (`NotFound`, `Denied`, `TooMany`, `Broken` for a write to a child that has gone, `Gone` for a signal to one that has, `Other`). A program is a slice of C strings, `argv[0]` found on `PATH`. Memory a call returns comes from the current allocator (smith-mem) and is the caller's region.
 
 ```smith
 module scratch;
 import std::arena;
 import std::mem;
 import std::process;
-export i32 status_of_echo(arena::Arena *a) {
+export I32 status_of_echo(arena::Arena *a) {
     arena::ArenaAllocator allocator = arena::allocator(a);
     mem::Allocator *before = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(before);
@@ -41,7 +41,7 @@ module scratch_fake;
 import std::arena;
 import std::mem;
 import std::process;
-export usize lines_built(arena::Arena *a) {
+export Usize lines_built(arena::Arena *a) {
     arena::ArenaAllocator allocator = arena::allocator(a);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);

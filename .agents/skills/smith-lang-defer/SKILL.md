@@ -11,14 +11,14 @@ C has no way to run cleanup on every exit from a block. In a `.smith` file with 
 module main;
 import <stdio.h>;
 
-static i32 first_word(i32 n) {
+static I32 first_word(I32 n) {
     defer c::puts("leave");           // runs when the function returns, whichever return
     if (n > 0) return 1;
     c::puts("not early");
     return 0;
 }
 
-i32 main() {
+I32 main() {
     {
         defer c::puts("runs last");
         defer { c::puts("runs first"); c::puts("a block works too"); }

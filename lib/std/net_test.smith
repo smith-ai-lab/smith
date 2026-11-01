@@ -33,12 +33,12 @@ net::Listener value_listener(net::ListenerResult r) {
     }
 }
 
-usize value_count(net::CountResult r) {
+Usize value_count(net::CountResult r) {
     switch (r) {
     case .ok:
         return r.ok;
     case .error:
-        return ~(usize)0;
+        return ~(Usize)0;
     }
 }
 
@@ -71,25 +71,25 @@ net::Error failure_count(net::CountResult r) {
 
 // Whether the bytes are the text.
 bool is_text(net::Bytes got, const char *text) {
-    usize length = __builtin_strlen(text);
+    Usize length = __builtin_strlen(text);
     if (countof(got) != length) return false;
-    for (usize i = 0; i < length; i++) {
-        if (got[i] != (u8)text[i]) return false;
+    for (Usize i = 0; i < length; i++) {
+        if (got[i] != (U8)text[i]) return false;
     }
     return true;
 }
 
-const u8 *bytes_of(const char *text) {
-    return (const u8 *)text;
+const U8 *bytes_of(const char *text) {
+    return (const U8 *)text;
 }
 
 // Reads a connection to its end (a test's peer sends a few pieces).
-usize read_all(net::Connection *connection, u8 buffer[:]) {
-    usize filled = 0;
-    for (usize rounds = 0; rounds < 64; rounds++) {
-        u8 room[:] = buffer[filled:];
+Usize read_all(net::Connection *connection, U8 buffer[:]) {
+    Usize filled = 0;
+    for (Usize rounds = 0; rounds < 64; rounds++) {
+        U8 room[:] = buffer[filled:];
         net::CountResult step = net::read(connection, room);
-        usize count = value_count(step);
+        Usize count = value_count(step);
         if (step == .error || count == 0) break;
         filled += count;
     }
@@ -110,10 +110,10 @@ export void test_net_a_scripted_server_answers_a_request_in_pieces_and_records_i
     test::check_condition(made == .ok);
     net::Connection connection = value_connection(made);
     test::check_equal(value_count(net::write(&connection, bytes_of("GET /")[0:5])), 5);
-    u8 buffer[:] = mem::alloc_slice(u8, 32);
+    U8 buffer[:] = mem::alloc_slice(U8, 32);
     net::CountResult first = net::read(&connection, buffer);
     test::check_equal(value_count(first), 4);
-    usize rest = read_all(&connection, buffer[4:]);
+    Usize rest = read_all(&connection, buffer[4:]);
     test::check_equal(rest, 11);
     test::check_condition(is_text(buffer[0:15], "HTTP/1.1 200 OK"));
     net::CountResult end = net::read(&connection, buffer);
@@ -150,8 +150,8 @@ export void test_net_two_connects_to_one_host_use_two_scripts() {
 
     net::Connection first = value_connection(net::connect("api", 80));
     net::Connection second = value_connection(net::connect("api", 80));
-    u8 buffer[:] = mem::alloc_slice(u8, 8);
-    usize got = read_all(&first, buffer);
+    U8 buffer[:] = mem::alloc_slice(U8, 8);
+    Usize got = read_all(&first, buffer);
     test::check_condition(is_text(buffer[0:got], "one"));
     got = read_all(&second, buffer);
     test::check_condition(is_text(buffer[0:got], "two"));
@@ -177,7 +177,7 @@ export void test_net_a_fake_listener_pairs_a_client_with_the_accepted_connection
     net::Connection client = value_connection(net::connect("127.0.0.1", listener.port));
     net::Connection server = value_connection(net::accept(&listener));
     test::check_equal(value_count(net::write(&client, bytes_of("ping")[0:4])), 4);
-    u8 buffer[:] = mem::alloc_slice(u8, 16);
+    U8 buffer[:] = mem::alloc_slice(U8, 16);
     test::check_equal(value_count(net::read(&server, buffer)), 4);
     test::check_condition(is_text(buffer[0:4], "ping"));
     test::check_equal(value_count(net::write(&server, bytes_of("pong!")[0:5])), 5);
@@ -229,7 +229,7 @@ export void test_net_real_loopback_sockets_carry_bytes_both_ways_and_end_when_cl
     net::Connection server = value_connection(accepted);
 
     test::check_equal(value_count(net::write(&client, bytes_of("hello")[0:5])), 5);
-    u8 buffer[16];
+    U8 buffer[16];
     test::check_equal(value_count(net::read(&server, buffer[0:16])), 5);
     test::check_condition(is_text(buffer[0:5], "hello"));
     test::check_equal(value_count(net::write(&server, bytes_of("hi")[0:2])), 2);
@@ -244,7 +244,7 @@ export void test_net_real_loopback_sockets_carry_bytes_both_ways_and_end_when_cl
 
 export void test_net_a_real_connect_to_a_port_nobody_listens_on_is_refused() {
     net::Listener listener = value_listener(net::listen("127.0.0.1", 0));
-    u16 port = listener.port;
+    U16 port = listener.port;
     net::stop(&listener); // the port is free again
     net::ConnectionResult dialed = net::connect("127.0.0.1", port);
     test::check_condition(dialed == .error);
@@ -265,7 +265,7 @@ export void test_net_a_real_write_to_a_closed_peer_is_reset_and_never_a_signal()
     net::Connection server = value_connection(net::accept(&listener));
     net::close(&server);
     bool reset = false;
-    for (usize attempt = 0; attempt < 64 && !reset;
+    for (Usize attempt = 0; attempt < 64 && !reset;
          attempt++) { // the first writes may be taken before the reset arrives
         clock::sleep(1'000'000);
         net::CountResult sent = net::write(&client, bytes_of("data")[0:4]);
@@ -288,7 +288,7 @@ export void test_net_read_within_on_the_fake_returns_what_is_there_and_times_out
     net::Handler *before = net::set_handler(&fake.base);
     defer net::set_handler(before);
 
-    u8 buffer[:] = mem::alloc_slice(u8, 16);
+    U8 buffer[:] = mem::alloc_slice(U8, 16);
     net::Connection quiet = value_connection(net::connect("quiet", 80));
     test::check_equal(value_count(net::read_within(&quiet, buffer, 1'000'000'000)), 7);
     net::CountResult silent = net::read_within(&quiet, buffer, 1'000'000'000);
@@ -311,7 +311,7 @@ export void test_net_read_within_on_a_real_socket_times_out_when_the_peer_sends_
     net::Listener listener = value_listener(net::listen("127.0.0.1", 0));
     net::Connection client = value_connection(net::connect("127.0.0.1", listener.port));
     net::Connection server = value_connection(net::accept(&listener));
-    u8 buffer[16];
+    U8 buffer[16];
     net::CountResult silent = net::read_within(&client, buffer[0:16], 20'000'000); // 20 ms
     test::check_condition(silent == .error && failure_count(silent) == net::TimedOut);
 

@@ -10,20 +10,20 @@ import std::mem;
 import std::random;
 import std::test;
 
-constexpr usize draws = 10000; // per key
-constexpr u64 seed = 20260101;
+constexpr Usize draws = 10000; // per key
+constexpr U64 seed = 20260101;
 
 // Wilson-Hilferty at z = 5, about 3e-7 in the tail: a correct draw passes.
-static f64 chi_limit(usize degrees) {
-    f64 d = (f64)degrees;
-    f64 t = 1.0 - 2.0 / (9.0 * d) + 5.0 * __builtin_sqrt(2.0 / (9.0 * d));
+static F64 chi_limit(Usize degrees) {
+    F64 d = (F64)degrees;
+    F64 t = 1.0 - 2.0 / (9.0 * d) + 5.0 * __builtin_sqrt(2.0 / (9.0 * d));
     return d * t * t * t;
 }
 
-static f64 chi_square(const usize *observed, const f64 *expected, usize cells) {
-    f64 sum = 0;
-    for (usize i = 0; i < cells; i++) {
-        f64 difference = (f64)observed[i] - expected[i];
+static F64 chi_square(const Usize *observed, const F64 *expected, Usize cells) {
+    F64 sum = 0;
+    for (Usize i = 0; i < cells; i++) {
+        F64 difference = (F64)observed[i] - expected[i];
         sum += difference * difference / expected[i];
     }
     return sum;
@@ -37,8 +37,8 @@ static random::Key take(random::Key *stream) {
     return next[1];
 }
 
-static u64 double_bits(f64 value) {
-    return __builtin_bit_cast(u64, value);
+static U64 double_bits(F64 value) {
+    return __builtin_bit_cast(U64, value);
 }
 
 // Frequencies by chi-square, a zero weight never drawn, one category, and a deterministic table.
@@ -48,47 +48,47 @@ export void test_categorical_frequencies_and_tables(random::Key key) {
     arena::ArenaAllocator allocator = arena::allocator(&a); // the tables live in the current allocator's region
     mem::Allocator *before = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(before);
-    const f64 weights[_] = {1.0, 2.0, 3.0, 0.0, 4.0, 0.5, 9.5};
-    constexpr usize count = 7;
+    const F64 weights[_] = {1.0, 2.0, 3.0, 0.0, 4.0, 0.5, 9.5};
+    constexpr Usize count = 7;
     categorical::Table categorical = categorical::make(weights, count);
     test::check_equal(categorical.count, count);
     test::check_condition(a.used > 0); // from the allocator in force
-    usize observed[count] = {};
-    for (u64 i = 0; i < draws; i++) {
-        usize index = categorical::sample(take(stream), categorical);
+    Usize observed[count] = {};
+    for (U64 i = 0; i < draws; i++) {
+        Usize index = categorical::sample(take(stream), categorical);
         test::check_less(index, count);
         observed[index]++;
     }
     test::check_equal(observed[3], 0);
-    f64 expected[count - 1];
-    usize cells[count - 1];
-    usize used = 0;
-    for (usize i = 0; i < count; i++) {
+    F64 expected[count - 1];
+    Usize cells[count - 1];
+    Usize used = 0;
+    for (Usize i = 0; i < count; i++) {
         if (weights[i] == 0.0) {
             continue;
         }
-        expected[used] = (f64)(draws)*weights[i] / 20.0;
+        expected[used] = (F64)(draws)*weights[i] / 20.0;
         cells[used++] = observed[i];
     }
     test::check_less(chi_square(cells, expected, used), chi_limit(used - 1));
-    categorical::Table one = categorical::make((const f64[_]){3.5}, 1);
-    for (u64 i = 0; i < 100; i++) {
+    categorical::Table one = categorical::make((const F64[_]){3.5}, 1);
+    for (U64 i = 0; i < 100; i++) {
         test::check_equal(categorical::sample(take(stream), one), 0);
     }
     categorical::Table same = categorical::make(weights, count); // construction is deterministic
-    for (usize i = 0; i < count; i++) {
+    for (Usize i = 0; i < count; i++) {
         test::check_equal(same.probability[i], categorical.probability[i]);
         test::check_equal(same.alias[i], categorical.alias[i]);
     }
-    categorical::Table tiny = categorical::make((const f64[_]){0.0, 1.0}, 2);
-    for (u64 i = 0; i < 1000; i++) {
+    categorical::Table tiny = categorical::make((const F64[_]){0.0, 1.0}, 2);
+    for (U64 i = 0; i < 1000; i++) {
         test::check_equal(categorical::sample(take(stream), tiny), 1);
     }
 }
 
 // The pinned values: the table of five weights (probability bits and alias) and the sample of four keys. The numbers
 // are part of the API: a change to any of them is a breaking change.
-static constexpr u64 pinned_values[_] = {
+static constexpr U64 pinned_values[_] = {
     0x3fe0000000000000, // categorical probability
     0x0000000000000004, // categorical alias
     0x3ff0000000000000, // categorical probability
@@ -110,27 +110,27 @@ export void test_categorical_pinned_values() {
     arena::ArenaAllocator allocator = arena::allocator(&a);
     mem::Allocator *before = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(before);
-    const f64 weights[_] = {1.0, 2.0, 3.0, 0.0, 4.0};
+    const F64 weights[_] = {1.0, 2.0, 3.0, 0.0, 4.0};
     categorical::Table table = categorical::make(weights, 5);
-    usize at = 0;
-    for (usize i = 0; i < 5; i++) {
+    Usize at = 0;
+    for (Usize i = 0; i < 5; i++) {
         test::check_equal(double_bits(table.probability[i]), pinned_values[at++]);
-        test::check_equal((u64)table.alias[i], pinned_values[at++]);
+        test::check_equal((U64)table.alias[i], pinned_values[at++]);
     }
     random::Key cases[4];
     random::split(random::key_make(42), cases);
-    for (usize i = 0; i < 4; i++) {
-        test::check_equal((u64)categorical::sample(random::key_make(cases[i].bits), table), pinned_values[at++]);
+    for (Usize i = 0; i < 4; i++) {
+        test::check_equal((U64)categorical::sample(random::key_make(cases[i].bits), table), pinned_values[at++]);
     }
     test::check_equal(at, 14);
 }
 
 typedef struct {
     random::Tap tap;
-    u64 word;
+    U64 word;
 } ConstantTap;
 
-static u64 tap_constant(const random::Tap *tap, u64 key, u64 n, u64 bits) {
+static U64 tap_constant(const random::Tap *tap, U64 key, U64 n, U64 bits) {
     (void)key;
     (void)n;
     (void)bits;
@@ -144,7 +144,7 @@ export void test_categorical_zero_word_gives_column_0() {
     arena::ArenaAllocator allocator = arena::allocator(&a);
     mem::Allocator *before = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(before);
-    categorical::Table table = categorical::make((const f64[_]){1.0, 2.0, 3.0}, 3);
+    categorical::Table table = categorical::make((const F64[_]){1.0, 2.0, 3.0}, 3);
     random::Key key = random::key_make(seed + 13);
     key.tap = &zero.tap;
     test::check_equal(categorical::sample(key, table), 0);

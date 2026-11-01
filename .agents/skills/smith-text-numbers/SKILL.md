@@ -9,10 +9,10 @@ description: "Parsing and writing numbers with std::text: u64, i64, hex, f32 and
 import std::text;
 
 void parse(const char word[:]) {
-    u64 u, h;
-    i64 i;
-    f32 f;
-    f64 d;
+    U64 u, h;
+    I64 i;
+    F32 f;
+    F64 d;
     bool ok = text::parse_u64(word, &u);    // decimal digits
     ok = text::parse_i64(word, &i);         // an optional leading -
     ok = text::parse_hex(word, &h);         // lowercase hex digits, as text::write_hex writes them
@@ -32,8 +32,8 @@ void parse(const char word[:]) {
 ```smith
 import std::text;
 
-usize write_line(char out[:], u64 tick, u64 hash) {   // out has room for the three numbers and two spaces
-    usize length = text::write_u64(out, tick);       // each write needs countof(out) >= text::number_capacity (20), the longest: -9223372036854775808
+Usize write_line(char out[:], U64 tick, U64 hash) {   // out has room for the three numbers and two spaces
+    Usize length = text::write_u64(out, tick);       // each write needs countof(out) >= text::number_capacity (20), the longest: -9223372036854775808
     out[length++] = ' ';
     length += text::write_i64(out[length:countof(out)], -7);
     out[length++] = ' ';

@@ -167,19 +167,19 @@ constexpr char loud_error[_] =
     "error: smith-effect: `bad` is [[std::pure]], but it has the effects console, globals: bad -> "
     "fx::lib::noisy (main.smith:4) "
     "-> printf (lib.smith:4)";
-constexpr char lib_loud[_] = "module fx::lib;\nimport <stdio.h>;\nexport i32 plain(i32 x) { return x + 1; }\n"
-                             "export i32 noisy(i32 x) { c::printf(\"%d\\n\", x); return x; }\n";
-constexpr char lib_quiet[_] = "module fx::lib;\nimport <stdio.h>;\nexport i32 plain(i32 x) { return x + 1; }\nexport "
-                              "i32 noisy(i32 x) { return x; }\n";
+constexpr char lib_loud[_] = "module fx::lib;\nimport <stdio.h>;\nexport I32 plain(I32 x) { return x + 1; }\n"
+                             "export I32 noisy(I32 x) { c::printf(\"%d\\n\", x); return x; }\n";
+constexpr char lib_quiet[_] = "module fx::lib;\nimport <stdio.h>;\nexport I32 plain(I32 x) { return x + 1; }\nexport "
+                              "I32 noisy(I32 x) { return x; }\n";
 
 static void write_modules(const scratch::Project *p) {
     scratch::Run made = scratch::sh(p, "mkdir -p fx");
     scratch::expect_status("the folder of the module", 0, &made);
     scratch::write(p, "fx/lib.smith", lib_loud);
     scratch::write(p, "main.smith",
-                   "module main;\nimport fx::lib as lib;\n[[std::pure]] i32 good(i32 x) { return lib::plain(x); }\n"
-                   "[[std::pure]] i32 bad(i32 x) { return lib::noisy(x); }\n"
-                   "i32 main() { return good(1) + bad(1) - 4; }\n");
+                   "module main;\nimport fx::lib as lib;\n[[std::pure]] I32 good(I32 x) { return lib::plain(x); }\n"
+                   "[[std::pure]] I32 bad(I32 x) { return lib::noisy(x); }\n"
+                   "I32 main() { return good(1) + bad(1) - 4; }\n");
 }
 
 // The effect errors of a build.
@@ -282,14 +282,14 @@ static void stack_project(const scratch::Project *p, const char *source) {
 }
 
 // The frame of a function in a reference's .su file, or -1.
-static i64 frame(const scratch::Project *p, const char *reference, const char *name) {
+static I64 frame(const scratch::Project *p, const char *reference, const char *name) {
     char command[512];
     format::Written written =
         format::to(command, sizeof command, "awk -F'\\t' -v n=", name,
                    " '{ split($1, p, \":\"); if (p[length(p)] == n) print $2 }' ", reference, ".su");
     test::check_condition(written.fits);
     const char *text = scratch::sh(p, command).out;
-    return text[0] == '\0' ? -1 : (i64)c::strtol(text, nullptr, 10);
+    return text[0] == '\0' ? -1 : (I64)c::strtol(text, nullptr, 10);
 }
 
 // A column of a function's row in <program>.stack: 2 is its worst case, 3 the deepest call.
@@ -301,11 +301,11 @@ static const char *row(const scratch::Project *p, const char *program, const cha
     return scratch::sh(p, command).out;
 }
 
-static i64 number(const char *text) {
-    return text[0] == '\0' ? -1 : (i64)c::strtol(text, nullptr, 10);
+static I64 number(const char *text) {
+    return text[0] == '\0' ? -1 : (I64)c::strtol(text, nullptr, 10);
 }
 
-static i64 stack_want(const scratch::Project *p, const char *a, const char *b) {
+static I64 stack_want(const scratch::Project *p, const char *a, const char *b) {
     return frame(p, a, "f") + frame(p, a, "h") + frame(p, b, "g");
 }
 
@@ -317,8 +317,8 @@ export void test_stack_f_h_g_is_the_sum_of_the_three_frames_the_backend_gave() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     stack_project(&p, stack_a);
-    i64 want = stack_want(&p, "ref_a", "ref_b");
-    test::check_greater(want, (i64)0);
+    I64 want = stack_want(&p, "ref_a", "ref_b");
+    test::check_greater(want, (I64)0);
     test::check_equal(number(row(&p, "p", "f", "2")), want);
     scratch::expect_text("stack: the deepest call", "f -> h -> g", row(&p, "p", "f", "3"));
 }
@@ -342,7 +342,7 @@ export void test_stack_a_cycle_of_musttail_calls_is_bounded() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     stack_project(&p, stack_a);
-    test::check_greater_equal(number(row(&p, "p", "even", "2")), (i64)0);
+    test::check_greater_equal(number(row(&p, "p", "even", "2")), (I64)0);
 }
 
 export void test_stack_a_call_of_code_with_no_source_is_at_least_n_plus_unknown() {
@@ -389,14 +389,14 @@ export void test_stack_o2_frames_are_the_optimized_ones_and_the_file_says_so() {
     scratch::expect_status("stack: -O2 objects", 0, &run);
     scratch::Run header = scratch::sh(&p, "grep -q '^# build: \\[opt=2\\]' p3.stack");
     scratch::expect_status("stack: the file says opt=2", 0, &header);
-    i64 sum = 0;
+    I64 sum = 0;
     const char *path = row(&p, "p3", "f", "3");
     for (const char *at = path; *at != '\0';) {
-        usize length = c::strcspn(at, " \n");
+        Usize length = c::strcspn(at, " \n");
         char step[128] = "";
         if (length > 0 && length < sizeof step) mem::copy(step[0:length], at[0:length]);
         if (length > 0 && c::strcmp(step, "->") != 0) {
-            i64 n = frame(&p, "ref2_a", step);
+            I64 n = frame(&p, "ref2_a", step);
             if (n < 0) n = frame(&p, "ref2_b", step);
             sum += n > 0 ? n : 0;
         }
@@ -417,11 +417,11 @@ export void test_stack_a_modules_function_has_its_frame_and_its_callees_in_the_b
     scratch::Run made = scratch::sh(&p, "mkdir -p fx");
     scratch::expect_status("the folder of the module", 0, &made);
     scratch::write(&p, "fx/lib.smith",
-                   "module fx::lib;\nstatic i32 leaf(i32 x) { i32 a[64]; for (i32 i = 0; i < 64; i++) a[i] = x + i; "
+                   "module fx::lib;\nstatic I32 leaf(I32 x) { I32 a[64]; for (I32 i = 0; i < 64; i++) a[i] = x + i; "
                    "return a[x % 64]; }\n"
-                   "export i32 deep(i32 x) { return leaf(x) + 1; }\n");
+                   "export I32 deep(I32 x) { return leaf(x) + 1; }\n");
     scratch::write(&p, "main.smith",
-                   "module main;\nimport fx::lib as lib;\ni32 main() { return lib::deep(1) - lib::deep(1); }\n");
+                   "module main;\nimport fx::lib as lib;\nI32 main() { return lib::deep(1) - lib::deep(1); }\n");
     scratch::Run built = scratch::sh(&p, "smith build");
     scratch::expect_status("stack: the module builds", 0, &built);
     scratch::Run found = scratch::sh(&p, "awk -F'\\t' '$1 == \"fx::lib::deep\" && $2 + 0 > 256 && $3 ~ /^fx::lib::deep "
@@ -444,11 +444,11 @@ export void test_names_the_link_shows_functions_as_written() {
     scratch::expect_status("the folder of the module", 0, &made);
     scratch::write(
         &p, "fx2/lib.smith",
-        "module fx2::lib;\nimport <stdio.h>;\nstatic i32 shout(i32 x) { c::printf(\"%d\\n\", x); return x; }\n"
-        "export i32 loud(i32 x) { return shout(x); }\n");
+        "module fx2::lib;\nimport <stdio.h>;\nstatic I32 shout(I32 x) { c::printf(\"%d\\n\", x); return x; }\n"
+        "export I32 loud(I32 x) { return shout(x); }\n");
     scratch::write(&p, "main.smith",
-                   "module main;\nimport fx2::lib as lib;\n[[std::pure]] i32 bad2(i32 x) { return lib::loud(x); }\n"
-                   "i32 main() { return bad2(1) - 1; }\n");
+                   "module main;\nimport fx2::lib as lib;\n[[std::pure]] I32 bad2(I32 x) { return lib::loud(x); }\n"
+                   "I32 main() { return bad2(1) - 1; }\n");
     scratch::Run run = scratch::sh(&p, "smith build 2>&1 | grep -E 'smith-effect' | sed 's/^main.smith:3:[0-9]*: //'");
     scratch::expect_text(
         "names: the link shows the importer's private function, the export and the module's private function as "
@@ -500,7 +500,7 @@ export void test_the_fix_it_of_an_effects_error_replaces_the_attribute_and_the_f
         "[[std::pure]] int noisy(int x) { puts(\"x\"); return x; }\n"
         "[[std::alloc]] void *single(unsigned n) { FILE *f = fopen(\"d\", \"r\"); (void)f; return malloc(n); }\n");
     const char *flags = "-std=gnu2y -I \"$SMITH_REPO/.smith/include\" -include stdio.h -include stdlib.h";
-    for (usize i = 0; i < 2; i++) {
+    for (Usize i = 0; i < 2; i++) {
         const char *file = i == 0 ? "c.c" : "p.c";
         (void)scratch::sh(&p, join("smith cc ", flags, " -Xclang -fixit -fsyntax-only ", file));
         scratch::Run compiled = scratch::sh(&p, join("smith cc ", flags, " -fsyntax-only ", file));
@@ -614,6 +614,11 @@ export void test_effects_printf_float_c() {
     effects_case("effects_printf_float.c");
 }
 
+// mkdtemp and mkstemp have the files effect (the table), so a ceiling below files is an error.
+export void test_effects_temp_files_smith() {
+    effects_case("effects_temp_files.smith");
+}
+
 export void test_effects_libc_idioms_smith() {
     effects_case("effects_libc_idioms.smith");
 }
@@ -690,14 +695,14 @@ export void test_within_in_modules_the_link_judges_a_function_of_another_module_
     scratch::Run made = scratch::sh(&p, "mkdir -p fx3");
     scratch::expect_status("the folder of the module", 0, &made);
     scratch::write(&p, "fx3/lib.smith",
-                   "module fx3::lib;\nimport <stdio.h>;\nexport i32 plain(i32 x) { return x + 1; }\n"
-                   "export i32 noisy(i32 x) { c::printf(\"%d\\n\", x); return x; }\n");
+                   "module fx3::lib;\nimport <stdio.h>;\nexport I32 plain(I32 x) { return x + 1; }\n"
+                   "export I32 noisy(I32 x) { c::printf(\"%d\\n\", x); return x; }\n");
     scratch::write(&p, "main.smith",
                    "module main;\nimport fx3::lib as lib;\nimport std::effects;\n"
-                   "export i32 run(constexpr auto f, i32 x) {\n"
+                   "export I32 run(constexpr auto f, I32 x) {\n"
                    "    static_assert(effects::within(f, effects::alloc), \"run: f may only allocate\");\n"
                    "    return f(x);\n}\n"
-                   "i32 main() { return run(lib::plain, 1) + run(lib::noisy, 1) - 4; }\n");
+                   "I32 main() { return run(lib::plain, 1) + run(lib::noisy, 1) - 4; }\n");
     scratch::Run run = scratch::sh(&p, "smith build 2>&1 | grep -E 'smith-effect' | sed 's/^main.smith:5:[0-9]*: //'");
     scratch::expect_text("within, modules: the link judges a function of another module and names the chain",
                          "error: smith-effect: static assertion failed: run: f may only allocate: `fx3::lib::noisy` "
@@ -756,15 +761,15 @@ export void test_fails_a_callee_in_another_file_reaches_a_pure_caller_at_the_lin
     scratch::Run made = scratch::sh(&p, "mkdir -p fx4");
     scratch::expect_status("the folder of the module", 0, &made);
     scratch::write(&p, "fx4/lib.smith",
-                   "module fx4::lib;\nimport std::contract;\nexport i32 plain(i32 x) { return x + 1; }\n"
-                   "export i32 get(i32 xs[:], usize i) { return xs[i]; }\n"
-                   "export i32 checked(i32 x) { contract::assert(x > 0); return x; }\n");
+                   "module fx4::lib;\nimport std::contract;\nexport I32 plain(I32 x) { return x + 1; }\n"
+                   "export I32 get(I32 xs[:], Usize i) { return xs[i]; }\n"
+                   "export I32 checked(I32 x) { contract::assert(x > 0); return x; }\n");
     scratch::write(
         &p, "main.smith",
-        "module main;\nimport fx4::lib as lib;\nexport [[std::pure]] i32 good(i32 x) { return lib::plain(x); }\n"
-        "export [[std::pure]] i32 bad(i32 xs[:], usize i) { return lib::get(xs, i); }\n"
-        "export [[std::pure]] i32 asserts(i32 x) { return lib::checked(x); }\n"
-        "i32 main() { return good(1) - 2; }\n");
+        "module main;\nimport fx4::lib as lib;\nexport [[std::pure]] I32 good(I32 x) { return lib::plain(x); }\n"
+        "export [[std::pure]] I32 bad(I32 xs[:], Usize i) { return lib::get(xs, i); }\n"
+        "export [[std::pure]] I32 asserts(I32 x) { return lib::checked(x); }\n"
+        "I32 main() { return good(1) - 2; }\n");
     scratch::Run run =
         scratch::sh(&p, "smith build 2>&1 | grep -E 'smith-effect' | sed 's/^main.smith:[45]:[0-9]*: //'");
     scratch::expect_contains("fails: the chain through the other file", run.out,
@@ -786,8 +791,8 @@ export void test_fails_a_proved_assert_adds_no_fails_in_any_build() {
     defer mem::set_allocator(outside);
     scratch::write(&p, "sure.smith",
                    "module sure;\nimport std::contract;\n"
-                   "export [[std::pure]] i32 low(i32 x) { i32 y = x & 7; contract::assert(y < 8); return y; }\n");
-    scratch::write(&p, "main.smith", "module main;\nimport sure;\ni32 main() { return sure::low(8); }\n");
+                   "export [[std::pure]] I32 low(I32 x) { I32 y = x & 7; contract::assert(y < 8); return y; }\n");
+    scratch::write(&p, "main.smith", "module main;\nimport sure;\nI32 main() { return sure::low(8); }\n");
     scratch::Run before = scratch::sh(&p, "smith build release 2>&1");
     scratch::expect_contains("no proof: the assert is a failure point", before.out,
                              "`sure::low` is [[std::pure]], but it has the effects fails");
@@ -813,21 +818,21 @@ export void test_fails_a_proved_index_adds_no_fails_in_debug() {
     defer mem::set_allocator(outside);
     scratch::write(&p, "pick.smith",
                    "module pick;\nimport bounds;\nimport std::contract;\n"
-                   "export [[std::pure]] i32 at(usize i) {\n"
-                   "    i32 buffer[8] = {1, 2, 3, 4, 5, 6, 7, 8};\n"
-                   "    i32 window[:] = buffer;\n"
-                   "    usize j = bounds::clamp(i);\n"
+                   "export [[std::pure]] I32 at(Usize i) {\n"
+                   "    I32 buffer[8] = {1, 2, 3, 4, 5, 6, 7, 8};\n"
+                   "    I32 window[:] = buffer;\n"
+                   "    Usize j = bounds::clamp(i);\n"
                    "    contract::ensures(true);\n"
                    "    return window[j];\n"
                    "}\n");
     scratch::write(&p, "bounds.smith",
                    "module bounds;\nimport std::contract;\n"
-                   "export [[std::pure]] usize clamp(usize n) {\n"
-                   "    usize r = n < 8 ? n : 7;\n"
+                   "export [[std::pure]] Usize clamp(Usize n) {\n"
+                   "    Usize r = n < 8 ? n : 7;\n"
                    "    contract::ensures(r < 8);\n"
                    "    return r;\n"
                    "}\n");
-    scratch::write(&p, "main.smith", "module main;\nimport pick;\ni32 main() { return pick::at(1) - 2; }\n");
+    scratch::write(&p, "main.smith", "module main;\nimport pick;\nI32 main() { return pick::at(1) - 2; }\n");
     scratch::Run before = scratch::sh(&p, "smith build 2>&1");
     scratch::expect_contains("no proof: the index is a failure point", before.out,
                              "`at` is [[std::pure]], but it has the effects fails");

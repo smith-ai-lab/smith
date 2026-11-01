@@ -9,7 +9,7 @@
 //             C's keyword types, as one named type spelled as written (`unsigned long`); `struct X`, `union X`,
 //             `enum X`; `typeof(e)` or `typeof(T)`
 //   suffixes  `*` (a pointer; qualifiers after it belong to the pointer), `[:]` (a slice), `[N]` (an array)
-//   applied   `Option(T)`, `Result(T, E)`, `Fn(F)`, `lambda(F)`, a user's type function with type or value arguments
+//   applied   `Option(T)`, `Result(T, E)`, `Fn(F)`, `Lambda(F)`, a user's type function with type or value arguments
 //   function  `R (P1, P2)`, `R (P1, ...)` and `R ()`: only as the argument of `Fn(...)`, where a name followed by a
 //             parenthesis group is the result of a function type (`Fn(Bool (I32, I32))`), unless a second group
 //             follows it, which makes the name an applied type (`Fn(Option(I32) (I32))`)
@@ -93,12 +93,12 @@ export Bool path_is_type(const parse::Parser *p, Usize offset) {
     return !text::is(first, "c") || c_path_is_type();
 }
 
-// Whether the lowercase `lambda(` of a lambda parameter's type is `offset` tokens ahead. `lambda` is a name, not a
-// keyword, so the case rule does not make it a type; only the parenthesis after it does (`lambda(I32 (I32)) f`).
+// Whether the `Lambda(` of a lambda parameter's type is `offset` tokens ahead. `lambda` is a name, not a
+// keyword, so the case rule does not make it a type; only the parenthesis after it does (`Lambda(I32 (I32)) f`).
 static Bool is_lambda_type(const parse::Parser *p, Usize offset) {
     lex::Token token = parse::peek_at(p, offset);
     if (token.kind != lex::name || parse::peek_at(p, offset + 1).kind != lex::left_paren) return false;
-    return text::is(parse::text(p, token), "lambda");
+    return text::is(parse::text(p, token), "Lambda");
 }
 
 // Whether a type starts `offset` tokens ahead: a qualifier, a keyword type, `auto`, `struct`, `union`, `enum`,
@@ -192,12 +192,21 @@ static ast::TypeExpr *spelled(parse::Parser *p, U32 start, ast::Qualifiers q) {
     return node(start, p, q, {.named = {.path = name}});
 }
 
+// Whether the operand of `typeof` is a reflected member of a path, `T.[f]` or `T->[f]`: the path is read as a value.
+static Bool is_reflected(const parse::Parser *p) {
+    Usize last = path_last(p, 0);
+    if (last == no_path) return false;
+    lex::TokenKind next = parse::peek_at(p, last + 1).kind;
+    if (next != lex::dot && next != lex::arrow) return false;
+    return parse::peek_at(p, last + 2).kind == lex::left_bracket;
+}
+
 // `typeof(e)` or `typeof(T)`: the position is at the keyword.
 static ast::TypeExpr *type_of(parse::Parser *p, U32 start, ast::Qualifiers q) {
     parse::advance(p);
     parse::expect(p, lex::left_paren, "`(` after `typeof`");
     ast::Expr *operand = nullptr;
-    if (starts_type(p, 0)) {
+    if (starts_type(p, 0) && !is_reflected(p)) {
         ast::TypeExpr *inner = parse::type(p);
         operand = ast::expr({.type_value = {.type = inner}});
     } else {
@@ -455,8 +464,7 @@ static ast::TypeArg argument(parse::Parser *p, Bool is_function) {
 static ast::TypeExpr *applied(parse::Parser *p, U32 start, ast::Qualifiers q, ast::Path name) {
     parse::advance(p);
     Bool is_function = countof(name.segments) == 1 &&
-                       (text::is(name.segments[0].text, "Fn") || text::is(name.segments[0].text, "Lambda") ||
-                        text::is(name.segments[0].text, "lambda"));
+                       (text::is(name.segments[0].text, "Fn") || text::is(name.segments[0].text, "Lambda"));
     ast::TypeArg args[:] = {};
     while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
         args = mem::realloc(args, countof(args) + 1);
@@ -478,7 +486,7 @@ static ast::TypeExpr *read(parse::Parser *p) {
     if (call_shape && base->kind == .named) {
         ast::Path name = base->kind.named.path;
         Str last = name.segments[countof(name.segments) - 1].text;
-        Bool is_lambda = countof(name.segments) == 1 && text::is(last, "lambda");
+        Bool is_lambda = countof(name.segments) == 1 && text::is(last, "Lambda");
         if (countof(last) > 0 && ((last[0] >= 'A' && last[0] <= 'Z') || is_lambda)) base = applied(p, start, q, name);
     }
     return suffixes(p, start, base);

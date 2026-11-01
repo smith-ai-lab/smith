@@ -5,12 +5,12 @@ description: "Using std::net (import std::net; net::connect, connect_tls, listen
 
 # TCP and TLS by direct calls: std::net
 
-Call `net::` anywhere. A call returns `result(T, net::Error)`; the error is what the world said (`NotFound` for a name that does not resolve, `Refused`, `Unreachable`, `TimedOut`, `Reset`, `InUse`, `Denied`, `TooMany`; for TLS `Expired`, `NotYetValid`, `WrongHost`, `Untrusted`, `BadCertificate`, `HandshakeFailed`, `Unsupported` when the system has no TLS stack; `Other`). A host is a name or an address (`const char host[:]`). The calls block, take your buffers and allocate nothing.
+Call `net::` anywhere. A call returns `Result(T, net::Error)`; the error is what the world said (`NotFound` for a name that does not resolve, `Refused`, `Unreachable`, `TimedOut`, `Reset`, `InUse`, `Denied`, `TooMany`; for TLS `Expired`, `NotYetValid`, `WrongHost`, `Untrusted`, `BadCertificate`, `HandshakeFailed`, `Unsupported` when the system has no TLS stack; `Other`). A host is a name or an address (`const char host[:]`). The calls block, take your buffers and allocate nothing.
 
 ```smith
 module scratch;
 import std::net;
-export usize fetch(const u8 request[:], u8 reply[:]) {
+export Usize fetch(const U8 request[:], U8 reply[:]) {
     net::ConnectionResult made = net::connect_tls("example.com", 443);
     switch (made) {
     case .error:
@@ -36,7 +36,7 @@ module scratch_fake;
 import std::arena;
 import std::mem;
 import std::net;
-export usize greeting_size(arena::Arena *a) {
+export Usize greeting_size(arena::Arena *a) {
     arena::ArenaAllocator allocator = arena::allocator(a); // the fake's bytes: the allocator in force
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
@@ -45,7 +45,7 @@ export usize greeting_size(arena::Arena *a) {
     net::Handler *before = net::set_handler(&fake.base);
     defer net::set_handler(before);
     net::ConnectionResult made = net::connect("example.com", 80);
-    u8 buffer[:] = mem::alloc_slice(u8, 16);
+    U8 buffer[:] = mem::alloc_slice(U8, 16);
     switch (made) {
     case .error:
         return 0;

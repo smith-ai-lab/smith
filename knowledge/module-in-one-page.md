@@ -14,7 +14,7 @@ A `.smith` file with a `module` line is C with the footguns removed. Each footgu
 
 ## Names in scope
 
-A name is in scope in a module with no import exactly when the compiler depends on it: `option(T)` and `result(T, E)` (conversions to `.some` and `.ok`, `try`, `errdefer`, and their zero values). Everything else is a library and is imported, `list(T)` included (owner, 2026-10-26: "list is purely for opt-in"). The library's modules are `std::` (#366).
+A name is in scope in a module with no import exactly when the compiler depends on it: `Option(T)` and `Result(T, E)` (conversions to `.some` and `.ok`, `try`, `errdefer`, and their zero values). Everything else is a library and is imported, `list(T)` included (owner, 2026-10-26: "list is purely for opt-in"). The library's modules are `std::` (#366).
 
 ## Memory
 
@@ -35,14 +35,14 @@ Built means in the language today; planned means decided and in an open issue.
 | C form | In a module, instead | Issue | Status |
 |---|---|---|---|
 | a pointer and a length | a slice, `T xs[:]`, checked on every index | slices | built |
-| `int`, `long`, `char` for numbers | sized types, `i32`, `u8`, `usize` | sized types | built |
+| `int`, `long`, `char` for numbers | sized types, `I32`, `U8`, `Usize` | sized types | built |
 | the preprocessor | modules, `target::`, `if constexpr` | preprocessor check | built |
 | hidden effects | effects inferred; `[[std::pure]]` and `[[std::effects(...)]]` are checked ceilings | #207 | built |
 | recursion | a loop; `list(T)` as an explicit stack | #207, #446 | built (direct calls); planned (through pointers, proved stack depth) |
 | indexing or arithmetic on a raw pointer, `p < q` | a slice | #402 | planned |
 | an array parameter, a run-time-sized stack array, `alloca` | a slice; `arena::push_slice` | #422 | planned |
 | `setjmp`, `longjmp` | a `result`, or a task failure | #422, #324 | planned |
-| a null pointer | `T *` is never null; `option(T *)` may be | #86 | planned |
+| a null pointer | `T *` is never null; `Option(T *)` may be | #86 | planned |
 | `void *` converting silently | a written cast, then a typed API | #398, #402 | planned |
 | a cast between pointer types, or pointer and integer | `mem::view(bytes, T)`, `mem::bytes(&x)` | #399, #402 | planned |
 | casting away `const`, function-pointer casts | errors (#414's baseline) | #414 | planned |
@@ -51,7 +51,7 @@ Built means in the language today; planned means decided and in an open issue.
 | a dangling pointer, use after free, a leak | regions and linear types, checked at compile time | #438, #439 | planned |
 | a buffer grown by hand | `list(T)` | #449 | planned |
 | an uninitialized variable | everything starts at zero; no constructor functions | #415 | planned |
-| a C string, `printf`, varargs | `str` is a slice; `format::` | #416, #199 | planned |
+| a C string, `printf`, varargs | `Str` is a slice; `format::` | #416, #199 | planned |
 | a tag and a union kept by hand | a payload enum, narrowed by the compiler | #198, #402 | planned |
 | a bare union | to be decided after #402's count | #402 | open |
 | a sentinel, `errno`, an out parameter | `option`, `result` | #402 | planned |
@@ -60,7 +60,7 @@ Built means in the language today; planned means decided and in an open issue.
 | a lossy implicit conversion | an error; a written narrowing cast is checked | #414, #351 | planned |
 | a warning | an error, from a fixed baseline with a written "I meant it" form each | #414 | planned |
 | an unused value | `_ = x;`, `_name` | #413 | planned |
-| `typedef` | a tag is a type name; `constexpr type` aliases | #333 | planned |
+| `typedef` | a tag is a type name; `constexpr Type` aliases | #333 | planned |
 | `[]` with an initializer | `[_]` | #423 | planned |
 | threads and shared mutable data | task groups and the five kinds of value | #436, #241 | planned |
 | a mutable global | an error | #436 | planned |
@@ -73,5 +73,5 @@ Built means in the language today; planned means decided and in an open issue.
 ## Every check speaks the same way (proposed)
 
 - The first clause names the thing and the hazard: "`a` is a pointer, not an array".
-- After the semicolon, the replacement as code: "take `i32 a[:]` (a slice)".
+- After the semicolon, the replacement as code: "take `I32 a[:]` (a slice)".
 - A fix-it wherever the rewrite is mechanical, applied by `smith lint --fix` and the editor.

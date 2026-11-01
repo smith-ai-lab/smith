@@ -1,14 +1,14 @@
 module affine_member_write;
 
 export [[std::affine]] typedef struct {
-    u64 bits;
-    const i32 *tap;
+    U64 bits;
+    const I32 *tap;
 } Key;
-export u64 draw(Key key) {
+export U64 draw(Key key) {
     return key.bits;
 }
 
-u64 write_then_use(const i32 *tap) {
+U64 write_then_use(const I32 *tap) {
     Key key = {1, nullptr};
     key.tap = tap;
     return draw(key);

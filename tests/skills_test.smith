@@ -18,14 +18,14 @@ import <string.h>;
 import scratch;
 import std::mem;
 
-constexpr usize modules_max = 32;
-constexpr usize memory_size = (usize)16 << 20; // 16 MiB: a test's texts, given back with its memory
+constexpr Usize modules_max = 32;
+constexpr Usize memory_size = (Usize)16 << 20; // 16 MiB: a test's texts, given back with its memory
 
 // The modules a skill's complete blocks make: the file each is placed in and the line of its fence.
 typedef struct {
     const char *paths[modules_max];
-    usize lines[modules_max];
-    usize count;
+    Usize lines[modules_max];
+    Usize count;
 } Placed;
 
 // The idiom a complete block follows: no preprocessor line, no standard C type name (no match is the pass).
@@ -42,12 +42,12 @@ static Block block_of(const char *info) {
     return c::strncmp(info, "smith", 5) == 0 ? Block_Bad : Block_Other;
 }
 
-static const char *where(const char *name, usize line) {
+static const char *where(const char *name, Usize line) {
     return format::push(name, "/SKILL.md:", line).data;
 }
 
 // A `c` block holds no .smith.
-static void check_c_block(const scratch::Project *p, const char *name, usize line, const char *body) {
+static void check_c_block(const scratch::Project *p, const char *name, Usize line, const char *body) {
     scratch::write(p, "raw", body);
     scratch::Run run = scratch::sh(p, "grep -nE '^(module|import) |c::' raw");
     scratch::expect_status(format::push(where(name, line), ": a c block holds .smith (tag it smith)").data, 1, &run);
@@ -55,7 +55,7 @@ static void check_c_block(const scratch::Project *p, const char *name, usize lin
 
 // A complete `smith` block is placed in the file its module line implies (example-N.smith without one), and is not
 // C renamed.
-static void place_smith_block(const scratch::Project *p, const char *name, usize line, const char *body,
+static void place_smith_block(const scratch::Project *p, const char *name, Usize line, const char *body,
                               Placed *placed) {
     const char *label = where(name, line);
     scratch::write(p, "raw", body);
@@ -93,19 +93,19 @@ static void walk_blocks(arena::Arena *arena, const scratch::Project *p, const ch
     const char *at = scratch::read(p, "SKILL.md");
     char *body = arena::push_slice(arena, char, c::strlen(at) + 1).data;
     bool open = false;
-    usize indent = 0;
-    usize used = 0;
-    usize fence = 0;
+    Usize indent = 0;
+    Usize used = 0;
+    Usize fence = 0;
     Block kind = Block_Other;
-    for (usize number = 1; *at != '\0'; number++) {
+    for (Usize number = 1; *at != '\0'; number++) {
         const char *next = line_end(at);
-        usize spaces = 0;
+        Usize spaces = 0;
         while (at[spaces] == ' ') {
             spaces++;
         }
         if (c::strncmp(at + spaces, "```", 3) == 0) {
             if (!open) {
-                usize length = (usize)(next - at) - spaces - 3;
+                Usize length = (Usize)(next - at) - spaces - 3;
                 while (length > 0 && (at[spaces + 2 + length] == '\n' || at[spaces + 2 + length] == ' ')) {
                     length--;
                 }
@@ -128,11 +128,11 @@ static void walk_blocks(arena::Arena *arena, const scratch::Project *p, const ch
                 if (kind == Block_Smith) place_smith_block(p, name, fence, body, placed);
             }
         } else if (open) {
-            usize skip = 0;
+            Usize skip = 0;
             while (skip < indent && at[skip] == ' ') {
                 skip++;
             }
-            usize length = (usize)(next - at) - skip;
+            Usize length = (Usize)(next - at) - skip;
             mem::copy(body[used:used + length], at[skip:skip + length]);
             used += length;
         }
@@ -150,7 +150,7 @@ constexpr char headers_script[_] =
 
 // A file with no `module` line is a program's file or a test's: smith build declares the tests there, and a `main`
 // needs no prototype, so only a module's own functions are held to -Wmissing-prototypes.
-static void check_module(const scratch::Project *p, const char *name, const char *path, usize line) {
+static void check_module(const scratch::Project *p, const char *name, const char *path, Usize line) {
     const char *strict = c::strncmp(path, "example-", 8) == 0 ? "-Wno-missing-prototypes" : "-Wmissing-prototypes";
     const char *command =
         format::push("flags=\"-I $SMITH_REPO/.smith/include -I $PWD/.smith/include -I $PWD\"; ",
@@ -180,13 +180,13 @@ static void skill_case(const char *name) {
     Placed placed = {};
     walk_blocks(arena, &p, name, &placed);
     if (placed.count == 0) return;
-    for (usize i = 0; i < placed.count; i++) {
+    for (Usize i = 0; i < placed.count; i++) {
         const char *path = placed.paths[i];
         scratch::write(&p, "modules", format::push(scratch::read(&p, "modules"), path, "\n").data);
     }
     scratch::Run headers = scratch::sh(&p, headers_script);
     scratch::expect_status("the headers", 0, &headers);
-    for (usize i = 0; i < placed.count; i++) {
+    for (Usize i = 0; i < placed.count; i++) {
         check_module(&p, name, placed.paths[i], placed.lines[i]);
     }
 }
@@ -195,16 +195,16 @@ static void skill_case(const char *name) {
 // ends in "smith fragment".
 static bool has_code_block(const char *text) {
     const char *line = text;
-    for (usize guard = 0; guard < 100000 && *line != '\0'; guard++) { // each round is a line
+    for (Usize guard = 0; guard < 100000 && *line != '\0'; guard++) { // each round is a line
         const char *end = c::strchr(line, '\n');
-        usize length = end != nullptr ? (usize)(end - line) : c::strlen(line);
-        usize at = 0;
+        Usize length = end != nullptr ? (Usize)(end - line) : c::strlen(line);
+        Usize at = 0;
         while (at < length && line[at] == ' ')
             at++;
         if (length - at >= 3 && c::strncmp(line + at, "```", 3) == 0) {
             const char *info = line + at + 3;
-            usize info_length = length - at - 3;
-            usize word = 0;
+            Usize info_length = length - at - 3;
+            Usize word = 0;
             while (word < info_length && info[word] != ' ')
                 word++;
             bool code = (word == 1 && info[0] == 'c') || (word == 5 && c::strncmp(info, "smith", 5) == 0);
@@ -226,7 +226,7 @@ static const char *repo_file(arena::Arena *arena, const char *repo, const char *
         return nullptr;
     case .ok:
         char *text = arena::push_slice(arena, char, countof(file.ok) + 1).data;
-        for (usize i = 0; i < countof(file.ok); i++) {
+        for (Usize i = 0; i < countof(file.ok); i++) {
             text[i] = (char)file.ok[i];
         }
         text[countof(file.ok)] = '\0';
@@ -257,7 +257,7 @@ export void test_every_skill_with_a_block_has_a_test() {
         test::check_condition(false); // ends the test
     }
     const char *missing = "";
-    for (usize i = 0; i < countof(skills); i++) {
+    for (Usize i = 0; i < countof(skills); i++) {
         const char *name = skills[i].name.data;
         const char *skill = repo_file(arena, repo, "/.agents/skills/", format::push(name, "/SKILL.md").data);
         if (skill == nullptr || !has_code_block(skill)) continue;

@@ -31,13 +31,13 @@ import std::test;
 import <string.h>;
 import scratch;
 
-constexpr usize blocks_max = 96;
-constexpr usize placed_max = 32;
+constexpr Usize blocks_max = 96;
+constexpr Usize placed_max = 32;
 
 // A fenced block of the README.
 typedef struct {
-    usize number;        // the block's number, counting every block of the README
-    usize line;          // the line of its fence
+    Usize number;        // the block's number, counting every block of the README
+    Usize line;          // the line of its fence
     const char *kind;    // the first word of its info string: smith, c, make, output, sh...
     const char *project; // project=NAME, or block-<number> for a block that is a folder of its own
     const char *path;    // file=PATH, or nullptr
@@ -47,10 +47,10 @@ typedef struct {
 
 typedef struct {
     Block items[blocks_max];
-    usize count;
+    Usize count;
 } Blocks;
 
-static const char *copy_of(arena::Arena *arena, const char *at, usize length) {
+static const char *copy_of(arena::Arena *arena, const char *at, Usize length) {
     char *copy = arena::push_slice(arena, char, length + 1).data;
     mem::copy(copy[0:length], at[0:length]);
     return copy;
@@ -62,7 +62,7 @@ static void parse_info(arena::Arena *arena, const char *info, Block *block) {
     block->project = format::push("block-", block->number).data;
     block->path = nullptr;
     char *flags = arena::push_slice(arena, char, c::strlen(info) + 3).data;
-    usize used = 0;
+    Usize used = 0;
     flags[used++] = ',';
     bool first = true;
     for (const char *at = info; *at != '\0';) {
@@ -70,7 +70,7 @@ static void parse_info(arena::Arena *arena, const char *info, Block *block) {
             at++;
             continue;
         }
-        usize length = c::strcspn(at, " ");
+        Usize length = c::strcspn(at, " ");
         if (first) {
             block->kind = copy_of(arena, at, length);
         } else if (c::strncmp(at, "project=", 8) == 0) {
@@ -96,8 +96,8 @@ static const char *line_end(const char *at) {
 }
 
 // The info string after a fence that starts at `at + spaces`, without its trailing blanks.
-static const char *info_after_fence(arena::Arena *arena, const char *at, usize spaces, const char *next) {
-    usize length = (usize)(next - at) - spaces - 3;
+static const char *info_after_fence(arena::Arena *arena, const char *at, Usize spaces, const char *next) {
+    Usize length = (Usize)(next - at) - spaces - 3;
     while (length > 0 && (at[spaces + 2 + length] == '\n' || at[spaces + 2 + length] == ' ')) {
         length--;
     }
@@ -109,12 +109,12 @@ static void read_blocks(arena::Arena *arena, const scratch::Project *p, Blocks *
     scratch::copy_tree(p, "README.md", "README.md");
     const char *at = scratch::read(p, "README.md");
     char *body = arena::push_slice(arena, char, c::strlen(at) + 1).data;
-    usize indent = 0;
-    usize used = 0;
+    Usize indent = 0;
+    Usize used = 0;
     bool open = false;
-    for (usize line = 1; *at != '\0'; line++) {
+    for (Usize line = 1; *at != '\0'; line++) {
         const char *next = line_end(at);
-        usize spaces = 0;
+        Usize spaces = 0;
         while (at[spaces] == ' ') {
             spaces++;
         }
@@ -133,12 +133,12 @@ static void read_blocks(arena::Arena *arena, const scratch::Project *p, Blocks *
             blocks->items[blocks->count].body = copy_of(arena, body, used);
             blocks->count++;
         } else if (open) {
-            usize skip = 0;
+            Usize skip = 0;
             while (skip < indent && at[skip] == ' ') {
                 skip++;
             }
-            mem::copy(body[used:used + (usize)(next - at) - skip], at[skip:skip + (usize)(next - at) - skip]);
-            used += (usize)(next - at) - skip;
+            mem::copy(body[used:used + (Usize)(next - at) - skip], at[skip:skip + (Usize)(next - at) - skip]);
+            used += (Usize)(next - at) - skip;
         }
         at = next;
     }
@@ -152,7 +152,7 @@ static bool has(const char *flags, const char *flag) {
 
 typedef struct {
     const char *paths[placed_max];
-    usize count;
+    Usize count;
 } Placed;
 
 // The file a block is written to: file=PATH, else Makefile, c-N.c, or the path its module line implies (example-N.smith
@@ -178,7 +178,7 @@ static bool is_file_block(const Block *block) {
 // nothing else, so that the project's own blocks replace them.
 static void place_blocks(const scratch::Project *p, const Blocks *blocks, const char *name, bool files_only,
                          Placed *placed) {
-    for (usize i = 0; i < blocks->count; i++) {
+    for (Usize i = 0; i < blocks->count; i++) {
         const Block *block = &blocks->items[i];
         if (c::strcmp(block->project, name) != 0) continue;
         if (c::strcmp(block->kind, "output") == 0 && !files_only) {
@@ -186,7 +186,7 @@ static void place_blocks(const scratch::Project *p, const Blocks *blocks, const 
         }
         if (!is_file_block(block)) continue;
         const char *path = path_of(p, block);
-        for (usize j = 0; j < placed->count; j++) {
+        for (Usize j = 0; j < placed->count; j++) {
             if (c::strcmp(placed->paths[j], path) == 0) {
                 test::note("README.md:%zu: %s/%s is written by two blocks", block->line, name, path);
                 test::check_condition(false);
@@ -203,7 +203,7 @@ static void place_blocks(const scratch::Project *p, const Blocks *blocks, const 
 // The flags of all the blocks of a project, as ",run,test,".
 static const char *flags_of(const Blocks *blocks, const char *name) {
     const char *flags = ",";
-    for (usize i = 0; i < blocks->count; i++) {
+    for (Usize i = 0; i < blocks->count; i++) {
         if (c::strcmp(blocks->items[i].project, name) == 0) {
             flags = format::push(flags, blocks->items[i].flags).data;
         }
@@ -218,8 +218,8 @@ static const char *base_of(arena::Arena *arena, const char *flags) {
     return copy_of(arena, at + 6, c::strcspn(at + 6, ","));
 }
 
-static usize first_line_of(const Blocks *blocks, const char *name) {
-    for (usize i = 0; i < blocks->count; i++) {
+static Usize first_line_of(const Blocks *blocks, const char *name) {
+    for (Usize i = 0; i < blocks->count; i++) {
         if (c::strcmp(blocks->items[i].project, name) == 0) return blocks->items[i].line;
     }
     return 0;
@@ -261,7 +261,7 @@ static void check_run(const scratch::Project *p, const char *label) {
     }
 }
 
-static void check_project(const scratch::Project *p, const char *name, const char *flags, usize line) {
+static void check_project(const scratch::Project *p, const char *name, const char *flags, Usize line) {
     const char *label = format::push("README.md:", line, " (", name, ")").data;
     bool checked = false;
     if (has(flags, ",port,")) {
@@ -380,8 +380,8 @@ export void test_readme_blocks_that_are_a_folder_of_their_own_compile() {
     defer mem::set_allocator(outside);
     Blocks blocks = {};
     read_blocks(&memory, &p, &blocks);
-    usize checked = 0;
-    for (usize i = 0; i < blocks.count; i++) {
+    Usize checked = 0;
+    for (Usize i = 0; i < blocks.count; i++) {
         const Block *block = &blocks.items[i];
         bool own_folder = c::strcmp(block->project, format::push("block-", block->number).data) == 0;
         if (!own_folder || !is_file_block(block)) continue;
@@ -389,7 +389,7 @@ export void test_readme_blocks_that_are_a_folder_of_their_own_compile() {
         if (c::strcmp(block->kind, "smith") == 0) check_compiled_smith(&p, block, block->project);
         checked++;
     }
-    test::check_greater(checked, (usize)0);
+    test::check_greater(checked, (Usize)0);
 }
 
 // --- every smith block, whatever its project -----------------------------------------------------------------------
@@ -403,7 +403,7 @@ export void test_readme_smith_blocks_are_what_smith_fmt_writes() {
     defer mem::set_allocator(outside);
     Blocks blocks = {};
     read_blocks(&memory, &p, &blocks);
-    for (usize i = 0; i < blocks.count; i++) {
+    for (Usize i = 0; i < blocks.count; i++) {
         if (c::strcmp(blocks.items[i].kind, "smith") != 0) continue;
         scratch::write(&p, "block.smith", blocks.items[i].body);
         scratch::Run run = scratch::sh(&p, "smith fmt --dry-run --Werror block.smith 2>&1");
@@ -421,7 +421,7 @@ export void test_readme_smith_blocks_are_not_c_renamed() {
     defer mem::set_allocator(outside);
     Blocks blocks = {};
     read_blocks(&memory, &p, &blocks);
-    for (usize i = 0; i < blocks.count; i++) {
+    for (Usize i = 0; i < blocks.count; i++) {
         if (c::strcmp(blocks.items[i].kind, "smith") != 0) continue;
         scratch::write(&p, "block.smith", blocks.items[i].body);
         scratch::Run run = scratch::sh(
@@ -438,10 +438,10 @@ export void test_readme_smith_blocks_are_not_c_renamed() {
 static bool repo_has(arena::Arena *arena, const char *path) {
     env::Value repo = env::get("SMITH_REPO");
     const char *base = repo == .some ? repo.some.data : ".";
-    usize length = c::strlen(path);
+    Usize length = c::strlen(path);
     while (length > 1 && path[length - 1] == '/')
         length--;
-    usize slash = length;
+    Usize slash = length;
     while (slash > 0 && path[slash - 1] != '/')
         slash--;
     const char *name = copy_of(arena, path + slash, length - slash);
@@ -449,7 +449,7 @@ static bool repo_has(arena::Arena *arena, const char *path) {
     files::EntriesResult listed = files::list(parent[0:c::strlen(parent)]);
     switch (listed) {
     case .ok:
-        for (usize i = 0; i < countof(listed.ok); i++)
+        for (Usize i = 0; i < countof(listed.ok); i++)
             if (c::strcmp(listed.ok[i].name.data, name) == 0) return true;
         return false;
     case .error:
@@ -470,7 +470,7 @@ export void test_readme_every_relative_link_names_a_file_that_exists() {
                                                "grep -v '^[a-z]*:' | sort -u");
     const char *missing = "";
     for (const char *line = targets; *line != '\0';) { // each link: a line
-        usize length = c::strcspn(line, "\n");
+        Usize length = c::strcspn(line, "\n");
         char *target = arena::push_slice(&memory, char, length + 1).data;
         mem::copy(target[0:length], line[0:length]);
         target[length] = '\0';
@@ -509,7 +509,7 @@ export void test_readme_projects_that_build_by_the_conventions() {
     Blocks blocks = {};
     read_blocks(&memory, &p, &blocks);
     const char *names[8] = {"slices", "memcopy", "refuse", "reflect", "pack", "packerror", "constcast", "ported"};
-    for (usize i = 0; i < countof(names); i++) {
+    for (Usize i = 0; i < countof(names); i++) {
         empty_folder(&p);
         const char *flags = flags_of(&blocks, names[i]);
         Placed placed = {};

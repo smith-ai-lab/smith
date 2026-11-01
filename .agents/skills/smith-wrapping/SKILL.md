@@ -7,7 +7,7 @@ description: "Using std::wrapping (import std::wrapping; wrapping::add, sub, mul
 
 This skill ships in the smith plugin, from `.agents/skills/smith-wrapping/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there.
 
-`std::wrapping` (`lib/std/wrapping.smith`) holds `add`, `sub`, `mul` and `neg` over any integer type. Each returns the type of its first argument with the result cut to that width in two's complement, so `wrapping::add((i8)127, (i8)1)` is `-128`. In C a signed overflow is undefined; unsigned arithmetic already wraps and needs no call.
+`std::wrapping` (`lib/std/wrapping.smith`) holds `add`, `sub`, `mul` and `neg` over any integer type. Each returns the type of its first argument with the result cut to that width in two's complement, so `wrapping::add((I8)127, (I8)1)` is `-128`. In C a signed overflow is undefined; unsigned arithmetic already wraps and needs no call.
 
 ```smith
 module counter;
@@ -15,12 +15,12 @@ module counter;
 import std::wrapping;
 
 // The next tick, wrapping from the largest back to the smallest.
-export i32 next(i32 tick) {
+export I32 next(I32 tick) {
     return wrapping::add(tick, 1);
 }
 ```
 
-- Both arguments have the first's type: write the cast, `wrapping::mul((i8)100, (i8)2)` is `-56`.
+- Both arguments have the first's type: write the cast, `wrapping::mul((I8)100, (I8)2)` is `-56`.
 - Not built yet: `shl` and `to`, and `std::checked` (an `option` of the sum, `.none` on overflow).
 
 Also in this family: [smith-math](../smith-math/SKILL.md).

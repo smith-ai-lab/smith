@@ -17,8 +17,8 @@ import scratch;
 import <smith_core.h>;
 import <string.h>;
 
-constexpr usize build_capacity = 1U << 20;
-constexpr usize report_capacity = 1U << 16;
+constexpr Usize build_capacity = 1U << 20;
+constexpr Usize report_capacity = 1U << 16;
 
 typedef struct {
     const char *build;  // the build.c
@@ -27,7 +27,7 @@ typedef struct {
 
 // The pieces one after another, from the current allocator (the test's arena).
 const char *concatenated(auto... pieces) {
-    usize length = format::length(pieces...);
+    Usize length = format::length(pieces...);
     char *joined = mem::alloc_slice(char, length + 1).data;
     (void)format::to(joined, length + 1, pieces...);
     return joined;
@@ -56,9 +56,9 @@ static scratch::Project project(const char *name, const char *fixture) {
 static void write(const char *folder, const char *name, const char *contents) {
     const char *path = join(folder, name);
     const char *slash = c::strrchr(path, '/');
-    files::DoneResult made = files::make_folder(path[0:(usize)(slash - path)]);
+    files::DoneResult made = files::make_folder(path[0:(Usize)(slash - path)]);
     test::check_condition(made == .ok);
-    const u8 *bytes = (const u8 *)contents;
+    const U8 *bytes = (const U8 *)contents;
     files::CountResult written =
         files::write_file(path[0:c::strlen(path)], bytes[0:c::strlen(contents)], files::Replace);
     test::check_condition(written == .ok);
@@ -92,8 +92,8 @@ typedef struct {
     const char *value;
 } Define;
 
-static void defines(const char *label, const Translation *t, const Define *table, usize count) {
-    for (usize i = 0; i < count; i++) {
+static void defines(const char *label, const Translation *t, const Define *table, Usize count) {
+    for (Usize i = 0; i < count; i++) {
         const char *flag = concatenated("\"-D", table[i].name, "=\\\"", table[i].value, "\\\"\"");
         scratch::expect_contains(concatenated(label, ": ", table[i].name), t->build, flag);
     }
@@ -426,13 +426,13 @@ export void test_a_makefile_too_big_for_one_function() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     const char *folder = p.dir;
-    for (i32 i = 1; i <= 45; i++) {
+    for (I32 i = 1; i <= 45; i++) {
         write(folder, concatenated("src", i, ".dat"), "");
     }
     char *makefile = mem::alloc_slice(char, 1U << 16).data;
-    usize used = (usize)__builtin_snprintf(makefile, 1U << 16, "DATA := $(sort $(wildcard src*.dat))\nPREFIX ?= out\n");
-    for (i32 i = 1; i <= 30; i++) {
-        used += (usize)__builtin_snprintf(makefile + used, (1U << 16) - used,
+    Usize used = (Usize)__builtin_snprintf(makefile, 1U << 16, "DATA := $(sort $(wildcard src*.dat))\nPREFIX ?= out\n");
+    for (I32 i = 1; i <= 30; i++) {
+        used += (Usize)__builtin_snprintf(makefile + used, (1U << 16) - used,
                                           "step%d: $(DATA)\n\t@touch $(PREFIX)%d.txt $(DATA)\n", i, i);
     }
     __builtin_snprintf(makefile + used, (1U << 16) - used, ".PHONY: all\nall: step1 step30\n");

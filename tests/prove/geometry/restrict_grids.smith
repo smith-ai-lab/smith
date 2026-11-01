@@ -3,7 +3,7 @@
 module geometry::restrict_grids;
 import <smith/contract.h>;
 
-void copy(u8 dst[restrict :][:], const u8 src[restrict :][:]) {
+void copy(U8 dst[restrict :][:], const U8 src[restrict :][:]) {
     c::smith_requires(countof(dst) <= countof(src));
     c::smith_ensures(true);
     if (countof(dst) > 0 && countof(dst[0]) > 0 && countof(src[0]) > 0) dst[0][0] = src[0][0];
@@ -11,29 +11,29 @@ void copy(u8 dst[restrict :][:], const u8 src[restrict :][:]) {
 
 export void apart() {
     c::smith_ensures(true);
-    u8 a[4][2] = {0};
-    u8 b[4][2] = {0};
+    U8 a[4][2] = {0};
+    U8 b[4][2] = {0};
     copy(a, b);
 }
 
-export void apart_slots(u8 m[:][:]) {
+export void apart_slots(U8 m[:][:]) {
     c::smith_requires(countof(m) == 8);
     c::smith_ensures(true);
-    u8 top[:][:] = m[0:4];
-    u8 bottom[:][:] = m[4:8];
+    U8 top[:][:] = m[0:4];
+    U8 bottom[:][:] = m[4:8];
     copy(top, bottom);
 }
 
-export void overlapping(u8 m[:][:]) {
+export void overlapping(U8 m[:][:]) {
     c::smith_requires(countof(m) == 8);
     c::smith_ensures(true);
-    u8 top[:][:] = m[0:4];
-    u8 middle[:][:] = m[2:6];
+    U8 top[:][:] = m[0:4];
+    U8 middle[:][:] = m[2:6];
     copy(top, middle);
 }
 
 export void same() {
     c::smith_ensures(true);
-    u8 a[4][2] = {0};
+    U8 a[4][2] = {0};
     copy(a, a);
 }

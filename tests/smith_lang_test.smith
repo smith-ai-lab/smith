@@ -51,22 +51,22 @@ typedef struct {
 
 // What the compiles and the link made: 0 when all worked, and the objects (each after a space).
 typedef struct {
-    i32 status;
+    I32 status;
     const char *objects;
 } Built;
 
 // The raw lowering in process (include/smith_core.h): what `smith cc --smith-header` writes. The command asks the
 // compiler which of a module's C imports declared a name when several are possible, and the function does not, so a
 // case whose header is checked by its golden here, because it has several, is made by the command.
-constexpr usize header_capacity = 1U << 21;
-constexpr usize report_capacity = 1U << 16;
+constexpr Usize header_capacity = 1U << 21;
+constexpr Usize report_capacity = 1U << 16;
 
 static char header_text[header_capacity];
 static char report_text[report_capacity];
 
 static bool header_by_command(const char *name) {
     static const char *const cases[_] = {"filescope-if-header", "filescope-if-reflect"};
-    for (usize i = 0; i < countof(cases); i++) {
+    for (Usize i = 0; i < countof(cases); i++) {
         if (c::strcmp(name, cases[i]) == 0) return true;
     }
     return false;
@@ -84,7 +84,7 @@ static const char *join(const char *a, const char *b, const char *c, const char 
 static const char *next_line(arena::Arena *arena, const char **at) {
     if (**at == '\0') return nullptr;
     const char *end = c::strchr(*at, '\n');
-    usize length = end != nullptr ? (usize)(end - *at) : c::strlen(*at);
+    Usize length = end != nullptr ? (Usize)(end - *at) : c::strlen(*at);
     char *copy = arena::push_slice(arena, char, length + 1).data;
     const char *line = *at;
     mem::copy(copy[0:length], line[0:length]);
@@ -94,17 +94,17 @@ static const char *next_line(arena::Arena *arena, const char **at) {
 
 // `a/b.smith` as the module `a.b`, `a/b` the stem.
 static const char *module_of(arena::Arena *arena, const char *file) {
-    usize length = c::strlen(file);
+    Usize length = c::strlen(file);
     if (length > 6 && c::strcmp(file + length - 6, ".smith") == 0) length -= 6;
     char *copy = arena::push_slice(arena, char, length + 1).data;
-    for (usize i = 0; i < length; i++) {
+    for (Usize i = 0; i < length; i++) {
         copy[i] = file[i] == '/' ? '.' : file[i];
     }
     return copy;
 }
 
 static const char *stem_of(arena::Arena *arena, const char *file) {
-    usize length = c::strlen(file);
+    Usize length = c::strlen(file);
     if (length > 6 && c::strcmp(file + length - 6, ".smith") == 0) length -= 6;
     char *copy = arena::push_slice(arena, char, length + 1).data;
     mem::copy(copy[0:length], file[0:length]);
@@ -113,9 +113,9 @@ static const char *stem_of(arena::Arena *arena, const char *file) {
 
 // The object of a file that is not a module: its path with the dots for slashes.
 static const char *object_of(arena::Arena *arena, const char *file) {
-    usize length = c::strlen(file);
+    Usize length = c::strlen(file);
     char *copy = arena::push_slice(arena, char, length + 1).data;
-    for (usize i = 0; i < length; i++) {
+    for (Usize i = 0; i < length; i++) {
         copy[i] = file[i] == '/' ? '.' : file[i];
     }
     return copy;
@@ -129,7 +129,7 @@ static const char *listed(const Case *kase, const char *command) {
 // The text of a file of the case without the newlines at its end, as $(cat file) gives it ("" when it is absent).
 static const char *text_of(const Case *kase, const char *name) {
     const char *text = scratch::read(kase->project, name);
-    usize length = c::strlen(text);
+    Usize length = c::strlen(text);
     while (length > 0 && text[length - 1] == '\n')
         length--;
     char *copy = arena::push_slice(kase->arena, char, length + 1).data;
@@ -138,12 +138,12 @@ static const char *text_of(const Case *kase, const char *name) {
     return copy;
 }
 
-constexpr usize found_max = 512;
-constexpr usize found_folders_max = 128;
+constexpr Usize found_max = 512;
+constexpr Usize found_folders_max = 128;
 
 static bool ends_with(const char *text, const char *suffix) {
-    usize length = c::strlen(text);
-    usize tail = suffix != nullptr ? c::strlen(suffix) : 0;
+    Usize length = c::strlen(text);
+    Usize tail = suffix != nullptr ? c::strlen(suffix) : 0;
     return suffix != nullptr && length >= tail && c::strcmp(text + length - tail, suffix) == 0;
 }
 
@@ -154,18 +154,18 @@ static const char *found(const Case *kase, const char *from, const char *suffix_
                          bool files_only_here) {
     arena::Arena *arena = kase->arena;
     const char *names[found_max];
-    usize count = 0;
+    Usize count = 0;
     const char *folders[found_folders_max]; // relative to `from`; "" is `from` itself
-    usize tail = 1;
+    Usize tail = 1;
     folders[0] = "";
-    for (usize head = 0; head < tail; head++) {
+    for (Usize head = 0; head < tail; head++) {
         const char *where = folders[head][0] == '\0'
                                 ? join(kase->project->dir, "/", from, "")
                                 : join(kase->project->dir, "/", from, join("/", folders[head], "", ""));
         files::EntriesResult list = files::list(where[0:c::strlen(where)]);
         files::Entries entries = {};
         if (list == .ok) entries = list.ok;
-        for (usize i = 0; i < countof(entries); i++) {
+        for (Usize i = 0; i < countof(entries); i++) {
             const char *entry = entries[i].name.data;
             const char *relative = folders[head][0] == '\0' ? entry : join(folders[head], "/", entry, "");
             if (entries[i].folder && !files_only_here) {
@@ -179,7 +179,7 @@ static const char *found(const Case *kase, const char *from, const char *suffix_
                 continue;
             }
             test::check_less(count, found_max);
-            usize at = count++;
+            Usize at = count++;
             while (at > 0 && c::strcmp(names[at - 1], relative) > 0) { // insertion, bytewise
                 names[at] = names[at - 1];
                 at--;
@@ -188,7 +188,7 @@ static const char *found(const Case *kase, const char *from, const char *suffix_
         }
     }
     const char *lines = "";
-    for (usize i = 0; i < count; i++)
+    for (Usize i = 0; i < count; i++)
         lines = join(lines, names[i], "\n", "");
     return lines;
 }
@@ -207,7 +207,7 @@ static void write_header(const Case *kase, const char *file, const char *stem) {
     bool made =
         c::smith_core_header(p->dir, source, nullptr, header_text, header_capacity, report_text, report_capacity);
     if (report_text[0] != '\0') {
-        const u8 *bytes = (const u8 *)report_text;
+        const U8 *bytes = (const U8 *)report_text;
         const char *errors = format::push(p->dir, "/out/stderr").data;
         files::CountResult added =
             files::write_file(errors[0:c::strlen(errors)], bytes[0:c::strlen(report_text)], files::Append);
@@ -216,12 +216,12 @@ static void write_header(const Case *kase, const char *file, const char *stem) {
     if (!made) return;
     const char *path = format::push(p->dir, "/out/include/", include_stem(stem), ".h").data;
     const char *slash = c::strrchr(path, '/');
-    char *folder = arena::push_slice(arena, char, (usize)(slash - path) + 1).data;
-    mem::copy(folder[0:(usize)(slash - path)], path[0:(usize)(slash - path)]);
+    char *folder = arena::push_slice(arena, char, (Usize)(slash - path) + 1).data;
+    mem::copy(folder[0:(Usize)(slash - path)], path[0:(Usize)(slash - path)]);
     folder[slash - path] = '\0';
-    files::DoneResult folder_made = files::make_folder(folder[0:(usize)(slash - path)]);
+    files::DoneResult folder_made = files::make_folder(folder[0:(Usize)(slash - path)]);
     test::check(folder_made == .ok);
-    const u8 *header = (const u8 *)header_text;
+    const U8 *header = (const U8 *)header_text;
     files::CountResult written =
         files::write_file(path[0:c::strlen(path)], header[0:c::strlen(header_text)], files::Replace);
     test::check(written == .ok);
@@ -333,15 +333,15 @@ static void golden_at(const Case *kase, const char *relative, const char *actual
     test::golden(slice_of(join("tests/smith-lang/cases/", kase->name, "/", shown)), slice_of(actual));
 }
 
-static usize digits_at(const char *line, usize at) {
+static Usize digits_at(const char *line, Usize at) {
     while (line[at] >= '0' && line[at] <= '9')
         at++;
     return at;
 }
 
 // The length of `file:line:column` at the start of a line that goes on with ": error: ", or 0.
-static usize error_position(const char *line) {
-    usize at = 0;
+static Usize error_position(const char *line) {
+    Usize at = 0;
     while (line[at] != '\0' && line[at] != ' ' && line[at] != ':')
         at++;
     if (line[at] != ':') return 0;
@@ -351,7 +351,7 @@ static usize error_position(const char *line) {
     return c::strncmp(line + at, ": error: ", 9) == 0 ? at : 0;
 }
 
-constexpr usize errors_max = 512;
+constexpr Usize errors_max = 512;
 
 // The errors: file:line:column: message, and nothing else (no warnings, notes, source lines or counts), sorted bytewise
 // without duplicates: what `sed -n 's/^\([^ :]*:[0-9]*:[0-9]*\): error: \(.*\)$/\1: \2/p' | LC_ALL=C sort -u` made of
@@ -360,27 +360,27 @@ static const char *errors_of(const Case *kase, const char *file) {
     arena::Arena *arena = kase->arena;
     const char *text = scratch::read(kase->project, file);
     const char *lines[errors_max];
-    usize count = 0;
+    Usize count = 0;
     for (const char *at = text, *line = next_line(arena, &at); line != nullptr; line = next_line(arena, &at)) {
-        usize position = error_position(line);
+        Usize position = error_position(line);
         if (position == 0) {
             continue;
         }
         const char *error = format::push(line[0:position], ": ", line + position + 9).data;
-        usize place = 0;
+        Usize place = 0;
         while (place < count && c::strcmp(lines[place], error) < 0)
             place++;
         if (place < count && c::strcmp(lines[place], error) == 0) {
             continue;
         }
         test::check_less(count, errors_max);
-        for (usize k = count; k > place; k--)
+        for (Usize k = count; k > place; k--)
             lines[k] = lines[k - 1];
         lines[place] = error;
         count++;
     }
     const char *sorted = "";
-    for (usize k = 0; k < count; k++)
+    for (Usize k = 0; k < count; k++)
         sorted = join(sorted, lines[k], "\n", "");
     return sorted;
 }
@@ -486,7 +486,7 @@ static void corpus_case(const char *name) {
     }
     // The folders of the output and its empty error file, in process: a process for them cost as much as a compile.
     const char *folders[5] = {"out", "out/include", "out/header", "out/generics", "out/obj"};
-    for (usize i = 0; i < countof(folders); i++) {
+    for (Usize i = 0; i < countof(folders); i++) {
         const char *folder = join(p.dir, "/", folders[i], "");
         files::DoneResult made = files::make_folder(folder[0:c::strlen(folder)]);
         test::check(made == .ok);

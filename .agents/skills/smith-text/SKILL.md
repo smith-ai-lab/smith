@@ -21,8 +21,8 @@ bool read_replay(const char input[:]) {
     while (text::take_line(&input, &line)) {         // a line without its newline, a trailing \r, or a # comment
         if (!text::take_word(&line, &word)) continue; // blank, or only a comment
         if (text::is(word, "turn")) {
-            f32 degrees;
-            u64 ticks;
+            F32 degrees;
+            U64 ticks;
             if (!text::take_word(&line, &word) || !text::parse_f32(word, &degrees)) return false;
             if (!text::take_word(&line, &word) || !text::parse_u64(word, &ticks)) return false;
         }

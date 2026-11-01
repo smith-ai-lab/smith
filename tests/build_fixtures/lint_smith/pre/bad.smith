@@ -8,7 +8,7 @@ import <stdint.h>;
 #pragma STDC FP_CONTRACT OFF
 
 #if 1
-export i32 f(i32 x) {
+export I32 f(I32 x) {
     c::assert(x < c::SIZE_MAX);
     c::assert(c::isfinite(1.0));
     _Pragma("clang diagnostic push")

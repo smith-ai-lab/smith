@@ -5,7 +5,7 @@ import std::ascii;
 import std::slice;
 import std::test;
 
-typedef option(usize) Index;
+typedef Option(Usize) Index;
 
 export void test_equal() {
     {
@@ -39,31 +39,31 @@ export void test_compare() {
     {
         const char a[:] = "abc";
         const char b[:] = "abc";
-        i32 got = slice::compare(a, b);
+        I32 got = slice::compare(a, b);
         test::check_equal(got, 0);
     }
     {
         const char a[:] = "abc";
         const char b[:] = "abd";
-        i32 got = slice::compare(a, b);
+        I32 got = slice::compare(a, b);
         test::check_equal(got, -1);
     }
     {
         const char a[:] = "b";
         const char b[:] = "abc";
-        i32 got = slice::compare(a, b);
+        I32 got = slice::compare(a, b);
         test::check_equal(got, 1);
     }
     {
         const char a[:] = "abc";
         const char b[:] = "ab";
-        i32 got = slice::compare(a, b);
+        I32 got = slice::compare(a, b);
         test::check_equal(got, 1);
     }
     {
         const char a[:] = "abc";
         const char b[:] = "abcd";
-        i32 got = slice::compare(a, b);
+        I32 got = slice::compare(a, b);
         test::check_equal(got, -1);
     }
 }
@@ -125,7 +125,7 @@ export void test_find() {
     Index none = slice::find(plain, '=');
     bool found = first == .some;
     bool missing = none == .none;
-    usize two = slice::count(text, '=');
+    Usize two = slice::count(text, '=');
     test::check_equal(found, true);
     if (first == .some) test::check_equal(first.some, 1);
     if (last == .some) test::check_equal(last.some, 3);
@@ -133,15 +133,15 @@ export void test_find() {
     test::check_equal(has_last, true);
     test::check_equal(missing, true);
     test::check_equal(two, 2);
-    i32 numbers[4] = {5, 6, 7, 6};
-    i32 view[:] = numbers;
+    I32 numbers[4] = {5, 6, 7, 6};
+    I32 view[:] = numbers;
     Index at = slice::find(view, 7);
     if (at == .some) test::check_equal(at.some, 2);
 }
 
 export void test_fill_reverse() {
-    i32 a[4] = {1, 2, 3, 4};
-    i32 view[:] = a;
+    I32 a[4] = {1, 2, 3, 4};
+    I32 view[:] = a;
     slice::reverse(view);
     test::check_equal(a[0], 4);
     test::check_equal(a[3], 1);
@@ -193,25 +193,25 @@ export void test_trim() {
     test::check_equal(countof(none), 0);
 }
 
-static bool positive(i32 x) {
+static bool positive(I32 x) {
     return x > 0;
 }
 
-static bool small(u8 x) {
+static bool small(U8 x) {
     return x < 10;
 }
 
-static bool descending(i32 a, i32 b) {
+static bool descending(I32 a, I32 b) {
     return a > b;
 }
 
-static bool by_magnitude(f64 a, f64 b) {
+static bool by_magnitude(F64 a, F64 b) {
     return (a < 0 ? -a : a) < (b < 0 ? -b : b);
 }
 
 export void test_search() {
-    i32 a[6] = {1, 3, 3, 5, 8, 13};
-    const i32 xs[:] = a;
+    I32 a[6] = {1, 3, 3, 5, 8, 13};
+    const I32 xs[:] = a;
     test::check_equal(slice::search(xs, 0), 0);
     test::check_equal(slice::search(xs, 1), 0);
     test::check_equal(slice::search(xs, 2), 1);
@@ -219,58 +219,58 @@ export void test_search() {
     test::check_equal(slice::search(xs, 4), 3);
     test::check_equal(slice::search(xs, 13), 5);
     test::check_equal(slice::search(xs, 14), 6);
-    const i32 none[:] = xs[0:0];
+    const I32 none[:] = xs[0:0];
     test::check_equal(slice::search(none, 7), 0);
-    const i32 one[:] = xs[4:5];
+    const I32 one[:] = xs[4:5];
     test::check_equal(slice::search(one, 8), 0);
     test::check_equal(slice::search(one, 9), 1);
-    f64 b[3] = {0.5, 1.5, 2.5};
-    const f64 fs[:] = b;
+    F64 b[3] = {0.5, 1.5, 2.5};
+    const F64 fs[:] = b;
     test::check_equal(slice::search(fs, 1.5), 1);
     test::check_equal(slice::search(fs, 2.6), 3);
-    u8 c[4] = {2, 4, 6, 8};
-    const u8 bytes[:] = c;
+    U8 c[4] = {2, 4, 6, 8};
+    const U8 bytes[:] = c;
     test::check_equal(slice::search(bytes, 5), 2);
     test::check_equal(slice::search(bytes, 0), 0);
 }
 
 export void test_sort() {
-    i32 reversed[7] = {7, 6, 5, 4, 3, 2, 1};
-    const i32 want[:] = (i32[7]){1, 2, 3, 4, 5, 6, 7};
-    i32 r[:] = reversed;
+    I32 reversed[7] = {7, 6, 5, 4, 3, 2, 1};
+    const I32 want[:] = (I32[7]){1, 2, 3, 4, 5, 6, 7};
+    I32 r[:] = reversed;
     slice::sort(r);
     bool same_r = slice::equal(r, want);
     test::check_equal(same_r, true);
-    i32 dupes[6] = {3, 1, 3, 1, 2, 2};
-    const i32 dupes_want[:] = (i32[6]){1, 1, 2, 2, 3, 3};
-    i32 d[:] = dupes;
+    I32 dupes[6] = {3, 1, 3, 1, 2, 2};
+    const I32 dupes_want[:] = (I32[6]){1, 1, 2, 2, 3, 3};
+    I32 d[:] = dupes;
     slice::sort(d);
     bool same_d = slice::equal(d, dupes_want);
     test::check_equal(same_d, true);
-    i32 negative[4] = {0, -5, 7, -5};
-    const i32 negative_want[:] = (i32[4]){-5, -5, 0, 7};
-    i32 n[:] = negative;
+    I32 negative[4] = {0, -5, 7, -5};
+    const I32 negative_want[:] = (I32[4]){-5, -5, 0, 7};
+    I32 n[:] = negative;
     slice::sort(n);
     bool same_n = slice::equal(n, negative_want);
     test::check_equal(same_n, true);
-    f64 floats[5] = {2.5, -1.0, 0.0, 9.75, -3.5};
-    const f64 floats_want[:] = (f64[5]){-3.5, -1.0, 0.0, 2.5, 9.75};
-    f64 f[:] = floats;
+    F64 floats[5] = {2.5, -1.0, 0.0, 9.75, -3.5};
+    const F64 floats_want[:] = (F64[5]){-3.5, -1.0, 0.0, 2.5, 9.75};
+    F64 f[:] = floats;
     slice::sort(f);
     bool same_f = slice::equal(f, floats_want);
     test::check_equal(same_f, true);
-    u8 bytes[5] = {200, 3, 255, 0, 3};
-    const u8 bytes_want[:] = (u8[5]){0, 3, 3, 200, 255};
-    u8 b[:] = bytes;
+    U8 bytes[5] = {200, 3, 255, 0, 3};
+    const U8 bytes_want[:] = (U8[5]){0, 3, 3, 200, 255};
+    U8 b[:] = bytes;
     slice::sort(b);
     bool same_b = slice::equal(b, bytes_want);
     test::check_equal(same_b, true);
-    i32 empty_storage[1] = {9};
-    i32 e[:] = empty_storage[0:0];
+    I32 empty_storage[1] = {9};
+    I32 e[:] = empty_storage[0:0];
     slice::sort(e);
     test::check_equal(countof(e), 0);
-    i32 one_storage[1] = {9};
-    i32 o[:] = one_storage;
+    I32 one_storage[1] = {9};
+    I32 o[:] = one_storage;
     slice::sort(o);
     test::check_equal(o[0], 9);
 }
@@ -278,85 +278,85 @@ export void test_sort() {
 // A pseudo-random array sorts to an ordered permutation: the sum and the sum of squares match the input's, and the
 // result is ordered and searchable.
 export void test_sort_random() {
-    i32 data[200];
-    u32 state = 12345;
-    i64 total = 0;
-    i64 squares = 0;
-    for (usize i = 0; i < 200; i++) {
+    I32 data[200];
+    U32 state = 12345;
+    I64 total = 0;
+    I64 squares = 0;
+    for (Usize i = 0; i < 200; i++) {
         state = state * 1664525 + 1013904223;
-        data[i] = (i32)(state >> 20) % 50 - 25;
+        data[i] = (I32)(state >> 20) % 50 - 25;
         total += data[i];
-        squares += (i64)data[i] * data[i];
+        squares += (I64)data[i] * data[i];
     }
-    i32 xs[:] = data;
+    I32 xs[:] = data;
     slice::sort(xs);
     bool ordered = true;
-    i64 total_after = 0;
-    i64 squares_after = 0;
-    for (usize i = 0; i < 200; i++) {
+    I64 total_after = 0;
+    I64 squares_after = 0;
+    for (Usize i = 0; i < 200; i++) {
         if (i > 0 && xs[i] < xs[i - 1]) ordered = false;
         total_after += xs[i];
-        squares_after += (i64)xs[i] * xs[i];
+        squares_after += (I64)xs[i] * xs[i];
     }
     test::check_equal(ordered, true);
     test::check_equal(total_after, total);
     test::check_equal(squares_after, squares);
-    for (usize i = 0; i < 200; i++) {
-        usize at = slice::search(xs, xs[i]);
+    for (Usize i = 0; i < 200; i++) {
+        Usize at = slice::search(xs, xs[i]);
         test::check_equal(xs[at], xs[i]);
         if (at > 0) test::check_equal(xs[at - 1] < xs[i], true);
     }
 }
 
 export void test_sort_by() {
-    i32 values[5] = {4, 9, 1, 7, 3};
-    const i32 want[:] = (i32[5]){9, 7, 4, 3, 1};
-    i32 xs[:] = values;
+    I32 values[5] = {4, 9, 1, 7, 3};
+    const I32 want[:] = (I32[5]){9, 7, 4, 3, 1};
+    I32 xs[:] = values;
     slice::sort_by(xs, descending);
     bool same_xs = slice::equal(xs, want);
     test::check_equal(same_xs, true);
-    f64 floats[4] = {-3.0, 1.0, -0.5, 2.0};
-    const f64 floats_want[:] = (f64[4]){-0.5, 1.0, 2.0, -3.0};
-    f64 fs[:] = floats;
+    F64 floats[4] = {-3.0, 1.0, -0.5, 2.0};
+    const F64 floats_want[:] = (F64[4]){-0.5, 1.0, 2.0, -3.0};
+    F64 fs[:] = floats;
     slice::sort_by(fs, by_magnitude);
     bool same_fs = slice::equal(fs, floats_want);
     test::check_equal(same_fs, true);
-    i32 empty_storage[1] = {1};
-    i32 e[:] = empty_storage[0:0];
+    I32 empty_storage[1] = {1};
+    I32 e[:] = empty_storage[0:0];
     slice::sort_by(e, descending);
     test::check_equal(countof(e), 0);
 }
 
 export void test_sum() {
-    const i32 xs[:] = (i32[4]){1, 2, 3, 4};
+    const I32 xs[:] = (I32[4]){1, 2, 3, 4};
     test::check_equal(slice::sum(xs), 10);
-    const f64 fs[:] = (f64[3]){0.5, 0.25, 0.25};
+    const F64 fs[:] = (F64[3]){0.5, 0.25, 0.25};
     test::check_equal(slice::sum(fs), 1.0);
-    const u8 bytes[:] = (u8[3]){100, 100, 50};
+    const U8 bytes[:] = (U8[3]){100, 100, 50};
     test::check_equal(slice::sum(bytes), 250);
-    const i32 none[:] = xs[0:0];
+    const I32 none[:] = xs[0:0];
     test::check_equal(slice::sum(none), 0);
-    const i32 one[:] = xs[2:3];
+    const I32 one[:] = xs[2:3];
     test::check_equal(slice::sum(one), 3);
 }
 
 export void test_min_max() {
-    const i32 xs[:] = (i32[5]){3, -7, 9, -7, 4};
+    const I32 xs[:] = (I32[5]){3, -7, 9, -7, 4};
     test::check_equal(slice::min(xs), -7);
     test::check_equal(slice::max(xs), 9);
     test::check_equal(slice::argmin(xs), 1);
     test::check_equal(slice::argmax(xs), 2);
-    const f64 fs[:] = (f64[3]){0.5, -2.5, 1.25};
+    const F64 fs[:] = (F64[3]){0.5, -2.5, 1.25};
     test::check_equal(slice::min(fs), -2.5);
     test::check_equal(slice::max(fs), 1.25);
     test::check_equal(slice::argmin(fs), 1);
     test::check_equal(slice::argmax(fs), 2);
-    const u8 bytes[:] = (u8[4]){7, 200, 7, 200};
+    const U8 bytes[:] = (U8[4]){7, 200, 7, 200};
     test::check_equal(slice::min(bytes), 7);
     test::check_equal(slice::max(bytes), 200);
     test::check_equal(slice::argmin(bytes), 0);
     test::check_equal(slice::argmax(bytes), 1);
-    const i32 one[:] = xs[3:4];
+    const I32 one[:] = xs[3:4];
     test::check_equal(slice::min(one), -7);
     test::check_equal(slice::max(one), -7);
     test::check_equal(slice::argmin(one), 0);
@@ -364,18 +364,18 @@ export void test_min_max() {
 }
 
 export void test_all_any() {
-    const i32 xs[:] = (i32[3]){1, 2, 3};
+    const I32 xs[:] = (I32[3]){1, 2, 3};
     test::check_equal(slice::all(xs, positive), true);
     test::check_equal(slice::any(xs, positive), true);
-    const i32 mixed[:] = (i32[3]){1, -2, 3};
+    const I32 mixed[:] = (I32[3]){1, -2, 3};
     test::check_equal(slice::all(mixed, positive), false);
     test::check_equal(slice::any(mixed, positive), true);
-    const i32 negative[:] = (i32[2]){-1, 0};
+    const I32 negative[:] = (I32[2]){-1, 0};
     test::check_equal(slice::any(negative, positive), false);
-    const u8 bytes[:] = (u8[3]){1, 5, 200};
+    const U8 bytes[:] = (U8[3]){1, 5, 200};
     test::check_equal(slice::all(bytes, small), false);
     test::check_equal(slice::any(bytes, small), true);
-    const i32 none[:] = xs[0:0];
+    const I32 none[:] = xs[0:0];
     test::check_equal(slice::all(none, positive), true);
     test::check_equal(slice::any(none, positive), false);
 }

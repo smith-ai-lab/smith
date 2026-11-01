@@ -14,7 +14,7 @@ import std::mem;
 import std::test;
 import scratch;
 
-constexpr usize memory_size = (usize)1 << 20; // 1 MiB
+constexpr Usize memory_size = (Usize)1 << 20; // 1 MiB
 
 // The commands of every case: `w FILE` waits for a file, `ww FILE TEXT` waits for a text in a file, `hold` is a job
 // that keeps its slot until the file `free` exists.

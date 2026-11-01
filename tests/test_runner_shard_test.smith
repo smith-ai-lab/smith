@@ -86,7 +86,7 @@ export void test_runner_shard_a_bad_value_is_a_usage_error() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     const char *values[_] = {"0/2", "3/2", "2", "a/b", "1/0", "1/2000"};
-    for (usize i = 0; i < countof(values); i++) {
+    for (Usize i = 0; i < countof(values); i++) {
         scratch::Run run = runner::tests(&p, "", format_flag(values[i]));
         scratch::expect_contains(values[i], run.out, "usage:");
     }

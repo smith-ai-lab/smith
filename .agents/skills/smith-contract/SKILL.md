@@ -14,16 +14,16 @@ module geometry::box;
 
 import std::contract;
 
-export i32 clamp(i32 x, i32 low, i32 high) {
+export I32 clamp(I32 x, I32 low, I32 high) {
     contract::requires(low <= high);                     // the caller's job
-    i32 result = x < low ? low : x > high ? high : x;
+    I32 result = x < low ? low : x > high ? high : x;
     contract::ensures(low <= result && result <= high);  // this function's promise
     return result;
 }
 
-export u32 count_pairs(u32 squares, u32 *moves) {
-    u32 len = 0;
-    for (u32 square = 0; square < squares; square++) {
+export U32 count_pairs(U32 squares, U32 *moves) {
+    U32 len = 0;
+    for (U32 square = 0; square < squares; square++) {
         contract::invariant(len <= 2 * square);          // the first statement of a loop body
         moves[len] = square;
         len += square % 2;
@@ -41,7 +41,7 @@ export u32 count_pairs(u32 squares, u32 *moves) {
 | `smith_trusted()` | the first statement of a function | `smith prove` does not prove this function: callers prove its `smith_requires` and assume its `smith_ensures`, and its body is not read (see "Trusted boundaries"); it checks nothing at run time |
 | `smith_modifies(p, size)` (`contract::modifies(&x, xs, p[a:b])`) | the start of a function, after its `smith_requires` | the function writes nothing but these objects, ranges and its own locals; a caller keeps all it knew of the rest (smith-contract-proof) |
 
-- An old value is a `const` local saved at the top: `const u8 old = moves->len;` (for what a function leaves alone, `modifies`, smith-contract-proof). The result is the variable about to be returned.
+- An old value is a `const` local saved at the top: `const U8 old = moves->len;` (for what a function leaves alone, `modifies`, smith-contract-proof). The result is the variable about to be returned.
 - A spec is ordinary C: a pure helper function, called inside a contract, with loops of constant bounds.
 - **A condition must be free of side effects.** The call evaluates it, in every build: debug, release and fast check alike, `-DNDEBUG` or not. Only `smith prove` removes a check (a proved `assert`, `ensures` or `invariant` is left out of an optimized build, and adds no `fails` in any build; a `requires` is never left out, since a caller outside the proof may break it); to pay less at run time, prove more.
 

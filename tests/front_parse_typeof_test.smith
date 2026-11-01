@@ -1,0 +1,76 @@
+// Tests of `typeof(T.[f])` in front::parse_type (#1284, A7e of track A of #1112): the operand of `typeof` is a
+// reflected member of a type parameter. The sources are written in the final spelling.
+module front_parse_typeof_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_expr;
+import front::parse_type;
+
+// A parser over the tokens of source with the real expression and type hooks; a lexing error fails the test.
+static parse::Parser parser_of(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    lex::Tokens tokens = {};
+    switch (lexed) {
+    case .ok:
+        tokens = lexed.ok;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    parse::Parser p = parse::make(tokens, source);
+    p.hooks.expression = parse_expr::expression;
+    p.hooks.type = parse_type::type;
+    return p;
+}
+
+// Checks that `typeof(source)` parses into a type_of whose operand is a reflected member with the given arrow.
+static void check_reflected(Str source, Bool arrow) {
+    parse::Parser p = parser_of(source);
+    ast::TypeExpr *t = parse_type::type(&p);
+    test::check_equal(countof(p.errors), 0);
+    test::check_condition(t != nullptr);
+    if (t->kind != .type_of) {
+        test::check_condition(false);
+        return;
+    }
+    ast::Expr *operand = t->kind.type_of.operand;
+    if (operand->kind != .reflect_member) {
+        test::check_condition(false);
+        return;
+    }
+    test::check_equal(operand->kind.reflect_member.arrow, arrow);
+}
+
+export void test_parse_typeof_reflected_dot_member() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    check_reflected("typeof(T.[fields(T)[i]])", false);
+}
+
+export void test_parse_typeof_reflected_arrow_member() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    check_reflected("typeof(geometry::Box->[f])", true);
+}
+
+export void test_parse_typeof_reflected_error_says_what_to_write() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("typeof(T.[f)");
+    _ = parse_type::type(&p);
+    test::check_condition(countof(p.errors) > 0);
+    Str expected = "expected `]` to end the reflected member, found `)`";
+    test::check_equal(p.errors[0].message, expected);
+}

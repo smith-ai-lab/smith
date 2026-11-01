@@ -18,14 +18,14 @@ import <smith/trace.h>; // smith_failure_detail: the stop of a wrong call
 // least one bit, and bits past the end of the input are zeros that count as a truncation.
 //
 // In memory, when the size of the output is known or bounded (an HDF5 chunk, a PNG's pixels):
-//   u8 out[4096];
-//   usize used, size;
+//   U8 out[4096];
+//   Usize used, size;
 //   inflate::Status status = inflate::decode(inflate::Zlib, data, data_size, out, sizeof out, &used, &size);
 //
 // To a sink, for output of any size (a .tar.gz): the sink is given the bytes in pieces of up to inflate::window, in
 // order, and the window is memory you give it (inflate::window bytes, which every match may reach back into):
-//   bool collect(void *context, const u8 *data, usize size);   // false stops the decoder
-//   u8 window[inflate::window];
+//   bool collect(void *context, const U8 *data, Usize size);   // false stops the decoder
+//   U8 window[inflate::window];
 //   inflate::Status status = inflate::stream(inflate::Gzip, data, data_size, window, collect, &state, &used, &size);
 //
 // Both read one stream and say how much of the input it took (`used`, wrapper and trailer included), so what follows
@@ -58,15 +58,15 @@ import <smith/trace.h>; // smith_failure_detail: the stop of a wrong call
 // NOLINTEND(readability-identifier-naming)
 
 // Where stream sends the output: `size` bytes at `data`, valid until it returns. False stops the decoder.
-[[std::c_name("SmithInflateSink")]] export typedef bool (*Sink)(void *context, const u8 *data, usize size);
+[[std::c_name("SmithInflateSink")]] export typedef bool (*Sink)(void *context, const U8 *data, Usize size);
 
 // The window stream needs: the farthest a match reaches back, and the size of its buffer.
-[[std::c_name("smith_inflate_window")]] export constexpr usize window = 32768;
+[[std::c_name("smith_inflate_window")]] export constexpr Usize window = 32768;
 
-constexpr u32 fast_bits = 10;
+constexpr U32 fast_bits = 10;
 
 // The tables of the CRC-32 by slicing-by-8: [0] is the usual one, and [k][i] is [0][i] followed by k zero bytes.
-constexpr u32 crc_tables[8][256] = {
+constexpr U32 crc_tables[8][256] = {
     {
         0x00000000, 0x77073096, 0xEE0E612C, 0x990951BA, 0x076DC419, 0x706AF48F, 0xE963A535, 0x9E6495A3, 0x0EDB8832,
         0x79DCB8A4, 0xE0D5E91E, 0x97D2D988, 0x09B64C2B, 0x7EB17CBD, 0xE7B82D07, 0x90BF1D91, 0x1DB71064, 0x6AB020F2,
@@ -317,12 +317,12 @@ constexpr u32 crc_tables[8][256] = {
     },
 };
 
-u32 load32(const u8 *p) {
-    return (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24);
+U32 load32(const U8 *p) {
+    return (U32)p[0] | ((U32)p[1] << 8) | ((U32)p[2] << 16) | ((U32)p[3] << 24);
 }
 
-u64 load64(const u8 *p) {
-    return (u64)load32(p) | ((u64)load32(p + 4) << 32);
+U64 load64(const U8 *p) {
+    return (U64)load32(p) | ((U64)load32(p + 4) << 32);
 }
 
 // A wrong call stops the program with the report of a failed check, in every build. It is the edge of the proofs: a
@@ -333,36 +333,36 @@ u64 load64(const u8 *p) {
 }
 
 // The CRC-32 of data (gzip's and xz's, polynomial 0xEDB88320), continuing from `crc` (0 to start), by slicing-by-8.
-[[std::c_name("smith_inflate_crc32")]] export [[nodiscard]] u32 crc32(u32 crc, const u8 *data, usize size) {
+[[std::c_name("smith_inflate_crc32")]] export [[nodiscard]] U32 crc32(U32 crc, const U8 *data, Usize size) {
     if (!(data != nullptr || size == 0)) refuse("data != nullptr || size == 0");
-    u32 value = ~crc;
-    usize left = size;
+    U32 value = ~crc;
+    Usize left = size;
     while (left >= 8) {
-        u32 low = value ^ load32(data);
-        u32 high = load32(data + 4);
+        U32 low = value ^ load32(data);
+        U32 high = load32(data + 4);
         value = crc_tables[7][low & 255U] ^ crc_tables[6][(low >> 8) & 255U] ^ crc_tables[5][(low >> 16) & 255U] ^
                 crc_tables[4][low >> 24] ^ crc_tables[3][high & 255U] ^ crc_tables[2][(high >> 8) & 255U] ^
                 crc_tables[1][(high >> 16) & 255U] ^ crc_tables[0][high >> 24];
         data += 8;
         left -= 8;
     }
-    for (usize i = 0; i < left; i++) {
+    for (Usize i = 0; i < left; i++) {
         value = crc_tables[0][(value ^ data[i]) & 255U] ^ (value >> 8);
     }
     return ~value;
 }
 
 // The Adler-32 of data (zlib's), continuing from `adler` (1 to start).
-[[std::c_name("smith_inflate_adler32")]] export [[nodiscard]] u32 adler32(u32 adler, const u8 *data, usize size) {
+[[std::c_name("smith_inflate_adler32")]] export [[nodiscard]] U32 adler32(U32 adler, const U8 *data, Usize size) {
     if (!(data != nullptr || size == 0)) refuse("data != nullptr || size == 0");
-    constexpr u32 modulus = 65521;
-    constexpr usize chunk = 5552; // the most bytes whose sums fit in 32 bits before the reduction
-    u32 low = adler & 0xFFFFU;
-    u32 high = adler >> 16;
-    usize done = 0;
+    constexpr U32 modulus = 65521;
+    constexpr Usize chunk = 5552; // the most bytes whose sums fit in 32 bits before the reduction
+    U32 low = adler & 0xFFFFU;
+    U32 high = adler >> 16;
+    Usize done = 0;
     while (done < size) {
-        usize end = size - done < chunk ? size : done + chunk;
-        for (usize i = done; i < end; i++) {
+        Usize end = size - done < chunk ? size : done + chunk;
+        for (Usize i = done; i < end; i++) {
             low += data[i];
             high += low;
         }
@@ -388,24 +388,24 @@ u64 load64(const u8 *p) {
 // Bits, least significant first. Past the end of the input the reader supplies zeros and counts them in `fake`, so a
 // decoder checks `count < fake` after a symbol to learn that it read bits that are not there.
 typedef struct {
-    const u8 *in;
-    usize size;
-    usize at; // the next byte to load; may pass `size` by the fake bytes
-    u64 bits;
-    u32 count;
-    u32 fake;
+    const U8 *in;
+    Usize size;
+    Usize at; // the next byte to load; may pass `size` by the fake bytes
+    U64 bits;
+    U32 count;
+    U32 fake;
 } Bits;
 
 [[gnu::always_inline]] inline void refill(Bits *reader) {
     if (reader->at + 8 <= reader->size) {
         reader->bits |= load64(reader->in + reader->at) << reader->count;
-        u32 take = (63U - reader->count) >> 3;
+        U32 take = (63U - reader->count) >> 3;
         reader->at += take;
         reader->count += take * 8U;
         return;
     }
     for (; reader->count < 56; reader->count += 8, reader->at++) {
-        u64 byte = 0;
+        U64 byte = 0;
         if (reader->at < reader->size) {
             byte = reader->in[reader->at];
         } else {
@@ -415,17 +415,17 @@ typedef struct {
     }
 }
 
-[[gnu::always_inline]] inline u32 peek(const Bits *reader, u32 n) {
-    return (u32)(reader->bits & ((1ULL << n) - 1U));
+[[gnu::always_inline]] inline U32 peek(const Bits *reader, U32 n) {
+    return (U32)(reader->bits & ((1ULL << n) - 1U));
 }
 
-[[gnu::always_inline]] inline void drop(Bits *reader, u32 n) {
+[[gnu::always_inline]] inline void drop(Bits *reader, U32 n) {
     reader->bits >>= n;
     reader->count -= n;
 }
 
-[[gnu::always_inline]] inline u32 take(Bits *reader, u32 n) {
-    u32 value = peek(reader, n);
+[[gnu::always_inline]] inline U32 take(Bits *reader, U32 n) {
+    U32 value = peek(reader, n);
     drop(reader, n);
     return value;
 }
@@ -435,52 +435,52 @@ typedef struct {
 }
 
 // The bytes the reader has used, whole bytes still in its buffer handed back.
-usize consumed(const Bits *reader) {
-    usize back = reader->count / 8U;
-    usize used = reader->at > back ? reader->at - back : 0;
+Usize consumed(const Bits *reader) {
+    Usize back = reader->count / 8U;
+    Usize used = reader->at > back ? reader->at - back : 0;
     return used > reader->size ? reader->size : used;
 }
 
 typedef struct {
-    u16 fast[1U << fast_bits]; // symbol << 4 | length for codes up to the table's bits, else 0
-    u16 count[16];             // codes of each length
-    u16 symbol[288];           // symbols in canonical order
+    U16 fast[1U << fast_bits]; // symbol << 4 | length for codes up to the table's bits, else 0
+    U16 count[16];             // codes of each length
+    U16 symbol[288];           // symbols in canonical order
 } Huffman;
 
 // Builds the decoder of a canonical code from its lengths. False when the code is over-subscribed, or incomplete
 // (zlib's rule: except the one code of length 1 that a lone distance may be).
-bool huffman_build(Huffman *huffman, const u8 *lengths, usize n) {
+bool huffman_build(Huffman *huffman, const U8 *lengths, Usize n) {
     __builtin_memset(huffman->count, 0, sizeof huffman->count);
     __builtin_memset(huffman->fast, 0, sizeof huffman->fast);
-    for (usize i = 0; i < n; i++) {
+    for (Usize i = 0; i < n; i++) {
         huffman->count[lengths[i]]++;
     }
     huffman->count[0] = 0;
-    i32 left = 1;
-    u16 offsets[16] = {};
-    usize used = 0;
-    for (usize length = 1; length < 16; length++) {
+    I32 left = 1;
+    U16 offsets[16] = {};
+    Usize used = 0;
+    for (Usize length = 1; length < 16; length++) {
         left = left * 2 - huffman->count[length];
         if (left < 0) return false;
-        offsets[length] = (u16)used;
+        offsets[length] = (U16)used;
         used += huffman->count[length];
     }
     if (left > 0 && !(used == 1 && huffman->count[1] == 1)) return used == 0;
-    u16 next[16];
+    U16 next[16];
     __builtin_memcpy(next, offsets, sizeof next);
-    for (usize i = 0; i < n; i++) {
-        if (lengths[i] != 0) huffman->symbol[next[lengths[i]]++] = (u16)i;
+    for (Usize i = 0; i < n; i++) {
+        if (lengths[i] != 0) huffman->symbol[next[lengths[i]]++] = (U16)i;
     }
-    u32 code = 0;
-    usize index = 0;
-    for (u32 length = 1; length <= fast_bits; length++) {
-        for (u16 k = 0; k < huffman->count[length]; k++, code++, index++) {
-            u32 reversed = 0;
-            for (u32 bit = 0; bit < length; bit++) {
+    U32 code = 0;
+    Usize index = 0;
+    for (U32 length = 1; length <= fast_bits; length++) {
+        for (U16 k = 0; k < huffman->count[length]; k++, code++, index++) {
+            U32 reversed = 0;
+            for (U32 bit = 0; bit < length; bit++) {
                 reversed |= ((code >> bit) & 1U) << (length - 1U - bit);
             }
-            for (u32 fill = reversed; fill < (1U << fast_bits); fill += 1U << length) {
-                huffman->fast[fill] = (u16)(((u32)huffman->symbol[index] << 4) | length);
+            for (U32 fill = reversed; fill < (1U << fast_bits); fill += 1U << length) {
+                huffman->fast[fill] = (U16)(((U32)huffman->symbol[index] << 4) | length);
             }
         }
         code <<= 1;
@@ -489,18 +489,18 @@ bool huffman_build(Huffman *huffman, const u8 *lengths, usize n) {
 }
 
 // The next symbol, or -1 for bits that are no code. The reader must hold at least 15 bits.
-[[gnu::always_inline]] inline i32 huffman_decode(const Huffman *huffman, Bits *reader) {
-    u16 entry = huffman->fast[peek(reader, fast_bits)];
+[[gnu::always_inline]] inline I32 huffman_decode(const Huffman *huffman, Bits *reader) {
+    U16 entry = huffman->fast[peek(reader, fast_bits)];
     if (entry != 0) {
         drop(reader, entry & 15U);
         return entry >> 4;
     }
-    u32 code = 0;  // the bits read so far, first bit highest
-    u32 first = 0; // the first code of this length
-    u32 index = 0; // where the codes of this length start in `symbol`
-    for (u32 length = 1; length < 16; length++) {
-        code = (code << 1) + (u32)((reader->bits >> (length - 1U)) & 1U);
-        u32 count = huffman->count[length];
+    U32 code = 0;  // the bits read so far, first bit highest
+    U32 first = 0; // the first code of this length
+    U32 index = 0; // where the codes of this length start in `symbol`
+    for (U32 length = 1; length < 16; length++) {
+        code = (code << 1) + (U32)((reader->bits >> (length - 1U)) & 1U);
+        U32 count = huffman->count[length];
         if (code - first < count) {
             drop(reader, length);
             return huffman->symbol[index + (code - first)];
@@ -516,16 +516,16 @@ bool huffman_build(Huffman *huffman, const u8 *lengths, usize n) {
 // flushed whenever it fills, so `position` is always below `capacity` between calls.
 typedef struct {
     Bits bits;
-    u8 *out;
-    usize capacity;
-    usize position; // bytes in `out`
-    u64 total;      // bytes of this stream produced, flushed or not
+    U8 *out;
+    Usize capacity;
+    Usize position; // bytes in `out`
+    U64 total;      // bytes of this stream produced, flushed or not
     Sink sink;
     void *context;
     Format format;
-    u32 check;    // the checksum of the bytes of `out` before `summed`, and of those already flushed
-    usize summed; // how much of `out` the checksum has seen
-    u64 guard;    // loop bound: bits of input plus slack
+    U32 check;    // the checksum of the bytes of `out` before `summed`, and of those already flushed
+    Usize summed; // how much of `out` the checksum has seen
+    U64 guard;    // loop bound: bits of input plus slack
     Huffman literals;
     Huffman distances;
 } State;
@@ -546,7 +546,7 @@ Status flush(State *s) {
     return ok ? Ok : Stopped;
 }
 
-[[gnu::always_inline]] inline Status put(State *s, u8 byte) {
+[[gnu::always_inline]] inline Status put(State *s, U8 byte) {
     bool windowed = s->sink != nullptr;
     if (!windowed && s->position == s->capacity) return Overflow;
     s->out[s->position] = byte;
@@ -559,8 +559,8 @@ Status flush(State *s) {
 Status stored(State *s) {
     Bits *reader = &s->bits;
     drop(reader, reader->count & 7U);
-    u32 length = take(reader, 16);
-    u32 inverse = take(reader, 16);
+    U32 length = take(reader, 16);
+    U32 inverse = take(reader, 16);
     if (overrun(reader)) return Truncated;
     if ((length ^ inverse) != 0xFFFFU) return Corrupt;
     reader->at -= reader->count / 8U; // hand the whole bytes still in the buffer back
@@ -568,12 +568,12 @@ Status stored(State *s) {
     reader->count = 0;
     reader->fake = 0;
     if (reader->at > reader->size || reader->size - reader->at < length) return Truncated;
-    const u8 *from = reader->in + reader->at;
-    usize remaining = length;
+    const U8 *from = reader->in + reader->at;
+    Usize remaining = length;
     while (remaining > 0) {
-        usize room = s->capacity - s->position;
+        Usize room = s->capacity - s->position;
         if (room == 0) return Overflow; // only in memory: to a sink the window is flushed as it fills
-        usize n = remaining < room ? remaining : room;
+        Usize n = remaining < room ? remaining : room;
         __builtin_memcpy(s->out + s->position, from, n);
         s->position += n;
         s->total += n;
@@ -588,26 +588,26 @@ Status stored(State *s) {
     return Ok;
 }
 
-constexpr u16 length_base[29] = {3,  4,  5,  6,  7,  8,  9,  10, 11,  13,  15,  17,  19,  23, 27,
+constexpr U16 length_base[29] = {3,  4,  5,  6,  7,  8,  9,  10, 11,  13,  15,  17,  19,  23, 27,
                                  31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
-constexpr u8 length_extra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
-constexpr u16 distance_base[30] = {1,    2,    3,    4,    5,    7,    9,    13,    17,    25,
+constexpr U8 length_extra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
+constexpr U16 distance_base[30] = {1,    2,    3,    4,    5,    7,    9,    13,    17,    25,
                                    33,   49,   65,   97,   129,  193,  257,  385,   513,   769,
                                    1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
-constexpr u8 distance_extra[30] = {0, 0, 0, 0, 1, 1, 2, 2,  3,  3,  4,  4,  5,  5,  6,
+constexpr U8 distance_extra[30] = {0, 0, 0, 0, 1, 1, 2, 2,  3,  3,  4,  4,  5,  5,  6,
                                    6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
 
 // Copies `length` bytes from `distance` back, which may overlap what it writes.
-Status copy(State *s, u32 length, u32 distance) {
+Status copy(State *s, U32 length, U32 distance) {
     if (distance > s->total) return Corrupt;
     if (s->sink == nullptr) { // in memory every byte written is still there, and nothing wraps
         if (length > s->capacity - s->position) return Overflow;
-        u8 *to = s->out + s->position;
-        const u8 *from = to - distance;
+        U8 *to = s->out + s->position;
+        const U8 *from = to - distance;
         if (distance >= length) {
             __builtin_memcpy(to, from, length);
         } else {
-            for (u32 i = 0; i < length; i++) {
+            for (U32 i = 0; i < length; i++) {
                 to[i] = from[i];
             }
         }
@@ -616,12 +616,12 @@ Status copy(State *s, u32 length, u32 distance) {
         return Ok;
     }
     if (s->position >= distance && s->position + length < s->capacity) { // the common case: no wrap, no flush
-        u8 *to = s->out + s->position;
-        const u8 *from = to - distance;
+        U8 *to = s->out + s->position;
+        const U8 *from = to - distance;
         if (distance >= length) {
             __builtin_memcpy(to, from, length);
         } else {
-            for (u32 i = 0; i < length; i++) {
+            for (U32 i = 0; i < length; i++) {
                 to[i] = from[i];
             }
         }
@@ -629,8 +629,8 @@ Status copy(State *s, u32 length, u32 distance) {
         s->total += length;
         return Ok;
     }
-    for (u32 i = 0; i < length; i++) {
-        usize from = (s->position - distance) & (window - 1U);
+    for (U32 i = 0; i < length; i++) {
+        Usize from = (s->position - distance) & (window - 1U);
         Status status = put(s, s->out[from]);
         if (status != Ok) return status;
     }
@@ -640,22 +640,22 @@ Status copy(State *s, u32 length, u32 distance) {
 // The symbols of one Huffman block, up to its end-of-block.
 Status symbols(State *s) {
     Bits *reader = &s->bits;
-    for (u64 step = 0; step < s->guard; step++) {
+    for (U64 step = 0; step < s->guard; step++) {
         refill(reader); // 15 + 5 + 15 + 13 bits is the most one symbol and its match take: under 56
-        i32 symbol = huffman_decode(&s->literals, reader);
+        I32 symbol = huffman_decode(&s->literals, reader);
         if (symbol < 0) return Corrupt;
         if (symbol < 256) {
-            Status status = put(s, (u8)symbol);
+            Status status = put(s, (U8)symbol);
             if (status != Ok) return status;
         } else if (symbol == 256) {
             return overrun(reader) ? Truncated : Ok;
         } else {
             symbol -= 257;
             if (symbol >= 29) return Corrupt;
-            u32 length = length_base[symbol] + take(reader, length_extra[symbol]);
-            i32 slot = huffman_decode(&s->distances, reader);
+            U32 length = length_base[symbol] + take(reader, length_extra[symbol]);
+            I32 slot = huffman_decode(&s->distances, reader);
             if (slot < 0 || slot >= 30) return Corrupt;
-            u32 distance = distance_base[slot] + take(reader, distance_extra[slot]);
+            U32 distance = distance_base[slot] + take(reader, distance_extra[slot]);
             if (overrun(reader)) return Truncated;
             Status status = copy(s, length, distance);
             if (status != Ok) return status;
@@ -666,7 +666,7 @@ Status symbols(State *s) {
 }
 
 Status fixed(State *s) {
-    u8 lengths[288];
+    U8 lengths[288];
     __builtin_memset(lengths, 8, 144);
     __builtin_memset(lengths + 144, 9, 112);
     __builtin_memset(lengths + 256, 7, 24);
@@ -679,16 +679,16 @@ Status fixed(State *s) {
 
 // Reads `count` code lengths with the code-length code, whose repeats 16, 17 and 18 may cross from literals to
 // distances.
-Status read_lengths(State *s, const Huffman *code, u8 *lengths, usize count) {
+Status read_lengths(State *s, const Huffman *code, U8 *lengths, Usize count) {
     Bits *reader = &s->bits;
-    usize at = 0;
-    for (usize step = 0; at < count; step++) {
+    Usize at = 0;
+    for (Usize step = 0; at < count; step++) {
         if (step > count) return Corrupt;
         refill(reader);
-        i32 symbol = huffman_decode(code, reader);
+        I32 symbol = huffman_decode(code, reader);
         if (symbol < 0) return Corrupt;
-        u32 repeat = 1;
-        u8 value = (u8)symbol;
+        U32 repeat = 1;
+        U8 value = (U8)symbol;
         if (symbol == 16) {
             if (at == 0) return Corrupt;
             value = lengths[at - 1];
@@ -708,19 +708,19 @@ Status read_lengths(State *s, const Huffman *code, u8 *lengths, usize count) {
     return Ok;
 }
 
-constexpr u8 length_order[19] = {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
+constexpr U8 length_order[19] = {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
 
 Status dynamic(State *s) {
     Bits *reader = &s->bits;
     refill(reader);
-    usize literals = 257U + take(reader, 5);
-    usize distances = 1U + take(reader, 5);
-    usize codes = 4U + take(reader, 4);
+    Usize literals = 257U + take(reader, 5);
+    Usize distances = 1U + take(reader, 5);
+    Usize codes = 4U + take(reader, 4);
     if (literals > 286 || distances > 30) return Corrupt;
-    u8 lengths[320] = {};
-    for (usize i = 0; i < codes; i++) {
+    U8 lengths[320] = {};
+    for (Usize i = 0; i < codes; i++) {
         refill(reader);
-        lengths[length_order[i]] = (u8)take(reader, 3);
+        lengths[length_order[i]] = (U8)take(reader, 3);
     }
     if (overrun(reader)) return Truncated;
     Huffman code;
@@ -738,10 +738,10 @@ Status dynamic(State *s) {
 // The blocks of one DEFLATE stream, to the one marked final.
 Status blocks(State *s) {
     Bits *reader = &s->bits;
-    for (u64 block = 0; block < s->guard; block++) {
+    for (U64 block = 0; block < s->guard; block++) {
         refill(reader);
         bool last = take(reader, 1) != 0;
-        u32 type = take(reader, 2);
+        U32 type = take(reader, 2);
         if (overrun(reader)) return Truncated;
         Status status = Corrupt; // the reserved type 3
         if (type == 0) status = stored(s);
@@ -755,23 +755,23 @@ Status blocks(State *s) {
 
 // The length of a gzip member's header: the ten fixed bytes, then the extra field, name, comment and header CRC the
 // flags ask for.
-Status gzip_header(const u8 *in, usize size, usize *length) {
-    constexpr u8 extra = 4;
-    constexpr u8 name = 8;
-    constexpr u8 comment = 16;
-    constexpr u8 crc16 = 2;
+Status gzip_header(const U8 *in, Usize size, Usize *length) {
+    constexpr U8 extra = 4;
+    constexpr U8 name = 8;
+    constexpr U8 comment = 16;
+    constexpr U8 crc16 = 2;
     if (size >= 2 && (in[0] != 0x1F || in[1] != 0x8B)) return BadHeader;
     if (size < 10) return Truncated;
     if (in[2] != 8 || (in[3] & 0xE0U) != 0) return BadHeader;
-    usize at = 10;
-    u8 flags = in[3];
+    Usize at = 10;
+    U8 flags = in[3];
     if ((flags & extra) != 0) {
         if (size - at < 2) return Truncated;
-        usize field = (usize)in[at] | ((usize)in[at + 1] << 8);
+        Usize field = (Usize)in[at] | ((Usize)in[at + 1] << 8);
         if (size - at - 2 < field) return Truncated;
         at += 2 + field;
     }
-    for (u8 flag = name; flag <= comment; flag = (u8)(flag * 2)) {
+    for (U8 flag = name; flag <= comment; flag = (U8)(flag * 2)) {
         if ((flags & flag) == 0) continue;
         while (at < size && in[at] != 0) {
             at += 1;
@@ -781,7 +781,7 @@ Status gzip_header(const u8 *in, usize size, usize *length) {
     }
     if ((flags & crc16) != 0) {
         if (size - at < 2) return Truncated;
-        u32 wanted = (u32)in[at] | ((u32)in[at + 1] << 8);
+        U32 wanted = (U32)in[at] | ((U32)in[at + 1] << 8);
         if ((crc32(0, in, at) & 0xFFFFU) != wanted) return BadChecksum;
         at += 2;
     }
@@ -790,12 +790,12 @@ Status gzip_header(const u8 *in, usize size, usize *length) {
 }
 
 // The wrapper's header: where the DEFLATE stream starts.
-Status open_wrapper(Format format, const u8 *in, usize size, usize *start) {
+Status open_wrapper(Format format, const U8 *in, Usize size, Usize *start) {
     *start = 0;
     if (format == Gzip) return gzip_header(in, size, start);
     if (format == Zlib) {
         if (size < 2) return Truncated;
-        u32 header = ((u32)in[0] << 8) | in[1];
+        U32 header = ((U32)in[0] << 8) | in[1];
         bool method = (in[0] & 15U) == 8 && (in[0] >> 4) <= 7;
         if (!method || header % 31 != 0 || (in[1] & 0x20U) != 0) return BadHeader; // a preset dictionary is refused
         *start = 2;
@@ -804,41 +804,41 @@ Status open_wrapper(Format format, const u8 *in, usize size, usize *start) {
 }
 
 // The wrapper's trailer, checked against what the decoder made.
-Status close_wrapper(const State *s, const u8 *trailer, usize available, usize *used) {
+Status close_wrapper(const State *s, const U8 *trailer, Usize available, Usize *used) {
     if (s->format == Zlib) {
         if (available < 4) return Truncated;
         *used = 4;
-        u32 wanted = ((u32)trailer[0] << 24) | ((u32)trailer[1] << 16) | ((u32)trailer[2] << 8) | trailer[3];
+        U32 wanted = ((U32)trailer[0] << 24) | ((U32)trailer[1] << 16) | ((U32)trailer[2] << 8) | trailer[3];
         return wanted == s->check ? Ok : BadChecksum;
     }
     if (s->format == Gzip) {
         if (available < 8) return Truncated;
         *used = 8;
         if (load32(trailer) != s->check) return BadChecksum;
-        return load32(trailer + 4) == (u32)s->total ? Ok : BadLength;
+        return load32(trailer + 4) == (U32)s->total ? Ok : BadLength;
     }
     return Ok;
 }
 
 // One stream: header, DEFLATE data, trailer. `s` has its output set up.
-Status run(State *s, const u8 *input, usize size, usize *used, u64 *produced) {
+Status run(State *s, const U8 *input, Usize size, Usize *used, U64 *produced) {
     *used = 0;
     *produced = 0;
-    usize start = 0;
+    Usize start = 0;
     Status status = open_wrapper(s->format, input, size, &start);
     if (status != Ok) return status;
     *used = start;
     s->bits = (Bits){.in = input + start, .size = size - start};
     s->check = s->format == Zlib ? 1 : 0;
-    s->guard = (u64)(size - start) * 8U + 64U;
+    s->guard = (U64)(size - start) * 8U + 64U;
     status = blocks(s);
     if (status == Ok && s->sink != nullptr) status = flush(s);
     if (status == Ok) sum(s);
     *produced = s->total;
-    usize end = consumed(&s->bits);
+    Usize end = consumed(&s->bits);
     *used = start + end;
     if (status != Ok) return status;
-    usize trailer_size = 0;
+    Usize trailer_size = 0;
     status = close_wrapper(s, s->bits.in + end, s->bits.size - end, &trailer_size);
     *used += trailer_size;
     return status;
@@ -849,12 +849,12 @@ Status run(State *s, const u8 *input, usize size, usize *used, u64 *produced) {
 // Overflow, with the first capacity bytes written. A null input with a size, a null output with a capacity or a null
 // `used` or `size` is a bug and stops the program with the report of a failed check.
 [[std::c_name("smith_inflate_decode")]] export [[nodiscard]] Status
-decode(Format format, const u8 *input, usize input_size, u8 *output, usize capacity, usize *used, usize *size) {
+decode(Format format, const U8 *input, Usize input_size, U8 *output, Usize capacity, Usize *used, Usize *size) {
     if (!(input != nullptr || input_size == 0)) refuse("input != nullptr || input_size == 0");
     if (!(output != nullptr || capacity == 0)) refuse("output != nullptr || capacity == 0");
     if (!(used != nullptr && size != nullptr)) refuse("used != nullptr && size != nullptr");
     State state = {.out = output, .capacity = capacity, .format = format};
-    u64 produced = 0;
+    U64 produced = 0;
     Status status = run(&state, input, input_size, used, &produced);
     *size = state.position;
     return status;
@@ -864,7 +864,7 @@ decode(Format format, const u8 *input, usize input_size, u8 *output, usize capac
 // order. `buffer` is inflate::window bytes of memory, which the decoder uses as its window: a match reaches back into
 // it. `size` is set to the bytes produced. A null buffer, sink, `used` or `size` is a bug and stops the program.
 [[std::c_name("smith_inflate_stream")]] export [[nodiscard]] Status
-stream(Format format, const u8 *input, usize input_size, u8 *buffer, Sink sink, void *context, usize *used, u64 *size) {
+stream(Format format, const U8 *input, Usize input_size, U8 *buffer, Sink sink, void *context, Usize *used, U64 *size) {
     if (!(input != nullptr || input_size == 0)) refuse("input != nullptr || input_size == 0");
     if (!(buffer != nullptr)) refuse("buffer != nullptr");
     if (!(sink != nullptr)) refuse("sink != nullptr");

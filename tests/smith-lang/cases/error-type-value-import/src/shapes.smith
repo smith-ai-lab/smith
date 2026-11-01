@@ -14,7 +14,7 @@ export Type wider(Type a, Type b) {
     return sizeof(a) >= sizeof(b) ? a : b;
 }
 
-// `t[:]` once for each size: `slice_of(f32, 2)` is `f32[:][:]`.
+// `t[:]` once for each size: `slice_of(F32, 2)` is `F32[:][:]`.
 export Type slice_of(Type element, Usize count) {
     Type t = element;
     for (Usize i = 0; i < count; i++)

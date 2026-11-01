@@ -359,6 +359,7 @@ static state::Status run(state::Emitter *e) {
             try dispatch_statement(e, item.stmt);
             break;
         case .then:
+            try debug::then_location(e, &item);
             try item.then(e, &item);
             break;
         }
@@ -587,6 +588,7 @@ export ModuleResult module(c::LLVMContextRef context, const ast::Module *m, stat
     e.builder = c::LLVMCreateBuilderInContext(context);
     e.alloca_builder = c::LLVMCreateBuilderInContext(context);
     state::Status status = emit_all(&e);
+    debug::release(&e);
     memory::release(&e);
     c::LLVMDisposeBuilder(e.builder);
     c::LLVMDisposeBuilder(e.alloca_builder);

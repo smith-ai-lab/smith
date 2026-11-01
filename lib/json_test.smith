@@ -21,15 +21,15 @@ import <string.h>;
 import std::mem;
 
 // The bytes of a buffer, for the calls of files that take a slice.
-static typeof(const u8[:]) test_file_bytes(const void *data, usize size) {
-    const u8 *bytes = (const u8 *)data;
+static typeof(const U8[:]) test_file_bytes(const void *data, Usize size) {
+    const U8 *bytes = (const U8 *)data;
     return bytes[0:size];
 }
 
 // The C headers write these as macros (DBL_MAX, INT64_MIN), which a .smith file does not use.
-constexpr i64 i64_max = 9223372036854775807;
-constexpr i64 i64_min = -9223372036854775807 - 1;
-constexpr f64 f64_max = 0x1.fffffffffffffp+1023;
+constexpr I64 i64_max = 9223372036854775807;
+constexpr I64 i64_min = -9223372036854775807 - 1;
+constexpr F64 f64_max = 0x1.fffffffffffffp+1023;
 
 constexpr c::SmithJsonLimits test_json_wide = {.depth = 64, .string_length = 1 << 16, .count = 1 << 16};
 
@@ -62,7 +62,7 @@ static random::Key take(random::Key *stream) {
     return next[1];
 }
 
-static i64 test_json_uniform(random::Key key, i64 low, i64 high) {
+static I64 test_json_uniform(random::Key key, I64 low, I64 high) {
     return random::uniform_int64_sample(key, (random::UniformInt64){.low = low, .high = high});
 }
 
@@ -71,7 +71,7 @@ static i64 test_json_uniform(random::Key key, i64 low, i64 high) {
 
 typedef struct {
     c::SmithJsonToken token;
-    usize offset;
+    Usize offset;
 } TestJsonStep;
 
 export void test_json_reader_tokens_of_a_document() {
@@ -84,7 +84,7 @@ export void test_json_reader_tokens_of_a_document() {
         {c::SmithJsonToken_ObjectBegin, 34}, {c::SmithJsonToken_ObjectEnd, 35}, {c::SmithJsonToken_ObjectEnd, 36},
         {c::SmithJsonToken_End, 37},
     };
-    for (usize i = 0; i < _Countof expected; i++) {
+    for (Usize i = 0; i < _Countof expected; i++) {
         c::SmithJsonToken token = c::smith_json_read(&reader);
         test::note("step %zu", i);
         test::check(token == expected[i].token);
@@ -104,10 +104,10 @@ export void test_json_reader_keys_and_numbers() {
     test::check(!c::smith_json_is(&reader, "k\xc3\xa9yz"));
     test::check(c::smith_json_read(&reader) == c::SmithJsonToken_Number);
     test::check(text::is(reader.text, "-12.5e+3"));
-    f64 value = 0;
+    F64 value = 0;
     test::check(text::parse_f64(reader.text, &value));
     test::check_same_bits(value, -12500.0);
-    i64 integer = 0;
+    I64 integer = 0;
     test::check(!text::parse_i64(reader.text, &integer)); // not an integer as written
 }
 
@@ -152,12 +152,12 @@ export void test_json_reader_an_error_is_final() {
 typedef struct {
     const char *input;
     c::SmithJsonReason reason;
-    usize offset;
+    Usize offset;
 } TestJsonError;
 
-static void test_json_check_errors(const TestJsonError *cases, usize count) {
+static void test_json_check_errors(const TestJsonError *cases, Usize count) {
     arena::Arena arena = test::memory(1 << 16);
-    for (usize i = 0; i < count; i++) {
+    for (Usize i = 0; i < count; i++) {
         test::note("input \"%s\"", cases[i].input);
         const c::SmithJsonValue *root = nullptr;
         c::SmithJsonError error = {};
@@ -168,7 +168,7 @@ static void test_json_check_errors(const TestJsonError *cases, usize count) {
         test::check_equal(arena.used, 0);
         c::SmithJsonReader reader = c::smith_json_reader_make(input, test_json_wide);
         c::SmithJsonToken token = c::SmithJsonToken_Null;
-        for (usize step = 0;
+        for (Usize step = 0;
              step <= countof(input) + 1 && token != c::SmithJsonToken_Error && token != c::SmithJsonToken_End; step++) {
             token = c::smith_json_read(&reader);
         }
@@ -308,7 +308,7 @@ export void test_json_accepts_the_grammar() {
         "\n\n{ \"k\" : [ 1 , 2 ] }\n",
     };
     arena::Arena arena = test::memory(1 << 16);
-    for (usize i = 0; i < _Countof good; i++) {
+    for (Usize i = 0; i < _Countof good; i++) {
         test::note("input \"%s\"", good[i]);
         const c::SmithJsonValue *root = nullptr;
         c::SmithJsonError error = {};
@@ -328,7 +328,7 @@ static typeof(const char[:]) test_json_only_string(arena::Arena *arena, const ch
     return root->text;
 }
 
-static void test_json_check_string(arena::Arena *arena, const char *document, const char *bytes, usize length) {
+static void test_json_check_string(arena::Arena *arena, const char *document, const char *bytes, Usize length) {
     test::note("document %s", document);
     const char string[:] = test_json_only_string(arena, document);
     test::check_equal(countof(string), length);
@@ -364,7 +364,7 @@ export void test_json_reader_decodes_into_the_arena() {
     c::SmithJsonReader reader = c::smith_json_reader_make(test_json_text("[\"x\\ty\", \"plain\"]"), test_json_wide);
     test::check(c::smith_json_read(&reader) == c::SmithJsonToken_ArrayBegin);
     test::check(c::smith_json_read(&reader) == c::SmithJsonToken_String);
-    usize before = arena.used;
+    Usize before = arena.used;
     const char first[:] = test_json_decode(&reader, &arena);
     test::check_greater(arena.used, before);
     test::check_equal(countof(first), 3);
@@ -394,14 +394,14 @@ export void test_json_numbers_are_exact() {
         &arena, "[0, -0, 9223372036854775807, -9223372036854775808, 18446744073709551615, 18446744073709551616, "
                 "-9223372036854775809, 1e2, 2.5, 1E400, -1e400, 1e-400]");
     test::check_equal(root->count, 12);
-    i64 i = 7;
-    u64 u = 7;
-    f64 d = 7;
+    I64 i = 7;
+    U64 u = 7;
+    F64 d = 7;
     test::check(text::parse_i64(root->items[0]->text, &i) && i == 0);
     test::check(text::parse_i64(root->items[1]->text, &i) && i == 0);
     test::check(text::parse_i64(root->items[2]->text, &i) && i == i64_max);
     test::check(text::parse_i64(root->items[3]->text, &i) && i == i64_min);
-    test::check(text::parse_u64(root->items[4]->text, &u) && u == math::max(u64));
+    test::check(text::parse_u64(root->items[4]->text, &u) && u == math::max(U64));
     test::check(!text::parse_u64(root->items[5]->text, &u));
     test::check(!text::parse_i64(root->items[5]->text, &i));
     test::check(!text::parse_i64(root->items[6]->text, &i));
@@ -442,7 +442,7 @@ export void test_json_depth_limit() {
     test::check_equal(error.offset, 0);
     c::SmithJsonLimits deepest = {.depth = c::smith_json_depth_max, .string_length = 10, .count = 2000};
     char many[c::smith_json_depth_max * 2 + 1];
-    usize depth = c::smith_json_depth_max;
+    Usize depth = c::smith_json_depth_max;
     mem::fill(many[0:depth], '[');
     mem::fill(many[depth:depth * 2], ']');
     many[c::smith_json_depth_max * 2] = '\0';
@@ -517,8 +517,8 @@ export void test_json_tree_of_a_document() {
 
 export void test_json_tree_does_not_touch_the_arena_on_failure() {
     arena::Arena arena = test::memory(1 << 16);
-    (void)arena::push(&arena, u64);
-    usize used = arena.used;
+    (void)arena::push(&arena, U64);
+    Usize used = arena.used;
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
     test::check(!test_json_parse(&arena, test_json_text("[1, 2, \"a\\n\", ]"), test_json_wide, &root, &error));
@@ -546,12 +546,12 @@ export void test_json_parse_allocates_only_through_the_current_allocator() {
 // arena stays in force while the runner's signal handler runs (glibc mallocs there), so it is left room for that.
 export void test_json_tree_that_the_allocator_refuses_stops() {
     test::expect_abort();
-    alignas(arena::align_max) u8 memory[16384];
+    alignas(arena::align_max) U8 memory[16384];
     arena::Arena arena = arena::fixed(memory, sizeof memory);
     char big[2048];
-    usize used = 0;
+    Usize used = 0;
     big[used++] = '[';
-    for (i32 i = 0; i < 400; i++) {
+    for (I32 i = 0; i < 400; i++) {
         big[used++] = '1';
         big[used++] = ',';
     }
@@ -564,9 +564,9 @@ export void test_json_tree_that_the_allocator_refuses_stops() {
 export void test_json_a_large_array_keeps_its_order() {
     arena::Arena arena = test::memory(1 << 20);
     char digits[8192];
-    usize used = 0;
+    Usize used = 0;
     digits[used++] = '[';
-    for (usize i = 0; i < 1000; i++) {
+    for (Usize i = 0; i < 1000; i++) {
         if (i > 0) digits[used++] = ',';
         used += text::write_u64(digits[used:sizeof digits], i * i);
     }
@@ -576,10 +576,10 @@ export void test_json_a_large_array_keeps_its_order() {
     c::SmithJsonLimits limits = {.depth = 2, .string_length = 1, .count = 1001};
     test::check(test_json_parse(&arena, digits[0:used], limits, &root, &error));
     test::check_equal(root->count, 1000);
-    for (usize i = 0; i < 1000; i++) {
-        u64 value = 0;
+    for (Usize i = 0; i < 1000; i++) {
+        U64 value = 0;
         test::check(text::parse_u64(root->items[i]->text, &value));
-        u64 square = i;
+        U64 square = i;
         test::check_equal(value, square * square);
     }
 }
@@ -641,7 +641,7 @@ export void test_json_writer_indents() {
     test::check(test_json_writer_is(&scalar, "7"));
 }
 
-static bool test_json_string_writes(const char *bytes, usize length, const char *expected) {
+static bool test_json_string_writes(const char *bytes, Usize length, const char *expected) {
     char buffer[128];
     c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, sizeof buffer, 0);
     c::smith_json_write_string(&writer, bytes[0:length]);
@@ -661,7 +661,7 @@ export void test_json_writer_escapes() {
 
 export void test_json_writer_refuses_invalid_utf8() {
     const char *bad[_] = {"\xff", "\xc0\x80", "\xed\xa0\x80", "\xe2\x82", "ok\x80"};
-    for (usize i = 0; i < _Countof bad; i++) {
+    for (Usize i = 0; i < _Countof bad; i++) {
         char buffer[64];
         c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, sizeof buffer, 0);
         c::smith_json_write_string(&writer, test_json_text(bad[i]));
@@ -675,7 +675,7 @@ export void test_json_writer_numbers() {
     char buffer[512];
     c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, sizeof buffer, 0);
     c::smith_json_write_array_begin(&writer);
-    c::smith_json_write_u64(&writer, math::max(u64));
+    c::smith_json_write_u64(&writer, math::max(U64));
     c::smith_json_write_i64(&writer, i64_min);
     c::smith_json_write_i64(&writer, i64_max);
     c::smith_json_write_f64(&writer, -0.0);
@@ -687,7 +687,7 @@ export void test_json_writer_numbers() {
         &writer, "[18446744073709551615,-9223372036854775808,9223372036854775807,-0,0.1,1e300,5e-324]"));
 }
 
-static void test_json_write_not_finite(f64 value) {
+static void test_json_write_not_finite(F64 value) {
     char buffer[64];
     c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, sizeof buffer, 0);
     c::smith_json_write_array_begin(&writer);
@@ -707,7 +707,7 @@ export void test_json_writer_stops_on_nan() {
     test_json_write_not_finite(__builtin_nan(""));
 }
 
-static void test_json_misuse(i32 which) {
+static void test_json_misuse(I32 which) {
     char buffer[64];
     c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, sizeof buffer, 0);
     const char output[:] = {};
@@ -828,11 +828,11 @@ export void test_json_writer_full_buffer() {
 }
 
 export void test_json_writer_depth() {
-    constexpr usize size = c::smith_json_depth_max * 2 + 8;
+    constexpr Usize size = c::smith_json_depth_max * 2 + 8;
     arena::Arena arena = test::memory(size);
     char *buffer = arena::push_slice(&arena, char, size).data;
     c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, size, 0);
-    for (usize i = 0; i < c::smith_json_depth_max; i++) {
+    for (Usize i = 0; i < c::smith_json_depth_max; i++) {
         c::smith_json_write_array_begin(&writer);
     }
     test::check(writer.error.reason == c::SmithJsonReason_None);
@@ -843,41 +843,41 @@ export void test_json_writer_depth() {
 // ---------------------------------------------------------------------------------------------------------------
 // Property tests: a random document, written, then read
 
-constexpr usize test_json_events_max = 160;
-constexpr usize test_json_string_max = 24;
+constexpr Usize test_json_events_max = 160;
+constexpr Usize test_json_string_max = 24;
 
 typedef enum { TestJsonNumber_U64, TestJsonNumber_I64, TestJsonNumber_F64 } TestJsonNumber;
 
 typedef struct {
     c::SmithJsonToken token;
     char string[test_json_string_max * 4 + 1]; // a Key or String, as UTF-8
-    usize length;
+    Usize length;
     TestJsonNumber number;
-    u64 bits; // a number's value: the integer, or the f64's bits
+    U64 bits; // a number's value: the integer, or the f64's bits
 } TestJsonEvent;
 
 typedef struct {
     TestJsonEvent events[test_json_events_max];
-    usize count;
+    Usize count;
 } TestJsonDocument;
 
 // A random code point that is not a surrogate and, optionally, not zero.
-static u32 test_json_code_point(random::Key key) {
+static U32 test_json_code_point(random::Key key) {
     random::Key *key_stream = &key;
-    i64 band = test_json_uniform(take(key_stream), 0, 9);
+    I64 band = test_json_uniform(take(key_stream), 0, 9);
     random::Key pick = take(key_stream);
-    if (band <= 3) return (u32)test_json_uniform(pick, 0x20, 0x7e);
-    if (band == 4) return (u32)test_json_uniform(pick, 1, 0x1f);
-    if (band == 5) return (u32)(u8) "\"\\/\x7f"[test_json_uniform(pick, 0, 3)];
-    if (band == 6) return (u32)test_json_uniform(pick, 0x80, 0x7ff);
+    if (band <= 3) return (U32)test_json_uniform(pick, 0x20, 0x7e);
+    if (band == 4) return (U32)test_json_uniform(pick, 1, 0x1f);
+    if (band == 5) return (U32)(U8) "\"\\/\x7f"[test_json_uniform(pick, 0, 3)];
+    if (band == 6) return (U32)test_json_uniform(pick, 0x80, 0x7ff);
     if (band == 7) {
-        u32 code = (u32)test_json_uniform(pick, 0x800, 0xffff - 0x800);
+        U32 code = (U32)test_json_uniform(pick, 0x800, 0xffff - 0x800);
         return code >= 0xd800 && code <= 0xdfff ? code + 0x800 : code;
     }
-    return (u32)test_json_uniform(pick, 0x10000, 0x10ffff);
+    return (U32)test_json_uniform(pick, 0x10000, 0x10ffff);
 }
 
-static usize test_json_utf8(u32 code, char *out) {
+static Usize test_json_utf8(U32 code, char *out) {
     if (code < 0x80) {
         out[0] = (char)code;
         return 1;
@@ -902,25 +902,25 @@ static usize test_json_utf8(u32 code, char *out) {
 
 static void test_json_random_string(random::Key key, TestJsonEvent *event) {
     random::Key *stream = &key;
-    usize length = (usize)test_json_uniform(take(stream), 0, test_json_string_max);
+    Usize length = (Usize)test_json_uniform(take(stream), 0, test_json_string_max);
     event->length = 0;
-    for (usize i = 0; i < length; i++) {
+    for (Usize i = 0; i < length; i++) {
         event->length += test_json_utf8(test_json_code_point(take(stream)), event->string + event->length);
     }
     event->string[event->length] = '\0';
 }
 
-static u64 test_json_random_double_bits(random::Key key) {
+static U64 test_json_random_double_bits(random::Key key) {
     random::Key *key_stream = &key;
-    i64 kind = test_json_uniform(take(key_stream), 0, 5);
+    I64 kind = test_json_uniform(take(key_stream), 0, 5);
     if (kind == 0) { // a short decimal, the common case
-        f64 d = (f64)test_json_uniform(take(key_stream), -100000, 100000) / 100.0;
-        return __builtin_bit_cast(u64, d);
+        F64 d = (F64)test_json_uniform(take(key_stream), -100000, 100000) / 100.0;
+        return __builtin_bit_cast(U64, d);
     }
-    u64 bits = random::key_bits(take(key_stream));
-    if (kind == 1) bits &= ~((u64)0x7ff << 52); // subnormal
-    f64 d = __builtin_bit_cast(f64, bits);
-    if (d != d || d > f64_max || d < -f64_max) bits &= ~((u64)0x400 << 52); // finite: clear an exponent bit
+    U64 bits = random::key_bits(take(key_stream));
+    if (kind == 1) bits &= ~((U64)0x7ff << 52); // subnormal
+    F64 d = __builtin_bit_cast(F64, bits);
+    if (d != d || d > f64_max || d < -f64_max) bits &= ~((U64)0x400 << 52); // finite: clear an exponent bit
     return bits;
 }
 
@@ -958,8 +958,8 @@ static void test_json_emit(c::SmithJsonWriter *writer, TestJsonDocument *documen
         break;
     case c::SmithJsonToken_Number:
         if (event->number == TestJsonNumber_U64) c::smith_json_write_u64(writer, event->bits);
-        if (event->number == TestJsonNumber_I64) c::smith_json_write_i64(writer, (i64)event->bits);
-        if (event->number == TestJsonNumber_F64) c::smith_json_write_f64(writer, __builtin_bit_cast(f64, event->bits));
+        if (event->number == TestJsonNumber_I64) c::smith_json_write_i64(writer, (I64)event->bits);
+        if (event->number == TestJsonNumber_F64) c::smith_json_write_f64(writer, __builtin_bit_cast(F64, event->bits));
         break;
     case c::SmithJsonToken_Error:
     case c::SmithJsonToken_End:
@@ -969,17 +969,17 @@ static void test_json_emit(c::SmithJsonWriter *writer, TestJsonDocument *documen
 
 typedef struct {
     bool object;
-    usize remaining;
+    Usize remaining;
 } TestJsonFrame;
 
 // A random value, as events, with an explicit stack of the containers it is inside.
 static void test_json_random_value(c::SmithJsonWriter *writer, TestJsonDocument *document, random::Key key,
-                                   usize depth_max) {
+                                   Usize depth_max) {
     TestJsonFrame stack[16];
-    usize depth = 0;
+    Usize depth = 0;
     bool started = false;
     random::Key *key_stream = &key;
-    for (usize step = 0; document->count + 16 < test_json_events_max; step++) {
+    for (Usize step = 0; document->count + 16 < test_json_events_max; step++) {
         random::Key here = take(key_stream);
         random::Key *here_stream = &here;
         TestJsonEvent event = {};
@@ -1000,12 +1000,12 @@ static void test_json_random_value(c::SmithJsonWriter *writer, TestJsonDocument 
             }
         }
         started = true;
-        i64 kind = test_json_uniform(take(here_stream), 0, 9);
+        I64 kind = test_json_uniform(take(here_stream), 0, 9);
         bool room = depth < depth_max && document->count + 24 < test_json_events_max;
         if (kind <= 1 && room) {
             bool object = kind == 1;
             event.token = object ? c::SmithJsonToken_ObjectBegin : c::SmithJsonToken_ArrayBegin;
-            stack[depth++] = (TestJsonFrame){object, (usize)test_json_uniform(take(here_stream), 0, 4)};
+            stack[depth++] = (TestJsonFrame){object, (Usize)test_json_uniform(take(here_stream), 0, 4)};
         } else if (kind == 2) {
             event.token = c::SmithJsonToken_String;
             test_json_random_string(take(here_stream), &event);
@@ -1014,7 +1014,7 @@ static void test_json_random_value(c::SmithJsonWriter *writer, TestJsonDocument 
         } else {
             event.token = c::SmithJsonToken_Number;
             event.number = (TestJsonNumber)test_json_uniform(take(here_stream), 0, 2);
-            u64 bits = random::key_bits(take(here_stream));
+            U64 bits = random::key_bits(take(here_stream));
             bits >>= random::key_bits(take(here_stream)) % 64; // every length of integer
             event.bits = event.number == TestJsonNumber_F64 ? test_json_random_double_bits(take(here_stream)) : bits;
         }
@@ -1030,24 +1030,24 @@ static void test_json_random_value(c::SmithJsonWriter *writer, TestJsonDocument 
 
 static bool test_json_number_matches(const char word[:], const TestJsonEvent *event) {
     if (event->number == TestJsonNumber_U64) {
-        u64 value = 0;
+        U64 value = 0;
         return text::parse_u64(word, &value) && value == event->bits;
     }
     if (event->number == TestJsonNumber_I64) {
-        i64 value = 0;
-        return text::parse_i64(word, &value) && (u64)value == event->bits;
+        I64 value = 0;
+        return text::parse_i64(word, &value) && (U64)value == event->bits;
     }
-    f64 value = 0;
-    return text::parse_f64(word, &value) && __builtin_bit_cast(u64, value) == event->bits;
+    F64 value = 0;
+    return text::parse_f64(word, &value) && __builtin_bit_cast(U64, value) == event->bits;
 }
 
 // The pull parser sees exactly the events.
 static void test_json_check_reader(const char input[:], const TestJsonDocument *document, arena::Arena *arena) {
     c::SmithJsonReader reader = c::smith_json_reader_make(input, test_json_wide);
-    for (usize i = 0; i < document->count; i++) {
+    for (Usize i = 0; i < document->count; i++) {
         const TestJsonEvent *event = &document->events[i];
         test::note("event %zu of %zu in %.*s", i, document->count,
-                   (i32)countof(input) > 600 ? 600 : (i32)countof(input), input.data);
+                   (I32)countof(input) > 600 ? 600 : (I32)countof(input), input.data);
         test::check(c::smith_json_read(&reader) == event->token);
         if (event->token == c::SmithJsonToken_Key || event->token == c::SmithJsonToken_String) {
             const char decoded[:] = test_json_decode(&reader, arena);
@@ -1066,11 +1066,11 @@ static void test_json_check_reader(const char input[:], const TestJsonDocument *
 // The tree holds exactly the events, in order: walked with a stack of (container, next child).
 static void test_json_check_tree(const c::SmithJsonValue *root, const TestJsonDocument *document) {
     const c::SmithJsonValue *containers[32];
-    usize next_child[32];
-    usize depth = 0;
+    Usize next_child[32];
+    Usize depth = 0;
     const c::SmithJsonValue *value = root;
     bool pending_key = false;
-    for (usize i = 0; i < document->count; i++) {
+    for (Usize i = 0; i < document->count; i++) {
         const TestJsonEvent *event = &document->events[i];
         if (event->token == c::SmithJsonToken_ObjectEnd || event->token == c::SmithJsonToken_ArrayEnd) {
             test::check(depth > 0 && next_child[depth - 1] == containers[depth - 1]->count);
@@ -1131,12 +1131,12 @@ static void test_json_check_tree(const c::SmithJsonValue *root, const TestJsonDo
 export void test_json_any_value_written_then_read_is_the_same(random::Key key) {
     random::Key *key_stream = &key;
     arena::Arena arena = test::memory(1 << 20);
-    constexpr usize size = 1 << 16;
+    constexpr Usize size = 1 << 16;
     char *buffer = arena::push_slice(&arena, char, size).data;
-    usize indent = (usize)test_json_uniform(take(key_stream), 0, 1) * 2;
+    Usize indent = (Usize)test_json_uniform(take(key_stream), 0, 1) * 2;
     c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, size, indent);
     TestJsonDocument *document = arena::push(&arena, TestJsonDocument);
-    test_json_random_value(&writer, document, take(key_stream), (usize)test_json_uniform(take(key_stream), 0, 6));
+    test_json_random_value(&writer, document, take(key_stream), (Usize)test_json_uniform(take(key_stream), 0, 6));
     const char output[:] = {};
     test::check(c::smith_json_writer_finish(&writer, &output));
     test_json_check_reader(output, document, &arena);
@@ -1153,13 +1153,13 @@ export void test_json_any_value_written_then_read_is_the_same(random::Key key) {
 export void test_json_write_value_puts_a_tree_back_as_it_was_written(random::Key key) {
     random::Key *key_stream = &key;
     arena::Arena arena = test::memory(1 << 20);
-    constexpr usize size = 1 << 16;
+    constexpr Usize size = 1 << 16;
     char *first = arena::push_slice(&arena, char, size).data;
     char *second = arena::push_slice(&arena, char, size).data;
-    usize indent = (usize)test_json_uniform(take(key_stream), 0, 1) * 2;
+    Usize indent = (Usize)test_json_uniform(take(key_stream), 0, 1) * 2;
     c::SmithJsonWriter writer = c::smith_json_writer_make(first, size, indent);
     TestJsonDocument *document = arena::push(&arena, TestJsonDocument);
-    test_json_random_value(&writer, document, take(key_stream), (usize)test_json_uniform(take(key_stream), 0, 6));
+    test_json_random_value(&writer, document, take(key_stream), (Usize)test_json_uniform(take(key_stream), 0, 6));
     const char output[:] = {};
     test::check(c::smith_json_writer_finish(&writer, &output));
     const c::SmithJsonValue *root = nullptr;
@@ -1197,11 +1197,11 @@ export void test_json_write_value_keeps_numbers_and_duplicate_keys() {
 
 export void test_json_any_double_round_trips_bit_for_bit(random::Key key) {
     random::Key *key_stream = &key;
-    u64 bits = test_json_random_double_bits(take(key_stream));
+    U64 bits = test_json_random_double_bits(take(key_stream));
     if (random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.5})) {
         bits = random::key_bits(take(key_stream));
     }
-    f64 d = __builtin_bit_cast(f64, bits);
+    F64 d = __builtin_bit_cast(F64, bits);
     if (d != d || d > f64_max || d < -f64_max) return;
     char buffer[64];
     c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, sizeof buffer, 0);
@@ -1212,19 +1212,19 @@ export void test_json_any_double_round_trips_bit_for_bit(random::Key key) {
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
     test::check(test_json_parse(&arena, output, test_json_wide, &root, &error));
-    f64 back = 0;
+    F64 back = 0;
     test::check(text::parse_f64(root->text, &back));
     test::check_same_bits(back, d);
 }
 
 export void test_json_any_integer_round_trips_exactly(random::Key key) {
     random::Key *key_stream = &key;
-    u64 bits = random::key_bits(take(key_stream)) >> (random::key_bits(take(key_stream)) % 64);
+    U64 bits = random::key_bits(take(key_stream)) >> (random::key_bits(take(key_stream)) % 64);
     char buffer[64];
     c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, sizeof buffer, 0);
     c::smith_json_write_array_begin(&writer);
     c::smith_json_write_u64(&writer, bits);
-    c::smith_json_write_i64(&writer, (i64)bits);
+    c::smith_json_write_i64(&writer, (I64)bits);
     c::smith_json_write_array_end(&writer);
     const char output[:] = {};
     test::check(c::smith_json_writer_finish(&writer, &output));
@@ -1232,27 +1232,27 @@ export void test_json_any_integer_round_trips_exactly(random::Key key) {
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
     test::check(test_json_parse(&arena, output, test_json_wide, &root, &error));
-    u64 u = 0;
-    i64 i = 0;
+    U64 u = 0;
+    I64 i = 0;
     test::check(text::parse_u64(root->items[0]->text, &u));
     test::check(text::parse_i64(root->items[1]->text, &i));
     test::check_equal(u, bits);
-    test::check_equal((u64)i, bits);
+    test::check_equal((U64)i, bits);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Fuzzing: damaged documents
 
 // Damages the bytes in place and returns the new length; every byte comes from the key.
-static usize test_json_damage(random::Key key, char *bytes, usize length, usize capacity) {
+static Usize test_json_damage(random::Key key, char *bytes, Usize length, Usize capacity) {
     random::Key *stream = &key;
     static const char interesting[_] = "[]{},:\"\\ \n-+.eE0123456789tfnu\xff\xc3\xed\xf4\x80";
-    usize edits = (usize)test_json_uniform(take(stream), 1, 4);
-    for (usize e = 0; e < edits && length > 0; e++) {
+    Usize edits = (Usize)test_json_uniform(take(stream), 1, 4);
+    for (Usize e = 0; e < edits && length > 0; e++) {
         random::Key edit = take(stream);
         random::Key *edit_stream = &edit;
-        usize at = (usize)test_json_uniform(take(edit_stream), 0, (i64)length - 1);
-        char byte = interesting[test_json_uniform(take(edit_stream), 0, (i64)sizeof interesting - 2)];
+        Usize at = (Usize)test_json_uniform(take(edit_stream), 0, (I64)length - 1);
+        char byte = interesting[test_json_uniform(take(edit_stream), 0, (I64)sizeof interesting - 2)];
         switch (test_json_uniform(take(edit_stream), 0, 5)) {
         case 0:
             bytes[at] = byte;
@@ -1275,7 +1275,7 @@ static usize test_json_damage(random::Key key, char *bytes, usize length, usize 
             }
             break;
         default:
-            bytes[at] = (char)((u8)bytes[at] ^ (1U << (u32)test_json_uniform(take(edit_stream), 0, 7)));
+            bytes[at] = (char)((U8)bytes[at] ^ (1U << (U32)test_json_uniform(take(edit_stream), 0, 7)));
             break;
         }
     }
@@ -1284,13 +1284,13 @@ static usize test_json_damage(random::Key key, char *bytes, usize length, usize 
 
 // The reader and the tree agree on whether the bytes are a document, report an offset inside the input, and read
 // nothing outside it (the input sits exactly in its own arena push, so AddressSanitizer sees a stray read).
-static void test_json_judge(arena::Arena *arena, const char *bytes, usize length, c::SmithJsonLimits limits) {
+static void test_json_judge(arena::Arena *arena, const char *bytes, Usize length, c::SmithJsonLimits limits) {
     char *exact = arena::push_slice(arena, char, length == 0 ? 1 : length).data;
     mem::copy(exact[0:length], bytes[0:length]);
     const char input[:] = exact[0:length];
     c::SmithJsonReader reader = c::smith_json_reader_make(input, limits);
     c::SmithJsonToken token = c::SmithJsonToken_Null;
-    usize steps = 0;
+    Usize steps = 0;
     while (token != c::SmithJsonToken_Error && token != c::SmithJsonToken_End) {
         token = c::smith_json_read(&reader);
         steps += 1;
@@ -1323,17 +1323,17 @@ export void test_json_damaged_documents_never_misbehave(random::Key key) {
     random::Key *key_stream = &key;
     arena::Arena arena = test::memory(1 << 22);
     c::SmithJsonWriter writer;
-    constexpr usize size = 1 << 14;
+    constexpr Usize size = 1 << 14;
     char *buffer = arena::push_slice(&arena, char, size).data;
-    writer = c::smith_json_writer_make(buffer, size, (usize)test_json_uniform(take(key_stream), 0, 1));
+    writer = c::smith_json_writer_make(buffer, size, (Usize)test_json_uniform(take(key_stream), 0, 1));
     TestJsonDocument *document = arena::push(&arena, TestJsonDocument);
     test_json_random_value(&writer, document, take(key_stream), 6);
     const char output[:] = {};
     test::check(c::smith_json_writer_finish(&writer, &output));
     char damaged[1 << 14];
     mem::copy(damaged[0:countof(output)], output.data[0:countof(output)]);
-    usize length = test_json_damage(take(key_stream), damaged, countof(output), sizeof damaged);
-    test::note("damaged %.*s", (i32)length > 400 ? 400 : (i32)length, damaged);
+    Usize length = test_json_damage(take(key_stream), damaged, countof(output), sizeof damaged);
+    test::note("damaged %.*s", (I32)length > 400 ? 400 : (I32)length, damaged);
     test_json_judge(&arena, damaged, length, test_json_wide);
     c::SmithJsonLimits tight = {.depth = 3, .string_length = 6, .count = 12};
     test_json_judge(&arena, damaged, length, tight);
@@ -1343,9 +1343,9 @@ export void test_json_damaged_documents_never_misbehave(random::Key key) {
 export void test_json_random_bytes_never_misbehave(random::Key key) {
     random::Key *key_stream = &key;
     arena::Arena arena = test::memory(1 << 20);
-    usize length = (usize)test_json_uniform(take(key_stream), 0, 64);
+    Usize length = (Usize)test_json_uniform(take(key_stream), 0, 64);
     char bytes[64];
-    for (usize i = 0; i < length; i++) {
+    for (Usize i = 0; i < length; i++) {
         bytes[i] = (char)random::key_bits(take(key_stream));
         if (random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.6})) {
             bytes[i] = "[]{}:,\" 0-1e.tfnu\\"[random::key_bits(take(key_stream)) % 19]; // mostly structure
@@ -1408,12 +1408,12 @@ static const TestJsonImplementationDefined test_json_implementation_defined[_] =
 };
 
 typedef struct {
-    usize y_total;
-    usize y_accepted;
-    usize n_total;
-    usize n_refused;
-    usize i_total;
-    usize i_as_listed;
+    Usize y_total;
+    Usize y_accepted;
+    Usize n_total;
+    Usize n_refused;
+    Usize i_total;
+    Usize i_as_listed;
 } TestJsonConformance;
 
 static bool test_json_suite_accepts(arena::Arena *arena, const char bytes[:]) {
@@ -1433,13 +1433,13 @@ static bool test_json_suite_accepts(arena::Arena *arena, const char bytes[:]) {
 }
 
 static const TestJsonImplementationDefined *test_json_find_listed(const char *name) {
-    for (usize i = 0; i < _Countof test_json_implementation_defined; i++) {
+    for (Usize i = 0; i < _Countof test_json_implementation_defined; i++) {
         if (c::strcmp(test_json_implementation_defined[i].name, name) == 0) return &test_json_implementation_defined[i];
     }
     return nullptr;
 }
 
-constexpr usize test_json_listing_capacity = 1 << 17;
+constexpr Usize test_json_listing_capacity = 1 << 17;
 
 // Runs every file of the suite's test_parsing folder. The folder and where to list what was done with each case come
 // from the environment (tests/library_modes_test.smith fetches the package and sets them). Prints nothing when it
@@ -1476,7 +1476,7 @@ static bool test_json_file_accepted(arena::Arena *memory, const char path[:]) {
 
 // What was done with one case: the counts of its kind, and a line of the listing for an implementation-defined one.
 static void test_json_count_case(TestJsonConformance *totals, const char *name, bool accepted, char *report,
-                                 usize *reported, bool listing) {
+                                 Usize *reported, bool listing) {
     if (name[0] == 'y') {
         totals->y_total += 1;
         totals->y_accepted += accepted ? 1 : 0;
@@ -1499,7 +1499,7 @@ static void test_json_count_case(TestJsonConformance *totals, const char *name, 
 }
 
 static void test_json_write_listing(const char path[:], const TestJsonConformance *totals, char *report,
-                                    usize reported) {
+                                    Usize reported) {
     reported += format::to(report + reported, test_json_listing_capacity - reported, "y_: ", totals->y_accepted, " of ",
                            totals->y_total, " accepted; n_: ", totals->n_refused, " of ", totals->n_total,
                            " refused; i_: ", totals->i_as_listed, " of ", totals->i_total, " as listed\n")
@@ -1524,12 +1524,12 @@ export void test_json_conformance_with_jsontestsuite() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     char *report = arena::push_slice(&memory, char, test_json_listing_capacity).data;
-    usize reported = 0;
+    Usize reported = 0;
     TestJsonConformance totals = {};
     files::Entries names = test_json_list_suite(folder[0:c::strlen(folder)]);
-    for (usize i = 0; i < countof(names); i++) {
+    for (Usize i = 0; i < countof(names); i++) {
         const char *name = names[i].name.data;
-        usize name_length = c::strlen(name);
+        Usize name_length = c::strlen(name);
         if (name_length < 7 || c::strcmp(name + name_length - 5, ".json") != 0 || name[1] != '_') continue;
         char path[1024];
         (void)format::to(path, sizeof path, folder, "/", name);
@@ -1542,7 +1542,7 @@ export void test_json_conformance_with_jsontestsuite() {
                totals.n_refused, totals.n_total, totals.i_as_listed, totals.i_total);
     test::check_equal(totals.y_total, totals.y_accepted);
     test::check_equal(totals.n_total, totals.n_refused);
-    usize listed_count = _Countof test_json_implementation_defined;
+    Usize listed_count = _Countof test_json_implementation_defined;
     test::check_equal(totals.i_total, listed_count);
     test::check_greater_equal(totals.y_total, 95);
     test::check_greater_equal(totals.n_total, 188);

@@ -74,7 +74,7 @@ static void seed_extracts(const scratch::Project *p, const char *seed) {
 
 // Every shorter prefix of it is refused: the part `part` of `parts` of them (the parts run side by side as tests and
 // together try all).
-static void seed_prefixes_are_refused(const scratch::Project *p, const char *seed, usize part, usize parts) {
+static void seed_prefixes_are_refused(const scratch::Project *p, const char *seed, Usize part, Usize parts) {
     const char *archive = seed_path(seed);
     scratch::Run prefixes =
         untar(p, format::push("prefixes ", archive, " \"$work/scratch\" $prefix_step ", part, " ", parts).data);

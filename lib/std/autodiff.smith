@@ -39,40 +39,40 @@ import std::mem;
 // The type of one argument's leaf: what a pointer points to, the type itself for anything else (a number `map` passes
 // through). A type function (it runs in the compiler), used as the result type of `map_at`. Written before the markers:
 // a type function after an `extern` declaration is not read.
-static type leaf_of(type t) {
+static Type leaf_of(Type t) {
     if (is_pointer(t)) return typeof(*(t) nullptr);
     return t;
 }
 
 // What `map_down` returns: `down`, the pointer to the field's first element, for a pointer argument, else the type
 // itself.
-static type down_of(type t, type down) {
+static Type down_of(Type t, Type down) {
     if (is_pointer(t)) return down;
     return t;
 }
 
 // <smith/autodiff.h>: the reverse mode derivative of a function: `autodiff::reverse(f, marker, argument, ...)`.
 // C: __enzyme_autodiff(void *function, ...)
-[[std::c_name("__enzyme_autodiff")]] export f64 reverse(void *function, ...); // NOLINT(bugprone-reserved-identifier)
+[[std::c_name("__enzyme_autodiff")]] export F64 reverse(void *function, ...); // NOLINT(bugprone-reserved-identifier)
 
 // The forward mode derivative of a function: the tangent of each autodiff::dup argument is read from its shadow, and
 // the call returns the tangent of the result. C: __enzyme_fwddiff(void *function, ...)
-[[std::c_name("__enzyme_fwddiff")]] export f64 forward(void *function, ...); // NOLINT(bugprone-reserved-identifier)
+[[std::c_name("__enzyme_fwddiff")]] export F64 forward(void *function, ...); // NOLINT(bugprone-reserved-identifier)
 
 // The markers. C: enzyme_const, enzyme_dup, enzyme_out, enzyme_dupnoneed.
-[[std::c_name("enzyme_const")]] export extern i32 constant;
-[[std::c_name("enzyme_dup")]] export extern i32 dup;
-[[std::c_name("enzyme_out")]] export extern i32 out;
-[[std::c_name("enzyme_dupnoneed")]] export extern i32 dup_no_need;
-[[std::c_name("enzyme_interleave")]] export extern i32 interleave;
+[[std::c_name("enzyme_const")]] export extern I32 constant;
+[[std::c_name("enzyme_dup")]] export extern I32 dup;
+[[std::c_name("enzyme_out")]] export extern I32 out;
+[[std::c_name("enzyme_dupnoneed")]] export extern I32 dup_no_need;
+[[std::c_name("enzyme_interleave")]] export extern I32 interleave;
 
 // The shape of a gradient: the `n` values `p` points to, in a row, are all set to zero, and each `[:]` field given a
 // new block of the same length from the current allocator (a `[:]` of structs is walked element by element, a fixed
 // array of structs too).
-void shadow_walk(auto p, usize n) {
+void shadow_walk(auto p, Usize n) {
     if constexpr (is_record(typeof(*p))) {
         for (; n > 0; n--) {
-            for constexpr (usize i = 0; i < countof(fields(typeof(*p))); i++) {
+            for constexpr (Usize i = 0; i < countof(fields(typeof(*p))); i++) {
                 constexpr Field f = fields(typeof(*p))[i];
                 (void)f;
                 if constexpr (is_array(typeof(p->[f]))) {
@@ -130,7 +130,7 @@ export typeof(*x) gradient(constexpr auto f, auto x, auto... rest) {
 }
 
 // The leaf `k` of one argument: `x[k]` for a pointer, `x` as it is for anything else.
-leaf_of(typeof(x)) map_at(auto x, usize k) {
+leaf_of(typeof(x)) map_at(auto x, Usize k) {
     (void)k;
     if constexpr (is_pointer(typeof(x))) {
         return x[k];
@@ -140,7 +140,7 @@ leaf_of(typeof(x)) map_at(auto x, usize k) {
 }
 
 // One argument of the walk, moved on by `k` values: a pointer is advanced, anything else stays as it is.
-typeof(x) map_off(auto x, usize k) {
+typeof(x) map_off(auto x, Usize k) {
     if constexpr (is_pointer(typeof(x))) {
         return x + k;
     } else {
@@ -152,7 +152,7 @@ typeof(x) map_off(auto x, usize k) {
 // One argument of the walk, taken into field `i` of its struct: a pointer becomes the pointer to the first element of
 // the field (`&p->f`, `&p->f[0]` for an array, `p->f.data` for a slice, `n` long as `out`'s, checked); anything else
 // stays as it is. `like` is that pointer for `out`, which gives its type (a type function cannot read a field).
-down_of(typeof(x), typeof(like)) map_down(auto like, auto x, constexpr usize i, usize n) {
+down_of(typeof(x), typeof(like)) map_down(auto like, auto x, constexpr Usize i, Usize n) {
     (void)like;
     (void)n;
     if constexpr (is_pointer(typeof(x))) {
@@ -174,21 +174,21 @@ down_of(typeof(x), typeof(like)) map_down(auto like, auto x, constexpr usize i, 
 
 // The walker of `map`: `n` values of `*out` in a row, and the same of every pointer in `rest`; a leaf float is written
 // from `f` of the matching leaf of each argument, and the other arguments go to `f` as they are.
-void map_walk(constexpr auto f, usize n, auto dst, auto... rest) {
+void map_walk(constexpr auto f, Usize n, auto dst, auto... rest) {
     (void)n;
     (void)dst;
     if constexpr (is_record(typeof(*dst))) {
         if (n != 1) { // one struct at a time: its slices have their own lengths
-            for (usize k = 0; k < n; k++) {
+            for (Usize k = 0; k < n; k++) {
                 map_walk(f, 1, dst + k, map_off(rest, k)...);
             }
             return;
         }
-        for constexpr (usize i = 0; i < countof(fields(typeof(*dst))); i++) {
+        for constexpr (Usize i = 0; i < countof(fields(typeof(*dst))); i++) {
             constexpr Field fld = fields(typeof(*dst))[i];
             (void)fld;
             if constexpr (is_array(typeof(dst->[fld]))) {
-                constexpr usize length = sizeof(dst->[fld]) / sizeof(dst->[fld][0]);
+                constexpr Usize length = sizeof(dst->[fld]) / sizeof(dst->[fld][0]);
                 map_walk(f, length, &dst->[fld][0], map_down(&dst->[fld][0], rest, i, length)...);
             } else if constexpr (is_slice(typeof(dst->[fld]))) {
                 if (countof(dst->[fld]) > 0) { // an empty slice has no element to read
@@ -200,7 +200,7 @@ void map_walk(constexpr auto f, usize n, auto dst, auto... rest) {
             }
         }
     } else if constexpr (is_float(typeof(*dst))) {
-        for (usize k = 0; k < n; k++) {
+        for (Usize k = 0; k < n; k++) {
             dst[k] = (typeof(*dst))f(map_at(rest, k)...);
         }
     } else if constexpr (is_pointer(typeof(*dst)) || is_array(typeof(*dst))) {
@@ -215,7 +215,7 @@ void map_walk(constexpr auto f, usize n, auto dst, auto... rest) {
 // (`map(sgd, &params, &params, &g)`). An argument that is not a pointer, a number such as the learning rate, is passed
 // to `f` as it is, at every leaf, in its place: `map(adam, &p, &p, &g, &m, &v, lr, t)` calls `adam(p, g, m, v, lr, t)`
 // for each leaf. `f` is the name of an ordinary function of one float per input and one value per number, so a step is
-// `map` and one small function (`f64 adam(f64 p, f64 g, f64 m, f64 v, f64 lr, i32 t)`); an `f32` leaf is converted to
+// `map` and one small function (`F64 adam(F64 p, F64 g, F64 m, F64 v, F64 lr, I32 t)`); an `F32` leaf is converted to
 // `f`'s parameters and the result back. A generic function cannot be passed.
 export void map(constexpr auto f, auto out, auto... rest) {
     static_assert(countof(rest) >= 1, "map takes the input structs, and the numbers for f, after the output");

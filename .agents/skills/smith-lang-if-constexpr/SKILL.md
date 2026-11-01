@@ -10,18 +10,18 @@ C has `#if` for code that may not compile everywhere and nothing for code that m
 ```smith
 module kinds;
 
-export i32 describe(auto value) {
-    if constexpr (typeof(value) == f32) {
-        return (i32)value;                                 // here value is a float
+export I32 describe(auto value) {
+    if constexpr (typeof(value) == F32) {
+        return (I32)value;                                 // here value is a float
     } else if constexpr (is_integer(typeof(value)) && sizeof(typeof(value)) == 8) {
-        return 2 * (i32)value;
+        return 2 * (I32)value;
     } else {
         static_assert(false, "describe: not a number");   // a constraint: a static_assert in a final else
     }
 }
 
-export i32 demo() {
-    return describe(1.5f) + describe((i64)3);              // 1 + 6
+export I32 demo() {
+    return describe(1.5f) + describe((I64)3);              // 1 + 6
 }
 ```
 
@@ -42,11 +42,11 @@ import target;
 
 if constexpr (target::os == target::macos) {
     import <libproc.h>; // a macOS header: on Linux this branch is never read
-    export i32 ticks_per_second() {
+    export I32 ticks_per_second() {
         return 1000;
     }
 } else {
-    export i32 ticks_per_second() {
+    export I32 ticks_per_second() {
         return 100;
     }
 }

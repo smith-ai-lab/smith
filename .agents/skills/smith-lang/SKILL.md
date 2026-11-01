@@ -17,9 +17,9 @@ export typeof(x) clamp(auto x, typeof(x) low, typeof(x) high) {   // generic: th
     return x < low ? low : x > high ? high : x;
 }
 
-export u32 total(const u32 xs[:]) {            // a slice: a pointer and its count
-    u32 sum = 0;
-    for (usize i = 0; i < countof(xs); i++) sum += xs[i];   // xs[i] is bounds-checked
+export U32 total(const U32 xs[:]) {            // a slice: a pointer and its count
+    U32 sum = 0;
+    for (Usize i = 0; i < countof(xs); i++) sum += xs[i];   // xs[i] is bounds-checked
     return sum;
 }
 ```
@@ -28,18 +28,18 @@ export u32 total(const u32 xs[:]) {            // a slice: a pointer and its cou
 
 | Step | Write | Skill |
 | --- | --- | --- |
-| sized types | `u32`, `f64`, `usize` | `smith-lang-sized-types` |
+| sized types | `U32`, `F64`, `Usize` | `smith-lang-sized-types` |
 | imports | `import lib::text;`, `import <math.h>;` then `c::sqrtf` | `smith-lang-modules`, `smith-lang-c-interop` |
 | modules | `module a::b;`, `export` | `smith-lang-modules`, `smith-lang-exports` |
-| slices, the range `for` | `i32 xs[:]`, `xs[a:b]`, `countof(xs)`, `for (i32 x : xs)` | `smith-lang-arrays`, `smith-lang-for` |
-| generics | `constexpr type T`, `auto x`, `typeof(x)`, `if constexpr` | `smith-lang-generics` |
+| slices, the range `for` | `I32 xs[:]`, `xs[a:b]`, `countof(xs)`, `for (I32 x : xs)` | `smith-lang-arrays`, `smith-lang-for` |
+| generics | `constexpr Type T`, `auto x`, `typeof(x)`, `if constexpr` | `smith-lang-generics` |
 | argument lists, reflection | `auto... rest`, `fields(T)` | `smith-lang-rest`, `smith-lang-reflection` |
-| concepts | `arithmetic x`, `integer n = 3;` | `smith-lang-concepts` |
-| compile time, type values | `constexpr i32 x = fib(10);`, `constexpr type t = i32;` | `smith-lang-constexpr`, `smith-lang-type-values` |
-| tuples, used once, lambdas | `struct { i32, f32 }`, `[[std::affine]]`, `[](i32 a) -> i32 { return a * 2; }` | `smith-lang-tuples`, `smith-lang-affine`, `smith-lang-lambdas`, `smith-lang-lambda-param` |
+| concepts | `Num x`, `Int n = 3;` | `smith-lang-concepts` |
+| compile time, type values | `constexpr I32 x = fib(10);`, `constexpr Type t = I32;` | `smith-lang-constexpr`, `smith-lang-type-values` |
+| tuples, used once, lambdas | `struct { I32, F32 }`, `[[std::affine]]`, `[](I32 a) -> I32 { return a * 2; }` | `smith-lang-tuples`, `smith-lang-affine`, `smith-lang-lambdas`, `smith-lang-lambda-param` |
 | enums with payloads | `typedef enum { Circle circle; empty; } Shape;`, `s == .circle` | `smith-lang-enums` |
 | cleanup on every exit, a failure passed up, what a function may touch, unused on purpose | `defer c::close(fd);`, `try f()`, `[[std::pure]]`, `_ = f();` | `smith-lang-defer`, `smith-lang-try`, `smith-lang-effects`, `smith-lang-unused` |
-| the target, the arguments | `import target;`, `i32 main(str args[:])` | `smith-lang-target` |
+| the target, the arguments | `import target;`, `I32 main(Str args[:])` | `smith-lang-target` |
 
 Formatting, linting, building, the editor: `smith-lang-tools`. Good style: `smith-idiom`.
 
@@ -56,5 +56,5 @@ smith cc -c main.smith                    # alone: stats.smith is found by the p
 ## Errors
 
 - `.smith files need a smith whose clang has the token hook`: a stage0, or a smith built without `patches/clang-token-hook.patch`; `smith cc --smith-which x.smith` says `token-hook yes` or `no`.
-- ``` `double` is a C keyword; it cannot name a function ```: a C keyword as a name (`i32 double(i32 x)`), at the name, and nothing follows it.
+- ``` `double` is a C keyword; it cannot name a function ```: a C keyword as a name (`I32 double(I32 x)`), at the name, and nothing follows it.
 - A module not found is one error listing what was tried. `... is a C name; write c::...` and the module errors are in `smith-lang-modules-errors`. Every error points at the `.smith` text; if a file fails like plain C, it is C: fix it as C.

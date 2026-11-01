@@ -2,9 +2,9 @@
 the sized types
 ================================================================================
 
-u8 a; u16 b; u32 c; u64 d;
-i8 e; i16 f; i32 g; i64 h;
-usize i; isize j; f16 k; f32 l; f64 m;
+U8 a; U16 b; U32 c; U64 d;
+I8 e; I16 f; I32 g; I64 h;
+Usize i; Isize j; F16 k; F32 l; F64 m;
 
 --------------------------------------------------------------------------------
 
@@ -53,9 +53,9 @@ usize i; isize j; f16 k; f32 l; f64 m;
 sized types in a function
 ================================================================================
 
-f32 root(const u8 *data, usize size) {
-    u32 total = (u32)size;
-    return (f32)total;
+F32 root(const U8 *data, Usize size) {
+    U32 total = (U32)size;
+    return (F32)total;
 }
 
 --------------------------------------------------------------------------------
@@ -93,10 +93,10 @@ f32 root(const u8 *data, usize size) {
 a file may declare its own sized name
 ================================================================================
 
-void f(int u8) {
-    int f32 = 1;
-    printf("%d %d", u8 + 1, f32 + 1);
-    u8 = 3;
+void f(int U8) {
+    int F32 = 1;
+    printf("%d %d", U8 + 1, F32 + 1);
+    U8 = 3;
 }
 
 --------------------------------------------------------------------------------
@@ -137,7 +137,7 @@ void f(int u8) {
 a type parameter
 ================================================================================
 
-T max(constexpr type T, T a, T b);
+T max(constexpr Type T, T a, T b);
 
 --------------------------------------------------------------------------------
 
@@ -161,7 +161,7 @@ T max(constexpr type T, T a, T b);
 type parameters of an exported function
 ================================================================================
 
-export T *push_array(Arena *a, constexpr type T, usize count) {
+export T *push_array(Arena *a, constexpr Type T, Usize count) {
     return (T *)push_bytes(a, count * sizeof(T), alignof(T));
 }
 
@@ -210,7 +210,7 @@ a type passed where an argument goes
 
 void f(void) {
     Point *p = arena::push(&io.arena, Point);
-    f32 *xs = arena::push_array(&io.arena, f32, 1024);
+    F32 *xs = arena::push_array(&io.arena, F32, 1024);
     unsigned char *s = push(&a, unsigned char, 3);
 }
 
@@ -276,8 +276,8 @@ void f(void) {
 if constexpr
 ================================================================================
 
-void write_value(constexpr type T, T value) {
-    if constexpr (T == f32 || T == f64) {
+void write_value(constexpr Type T, T value) {
+    if constexpr (T == F32 || T == F64) {
         a();
     } else if constexpr (sizeof(T) == 8) {
         b();
@@ -372,7 +372,7 @@ void f(void) {
 if constexpr on the type questions
 ================================================================================
 
-int kind(constexpr type T, T v) {
+int kind(constexpr Type T, T v) {
     if constexpr (is_integer(T) && sizeof(T) == 8) return 1;
     return 0;
 }
@@ -450,7 +450,7 @@ for constexpr, a list, and its assignment
 
 int total(auto... rest) {
     auto args = {1, 2};
-    for constexpr (usize i = 0; i < countof(rest); i++) {
+    for constexpr (Usize i = 0; i < countof(rest); i++) {
         args = {args..., rest[i], rest...};
     }
     return 0;
@@ -507,9 +507,9 @@ int total(auto... rest) {
 a tuple type
 ================================================================================
 
-typedef struct { i32, f32 } Pair;
-struct { i32, struct { f32, f32 } } nest(struct { i32, f32 } *p) {
-    return (struct { i32, f32 }){1, 2.0f};
+typedef struct { I32, F32 } Pair;
+struct { I32, struct { F32, F32 } } nest(struct { I32, F32 } *p) {
+    return (struct { I32, F32 }){1, 2.0f};
 }
 
 --------------------------------------------------------------------------------
@@ -565,8 +565,8 @@ struct { i32, struct { f32, f32 } } nest(struct { i32, f32 } *p) {
 a slice is declared with [:] and sliced with [a:b]
 ================================================================================
 
-i32 take(i32 xs[:]) {
-  i32 view[:] = xs[1:3];
+I32 take(I32 xs[:]) {
+  I32 view[:] = xs[1:3];
   return view[0] + xs[:2][0] + xs[2:][0];
 }
 
@@ -616,7 +616,7 @@ i32 take(i32 xs[:]) {
 a slice takes C's qualifiers in its brackets (issue #126)
 ================================================================================
 
-void copy(u8 dst[restrict :], const u8 src[const restrict :], u8 const rest[:]);
+void copy(U8 dst[restrict :], const U8 src[const restrict :], U8 const rest[:]);
 
 --------------------------------------------------------------------------------
 
@@ -648,8 +648,8 @@ void copy(u8 dst[restrict :], const u8 src[const restrict :], u8 const rest[:]);
 [_] is a fixed array of inferred size (issue #423)
 ================================================================================
 
-i32 xs[_] = {1, 2, 3};
-i32 m[_][3] = {{1}, {2}};
+I32 xs[_] = {1, 2, 3};
+I32 m[_][3] = {{1}, {2}};
 char s[_] = "abc";
 
 --------------------------------------------------------------------------------
@@ -691,8 +691,8 @@ char s[_] = "abc";
 a concept as the element of a parameter
 ================================================================================
 
-usize count(const arithmetic xs[:]);
-void bump(integer *p, floating m[:][:], arithmetic a[4]);
+Usize count(const arithmetic xs[:]);
+void bump(integer *p, Float m[:][:], Num a[4]);
 
 --------------------------------------------------------------------------------
 
@@ -730,8 +730,8 @@ void bump(integer *p, floating m[:][:], arithmetic a[4]);
 type values written as full C types
 ================================================================================
 
-constexpr type Handler = Response (*)(Request *);
-constexpr type Block = u8[16];
+constexpr Type Handler = Response (*)(Request *);
+constexpr Type Block = U8[16];
 
 --------------------------------------------------------------------------------
 

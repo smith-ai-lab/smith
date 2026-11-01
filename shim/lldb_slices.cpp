@@ -96,9 +96,22 @@ Tag parse_tag(llvm::StringRef name, bool const_slice) {
     return tag;
 }
 
-// `i32[:]`, `const char[:]`, `f32[:][2]`, `u8[restrict :]`, `u8[const :]`: as the language writes them.
+// The sized types the lowering names with a lowercase word in a tag (`smith_array_f32_n`), written as the language
+// does.
+static std::string sized_capital(const std::string &word) {
+    static const char *const pairs[][2] = {{"i8", "I8"},       {"i16", "I16"},     {"i32", "I32"}, {"i64", "I64"},
+                                           {"u8", "U8"},       {"u16", "U16"},     {"u32", "U32"}, {"u64", "U64"},
+                                           {"isize", "Isize"}, {"usize", "Usize"}, {"f16", "F16"}, {"f32", "F32"},
+                                           {"f64", "F64"}};
+    size_t space = word.rfind(' ') == std::string::npos ? 0 : word.rfind(' ') + 1; // after `const `, `volatile `
+    for (const auto &pair : pairs)
+        if (word.compare(space, std::string::npos, pair[0]) == 0) return word.substr(0, space) + pair[1];
+    return word;
+}
+
+// `I32[:]`, `const char[:]`, `f32[:][2]`, `u8[restrict :]`, `u8[const :]`: as the language writes them.
 std::string written_name(const Tag &tag) {
-    std::string text = tag.element;
+    std::string text = sized_capital(tag.element);
     for (size_t at = 0; at < tag.count; at++) {
         text += '[';
         if (at == 0 && (tag.const_slice || tag.restrict_data))

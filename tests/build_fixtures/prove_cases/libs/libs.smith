@@ -3,7 +3,7 @@ module libs;
 import std::contract;
 import std::random;
 
-export u64 pick(u64 index) {
+export U64 pick(U64 index) {
     contract::requires(index < 10);
     random::Key key = random::key_make(7);
     random::Key parts[2];

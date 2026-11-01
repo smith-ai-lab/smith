@@ -5,7 +5,7 @@ import <stdio.h>;
 I32 main() {
     I32 factor = 3;
     I32 offset = 1;
-    I32 (*scale)(I32) = [factor, offset](I32 a) -> i32 { return a * 2; };
+    I32 (*scale)(I32) = [factor, offset](I32 a) -> I32 { return a * 2; };
     c::printf("%d\n", scale(2));
     return 0;
 }

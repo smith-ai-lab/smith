@@ -4,16 +4,16 @@ import <stddef.h>;
 import <stdbool.h>;
 
 typedef struct {
-    u32 a;
-    u32 b;
+    U32 a;
+    U32 b;
 } Pair;
 
 [[noreturn]] void stop();
 __attribute__((noreturn)) void halt();
 
-export u32 f(const u8 *p) {
+export U32 f(const U8 *p) {
     _Bool flag = p == c::NULL;
     Pair pair = {0};
-    u8 bytes[4] = {0};
+    U8 bytes[4] = {0};
     return pair.a + bytes[0] + flag;
 }

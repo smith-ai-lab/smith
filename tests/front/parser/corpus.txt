@@ -17,9 +17,9 @@ c-sized-names/main.smith: C, out of scope
 compile-alone-by-path/foo.smith: ok
 compile-alone-by-path/main.smith: ok
 constexpr-c/main.smith: C, out of scope
-constexpr-c-pedantic/main.smith: error: expected a variant name, found `=` (19:13)
+constexpr-c-pedantic/main.smith: ok
 constexpr-import/calc.smith: ok
-constexpr-import/main.smith: error: expected a variant name, found `=` (10:13)
+constexpr-import/main.smith: ok
 constexpr-import/mid.smith: ok
 constexpr-import-header/main.smith: ok
 constexpr-import-header/shapes.smith: error: expected a field name, found `,` (12:20)
@@ -77,11 +77,11 @@ error-array-param-modify/main.smith: ok
 error-array-param-shape/main.smith: ok
 error-array-param-sizeof/main.smith: ok
 error-array-param-unsized/main.smith: error: an array needs a size: write `[N]`, or `[:]` for a slice (3:18)
-error-c-name/std/names.smith: error: expected a variant name, found `,` (33:53)
+error-c-name/std/names.smith: ok
 error-c-name-function/uses/math.smith: ok
 error-c-name-macro/uses/macro.smith: ok
 error-c-name-tag/uses/tag.smith: error: `struct stat` names a C tag; write `struct c::stat` (5:12)
-error-concept-notes/main.smith: error: expected a variant name, found `,` (5:18)
+error-concept-notes/main.smith: ok
 error-concept-notes/stats.smith: ok
 error-constexpr-c/main.smith: C, out of scope
 error-constexpr-c-asm/main.smith: C, out of scope
@@ -106,7 +106,7 @@ error-export-no-module/main.smith: C, out of scope
 error-export-private-type/e/priv.smith: ok
 error-export-static/s.smith: ok
 error-export-two-names/two.smith: error: one name per declaration: write `int a;` and `int b;` (2:13)
-error-fields-enum-member/main.smith: error: expected a variant name, found `,` (4:8)
+error-fields-enum-member/main.smith: ok
 error-filescope-if/main.smith: ok
 error-generic-auto-const/main.smith: ok
 error-generic-auto-const/stats.smith: ok
@@ -124,7 +124,7 @@ error-generic-number-parameter/number.smith: ok
 error-generic-private-generic/main.smith: ok
 error-generic-private-generic/shape.smith: ok
 error-generic-private-name/main.smith: ok
-error-generic-private-name/scale.smith: error: expected a variant name, found `,` (9:21)
+error-generic-private-name/scale.smith: ok
 error-generic-return-type/main.smith: error: expected `)`, found `T` (4:23)
 error-if-constexpr/main.smith: C, out of scope
 error-import-broken-module/broken.smith: error: expected a field name, found `char` (4:34)
@@ -182,7 +182,7 @@ error-slice-qualifier-bracket/main.smith: error: `static` has no meaning for a s
 error-slice-step/main.smith: error: expected `]` to end the index, found `:` (10:33)
 error-stale-header/main.smith: C, out of scope
 error-standard-type/main.smith: C, out of scope
-error-str-name/main.smith: ok
+error-str-name/main.smith: error: expected a field name, found `Str` (6:17)
 error-target-fact/bad.smith: ok
 error-try-error-type/main.smith: ok
 error-try-expression/main.smith: ok
@@ -296,8 +296,8 @@ generic-error-instance/num.smith: ok
 generic-field-element/main.smith: ok
 generic-field-element/walk.smith: ok
 generic-fields/main.smith: ok
-generic-fields/reflect.smith: error: expected `)` to end `typeof`, found `.` (12:49)
-generic-fields-doc/docs.smith: error: expected a variant name, found `,` (47:8)
+generic-fields/reflect.smith: ok
+generic-fields-doc/docs.smith: ok
 generic-fields-doc/main.smith: ok
 generic-fields-error/main.smith: error: expected a tag name after `struct`, `union` or `enum` (12:12)
 generic-fields-error/reflect.smith: ok
@@ -314,7 +314,7 @@ generic-fields-values/walk.smith: error: expected a field name, found `,` (13:8)
 generic-for-constexpr-error/bad.smith: error: expected `)`, found `,` (5:45)
 generic-for-constexpr-error/main.smith: ok
 generic-for-range/main.smith: ok
-generic-for-range/reflect.smith: error: expected `)` to end `typeof`, found `.` (12:49)
+generic-for-range/reflect.smith: ok
 generic-for-range-error/main.smith: error: a range `for` declares an index and an element at most: `for (Usize i, T x : xs)` (5:36)
 generic-function/apply.smith: ok
 generic-function/main.smith: ok
@@ -372,7 +372,7 @@ generic-private-included-first/main.smith: ok
 generic-private-included-first/mid.smith: ok
 generic-private-included-first/scale.smith: ok
 generic-private-names/main.smith: ok
-generic-private-names/scale.smith: error: expected a variant name, found `,` (9:21)
+generic-private-names/scale.smith: ok
 generic-rest/arguments.smith: ok
 generic-rest/main.smith: ok
 generic-rest-error/bad.smith: ok
@@ -475,12 +475,12 @@ main-args/main.smith: ok
 main-old-form-error/main.smith: ok
 member-after-dot-is-not-a-macro/main.smith: C, out of scope
 module-basic/main.smith: C, out of scope
-module-basic/shapes/area.smith: error: expected a variant name, found `,` (5:26)
+module-basic/shapes/area.smith: ok
 module-c-caller/mix/sum.smith: ok
 module-c-features/main.smith: C, out of scope
 module-c-features/kit/things.smith: C, out of scope
 module-cpp-callers/geo/vec.smith: ok
-module-enum-c-names/mix/modes.smith: error: expected a variant name, found `,` (5:9)
+module-enum-c-names/mix/modes.smith: ok
 module-enum-c-names/mix/use.smith: ok
 module-export-extern/main.smith: C, out of scope
 module-export-extern/cfg/limits.smith: ok
@@ -553,10 +553,10 @@ str-lowering/words.smith: ok
 str-module/main.smith: ok
 str-module/words.smith: ok
 str-run/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (26:23)
-str-typedef-lowering/text.smith: ok
+str-typedef-lowering/text.smith: error: expected the type's name, found `str` (3:27)
 str-typedef-module/main.smith: error: expected `;`, found `s` (7:15)
 str-typedef-module/text.smith: error: expected the type's name, found `str` (3:27)
-str-typedef-run/main.smith: error: expected the type's name, found `bytes` (8:14)
+str-typedef-run/main.smith: error: expected the type's name, found `str` (7:20)
 target-facts/main.smith: C, out of scope
 try-generic/main.smith: error: expected `;`, found `c` (22:14)
 try-return-value/main.smith: error: expected `;`, found `c` (25:14)
@@ -612,4 +612,4 @@ value-query-plain/main.smith: C, out of scope
 value-query-windows/size.smith: ok
 void-pointer-cast/main.smith: ok
 void-pointer-plain/main.smith: C, out of scope
-total 614, ok 370, error 120, C 124, skipped 0
+total 614, ok 380, error 110, C 124, skipped 0

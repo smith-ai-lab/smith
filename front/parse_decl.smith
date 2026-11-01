@@ -727,7 +727,8 @@ static Bool ends_variant(lex::TokenKind kind) {
     return kind == lex::equal || kind == lex::comma || kind == lex::semicolon || kind == lex::right_brace;
 }
 
-// One enumerator: `red`, `green = 2`, `Circle circle;` or `empty;`, then `,` or `;`.
+// One enumerator: `red`, `Red`, `green = 2`, `Fib7 = f(7)`, `Circle circle;` or `empty;` (a name alone, with or without
+// a value, is a value; a payload has a type before its name), then `,` or `;`.
 static ast::Enumerator parse_enumerator(parse::Parser *p) {
     ast::Enumerator item = {};
     U32 start = parse::peek(p).span.start;
@@ -735,7 +736,7 @@ static ast::Enumerator parse_enumerator(parse::Parser *p) {
         item.payload = parse_anonymous_record(p);
         lex::Token name = parse::expect(p, lex::name, "a variant name");
         if (name.kind == lex::name) item.name = parse::text(p, name);
-    } else if (parse::at(p, lex::name) && ends_variant(parse::peek_at(p, 1).kind)) {
+    } else if ((parse::at(p, lex::name) || parse::at(p, lex::type_name)) && ends_variant(parse::peek_at(p, 1).kind)) {
         item.name = parse::text(p, parse::advance(p));
         if (parse::accept(p, lex::equal)) item.value = parse::expression(p);
     } else {

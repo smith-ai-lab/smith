@@ -34,7 +34,7 @@ changes a debug configuration of yours.
 
 - **`.smith` files** get the `smith` file type and tree-sitter highlighting: `module`, `import`, `as` and `export`,
   the `a::b` paths of modules (`module` for each name in a path, `punctuation.delimiter` for `::`), `c::printf` as a
-  call, `tx::Text` as a type, `constexpr type T` parameters, and everything C highlights. Folds and indents are the queries (C's,
+  call, `tx::Text` as a type, `constexpr Type T` parameters, and everything C highlights. Folds and indents are the queries (C's,
   inherited): `vim.wo.foldexpr = "v:lua.vim.treesitter.foldexpr()"` uses the folds; indents are for nvim-treesitter.
 - **A `.h` file gets its language from the project**, not Neovim's guess (which is `cpp` for every `.h`). Only in a smith
   project (a folder at or above the file with `build.c`, `build.smith`, `main.smith`, `main.c` or `.smith/`); elsewhere nothing changes. If you set
@@ -52,7 +52,7 @@ changes a debug configuration of yours.
   seed (`scripts/seed_linux.c`) builds a smith without the parser: the query fails with `this smith was built without
   the tree-sitter parser (a seed build); rebuild with `smith build``, and a Linux smith that `build.c` builds has it.
 - **Plain C stays C**: `module`, `import`, `export`, `type`, `throw`, `new` and `class` are names wherever C allows names
-  (`int import;`, `module = 1;`, `s->type`), and `u8` is a variable in a file that declares one.
+  (`int import;`, `module = 1;`, `s->type`), and `U8` is a variable in a file that declares one.
 - **`vim.lsp.enable("smith")`** runs `smith lsp` (clangd from smith's LLVM) for `c`, `cpp`, `objc`, `objcpp` and `smith`, with the
   root markers `build.c`, `build.smith`, `main.smith`, `main.c`, `compile_commands.json` and `.git`. It replaces a `clangd` config: enable one.
   Do not add `--query-driver` (clangd then puts the SDK's include paths ahead of clang's own and the SDK's modules fail).
@@ -118,8 +118,8 @@ changes a debug configuration of yours.
 
 `tree-sitter-smith` extends tree-sitter-c (v0.24.2) as C++, CUDA and GLSL do, adding what `.smith` adds
 ([the language](smith-language.md), issue #11): `module a::b;`, `import a::b [as x];`, `import <h>;`, `export` (with `[[std::c_name]]` attributes before it, on a
-declaration, a function, a typedef or a tag, at file scope), `a::b` paths in expressions and types, `constexpr type T` parameters,
-`if constexpr`, a type where an argument goes, and the sized types `u8` ... `usize`, `f16`, `f32`, `f64`. It also reads
+declaration, a function, a typedef or a tag, at file scope), `a::b` paths in expressions and types, `constexpr Type T` parameters,
+`if constexpr`, a type where an argument goes, and the sized types `U8` ... `Usize`, `F16`, `F32`, `F64`. It also reads
 what smith's own C needs and tree-sitter-c does not: `#embed`, `_Atomic(T)`, `_BitInt(N)`, `enum : unsigned char`, types
 and operators as macro arguments (`TYPED_PUSH(&a, long double)`, `SMITH_CHECK(a, ==, b)`), a macro that defines
 functions without a semicolon, Apple blocks and `__block`.

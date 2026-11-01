@@ -11,8 +11,8 @@ module bag;
 import std::contract;
 
 export typedef struct {
-    u32 len;
-    u32 jumps;
+    U32 len;
+    U32 jumps;
 } Moves;
 
 export void add_jump(Moves *moves) {
@@ -22,7 +22,7 @@ export void add_jump(Moves *moves) {
     contract::ensures(moves->jumps <= 100);
 }
 
-export u32 use_it(Moves *moves) {
+export U32 use_it(Moves *moves) {
     contract::requires(moves->jumps < 100 && moves->len == 7);
     add_jump(moves);
     contract::assert(moves->len == 7);           // proved from `modifies`

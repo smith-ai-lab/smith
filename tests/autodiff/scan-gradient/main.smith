@@ -9,71 +9,71 @@ import std::format;
 import <math.h>;
 import "base/reference_scan.h";
 
-constexpr f64 tolerance = 1e-12;
+constexpr F64 tolerance = 1e-12;
 
 typedef struct {
-    f64 x[36];
-    f64 dt[12];
-    f64 a[2];
-    f64 b[24];
-    f64 c[24];
-    f64 keep[6];
-    f64 state0[48];
+    F64 x[36];
+    F64 dt[12];
+    F64 a[2];
+    F64 b[24];
+    F64 c[24];
+    F64 keep[6];
+    F64 state0[48];
 } Scan;
 
 typedef struct {
-    f64 dy[36];
-    f64 dse[48];
+    F64 dy[36];
+    F64 dse[48];
 } Seeds;
 
 // sum(y * dy) + sum(state_end * dse): the scalar whose gradient the backward computes.
-f64 scan_loss(Scan *scan, const Seeds *seeds) {
+F64 scan_loss(Scan *scan, const Seeds *seeds) {
     c::ReferenceScanShape shape = {2, 3, 2, 3, 4};
     c::ReferenceScanInputs in = {scan->x, scan->dt, scan->a, scan->b, scan->c, scan->keep};
-    f64 y[36] = {};
-    f64 state_end[48] = {};
+    F64 y[36] = {};
+    F64 state_end[48] = {};
     c::reference_scan_forward(&shape, &in, scan->state0, y, state_end, nullptr);
-    f64 total = 0.0;
-    for (usize i = 0; i < 36; i++) {
+    F64 total = 0.0;
+    for (Usize i = 0; i < 36; i++) {
         total += y[i] * seeds->dy[i];
     }
-    for (usize i = 0; i < 48; i++) {
+    for (Usize i = 0; i < 48; i++) {
         total += state_end[i] * seeds->dse[i];
     }
     return total;
 }
 
-u64 rng = 88172645463325252ULL;
+U64 rng = 88172645463325252ULL;
 
-f64 urand(f64 lo, f64 hi) {
+F64 urand(F64 lo, F64 hi) {
     rng ^= rng << 13;
     rng ^= rng >> 7;
     rng ^= rng << 17;
-    return lo + (hi - lo) * ((f64)(rng >> 11) / 9007199254740992.0);
+    return lo + (hi - lo) * ((F64)(rng >> 11) / 9007199254740992.0);
 }
 
-void fill(f64 *p, usize n, f64 lo, f64 hi) {
-    for (usize i = 0; i < n; i++) {
+void fill(F64 *p, Usize n, F64 lo, F64 hi) {
+    for (Usize i = 0; i < n; i++) {
         p[i] = urand(lo, hi);
     }
 }
 
-f64 worst = 0.0;
+F64 worst = 0.0;
 
-void compare(const char *name, const f64 *got, const f64 *want, usize n) {
-    f64 scale = 0.0;
-    f64 difference = 0.0;
-    for (usize i = 0; i < n; i++) {
+void compare(const char *name, const F64 *got, const F64 *want, Usize n) {
+    F64 scale = 0.0;
+    F64 difference = 0.0;
+    for (Usize i = 0; i < n; i++) {
         scale = c::fmax(scale, c::fabs(want[i]));
         difference = c::fmax(difference, c::fabs(got[i] - want[i]));
     }
-    f64 relative = scale > 0.0 ? difference / scale : difference;
+    F64 relative = scale > 0.0 ? difference / scale : difference;
     (void)console::print("  ", format::left(name, 8), " n=", format::left(n, 4), " max|ref|=", format::scientific(scale, 3),
                          "  maxrel=", format::scientific(relative, 3), "\n");
     worst = c::fmax(worst, relative);
 }
 
-i32 main() {
+I32 main() {
     Scan scan = {};
     Seeds seeds = {};
     fill(scan.x, 36, -1.0, 1.0);
@@ -81,7 +81,7 @@ i32 main() {
     fill(scan.a, 2, -2.0, -0.1);
     fill(scan.b, 24, -1.0, 1.0);
     fill(scan.c, 24, -1.0, 1.0);
-    for (usize i = 0; i < 6; i++) {
+    for (Usize i = 0; i < 6; i++) {
         scan.keep[i] = urand(0.0, 1.0) < 0.1 ? 0.0 : 1.0;
     }
     fill(scan.state0, 48, -1.0, 1.0);
@@ -92,9 +92,9 @@ i32 main() {
 
     c::ReferenceScanShape shape = {2, 3, 2, 3, 4};
     c::ReferenceScanInputs in = {scan.x, scan.dt, scan.a, scan.b, scan.c, scan.keep};
-    f64 states[144] = {};
-    f64 y[36] = {};
-    f64 state_end[48] = {};
+    F64 states[144] = {};
+    F64 y[36] = {};
+    F64 state_end[48] = {};
     c::reference_scan_forward(&shape, &in, scan.state0, y, state_end, states);
     Scan h = {};
     c::ReferenceScanGradients hand = {h.x, h.dt, h.a, h.b, h.c, h.state0, nullptr};

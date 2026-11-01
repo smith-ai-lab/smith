@@ -2,18 +2,18 @@
 // std::result, <smith/result.h>: a value or the reason there is none, in place of an out parameter or a sentinel.
 // `result` is in scope in every module with no import (see lib/std/option.smith).
 //
-// `result(T, E)` is an enum with a payload: `ok` carries the `T`, `error` carries the `E` (the caller's own error type,
-// a code, an enum or a struct). `result(usize, i32)` written anywhere is one type (the struct
+// `Result(T, E)` is an enum with a payload: `ok` carries the `T`, `error` carries the `E` (the caller's own error type,
+// a code, an enum or a struct). `Result(Usize, I32)` written anywhere is one type (the struct
 // `smith_enum_result_usize__i32`).
 //
-//   result(f64, i32) divide(f64 a, f64 b) {
+//   Result(F64, I32) divide(F64 a, F64 b) {
 //       if (b == 0) return {.error = 1};
 //       return a / b;
 //   }
 module std::result;
 
 // The type of a value or an error: a value, which converts to `{.ok = value}`, or `{.error = reason}`.
-export type result(type T, type E) {
+export Type Result(Type T, Type E) {
     return enum {
         T ok;
         E error;

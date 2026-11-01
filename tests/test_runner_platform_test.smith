@@ -100,3 +100,23 @@ export void test_runner_partial_a_filter_of_another_runner_runs_nothing_and_pass
     scratch::expect_status("partial: without --partial the same filter is still an error", 1, &strict);
     scratch::expect_contains("partial: ... and says so", strict.out, "no test matches \"belongs_to_another_runner\"");
 }
+
+// `--others <runner>` (#1260): `smith test --test x*` runs the units runner and the front runner; a name only the other
+// one has is its to run, so this runner passes, and a name neither has is an error that says where it looked.
+export void test_runner_others_a_filter_the_other_runner_has_runs_nothing_and_passes() {
+    scratch::Project p = runner::built_project("runner_base", "runner_platform", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::capture(&p, "printf '#!/bin/sh\\necho found::t\\n' > has && printf '#!/bin/sh\\nexit 0\\n' > hasnot && "
+                         "chmod +x has hasnot");
+    scratch::Run has = runner::tests(&p, "", "--others ./has --test belongs_to_another_runner");
+    scratch::expect_status("others: the other runner has the name: exit 0", 0, &has);
+    scratch::expect_contains("others: ... and says so", has.out, "the other runner has it, nothing to run");
+    scratch::Run neither = runner::tests(&p, "", "--others ./hasnot --test belongs_to_another_runner");
+    scratch::expect_status("others: neither runner has the name: exit 1", 1, &neither);
+    scratch::expect_contains("others: ... and says where it looked", neither.out,
+                             "no test matches \"belongs_to_another_runner\" in this runner or the other one");
+}

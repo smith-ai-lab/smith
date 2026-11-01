@@ -16,7 +16,7 @@ void test_idle_2_sleeps_itself(void) {
 
 void test_idle_3_computes_for_longer_than_the_limit(void) {
     c::clock_t start = c::clock();
-    volatile u64 sink = 0;
+    volatile U64 sink = 0;
     while (c::clock() - start < 3 * 1000000)
         sink = sink + 1;
 }

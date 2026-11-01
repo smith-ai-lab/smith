@@ -2,7 +2,7 @@ module main;
 
 import <stdio.h>;
 
-// Run-time arrays of more dimensions: `f32 xs[:][2]` (rows of 2) and `xs[:][:]`, any mix. Built by hand from a fixed
+// Run-time arrays of more dimensions: `F32 xs[:][2]` (rows of 2) and `xs[:][:]`, any mix. Built by hand from a fixed
 // array, indexed `xs[i][j]`, a row `xs[i]` (a `[:]`), counted, sliced within a row, passed on and returned.
 
 struct Grid {

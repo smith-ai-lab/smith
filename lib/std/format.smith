@@ -8,7 +8,7 @@ import std::text;
 
 // <smith/format.h>: a type-checked formatter. There is no format string: the arguments are the pieces of the text, in
 // order, and the type of each one picks how it is written, when the call is compiled. A type it has no rule for is a
-// compile-time error at the call (the note names the instance, `format::to(char *, usize, Point)`).
+// compile-time error at the call (the note names the instance, `format::to(char *, Usize, Point)`).
 //
 //   format::Written written = format::to(buffer, sizeof buffer, "count: ", n, " of ", total, "\n");
 //   if (!written.fits) ...                                   // the text was cut; written.length is what it needed
@@ -17,8 +17,8 @@ import std::text;
 // What each type is written as, with no locale and no C library function:
 //   bool                      true or false
 //   char                      the character
-//   i8..i64, u8..u64, usize   decimal digits, a leading - for a negative number (i8 is a number, char is a character)
-//   f32, f64                  text::write_f32's and write_f64's shortest digits that read back as the same value
+//   I8..i64, U8..u64, Usize   decimal digits, a leading - for a negative number (I8 is a number, char is a character)
+//   F32, F64                  text::write_f32's and write_f64's shortest digits that read back as the same value
 //                             (0.1f is 0.1, 1e22, 5e-324); inf, -inf and nan for what has no number
 //   char *, const char *      the terminated string; a null pointer is (null)
 //   char[:], const char[:]    its count of characters, which need no terminator
@@ -41,49 +41,49 @@ import std::text;
 // How a write went. length is the characters of the whole text, whether or not they fit, without the terminator;
 // fits is length < capacity, that is, every character and the terminator were written.
 [[std::c_name("SmithFormatWritten")]] export typedef struct {
-    usize length;
+    Usize length;
     bool fits;
 } Written;
 
 // A number in lowercase hexadecimal, at least width digits (at most 16), zero-padded; made by hex().
 [[std::c_name("SmithFormatHex")]] export typedef struct {
-    u64 value;
-    u32 width;
+    U64 value;
+    U32 width;
 } Hex;
 
 // A f64 with places digits after the point (at most 20), made by fixed().
 [[std::c_name("SmithFormatFixed")]] export typedef struct {
-    f64 value;
-    u32 places;
+    F64 value;
+    U32 places;
 } Fixed;
 
 // value in hexadecimal, width digits at least: hex(255, 4) is 00ff, hex(255, 0) is ff, and hex(0, 0) is 0.
-[[std::c_name("smith_format_hex")]] export [[nodiscard]] Hex hex(u64 value, u32 width) {
+[[std::c_name("smith_format_hex")]] export [[nodiscard]] Hex hex(U64 value, U32 width) {
     return (Hex){value, width};
 }
 
 // value to places digits after the point, correctly rounded from its exact binary value (ties to even), as printf's
 // %.Nf: fixed(2.5, 0) is 2 and fixed(0.125, 2) is 0.12. A negative number that rounds to zero keeps its sign (-0.00),
 // as printf does. A number of 2^63 or more has no fixed rule here and is written as with no wrapper.
-[[std::c_name("smith_format_fixed")]] export [[nodiscard]] Fixed fixed(f64 value, u32 places) {
+[[std::c_name("smith_format_fixed")]] export [[nodiscard]] Fixed fixed(F64 value, U32 places) {
     return (Fixed){value, places};
 }
 
 // The text of length characters at begin, for what a printf wrote as %.*s.
 [[std::c_name("smith_format_bytes")]] export [[nodiscard]] typeof(const char[:]) bytes(const char *begin,
-                                                                                       usize length) {
+                                                                                       Usize length) {
     return begin[0:length];
 }
 
 [[std::c_name("SmithFormatWriter")]] export typedef struct {
     char *out;
-    usize capacity;
-    usize length;
+    Usize capacity;
+    Usize length;
 } Writer;
 
 // A writer over buffer, which has room for capacity characters (0 and a null buffer measure only). The Writer is what
 // `to` is made of, and C can use it: each put below is a piece of the text, and finish ends it.
-[[std::c_name("smith_format_make")]] export [[nodiscard]] Writer make(char *buffer, usize capacity) {
+[[std::c_name("smith_format_make")]] export [[nodiscard]] Writer make(char *buffer, Usize capacity) {
     return (Writer){buffer, capacity, 0};
 }
 
@@ -95,57 +95,57 @@ import std::text;
 
 // The characters of text.
 [[std::c_name("smith_format_put_bytes")]] export void put_bytes(Writer *writer, const char text[:]) {
-    for (usize i = 0; i < countof(text); i++) {
+    for (Usize i = 0; i < countof(text); i++) {
         put_char(writer, text[i]);
     }
 }
 
 // length characters at begin (a generic's body cannot cut a pointer, so it calls this).
-void put_chars(Writer *writer, const char *begin, usize characters) {
+void put_chars(Writer *writer, const char *begin, Usize characters) {
     put_bytes(writer, begin[0:characters]);
 }
 
 // A terminated string; a null pointer is (null).
 [[std::c_name("smith_format_put_string")]] export void put_string(Writer *writer, const char *string) {
     if (string == nullptr) string = "(null)";
-    for (usize i = 0; string[i] != '\0'; i++) {
+    for (Usize i = 0; string[i] != '\0'; i++) {
         put_char(writer, string[i]);
     }
 }
 
 // A terminated string, or, with a count, a char array of a struct: up to its end or its terminator.
-[[maybe_unused]] void put_c_string(Writer *writer, const char *string, usize count) {
+[[maybe_unused]] void put_c_string(Writer *writer, const char *string, Usize count) {
     if (count == 0) {
         put_string(writer, string);
         return;
     }
-    usize length = 0;
+    Usize length = 0;
     while (length < count && string[length] != '\0')
         length += 1;
     put_chars(writer, string, length);
 }
 
 // Decimal digits.
-[[std::c_name("smith_format_put_u64")]] export void put_u64(Writer *writer, u64 value) {
+[[std::c_name("smith_format_put_u64")]] export void put_u64(Writer *writer, U64 value) {
     char digits[text::number_capacity];
-    usize length = text::write_u64(digits, value);
+    Usize length = text::write_u64(digits, value);
     put_bytes(writer, digits[0:length]);
 }
 
 // Decimal digits with a leading - for a negative number.
-[[std::c_name("smith_format_put_i64")]] export void put_i64(Writer *writer, i64 value) {
+[[std::c_name("smith_format_put_i64")]] export void put_i64(Writer *writer, I64 value) {
     char digits[text::number_capacity + 1];
-    usize length = text::write_i64(digits, value);
+    Usize length = text::write_i64(digits, value);
     put_bytes(writer, digits[0:length]);
 }
 
-bool is_finite(f64 value) {
-    u64 bits = __builtin_bit_cast(u64, value);
+bool is_finite(F64 value) {
+    U64 bits = __builtin_bit_cast(U64, value);
     return ((bits >> 52) & 0x7ff) != 0x7ff;
 }
 
 // inf, -inf and nan, which text::write_f64 refuses; nan has no sign here.
-void put_unfinite(Writer *writer, f64 value) {
+void put_unfinite(Writer *writer, F64 value) {
     if (value != value) {
         put_string(writer, "nan");
     } else if (value < 0) {
@@ -156,73 +156,73 @@ void put_unfinite(Writer *writer, f64 value) {
 }
 
 // As text::write_f64, and inf, -inf or nan for a value with no number.
-[[std::c_name("smith_format_put_f64")]] export void put_f64(Writer *writer, f64 value) {
+[[std::c_name("smith_format_put_f64")]] export void put_f64(Writer *writer, F64 value) {
     if (!is_finite(value)) {
         put_unfinite(writer, value);
         return;
     }
     char digits[text::f64_capacity];
-    usize length = text::write_f64(digits, value);
+    Usize length = text::write_f64(digits, value);
     put_bytes(writer, digits[0:length]);
 }
 
 // As text::write_f32: the shortest digits that read back as the same f32, and inf, -inf or nan.
-[[std::c_name("smith_format_put_f32")]] export void put_f32(Writer *writer, f32 value) {
-    if (!is_finite((f64)value)) {
-        put_unfinite(writer, (f64)value);
+[[std::c_name("smith_format_put_f32")]] export void put_f32(Writer *writer, F32 value) {
+    if (!is_finite((F64)value)) {
+        put_unfinite(writer, (F64)value);
         return;
     }
     char digits[text::f32_capacity];
-    usize length = text::write_f32(digits, value);
+    Usize length = text::write_f32(digits, value);
     put_bytes(writer, digits[0:length]);
 }
 
 // A Hex, as hex() made it.
 [[std::c_name("smith_format_put_hex")]] export void put_hex(Writer *writer, Hex hex) {
     char digits[16];
-    usize count = 0;
-    u64 rest = hex.value;
+    Usize count = 0;
+    U64 rest = hex.value;
     do {
-        u64 digit = rest & 0xf;
+        U64 digit = rest & 0xf;
         digits[count++] = (char)(digit < 10 ? '0' + digit : 'a' + (digit - 10));
         rest >>= 4;
     } while (rest != 0);
-    u32 width = hex.width < 16 ? hex.width : 16;
-    for (usize pad = count; pad < width; pad++) {
+    U32 width = hex.width < 16 ? hex.width : 16;
+    for (Usize pad = count; pad < width; pad++) {
         put_char(writer, '0');
     }
-    for (usize i = count; i-- > 0;) {
+    for (Usize i = count; i-- > 0;) {
         put_char(writer, digits[i]);
     }
 }
 
-constexpr u32 places_max = 20;
-constexpr u64 whole_limit = (u64)1 << 63;
-constexpr u32 fraction_bits_max = 120;
+constexpr U32 places_max = 20;
+constexpr U64 whole_limit = (U64)1 << 63;
+constexpr U32 fraction_bits_max = 120;
 
 typedef __uint128_t Wide;
 
 // |value| as a whole part and a fraction n / 2^bits, exactly. A value below 2^-68 has a fraction past 120 bits, but no
 // digit of at most 20 places can then be other than zero (half of 10^-20 is above 2^-68), so it is written as zero.
 typedef struct {
-    u64 whole;
+    U64 whole;
     Wide fraction;
-    u32 bits;
+    U32 bits;
 } Split;
 
-Split split(f64 value) {
-    u64 abs = __builtin_bit_cast(u64, value) & ~((u64)1 << 63);
-    u64 field = abs >> 52;
-    u64 m = field == 0 ? abs : (abs & 0xfffffffffffffULL) | ((u64)1 << 52);
-    i64 e = field == 0 ? -1074 : (i64)field - 1075;
+Split split(F64 value) {
+    U64 abs = __builtin_bit_cast(U64, value) & ~((U64)1 << 63);
+    U64 field = abs >> 52;
+    U64 m = field == 0 ? abs : (abs & 0xfffffffffffffULL) | ((U64)1 << 52);
+    I64 e = field == 0 ? -1074 : (I64)field - 1075;
     Split result = {0, 0, 0};
     if (e >= 0) {
-        result.whole = m << (u32)e;
+        result.whole = m << (U32)e;
     } else {
-        u32 shift = (u32)(0 - e);
+        U32 shift = (U32)(0 - e);
         if (shift < 64) {
             result.whole = m >> shift;
-            result.fraction = m & (((u64)1 << shift) - 1);
+            result.fraction = m & (((U64)1 << shift) - 1);
             result.bits = shift;
         } else if (shift <= fraction_bits_max) {
             result.fraction = m;
@@ -233,18 +233,18 @@ Split split(f64 value) {
 }
 
 // places digits of the fraction, rounded to nearest with ties to even; a carry out of the first digit goes to *whole.
-void fraction_digits(Split split, u32 places, char *digits, u64 *whole) {
+void fraction_digits(Split split, U32 places, char *digits, U64 *whole) {
     Wide n = split.fraction;
-    for (u32 i = 0; i < places; i++) {
+    for (U32 i = 0; i < places; i++) {
         n *= 10;
-        digits[i] = (char)('0' + (u32)(n >> split.bits));
+        digits[i] = (char)('0' + (U32)(n >> split.bits));
         n &= ((Wide)1 << split.bits) - 1;
     }
     if (split.bits == 0) return;
     Wide half = (Wide)1 << (split.bits - 1);
-    u64 last = places > 0 ? (u64)(digits[places - 1] - '0') : *whole;
+    U64 last = places > 0 ? (U64)(digits[places - 1] - '0') : *whole;
     if (n < half || (n == half && (last & 1) == 0)) return;
-    u32 i = places;
+    U32 i = places;
     while (i > 0 && digits[i - 1] == '9') {
         digits[i - 1] = '0';
         i -= 1;
@@ -261,15 +261,15 @@ void fraction_digits(Split split, u32 places, char *digits, u64 *whole) {
         put_unfinite(writer, fixed.value);
         return;
     }
-    u64 bits = __builtin_bit_cast(u64, fixed.value);
-    if ((bits & ~((u64)1 << 63)) >= __builtin_bit_cast(u64, (f64)whole_limit)) {
+    U64 bits = __builtin_bit_cast(U64, fixed.value);
+    if ((bits & ~((U64)1 << 63)) >= __builtin_bit_cast(U64, (F64)whole_limit)) {
         put_f64(writer, fixed.value);
         return;
     }
-    u32 places = fixed.places < places_max ? fixed.places : places_max;
+    U32 places = fixed.places < places_max ? fixed.places : places_max;
     Split parts = split(fixed.value);
     char digits[places_max];
-    u64 whole = parts.whole;
+    U64 whole = parts.whole;
     fraction_digits(parts, places, digits, &whole);
     if ((bits >> 63) != 0) put_char(writer, '-');
     put_u64(writer, whole);
@@ -280,7 +280,7 @@ void fraction_digits(Split split, u32 places, char *digits, u64 *whole) {
 // Ends the text: terminates the buffer where it ends and says how it went (see Written).
 [[std::c_name("smith_format_finish")]] export [[nodiscard]] Written finish(Writer *writer) {
     if (writer->capacity > 0) {
-        usize end = writer->length < writer->capacity - 1 ? writer->length : writer->capacity - 1;
+        Usize end = writer->length < writer->capacity - 1 ? writer->length : writer->capacity - 1;
         writer->out[end] = '\0';
     }
     return (Written){writer->length, writer->length < writer->capacity};
@@ -290,95 +290,95 @@ void fraction_digits(Split split, u32 places, char *digits, u64 *whole) {
 // (ties to even), in the fixed style when the decimal exponent is from -4 up to digits - 1 and in the e style
 // otherwise, with the trailing zeros and a bare point removed: general(0.1, 6) is 0.1, general(1e22, 6) is 1e+22.
 [[std::c_name("SmithFormatGeneral")]] export typedef struct {
-    f64 value;
-    u32 digits;
+    F64 value;
+    U32 digits;
 } General;
 
 // A f64 as printf's %.Ne: one digit, a point and places more (at most 40), then e, a sign and at least two exponent
 // digits, correctly rounded as General is: scientific(12345.678, 2) is 1.23e+04.
 [[std::c_name("SmithFormatScientific")]] export typedef struct {
-    f64 value;
-    u32 places;
+    F64 value;
+    U32 places;
 } Scientific;
 
 // A piece in a column of width characters, made by pad() or left(). The piece is already text: a string or a text is
 // referenced (it must outlive the call that writes it), any other piece is held in the 64 characters of the value.
-export constexpr usize padded_capacity = 64;
+export constexpr Usize padded_capacity = 64;
 [[std::c_name("SmithFormatPadded")]] export typedef struct {
     const char *begin;
-    usize length;
-    u32 width;
+    Usize length;
+    U32 width;
     bool left;
     char characters[padded_capacity];
 } Padded;
 
-[[std::c_name("smith_format_general")]] export [[nodiscard]] General general(f64 value, u32 digits) {
+[[std::c_name("smith_format_general")]] export [[nodiscard]] General general(F64 value, U32 digits) {
     return (General){value, digits};
 }
 
-[[std::c_name("smith_format_scientific")]] export [[nodiscard]] Scientific scientific(f64 value, u32 places) {
+[[std::c_name("smith_format_scientific")]] export [[nodiscard]] Scientific scientific(F64 value, U32 places) {
     return (Scientific){value, places};
 }
 
-constexpr u32 significant_max = 40;
-constexpr usize exact_capacity = 800;
-constexpr usize limbs_capacity = 100;
-constexpr u32 limb_base = 1000000000;
+constexpr U32 significant_max = 40;
+constexpr Usize exact_capacity = 800;
+constexpr Usize limbs_capacity = 100;
+constexpr U32 limb_base = 1000000000;
 
 // A natural number in base 10^9, least significant limb first.
 typedef struct {
-    u32 limb[limbs_capacity];
-    usize count;
+    U32 limb[limbs_capacity];
+    Usize count;
 } Big;
 
-void big_multiply(Big *big, u32 factor) {
-    u64 carry = 0;
-    for (usize i = 0; i < big->count; i++) {
-        u64 product = (u64)big->limb[i] * factor + carry;
-        big->limb[i] = (u32)(product % limb_base);
+void big_multiply(Big *big, U32 factor) {
+    U64 carry = 0;
+    for (Usize i = 0; i < big->count; i++) {
+        U64 product = (U64)big->limb[i] * factor + carry;
+        big->limb[i] = (U32)(product % limb_base);
         carry = product / limb_base;
     }
     while (carry != 0) {
-        big->limb[big->count++] = (u32)(carry % limb_base);
+        big->limb[big->count++] = (U32)(carry % limb_base);
         carry /= limb_base;
     }
 }
 
 // The exact decimal digits of the integer m * 2^e (e >= 0) or m * 5^-e (e < 0), most significant first; returns how
 // many.
-usize exact_digits(u64 m, i32 e, char *digits) {
+Usize exact_digits(U64 m, I32 e, char *digits) {
     Big big = {};
-    big.limb[0] = (u32)(m % limb_base);
-    big.limb[1] = (u32)((m / limb_base) % limb_base);
-    big.limb[2] = (u32)(m / limb_base / limb_base);
+    big.limb[0] = (U32)(m % limb_base);
+    big.limb[1] = (U32)((m / limb_base) % limb_base);
+    big.limb[2] = (U32)(m / limb_base / limb_base);
     big.count = 3;
-    i32 left = e < 0 ? -e : e;
-    u32 step = e < 0 ? 13 : 30;
+    I32 left = e < 0 ? -e : e;
+    U32 step = e < 0 ? 13 : 30;
     while (left > 0) {
-        u32 now = (u32)left < step ? (u32)left : step;
-        u32 factor = 1;
-        for (u32 j = 0; j < now; j++) {
+        U32 now = (U32)left < step ? (U32)left : step;
+        U32 factor = 1;
+        for (U32 j = 0; j < now; j++) {
             factor *= e < 0 ? 5 : 2;
         }
         big_multiply(&big, factor);
-        left -= (i32)now;
+        left -= (I32)now;
     }
     while (big.count > 1 && big.limb[big.count - 1] == 0) {
         big.count -= 1;
     }
-    usize length = 0;
-    for (usize i = big.count; i-- > 0;) {
+    Usize length = 0;
+    for (Usize i = big.count; i-- > 0;) {
         char chunk[9];
-        u32 rest = big.limb[i];
-        for (usize j = 9; j-- > 0;) {
+        U32 rest = big.limb[i];
+        for (Usize j = 9; j-- > 0;) {
             chunk[j] = (char)('0' + rest % 10);
             rest /= 10;
         }
-        usize from = 0;
+        Usize from = 0;
         while (length == 0 && from < 8 && chunk[from] == '0') {
             from += 1;
         }
-        for (usize j = from; j < 9; j++) {
+        for (Usize j = from; j < 9; j++) {
             digits[length++] = chunk[j];
         }
     }
@@ -387,26 +387,26 @@ usize exact_digits(u64 m, i32 e, char *digits) {
 
 // The first want significant digits of value (finite, not zero), correctly rounded, ties to even, in out; *exponent is
 // the decimal exponent of the first digit (1234.5 with want 3 is 123 and 3).
-void significant_digits(f64 value, u32 want, char *out, i32 *exponent) {
-    u64 abs = __builtin_bit_cast(u64, value) & ~((u64)1 << 63);
-    u64 field = abs >> 52;
-    u64 m = field == 0 ? abs : (abs & 0xfffffffffffffULL) | ((u64)1 << 52);
-    i32 e = field == 0 ? -1074 : (i32)field - 1075;
+void significant_digits(F64 value, U32 want, char *out, I32 *exponent) {
+    U64 abs = __builtin_bit_cast(U64, value) & ~((U64)1 << 63);
+    U64 field = abs >> 52;
+    U64 m = field == 0 ? abs : (abs & 0xfffffffffffffULL) | ((U64)1 << 52);
+    I32 e = field == 0 ? -1074 : (I32)field - 1075;
     char exact[exact_capacity];
-    usize count = exact_digits(m, e, exact);
-    *exponent = (i32)count - 1 - (e < 0 ? -e : 0);
-    for (u32 i = 0; i < want; i++) {
+    Usize count = exact_digits(m, e, exact);
+    *exponent = (I32)count - 1 - (e < 0 ? -e : 0);
+    for (U32 i = 0; i < want; i++) {
         out[i] = i < count ? exact[i] : '0';
     }
     if (count <= want) return;
     bool tail_zero = true;
-    for (usize i = want + 1; i < count; i++) {
+    for (Usize i = want + 1; i < count; i++) {
         tail_zero = tail_zero && exact[i] == '0';
     }
     char next = exact[want];
     bool odd = (out[want - 1] - '0') % 2 != 0;
     if (next < '5' || (next == '5' && tail_zero && !odd)) return;
-    u32 i = want;
+    U32 i = want;
     while (i > 0 && out[i - 1] == '9') {
         out[i - 1] = '0';
         i -= 1;
@@ -419,16 +419,16 @@ void significant_digits(f64 value, u32 want, char *out, i32 *exponent) {
     }
 }
 
-void put_exponent(Writer *writer, i32 exponent) {
+void put_exponent(Writer *writer, I32 exponent) {
     put_char(writer, 'e');
     put_char(writer, exponent < 0 ? '-' : '+');
-    u32 magnitude = (u32)(exponent < 0 ? -exponent : exponent);
+    U32 magnitude = (U32)(exponent < 0 ? -exponent : exponent);
     if (magnitude < 10) put_char(writer, '0');
     put_u64(writer, magnitude);
 }
 
 // The digits as d.ddd and the exponent; a bare point is left out.
-void put_scientific_digits(Writer *writer, const char *digits, u32 count, i32 exponent) {
+void put_scientific_digits(Writer *writer, const char *digits, U32 count, I32 exponent) {
     put_char(writer, digits[0]);
     if (count > 1) {
         put_char(writer, '.');
@@ -438,15 +438,15 @@ void put_scientific_digits(Writer *writer, const char *digits, u32 count, i32 ex
 }
 
 // Sign and digits of a finite value: the first want significant digits (all zeros for zero) and their exponent.
-bool prepare_digits(Writer *writer, f64 value, u32 want, char *digits, i32 *exponent) {
+bool prepare_digits(Writer *writer, F64 value, U32 want, char *digits, I32 *exponent) {
     if (!is_finite(value)) {
         put_unfinite(writer, value);
         return false;
     }
-    if ((__builtin_bit_cast(u64, value) >> 63) != 0) put_char(writer, '-');
+    if ((__builtin_bit_cast(U64, value) >> 63) != 0) put_char(writer, '-');
     *exponent = 0;
     if (value == 0) {
-        for (u32 i = 0; i < want; i++) {
+        for (U32 i = 0; i < want; i++) {
             digits[i] = '0';
         }
     } else {
@@ -457,36 +457,36 @@ bool prepare_digits(Writer *writer, f64 value, u32 want, char *digits, i32 *expo
 
 // A Scientific, as scientific() made it.
 [[std::c_name("smith_format_put_scientific")]] export void put_scientific(Writer *writer, Scientific scientific) {
-    u32 want = (scientific.places < significant_max ? scientific.places : significant_max) + 1;
+    U32 want = (scientific.places < significant_max ? scientific.places : significant_max) + 1;
     char digits[significant_max + 1];
-    i32 exponent = 0;
+    I32 exponent = 0;
     if (!prepare_digits(writer, scientific.value, want, digits, &exponent)) return;
     put_scientific_digits(writer, digits, want, exponent);
 }
 
 // A General, as general() made it.
 [[std::c_name("smith_format_put_general")]] export void put_general(Writer *writer, General general) {
-    u32 want = general.digits == 0 ? 1 : (general.digits < significant_max ? general.digits : significant_max);
+    U32 want = general.digits == 0 ? 1 : (general.digits < significant_max ? general.digits : significant_max);
     char digits[significant_max];
-    i32 exponent = 0;
+    I32 exponent = 0;
     if (!prepare_digits(writer, general.value, want, digits, &exponent)) return;
-    u32 count = want;
+    U32 count = want;
     while (count > 1 && digits[count - 1] == '0') {
         count -= 1;
     }
-    if (exponent < -4 || exponent >= (i32)want) {
+    if (exponent < -4 || exponent >= (I32)want) {
         put_scientific_digits(writer, digits, count, exponent);
     } else if (exponent >= 0) {
-        for (u32 i = 0; i <= (u32)exponent; i++) {
+        for (U32 i = 0; i <= (U32)exponent; i++) {
             put_char(writer, i < count ? digits[i] : '0');
         }
-        if (count > (u32)exponent + 1) {
+        if (count > (U32)exponent + 1) {
             put_char(writer, '.');
-            put_bytes(writer, digits[(u32)exponent + 1:count]);
+            put_bytes(writer, digits[(U32)exponent + 1:count]);
         }
     } else {
         put_string(writer, "0.");
-        for (i32 i = 1; i < -exponent; i++) {
+        for (I32 i = 1; i < -exponent; i++) {
             put_char(writer, '0');
         }
         put_bytes(writer, digits[0:count]);
@@ -496,15 +496,15 @@ bool prepare_digits(Writer *writer, f64 value, u32 want, char *digits, i32 *expo
 // A Padded, as pad() or left() made it: spaces to the width, on the left of the piece or, for left(), after it.
 [[std::c_name("smith_format_put_padded")]] export void put_padded(Writer *writer, Padded padded) {
     const char *characters = padded.begin != nullptr ? padded.begin : padded.characters;
-    usize spaces = padded.width > padded.length ? padded.width - padded.length : 0;
+    Usize spaces = padded.width > padded.length ? padded.width - padded.length : 0;
     if (!padded.left) {
-        for (usize i = 0; i < spaces; i++) {
+        for (Usize i = 0; i < spaces; i++) {
             put_char(writer, ' ');
         }
     }
     put_bytes(writer, characters[0:padded.length]);
     if (padded.left) {
-        for (usize i = 0; i < spaces; i++) {
+        for (Usize i = 0; i < spaces; i++) {
             put_char(writer, ' ');
         }
     }
@@ -514,20 +514,20 @@ bool prepare_digits(Writer *writer, f64 value, u32 want, char *digits, i32 *expo
 // at the position of the piece in `to`. A struct is `{m = 1, b = 2}`: each field by the rule of its type (a nested
 // struct the same way, a fixed array as `[1, 2, 3]`: a field that is an array arrives as the pointer it decays to, with
 // its count), the fields being the compile-time list `fields(typeof(piece))`.
-void put(Writer *writer, auto piece, usize count) {
+void put(Writer *writer, auto piece, Usize count) {
     (void)count;
     if constexpr (is_bool(typeof(piece))) {
         put_string(writer, piece ? "true" : "false");
     } else if constexpr (typeof(piece) == char) {
         put_char(writer, piece);
     } else if constexpr (is_integer(typeof(piece)) && is_signed(typeof(piece))) {
-        put_i64(writer, (i64)piece);
+        put_i64(writer, (I64)piece);
     } else if constexpr (is_integer(typeof(piece))) {
-        put_u64(writer, (u64)piece);
-    } else if constexpr (typeof(piece) == f32) {
+        put_u64(writer, (U64)piece);
+    } else if constexpr (typeof(piece) == F32) {
         put_f32(writer, piece);
     } else if constexpr (is_float(typeof(piece))) {
-        put_f64(writer, (f64)piece);
+        put_f64(writer, (F64)piece);
     } else if constexpr (typeof(piece) == char * || typeof(piece) == const char *) {
         put_c_string(writer, piece, count);
     } else if constexpr (typeof(piece) == struct smith_array_char_n ||
@@ -545,7 +545,7 @@ void put(Writer *writer, auto piece, usize count) {
         put_padded(writer, piece);
     } else if constexpr (is_pointer(typeof(piece))) {
         put_char(writer, '[');
-        for (usize j = 0; j < count; j++) {
+        for (Usize j = 0; j < count; j++) {
             if (j > 0) {
                 put_string(writer, ", ");
             }
@@ -555,7 +555,7 @@ void put(Writer *writer, auto piece, usize count) {
         put_char(writer, ']');
     } else if constexpr (is_record(typeof(piece))) {
         put_char(writer, '{');
-        for constexpr (usize i = 0; i < countof(fields(typeof(piece))); i++) {
+        for constexpr (Usize i = 0; i < countof(fields(typeof(piece))); i++) {
             if constexpr (i > 0) {
                 put_string(writer, ", ");
             }
@@ -579,7 +579,7 @@ void put(Writer *writer, auto piece, usize count) {
 }
 
 // The piece as text, to be put in a column of width characters (on the right, or on the left when left is true).
-Padded make_padded(auto piece, u32 width, bool left) {
+Padded make_padded(auto piece, U32 width, bool left) {
     Padded padded = {};
     padded.width = width;
     padded.left = left;
@@ -605,18 +605,18 @@ Padded make_padded(auto piece, u32 width, bool left) {
 // The piece in a column of width characters, spaces on its left: pad(n, 5) is printf's %5d, pad(name, 12) is %12s, and
 // pad(format::fixed(x, 1), 6) is %6.1f. A piece wider than the column is written whole. The piece is any of the types
 // `to` has a rule for except a Padded; a string or a text is read when the Padded is written, not when it is made.
-export [[nodiscard]] Padded pad(auto piece, u32 width) {
+export [[nodiscard]] Padded pad(auto piece, U32 width) {
     return make_padded(piece, width, false);
 }
 
 // The piece in a column of width characters, spaces after it: left(name, 16) is printf's %-16s.
-export [[nodiscard]] Padded left(auto piece, u32 width) {
+export [[nodiscard]] Padded left(auto piece, U32 width) {
     return make_padded(piece, width, true);
 }
 
 // The error for a piece `to` has no rule for: Slot is char[n] for the n-th piece, counting from 1, so the message can
 // name it (a static_assert message is a literal, and a number cannot be a compile-time parameter).
-void no_rule(constexpr type Slot) {
+void no_rule(constexpr Type Slot) {
     if constexpr (sizeof(Slot) == 1) {
         static_assert(false, "format: no rule for the type of piece 1; the note lists the types in order");
     } else if constexpr (sizeof(Slot) == 2) {
@@ -685,9 +685,9 @@ void no_rule(constexpr type Slot) {
 // The arguments as text into buffer, which has room for capacity characters; a capacity of 0 writes nothing (buffer may
 // be null) and only measures. See the rules at the top of this file. A piece with no rule is an error that says which
 // one it is (piece 3 is the third piece after buffer and capacity, counting from 1).
-export Written to(char *buffer, usize capacity, auto... args) {
+export Written to(char *buffer, Usize capacity, auto... args) {
     Writer writer = {buffer, capacity, 0};
-    for constexpr (usize i = 0; i < countof(args); i++) {
+    for constexpr (Usize i = 0; i < countof(args); i++) {
         if constexpr (is_bool(typeof(args[i])) || is_integer(typeof(args[i])) || is_float(typeof(args[i]))) {
             put(&writer, args[i], 0);
         } else if constexpr (typeof(args[i]) == char * || typeof(args[i]) == const char * ||
@@ -708,7 +708,7 @@ export Written to(char *buffer, usize capacity, auto... args) {
 }
 
 // How many characters the arguments make, without the terminator.
-export usize length(auto... args) {
+export Usize length(auto... args) {
     return to(nullptr, 0, args...).length;
 }
 
@@ -717,7 +717,7 @@ export usize length(auto... args) {
 export typedef typeof(char[:]) Chars;
 
 // length characters at memory (a generic's body cannot cut a pointer).
-Chars cut(char *memory, usize characters) {
+Chars cut(char *memory, Usize characters) {
     Chars chars = memory[0:characters];
     return chars;
 }
@@ -725,7 +725,7 @@ Chars cut(char *memory, usize characters) {
 // The arguments as text in memory of the allocator in force, with a terminator after it that the slice's count does not
 // count. A refusal of the allocator is a checked failure (mem::alloc never returns null).
 export Chars push(auto... args) {
-    usize characters = length(args...);
+    Usize characters = length(args...);
     char *memory =
         mem::alloc_array_raw(sizeof(char), characters + 1, alignof(char)); // a generic's local has no type yet
     Written written = to(memory, characters + 1, args...);

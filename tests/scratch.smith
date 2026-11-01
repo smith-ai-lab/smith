@@ -17,8 +17,8 @@ import <smith_core.h>;
 import <string.h>;
 
 // The bytes of a buffer, for the calls of files that take a slice.
-static typeof(const u8[:]) bytes_of(const void *data, usize size) {
-    const u8 *bytes = (const u8 *)data;
+static typeof(const U8[:]) bytes_of(const void *data, Usize size) {
+    const U8 *bytes = (const U8 *)data;
     return bytes[0:size];
 }
 
@@ -27,10 +27,11 @@ export typedef struct {
     const char *dir;    // where commands run
     const char *tested; // a folder with smith, smith-cc and smith-c++ for PATH
     const char *cache;  // XDG_CACHE_HOME of the commands
+    bool uncached;      // scratch::uncached: the commands run with SMITH_STEP_CACHE=0
 } Project;
 
 export typedef struct {
-    i32 status; // the exit status; 128 and the signal when killed
+    I32 status; // the exit status; 128 and the signal when killed
     const char *out;
     const char *err;
 } Run;
@@ -43,13 +44,13 @@ export typedef struct {
 
 // Gives back a text that scratch returned (a Run's out and err, `read`, `capture`).
 export void release(const char *text) {
-    mem::free((void *)(usize)text);
+    mem::free((void *)(Usize)text);
 }
 
 // The bytes as a terminated text of its own.
 static const char *bytes_text(process::Bytes bytes) {
     char *copy = mem::alloc_slice(char, countof(bytes) + 1).data;
-    for (usize i = 0; i < countof(bytes); i++) {
+    for (Usize i = 0; i < countof(bytes); i++) {
         copy[i] = (char)bytes[i];
     }
     copy[countof(bytes)] = '\0';
@@ -58,7 +59,7 @@ static const char *bytes_text(process::Bytes bytes) {
 
 // A text of its own: the pieces one after another.
 static const char *join_free(const char *a, const char *b, const char *c) {
-    usize length = format::length(a, b, c);
+    Usize length = format::length(a, b, c);
     char *text = mem::alloc_slice(char, length + 1).data;
     (void)format::to(text, length + 1, a, b, c);
     return text;
@@ -108,11 +109,14 @@ static const char *script_free(const char *script, const char *arg0, const char 
 // A command with no shell feature in it is run in place of the shell that starts it. The smith a test starts takes no
 // cores of the host's pool (SMITH_SLOTS=0): the test's own worker already holds one, and a test of the executor's
 // concurrency must not wait for a core a busy host does not have; tests/slots_test.smith sets its own pool. The step
-// cache is off (SMITH_STEP_CACHE=0): a test of what the executor rebuilds must run the compile it counts; tests/
-// build_step_cache_test.smith turns it on, with a cache of its own.
+// cache is on (SMITH_STEP_CACHE defaults to 1, #1307): the build program's parts (runtime.c, the library objects) are
+// compiled once for the run, in the shared cache above, not again in every project. A test that counts or compares the
+// compiles of its own fixture calls scratch::uncached(&p), which gives its commands SMITH_STEP_CACHE=0 ($4);
+// tests/build_step_cache_test.smith sets its own and has a cache of its own.
 constexpr char run_script[_] =
-    "unset SMITH_ACCOUNT_FILE; export SMITH_SLOTS=0 SMITH_STEP_CACHE=0; here=$PWD; repo=${SMITH_REPO:-$PWD}; cd \"$0\" "
+    "unset SMITH_ACCOUNT_FILE; export SMITH_SLOTS=0; here=$PWD; repo=${SMITH_REPO:-$PWD}; cd \"$0\" "
     "|| exit 97; "
+    "export SMITH_STEP_CACHE=\"${4:-${SMITH_STEP_CACHE:-1}}\"; "
     "cache=$3; [ -n \"$cache\" ] || cache=${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg; "
     "data=${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/data; "
     "[ -d \"$cache\" ] && [ -d \"$data\" ] || mkdir -p \"$cache\" \"$data\"; "
@@ -130,8 +134,9 @@ constexpr char setup_script[_] =
 // (never the real one) and the repository as $SMITH_REPO (where the runner was started). Nothing is set in this
 // process: the environment is made by the shell that runs the command.
 static Run run_in(const Project *p, const char *command) {
-    const char *const argv[_] = {"sh", "-c", run_script, p->dir, command, p->tested, p->cache, nullptr};
-    return run_free(argv[0:7]);
+    const char *const argv[_] = {"sh",   "-c", run_script, p->dir, command, p->tested, p->cache, p->uncached ? "0" : "",
+                                 nullptr};
+    return run_free(argv[0:8]);
 }
 
 // The pieces as text on `arena`, which is the allocator while it is pushed: what a test builds in its arena goes back
@@ -170,8 +175,8 @@ export void copy_tree(const Project *p, const char *source, const char *name) {
 }
 
 static bool ends_with(const char *text, const char *suffix) {
-    usize length = c::strlen(text);
-    usize tail = c::strlen(suffix);
+    Usize length = c::strlen(text);
+    Usize tail = c::strlen(suffix);
     return length >= tail && c::strcmp(text + length - tail, suffix) == 0;
 }
 
@@ -207,7 +212,7 @@ export const char *untested_names(const char *folder, const char *test_source, c
     }
     const char *text = bytes_text(source);
     const char *missing = join_free("", "", "");
-    for (usize i = 0; i < countof(entries); i++) {
+    for (Usize i = 0; i < countof(entries); i++) {
         const char *name = entries[i].name.data;
         bool wanted = (suffix_a == nullptr && suffix_b == nullptr) ||
                       (suffix_a != nullptr && ends_with(name, suffix_a)) ||
@@ -241,7 +246,7 @@ export const char *untested_names(const char *folder, const char *test_source, c
 export Project make(const char *name, const char *fixture) {
     const char *made =
         script_free("d=${TMPDIR:-/tmp}; [ -d \"$d\" ] || d=/tmp; mktemp -d \"$d/smith-scratch-XXXXXX\"", "", "");
-    usize length = c::strlen(made);
+    Usize length = c::strlen(made);
     while (length > 0 && made[length - 1] == '\n') {
         length--;
     }
@@ -277,6 +282,12 @@ export void own_cache(Project *p) {
     p->cache = join_free(p->root, "/", "xdg-cache"); // clean frees it
 }
 
+// The project's commands run with the compile step cache off, for a test that counts or compares the compiles of its
+// own fixture (a job order or a "cached" line would differ).
+export void uncached(Project *p) {
+    p->uncached = true;
+}
+
 // Runs a shell command in the project: `smith build -v`, `./build/app`, `cp a b`. `smith` is the smith under test.
 export Run sh(const Project *p, const char *command) {
     return run_in(p, command);
@@ -296,8 +307,8 @@ export void write(const Project *p, const char *name, const char *text) {
     release(path);
 }
 
-constexpr usize lowered_capacity = 1U << 23;
-constexpr usize lowered_errors_capacity = 1U << 16;
+constexpr Usize lowered_capacity = 1U << 23;
+constexpr Usize lowered_errors_capacity = 1U << 16;
 static char lowered_text[lowered_capacity];
 static char lowered_errors[lowered_errors_capacity];
 
@@ -306,7 +317,7 @@ static void write_in_new_folder(const Project *p, const char *name, const char *
     // through std::files: a lowered text is larger than one argument of a command may be
     const char *path = path_in(p, name);
     const char *slash = c::strrchr(path, '/');
-    files::DoneResult made = files::make_folder(path[0:(usize)(slash - path)]);
+    files::DoneResult made = files::make_folder(path[0:(Usize)(slash - path)]);
     test::check_condition(made == .ok);
     files::CountResult written =
         files::write_file(path[0:c::strlen(path)], bytes_of(text, c::strlen(text)), files::Replace);
@@ -398,8 +409,8 @@ export bool exists(const Project *p, const char *name) {
 }
 
 // The number of lines of a file, 0 when it is absent.
-export usize lines(const Project *p, const char *name) {
-    usize count = 0;
+export Usize lines(const Project *p, const char *name) {
+    Usize count = 0;
     const char *text = read(p, name); // freed here
     for (const char *c = text; *c != '\0'; c++)
         count += *c == '\n' ? 1U : 0U;
@@ -408,7 +419,7 @@ export usize lines(const Project *p, const char *name) {
 }
 
 // Through the clock handler of the thread: a fake clock advances and returns.
-export void sleep(const Project *p, u64 milliseconds) {
+export void sleep(const Project *p, U64 milliseconds) {
     (void)p;
     clock::sleep(milliseconds * clock::millisecond);
 }
@@ -418,15 +429,15 @@ export bool contains(const char *text, const char *needle) {
 }
 
 // Both texts as a shell's $(...) gives them: without trailing newlines.
-static usize trimmed(const char *text) {
-    usize length = c::strlen(text);
+static Usize trimmed(const char *text) {
+    Usize length = c::strlen(text);
     while (length > 0 && text[length - 1] == '\n')
         length--;
     return length;
 }
 
 export bool same(const char *a, const char *b) {
-    usize length = trimmed(a);
+    Usize length = trimmed(a);
     return length == trimmed(b) && c::strncmp(a, b, length) == 0;
 }
 
@@ -452,7 +463,7 @@ export void expect_text(const char *name, const char *expected, const char *actu
     test::check_condition(same(expected, actual));
 }
 
-export void expect_status(const char *name, i32 expected, const Run *run) {
+export void expect_status(const char *name, I32 expected, const Run *run) {
     if (run->status != expected) {
         test::note("%s: status %d\n%s\n%s", name, run->status, run->out, run->err);
     }
@@ -466,7 +477,7 @@ export void expect_failure(const char *name, const Run *run) {
     test::check_not_equal(run->status, 0);
 }
 
-export void expect_count(const char *name, usize expected, usize actual) {
+export void expect_count(const char *name, Usize expected, Usize actual) {
     if (expected != actual) {
         test::note("%s: expected %zu, got %zu", name, expected, actual);
     }
@@ -477,7 +488,7 @@ export void expect_count(const char *name, usize expected, usize actual) {
 export const char *capture(const Project *p, const char *command) {
     // a text of its own for the caller to free; the run's err is freed here
     Run run = sh(p, command);
-    usize length = trimmed(run.out);
+    Usize length = trimmed(run.out);
     char *copy = mem::alloc_slice(char, length + 1).data;
     mem::copy(copy[0:length], run.out[0:length]);
     copy[length] = '\0';

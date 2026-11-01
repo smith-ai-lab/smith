@@ -489,6 +489,9 @@ static void smith_run_finish(SmithExec *exec, SmithJob *job, uint32_t *stack) {
     if (edge->pool != smith_exec_pool_console) smith_run_progress(exec, edge, job->cached);
     if (!success) {
         smith_run_report_failure(exec, job, edge);
+        if (exec->failures == 0)
+            snprintf(exec->first_failed, sizeof exec->first_failed, "step %zu %s", exec->finished_edges,
+                     edge->description != nullptr ? edge->description : edge->command);
         exec->failures += 1;
         if (exec->failures_left > 0) exec->failures_left -= 1;
     }
@@ -673,6 +676,7 @@ static int smith_run_plan(SmithExec *exec) {
     exec->origin = smith_clock_now(&exec->io->clock);
     exec->failures_left = exec->options.failures_allowed;
     exec->failures = 0;
+    exec->first_failed[0] = '\0';
     exec->started_edges = 0;
     exec->finished_edges = 0;
     if (exec->jobs == nullptr)
@@ -694,8 +698,9 @@ static int smith_run_plan(SmithExec *exec) {
         return 128 + exec->stopped;
     }
     if (exec->failures == 0) return 0;
-    fprintf(stderr, "smith: build stopped: %s.\n",
-            exec->failures_left == 0 ? "subcommand failed" : "cannot make progress due to previous errors");
+    fprintf(stderr, "smith: build stopped: %s (%s).\n",
+            exec->failures_left == 0 ? "subcommand failed" : "cannot make progress due to previous errors",
+            exec->first_failed);
     return smith_exec_failed;
 }
 

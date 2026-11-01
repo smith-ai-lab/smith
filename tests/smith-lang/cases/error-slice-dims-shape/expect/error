@@ -1,2 +1,2 @@
-src/main.smith:6:22: the array has not the shape of the slice: a `[:]` takes any size, a number must be the array's own (an `f32[4][2]` is an `f32[:][2]`)
-src/main.smith:7:22: the array has not the shape of the slice: a `[:]` takes any size, a number must be the array's own (an `f32[4][2]` is an `f32[:][2]`)
+src/main.smith:6:22: the array has not the shape of the slice: a `[:]` takes any size, a number must be the array's own (an `F32[4][2]` is an `F32[:][2]`)
+src/main.smith:7:22: the array has not the shape of the slice: a `[:]` takes any size, a number must be the array's own (an `F32[4][2]` is an `F32[:][2]`)

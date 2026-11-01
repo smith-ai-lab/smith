@@ -31,27 +31,15 @@ import std::test;
 // the golden.
 static Str gap_a1() {
     return "c-array-bound/grid.smith\n"
-           "constexpr-c-pedantic/main.smith\n"
-           "constexpr-import/main.smith\n"
            "enum-option-slice/main.smith\n"
-           "error-c-name/std/names.smith\n"
-           "error-concept-notes/main.smith\n"
-           "error-fields-enum-member/main.smith\n"
-           "error-generic-private-name/scale.smith\n"
            "error-lambda-param-untyped/main.smith\n"
            "error-range-for/main.smith\n"
            "error-slice-initializer-unread/main.smith\n"
            "error-type-value-import/main.smith\n"
-           "generic-fields-doc/docs.smith\n"
-           "generic-fields-error/main.smith\n"
-           "generic-fields/reflect.smith\n";
+           "generic-fields-error/main.smith\n";
 }
 static Str gap_a2() {
-    return "generic-for-range/reflect.smith\n"
-           "generic-private-names/scale.smith\n"
-           "module-basic/shapes/area.smith\n"
-           "module-enum-c-names/mix/modes.smith\n"
-           "tuple-modules/geo/b.smith\n"
+    return "tuple-modules/geo/b.smith\n"
            "type-value-import/main.smith\n";
 }
 static Str removed_b() {
@@ -78,6 +66,7 @@ static Str removed_b() {
            "lambda-static/main.smith\n"
            "lambda-two/main.smith\n"
            "param-names/shape/box.smith\n"
+           "str-typedef-lowering/text.smith\n"
            "str-typedef-module/main.smith\n"
            "str-typedef-module/text.smith\n"
            "str-typedef-run/main.smith\n";
@@ -155,6 +144,7 @@ static Str must_fail_d() {
            "error-module-syntax/syntax.smith\n"
            "error-slice-qualifier-bracket/main.smith\n"
            "error-slice-step/main.smith\n"
+           "error-str-name/main.smith\n"
            "error-typetag-collision-reverse/main.smith\n"
            "error-typetag-collision/main.smith\n"
            "generic-for-constexpr-error/bad.smith\n"
@@ -348,9 +338,9 @@ export void test_parser_every_corpus_file_has_an_outcome_and_matches_the_golden(
     char written[:] = report.text[0:report.used];
     env::Value update = env::get("FRONT_UPDATE");
     if (update == .some) {
-        u8 bytes[:] = mem::alloc_slice(u8, countof(written));
+        U8 bytes[:] = mem::alloc_slice(U8, countof(written));
         for (Usize i = 0; i < countof(written); i++) {
-            bytes[i] = (u8)written[i];
+            bytes[i] = (U8)written[i];
         }
         files::CountResult done = files::write_file("tests/front/parser/corpus.txt", bytes, files::Replace);
         Bool wrote = done == .ok;

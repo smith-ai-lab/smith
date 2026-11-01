@@ -449,8 +449,8 @@ export void test_prove_messages_an_instance_is_named_as_written() {
     scratch::Run run = in_folder(&p, "clamp", "-v");
     scratch::expect_status("messages: a call that breaks a requires fails", 1, &run);
     has("messages: the failure names the instance as written", &run,
-        "the call of stats::clamp<i32> may break smith_requires(low <= high)");
-    has("messages: -v names it the same way", &run, "ok    stats::clamp<i32>  (");
+        "the call of stats::clamp<I32> may break smith_requires(low <= high)");
+    has("messages: -v names it the same way", &run, "ok    stats::clamp<I32>  (");
     scratch::expect_lacks("messages: no C type in an instance's name", run.out, "<int>");
     scratch::expect_lacks("messages: a pure generic is not said to write memory", run.out, "may write memory");
 }
@@ -475,10 +475,10 @@ constexpr char printing_stats[_] = "module stats;\n"
                                    "\n"
                                    "import std::contract;\n"
                                    "\n"
-                                   "export i32 largest(i32 xs[:]) {\n"
+                                   "export I32 largest(I32 xs[:]) {\n"
                                    "    contract::requires(countof(xs) > 0);\n"
-                                   "    i32 best = xs[0];\n"
-                                   "    for (usize i = 1; i < countof(xs); i++) {\n"
+                                   "    I32 best = xs[0];\n"
+                                   "    for (Usize i = 1; i < countof(xs); i++) {\n"
                                    "        contract::invariant(1 <= i && i <= countof(xs));\n"
                                    "        best = xs[i] > best ? xs[i] : best;\n"
                                    "    }\n"
@@ -490,9 +490,9 @@ constexpr char printing_main[_] = "module main;\n"
                                   "import std::console;\n"
                                   "import stats;\n"
                                   "\n"
-                                  "i32 main() {\n"
-                                  "    i32 raw[_] = {-3, 1, 9, 4};\n"
-                                  "    i32 readings[:] = raw;\n"
+                                  "I32 main() {\n"
+                                  "    I32 raw[_] = {-3, 1, 9, 4};\n"
+                                  "    I32 readings[:] = raw;\n"
                                   "    console::print(\"largest \", stats::largest(readings[1:]), \"\\n\");\n"
                                   "    return 0;\n"
                                   "}\n";

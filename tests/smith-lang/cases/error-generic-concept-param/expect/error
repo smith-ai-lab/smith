@@ -1,5 +1,5 @@
-src/main.smith:14:18: `const char *` is not `arithmetic`
-src/main.smith:15:18: `Pair` is not `arithmetic`
-src/main.smith:16:19: `f64` is not `integer`
-src/main.smith:17:20: `u32` is not `signed_integer`
-src/main.smith:18:18: `f64` is not `pointer`
+src/main.smith:14:18: `const char *` is not `Num`
+src/main.smith:15:18: `Pair` is not `Num`
+src/main.smith:16:19: `F64` is not `Int`
+src/main.smith:17:20: `U32` is not `Signed`
+src/main.smith:18:18: `F64` is not `Pointer`

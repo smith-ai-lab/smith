@@ -14,8 +14,8 @@ import std::test;
 import scratch;
 import <smith_core_plan.h>;
 
-constexpr usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
-constexpr usize output_capacity = 1U << 14;
+constexpr Usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
+constexpr Usize output_capacity = 1U << 14;
 
 // The manifest `smith build` writes for a build.c (.smith/build.ninja): a rule that runs $cmd, the steps, and the
 // phony targets every build.c has.
@@ -25,7 +25,7 @@ constexpr const char *manifest_tail = "build smith_needs: phony\nbuild smith_tes
 // What a build did: its explanations and `ran <output>` lines, and how many commands ran.
 typedef struct {
     const char *text;
-    usize ran;
+    Usize ran;
 } Build;
 
 // The manifest of a project, as the head, `steps` and the tail make it.
@@ -36,13 +36,13 @@ static void manifest(const char *dir, const char *steps) {
 }
 
 // A file of the project, with the time (in seconds) its last edit had.
-static void put(const char *dir, const char *name, const char *text, i64 time) {
+static void put(const char *dir, const char *name, const char *text, I64 time) {
     test::check_condition(c::smith_core_plan_write(dir, name, text, time));
 }
 
 // One `smith build` of the targets (nullptr for the defaults), whose commands run at `time`: `unchanged` are the
 // outputs a command leaves as they are, `depends` what the depfile of an output names.
-static Build build(const char *dir, const char *const *targets, i64 time, const char *const *unchanged,
+static Build build(const char *dir, const char *const *targets, I64 time, const char *const *unchanged,
                    const char *const *depends) {
     c::SmithCorePlan plan = {.folder = dir,
                              .manifest = ".smith/build.ninja",
@@ -51,17 +51,17 @@ static Build build(const char *dir, const char *const *targets, i64 time, const 
                              .depends = depends,
                              .time = time};
     char *text = mem::alloc_slice(char, output_capacity).data;
-    usize ran = 0;
+    Usize ran = 0;
     test::check_equal(c::smith_core_plan(&plan, text, output_capacity, &ran), true);
     Build done = {text, ran};
     return done;
 }
 
-static Build build_defaults(const char *dir, i64 time) {
+static Build build_defaults(const char *dir, I64 time) {
     return build(dir, nullptr, time, nullptr, nullptr);
 }
 
-static void expect_ran(const char *name, usize expected, const Build *done) {
+static void expect_ran(const char *name, Usize expected, const Build *done) {
     scratch::expect_count(name, expected, done->ran);
     if (expected == 0) scratch::expect_contains(name, done->text, "no work to do");
 }

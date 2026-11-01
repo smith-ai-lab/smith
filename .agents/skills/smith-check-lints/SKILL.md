@@ -7,7 +7,7 @@ description: "smith's own clang-tidy checks and what each reports: smith-preproc
 
 ## smith-preprocessor
 
-smith's default `.clang-tidy` also lists `smith-preprocessor`: **a `.smith` file has no preprocessor.** In a `.smith` file it reports every directive (`#define`, `#undef`, `#include`, `#if` and its kin, `#pragma`, `#error`, `#warning`, `#line`, `#embed`) and `_Pragma`, and every `c::` name that is a C macro, each with what to write instead: `#include` becomes `import`, `#define` of a constant `constexpr`, `#if` `if constexpr` with `target::`, `#pragma` a flag the library declares, `#error` `static_assert(false, ...)`; `c::assert` becomes `contract::assert`, `c::isfinite` `math::is_finite`, `c::SIZE_MAX` `math::max(usize)`, `c::INFINITY` and `c::NAN` `math::infinity(f64)` and `math::nan(f32)`; any other macro is the module that wraps the C API's to provide (`smith-lang-c-interop`). A `.c` file is left alone. The directives are read from the file's text, so those in a branch the compiler did not take count, and the `c::` names are the macros the file's imports defined (the lowering's own test, so `c::memset` is a macro in a fortified SDK: write `mem::zero` or `mem::fill`, below). The editor shows it too. A line that must keep one says `// NOLINT(smith-preprocessor)` (or `NOLINTBEGIN`/`NOLINTEND`); deleting `smith-preprocessor` from `Checks` opts a project out.
+smith's default `.clang-tidy` also lists `smith-preprocessor`: **a `.smith` file has no preprocessor.** In a `.smith` file it reports every directive (`#define`, `#undef`, `#include`, `#if` and its kin, `#pragma`, `#error`, `#warning`, `#line`, `#embed`) and `_Pragma`, and every `c::` name that is a C macro, each with what to write instead: `#include` becomes `import`, `#define` of a constant `constexpr`, `#if` `if constexpr` with `target::`, `#pragma` a flag the library declares, `#error` `static_assert(false, ...)`; `c::assert` becomes `contract::assert`, `c::isfinite` `math::is_finite`, `c::SIZE_MAX` `math::max(Usize)`, `c::INFINITY` and `c::NAN` `math::infinity(F64)` and `math::nan(F32)`; any other macro is the module that wraps the C API's to provide (`smith-lang-c-interop`). A `.c` file is left alone. The directives are read from the file's text, so those in a branch the compiler did not take count, and the `c::` names are the macros the file's imports defined (the lowering's own test, so `c::memset` is a macro in a fortified SDK: write `mem::zero` or `mem::fill`, below). The editor shows it too. A line that must keep one says `// NOLINT(smith-preprocessor)` (or `NOLINTBEGIN`/`NOLINTEND`); deleting `smith-preprocessor` from `Checks` opts a project out.
 
 ## smith-mem
 
@@ -19,7 +19,7 @@ smith's default `.clang-tidy` lists six more `smith-*` checks (issues #47 and #6
 
 | Check | Files | Reports | Says |
 |---|---|---|---|
-| `smith-sized-types` | `.smith` | `uint8_t` to `uint64_t`, `int8_t` to `int64_t`, `size_t`, `ptrdiff_t`, `float`, `double`, `unsigned`, `long`, `short`, `signed` and `int` (not `char`; `main` too: `i32 main(i32 argc, char *argv[])`; a renamed `int main(int argc, char **argv)` compiles and is reported) | the sized type: ``write `u64` `` |
+| `smith-sized-types` | `.smith` | `uint8_t` to `uint64_t`, `int8_t` to `int64_t`, `size_t`, `ptrdiff_t`, `float`, `double`, `unsigned`, `long`, `short`, `signed` and `int` (not `char`; `main` too: `I32 main(I32 argc, char *argv[])`; a renamed `int main(int argc, char **argv)` compiles and is reported) | the sized type: ``write `U64` `` |
 | `smith-module` | `.smith` | a file with no `module` line (build.smith and the tests included; a leading comment is fine) | the line its path implies, from the project's root with `tests/` a root of its own: ``write `module primes_test;` `` (`main.smith` is `module main;`, `build.smith` `module build;`), and `export` what other files use. The compiler never refuses such a file; `// NOLINT(smith-module)` on line 1 opts out |
 | `smith-module-library` | `.smith` | a library that is a module, used through its C header: `import <smith/arena.h>;`, `c::smith_arena_push(...)`, `c::SmithArena` (the generated header's `// smith-module:` line says it is one) | `import std::arena;` and the module's name, `arena::push_raw`, `arena::Arena` |
 | `smith-bounded-loop` | `.smith` and C | a loop with no condition or a constant one (`for (;;)`, `while (true)`, `do ... while (1)`) outside `main` | bound it by a count; only `main` runs forever |
@@ -31,10 +31,10 @@ smith's default `.clang-tidy` lists six more `smith-*` checks (issues #47 and #6
 | Reports | Says |
 |---|---|
 | `setjmp`, `longjmp`, `sigsetjmp`, `siglongjmp` (a function that calls `smith_trusted()` may, until #324) | the jump skips every `defer` and `errdefer`: return a `result`, or let the task fail |
-| an array parameter that is not a checked one: a bound that is no constant (`i32 a[n]`), `i32 a[const 4]`, a typedef'd array (`Row a`), `i32 a[restrict 4]` | take `i32 a[:]`, or write `i32 a[4]` |
-| a stack array sized at run time (`i32 xs[n]`) and `alloca` | `arena::push_slice(&a, i32, n)`, or a fixed array when `n` has a maximum |
+| an array parameter that is not a checked one: a bound that is no constant (`I32 a[n]`), `I32 a[const 4]`, a typedef'd array (`Row a`), `I32 a[restrict 4]` | take `I32 a[:]`, or write `I32 a[4]` |
+| a stack array sized at run time (`I32 xs[n]`) and `alloca` | `arena::push_slice(&a, I32, n)`, or a fixed array when `n` has a maximum |
 
-`i32 xs[4]` is no finding: in a module it is a checked parameter (`smith-lang-array-params`). `// NOLINT(smith-unsafe)` opts a line out.
+`I32 xs[4]` is no finding: in a module it is a checked parameter (`smith-lang-array-params`). `// NOLINT(smith-unsafe)` opts a line out.
 
 One more is off by default, because it is a style a project chooses (`Checks: smith-designated-init` turns it on): `smith-designated-init` (`.smith`) reports a positional initializer of two or more values for a struct that another file defines (`(text::Text){bytes, length}`, `{"src/base", fast}` for a `build::Folder`), which breaks, or shifts its values, when that struct gains a field. It says to name the fields: ``{.path = "src/base", .fast = fast}``. A struct the file defines itself, a system header's and a one-value initializer are left alone.
 

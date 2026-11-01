@@ -51,13 +51,13 @@ static const char *second(const scratch::Project *p) {
     return scratch::capture(p, "cat second");
 }
 
-static const char *line(const char *text, usize number) {
+static const char *line(const char *text, Usize number) {
     static char buffer[256];
-    usize at = 0;
-    for (usize n = 1; n < number && text[at] != '\0'; at++) {
+    Usize at = 0;
+    for (Usize n = 1; n < number && text[at] != '\0'; at++) {
         if (text[at] == '\n') n += 1;
     }
-    usize size = 0;
+    Usize size = 0;
     while (text[at + size] != '\0' && text[at + size] != '\n' && size < sizeof buffer - 1) {
         size += 1;
     }
