@@ -777,6 +777,66 @@ static int smith_lint_prepare(const char *self, const SmithVerbArgs *split, cons
     return 0;
 }
 
+// Whether `name` is a source `smith lint DIR` takes: C, C++, Objective-C or .smith, not a header (clang-tidy reads a
+// header through the source that includes it).
+static bool smith_lint_dir_wants(const char *name) {
+    static const char *const extensions[] = {".c", ".cc", ".cpp", ".cxx", ".m", ".mm", ".smith"};
+    for (size_t i = 0; i < sizeof extensions / sizeof extensions[0]; i++) {
+        if (smith_ends_with(name, extensions[i])) return true;
+    }
+    return false;
+}
+
+static char *smith_lint_dir_argv[smith_defaults_args_max];
+
+// `smith lint DIR ...` (#1262): each folder among the arguments (before any `--`) becomes the sources under it that git
+// sees (so ignored and generated folders stay out) and `.clang-format-ignore` does not name, as the project lint
+// picks them; the other arguments stay as they are. A folder with none is an error that says so. Returns true when it
+// replaced the arguments.
+static bool smith_lint_expand_dirs(int *argc, char ***argv) {
+    bool any = false;
+    for (int i = 2; i < *argc && strcmp((*argv)[i], "--") != 0; i++) { // bounded by the arguments
+        struct stat info;
+        any = any || ((*argv)[i][0] != '-' && stat((*argv)[i], &info) == 0 && S_ISDIR(info.st_mode));
+    }
+    if (!any) return false;
+    size_t listed = 0;
+    if (!smith_fmt_list(&listed)) exit(smith_exit_usage);
+    int out = 0;
+    smith_lint_dir_argv[out++] = (*argv)[0];
+    smith_lint_dir_argv[out++] = (*argv)[1];
+    bool flags = false;               // after `--` the arguments are the caller's compile flags
+    for (int i = 2; i < *argc; i++) { // bounded by the arguments
+        char *arg = (*argv)[i];
+        struct stat info;
+        flags = flags || strcmp(arg, "--") == 0;
+        if (flags || arg[0] == '-' || stat(arg, &info) != 0 || !S_ISDIR(info.st_mode)) {
+            if (out >= smith_defaults_args_max - 1)
+                smith_die(smith_exit_usage, "too many arguments for smith lint", nullptr);
+            smith_lint_dir_argv[out++] = arg;
+            continue;
+        }
+        size_t length = strlen(arg);
+        while (length > 1 && arg[length - 1] == '/')
+            length--; // "front/" is "front"
+        bool all = length == 1 && arg[0] == '.';
+        size_t taken = 0;
+        for (size_t f = 0; f < listed; f++) { // bounded by the files git sees
+            const char *name = smith_fmt_files[f];
+            bool inside = all || (strncmp(name, arg, length) == 0 && name[length] == '/');
+            if (!inside || !smith_lint_dir_wants(name) || smith_lint_ignored(name)) continue;
+            if (out >= smith_defaults_args_max - 1) smith_die(smith_exit_usage, "too many files to lint", nullptr);
+            smith_lint_dir_argv[out++] = (char *)name;
+            taken++;
+        }
+        if (taken == 0) smith_die(smith_exit_usage, "smith lint: no C, C++ or .smith source under the folder:", arg);
+    }
+    smith_lint_dir_argv[out] = nullptr;
+    *argc = out;
+    *argv = smith_lint_dir_argv;
+    return true;
+}
+
 // `smith lint` with no arguments: builds what the project's compiles read (the generated headers), then runs clang-tidy
 // on each of its own C-family sources, side by side, with the flags of the compile (.smith/compile_commands.json). A
 // `.smith` source is linted as written (shim/tidy.cpp) by a smith whose clang has the token hook, the way `smith lint
