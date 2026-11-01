@@ -31,27 +31,17 @@ import std::test;
 // the golden.
 static Str gap_a1() {
     return "c-array-bound/grid.smith\n"
-           "constexpr-c-pedantic/main.smith\n"
-           "constexpr-import/main.smith\n"
            "enum-option-slice/main.smith\n"
-           "error-c-name/std/names.smith\n"
-           "error-concept-notes/main.smith\n"
-           "error-fields-enum-member/main.smith\n"
-           "error-generic-private-name/scale.smith\n"
            "error-lambda-param-untyped/main.smith\n"
            "error-range-for/main.smith\n"
            "error-slice-initializer-unread/main.smith\n"
            "error-type-value-import/main.smith\n"
-           "generic-fields-doc/docs.smith\n"
            "generic-fields-error/main.smith\n"
            "generic-fields/reflect.smith\n";
 }
 static Str gap_a2() {
     return "generic-for-range/reflect.smith\n"
-           "generic-private-names/scale.smith\n"
            "generic-slice-restrict/pair.smith\n"
-           "module-basic/shapes/area.smith\n"
-           "module-enum-c-names/mix/modes.smith\n"
            "tuple-modules/geo/b.smith\n"
            "type-value-import/main.smith\n";
 }
