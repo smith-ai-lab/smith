@@ -3,7 +3,7 @@ import geometry::box;
 import <stdio.h>;
 
 int main() {
-    i32 x = box::area(3, 4);
+    I32 x = box::area(3, 4);
     c::printf("%d\n", x);
     return 0;
 }

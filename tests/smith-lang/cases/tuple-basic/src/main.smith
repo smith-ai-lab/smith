@@ -52,6 +52,6 @@ I32 main() {
     I32 xs[3] = {4, 5, 6};
     I32 *pointer = xs;
     struct { I32 a; I32 b; } plain = {1, 2}; // a struct with named fields is no tuple
-    c::printf("%d %d %d %d\n", xs[1], Pointer[2], (I32)_Countof(xs), plain.b);
+    c::printf("%d %d %d %d\n", xs[1], pointer[2], (I32)_Countof(xs), plain.b);
     return 0;
 }

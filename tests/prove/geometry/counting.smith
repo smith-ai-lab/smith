@@ -3,20 +3,20 @@
 module geometry::counting;
 import std::contract;
 
-export usize positives(i32 xs[8], usize count) {
+export Usize positives(I32 xs[8], Usize count) {
     contract::requires(count <= 8);
-    usize hits = 0;
-    for (usize i = 0; i < count; i++) {
+    Usize hits = 0;
+    for (Usize i = 0; i < count; i++) {
         if (xs[i] > 0) hits++;
     }
     contract::ensures(hits <= 8);
     return hits;
 }
 
-export usize positives_of_slice(i32 xs[:]) {
+export Usize positives_of_slice(I32 xs[:]) {
     contract::requires(countof(xs) <= 8);
-    usize hits = 0;
-    for (usize i = 0; i < countof(xs); i++) {
+    Usize hits = 0;
+    for (Usize i = 0; i < countof(xs); i++) {
         if (xs[i] > 0) hits++;
     }
     contract::ensures(hits <= 8);
@@ -24,10 +24,10 @@ export usize positives_of_slice(i32 xs[:]) {
 }
 
 // False: eight positives make eight.
-export usize positives_wrong(i32 xs[8], usize count) {
+export Usize positives_wrong(I32 xs[8], Usize count) {
     contract::requires(count <= 8);
-    usize hits = 0;
-    for (usize i = 0; i < count; i++) {
+    Usize hits = 0;
+    for (Usize i = 0; i < count; i++) {
         if (xs[i] > 0) hits++;
     }
     contract::ensures(hits <= 3);

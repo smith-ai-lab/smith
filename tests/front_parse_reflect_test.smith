@@ -1,0 +1,136 @@
+// Tests of the reflected member `x.[f]` and `x->[f]` and of the pack expansion `pattern...` in front::parse_expr
+// (#1264, A7 of track A of #1112). The sources are written in the final spelling.
+module front_parse_reflect_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_expr;
+import front::parse_type;
+
+// A parser over the tokens of source with the real expression and type hooks; a lexing error fails the test.
+static parse::Parser parser_of(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    lex::Tokens tokens = {};
+    switch (lexed) {
+    case .ok:
+        tokens = lexed.ok;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    parse::Parser p = parse::make(tokens, source);
+    p.hooks.expression = parse_expr::expression;
+    p.hooks.type = parse_type::type;
+    return p;
+}
+
+static Bool contains(Str text, Str piece) {
+    if (countof(piece) > countof(text)) return false;
+    for (Usize i = 0; i + countof(piece) <= countof(text); i += 1) {
+        if (mem::equal(text[i:i + countof(piece)], piece)) return true;
+    }
+    return false;
+}
+
+// The first error message of a source; the test fails when there is none.
+static Str first_error(Str source) {
+    parse::Parser p = parser_of(source);
+    _ = parse::expression(&p);
+    test::check_condition(countof(p.errors) > 0);
+    return p.errors[0].message;
+}
+
+export void test_parse_reflect_dot_member() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("x.[fields(T)[i]]");
+    ast::Expr *e = parse::expression(&p);
+    test::check_equal(countof(p.errors), 0);
+    test::check_condition(e != nullptr);
+    if (e->kind != .reflect_member) {
+        test::check_condition(false);
+        return;
+    }
+    test::check_equal(e->kind.reflect_member.arrow, false);
+    ast::Expr *base = e->kind.reflect_member.base;
+    ast::Expr *field = e->kind.reflect_member.field;
+    test::check_condition(base->kind == .name);
+    test::check_condition(field->kind == .index);
+}
+
+export void test_parse_reflect_arrow_member_and_postfix() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("x->[f][i]");
+    ast::Expr *e = parse::expression(&p);
+    test::check_equal(countof(p.errors), 0);
+    test::check_condition(e != nullptr);
+    if (e->kind != .index) {
+        test::check_condition(false);
+        return;
+    }
+    ast::Expr *inner = e->kind.index.base;
+    if (inner->kind != .reflect_member) {
+        test::check_condition(false);
+        return;
+    }
+    test::check_equal(inner->kind.reflect_member.arrow, true);
+}
+
+export void test_parse_reflect_empty_brackets_name_the_fix() {
+    Str message = first_error("x.[]");
+    test::check_condition(contains(message, "write `x.[fields(T)[i]]`"));
+}
+
+export void test_parse_rest_expansion_in_a_call() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("f(a, leaf(rest, off)..., b)");
+    ast::Expr *e = parse::expression(&p);
+    test::check_equal(countof(p.errors), 0);
+    test::check_condition(e != nullptr);
+    if (e->kind != .call) {
+        test::check_condition(false);
+        return;
+    }
+    test::check_equal(countof(e->kind.call.args), 3);
+    ast::Expr *first = e->kind.call.args[0];
+    ast::Expr *second = e->kind.call.args[1];
+    test::check_condition(first->kind == .name);
+    test::check_condition(second->kind == .expand);
+}
+
+export void test_parse_rest_expansion_in_a_list() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("{(F64)first, (F64)rest...}");
+    ast::Expr *e = parse::expression(&p);
+    test::check_equal(countof(p.errors), 0);
+    test::check_condition(e != nullptr);
+    if (e->kind != .compound) {
+        test::check_condition(false);
+        return;
+    }
+    test::check_equal(countof(e->kind.compound.items), 2);
+    ast::Expr *second = e->kind.compound.items[1].value;
+    test::check_condition(second->kind == .expand);
+}
+
+export void test_parse_rest_expansion_does_not_nest() {
+    Str message = first_error("f(rest......)");
+    test::check_condition(contains(message, "does not nest"));
+    test::check_condition(contains(message, "one `...`"));
+}

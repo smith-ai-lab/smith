@@ -25,7 +25,7 @@ constexpr char make_archives[_] =
 
 // A cache folder `name` in the project's scratch folder, allocated with mem:: as scratch::clean frees it.
 static const char *cache_in(const scratch::Project *p, const char *name) {
-    usize length = format::length(p->root, "/", name) + 1;
+    Usize length = format::length(p->root, "/", name) + 1;
     char *path = mem::alloc_slice(char, length).data;
     (void)format::to(path, length, p->root, "/", name);
     return path;
@@ -192,7 +192,7 @@ export void test_build_package_xz_extracts_and_a_zip_is_refused() {
     char hash[128] = "";
     if (start != nullptr) {
         const char *end = c::strchr(start + 1, '"');
-        usize length = end != nullptr ? (usize)(end - start - 1) : 0;
+        Usize length = end != nullptr ? (Usize)(end - start - 1) : 0;
         if (length < sizeof hash) {
             mem::copy(hash[0:length], start[1:1 + length]);
             hash[length] = '\0';

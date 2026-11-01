@@ -101,16 +101,16 @@ static bool smith_lang_rfor_parts(SmithLang *lang, const SmithHost *host, const 
     size_t element = 0;
     if (head->comma_count > 1) {
         smith_lang_error(lang, host, token->location,
-                         "a range `for` declares an index and an element at most: `for (usize i, T x : xs)`; C's "
+                         "a range `for` declares an index and an element at most: `for (Usize i, T x : xs)`; C's "
                          "loop walks several slices together");
         return false;
     }
     if (head->comma_count == 1) {
         size_t comma = head->commas[0];
-        bool ok = comma == 2 && smith_lang_ident(&tokens[0], "usize") && tokens[1].kind == SmithTokenKind_Identifier;
+        bool ok = comma == 2 && smith_lang_ident(&tokens[0], "Usize") && tokens[1].kind == SmithTokenKind_Identifier;
         if (!ok) {
             smith_lang_error(lang, host, token->location,
-                             "the index of a range `for` is a `usize`, counted from 0: `for (usize i, T x : xs)`");
+                             "the index of a range `for` is a `Usize`, counted from 0: `for (Usize i, T x : xs)`");
             return false;
         }
         parts->has_index = true;
@@ -121,7 +121,7 @@ static bool smith_lang_rfor_parts(SmithLang *lang, const SmithHost *host, const 
     if (head->colon <= element + 1 || tokens[last].kind != SmithTokenKind_Identifier) {
         smith_lang_error(lang, host, token->location,
                          head->colon > element && smith_lang_punct(&tokens[last], "]")
-                             ? "a range `for` has no structured bindings: write `for (usize i, T x : xs)`"
+                             ? "a range `for` has no structured bindings: write `for (Usize i, T x : xs)`"
                              : "a range `for` declares its element with a type: `for (T x : xs)`, or `auto x`");
         return false;
     }
@@ -141,7 +141,7 @@ static bool smith_lang_rfor_parts(SmithLang *lang, const SmithHost *host, const 
                          "a generic), or write `auto x` for a copy");
         return false;
     }
-    for (size_t i = 0; i < sizeof smith_lang_concepts / sizeof smith_lang_concepts[0]; i++) { // 11 concepts
+    for (size_t i = 0; i < sizeof smith_lang_concepts / sizeof smith_lang_concepts[0]; i++) { // 10 concepts
         if (parts->type.count == 1 && smith_lang_ident(&parts->type.tokens[0], smith_lang_concepts[i])) {
             parts->concept_id = (unsigned)i + 1;
         }
@@ -196,7 +196,7 @@ static SmithLangRforForm smith_lang_rfor_classify(SmithLang *lang, const SmithHo
     if (form == SmithLangRfor_Error) {
         smith_lang_error(lang, host, token->location,
                          "a range `for` loops over a slice (`T xs[:]`, a cut `xs[a:b]`) or a fixed array (`T xs[N]`) "
-                         "of one dimension; write C's loop for anything else: `for (usize i = 0; i < n; ++i)`");
+                         "of one dimension; write C's loop for anything else: `for (Usize i = 0; i < n; ++i)`");
     }
     return form;
 }

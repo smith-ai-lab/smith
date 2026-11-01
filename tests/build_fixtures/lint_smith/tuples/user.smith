@@ -1,7 +1,7 @@
 module tuples::user;
 import tuples::pairs;
 
-export f32 use() {
+export F32 use() {
     auto p = pairs::make(1, 2.0f);
     auto n = pairs::nested();
     return pairs::total(p, &p) + n[1][0];

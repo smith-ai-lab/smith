@@ -21,7 +21,7 @@ tags: [libc, lint, idiom, libraries]
 | `printf`, `puts`, `putchar`, `fputs(s, stdout)`, `vprintf` | `console::print(pieces...)`: typed pieces, no format string ([direct-call-modules](direct-call-modules.md)) |
 | `fprintf(stderr, ...)`, `fputs(s, stderr)`, `dprintf`, `perror` | `console::print_error(pieces...)` |
 | `snprintf` | `format::to(buffer, capacity, pieces...)` ([format-library](format-library.md)); `format::hex`, `fixed`, `general`, `scientific`, `pad` for the conversions |
-| `fopen`, `fclose`, `FILE` | `files::open(path, mode)` returning `result(File, files::Error)`, `files::close` ([files](files.md)) |
+| `fopen`, `fclose`, `FILE` | `files::open(path, mode)` returning `Result(File, files::Error)`, `files::close` ([files](files.md)) |
 | `fgets` | gap: [#918](https://github.com/smith-ai-lab/smith/issues/918) |
 | `fflush`, `setvbuf`, `_IONBF`, `_IOFBF` | not needed: the console writes each call unbuffered |
 | `stdout`, `stderr`, `stdin`, `EOF` | `console::write`, `console::write_error`, `console::read` (a count of 0 is the end) and `console::read_line` |
@@ -49,7 +49,7 @@ tags: [libc, lint, idiom, libraries]
 | `strlen` | `text::make(string)`, a slice that knows its length |
 | `strcmp` | `text::is(word, string)` against a C string, `slice::equal(a, b)` and `slice::compare(a, b)` between slices |
 | `strncmp` | `slice::starts_with(xs, prefix)` |
-| `strstr` | `slice::find_slice(xs, needle)`, an `option(usize)` |
+| `strstr` | `slice::find_slice(xs, needle)`, an `Option(Usize)` |
 | `strchr`, `memchr` | `slice::find(xs, v)` |
 | `strrchr` | `slice::find_last(xs, v)` |
 | `strcspn` | `slice::find_if(xs, pred)` |
@@ -63,7 +63,7 @@ tags: [libc, lint, idiom, libraries]
 | `sqrt`, `sqrtf` | `math::sqrt(x)` |
 | `fabs` | `math::abs(x)` |
 | `isfinite` | `math::is_finite(x)` |
-| `SIZE_MAX`, `UINT64_MAX` | `math::max(usize)`, `math::max(u64)` |
+| `SIZE_MAX`, `UINT64_MAX` | `math::max(Usize)`, `math::max(U64)` |
 | `pow`, `log`, `logf`, `sin`, `cos`, `ldexp`, `ldexpf`, `fmax` | gap: [#916](https://github.com/smith-ai-lab/smith/issues/916) |
 
 ## ctype.h
@@ -87,7 +87,7 @@ tags: [libc, lint, idiom, libraries]
 | libc | smith |
 |---|---|
 | `assert` | `contract::assert(cond)`; a precondition is `contract::requires` |
-| `errno`, `E*` (`ENOENT`, `EINTR`, `EPIPE`, ...), `__error`, `__errno_location` | a call returns `result(T, Error)` and the module's error enum names the cause (`files::Error`, `process::Error`, `net::Error`); the raw `errno` is read inside the library (platform) |
+| `errno`, `E*` (`ENOENT`, `EINTR`, `EPIPE`, ...), `__error`, `__errno_location` | a call returns `Result(T, Error)` and the module's error enum names the cause (`files::Error`, `process::Error`, `net::Error`); the raw `errno` is read inside the library (platform) |
 | `va_list`, `va_start`, `va_end` | gap (design): [#924](https://github.com/smith-ai-lab/smith/issues/924); a `.smith` function takes `auto...` pieces, as `format::to` does |
 | `setjmp`, `longjmp`, `sigsetjmp`, `siglongjmp`, `jmp_buf` | gap (design): [#924](https://github.com/smith-ai-lab/smith/issues/924) |
 | `signal`, `sigaction`, `sigaltstack`, `raise`, `sigwait`, `sigpending`, `sigemptyset`, `sigaddset`, `sigismember`, `pthread_sigmask`, `SIG*` | gap (design): [#924](https://github.com/smith-ai-lab/smith/issues/924) |
@@ -139,7 +139,7 @@ tags: [libc, lint, idiom, libraries]
 | `getusershell` | none: only a fixture of the effects check calls it, as a raw effect on purpose |
 | `__asan_poison_memory_region`, `__asan_unpoison_memory_region` | platform: the sanitizer's interface, inside `arena` and `mem` under `contract::trusted()` |
 | `NULL` | `nullptr` |
-| `size_t`, `ssize_t`, `uintmax_t`, `intmax_t`, `uint8_t` to `uint64_t`, `int8_t` to `int64_t`, `uintptr_t`, `time_t`, `pid_t`, `mode_t` | `usize`, `isize`, `u64`, `i64`, `u8` to `u64`, `i8` to `i64`, and a library's own type where the type is a handle ([smith-language](smith-language.md)) |
+| `size_t`, `ssize_t`, `uintmax_t`, `intmax_t`, `uint8_t` to `uint64_t`, `int8_t` to `int64_t`, `uintptr_t`, `time_t`, `pid_t`, `mode_t` | `Usize`, `Isize`, `U64`, `I64`, `U8` to `U64`, `I8` to `I64`, and a library's own type where the type is a handle ([smith-language](smith-language.md)) |
 
 ## Changing a row
 

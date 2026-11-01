@@ -8,7 +8,7 @@ import scratch;
 
 // What a test's commands print goes to an arena of the runner's (test::memory), the current allocator from start to
 // finish, so the test frees none of it; the project is made and cleaned inside it.
-constexpr usize memory_size = 1U << 24;
+constexpr Usize memory_size = 1U << 24;
 static arena::Arena memory;
 static arena::ArenaAllocator allocator;
 static mem::Allocator *outside;
@@ -28,7 +28,7 @@ static void finish(scratch::Project *p) {
 // The output of a command as $(...) gives it, without trailing newlines (scratch::capture reads a project's io).
 static const char *captured(const scratch::Project *p, const char *command) {
     const char *out = scratch::sh(p, command).out;
-    usize length = 0;
+    Usize length = 0;
     while (out[length] != '\0')
         length++;
     while (length > 0 && out[length - 1] == '\n')
@@ -73,9 +73,9 @@ export void test_caps_smith_inputs_and_flags_reach_the_compiler_whole() {
                    "echo \"inputs=$(printf %s \"$SMITH_LANG_INPUTS\" | wc -l | tr -d ' ')\"\n"
                    "[ $(printf %s \"$SMITH_LANG_FLAGS\" | wc -c) -gt 12000 ] && echo flags=whole\n");
     (void)scratch::sh(&p, "chmod +x stub.sh; D=$(printf 'd%.0s' $(seq 1 150)); mkdir $D; "
-                          "for i in $(seq 0 59); do printf \"module m$i;\\nexport i32 f$i(void) { return $i; }\\n\" > "
+                          "for i in $(seq 0 59); do printf \"module m$i;\\nexport I32 f$i(void) { return $i; }\\n\" > "
                           "$D/m$i.smith; done; "
-                          "printf 'module main;\\ni32 main(void) { return 0; }\\n' > $D/main.smith; "
+                          "printf 'module main;\\nI32 main(void) { return 0; }\\n' > $D/main.smith; "
                           "echo $D > dir.txt");
     scratch::Run run =
         scratch::sh(&p, "D=$(cat dir.txt); SMITH_CLANG=$PWD/stub.sh smith cc $D/main.smith "

@@ -64,7 +64,7 @@ export void test_build_lang_a_project_of_three_modules_and_a_c_file() {
         "stat -c %Y .smith/include/lib/text.h 2>/dev/null || stat -f %m .smith/include/lib/text.h";
     const char *header_time = scratch::sh(&p, header_time_command).out;
     scratch::sleep(&p, 1000);
-    (void)scratch::sh(&p, "printf '\\nusize other_helper(void) {\\n    return 5;\\n}\\n' >>src/lib/text.smith");
+    (void)scratch::sh(&p, "printf '\\nUsize other_helper(void) {\\n    return 5;\\n}\\n' >>src/lib/text.smith");
     scratch::expect_text("modules: an edit to a module's body recompiles that module alone", "src/lib/text.smith ",
                          scratch::sh(&p, compiled_command).out);
     scratch::expect_text("modules: and leaves its header's time alone", header_time,
@@ -73,7 +73,7 @@ export void test_build_lang_a_project_of_three_modules_and_a_c_file() {
                          scratch::sh(&p, "./build/app 2>&1").out);
 
     scratch::sleep(&p, 1000);
-    (void)scratch::sh(&p, "printf '\\nexport usize extra(void) {\\n    return 2;\\n}\\n' >>src/game/replay.smith");
+    (void)scratch::sh(&p, "printf '\\nexport Usize extra(void) {\\n    return 2;\\n}\\n' >>src/game/replay.smith");
     scratch::expect_text("modules: an edit to a module's exports recompiles it and its importers, and the C file that "
                          "includes the header",
                          "src/checksum.c src/game/replay.smith src/main.smith ", scratch::sh(&p, compiled_command).out);
@@ -144,10 +144,10 @@ export void test_build_lang_a_plain_smith_file_builds_with_no_header() {
 // module imports: under -MMD the depfile names them (the copies are a system buffer, and what is included from a
 // system file is a system header), so an edit that changes a body rebuilds the importer (issue #621).
 constexpr char body_calc[_] = "module calc;\n\nimport other;\n\n"
-                              "export i32 fib(i32 n) {\n    return other::twice(n) + 1;\n}\n";
-constexpr char body_other[_] = "module other;\n\nexport i32 twice(i32 n) {\n    return n * 2;\n}\n";
+                              "export I32 fib(I32 n) {\n    return other::twice(n) + 1;\n}\n";
+constexpr char body_other[_] = "module other;\n\nexport I32 twice(I32 n) {\n    return n * 2;\n}\n";
 constexpr char body_main[_] = "module main;\n\nimport calc;\n\nstatic_assert(calc::fib(5) == 11);\n\n"
-                              "i32 main(void) {\n    return calc::fib(3) - 7;\n}\n";
+                              "I32 main(void) {\n    return calc::fib(3) - 7;\n}\n";
 
 static scratch::Project body_project() {
     scratch::Project p = lang_project("module-three");
@@ -193,7 +193,7 @@ export void test_build_lang_an_edit_to_what_a_body_imports_rebuilds_the_importer
     scratch::Run settled = scratch::build(&p, "");
     scratch::expect_contains("body files: then it settles", settled.out, "no work to do");
     scratch::sleep(&p, 1000);
-    scratch::write(&p, "src/other.smith", "module other;\n\nexport i32 twice(i32 n) {\n    return n * 3;\n}\n");
+    scratch::write(&p, "src/other.smith", "module other;\n\nexport I32 twice(I32 n) {\n    return n * 3;\n}\n");
     scratch::Run broken = scratch::build(&p, "");
     scratch::expect_failure("body files: an edit to a module a body imports rebuilds the importer, whose assert fails",
                             &broken);

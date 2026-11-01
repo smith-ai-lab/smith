@@ -13,65 +13,65 @@ import std::format;
 import std::mem;
 
 typedef struct {
-    f32 m;
-    f32 b;
+    F32 m;
+    F32 b;
 } Model;
 
 typedef struct {
-    f32 x[4];
-    f32 y[4];
+    F32 x[4];
+    F32 y[4];
 } Points;
 
-f32 model_loss(Model *p, const Points *d) {
-    f32 total = 0.0f;
-    for (usize i = 0; i < 4; i++) {
-        f32 r = p->m * d->x[i] + p->b - d->y[i];
+F32 model_loss(Model *p, const Points *d) {
+    F32 total = 0.0f;
+    for (Usize i = 0; i < 4; i++) {
+        F32 r = p->m * d->x[i] + p->b - d->y[i];
         total += r * r;
     }
     return total;
 }
 
 typedef struct {
-    f64 w[:];
-    f64 b;
+    F64 w[:];
+    F64 b;
 } Layer;
 
 typedef struct {
     Layer layers[:];
-    f64 scale[2];
-    f32 tag;
-    i32 steps;
+    F64 scale[2];
+    F32 tag;
+    I32 steps;
 } Net;
 
 typedef struct {
-    f64 x[:];
+    F64 x[:];
 } Batch;
 
 // scale0 * (sum over the layers of sum_i w_i^2 x_(i mod n) + b scale1) + tag^2
-f64 net_loss(Net *p, const Batch *batch) {
-    f64 total = 0.0;
-    for (usize j = 0; j < countof(p->layers); j++) {
+F64 net_loss(Net *p, const Batch *batch) {
+    F64 total = 0.0;
+    for (Usize j = 0; j < countof(p->layers); j++) {
         const Layer *layer = &p->layers[j];
-        for (usize i = 0; i < countof(layer->w); i++) {
+        for (Usize i = 0; i < countof(layer->w); i++) {
             total += layer->w[i] * layer->w[i] * batch->x[i % countof(batch->x)];
         }
         total += layer->b * p->scale[1];
     }
-    return p->scale[0] * total + (f64)p->tag * (f64)p->tag;
+    return p->scale[0] * total + (F64)p->tag * (F64)p->tag;
 }
 
-f64 tolerance = 1e-12;
-f64 worst = 0.0;
+F64 tolerance = 1e-12;
+F64 worst = 0.0;
 bool ok = true;
 
-void report(const char *name, const f64 *got, const f64 *want, usize n, f64 limit) {
-    f64 scale = 0.0;
-    f64 difference = 0.0;
-    for (usize i = 0; i < n; i++) {
+void report(const char *name, const F64 *got, const F64 *want, Usize n, F64 limit) {
+    F64 scale = 0.0;
+    F64 difference = 0.0;
+    for (Usize i = 0; i < n; i++) {
         scale = c::fmax(scale, c::fabs(want[i]));
         difference = c::fmax(difference, c::fabs(got[i] - want[i]));
     }
-    f64 relative = scale > 0.0 ? difference / scale : difference;
+    F64 relative = scale > 0.0 ? difference / scale : difference;
     (void)console::print("  ", format::left(name, 22), " n=", format::left(n, 3), " maxrel=", format::scientific(relative, 3), " limit=",
                          format::scientific(limit, 0), "\n");
     if (limit <= tolerance) {
@@ -83,10 +83,10 @@ void report(const char *name, const f64 *got, const f64 *want, usize n, f64 limi
 }
 
 // The f64 numbers of a net in one array: each layer's weights and bias, then the scale. Returns how many.
-usize flatten(const Net *p, f64 *out) {
-    usize n = 0;
-    for (usize j = 0; j < countof(p->layers); j++) {
-        for (usize i = 0; i < p->layers[j].w.count[0]; i++) {
+Usize flatten(const Net *p, F64 *out) {
+    Usize n = 0;
+    for (Usize j = 0; j < countof(p->layers); j++) {
+        for (Usize i = 0; i < p->layers[j].w.count[0]; i++) {
             out[n++] = p->layers[j].w[i];
         }
         out[n++] = p->layers[j].b;
@@ -96,69 +96,69 @@ usize flatten(const Net *p, f64 *out) {
     return n;
 }
 
-constexpr usize numbers = 3 + 2 + 1 + 4 + 1 + 1 + 2;
+constexpr Usize numbers = 3 + 2 + 1 + 4 + 1 + 1 + 2;
 
 // A net with layers of 3, 4 and 2 weights and given numbers; no value is special.
-Net make_net(f64 seed) {
+Net make_net(F64 seed) {
     Net p = {
         .layers = mem::alloc_slice(Layer, 3), .scale = {1.5 + seed, -0.5 + seed}, .tag = 0.75f, .steps = 7};
-    usize sizes[3] = {3, 4, 2};
-    for (usize j = 0; j < 3; j++) {
-        p.layers[j].w = mem::alloc_slice(f64, sizes[j]);
-        for (usize i = 0; i < sizes[j]; i++) {
-            p.layers[j].w[i] = 0.3 * (f64)(j + 1) - 0.17 * (f64)i + seed;
+    Usize sizes[3] = {3, 4, 2};
+    for (Usize j = 0; j < 3; j++) {
+        p.layers[j].w = mem::alloc_slice(F64, sizes[j]);
+        for (Usize i = 0; i < sizes[j]; i++) {
+            p.layers[j].w[i] = 0.3 * (F64)(j + 1) - 0.17 * (F64)i + seed;
         }
-        p.layers[j].b = 0.1 * (f64)j - seed;
+        p.layers[j].b = 0.1 * (F64)j - seed;
     }
     return p;
 }
 
 // Optimizers: functions of one set of matching leaves and the numbers they need, applied with autodiff::map: a pointer
 // is walked to its leaf, a number (the learning rate, the step) is passed to every call as it is.
-f64 sgd(f64 p, f64 g, f64 rate) {
+F64 sgd(F64 p, F64 g, F64 rate) {
     return p - rate * g;
 }
 
-f64 moment1(f64 m, f64 g, f64 beta) {
+F64 moment1(F64 m, F64 g, F64 beta) {
     return beta * m + (1.0 - beta) * g;
 }
 
-f64 moment2(f64 v, f64 g, f64 beta) {
+F64 moment2(F64 v, F64 g, F64 beta) {
     return beta * v + (1.0 - beta) * g * g;
 }
 
-f64 adam(f64 p, f64 m, f64 v, f64 rate, i32 step) {
-    f64 correct1 = 1.0 / (1.0 - c::pow(0.9, (f64)step));
-    f64 correct2 = 1.0 / (1.0 - c::pow(0.999, (f64)step));
+F64 adam(F64 p, F64 m, F64 v, F64 rate, I32 step) {
+    F64 correct1 = 1.0 / (1.0 - c::pow(0.9, (F64)step));
+    F64 correct2 = 1.0 / (1.0 - c::pow(0.999, (F64)step));
     return p - rate * (m * correct1) / (c::sqrt(v * correct2) + 1e-8);
 }
 
 // One to six inputs and two numbers: out = sum of the inputs scaled by `a`, plus `b`.
-f64 sum1(f64 x, f64 a, f64 b) {
+F64 sum1(F64 x, F64 a, F64 b) {
     return a * x + b;
 }
-f64 sum2(f64 x, f64 y, f64 a, f64 b) {
+F64 sum2(F64 x, F64 y, F64 a, F64 b) {
     return a * (x + y) + b;
 }
-f64 sum3(f64 x, f64 y, f64 z, f64 a, f64 b) {
+F64 sum3(F64 x, F64 y, F64 z, F64 a, F64 b) {
     return a * (x + y + z) + b;
 }
-f64 sum4(f64 x, f64 y, f64 z, f64 w, f64 a, f64 b) {
+F64 sum4(F64 x, F64 y, F64 z, F64 w, F64 a, F64 b) {
     return a * (x + y + z + w) + b;
 }
-f64 sum5(f64 x, f64 y, f64 z, f64 w, f64 u, f64 a, f64 b) {
+F64 sum5(F64 x, F64 y, F64 z, F64 w, F64 u, F64 a, F64 b) {
     return a * (x + y + z + w + u) + b;
 }
-f64 sum6(f64 x, f64 y, f64 z, f64 w, f64 u, f64 t, f64 a, f64 b) {
+F64 sum6(F64 x, F64 y, F64 z, F64 w, F64 u, F64 t, F64 a, F64 b) {
     return a * (x + y + z + w + u + t) + b;
 }
 
-f64 learning_rate = 0.05;
-f64 beta1 = 0.9;
-f64 beta2 = 0.999;
+F64 learning_rate = 0.05;
+F64 beta1 = 0.9;
+F64 beta2 = 0.999;
 
-i32 main() {
-    arena::Arena memory = arena::growing((usize)1 << 20, nullptr);
+I32 main() {
+    arena::Arena memory = arena::growing((Usize)1 << 20, nullptr);
     defer arena::release(&memory);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
@@ -168,30 +168,30 @@ i32 main() {
     Model model = {.m = 0.5f, .b = -0.25f};
     Points points = {.x = {1.0f, 2.0f, 3.0f, 4.0f}, .y = {1.0f, 0.0f, 2.5f, 3.0f}};
     Model mg = autodiff::gradient(model_loss, &model, &points);
-    f32 dm = 0.0f;
-    f32 db = 0.0f;
-    for (usize i = 0; i < 4; i++) {
-        f32 r = model.m * points.x[i] + model.b - points.y[i];
+    F32 dm = 0.0f;
+    F32 db = 0.0f;
+    for (Usize i = 0; i < 4; i++) {
+        F32 r = model.m * points.x[i] + model.b - points.y[i];
         dm += 2.0f * r * points.x[i];
         db += 2.0f * r;
     }
     (void)console::print("model:\n");
-    f64 mgot[2] = {(f64)mg.m, (f64)mg.b};
-    f64 mwant[2] = {(f64)dm, (f64)db};
+    F64 mgot[2] = {(F64)mg.m, (F64)mg.b};
+    F64 mwant[2] = {(F64)dm, (F64)db};
     report("dm, db", mgot, mwant, 2, 1e-5);
 
     // 2. A net: the gradient against the analytic one; the integer comes back zero, every array has the length of its
     // own.
     Net net = make_net(0.0);
-    f64 data[2] = {1.25, -0.75};
+    F64 data[2] = {1.25, -0.75};
     Batch batch = {};
     batch.x = data;
     Net g = autodiff::gradient(net_loss, &net, &batch);
-    f64 want[numbers] = {};
-    f64 inner = 0.0;
-    usize n = 0;
-    for (usize j = 0; j < 3; j++) {
-        for (usize i = 0; i < net.layers[j].w.count[0]; i++) {
+    F64 want[numbers] = {};
+    F64 inner = 0.0;
+    Usize n = 0;
+    for (Usize j = 0; j < 3; j++) {
+        for (Usize i = 0; i < net.layers[j].w.count[0]; i++) {
             want[n++] = 2.0 * net.layers[j].w[i] * data[i % 2] * net.scale[0];
             inner += net.layers[j].w[i] * net.layers[j].w[i] * data[i % 2];
         }
@@ -199,37 +199,37 @@ i32 main() {
         inner += net.layers[j].b * net.scale[1];
     }
     want[n++] = inner;
-    f64 sum_b = net.layers[0].b + net.layers[1].b + net.layers[2].b;
+    F64 sum_b = net.layers[0].b + net.layers[1].b + net.layers[2].b;
     want[n++] = sum_b * net.scale[0];
-    f64 got[numbers] = {};
-    usize count = flatten(&g, got);
+    F64 got[numbers] = {};
+    Usize count = flatten(&g, got);
     (void)console::print("net gradient:\n");
     if (count != numbers || g.layers[1].w.count[0] != 4 || g.steps != 0) {
         ok = false;
     }
     report("gradient vs analytic", got, want, numbers, tolerance);
-    f64 tag_got[1] = {(f64)g.tag};
-    f64 tag_want[1] = {2.0 * (f64)net.tag};
-    report("d tag (f32)", tag_got, tag_want, 1, 1e-6);
+    F64 tag_got[1] = {(F64)g.tag};
+    F64 tag_want[1] = {2.0 * (F64)net.tag};
+    report("d tag (F32)", tag_got, tag_want, 1, 1e-6);
 
     // 3. SGD with map against a loop over the flattened numbers.
     Net p = make_net(0.0);
-    f64 before[numbers] = {};
-    f64 flat_g[numbers] = {};
+    F64 before[numbers] = {};
+    F64 flat_g[numbers] = {};
     (void)flatten(&p, before);
     (void)flatten(&g, flat_g);
     autodiff::map(sgd, &p, &p, &g, learning_rate);
-    f64 sgd_want[numbers] = {};
-    for (usize i = 0; i < numbers; i++) {
+    F64 sgd_want[numbers] = {};
+    for (Usize i = 0; i < numbers; i++) {
         sgd_want[i] = before[i] - learning_rate * flat_g[i];
     }
-    f64 sgd_got[numbers] = {};
+    F64 sgd_got[numbers] = {};
     (void)flatten(&p, sgd_got);
     (void)console::print("sgd:\n");
     report("map(sgd) vs loop", sgd_got, sgd_want, numbers, tolerance);
-    f64 tag_sgd[1] = {(f64)p.tag};
-    f64 tag_sgd_want[1] = {0.75 - learning_rate * (f64)g.tag};
-    report("f32 leaf", tag_sgd, tag_sgd_want, 1, 1e-6);
+    F64 tag_sgd[1] = {(F64)p.tag};
+    F64 tag_sgd_want[1] = {0.75 - learning_rate * (F64)g.tag};
+    report("F32 leaf", tag_sgd, tag_sgd_want, 1, 1e-6);
     if (p.steps != 7) {
         ok = false;
     }
@@ -238,52 +238,52 @@ i32 main() {
     Net q = make_net(0.0);
     Net m = autodiff::zeros(q);
     Net v = autodiff::zeros(q);
-    f64 ref[numbers] = {};
-    f64 ref_m[numbers] = {};
-    f64 ref_v[numbers] = {};
+    F64 ref[numbers] = {};
+    F64 ref_m[numbers] = {};
+    F64 ref_v[numbers] = {};
     (void)flatten(&q, ref);
-    for (i32 step = 1; step <= 5; step++) {
+    for (I32 step = 1; step <= 5; step++) {
         Net gq = autodiff::gradient(net_loss, &q, &batch);
-        f64 gflat[numbers] = {};
+        F64 gflat[numbers] = {};
         (void)flatten(&gq, gflat);
-        f64 correct1 = 1.0 / (1.0 - c::pow(beta1, (f64)step));
-        f64 correct2 = 1.0 / (1.0 - c::pow(beta2, (f64)step));
+        F64 correct1 = 1.0 / (1.0 - c::pow(beta1, (F64)step));
+        F64 correct2 = 1.0 / (1.0 - c::pow(beta2, (F64)step));
         autodiff::map(moment1, &m, &m, &gq, beta1);
         autodiff::map(moment2, &v, &v, &gq, beta2);
         autodiff::map(adam, &q, &q, &m, &v, learning_rate, step);
-        for (usize i = 0; i < numbers; i++) {
+        for (Usize i = 0; i < numbers; i++) {
             ref_m[i] = beta1 * ref_m[i] + (1.0 - beta1) * gflat[i];
             ref_v[i] = beta2 * ref_v[i] + (1.0 - beta2) * gflat[i] * gflat[i];
             ref[i] = ref[i] - learning_rate * (ref_m[i] * correct1) / (c::sqrt(ref_v[i] * correct2) + 1e-8);
         }
     }
-    f64 adam_got[numbers] = {};
+    F64 adam_got[numbers] = {};
     (void)flatten(&q, adam_got);
     (void)console::print("adam, five steps:\n");
     report("map(adam) vs loop", adam_got, ref, numbers, tolerance);
 
     // 5. One to six walked inputs and two numbers, against a loop: out = a * (sum of the inputs) + b.
     Net in[6] = {};
-    f64 flat[6][numbers] = {};
-    for (usize j = 0; j < 6; j++) {
-        in[j] = make_net(0.1 * (f64)(j + 1));
+    F64 flat[6][numbers] = {};
+    for (Usize j = 0; j < 6; j++) {
+        in[j] = make_net(0.1 * (F64)(j + 1));
         (void)flatten(&in[j], flat[j]);
     }
     Net o = autodiff::zeros(in[0]);
     (void)console::print("map with 1 to 6 inputs and 2 numbers:\n");
-    for (usize inputs = 1; inputs <= 6; inputs++) {
+    for (Usize inputs = 1; inputs <= 6; inputs++) {
         if (inputs == 1) autodiff::map(sum1, &o, &in[0], 2.0, 0.5);
         if (inputs == 2) autodiff::map(sum2, &o, &in[0], &in[1], 2.0, 0.5);
         if (inputs == 3) autodiff::map(sum3, &o, &in[0], &in[1], &in[2], 2.0, 0.5);
         if (inputs == 4) autodiff::map(sum4, &o, &in[0], &in[1], &in[2], &in[3], 2.0, 0.5);
         if (inputs == 5) autodiff::map(sum5, &o, &in[0], &in[1], &in[2], &in[3], &in[4], 2.0, 0.5);
         if (inputs == 6) autodiff::map(sum6, &o, &in[0], &in[1], &in[2], &in[3], &in[4], &in[5], 2.0, 0.5);
-        f64 got_sum[numbers] = {};
-        f64 want_sum[numbers] = {};
+        F64 got_sum[numbers] = {};
+        F64 want_sum[numbers] = {};
         (void)flatten(&o, got_sum);
-        for (usize i = 0; i < numbers; i++) {
-            f64 total = 0.0;
-            for (usize j = 0; j < inputs; j++) {
+        for (Usize i = 0; i < numbers; i++) {
+            F64 total = 0.0;
+            for (Usize j = 0; j < inputs; j++) {
                 total += flat[j][i];
             }
             want_sum[i] = 2.0 * total + 0.5;

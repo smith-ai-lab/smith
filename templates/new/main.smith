@@ -5,8 +5,8 @@ import primes;
 
 import std::contract;
 
-i32 main() {
-    i32 sum = primes::sum(5);
+I32 main() {
+    I32 sum = primes::sum(5);
     contract::assert(sum <= 28);
     primes::report(sum);
     return 0;

@@ -1,14 +1,14 @@
 module tuples;
 
-export typedef struct { i32, f32 } Pair;
+export typedef struct { I32, F32 } Pair;
 
-export struct { i32, f32 } make(i32 a, f32 b) {
+export struct { I32, F32 } make(I32 a, F32 b) {
     return {a, b};
 }
 
-export f32 total() {
+export F32 total() {
     auto p = make(1, 2.0f);
     p[0] += 1;
-    struct { i32, struct { f32, f32 } } n = {1, {2.0f, 3.0f}};
-    return p[1] + n[1][0] + (f32)countof(p);
+    struct { I32, struct { F32, F32 } } n = {1, {2.0f, 3.0f}};
+    return p[1] + n[1][0] + (F32)countof(p);
 }

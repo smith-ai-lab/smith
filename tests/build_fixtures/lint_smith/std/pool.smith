@@ -1,11 +1,11 @@
 module std::pool;
 
 export typedef struct {
-    u8 *base;
-    usize used;
+    U8 *base;
+    Usize used;
 } Pool;
 
-export T *push_array(Pool *pool, constexpr type T, usize count) {
+export T *push_array(Pool *pool, constexpr Type T, Usize count) {
     T *result = (T *)(pool->base + pool->used);
     pool->used += sizeof(T) * count;
     return result;

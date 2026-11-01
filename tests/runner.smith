@@ -24,7 +24,7 @@ export const char *plain_pipe() {
 
 // The arguments as a text of its own from the allocator in force.
 const char *own(auto... args) {
-    usize characters = format::length(args...);
+    Usize characters = format::length(args...);
     char *memory = (char *)mem::alloc_array_raw(sizeof(char), characters + 1, alignof(char));
     (void)format::to(memory, characters + 1, args...);
     return memory;
@@ -130,16 +130,16 @@ export void add(const scratch::Project *p, const char *files) {
 }
 
 // A character repeated.
-export const char *repeated(char letter, usize count) {
+export const char *repeated(char letter, Usize count) {
     char *text = mem::alloc_slice(char, count + 1).data;
-    for (usize i = 0; i < count; i++)
+    for (Usize i = 0; i < count; i++)
         text[i] = letter;
     text[count] = '\0';
     return text;
 }
 
 // The second argument of the runner for mode 0 (workers) and mode 1 (a process per test).
-export const char *flag(usize mode) {
+export const char *flag(Usize mode) {
     return mode == 0 ? "" : "--isolate";
 }
 
@@ -199,10 +199,10 @@ export bool can_symbolize(const scratch::Project *p) {
 
 // The text with every run of spaces made one space, as `tr -s ' '` does.
 export const char *squeezed(const char *text) {
-    usize length = c::strlen(text);
+    Usize length = c::strlen(text);
     char *copy = mem::alloc_slice(char, length + 1).data;
-    usize at = 0;
-    for (usize i = 0; i < length; i++) {
+    Usize at = 0;
+    for (Usize i = 0; i < length; i++) {
         if (text[i] == ' ' && at > 0 && copy[at - 1] == ' ') continue;
         copy[at++] = text[i];
     }
@@ -211,24 +211,24 @@ export const char *squeezed(const char *text) {
 }
 
 // The number a text starts with (digits only), 0 when it has none.
-export usize number(const char *text) {
-    usize value = 0;
+export Usize number(const char *text) {
+    Usize value = 0;
     for (; *text >= '0' && *text <= '9'; text++)
-        value = value * 10 + (usize)(*text - '0');
+        value = value * 10 + (Usize)(*text - '0');
     return value;
 }
 
 // The number of the line (from 1) of the `occurrence`th line (from 1) of a project's file that holds the text.
-export usize line_of_nth(const scratch::Project *p, const char *file, const char *text, usize occurrence) {
+export Usize line_of_nth(const scratch::Project *p, const char *file, const char *text, Usize occurrence) {
     const char *whole = scratch::read(p, file);
-    usize size = c::strlen(whole);
-    usize wanted = c::strlen(text);
-    usize line = 1;
-    usize seen = 0;
-    usize start = 0;
-    for (usize at = 0; at <= size; at++) {
+    Usize size = c::strlen(whole);
+    Usize wanted = c::strlen(text);
+    Usize line = 1;
+    Usize seen = 0;
+    Usize start = 0;
+    for (Usize at = 0; at <= size; at++) {
         if (whole[at] != '\n' && whole[at] != '\0') continue;
-        for (usize i = start; i + wanted <= at; i++) {
+        for (Usize i = start; i + wanted <= at; i++) {
             if (c::strncmp(whole + i, text, wanted) == 0) {
                 seen++;
                 break;
@@ -247,7 +247,7 @@ export usize line_of_nth(const scratch::Project *p, const char *file, const char
     return 0;
 }
 
-export usize line_of(const scratch::Project *p, const char *file, const char *text) {
+export Usize line_of(const scratch::Project *p, const char *file, const char *text) {
     return line_of_nth(p, file, text, 1);
 }
 
@@ -255,7 +255,7 @@ export usize line_of(const scratch::Project *p, const char *file, const char *te
 // failing line (found in `file`), `values` the line under it, `extra` the lines after the chain (notes and output).
 export void expect_failure_block(const scratch::Project *p, const char *iso, const char *name, const char *test_name,
                                  const char *file, const char *source, const char *values, const char *extra) {
-    usize line = line_of(p, file, source);
+    Usize line = line_of(p, file, source);
     const char *wanted = text_in(p, "FAIL ", test_name, "\n  check failed at ", file, ":", line, "\n     ", line,
                                  " |     ", source, "\n           ", values, "\n  called from\n    ", file, ":", line,
                                  " test_", test_name, "\n", extra, "\n0 passed, 1 failed");
@@ -286,11 +286,11 @@ export void expect_lacks(const char *iso, const char *name, const scratch::Run *
 }
 
 // The forks the run made: the runner's `forks: N` line of --stats.
-export usize forks_of(const scratch::Run *run) {
+export Usize forks_of(const scratch::Run *run) {
     const char *at = c::strstr(run->out, "forks: ");
     test::check_not_equal(at, nullptr);
-    usize count = 0;
+    Usize count = 0;
     for (at += 7; *at >= '0' && *at <= '9'; at++)
-        count = count * 10 + (usize)(*at - '0');
+        count = count * 10 + (Usize)(*at - '0');
     return count;
 }

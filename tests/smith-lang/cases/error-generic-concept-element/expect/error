@@ -1,5 +1,5 @@
-src/main.smith:12:18: `char *` is not `arithmetic`: the elements of `ns` have that type
-src/main.smith:13:18: `n`, the argument of `count`, has the type `i32`, but the parameter `xs` is a slice (`arithmetic xs[:]`); pass a slice (`xs[0:n]` makes one of an array)
-src/main.smith:14:17: `i32` is not `floating`: the elements of `is` have that type
-src/main.smith:15:17: `f32` is not `integer`: the pointee of `&f` has that type
-src/main.smith:16:18: `char *` is not `arithmetic`: the elements of `names` have that type
+src/main.smith:12:18: `char *` is not `Num`: the elements of `ns` have that type
+src/main.smith:13:18: `n`, the argument of `count`, has the type `I32`, but the parameter `xs` is a slice (`Num xs[:]`); pass a slice (`xs[0:n]` makes one of an array)
+src/main.smith:14:17: `I32` is not `Float`: the elements of `is` have that type
+src/main.smith:15:17: `F32` is not `Int`: the pointee of `&f` has that type
+src/main.smith:16:18: `char *` is not `Num`: the elements of `names` have that type

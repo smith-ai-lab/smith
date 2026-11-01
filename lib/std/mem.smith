@@ -42,10 +42,10 @@ import <unistd.h>; // write: the reports of mem::checked
 
 // Memory for size bytes at align (a power of two) from the allocator in force, or null when it refuses. Not zeroed.
 // For code that refuses; alloc_raw stops instead.
-[[std::c_name("smith_mem_try_alloc")]] export [[nodiscard]] void *try_alloc_raw(usize size, usize align) {
+[[std::c_name("smith_mem_try_alloc")]] export [[nodiscard]] void *try_alloc_raw(Usize size, Usize align) {
     contract::trusted(); // the allocator is the edge
     contract::requires(align > 0 && (align & (align - 1)) == 0);
-    usize bytes = size;
+    Usize bytes = size;
     if (bytes == 0) bytes = 1; // malloc(0) may be null, which would read as a refusal
     // NOLINTBEGIN(smith-effects): the allocator is the edge: these are the calls the handlers of the thread answer
     if (align <= 16) return c::malloc(bytes);
@@ -58,14 +58,14 @@ import <unistd.h>; // write: the reports of mem::checked
 const char *allocator_name(const Allocator *allocator);
 
 // A refusal stops here, in every build, naming the allocator and the size.
-[[noreturn]] void refuse(usize size, usize align) {
+[[noreturn]] void refuse(Usize size, Usize align) {
     c::smith_failure_format(c::SmithFailure_Capacity, "%s refused %zu bytes (align %zu)",
                             allocator_name(c::smith_handlers_allocator()), size, align);
 }
 
 // Zeroed memory for size bytes at align (a power of two) from the allocator in force. Never null: the allocator
 // refusing is a checked failure naming the size.
-[[std::c_name("smith_mem_alloc")]] export [[nodiscard]] void *alloc_raw(usize size, usize align) {
+[[std::c_name("smith_mem_alloc")]] export [[nodiscard]] void *alloc_raw(Usize size, Usize align) {
     contract::trusted(); // it writes the memory it hands out
     void *memory = try_alloc_raw(size, align);
     if (memory == nullptr) refuse(size, align);
@@ -74,10 +74,10 @@ const char *allocator_name(const Allocator *allocator);
 }
 
 // count items of size bytes, zeroed; a count that overflows is a refusal of the largest size.
-[[std::c_name("smith_mem_alloc_array")]] export [[nodiscard]] void *alloc_array_raw(usize size, usize count,
-                                                                                    usize align) {
+[[std::c_name("smith_mem_alloc_array")]] export [[nodiscard]] void *alloc_array_raw(Usize size, Usize count,
+                                                                                    Usize align) {
     contract::trusted();
-    if (size > 0 && count > math::max(usize) / size) refuse(math::max(usize), align);
+    if (size > 0 && count > math::max(Usize) / size) refuse(math::max(Usize), align);
     return alloc_raw(size * count, align);
 }
 
@@ -89,29 +89,29 @@ const char *allocator_name(const Allocator *allocator);
 
 // A zeroed T, the size and the alignment of the type, from the allocator in force. For .smith; C passes sizeof and
 // alignof to smith_mem_alloc.
-[[std::c_name("smith_mem_alloc_type")]] export [[nodiscard]] T *alloc(constexpr type T) {
+[[std::c_name("smith_mem_alloc_type")]] export [[nodiscard]] T *alloc(constexpr Type T) {
     return (T *)alloc_raw(sizeof(T), alignof(T));
 }
 
 // A zeroed T, or `.none` when the allocator refuses: `if (auto p = mem::try_alloc(Big); p == .some) ...`. The form for
 // code that can do something about a refusal.
-[[std::c_name("smith_mem_try_alloc_type")]] export [[nodiscard]] option(T *) try_alloc(constexpr type T) {
+[[std::c_name("smith_mem_try_alloc_type")]] export [[nodiscard]] Option(T *) try_alloc(constexpr Type T) {
     void *memory = try_alloc_raw(sizeof(T), alignof(T));
     if (memory == nullptr) return .none;
     __builtin_memset(memory, 0, sizeof(T));
     return {.some = (T *)memory};
 }
 
-// A zeroed array of T with a size for each `[:]`, as a slice, from the allocator in force: `alloc_slice(f32, n)` is
-// `f32[:]`, `alloc_slice(f32, n, m)` is `f32[:][:]` (one block, row-major), as arena::push_slice.
+// A zeroed array of T with a size for each `[:]`, as a slice, from the allocator in force: `alloc_slice(F32, n)` is
+// `F32[:]`, `alloc_slice(F32, n, m)` is `F32[:][:]` (one block, row-major), as arena::push_slice.
 [[std::c_name("smith_mem_alloc_slice_type")]] export [[nodiscard]] arena::slice_of(T, countof(dims))
-    alloc_slice(constexpr type T, auto... dims) {
+    alloc_slice(constexpr Type T, auto... dims) {
     static_assert(countof(dims) > 0, "alloc_slice needs a size for each `[:]` of the result: alloc_slice(T, n)");
     struct smith_array_T_n result = {};
-    usize total = 1;
-    for constexpr (usize i = 0; i < countof(dims); i++) {
-        usize size = (usize)dims[i];
-        if (__builtin_mul_overflow(total, size, &total)) total = ~(usize)0; // the largest usize: no allocator has it
+    Usize total = 1;
+    for constexpr (Usize i = 0; i < countof(dims); i++) {
+        Usize size = (Usize)dims[i];
+        if (__builtin_mul_overflow(total, size, &total)) total = ~(Usize)0; // the largest usize: no allocator has it
         result.count[i] = size;
     }
     result.data = alloc_array_raw(sizeof(T), total, alignof(T));
@@ -119,26 +119,26 @@ const char *allocator_name(const Allocator *allocator);
 }
 
 // The slice of dims over memory: the sizes in `count`, row-major, as alloc_slice builds it.
-arena::slice_of(T, countof(dims)) slice_over(constexpr type T, void *memory, auto... dims) {
+arena::slice_of(T, countof(dims)) slice_over(constexpr Type T, void *memory, auto... dims) {
     struct smith_array_T_n result = {};
-    for constexpr (usize i = 0; i < countof(dims); i++)
-        result.count[i] = (usize)dims[i];
+    for constexpr (Usize i = 0; i < countof(dims); i++)
+        result.count[i] = (Usize)dims[i];
     result.data = (T *)memory;
     return result;
 }
 
 // The slice of alloc_slice, or `.none` when the allocator refuses or the size overflows (nothing is allocated then):
-// `try_alloc_slice(f32, n)` for a server that turns away a huge `n`; the size and the data travel as one. Built on
+// `try_alloc_slice(F32, n)` for a server that turns away a huge `n`; the size and the data travel as one. Built on
 // try_alloc_raw as try_alloc is.
-[[std::c_name("smith_mem_try_alloc_slice_type")]] export [[nodiscard]] option(arena::slice_of(T, countof(dims)))
-    try_alloc_slice(constexpr type T, auto... dims) {
+[[std::c_name("smith_mem_try_alloc_slice_type")]] export [[nodiscard]] Option(arena::slice_of(T, countof(dims)))
+    try_alloc_slice(constexpr Type T, auto... dims) {
     static_assert(countof(dims) > 0,
                   "try_alloc_slice needs a size for each `[:]` of the result: try_alloc_slice(T, n)");
-    usize total = 1;
-    for constexpr (usize i = 0; i < countof(dims); i++) {
-        if (__builtin_mul_overflow(total, (usize)dims[i], &total)) return .none;
+    Usize total = 1;
+    for constexpr (Usize i = 0; i < countof(dims); i++) {
+        if (__builtin_mul_overflow(total, (Usize)dims[i], &total)) return .none;
     }
-    usize bytes = 0;
+    Usize bytes = 0;
     if (__builtin_mul_overflow(total, sizeof(T), &bytes)) return .none;
     void *memory = try_alloc_raw(bytes, alignof(T));
     if (memory == nullptr) return .none;
@@ -148,20 +148,20 @@ arena::slice_of(T, countof(dims)) slice_over(constexpr type T, void *memory, aut
 
 // The block of `block` resized to size bytes, or null when the allocator refuses (the old block is then untouched).
 // Libc's realloc is called, so the handlers and any swapped allocator see it whoever the caller is.
-void *realloc_block(void *block, usize size) {
+void *realloc_block(void *block, Usize size) {
     contract::trusted();            // the allocator is the edge
     return c::realloc(block, size); // NOLINT(smith-effects): the edge, as try_alloc_raw
 }
 
 // block resized from old items to n of size bytes, the tail zeroed; null when n * size overflows or the allocator
 // refuses (block is then untouched). n == 0 frees the block (C23 leaves `realloc(p, 0)` undefined) and gives null.
-void *resize_raw(void *block, usize old, usize n, usize size) {
+void *resize_raw(void *block, Usize old, Usize n, Usize size) {
     contract::trusted(); // it writes the tail it hands out
     if (n == 0) {
         c::free(block); // NOLINT(smith-effects): the edge
         return nullptr;
     }
-    usize bytes = 0;
+    Usize bytes = 0;
     if (__builtin_mul_overflow(n, size, &bytes)) return nullptr;
     void *memory = realloc_block(block, bytes);
     if (memory == nullptr) return nullptr;
@@ -173,9 +173,9 @@ void *resize_raw(void *block, usize old, usize n, usize size) {
 // untouched and still the caller's. `.some` holds the first min(count, n) elements of xs and a zeroed tail; the old
 // block is gone. n == 0 frees the block and gives the empty slice. An empty xs (data null) is a fresh allocation.
 // One dimension only; the result is freed with mem::free.
-[[std::c_name("smith_mem_try_realloc_slice")]] export [[nodiscard]] option(typeof(xs)) try_realloc(auto xs, usize n) {
+[[std::c_name("smith_mem_try_realloc_slice")]] export [[nodiscard]] Option(typeof(xs)) try_realloc(auto xs, Usize n) {
     static_assert(alignof(typeof(*xs.data)) <= 16, "try_realloc: realloc aligns to 16 bytes");
-    usize old = xs.data == nullptr ? 0 : xs.count[0];
+    Usize old = xs.data == nullptr ? 0 : xs.count[0];
     void *memory = resize_raw((void *)xs.data, old, n, sizeof(*xs.data));
     if (memory == nullptr && n != 0) {
         return .none;
@@ -189,13 +189,13 @@ void *resize_raw(void *block, usize old, usize n, usize size) {
 // xs resized to n elements, never null: the first min(count, n) elements stay, a grown tail is zeroed, `xs = mem::
 // realloc(xs, n)`. A refusal or an overflowing size is a checked failure naming the size, as alloc_slice. See
 // try_realloc for n == 0 and an empty xs.
-[[std::c_name("smith_mem_realloc_slice")]] export [[nodiscard]] typeof(xs) realloc(auto xs, usize n) {
+[[std::c_name("smith_mem_realloc_slice")]] export [[nodiscard]] typeof(xs) realloc(auto xs, Usize n) {
     static_assert(alignof(typeof(*xs.data)) <= 16, "realloc: realloc aligns to 16 bytes");
-    usize old = xs.data == nullptr ? 0 : xs.count[0];
+    Usize old = xs.data == nullptr ? 0 : xs.count[0];
     void *memory = resize_raw((void *)xs.data, old, n, sizeof(*xs.data));
     if (memory == nullptr && n != 0) {
-        usize bytes = 0;
-        if (__builtin_mul_overflow(n, sizeof(*xs.data), &bytes)) bytes = ~(usize)0;
+        Usize bytes = 0;
+        if (__builtin_mul_overflow(n, sizeof(*xs.data), &bytes)) bytes = ~(Usize)0;
         refuse(bytes, alignof(typeof(*xs.data)));
     }
     typeof(xs) result = {};
@@ -224,24 +224,24 @@ void *resize_raw(void *block, usize old, usize n, usize size) {
 
 constexpr bool sanitized = target::address_sanitizer;
 
-export constexpr usize checked_frames_max = 16; // the frames kept for a site
-constexpr usize free_frames_max = 8;            // the frames kept for the first free
-constexpr usize buckets_count = 256;            // of the table that finds a block by its address
-constexpr u32 state_live = 1;
-constexpr u32 state_freed = 2;
-constexpr usize sites_listed = 8; // the leaks a report lists
+export constexpr Usize checked_frames_max = 16; // the frames kept for a site
+constexpr Usize free_frames_max = 8;            // the frames kept for the first free
+constexpr Usize buckets_count = 256;            // of the table that finds a block by its address
+constexpr U32 state_live = 1;
+constexpr U32 state_freed = 2;
+constexpr Usize sites_listed = 8; // the leaks a report lists
 
 typedef struct CheckedRecord {
     struct CheckedRecord *next; // the next in the bucket
-    u8 *block;                  // what the caller got: the parent's own block
-    usize size;                 // what the caller asked
-    usize span;                 // what the parent made: the size asked, at least 1
-    usize serial;               // 1 for the first allocation: the order a report lists
-    u32 state;
-    u32 alloc_count;
-    u32 free_count;
-    usize alloc_frames[checked_frames_max];
-    usize free_frames[free_frames_max];
+    U8 *block;                  // what the caller got: the parent's own block
+    Usize size;                 // what the caller asked
+    Usize span;                 // what the parent made: the size asked, at least 1
+    Usize serial;               // 1 for the first allocation: the order a report lists
+    U32 state;
+    U32 alloc_count;
+    U32 free_count;
+    Usize alloc_frames[checked_frames_max];
+    Usize free_frames[free_frames_max];
 } CheckedRecord;
 
 // The allocator. `base` comes first so &checked.base is what set_allocator takes; the value must not move while set.
@@ -249,27 +249,27 @@ typedef struct CheckedRecord {
     Allocator base;
     Allocator *parent; // null: the system's
     void *buckets;     // the table of records, made with the first block
-    usize serial;
-    usize live;       // blocks not freed
-    usize live_bytes; // their sizes
+    Usize serial;
+    Usize live;       // blocks not freed
+    Usize live_bytes; // their sizes
 } Checked;
 
 // One live block: where it was made.
 [[std::c_name("SmithCheckedSite")]] export typedef struct {
-    usize serial; // 0 when there is none
-    usize size;
-    usize address;
-    usize frame_count;
-    usize frames[checked_frames_max]; // innermost first, as <smith/trace.h>
+    Usize serial; // 0 when there is none
+    Usize size;
+    Usize address;
+    Usize frame_count;
+    Usize frames[checked_frames_max]; // innermost first, as <smith/trace.h>
 } CheckedSite;
 
 // The bucket of an address: the top 8 bits of its hash (256 buckets).
-usize bucket_of(const void *block) {
-    return (usize)(((u64)(usize)block >> 4) * 0x9E3779B97F4A7C15ULL >> 56);
+Usize bucket_of(const void *block) {
+    return (Usize)(((U64)(Usize)block >> 4) * 0x9E3779B97F4A7C15ULL >> 56);
 }
 
 // Memory from a parent (null: the system's). The system's is reached with the handler of the thread out of the way.
-export void *from_parent(Allocator *parent, usize size, usize align) {
+export void *from_parent(Allocator *parent, Usize size, Usize align) {
     contract::trusted();
     if (parent != nullptr) return parent->alloc(parent, size, align);
     Allocator *before = set_allocator(nullptr);
@@ -289,7 +289,7 @@ export void to_parent(Allocator *parent, void *block) {
     set_allocator(before);
 }
 
-void *parent_alloc(Checked *self, usize size, usize align) {
+void *parent_alloc(Checked *self, Usize size, Usize align) {
     return from_parent(self->parent, size, align);
 }
 
@@ -315,7 +315,7 @@ CheckedRecord *find(const Checked *self, const void *block) {
 }
 
 // A line on standard error, then the stack as a block `smith symbolize` reads.
-void say_site(const char *heading, const char *details, const usize *frames, u32 count) {
+void say_site(const char *heading, const char *details, const Usize *frames, U32 count) {
     contract::trusted();
     c::smith_trace_write(2, "", heading, nullptr, details, frames, count, false, true);
 }
@@ -337,25 +337,25 @@ void say_site(const char *heading, const char *details, const usize *frames, u32
 // A freed block is poisoned to the end of its last 8-byte granule: a block of 4 bytes has the other 4 of its granule.
 void poison_freed(const CheckedRecord *record) {
     contract::trusted(); // the sanitizer's runtime is the edge; a build without it never calls this
-    c::__asan_poison_memory_region(record->block, (record->span + 7) & ~(usize)7);
+    c::__asan_poison_memory_region(record->block, (record->span + 7) & ~(Usize)7);
 }
 
-void *checked_alloc(Allocator *self, usize size, usize align) {
+void *checked_alloc(Allocator *self, Usize size, Usize align) {
     contract::trusted();
     Checked *checked_self = (Checked *)self;
     if (align < 16) align = 16;
-    if (size > math::max(usize) - 64) return nullptr;
-    usize span = size > 0 ? size : 1;
+    if (size > math::max(Usize) - 64) return nullptr;
+    Usize span = size > 0 ? size : 1;
     CheckedRecord **buckets = table(checked_self);
     if (buckets == nullptr) return nullptr;
-    u8 *block = (u8 *)parent_alloc(checked_self, span, align);
+    U8 *block = (U8 *)parent_alloc(checked_self, span, align);
     CheckedRecord *record = (CheckedRecord *)parent_alloc(checked_self, sizeof(CheckedRecord), 16);
     if (block == nullptr || record == nullptr) {
         if (block != nullptr) parent_free(checked_self, block);
         if (record != nullptr) parent_free(checked_self, record);
         return nullptr;
     }
-    usize bucket = bucket_of(block);
+    Usize bucket = bucket_of(block);
     checked_self->serial += 1;
     *record = (CheckedRecord){.next = buckets[bucket],
                               .block = block,
@@ -363,7 +363,7 @@ void *checked_alloc(Allocator *self, usize size, usize align) {
                               .span = span,
                               .serial = checked_self->serial,
                               .state = state_live};
-    record->alloc_count = (u32)c::smith_trace_capture(record->alloc_frames, checked_frames_max);
+    record->alloc_count = (U32)c::smith_trace_capture(record->alloc_frames, checked_frames_max);
     buckets[bucket] = record;
     checked_self->live += 1;
     checked_self->live_bytes += size;
@@ -393,13 +393,13 @@ void checked_free(Allocator *self, void *block) {
     Checked *checked_self = (Checked *)self;
     CheckedRecord *record = held(checked_self, block, "free");
     record->state = state_freed;
-    record->free_count = (u32)c::smith_trace_capture(record->free_frames, free_frames_max);
+    record->free_count = (U32)c::smith_trace_capture(record->free_frames, free_frames_max);
     checked_self->live -= 1;
     checked_self->live_bytes -= record->size;
     if (sanitized) poison_freed(record);
 }
 
-void *checked_realloc(Allocator *self, void *block, usize size, usize align) {
+void *checked_realloc(Allocator *self, void *block, Usize size, Usize align) {
     contract::trusted();
     if (block == nullptr) return checked_alloc(self, size, align);
     CheckedRecord *record = held((Checked *)self, block, "realloc");
@@ -415,7 +415,7 @@ bool checked_owns(Allocator *self, const void *block) {
     return find((Checked *)self, block) != nullptr;
 }
 
-usize checked_size(Allocator *self, const void *block) {
+Usize checked_size(Allocator *self, const void *block) {
     contract::trusted();
     const CheckedRecord *record = find((Checked *)self, block);
     return record != nullptr ? record->size : 0;
@@ -433,11 +433,11 @@ usize checked_size(Allocator *self, const void *block) {
 }
 
 // The blocks not freed, and their bytes.
-[[std::c_name("smith_mem_checked_live")]] export [[nodiscard]] usize checked_live(const Checked *self) {
+[[std::c_name("smith_mem_checked_live")]] export [[nodiscard]] Usize checked_live(const Checked *self) {
     return self->live;
 }
 
-[[std::c_name("smith_mem_checked_live_bytes")]] export [[nodiscard]] usize checked_live_bytes(const Checked *self) {
+[[std::c_name("smith_mem_checked_live_bytes")]] export [[nodiscard]] Usize checked_live_bytes(const Checked *self) {
     return self->live_bytes;
 }
 
@@ -466,7 +466,7 @@ bool system_path(const char *path) {
 if constexpr (target::os == target::macos) {
     typedef c::Dl_info Image;
 
-    i32 image_of(const void *address, Image *info) {
+    I32 image_of(const void *address, Image *info) {
         // NOLINTNEXTLINE(smith-effects): the loader's own table of images, read-only
         return c::dladdr(address, info);
     }
@@ -478,9 +478,9 @@ if constexpr (target::os == target::macos) {
         void *dli_saddr;
     } Image;
 
-    extern i32 loader_image(const void *address, Image *info) __asm__("dladdr");
+    extern I32 loader_image(const void *address, Image *info) __asm__("dladdr");
 
-    i32 image_of(const void *address, Image *info) {
+    I32 image_of(const void *address, Image *info) {
         // NOLINTNEXTLINE(smith-effects): the loader's own table of images, read-only
         return loader_image(address, info);
     }
@@ -493,7 +493,7 @@ bool machinery(const Image *info) {
                                        __builtin_strstr(info->dli_fname, "libsystem_malloc") != nullptr))
         return true;
     if (info->dli_sname == nullptr) return false;
-    for (usize i = 0; i < sizeof machinery_names / sizeof machinery_names[0]; i++)
+    for (Usize i = 0; i < sizeof machinery_names / sizeof machinery_names[0]; i++)
         if (starts(info->dli_sname, machinery_names[i])) return true;
     return false;
 }
@@ -503,12 +503,12 @@ bool machinery(const Image *info) {
 // caller. A frame of the program's own (the caller of mem::alloc, of strdup) ends the walk: the block is its.
 bool library_held(const CheckedRecord *record) {
     contract::trusted(); // dladdr is the edge
-    for (u32 i = 0; i < record->alloc_count; i++) {
+    for (U32 i = 0; i < record->alloc_count; i++) {
         Image info = {};
         if (image_of((const void *)record->alloc_frames[i], &info) == 0) return false;
         if (machinery(&info)) continue;
         if (!system_path(info.dli_fname) || info.dli_sname == nullptr) return false;
-        for (usize name = 0; name < sizeof owning / sizeof owning[0]; name++)
+        for (Usize name = 0; name < sizeof owning / sizeof owning[0]; name++)
             if (__builtin_strcmp(info.dli_sname, owning[name]) == 0) return false;
         return true;
     }
@@ -518,17 +518,17 @@ bool library_held(const CheckedRecord *record) {
 CheckedSite site_of(const CheckedRecord *record) {
     CheckedSite site = {.serial = record->serial,
                         .size = record->size,
-                        .address = (usize)record->block,
+                        .address = (Usize)record->block,
                         .frame_count = record->alloc_count};
-    for (u32 i = 0; i < record->alloc_count; i++)
+    for (U32 i = 0; i < record->alloc_count; i++)
         site.frames[i] = record->alloc_frames[i];
     return site;
 }
 
 // The leaks of the allocator so far: the live blocks that the caller owes, how many, their bytes, and the first.
 [[std::c_name("SmithCheckedLeaks")]] export typedef struct {
-    usize count;
-    usize bytes;
+    Usize count;
+    Usize bytes;
     CheckedSite first; // the one allocated first; its serial is 0 when there is none
 } CheckedLeaks;
 
@@ -536,12 +536,12 @@ CheckedSite site_of(const CheckedRecord *record) {
 // for the next. serial is 0 when there is none. The order is the order of allocation, so a report is the same on every
 // run. A block the C library keeps for itself (see library_held) is not a leak.
 [[std::c_name("smith_mem_checked_leak")]] export [[nodiscard]] CheckedSite checked_leak(const Checked *self,
-                                                                                        usize after) {
+                                                                                        Usize after) {
     contract::trusted();
     CheckedSite site = {};
     if (self->buckets == nullptr) return site;
     const CheckedRecord *best = nullptr;
-    for (usize i = 0; i < buckets_count; i++)
+    for (Usize i = 0; i < buckets_count; i++)
         for (const CheckedRecord *r = ((CheckedRecord **)self->buckets)[i]; r != nullptr; r = r->next)
             if (r->state == state_live && r->serial > after && (best == nullptr || r->serial < best->serial) &&
                 !library_held(r))
@@ -556,7 +556,7 @@ CheckedSite site_of(const CheckedRecord *record) {
     CheckedLeaks leaks = {};
     if (self->buckets == nullptr) return leaks;
     const CheckedRecord *first = nullptr;
-    for (usize i = 0; i < buckets_count; i++)
+    for (Usize i = 0; i < buckets_count; i++)
         for (const CheckedRecord *r = ((CheckedRecord **)self->buckets)[i]; r != nullptr; r = r->next) {
             if (r->state != state_live || library_held(r)) continue;
             leaks.count += 1;
@@ -569,17 +569,17 @@ CheckedSite site_of(const CheckedRecord *record) {
 
 // Writes the leaks to standard error, the first eight with the stack of their allocation as blocks `smith symbolize`
 // reads, and returns how many there are.
-[[std::c_name("smith_mem_checked_report")]] export usize checked_report(const Checked *self) {
+[[std::c_name("smith_mem_checked_report")]] export Usize checked_report(const Checked *self) {
     contract::trusted();
-    usize serial = 0;
-    for (usize listed = 0; listed < sites_listed; listed++) {
+    Usize serial = 0;
+    for (Usize listed = 0; listed < sites_listed; listed++) {
         CheckedSite site = checked_leak(self, serial);
         if (site.serial == 0) break;
         serial = site.serial;
         char details[96];
         __builtin_snprintf(details, sizeof details, "%zu bytes at %p were never freed", site.size,
                            (void *)site.address);
-        say_site("memory leaked", details, site.frames, (u32)site.frame_count);
+        say_site("memory leaked", details, site.frames, (U32)site.frame_count);
     }
     return checked_leaks(self).count;
 }
@@ -589,7 +589,7 @@ CheckedSite site_of(const CheckedRecord *record) {
 [[std::c_name("smith_mem_checked_release")]] export void checked_release(Checked *self) {
     contract::trusted();
     if (self->buckets == nullptr) return;
-    for (usize i = 0; i < buckets_count; i++) {
+    for (Usize i = 0; i < buckets_count; i++) {
         CheckedRecord *r = ((CheckedRecord **)self->buckets)[i];
         while (r != nullptr) {
             CheckedRecord *next = r->next;
@@ -654,7 +654,7 @@ export void zero(auto x) {
 
 // Sets every element of xs to v (converted to the element type, as an assignment does).
 export void fill(auto xs, auto v) {
-    usize at = 0;
+    Usize at = 0;
     while (at < xs.count[0]) {
         xs.data[at] = (typeof(*xs.data))v;
         at++;
@@ -672,45 +672,45 @@ export [[nodiscard]] bool equal(auto a, auto b) {
 }
 
 // A slice of count bytes at p: the one place a byte pointer gets its count.
-typeof(u8[:]) bytes_at(u8 *p, usize count) {
+typeof(U8[:]) bytes_at(U8 *p, Usize count) {
     return p[0:count];
 }
 
 // A slice of count read-only bytes at p.
-typeof(const u8[:]) read_bytes_at(const u8 *p, usize count) {
+typeof(const U8[:]) read_bytes_at(const U8 *p, Usize count) {
     return p[0:count];
 }
 
 // Whether data is a whole number of items of size bytes aligned to align.
-bool whole_items(u8 data[:], usize size, usize align) {
+bool whole_items(U8 data[:], Usize size, Usize align) {
     if (countof(data) % size != 0) return false;
     if (countof(data) == 0) return true;
-    return (usize)&data[0] % align == 0;
+    return (Usize)&data[0] % align == 0;
 }
 
-// The bytes of the one value p points at, as a `u8[:]` that carries the size: `mem::bytes(&x)`. For a value to read
+// The bytes of the one value p points at, as a `U8[:]` that carries the size: `mem::bytes(&x)`. For a value to read
 // only (a `const` pointee) use read_bytes.
-export [[nodiscard]] typeof(u8[:]) bytes(auto p) {
+export [[nodiscard]] typeof(U8[:]) bytes(auto p) {
     contract::trusted();
-    return bytes_at((u8 *)p, sizeof(*p));
+    return bytes_at((U8 *)p, sizeof(*p));
 }
 
-// The bytes of the one value p points at, as a `const u8[:]`.
-export [[nodiscard]] typeof(const u8[:]) read_bytes(auto p) {
+// The bytes of the one value p points at, as a `const U8[:]`.
+export [[nodiscard]] typeof(const U8[:]) read_bytes(auto p) {
     contract::trusted();
-    return read_bytes_at((const u8 *)p, sizeof(*p));
+    return read_bytes_at((const U8 *)p, sizeof(*p));
 }
 
 // Whether the bytes are a whole number of T and aligned for T, so that view(data, T) holds. A bytes-to-slice cast is
 // the one unchecked thing C lets you write for this; here the question has an answer first.
-export [[nodiscard]] bool can_view(u8 data[:], constexpr type T) {
+export [[nodiscard]] bool can_view(U8 data[:], constexpr Type T) {
     return whole_items(data, sizeof(T), alignof(T));
 }
 
 // The one sanctioned place bytes become a typed slice: the bytes as a `T[:]`. It is a checked failure unless
 // can_view(data, T) (a whole number of T, aligned for T): `if (mem::can_view(raw, f32)) { f32 xs[:] = mem::view(raw,
 // f32); }`. An option of a slice cannot be written in a generic yet, so the question and the cast are two calls.
-export [[nodiscard]] typeof(T[:]) view(u8 data[:], constexpr type T) {
+export [[nodiscard]] typeof(T[:]) view(U8 data[:], constexpr Type T) {
     contract::trusted();
     bool whole = whole_items(data, sizeof(T), alignof(T));
     contract::assert(whole);

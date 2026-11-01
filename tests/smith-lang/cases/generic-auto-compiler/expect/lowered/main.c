@@ -7,7 +7,7 @@ float real;
 __UINT32_TYPE__ bits;
 };
 } Cell;
-typedef enum : u8 { Small = 3, Large = 200 } Size;
+typedef enum : U8 { Small = 3, Large = 200 } Size;
 static __INT32_TYPE__ triple(__INT32_TYPE__ v) {
 return v * 3;
 }

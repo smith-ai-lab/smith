@@ -1,10 +1,10 @@
 module main;
 
-I32 apply(lambda(I32 (I32)) f, I32 x) {
+I32 apply(Lambda(I32 (I32)) f, I32 x) {
     return f(x);
 }
 
 I32 main() {
     I32 factor = 3;
-    return apply([factor](I32 a) -> i32 { return a * factor; }, 4);
+    return apply([factor](I32 a) -> I32 { return a * factor; }, 4);
 }

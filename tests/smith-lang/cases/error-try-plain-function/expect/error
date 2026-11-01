@@ -1,2 +1,2 @@
-src/main.smith:9:13: `try` returns the failure from the function, so the function must return a `result(T, E)` or an `option(T)`; this one returns something else. Test the value by hand: `if (r == .error) return ...;`
-src/main.smith:9:9: initializing 'i32' (aka 'int') with an expression of incompatible type 'struct smith_enum_result_i32__i32'
+src/main.smith:9:13: `try` returns the failure from the function, so the function must return a `Result(T, E)` or an `Option(T)`; this one returns something else. Test the value by hand: `if (r == .error) return ...;`
+src/main.smith:9:9: initializing 'I32' (aka 'int') with an expression of incompatible type 'struct smith_enum_result_i32__i32'

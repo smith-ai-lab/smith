@@ -1,1 +1,1 @@
-Packet,Alias,struct Header,union Number,Hidden,Missing,u32
+Packet,Alias,struct Header,union Number,Hidden,Missing,U32

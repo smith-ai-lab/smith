@@ -15,8 +15,8 @@ module words;
 import std::ascii;
 
 // How many runs of letters a text holds.
-export usize word_count(const char text[:]) {
-    usize words = 0;
+export Usize word_count(const char text[:]) {
+    Usize words = 0;
     bool inside = false;
     for (char c : text) {
         bool letter = ascii::alpha(c);

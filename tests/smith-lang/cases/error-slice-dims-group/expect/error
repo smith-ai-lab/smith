@@ -1,1 +1,1 @@
-src/main.smith:3:22: a dimension of a run-time array is `[:]` or a number: `f32 xs[:][2]`
+src/main.smith:3:22: a dimension of a run-time array is `[:]` or a number: `F32 xs[:][2]`

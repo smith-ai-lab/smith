@@ -1,27 +1,27 @@
 // Tuple types and slice declarators: clang-format keeps them as written (patches/clang-format-smith.patch, #96, #82).
-typedef struct { i32, f32 } Pair;
-export struct { i32, f32 } make(i32 a, f32 b) {
-    return (struct { i32, f32 }){a, b};
+typedef struct { I32, F32 } Pair;
+export struct { I32, F32 } make(I32 a, F32 b) {
+    return (struct { I32, F32 }){a, b};
 }
-i32 use(struct { i32, struct { f32, f32 } } *p, struct { i32, f32 } q) {
-    struct { i32, f32 } t = {1, 2.0f};
-    usize n = sizeof(struct { i32, f32 });
-    struct { i32, f32 } arr[2] = {{1, 2.0f}, {3, 4.0f}};
+I32 use(struct { I32, struct { F32, F32 } } *p, struct { I32, F32 } q) {
+    struct { I32, F32 } t = {1, 2.0f};
+    Usize n = sizeof(struct { I32, F32 });
+    struct { I32, F32 } arr[2] = {{1, 2.0f}, {3, 4.0f}};
     t[1] = 2.5f;
     return t[0] + p[0][1][0];
 }
 struct Outer {
-    struct { i32, f32 } pair;
-    struct { i32, f32 } list[4];
+    struct { I32, F32 } pair;
+    struct { I32, F32 } list[4];
 };
-struct { i32 *, f32 } make2();
-void slices(i32 xs[:], f32 m[:][2], char s[:]) {
-    i32 a = xs[1:2];
-    i32 b = xs[:b];
-    i32 c = xs[a:];
-    i32 d = xs[i][a:b];
-    i32 e = x ? y : z;
-    i32 f = x ? xs[1] : xs[2];
-    i32 g = xs[a + 1:b - 1];
-    i32 h = xs[c ? 1 : 2:3];
+struct { I32 *, F32 } make2();
+void slices(I32 xs[:], F32 m[:][2], char s[:]) {
+    I32 a = xs[1:2];
+    I32 b = xs[:b];
+    I32 c = xs[a:];
+    I32 d = xs[i][a:b];
+    I32 e = x ? y : z;
+    I32 f = x ? xs[1] : xs[2];
+    I32 g = xs[a + 1:b - 1];
+    I32 h = xs[c ? 1 : 2:3];
 }

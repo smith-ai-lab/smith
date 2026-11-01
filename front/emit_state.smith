@@ -197,6 +197,12 @@ export struct Work {
 // The emitter
 
 // Every field the tickets after B1 need. A ticket that finds one missing escalates; it does not edit this.
+// A `Ty.element` block and the next one; `ty` is first, so a block's address is the element's.
+export struct OwnedTy {
+    Ty ty;
+    OwnedTy *next;
+};
+
 export struct Emitter {
     c::LLVMContextRef context;
     c::LLVMModuleRef module;
@@ -238,6 +244,12 @@ export struct Emitter {
     c::LLVMMetadataRef compile_unit;
     c::LLVMMetadataRef file;
     c::LLVMMetadataRef scope;
+    U32 line_starts[:];  // the byte offset of each line of `options.source`, built once by `debug::begin_module`
+    U32 parameters_left; // parameters of the function not yet declared
+    U32 next_parameter;  // the `arg:` number of the next one
+
+    // The blocks `Ty.element` points to, chained so `memory::release` frees them (B3b).
+    OwnedTy *owned;
 };
 
 // ---------------------------------------------------------------------------------------------------------------

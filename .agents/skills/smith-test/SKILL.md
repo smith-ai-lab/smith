@@ -31,13 +31,13 @@ export void test_sorted_stays_sorted(random::Key key) { // a property test: runs
     arena::Arena a = test::memory(1 << 16); // this test's memory, given back before each key
     random::Key parts[2];
     random::split(key, parts); // a key is used once: split it for each use
-    usize count = (usize)random::uniform_int64_sample(parts[0], (random::UniformInt64){.low = 0, .high = 100});
+    Usize count = (Usize)random::uniform_int64_sample(parts[0], (random::UniformInt64){.low = 0, .high = 100});
     test::note("count %zu", count); // printed under a failure
-    usize items[:] = arena::push_slice(&a, usize, count);
+    Usize items[:] = arena::push_slice(&a, Usize, count);
     random::Key item_keys[:] = arena::push_slice(&a, random::Key, count); // one key per item
     random::split(parts[1], item_keys);
-    for (usize i = 0; i < countof(item_keys); i++) {
-        items[i] = (usize)random::uniform_int64_sample(item_keys[i], (random::UniformInt64){.low = 0, .high = 9});
+    for (Usize i = 0; i < countof(item_keys); i++) {
+        items[i] = (Usize)random::uniform_int64_sample(item_keys[i], (random::UniformInt64){.low = 0, .high = 9});
     }
 }
 ```

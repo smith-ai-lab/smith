@@ -2,11 +2,11 @@ import <stdint.h>;
 import <stdio.h>;
 import std::text;
 
-extern u64 from_c(void);
+extern U64 from_c(void);
 
-i32 main(void) {
-    u64 value = 0;
-    u64 parsed = text::parse_u64(text::make("42"), &value) ? value : 0;
+I32 main(void) {
+    U64 value = 0;
+    U64 parsed = text::parse_u64(text::make("42"), &value) ? value : 0;
     c::printf("%ju %ju\n", (c::uintmax_t)parsed, (c::uintmax_t)from_c());
     return 0;
 }

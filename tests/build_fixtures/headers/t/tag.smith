@@ -1,4 +1,4 @@
 module t::tag;
 import <sys/stat.h>;
 import <stdio.h>;
-export u32 tag_size(struct c::stat *info);
+export U32 tag_size(struct c::stat *info);

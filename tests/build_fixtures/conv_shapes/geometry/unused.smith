@@ -1,5 +1,5 @@
 module geometry::unused;
 
-export i32 nothing() {
+export I32 nothing() {
     return 0 +; // would not compile: nothing imports this file, so nothing compiles it
 }

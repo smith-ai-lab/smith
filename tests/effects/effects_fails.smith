@@ -3,38 +3,38 @@ module effects_fails;
 import std::effects;
 
 // A checked index is a failure point.
-export [[std::effects(fails)]] i32 at(i32 values[:], usize index) {
+export [[std::effects(fails)]] I32 at(I32 values[:], Usize index) {
     return values[index];
 }
 
 // Inferred: the index brings `fails`, and a ceiling without it rejects the function.
-export [[std::pure]] i32 pure_at(i32 values[:], usize index) {
+export [[std::pure]] I32 pure_at(I32 values[:], Usize index) {
     return values[index];
 }
 
-export [[std::effects(alloc)]] i32 alloc_at(i32 values[:], usize index) {
+export [[std::effects(alloc)]] I32 alloc_at(I32 values[:], Usize index) {
     return values[index];
 }
 
-static i32 first(i32 values[:]) {
+static I32 first(I32 values[:]) {
     return values[0];
 }
 
 // No failure point: pure holds.
-export [[std::pure]] i32 safe(i32 x) {
+export [[std::pure]] I32 safe(I32 x) {
     return x + 1;
 }
 
 // The generic asks for no `fails` of the function it is given.
-export i32 run(constexpr auto f, auto x) {
+export I32 run(constexpr auto f, auto x) {
     static_assert(effects::within(f, effects::none), "run: f may not fail");
     return f(x);
 }
 
-export i32 good(i32 x) {
+export I32 good(I32 x) {
     return run(safe, x);
 }
 
-export i32 bad(i32 values[:]) {
+export I32 bad(I32 values[:]) {
     return run(first, values);
 }

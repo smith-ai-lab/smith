@@ -3,6 +3,6 @@ module effects_libc_null_unknown;
 import <unistd.h>;
 
 // A pointer parameter is neither a buffer nor a null constant, so the form of getcwd is not evident.
-export char *here(char *p, usize n) {
+export char *here(char *p, Usize n) {
     return c::getcwd(p, n);
 }

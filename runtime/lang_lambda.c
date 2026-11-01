@@ -578,7 +578,7 @@ static bool smith_lang_lambda_check_list(SmithLang *lang, const SmithHost *host,
     }
     smith_lang_error(lang, host, t[p->captures_from].location,
                      "this lambda captures `%.*s`, and a lambda that captures converts to no function pointer (a "
-                     "function pointer can't carry captures); pass it where a `lambda(F)` is expected",
+                     "function pointer can't carry captures); pass it where a `Lambda(F)` is expected",
                      (int)t[p->captures_from].length, t[p->captures_from].text);
     return false;
 }

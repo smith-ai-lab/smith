@@ -3,8 +3,8 @@
 // smith-module: count
 // smith-imports:
 // smith-names: count_of show
-// smith-generic: count count_of count_count_of src/count.smith -@12 1 2 6 7 | ixw@0:8=__SIZE_TYPE__ iw@0:14=count_count_of p@0:22=( i@0:23=constexpr iw@0:33=type iP1w@0:38=T p@0:39=) pw@0:41={ iw@1:5=return iw@1:12=countof p@1:19=( i@1:20=fields p@1:26=( iP1@1:27=T p@1:28=) p@1:29=) p@1:30=; p@2:1=}
-// smith-generic: count show count_show src/count.smith -@16 1 2 6 7 | iw@0:8=void iw@0:13=count_show p@0:17=( i@0:18=constexpr iw@0:28=type iP1w@0:33=T p@0:34=) pw@0:36={ ixw@1:8=printf p@1:14=( s@1:15="%25zu%20%25s\n" p@1:25=, iw@1:27=countof p@1:34=( i@1:35=fields p@1:41=( iP1@1:42=T p@1:43=) p@1:44=) p@1:45=, iw@1:47=fields p@1:53=( iP1@1:54=T p@1:55=) p@1:56=[ n@1:57=0 p@1:58=] p@1:59=. i@1:60=name p@1:64=) p@1:65=; p@2:1=}
+// smith-generic: count count_of count_count_of src/count.smith -@12 1 2 6 7 | ixw@0:8=__SIZE_TYPE__ iw@0:14=count_count_of p@0:22=( i@0:23=constexpr iw@0:33=Type iP1w@0:38=T p@0:39=) pw@0:41={ iw@1:5=return iw@1:12=countof p@1:19=( i@1:20=fields p@1:26=( iP1@1:27=T p@1:28=) p@1:29=) p@1:30=; p@2:1=}
+// smith-generic: count show count_show src/count.smith -@16 1 2 6 7 | iw@0:8=void iw@0:13=count_show p@0:17=( i@0:18=constexpr iw@0:28=Type iP1w@0:33=T p@0:34=) pw@0:36={ ixw@1:8=printf p@1:14=( s@1:15="%25zu%20%25s\n" p@1:25=, iw@1:27=countof p@1:34=( i@1:35=fields p@1:41=( iP1@1:42=T p@1:43=) p@1:44=) p@1:45=, iw@1:47=fields p@1:53=( iP1@1:54=T p@1:55=) p@1:56=[ n@1:57=0 p@1:58=] p@1:59=. i@1:60=name p@1:64=) p@1:65=; p@2:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>

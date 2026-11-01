@@ -4,4 +4,4 @@ src/main.smith:12:31: cannot tell the type of `5`, the argument of `spread`: the
 src/main.smith:13:31: cannot tell the type of `1`, the argument of `shapes`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
 src/main.smith:15:30: cannot tell the type of `1`, the argument of `mixed`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
 src/main.smith:7:30: cannot tell the type of `1`, the argument of `total`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
-src/main.smith:9:30: cannot tell the type of `(u8)200`, the argument of `total`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:9:30: cannot tell the type of `(U8)200`, the argument of `total`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

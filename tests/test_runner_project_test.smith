@@ -47,7 +47,7 @@ export void test_runner_project_a_file_without_tests_adds_nothing_and_a_project_
     defer mem::set_allocator(outside);
     scratch::Run built = runner::build(&p, "");
     scratch::expect_status("no tests: a file without tests is fine", 0, &built);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::expect_text(runner::label(iso, "no tests: ... and adds nothing"), "same",
                              runner::tests(&p, iso, "--list").out);
@@ -55,11 +55,11 @@ export void test_runner_project_a_file_without_tests_adds_nothing_and_a_project_
     (void)scratch::sh(&p, "rm tests/test_a.smith");
     scratch::Run again = runner::build(&p, "");
     scratch::expect_status("no tests: a project with none builds", 0, &again);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "");
         runner::expect_has(iso, "no tests: ... and runs nothing", &run, "0 passed, 0 failed");
-        scratch::expect_count(runner::label(iso, "no tests: ... with status 0"), 0, (usize)run.status);
+        scratch::expect_count(runner::label(iso, "no tests: ... with status 0"), 0, (Usize)run.status);
     }
 }
 
@@ -74,7 +74,7 @@ export void test_runner_project_a_library_left_out_of_objects_is_linked_by_smith
     defer mem::set_allocator(outside);
     scratch::Run built = runner::build(&p, "");
     scratch::expect_status("objects: a library left out of .objects is linked by smith_tests", 0, &built);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "");
         runner::expect_has(iso, "objects: ... and the test runs", &run, "1 passed, 0 failed");
@@ -91,7 +91,7 @@ export void test_runner_project_no_objects_at_all_builds_and_the_test_runs() {
     (void)scratch::sh(&p, "cp build.noobjects.c build.c");
     scratch::Run built = runner::build(&p, "");
     scratch::expect_status("objects: no .objects at all builds", 0, &built);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "");
         runner::expect_has(iso, "objects: ... and the test runs without them", &run, "1 passed, 0 failed");
@@ -107,7 +107,7 @@ export void test_runner_project_a_test_sees_full_only_with_the_full_option() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run size = runner::plain(&p, iso, "--test size");
         runner::expect_has(iso, "full: a test sees false by default", &size, "1 passed, 0 failed");
@@ -127,7 +127,7 @@ export void test_runner_project_repeated_test_filters_add_up() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run one = runner::tests(&p, iso, "--test bits_equal");
         runner::expect_has(iso, "filters: one --test runs one test", &one, "1 passed, 0 failed");
@@ -148,14 +148,14 @@ export void test_runner_project_check_same_bits_compares_the_bits_and_shows_them
     // Its own build: the failure block reads symbolized paths, which a shared runner cannot give until #782.
     scratch::Run built = runner::build(&p, "");
     scratch::expect_status("extras: the runner builds", 0, &built);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run equal = runner::tests(&p, iso, "--test bits_equal");
         runner::expect_has(iso, "bits: equal bits pass, even a NaN and -0", &equal, "1 passed, 0 failed");
         if (runner::can_symbolize(&p)) {
             runner::expect_failure_block(&p, iso, "bits: 0.0 against -0.0 fails, with both in hex", "bits_zero",
                                          "tests/test_extras.smith", "test::check_same_bits(zero, -0.0);",
-                                         "zero = 0 [0x0p+0], -0.0 = -0 [-0x0p+0]   (f64)", "");
+                                         "zero = 0 [0x0p+0], -0.0 = -0 [-0x0p+0]   (F64)", "");
         }
         scratch::Run nan = runner::tests(&p, iso, "--test bits_nan");
         runner::expect_has(iso, "bits: two NaN payloads fail", &nan, "FAIL bits_nan");
@@ -173,7 +173,7 @@ export void test_runner_project_inputs_are_built_before_the_tests_and_rerun_them
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::write(&p, "gen.txt", "one\n");
         (void)scratch::sh(&p, "rm -f build/data.txt");
@@ -243,7 +243,7 @@ static void check_library_compiles(const char *source) {
     scratch::copy_tree(&p, "lib", "lib");
     scratch::copy_tree(&p, "runtime/build_runtime.c", "runtime/build_runtime.c");
     const char *standards[2] = {"gnu2y", "gnu23"};
-    for (usize i = 0; i < 2; i++) {
+    for (Usize i = 0; i < 2; i++) {
         const char *command =
             format::push("flags=$(awk '/smith_profile_warnings\\[\\] =/ {on = 1} on {print} /nullptr};/ {on = 0}' "
                          "runtime/build_runtime.c | grep -o '\"-[^\"]*\"' | tr -d '\"' | grep -v '^-std='); "
@@ -296,7 +296,7 @@ export void test_runner_project_smith_tests_are_found_and_selected_by_the_name_a
     scratch::Run prototype = scratch::sh(&p, "grep -F 'void geometry_box_test_test_area(void)' build/tests_list.h");
     scratch::expect_contains("smith tests: ... the prototype has the symbol of the export", prototype.out,
                              "__asm__(\"_geometry::box_test::test_area\")");
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run list = runner::tests(&p, iso, "--list");
         scratch::expect_text(runner::label(iso, "smith tests: found, a module's by its written name"),
@@ -354,10 +354,10 @@ export void test_runner_project_a_failing_smith_test_names_the_smith_line_and_th
     defer mem::set_allocator(outside);
     build_lang(&p);
     if (!runner::can_symbolize(&p)) return;
-    usize area = runner::line_of(&p, "tests/geometry/box_test.smith", "test::check_equal_u64(area, expected);");
-    usize library = runner::line_of(&p, "tests/geometry/box_test.smith", "helpers::require(box::area(2, 3) == 7);");
-    usize plain = runner::line_of(&p, "tests/test_plain.smith", "test::check_equal(n, 4);");
-    for (usize mode = 0; mode < 2; mode++) {
+    Usize area = runner::line_of(&p, "tests/geometry/box_test.smith", "test::check_equal_u64(area, expected);");
+    Usize library = runner::line_of(&p, "tests/geometry/box_test.smith", "helpers::require(box::area(2, 3) == 7);");
+    Usize plain = runner::line_of(&p, "tests/test_plain.smith", "test::check_equal(n, 4);");
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run fails = runner::smith_test(&p, iso, "--test geometry::box_test::area_fails");
         runner::expect_has(iso, "smith tests: a failing check names the .smith line", &fails,

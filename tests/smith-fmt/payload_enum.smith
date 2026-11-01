@@ -1,16 +1,16 @@
 module shapes;
 
 export typedef struct {
-    f64 r;
+    F64 r;
 } Circle;
 
 export typedef enum {
     Circle circle;
-    f64 square;
+    F64 square;
     empty;
 } Shape;
 
-export f64 area(Shape s) {
+export F64 area(Shape s) {
     switch (s) {
     case .circle:
         return 3.14 * s.circle.r * s.circle.r;

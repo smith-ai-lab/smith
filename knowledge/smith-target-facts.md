@@ -20,7 +20,7 @@ at its top), which is how `std::contract` keeps `NDEBUG` and the analyzer in a C
 libraries have no directive and no `c::` name that is a C macro: `#pragma STDC FP_CONTRACT OFF` is a flag the library
 declares (`SMITH_LIBRARY_FLAGS` in smith.c; the build adds it after the project's, from `.smith/lib/std/<name>.flags`),
 `c::assert` is `contract::assert`, `c::isfinite`, `sqrt`, `fabs`, `SIZE_MAX`, `INFINITY` and `NAN` are `std::math`'s
-generics (`math::is_finite(x)`, `math::max(usize)`; not constant expressions, since a generic call is a call), and
+generics (`math::is_finite(x)`, `math::max(Usize)`; not constant expressions, since a generic call is a call), and
 the arena's stop is `smith_failure_format` of trace (so arena, and everything that uses it, links contract and trace).
 
 The goal is no preprocessor in `.smith` source (issue #46 is the first step): what a library asked the preprocessor, the

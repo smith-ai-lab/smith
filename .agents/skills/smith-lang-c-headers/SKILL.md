@@ -9,8 +9,8 @@ description: "A smith module seen from C and C++: the generated header (.smith/i
 module game::replay;
 
 // How many frames a replay holds.
-export typedef struct { u64 frames; } Replay;
-export Replay open(u64 frames) { return (Replay){.frames = frames}; }
+export typedef struct { U64 frames; } Replay;
+export Replay open(U64 frames) { return (Replay){.frames = frames}; }
 ```
 
 ```c

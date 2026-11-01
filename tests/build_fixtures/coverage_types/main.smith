@@ -3,8 +3,8 @@ module main;
 import std::arena;
 
 // A variable with an initializer after the import: the import's functions over types are defined before it.
-i32 limit = 9;
+I32 limit = 9;
 
-i32 main(void) {
+I32 main(void) {
     return limit - 9;
 }

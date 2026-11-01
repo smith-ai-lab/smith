@@ -1,5 +1,5 @@
 module geometry::scale;
 
-export i32 times(i32 a, i32 b) {
+export I32 times(I32 a, I32 b) {
     return a * b;
 }

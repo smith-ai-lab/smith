@@ -7,7 +7,7 @@ export void test_plain(random::Key key) {
     c::smith_check(true);
 }
 
-static i32 helper(i32 x) {
+static I32 helper(I32 x) {
     return x;
 }
 
