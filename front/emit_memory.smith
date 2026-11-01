@@ -16,9 +16,9 @@
 // `sizeof(expr)` has no code to emit: `static_type` walks the chain of members, indexes and dereferences with a loop.
 // A pointer or array `Ty` keeps its element in `Ty.element`, a block of the allocator in force.
 //
-// A NAME THAT IS A GLOBAL is found by `&name` and by the bases of `name[i]`, `name.f` (through `push_place_of`). B1's
-// `name_ref` and `place_name` look at locals only, so a global read or assigned by its bare name is "unknown name";
-// that is an escalation on #1133, not an edit of emit_arith.
+// A NAME THAT IS A GLOBAL is found by `&name`, by the bases of `name[i]`, `name.f` (through `push_place_of`) and, from
+// emit.smith's dispatch, by its bare name (`is_global_name`, `name_ref`, `place_name`): a name that is not a local is
+// tried here before it is reported unknown.
 module front::emit_memory;
 
 import front::ast;
@@ -44,9 +44,25 @@ static state::Ty u64_type(state::Emitter *e) {
     return ty;
 }
 
+// The blocks `Ty.element` points to, chained so `release` can free them: `ty` is first, so a block's address is the
+// element's. The head is one per process; an emitter runs one module at a time and `release` empties it.
+struct Owned {
+    state::Ty ty;
+    Owned *next;
+};
+
+static Owned *owned_head = nullptr;
+
+static state::Ty *own(state::Ty element) {
+    Owned *block = mem::alloc(Owned);
+    block->ty = element;
+    block->next = owned_head;
+    owned_head = block;
+    return &block->ty;
+}
+
 static state::Ty pointer_to(state::Emitter *e, state::Ty element, U32 space) {
-    state::Ty *inner = mem::alloc(state::Ty);
-    *inner = element;
+    state::Ty *inner = own(element);
     state::Ty ty = {.kind = .pointer,
                     .llvm = state::pointer_type(e, space),
                     .name = "pointer",
@@ -56,8 +72,7 @@ static state::Ty pointer_to(state::Emitter *e, state::Ty element, U32 space) {
 }
 
 static state::Ty array_of(state::Ty element, U64 count) {
-    state::Ty *inner = mem::alloc(state::Ty);
-    *inner = element;
+    state::Ty *inner = own(element);
     state::Ty ty = {.kind = .array, .llvm = c::LLVMArrayType2(element.llvm, count), .name = "array", .element = inner};
     ty.count = count;
     return ty;
@@ -197,6 +212,35 @@ static state::Status global_place(state::Emitter *e, const state::Work *w) {
     try global_place_of(e, path.segments[0].text, w->span, &place);
     state::push_value(e, place);
     return state::success();
+}
+
+// Whether `x` is a bare name that is no local but a global of the module.
+export Bool is_global_name(state::Emitter *e, const ast::Expr *x) {
+    if (x->kind != .name) return false;
+    ast::Path path = x->kind.name.path;
+    state::Local local = {};
+    return countof(path.segments) == 1 && !state::find_local(e, path.segments[0].text, &local) &&
+           find_global(e, path.segments[0].text) != nullptr;
+}
+
+static state::Status global_read(state::Emitter *e, const state::Work *w) {
+    try global_place(e, w);
+    state::Value place = state::pop_value(e);
+    c::LLVMValueRef loaded = c::LLVMBuildLoad2(e->builder, place.ty.llvm, place.llvm, "");
+    state::push_value(e, (state::Value){.llvm = loaded, .ty = place.ty});
+    return state::success();
+}
+
+// A global read by its bare name: the place plus a load.
+export state::Status name_ref(state::Emitter *e, const ast::Expr *x) {
+    state::Work w = {.expr = x, .span = x->span};
+    return global_read(e, &w);
+}
+
+// A global as a place by its bare name.
+export state::Status place_name(state::Emitter *e, const ast::Expr *x) {
+    state::Work w = {.expr = x, .span = x->span};
+    return global_place(e, &w);
 }
 
 // Push the place of `x`: a local's by B1, a global's here.
@@ -882,9 +926,13 @@ export state::Status global_variable(state::Emitter *e, const ast::Decl *d) {
     return result;
 }
 
-// Give back the record table and its field lists. `emit::module` does not call this yet (it would need one line in
-// emit.smith, which this ticket may not edit: see the PR of #1133).
+// Give back the record table, its field lists and the `Ty.element` blocks. `emit::module` calls it.
 export void release(state::Emitter *e) {
+    while (owned_head != nullptr) {
+        Owned *next = owned_head->next;
+        mem::free(owned_head);
+        owned_head = next;
+    }
     for (Usize i = 0; i < e->record_count; i++)
         mem::free(e->records[i].fields.data);
     mem::free(e->records.data);
