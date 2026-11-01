@@ -1,0 +1,141 @@
+// Tests of a pointer to a fixed array (#1390, A7u of track A of #1112): `I32[4] *p` and `I32[2][3] *m` as a parameter,
+// a result, a field, a local and a typedef, and the removed C form `T (*p)[4]`, an error that names `T[4] *p`. Each
+// case compares the dump of the module.
+module front_parse_array_pointer_test;
+
+import front::ast;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+// The dump of a file that must parse without errors.
+static Str dump_of(Str source) {
+    parser::Parsed parsed = parser::parse("x.smith", source);
+    if (countof(parsed.errors) > 0) {
+        Str expected = "no error";
+        test::check_equal(parsed.errors[0].message, expected);
+    }
+    return ast::dump(&parsed.module);
+}
+
+// The first error of a file, or `no error`.
+static Str first_error(Str source) {
+    parser::Parsed parsed = parser::parse("x.smith", source);
+    if (countof(parsed.errors) == 0) return "no error";
+    return parsed.errors[0].message;
+}
+
+export void test_array_pointer_parameter() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = dump_of("U8 f(const I32[4] *xs, I32[2][3] *m);");
+    Str want = "(module \n"
+               "  (function f (param xs (pointer (array (named I32 const) (integer 4)))) (param m (pointer (array "
+               "(array (named I32) (integer 3)) (integer 2)))) (result (named U8))))\n";
+    test::check_equal(got, want);
+}
+
+export void test_array_pointer_result() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = dump_of("I32[4] *f(I32 n);");
+    Str want = "(module \n"
+               "  (function f (param n (named I32)) (result (pointer (array (named I32) (integer 4))))))\n";
+    test::check_equal(got, want);
+}
+
+export void test_array_pointer_field() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = dump_of("struct S { I32[4] *xs; I32[4] **pp; };");
+    Str want = "(module \n"
+               "  (struct S\n"
+               "    (field xs (pointer (array (named I32) (integer 4))))\n"
+               "    (field pp (pointer (pointer (array (named I32) (integer 4)))))))\n";
+    test::check_equal(got, want);
+}
+
+export void test_array_pointer_local() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = dump_of("void f(void) { I32[2][3] *m = nullptr; }");
+    Str want =
+        "(module \n"
+        "  (function f\n"
+        "    (result (named void))\n"
+        "    (block\n"
+        "      (declaration\n"
+        "        (variable m (pointer (array (array (named I32) (integer 3)) (integer 2))) (null_pointer))))))\n";
+    test::check_equal(got, want);
+}
+
+export void test_array_pointer_typedef() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = dump_of("typedef I32[4] *Row;");
+    Str want = "(module \n"
+               "  (typedef Row (pointer (array (named I32) (integer 4)))))\n";
+    test::check_equal(got, want);
+}
+
+export void test_array_pointer_c_form_removed() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("U8 f(const I32 (*xs)[4]);");
+    Str want = "a pointer to an array is written `const I32[4] *xs`, not `const I32 (*xs)[4]`";
+    test::check_equal(got, want);
+}
+
+export void test_array_pointer_c_form_removed_variable() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("I32 (**pp)[2][3] = nullptr;");
+    Str want = "a pointer to an array is written `I32[2][3] **pp`, not `I32 (**pp)[2][3]`";
+    test::check_equal(got, want);
+}
+
+export void test_array_pointer_c_form_removed_field() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("struct S { Str (*p)[4]; };");
+    Str want = "a pointer to an array is written `Str[4] *p`, not `Str (*p)[4]`";
+    test::check_equal(got, want);
+}
+
+export void test_array_pointer_c_form_removed_local() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("void f(void) { const I32 (*xs)[4] = nullptr; }");
+    Str want = "a pointer to an array is written `const I32[4] *xs`, not `const I32 (*xs)[4]`";
+    test::check_equal(got, want);
+}
+
+export void test_array_pointer_function_pointer_untouched() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("I32 (*f)(I32);");
+    Str want = "C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result "
+               "type and the parameter types in parentheses, inside `Fn(...)`";
+    test::check_equal(got, want);
+}
