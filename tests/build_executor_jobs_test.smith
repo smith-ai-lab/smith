@@ -2,6 +2,9 @@
 // its jobs, a console job keeps stdin, and Ctrl-C (SIGINT) stops the jobs, removes what they half wrote and exits with
 // 130. Order, never durations: a job that must overlap another waits for the other's mark, and a pooled one waits a
 // bounded while for a mark that must not come, so a loaded machine can only make a check weaker, never fail it.
+// The executor is started as `smith --smith-exec`, dispatched in smith.c, so smith.c is declared.
+// smith-covers: smith.c runtime/executor*.c runtime/slots.c runtime/quiet.c runtime/base.h runtime/platform_*.c
+// smith-covers: tests/build_fixtures/
 module build_executor_jobs_test;
 
 import std::mem;
