@@ -2,42 +2,129 @@
 // files"; issue #906). A tracked file fails when its name ends in `.sh` or its first line is a shell `#!` line, unless
 // it is one of the shell files that exist today, each waiting for its port (#291). The fake programs of
 // tests/build_fixtures/ are data the build tests run in place of curl, gh and a compiler, and are not smith's scripts.
-// The guard is a test, so `smith check` runs it on every tree the train checks.
+// The guard is a test, so `smith check` runs it on every tree the train checks. One process lists the tracked files
+// and the test reads the first bytes of each in process: a loop of head, tr and grep for every file cost 22 CPU-s
+// (#1315).
 module no_shell_files_test;
 
 import std::arena;
+import std::env;
+import std::files;
 import std::format;
 import std::mem;
 import std::test;
+import <string.h>;
 import scratch;
 
-// The tracked shell files, one a line; the repository is the script's first argument.
-constexpr char guard_script[_] =
-    "cd \"$1\" || exit 97; git ls-files | grep -v -e '^scripts/llvm[.]sh$' -e '^scripts/release[.]sh$' "
-    "-e '^tests/build_fixtures/' "
-    "| while IFS= read -r f; do [ -f \"$f\" ] || continue; case \"$f\" in *.sh) printf '%s\\n' \"$f\"; continue;; "
-    "esac; "
-    "head -c 64 \"$f\" | head -n 1 | tr -d '\\000' | grep -qE "
-    "'^#![[:space:]]*(/usr/bin/env[[:space:]]+)?(/[a-z/]*/)?(sh|bash|zsh|dash|ksh)([[:space:]]|$)' "
-    "&& printf '%s\\n' \"$f\"; done | sort -u";
+static bool starts_with(const char *text, const char *prefix) {
+    return c::strncmp(text, prefix, c::strlen(prefix)) == 0;
+}
 
-// The shell files the guard names in the repository at `root` (a shell word).
+static bool blank(char ch) {
+    return ch == ' ' || ch == '\t' || ch == '\v' || ch == '\f' || ch == '\r';
+}
+
+static Usize skip_blanks(const char *line, Usize at) {
+    while (blank(line[at]))
+        at += 1;
+    return at;
+}
+
+// After the optional `/usr/bin/env` and blanks: the optional folder (lower case letters and slashes, up to the last
+// slash), then sh, bash, zsh, dash or ksh followed by a blank or the end of the line.
+static bool names_shell(const char *line, Usize at) {
+    if (line[at] == '/') {
+        Usize last = at;
+        for (Usize i = at; (line[i] >= 'a' && line[i] <= 'z') || line[i] == '/'; i++) {
+            if (line[i] == '/') last = i;
+        }
+        if (last == at) return false;
+        at = last + 1;
+    }
+    const char *shells[5] = {"sh", "bash", "zsh", "dash", "ksh"};
+    for (Usize i = 0; i < 5; i++) {
+        Usize length = c::strlen(shells[i]);
+        if (starts_with(line + at, shells[i]) && (line[at + length] == '\0' || blank(line[at + length]))) return true;
+    }
+    return false;
+}
+
+// Whether the first line (NULs dropped) is `#!` and a shell.
+static bool shell_line(const char *line) {
+    if (!starts_with(line, "#!")) return false;
+    Usize at = skip_blanks(line, 2);
+    const char *env = "/usr/bin/env";
+    Usize env_length = c::strlen(env);
+    if (starts_with(line + at, env) && blank(line[at + env_length])) at = skip_blanks(line, at + env_length);
+    return names_shell(line, at);
+}
+
+// The first line of the first 64 bytes of the file at `path`, in the current allocator; "" when it is no file.
+static const char *first_line(const char *path) {
+    files::OpenResult opened = files::open(path[0:c::strlen(path)], files::Read);
+    if (opened != .ok) return "";
+    U8 buffer[64] = {};
+    files::CountResult got = files::read(opened.ok, buffer[0:64]);
+    files::CloseResult closed = files::close(opened.ok);
+    (void)closed;
+    char *line = mem::alloc_slice(char, 65).data;
+    Usize used = 0;
+    if (got == .ok) {
+        for (Usize i = 0; i < got.ok && buffer[i] != '\n'; i++) {
+            if (buffer[i] != 0) line[used++] = (char)buffer[i];
+        }
+    }
+    line[used] = '\0';
+    return line;
+}
+
+// The shell files that exist today, waiting for their port, and the fake programs of the build tests.
+static bool exempt(const char *name) {
+    return c::strcmp(name, "scripts/llvm.sh") == 0 || c::strcmp(name, "scripts/release.sh") == 0 ||
+           starts_with(name, "tests/build_fixtures/");
+}
+
+static bool ends_with_sh(const char *name) {
+    Usize length = c::strlen(name);
+    return length >= 3 && c::strcmp(name + length - 3, ".sh") == 0;
+}
+
+// The tracked shell files of the repository at `root` (a path), one a line, sorted.
 static const char *offenders(const scratch::Project *p, const char *root) {
-    scratch::write(p, "../guard.sh", guard_script);
-    const char *command = format::push("sh ../guard.sh ", root).data;
-    return scratch::capture(p, command);
+    const char *command = format::push("cd '", root, "' && git -c core.quotepath=off ls-files | LC_ALL=C sort").data;
+    const char *listing = scratch::capture(p, command);
+    const char *found = "";
+    Usize start = 0;
+    Usize length = c::strlen(listing);
+    while (start < length) {
+        Usize end = start;
+        while (end < length && listing[end] != '\n')
+            end += 1;
+        const char *name = format::push(listing[start:end]).data;
+        start = end + 1;
+        if (exempt(name)) continue;
+        const char *path = format::push(root, "/", name).data;
+        if (ends_with_sh(name) || shell_line(first_line(path))) found = format::push(found, name, "\n").data;
+    }
+    scratch::release(listing);
+    return found;
+}
+
+static const char *repo() {
+    env::Value named = env::get("SMITH_REPO");
+    return named == .some ? named.some.data : ".";
 }
 
 export void test_no_tracked_file_of_smith_is_a_new_shell_file() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
-    arena::Arena memory = test::memory(1U << 20);
+    arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::expect_text("a new shell file; owner: \"I want everything to be in Smith. I don't want any shell files.\" "
                          "Write a .smith test through scratch:: (tests/scratch.smith), or a task in the build file",
-                         "", offenders(&p, "\"$SMITH_REPO\""));
+                         "", offenders(&p, repo()));
 }
 
 export void test_a_new_shell_file_fails() {
@@ -53,5 +140,5 @@ export void test_a_new_shell_file_fails() {
             "printf '#!/bin/sh\\n' > scripts/llvm.sh && printf '#!/bin/sh\\n' > tests/build_fixtures/curl && "
             "printf '#!/usr/bin/env python3\\n' > p.py && printf 'int ok;\\n' > src/ok.c && git add -f -A");
     scratch::expect_status("the repository is made", 0, &made);
-    scratch::expect_text("the new shell files", "src/env\ntool\nx.sh\n", offenders(&p, "."));
+    scratch::expect_text("the new shell files", "src/env\ntool\nx.sh\n", offenders(&p, p.dir));
 }
