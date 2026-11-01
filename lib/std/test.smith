@@ -1720,7 +1720,7 @@ constexpr usize slots_max = 131072; // a power of two, twice the words: the hash
 constexpr u32 shrink_runs_max = 1000;
 constexpr u32 shrink_seconds_default = 10;
 
-export typedef struct {
+[[std::c_name("SmithTestDraw")]] export typedef struct {
     u64 key;
     u64 n;
     u64 word;
@@ -2817,7 +2817,7 @@ void shrink_run(const Test *test, const Options *options, Run *run) {
 // returns 0 when it passes and a number naming the failure otherwise (a failure that moves to another number is not
 // kept). The search starts from the words the predicate draws first, and the result holds the shrunk words, in
 // first-use order (the first 32).
-export typedef struct {
+[[std::c_name("SmithTestShrunk")]] export typedef struct {
     u32 runs;     // the predicate's runs, the first included
     u32 count;    // the draws of the shrunk run
     bool changed; // some word got smaller
