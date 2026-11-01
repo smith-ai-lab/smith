@@ -1064,8 +1064,7 @@ static void smith_docs_claude_link(SmithDocs *docs) {
 
 // ---- Documents
 
-// Every .md under knowledge/ and under .agents/skills/, each folder's sorted. A project's AGENTS.md is its own file and
-// is not checked.
+// Every .md under knowledge/ and under .agents/skills/, each folder's sorted.
 static uint32_t smith_docs_documents(SmithDocs *docs, const char **paths) {
     uint32_t count = 0;
     smith_docs_collect(docs, "knowledge", paths, &count);

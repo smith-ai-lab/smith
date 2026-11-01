@@ -18,7 +18,7 @@
 //                                   A type that is already an error (`invalid`) or `Auto` converts with kind
 //                                   `identity`, so one mistake is reported once.
 //
-// THE RULES (the baseline of #414, the owner's rules in AGENTS.md)
+// THE RULES (the baseline of #414, the owner's rules in knowledge/decisions.md)
 //   integers      Widening of the same signedness is implicit (`I32` to `I64`, `U8` to `U32`), and so is unsigned to
 //                 a strictly wider signed (`U32` to `I64`). Narrowing and a change of sign are refused unless the value
 //                 is a constant that fits.

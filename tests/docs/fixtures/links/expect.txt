@@ -1,4 +1,4 @@
-knowledge/alpha.md: broken link ../nope/AGENTS.md
+knowledge/alpha.md: broken link ../nope/GONE.md
 knowledge/alpha.md: broken link gone.md
 knowledge/alpha.md: broken link missing.md
 knowledge/alpha.md: broken link split.md

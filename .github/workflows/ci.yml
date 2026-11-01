@@ -23,7 +23,7 @@ env:
 
 jobs:
   changes:
-    # what the change touches decides what runs: a document no build reads runs nothing, the README, AGENTS.md,
+    # what the change touches decides what runs: a document no build reads runs nothing, the README,
     # knowledge/ and the skills run `smith docs` and their tests, everything else runs the full check
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -79,7 +79,7 @@ jobs:
           # Other workflows (llvm.yml) change nothing this one runs; ci.yml itself and the actions it uses do.
           documents='^(LICENSE[^/]*|CONTRIBUTING[.]md|[^/]+[.](png|jpe?g|gif|svg|webp))$'
           workflows='^[.]github/workflows/'
-          gated='^(README[.]md|AGENTS[.]md|knowledge/.*|[.]agents/.*)$'
+          gated='^(README[.]md|knowledge/.*|[.]agents/.*)$'
           scope=full
           mode=full
           # a push to main is a commit the merge queue already checked: it only publishes the release
@@ -413,7 +413,7 @@ jobs:
             cat "$RUNNER_TEMP/failed.txt"
           fi
   docs:
-    # a change of the README, AGENTS.md, knowledge/ or the skills only: the docs check and the tests that read them
+    # a change of the README, knowledge/ or the skills only: the docs check and the tests that read them
     # (a change that also touches code runs the full check, whose parts include both)
     needs: [changes, build]
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'docs' }}
