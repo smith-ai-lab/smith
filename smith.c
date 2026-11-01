@@ -1179,6 +1179,9 @@ static constexpr unsigned char smith_categorical_source[] = {
 static constexpr unsigned char smith_slice_source[] = {
 #embed "lib/std/slice.smith"
 };
+static constexpr unsigned char smith_optimize_source[] = {
+#embed "lib/std/optimize.smith"
+};
 static constexpr unsigned char smith_wrapping_source[] = {
 #embed "lib/std/wrapping.smith"
 };
@@ -1262,6 +1265,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(mem, true),
     SMITH_LIBRARY(process, true),
     SMITH_LIBRARY(net, true),
+    SMITH_LIBRARY(optimize, true),
     SMITH_LIBRARY_FLAGS(random, true, "-ffp-contract=off\n"),
     SMITH_LIBRARY(slice, true),
     SMITH_LIBRARY(wrapping, true),

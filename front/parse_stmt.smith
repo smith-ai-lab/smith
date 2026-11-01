@@ -367,7 +367,7 @@ static Bool extended_asm(const parse::Parser *p) {
 static ast::Stmt *asm_statement(parse::Parser *p) {
     U32 start = parse::peek(p).span.start;
     Usize before = countof(p->errors);
-    parse::error(p, parse::peek(p).span, "extended asm is not part of Smith; use `hint::keep(x)`");
+    parse::error(p, parse::peek(p).span, "extended asm is not part of Smith; use `optimize::opaque(x)`");
     return settle(p, start, before, empty_stmt());
 }
 
