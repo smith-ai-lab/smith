@@ -5,6 +5,13 @@
 // module's static functions by including its raw lowering, what `smith cc --smith-lower` writes. The behavior of the
 // library is lib/std/random_test.smith. Each test makes its project with scratch::make and has a test::memory arena
 // as the current allocator, so what scratch returns goes back with the arena.
+// smith-covers: smith.c runtime/verbs.c runtime/lang*.c runtime/front_flag.c runtime/sdk_cache.c runtime/platform_*.c
+// smith-covers: runtime/quiet.c shim/hook.cpp shim/clang.cpp shim/names.h shim/tool.h shim/platform*.h include/smith/
+// smith-covers: runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/cache.c runtime/package.c
+// smith-covers: shim/lsp.cpp shim/clangd.cpp lib/std/random.smith lib/std/categorical.smith lib/std/arena.smith
+// smith-covers: lib/std/contract.smith lib/std/math.smith lib/trace.c lib/handlers.c tests/random.c
+// smith-covers: tests/build_fixtures/random_project/
+// smith.c is declared for the cc, build and lsp verbs.
 module random_c_test;
 
 import std::arena;

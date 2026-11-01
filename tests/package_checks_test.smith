@@ -3,6 +3,12 @@
 // tests/package.c holds the checks; the cache and tar are real, the network is std::net's scripted one. It is
 // compiled with smith's cc against the repository ($SMITH_REPO) and run on a tar.gz made here, once at -O0 under ASan
 // and UBSan, once at -O2.
+// smith-covers: smith.c runtime/verbs.c runtime/package.c runtime/untar.c runtime/gzip.c runtime/xz.c runtime/cache.c
+// smith-covers: runtime/lang*.c runtime/front_flag.c runtime/sdk_cache.c runtime/platform_*.c shim/hook.cpp
+// smith-covers: shim/clang.cpp include/smith/ lib/std/net.smith lib/std/files.smith lib/std/env.smith
+// smith-covers: lib/std/inflate.smith lib/std/mem.smith lib/std/arena.smith lib/std/random.smith
+// smith-covers: lib/std/contract.smith lib/std/math.smith lib/handlers.c lib/trace.c tests/package.c
+// smith.c is declared for the cc verb, and the fetch code the check compiles.
 module package_checks_test;
 
 import std::arena;

@@ -9,6 +9,10 @@
 // plain C is left alone. A file added to tests/affine needs a test here: `test_every_file_has_a_test` says which. A
 // test makes its project, then sets its own memory as the current allocator: what scratch returns to it (a Run's texts)
 // is given back with that memory, and scratch::clean frees what make holds.
+// smith-covers: smith.c runtime/verbs.c runtime/lang*.c runtime/front_flag.c runtime/sdk_cache.c runtime/platform_*.c
+// smith-covers: runtime/quiet.c shim/hook.cpp shim/clang.cpp shim/names.h shim/tool.h shim/platform*.h include/smith/
+// smith-covers: shim/affine.cpp shim/lsp.cpp shim/clangd.cpp tests/affine/
+// smith.c is declared for the cc and lsp verbs, whose --check the editor case runs.
 module affine_test;
 
 import std::arena;

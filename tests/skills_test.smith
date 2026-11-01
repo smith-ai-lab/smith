@@ -7,6 +7,11 @@
 // complete `smith` block has no #include, #define, or standard C type (uint32_t, size_t...), and a `c` block has no
 // `module`, `import` or `c::`. There is a test for each skill that has such a block, `skill_case("<skill>")`; a
 // skill that gets its first block needs one: `test_every_skill_with_a_block_has_a_test` says which.
+// smith-covers: smith.c runtime/verbs.c runtime/lang*.c runtime/front_flag.c runtime/sdk_cache.c runtime/platform_*.c
+// smith-covers: runtime/quiet.c shim/hook.cpp shim/clang.cpp shim/names.h shim/tool.h shim/platform*.h include/smith/
+// smith-covers: .agents/skills/ shim/tidy.cpp shim/preprocessor.h shim/idiom.h shim/unsafe.h shim/mem.h lib/std/
+// smith-covers: lib/trace.c lib/handlers.c
+// smith.c is declared for the cc and lint verbs.
 module skills_test;
 
 import std::arena;
