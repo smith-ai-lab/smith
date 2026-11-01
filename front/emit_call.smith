@@ -1,21 +1,298 @@
-// front::emit_call: calls and function declarations for the emitter (B3a, #1112). Stubs with their final signatures:
-// B3a fills the bodies without touching front/emit.smith. The protocol is at the top of front/emit.smith.
+// front::emit_call: calls, `return;` and function prototypes for the emitter (B3a, #1112). The protocol is at the top
+// of front/emit.smith.
+//
+// A call `f(a, b)` names a function of the module or a prototype in it. The callee's key is its path joined by `::`
+// (`geometry::area`); it is found among the module's functions (`e->functions`, bodies) or among the module's
+// prototypes (a `Decl.function` with no body, found in the tree). The arguments are evaluated left to right, each with
+// the parameter's type as its hint; their number and types must be the parameters' exactly (no conversions yet).
+// A prototype is NOT added to `e->functions`: pass 3 walks that table in step with the functions that have bodies, so a
+// prototype in it would shift every body after it. It is declared in the LLVM module, and a call finds it again in the
+// tree. A prototype's symbol is the module's path and its name, like any function (`front::test::cube`); a name
+// written with `::` (`geometry::area`) is the symbol itself, which is how a prototype stands for a function of another
+// module.
+//
+// `Void` is a type of its own here (an LLVM `void`, kind `integer`, zero bits, named `Void`): a call of a function
+// that returns it pushes one value of that type, so an expression statement drops it like any other.
 module front::emit_call;
 
 import front::ast;
+import front::emit_control as control;
+import front::emit_memory as memory;
 import front::emit_state as state;
+import std::arena;
+import std::format;
+import std::mem;
+import <llvm-c/Core.h>;
+
+export struct Signature;
+
+// A function as a call sees it. `params` is the callee's own when `owned` is false, else it is allocated.
+export struct Signature {
+    c::LLVMValueRef function;
+    c::LLVMTypeRef type;
+    state::Ty result;
+    state::Ty params[:];
+    Bool owned;
+};
+
+export typedef Result(Signature, state::Error) SignatureResult;
+
+static Bool is_void(state::Ty ty) {
+    return c::LLVMGetTypeKind(ty.llvm) == c::LLVMVoidTypeKind;
+}
+
+static void release(Signature sig) {
+    if (sig.owned) mem::free(sig.params.data);
+}
+
+// The type a type expression says, with `Void` for the result of a function that returns nothing. (front::emit's
+// `type_of` cannot be imported from here; this is its mapping.)
+static state::TyResult type_for(state::Emitter *e, const ast::TypeExpr *t) {
+    if (t->kind == .named) {
+        ast::Path path = t->kind.named.path;
+        if (countof(path.segments) == 1) {
+            Str text = path.segments[0].text;
+            if (state::same_text(text, "Void")) {
+                state::Ty none = {.kind = .integer, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
+                return none;
+            }
+            state::Ty ty = {};
+            if (state::scalar_type(e, text, &ty)) return ty;
+        }
+        return memory::type_record(e, t);
+    }
+    if (t->kind == .pointer) return memory::type_pointer(e, t);
+    if (t->kind == .array) return memory::type_array(e, t);
+    if (t->kind == .auto_type) return state::ty_fail("`auto` where a type is needed", t->span);
+    return state::ty_fail("not emitted yet: this kind of type", t->span);
+}
+
+// The path joined by `::`, in the allocator in force.
+static Str join(ast::Path path) {
+    Str key = state::msg(format::push(path.segments[0].text));
+    for (Usize i = 1; i < countof(path.segments); i++) {
+        Str longer = state::msg(format::push(key, "::", path.segments[i].text));
+        state::free_text(key);
+        key = longer;
+    }
+    return key;
+}
+
+// The LLVM name of a prototype: the module's path and the name, or the name itself when it holds a `::`.
+static Str symbol_for(state::Emitter *e, Str name) {
+    Str symbol = state::msg(format::push(name));
+    for (Usize i = 0; i + 1 < countof(name); i++) {
+        if (name[i] == ':' && name[i + 1] == ':') return symbol;
+    }
+    for (Usize i = countof(e->tree->name.segments); i > 0; i--) {
+        Str longer = state::msg(format::push(e->tree->name.segments[i - 1].text, "::", symbol));
+        state::free_text(symbol);
+        symbol = longer;
+    }
+    return symbol;
+}
+
+static SignatureResult signature_failed(state::Status status) {
+    if (status == .error) {
+        return {.error = status.error};
+    }
+    state::Error none = {};
+    return {.error = none};
+}
+
+// The types of a function declaration (its function type too), or why it is not emitted.
+static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
+    if (d->kind != .function) {
+        return signature_failed(state::fail("not a function", d->span));
+    }
+    ast::Param source[:] = d->kind.function.params;
+    const ast::TypeExpr *result_type = d->kind.function.result;
+    Bool variadic = d->kind.function.variadic;
+    if (variadic) return signature_failed(state::not_emitted("variadic function", d->span));
+    if (d->is_extern) return signature_failed(state::not_emitted("extern C function", d->span));
+    for (Usize i = 0; i < countof(d->attributes); i++) {
+        ast::Path name = d->attributes[i].name;
+        if (state::same_text(name.segments[countof(name.segments) - 1].text, "c_name"))
+            return signature_failed(state::not_emitted("c_name", d->attributes[i].span));
+    }
+    if (result_type == nullptr) return signature_failed(state::not_emitted("function without a result", d->span));
+    Usize count = countof(source);
+    if (count > 64) return signature_failed(state::not_emitted("more than 64 parameters", d->span));
+    for (Usize i = 0; i < count; i++) {
+        if (source[i].is_constexpr || source[i].is_rest)
+            return signature_failed(state::not_emitted("constexpr or rest parameter", source[i].span));
+    }
+    state::Ty all[:] = mem::alloc_slice(state::Ty, count + 1);
+    c::LLVMTypeRef types[64];
+    for (Usize i = 0; i < count; i++) {
+        state::TyResult made = type_for(e, source[i].type);
+        if (made == .error) {
+            mem::free(all.data);
+            return {.error = made.error};
+        }
+        if (is_void(made.ok)) {
+            mem::free(all.data);
+            return signature_failed(state::fail("a parameter cannot be Void", source[i].span));
+        }
+        all[i] = made.ok;
+        types[i] = made.ok.llvm;
+    }
+    state::TyResult made_result = type_for(e, result_type);
+    if (made_result == .error) {
+        mem::free(all.data);
+        return {.error = made_result.error};
+    }
+    Signature sig = {.result = made_result.ok, .params = all[0:count], .owned = true};
+    sig.type = c::LLVMFunctionType(made_result.ok.llvm, types, (U32)count, 0);
+    return sig;
+}
+
+// The function a call names: one of the module's with a body, or a prototype of the module.
+static SignatureResult find(state::Emitter *e, Str key, ast::Span span) {
+    for (Usize i = 0; i < e->function_count; i++) {
+        if (state::same_text(e->functions[i].name, key)) {
+            state::FunctionInfo info = e->functions[i];
+            Signature sig = {
+                .function = info.llvm, .type = info.llvm_type, .result = info.result, .params = info.params};
+            return sig;
+        }
+    }
+    for (Usize i = 0; i < countof(e->tree->decls); i++) {
+        const ast::Decl *d = e->tree->decls[i];
+        if (d->kind != .function || d->kind.function.body != nullptr) continue;
+        if (!state::same_text(d->kind.function.name, key)) continue;
+        SignatureResult made = signature(e, d);
+        if (made == .error) return made;
+        Signature sig = made.ok;
+        Str symbol = symbol_for(e, key);
+        char *label = state::cstr(symbol);
+        state::free_text(symbol);
+        sig.function = c::LLVMGetNamedFunction(e->module, label);
+        mem::free(label);
+        if (sig.function == nullptr) {
+            release(sig);
+            return signature_failed(state::failf(span, "the prototype of ", key, " is not declared"));
+        }
+        return sig;
+    }
+    return signature_failed(state::failf(span, "unknown function ", key));
+}
+
+// The arguments' values are on the value stack, the first deepest: check them and call.
+static state::Status call_finish(state::Emitter *e, const state::Work *w) {
+    const ast::Expr *x = w->expr;
+    if (x->kind != .call) {
+        return state::fail("not a call", w->span);
+    }
+    ast::ExprRef args[:] = x->kind.call.args;
+    const ast::Expr *callee = x->kind.call.callee;
+    if (callee->kind != .name) {
+        return state::fail("not a name", w->span);
+    }
+    ast::Path path = callee->kind.name.path;
+    Usize count = (Usize)w->number;
+    state::Value values[64];
+    for (Usize i = count; i > 0; i--)
+        values[i - 1] = state::pop_value(e);
+    Str key = join(path);
+    SignatureResult found = find(e, key, callee->span);
+    if (found == .error) {
+        state::free_text(key);
+        return {.error = found.error};
+    }
+    Signature sig = found.ok;
+    c::LLVMValueRef argv[64];
+    for (Usize i = 0; i < count; i++) {
+        if (!state::same_type(values[i].ty, sig.params[i])) {
+            state::Status wrong = state::failf(args[i]->span, "argument ", (U64)(i + 1), " of ", key, " is ",
+                                               values[i].ty.name, ", the parameter is ", sig.params[i].name);
+            state::free_text(key);
+            release(sig);
+            return wrong;
+        }
+        argv[i] = values[i].llvm;
+    }
+    c::LLVMValueRef made = nullptr;
+    if (is_void(sig.result))
+        made = c::LLVMBuildCall2(e->builder, sig.type, sig.function, argv, (U32)count, "");
+    else
+        made = c::LLVMBuildCall2(e->builder, sig.type, sig.function, argv, (U32)count, "call");
+    state::push_value(e, (state::Value){.llvm = made, .ty = sig.result});
+    state::free_text(key);
+    release(sig);
+    return state::success();
+}
 
 // `Expr.call`.
-export state::Status call(state::Emitter *_, const ast::Expr *x, state::Hint _) {
-    return state::not_emitted("call", x->span);
+export state::Status call(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    if (x->kind != .call) {
+        return state::fail("not a call", x->span);
+    }
+    const ast::Expr *callee = x->kind.call.callee;
+    ast::ExprRef args[:] = x->kind.call.args;
+    if (callee->kind != .name) {
+        return state::not_emitted("call of something that is not a name", x->span);
+    }
+    ast::Path path = callee->kind.name.path;
+    Str key = join(path);
+    SignatureResult found = find(e, key, callee->span);
+    if (found == .error) {
+        state::free_text(key);
+        return {.error = found.error};
+    }
+    Signature sig = found.ok;
+    Usize count = countof(args);
+    if (count != countof(sig.params)) {
+        state::Status wrong =
+            state::failf(x->span, key, " takes ", (U64)countof(sig.params), " arguments, the call has ", (U64)count);
+        state::free_text(key);
+        release(sig);
+        return wrong;
+    }
+    state::push_then(e, (state::Work){.then = call_finish, .expr = x, .number = count, .span = x->span});
+    // The first argument runs first: it is pushed last.
+    for (Usize i = count; i > 0; i--)
+        state::push_eval(e, args[i - 1], state::hint_of(sig.params[i - 1]));
+    state::free_text(key);
+    release(sig);
+    return state::success();
 }
 
 // `return;` in a function with no result.
-export state::Status return_void(state::Emitter *_, const ast::Stmt *s) {
-    return state::not_emitted("return without a value", s->span);
+export state::Status return_void(state::Emitter *e, const ast::Stmt *s) {
+    if (!is_void(e->result))
+        return state::failf(s->span, "returning no value from a function that returns ", e->result.name);
+    try control::before_return(e, s->span);
+    c::LLVMBuildRetVoid(e->builder);
+    return state::success();
 }
 
-// A `Decl.function` with no body, declared in the first pass (the function table gets it too).
-export state::Status prototype(state::Emitter *_, const ast::Decl *d) {
-    return state::not_emitted("prototype", d->span);
+// A `Decl.function` with no body, declared in the first pass: an external declaration in the LLVM module. (It is not
+// added to `e->functions`, see the top of this file.)
+export state::Status prototype(state::Emitter *e, const ast::Decl *d) {
+    if (d->kind != .function) {
+        return state::fail("not a function", d->span);
+    }
+    Str name = d->kind.function.name;
+    ast::Span span = d->span;
+    for (Usize i = 0; i < countof(e->tree->decls); i++) {
+        const ast::Decl *other = e->tree->decls[i];
+        if (other != d && other->kind == .function && state::same_text(other->kind.function.name, name))
+            return state::failf(span, name, " is declared twice");
+    }
+    SignatureResult made = signature(e, d);
+    if (made == .error) return {.error = made.error};
+    Signature sig = made.ok;
+    Str symbol = symbol_for(e, name);
+    char *label = state::cstr(symbol);
+    state::free_text(symbol);
+    if (c::LLVMGetNamedFunction(e->module, label) != nullptr) {
+        mem::free(label);
+        release(sig);
+        return state::failf(span, name, " is declared twice");
+    }
+    c::LLVMAddFunction(e->module, label, sig.type);
+    mem::free(label);
+    release(sig);
+    return state::success();
 }

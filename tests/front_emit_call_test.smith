@@ -1,0 +1,358 @@
+// Tests of front::emit_call (#1132, B3a of #1112): calls between the functions of a module, prototypes standing for
+// functions of a second LLVM module in the same JIT, and the errors of a call with their spans. The trees are built by
+// hand as in front_emit_arith_test.smith, which says why a test keeps its tree in an arena and emits with the system's
+// allocator. Not here yet: `fact(n)` calling itself (it needs B2's `if`), and a function that returns `Void` (the
+// declaration of one is emit.smith's, see #1132).
+module front_emit_call_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <string.h>;
+
+typedef I32 (*UnaryI32)(I32);
+typedef I32 (*BinaryI32)(I32, I32);
+
+// ---------------------------------------------------------------------------------------------------------------
+// Building trees
+
+static ast::Expr *name(Str text) {
+    return ast::name(text);
+}
+
+static ast::Expr *number(U64 value) {
+    return ast::integer(value);
+}
+
+static ast::Expr *call1(Str callee, ast::Expr *a) {
+    ast::ExprRef args[1] = {a};
+    return ast::call(ast::name(callee), args);
+}
+
+static ast::Expr *call2(Str callee, ast::Expr *a, ast::Expr *b) {
+    ast::ExprRef args[2] = {a, b};
+    return ast::call(ast::name(callee), args);
+}
+
+static ast::Stmt *give(ast::Expr *value) {
+    return ast::return_value(value);
+}
+
+static ast::Stmt *expression(ast::Expr *value) {
+    ast::StmtKind kind = {.expression = {.value = value}};
+    return ast::stmt(kind);
+}
+
+// An exported function `rtype name(ptype a) { items }`.
+static ast::Decl *function1(Str name, Str ptype, Str rtype, ast::StmtRef items[:]) {
+    ast::Param params[1] = {ast::param("a", ast::named(ptype))};
+    ast::Decl *function = ast::function(name, params, ast::named(rtype), ast::block(items));
+    function->exported = true;
+    return function;
+}
+
+static ast::Decl *function2(Str name, ast::StmtRef items[:]) {
+    ast::Param params[2] = {ast::param("a", ast::named("I32")), ast::param("b", ast::named("I32"))};
+    ast::Decl *function = ast::function(name, params, ast::named("I32"), ast::block(items));
+    function->exported = true;
+    return function;
+}
+
+// A prototype `I32 name(I32 ...);` with `count` parameters.
+static ast::Decl *prototype_i32(Str name, Usize count) {
+    ast::Param params[2] = {ast::param("a", ast::named("I32")), ast::param("b", ast::named("I32"))};
+    return ast::function(name, params[0:count], ast::named("I32"), nullptr);
+}
+
+// A prototype `Void name(I32 a);`.
+static ast::Decl *prototype_void(Str name) {
+    ast::Param params[1] = {ast::param("a", ast::named("I32"))};
+    return ast::function(name, params, ast::named("Void"), nullptr);
+}
+
+static ast::Module module_of(ast::DeclRef decls[:]) {
+    return ast::new_module("front::test", decls);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Memory and running, as in front_emit_arith_test.smith
+
+struct TreeMemory {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    mem::Allocator *outside;
+};
+
+static void tree_begin(TreeMemory *trees) {
+    trees->memory = test::memory(1U << 22);
+    trees->allocator = arena::allocator(&trees->memory);
+    trees->outside = mem::set_allocator(&trees->allocator.base);
+}
+
+static void tree_end(TreeMemory *trees) {
+    mem::set_allocator(trees->outside);
+}
+
+static emit::Options options_for(emit::Target target) {
+    emit::Options options = {};
+    options.target = target;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+// The module as a JIT symbol: emit, hand over to the JIT, look up `symbol`.
+static Usize jit_function(emit_jit::Jit *host, const ast::Module *m, Str symbol) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, m, options_for(host->target));
+    test::check_equal(emitted == .ok, true);
+    Usize address = 0;
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+        emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+        test::check_equal(found == .ok, true);
+        if (found == .ok) address = found.ok;
+    }
+    return address;
+}
+
+static Bool contains(const char *text, Str needle) {
+    return c::strstr(text, needle.data) != nullptr; // a literal's text ends with a terminator
+}
+
+// The error of emitting the module, with the context and the half-built module gone. Its message is the caller's to
+// free.
+static emit::Error failure_of(const ast::Module *m) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::Target target = {};
+    target.triple = "x86_64-unknown-linux-gnu";
+    emit::ModuleResult emitted = emit::module(context, m, options_for(target));
+    test::check_equal(emitted == .error, true);
+    emit::Error error = {};
+    if (emitted == .error) error = emitted.error;
+    c::LLVMContextDispose(context);
+    return error;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// A second LLVM module, built by hand and linked into the JIT of the module under test
+
+// A module whose function `symbol` takes `count` I32 parameters (1 or 2) and returns their product, cubed when there
+// is one parameter (`x * x * x`).
+static void add_product(emit_jit::Jit *host, Str symbol, U32 count) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    c::LLVMModuleRef ir = c::LLVMModuleCreateWithNameInContext("other", context);
+    c::LLVMTypeRef i32 = c::LLVMInt32TypeInContext(context);
+    c::LLVMTypeRef types[2];
+    types[0] = i32;
+    types[1] = i32;
+    c::LLVMTypeRef type = c::LLVMFunctionType(i32, types, count, 0);
+    c::LLVMValueRef function = c::LLVMAddFunction(ir, symbol.data, type); // a literal ends with a terminator
+    c::LLVMBasicBlockRef entry = c::LLVMAppendBasicBlockInContext(context, function, "entry");
+    c::LLVMBuilderRef builder = c::LLVMCreateBuilderInContext(context);
+    c::LLVMPositionBuilderAtEnd(builder, entry);
+    c::LLVMValueRef a = c::LLVMGetParam(function, 0);
+    c::LLVMValueRef product = nullptr;
+    if (count == 1) {
+        product = c::LLVMBuildMul(builder, c::LLVMBuildMul(builder, a, a, ""), a, "");
+    } else {
+        product = c::LLVMBuildMul(builder, a, c::LLVMGetParam(function, 1), "");
+    }
+    c::LLVMBuildRet(builder, product);
+    c::LLVMDisposeBuilder(builder);
+    emit_jit::BoolResult added = emit_jit::add(host, context, ir);
+    test::check_equal(added == .ok, true);
+}
+
+// A module with a global `front::test::seen` and `Void front::test::tick(I32 x) { seen = x; }`.
+static void add_tick(emit_jit::Jit *host) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    c::LLVMModuleRef ir = c::LLVMModuleCreateWithNameInContext("other", context);
+    c::LLVMTypeRef i32 = c::LLVMInt32TypeInContext(context);
+    c::LLVMValueRef seen = c::LLVMAddGlobal(ir, i32, "front::test::seen");
+    c::LLVMSetInitializer(seen, c::LLVMConstInt(i32, 0, 0));
+    c::LLVMTypeRef types[1];
+    types[0] = i32;
+    c::LLVMTypeRef type = c::LLVMFunctionType(c::LLVMVoidTypeInContext(context), types, 1, 0);
+    c::LLVMValueRef function = c::LLVMAddFunction(ir, "front::test::tick", type);
+    c::LLVMBasicBlockRef entry = c::LLVMAppendBasicBlockInContext(context, function, "entry");
+    c::LLVMBuilderRef builder = c::LLVMCreateBuilderInContext(context);
+    c::LLVMPositionBuilderAtEnd(builder, entry);
+    c::LLVMBuildStore(builder, c::LLVMGetParam(function, 0), seen);
+    c::LLVMBuildRetVoid(builder);
+    c::LLVMDisposeBuilder(builder);
+    emit_jit::BoolResult added = emit_jit::add(host, context, ir);
+    test::check_equal(added == .ok, true);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Tests
+
+// `sum_of_squares` comes before `square` in the module: every function is declared before any body.
+export void test_front_emit_call_a_function_declared_after_the_caller() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef sum_items[1] = {give(ast::binary(.add, call1("square", name("a")), call1("square", name("b"))))};
+    ast::StmtRef square_items[1] = {give(ast::binary(.multiply, name("a"), name("a")))};
+    ast::DeclRef decls[2] = {function2("sum_of_squares", sum_items), function1("square", "I32", "I32", square_items)};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 sum = (BinaryI32)jit_function(&host, &m, "front::test::sum_of_squares");
+    test::check_equal(sum(3, 4), 25);
+    test::check_equal(sum(-5, 1), 26);
+    emit_jit::stop(&host);
+}
+
+// A literal argument takes the parameter's type, and the arguments run left to right.
+export void test_front_emit_call_with_a_literal_argument_and_two_arguments() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef minus_items[1] = {give(ast::binary(.subtract, name("a"), name("b")))};
+    ast::StmtRef call_items[1] = {give(call2("minus", name("a"), number(1)))};
+    ast::DeclRef decls[2] = {function2("minus", minus_items), function1("dec", "I32", "I32", call_items)};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    UnaryI32 dec = (UnaryI32)jit_function(&host, &m, "front::test::dec");
+    test::check_equal(dec(10), 9);
+    emit_jit::stop(&host);
+}
+
+// A prototype of a function the module under test does not define: it is in another LLVM module in the same JIT.
+export void test_front_emit_call_a_prototype_defined_in_a_second_module() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[1] = {give(ast::binary(.add, call1("cube", name("a")), number(1)))};
+    ast::DeclRef decls[2] = {prototype_i32("cube", 1), function1("cube_plus_one", "I32", "I32", items)};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    add_product(&host, "front::test::cube", 1);
+    UnaryI32 f = (UnaryI32)jit_function(&host, &m, "front::test::cube_plus_one");
+    test::check_equal(f(3), 28);
+    emit_jit::stop(&host);
+}
+
+// A prototype named with a path is the symbol itself: a function of another module.
+export void test_front_emit_call_a_prototype_of_another_module_by_its_path() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[1] = {give(call2("geometry::area", name("a"), name("b")))};
+    ast::DeclRef decls[2] = {prototype_i32("geometry::area", 2), function2("area_of", items)};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    add_product(&host, "geometry::area", 2);
+    BinaryI32 f = (BinaryI32)jit_function(&host, &m, "front::test::area_of");
+    test::check_equal(f(6, 7), 42);
+    emit_jit::stop(&host);
+}
+
+// A call of a `Void` function as a statement: its value is dropped, and the function after it still returns.
+export void test_front_emit_call_a_void_prototype_as_a_statement() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[2] = {expression(call1("tick", name("a"))), give(ast::binary(.add, name("a"), number(1)))};
+    ast::DeclRef decls[2] = {prototype_void("tick"), function1("run", "I32", "I32", items)};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    add_tick(&host);
+    UnaryI32 run = (UnaryI32)jit_function(&host, &m, "front::test::run");
+    test::check_equal(run(5), 6);
+    emit_jit::AddressResult seen = emit_jit::lookup(&host, "front::test::seen");
+    test::check_equal(seen == .ok, true);
+    if (seen == .ok) {
+        I32 *where = (I32 *)seen.ok;
+        test::check_equal(*where, 5);
+    }
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_call_with_the_wrong_number_of_arguments_is_an_error() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Expr *bad = call2("square", name("a"), name("a"));
+    bad->span = (ast::Span){.start = 20, .end = 33};
+    ast::StmtRef square_items[1] = {give(ast::binary(.multiply, name("a"), name("a")))};
+    ast::StmtRef items[1] = {give(bad)};
+    ast::DeclRef decls[2] = {function1("square", "I32", "I32", square_items), function1("f", "I32", "I32", items)};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit::Error error = failure_of(&m);
+    test::check_equal(contains(error.message.data, "square takes 1 arguments, the call has 2"), true);
+    test::check_equal(error.span.start, 20U);
+    emit::free_error(error);
+}
+
+export void test_front_emit_call_with_an_argument_of_the_wrong_type_is_an_error() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Expr *wrong = name("a");
+    wrong->span = (ast::Span){.start = 30, .end = 31};
+    ast::StmtRef square_items[1] = {give(ast::binary(.multiply, name("a"), name("a")))};
+    ast::StmtRef items[1] = {give(call1("square", wrong))};
+    ast::DeclRef decls[2] = {function1("square", "I32", "I32", square_items), function1("f", "U8", "I32", items)};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit::Error error = failure_of(&m);
+    test::check_equal(contains(error.message.data, "argument 1 of square is U8, the parameter is I32"), true);
+    test::check_equal(error.span.start, 30U);
+    emit::free_error(error);
+}
+
+export void test_front_emit_call_of_an_unknown_function_is_an_error() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Expr *callee = name("missing");
+    callee->span = (ast::Span){.start = 12, .end = 19};
+    ast::ExprRef args[1] = {number(1)};
+    ast::Expr *bad = ast::call(callee, args);
+    ast::StmtRef items[1] = {give(bad)};
+    ast::DeclRef decls[1] = {function1("f", "I32", "I32", items)};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit::Error error = failure_of(&m);
+    test::check_equal(contains(error.message.data, "unknown function missing"), true);
+    test::check_equal(error.span.start, 12U);
+    emit::free_error(error);
+}
+
+export void test_front_emit_return_without_a_value_in_a_function_with_a_result_is_an_error() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtKind kind = {.return_stmt = {.value = nullptr}};
+    ast::Stmt *bare = ast::stmt(kind);
+    bare->span = (ast::Span){.start = 3, .end = 10};
+    ast::StmtRef items[1] = {bare};
+    ast::DeclRef decls[1] = {function1("f", "I32", "I32", items)};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit::Error error = failure_of(&m);
+    test::check_equal(contains(error.message.data, "returning no value from a function that returns"), true);
+    test::check_equal(error.span.start, 3U);
+    emit::free_error(error);
+}
+
+export void test_front_emit_two_prototypes_of_one_name_are_an_error() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::DeclRef decls[2] = {prototype_i32("cube", 1), prototype_i32("cube", 1)};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit::Error error = failure_of(&m);
+    test::check_equal(contains(error.message.data, "cube is declared twice"), true);
+    emit::free_error(error);
+}
