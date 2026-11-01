@@ -2,14 +2,12 @@ module main;
 
 import <stdio.h>;
 import shapes;
+import std::arena;
 
 // The result type is computed by another module's function; the instance is written here.
-export shapes::slice_of(T, countof(sizes)) make(constexpr Type T, auto... sizes) {
+export shapes::slice_of(T, countof(sizes)) make(arena::Arena *a, constexpr Type T, auto... sizes) {
     static_assert(countof(sizes) > 0, "make needs a size");
-    struct smith_array_T_n result = {};
-    for constexpr (Usize i = 0; i < countof(sizes); i++)
-        result.count[i] = (Usize)sizes[i];
-    return result;
+    return arena::push_slice(a, T, sizes...);
 }
 
 // ... and a condition asks it too.
@@ -39,8 +37,10 @@ int main() {
     static_assert(shapes::small(U8) && !shapes::small(Pair));
     constexpr Type chosen = shapes::slice_if_small(I16);
     static_assert(chosen == typeof(vector) || sizeof(chosen) == 16);
-    grid = make(F32, 3, 4);
-    rows = make(F32[2], 5);
+    arena::Arena a = {};
+    grid = make(&a, F32, 3, 4);
+    rows = make(&a, F32[2], 5);
     c::printf("%zu %zu %zu %d %d\n", countof(grid), countof(grid[0]), countof(rows), describe(U8), describe(Pair));
+    arena::reset(&a);
     return 0;
 }

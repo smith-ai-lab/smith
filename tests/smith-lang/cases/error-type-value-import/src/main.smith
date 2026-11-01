@@ -5,10 +5,6 @@ import shapes;
 // The result type is another module's function, and the body checks the sizes: no size is a message at the call.
 export shapes::slice_of(T, countof(sizes)) make(constexpr Type T, auto... sizes) {
     static_assert(countof(sizes) > 0, "make needs a size for each [:]");
-    struct smith_array_T_n result = {};
-    for constexpr (Usize i = 0; i < countof(sizes); i++)
-        result.count[i] = (Usize)sizes[i];
-    return result;
 }
 
 int main() {

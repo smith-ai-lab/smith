@@ -495,19 +495,19 @@ module main;
 import <stdio.h>;
 import counts;
 import kinds;
+import std::arena;
 
 // The result type is a function over types applied to the result of another module's ordinary function.
-export kinds::slice_of(T, counts::dims(2, 3)) make(constexpr Type T, Usize rows, Usize columns) {
-    struct smith_array_T_n result = {};
-    result.count[0] = rows;
-    result.count[1] = columns;
-    return result;
+export kinds::slice_of(T, counts::dims(2, 3)) make(arena::Arena *a, constexpr Type T, Usize rows, Usize columns) {
+    return arena::push_slice(a, T, rows, columns);
 }
 
 int main() {
     F32 grid[:][:];
-    grid = make(F32, 4, 5);
+    arena::Arena a = {};
+    grid = make(&a, F32, 4, 5);
     c::printf("%zu %zu\n", countof(grid), countof(grid[0]));
+    arena::reset(&a);
     return 0;
 }
 ==> constexpr-import-slice-u8/src/bytes.smith <==
@@ -1446,10 +1446,7 @@ static Option(F32[:]) first(F32 x[:]) {
 }
 
 export Option(arena::slice_of(T, countof(dims))) wrap(constexpr Type T, T *p, auto... dims) {
-    struct smith_array_T_n result = {};
-    result.data = p;
-    result.count[0] = (Usize)dims[0];
-    return {.some = result};
+    return {.some = p[0:(Usize)dims[0]]};
 }
 
 I32 main(void) {
@@ -3916,10 +3913,6 @@ import shapes;
 // The result type is another module's function, and the body checks the sizes: no size is a message at the call.
 export shapes::slice_of(T, countof(sizes)) make(constexpr Type T, auto... sizes) {
     static_assert(countof(sizes) > 0, "make needs a size for each [:]");
-    struct smith_array_T_n result = {};
-    for constexpr (Usize i = 0; i < countof(sizes); i++)
-        result.count[i] = (Usize)sizes[i];
-    return result;
 }
 
 int main() {
@@ -4381,6 +4374,7 @@ export Type slice_of(Type element, Usize count) {
 module main;
 
 import kinds;
+import std::arena;
 import target;
 import <stdio.h>;
 
@@ -4389,17 +4383,16 @@ if constexpr (target::os == target::macos) {
     import <dispatch/dispatch.h>;
 }
 
-export kinds::slice_of(T, 2) make(constexpr Type T, Usize rows, Usize columns) {
-    struct smith_array_T_n result = {};
-    result.count[0] = rows;
-    result.count[1] = columns;
-    return result;
+export kinds::slice_of(T, 2) make(arena::Arena *a, constexpr Type T, Usize rows, Usize columns) {
+    return arena::push_slice(a, T, rows, columns);
 }
 
 int main() {
     F32 grid[:][:];
-    grid = make(F32, 4, 5);
+    arena::Arena a = {};
+    grid = make(&a, F32, 4, 5);
     c::printf("%zu %zu\n", countof(grid), countof(grid[0]));
+    arena::reset(&a);
     return 0;
 }
 ==> foreign-extern/src/sys/world.smith <==
@@ -7280,7 +7273,7 @@ export Type slice_of(Type element, Usize count) {
 // The result is an option over a slice type that a function computes: the argument of `option` is a call.
 export Option(slice_of(T, 1)) view(constexpr Type T, T *xs, Usize n) {
     if (n == 0) return .none;
-    return {.some = (struct smith_array_T_n){.data = xs, .count = {n}}};
+    return {.some = xs[0:n]};
 }
 ==> generic-own-names/src/main.smith <==
 module main;
@@ -12554,14 +12547,12 @@ module main;
 
 import <stdio.h>;
 import shapes;
+import std::arena;
 
 // The result type is computed by another module's function; the instance is written here.
-export shapes::slice_of(T, countof(sizes)) make(constexpr Type T, auto... sizes) {
+export shapes::slice_of(T, countof(sizes)) make(arena::Arena *a, constexpr Type T, auto... sizes) {
     static_assert(countof(sizes) > 0, "make needs a size");
-    struct smith_array_T_n result = {};
-    for constexpr (Usize i = 0; i < countof(sizes); i++)
-        result.count[i] = (Usize)sizes[i];
-    return result;
+    return arena::push_slice(a, T, sizes...);
 }
 
 // ... and a condition asks it too.
@@ -12591,9 +12582,11 @@ int main() {
     static_assert(shapes::small(U8) && !shapes::small(Pair));
     constexpr Type chosen = shapes::slice_if_small(I16);
     static_assert(chosen == typeof(vector) || sizeof(chosen) == 16);
-    grid = make(F32, 3, 4);
-    rows = make(F32[2], 5);
+    arena::Arena a = {};
+    grid = make(&a, F32, 3, 4);
+    rows = make(&a, F32[2], 5);
     c::printf("%zu %zu %zu %d %d\n", countof(grid), countof(grid[0]), countof(rows), describe(U8), describe(Pair));
+    arena::reset(&a);
     return 0;
 }
 ==> type-value-import/src/shapes.smith <==

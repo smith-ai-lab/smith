@@ -3,18 +3,18 @@ module main;
 import <stdio.h>;
 import counts;
 import kinds;
+import std::arena;
 
 // The result type is a function over types applied to the result of another module's ordinary function.
-export kinds::slice_of(T, counts::dims(2, 3)) make(constexpr Type T, Usize rows, Usize columns) {
-    struct smith_array_T_n result = {};
-    result.count[0] = rows;
-    result.count[1] = columns;
-    return result;
+export kinds::slice_of(T, counts::dims(2, 3)) make(arena::Arena *a, constexpr Type T, Usize rows, Usize columns) {
+    return arena::push_slice(a, T, rows, columns);
 }
 
 int main() {
     F32 grid[:][:];
-    grid = make(F32, 4, 5);
+    arena::Arena a = {};
+    grid = make(&a, F32, 4, 5);
     c::printf("%zu %zu\n", countof(grid), countof(grid[0]));
+    arena::reset(&a);
     return 0;
 }

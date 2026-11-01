@@ -1,3 +1,2 @@
-src/main.smith:15:9: initializing 'struct smith_array_f32_n' with an expression of incompatible type 'F32' (aka 'float')
+src/main.smith:11:9: initializing 'struct smith_array_f32_n' with an expression of incompatible type 'F32' (aka 'float')
 src/main.smith:7:19: static assertion failed due to requirement '0 > 0': make needs a size for each [:]
-src/main.smith:8:28: variable has incomplete type 'struct smith_array_f32_n'

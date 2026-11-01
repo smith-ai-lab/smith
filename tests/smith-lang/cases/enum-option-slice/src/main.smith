@@ -8,10 +8,7 @@ static Option(F32[:]) first(F32 x[:]) {
 }
 
 export Option(arena::slice_of(T, countof(dims))) wrap(constexpr Type T, T *p, auto... dims) {
-    struct smith_array_T_n result = {};
-    result.data = p;
-    result.count[0] = (Usize)dims[0];
-    return {.some = result};
+    return {.some = p[0:(Usize)dims[0]]};
 }
 
 I32 main(void) {
