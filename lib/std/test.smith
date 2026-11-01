@@ -1720,7 +1720,7 @@ constexpr usize slots_max = 131072; // a power of two, twice the words: the hash
 constexpr u32 shrink_runs_max = 1000;
 constexpr u32 shrink_seconds_default = 10;
 
-typedef struct {
+export typedef struct {
     u64 key;
     u64 n;
     u64 word;
@@ -2634,17 +2634,20 @@ void report(const Test *test, const Options *options, const Run *run) {
 
 // What shrinking one failure holds: the runs it keeps (the best failure so far and the latest try), and the words of
 // the best one's draws.
-typedef struct {
+struct Shrink {
     const Test *test;
     const Options *options;
     u64 seed;
+    void (*attempt)(Shrink *shrink); // how one try runs: in the shrinking worker, or a predicate (shrink_search)
+    u32 (*verdict)(void *context);   // a predicate's answer: 0 passes, any other number is a failure's identity
+    void *context;
     Run *best;      // the smallest failing run so far
     Run *candidate; // the latest try
     u32 runs;
     f64 deadline;
     Draw list[draws_max]; // the best run's draws, in first-use order
     u32 count;
-} Shrink;
+};
 
 Run tries[2];
 
@@ -2667,15 +2670,27 @@ bool in_budget(const Shrink *shrink) {
 // Runs the key once more in the shrinking worker, which records its draws, with the overrides in place. The run lands
 // in shrink->candidate, with its output.
 void try_run(Shrink *shrink) {
+    draws_clear(recorded);
+    *shrink->candidate = (Run){};
+    shrink->attempt(shrink);
+    shrink->runs += 1;
+}
+
+// The runner's attempt: the key in the shrinking worker.
+void attempt_in_worker(Shrink *shrink) {
     Run *run = shrink->candidate;
     Options options = *shrink->options;
     options.seed_given = true;
     options.seed = shrink->seed;
-    draws_clear(recorded);
-    *run = (Run){};
     dispatch(&options, shrink_slot, shrink->test, run);
     wait_for(shrink_slot, run);
-    shrink->runs += 1;
+}
+
+// A predicate's attempt: its verdict is the outcome, a failure identified by its number.
+void attempt_by_verdict(Shrink *shrink) {
+    u32 verdict = shrink->verdict(shrink->context);
+    shrink->candidate->outcome =
+        verdict == 0 ? (Outcome){.end = End_Passed} : (Outcome){.end = End_Exit, .number = (i32)verdict};
 }
 
 // Tries the word for the draw at index; true (and the try becomes the best) when the failure is the same.
@@ -2762,6 +2777,16 @@ bool shrink_confirm(Shrink *shrink) {
     return same_failure(shrink->best, shrink->candidate);
 }
 
+// Passes over the draws until one makes none smaller; true when any did.
+bool shrink_passes(Shrink *shrink) {
+    bool changed = false;
+    for (i32 pass = 0; pass < 64 && in_budget(shrink); pass++) { // the budget ends it long before
+        if (!shrink_pass(shrink)) break;
+        changed = true;
+    }
+    return changed;
+}
+
 // Shrinks the failing key of a finished property test in place. It runs here, while the other tests' children go on;
 // the same seed gives the same shrunk case unless the time budget ends the search.
 void shrink_run(const Test *test, const Options *options, Run *run) {
@@ -2769,6 +2794,7 @@ void shrink_run(const Test *test, const Options *options, Run *run) {
     *shrink = (Shrink){.test = test,
                        .options = options,
                        .seed = run->seed,
+                       .attempt = attempt_in_worker,
                        .best = &tries[0],
                        .candidate = &tries[1],
                        .deadline = seconds() + options->shrink_seconds};
@@ -2782,13 +2808,62 @@ void shrink_run(const Test *test, const Options *options, Run *run) {
     for (u32 i = 0; i < recorded->count; i++)
         shrink->list[i] = recorded->draws[i];
     if (!reproduced) return; // it depended on earlier keys or on chance: the failure stays as it was
-    bool changed = false;
-    for (i32 pass = 0; pass < 64 && in_budget(shrink); pass++) { // the budget ends it long before
-        if (!shrink_pass(shrink)) break;
-        changed = true;
-    }
+    bool changed = shrink_passes(shrink);
     bool leaked = changed && !shrink_confirm(shrink);
     shrink_finish(shrink, changed && !leaked, leaked, run);
+}
+
+// The search without a runner, for tests: a predicate runs the "test" and draws its words through shrink_draw. It
+// returns 0 when it passes and a number naming the failure otherwise (a failure that moves to another number is not
+// kept). The search starts from the words the predicate draws first, and the result holds the shrunk words, in
+// first-use order (the first 32).
+export typedef struct {
+    u32 runs;     // the predicate's runs, the first included
+    u32 length;   // the draws of the shrunk run
+    bool changed; // some word got smaller
+    Draw draws[32];
+} Shrunk;
+
+// What a predicate draws for (key, n): the override of the search if it has one, else bits; recorded as the tap does.
+export u64 shrink_draw(u64 key, u64 n, u64 bits) {
+    return tap_word(nullptr, key, n, bits);
+}
+
+void restore_tables(Draws *outer_recorded, Draws *outer_overrides) {
+    c::munmap(recorded, sizeof(Draws));
+    c::munmap(overrides, sizeof(Draws));
+    recorded = outer_recorded;
+    overrides = outer_overrides;
+}
+
+export Shrunk shrink_search(u32 (*verdict)(void *context), void *context, u32 seconds_budget) {
+    // Tables of its own: a test's process inherits the runner's, which the other workers share.
+    Draws *outer_recorded = recorded;
+    Draws *outer_overrides = overrides;
+    recorded = (Draws *)map_bytes((1) * sizeof(Draws), map_private);
+    overrides = (Draws *)map_bytes((1) * sizeof(Draws), map_private);
+    defer restore_tables(outer_recorded, outer_overrides);
+    Shrink *shrink = (Shrink *)map_bytes((1) * sizeof(Shrink), map_private);
+    *shrink = (Shrink){.attempt = attempt_by_verdict,
+                       .verdict = verdict,
+                       .context = context,
+                       .best = &tries[0],
+                       .candidate = &tries[1],
+                       .deadline = seconds() + seconds_budget};
+    draws_clear(overrides);
+    try_run(shrink);
+    shrink->best = shrink->candidate;
+    shrink->candidate = &tries[0] == shrink->best ? &tries[1] : &tries[0];
+    shrink->count = recorded->count;
+    for (u32 i = 0; i < recorded->count; i++)
+        shrink->list[i] = recorded->draws[i];
+    Shrunk result = {.runs = shrink->runs};
+    if (shrink->best->outcome.end != End_Passed) result.changed = shrink_passes(shrink);
+    result.runs = shrink->runs;
+    result.length = shrink->count;
+    for (u32 i = 0; i < shrink->count && i < 32; i++)
+        result.draws[i] = shrink->list[i];
+    return result;
 }
 
 // The final failure of a property test, shrunk or not, run once more in a fresh worker with the failing frame read:

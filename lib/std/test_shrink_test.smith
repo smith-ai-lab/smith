@@ -1,0 +1,84 @@
+// The search that shrinks a failed property test (std::test's shrink_search), with a predicate in place of a worker
+// process: the cases tests/test_runner_shrink_test.smith ran through built runners, which now keeps one real failure
+// shrunk by a runner and the test that shrinking one test leaves another alone. A word here is what a distribution
+// draws from, so a "value" is the word itself.
+module std::test_shrink_test;
+
+import std::test;
+
+constexpr u64 key = 1;
+
+// A uniform failure: x >= 500 fails.
+static u32 at_least_500(void *context) {
+    (void)context;
+    return test::shrink_draw(key, 0, 900000) >= 500 ? 1 : 0;
+}
+
+export void test_shrink_a_uniform_failure_shrinks_to_the_boundary() {
+    test::Shrunk shrunk = test::shrink_search(at_least_500, nullptr, 3600);
+    test::check_equal(shrunk.length, 1U);
+    test::check_equal(shrunk.draws[0].word, 500ULL);
+    test::check_equal(shrunk.changed, true);
+    test::check_less_equal(shrunk.runs, 1000U);
+}
+
+// x >= 500 fails one check; x == 0 fails another, which is not the failure being shrunk.
+static u32 moves_at_zero(void *context) {
+    (void)context;
+    u64 x = test::shrink_draw(key, 0, 900000);
+    if (x == 0) return 2;
+    return x >= 500 ? 1 : 0;
+}
+
+export void test_shrink_a_failure_that_moves_to_another_check_is_not_kept() {
+    test::Shrunk shrunk = test::shrink_search(moves_at_zero, nullptr, 3600);
+    test::check_equal(shrunk.draws[0].word, 500ULL);
+}
+
+// A list: its length, then that many items; an item of 91 or more fails.
+static u32 list_has_big_item(void *context) {
+    (void)context;
+    u64 length = test::shrink_draw(key, 0, 8);
+    u64 items[8] = {3, 5, 200, 7, 300, 9, 11, 13};
+    for (u64 i = 0; i < length && i < 8; i++)
+        if (test::shrink_draw(2, i, items[i]) >= 91) return 1;
+    return 0;
+}
+
+export void test_shrink_a_list_shrinks_to_its_failing_item_and_one_seed_gives_one_case() {
+    test::Shrunk first = test::shrink_search(list_has_big_item, nullptr, 3600);
+    // the length shrinks as far as the failing item allows: length = item + 1, and the item is 91
+    test::check_equal(first.length, 4U);
+    test::check_equal(first.draws[0].word, 3ULL);
+    test::check_equal(first.draws[3].word, 91ULL);
+    test::Shrunk second = test::shrink_search(list_has_big_item, nullptr, 3600);
+    test::check_equal(second.length, first.length);
+    for (u32 i = 0; i < first.length; i++)
+        test::check_equal(second.draws[i].word, first.draws[i].word);
+}
+
+// A word of the full 64 bits: the search is exact down to the last one.
+static u32 at_least_a_large_word(void *context) {
+    (void)context;
+    return test::shrink_draw(key, 0, 0xfedcba9876543210ULL) >= 0x123456789abcdef0ULL ? 1 : 0;
+}
+
+export void test_shrink_a_large_word_shrinks_to_its_exact_threshold() {
+    test::Shrunk shrunk = test::shrink_search(at_least_a_large_word, nullptr, 3600);
+    test::check_equal(shrunk.draws[0].word, 0x123456789abcdef0ULL);
+}
+
+// Thirty draws that all must stay large, each needing a long search: the budget of 1000 runs ends it.
+static u32 many_thresholds(void *context) {
+    (void)context;
+    u32 failing = 1;
+    for (u64 i = 0; i < 30; i++)
+        if (test::shrink_draw(key, i, 0xffffffffffffff00ULL) < 0x7000000000000001ULL + i) failing = 0;
+    return failing;
+}
+
+export void test_shrink_the_budget_stops_shrinking_within_1000_runs() {
+    test::Shrunk shrunk = test::shrink_search(many_thresholds, nullptr, 3600);
+    test::check_less_equal(shrunk.runs, 1000U);
+    test::check_equal(shrunk.changed, true);
+}
