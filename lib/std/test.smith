@@ -52,7 +52,7 @@ import <unistd.h>;
 // There is no registration: smith_tests (build.c) finds `void test_<name>(void) {` and `void test_<name>(SmithKey key)
 // {` by name (`random::Key` in a `.smith` file), and a test that takes an io is a build error, and the runner, which is
 // this module's main, runs them in parallel, with failures printed with both values and their types. `smith test` runs
-// it; its arguments are the runner's options: --test <substring>, --seed <n>, --seeds <n>, --jobs <n>,
+// it; its arguments are the runner's options: --test <names>, --seed <n>, --seeds <n>, --jobs <n>,
 // --shrink 0|1, --shuffle <seed>, --isolate, --in-process, --full and --update (knowledge/build-tests.md). A failed
 // check or contract shows the variables of its line when smith started the runner with --explain <smith> (below);
 // --no-explain turns it off.
@@ -4026,15 +4026,24 @@ static Options default_options(Runner *runner) {
     return options;
 }
 
-static void say_usage(const Runner *runner) {
-    complain("usage: %s [--test <substring>] [--seed <n>] [--seeds <1 to %ju>] [--jobs <1 to %zu>] "
-             "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds <seconds>] "
-             "[--shuffle <seed>] [--shard <i>/<n>] [--macos-only|--skip-macos] [--partial] [--isolate] "
-             "[--in-process] [--full] [--update] [--list] [--fail-fast] [--costs <file>] [--cheapest] [--idle-timeout "
-             "<seconds>] [--verbose] [--stats] "
-             "[--trace] [--color] "
-             "[--explain <smith>] [--explain-max <n>] [--no-explain] [--unchecked]\n",
-             runner->argv[0], (c::uintmax_t)seeds_max, jobs_max);
+// The runner's usage: on stderr after a bad option, on stdout (and exit 0) for --help or -h.
+static void say_usage(const Runner *runner, bool help) {
+    static char text[1280];
+    __builtin_snprintf(text, sizeof text,
+                       "usage: %s [--test <names>] [--seed <n>] [--seeds <1 to %ju>] [--jobs <1 to %zu>] "
+                       "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds "
+                       "<seconds>] [--shuffle <seed>] [--shard <i>/<n>] [--macos-only|--skip-macos] [--partial] "
+                       "[--isolate] [--in-process] [--full] [--update] [--list] [--fail-fast] [--costs <file>] "
+                       "[--cheapest] [--idle-timeout <seconds>] [--verbose] [--stats] [--trace] [--color] "
+                       "[--explain <smith>] [--explain-max <n>] [--no-explain] [--unchecked] [-h|--help]\n"
+                       "--test takes a test file's path, a name (x_test, x_test::name) or a * pattern (x*), not a "
+                       "prefix; --update writes the files of the selected tests (every test without --test)\n",
+                       runner->argv[0], (c::uintmax_t)seeds_max, jobs_max);
+    if (help) {
+        say("%s", text);
+    } else {
+        complain("%s", text);
+    }
 }
 
 // The state the run shares with its workers: what the options decide, the shared counters and the memory block.
@@ -4084,8 +4093,14 @@ static usize report_run(const Plan *plan, const Options *options, f64 start) {
 // test passed. main makes the Runner.
 [[std::c_name("smith_test_run")]] export i32 run_tests(Runner *runner) {
     Options options = default_options(runner);
+    for (i32 i = 1; i < runner->argc; i++) {
+        if (c::strcmp(runner->argv[i], "--help") == 0 || c::strcmp(runner->argv[i], "-h") == 0) {
+            say_usage(runner, true);
+            return 0;
+        }
+    }
     if (!parse_options(runner->argc, runner->argv, &options)) {
-        say_usage(runner);
+        say_usage(runner, false);
         return usage_status;
     }
     f64 start = seconds();
