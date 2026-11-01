@@ -1,0 +1,2 @@
+(module m
+  (variable Meters constexpr exported (named Type) (type_value (named F64))))

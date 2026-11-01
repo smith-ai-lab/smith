@@ -33,8 +33,6 @@ static Str gap_a1() {
     return "c-array-bound/grid.smith\n"
            "constexpr-c-pedantic/main.smith\n"
            "constexpr-import/main.smith\n"
-           "countof-fixed-array/main.smith\n"
-           "enum-convert-gaps/main.smith\n"
            "enum-option-slice/main.smith\n"
            "error-c-name/std/names.smith\n"
            "error-concept-notes/main.smith\n"
@@ -42,15 +40,8 @@ static Str gap_a1() {
            "error-generic-private-name/scale.smith\n"
            "error-lambda-param-untyped/main.smith\n"
            "error-range-for/main.smith\n"
-           "error-slice-const-write/main.smith\n"
            "error-slice-initializer-unread/main.smith\n"
-           "error-slice-initializer/main.smith\n"
            "error-type-value-import/main.smith\n"
-           "filescope-if-imports/clock.smith\n"
-           "generic-array-pointer/main.smith\n"
-           "generic-auto-element/main.smith\n"
-           "generic-countof-member/main.smith\n"
-           "generic-field-element/main.smith\n"
            "generic-fields-doc/docs.smith\n"
            "generic-fields-error/main.smith\n"
            "generic-fields/reflect.smith\n";
@@ -58,35 +49,16 @@ static Str gap_a1() {
 static Str gap_a2() {
     return "generic-for-range/reflect.smith\n"
            "generic-private-names/scale.smith\n"
-           "generic-slice-const/main.smith\n"
-           "generic-slice-convert/conv.smith\n"
-           "generic-slice-convert/main.smith\n"
-           "generic-slice-derived/same.smith\n"
-           "generic-slice-init/conv.smith\n"
-           "generic-slice-init/main.smith\n"
-           "generic-slice-local/conv.smith\n"
-           "generic-slice-local/main.smith\n"
-           "generic-slice-qualifiers-auto/copy.smith\n"
            "generic-slice-restrict/pair.smith\n"
            "module-basic/shapes/area.smith\n"
            "module-enum-c-names/mix/modes.smith\n"
-           "range-for-generic/loops.smith\n"
-           "range-for/main.smith\n"
-           "slice-dims-run/main.smith\n"
-           "slice-initializer-run/main.smith\n"
-           "slice-qualifiers-lowering/qualifiers.smith\n"
-           "slice-qualifiers-run/main.smith\n"
-           "slice-run/main.smith\n"
-           "str-module/main.smith\n"
            "tuple-modules/geo/b.smith\n"
-           "type-value-declarator/main.smith\n"
-           "type-value-header/geo/units.smith\n"
-           "type-value-import/main.smith\n"
-           "typetag-module/main.smith\n"
-           "value-query-for/loop.smith\n";
+           "type-value-import/main.smith\n";
 }
 static Str removed_b() {
-    return "error-lambda-capture-not-local/main.smith\n"
+    return "type-value-declarator/main.smith\n" // C's function-pointer type as a type value: `Fn(F)` is the spelling
+           "type-value-header/geo/units.smith\n"
+           "error-lambda-capture-not-local/main.smith\n"
            "error-lambda-capture-to-pointer/main.smith\n"
            "error-lambda-captures-local/main.smith\n"
            "error-lambda-generic-nested/main.smith\n"
@@ -109,9 +81,9 @@ static Str removed_b() {
            "param-names/shape/box.smith\n"
            "str-typedef-module/main.smith\n"
            "str-typedef-module/text.smith\n"
-           "str-typedef-run/main.smith\n"
-           "typetag-run/main.smith\n";
+           "str-typedef-run/main.smith\n";
 }
+
 static Str undecided_c() {
     return "attribute-c-names/log/fmt.smith\n"
            "constexpr-import-header/shapes.smith\n"

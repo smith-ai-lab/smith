@@ -368,6 +368,8 @@ export typedef enum {
         Expr *step;
         Stmt *body;
         Bool is_constexpr;
+        Expr *range; // a range `for (T x : range)`: init is the variable, condition and step are null
+        Stmt *index; // a range `for (Usize i, T x : range)`: the declaration of the index, else null
     } for_stmt;
     struct {
         Expr *value;
@@ -1039,6 +1041,8 @@ static void stmt_children(Items *items, Stmt *s) {
         add_stmt(items, s->kind.for_stmt.init, true);
         add_expr(items, s->kind.for_stmt.condition, true);
         add_expr(items, s->kind.for_stmt.step, true);
+        add_stmt(items, s->kind.for_stmt.index, false);
+        add_expr(items, s->kind.for_stmt.range, false);
         add_stmt(items, s->kind.for_stmt.body, false);
         break;
     case .switch_stmt:
