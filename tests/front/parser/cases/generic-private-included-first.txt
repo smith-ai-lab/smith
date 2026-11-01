@@ -1,0 +1,3 @@
+generic-private-included-first/main.smith: ok
+generic-private-included-first/mid.smith: ok
+generic-private-included-first/scale.smith: ok

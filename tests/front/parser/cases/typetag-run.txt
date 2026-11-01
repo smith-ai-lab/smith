@@ -1,0 +1,1 @@
+typetag-run/main.smith: ok

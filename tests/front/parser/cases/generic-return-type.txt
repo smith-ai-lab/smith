@@ -1,0 +1,1 @@
+generic-return-type/main.smith: error: expected `)`, found `T` (6:27) [undecided_c]

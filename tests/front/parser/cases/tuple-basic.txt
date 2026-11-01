@@ -1,0 +1,1 @@
+tuple-basic/main.smith: C, out of scope

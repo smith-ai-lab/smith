@@ -1,0 +1,2 @@
+generic-array-pointer/main.smith: ok
+generic-array-pointer/reach.smith: ok

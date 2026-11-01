@@ -1,0 +1,3 @@
+enum-builtin-option-result/finder.smith: ok
+enum-builtin-option-result/main.smith: ok
+enum-builtin-option-result/parser.smith: ok

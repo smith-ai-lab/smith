@@ -1,0 +1,2 @@
+error-type-value-import/main.smith: error: expected a name, found `(` (6:24) [gap_a1]
+error-type-value-import/shapes.smith: ok

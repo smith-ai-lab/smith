@@ -1,0 +1,2 @@
+keyword-after-comment/a.smith: ok
+keyword-after-comment/main.smith: ok

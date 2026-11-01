@@ -1,0 +1,2 @@
+session-two-modules/foo.smith: ok
+session-two-modules/main.smith: ok

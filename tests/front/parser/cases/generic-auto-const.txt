@@ -1,0 +1,2 @@
+generic-auto-const/main.smith: ok
+generic-auto-const/stats.smith: ok

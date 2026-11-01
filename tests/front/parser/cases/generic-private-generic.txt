@@ -1,0 +1,2 @@
+generic-private-generic/main.smith: ok
+generic-private-generic/shape.smith: ok

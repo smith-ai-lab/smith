@@ -1,0 +1,1 @@
+error-lambda-wrong-signature/main.smith: ok

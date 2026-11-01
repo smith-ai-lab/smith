@@ -1,0 +1,1 @@
+c-macro-argument/main.smith: C, out of scope

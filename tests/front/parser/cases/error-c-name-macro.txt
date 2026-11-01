@@ -1,0 +1,1 @@
+error-c-name-macro/uses/macro.smith: ok

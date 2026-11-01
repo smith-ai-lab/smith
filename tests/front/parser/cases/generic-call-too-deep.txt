@@ -1,0 +1,2 @@
+generic-call-too-deep/main.smith: C, out of scope
+generic-call-too-deep/num.smith: ok

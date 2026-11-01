@@ -1,0 +1,1 @@
+sized-error-message/main.smith: C, out of scope

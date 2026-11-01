@@ -1,0 +1,2 @@
+generic-print-error/fmt.smith: ok
+generic-print-error/main.smith: ok

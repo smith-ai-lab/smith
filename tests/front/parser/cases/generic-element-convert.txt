@@ -1,0 +1,2 @@
+generic-element-convert/main.smith: ok
+generic-element-convert/stats.smith: ok

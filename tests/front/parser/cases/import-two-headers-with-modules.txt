@@ -1,0 +1,1 @@
+import-two-headers-with-modules/main.smith: C, out of scope

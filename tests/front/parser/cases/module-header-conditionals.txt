@@ -1,0 +1,2 @@
+module-header-conditionals/main.smith: C, out of scope
+module-header-conditionals/cond/gate.smith: C, out of scope

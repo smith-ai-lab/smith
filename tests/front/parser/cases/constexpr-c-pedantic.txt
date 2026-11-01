@@ -1,0 +1,1 @@
+constexpr-c-pedantic/main.smith: ok

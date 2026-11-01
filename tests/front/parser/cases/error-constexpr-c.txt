@@ -1,0 +1,1 @@
+error-constexpr-c/main.smith: C, out of scope

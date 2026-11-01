@@ -1,0 +1,1 @@
+slice-initializer-run/main.smith: ok

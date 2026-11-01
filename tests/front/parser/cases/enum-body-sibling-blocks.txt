@@ -1,0 +1,1 @@
+enum-body-sibling-blocks/main.smith: ok

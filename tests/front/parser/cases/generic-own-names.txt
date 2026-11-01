@@ -1,0 +1,2 @@
+generic-own-names/main.smith: ok
+generic-own-names/std/tools.smith: ok

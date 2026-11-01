@@ -1,0 +1,1 @@
+error-export-static/s.smith: ok

@@ -1,0 +1,2 @@
+c-name/std/arena.smith: ok
+c-name/std/text.smith: ok

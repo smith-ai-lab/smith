@@ -1,0 +1,2 @@
+generic-argument-names/args.smith: ok
+generic-argument-names/main.smith: ok

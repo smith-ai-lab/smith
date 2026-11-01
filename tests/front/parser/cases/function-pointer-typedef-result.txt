@@ -1,0 +1,2 @@
+function-pointer-typedef-result/main.smith: error: expected `;` after the import, found `as` (3:20) [undecided_c]
+function-pointer-typedef-result/hook/table.smith: C, out of scope

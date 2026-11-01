@@ -1,0 +1,3 @@
+constexpr-import/calc.smith: ok
+constexpr-import/main.smith: ok
+constexpr-import/mid.smith: ok

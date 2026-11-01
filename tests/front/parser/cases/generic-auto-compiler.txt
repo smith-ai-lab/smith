@@ -1,0 +1,2 @@
+generic-auto-compiler/main.smith: C, out of scope
+generic-auto-compiler/pick.smith: ok

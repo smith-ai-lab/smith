@@ -1,0 +1,1 @@
+lambda-static/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (5:12) [removed_b]

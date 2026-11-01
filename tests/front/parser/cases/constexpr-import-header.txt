@@ -1,0 +1,2 @@
+constexpr-import-header/main.smith: ok
+constexpr-import-header/shapes.smith: error: expected a field name, found `,` (12:20) [undecided_c]

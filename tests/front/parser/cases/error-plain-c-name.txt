@@ -1,0 +1,1 @@
+error-plain-c-name/main.smith: C, out of scope

@@ -1,0 +1,1 @@
+error-constexpr-c-asm/main.smith: C, out of scope

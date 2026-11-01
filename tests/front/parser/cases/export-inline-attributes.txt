@@ -1,0 +1,1 @@
+export-inline-attributes/hint.smith: ok

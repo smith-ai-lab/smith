@@ -1,0 +1,2 @@
+generic-fields-values/main.smith: ok
+generic-fields-values/walk.smith: error: expected a field name, found `,` (13:8) [undecided_c]

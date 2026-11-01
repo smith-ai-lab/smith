@@ -1,0 +1,2 @@
+error-concept-notes/main.smith: ok
+error-concept-notes/stats.smith: ok

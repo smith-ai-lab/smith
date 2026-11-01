@@ -1,0 +1,1 @@
+error-type-value-runtime/main.smith: C, out of scope

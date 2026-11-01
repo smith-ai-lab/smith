@@ -1,0 +1,2 @@
+generic-call-in-call-names/main.smith: ok
+generic-call-in-call-names/names.smith: ok

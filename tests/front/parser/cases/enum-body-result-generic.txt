@@ -1,0 +1,1 @@
+enum-body-result-generic/main.smith: error: expected `)`, found `T` (5:17) [undecided_c]

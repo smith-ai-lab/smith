@@ -1,0 +1,1 @@
+sized-own-typedef/main.smith: C, out of scope

@@ -1,0 +1,2 @@
+generic-braceless-head/heads.smith: ok
+generic-braceless-head/same.smith: ok

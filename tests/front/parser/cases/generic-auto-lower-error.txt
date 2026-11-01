@@ -1,0 +1,2 @@
+generic-auto-lower-error/main.smith: C, out of scope
+generic-auto-lower-error/pick.smith: ok

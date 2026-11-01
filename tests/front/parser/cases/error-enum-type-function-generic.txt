@@ -1,0 +1,1 @@
+error-enum-type-function-generic/main.smith: error: expected `)`, found `T` (3:17) [undecided_c]

@@ -1,0 +1,2 @@
+type-value-use/main.smith: C, out of scope
+type-value-use/pool.smith: ok

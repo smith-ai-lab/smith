@@ -1,0 +1,2 @@
+generic-slice-local/conv.smith: ok
+generic-slice-local/main.smith: ok

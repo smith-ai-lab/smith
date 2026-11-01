@@ -1,0 +1,2 @@
+generic-gradient-shape/main.smith: ok
+generic-gradient-shape/shape.smith: ok

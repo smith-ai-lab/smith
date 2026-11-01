@@ -1,0 +1,2 @@
+session-keyword-name/foo.smith: error: expected a name, found `double` (3:12) [must_fail_d]
+session-keyword-name/main.smith: ok

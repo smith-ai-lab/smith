@@ -1,0 +1,1 @@
+error-array-empty/main.smith: error: an array needs a size: write `[N]`, or `[:]` for a slice (4:8) [must_fail_d]

@@ -1,0 +1,2 @@
+lambda-generic-spawn/later.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (3:21) [removed_b]
+lambda-generic-spawn/main.smith: error: expected `;`, found `::` (18:10) [undecided_c]

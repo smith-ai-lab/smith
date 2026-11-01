@@ -1,0 +1,1 @@
+error-slice-not-sliceable/main.smith: ok

@@ -1,0 +1,2 @@
+generic-fields-helper/lib.smith: ok
+generic-fields-helper/main.smith: ok

@@ -1,0 +1,1 @@
+error-keyword-module/shapes.smith: error: expected a field name, found `char` (5:9) [must_fail_d]

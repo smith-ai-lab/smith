@@ -1,0 +1,1 @@
+error-plain-c-macro/main.smith: C, out of scope

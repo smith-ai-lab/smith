@@ -1,0 +1,1 @@
+member-after-dot-is-not-a-macro/main.smith: C, out of scope

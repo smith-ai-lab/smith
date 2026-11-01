@@ -1,0 +1,3 @@
+generic-rest-error/bad.smith: ok
+generic-rest-error/main.smith: ok
+generic-rest-error/plain.smith: ok

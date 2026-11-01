@@ -1,0 +1,3 @@
+enum-type-function-module/first.smith: error: expected `)`, found `T` (6:17) [undecided_c]
+enum-type-function-module/main.smith: error: expected `)`, found `T` (7:17) [undecided_c]
+enum-type-function-module/second.smith: error: expected `)`, found `T` (3:17) [undecided_c]

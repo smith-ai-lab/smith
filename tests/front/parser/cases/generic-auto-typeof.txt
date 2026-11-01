@@ -1,0 +1,2 @@
+generic-auto-typeof/main.smith: C, out of scope
+generic-auto-typeof/num.smith: ok

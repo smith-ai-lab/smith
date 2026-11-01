@@ -1,0 +1,2 @@
+generic-fields-import/lib.smith: ok
+generic-fields-import/main.smith: ok

@@ -1,0 +1,1 @@
+str-c-rule/main.smith: C, out of scope

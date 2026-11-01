@@ -1,0 +1,2 @@
+value-query-if/main.smith: C, out of scope
+value-query-if/size.smith: ok

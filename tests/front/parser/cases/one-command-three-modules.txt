@@ -1,0 +1,3 @@
+one-command-three-modules/main.smith: ok
+one-command-three-modules/shapes.smith: ok
+one-command-three-modules/units.smith: ok

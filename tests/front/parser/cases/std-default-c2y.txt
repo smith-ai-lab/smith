@@ -1,0 +1,1 @@
+std-default-c2y/main.smith: C, out of scope

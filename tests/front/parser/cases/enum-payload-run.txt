@@ -1,0 +1,1 @@
+enum-payload-run/main.smith: ok

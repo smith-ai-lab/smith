@@ -1,0 +1,2 @@
+generic-slice-derived/main.smith: ok
+generic-slice-derived/same.smith: ok

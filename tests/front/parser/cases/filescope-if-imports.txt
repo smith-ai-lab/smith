@@ -1,0 +1,2 @@
+filescope-if-imports/clock.smith: ok
+filescope-if-imports/main.smith: C, out of scope

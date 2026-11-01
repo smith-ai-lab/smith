@@ -1,0 +1,2 @@
+generic-pack-expand-error/bad.smith: ok
+generic-pack-expand-error/main.smith: ok

@@ -1,0 +1,1 @@
+import-c-header/main.smith: C, out of scope

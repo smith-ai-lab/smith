@@ -1,0 +1,2 @@
+generic-fields-error/main.smith: ok
+generic-fields-error/reflect.smith: ok

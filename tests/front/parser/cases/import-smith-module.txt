@@ -1,0 +1,3 @@
+import-smith-module/main.smith: C, out of scope
+import-smith-module/lib/text.smith: ok
+import-smith-module/lib/util.smith: ok

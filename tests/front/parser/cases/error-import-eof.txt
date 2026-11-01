@@ -1,0 +1,2 @@
+error-import-eof/main.smith: C, out of scope
+error-import-eof/lib/text.smith: ok

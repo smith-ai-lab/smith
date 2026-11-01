@@ -1,0 +1,2 @@
+enum-generic-import-in-function/lists.smith: ok
+enum-generic-import-in-function/main.smith: ok

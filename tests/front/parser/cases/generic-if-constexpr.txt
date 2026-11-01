@@ -1,0 +1,2 @@
+generic-if-constexpr/kind.smith: ok
+generic-if-constexpr/main.smith: C, out of scope

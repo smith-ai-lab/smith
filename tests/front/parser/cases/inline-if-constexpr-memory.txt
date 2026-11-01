@@ -1,0 +1,2 @@
+inline-if-constexpr-memory/main.smith: C, out of scope
+inline-if-constexpr-memory/pick/inl.smith: ok

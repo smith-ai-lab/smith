@@ -1,0 +1,2 @@
+generic-auto-constants/main.smith: C, out of scope
+generic-auto-constants/pick.smith: ok

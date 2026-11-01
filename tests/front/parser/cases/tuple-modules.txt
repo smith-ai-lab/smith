@@ -1,0 +1,3 @@
+tuple-modules/main.smith: C, out of scope
+tuple-modules/geo/a.smith: error: expected a field name, found `,` (4:31) [undecided_c]
+tuple-modules/geo/b.smith: error: expected a tag name after `struct`, `union` or `enum` (6:25) [gap_a2]

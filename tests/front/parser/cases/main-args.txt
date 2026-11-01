@@ -1,0 +1,1 @@
+main-args/main.smith: ok

@@ -1,0 +1,2 @@
+str-typedef-module/main.smith: error: expected `;`, found `s` (7:15) [removed_b]
+str-typedef-module/text.smith: error: expected the type's name, found `str` (3:27) [removed_b]

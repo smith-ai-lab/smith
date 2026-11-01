@@ -1,0 +1,2 @@
+enum-generic-derived-result/keep.smith: ok
+enum-generic-derived-result/main.smith: ok

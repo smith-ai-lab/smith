@@ -1,0 +1,1 @@
+enum-option-slice-assign/main.smith: ok

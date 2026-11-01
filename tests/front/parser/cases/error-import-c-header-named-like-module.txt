@@ -1,0 +1,2 @@
+error-import-c-header-named-like-module/main.smith: C, out of scope
+error-import-c-header-named-like-module/vector_check.smith: ok

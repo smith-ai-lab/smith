@@ -1,0 +1,2 @@
+nested-compile-alone/lib/text.smith: ok
+nested-compile-alone/game/main.smith: ok

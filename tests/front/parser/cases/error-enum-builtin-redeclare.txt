@@ -1,0 +1,1 @@
+error-enum-builtin-redeclare/main.smith: error: expected a name, found `Option` (5:6) [must_fail_d]

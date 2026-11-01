@@ -1,0 +1,3 @@
+generic-auto-module-body/box.smith: ok
+generic-auto-module-body/main.smith: C, out of scope
+generic-auto-module-body/pick.smith: ok

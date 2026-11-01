@@ -1,0 +1,2 @@
+error-import-cycle/cycle/a.smith: ok
+error-import-cycle/cycle/b.smith: ok

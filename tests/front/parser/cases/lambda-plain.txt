@@ -1,0 +1,1 @@
+lambda-plain/main.smith: C, out of scope

@@ -1,0 +1,1 @@
+generic-fields-index-error/main.smith: ok
