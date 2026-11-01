@@ -1,0 +1,10 @@
+expected `{` or `if` after `else` | 
+expected an expression, found `{` | 
+expected a name, found `)` | 
+expected `{`: braces are required around the body | 
+expected `.` before a variant name, found `a` | 
+expected `=>`, found `v` | 
+expected `=>`, found `}` | 
+expected `=` after the pattern, found `x` | 
+expected a name for the payload, found `)` | 
+expected `;`, found `)` | 
