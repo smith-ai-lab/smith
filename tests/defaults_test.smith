@@ -12,7 +12,7 @@ import std::mem;
 import std::test;
 import scratch;
 
-constexpr usize memory_size = (usize)16 << 20; // 16 MiB
+constexpr Usize memory_size = (Usize)16 << 20; // 16 MiB
 
 constexpr char c_file[_] = "int main(void) {\nif (1) {\nreturn 0;\n}\n}\n";
 constexpr char smith_second_line[_] = "    if (1) {";

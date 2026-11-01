@@ -7,39 +7,39 @@ import <string.h>;
 import std::test;
 
 struct Bag {
-    i32 items[:];
+    I32 items[:];
     char name[:];
 };
 
-static i32 sum(i32 xs[:]) {
-    i32 total = 0;
-    for (usize i = 0; i < countof(xs); i++) {
+static I32 sum(I32 xs[:]) {
+    I32 total = 0;
+    for (Usize i = 0; i < countof(xs); i++) {
         total += xs[i];
     }
     return total;
 }
 
-static typeof(i32[:]) inner(i32 xs[:]) {
+static typeof(I32[:]) inner(I32 xs[:]) {
     return xs[1:countof(xs) - 1];
 }
 
-static typeof(i32[:]) fixed() {
-    static i32 data[3] = {7, 8, 9};
+static typeof(I32[:]) fixed() {
+    static I32 data[3] = {7, 8, 9};
     return data;
 }
 
 export void test_slice_a_fixed_array_converts_with_its_size() {
-    i32 raw[5] = {1, 2, 3, 4, 5};
-    i32 all[:] = raw;
+    I32 raw[5] = {1, 2, 3, 4, 5};
+    I32 all[:] = raw;
     test::check_equal(countof(all), 5);
     test::check_equal(sum(all), 15);
     test::check_equal(sum(raw), 15);
 }
 
 export void test_slice_a_view_shares_the_elements() {
-    i32 raw[5] = {1, 2, 3, 4, 5};
-    i32 all[:] = raw;
-    i32 mid[:] = all[1:4];
+    I32 raw[5] = {1, 2, 3, 4, 5};
+    I32 all[:] = raw;
+    I32 mid[:] = all[1:4];
     test::check_equal(countof(mid), 3);
     mid[0] = 40;
     test::check_equal(raw[1], 40);
@@ -49,17 +49,17 @@ export void test_slice_a_view_shares_the_elements() {
 }
 
 export void test_slice_a_pointer_is_sliced_into_one() {
-    i32 raw[4] = {1, 2, 3, 4};
-    i32 *p = raw;
-    i32 view[:] = p[1:3];
+    I32 raw[4] = {1, 2, 3, 4};
+    I32 *p = raw;
+    I32 view[:] = p[1:3];
     test::check_equal(countof(view), 2);
     test::check_equal(view[0], 2);
     test::check_equal(sum(p[0:4]), 10);
 }
 
 export void test_slice_an_empty_slice_has_a_null_pointer() {
-    i32 *none = nullptr;
-    i32 empty[:] = none[0:0];
+    I32 *none = nullptr;
+    I32 empty[:] = none[0:0];
     test::check_equal(countof(empty), 0);
     test::check_equal(sum(empty), 0);
 }
@@ -73,7 +73,7 @@ export void test_slice_a_text_literal_has_no_terminating_zero() {
 }
 
 export void test_slice_results_fields_and_nested_chains() {
-    i32 raw[4] = {1, 2, 3, 4};
+    I32 raw[4] = {1, 2, 3, 4};
     struct Bag bag = {};
     bag.items = raw;
     bag.name = "bag";
@@ -92,47 +92,47 @@ export void test_slice_a_slice_passes_to_c_as_a_pointer() {
 }
 
 export void test_slice_an_index_past_the_end_stops() {
-    i32 raw[3] = {1, 2, 3};
-    i32 all[:] = raw;
-    usize far = 3;
+    I32 raw[3] = {1, 2, 3};
+    I32 all[:] = raw;
+    Usize far = 3;
     test::expect_abort();
     (void)all[far];
 }
 
 export void test_slice_a_view_past_the_end_stops() {
-    i32 raw[3] = {1, 2, 3};
-    i32 all[:] = raw;
-    usize far = 4;
+    I32 raw[3] = {1, 2, 3};
+    I32 all[:] = raw;
+    Usize far = 4;
     test::expect_abort();
-    i32 view[:] = all[1:far];
+    I32 view[:] = all[1:far];
     (void)view;
 }
 
 export void test_slice_a_view_that_ends_before_it_begins_stops() {
-    i32 raw[3] = {1, 2, 3};
-    i32 all[:] = raw;
-    usize low = 2;
+    I32 raw[3] = {1, 2, 3};
+    I32 all[:] = raw;
+    Usize low = 2;
     test::expect_abort();
-    i32 view[:] = all[low:1];
+    I32 view[:] = all[low:1];
     (void)view;
 }
 
-static i32 calls = 0;
-static i32 backing[4] = {10, 20, 30, 40};
+static I32 calls = 0;
+static I32 backing[4] = {10, 20, 30, 40};
 
-static typeof(i32[:]) counted() {
+static typeof(I32[:]) counted() {
     calls += 1;
     return backing;
 }
 
-static i32 *counted_pointer() {
+static I32 *counted_pointer() {
     calls += 1;
     return backing;
 }
 
 export void test_slice_the_array_of_an_index_is_evaluated_once() {
     calls = 0;
-    i32 second = counted()[1];
+    I32 second = counted()[1];
     test::check_equal(second, 20);
     test::check_equal(calls, 1);
     counted()[2] = 33;
@@ -143,55 +143,55 @@ export void test_slice_the_array_of_an_index_is_evaluated_once() {
 
 export void test_slice_the_array_of_a_slice_is_evaluated_once() {
     calls = 0;
-    i32 middle[:] = counted()[1:3];
+    I32 middle[:] = counted()[1:3];
     test::check_equal(countof(middle), 2);
     test::check_equal(calls, 1);
-    i32 view[:] = counted_pointer()[0:2];
+    I32 view[:] = counted_pointer()[0:2];
     test::check_equal(countof(view), 2);
     test::check_equal(calls, 2);
-    i32 nested = counted()[1:4][1];
+    I32 nested = counted()[1:4][1];
     test::check_equal(nested, 30);
     test::check_equal(calls, 3);
 }
 
 export void test_slice_a_braceless_loop_body_may_call_a_generic() {
-    i32 raw[3] = {4, 5, 6};
-    i32 all[:] = raw;
-    for (usize i = 0; i < countof(all); i++)
+    I32 raw[3] = {4, 5, 6};
+    I32 all[:] = raw;
+    for (Usize i = 0; i < countof(all); i++)
         test::check_equal(all[i], raw[i]); // the loop head's `(` is no operand, so its body is not read ahead
 }
 
 // More dimensions (issue #105): one contiguous block, row-major, built by hand from a fixed array.
 
 export void test_slice_a_three_dimensional_array_is_indexed_by_row_and_column() {
-    i32 cube[2][3][4] = {};
-    for (i32 n = 0; n < 24; n++) {
+    I32 cube[2][3][4] = {};
+    for (I32 n = 0; n < 24; n++) {
         cube[n / 12][n / 4 % 3][n % 4] = n;
     }
-    i32 deep[:][:][4] = cube;
+    I32 deep[:][:][4] = cube;
     test::check_equal(countof(deep), 2);
     test::check_equal(countof(deep[0]), 3);
     test::check_equal(countof(deep[1][2]), 4);
     test::check_equal(deep[0][0][0], 0);
     test::check_equal(deep[1][2][3], 23);
     test::check_equal(deep[1][1][2], 18);
-    i32 plane[:][4] = deep[1];
+    I32 plane[:][4] = deep[1];
     test::check_equal(plane[2][1], 21);
-    i32 line[:] = deep[0][2];
+    I32 line[:] = deep[0][2];
     test::check_equal(line[3], 11);
-    i32 cut[:] = deep[1][1][1:3];
+    I32 cut[:] = deep[1][1][1:3];
     test::check_equal(countof(cut), 2);
     cut[0] = 77;
     test::check_equal(cube[1][1][1], 77);
 }
 
 export void test_slice_rows_of_a_slice_are_a_view_of_the_same_shape() {
-    f32 raw[4][2] = {{1, 2}, {3, 4}, {5, 6}, {7, 8}};
-    f32 pairs[:][2] = raw;
-    f32 tail[:][2] = pairs[1:4];
+    F32 raw[4][2] = {{1, 2}, {3, 4}, {5, 6}, {7, 8}};
+    F32 pairs[:][2] = raw;
+    F32 tail[:][2] = pairs[1:4];
     test::check_equal(countof(tail), 3);
     test::check_equal(tail[0][1], 4.0f);
     test::check_equal(countof(tail[0]), 2);
-    f32 flat[:][:] = raw;
+    F32 flat[:][:] = raw;
     test::check_equal(flat[3][0], 7.0f);
 }

@@ -4,7 +4,7 @@ try and errdefer: a declaration, an assignment, a statement and a return (issue 
 
 module m;
 
-static option(usize) f(int a) {
+static Option(Usize) f(int a) {
     errdefer close(fd);
     int x = try g(a);
     x = try g(x);

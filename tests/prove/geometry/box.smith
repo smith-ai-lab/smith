@@ -2,26 +2,26 @@
 module geometry::box;
 import <smith/contract.h>;
 
-export i32 clamp(i32 x, i32 low, i32 high) {
+export I32 clamp(I32 x, I32 low, I32 high) {
     c::smith_requires(low <= high);
-    i32 result = x < low ? low : x > high ? high : x;
+    I32 result = x < low ? low : x > high ? high : x;
     c::smith_ensures(low <= result && result <= high);
     return result;
 }
 
-export i32 clamp_wrong(i32 x, i32 low, i32 high) {
+export I32 clamp_wrong(I32 x, I32 low, I32 high) {
     c::smith_requires(low <= high);
-    i32 result = x < low ? low : x > high ? high : x;
+    I32 result = x < low ? low : x > high ? high : x;
     c::smith_ensures(result < high);
     return result;
 }
 
-export i32 add_unchecked(i32 a, i32 b) {
+export I32 add_unchecked(I32 a, I32 b) {
     c::smith_requires(a >= 0);
     return a + b;
 }
 
-export i32 caller(i32 x) {
+export I32 caller(I32 x) {
     c::smith_requires(x >= 0);
     return clamp(x, 10, 5);
 }

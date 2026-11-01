@@ -11,14 +11,14 @@ import <smith/trace.h>;
 // <smith/contract.h>: contracts written as calls. Each is a check that stops the program when its condition is false,
 // as an assert does, and `smith prove` proves the same statements on LLVM IR. In a .smith file:
 //
-//   export i32 clamp(i32 x, i32 low, i32 high) {
+//   export I32 clamp(I32 x, I32 low, I32 high) {
 //       contract::requires(low <= high);                     // the caller's job
-//       i32 result = x < low ? low : x > high ? high : x;
+//       I32 result = x < low ? low : x > high ? high : x;
 //       contract::ensures(low <= result && result <= high);  // this function's promise
 //       return result;
 //   }
 //
-//   for (u8 square = 0; square < squares; square++) {
+//   for (U8 square = 0; square < squares; square++) {
 //       contract::invariant(moves->len <= 2 * square);       // the first statement of a loop body
 //       ...
 //   }
@@ -155,13 +155,13 @@ check_assert(bool condition) {
 
 // A marker for `smith prove`, which reads the call in the IR: the range [p, p + size) is one the function may write. It
 // checks nothing at run time. (With no range at all, `modifies()` is one call with size 0.)
-[[std::c_name("smith_contract_may_write")]] export void check_modifies(const void *p, usize size) {
+[[std::c_name("smith_contract_may_write")]] export void check_modifies(const void *p, Usize size) {
     (void)p;
     (void)size;
 }
 
 [[std::c_name("smith_modifies")]] export [[gnu::always_inline, maybe_unused]] inline void modifies_range(const void *p,
-                                                                                                         usize size) {
+                                                                                                         Usize size) {
     if constexpr (target::static_analyzer) {
         (void)p;
         (void)size;
@@ -177,7 +177,7 @@ inline void modifies_slice(auto xs) {
 
 export inline void modifies(auto... rest) {
     modifies_range(nullptr, 0); // the marker `modifies()` is: a range of no bytes
-    for constexpr (usize i = 0; i < countof(rest); i++) {
+    for constexpr (Usize i = 0; i < countof(rest); i++) {
         if constexpr (is_pointer(typeof(rest[i]))) {
             modifies_range(rest[i], sizeof(*rest[i]));
         } else if constexpr (is_slice(typeof(rest[i]))) {

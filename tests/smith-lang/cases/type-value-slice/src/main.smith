@@ -2,7 +2,7 @@ module main;
 
 import <stdio.h>;
 
-// `t[:]` on a type value is the type "slice of t" (the spelling follows `i32 xs[:]`). An ordinary function over `type`
+// `t[:]` on a type value is the type "slice of t" (the spelling follows `I32 xs[:]`). An ordinary function over `type`
 // builds a slice type with one `[:]` for each size; the result is a real type handle: `==`, `sizeof` and a declaration
 // `t x;` all work.
 static Type slice_of(Type T, Usize k) {

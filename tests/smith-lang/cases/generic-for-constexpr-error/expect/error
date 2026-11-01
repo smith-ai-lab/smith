@@ -1,4 +1,4 @@
-src/bad.smith:11:5: `for constexpr` is written `for constexpr (usize i = 0; condition; step) body`: it declares its variable
+src/bad.smith:11:5: `for constexpr` is written `for constexpr (Usize i = 0; condition; step) body`: it declares its variable
 src/bad.smith:18:9: `rest_0` is the name of one of the arguments `rest`: give the variable another name
 src/bad.smith:18:9: redefinition of 'rest_0'
 src/bad.smith:19:12: `rest_0` is the name of one of the arguments `rest`: give the variable another name

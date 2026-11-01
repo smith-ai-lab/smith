@@ -3,45 +3,45 @@
 module geometry::grids;
 import <smith/contract.h>;
 
-export f32 fixed_at(f32 m[:][2], usize r, usize c) {
+export F32 fixed_at(F32 m[:][2], Usize r, Usize c) {
     c::smith_ensures(true);
     if (r < countof(m) && c < 2) return m[r][c];
     return 0;
 }
 
-export f32 fixed_wide(f32 m[:][2], usize r, usize c) {
+export F32 fixed_wide(F32 m[:][2], Usize r, Usize c) {
     c::smith_ensures(true);
     if (r < countof(m)) return m[r][c];
     return 0;
 }
 
-export f32 rows_at(f32 m[:][:], usize r, usize c) {
+export F32 rows_at(F32 m[:][:], Usize r, Usize c) {
     c::smith_ensures(true);
     if (r < countof(m) && c < countof(m[r])) return m[r][c];
     return 0;
 }
 
-export f32 rows_wide(f32 m[:][:], usize r, usize c) {
+export F32 rows_wide(F32 m[:][:], Usize r, Usize c) {
     c::smith_ensures(true);
     if (r < countof(m)) return m[r][c];
     return 0;
 }
 
-export f32 volume_at(f32 t[:][:][:], usize a, usize b, usize c) {
+export F32 volume_at(F32 t[:][:][:], Usize a, Usize b, Usize c) {
     c::smith_ensures(true);
     if (a < countof(t) && b < countof(t[a]) && c < countof(t[a][b])) return t[a][b][c];
     return 0;
 }
 
-export f32 mixed_at(f32 t[:][3][:], usize a, usize b, usize c) {
+export F32 mixed_at(F32 t[:][3][:], Usize a, Usize b, Usize c) {
     c::smith_ensures(true);
     if (a < countof(t) && b < 3 && c < countof(t[a][b])) return t[a][b][c];
     return 0;
 }
 
 // The same element read twice is one address: what is written is what is read.
-export f32 roundtrip(f32 m[:][:], usize r, usize c, f32 v) {
-    f32 result = v;
+export F32 roundtrip(F32 m[:][:], Usize r, Usize c, F32 v) {
+    F32 result = v;
     if (r < countof(m) && c < countof(m[r])) {
         m[r][c] = v;
         result = m[r][c];
@@ -52,9 +52,9 @@ export f32 roundtrip(f32 m[:][:], usize r, usize c, f32 v) {
 
 // A row is a `[:]` again: an index past its own count is refuted at its line. (Proving a read through the row view
 // takes about 8 s of CPU, so no case here.)
-export f32 row_wide(f32 m[:][:], usize r, usize c) {
+export F32 row_wide(F32 m[:][:], Usize r, Usize c) {
     c::smith_ensures(true);
     if (r >= countof(m)) return 0;
-    f32 row[:] = m[r];
+    F32 row[:] = m[r];
     return row[c];
 }

@@ -22,7 +22,7 @@ static typeof(const char[:]) slice_of(const char *text) {
     return text[0:c::strlen(text)];
 }
 
-constexpr usize memory_size = (usize)16 << 20; // 16 MiB
+constexpr Usize memory_size = (Usize)16 << 20; // 16 MiB
 
 // What a compile of the file prints, as tests/affine/<file>.expected holds it.
 static void affine_case(const char *file) {

@@ -3,10 +3,10 @@ range for, with and without the index, and for constexpr over a list
 ================================================================================
 
 int total(const int xs[:]) {
-    for (i32 x : xs) { }
-    for (usize i, auto *p : xs[1:2]) { }
+    for (I32 x : xs) { }
+    for (Usize i, auto *p : xs[1:2]) { }
     for constexpr (auto f : fields(T)) { }
-    for constexpr (usize i, auto x : rest) { }
+    for constexpr (Usize i, auto x : rest) { }
     return 0;
 }
 

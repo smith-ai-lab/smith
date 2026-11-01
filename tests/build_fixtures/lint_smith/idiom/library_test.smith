@@ -2,7 +2,7 @@ module idiom::library_test;
 
 import <smith/test.h>;
 
-export void use(i32 a, i32 b) {
+export void use(I32 a, I32 b) {
     c::smith_check_equal_i32(a, b);
     c::smith_check(a == b);
 }

@@ -12,19 +12,19 @@ module stats;
 import <stdlib.h>;
 import <string.h>;
 
-export [[std::pure]] i32 length(const char *text) {   // strlen touches nothing: pure holds
-    return (i32)c::strlen(text);
+export [[std::pure]] I32 length(const char *text) {   // strlen touches nothing: pure holds
+    return (I32)c::strlen(text);
 }
 
-export [[std::effects(alloc)]] void *grab(u32 size) { // may allocate, and nothing else
+export [[std::effects(alloc)]] void *grab(U32 size) { // may allocate, and nothing else
     return c::malloc(size);
 }
 
-export void *plain(u32 size) {                          // no attribute: inferred (it allocates)
+export void *plain(U32 size) {                          // no attribute: inferred (it allocates)
     return c::malloc(size);
 }
 
-i32 main() {
+I32 main() {
     return length("abc") - 3;
 }
 ```
@@ -52,7 +52,7 @@ stats.smith:9:5: error: smith-effect: `bad` is [[std::pure]], but it has the eff
 - **No recursion in a module**: a call on a cycle of the module's functions (`fib` calling itself, `is_odd` and `is_even` calling each other) is a compile error naming the cycle, `fib -> recursion::fib (recursion.smith:7)`. Write a loop, with an explicit stack when you need one. A cycle whose every call is `[[clang::musttail]] return f(...);` is allowed: a jump is a loop. A call through a function pointer, or into code with no source, is not followed. C and a `.smith` file with no `module` line are left alone.
 - **Proof code is exempt** (no attribute, no name): a function with internal linkage that is called only inside the argument of a check `smith prove` proved, or by other such functions, has no effects on the checking function and may recurse, so a proof can use a recursive helper. A check that is not proved runs, so the function it calls keeps its effects and its recursion error; so does one that running code also calls.
 - **Worst-case stack**: linking objects compiled by smith (`smith build`, or `smith cc a.c b.c -o p`) writes `<program>.stack` beside the program: one tab-separated row a function, `name`, its stack and the deepest path (`f -> h -> g`). Frames are the backend's own (the numbers of `-fstack-usage`, which smith asks of every compile to an object and removes after reading). A cycle of musttail calls takes no more; any other recursion (C allows it) and a frame that grows at run time (`alloca`, a variable-length array) are `unbounded`. A call into code with no source (printf, a pointer call, a prebuilt library) cannot be measured: the row says `at least N + unknown (calls: printf, qsort)`, and a runtime decides what an unknown is (no number is added, and nothing in the build reads an environment variable). The header lines say the build the numbers are for (`opt=0 address undefined`): a runtime reads the file of the build it runs.
-- **Asking about a function you are given**: a generic that takes a function (`constexpr auto f`) states what it allows with `import std::effects;` and `static_assert(effects::within(f, effects::alloc), "gradient: f may only allocate");`. The masks (`effects::none`, `alloc`, `files`, `net`, `console`, `clock`, `process`, `env`, `entropy`, `globals`, `unknown`, `fails`) are `u32`, so `effects::alloc | effects::files` is a set. That is the only way to ask, and only inside a `static_assert`: there is no `effects::of` and no `effects::pure` (`within(f, effects::none)` says pure), and anywhere else `within` is true and checks nothing. The effects exist only after the file is read, so smith judges the assertion then: a function of the file at once, one of another file at the link. The error shows your message, the effects and the chain (`viaNoisy -> noisy (a.smith:23) -> printf (a.smith:18)`), with a note at the call that instantiated the generic. A function with no source and no attribute is `unknown`, so `within` rejects it.
+- **Asking about a function you are given**: a generic that takes a function (`constexpr auto f`) states what it allows with `import std::effects;` and `static_assert(effects::within(f, effects::alloc), "gradient: f may only allocate");`. The masks (`effects::none`, `alloc`, `files`, `net`, `console`, `clock`, `process`, `env`, `entropy`, `globals`, `unknown`, `fails`) are `U32`, so `effects::alloc | effects::files` is a set. That is the only way to ask, and only inside a `static_assert`: there is no `effects::of` and no `effects::pure` (`within(f, effects::none)` says pure), and anywhere else `within` is true and checks nothing. The effects exist only after the file is read, so smith judges the assertion then: a function of the file at once, one of another file at the link. The error shows your message, the effects and the chain (`viaNoisy -> noisy (a.smith:23) -> printf (a.smith:18)`), with a note at the call that instantiated the generic. A function with no source and no attribute is `unknown`, so `within` rejects it.
 - **Promises**: what smith trusts and does not check is a function with an effects attribute and no source (a prebuilt library's header) and a function that calls `contract::trusted()`. `smith check` ends with `smith check: promises: N`, and `smith check -v` lists each as `file:line name`. `smith check` builds first if it must, so the summaries (`.smith/effects/`) are fresh; a header's promise counts once, and smith's own generated files under `.smith/` are left out.
 - **What a returned pointer means** (#720): `[[std::returns_owned(free)]] char *strdup(const char *s);` (the caller frees it with `free`, a declared function of one pointer), `[[std::returns_borrowed(1)]] char *strchr(const char *s, int c);` (points into parameter 1, a pointer or a slice), `[[std::returns_internal]] char *strerror(int e);` (never freed). On a function that returns a pointer or a slice, one per declaration; on a function pointer's typedef write it first (`[[std::returns_internal]] typedef char *(*Describe)(int);`) or as `[[clang::annotate_type("std::owns:internal")]]` after the parameters. A bad use is `error: smith-ownership: ...`. Today it is recorded (`O` and `T` lines of the `.fx` summary) and nothing is judged. In a module write `free`, not `c::free`.
 - **Not yet** (issue #207, #263): hover.

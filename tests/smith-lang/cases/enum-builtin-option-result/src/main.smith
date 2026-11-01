@@ -4,7 +4,7 @@ import <stdio.h>;
 import finder;
 import parser;
 
-// `option` and `result` are in scope in every module, with no import; every module's `option(usize)` is one type.
+// `option` and `result` are in scope in every module, with no import; every module's `Option(Usize)` is one type.
 
 typedef Option(Usize) Index;
 typedef Result(F64, I32) Quotient;

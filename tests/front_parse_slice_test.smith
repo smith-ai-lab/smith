@@ -1,6 +1,6 @@
-// Tests of the slice qualifiers and the `lambda(F)` type of front::parse_type (#1265, part of #1112): `U8[restrict :]`
+// Tests of the slice qualifiers and the `Lambda(F)` type of front::parse_type (#1265, part of #1112): `U8[restrict :]`
 // and `U8[const restrict :]` carry the slice's own qualifiers on the slice node, a qualifier in a later bracket or
-// `[static :]` is an error that says what to write, and `lambda(Bool (I32))` is an applied type.
+// `[static :]` is an error that says what to write, and `Lambda(Bool (I32))` is an applied type.
 module front_parse_slice_test;
 
 import front::ast;
@@ -127,7 +127,7 @@ export void test_parse_lambda_type() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parse::Parser p = parser_of("lambda(I32 (I32, I32))");
+    parse::Parser p = parser_of("Lambda(I32 (I32, I32))");
     test::check_condition(parse_type::starts_type(&p, 0));
     ast::TypeExpr *type = parse::type(&p);
     test::check_equal(countof(p.errors), 0);

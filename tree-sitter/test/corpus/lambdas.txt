@@ -2,9 +2,9 @@
 lambda: the full form, the short forms and a capture list (issue #316)
 ================================================================================
 
-void f(i32 n) {
-    auto a = [x, y](i32 a) -> i32 { return a * x; };
-    auto b = [](i32 a) { return a * 2; };
+void f(I32 n) {
+    auto a = [x, y](I32 a) -> I32 { return a * x; };
+    auto b = [](I32 a) { return a * 2; };
     auto c = [] { g(); };
     auto d = [x] { g(x); };
 }
@@ -195,8 +195,8 @@ void f(void) {
 lambda: the type of a parameter and its lifetime attributes
 ================================================================================
 
-void sort(Person *xs, usize n, lambda(bool (Person *, Person *)) less);
-void each(i32 *xs, [[std::until(g)]] lambda(void (i32)) h, [[std::escapes]] lambda(void (void)) k);
+void sort(Person *xs, Usize n, Lambda(bool (Person *, Person *)) less);
+void each(I32 *xs, [[std::until(g)]] Lambda(void (I32)) h, [[std::escapes]] Lambda(void (void)) k);
 
 --------------------------------------------------------------------------------
 

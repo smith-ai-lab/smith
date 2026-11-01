@@ -290,9 +290,10 @@ struct SmithExec {
     size_t started_edges;
     size_t finished_edges;
     int failures;
-    int failures_left; // failed jobs the build can still take before it stops starting new ones
-    int stopped;       // the signal that interrupted the build, or 0
-    uint64_t origin;   // the monotonic clock when the build began
+    char first_failed[256]; // the first failed step, "step 46 compile smith.c": the last line names it
+    int failures_left;      // failed jobs the build can still take before it stops starting new ones
+    int stopped;            // the signal that interrupted the build, or 0
+    uint64_t origin;        // the monotonic clock when the build began
     SmithJob *jobs;
     size_t running;
     size_t heavy_running; // jobs that hold a core of the pool: the first rides on the base token

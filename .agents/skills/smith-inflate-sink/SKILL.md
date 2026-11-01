@@ -11,20 +11,20 @@ description: "Streaming inflate to a sink for any size, and std::inflate from C 
 import std::inflate;
 
 typedef struct {
-    u64 total;
+    U64 total;
 } Count;
 
-static bool count(void *context, const u8 *data, usize size) {
+static bool count(void *context, const U8 *data, Usize size) {
     Count *count = context;
     count->total += size;
     (void)data;
     return true; // false stops the decoder: inflate::Stopped
 }
 
-bool gunzip_size(const u8 *data, usize data_size, u64 *size) {
-    static u8 window[inflate::window];
+bool gunzip_size(const U8 *data, Usize data_size, U64 *size) {
+    static U8 window[inflate::window];
     Count counted = {};
-    usize used = 0;
+    Usize used = 0;
     inflate::Status status = inflate::stream(inflate::Gzip, data, data_size, window, count, &counted, &used, size);
     return status == inflate::Ok;
 }

@@ -7,58 +7,58 @@ import <stdio.h>;
 import std::contract;
 
 // Only a proved check calls it: it recurses and says it is pure, which holds because it runs nowhere.
-static u64 odd_sum(u64 n) {
+static U64 odd_sum(U64 n) {
     return n == 0 ? 0 : odd_sum(n - 1) + 2 * n - 1;
 }
 
-export [[std::pure]] u64 square(u64 n) {
+export [[std::pure]] U64 square(U64 n) {
     contract::kept_assert(odd_sum(n) == n * n);
     return n * n;
 }
 
 // A function the proof code calls is proof code too, and a cycle of them is no error.
-static bool even_proof(u64 n);
+static bool even_proof(U64 n);
 
-static bool odd_proof(u64 n) {
+static bool odd_proof(U64 n) {
     return n != 0 && even_proof(n - 1);
 }
 
-static bool even_proof(u64 n) {
+static bool even_proof(U64 n) {
     return n == 0 || odd_proof(n - 1);
 }
 
-export u64 half(u64 n) {
+export U64 half(U64 n) {
     contract::kept_assert(even_proof(n * 2));
     return n;
 }
 
 // Its effects do not reach the caller either.
-static u64 noisy(u64 n) {
+static U64 noisy(U64 n) {
     c::printf("%lu\n", n);
     return n;
 }
 
-export [[std::pure]] u64 quiet(u64 n) {
+export [[std::pure]] U64 quiet(U64 n) {
     contract::kept_assert(noisy(n) == n);
     return n;
 }
 
 // Running code that calls it makes it running: the error is the existing one.
-static u64 loud(u64 n) {
+static U64 loud(U64 n) {
     return n == 0 ? 0 : loud(n - 1) + 1;
 }
 
-export u64 both(u64 n) {
+export U64 both(U64 n) {
     contract::kept_assert(loud(n) == n);
     return loud(n);
 }
 
 // A check that is not proved runs, so its function does too.
-static u64 checked(u64 n) {
+static U64 checked(U64 n) {
     return n == 0 ? 0 : checked(n - 1) + 1;
 }
 
-export u64 unproved(u64 n) {
+export U64 unproved(U64 n) {
     contract::assert(checked(n) == n);
     return n;
 }

@@ -10,7 +10,7 @@ import std::mem;
 import std::test;
 import scratch;
 
-constexpr usize memory_size = (usize)4 << 20; // 4 MiB
+constexpr Usize memory_size = (Usize)4 << 20; // 4 MiB
 
 // A project with a cache of its own, which `sibling` projects share.
 static scratch::Project made(const char *name) {

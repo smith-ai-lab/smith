@@ -31,9 +31,9 @@ typeof(const char[:]) name_of(arena::Arena *a, const char input[:]) {
     return name->text;
 }
 
-usize total_items(const c::SmithJsonValue *list) {
-    usize total = 0;
-    for (usize i = 0; i < list->count; i++) total += list->items[i]->count; // arrays: elements; objects: member values, .key each
+Usize total_items(const c::SmithJsonValue *list) {
+    Usize total = 0;
+    for (Usize i = 0; i < list->count; i++) total += list->items[i]->count; // arrays: elements; objects: member values, .key each
     return total;
 }
 ```

@@ -25,6 +25,6 @@ Not supported, and what happens:
 
 ## Testing a derivative
 
-Check a gradient against a hand-written one or a finite difference, as the tests of smith do (`tests/autodiff/`): the toy compares each derivative with its analytic value, learner's scan reference compares Enzyme with the hand-written backward to 1e-12 relative (also through a struct of `f64[:]` fields), and an SGD and an Adam step written with `autodiff::map` are compared with a loop over the same numbers. A test that differentiates is an ordinary `test_*` file that imports `std::autodiff`; `smith test` builds it as an autodiff program.
+Check a gradient against a hand-written one or a finite difference, as the tests of smith do (`tests/autodiff/`): the toy compares each derivative with its analytic value, learner's scan reference compares Enzyme with the hand-written backward to 1e-12 relative (also through a struct of `F64[:]` fields), and an SGD and an Adam step written with `autodiff::map` are compared with a loop over the same numbers. A test that differentiates is an ordinary `test_*` file that imports `std::autodiff`; `smith test` builds it as an autodiff program.
 
 Also in this family: [smith-autodiff](../smith-autodiff/SKILL.md), [smith-autodiff-c](../smith-autodiff-c/SKILL.md).

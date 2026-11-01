@@ -6,11 +6,11 @@ import std::mem;
 import std::contract;
 
 export typedef struct {
-    i32 a;
-    i32 b;
+    I32 a;
+    I32 b;
 } Pair;
 
-export void clear(Pair *p, u8 *buf, usize n) {
+export void clear(Pair *p, U8 *buf, Usize n) {
     c::memset(p, 0, sizeof *p);
     Pair q = {1, 2};
     c::memset(&q, 0, sizeof(q));
@@ -20,12 +20,12 @@ export void clear(Pair *p, u8 *buf, usize n) {
     if (c::memcmp(buf, p, n) == 0) return;
 }
 
-export void wrapper(u8 *dst, const u8 *src, usize n) {
+export void wrapper(U8 *dst, const U8 *src, Usize n) {
     contract::trusted();
     c::memcpy(dst, src, n);
 }
 
-export void allocate(usize n) {
+export void allocate(Usize n) {
     Pair *one = (Pair *)c::malloc(sizeof(Pair));
     Pair *many = (Pair *)c::calloc(n, sizeof(Pair));
     Pair *aligned = (Pair *)c::aligned_alloc(16, 16 * n);
@@ -39,6 +39,6 @@ export void release(void *block) {
     c::free(block);
 }
 
-export void *grow(void *block, usize n) {
+export void *grow(void *block, Usize n) {
     return c::realloc(block, n);
 }

@@ -8,14 +8,14 @@ import toy;
 import <math.h>;
 
 // autodiff::gradient against the analytic values and the raw call: the same Enzyme call, so equal to the bit.
-i32 gradients() {
+I32 gradients() {
     toy::Params p = {.w = {0.5, -1.5, 2.0}, .b = 0.3};
     toy::Batch batch = {.x = {1.0, 2.0, 3.0}, .scale = 1.5};
     toy::Params g = autodiff::gradient(toy::model, &p, &batch);
     toy::Params raw = {};
     autodiff::reverse((void *)toy::model, autodiff::dup, &p, &raw, autodiff::constant, &batch);
-    i32 status = 0;
-    for (usize i = 0; i < 3; i++) {
+    I32 status = 0;
+    for (Usize i = 0; i < 3; i++) {
         (void)console::print("gradient model dw[", i, "] ", format::fixed(g.w[i], 12), " ",
                              format::fixed(2.0 * batch.scale * batch.x[i] * p.w[i], 12), "\n");
         if (g.w[i] != raw.w[i]) {
@@ -31,29 +31,29 @@ i32 gradients() {
     (void)console::print("gradient product dw1 ", format::fixed(one.w[1], 12), " ", format::fixed(p.w[0], 12), "\n");
     toy::Params readonly = autodiff::gradient(toy::first_square, &p);
     (void)console::print("gradient first_square dw0 ", format::fixed(readonly.w[0], 12), " ", format::fixed(2.0 * p.w[0], 12), "\n");
-    f64 s = 1.7;
-    f64 cube = autodiff::gradient(toy::cube, &s);
+    F64 s = 1.7;
+    F64 cube = autodiff::gradient(toy::cube, &s);
     (void)console::print("gradient cube ds ", format::fixed(cube, 12), " ", format::fixed(3.0 * s * s, 12), "\n");
     return status;
 }
 
-i32 main() {
-    f64 x = 1.7;
-    f64 y = 0.4;
-    f64 dx = autodiff::reverse((void *)toy::f, autodiff::out, x, autodiff::out, y);
-    f64 tx = autodiff::forward((void *)toy::f, autodiff::dup, x, 1.0, autodiff::dup, y, 0.0);
-    f64 ty = autodiff::forward((void *)toy::f, autodiff::dup, x, 0.0, autodiff::dup, y, 1.0);
-    f64 p[3] = {0.5, -1.5, 2.0};
-    f64 dp[3] = {};
-    autodiff::reverse((void *)toy::loss, autodiff::dup, p, dp, autodiff::constant, (usize)3);
-    f64 analytic_x = 2.0 * x * c::sin(y) + 3.0 * y;
-    f64 analytic_y = x * x * c::cos(y) + 3.0 * x;
+I32 main() {
+    F64 x = 1.7;
+    F64 y = 0.4;
+    F64 dx = autodiff::reverse((void *)toy::f, autodiff::out, x, autodiff::out, y);
+    F64 tx = autodiff::forward((void *)toy::f, autodiff::dup, x, 1.0, autodiff::dup, y, 0.0);
+    F64 ty = autodiff::forward((void *)toy::f, autodiff::dup, x, 0.0, autodiff::dup, y, 1.0);
+    F64 p[3] = {0.5, -1.5, 2.0};
+    F64 dp[3] = {};
+    autodiff::reverse((void *)toy::loss, autodiff::dup, p, dp, autodiff::constant, (Usize)3);
+    F64 analytic_x = 2.0 * x * c::sin(y) + 3.0 * y;
+    F64 analytic_y = x * x * c::cos(y) + 3.0 * x;
     (void)console::print("reverse dx ", format::fixed(dx, 12), " ", format::fixed(analytic_x, 12), "\n");
     (void)console::print("forward dx ", format::fixed(tx, 12), " ", format::fixed(analytic_x, 12), "\n");
     (void)console::print("forward dy ", format::fixed(ty, 12), " ", format::fixed(analytic_y, 12), "\n");
-    for (usize i = 0; i < 3; i++) {
-        (void)console::print("loss dp[", i, "] ", format::fixed(dp[i], 12), " ", format::fixed(2.0 * (f64)(i + 1) * p[i], 12), "\n");
+    for (Usize i = 0; i < 3; i++) {
+        (void)console::print("loss dp[", i, "] ", format::fixed(dp[i], 12), " ", format::fixed(2.0 * (F64)(i + 1) * p[i], 12), "\n");
     }
-    i32 status = gradients();
+    I32 status = gradients();
     return status;
 }

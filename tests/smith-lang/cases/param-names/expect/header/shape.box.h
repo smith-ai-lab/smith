@@ -4,7 +4,7 @@
 // smith-imports:
 // smith-names: Box width height area scaled apply combined larger
 // smith-bodies: height area scaled apply combined width
-// smith-generic: shape::box larger shape_box_larger src/shape/box.smith -@18 1 2 12 13 | iP1w@0:8=T iw@0:10=shape_box_larger p@0:16=( i@0:17=constexpr iw@0:27=type iP1w@0:32=T p@0:33=, iP1w@0:35=T iw@0:37=width p@0:42=, iP1w@0:44=T iw@0:46=height p@0:52=) pw@0:54={ iw@0:56=return iw@0:63=width pw@0:69=> iw@0:71=height pw@0:78=? iw@0:80=width pw@0:86=: iw@0:88=height p@0:94=; pw@0:96=}
+// smith-generic: shape::box larger shape_box_larger src/shape/box.smith -@18 1 2 12 13 | iP1w@0:8=T iw@0:10=shape_box_larger p@0:16=( i@0:17=constexpr iw@0:27=Type iP1w@0:32=T p@0:33=, iP1w@0:35=T iw@0:37=width p@0:42=, iP1w@0:44=T iw@0:46=height p@0:52=) pw@0:54={ iw@0:56=return iw@0:63=width pw@0:69=> iw@0:71=height pw@0:78=? iw@0:80=width pw@0:86=: iw@0:88=height p@0:94=; pw@0:96=}
 // clang-format on
 #pragma once
 #include <stddef.h>

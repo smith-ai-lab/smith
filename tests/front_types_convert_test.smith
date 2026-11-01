@@ -1,0 +1,248 @@
+// Tests of front::types_convert (#1220, J1c): the conversions a module allows, the casts, and that each refusal names
+// what was expected, what was found and what to write.
+module front_types_convert_test;
+
+import front::types;
+import front::types_convert;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str piece) {
+    if (countof(piece) > countof(text)) return false;
+    for (Usize at = 0; at + countof(piece) <= countof(text); at++) {
+        Bool same = true;
+        for (Usize i = 0; i < countof(piece); i++) {
+            if (text[at + i] != piece[i]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+// A refusal whose message holds all three pieces: the expected type, the found type and what to write.
+static void refused(types_convert::Verdict v, Str expected, Str found, Str write) {
+    test::check_condition(!v.ok);
+    test::check_condition(has(v.message, expected));
+    test::check_condition(has(v.message, found));
+    test::check_condition(has(v.message, write));
+}
+
+static types_convert::Verdict conv(types::Table *t, types::TypeRef from, types::TypeRef to) {
+    return types_convert::convert(t, from, to, types_convert::no_literal());
+}
+
+static types::TypeRef named(types::Table *t, Str name) {
+    return types::builtin(t, name);
+}
+
+static Bool is(types_convert::Verdict v, types_convert::How want) {
+    return v.ok && v.kind == want;
+}
+
+export void test_front_types_convert_integers_widen_never_narrow() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    test::check_condition(is(conv(&t, named(&t, "I32"), named(&t, "I64")), types_convert::widening));
+    test::check_condition(is(conv(&t, named(&t, "U8"), named(&t, "U32")), types_convert::widening));
+    test::check_condition(is(conv(&t, named(&t, "U32"), named(&t, "I64")), types_convert::widening));
+    test::check_condition(is(conv(&t, named(&t, "U64"), named(&t, "Usize")), types_convert::widening));
+    test::check_condition(is(conv(&t, named(&t, "I32"), named(&t, "I32")), types_convert::identity));
+    refused(conv(&t, named(&t, "I64"), named(&t, "I32")), "expected I32", "found I64", "write a cast: (I32)x");
+    refused(conv(&t, named(&t, "I32"), named(&t, "U32")), "expected U32", "found I32", "write a cast: (U32)x");
+    refused(conv(&t, named(&t, "U32"), named(&t, "I32")), "expected I32", "found U32", "write a cast: (I32)x");
+    refused(conv(&t, named(&t, "I8"), named(&t, "U64")), "expected U64", "found I8", "write a cast: (U64)x");
+}
+
+export void test_front_types_convert_a_constant_that_fits_converts() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types::TypeRef small = named(&t, "U8");
+    types::TypeRef plain = named(&t, "I32");
+    test::check_condition(
+        is(types_convert::convert(&t, plain, small, types_convert::constant(200)), types_convert::constant_fits));
+    test::check_condition(
+        is(types_convert::convert(&t, plain, small, types_convert::constant(255)), types_convert::constant_fits));
+    test::check_condition(is(types_convert::convert(&t, plain, named(&t, "I8"), types_convert::constant(-128)),
+                             types_convert::constant_fits));
+    test::check_condition(is(
+        types_convert::convert(&t, plain, named(&t, "U64"), types_convert::constant_unsigned(18446744073709551615ULL)),
+        types_convert::constant_fits));
+    types_convert::Verdict big = types_convert::convert(&t, plain, small, types_convert::constant(300));
+    refused(big, "expected U8", "found I32", "300 does not fit U8");
+    refused(big, "expected U8", "found I32", "(U8)300");
+    refused(types_convert::convert(&t, plain, small, types_convert::constant(-1)), "expected U8", "found I32",
+            "-1 does not fit U8");
+    refused(types_convert::convert(&t, plain, named(&t, "I8"), types_convert::constant(128)), "expected I8",
+            "found I32", "128 does not fit I8");
+}
+
+export void test_front_types_convert_floats_and_integers_need_casts() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    test::check_condition(is(conv(&t, named(&t, "F32"), named(&t, "F64")), types_convert::widening));
+    refused(conv(&t, named(&t, "F64"), named(&t, "F32")), "expected F32", "found F64", "write a cast: (F32)x");
+    refused(conv(&t, named(&t, "F64"), named(&t, "I32")), "expected I32", "found F64", "write a cast: (I32)x");
+    refused(conv(&t, named(&t, "I32"), named(&t, "F64")), "expected F64", "found I32", "write a cast: (F64)x");
+    refused(types_convert::convert(&t, named(&t, "I32"), named(&t, "F64"), types_convert::constant(1)), "expected F64",
+            "found I32", "(F64)x");
+}
+
+export void test_front_types_convert_bool_and_enumerations() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types::TypeRef flag = named(&t, "Bool");
+    refused(conv(&t, named(&t, "I32"), flag), "expected Bool", "found I32", "x != 0");
+    refused(types_convert::convert(&t, named(&t, "I32"), flag, types_convert::constant(1)), "expected Bool",
+            "found I32", "x != 0");
+    refused(conv(&t, flag, named(&t, "I32")), "expected I32", "found Bool", "write a cast: (I32)x");
+    types::TypeRef color = types::new_enumeration(&t, "Color", named(&t, "I32"));
+    types::TypeRef shape = types::new_enumeration(&t, "Shape", named(&t, "I32"));
+    test::check_condition(is(conv(&t, color, color), types_convert::identity));
+    refused(conv(&t, color, named(&t, "I32")), "expected I32", "found Color", "write a cast: (I32)x");
+    refused(conv(&t, named(&t, "I32"), color), "expected Color", "found I32", "write a cast: (Color)x");
+    refused(conv(&t, color, shape), "expected Shape", "found Color", "write the value as the expected type");
+}
+
+export void test_front_types_convert_pointers() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types::TypeRef int32 = named(&t, "I32");
+    types::TypeRef plain = types::pointer_to(&t, int32, false);
+    types::TypeRef readonly = types::pointer_to(&t, int32, true);
+    types::TypeRef nothing = types::pointer_to(&t, named(&t, "Void"), false);
+    types::TypeRef const_nothing = types::pointer_to(&t, named(&t, "Void"), true);
+    types::TypeRef bytes = types::pointer_to(&t, named(&t, "U8"), false);
+    test::check_condition(is(conv(&t, plain, readonly), types_convert::add_const));
+    test::check_condition(is(conv(&t, plain, nothing), types_convert::to_void_pointer));
+    test::check_condition(is(conv(&t, plain, const_nothing), types_convert::to_void_pointer));
+    test::check_condition(is(conv(&t, readonly, const_nothing), types_convert::to_void_pointer));
+    test::check_condition(is(conv(&t, t.null_type, plain), types_convert::null_to_pointer));
+    refused(conv(&t, readonly, plain), "expected I32 *", "found const I32 *", "drops const");
+    refused(conv(&t, readonly, nothing), "expected Void *", "found const I32 *", "drops const");
+    refused(conv(&t, nothing, plain), "expected I32 *", "found Void *", "write a cast: (I32 *)x");
+    refused(conv(&t, plain, bytes), "expected U8 *", "found I32 *", "write a cast: (U8 *)x");
+    refused(conv(&t, named(&t, "I32"), plain), "expected I32 *", "found I32", "write a cast: (I32 *)x");
+}
+
+export void test_front_types_convert_arrays_slices_and_text() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types::TypeRef int32 = named(&t, "I32");
+    types::TypeRef three = types::array_of(&t, int32, 3, false);
+    types::TypeRef xs = types::slice_of(&t, int32, false);
+    types::TypeRef read_xs = types::slice_of(&t, int32, true);
+    types::TypeRef address = types::pointer_to(&t, int32, false);
+    test::check_condition(is(conv(&t, three, xs), types_convert::array_to_slice));
+    test::check_condition(is(conv(&t, three, read_xs), types_convert::array_to_slice));
+    test::check_condition(is(conv(&t, xs, read_xs), types_convert::add_const));
+    test::check_condition(is(conv(&t, three, address), types_convert::array_decay));
+    refused(conv(&t, read_xs, xs), "expected I32[:]", "found I32[:]", "drops const");
+    refused(conv(&t, xs, address), "expected I32 *", "found I32[:]", "&xs[0]");
+    refused(conv(&t, three, types::slice_of(&t, named(&t, "I64"), false)), "expected I64[:]", "found I32[3]",
+            "write a cast: (I64[:])x");
+    types::TypeRef chars = types::slice_of(&t, named(&t, "U8"), false);
+    types::TypeRef read_chars = types::slice_of(&t, named(&t, "U8"), true);
+    test::check_condition(is(conv(&t, chars, t.text), types_convert::text_from_chars));
+    test::check_condition(
+        is(conv(&t, types::array_of(&t, named(&t, "U8"), 4, true), t.text), types_convert::text_from_chars));
+    test::check_condition(is(conv(&t, t.text, read_chars), types_convert::text_from_chars));
+    refused(conv(&t, t.text, chars), "expected U8[:]", "found Str", "const");
+    refused(conv(&t, xs, t.text), "expected Str", "found I32[:]", "8-bit integers");
+}
+
+export void test_front_types_convert_values_become_some_and_ok() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types::TypeRef int32 = named(&t, "I32");
+    types::TypeRef maybe = types::option_of(&t, int32);
+    types::TypeRef answer = types::result_of(&t, int32, t.text);
+    test::check_condition(is(conv(&t, int32, maybe), types_convert::to_some));
+    test::check_condition(is(conv(&t, named(&t, "I8"), maybe), types_convert::to_some));
+    test::check_condition(is(conv(&t, int32, answer), types_convert::to_ok));
+    test::check_condition(is(conv(&t, maybe, maybe), types_convert::identity));
+    test::check_condition(
+        is(types_convert::convert(&t, int32, types::option_of(&t, named(&t, "U8")), types_convert::constant(7)),
+           types_convert::to_some));
+    refused(types_convert::convert(&t, int32, types::option_of(&t, named(&t, "U8")), types_convert::constant(300)),
+            "expected Option(U8)", "found I32", "300 does not fit U8");
+    refused(conv(&t, named(&t, "I64"), maybe), "expected Option(I32)", "found I64", "write a cast: (I32)x");
+    refused(conv(&t, maybe, int32), "expected I32", "found Option(I32)", "test whether it holds a value first");
+    refused(conv(&t, answer, int32), "expected I32", "found Result(I32, Str)", "try");
+    refused(conv(&t, t.null_type, maybe), "expected Option(I32)", "found Null", ".none");
+    refused(conv(&t, maybe, types::option_of(&t, named(&t, "I64"))), "expected Option(I64)", "found Option(I32)",
+            "test whether it holds a value first");
+}
+
+export void test_front_types_convert_an_error_type_is_not_reported_again() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    test::check_condition(is(conv(&t, t.invalid, named(&t, "U8")), types_convert::identity));
+    test::check_condition(is(conv(&t, named(&t, "U8"), t.invalid), types_convert::identity));
+    test::check_condition(is(conv(&t, named(&t, "U8"), t.automatic), types_convert::identity));
+    refused(conv(&t, named(&t, "I32"), t.text), "expected Str", "found I32", "write the value as the expected type");
+}
+
+export void test_front_types_convert_casts() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types::TypeRef int32 = named(&t, "I32");
+    types::TypeRef byte = named(&t, "U8");
+    test::check_condition(is(types_convert::cast_ok(&t, named(&t, "I64"), int32), types_convert::cast));
+    test::check_condition(types_convert::cast_ok(&t, int32, byte).ok);
+    test::check_condition(types_convert::cast_ok(&t, int32, named(&t, "F64")).ok);
+    test::check_condition(types_convert::cast_ok(&t, named(&t, "F64"), int32).ok);
+    test::check_condition(types_convert::cast_ok(&t, int32, named(&t, "Bool")).ok);
+    test::check_condition(types_convert::cast_ok(&t, named(&t, "Bool"), int32).ok);
+    types::TypeRef color = types::new_enumeration(&t, "Color", int32);
+    test::check_condition(types_convert::cast_ok(&t, color, int32).ok);
+    test::check_condition(types_convert::cast_ok(&t, int32, color).ok);
+    types::TypeRef nothing = types::pointer_to(&t, named(&t, "Void"), false);
+    types::TypeRef plain = types::pointer_to(&t, int32, false);
+    types::TypeRef readonly = types::pointer_to(&t, int32, true);
+    test::check_condition(types_convert::cast_ok(&t, nothing, plain).ok);
+    test::check_condition(types_convert::cast_ok(&t, plain, types::pointer_to(&t, byte, false)).ok);
+    test::check_condition(types_convert::cast_ok(&t, plain, named(&t, "Usize")).ok);
+    test::check_condition(types_convert::cast_ok(&t, named(&t, "U64"), plain).ok);
+    test::check_condition(is(types_convert::cast_ok(&t, int32, types::option_of(&t, int32)), types_convert::to_some));
+    refused(types_convert::cast_ok(&t, readonly, plain), "expected I32 *", "found const I32 *", "drops const");
+    refused(types_convert::cast_ok(&t, readonly, types::pointer_to(&t, byte, false)), "expected U8 *",
+            "found const I32 *", "drops const");
+    refused(types_convert::cast_ok(&t, plain, int32), "expected I32", "found I32 *", "cast through Usize");
+    refused(types_convert::cast_ok(&t, int32, t.void_type), "expected Void", "found I32", "_ = x;");
+    refused(types_convert::cast_ok(&t, color, types::new_enumeration(&t, "Shape", int32)), "expected Shape",
+            "found Color", "convert the parts one at a time");
+    refused(types_convert::cast_ok(&t, t.text, int32), "expected I32", "found Str", "convert the parts one at a time");
+    refused(types_convert::cast_ok(&t, types::option_of(&t, int32), int32), "expected I32", "found Option(I32)",
+            "test whether it holds a value first");
+}

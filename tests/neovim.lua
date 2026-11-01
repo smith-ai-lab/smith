@@ -83,7 +83,7 @@ function tests.parser()
   local again = parser_ready()
   equal(path, again, "the second use finds the same parser")
   equal(before, vim.uv.fs_stat(path).mtime.nsec, "the parser is not written twice")
-  local _, root = captures("module a::b;\nimport lib::text as tx;\nexport u32 f(void) { return c::strlen(\"x\"); }\n")
+  local _, root = captures("module a::b;\nimport lib::text as tx;\nexport U32 f(void) { return c::strlen(\"x\"); }\n")
   check(not root:has_error(), "a module parses without an error node: " .. root:sexpr())
 end
 
@@ -95,8 +95,8 @@ function tests.highlights()
     "export tx::Text open(const char *path) {",
     "    return tx::make(c::strlen(path));",
     "}",
-    "T max(constexpr type T, T a, T b);",
-    "export int kind(constexpr type T, T v) {",
+    "T max(constexpr Type T, T a, T b);",
+    "export int kind(constexpr Type T, T v) {",
     "    if constexpr (is_integer(T) && sizeof(T) == 8) { return 1; }",
     "    return tx::make(v);",
     "}",
@@ -111,7 +111,7 @@ function tests.highlights()
   check(#(found["punctuation.delimiter"] or {}) >= 5, "the :: of paths are punctuation.delimiter")
   check(has(found["punctuation.delimiter"], "::"), "'::' is punctuation.delimiter")
   check(has(found["function.call"], "make") and has(found["function.call"], "strlen"), "called paths are function.call")
-  check(has(found["keyword.type"], "type"), "the type parameter keyword")
+  check(has(found["keyword.type"], "Type"), "the type parameter keyword")
   check(has(found["keyword.modifier"], "constexpr"), "constexpr in a parameter list is a keyword.modifier")
   check(has(found["keyword.conditional"], "constexpr"), "if constexpr: constexpr is a keyword.conditional")
   check(has(found["function.builtin"], "is_integer"), "the type questions of if constexpr are function.builtin")

@@ -2,8 +2,8 @@ module main;
 import geometry::box;
 import <stdio.h>;
 
-i32 main() {
-    i32 x = box::area(3, 4);
+I32 main() {
+    I32 x = box::area(3, 4);
     c::printf("%d\n", x);
     return 0;
 }

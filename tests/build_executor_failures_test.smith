@@ -10,9 +10,9 @@ import scratch;
 
 // The text with its newlines as spaces, for the order in which words were printed.
 static const char *flat(arena::Arena *memory, const char *text) {
-    usize length = __builtin_strlen(text);
+    Usize length = __builtin_strlen(text);
     char *copy = arena::push_slice(memory, char, length + 1).data;
-    for (usize i = 0; i < length; i++)
+    for (Usize i = 0; i < length; i++)
         copy[i] = text[i] == '\n' ? ' ' : text[i];
     copy[length] = '\0';
     return copy;
@@ -42,7 +42,8 @@ export void test_build_executor_a_failed_job_says_why_and_stops_the_build() {
     scratch::expect_contains("failure: then the command", run.out, "echo to-out; echo to-err >&2; exit 3");
     scratch::expect_contains("failure: then what it printed, stdout and stderr in order", flat(&memory, run.out),
                              "to-out to-err");
-    scratch::expect_contains("failure: the build says why it stopped", run.err, "build stopped: subcommand failed.");
+    scratch::expect_contains("failure: the build says why it stopped", run.err,
+                             "build stopped: subcommand failed (step ");
     char state[16];
     (void)format::to(state, sizeof state, yes_no(&p, "good"), " ", yes_no(&p, "after"));
     scratch::expect_text("failure: the first failure stops the others", "no no", state);
@@ -76,7 +77,7 @@ export void test_build_executor_keep_going_builds_what_does_not_depend_on_the_fa
     scratch::expect_text("keep going: -k 0 builds what does not depend on the failure", "G", scratch::read(&p, "good"));
     scratch::expect_text("keep going: and not what does", "no", yes_no(&p, "after"));
     scratch::expect_contains("keep going: it says it cannot go on", keep.err,
-                             "cannot make progress due to previous errors.");
+                             "cannot make progress due to previous errors (step ");
 }
 
 export void test_build_executor_keep_going_after_two_failures_stops_at_the_only_one() {

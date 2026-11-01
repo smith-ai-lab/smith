@@ -1,5 +1,5 @@
 module main;
 
-i32 main(void) {
+I32 main(void) {
     return 0;
 }

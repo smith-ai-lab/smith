@@ -17,7 +17,7 @@ import std::format;
 import <smith_core_lint_cache.h>;
 import <string.h>;
 
-constexpr usize output_capacity = 1U << 16;
+constexpr Usize output_capacity = 1U << 16;
 
 // What a lint run did, file by file: a.c, b.c, c.c and build.c in this order.
 typedef struct {
@@ -28,7 +28,7 @@ typedef struct {
 static void put(const char *folder, const char *name, const char *text) {
     char path[512];
     (void)format::to(path, sizeof path, folder, "/", name);
-    const u8 *bytes = (const u8 *)text;
+    const U8 *bytes = (const U8 *)text;
     files::CountResult written = files::write_file(path[0:c::strlen(path)], bytes[0:c::strlen(text)], files::Replace);
     test::check_condition(written == .ok);
 }
@@ -42,7 +42,7 @@ static void edit(const char *folder, const char *name, const char *original) {
 
 // One lint run of the project in `folder`, with the cache `cache`: a.c and b.c read common.h, c.c nothing else.
 // `third` is what the fake clang-tidy does for c.c (its status and output); `setting` is SMITH_LINT_CACHE.
-static Lint run(const char *folder, const char *cache, const char *setting, i32 status, const char *output) {
+static Lint run(const char *folder, const char *cache, const char *setting, I32 status, const char *output) {
     const c::SmithCoreLintFile files[_] = {
         {"a.c", "clang\t-c\ta.c", "a.c\ncommon.h", 0, ""},
         {"b.c", "clang\t-c\tb.c", "b.c\ncommon.h", 0, ""},
@@ -78,21 +78,21 @@ static void make_header(const char *folder, const char *text) {
     put(folder, ".smith/include/dep.h", text);
 }
 
-static usize ran(const Lint *lint) {
-    usize count = 0;
-    for (usize i = 0; i < 4; i++)
+static Usize ran(const Lint *lint) {
+    Usize count = 0;
+    for (Usize i = 0; i < 4; i++)
         count += lint->file[i].ran ? 1 : 0;
     return count;
 }
 
-static usize cached(const Lint *lint) {
-    usize count = 0;
-    for (usize i = 0; i < 4; i++)
+static Usize cached(const Lint *lint) {
+    Usize count = 0;
+    for (Usize i = 0; i < 4; i++)
         count += lint->file[i].cached ? 1 : 0;
     return count;
 }
 
-static void expect_counts(const char *name, usize expected_ran, const Lint *lint) {
+static void expect_counts(const char *name, Usize expected_ran, const Lint *lint) {
     scratch::expect_count(name, expected_ran, ran(lint));
     scratch::expect_count("... and the rest come from the cache", 4 - expected_ran, cached(lint));
 }
@@ -123,8 +123,8 @@ static bool has_results(const scratch::Project *p) {
 }
 
 // How many times `needle` is in `text`.
-static usize occurrences(const char *text, const char *needle) {
-    usize count = 0;
+static Usize occurrences(const char *text, const char *needle) {
+    Usize count = 0;
     for (const char *at = c::strstr(text, needle); at != nullptr; at = c::strstr(at + 1, needle))
         count++;
     return count;
@@ -221,10 +221,10 @@ export void test_lint_replays_a_finding_and_the_failing_status_from_the_cache() 
     constexpr const char *finding = "c.c:1:26: error: parameter 'unused' is unused\n";
     put(p.dir, "c.c", "int third(int value, int unused) {\n    return value;\n}\n");
     Lint first = run(p.dir, p.cache, nullptr, 1, finding);
-    scratch::expect_count("the first lint fails on the finding", 1, (usize)first.file[2].status);
+    scratch::expect_count("the first lint fails on the finding", 1, (Usize)first.file[2].status);
     scratch::expect_contains("... and reports it", first.output, finding);
     Lint second = run(p.dir, p.cache, nullptr, 1, finding);
-    scratch::expect_count("the second lint fails too", 1, (usize)second.file[2].status);
+    scratch::expect_count("the second lint fails too", 1, (Usize)second.file[2].status);
     expect_counts("... from the cache", 0, &second);
     scratch::expect_contains("... with the same finding", second.output, finding);
     scratch::expect_count("... printed once", 1, occurrences(second.output, "parameter 'unused' is unused"));

@@ -1,5 +1,5 @@
 module geometry::box;
 
-export u64 area(u64 width, u64 height) {
+export U64 area(U64 width, U64 height) {
     return width * height;
 }

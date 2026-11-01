@@ -3,15 +3,15 @@ module user;
 import geom::vec as v;
 import geom::vec;
 
-export f32 length_squared(v::Vec a) {
+export F32 length_squared(v::Vec a) {
     auto n = v::dot(a, a);
     return n;
 }
 
-export f32 biggest(vec::Vec a, vec::Vec b) {
+export F32 biggest(vec::Vec a, vec::Vec b) {
     return vec::larger(vec::dot(a, a), vec::dot(b, b));
 }
 
-export f32 squared(vec::Vec a) {
+export F32 squared(vec::Vec a) {
     return vec::length2(a);
 }

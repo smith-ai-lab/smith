@@ -14,7 +14,7 @@ import std::test;
 import scratch;
 import <string.h>;
 
-constexpr usize memory_size = (usize)16 << 20; // 16 MiB
+constexpr Usize memory_size = (Usize)16 << 20; // 16 MiB
 
 // Copies tests/autodiff/<source> into the project as `name` (scratch::copy_tree).
 static void copy(const scratch::Project *p, const char *source, const char *name) {
@@ -63,7 +63,7 @@ export void test_autodiff_toy_runs_in_each_profile_with_derivatives_equal_to_the
     builds(&p, "autodiff: toy: debug builds", "");
     builds(&p, "autodiff: toy: release and fast build", "release fast");
     const char *profiles[3] = {"debug", "release", "fast"};
-    for (usize i = 0; i < 3; i++) {
+    for (Usize i = 0; i < 3; i++) {
         const char *program = format::push("build/", profiles[i], "/toy").data;
         scratch::Run run = scratch::sh(&p, program);
         scratch::expect_status(format::push("autodiff: toy: ", profiles[i], " runs").data, 0, &run);
@@ -168,7 +168,7 @@ static void reference_equals_backward(const char *name, const char *program, con
     builds(&p, format::push("autodiff: ", name, ": release builds").data, "release");
     builds(&p, format::push("autodiff: ", name, ": debug builds").data, "");
     const char *profiles[2] = {"release", "debug"};
-    for (usize i = 0; i < 2; i++) {
+    for (Usize i = 0; i < 2; i++) {
         scratch::Run run = scratch::sh(&p, format::push("build/", profiles[i], "/", program, " 2>/dev/null").data);
         scratch::expect_status(
             format::push("autodiff: ", name, ": ", profiles[i], ", Enzyme equals the hand-written backward to 1e-12")
@@ -203,7 +203,7 @@ export void test_autodiff_structs_gradients_sgd_and_adam_equal_their_references(
     builds(&p, "autodiff: structs: release builds", "release");
     builds(&p, "autodiff: structs: debug builds", "");
     const char *profiles[2] = {"release", "debug"};
-    for (usize i = 0; i < 2; i++) {
+    for (Usize i = 0; i < 2; i++) {
         scratch::Run run = scratch::sh(&p, format::push("build/", profiles[i], "/structs 2>/dev/null").data);
         scratch::expect_status(
             format::push("autodiff: structs: ", profiles[i], " gradients, SGD and Adam equal their references to 1e-12")

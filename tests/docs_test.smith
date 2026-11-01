@@ -19,7 +19,7 @@ static typeof(const char[:]) slice_of(const char *text) {
     return text[0:c::strlen(text)];
 }
 
-constexpr usize check_capacity = 1U << 16;
+constexpr Usize check_capacity = 1U << 16;
 
 // The folder of the repository (`name`, relative to $SMITH_REPO) as a path, from the current allocator.
 static const char *in_repo(const char *name) {

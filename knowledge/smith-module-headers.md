@@ -17,7 +17,7 @@ extern uint32_t game_replay_counter __asm__("_game::replay::counter");
 game_replay_Replay game_replay_open(const char *path) __asm__("_game::replay::open");
 ```
 
-An exported `constexpr type` is a typedef, whatever it names (issue #333): `export constexpr type Meters = f64;` is
+An exported `constexpr Type` is a typedef, whatever it names (issue #333): `export constexpr Type Meters = F64;` is
 `typedef double geo_Meters;`, a function pointer `typedef void (*geo_Handler)(int32_t);`, an array `typedef uint8_t
 geo_Block[16];`. The module's own code keeps the type value; the header is what C and importers read, and the alias is
 a type name of the module (its uses in other exports' prototypes are prefixed, `geo_Meters add(geo_Meters a, ...)`).
@@ -72,7 +72,7 @@ too; an export with no body is defined against it, in C, by its C name.
 What the header keeps of the source (written by the plain lexer, `runtime/lang_trivia.c`; the entries are `SmithTrivia`):
 - **Doc comments.** The comments directly above an `export` (or above the `[[std::c_name]]` before it; no blank line
   between) are copied above its declaration, as written. Comments inside an exported declaration (a struct's fields) and a
-  comment after its last token on the same line (`export u32 limit = 4; // bytes`) are kept. A comment separated by a
+  comment after its last token on the same line (`export U32 limit = 4; // bytes`) are kept. A comment separated by a
   blank line from the export, and the comments of private code, are not. A `// NOLINTBEGIN` the header keeps keeps its
   `// NOLINTEND` too, on the line after the last declaration of the region it has (a pair is never split: clang-tidy
   reports a begin with no end); an end whose begin is not in the header is dropped.

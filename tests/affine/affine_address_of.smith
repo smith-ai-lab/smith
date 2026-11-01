@@ -1,13 +1,13 @@
 module affine_address_of;
 
 export [[std::affine]] typedef struct {
-    u64 bits;
+    U64 bits;
 } Key;
 export typedef struct {
     Key key;
-    u64 n;
+    U64 n;
 } Holder;
-export u64 draw(Key key) {
+export U64 draw(Key key) {
     return key.bits;
 }
 export void split(Key key, Key keys[3]) {
@@ -18,11 +18,11 @@ export void split_all(Key key, Key keys[:]) {
     (void)key;
     (void)keys;
 }
-export u64 take(Key *key) {
+export U64 take(Key *key) {
     return key->bits;
 }
 
-u64 address(Key key) {
+U64 address(Key key) {
     Key *p = &key;
     return draw(key) + take(p);
 }

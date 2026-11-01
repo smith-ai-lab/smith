@@ -1,2 +1,2 @@
-src/main.smith:8:26: this lambda captures `factor`, and a lambda that captures converts to no function pointer (a function pointer can't carry captures); pass it where a `lambda(F)` is expected
+src/main.smith:8:26: this lambda captures `factor`, and a lambda that captures converts to no function pointer (a function pointer can't carry captures); pass it where a `Lambda(F)` is expected
 src/main.smith:8:73: expected expression

@@ -10,7 +10,7 @@ import std::mem;
 import std::test;
 import scratch;
 
-constexpr usize memory_size = (usize)4 << 20; // 4 MiB
+constexpr Usize memory_size = (Usize)4 << 20; // 4 MiB
 
 // Every command: the stub gh first on PATH, its releases in ../gh and its log in ../gh.log, parts of 20,000 bytes so
 // that the 30,000-byte archives (random bytes, which xz cannot shrink) make several, and the tool of this scratch

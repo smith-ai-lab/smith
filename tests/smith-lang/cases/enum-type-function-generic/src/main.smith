@@ -12,7 +12,7 @@ Type maybe(Type T) {
 typedef maybe(Usize) Maybe;
 typedef maybe(F64) MaybeF;
 
-// A type function used with a generic's own parameters: each instance writes the struct a written `maybe(usize)` is.
+// A type function used with a generic's own parameters: each instance writes the struct a written `maybe(Usize)` is.
 maybe(T) first(constexpr Type T, T *xs, Usize n) {
     if (n == 0) return .none;
     return {.some = xs[0]};

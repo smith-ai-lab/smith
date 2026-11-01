@@ -3,7 +3,7 @@
 // smith-module: main
 // smith-imports:
 // smith-names: sum
-// smith-generic: main sum main_sum src/main.smith -@6 1 2 12 13 | iP1w@0:8=T iw@0:10=main_sum p@0:13=( i@0:14=constexpr iw@0:24=type iP1w@0:29=T p@0:30=, iP1w@0:32=T iw@0:34=a p@0:35=, iP1w@0:37=T iw@0:39=b p@0:40=) pw@0:42={ iP1w@1:5=T pw@1:7=( p@1:8=* i@1:9=add p@1:12=) p@1:13=( iP1@1:14=T p@1:15=, iP1w@1:17=T p@1:18=) pw@1:20== pw@1:22=[ p@1:23=] p@1:24=( iP1@1:25=T iw@1:27=x p@1:28=, iP1w@1:30=T iw@1:32=y p@1:33=) pw@1:35={ iw@1:37=return iw@1:44=x pw@1:46=+ iw@1:48=y p@1:49=; pw@1:51=} p@1:52=; iw@2:5=void pw@2:10=( p@2:11=* i@2:12=nothing p@2:19=) p@2:20=( i@2:21=void p@2:25=) pw@2:27== pw@2:29=[ p@2:30=] pw@2:32={ pw@2:34=} p@2:35=; iw@3:5=nothing p@3:12=( p@3:13=) p@3:14=; iw@4:5=return iw@4:12=add p@4:15=( i@4:16=a p@4:17=, iw@4:19=b p@4:20=) p@4:21=; p@5:1=}
+// smith-generic: main sum main_sum src/main.smith -@6 1 2 12 13 | iP1w@0:8=T iw@0:10=main_sum p@0:13=( i@0:14=constexpr iw@0:24=Type iP1w@0:29=T p@0:30=, iP1w@0:32=T iw@0:34=a p@0:35=, iP1w@0:37=T iw@0:39=b p@0:40=) pw@0:42={ iP1w@1:5=T pw@1:7=( p@1:8=* i@1:9=add p@1:12=) p@1:13=( iP1@1:14=T p@1:15=, iP1w@1:17=T p@1:18=) pw@1:20== pw@1:22=[ p@1:23=] p@1:24=( iP1@1:25=T iw@1:27=x p@1:28=, iP1w@1:30=T iw@1:32=y p@1:33=) pw@1:35={ iw@1:37=return iw@1:44=x pw@1:46=+ iw@1:48=y p@1:49=; pw@1:51=} p@1:52=; iw@2:5=void pw@2:10=( p@2:11=* i@2:12=nothing p@2:19=) p@2:20=( i@2:21=void p@2:25=) pw@2:27== pw@2:29=[ p@2:30=] pw@2:32={ pw@2:34=} p@2:35=; iw@3:5=nothing p@3:12=( p@3:13=) p@3:14=; iw@4:5=return iw@4:12=add p@4:15=( i@4:16=a p@4:17=, iw@4:19=b p@4:20=) p@4:21=; p@5:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>

@@ -45,10 +45,10 @@ import <unistd.h>;         // read and write: the functions the handler of the t
 // NOLINTEND(readability-identifier-naming)
 
 // The bytes written, or why not; the type of every write and print.
-export typedef result(usize, Error) Written;
+export typedef Result(Usize, Error) Written;
 
 // The bytes read (0 is the end of the input), or why not.
-export typedef result(usize, Error) Count;
+export typedef Result(Usize, Error) Count;
 
 // A line of stdin without its newline, a terminator after it that the slice's count does not count, in memory of the
 // allocator in force (the caller's, `mem::free(line.text.data)` gives it back). `end` is set when the input was over
@@ -57,86 +57,86 @@ export typedef result(usize, Error) Count;
     char text[:];
     bool end;
 } Line;
-export typedef result(Line, Error) LineResult;
+export typedef Result(Line, Error) LineResult;
 
 // The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
 // NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
-constexpr i32 stdin_fd = c::STDIN_FILENO;
-constexpr i32 stdout_fd = c::STDOUT_FILENO;
-constexpr i32 stderr_fd = c::STDERR_FILENO;
-constexpr i32 ebadf = c::EBADF;
-constexpr i32 edquot = c::EDQUOT;
-constexpr i32 eintr = c::EINTR;
-constexpr i32 enospc = c::ENOSPC;
-constexpr i32 epipe = c::EPIPE;
+constexpr I32 stdin_fd = c::STDIN_FILENO;
+constexpr I32 stdout_fd = c::STDOUT_FILENO;
+constexpr I32 stderr_fd = c::STDERR_FILENO;
+constexpr I32 ebadf = c::EBADF;
+constexpr I32 edquot = c::EDQUOT;
+constexpr I32 eintr = c::EINTR;
+constexpr I32 enospc = c::ENOSPC;
+constexpr I32 epipe = c::EPIPE;
 // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
 
 // errno, which is a macro for the system's function.
 if constexpr (target::os == target::macos) {
-    i32 errno_now() {
+    I32 errno_now() {
         return *c::__error();
     }
 } else {
-    i32 errno_now() {
+    I32 errno_now() {
         return *c::__errno_location();
     }
 }
 
-Error error_of(i32 code) {
+Error error_of(I32 code) {
     if (code == epipe || code == ebadf) return Closed;
     if (code == enospc || code == edquot) return Full;
     return Failed;
 }
 
 // Writes all of the bytes to the descriptor. Each pass writes at least one byte or ends, so the loop is bounded.
-Written write_all(i32 descriptor, const u8 *bytes, usize size) {
+Written write_all(I32 descriptor, const U8 *bytes, Usize size) {
     contract::trusted(); // a call into the system, the edge a proof cannot read
-    usize done = 0;
-    for (usize passes = 0; done < size && passes <= size + 4096; passes++) {
-        isize n = c::write(descriptor, bytes + done, size - done); // NOLINT(smith-effects): the edge
+    Usize done = 0;
+    for (Usize passes = 0; done < size && passes <= size + 4096; passes++) {
+        Isize n = c::write(descriptor, bytes + done, size - done); // NOLINT(smith-effects): the edge
         if (n < 0 && errno_now() == eintr) continue;
         if (n < 0) return {.error = error_of(errno_now())};
         if (n == 0) return {.error = Failed};
-        done += (usize)n;
+        done += (Usize)n;
     }
     return done;
 }
 
 // Writes the bytes to stdout, all of them or an error.
-[[std::c_name("smith_console_write")]] export Written write(const u8 bytes[:]) {
+[[std::c_name("smith_console_write")]] export Written write(const U8 bytes[:]) {
     return write_all(stdout_fd, bytes.data, countof(bytes));
 }
 
 // Writes the bytes to stderr, all of them or an error.
-[[std::c_name("smith_console_write_error")]] export Written write_error(const u8 bytes[:]) {
+[[std::c_name("smith_console_write_error")]] export Written write_error(const U8 bytes[:]) {
     return write_all(stderr_fd, bytes.data, countof(bytes));
 }
 
 // Reads at most countof(buffer) bytes of stdin into the buffer, as many as are available: the count, 0 at the end of
 // the input. A buffer with no room is a bug: a checked failure.
-[[std::c_name("smith_console_read")]] export Count read(u8 buffer[:]) {
+[[std::c_name("smith_console_read")]] export Count read(U8 buffer[:]) {
     contract::trusted(); // a call into the system, the edge a proof cannot read
     contract::requires(countof(buffer) > 0);
-    for (u32 passes = 0; passes < 4096; passes++) {                // each pass reads or follows a signal
-        isize n = c::read(stdin_fd, buffer.data, countof(buffer)); // NOLINT(smith-effects): the edge
-        if (n >= 0) return (usize)n;
+    for (U32 passes = 0; passes < 4096; passes++) {                // each pass reads or follows a signal
+        Isize n = c::read(stdin_fd, buffer.data, countof(buffer)); // NOLINT(smith-effects): the edge
+        if (n >= 0) return (Usize)n;
         if (errno_now() != eintr) return {.error = error_of(errno_now())};
     }
     return {.error = Failed};
 }
 
-constexpr usize line_first = 128; // the first room of a line; it doubles
+constexpr Usize line_first = 128; // the first room of a line; it doubles
 
 // The next line of stdin without its newline. Input is read a byte at a time, so a line and a `read` can be mixed on
 // one input and nothing is held between calls; for a bulk read use `read`.
 [[std::c_name("smith_console_line")]] export LineResult read_line() {
     contract::trusted(); // grows its memory and reads the system
     char line[:] = mem::alloc_slice(char, line_first);
-    usize count = 0;
+    Usize count = 0;
     bool any = false;
     bool newline = false;
-    for (usize passes = 0; !newline; passes++) {
-        u8 byte[1] = {};
+    for (Usize passes = 0; !newline; passes++) {
+        U8 byte[1] = {};
         Count got = read(byte[0:1]);
         if (got == .error) {
             mem::free(line.data);
@@ -163,12 +163,12 @@ constexpr usize line_first = 128; // the first room of a line; it doubles
 }
 
 // Writes the characters to stdout or stderr: the whole text or an error.
-Written emit(bool errors, const char *data, usize count) {
-    return write_all(errors ? stderr_fd : stdout_fd, (const u8 *)data, count);
+Written emit(bool errors, const char *data, Usize count) {
+    return write_all(errors ? stderr_fd : stdout_fd, (const U8 *)data, count);
 }
 
 // The pieces printed with the room of `characters`, which is the length of their text.
-Written emit_long(bool errors, char *memory, usize characters) {
+Written emit_long(bool errors, char *memory, Usize characters) {
     Written written = emit(errors, memory, characters);
     mem::free(memory);
     return written;

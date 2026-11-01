@@ -305,7 +305,7 @@ void f(void) {
 auto local and typeof of a member in a parameter
 ================================================================================
 
-u32 f(struct P *p, typeof(p->x) y) {
+U32 f(struct P *p, typeof(p->x) y) {
   auto q = y;
   auto n = 4;
   return q + n;

@@ -9,8 +9,8 @@ description: "A weighted random index with std::categorical (import std::categor
 import std::categorical;
 import std::random;
 
-usize pick(random::Key key) {
-    f64 weights[3] = {1, 2, 3};
+Usize pick(random::Key key) {
+    F64 weights[3] = {1, 2, 3};
     categorical::Table table = categorical::make(weights, 3); // built once; memory from the allocator in force
     return categorical::sample(key, table);                   // an index below 3, drawn 1:2:3
 }

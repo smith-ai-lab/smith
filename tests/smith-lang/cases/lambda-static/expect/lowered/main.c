@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-static __INT32_TYPE__ (*const square)(__INT32_TYPE__) =(__INT32_TYPE__ a) -> i32 { return a * a; };
+static __INT32_TYPE__ (*const square)(__INT32_TYPE__) =(__INT32_TYPE__ a) -> I32 { return a * a; };
 struct main_Op {
 const char *name;
 __INT32_TYPE__ (*call)(__INT32_TYPE__, __INT32_TYPE__);

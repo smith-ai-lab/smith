@@ -4,7 +4,7 @@ import <unistd.h>;
 import std::test;
 
 void test_overflow(void) {
-    u8 *buffer = (u8 *)c::malloc(8);
+    U8 *buffer = (U8 *)c::malloc(8);
     test::note("index %d", 8);
     buffer[8] = 'x';
     c::free(buffer);
@@ -19,7 +19,7 @@ void test_exits(void) {
 }
 
 void test_spins(void) {
-    volatile u64 count = 0;
+    volatile U64 count = 0;
     while (count < 0xffffffffffffffffULL) {
         count = count + 1;
     }

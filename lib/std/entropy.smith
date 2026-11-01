@@ -31,8 +31,8 @@ import <sys/random.h>;     // getentropy: the function the handler of the thread
 // failure.
 [[std::c_name("smith_entropy_seed")]] export [[nodiscard]] random::Key seed() {
     contract::trusted(); // a call into the system, the edge a proof cannot read
-    u64 bits = 0;
-    i32 status = c::getentropy(&bits, sizeof bits); // NOLINT(smith-effects): the edge, as the handler answers it
+    U64 bits = 0;
+    I32 status = c::getentropy(&bits, sizeof bits); // NOLINT(smith-effects): the edge, as the handler answers it
     contract::assert(status == 0);
     return random::key_make(bits);
 }
@@ -42,20 +42,20 @@ import <sys/random.h>;     // getentropy: the function the handler of the thread
 // the first member: `&fake.base` is what `entropy::set_handler` takes.
 [[std::c_name("SmithEntropyFake")]] export typedef struct {
     Handler base;
-    u64 number;
-    usize asked;
+    U64 number;
+    Usize asked;
 } Fake;
 
-void fake_fill(Handler *self, u8 *buffer, usize size) {
+void fake_fill(Handler *self, U8 *buffer, Usize size) {
     contract::trusted(); // the handler's C signature is a pointer and a size, which a proof cannot relate
     Fake *fake = (Fake *)self;
     fake->asked += 1;
-    for (usize i = 0; i < size; i++)
-        buffer[i] = (u8)(fake->number >> (8 * (i % 8)));
+    for (Usize i = 0; i < size; i++)
+        buffer[i] = (U8)(fake->number >> (8 * (i % 8)));
 }
 
 // A fake whose bytes are those of `number`. Put it in force with `entropy::set_handler(&fake.base)`.
-[[std::c_name("smith_entropy_fake")]] export [[nodiscard]] Fake fake(u64 number) {
+[[std::c_name("smith_entropy_fake")]] export [[nodiscard]] Fake fake(U64 number) {
     Fake result = {};
     result.base = (c::SmithEntropyHandler){.fill = fake_fill};
     result.number = number;

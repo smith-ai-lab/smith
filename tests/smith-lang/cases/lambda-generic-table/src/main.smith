@@ -17,7 +17,7 @@ static I32 triple(I32 x) {
 
 // The `http::get` shape: routes with different handlers in one table, each a function pointer that knows its instance.
 Route route(const char *path, constexpr auto handler) {
-    Route r = {path, [](I32 x) -> i32 { return handler(x); }};
+    Route r = {path, [](I32 x) -> I32 { return handler(x); }};
     return r;
 }
 

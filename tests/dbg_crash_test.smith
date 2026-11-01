@@ -14,7 +14,7 @@ import std::test;
 import scratch;
 import target;
 
-constexpr usize memory_size = (usize)16 << 20; // 16 MiB
+constexpr Usize memory_size = (Usize)16 << 20; // 16 MiB
 
 // What the tests debug is built once for each smith under test and set of sources, in $SMITH_TEST_CACHE/dbgcrash-<key>
 // (a lock folder makes one test the builder and the others wait, as runner.smith's shared build does) and copied into

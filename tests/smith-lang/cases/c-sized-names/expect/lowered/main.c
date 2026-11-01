@@ -10,11 +10,11 @@ return x * 2;
 }
 static int local(int x) {
 enum { i8 = 3, u8_local };
-return x + __INT8_TYPE__ + u8_local;
+return x + i8 + u8_local;
 }
 int main() {
-int sum = (int)__INT64_TYPE__ + (int)__UINT8_TYPE__ + (int)__UINT16_TYPE__;
-printf("%d %d %d %d\n", sum, (int)__INT32_TYPE__, (int)__UINT64_TYPE__, (int)last);
-printf("%d %d %d\n", __UINT32_TYPE__(1), double(4), local(1));
+int sum = (int)i64 + (int)u8 + (int)u16;
+printf("%d %d %d %d\n", sum, (int)i32, (int)u64, (int)last);
+printf("%d %d %d\n", u32(1), f64(4), local(1));
 return 0;
 }
