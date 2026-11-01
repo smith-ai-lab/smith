@@ -67,6 +67,10 @@ Declarations and whole files. `parse_decl::declaration(p)` is the hook `parse::H
 
 **Statements** (`front/parse_stmt.smith`, A4): `parse_stmt::statement(p)` is the `statement` hook. It reads every statement form (blocks, `if` / `if constexpr`, loops, `switch`, jumps, labels, `defer`, `static_assert`) and a declaration-or-expression with no symbol table. Nesting is an explicit stack of frames, never recursion; after an error the rest of the statement is skipped and an `empty` placeholder stands in, so one mistake gives one error. Tests: `tests/front_parse_stmt_test.smith` with stub hooks and goldens in `tests/front/parse_stmt/`.
 
+## front::parser (`front/parser.smith`, #1219)
+
+`parser::parse(file, source)` reads a whole file into a `Parsed` (the `ast::Module` and the `parse::ParseError` list): it tokenizes, makes a `parse::Parser`, installs the four real hooks (`parse_expr::expression`, `parse_type::type`, `parse_stmt::statement`, `parse_decl::declaration`) and calls `parse_decl::file`. It never aborts: a lexer error is the one error with an empty module. The corpus run, `tests/front_parser_test.smith`, parses every `.smith` file of `tests/smith-lang/cases` and writes one outcome per file (`ok`, `error: <message>`, `C, out of scope` or `skipped: <issue>`) to the golden `tests/front/parser/corpus.txt`, which ends with a summary line; a parse error must be in the test's allow list. `FRONT_UPDATE=1` writes the golden.
+
 ## front::cimport (track C)
 
 Declarations read from C headers become these same nodes; its concept comes with #1117 (`c-header-import.md`), and links here once that file exists.
