@@ -6,6 +6,7 @@
 module front::emit_state;
 
 import front::ast;
+import front::types;
 import std::contract;
 import std::arena;
 import std::mem;
@@ -34,6 +35,7 @@ export struct Options {
     Target target;
     Str source; // the file's text, for debug info's lines (B5)
     Bool debug_info;
+    const types::Checked *checked; // the checker's result for the module; null: no cast is checked (K2, #1329)
 };
 
 // What a handler returns: success, or the Error that stops the walk.
