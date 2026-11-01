@@ -1,1 +1,1 @@
-generic-return-type/main.smith: error: expected `)`, found `T` (6:27) [undecided_c]
+generic-return-type/main.smith: error: a declaration needs a type (there is no implicit `int`): write the type before `by_count`, as in `I32 by_count` (15:8) [undecided_c]

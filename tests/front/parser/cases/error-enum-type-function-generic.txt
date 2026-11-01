@@ -1,1 +1,1 @@
-error-enum-type-function-generic/main.smith: error: expected `)`, found `T` (3:17) [undecided_c]
+error-enum-type-function-generic/main.smith: error: expected a tag name after `struct`, `union` or `enum` (4:17) [undecided_c]

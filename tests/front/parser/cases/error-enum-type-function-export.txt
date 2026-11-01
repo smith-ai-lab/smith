@@ -1,2 +1,2 @@
 error-enum-type-function-export/main.smith: ok
-error-enum-type-function-export/opt.smith: error: expected `)`, found `T` (3:17) [undecided_c]
+error-enum-type-function-export/opt.smith: error: expected a tag name after `struct`, `union` or `enum` (4:17) [undecided_c]
