@@ -67,6 +67,13 @@ struct SmithFileHandler {
     // Maps a file (private, writable): the memory and its size, or null with errno set.
     void *(*map)(SmithFileHandler *self, const char *path, size_t *size);
     void (*unmap)(SmithFileHandler *self, void *data, size_t size);
+    // Paths and links (std::files current_folder, real_path, can, read_link, make_link); each may be null, which is
+    // libc's own call (getcwd, realpath, access, readlink, symlink). 0 for success and -1 with errno set, as libc.
+    int (*getcwd)(SmithFileHandler *self, char *buffer, size_t size);   // the current folder, with its NUL
+    int (*realpath)(SmithFileHandler *self, const char *path, char *out); // out holds PATH_MAX bytes
+    int (*access)(SmithFileHandler *self, const char *path, int mode);  // mode is access's (R_OK, W_OK, X_OK)
+    ssize_t (*readlink)(SmithFileHandler *self, const char *path, char *buffer, size_t size); // bytes, no NUL
+    int (*symlink)(SmithFileHandler *self, const char *target, const char *path);
 };
 
 // Sets the files of the calling thread (null: libc's), returning the ones it had.

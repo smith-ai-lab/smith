@@ -56,6 +56,7 @@ constexpr I32 enotdir = c::ENOTDIR;
 constexpr I32 enotempty = c::ENOTEMPTY;
 constexpr I32 eacces = c::EACCES;
 constexpr I32 eperm = c::EPERM;
+constexpr I32 erange = c::ERANGE;
 constexpr I32 erofs = c::EROFS;
 constexpr I32 access_mask = c::O_ACCMODE;
 constexpr I32 open_read = c::O_RDONLY | c::O_CLOEXEC;
@@ -69,6 +70,8 @@ constexpr I32 flag_truncate = c::O_TRUNC;
 constexpr I32 flag_append = c::O_APPEND;
 constexpr I32 flag_exclusive = c::O_EXCL;
 constexpr I32 write_ok = c::W_OK;
+constexpr I32 read_ok = c::R_OK;
+constexpr I32 run_ok = c::X_OK;
 constexpr I32 protect_both = c::PROT_READ | c::PROT_WRITE;
 constexpr I32 map_file = c::MAP_PRIVATE;
 constexpr Usize path_max = c::PATH_MAX;
@@ -115,8 +118,15 @@ I32 errno_now() {
     NoSpace,     // the disk is full
     ReadOnly,    // the file system does not take writes
     TooManyOpen, // the process or the system has no more descriptors
-    Other,       // the system said something else
+    Other,       // the system said something else (read_link of a path that is not a link, for one)
 } Error;
+
+// What can() asks about a path.
+[[std::c_name("SmithFilesAccess")]] export typedef enum {
+    CanRead,
+    CanWrite,
+    CanRun,
+} Access;
 
 // How a file is opened, and how write_file puts bytes in a file.
 [[std::c_name("SmithFilesMode")]] export typedef enum {
@@ -161,6 +171,9 @@ export typedef typeof(Entry[:]) Entries;
 export typedef Result(Bytes, Error) BytesResult;
 export typedef Result(Entries, Error) EntriesResult;
 export typedef Option(Error) CloseResult;
+export typedef typeof(char[:]) Text;
+export typedef Result(Text, Error) TextResult;
+export typedef Option(Error) LinkResult;
 
 // The handler type (the files of include/smith/handlers.h) and its setter, which returns the one the thread had:
 //   files::Handler *before = files::set_handler(&fake.base);
@@ -258,6 +271,43 @@ I32 raw_rename(const char *from, const char *to) {
     if (handler != nullptr && handler->rename != nullptr)
         return handler->rename(handler, from, to) == 0 ? 0 : errno_now();
     return c::rename(from, to) == 0 ? 0 : errno_now();
+}
+
+I32 raw_getcwd(char *buffer, Usize size) {
+    c::SmithFileHandler *handler = c::smith_handlers_files();
+    if (handler != nullptr && handler->getcwd != nullptr)
+        return handler->getcwd(handler, buffer, size) == 0 ? 0 : errno_now();
+    return c::getcwd(buffer, size) != nullptr ? 0 : errno_now();
+}
+
+I32 raw_realpath(const char *path, char *out) {
+    c::SmithFileHandler *handler = c::smith_handlers_files();
+    if (handler != nullptr && handler->realpath != nullptr)
+        return handler->realpath(handler, path, out) == 0 ? 0 : errno_now();
+    return c::realpath(path, out) != nullptr ? 0 : errno_now();
+}
+
+I32 raw_access(const char *path, I32 mode) {
+    c::SmithFileHandler *handler = c::smith_handlers_files();
+    if (handler != nullptr && handler->access != nullptr)
+        return handler->access(handler, path, mode) == 0 ? 0 : errno_now();
+    return c::access(path, mode) == 0 ? 0 : errno_now();
+}
+
+// The bytes of the link, or -1 with the errno in code.
+Isize raw_readlink(const char *path, char *buffer, Usize size, I32 *code) {
+    c::SmithFileHandler *handler = c::smith_handlers_files();
+    Isize count = handler != nullptr && handler->readlink != nullptr ? handler->readlink(handler, path, buffer, size)
+                                                                      : c::readlink(path, buffer, size);
+    if (count < 0) *code = errno_now();
+    return count;
+}
+
+I32 raw_symlink(const char *target, const char *path) {
+    c::SmithFileHandler *handler = c::smith_handlers_files();
+    if (handler != nullptr && handler->symlink != nullptr)
+        return handler->symlink(handler, target, path) == 0 ? 0 : errno_now();
+    return c::symlink(target, path) == 0 ? 0 : errno_now();
 }
 
 // The entries of one folder, one at a time: the handler's list or the system's readdir.
@@ -540,6 +590,80 @@ CountResult write_in_place(const char path[:], const U8 data[:], Mode mode) {
     return (Done){};
 }
 
+// Text from the current allocator: a copy of length bytes, with a NUL after them (not counted).
+Text text_copy(const char *bytes, Usize length) {
+    char copy[:] = mem::alloc_slice(char, length + 1);
+    put(copy.data, bytes, length);
+    copy[length] = 0;
+    return copy[0:length];
+}
+
+// The folder the program is in, as an absolute path.
+[[std::c_name("smith_fs_current_folder")]] export [[nodiscard]] TextResult current_folder() {
+    char buffer[path_max] = {};
+    I32 code = raw_getcwd(buffer, path_max);
+    if (code != 0) {
+        return {.error = error_from(code)};
+    }
+    return text_copy(buffer, c::strlen(buffer));
+}
+
+// The absolute path with every link and "." and ".." resolved. The path must exist (NotFound otherwise).
+[[std::c_name("smith_fs_real_path")]] export [[nodiscard]] TextResult real_path(const char path[:]) {
+    Path where = path_make(path);
+    if (!where.fits) {
+        return {.error = NameTooLong};
+    }
+    char buffer[path_max] = {};
+    I32 code = raw_realpath(where.text, buffer);
+    if (code != 0) {
+        return {.error = error_from(code)};
+    }
+    return text_copy(buffer, c::strlen(buffer));
+}
+
+// Whether something (a file, a folder or a link that leads somewhere) is at the path.
+[[std::c_name("smith_fs_exists")]] export [[nodiscard]] Bool exists(const char path[:]) {
+    Path where = path_make(path);
+    c::SmithFileStatus status = {};
+    return where.fits && raw_stat(where.text, &status) == 0;
+}
+
+// Whether the program may read, write or run the path; false also when nothing is there.
+[[std::c_name("smith_fs_can")]] export [[nodiscard]] Bool can(const char path[:], Access what) {
+    Path where = path_make(path);
+    if (!where.fits) return false;
+    I32 mode = what == CanRead ? read_ok : (what == CanWrite ? write_ok : run_ok);
+    return raw_access(where.text, mode) == 0;
+}
+
+// Where a link points, as written in the link. A path that is not a link is Other.
+[[std::c_name("smith_fs_read_link")]] export [[nodiscard]] TextResult read_link(const char path[:]) {
+    Path where = path_make(path);
+    if (!where.fits) {
+        return {.error = NameTooLong};
+    }
+    char buffer[path_max] = {};
+    I32 code = 0;
+    Isize count = raw_readlink(where.text, buffer, path_max - 1, &code);
+    if (count < 0) {
+        return {.error = code == einval ? Other : error_from(code)};
+    }
+    return text_copy(buffer, (Usize)count);
+}
+
+// Makes a link at path that points to target (the text is stored as given); Exists if path is taken.
+[[std::c_name("smith_fs_make_link")]] export [[nodiscard]] LinkResult make_link(const char target[:], const char path[:]) {
+    Path to = path_make(target);
+    Path where = path_make(path);
+    if (!to.fits || !where.fits) {
+        return Error.NameTooLong;
+    }
+    I32 code = raw_symlink(to.text, where.text);
+    if (code != 0) return error_from(code);
+    return .none;
+}
+
 // Deletes a file (a folder is Denied).
 [[std::c_name("smith_fs_remove")]] export [[nodiscard]] DoneResult remove(const char path[:]) {
     Path where = path_make(path);
@@ -681,6 +805,7 @@ I32 entry_compare(const void *a, const void *b) {
     char path[fake_path_max];
     Bool used;
     Bool folder; // a folder made by make_folder; the folders of a file's path need no entry
+    Bool link;   // a link made by make_link: data holds the target
     U8 *data;
     Usize size;
     Usize capacity;
@@ -988,6 +1113,72 @@ void fake_unmap(c::SmithFileHandler *self, void *data, Usize size) {
     (void)size;
 }
 
+// The fake's folder is "/fake"; its paths are relative to it.
+I32 fake_getcwd(c::SmithFileHandler *self, char *buffer, Usize size) {
+    (void)self;
+    const char *folder = "/fake";
+    if (size <= c::strlen(folder)) {
+        fake_fail(erange);
+        return -1;
+    }
+    put(buffer, folder, c::strlen(folder) + 1);
+    return 0;
+}
+
+Bool fake_exists(const Fake *fake, const char *path) {
+    return fake_find(fake, path) != fake_files_max || fake_folder_exists(fake, path);
+}
+
+// A path in the fake is its own real path: it has no relative parts, and a link is not followed.
+I32 fake_realpath(c::SmithFileHandler *self, const char *path, char *out) {
+    if (!fake_exists((const Fake *)self, path)) {
+        fake_fail(enoent);
+        return -1;
+    }
+    put(out, path, c::strlen(path) + 1);
+    return 0;
+}
+
+I32 fake_access(c::SmithFileHandler *self, const char *path, I32 mode) {
+    (void)mode; // everything in the fake may be read, written and run
+    if (!fake_exists((const Fake *)self, path)) {
+        fake_fail(enoent);
+        return -1;
+    }
+    return 0;
+}
+
+Isize fake_readlink(c::SmithFileHandler *self, const char *path, char *buffer, Usize size) {
+    const Fake *fake = (const Fake *)self;
+    Usize found = fake_find(fake, path);
+    if (found == fake_files_max && !fake_folder_exists(fake, path)) {
+        fake_fail(enoent);
+        return -1;
+    }
+    if (found == fake_files_max || !fake->files[found].link) {
+        fake_fail(einval);
+        return -1;
+    }
+    Usize count = fake->files[found].size < size ? fake->files[found].size : size;
+    put(buffer, fake->files[found].data, count);
+    return (Isize)count;
+}
+
+I32 fake_symlink(c::SmithFileHandler *self, const char *target, const char *path) {
+    Fake *fake = (Fake *)self;
+    if (fake_exists(fake, path)) {
+        fake_fail(eexist);
+        return -1;
+    }
+    FakeFile *file = &fake->files[fake_new(fake, path)];
+    Usize length = c::strlen(target);
+    file->link = true;
+    fake_reserve(file, length);
+    put(file->data, target, length);
+    file->size = length;
+    return 0;
+}
+
 // An empty fake. Put it in force with `files::set_handler(&fake.base)`.
 [[std::c_name("smith_fs_fake")]] export [[nodiscard]] Fake fake() {
     Fake result = {};
@@ -1003,6 +1194,11 @@ void fake_unmap(c::SmithFileHandler *self, void *data, Usize size) {
         .list = fake_list,
         .map = fake_map,
         .unmap = fake_unmap,
+        .getcwd = fake_getcwd,
+        .realpath = fake_realpath,
+        .access = fake_access,
+        .readlink = fake_readlink,
+        .symlink = fake_symlink,
     };
     return result;
 }
