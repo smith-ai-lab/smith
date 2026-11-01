@@ -390,7 +390,14 @@ static ast::Expr *string_literal(parse::Parser *p) {
     return make(parse::span_from(p, start), {.string = {.bytes = bytes}});
 }
 
-// `.name` as a value.
+// Takes a token of the kind, or records the error and says false.
+static Bool expect_ok(parse::Parser *p, lex::TokenKind kind, Str what) {
+    Usize before = countof(p->errors);
+    _ = parse::expect(p, kind, what);
+    return countof(p->errors) == before;
+}
+
+// `.name` as a value, and `.name(payload)` in smith's own syntax.
 static ast::Expr *variant_value(parse::Parser *p) {
     U32 start = parse::advance(p).span.start;
     lex::Token name = parse::peek(p);
@@ -399,7 +406,13 @@ static ast::Expr *variant_value(parse::Parser *p) {
         return nullptr;
     }
     parse::advance(p);
-    return make(parse::span_from(p, start), {.variant = {.name = parse::text(p, name)}});
+    ast::Expr *payload = nullptr;
+    if (p->new_syntax && parse::accept(p, lex::left_paren)) {
+        payload = parse::expression(p);
+        if (payload == nullptr) return nullptr;
+        if (!expect_ok(p, lex::right_paren, "`)` to end the payload")) return nullptr;
+    }
+    return make(parse::span_from(p, start), {.variant = {.name = parse::text(p, name), .payload = payload}});
 }
 
 // A type where a value is expected: `f(I32)`, `Option(I32)`.
@@ -547,11 +560,135 @@ static ast::Expr *lambda(parse::Parser *p) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Smith's own forms (#1446): arrays, tuples, lambdas and blocks
+
+// `[1, 2, 3]`: the position is at the bracket.
+static ast::Expr *array_literal(parse::Parser *p) {
+    U32 start = parse::advance(p).span.start;
+    ast::ExprRef items[:] = {};
+    while (!parse::at(p, lex::right_bracket) && !parse::at(p, lex::end_of_file)) {
+        ast::Expr *next = parse::expression(p);
+        if (next == nullptr) return nullptr;
+        items = parse_type::with_expr(items, next);
+        if (!parse::accept(p, lex::comma)) break;
+    }
+    if (!expect_ok(p, lex::right_bracket, "`]` to end the array")) return nullptr;
+    return make(parse::span_from(p, start), {.array_lit = {.items = items}});
+}
+
+// The offset just past the group that opens at `offset` (an `open` token), counting depth.
+static Usize after_group(const parse::Parser *p, Usize offset, lex::TokenKind open, lex::TokenKind close) {
+    Usize depth = 0;
+    for (Usize i = 0; i < countof(p->tokens); i += 1) {
+        lex::TokenKind kind = parse::peek_at(p, offset).kind;
+        if (kind == lex::end_of_file) return offset;
+        if (kind == open) depth += 1;
+        if (kind == close) depth -= 1;
+        offset += 1;
+        if (depth == 0) return offset;
+    }
+    return offset;
+}
+
+// Whether the `fn` at the position starts a lambda (a body follows its parameters and result) and not a function type.
+static Bool fn_has_body(const parse::Parser *p) {
+    Usize at = 1;
+    if (parse::peek_at(p, at).kind == lex::left_bracket) at = after_group(p, at, lex::left_bracket, lex::right_bracket);
+    if (parse::peek_at(p, at).kind != lex::left_paren) return false;
+    at = after_group(p, at, lex::left_paren, lex::right_paren);
+    if (parse::peek_at(p, at).kind == lex::left_brace) return true;
+    if (parse::peek_at(p, at).kind != lex::arrow) return false;
+    Usize depth = 0;
+    for (Usize i = at + 1; i < at + 1 + countof(p->tokens); i += 1) {
+        lex::TokenKind kind = parse::peek_at(p, i).kind;
+        if (kind == lex::left_paren || kind == lex::left_bracket) depth += 1;
+        if (kind == lex::right_paren || kind == lex::right_bracket) {
+            if (depth == 0) return false;
+            depth -= 1;
+        }
+        if (depth > 0) continue;
+        if (kind == lex::left_brace) return true;
+        if (kind == lex::comma || kind == lex::semicolon || kind == lex::equal || kind == lex::right_brace)
+            return false;
+        if (kind == lex::end_of_file) return false;
+    }
+    return false;
+}
+
+// One parameter of a lambda in smith's own syntax: a name, and a type only when the context cannot give it.
+static ast::Param fn_param(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    ast::Param param = {};
+    lex::Token name = parse::expect(p, lex::name, "a parameter name");
+    if (name.kind == lex::name) param.name = parse::text(p, name);
+    if (parse::accept(p, lex::colon)) param.type = parse::type(p);
+    param.span = parse::span_from(p, start);
+    return param;
+}
+
+// `fn(x) { body }` and `fn[a, b](x) -> R { body }`: the position is at `fn`. Without a body it is a type.
+static ast::Expr *fn_lambda(parse::Parser *p) {
+    if (!fn_has_body(p)) return type_value(p);
+    U32 start = parse::advance(p).span.start;
+    ast::Identifier captures[:] = {};
+    if (parse::accept(p, lex::left_bracket)) {
+        while (parse::at(p, lex::name)) {
+            lex::Token name = parse::advance(p);
+            ast::Identifier capture = {.text = parse::text(p, name), .span = name.span};
+            captures = mem::realloc(captures, countof(captures) + 1);
+            captures[countof(captures) - 1] = capture;
+            if (!parse::accept(p, lex::comma)) break;
+        }
+        if (!expect_ok(p, lex::right_bracket, "`]` to end the captures")) return nullptr;
+    }
+    ast::Param params[:] = {};
+    if (!expect_ok(p, lex::left_paren, "`(` to start the parameters")) return nullptr;
+    while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
+        params = mem::realloc(params, countof(params) + 1);
+        params[countof(params) - 1] = fn_param(p);
+        if (!parse::accept(p, lex::comma)) break;
+    }
+    if (!expect_ok(p, lex::right_paren, "`)` to end the parameters")) return nullptr;
+    ast::TypeExpr *result = nullptr;
+    if (parse::accept(p, lex::arrow)) {
+        result = parse::type(p);
+        if (result == nullptr) return nullptr;
+    }
+    ast::Stmt *body = parse::statement(p);
+    if (body == nullptr) return nullptr;
+    return make(parse::span_from(p, start),
+                {.lambda = {.captures = captures, .params = params, .result = result, .body = body}});
+}
+
+// An `if`, `match`, `for` or block in expression position: the statement it is.
+static ast::Expr *statement_value(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    ast::Stmt *stmt = parse::statement(p);
+    if (stmt == nullptr) return nullptr;
+    return make(parse::span_from(p, start), {.stmt_expr = {.stmt = stmt}});
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Primary expressions
+
+// Whether the path at the position is called with a named argument: `Point(x = 1)`, a construction in smith's own
+// syntax (an applied type never has `name =` inside).
+static Bool named_construction(const parse::Parser *p) {
+    Usize last = 0;
+    lex::TokenKind first = parse::peek_at(p, 0).kind;
+    if (!p->new_syntax || (first != lex::name && first != lex::type_name)) return false;
+    while (parse::peek_at(p, last + 1).kind == lex::colon_colon) {
+        lex::TokenKind next = parse::peek_at(p, last + 2).kind;
+        if (next != lex::name && next != lex::type_name) break;
+        last += 2;
+    }
+    if (parse::peek_at(p, last + 1).kind != lex::left_paren) return false;
+    return parse::peek_at(p, last + 2).kind == lex::name && parse::peek_at(p, last + 3).kind == lex::equal;
+}
 
 // A name or path as a value, or a type as a value.
 static ast::Expr *name_or_type(parse::Parser *p) {
-    if (parse_type::starts_type(p, 0)) return type_value(p);
+    if (parse_type::starts_type(p, 0) && !named_construction(p)) return type_value(p);
     lex::TokenKind kind = parse::peek(p).kind;
     if (kind != lex::name && kind != lex::type_name) {
         not_an_expression(p);
@@ -559,13 +696,6 @@ static ast::Expr *name_or_type(parse::Parser *p) {
     }
     ast::Path path = parse_type::path(p);
     return make(path.span, {.name = {.path = path}});
-}
-
-// Takes a token of the kind, or records the error and says false.
-static Bool expect_ok(parse::Parser *p, lex::TokenKind kind, Str what) {
-    Usize before = countof(p->errors);
-    _ = parse::expect(p, kind, what);
-    return countof(p->errors) == before;
 }
 
 // One association of `_Generic`: `T: value` or `default: value`; the value is null after an error.
@@ -629,9 +759,19 @@ static ast::Expr *primary(parse::Parser *p) {
     case lex::dot:
         return variant_value(p);
     case lex::left_brace:
+        if (p->new_syntax) return statement_value(p);
         return initializer_list(p, nullptr, token.span.start);
     case lex::left_bracket:
+        if (p->new_syntax) return array_literal(p);
         return lambda(p);
+    case lex::kw_fn:
+        return fn_lambda(p);
+    case lex::kw_fn_once:
+        return type_value(p);
+    case lex::kw_if:
+    case lex::kw_match:
+    case lex::kw_for:
+        return statement_value(p);
     case lex::kw_generic:
         return generic_select(p);
     default:
@@ -969,12 +1109,24 @@ static Bool comma_operator(parse::Parser *p) {
     return true;
 }
 
+// One call argument: `value`, or `name = value` in smith's own syntax.
+static ast::Expr *argument(parse::Parser *p) {
+    if (!p->new_syntax || !parse::at(p, lex::name) || parse::peek_at(p, 1).kind != lex::equal) {
+        return expansion(p, parse::expression(p));
+    }
+    lex::Token name = parse::advance(p);
+    parse::advance(p);
+    ast::Expr *value = parse::expression(p);
+    if (value == nullptr) return nullptr;
+    return make(parse::span_from(p, name.span.start), {.named_arg = {.name = parse::text(p, name), .value = value}});
+}
+
 // `f(a, b)`: the position is at the parenthesis.
 static ast::Expr *call(parse::Parser *p, ast::Expr *callee) {
     parse::advance(p);
     ast::ExprRef args[:] = {};
     while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
-        ast::Expr *arg = expansion(p, parse::expression(p));
+        ast::Expr *arg = argument(p);
         if (arg == nullptr) return nullptr;
         args = parse_type::with_expr(args, arg);
         if (!parse::accept(p, lex::comma)) break;
@@ -1034,6 +1186,17 @@ static ast::Expr *member(parse::Parser *p, ast::Expr *base) {
                 {.member = {.base = base, .name = parse::text(p, name), .arrow = arrow}});
 }
 
+// `x as T`: binds tighter than every binary operator, so pending prefix operators apply first (`-x as T` is `(-x) as
+// T`). The position is at `as`.
+static ast::Expr *as_cast(parse::Parser *p, Stack *st) {
+    reduce_above(st, prefix_prec, false);
+    ast::Expr *operand = st->values[st->value_count - 1];
+    parse::advance(p);
+    ast::TypeExpr *type = parse::type(p);
+    if (type == nullptr) return nullptr;
+    return make(parse::span_from(p, operand->span.start), {.cast = {.type = type, .operand = operand}});
+}
+
 // A postfix operator applied to the last operand, if one is at the position.
 static Outcome postfix_step(parse::Parser *p, Stack *st) {
     lex::Token token = parse::peek(p);
@@ -1049,6 +1212,14 @@ static Outcome postfix_step(parse::Parser *p, Stack *st) {
     case lex::dot:
     case lex::arrow:
         result = member(p, base);
+        break;
+    case lex::dot_star:
+        parse::advance(p);
+        result = ast::deref(base);
+        result->span = parse::span_from(p, base->span.start);
+        break;
+    case lex::kw_as:
+        result = as_cast(p, st);
         break;
     case lex::plus_plus:
     case lex::minus_minus:
@@ -1122,9 +1293,32 @@ static Bool type_value_cast(const parse::Parser *p) {
     return starts_bare_operand(parse::peek_at(p, last + 2).kind);
 }
 
+// `(` in smith's own syntax: `()`, `(x,)` and `(a, b)` are tuples, `(x)` groups. The `(` is read.
+static Step group_or_tuple(parse::Parser *p, Stack *st, U32 start) {
+    ast::ExprRef items[:] = {};
+    Bool is_tuple = parse::at(p, lex::right_paren);
+    for (Usize i = 0; i <= countof(p->tokens) && !parse::at(p, lex::right_paren); i += 1) {
+        ast::Expr *item = parse::expression(p);
+        if (item == nullptr) return .failed;
+        items = parse_type::with_expr(items, item);
+        if (!parse::accept(p, lex::comma)) break;
+        is_tuple = true;
+    }
+    if (!expect_ok(p, lex::right_paren, "`)` to close the `(`")) return .failed;
+    ast::Span span = parse::span_from(p, start);
+    if (is_tuple) {
+        push_value(st, make(span, {.tuple_lit = {.items = items}}));
+    } else {
+        items[0]->span = span;
+        push_value(st, items[0]);
+    }
+    return .value;
+}
+
 // `(`: a cast `(T)x`, a compound literal `(T){...}` or a parenthesized expression.
 static Step paren(parse::Parser *p, Stack *st) {
     U32 start = parse::advance(p).span.start;
+    if (p->new_syntax) return group_or_tuple(p, st, start);
     if (parse_type::starts_type(p, 0) || type_value_cast(p)) {
         ast::TypeExpr *type = parse::type(p);
         parse::expect(p, lex::right_paren, "`)` to end the cast's type");

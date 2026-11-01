@@ -31,8 +31,8 @@ static ast::Stmt *stub_statement(parse::Parser *p) {
 }
 
 // A parser over the tokens of source with the real hooks and the stub; a lexing error fails the test.
-static parse::Parser parser_of(Str source) {
-    lex::Lexed lexed = lex::tokenize(source);
+static parse::Parser parser_in(Str source, Bool new_syntax) {
+    lex::Lexed lexed = new_syntax ? lex::tokenize_new(source) : lex::tokenize(source);
     lex::Tokens tokens = {};
     switch (lexed) {
     case .ok:
@@ -43,16 +43,21 @@ static parse::Parser parser_of(Str source) {
         test::check_equal(lexed.error.message, expected);
     }
     parse::Parser p = parse::make(tokens, source);
+    p.new_syntax = new_syntax;
     p.hooks.expression = parse_expr::expression;
     p.hooks.type = parse_type::type;
     p.hooks.statement = stub_statement;
     return p;
 }
 
+static parse::Parser parser_of(Str source) {
+    return parser_in(source, false);
+}
+
 // The dump of one expression, as the value returned by a function `f` of a module, then the errors, one a line, and
 // what was left unread.
-static Str dump_one(Str source) {
-    parse::Parser p = parser_of(source);
+static Str dump_one(Str source, Bool new_syntax) {
+    parse::Parser p = parser_in(source, new_syntax);
     ast::Expr *e = parse::expression(&p);
     ast::StmtRef statements[1] = {ast::return_value(e)};
     ast::StmtRef none[:] = {};
@@ -76,23 +81,27 @@ static Str dump_one(Str source) {
 }
 
 // Every line of `lines` is a source, dumped one after the other with a blank line between.
-static Str dump_all(Str lines) {
+static Str dump_all(Str lines, Bool new_syntax) {
     char all[:] = {};
     Usize start = 0;
     for (Usize i = 0; i <= countof(lines); i += 1) {
         if (i < countof(lines) && lines[i] != '\n') continue;
-        all = format::push(all, dump_one(lines[start:i]), "\n");
+        all = format::push(all, dump_one(lines[start:i], new_syntax), "\n");
         start = i + 1;
     }
     return all;
 }
 
-static void check_golden(Str path, Str lines) {
+static void check_golden_in(Str path, Str lines, Bool new_syntax) {
     arena::Arena memory = test::memory(1U << 23);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    test::golden(path, dump_all(lines));
+    test::golden(path, dump_all(lines, new_syntax));
+}
+
+static void check_golden(Str path, Str lines) {
+    check_golden_in(path, lines, false);
 }
 
 // Two texts are the same (a literal converts to Str in a parameter, not in a generic).
@@ -241,4 +250,36 @@ export void test_parse_expr_a_hook_that_is_not_set_is_reported() {
     ast::Expr *e = parse::expression(&p);
     test::check_condition(e == nullptr);
     same(p.errors[0].message, "no parser for a type is installed");
+}
+
+export void test_parse_expr_new_calls_variants_and_tuples() {
+    check_golden_in("tests/front/parse_expr/new_values.txt",
+                    "f(a = 1, b = 2)\nPoint(x = 1)\nf(a, b = c)\n.red\n.circle(r)\n.some(.circle(Circle(radius = 1)))\n"
+                    "(1, 2)\n(x,)\n()\n((1, 2), 3)\n(a + b)\n[1, 2, 3]\n[]\n[[1], [2, 3]]\n[x,]\nxs[0]",
+                    true);
+}
+
+export void test_parse_expr_new_dereference_and_casts() {
+    check_golden_in("tests/front/parse_expr/new_operators.txt",
+                    "p.*\np.x.*\np.*.x\n&x\nx as f64\n-x as f64\na + b as f64\nx as u8 as i32\na * b as f64\n"
+                    "x as *mut u8\nx as ?i32\n&x as *i32\nf(x) as u8",
+                    true);
+}
+
+export void test_parse_expr_new_lambdas_and_types() {
+    check_golden_in("tests/front/parse_expr/new_lambdas.txt",
+                    "fn(x) { x }\nfn() { }\nfn[a, b](x) { x }\nfn(x: i32, y) -> i32 { x }\nfn(i32) -> i32\nfn()\n"
+                    "f(fn(x) { x }, 1)\nf(fn(i32) -> i32)\nfn_once(i32) -> i32",
+                    true);
+}
+
+export void test_parse_expr_new_blocks_in_expression_position() {
+    check_golden_in("tests/front/parse_expr/new_blocks.txt", "{ }\nf({ })\n{ 1 } + 2", true);
+}
+
+export void test_parse_expr_new_malformed_forms() {
+    check_golden_in("tests/front/parse_expr/new_errors.txt",
+                    "f(a =)\nf(a = 1\n.circle(\n.circle(r\n(1,\n(1, 2\n(\n[1, 2\n[1,\np.\nx as\nx as 5\n"
+                    "fn(x\nfn[a, 1](x) { }\nfn(x) -> { }\n)",
+                    true);
 }

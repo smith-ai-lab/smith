@@ -1,0 +1,82 @@
+fn(x) { x }
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (lambda
+          (param x)
+          (block))))))
+
+fn() { }
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (lambda
+          (block))))))
+
+fn[a, b](x) { x }
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (lambda a b
+          (param x)
+          (block))))))
+
+fn(x: i32, y) -> i32 { x }
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (lambda
+          (param x (named i32))
+          (param y)
+          (result (named i32))
+          (block))))))
+
+fn(i32) -> i32
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (type_value (function_type (named i32) (result (named i32))))))))
+
+fn()
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (type_value (function_type))))))
+
+f(fn(x) { x }, 1)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (call
+          (name f)
+          (lambda
+            (param x)
+            (block))
+          (integer 1))))))
+
+f(fn(i32) -> i32)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (call (name f) (type_value (function_type (named i32) (result (named i32)))))))))
+
+fn_once(i32) -> i32
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (type_value (function_type once (named i32) (result (named i32))))))))
+
