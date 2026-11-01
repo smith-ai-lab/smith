@@ -1,0 +1,184 @@
+// `smith help` and the page of every command (#1149): all of it is printed from the verb table in smith.c, and each
+// screen is checked against a golden file under tests/help/ (`smith test --test help_test --update` rewrites them).
+// smith-covers: smith.c runtime/verbs.c tests/help/
+module help_test;
+
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+import scratch;
+import corpus;
+
+constexpr Usize memory_size = 1U << 25;
+
+// Runs `smith <arguments>` in a folder with no build file and compares its standard output with the golden file.
+static void screen_equals_golden(const char *arguments, const char *golden) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    char command[256];
+    (void)format::to(command, sizeof command, "smith ", arguments);
+    scratch::Run run = scratch::sh(&p, command);
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_status("help: the screen exits 0", 0, &run);
+    scratch::expect_text("help: ... and builds nothing", "no", scratch::exists(&p, ".smith") ? "yes" : "no");
+    const char *differing = "";
+    corpus::golden(&memory, &differing, golden, run.out);
+    corpus::finish(differing);
+}
+
+export void test_help_the_list_of_commands() {
+    screen_equals_golden("help", "tests/help/list.txt");
+}
+
+export void test_help_the_list_is_the_same_for_every_way_to_ask() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run list = scratch::sh(&p, "smith help");
+    scratch::Run flag = scratch::sh(&p, "smith --help");
+    scratch::Run dash = scratch::sh(&p, "smith -h");
+    scratch::Run bare = scratch::sh(&p, "smith");
+    scratch::expect_status("help: smith --help exits 0", 0, &flag);
+    scratch::expect_status("help: smith -h exits 0", 0, &dash);
+    scratch::expect_status("help: bare smith exits 0", 0, &bare);
+    scratch::expect_text("help: --help prints the list", list.out, flag.out);
+    scratch::expect_text("help: -h prints the list", list.out, dash.out);
+    scratch::expect_text("help: bare smith prints the list", list.out, bare.out);
+}
+
+// Every row of the table has a usage line and an example, and `smith <command> --help` prints the page that `smith
+// help <command>` does for the commands smith owns: a new command can't ship without help.
+export void test_help_every_command_in_the_list_has_a_page_with_usage_and_an_example() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run =
+        scratch::sh(&p, "for v in $(smith help | sed -n 's/^  \\([^ ]*\\) .*/\\1/p'); do smith help $v > page.txt || "
+                        "echo \"$v: fails\"; "
+                        "grep -q '^usage: smith ' page.txt || echo \"$v: no usage\"; grep -q '^examples:' page.txt || "
+                        "echo \"$v: no examples\"; "
+                        "grep -A1 '^examples:' page.txt | grep -q '^  smith ' || echo \"$v: no example\"; done");
+    scratch::expect_status("help: the loop runs", 0, &run);
+    scratch::expect_text("help: every command has a page", "", run.out);
+}
+
+export void test_help_a_command_page_is_the_same_with_help_and_with_the_flag() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = scratch::sh(
+        &p, "for v in build new fetch cache symbolize docs version run test check mcp; do smith help $v > a.txt; "
+            "smith $v --help > b.txt || echo \"$v: --help fails\"; cmp -s a.txt b.txt || echo \"$v: --help differs\"; "
+            "smith $v -h > c.txt || echo \"$v: -h fails\"; cmp -s a.txt c.txt || echo \"$v: -h differs\"; done");
+    scratch::expect_text("help: --help and -h print the page", "", run.out);
+}
+
+export void test_help_the_tools_keep_their_own_help_for_the_flag() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run fmt = scratch::sh(&p, "smith fmt --help");
+    scratch::expect_contains("help: smith fmt --help is clang-format's", fmt.out, "OVERVIEW: A tool to format");
+    scratch::Run page = scratch::sh(&p, "smith help fmt");
+    scratch::expect_contains("help: smith help fmt is smith's page", page.out, "smith fmt: ");
+    scratch::expect_contains("help: ... pointing to the tool's own", page.out,
+                             "clang-format's own options: smith fmt --help");
+}
+
+export void test_help_page_of_cc() {
+    screen_equals_golden("help cc", "tests/help/cc.txt");
+}
+
+export void test_help_page_of_cpp() {
+    screen_equals_golden("help c++", "tests/help/cpp.txt");
+}
+
+export void test_help_page_of_build() {
+    screen_equals_golden("help build", "tests/help/build.txt");
+}
+
+export void test_help_page_of_new() {
+    screen_equals_golden("help new", "tests/help/new.txt");
+}
+
+export void test_help_page_of_fetch() {
+    screen_equals_golden("help fetch", "tests/help/fetch.txt");
+}
+
+export void test_help_page_of_cache() {
+    screen_equals_golden("help cache", "tests/help/cache.txt");
+}
+
+export void test_help_page_of_symbolize() {
+    screen_equals_golden("help symbolize", "tests/help/symbolize.txt");
+}
+
+export void test_help_page_of_docs() {
+    screen_equals_golden("help docs", "tests/help/docs.txt");
+}
+
+export void test_help_page_of_version() {
+    screen_equals_golden("help version", "tests/help/version.txt");
+}
+
+export void test_help_page_of_fmt() {
+    screen_equals_golden("help fmt", "tests/help/fmt.txt");
+}
+
+export void test_help_page_of_lint() {
+    screen_equals_golden("help lint", "tests/help/lint.txt");
+}
+
+export void test_help_page_of_lsp() {
+    screen_equals_golden("help lsp", "tests/help/lsp.txt");
+}
+
+export void test_help_page_of_run() {
+    screen_equals_golden("help run", "tests/help/run.txt");
+}
+
+export void test_help_page_of_test() {
+    screen_equals_golden("help test", "tests/help/test.txt");
+}
+
+export void test_help_page_of_check() {
+    screen_equals_golden("help check", "tests/help/check.txt");
+}
+
+export void test_help_page_of_prove() {
+    screen_equals_golden("help prove", "tests/help/prove.txt");
+}
+
+export void test_help_page_of_dbg() {
+    screen_equals_golden("help dbg", "tests/help/dbg.txt");
+}
+
+export void test_help_page_of_dap() {
+    screen_equals_golden("help dap", "tests/help/dap.txt");
+}
+
+export void test_help_page_of_mcp() {
+    screen_equals_golden("help mcp", "tests/help/mcp.txt");
+}
+
+export void test_help_page_of_help() {
+    screen_equals_golden("help help", "tests/help/help.txt");
+}

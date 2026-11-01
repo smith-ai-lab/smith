@@ -1,0 +1,20 @@
+smith build: build the project from its build.c
+
+usage: smith build [<target>...] [-n] [-v] [--quiet] [-j<n>] [-k<n>] [-d explain] [-D<name>=<value>...]
+       smith build --dump-config
+
+flags:
+  -n                 print the steps and run none
+  -v, --verbose      show every command as it runs
+  --quiet            no progress, only what a failed step printed
+  -j<n>              run <n> steps at once (0: as many as the machine has)
+  -k<n>              keep going until <n> steps have failed (0: all)
+  -d explain         say why each step runs
+  -t <tool> ...      run an executor tool; the rest of the arguments are the tool's
+  -D<name>=<value>   an option the project's build.c reads
+  --dump-config      print the build file that does what the conventions do
+
+examples:
+  smith build
+  smith build -j4 -k0
+  smith build --dump-config > build.smith

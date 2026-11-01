@@ -216,23 +216,6 @@ export void test_build_verbs_top_level_version_prints_what_the_version_verb_prin
     scratch::expect_text("verbs: ... the same as smith version", verb.out, flag.out);
 }
 
-static void lists_the_verbs(const char *command) {
-    arena::Arena memory = test::memory(memory_size);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    scratch::Run run = runs_in_a_bare_folder(command);
-    scratch::expect_status("verbs: the verb list exits 0", 0, &run);
-    scratch::expect_contains("verbs: ... and lists the verbs", run.out, "usage: smith <command>");
-    scratch::expect_contains("verbs: ... test among them", run.out, "run, test, check");
-}
-
-export void test_build_verbs_top_level_help_lists_the_verbs() {
-    lists_the_verbs("smith --help");
-    lists_the_verbs("smith -h");
-    lists_the_verbs("smith help");
-}
-
 export void test_build_verbs_help_test_prints_the_same_as_test_help() {
     arena::Arena memory = test::memory(memory_size);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -244,46 +227,40 @@ export void test_build_verbs_help_test_prints_the_same_as_test_help() {
     scratch::expect_text("verbs: ... the same as smith test --help", flag.out, help.out);
 }
 
-static void says_there_is_no_detailed_help(const char *verb) {
+static void prints_its_page_and_runs_nothing(const char *verb) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     char command[128];
-    (void)format::to(command, sizeof command, "smith help ", verb);
-    scratch::Run help = runs_in_a_bare_folder(command);
     (void)format::to(command, sizeof command, "smith ", verb, " --help");
-    scratch::Run flag = runs_in_a_bare_folder(command);
-    scratch::expect_status("verbs: smith help <verb> exits 0", 0, &help);
+    scratch::Run flag = scratch::sh(&p, command);
     scratch::expect_status("verbs: smith <verb> --help exits 0", 0, &flag);
-    scratch::expect_contains("verbs: ... names the verb", help.out, "smith ");
-    scratch::expect_contains("verbs: ... and says there is no detailed help", help.out, "no detailed help yet");
-    scratch::expect_text("verbs: ... the same for both forms", help.out, flag.out);
-    (void)format::to(command, sizeof command, "smith ", verb, " -h");
-    scratch::Run dash = runs_in_a_bare_folder(command);
-    scratch::expect_status("verbs: smith <verb> -h exits 0", 0, &dash);
-    scratch::expect_text("verbs: ... and prints the same", help.out, dash.out);
+    scratch::expect_contains("verbs: ... prints the page", flag.out, "usage: smith ");
+    scratch::expect_text("verbs: ... and builds nothing", "no", scratch::exists(&p, ".smith") ? "yes" : "no");
 }
 
-// `smith run --help` and the others would build, run or fail: they print their line and run nothing.
-export void test_build_verbs_help_of_a_verb_without_usage_says_so_and_runs_nothing() {
-    says_there_is_no_detailed_help("run");
-    says_there_is_no_detailed_help("build");
-    says_there_is_no_detailed_help("check");
-    says_there_is_no_detailed_help("prove");
-    says_there_is_no_detailed_help("fetch");
-    says_there_is_no_detailed_help("cache");
-    says_there_is_no_detailed_help("docs");
+// `smith run --help` and the others would build, run or fail: they print their page and run nothing.
+export void test_build_verbs_help_of_a_verb_prints_its_page_and_runs_nothing() {
+    prints_its_page_and_runs_nothing("run");
+    prints_its_page_and_runs_nothing("build");
+    prints_its_page_and_runs_nothing("check");
+    prints_its_page_and_runs_nothing("fetch");
+    prints_its_page_and_runs_nothing("cache");
+    prints_its_page_and_runs_nothing("docs");
 }
 
-export void test_build_verbs_help_of_a_tool_verb_is_the_tools_usage() {
+export void test_build_verbs_help_of_a_tool_verb_is_smiths_page() {
     arena::Arena memory = test::memory(memory_size);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::Run help = runs_in_a_bare_folder("smith help fmt");
     scratch::expect_status("verbs: smith help fmt exits 0", 0, &help);
-    scratch::expect_contains("verbs: ... is clang-format's usage", help.out, "OVERVIEW: A tool to format");
+    scratch::expect_contains("verbs: ... is smith's page", help.out, "smith fmt: ");
+    scratch::expect_contains("verbs: ... pointing to clang-format's", help.out, "clang-format's own options");
     scratch::Run unknown = runs_in_a_bare_folder("smith help frobnicate");
     scratch::expect_status("verbs: help of an unknown verb exits 2", 2, &unknown);
 }

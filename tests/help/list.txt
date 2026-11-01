@@ -1,0 +1,25 @@
+usage: smith <command> [<arguments>]
+
+commands:
+  cc         compile and link as clang does
+  c++        compile and link C++ as clang does
+  build      build the project from its build.c
+  new        start a project
+  fetch      fetch a package
+  cache      show and clean the caches
+  symbolize  turn stack traces into lines
+  docs       check knowledge/ and the skills of the project
+  version    the version and the commit smith was built from
+  fmt        format the project (clang-format with arguments)
+  lint       lint the project (clang-tidy with arguments)
+  lsp        clangd, the language server
+  run        run the project's program
+  test       build and run the project's tests
+  check      run all the project's checks
+  prove      prove the project's contracts
+  dbg        lldb, the debugger
+  dap        lldb-dap, the Debug Adapter Protocol server
+  mcp        the debugger as an MCP server over stdio
+  help       this list, or the page of one command
+
+`smith help <command>` shows a command's flags and examples.

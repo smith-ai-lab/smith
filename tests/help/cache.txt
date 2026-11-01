@@ -1,0 +1,13 @@
+smith cache: show and clean the caches
+
+usage: smith cache [-v]
+       smith cache clean [modules|packages|lint|steps]
+
+flags:
+  -v              show more of each cache
+  clean           delete every cache
+  clean <cache>   delete one cache: modules, packages, lint or steps
+
+examples:
+  smith cache
+  smith cache clean modules

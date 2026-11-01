@@ -1,0 +1,11 @@
+smith new: start a project
+
+usage: smith new [--language smith|c] [<name>]
+
+flags:
+  --language smith|c   the language of the program: smith (the default) or c
+  <name>               the folder and the program's name; with none, the current folder
+
+examples:
+  smith new hello
+  smith new --language c hello

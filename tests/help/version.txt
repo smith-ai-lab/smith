@@ -1,0 +1,7 @@
+smith version: the version and the commit smith was built from
+
+usage: smith version
+
+examples:
+  smith version
+  smith --version

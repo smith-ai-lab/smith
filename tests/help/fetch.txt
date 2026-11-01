@@ -1,0 +1,6 @@
+smith fetch: fetch a package
+
+usage: smith fetch <url>
+
+examples:
+  smith fetch https://example.com/package.tar.gz

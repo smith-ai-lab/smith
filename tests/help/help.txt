@@ -1,0 +1,7 @@
+smith help: this list, or the page of one command
+
+usage: smith help [<command>]
+
+examples:
+  smith help
+  smith help test
