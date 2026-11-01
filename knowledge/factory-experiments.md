@@ -25,7 +25,7 @@ First, friction was reviewed daily by the lead: sum the minutes, re-rank, move p
 
 ## The Mac runner on API credits (2026-11-01)
 
-The cloud runners pause at the subscription's daily limit. A bash loop on the owner's Mac starts `claude -p` runners on the owner's Anthropic API credits and keeps the work going; the key comes from 1Password on the command line, and `mac` tickets (those needing the macOS SDK) go to it first. A loop, not a chain of successors, so a crash costs one ticket.
+The cloud runners pause at the subscription's daily limit. A bash loop on the owner's Mac starts `claude -p` runners on the owner's Anthropic API credits and keeps the work going; the key comes from the login Keychain on the command line, and `mac` tickets (those needing the macOS SDK) go to it first. A loop, not a chain of successors, so a crash costs one ticket.
 
 ## Alternatives considered
 
