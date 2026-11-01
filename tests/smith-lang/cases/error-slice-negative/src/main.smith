@@ -1,8 +1,8 @@
 module main;
 
-i32 main() {
-    i32 raw[3] = {1, 2, 3};
-    i32 all[:] = raw;
-    i32 last = all[-1];
+I32 main() {
+    I32 raw[3] = {1, 2, 3};
+    I32 all[:] = raw;
+    I32 last = all[-1];
     return last;
 }

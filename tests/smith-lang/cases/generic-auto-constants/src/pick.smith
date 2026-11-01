@@ -5,7 +5,7 @@ export typeof(a) larger(auto a, typeof(a) b) {
     return a > b ? a : b;
 }
 
-export usize size_of_value(auto value) {
+export Usize size_of_value(auto value) {
     (void)value;
     return sizeof(typeof(value));
 }
@@ -20,16 +20,16 @@ export typeof(a) zero_like(auto a) {
     return (typeof(a)){0};
 }
 
-export T *alloc(i32 bytes, constexpr type T) {
+export T *alloc(I32 bytes, constexpr Type T) {
     (void)bytes;
     return nullptr;
 }
 
-export T zero(constexpr type T) {
+export T zero(constexpr Type T) {
     return (T){0};
 }
 
-export typeof(a) pair(auto a, typeof(a) b, constexpr type T) {
+export typeof(a) pair(auto a, typeof(a) b, constexpr Type T) {
     (void)b;
     return a;
 }

@@ -1,7 +1,7 @@
 module size;
 
 // A sized result type before a generic whose parameter is `typeof(x)`, and a cast to a sized type before `sizeof`.
-export u32 bytes_of(auto x, typeof(x) y) {
+export U32 bytes_of(auto x, typeof(x) y) {
     (void)y;
-    return (u32)sizeof(x) + (u32)sizeof y;
+    return (U32)sizeof(x) + (U32)sizeof y;
 }

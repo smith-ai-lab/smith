@@ -3,7 +3,7 @@ module kind;
 import "shape.h";
 
 // The type of `value` names a struct and a vector of a C header, which `if constexpr` reads like any type.
-export i32 of(auto value) {
+export I32 of(auto value) {
     (void)value;
     if constexpr (typeof(value) == c::V2) {
         return 2;

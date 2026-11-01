@@ -1,23 +1,23 @@
 module loop;
 
 struct Config {
-    usize count;
-    i32 step;
+    Usize count;
+    I32 step;
 };
 constexpr struct Config config = {.count = 4, .step = 3};
 
 // The bound is a field of a `constexpr` struct: only the compiler can read it.
-i32 total(constexpr type T) {
-    i32 sum = 0;
-    for constexpr (usize i = 0; i < config.count; i++) {
+I32 total(constexpr Type T) {
+    I32 sum = 0;
+    for constexpr (Usize i = 0; i < config.count; i++) {
         sum += config.step + sizeof(T);
     }
     return sum;
 }
 
-export i32 bytes() {
-    return total(u8);
+export I32 bytes() {
+    return total(U8);
 }
-export i32 words() {
-    return total(u64);
+export I32 words() {
+    return total(U64);
 }

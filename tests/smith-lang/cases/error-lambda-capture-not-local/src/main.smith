@@ -2,10 +2,10 @@ module main;
 
 import <stdio.h>;
 
-i32 limit = 10;
+I32 limit = 10;
 
-i32 main() {
-    i32 (*under)(i32) = [limit](i32 a) -> i32 { return a; };
+I32 main() {
+    I32 (*under)(I32) = [limit](I32 a) -> i32 { return a; };
     c::printf("%d\n", under(2));
     return 0;
 }

@@ -9,10 +9,10 @@
 2:16 greater >
 2:17 semicolon ;
 6:1 kw_static static
-6:8 name i32
+6:8 type_name I32
 6:12 name early
 6:17 left_paren (
-6:18 name i32
+6:18 type_name I32
 6:22 name n
 6:23 right_paren )
 6:25 left_brace {
@@ -73,7 +73,7 @@
 19:29 right_paren )
 19:30 semicolon ;
 20:1 right_brace }
-22:1 name i32
+22:1 type_name I32
 22:5 name main
 22:9 left_paren (
 22:10 right_paren )
@@ -105,7 +105,7 @@
 27:5 right_brace }
 28:5 kw_for for
 28:9 left_paren (
-28:10 name i32
+28:10 type_name I32
 28:14 name i
 28:16 equal =
 28:18 integer 0

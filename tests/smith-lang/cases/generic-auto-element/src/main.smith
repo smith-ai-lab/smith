@@ -4,22 +4,22 @@ import stats;
 import <stdio.h>;
 
 struct Point {
-    i32 x;
-    i32 y;
+    I32 x;
+    I32 y;
 };
 
-i32 main() {
-    i32 raw[4] = {1, 2, 3, 4};
-    i32 xs[:] = raw;
-    const f64 fs[:] = (f64[3]){1.5, 2.5, 3.5};
+I32 main() {
+    I32 raw[4] = {1, 2, 3, 4};
+    I32 xs[:] = raw;
+    const F64 fs[:] = (F64[3]){1.5, 2.5, 3.5};
     c::printf("%zu %zu %zu\n", stats::count(xs), stats::count(fs), stats::find(xs, 3));
     c::printf("%zu %zu\n", stats::find(fs, 2.5), stats::find(fs, 9.0));
-    f32 grid[2][2] = {{1, 2}, {3, 4}};
-    f32 g[:][:] = grid;
+    F32 grid[2][2] = {{1, 2}, {3, 4}};
+    F32 g[:][:] = grid;
     c::printf("%zu %g\n", stats::rows(g), (double)stats::zero(g));
-    i32 n = 5;
+    I32 n = 5;
     stats::bump(&n, 2);
-    u8 small = 7;
+    U8 small = 7;
     stats::bump(&small, 1);
     c::printf("%d %d %d\n", n, small, stats::read(&n));
     c::printf("%d %d %d\n", stats::third(raw), stats::second(raw), stats::read(&raw[0]));

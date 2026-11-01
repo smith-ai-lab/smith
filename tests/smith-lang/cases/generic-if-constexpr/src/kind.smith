@@ -1,8 +1,8 @@
 module kind;
 
 // What a value is, chosen when the instance is written: the branches that are not taken are never given to the parser.
-export i32 describe(constexpr type T, T value) {
-    if constexpr (T == f32) {
+export I32 describe(constexpr Type T, T value) {
+    if constexpr (T == F32) {
         return 1;
     } else if constexpr (is_integer(T) && sizeof(T) == 8) {
         return 2;
@@ -16,15 +16,15 @@ export i32 describe(constexpr type T, T value) {
     }
 }
 
-export i32 floats_only(constexpr type T, T value) {
+export I32 floats_only(constexpr Type T, T value) {
     if constexpr (is_float(T)) {
-        return (i32)(value * 2) + sizeof(T);
+        return (I32)(value * 2) + sizeof(T);
     }
     return 0;
 }
 
-export i32 bytes(constexpr type T) {
+export I32 bytes(constexpr Type T) {
     if constexpr (alignof(T) > 4 || sizeof(T) >= 16) return 1;
-    if constexpr (T == u8) return 2;
+    if constexpr (T == U8) return 2;
     return 3 + (sizeof(T) != 8);
 }

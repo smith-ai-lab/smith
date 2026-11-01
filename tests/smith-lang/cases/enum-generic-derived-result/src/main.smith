@@ -3,9 +3,9 @@ module main;
 import <stdio.h>;
 import keep;
 
-typedef option(i32) Number;
+typedef Option(I32) Number;
 
-i32 main(void) {
+I32 main(void) {
     Number n = keep::keep(7);
     switch (n) {
     case .some: c::printf("some %d\n", n.some); break;

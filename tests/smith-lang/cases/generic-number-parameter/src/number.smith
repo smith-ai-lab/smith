@@ -1,11 +1,11 @@
 module number;
 
 // A number known at compile time as a parameter: each value is an instance, the name is that number in the body.
-export i32 scaled(constexpr usize i, i32 x) {
-    return (i32)(i * 10) + x;
+export I32 scaled(constexpr Usize i, I32 x) {
+    return (I32)(i * 10) + x;
 }
 
-export i32 pick(constexpr i32 which, i32 a, i32 b) {
+export I32 pick(constexpr I32 which, I32 a, I32 b) {
     if constexpr (which == 0) {
         return a;
     } else {
@@ -14,26 +14,26 @@ export i32 pick(constexpr i32 which, i32 a, i32 b) {
 }
 
 export typedef struct {
-    i32 a;
-    i32 b;
-    i32 c;
+    I32 a;
+    I32 b;
+    I32 c;
 } Triple;
 
 // The field `i` of a struct: the number is the index of `fields`.
-export i32 field_of(auto p, constexpr usize i) {
+export I32 field_of(auto p, constexpr Usize i) {
     constexpr Field f = fields(typeof(*p))[i];
-    return (i32)p->[f];
+    return (I32)p->[f];
 }
 
-export i32 sum_all(auto p) {
-    i32 sum = 0;
-    for constexpr (usize i = 0; i < countof(fields(typeof(*p))); i++) {
+export I32 sum_all(auto p) {
+    I32 sum = 0;
+    for constexpr (Usize i = 0; i < countof(fields(typeof(*p))); i++) {
         sum = sum * 10 + field_of(p, i);
     }
     return sum;
 }
 
 // A number among the arguments of a call that holds a pattern: the other parameters are no number.
-export i32 over_pack(auto p, auto... rest) {
-    return scaled(2, (i32)(*p)) + scaled(countof(rest), 0);
+export I32 over_pack(auto p, auto... rest) {
+    return scaled(2, (I32)(*p)) + scaled(countof(rest), 0);
 }

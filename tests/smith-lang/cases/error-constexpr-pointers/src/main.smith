@@ -3,8 +3,8 @@ constexpr const char *word = "abc";
 constexpr const char *outside = hello + 9;
 static_assert(word[0] == 'z');
 
-i32 main() {
-    const i32 automatic[2] = {1, 2};
-    constexpr const i32 *pointer = automatic;
+I32 main() {
+    const I32 automatic[2] = {1, 2};
+    constexpr const I32 *pointer = automatic;
     return *pointer;
 }

@@ -5,7 +5,7 @@ import <stdio.h>;
 
 typedef const char Text[:];
 
-i32 main() {
+I32 main() {
     Text t = "banana";
     const char u[:] = "banana";
     c::printf("%zu %zu\n", counting::count(t, 'a'), counting::count(u, 'n'));

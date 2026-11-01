@@ -4,18 +4,18 @@ import <stdio.h>;
 import leaves;
 
 typedef struct {
-    i32 a;
-    f64 b;
+    I32 a;
+    F64 b;
 } Pair;
 
 int main() {
     Pair pair = {3, 2.5};
     Pair *pointer = &pair;
-    i32 scalar = 7;
-    c::printf("%zu %zu %zu\n", sizeof(leaves::first(Pair *, pointer)), sizeof(leaves::first(i32, scalar)),
-              sizeof(leaves::first(f64 *, &pair.b)));
-    Pair *again = leaves::first(Pair **, &pointer); // one level: the pointee of a pointer to a pointer is a pointer
-    Pair copy = leaves::first(Pair *, pointer);
-    c::printf("%d %g %d %d\n", copy.a, copy.b, leaves::first(i32, scalar), again->a);
+    I32 scalar = 7;
+    c::printf("%zu %zu %zu\n", sizeof(leaves::first(Pair *, Pointer)), sizeof(leaves::first(I32, scalar)),
+              sizeof(leaves::first(F64 *, &pair.b)));
+    Pair *again = leaves::first(Pair **, &Pointer); // one level: the pointee of a pointer to a pointer is a pointer
+    Pair copy = leaves::first(Pair *, Pointer);
+    c::printf("%d %g %d %d\n", copy.a, copy.b, leaves::first(I32, scalar), again->a);
     return 0;
 }

@@ -1,88 +1,939 @@
-// front::emit_memory: pointers, arrays and records for the emitter (B3b, #1112). Stubs with their final signatures:
-// B3b fills the bodies without touching front/emit.smith. The protocol is at the top of front/emit.smith. A type
-// handler gets the type node and returns the Ty; it walks nested types with a loop, not by calling itself (recursion
-// is a compile error in a module), and maps a leaf with `emit_state::scalar_type`.
+// front::emit_memory: pointers, arrays, records and globals for the emitter (B3b, #1133 of #1112). The protocol is at
+// the top of front/emit.smith; this file only adds handlers.
+//
+// WHAT IT EMITS: the types `T *`, `T[N]` (N an integer literal) and a record of the module (`Decl.record`, an LLVM
+// named struct `<module path>::<name>`, declared before use; a union and a bit-field are errors); `&`, `*`, `a[i]`
+// (an array's index is checked against its count, a constant index in range is not; a pointer's is not checked),
+// `.` and `->`, `null`, compound literals with designators (unnamed fields are zero), casts between integer types and
+// between pointers, `sizeof`, `alignof` and `countof` (sizes from the target data, never from the host), assignment
+// through all of them (B1's `assign` pushes a place; the `place_*` handlers answer it) and globals with a constant
+// initializer. Pointer arithmetic, comparison of pointers, slices, unions and function pointers are later tickets.
+//
+// HOW. Every lvalue is a PLACE: a Value whose `llvm` is the address and whose `ty` is the type stored there. A read
+// of `*p`, `a[i]` or `s.f` is the place plus a load. The base of `a[i]` and `s.f` is pushed as a place when it is a
+// name, a member, an index or a dereference (`state::push_place`), else it is evaluated and spilled to a temporary;
+// whether it is an array or a pointer shows only on the Value (`ty.kind`), so no type is computed before the code.
+// `sizeof(expr)` has no code to emit: `static_type` walks the chain of members, indexes and dereferences with a loop.
+// A pointer or array `Ty` keeps its element in `Ty.element`, a block of the allocator in force.
+//
+// A NAME THAT IS A GLOBAL is found by `&name`, by the bases of `name[i]`, `name.f` (through `push_place_of`) and, from
+// emit.smith's dispatch, by its bare name (`is_global_name`, `name_ref`, `place_name`): a name that is not a local is
+// tried here before it is reported unknown.
 module front::emit_memory;
 
 import front::ast;
+import front::emit_arith as arith;
 import front::emit_state as state;
+import std::arena;
+import std::format;
+import std::mem;
+import <llvm-c/Core.h>;
+import <llvm-c/Target.h>;
+
+// ---------------------------------------------------------------------------------------------------------------
+// Small helpers
+
+static state::TyResult ty_failf(ast::Span span, Str first, Str second) {
+    state::Error error = {.message = state::msg(format::push(first, second)), .span = span};
+    return {.error = error};
+}
+
+static state::Ty u64_type(state::Emitter *e) {
+    state::Ty ty = {};
+    state::scalar_type(e, "U64", &ty);
+    return ty;
+}
+
+// The blocks `Ty.element` points to, chained so `release` can free them: `ty` is first, so a block's address is the
+// element's. The head is one per process; an emitter runs one module at a time and `release` empties it.
+struct Owned {
+    state::Ty ty;
+    Owned *next;
+};
+
+static Owned *owned_head = nullptr;
+
+static state::Ty *own(state::Ty element) {
+    Owned *block = mem::alloc(Owned);
+    block->ty = element;
+    block->next = owned_head;
+    owned_head = block;
+    return &block->ty;
+}
+
+static state::Ty pointer_to(state::Emitter *e, state::Ty element, U32 space) {
+    state::Ty *inner = own(element);
+    state::Ty ty = {.kind = .pointer,
+                    .llvm = state::pointer_type(e, space),
+                    .name = "pointer",
+                    .element = inner,
+                    .address_space = space};
+    return ty;
+}
+
+static state::Ty array_of(state::Ty element, U64 count) {
+    state::Ty *inner = own(element);
+    state::Ty ty = {.kind = .array, .llvm = c::LLVMArrayType2(element.llvm, count), .name = "array", .element = inner};
+    ty.count = count;
+    return ty;
+}
+
+// `front::test` and `Point` as `front::test::Point`: the module's path and the name joined by `::`, in the allocator
+// in force.
+static Str qualified(const ast::Module *m, Str name) {
+    Str symbol = state::msg(format::push(name));
+    for (Usize i = countof(m->name.segments); i > 0; i--) {
+        Str longer = state::msg(format::push(m->name.segments[i - 1].text, "::", symbol));
+        state::free_text(symbol);
+        symbol = longer;
+    }
+    return symbol;
+}
+
+static Bool find_record_named(state::Emitter *e, Str name, Usize *found) {
+    for (Usize i = 0; i < e->record_count; i++) {
+        if (state::same_text(e->records[i].name, name)) {
+            *found = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+static Usize field_count(state::Emitter *e, Usize at) {
+    state::FieldInfo fields[:] = e->records[at].fields;
+    return countof(fields);
+}
+
+// The record whose LLVM type is `ty.llvm`.
+static Bool find_record_of(state::Emitter *e, state::Ty ty, Usize *found) {
+    for (Usize i = 0; i < e->record_count; i++) {
+        if (e->records[i].ty.llvm == ty.llvm) {
+            *found = i;
+            return true;
+        }
+    }
+    return false;
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Types
 
-export state::TyResult type_pointer(state::Emitter *_, const ast::TypeExpr *t) {
-    return state::ty_fail("not emitted yet: pointer type", t->span);
+// The type `t` says. A chain of pointers and arrays is walked with a loop (no recursion), then built from the inside.
+static state::TyResult resolve(state::Emitter *e, const ast::TypeExpr *t) {
+    const ast::TypeExpr *chain[16];
+    Usize depth = 0;
+    const ast::TypeExpr *base = t;
+    while (base->kind == .pointer || base->kind == .array) {
+        if (depth == countof(chain)) return ty_failf(t->span, "a type nested more than 16 deep", "");
+        chain[depth] = base;
+        depth += 1;
+        if (base->kind == .pointer) {
+            const ast::TypeExpr *pointee = base->kind.pointer.pointee;
+            base = pointee;
+        } else if (base->kind == .array) {
+            const ast::TypeExpr *element = base->kind.array.element;
+            base = element;
+        }
+    }
+    if (base->kind != .named) return ty_failf(base->span, "not emitted yet: this kind of type", "");
+    ast::Path path = base->kind.named.path;
+    if (countof(path.segments) != 1) return ty_failf(base->span, "not emitted yet: qualified type", "");
+    Str name = path.segments[0].text;
+    state::Ty ty = {};
+    Usize index = 0;
+    if (state::scalar_type(e, name, &ty)) {
+    } else if (find_record_named(e, name, &index)) {
+        ty = e->records[index].ty;
+    } else {
+        return ty_failf(base->span, "unknown type ", name);
+    }
+    for (Usize i = depth; i > 0; i--) {
+        const ast::TypeExpr *node = chain[i - 1];
+        if (node->kind == .pointer) ty = pointer_to(e, ty, 0);
+        if (node->kind == .array) {
+            const ast::Expr *count = node->kind.array.count;
+            if (count == nullptr || count->kind != .integer)
+                return ty_failf(node->span, "an array length is an integer literal", "");
+            ty = array_of(ty, count->kind.integer.value);
+        }
+    }
+    return ty;
 }
 
-export state::TyResult type_array(state::Emitter *_, const ast::TypeExpr *t) {
-    return state::ty_fail("not emitted yet: array type", t->span);
+export state::TyResult type_pointer(state::Emitter *e, const ast::TypeExpr *t) {
+    return resolve(e, t);
+}
+
+export state::TyResult type_array(state::Emitter *e, const ast::TypeExpr *t) {
+    return resolve(e, t);
 }
 
 // A `named` type that is not a scalar: a record declared in the module.
-export state::TyResult type_record(state::Emitter *_, const ast::TypeExpr *t) {
-    return state::ty_fail("not emitted yet: record type", t->span);
+export state::TyResult type_record(state::Emitter *e, const ast::TypeExpr *t) {
+    return resolve(e, t);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Expressions
+// Globals found by name (B1 keeps no table of them: the module's declarations are the table)
 
-export state::Status address_of(state::Emitter *_, const ast::Expr *x, state::Hint _) {
-    return state::not_emitted("address of", x->span);
+static const ast::Decl *find_global(state::Emitter *e, Str name) {
+    for (Usize i = 0; i < countof(e->tree->decls); i++) {
+        const ast::Decl *d = e->tree->decls[i];
+        if (d->kind == .variable && state::same_text(d->kind.variable.name, name)) return d;
+    }
+    return nullptr;
 }
 
-export state::Status dereference(state::Emitter *_, const ast::Expr *x, state::Hint _) {
-    return state::not_emitted("dereference", x->span);
+// The global `name` as a place.
+static state::Status global_place_of(state::Emitter *e, Str name, ast::Span span, state::Value *place) {
+    const ast::Decl *d = find_global(e, name);
+    if (d == nullptr || d->kind != .variable) return state::failf(span, "unknown name ", name);
+    const ast::TypeExpr *type = d->kind.variable.type;
+    state::TyResult made = resolve(e, type);
+    if (made == .error) {
+        return {.error = made.error};
+    }
+    Str symbol = qualified(e->tree, name);
+    const char *label = symbol.data; // the text of `qualified` ends with a terminator
+    c::LLVMValueRef global = c::LLVMGetNamedGlobal(e->module, label);
+    state::free_text(symbol);
+    if (global == nullptr) return state::failf(span, "the global ", name, " is not declared yet");
+    *place = (state::Value){.llvm = global, .ty = made.ok};
+    return state::success();
 }
 
-export state::Status index(state::Emitter *_, const ast::Expr *x, state::Hint _) {
-    return state::not_emitted("index", x->span);
+static state::Status global_place(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .name) {
+        return state::fail("not a name", w->span);
+    }
+    ast::Path path = w->expr->kind.name.path;
+    state::Value place = {};
+    try global_place_of(e, path.segments[0].text, w->span, &place);
+    state::push_value(e, place);
+    return state::success();
 }
 
-export state::Status member(state::Emitter *_, const ast::Expr *x, state::Hint _) {
-    return state::not_emitted("member", x->span);
+// Whether `x` is a bare name that is no local but a global of the module.
+export Bool is_global_name(state::Emitter *e, const ast::Expr *x) {
+    if (x->kind != .name) return false;
+    ast::Path path = x->kind.name.path;
+    state::Local local = {};
+    return countof(path.segments) == 1 && !state::find_local(e, path.segments[0].text, &local) &&
+           find_global(e, path.segments[0].text) != nullptr;
 }
 
-export state::Status compound(state::Emitter *_, const ast::Expr *x, state::Hint _) {
-    return state::not_emitted("compound literal", x->span);
+static state::Status global_read(state::Emitter *e, const state::Work *w) {
+    try global_place(e, w);
+    state::Value place = state::pop_value(e);
+    c::LLVMValueRef loaded = c::LLVMBuildLoad2(e->builder, place.ty.llvm, place.llvm, "");
+    state::push_value(e, (state::Value){.llvm = loaded, .ty = place.ty});
+    return state::success();
 }
 
-export state::Status cast(state::Emitter *_, const ast::Expr *x, state::Hint _) {
-    return state::not_emitted("cast", x->span);
+// A global read by its bare name: the place plus a load.
+export state::Status name_ref(state::Emitter *e, const ast::Expr *x) {
+    state::Work w = {.expr = x, .span = x->span};
+    return global_read(e, &w);
 }
 
-export state::Status null_pointer(state::Emitter *_, const ast::Expr *x, state::Hint _) {
-    return state::not_emitted("null pointer", x->span);
+// A global as a place by its bare name.
+export state::Status place_name(state::Emitter *e, const ast::Expr *x) {
+    state::Work w = {.expr = x, .span = x->span};
+    return global_place(e, &w);
+}
+
+// Push the place of `x`: a local's by B1, a global's here.
+static void push_place_of(state::Emitter *e, const ast::Expr *x) {
+    if (x->kind == .name) {
+        ast::Path path = x->kind.name.path;
+        state::Local local = {};
+        if (countof(path.segments) == 1 && !state::find_local(e, path.segments[0].text, &local) &&
+            find_global(e, path.segments[0].text) != nullptr) {
+            state::push_then(e, (state::Work){.then = global_place, .expr = x, .span = x->span});
+            return;
+        }
+    }
+    state::push_place(e, x);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Places and loads
+
+static state::Status load_finish(state::Emitter *e, const state::Work *w) {
+    state::Value place = state::pop_value(e);
+    if (place.ty.kind == .array)
+        return state::fail("an array is not a value yet; index it or take its address", w->span);
+    c::LLVMValueRef loaded = c::LLVMBuildLoad2(e->builder, place.ty.llvm, place.llvm, "");
+    state::push_value(e, (state::Value){.llvm = loaded, .ty = place.ty});
+    return state::success();
+}
+
+// An rvalue that is the base of `.` or `[`: stored in a temporary so that it has an address.
+static state::Status spill_finish(state::Emitter *e, const state::Work *_) {
+    state::Value value = state::pop_value(e);
+    c::LLVMValueRef slot = state::new_alloca(e, value.ty, "temporary");
+    c::LLVMBuildStore(e->builder, value.llvm, slot);
+    state::push_value(e, (state::Value){.llvm = slot, .ty = value.ty});
+    return state::success();
+}
+
+static Bool is_lvalue(const ast::Expr *x) {
+    if (x->kind == .name || x->kind == .member || x->kind == .index) return true;
+    return x->kind == .unary && x->kind.unary.op == .dereference;
+}
+
+// Leave a Value (address, type stored) of `base`: its place, or a temporary holding its value.
+static void push_address(state::Emitter *e, const ast::Expr *base) {
+    if (is_lvalue(base)) {
+        push_place_of(e, base);
+        return;
+    }
+    state::push_then(e, (state::Work){.then = spill_finish, .span = base->span});
+    state::push_eval(e, base, state::no_hint());
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Address, dereference, index, member
+
+static state::Status address_finish(state::Emitter *e, const state::Work *_) {
+    state::Value place = state::pop_value(e);
+    state::push_value(e, (state::Value){.llvm = place.llvm, .ty = pointer_to(e, place.ty, 0)});
+    return state::success();
+}
+
+export state::Status address_of(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    if (x->kind != .unary) {
+        return state::fail("not a unary expression", x->span);
+    }
+    const ast::Expr *operand = x->kind.unary.operand;
+    state::push_then(e, (state::Work){.then = address_finish, .span = x->span});
+    push_place_of(e, operand);
+    return state::success();
+}
+
+static state::Status dereference_finish(state::Emitter *e, const state::Work *w) {
+    state::Value pointer = state::pop_value(e);
+    if (pointer.ty.kind != .pointer) return state::failf(w->span, "dereferencing ", pointer.ty.name);
+    if (pointer.ty.element == nullptr) return state::fail("dereferencing a pointer to an unknown type", w->span);
+    state::push_value(e, (state::Value){.llvm = pointer.llvm, .ty = *pointer.ty.element});
+    return state::success();
+}
+
+export state::Status place_dereference(state::Emitter *e, const ast::Expr *x) {
+    if (x->kind != .unary) {
+        return state::fail("not a unary expression", x->span);
+    }
+    const ast::Expr *operand = x->kind.unary.operand;
+    state::push_then(e, (state::Work){.then = dereference_finish, .span = x->span});
+    state::push_eval(e, operand, state::no_hint());
+    return state::success();
+}
+
+export state::Status dereference(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    state::push_then(e, (state::Work){.then = load_finish, .span = x->span});
+    return place_dereference(e, x);
+}
+
+// The integer type an index is widened to: the target's pointer width, else 64 bits.
+static c::LLVMTypeRef index_word(state::Emitter *e) {
+    if (e->target_data != nullptr) return c::LLVMIntPtrTypeInContext(e->context, e->target_data);
+    return c::LLVMInt64TypeInContext(e->context);
+}
+
+// Is the index a constant inside `count`?
+static Bool in_range_constant(state::Value at, U64 count) {
+    if (c::LLVMIsAConstantInt(at.llvm) == nullptr) return false;
+    if (at.ty.is_signed) {
+        I64 value = c::LLVMConstIntGetSExtValue(at.llvm);
+        return value >= 0 && (U64)value < count;
+    }
+    return c::LLVMConstIntGetZExtValue(at.llvm) < count;
+}
+
+// An array's element: the index is checked against the count (a failed check reaches `llvm.trap`).
+static void array_element(state::Emitter *e, state::Value base, state::Value at, c::LLVMValueRef position) {
+    c::LLVMTypeRef word = index_word(e);
+    if (!in_range_constant(at, base.ty.count)) {
+        c::LLVMValueRef count = c::LLVMConstInt(word, base.ty.count, 0);
+        arith::trap_if(e, c::LLVMBuildICmp(e->builder, c::LLVMIntUGE, position, count, "outside"));
+    }
+    c::LLVMValueRef indices[2] = {c::LLVMConstInt(word, 0, 0), position};
+    c::LLVMValueRef address = c::LLVMBuildInBoundsGEP2(e->builder, base.ty.llvm, base.llvm, indices, 2, "element");
+    state::push_value(e, (state::Value){.llvm = address, .ty = *base.ty.element});
+}
+
+static state::Status index_finish(state::Emitter *e, const state::Work *w) {
+    state::Value at = state::pop_value(e);
+    state::Value base = state::pop_value(e);
+    if (at.ty.kind != .integer) return state::failf(w->span, "an index is an integer, not ", at.ty.name);
+    c::LLVMValueRef position = c::LLVMBuildIntCast2(e->builder, at.llvm, index_word(e), at.ty.is_signed, "");
+    if (base.ty.kind == .array) {
+        array_element(e, base, at, position);
+        return state::success();
+    }
+    if (base.ty.kind != .pointer || base.ty.element == nullptr) return state::failf(w->span, "indexing ", base.ty.name);
+    c::LLVMValueRef pointer = c::LLVMBuildLoad2(e->builder, base.ty.llvm, base.llvm, "");
+    c::LLVMValueRef address = c::LLVMBuildGEP2(e->builder, base.ty.element->llvm, pointer, &position, 1, "element");
+    state::push_value(e, (state::Value){.llvm = address, .ty = *base.ty.element});
+    return state::success();
+}
+
+export state::Status place_index(state::Emitter *e, const ast::Expr *x) {
+    if (x->kind != .index) {
+        return state::fail("not an index", x->span);
+    }
+    const ast::Expr *base = x->kind.index.base;
+    const ast::Expr *at = x->kind.index.index;
+    state::push_then(e, (state::Work){.then = index_finish, .span = x->span});
+    state::push_eval(e, at, state::no_hint());
+    push_address(e, base);
+    return state::success();
+}
+
+export state::Status index(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    state::push_then(e, (state::Work){.then = load_finish, .span = x->span});
+    return place_index(e, x);
+}
+
+// The index in the record's field list of the field called `name`.
+static state::Status field_index(state::Emitter *e, state::Ty record, Str name, ast::Span span, Usize *found) {
+    Usize at = 0;
+    if (record.kind != .record || !find_record_of(e, record, &at))
+        return state::failf(span, record.name, " is not a record");
+    for (Usize i = 0; i < field_count(e, at); i++) {
+        if (state::same_text(e->records[at].fields[i].name, name)) {
+            *found = i;
+            return state::success();
+        }
+    }
+    return state::failf(span, "no field ", name, " in ", record.name);
+}
+
+// The place of a field of the record stored at `address`.
+static state::Status push_field(state::Emitter *e, state::Ty record, c::LLVMValueRef address, Str name,
+                                ast::Span span) {
+    Usize field = 0;
+    try field_index(e, record, name, span, &field);
+    Usize at = 0;
+    find_record_of(e, record, &at);
+    c::LLVMValueRef gep = c::LLVMBuildStructGEP2(e->builder, record.llvm, address, (U32)field, "field");
+    state::push_value(e, (state::Value){.llvm = gep, .ty = e->records[at].fields[field].ty});
+    return state::success();
+}
+
+static state::Status member_finish(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .member) {
+        return state::fail("not a member access", w->span);
+    }
+    Str name = w->expr->kind.member.name;
+    state::Value base = state::pop_value(e);
+    state::Ty record = base.ty;
+    if (w->flag) {
+        if (base.ty.kind != .pointer || base.ty.element == nullptr)
+            return state::failf(w->span, "`->` on ", base.ty.name);
+        record = *base.ty.element;
+    }
+    return push_field(e, record, base.llvm, name, w->span);
+}
+
+export state::Status place_member(state::Emitter *e, const ast::Expr *x) {
+    if (x->kind != .member) {
+        return state::fail("not a member access", x->span);
+    }
+    const ast::Expr *base = x->kind.member.base;
+    Bool arrow = x->kind.member.arrow;
+    state::push_then(e, (state::Work){.then = member_finish, .expr = x, .flag = arrow, .span = x->span});
+    if (arrow)
+        state::push_eval(e, base, state::no_hint());
+    else
+        push_address(e, base);
+    return state::success();
+}
+
+export state::Status member(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    state::push_then(e, (state::Work){.then = load_finish, .span = x->span});
+    return place_member(e, x);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// null and casts
+
+export state::Status null_pointer(state::Emitter *e, const ast::Expr *_, state::Hint hint) {
+    if (hint.present && hint.ty.kind == .pointer) {
+        state::push_value(e, (state::Value){.llvm = c::LLVMConstNull(hint.ty.llvm), .ty = hint.ty});
+        return state::success();
+    }
+    // No pointer is expected here: a pointer to nothing in particular, which any pointer type takes.
+    state::Ty ty = {.kind = .pointer, .llvm = state::pointer_type(e, 0), .name = "null"};
+    state::push_value(e, (state::Value){.llvm = c::LLVMConstNull(ty.llvm), .ty = ty});
+    return state::success();
+}
+
+static Bool is_integer_like(state::Ty ty) {
+    return ty.kind == .integer || ty.kind == .boolean;
+}
+
+static state::Status cast_finish(state::Emitter *e, const state::Work *w) {
+    state::Value from = state::pop_value(e);
+    state::Ty to = w->ty;
+    if (is_integer_like(from.ty) && is_integer_like(to)) {
+        c::LLVMValueRef out = nullptr;
+        if (to.kind == .boolean && from.ty.kind != .boolean) {
+            c::LLVMValueRef zero = c::LLVMConstInt(from.ty.llvm, 0, 0);
+            out = c::LLVMBuildICmp(e->builder, c::LLVMIntNE, from.llvm, zero, "");
+        } else {
+            out = c::LLVMBuildIntCast2(e->builder, from.llvm, to.llvm, from.ty.is_signed, "");
+        }
+        state::push_value(e, (state::Value){.llvm = out, .ty = to});
+        return state::success();
+    }
+    if (from.ty.kind == .pointer && to.kind == .pointer) {
+        if (from.ty.address_space != to.address_space)
+            return state::not_emitted("cast between address spaces", w->span);
+        state::push_value(e, (state::Value){.llvm = from.llvm, .ty = to});
+        return state::success();
+    }
+    return state::failf(w->span, "cannot cast ", from.ty.name, " to ", to.name);
+}
+
+export state::Status cast(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    if (x->kind != .cast) {
+        return state::fail("not a cast", x->span);
+    }
+    const ast::TypeExpr *type = x->kind.cast.type;
+    const ast::Expr *operand = x->kind.cast.operand;
+    state::TyResult made = resolve(e, type);
+    if (made == .error) {
+        return {.error = made.error};
+    }
+    state::Hint hint = state::no_hint();
+    if (operand->kind == .null_pointer) hint = state::hint_of(made.ok);
+    state::push_then(e, (state::Work){.then = cast_finish, .ty = made.ok, .span = x->span});
+    state::push_eval(e, operand, hint);
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// sizeof, alignof, countof
+
+static Bool is_step(const ast::Expr *x) {
+    if (x->kind == .member || x->kind == .index) return true;
+    return x->kind == .unary && (x->kind.unary.op == .dereference || x->kind.unary.op == .address_of);
+}
+
+static const ast::Expr *inner_of(const ast::Expr *x) {
+    if (x->kind == .member) return x->kind.member.base;
+    if (x->kind == .index) return x->kind.index.base;
+    if (x->kind == .unary) return x->kind.unary.operand;
+    return x;
+}
+
+// The type of the root of a chain: a local, a global or an integer literal.
+static state::Status root_type(state::Emitter *e, const ast::Expr *x, state::Ty *out) {
+    if (x->kind == .integer) {
+        state::scalar_type(e, "I32", out);
+        return state::success();
+    }
+    if (x->kind != .name) return state::not_emitted("sizeof of this expression", x->span);
+    ast::Path path = x->kind.name.path;
+    if (countof(path.segments) != 1) return state::not_emitted("qualified name", x->span);
+    Str name = path.segments[0].text;
+    state::Local local = {};
+    if (state::find_local(e, name, &local)) {
+        *out = local.ty;
+        return state::success();
+    }
+    state::Value place = {};
+    try global_place_of(e, name, x->span, &place);
+    *out = place.ty;
+    return state::success();
+}
+
+// One step of a chain applied to the type so far.
+static state::Status step_type(state::Emitter *e, const ast::Expr *node, state::Ty *ty) {
+    if (node->kind == .member) {
+        Str name = node->kind.member.name;
+        state::Ty record = *ty;
+        if (node->kind.member.arrow) {
+            if (ty->kind != .pointer || ty->element == nullptr) return state::failf(node->span, "`->` on ", ty->name);
+            record = *ty->element;
+        }
+        Usize field = 0;
+        Usize at = 0;
+        try field_index(e, record, name, node->span, &field);
+        find_record_of(e, record, &at);
+        *ty = e->records[at].fields[field].ty;
+        return state::success();
+    }
+    if (node->kind == .index || (node->kind == .unary && node->kind.unary.op == .dereference)) {
+        if ((ty->kind != .pointer && ty->kind != .array) || ty->element == nullptr)
+            return state::failf(node->span, "indexing or dereferencing ", ty->name);
+        *ty = *ty->element;
+        return state::success();
+    }
+    *ty = pointer_to(e, *ty, 0); // `&`
+    return state::success();
+}
+
+// The type of an expression without emitting it: the root's type, then the chain of members, indexes and
+// dereferences from the inside out. The chain is walked with loops.
+static state::Status static_type(state::Emitter *e, const ast::Expr *x, state::Ty *out) {
+    const ast::Expr *chain[32];
+    Usize depth = 0;
+    const ast::Expr *root = x;
+    while (is_step(root)) {
+        if (depth == countof(chain)) return state::fail("an expression nested more than 32 deep", x->span);
+        chain[depth] = root;
+        depth += 1;
+        root = inner_of(root);
+    }
+    try root_type(e, root, out);
+    for (Usize i = depth; i > 0; i--)
+        try step_type(e, chain[i - 1], out);
+    return state::success();
 }
 
 // `sizeof`, `alignof` and `countof`.
-export state::Status query(state::Emitter *_, const ast::Expr *x, state::Hint _) {
-    return state::not_emitted("query", x->span);
+export state::Status query(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    if (x->kind != .query) {
+        return state::fail("not a query", x->span);
+    }
+    ast::QueryOp op = x->kind.query.op;
+    const ast::TypeExpr *type = x->kind.query.type;
+    const ast::Expr *operand = x->kind.query.operand;
+    state::Ty subject = {};
+    if (type != nullptr) {
+        state::TyResult made = resolve(e, type);
+        if (made == .error) {
+            return {.error = made.error};
+        }
+        subject = made.ok;
+    } else {
+        try static_type(e, operand, &subject);
+    }
+    state::Ty word = u64_type(e);
+    U64 number = 0;
+    if (op == .count_of) {
+        if (subject.kind != .array)
+            return state::failf(x->span, "countof of ", subject.name, ", which is not an array");
+        number = subject.count;
+    } else {
+        if (e->target_data == nullptr) return state::fail("sizeof and alignof need the target's data layout", x->span);
+        if (op == .size_of)
+            number = c::LLVMABISizeOfType(e->target_data, subject.llvm);
+        else
+            number = c::LLVMABIAlignmentOfType(e->target_data, subject.llvm);
+    }
+    state::push_value(e, (state::Value){.llvm = c::LLVMConstInt(word.llvm, number, 0), .ty = word});
+    return state::success();
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Places: the address of an lvalue, pushed as a Value whose `llvm` is the address (see `Work.place`)
+// Compound literals
 
-export state::Status place_dereference(state::Emitter *_, const ast::Expr *x) {
-    return state::not_emitted("dereference as a place", x->span);
+// Which field (or element, for an array) the `position`th initializer sets, and its type: the one its designator
+// names, else the next in order.
+static state::Status item_target(state::Emitter *e, state::Ty whole, ast::Initializer item, Usize position,
+                                 Usize *found, state::Ty *want) {
+    ast::Span span = item.value->span;
+    ast::Designator designators[:] = item.designators;
+    Usize at = 0;
+    if (whole.kind == .array) {
+        if (countof(designators) > 0) return state::not_emitted("designator in an array", span);
+        if (position >= whole.count) return state::failf(span, "too many initializers for ", whole.name);
+        *found = position;
+        *want = *whole.element;
+        return state::success();
+    }
+    if (whole.kind != .record || !find_record_of(e, whole, &at))
+        return state::failf(span, whole.name, " is not a record or an array");
+    if (countof(designators) == 0) {
+        if (position >= field_count(e, at)) return state::failf(span, "too many initializers for ", whole.name);
+        *found = position;
+    } else {
+        ast::Designator first = designators[0];
+        if (countof(designators) > 1 || first != .field) return state::not_emitted("this designator", span);
+        try field_index(e, whole, first.field.name, span, found);
+    }
+    *want = e->records[at].fields[*found].ty;
+    return state::success();
 }
 
-export state::Status place_index(state::Emitter *_, const ast::Expr *x) {
-    return state::not_emitted("index as a place", x->span);
+// The address of field or element `index` of the record or array stored at `slot`.
+static c::LLVMValueRef part_address(state::Emitter *e, state::Ty whole, c::LLVMValueRef slot, Usize index) {
+    if (whole.kind == .record) return c::LLVMBuildStructGEP2(e->builder, whole.llvm, slot, (U32)index, "field");
+    c::LLVMTypeRef word = index_word(e);
+    c::LLVMValueRef indices[2] = {c::LLVMConstInt(word, 0, 0), c::LLVMConstInt(word, index, 0)};
+    return c::LLVMBuildInBoundsGEP2(e->builder, whole.llvm, slot, indices, 2, "element");
 }
 
-export state::Status place_member(state::Emitter *_, const ast::Expr *x) {
-    return state::not_emitted("member as a place", x->span);
+static state::Status compound_step(state::Emitter *e, const state::Work *w);
+
+// The value is evaluated: stored into its field, then the next initializer.
+static state::Status compound_store(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .compound) {
+        return state::fail("not a compound literal", w->span);
+    }
+    ast::Initializer items[:] = w->expr->kind.compound.items;
+    Usize position = (Usize)w->number;
+    Usize part = 0;
+    state::Ty want = {};
+    try item_target(e, w->ty, items[position], position, &part, &want);
+    state::Value value = state::pop_value(e);
+    if (!state::same_type(want, value.ty))
+        return state::failf(items[position].value->span, "initializing ", want.name, " with ", value.ty.name);
+    c::LLVMBuildStore(e->builder, value.llvm, part_address(e, w->ty, w->value, part));
+    state::push_then(e, (state::Work){.then = compound_step,
+                                      .expr = w->expr,
+                                      .ty = w->ty,
+                                      .number = w->number + 1,
+                                      .value = w->value,
+                                      .span = w->span});
+    return state::success();
+}
+
+// Initializer number `w->number` is next: evaluated with its part's type, or the literal is finished.
+static state::Status compound_step(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .compound) {
+        return state::fail("not a compound literal", w->span);
+    }
+    ast::Initializer items[:] = w->expr->kind.compound.items;
+    Usize position = (Usize)w->number;
+    if (position >= countof(items)) {
+        c::LLVMValueRef whole = c::LLVMBuildLoad2(e->builder, w->ty.llvm, w->value, "");
+        state::push_value(e, (state::Value){.llvm = whole, .ty = w->ty});
+        return state::success();
+    }
+    Usize part = 0;
+    state::Ty want = {};
+    try item_target(e, w->ty, items[position], position, &part, &want);
+    state::push_then(e, (state::Work){.then = compound_store,
+                                      .expr = w->expr,
+                                      .ty = w->ty,
+                                      .number = w->number,
+                                      .value = w->value,
+                                      .span = w->span});
+    state::push_eval(e, items[position].value, state::hint_of(want));
+    return state::success();
+}
+
+// `(Point){.x = 1, .y = 2}` and `{1, 2, 3}` for an array: a zeroed temporary, each initializer stored into its part,
+// the whole loaded.
+export state::Status compound(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    if (x->kind != .compound) {
+        return state::fail("not a compound literal", x->span);
+    }
+    const ast::TypeExpr *type = x->kind.compound.type;
+    state::Ty ty = {};
+    if (type != nullptr) {
+        state::TyResult made = resolve(e, type);
+        if (made == .error) {
+            return {.error = made.error};
+        }
+        ty = made.ok;
+    } else if (hint.present) {
+        ty = hint.ty;
+    } else {
+        return state::fail("a compound literal needs a type", x->span);
+    }
+    if (ty.kind != .record && ty.kind != .array) return state::not_emitted("compound literal of this type", x->span);
+    c::LLVMValueRef slot = state::new_alloca(e, ty, "compound");
+    c::LLVMBuildStore(e->builder, c::LLVMConstNull(ty.llvm), slot);
+    state::push_then(e, (state::Work){.then = compound_step, .expr = x, .ty = ty, .value = slot, .span = x->span});
+    return state::success();
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Declarations
 
-// `Decl.record` (file scope or a block).
-export state::Status record_decl(state::Emitter *_, const ast::Decl *d) {
-    return state::not_emitted("record declaration", d->span);
+static void add_record(state::Emitter *e, state::RecordType record) {
+    if (e->record_count == countof(e->records)) {
+        Usize capacity = countof(e->records) * 2;
+        if (capacity < 8) capacity = 8;
+        e->records = mem::realloc(e->records, capacity);
+    }
+    e->records[e->record_count] = record;
+    e->record_count += 1;
 }
 
-// `Decl.variable` at file scope: a global.
-export state::Status global_variable(state::Emitter *_, const ast::Decl *d) {
-    return state::not_emitted("global variable", d->span);
+// Does a field of type `ty` hold the record `self` by value (directly or in an array)?
+static Bool holds(state::Ty ty, c::LLVMTypeRef self) {
+    state::Ty inner = ty;
+    while (inner.kind == .array)
+        inner = *inner.element;
+    return inner.kind == .record && inner.llvm == self;
+}
+
+// The fields of a record, resolved in order; the record itself is already in the table so a field can point to it.
+static state::Status record_fields(state::Emitter *e, const ast::Decl *d, Usize at, state::FieldInfo infos[:],
+                                   c::LLVMTypeRef *types) {
+    if (d->kind != .record) {
+        return state::fail("not a record", d->span);
+    }
+    ast::FieldDecl fields[:] = d->kind.record.fields;
+    for (Usize i = 0; i < countof(fields); i++) {
+        ast::FieldDecl field = fields[i];
+        if (field.bit_width != nullptr) return state::not_emitted("bit-field", field.span);
+        for (Usize j = 0; j < i; j++) {
+            if (state::same_text(infos[j].name, field.name))
+                return state::failf(field.span, field.name, " is declared twice");
+        }
+        state::TyResult made = resolve(e, field.type);
+        if (made == .error) {
+            return {.error = made.error};
+        }
+        if (holds(made.ok, e->records[at].ty.llvm)) {
+            return state::failf(field.span, e->records[at].name, " contains itself; use a pointer");
+        }
+        infos[i] = (state::FieldInfo){.name = field.name, .ty = made.ok};
+        types[i] = made.ok.llvm;
+    }
+    return state::success();
+}
+
+// `Decl.record` (file scope or a block).
+export state::Status record_decl(state::Emitter *e, const ast::Decl *d) {
+    if (d->kind != .record) {
+        return state::fail("not a record", d->span);
+    }
+    Str name = d->kind.record.name;
+    Bool opaque = d->kind.record.opaque;
+    Usize count = countof(d->kind.record.fields);
+    if (d->kind.record.is_union) return state::not_emitted("union", d->span);
+    Usize at = 0;
+    if (find_record_named(e, name, &at)) return state::failf(d->span, name, " is declared twice");
+    Str label = qualified(e->tree, name);
+    const char *text = label.data;
+    c::LLVMTypeRef named = c::LLVMStructCreateNamed(e->context, text);
+    state::free_text(label);
+    state::Ty ty = {.kind = .record, .llvm = named, .name = name};
+    at = e->record_count;
+    add_record(e, (state::RecordType){.name = name, .ty = ty});
+    if (opaque) {
+        return state::success();
+    }
+    if (count > 64) {
+        return state::not_emitted("record with more than 64 fields", d->span);
+    }
+    state::FieldInfo infos[:] = mem::alloc_slice(state::FieldInfo, count + 1);
+    c::LLVMTypeRef types[64];
+    state::Status status = record_fields(e, d, at, infos, types);
+    if (status == .error) {
+        mem::free(infos.data);
+        return status;
+    }
+    c::LLVMStructSetBody(named, types, (U32)count, 0);
+    e->records[at].fields = infos[0:count];
+    return state::success();
+}
+
+// An integer constant of type `ty`; `negative` for `-literal`.
+static state::Status integer_constant(state::Ty ty, U64 value, Bool negative, ast::Span span, c::LLVMValueRef *out) {
+    U32 usable = ty.bits;
+    if (ty.is_signed) usable -= 1;
+    Bool fits = ty.bits == 64 && !ty.is_signed;
+    if (!fits) fits = value < (1ULL << usable) || (negative && ty.is_signed && value == (1ULL << usable));
+    if (!fits) return state::failf(span, "integer literal ", value, " does not fit ", ty.name);
+    *out = c::LLVMConstInt(ty.llvm, value, 0);
+    if (negative) *out = c::LLVMConstNeg(*out);
+    return state::success();
+}
+
+// A scalar constant of type `ty`: an integer literal (negated or not), `true`/`false` or `null`.
+static state::Status scalar_constant(state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+    if (x->kind == .null_pointer && ty.kind == .pointer) {
+        *out = c::LLVMConstNull(ty.llvm);
+        return state::success();
+    }
+    if (x->kind == .boolean && ty.kind == .boolean) {
+        *out = c::LLVMConstInt(ty.llvm, x->kind.boolean.value ? 1 : 0, 0);
+        return state::success();
+    }
+    if (ty.kind == .integer && x->kind == .integer)
+        return integer_constant(ty, x->kind.integer.value, false, x->span, out);
+    if (ty.kind == .integer && x->kind == .unary && x->kind.unary.op == .negate) {
+        const ast::Expr *inner = x->kind.unary.operand;
+        if (inner->kind == .integer) return integer_constant(ty, inner->kind.integer.value, true, x->span, out);
+    }
+    return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
+}
+
+// A record's constant from a compound of scalar constants; fields left out are zero.
+static state::Status compound_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+    if (x->kind != .compound) {
+        return scalar_constant(ty, x, out);
+    }
+    ast::Initializer items[:] = x->kind.compound.items;
+    Usize at = 0;
+    if (ty.kind != .record || !find_record_of(e, ty, &at))
+        return state::failf(x->span, "a compound initializer for ", ty.name);
+    Usize count = field_count(e, at);
+    if (count > 64) {
+        return state::not_emitted("record with more than 64 fields", x->span);
+    }
+    c::LLVMValueRef values[64];
+    for (Usize i = 0; i < count; i++)
+        values[i] = c::LLVMConstNull(e->records[at].fields[i].ty.llvm);
+    for (Usize i = 0; i < countof(items); i++) {
+        Usize field = 0;
+        state::Ty want = {};
+        state::Status found = item_target(e, ty, items[i], i, &field, &want);
+        if (found == .error) {
+            return found;
+        }
+        state::Status made = scalar_constant(e->records[at].fields[field].ty, items[i].value, &values[field]);
+        if (made == .error) {
+            return made;
+        }
+    }
+    *out = c::LLVMConstNamedStruct(ty.llvm, values, (U32)count);
+    return state::success();
+}
+
+// `Decl.variable` at file scope: a global. Exported is external linkage, the rest internal.
+export state::Status global_variable(state::Emitter *e, const ast::Decl *d) {
+    if (d->kind != .variable) {
+        return state::fail("not a variable", d->span);
+    }
+    Str name = d->kind.variable.name;
+    const ast::TypeExpr *type = d->kind.variable.type;
+    const ast::Expr *init = d->kind.variable.init;
+    if (d->kind.variable.is_constexpr || d->kind.variable.is_thread_local || d->is_extern)
+        return state::not_emitted("this kind of global", d->span);
+    if (type->kind == .auto_type) return state::fail("a global needs a written type", d->span);
+    state::TyResult made = resolve(e, type);
+    if (made == .error) {
+        return {.error = made.error};
+    }
+    state::Ty ty = made.ok;
+    c::LLVMValueRef initial = c::LLVMConstNull(ty.llvm);
+    if (init != nullptr) try compound_constant(e, ty, init, &initial);
+    Str symbol = qualified(e->tree, name);
+    const char *label = symbol.data; // the text of `qualified` ends with a terminator
+    state::Status result = state::success();
+    if (c::LLVMGetNamedGlobal(e->module, label) != nullptr) {
+        result = state::failf(d->span, name, " is declared twice");
+    } else {
+        c::LLVMValueRef global = c::LLVMAddGlobal(e->module, ty.llvm, label);
+        c::LLVMSetInitializer(global, initial);
+        if (d->exported && !d->is_static)
+            c::LLVMSetLinkage(global, c::LLVMExternalLinkage);
+        else
+            c::LLVMSetLinkage(global, c::LLVMInternalLinkage);
+    }
+    state::free_text(symbol);
+    return result;
+}
+
+// Give back the record table, its field lists and the `Ty.element` blocks. `emit::module` calls it.
+export void release(state::Emitter *e) {
+    while (owned_head != nullptr) {
+        Owned *next = owned_head->next;
+        mem::free(owned_head);
+        owned_head = next;
+    }
+    for (Usize i = 0; i < e->record_count; i++)
+        mem::free(e->records[i].fields.data);
+    mem::free(e->records.data);
 }

@@ -3,11 +3,11 @@ module main;
 import shape;
 import <stdio.h>;
 
-static f64 loss(const shape::Params *p, const shape::Batch *batch) {
+static F64 loss(const shape::Params *p, const shape::Batch *batch) {
     return (p->a + p->b) * batch->scale;
 }
 
-static f64 plain(const shape::Params *p) {
+static F64 plain(const shape::Params *p) {
     return p->a * 2;
 }
 

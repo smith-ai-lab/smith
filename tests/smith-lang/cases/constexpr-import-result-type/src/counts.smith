@@ -1,6 +1,6 @@
 module counts;
 
 // An ordinary function: how many `[:]` a result has.
-export usize dims(usize rows, usize columns) {
+export Usize dims(Usize rows, Usize columns) {
     return rows > 0 && columns > 0 ? 2 : 1;
 }

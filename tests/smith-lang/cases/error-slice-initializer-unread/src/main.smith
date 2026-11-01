@@ -5,27 +5,27 @@ module main;
 
 struct Pair {
     const char key[:];
-    i32 id;
+    I32 id;
 };
 
 struct Anon {
     union {
-        i32 a;
-        f32 b;
+        I32 a;
+        F32 b;
     };
     const char name[:];
 };
 
 struct Long {
     const char name[:];
-    i32 values[130];
+    I32 values[130];
 };
 
 struct Holder {
     struct Anon inner;
 };
 
-i32 main() {
+I32 main() {
     struct Pair ps[2] = {{.key = "a"}, {.key = "b"}};
     struct Anon an = {.name = "x"};
     struct Holder h = {.inner = {.name = "y"}};

@@ -3,9 +3,9 @@ module main;
 import bad;
 
 int main() {
-    i32 a = bad::no_step();
-    i32 b = bad::no_variable();
-    i32 c = bad::clash(1);
-    i32 f = bad::generic_literal(1);
+    I32 a = bad::no_step();
+    I32 b = bad::no_variable();
+    I32 c = bad::clash(1);
+    I32 f = bad::generic_literal(1);
     return a + b + c + f;
 }

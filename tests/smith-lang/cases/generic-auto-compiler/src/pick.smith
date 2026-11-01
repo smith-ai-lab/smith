@@ -5,7 +5,7 @@ export typeof(a) larger(auto a, typeof(a) b) {
     return a > b ? a : b;
 }
 
-export usize size_of_value(auto value) {
+export Usize size_of_value(auto value) {
     (void)value;
     return sizeof(typeof(value));
 }

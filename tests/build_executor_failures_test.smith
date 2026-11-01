@@ -48,6 +48,22 @@ export void test_build_executor_a_failed_job_says_why_and_stops_the_build() {
     scratch::expect_text("failure: the first failure stops the others", "no no", state);
 }
 
+// A step killed by a signal says so, names the step and says a rerun resumes (#1254).
+export void test_build_executor_a_killed_job_says_the_signal_and_that_a_rerun_resumes() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "exec_killed");
+    defer scratch::clean(&p);
+    scratch::Run run = exec(&p, "-j1");
+    scratch::expect_status("killed: the build fails", 1, &run);
+    scratch::expect_contains("killed: FAILED names the status", run.out, "FAILED: [code=137] killed ");
+    scratch::expect_contains("killed: the step and the signal", run.out, "step 1 of 1 was killed by signal 9");
+    scratch::expect_contains("killed: out of memory is named", run.out, "probably out of memory");
+    scratch::expect_contains("killed: a rerun resumes", run.out, "again resumes from the steps that are done");
+}
+
 export void test_build_executor_keep_going_builds_what_does_not_depend_on_the_failure() {
     arena::Arena memory = test::memory(1 << 26);
     arena::ArenaAllocator allocator = arena::allocator(&memory);

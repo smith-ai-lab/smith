@@ -2,22 +2,22 @@ module main;
 
 import <stdio.h>;
 
-typedef i32 (*Call)(i32);
+typedef I32 (*Call)(I32);
 
-static i32 twice(i32 x) {
+static I32 twice(I32 x) {
     return x * 2;
 }
 
-static i32 negate(i32 x) {
+static I32 negate(I32 x) {
     return -x;
 }
 
 // A lambda in a generic calls the generic's `constexpr auto handler`: it is not a capture.
 Call wrap(constexpr auto handler) {
-    return [](i32 x) -> i32 { return handler(x) + 1; };
+    return [](I32 x) -> i32 { return handler(x) + 1; };
 }
 
-i32 main() {
+I32 main() {
     Call a = wrap(twice);
     Call b = wrap(negate);
     c::printf("%d %d\n", a(10), b(10));

@@ -1,24 +1,24 @@
 module main;
 import <stdio.h>;
 
-typedef result(f64, i32) Quotient;
-typedef option(i32) Number;
-typedef option(i64) Wide;
+typedef Result(F64, I32) Quotient;
+typedef Option(I32) Number;
+typedef Option(I64) Wide;
 
 struct Pair {
-    i32 left;
-    i32 right;
+    I32 left;
+    I32 right;
 };
 
-typedef option(struct Pair) Maybe;
+typedef Option(struct Pair) Maybe;
 
 // A value converts to `.ok` and `.some` wherever a `result` or an `option` is expected (issue #358).
-static Quotient divide(f64 a, f64 b) {
+static Quotient divide(F64 a, F64 b) {
     if (b == 0) return {.error = 7};
     return a / b;
 }
 
-static i32 describe(Number n, i32 other) {
+static I32 describe(Number n, I32 other) {
     return n == .some ? n.some : other;
 }
 
@@ -31,7 +31,7 @@ static Number absent(void) {
     return .none;
 }
 
-i32 main() {
+I32 main() {
     Number a = 5;                      // a declaration's initializer
     Number b;
     b = 6;                             // an assignment
@@ -41,7 +41,7 @@ i32 main() {
     Maybe f = (struct Pair){1, 2};     // a struct value
     Quotient g = divide(9, 3);
     Quotient h = divide(1, 0);
-    c::printf("%d %d %d %d\n", describe(a, -1), describe(b, -1), (i32)(c == .some ? c.some : -1), describe(d, -1));
+    c::printf("%d %d %d %d\n", describe(a, -1), describe(b, -1), (I32)(c == .some ? c.some : -1), describe(d, -1));
     c::printf("%d\n", describe(e, -1));
     if (f == .some) c::printf("pair %d %d\n", f.some.left, f.some.right);
     if (g == .ok) c::printf("quotient %.1f\n", g.ok);

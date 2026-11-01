@@ -930,7 +930,7 @@ bool smith_lang_capital_at(size_t index, const char **written, const char **name
 
 // The lowercase name a capitalized one stands for, or null.
 const char *smith_lang_capital_name(const char *text, size_t length) {
-    if (length < 3 || length > 8 || text[0] < 'A' || text[0] > 'Z') return nullptr;
+    if (length < 2 || length > 8 || text[0] < 'A' || text[0] > 'Z') return nullptr;
     for (size_t i = 0; i < sizeof smith_lang_capitals / sizeof smith_lang_capitals[0]; i++) { // 28 names
         if (smith_lang_equals(text, length, smith_lang_capitals[i].written)) return smith_lang_capitals[i].name;
     }

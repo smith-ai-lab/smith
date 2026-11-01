@@ -2,34 +2,34 @@ module calc;
 
 // A function of another module runs at compile time: the importer defines it from this module's `.body` (issue #107).
 typedef struct {
-    i32 a;
-    i32 b;
+    I32 a;
+    I32 b;
 } Pair;
 
-static i32 twice(i32 n) {
+static I32 twice(I32 n) {
     return n * 2;
 }
 
-static i32 sum(Pair p) {
+static I32 sum(Pair p) {
     return twice(p.a) + p.b;
 }
 
-export i32 fib(i32 n) {
-    i32 a = 0;
-    i32 b = 1;
-    for (i32 i = 0; i < n; i++) { // a loop: a module has no recursion
-        i32 next = twice(a + b) / 2;
+export I32 fib(I32 n) {
+    I32 a = 0;
+    I32 b = 1;
+    for (I32 i = 0; i < n; i++) { // a loop: a module has no recursion
+        I32 next = twice(a + b) / 2;
         a = b;
         b = next;
     }
     return twice(a) / 2;
 }
 
-export i32 combine(i32 a, i32 b) {
+export I32 combine(I32 a, I32 b) {
     Pair p = {a, b};
     return sum(p);
 }
 
-export usize widen(usize n) {
+export Usize widen(Usize n) {
     return n + 1;
 }

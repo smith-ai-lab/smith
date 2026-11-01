@@ -1,18 +1,18 @@
 module main;
 
-typedef result(i32, i32) Same;
-typedef option(i32) Inner;
-typedef option(Inner) Nested;
-typedef i32 *Address;
-typedef option(Address) Maybe;
-typedef option(i32) Number;
+typedef Result(I32, I32) Same;
+typedef Option(I32) Inner;
+typedef Option(Inner) Nested;
+typedef I32 *Address;
+typedef Option(Address) Maybe;
+typedef Option(I32) Number;
 
 // Each conversion that would have to choose is an error that names the explicit form (issue #358).
-static Same same(i32 v) {
+static Same same(I32 v) {
     return v;
 }
 
-static Nested nested(i32 v) {
+static Nested nested(I32 v) {
     return v;
 }
 
@@ -21,15 +21,15 @@ static Maybe maybe(void) {
 }
 
 // A result or an option never becomes a value, and is never compared with one.
-static bool compared(Number n) {
+static Bool compared(Number n) {
     return n == 5;
 }
 
-static i32 unwrapped(Number n) {
-    i32 v = n;
+static I32 unwrapped(Number n) {
+    I32 v = n;
     return v;
 }
 
-i32 main() {
+I32 main() {
     return 0;
 }

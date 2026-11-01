@@ -4,16 +4,16 @@ module pointers;
 
 export typedef typeof(const char[:]) Text;
 
-export bool take_line(const char (*text)[:], const char (*line)[:]) {
+export Bool take_line(const char (*text)[:], const char (*line)[:]) {
     *line = (*text)[0:1];
     *text = (*text)[1:];
     return countof(*text) > 0;
 }
 
-export usize length(Text *text) {
+export Usize length(Text *text) {
     return countof(*text);
 }
 
-export void grow(i32 (*const xs)[:][2]) {
+export void grow(I32 (*const xs)[:][2]) {
     (*xs)[0][1] = 1;
 }

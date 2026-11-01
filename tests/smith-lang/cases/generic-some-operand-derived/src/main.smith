@@ -3,10 +3,10 @@ module main;
 import finder;
 import <stdio.h>;
 
-typedef option(i32) O;
+typedef Option(I32) O;
 
 // `== .some` and `!= .some` on a generic whose result is `option(typeof(v))`.
-i32 main() {
+I32 main() {
     if (finder::maybe(7, true) == .some) c::printf("some\n");
     if (finder::maybe(7, false) != .some) c::printf("none\n");
     return 0;

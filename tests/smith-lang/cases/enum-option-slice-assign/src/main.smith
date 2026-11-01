@@ -2,24 +2,24 @@ module main;
 import <stdio.h>;
 
 typedef const char Text[:];
-typedef option(Text) MaybeText; // names the struct once, as the first mention of `.none` needs
+typedef Option(Text) MaybeText; // names the struct once, as the first mention of `.none` needs
 
-static usize first_len(Text word, bool b) {
-    option(Text) found = .none;
+static Usize first_len(Text word, Bool b) {
+    Option(Text) found = .none;
     if (b) found = word[0:1];
     if (found == .none) return 9;
     return countof(found.some);
 }
 
-static usize typeof_len(Text word) {
-    option(typeof(const char[:])) found = word[0:2];
+static Usize typeof_len(Text word) {
+    Option(typeof(const char[:])) found = word[0:2];
     if (found == .none) return 0;
     return countof(found.some);
 }
 
-i32 main(void) {
+I32 main(void) {
     const char s[4] = {'a', 'b', 'c', 'd'};
     Text w = s[0:4];
-    c::printf("%d %d %d\n", (i32)first_len(w, true), (i32)first_len(w, false), (i32)typeof_len(w));
+    c::printf("%d %d %d\n", (I32)first_len(w, true), (I32)first_len(w, false), (I32)typeof_len(w));
     return 0;
 }

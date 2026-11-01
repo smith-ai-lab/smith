@@ -3,12 +3,12 @@ module main;
 import <stdio.h>;
 import stats;
 
-i32 main(void) {
-    i32 a = 21;
-    f64 b = 1.25;
-    u8 c = 7;
-    i16 d = -3;
-    c::printf("%d %g %d %d\n", stats::twice(a), stats::twice(b), stats::larger(a, 5), stats::larger(c, (u8)9));
+I32 main(void) {
+    I32 a = 21;
+    F64 b = 1.25;
+    U8 c = 7;
+    I16 d = -3;
+    c::printf("%d %g %d %d\n", stats::twice(a), stats::twice(b), stats::larger(a, 5), stats::larger(c, (U8)9));
     c::printf("%zu %d\n", stats::width(&b), stats::sign_of(d));
     c::printf("%d %g %d\n", stats::shifted(a), stats::shifted(b), stats::plain(a));
     return 0;

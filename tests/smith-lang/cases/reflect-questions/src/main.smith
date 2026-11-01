@@ -1,20 +1,20 @@
 // Nothing here uses the questions: the test asks the parser about these types at the end of the file (see `ask`), the
 // way reflection will, and compares its answers with expect/ask.
 typedef struct {
-    u8 tag;
-    u64 value;
-    f32 weight;
+    U8 tag;
+    U64 value;
+    F32 weight;
 } Packet;
 
 struct Header {
-    u16 id;
-    u16 flags;
+    U16 id;
+    U16 flags;
     char name[6];
 };
 
 union Number {
-    u32 whole;
-    f32 real;
+    U32 whole;
+    F32 real;
 };
 
 typedef Packet Alias;

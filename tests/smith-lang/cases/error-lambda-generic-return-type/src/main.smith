@@ -1,14 +1,14 @@
 module main;
 
 // The type is read from the first `return`, which must be the first statement of the body.
-i32 pick(constexpr type T, T a) {
-    i32 (*f)(T) = [](T x) {
+I32 pick(constexpr Type T, T a) {
+    I32 (*f)(T) = [](T x) {
         T y = x;
         return y;
     };
-    return (i32)f(a);
+    return (I32)f(a);
 }
 
-i32 main() {
-    return pick(i32, 1);
+I32 main() {
+    return pick(I32, 1);
 }

@@ -5,11 +5,11 @@ typedef enum {
     Green,
 } Color;
 
-i32 first(constexpr type T, T *x) {
+I32 first(constexpr Type T, T *x) {
     return x->[fields(T)[0]];
 }
 
-i32 main() {
+I32 main() {
     Color c = Red;
     return first(Color, &c);
 }

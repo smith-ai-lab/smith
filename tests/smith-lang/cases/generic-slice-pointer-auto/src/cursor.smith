@@ -2,14 +2,14 @@ module cursor;
 
 // A pointer to a slice with `auto` as its element, as `const char (*text)[:]`: a cursor that takes from the front.
 
-export usize skip(const auto (*xs)[:], typeof((*xs)[0]) stop) {
-    usize i = 0;
+export Usize skip(const auto (*xs)[:], typeof((*xs)[0]) stop) {
+    Usize i = 0;
     while (i < countof(*xs) && (*xs)[i] != stop) i++;
     *xs = (*xs)[i:];
     return i;
 }
 
-export typeof((*xs)[0:0]) take(const auto (*xs)[:], usize n) {
+export typeof((*xs)[0:0]) take(const auto (*xs)[:], Usize n) {
     typeof((*xs)[0:0]) head = (*xs)[0:n];
     *xs = (*xs)[n:];
     return head;

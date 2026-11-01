@@ -6,25 +6,25 @@ import parser;
 
 // `option` and `result` are in scope in every module, with no import; every module's `option(usize)` is one type.
 
-typedef option(usize) Index;
-typedef result(f64, i32) Quotient;
+typedef Option(Usize) Index;
+typedef Result(F64, I32) Quotient;
 
 // A generic may write them with its own types.
-option(T) first(constexpr type T, T *xs, usize n) {
+Option(T) first(constexpr Type T, T *xs, Usize n) {
     if (n == 0) return .none;
     return {.some = xs[0]};
 }
 
-static usize or_else(Index at, usize otherwise) {
+static Usize or_else(Index at, Usize otherwise) {
     if (at == .some) return at.some;
     return otherwise;
 }
 
-i32 main(void) {
-    usize xs[2] = {7, 8};
+I32 main(void) {
+    Usize xs[2] = {7, 8};
     Index a = finder::find("key=value", '=');
     Index b = parser::position("a,b", ',');
-    Index c = first(usize, xs, 2);
+    Index c = first(Usize, xs, 2);
     Quotient good = parser::divide(6, 3);
     Quotient bad = parser::divide(1, 0);
     c::printf("%zu %zu %zu\n", or_else(a, 99), or_else(b, 99), or_else(c, 99));

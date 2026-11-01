@@ -4,52 +4,52 @@ import <stdio.h>;
 // `try` returns the failure of a result or an option at once and gives the success value otherwise (issue #211). It
 // is a declaration's initializer, an assignment, a statement of its own, or the payload of a returned variant
 // (`return {.ok = try f()};`); the `defer`s already set run on the way out.
-static result(i32, i32) step(i32 n) {
+static Result(I32, I32) step(I32 n) {
     if (n < 0) return {.error = n};
     return {.ok = n};
 }
 
-static option(i32) pick(i32 n) {
+static Option(I32) pick(I32 n) {
     if (n < 0) return .none;
     return {.some = n};
 }
 
-static result(i32, i32) declared(i32 a, i32 b) {
+static Result(I32, I32) declared(I32 a, I32 b) {
     defer c::puts("  declared leaves");
-    i32 x = try step(a);
+    I32 x = try step(a);
     defer c::puts("  second defer");
-    i32 y = try step(b);
+    I32 y = try step(b);
     return {.ok = x + y};
 }
 
-static result(i32, i32) assigned(i32 a) {
-    i32 x = 0;
+static Result(I32, I32) assigned(I32 a) {
+    I32 x = 0;
     x = try step(a);
     try step(a - 1);
     return {.ok = x};
 }
 
-static result(i32, i32) returned(i32 a) {
+static Result(I32, I32) returned(I32 a) {
     return {.ok = try step(a)};
 }
 
-static option(i32) options(i32 a) {
-    i32 v = try pick(a);
+static Option(I32) options(I32 a) {
+    I32 v = try pick(a);
     return {.some = v * 2};
 }
 
-static option(i32) payload_option(i32 a) {
+static Option(I32) payload_option(I32 a) {
     return {.some = try pick(a)};
 }
 
-static void show(result(i32, i32) r) {
+static void show(Result(I32, I32) r) {
     switch (r) {
     case .ok: c::printf("ok %d\n", r.ok); break;
     case .error: c::printf("error %d\n", r.error); break;
     }
 }
 
-i32 main() {
+I32 main() {
     show(declared(1, 2));
     show(declared(-1, 2));
     show(declared(1, -2));
@@ -57,10 +57,10 @@ i32 main() {
     show(assigned(0));
     show(returned(4));
     show(returned(-4));
-    option(i32) good = options(3);
-    option(i32) bad = options(-3);
+    Option(I32) good = options(3);
+    Option(I32) bad = options(-3);
     c::printf("%d %d\n", good == .some ? good.some : -1, bad == .none);
-    option(i32) viaPayload = payload_option(7);
+    Option(I32) viaPayload = payload_option(7);
     c::printf("%d\n", viaPayload == .some ? viaPayload.some : -1);
     return 0;
 }

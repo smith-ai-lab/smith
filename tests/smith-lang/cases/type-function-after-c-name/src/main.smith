@@ -3,11 +3,11 @@ module main;
 import <stdio.h>;
 import marks;
 
-i32 marker = 3;
+I32 marker = 3;
 
 int main() {
-    f64 values[2] = {1.5, 2.5};
-    i32 one = 7;
+    F64 values[2] = {1.5, 2.5};
+    I32 one = 7;
     c::printf("%g %d %d\n", marks::at(values), marks::at(one), marker);
     return 0;
 }

@@ -6,14 +6,14 @@ module hook::table;
 // `unsigned long`.
 [[std::c_name("HookFn")]] export typedef uint64_t (*Hook)(uint64_t bits);
 export typedef uint64_t (*Plain)(uint64_t bits);
-export typedef u32 (*Sized)(u32 bits);
+export typedef U32 (*Sized)(U32 bits);
 export typedef unsigned long (*Builtin)(uint64_t bits);
 typedef uint64_t (*Private)(uint64_t bits);
 
 export typedef struct {
-    u32 v;
+    U32 v;
 } Box;
-export typedef Box (*Make)(u32 v);
+export typedef Box (*Make)(U32 v);
 
 static uint64_t twice(uint64_t bits) {
     return bits * 2;

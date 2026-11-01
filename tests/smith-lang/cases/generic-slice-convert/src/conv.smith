@@ -3,48 +3,48 @@ module conv;
 // A generic's body converts a slice parameter at a call as an ordinary function does (issue #135): `const` added,
 // `restrict` added or dropped. Dropping `const` is an error (generic-slice-convert-error).
 
-static usize plain_sum(u8 xs[:]) {
-    usize total = 0;
-    for (usize i = 0; i < countof(xs); i++) {
+static Usize plain_sum(U8 xs[:]) {
+    Usize total = 0;
+    for (Usize i = 0; i < countof(xs); i++) {
         total += xs[i];
     }
     return total;
 }
 
-static usize read_sum(const u8 xs[:]) {
-    usize total = 0;
-    for (usize i = 0; i < countof(xs); i++) {
+static Usize read_sum(const U8 xs[:]) {
+    Usize total = 0;
+    for (Usize i = 0; i < countof(xs); i++) {
         total += xs[i];
     }
     return total;
 }
 
-static usize fast_count(u8 xs[restrict :]) {
+static Usize fast_count(U8 xs[restrict :]) {
     return countof(xs);
 }
 
-static usize both(u8 xs[:], const u8 ys[:], usize scale) {
+static Usize both(U8 xs[:], const U8 ys[:], Usize scale) {
     return plain_sum(xs) * scale + read_sum(ys);
 }
 
-export usize call_plain(auto xs) {
+export Usize call_plain(auto xs) {
     return plain_sum(xs);
 }
 
-export usize call_read(auto xs) {
+export Usize call_read(auto xs) {
     return read_sum(xs);
 }
 
-export usize call_fast(auto xs) {
+export Usize call_fast(auto xs) {
     return fast_count(xs);
 }
 
 // The arguments are converted one by one, and one that is no bare parameter is left as it is.
-export usize call_both(auto xs, auto ys) {
+export Usize call_both(auto xs, auto ys) {
     return both(xs, ys, countof(xs));
 }
 
 // A generic that calls a generic passes its parameter as it is; the callee's instance converts.
-export usize pass_on(auto xs) {
+export Usize pass_on(auto xs) {
     return call_plain(xs) + call_read(xs[1:]);
 }

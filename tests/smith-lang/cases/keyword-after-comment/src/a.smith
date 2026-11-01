@@ -1,7 +1,7 @@
 module a;
 
-export typedef option(i32) Maybe;
+export typedef Option(I32) Maybe;
 
-export i32 pass(i32 x) {
+export I32 pass(I32 x) {
     return x;
 }

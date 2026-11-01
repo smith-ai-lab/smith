@@ -2,16 +2,16 @@ module main;
 
 import <stdio.h>;
 
-typedef i32 (*Size)(void);
+typedef I32 (*Size)(void);
 
 // A lambda in a generic uses the generic's `T`: each instance gets a function of its own.
-Size size_of_type(constexpr type T) {
-    return []() -> i32 { return (i32)sizeof(T); };
+Size size_of_type(constexpr Type T) {
+    return []() -> i32 { return (I32)sizeof(T); };
 }
 
-i32 main() {
-    Size a = size_of_type(i16);
-    Size b = size_of_type(f64);
+I32 main() {
+    Size a = size_of_type(I16);
+    Size b = size_of_type(F64);
     c::printf("%d %d\n", a(), b());
     return 0;
 }

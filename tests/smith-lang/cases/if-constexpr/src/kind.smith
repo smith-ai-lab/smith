@@ -2,11 +2,11 @@ module kind;
 
 import target;
 
-constexpr i32 wide = 8;
-constexpr bool both = wide == 8 && target::float_radix == 2;
+constexpr I32 wide = 8;
+constexpr Bool both = wide == 8 && target::float_radix == 2;
 
 // A chain: the branches not taken are never given to the parser, so they may be anything.
-export i32 arch_name() {
+export I32 arch_name() {
     if constexpr (target::arch == target::aarch64) {
         return 1;
     } else if constexpr (target::arch == target::x86_64) {
@@ -17,7 +17,7 @@ export i32 arch_name() {
 }
 
 // The constraint for another architecture would not compile here.
-export i32 opaque(i32 value) {
+export I32 opaque(I32 value) {
     if constexpr (target::arch == target::aarch64) {
         __asm__("" : "+w"(value));
     } else if constexpr (target::arch == target::x86_64) {
@@ -29,9 +29,9 @@ export i32 opaque(i32 value) {
 }
 
 // Nested blocks, constants of the file and of the function, and a condition of literals.
-export i32 nested(i32 x) {
-    constexpr i32 local = 3;
-    i32 result = 0;
+export I32 nested(I32 x) {
+    constexpr I32 local = 3;
+    I32 result = 0;
     if constexpr (wide == 8) {
         if constexpr (target::os == target::macos) {
             result = 10;
@@ -59,9 +59,9 @@ export i32 nested(i32 x) {
 }
 
 // A generic's `if constexpr` still chooses the branch for each instance.
-export i32 describe(constexpr type T, T value) {
+export I32 describe(constexpr Type T, T value) {
     (void)value;
-    if constexpr (T == f32) {
+    if constexpr (T == F32) {
         return 1;
     } else if constexpr (sizeof(T) == 8) {
         return 2;

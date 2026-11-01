@@ -427,6 +427,12 @@ static void smith_run_report_failure(SmithExec *exec, const SmithJob *job, const
     smith_run_emit(exec, exec->scratch, used);
     smith_run_text(exec, "\n%s\n", edge->command);
     if (job->message[0] != '\0') smith_run_text(exec, "smith: %s\n", job->message);
+    if (job->signal != 0)
+        smith_run_text(exec,
+                       "smith: step %zu of %zu was killed by signal %d (%s)%s; running the same command again "
+                       "resumes from the steps that are done\n",
+                       exec->finished_edges, exec->command_edges, job->signal, strsignal(job->signal),
+                       job->signal == SIGKILL ? ", probably out of memory" : "");
 }
 
 // What a failed job printed, bounded (issue #78): a long output shows its excerpt (smith_quiet_excerpt) and the rest is

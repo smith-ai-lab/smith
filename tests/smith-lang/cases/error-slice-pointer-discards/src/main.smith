@@ -6,7 +6,7 @@ static void touch(char (*xs)[:]) {
     (*xs)[0] = 'x';
 }
 
-i32 main() {
+I32 main() {
     const char s[:] = "abc";
     touch(&s);
     return 0;

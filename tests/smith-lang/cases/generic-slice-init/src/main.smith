@@ -3,11 +3,11 @@ module main;
 import conv;
 import <stdio.h>;
 
-i32 main() {
-    u8 raw[5] = {1, 2, 3, 4, 5};
-    u8 xs[:] = raw;
-    const u8 rd[:] = raw;
-    u8 res[restrict :] = raw;
+I32 main() {
+    U8 raw[5] = {1, 2, 3, 4, 5};
+    U8 xs[:] = raw;
+    const U8 rd[:] = raw;
+    U8 res[restrict :] = raw;
     c::printf("%zu %zu %zu\n", conv::init_const(xs), conv::init_restrict(xs), conv::init_unrestrict(res));
     c::printf("%zu %zu\n", conv::assign_const(rd, xs), conv::assign_local(xs, res));
     return 0;

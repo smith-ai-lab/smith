@@ -5,12 +5,12 @@ import <stdio.h>;
 // A generic whose call is a statement of its own: `count::show(i, n);` after `if (...) continue;` must not read as the
 // if's second statement (-Wmisleading-indentation), as `show(i, n);` of a plain function does not.
 export void show(auto a, typeof(a) b) {
-    c::printf("%d of %d\n", (i32)a, (i32)b);
+    c::printf("%d of %d\n", (I32)a, (I32)b);
 }
 
-export i32 doubled(i32 n) {
-    i32 total = 0;
-    for (i32 i = 0; i < n; i++) {
+export I32 doubled(I32 n) {
+    I32 total = 0;
+    for (I32 i = 0; i < n; i++) {
         if (i == 1) continue;
         show(i, n);
         total += i;

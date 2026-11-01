@@ -2,9 +2,9 @@ module std::text;
 import std::arena;
 
 // A .smith importer writes the module's names, and gets the C names.
-export u64 fill(u64 capacity) {
+export U64 fill(U64 capacity) {
     arena::Arena a = arena::make(capacity);
     arena::take(&a, 10);
-    const u8 bytes[3] = {1, 2, 3};
+    const U8 bytes[3] = {1, 2, 3};
     return arena::take(&a, 5) + arena::checksum(bytes, 3) + arena::limit;
 }

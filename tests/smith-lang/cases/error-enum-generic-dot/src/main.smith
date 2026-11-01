@@ -1,7 +1,7 @@
 module main;
 
 export typedef struct {
-    f32 radius;
+    F32 radius;
 } Circle;
 
 export typedef enum {
@@ -9,7 +9,7 @@ export typedef enum {
     empty;
 } Shape;
 
-export bool is_empty(auto s) {
+export Bool is_empty(auto s) {
     return s == .empty;
 }
 

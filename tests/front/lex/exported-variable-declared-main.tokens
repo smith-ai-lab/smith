@@ -15,7 +15,7 @@
 4:15 name h
 4:16 greater >
 4:17 semicolon ;
-6:1 name i32
+6:1 type_name I32
 6:5 name main
 6:9 left_paren (
 6:10 right_paren )

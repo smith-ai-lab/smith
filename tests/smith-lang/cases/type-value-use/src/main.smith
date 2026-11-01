@@ -2,21 +2,21 @@ import pool;
 #include <stdio.h>
 
 typedef char *Text;
-constexpr type element = f64;
-constexpr type kinds[3] = {u16, i64, Text};
+constexpr Type element = F64;
+constexpr Type kinds[3] = {U16, I64, Text};
 
 typedef struct {
-    constexpr type of;
-    i32 count;
+    constexpr Type of;
+    I32 count;
 } Column;
-constexpr Column column = {.of = u8, .count = 3};
+constexpr Column column = {.of = U8, .count = 3};
 
 int main() {
-    constexpr type t = i32;
+    constexpr Type t = I32;
     t a = 7;                    // `t x;` declares a variable of the type t holds
     element b = 2.5;            // a file-scope type value
-    constexpr type second = kinds[1];
-    constexpr type of = column.of;
+    constexpr Type second = kinds[1];
+    constexpr Type of = column.of;
     second c = 1;               // an element of an array of types
     of d = 200;                 // a member of a struct
     t *p = &a;

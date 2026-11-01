@@ -2,9 +2,9 @@ module wide;
 
 // The size of a type value is the target's: `long` is four bytes for Windows and eight elsewhere. A function over a
 // type value runs in the compiler with the same answer.
-constexpr type wide = long;
+constexpr Type wide = long;
 
-static bool long_is_four(type t) {
+static Bool long_is_four(Type t) {
     return sizeof(t) == 4;
 }
 
@@ -13,6 +13,6 @@ static_assert(sizeof(wide) != 4, "sizeof of a type value is four bytes here");
 static_assert(alignof(wide) != 4, "alignof of a type value is four here");
 static_assert(sizeof(char *) == 8);
 
-export i32 eight() {
+export I32 eight() {
     return 8;
 }

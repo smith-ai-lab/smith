@@ -1,3 +1,3 @@
 module foo;
 
-export i32 f(i32 x) { return x * 2; }
+export I32 f(I32 x) { return x * 2; }

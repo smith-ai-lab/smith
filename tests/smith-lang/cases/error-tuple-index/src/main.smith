@@ -1,8 +1,8 @@
 import <stdio.h>;
 
-i32 main() {
-    struct { i32, f32 } t = {1, 2.0f};
-    i32 i = 1;
+I32 main() {
+    struct { I32, F32 } t = {1, 2.0f};
+    I32 i = 1;
     c::printf("%d\n", t[i]);
     c::printf("%d\n", t[2]);
     c::printf("%d\n", t[i + 1]);

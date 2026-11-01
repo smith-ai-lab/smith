@@ -1,10 +1,10 @@
 module scale;
 
 export struct Key {
-    u64 bits;
+    U64 bits;
 };
 
-static u64 derive(u64 x) {
+static U64 derive(U64 x) {
     return x * 2;
 }
 

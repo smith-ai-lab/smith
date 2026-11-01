@@ -1,11 +1,11 @@
 module main;
 
-i32 take(i32 xs[:]) {
+I32 take(I32 xs[:]) {
     return xs[0];
 }
 
-i32 main() {
-    i32 raw[3] = {1, 2, 3};
-    i32 *p = raw;
+I32 main() {
+    I32 raw[3] = {1, 2, 3};
+    I32 *p = raw;
     return take(p);
 }

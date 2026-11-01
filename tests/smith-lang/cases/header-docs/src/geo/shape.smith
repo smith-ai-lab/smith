@@ -7,29 +7,29 @@ import <stdint.h>;
 // A point on the plane.
 // Both coordinates are in meters.
 export typedef struct {
-    u32 x; // east
-    u32 y; /* north */
+    U32 x; // east
+    U32 y; /* north */
     /* the height, kept inside the type */
-    u32 z;
+    U32 z;
 } Point;
 
 /* The squared distance from the origin. */
-export u64 norm2(Point p) {
-    return (u64)p.x * p.x + (u64)p.y * p.y + (u64)p.z * p.z;
+export U64 norm2(Point p) {
+    return (U64)p.x * p.x + (U64)p.y * p.y + (U64)p.z * p.z;
 }
 
 // Not a doc comment: a blank line separates it from the export.
 
-export u32 origin_count = 1; // how many origins there are
+export U32 origin_count = 1; // how many origins there are
 
 /** Whether the point is the origin. */
-[[std::c_name("geo_is_origin")]] export bool is_origin(Point p) {
+[[std::c_name("geo_is_origin")]] export Bool is_origin(Point p) {
     return norm2(p) == 0;
 }
 
 // A private function has no comment in the header.
-static u32 helper() {
+static U32 helper() {
     return 7;
 }
 
-export u32 seven(); // declared here, defined in C
+export U32 seven(); // declared here, defined in C

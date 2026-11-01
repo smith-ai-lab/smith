@@ -3,6 +3,6 @@ main.smith:2:8: error: module `foo` cannot be imported: foo.smith:3:12: `double`
       |        ^
 1 error generated.
 foo.smith:3:12: error: `double` is a C keyword; it cannot name a function
-    3 | export i32 double(i32 x) { return x * 2; }
+    3 | export I32 double(I32 x) { return x * 2; }
       |            ^
 1 error generated.

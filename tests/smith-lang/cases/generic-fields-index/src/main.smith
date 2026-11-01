@@ -4,11 +4,11 @@ import <stdio.h>;
 import <stdlib.h>;
 
 typedef struct {
-    f64 xs[:];
-    i32 fixed[3];
-    i32 grid[2][2];
-    f32 rows[:][2];
-    i32 n;
+    F64 xs[:];
+    I32 fixed[3];
+    I32 grid[2][2];
+    F32 rows[:][2];
+    I32 n;
 } Bag;
 
 typedef struct {
@@ -16,50 +16,50 @@ typedef struct {
 } Outer;
 
 // What a failed check of an index calls.
-[[std::c_name("smith_failure")]] export void failure(u8 code) {
+[[std::c_name("smith_failure")]] export void failure(U8 code) {
     c::exit(code);
 }
 
-f64 total(f64 xs[:]) {
-    f64 t = 0;
-    for (usize i = 0; i < countof(xs); i++)
+F64 total(F64 xs[:]) {
+    F64 t = 0;
+    for (Usize i = 0; i < countof(xs); i++)
         t += xs[i];
     return t;
 }
 
 // An element of a slice or array member selected by a field value: `x->[f][0]`, `x.[f][i]`, `x.[f][a:b]`, and every
 // index of a member of more dimensions.
-void show(constexpr type T, T *x, T y) {
-    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+void show(constexpr Type T, T *x, T y) {
+    for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         constexpr Field f = fields(T)[i];
         if constexpr (is_slice(f.type)) {
             if constexpr (is_float(typeof(x->[f][0]))) {
-                if constexpr (typeof(x->[f][0]) == f64) {
+                if constexpr (typeof(x->[f][0]) == F64) {
                     c::printf("slice %g %g cut %g %g\n", x->[f][0], y.[f][1], total(x->[f][1:3]), total(y.[f][:2]));
                 } else {
-                    c::printf("rows %g %g\n", (f64)x->[f][2][1], (f64)y.[f][0][0]);
+                    c::printf("rows %g %g\n", (F64)x->[f][2][1], (F64)y.[f][0][0]);
                 }
             }
         } else if constexpr (is_array(f.type)) {
             if constexpr (is_integer(typeof(x->[f][0]))) {
-                c::printf("fixed %d %d\n", (i32)x->[f][1], (i32)y.[f][2]);
+                c::printf("fixed %d %d\n", (I32)x->[f][1], (I32)y.[f][2]);
             } else {
-                c::printf("grid %d %d\n", (i32)x->[f][1][0], (i32)y.[f][0][1]);
+                c::printf("grid %d %d\n", (I32)x->[f][1][0], (I32)y.[f][0][1]);
             }
         }
     }
 }
 
 // The object may be a chain of members.
-f64 first(constexpr type T, Outer *o) {
+F64 first(constexpr Type T, Outer *o) {
     constexpr Field f = fields(T)[0];
     return o->bag.[f][0] + o->bag.[f][countof(o->bag.[f]) - 1];
 }
 
-i32 main() {
-    f64 v[4] = {1, 2, 3, 4};
-    f32 r[3][2] = {{1, 2}, {3, 4}, {5, 6}};
-    f32 rows[:][2] = r;
+I32 main() {
+    F64 v[4] = {1, 2, 3, 4};
+    F32 r[3][2] = {{1, 2}, {3, 4}, {5, 6}};
+    F32 rows[:][2] = r;
     Bag a = {.xs = v[0:4], .fixed = {5, 6, 7}, .grid = {{1, 2}, {3, 4}}, .rows = rows, .n = 1};
     show(Bag, &a, a);
     Outer o = {a};

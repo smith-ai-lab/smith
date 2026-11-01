@@ -1,14 +1,14 @@
 module main;
 import <stdio.h>;
 // `typeof(expr)` in a function over `type` is the type of the expression, as it is anywhere (issue #143).
-static type element(type t) {
-    i32 *p = nullptr;
+static Type element(Type t) {
+    I32 *p = nullptr;
     if (sizeof(t) > 4) return typeof(*p);
     return t;
 }
 int main() {
-    constexpr type once = element(f64);
-    constexpr type small = element(u8);
+    constexpr Type once = element(F64);
+    constexpr Type small = element(U8);
     once x = 1.5;
     small y = 7;
     c::printf("%zu %zu\n", sizeof(x), sizeof(y));

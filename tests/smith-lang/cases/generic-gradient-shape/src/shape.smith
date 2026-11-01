@@ -3,12 +3,12 @@ module shape;
 import <stdio.h>;
 
 export typedef struct {
-    f64 a;
-    f64 b;
+    F64 a;
+    F64 b;
 } Params;
 
 export typedef struct {
-    f64 scale;
+    F64 scale;
 } Batch;
 
 // The shape autodiff::gradient takes: the function by its name, the parameters by pointer, the rest as they come.

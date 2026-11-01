@@ -3,11 +3,11 @@ module main;
 import copy;
 import <stdio.h>;
 
-i32 main() {
-    u8 from_raw[4] = {1, 2, 3, 4};
-    u8 to_raw[4] = {};
-    u8 from[:] = from_raw;
-    u8 to[:] = to_raw;
+I32 main() {
+    U8 from_raw[4] = {1, 2, 3, 4};
+    U8 to_raw[4] = {};
+    U8 from[:] = from_raw;
+    U8 to[:] = to_raw;
     copy::copy(to, from);
     c::printf("%zu %zu\n", copy::sum(to), copy::sum(from[1:3]));
     return 0;

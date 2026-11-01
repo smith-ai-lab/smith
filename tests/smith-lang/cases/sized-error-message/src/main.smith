@@ -1,4 +1,4 @@
 void f() {
-    i32 x = "hello";
+    I32 x = "hello";
     (void)x;
 }

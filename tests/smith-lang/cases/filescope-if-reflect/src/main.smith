@@ -3,11 +3,11 @@ module main;
 import count;
 
 typedef struct {
-    i32 a;
-    f32 b;
+    I32 a;
+    F32 b;
 } Pair;
 
-i32 main() {
+I32 main() {
     count::show(Pair);
-    return (i32)count::count_of(Pair) - 2;
+    return (I32)count::count_of(Pair) - 2;
 }

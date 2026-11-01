@@ -10,7 +10,7 @@ export typeof(a) bigger_twice(auto a, typeof(a) b) {
         r = pick::larger(a, b);
     if (a > b)
         r += 1;
-    for (i32 i = 0; i < 2; i++)
+    for (I32 i = 0; i < 2; i++)
         r += pick::larger(a, b);
     return r;
 }
