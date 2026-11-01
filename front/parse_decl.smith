@@ -112,7 +112,7 @@ static Str source_between(const parse::Parser *p, U32 start, U32 end) {
 
 // The token after an identifier says a declaration was meant: `main() {`, `x = 3;`, `static x;`, `xs[4];`.
 static Bool starts_untyped_declaration(const parse::Parser *p) {
-    if (!parse::at(p, lex::name)) return false;
+    if (!parse::at(p, lex::name) || parse_type::call_type_ahead(p, 0)) return false;
     lex::TokenKind next = parse::peek_at(p, 1).kind;
     return next == lex::left_paren || next == lex::equal || next == lex::semicolon || next == lex::left_bracket;
 }

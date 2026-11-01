@@ -83,6 +83,31 @@ static Bool c_path_is_type() {
     return false;
 }
 
+// Whether a parenthesis group starts `at` tokens ahead and a name (or a type's name, in a `typedef`) follows its
+// closing parenthesis: `(T) keep`.
+static Bool group_then_name(const parse::Parser *p, Usize at) {
+    if (parse::peek_at(p, at).kind != lex::left_paren) return false;
+    Usize depth = 0;
+    for (Usize i = 0; i < countof(p->tokens); i += 1) {
+        lex::TokenKind kind = parse::peek_at(p, at).kind;
+        if (kind == lex::end_of_file) return false;
+        if (kind == lex::left_paren) depth += 1;
+        if (kind == lex::right_paren) depth -= 1;
+        at += 1;
+        if (depth == 0) break;
+    }
+    return is_segment(parse::peek_at(p, at).kind);
+}
+
+// Whether the path `offset` tokens ahead is a call of a type function that is a type: `maybe(I32) m`,
+// `opt::maybe(Usize) x`. A call followed by a name is no expression and no declaration otherwise (#1358).
+export Bool call_type_ahead(const parse::Parser *p, Usize offset) {
+    Usize last = path_last(p, offset);
+    if (last == no_path || parse::peek_at(p, last).kind != lex::name) return false;
+    if (last != offset && text::is(parse::text(p, parse::peek_at(p, offset)), "c")) return false;
+    return group_then_name(p, last + 1);
+}
+
 // Whether the path `offset` tokens ahead is a type: its last segment is a `type_name`, and it does not start with
 // `c::`.
 export Bool path_is_type(const parse::Parser *p, Usize offset) {
@@ -117,7 +142,7 @@ export Bool starts_type(const parse::Parser *p, Usize offset) {
     case lex::kw_typeof_unqual:
         return true;
     default:
-        return path_is_type(p, offset);
+        return path_is_type(p, offset) || call_type_ahead(p, offset);
     }
 }
 
@@ -555,7 +580,8 @@ static ast::TypeExpr *read(parse::Parser *p) {
         ast::Path name = base->kind.named.path;
         Str last = name.segments[countof(name.segments) - 1].text;
         Bool is_lambda = countof(name.segments) == 1 && text::is(last, "Lambda");
-        if (countof(last) > 0 && ((last[0] >= 'A' && last[0] <= 'Z') || is_lambda)) base = applied(p, start, q, name);
+        Bool capital = countof(last) > 0 && last[0] >= 'A' && last[0] <= 'Z';
+        if (capital || is_lambda || group_then_name(p, 0)) base = applied(p, start, q, name);
     }
     return suffixes(p, start, base);
 }

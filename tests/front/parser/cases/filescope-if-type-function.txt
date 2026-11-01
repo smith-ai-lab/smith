@@ -1,2 +1,2 @@
 filescope-if-type-function/kinds.smith: ok
-filescope-if-type-function/main.smith: error: expected a name, found `(` (14:23) [undecided_c]
+filescope-if-type-function/main.smith: error: `struct smith_array_T_n` names a C tag; write `struct c::smith_array_T_n` (15:12) [undecided_c]
