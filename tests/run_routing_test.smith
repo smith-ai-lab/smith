@@ -6,6 +6,11 @@
 // name and every argument. A test makes its project, then sets its own memory as the current allocator: what scratch
 // returns to it (a Run's texts, a file it reads) is given back with that memory, and scratch::clean frees what make
 // holds.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: runtime/docs.c runtime/lint_cache.c shim/clang.cpp shim/format.cpp shim/tidy.cpp shim/tool.h
+// smith-covers: include/smith/ include/smith_core_route.h templates/defaults/ tests/stub.c
+// The routes (smith_core_route), the quiet verbs and smith fmt, lint, docs and check are in smith.c and verbs.c.
 module run_routing_test;
 
 import std::arena;

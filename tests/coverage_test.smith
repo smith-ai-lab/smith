@@ -5,6 +5,12 @@
 // records by hand, in process, in a scratch folder (never this checkout).
 // A test makes its project, then sets its own memory as the current allocator: what scratch returns to it (a Run's
 // texts, a file it reads) is given back with that memory, and scratch::clean frees what make holds.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: runtime/changed.c runtime/coverage.c runtime/record.c runtime/symbolize.c shim/coverage.cpp
+// smith-covers: shim/symbolize.cpp shim/clang.cpp shim/hook.cpp shim/lld.cpp include/smith/
+// smith-covers: include/smith_core_changed.h include/smith_core_coverage.h
+// smith.c is the core the in-process cases link and holds smith cc.
 module coverage_test;
 
 import std::files;
