@@ -2211,9 +2211,31 @@ static int build_tree_sitter_run(SmithRun *run) {
     status = status != 0 ? status
                          : build_exec(smith_list(b, "/bin/cp", smith_fmt(b, "%s/grammar.js", c_source),
                                                  smith_fmt(b, "%s/", vendor), nullptr));
-    return status != 0 ? status
-                       : build_spawn(&(BuildSpawn){.argv = smith_list(b, cli, "generate", "--abi", "15", nullptr),
-                                                   .folder = "tree-sitter"});
+    if (status != 0) return status;
+    // The CLI writes every file again, so a file with the same bytes would get a new time, and the step's restat
+    // (which compares times) would rebuild the parser, the library and smith each time (#1323). Keep the old time of
+    // a file whose bytes did not change.
+    const char *old = "tree-sitter/.vendor/previous";
+    status = build_remove(b, old);
+    status = status != 0 ? status : build_make_folder(b, old);
+    if (status == 0 && access("tree-sitter/src", F_OK) == 0)
+        status = build_exec(smith_list(b, "/bin/cp", "-pR", "tree-sitter/src/.", smith_fmt(b, "%s/", old), nullptr));
+    status = status != 0 ? status
+                         : build_spawn(&(BuildSpawn){.argv = smith_list(b, cli, "generate", "--abi", "15", nullptr),
+                                                     .folder = "tree-sitter"});
+    static const char *const files[] = {"parser.c",
+                                        "grammar.json",
+                                        "node-types.json",
+                                        "tree_sitter/alloc.h",
+                                        "tree_sitter/array.h",
+                                        "tree_sitter/parser.h"};
+    for (size_t i = 0; status == 0 && i < sizeof files / sizeof files[0]; i++) {
+        const char *before = smith_fmt(b, "%s/%s", old, files[i]);
+        const char *after = smith_fmt(b, "tree-sitter/src/%s", files[i]);
+        if (access(before, F_OK) == 0 && build_exec(smith_list(b, "/usr/bin/cmp", "-s", before, after, nullptr)) == 0)
+            status = build_exec(smith_list(b, "/usr/bin/touch", "-r", before, after, nullptr));
+    }
+    return status;
 }
 
 // The steps of the parser and the object that embeds it in smith (into *data, which smith links).
@@ -2226,7 +2248,8 @@ static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, con
                               "tree-sitter/src/node-types.json", "tree-sitter/src/tree_sitter/alloc.h",
                               "tree-sitter/src/tree_sitter/array.h", "tree-sitter/src/tree_sitter/parser.h", nullptr),
         .description = "generating the tree-sitter parser",
-        .restat = true, // the files are written again with the same bytes: nothing after them reruns
+        .restat =
+            true, // a file whose bytes did not change keeps its time (build_tree_sitter_run): nothing after it reruns
     };
     smith_step(b, &generate);
     SmithObject parser = {
