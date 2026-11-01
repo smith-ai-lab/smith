@@ -107,7 +107,7 @@ static Str msg(char chars[:]) {
 // ---------------------------------------------------------------------------------------------------------------
 // The conversion hook (J1c into J1b)
 
-// The constant that `e` is, when it is an integer literal (possibly negated).
+// The constant that `e` is, when it is an integer or floating literal (possibly negated).
 static types_convert::Literal literal_of(const ast::Expr *e) {
     if (e->kind == .integer) {
         return types_convert::constant_unsigned(e->kind.integer.value);
@@ -118,6 +118,12 @@ static types_convert::Literal literal_of(const ast::Expr *e) {
             return (types_convert::Literal){
                 .is_constant = true, .negative = true, .magnitude = operand->kind.integer.value};
         }
+        if (e->kind.unary.op == .negate && operand->kind == .floating) {
+            return types_convert::constant_float(-operand->kind.floating.value);
+        }
+    }
+    if (e->kind == .floating) {
+        return types_convert::constant_float(e->kind.floating.value);
     }
     return types_convert::no_literal();
 }
@@ -129,6 +135,23 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     }
     types::fail(c, e->span, verdict.message);
     return false;
+}
+
+// Whether the cast `e` may be written; a cast that can lose a value is marked for a run-time check (K1, #1328).
+static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
+    types_convert::Literal lit = types_convert::no_literal();
+    if (e->kind == .cast) {
+        lit = literal_of(e->kind.cast.operand);
+    }
+    types_convert::Verdict verdict = types_convert::cast_ok(&c->table, from, to, lit);
+    if (!verdict.ok) {
+        types::fail(c, e->span, verdict.message);
+        return false;
+    }
+    if (verdict.checked) {
+        types::mark_cast_checked(c, e, from);
+    }
+    return true;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -476,7 +499,7 @@ export void check_body(types::Checked *r, const ast::Decl *function) {
 }
 
 export void install() {
-    types_expr::set_hooks((types_expr::Hooks){.convert = convert_hook, .lambda_body = lambda_hook});
+    types_expr::set_hooks((types_expr::Hooks){.convert = convert_hook, .cast = cast_hook, .lambda_body = lambda_hook});
 }
 
 // Takes the hooks out again (the default of front::types_expr is exact equality).
