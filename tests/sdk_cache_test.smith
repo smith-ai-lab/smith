@@ -2,6 +2,8 @@
 // another developer folder asks xcrun again and uses that folder's SDK, never the stale remembered path (#708). The
 // test needs the real /usr/bin/xcrun and two developer folders that each have an SDK (Xcode and /Library/Developer/
 // CommandLineTools), so it is macOS-only (`macos` in the name) and says why when it has fewer than two.
+// smith-covers: smith.c runtime/sdk_cache.c runtime/platform_macos.c runtime/verbs.c
+// smith.c is declared for the cc verb.
 module sdk_cache_test;
 
 import std::arena;
