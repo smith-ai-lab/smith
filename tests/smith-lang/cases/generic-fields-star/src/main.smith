@@ -17,8 +17,8 @@ typedef struct {
 void show(constexpr Type T, T *x) {
     for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         constexpr Field f = fields(T)[i];
-        if constexpr (Slice(f.type)) {
-            if constexpr (Pointer(typeof(x->[f][0])) && typeof(x->[f][0]) == char *) {
+        if constexpr (is_slice(f.type)) {
+            if constexpr (is_pointer(typeof(x->[f][0])) && typeof(x->[f][0]) == char *) {
                 c::printf("%.*s: slice of char *\n", (I32)countof(f.name), f.name.data);
             } else {
                 c::printf("%.*s: slice of something else\n", (I32)countof(f.name), f.name.data);

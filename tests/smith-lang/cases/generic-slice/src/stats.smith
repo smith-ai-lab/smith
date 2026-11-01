@@ -12,7 +12,7 @@ export typeof(xs) head(auto xs, Usize n) {
 }
 
 export Bool is_a_slice(auto x) {
-    if constexpr (Slice(typeof(x))) {
+    if constexpr (is_slice(typeof(x))) {
         return true;
     } else {
         return false;

@@ -9,13 +9,13 @@ export void print(auto... args) {
         if constexpr (i > 0) {
             c::putchar(' ');
         }
-        if constexpr (typeof(args[i]) == Bool) {
+        if constexpr (is_bool(typeof(args[i]))) {
             c::fputs(args[i] ? "true" : "false", c::stdout);
-        } else if constexpr (Int(typeof(args[i])) && Signed(typeof(args[i]))) {
+        } else if constexpr (is_integer(typeof(args[i])) && is_signed(typeof(args[i]))) {
             c::printf("%lld", (long long)args[i]);
-        } else if constexpr (Int(typeof(args[i]))) {
+        } else if constexpr (is_integer(typeof(args[i]))) {
             c::printf("%llu", (unsigned long long)args[i]);
-        } else if constexpr (Float(typeof(args[i]))) {
+        } else if constexpr (is_float(typeof(args[i]))) {
             c::printf("%g", (double)args[i]);
         } else if constexpr (typeof(args[i]) == char *) {
             c::fputs(args[i], c::stdout);

@@ -7,9 +7,9 @@ import <stdio.h>;
 export void show(constexpr Type T, T *x) {
     c::printf("%zu fields:", (Usize)countof(fields(T)));
     for constexpr (auto f : fields(T)) {
-        if constexpr (Float(typeof(x->[f]))) {
+        if constexpr (is_float(typeof(x->[f]))) {
             c::printf(" %s=%g", f.name, (F64)x->[f]);
-        } else if constexpr (Int(typeof(T.[f]))) {
+        } else if constexpr (is_integer(typeof(T.[f]))) {
             c::printf(" %s=%lld", f.name, (long long)x->[f]);
         } else {
             c::printf(" %s=?", f.name);
@@ -21,7 +21,7 @@ export void show(constexpr Type T, T *x) {
 export F64 sum(constexpr Type T, T value) {
     F64 total = 0;
     for constexpr (auto f : fields(T)) {
-        if constexpr (Float(typeof(T.[f])) || Int(typeof(T.[f]))) {
+        if constexpr (is_float(typeof(T.[f])) || is_integer(typeof(T.[f]))) {
             typeof(T.[f]) part = value.[f];
             total += (F64)part;
         }

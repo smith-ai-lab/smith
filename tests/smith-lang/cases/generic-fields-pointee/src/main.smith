@@ -15,7 +15,7 @@ typedef struct {
 
 // `fields(typeof(*p))` and `fields(typeof(p->f))` read like `fields(T)`.
 void show_pointee(auto p) {
-    if constexpr (Struct(typeof(*p))) c::printf("record: ");
+    if constexpr (is_record(typeof(*p))) c::printf("record: ");
     for constexpr (Usize i = 0; i < countof(fields(typeof(*p))); i++) {
         c::printf("%s ", fields(typeof(*p))[i].name);
     }

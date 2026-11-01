@@ -28,7 +28,7 @@ I32 main() {
     constexpr Type plain_type = typeof(plain);
     constexpr Type read_type = typeof(read);
     static_assert(plain_type != read_type);
-    static_assert(Slice(read_type) && read_type == typeof(cut));
+    static_assert(is_slice(read_type) && read_type == typeof(cut));
     c::printf("%zu %zu %zu %zu\n", stats::calls(plain), stats::calls(read), stats::calls(plain),
               stats::calls(cut)); // the instance for const char[:] is not the one for char[:]
 

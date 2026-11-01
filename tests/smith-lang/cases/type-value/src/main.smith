@@ -18,7 +18,7 @@ constexpr Type distance = Meters;
 
 // Equal exactly when the types are the same, typedefs looked through.
 static_assert(count_type == uint32_t);
-static_assert(Struct(fields[0].of) == 0);
+static_assert(is_record(fields[0].of) == 0);
 static_assert(count_type == U32);
 static_assert(distance == I32);
 static_assert(distance == int);
@@ -28,8 +28,8 @@ static_assert(fields[1].of != fields[0].of);
 
 // The questions an `if constexpr` asks of T, asked of a value.
 static_assert(sizeof(names[2]) == 8 && alignof(names[1]) == 8);
-static_assert(Int(count_type) && !Signed(count_type) && Signed(distance));
-static_assert(Float(names[1]) && !Float(names[0]) && Pointer(names[2]));
+static_assert(is_integer(count_type) && !is_signed(count_type) && is_signed(distance));
+static_assert(is_float(names[1]) && !is_float(names[0]) && is_pointer(names[2]));
 
 // An ordinary function takes and returns a type: it runs in the compiler.
 static Bool small(Type t) {

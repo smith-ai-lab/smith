@@ -19,8 +19,8 @@ constexpr Type Grid = F32[2][3];
 constexpr Type Row = I32 (*)[4];
 constexpr Type Pointers = Request *[4];
 
-static_assert(Pointer(Handler) && Pointer(Callback) && Pointer(Row));
-static_assert(Array(Block) && Array(Grid) && Array(Pointers));
+static_assert(is_pointer(Handler) && is_pointer(Callback) && is_pointer(Row));
+static_assert(is_array(Block) && is_array(Grid) && is_array(Pointers));
 static_assert(sizeof(Block) == 16 && sizeof(Grid) == 24 && sizeof(Pointers) == 32 && sizeof(Row) == 8);
 static_assert(Handler != Callback && Block != Grid);
 

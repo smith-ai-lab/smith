@@ -4,7 +4,7 @@ import <stdio.h>;
 
 // A pointer's pointee is known one level deep: `T **` cannot be walked twice.
 static Type twice(Type t) {
-    if (Pointer(t)) return typeof(*(t)nullptr);
+    if (is_pointer(t)) return typeof(*(t)nullptr);
     return t;
 }
 

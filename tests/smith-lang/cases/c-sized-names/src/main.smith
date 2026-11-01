@@ -1,25 +1,25 @@
 // An enum constant or function named like a sized type keeps its C meaning in a file with no module line (issue #91).
 #include <stdio.h>
 
-enum { I64 = 7, U8, U16 };
-enum Tagged { first, I32 = 40, U64, last };
+enum { i64 = 7, u8, u16 };
+enum Tagged { first, i32 = 40, u64, last };
 
-static int U32(int x) {
+static int u32(int x) {
     return x + 1;
 }
-static int F64(int x);
-static int F64(int x) {
+static int f64(int x);
+static int f64(int x) {
     return x * 2;
 }
 
 static int local(int x) {
-    enum { I8 = 3, u8_local };
-    return x + I8 + u8_local;
+    enum { i8 = 3, u8_local };
+    return x + i8 + u8_local;
 }
 
 int main() {
-    int sum = (int)I64 + (int)U8 + (int)U16;
-    printf("%d %d %d %d\n", sum, (int)I32, (int)U64, (int)last);
-    printf("%d %d %d\n", U32(1), F64(4), local(1));
+    int sum = (int)i64 + (int)u8 + (int)u16;
+    printf("%d %d %d %d\n", sum, (int)i32, (int)u64, (int)last);
+    printf("%d %d %d\n", u32(1), f64(4), local(1));
     return 0;
 }

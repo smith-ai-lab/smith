@@ -7,11 +7,11 @@ import <stdio.h>;
 export void show(constexpr Type T, T *x) {
     c::printf("%zu fields:", (Usize)countof(fields(T)));
     for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
-        if constexpr (Float(typeof(x->[fields(T)[i]]))) {
+        if constexpr (is_float(typeof(x->[fields(T)[i]]))) {
             c::printf(" %s=%g", fields(T)[i].name, (F64)x->[fields(T)[i]]);
-        } else if constexpr (Int(typeof(T.[fields(T)[i]]))) {
+        } else if constexpr (is_integer(typeof(T.[fields(T)[i]]))) {
             c::printf(" %s=%lld", fields(T)[i].name, (long long)x->[fields(T)[i]]);
-        } else if constexpr (Array(typeof(x->[fields(T)[i]]))) {
+        } else if constexpr (is_array(typeof(x->[fields(T)[i]]))) {
             c::printf(" %s=array(%zu)", fields(T)[i].name, sizeof(x->[fields(T)[i]]) / sizeof(x->[fields(T)[i]][0]));
         } else {
             c::printf(" %s=?", fields(T)[i].name);
@@ -24,7 +24,7 @@ export void show(constexpr Type T, T *x) {
 export F64 sum(constexpr Type T, T value) {
     F64 total = 0;
     for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
-        if constexpr (Float(typeof(T.[fields(T)[i]])) || Int(typeof(T.[fields(T)[i]]))) {
+        if constexpr (is_float(typeof(T.[fields(T)[i]])) || is_integer(typeof(T.[fields(T)[i]]))) {
             typeof(T.[fields(T)[i]]) part = value.[fields(T)[i]];
             total += (F64)part;
         }

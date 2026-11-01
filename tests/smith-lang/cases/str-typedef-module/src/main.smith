@@ -3,11 +3,11 @@ module main;
 import <stdio.h>;
 import text;
 
-I32 main() {
+i32 main() {
     text::str s = "hello world";
     text::str w = text::first_word(s);
     text::str *p = &s;
-    Usize n = 0;
+    usize n = 0;
     while (text::pop(p)) n++;
     struct text::Pair pair = {.key = w};
     pair.value = "x";

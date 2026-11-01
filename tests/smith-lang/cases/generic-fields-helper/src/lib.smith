@@ -5,7 +5,7 @@ import <stdio.h>;
 // An exported helper over a `Field`, called from a condition in an exported generic: a module that imports it needs
 // no `Field` before its import line, and the helper and the field it holds need no attribute under the warnings.
 export Bool is_floating(Field f) {
-    return Float(f.type);
+    return is_float(f.type);
 }
 
 export F64 sum_floats(constexpr Type T, T *x) {

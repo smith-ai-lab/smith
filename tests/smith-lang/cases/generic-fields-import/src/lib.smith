@@ -7,9 +7,9 @@ import <stdio.h>;
 export void show(constexpr Type T, T *x) {
     for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         constexpr auto f = fields(T)[i];
-        if constexpr (Float(f.type)) {
+        if constexpr (is_float(f.type)) {
             c::printf("%s=%g ", fields(T)[i].name, (F64)x->[f]);
-        } else if constexpr (Int(f.type)) {
+        } else if constexpr (is_integer(f.type)) {
             c::printf("%s=%lld ", fields(T)[i].name, (long long)x->[f]);
         }
     }

@@ -15,9 +15,9 @@ export typeof(a) add(auto a, typeof(a) b) {
 export U32 kind(auto v) {
     if constexpr (typeof(v) == F32) {
         return 1;
-    } else if constexpr (Int(typeof(v)) && sizeof(typeof(v)) == 8) {
+    } else if constexpr (is_integer(typeof(v)) && sizeof(typeof(v)) == 8) {
         return 2;
-    } else if constexpr (Pointer(typeof(v))) {
+    } else if constexpr (is_pointer(typeof(v))) {
         return 4;
     } else {
         return 3;

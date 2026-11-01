@@ -21,7 +21,7 @@ Usize name_length(Field f) {
 }
 
 Bool is_floating(Field f) {
-    return Float(f.type);
+    return is_float(f.type);
 }
 
 Field first_float(Field a, Field b) {
@@ -53,7 +53,7 @@ F64 sum_floats(constexpr Type T, T *x) {
     F64 total = 0;
     for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         constexpr Field f = fields(T)[i];
-        if constexpr (Float(f.type)) {
+        if constexpr (is_float(f.type)) {
             typeof(x->[f]) copy = x->[f];
             total += (F64)copy;
         }
@@ -65,7 +65,7 @@ Usize count_integers(constexpr Type T) {
     Usize n = 0;
     for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         constexpr Field f = fields(T)[i];
-        if constexpr (Int(typeof(T.[f]))) {
+        if constexpr (is_integer(typeof(T.[f]))) {
             n += 1;
         }
     }

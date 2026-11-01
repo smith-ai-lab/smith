@@ -12,7 +12,7 @@ export Usize elements(auto p) {
 }
 
 export Bool is_a_pointer(auto p) {
-    if constexpr (Pointer(typeof(p))) {
+    if constexpr (is_pointer(typeof(p))) {
         return true;
     } else {
         return false;

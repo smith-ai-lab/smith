@@ -4,12 +4,12 @@ module marks;
 [[std::c_name("marks_const")]] export extern I32 marker;
 
 static Type leaf_of(Type t) {
-    if (Pointer(t)) return typeof(*(t)nullptr);
+    if (is_pointer(t)) return typeof(*(t)nullptr);
     return t;
 }
 
 export leaf_of(typeof(x)) at(auto x) {
-    if constexpr (Pointer(typeof(x))) {
+    if constexpr (is_pointer(typeof(x))) {
         return x[0];
     } else {
         return x;

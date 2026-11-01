@@ -287,26 +287,26 @@ export U64 fill(U64 capacity) {
 // An enum constant or function named like a sized type keeps its C meaning in a file with no module line (issue #91).
 #include <stdio.h>
 
-enum { I64 = 7, U8, U16 };
-enum Tagged { first, I32 = 40, U64, last };
+enum { i64 = 7, u8, u16 };
+enum Tagged { first, i32 = 40, u64, last };
 
-static int U32(int x) {
+static int u32(int x) {
     return x + 1;
 }
-static int F64(int x);
-static int F64(int x) {
+static int f64(int x);
+static int f64(int x) {
     return x * 2;
 }
 
 static int local(int x) {
-    enum { I8 = 3, u8_local };
-    return x + I8 + u8_local;
+    enum { i8 = 3, u8_local };
+    return x + i8 + u8_local;
 }
 
 int main() {
-    int sum = (int)I64 + (int)U8 + (int)U16;
-    printf("%d %d %d %d\n", sum, (int)I32, (int)U64, (int)last);
-    printf("%d %d %d\n", U32(1), F64(4), local(1));
+    int sum = (int)i64 + (int)u8 + (int)u16;
+    printf("%d %d %d %d\n", sum, (int)i32, (int)u64, (int)last);
+    printf("%d %d %d\n", u32(1), f64(4), local(1));
     return 0;
 }
 ==> compile-alone-by-path/src/foo.smith <==
@@ -3715,7 +3715,7 @@ import <stdio.h>;
 
 // A pointer's pointee is known one level deep: `T **` cannot be walked twice.
 static Type twice(Type t) {
-    if (Pointer(t)) return typeof(*(t) nullptr);
+    if (is_pointer(t)) return typeof(*(t) nullptr);
     return t;
 }
 
@@ -4374,7 +4374,7 @@ export Usize elements(auto p) {
 }
 
 export Bool is_a_pointer(auto p) {
-    if constexpr (Pointer(typeof(p))) {
+    if constexpr (is_pointer(typeof(p))) {
         return true;
     } else {
         return false;
@@ -4909,9 +4909,9 @@ export typeof(a) add(auto a, typeof(a) b) {
 export U32 kind(auto v) {
     if constexpr (typeof(v) == F32) {
         return 1;
-    } else if constexpr (Int(typeof(v)) && sizeof(typeof(v)) == 8) {
+    } else if constexpr (is_integer(typeof(v)) && sizeof(typeof(v)) == 8) {
         return 2;
-    } else if constexpr (Pointer(typeof(v))) {
+    } else if constexpr (is_pointer(typeof(v))) {
         return 4;
     } else {
         return 3;
@@ -5684,18 +5684,18 @@ export I32 describe(auto x) {
     I32 total = 0;
     for constexpr (Usize i = 0; i < countof(fields(typeof(x))); i++) {
         constexpr Field f = fields(typeof(x))[i];
-        if constexpr (Slice(typeof(x.[f]))) {
-            if constexpr (Float(typeof(x.[f][0]))) {
+        if constexpr (is_slice(typeof(x.[f]))) {
+            if constexpr (is_float(typeof(x.[f][0]))) {
                 total += 1; // a slice of floats
-            } else if constexpr (Int(typeof(x.[f][0]))) {
+            } else if constexpr (is_integer(typeof(x.[f][0]))) {
                 total += 10; // of integers
-            } else if constexpr (Struct(typeof(x.[f][0]))) {
+            } else if constexpr (is_record(typeof(x.[f][0]))) {
                 total += 100; // of structs
             } else {
                 total += 1000;
             }
-        } else if constexpr (Array(typeof(x.[f]))) {
-            if constexpr (Float(typeof(x.[f][0]))) total += 10000; // a fixed array of floats
+        } else if constexpr (is_array(typeof(x.[f]))) {
+            if constexpr (is_float(typeof(x.[f][0]))) total += 10000; // a fixed array of floats
         }
     }
     return total;
@@ -5849,7 +5849,7 @@ import <stdio.h>;
 // An exported helper over a `Field`, called from a condition in an exported generic: a module that imports it needs
 // no `Field` before its import line, and the helper and the field it holds need no attribute under the warnings.
 export Bool is_floating(Field f) {
-    return Float(f.type);
+    return is_float(f.type);
 }
 
 export F64 sum_floats(constexpr Type T, T *x) {
@@ -5887,9 +5887,9 @@ import <stdio.h>;
 export void show(constexpr Type T, T *x) {
     for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         constexpr auto f = fields(T)[i];
-        if constexpr (Float(f.type)) {
+        if constexpr (is_float(f.type)) {
             c::printf("%s=%g ", fields(T)[i].name, (F64)x->[f]);
-        } else if constexpr (Int(f.type)) {
+        } else if constexpr (is_integer(f.type)) {
             c::printf("%s=%lld ", fields(T)[i].name, (long long)x->[f]);
         }
     }
@@ -5965,16 +5965,16 @@ F64 total(F64 xs[:]) {
 void show(constexpr Type T, T *x, T y) {
     for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         constexpr Field f = fields(T)[i];
-        if constexpr (Slice(f.type)) {
-            if constexpr (Float(typeof(x->[f][0]))) {
+        if constexpr (is_slice(f.type)) {
+            if constexpr (is_float(typeof(x->[f][0]))) {
                 if constexpr (typeof(x->[f][0]) == F64) {
                     c::printf("slice %g %g cut %g %g\n", x->[f][0], y.[f][1], total(x->[f][1:3]), total(y.[f][:2]));
                 } else {
                     c::printf("rows %g %g\n", (F64)x->[f][2][1], (F64)y.[f][0][0]);
                 }
             }
-        } else if constexpr (Array(f.type)) {
-            if constexpr (Int(typeof(x->[f][0]))) {
+        } else if constexpr (is_array(f.type)) {
+            if constexpr (is_integer(typeof(x->[f][0]))) {
                 c::printf("fixed %d %d\n", (I32)x->[f][1], (I32)y.[f][2]);
             } else {
                 c::printf("grid %d %d\n", (I32)x->[f][1][0], (I32)y.[f][0][1]);
@@ -6017,7 +6017,7 @@ typedef struct {
 
 // `fields(typeof(*p))` and `fields(typeof(p->f))` read like `fields(T)`.
 void show_pointee(auto p) {
-    if constexpr (Struct(typeof(*p))) c::printf("record: ");
+    if constexpr (is_record(typeof(*p))) c::printf("record: ");
     for constexpr (Usize i = 0; i < countof(fields(typeof(*p))); i++) {
         c::printf("%s ", fields(typeof(*p))[i].name);
     }
@@ -6058,8 +6058,8 @@ typedef struct {
 void show(constexpr Type T, T *x) {
     for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         constexpr Field f = fields(T)[i];
-        if constexpr (Slice(f.type)) {
-            if constexpr (Pointer(typeof(x->[f][0])) && typeof(x->[f][0]) == char *) {
+        if constexpr (is_slice(f.type)) {
+            if constexpr (is_pointer(typeof(x->[f][0])) && typeof(x->[f][0]) == char *) {
                 c::printf("%.*s: slice of char *\n", (I32)countof(f.name), f.name.data);
             } else {
                 c::printf("%.*s: slice of something else\n", (I32)countof(f.name), f.name.data);
@@ -6106,7 +6106,7 @@ Usize name_length(Field f) {
 }
 
 Bool is_floating(Field f) {
-    return Float(f.type);
+    return is_float(f.type);
 }
 
 Field first_float(Field a, Field b) {
@@ -6138,7 +6138,7 @@ F64 sum_floats(constexpr Type T, T *x) {
     F64 total = 0;
     for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         constexpr Field f = fields(T)[i];
-        if constexpr (Float(f.type)) {
+        if constexpr (is_float(f.type)) {
             typeof(x->[f]) copy = x->[f];
             total += (F64)copy;
         }
@@ -6150,7 +6150,7 @@ Usize count_integers(constexpr Type T) {
     Usize n = 0;
     for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         constexpr Field f = fields(T)[i];
-        if constexpr (Int(typeof(T.[f]))) {
+        if constexpr (is_integer(typeof(T.[f]))) {
             n += 1;
         }
     }
@@ -6217,11 +6217,11 @@ import <stdio.h>;
 export void show(constexpr Type T, T *x) {
     c::printf("%zu fields:", (Usize)countof(fields(T)));
     for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
-        if constexpr (Float(typeof(x->[fields(T)[i]]))) {
+        if constexpr (is_float(typeof(x->[fields(T)[i]]))) {
             c::printf(" %s=%g", fields(T)[i].name, (F64)x->[fields(T)[i]]);
-        } else if constexpr (Int(typeof(T.[fields(T)[i]]))) {
+        } else if constexpr (is_integer(typeof(T.[fields(T)[i]]))) {
             c::printf(" %s=%lld", fields(T)[i].name, (long long)x->[fields(T)[i]]);
-        } else if constexpr (Array(typeof(x->[fields(T)[i]]))) {
+        } else if constexpr (is_array(typeof(x->[fields(T)[i]]))) {
             c::printf(" %s=array(%zu)", fields(T)[i].name, sizeof(x->[fields(T)[i]]) / sizeof(x->[fields(T)[i]][0]));
         } else {
             c::printf(" %s=?", fields(T)[i].name);
@@ -6234,7 +6234,7 @@ export void show(constexpr Type T, T *x) {
 export F64 sum(constexpr Type T, T value) {
     F64 total = 0;
     for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
-        if constexpr (Float(typeof(T.[fields(T)[i]])) || Int(typeof(T.[fields(T)[i]]))) {
+        if constexpr (is_float(typeof(T.[fields(T)[i]])) || is_integer(typeof(T.[fields(T)[i]]))) {
             typeof(T.[fields(T)[i]]) part = value.[fields(T)[i]];
             total += (F64)part;
         }
@@ -6349,9 +6349,9 @@ import <stdio.h>;
 export void show(constexpr Type T, T *x) {
     c::printf("%zu fields:", (Usize)countof(fields(T)));
     for constexpr (auto f : fields(T)) {
-        if constexpr (Float(typeof(x->[f]))) {
+        if constexpr (is_float(typeof(x->[f]))) {
             c::printf(" %s=%g", f.name, (F64)x->[f]);
-        } else if constexpr (Int(typeof(T.[f]))) {
+        } else if constexpr (is_integer(typeof(T.[f]))) {
             c::printf(" %s=%lld", f.name, (long long)x->[f]);
         } else {
             c::printf(" %s=?", f.name);
@@ -6363,7 +6363,7 @@ export void show(constexpr Type T, T *x) {
 export F64 sum(constexpr Type T, T value) {
     F64 total = 0;
     for constexpr (auto f : fields(T)) {
-        if constexpr (Float(typeof(T.[f])) || Int(typeof(T.[f]))) {
+        if constexpr (is_float(typeof(T.[f])) || is_integer(typeof(T.[f]))) {
             typeof(T.[f]) part = value.[f];
             total += (F64)part;
         }
@@ -6832,12 +6832,12 @@ module kind;
 export I32 describe(constexpr Type T, T value) {
     if constexpr (T == F32) {
         return 1;
-    } else if constexpr (Int(T) && sizeof(T) == 8) {
+    } else if constexpr (is_integer(T) && sizeof(T) == 8) {
         return 2;
-    } else if constexpr (Pointer(T)) {
+    } else if constexpr (is_pointer(T)) {
         return 3;
-    } else if constexpr (Int(T)) {
-        if constexpr (Signed(T)) return 4;
+    } else if constexpr (is_integer(T)) {
+        if constexpr (is_signed(T)) return 4;
         return 5;
     } else {
         return value.x + value.y;
@@ -6845,7 +6845,7 @@ export I32 describe(constexpr Type T, T value) {
 }
 
 export I32 floats_only(constexpr Type T, T value) {
-    if constexpr (Float(T)) {
+    if constexpr (is_float(T)) {
         return (I32)(value * 2) + sizeof(T);
     }
     return 0;
@@ -7506,13 +7506,13 @@ export void print(auto... args) {
         if constexpr (i > 0) {
             c::putchar(' ');
         }
-        if constexpr (typeof(args[i]) == Bool) {
+        if constexpr (is_bool(typeof(args[i]))) {
             c::fputs(args[i] ? "true" : "false", c::stdout);
-        } else if constexpr (Int(typeof(args[i])) && Signed(typeof(args[i]))) {
+        } else if constexpr (is_integer(typeof(args[i])) && is_signed(typeof(args[i]))) {
             c::printf("%lld", (long long)args[i]);
-        } else if constexpr (Int(typeof(args[i]))) {
+        } else if constexpr (is_integer(typeof(args[i]))) {
             c::printf("%llu", (unsigned long long)args[i]);
-        } else if constexpr (Float(typeof(args[i]))) {
+        } else if constexpr (is_float(typeof(args[i]))) {
             c::printf("%g", (double)args[i]);
         } else if constexpr (typeof(args[i]) == char *) {
             c::fputs(args[i], c::stdout);
@@ -7549,13 +7549,13 @@ export void print(auto... args) {
         if constexpr (i > 0) {
             c::putchar(' ');
         }
-        if constexpr (typeof(args[i]) == Bool) {
+        if constexpr (is_bool(typeof(args[i]))) {
             c::fputs(args[i] ? "true" : "false", c::stdout);
-        } else if constexpr (Int(typeof(args[i])) && Signed(typeof(args[i]))) {
+        } else if constexpr (is_integer(typeof(args[i])) && is_signed(typeof(args[i]))) {
             c::printf("%lld", (long long)args[i]);
-        } else if constexpr (Int(typeof(args[i]))) {
+        } else if constexpr (is_integer(typeof(args[i]))) {
             c::printf("%llu", (unsigned long long)args[i]);
-        } else if constexpr (Float(typeof(args[i]))) {
+        } else if constexpr (is_float(typeof(args[i]))) {
             c::printf("%g", (double)args[i]);
         } else if constexpr (typeof(args[i]) == char *) {
             c::fputs(args[i], c::stdout);
@@ -7930,7 +7930,7 @@ I32 main() {
     constexpr Type plain_type = typeof(plain);
     constexpr Type read_type = typeof(read);
     static_assert(plain_type != read_type);
-    static_assert(Slice(read_type) && read_type == typeof(cut));
+    static_assert(is_slice(read_type) && read_type == typeof(cut));
     c::printf("%zu %zu %zu %zu\n", stats::calls(plain), stats::calls(read), stats::calls(plain),
               stats::calls(cut)); // the instance for const char[:] is not the one for char[:]
 
@@ -8504,7 +8504,7 @@ static Type slice_of(Type T) {
 }
 
 static Bool slicy(Type t) {
-    return Slice(t);
+    return is_slice(t);
 }
 
 I32 main() {
@@ -8518,9 +8518,9 @@ I32 main() {
     constexpr Type of_xs = typeof(xs);
     constexpr Type of_rows = typeof(rows_type);
     constexpr Type of_grid = typeof(grid_type);
-    static_assert(Slice(one) && Slice(of_xs) && Slice(of_rows) && Slice(of_grid) && one == of_xs);
+    static_assert(is_slice(one) && is_slice(of_xs) && is_slice(of_rows) && is_slice(of_grid) && one == of_xs);
     static_assert(slicy(one) && slicy(slice_of(F32[2])) && !slicy(plain) && !slicy(fixed));
-    static_assert(!Slice(plain) && !Slice(fixed) && !Array(one) && Array(fixed));
+    static_assert(!is_slice(plain) && !is_slice(fixed) && !is_array(one) && is_array(fixed));
     c::printf("%lld %zu %d\n", (long long)stats::total_i(xs), stats::count(xs), stats::last_i32(xs));
 
     // A row of a slice of rows is a slice: f32[:][2] has rows of two, f32[:][:] rows of any count.
@@ -8561,7 +8561,7 @@ export typeof(xs) head(auto xs, Usize n) {
 }
 
 export Bool is_a_slice(auto x) {
-    if constexpr (Slice(typeof(x))) {
+    if constexpr (is_slice(typeof(x))) {
         return true;
     } else {
         return false;
@@ -8659,7 +8659,7 @@ int main() {
 ==> generic-static-assert/src/sa.smith <==
 module sa;
 export typeof(v) twice(auto v) {
-    if constexpr (Int(typeof(v))) {
+    if constexpr (is_integer(typeof(v))) {
         return v * 2;
     } else {
         static_assert(false, "twice needs an integer");
@@ -10291,13 +10291,13 @@ int main() {
 ==> plain-sized-shadow/src/main.smith <==
 #include <stdio.h>
 
-typedef unsigned U32;
+typedef unsigned u32;
 
 int main() {
-    U32 a = 3;
-    int U8 = 4;
-    int F32 = 5;
-    printf("%u %d %d\n", a, U8 + 1, F32 + 1);
+    u32 a = 3;
+    int u8 = 4;
+    int f32 = 5;
+    printf("%u %d %d\n", a, u8 + 1, f32 + 1);
     return 0;
 }
 ==> postfix-after-compound-literal/src/main.smith <==
@@ -10649,9 +10649,9 @@ export U64 area(const Shape *shape) {
 }
 ==> sized-own-typedef/src/main.smith <==
 // The file's own u32 is kept: the error names its type, not the built-in one.
-typedef unsigned char U32;
+typedef unsigned char u32;
 void f() {
-    U32 x = "hello";
+    u32 x = "hello";
     (void)x;
 }
 ==> sized-types/src/main.smith <==
@@ -11454,32 +11454,32 @@ I32 main() {
 ==> str-typedef-lowering/src/text.smith <==
 module text;
 
-export typedef const char Str[:];
+export typedef const char str[:];
 
 export struct Pair {
-    Str key;
-    Str value;
+    str key;
+    str value;
 };
 
-export Usize total(Str xs) {
+export usize total(str xs) {
     return countof(xs);
 }
 
-export Str first_word(Str xs) {
-    Usize n = 0;
+export str first_word(str xs) {
+    usize n = 0;
     while (n < countof(xs) && xs[n] != ' ')
         n++;
     return xs[0:n];
 }
 
-export Bool pop(Str *p) {
+export bool pop(str *p) {
     if (countof(*p) == 0) return false;
     *p = (*p)[1:];
     return true;
 }
 
-export Usize count_of(auto x) {
-    if constexpr (Slice(typeof(x))) return countof(x);
+export usize count_of(auto x) {
+    if constexpr (is_slice(typeof(x))) return countof(x);
     return 0;
 }
 ==> str-typedef-module/src/main.smith <==
@@ -11488,11 +11488,11 @@ module main;
 import <stdio.h>;
 import text;
 
-I32 main() {
+i32 main() {
     text::str s = "hello world";
     text::str w = text::first_word(s);
     text::str *p = &s;
-    Usize n = 0;
+    usize n = 0;
     while (text::pop(p))
         n++;
     struct text::Pair pair = {.key = w};
@@ -11504,32 +11504,32 @@ I32 main() {
 ==> str-typedef-module/src/text.smith <==
 module text;
 
-export typedef const char Str[:];
+export typedef const char str[:];
 
 export struct Pair {
-    Str key;
-    Str value;
+    str key;
+    str value;
 };
 
-export Usize total(Str xs) {
+export usize total(str xs) {
     return countof(xs);
 }
 
-export Str first_word(Str xs) {
-    Usize n = 0;
+export str first_word(str xs) {
+    usize n = 0;
     while (n < countof(xs) && xs[n] != ' ')
         n++;
     return xs[0:n];
 }
 
-export Bool pop(Str *p) {
+export bool pop(str *p) {
     if (countof(*p) == 0) return false;
     *p = (*p)[1:];
     return true;
 }
 
-export Usize count_of(auto x) {
-    if constexpr (Slice(typeof(x))) return countof(x);
+export usize count_of(auto x) {
+    if constexpr (is_slice(typeof(x))) return countof(x);
     return 0;
 }
 ==> str-typedef-run/src/main.smith <==
@@ -11540,22 +11540,22 @@ import <stdio.h>;
 // C's typedef of an array declarator names a slice type (issue #148): `typedef const char str[:];`, `typedef char
 // bytes[:];`.
 
-typedef const char Str[:];
+typedef const char str[:];
 typedef char bytes[:];
 
 struct Named {
-    Str name;
+    str name;
 };
 
-static Usize length(Str xs) {
+static usize length(str xs) {
     return countof(xs);
 }
 
-static Str tail(Str xs) {
+static str tail(str xs) {
     return xs[1:];
 }
 
-static Bool next(Str *p) {
+static bool next(str *p) {
     if (countof(*p) == 0) return false;
     *p = (*p)[1:];
     return true;
@@ -11565,20 +11565,20 @@ static void poke(bytes *b) {
     (*b)[0] = 'Z';
 }
 
-I32 main() {
-    Str s = "abc";
+i32 main() {
+    str s = "abc";
     c::printf("%zu %c %zu %zu\n", countof(s), s[1], length(s), length(s[1:]));
-    Str cut = s[0:2];
-    Str *p = &s;
-    Usize steps = 0;
+    str cut = s[0:2];
+    str *p = &s;
+    usize steps = 0;
     while (next(p))
         steps++;
     c::printf("%zu %zu %zu\n", countof(cut), steps, countof(s));
 
     char raw[4] = {'a', 'b', 'c', 'd'};
     bytes w = raw;
-    Str r = w;    // const is added implicitly
-    Str *pr = &w; // a pointer to bytes is a pointer to str (C23, N2607)
+    str r = w;    // const is added implicitly
+    str *pr = &w; // a pointer to bytes is a pointer to str (C23, N2607)
     poke(&w);
     c::printf("%zu %c %zu %c\n", length(w), (*pr)[0], countof(tail(r)), tail(w)[0]);
 
@@ -12058,12 +12058,12 @@ module marks;
 [[std::c_name("marks_const")]] export extern I32 marker;
 
 static Type leaf_of(Type t) {
-    if (Pointer(t)) return typeof(*(t) nullptr);
+    if (is_pointer(t)) return typeof(*(t) nullptr);
     return t;
 }
 
 export leaf_of(typeof(x)) at(auto x) {
-    if constexpr (Pointer(typeof(x))) {
+    if constexpr (is_pointer(typeof(x))) {
         return x[0];
     } else {
         return x;
@@ -12075,12 +12075,12 @@ module leaves;
 // The type a pointer points to, and a scalar's own: a function over `type` that reads the pointee of a type value in
 // C's own way (issue #143).
 static Type leaf_of(Type t) {
-    if (Pointer(t)) return typeof(*(t) nullptr);
+    if (is_pointer(t)) return typeof(*(t) nullptr);
     return t;
 }
 
 export leaf_of(T) first(constexpr Type T, T x) {
-    if constexpr (Pointer(T)) {
+    if constexpr (is_pointer(T)) {
         return *x;
     } else {
         return x;
@@ -12192,15 +12192,15 @@ typedef struct {
     int size;
 } Item;
 
-constexpr Type wide = I64;
+constexpr type wide = i64;
 
-static int scaled(int Type, int n) {
-    return (Type * n + 1) * 2;
+static int scaled(int type, int n) {
+    return (type * n + 1) * 2;
 }
 
 static int total(const Item *item, int n) {
     int type = item->type;
-    int sum = Type * n;
+    int sum = type * n;
     sum += item->type * item->size;
     return sum;
 }
@@ -12250,8 +12250,8 @@ constexpr Type Grid = F32[2][3];
 constexpr Type Row = I32 (*)[4];
 constexpr Type Pointers = Request *[4];
 
-static_assert(Pointer(Handler) && Pointer(Callback) && Pointer(Row));
-static_assert(Array(Block) && Array(Grid) && Array(Pointers));
+static_assert(is_pointer(Handler) && is_pointer(Callback) && is_pointer(Row));
+static_assert(is_array(Block) && is_array(Grid) && is_array(Pointers));
 static_assert(sizeof(Block) == 16 && sizeof(Grid) == 24 && sizeof(Pointers) == 32 && sizeof(Row) == 8);
 static_assert(Handler != Callback && Block != Grid);
 
@@ -12428,13 +12428,13 @@ export Type slice_if_small(Type t) {
 }
 ==> type-value-main-only/src/main.smith <==
 // A file whose only type values are in main is read in type-value mode (issue #174).
-typedef const char Str[:];
+typedef const char str[:];
 
-I32 main() {
-    constexpr Type t = str;
-    static_assert(Slice(t));
+i32 main() {
+    constexpr type t = str;
+    static_assert(is_slice(t));
     t words = "abc";
-    return (I32)countof(words) - 3;
+    return (i32)countof(words) - 3;
 }
 ==> type-value-module-variable/src/main.smith <==
 module main;
@@ -12555,7 +12555,7 @@ int main() {
     static_assert(two == twice(F32));
     static_assert(one != two && one != of_rows);
     static_assert(sizeof(one) == sizeof(typeof(xs)) && sizeof(two) == sizeof(typeof(grid)));
-    static_assert(Struct(one) && !Array(one) && !Int(one));
+    static_assert(is_record(one) && !is_array(one) && !is_integer(one));
     static_assert(alignof(two) == alignof(typeof(grid)));
 
     F32 data[6] = {1, 2, 3, 4, 5, 6};
@@ -12645,7 +12645,7 @@ constexpr Type distance = Meters;
 
 // Equal exactly when the types are the same, typedefs looked through.
 static_assert(count_type == uint32_t);
-static_assert(Struct(fields[0].of) == 0);
+static_assert(is_record(fields[0].of) == 0);
 static_assert(count_type == U32);
 static_assert(distance == I32);
 static_assert(distance == int);
@@ -12655,8 +12655,8 @@ static_assert(fields[1].of != fields[0].of);
 
 // The questions an `if constexpr` asks of T, asked of a value.
 static_assert(sizeof(names[2]) == 8 && alignof(names[1]) == 8);
-static_assert(Int(count_type) && !Signed(count_type) && Signed(distance));
-static_assert(Float(names[1]) && !Float(names[0]) && Pointer(names[2]));
+static_assert(is_integer(count_type) && !is_signed(count_type) && is_signed(distance));
+static_assert(is_float(names[1]) && !is_float(names[0]) && is_pointer(names[2]));
 
 // An ordinary function takes and returns a type: it runs in the compiler.
 static Bool small(Type t) {

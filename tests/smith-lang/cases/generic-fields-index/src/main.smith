@@ -32,16 +32,16 @@ F64 total(F64 xs[:]) {
 void show(constexpr Type T, T *x, T y) {
     for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         constexpr Field f = fields(T)[i];
-        if constexpr (Slice(f.type)) {
-            if constexpr (Float(typeof(x->[f][0]))) {
+        if constexpr (is_slice(f.type)) {
+            if constexpr (is_float(typeof(x->[f][0]))) {
                 if constexpr (typeof(x->[f][0]) == F64) {
                     c::printf("slice %g %g cut %g %g\n", x->[f][0], y.[f][1], total(x->[f][1:3]), total(y.[f][:2]));
                 } else {
                     c::printf("rows %g %g\n", (F64)x->[f][2][1], (F64)y.[f][0][0]);
                 }
             }
-        } else if constexpr (Array(f.type)) {
-            if constexpr (Int(typeof(x->[f][0]))) {
+        } else if constexpr (is_array(f.type)) {
+            if constexpr (is_integer(typeof(x->[f][0]))) {
                 c::printf("fixed %d %d\n", (I32)x->[f][1], (I32)y.[f][2]);
             } else {
                 c::printf("grid %d %d\n", (I32)x->[f][1][0], (I32)y.[f][0][1]);

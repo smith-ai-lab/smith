@@ -14,7 +14,7 @@ static Type slice_of(Type T) {
 }
 
 static Bool slicy(Type t) {
-    return Slice(t);
+    return is_slice(t);
 }
 
 I32 main() {
@@ -28,9 +28,9 @@ I32 main() {
     constexpr Type of_xs = typeof(xs);
     constexpr Type of_rows = typeof(rows_type);
     constexpr Type of_grid = typeof(grid_type);
-    static_assert(Slice(one) && Slice(of_xs) && Slice(of_rows) && Slice(of_grid) && one == of_xs);
+    static_assert(is_slice(one) && is_slice(of_xs) && is_slice(of_rows) && is_slice(of_grid) && one == of_xs);
     static_assert(slicy(one) && slicy(slice_of(F32[2])) && !slicy(plain) && !slicy(fixed));
-    static_assert(!Slice(plain) && !Slice(fixed) && !Array(one) && Array(fixed));
+    static_assert(!is_slice(plain) && !is_slice(fixed) && !is_array(one) && is_array(fixed));
     c::printf("%lld %zu %d\n", (long long)stats::total_i(xs), stats::count(xs), stats::last_i32(xs));
 
     // A row of a slice of rows is a slice: f32[:][2] has rows of two, f32[:][:] rows of any count.

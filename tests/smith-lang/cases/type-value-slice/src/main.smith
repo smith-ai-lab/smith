@@ -29,7 +29,7 @@ int main() {
     static_assert(two == twice(F32));
     static_assert(one != two && one != of_rows);
     static_assert(sizeof(one) == sizeof(typeof(xs)) && sizeof(two) == sizeof(typeof(grid)));
-    static_assert(Struct(one) && !Array(one) && !Int(one));
+    static_assert(is_record(one) && !is_array(one) && !is_integer(one));
     static_assert(alignof(two) == alignof(typeof(grid)));
 
     F32 data[6] = {1, 2, 3, 4, 5, 6};
