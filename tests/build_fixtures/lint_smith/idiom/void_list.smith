@@ -1,15 +1,15 @@
 module idiom::void_list;
 
 typedef void (*Callback)(void);
-u32 plain(void);
+U32 plain(void);
 
-u32 plain(void) {
-    u32 x = 1;
+U32 plain(void) {
+    U32 x = 1;
     (void)x;
     if (x) (void)plain;
-    return (u32)sizeof(void) + x;
+    return (U32)sizeof(void) + x;
 }
 
-export i32 main(void) {
+export I32 main(void) {
     return 0;
 }

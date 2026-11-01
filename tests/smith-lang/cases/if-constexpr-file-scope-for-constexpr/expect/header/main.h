@@ -3,7 +3,7 @@
 // smith-module: main
 // smith-imports:
 // smith-names: sum_fields
-// smith-generic: main sum_fields main_sum_fields src/main.smith -@9 1 2 10 11 | ixw@0:12=__INT32_TYPE__ iw@0:16=main_sum_fields p@0:26=( i@0:27=constexpr iw@0:37=type iP1w@0:42=T p@0:43=, iP1w@0:45=T pw@0:47=* i@0:48=x p@0:49=) pw@0:51={ ixw@1:9=__INT32_TYPE__ iw@1:13=sum pw@1:17== nw@1:19=0 p@1:20=; Y@2:9=for pw@2:23=( ix@2:24=__SIZE_TYPE__ iw@2:30=i pw@2:32== nw@2:34=0 p@2:35=; iw@2:37=i pw@2:39=< iw@2:41=countof p@2:48=( i@2:49=fields p@2:55=( iP1@2:56=T p@2:57=) p@2:58=) p@2:59=; iw@2:61=i p@2:62=++ p@2:64=) pw@2:66={ iw@3:13=sum pw@3:17=+= nw@3:20=1 p@3:21=; pw@4:9=} iw@5:9=return iw@5:16=sum p@5:19=; pw@6:5=}
+// smith-generic: main sum_fields main_sum_fields src/main.smith -@9 1 2 10 11 | ixw@0:12=__INT32_TYPE__ iw@0:16=main_sum_fields p@0:26=( i@0:27=constexpr iw@0:37=Type iP1w@0:42=T p@0:43=, iP1w@0:45=T pw@0:47=* i@0:48=x p@0:49=) pw@0:51={ ixw@1:9=__INT32_TYPE__ iw@1:13=sum pw@1:17== nw@1:19=0 p@1:20=; Y@2:9=for pw@2:23=( ix@2:24=__SIZE_TYPE__ iw@2:30=i pw@2:32== nw@2:34=0 p@2:35=; iw@2:37=i pw@2:39=< iw@2:41=countof p@2:48=( i@2:49=fields p@2:55=( iP1@2:56=T p@2:57=) p@2:58=) p@2:59=; iw@2:61=i p@2:62=++ p@2:64=) pw@2:66={ iw@3:13=sum pw@3:17=+= nw@3:20=1 p@3:21=; pw@4:9=} iw@5:9=return iw@5:16=sum p@5:19=; pw@6:5=}
 // clang-format on
 #pragma once
 #include <stddef.h>

@@ -2,8 +2,8 @@ module idiom::void_list_ok;
 
 typedef void (*Callback)();
 
-u32 plain() {
-    u32 x = 1;
+U32 plain() {
+    U32 x = 1;
     (void)x;
-    return (u32)sizeof(void) + x;
+    return (U32)sizeof(void) + x;
 }

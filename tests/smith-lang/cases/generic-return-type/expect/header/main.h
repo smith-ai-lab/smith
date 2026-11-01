@@ -4,10 +4,10 @@
 // smith-imports:
 // smith-names: from_count widen
 // smith-types: by_count wide_of
-// smith-generic: main by_count main_by_count src/main.smith g@6 2 3 9 10 | i@0:1=static iw@0:8=type iw@0:13=main_by_count p@0:21=( i@0:22=type iw@0:27=T p@0:28=, ixw@0:30=__SIZE_TYPE__ iw@0:36=k p@0:37=) pw@0:39={ iw@1:5=return iw@1:12=k pw@1:14=== nw@1:17=0 pw@1:19=? iw@1:21=T pw@1:23=: iw@1:25=k pw@1:27=== nw@1:30=1 pw@1:32=? ixw@1:34=__INT16_TYPE__ pw@1:38=: ixw@1:40=double p@1:43=; p@2:1=}
-// smith-generic: main wide_of main_wide_of src/main.smith g@10 2 3 6 7 | i@0:1=static iw@0:8=type iw@0:13=main_wide_of p@0:20=( i@0:21=type iw@0:26=T p@0:27=) pw@0:29={ iw@1:5=return iw@1:12=sizeof p@1:18=( i@1:19=T p@1:20=) pw@1:22=<= nw@1:25=2 pw@1:27=? ixw@1:29=__INT64_TYPE__ pw@1:33=: iw@1:35=T p@1:36=; p@2:1=}
-// smith-generic: main from_count main_from_count src/main.smith -@15 9 10 18 19 | iw@0:8=main_by_count p@0:16=( iP1@0:17=T p@0:18=, iw@0:20=countof p@0:27=( iP2@0:28=rest p@0:32=) p@0:33=) iw@0:35=main_from_count p@0:45=( i@0:46=constexpr iw@0:56=type iP1w@0:61=T p@0:62=, iw@0:64=auto p@0:68=... iP2w@0:72=rest p@0:76=) pw@0:78={ iw@1:5=return nw@1:12=7 p@1:13=; p@2:1=}
-// smith-generic: main widen main_widen src/main.smith -@20 4 5 12 13 | iw@0:8=main_wide_of p@0:15=( iP1@0:16=T p@0:17=) iw@0:19=main_widen p@0:24=( i@0:25=constexpr iw@0:35=type iP1w@0:40=T p@0:41=, iP2w@0:43=auto iw@0:48=x p@0:49=) pw@0:51={ iw@1:5=return iw@1:12=x p@1:13=; p@2:1=}
+// smith-generic: main by_count main_by_count src/main.smith g@6 2 3 9 10 | i@0:1=static iw@0:8=Type iw@0:13=main_by_count p@0:21=( i@0:22=Type iw@0:27=T p@0:28=, ixw@0:30=__SIZE_TYPE__ iw@0:36=k p@0:37=) pw@0:39={ iw@1:5=return iw@1:12=k pw@1:14=== nw@1:17=0 pw@1:19=? iw@1:21=T pw@1:23=: iw@1:25=k pw@1:27=== nw@1:30=1 pw@1:32=? ixw@1:34=__INT16_TYPE__ pw@1:38=: ixw@1:40=double p@1:43=; p@2:1=}
+// smith-generic: main wide_of main_wide_of src/main.smith g@10 2 3 6 7 | i@0:1=static iw@0:8=Type iw@0:13=main_wide_of p@0:20=( i@0:21=Type iw@0:26=T p@0:27=) pw@0:29={ iw@1:5=return iw@1:12=sizeof p@1:18=( i@1:19=T p@1:20=) pw@1:22=<= nw@1:25=2 pw@1:27=? ixw@1:29=__INT64_TYPE__ pw@1:33=: iw@1:35=T p@1:36=; p@2:1=}
+// smith-generic: main from_count main_from_count src/main.smith -@15 9 10 18 19 | iw@0:8=main_by_count p@0:16=( iP1@0:17=T p@0:18=, iw@0:20=countof p@0:27=( iP2@0:28=rest p@0:32=) p@0:33=) iw@0:35=main_from_count p@0:45=( i@0:46=constexpr iw@0:56=Type iP1w@0:61=T p@0:62=, iw@0:64=auto p@0:68=... iP2w@0:72=rest p@0:76=) pw@0:78={ iw@1:5=return nw@1:12=7 p@1:13=; p@2:1=}
+// smith-generic: main widen main_widen src/main.smith -@20 4 5 12 13 | iw@0:8=main_wide_of p@0:15=( iP1@0:16=T p@0:17=) iw@0:19=main_widen p@0:24=( i@0:25=constexpr iw@0:35=Type iP1w@0:40=T p@0:41=, iP2w@0:43=auto iw@0:48=x p@0:49=) pw@0:51={ iw@1:5=return iw@1:12=x p@1:13=; p@2:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>

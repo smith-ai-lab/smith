@@ -134,7 +134,7 @@ class UnsafeCheck final : public ClangTidyCheck {
     }
 
     void report_stack(SourceLocation at) {
-        diag(at, "the stack cannot hold a size known only at run time: use `arena::push_slice(&a, i32, n)`, or a fixed "
+        diag(at, "the stack cannot hold a size known only at run time: use `arena::push_slice(&a, I32, n)`, or a fixed "
                  "array when `n` has a maximum");
     }
 
@@ -188,12 +188,12 @@ class UnsafeCheck final : public ClangTidyCheck {
         std::string who = name.empty() ? std::string("this parameter") : "`" + name + "`";
         if (!constant) {
             diag(at,
-                 "the bound of %0 is not a constant expression, so the compiler cannot count it: take `i32 a[:]` (a "
-                 "slice) for a length known at run time, or a constant bound `i32 a[4]`")
+                 "the bound of %0 is not a constant expression, so the compiler cannot count it: take `I32 a[:]` (a "
+                 "slice) for a length known at run time, or a constant bound `I32 a[4]`")
                 << who;
         } else {
-            diag(at, "%0 is a plain pointer here, with no size to check: write the array parameter as `i32 a[4]` (a "
-                     "checked array) or take `i32 a[:]` (a slice)")
+            diag(at, "%0 is a plain pointer here, with no size to check: write the array parameter as `I32 a[4]` (a "
+                     "checked array) or take `I32 a[:]` (a slice)")
                 << who;
         }
     }

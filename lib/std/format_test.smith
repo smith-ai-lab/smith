@@ -13,10 +13,10 @@ import scratch;
 import <stdint.h>;
 import std::mem;
 
-constexpr usize capacity = 256;
-constexpr i64 i64_max = 9223372036854775807;
-constexpr i64 i64_min = -9223372036854775807 - 1;
-constexpr u64 u64_max = 18446744073709551615ULL;
+constexpr Usize capacity = 256;
+constexpr I64 i64_max = 9223372036854775807;
+constexpr I64 i64_min = -9223372036854775807 - 1;
+constexpr U64 u64_max = 18446744073709551615ULL;
 
 static bool is(const char *text, const char *expected) {
     return __builtin_strcmp(text, expected) == 0;
@@ -30,22 +30,22 @@ static random::Key take(random::Key *stream) {
     return next[1];
 }
 
-static u64 test_format_draw(random::Key key) {
+static U64 test_format_draw(random::Key key) {
     random::Key *key_stream = &key;
-    u64 shift = random::key_bits(take(key_stream)) % 64;
+    U64 shift = random::key_bits(take(key_stream)) % 64;
     return random::key_bits(take(key_stream)) >> shift;
 }
 
 typedef struct {
-    i32 m;
-    f32 b;
+    I32 m;
+    F32 b;
 } Pair;
 
 typedef struct {
     Pair pair;
-    u8 flags : 3;
-    u8 mode : 5;
-    i32 values[3];
+    U8 flags : 3;
+    U8 mode : 5;
+    I32 values[3];
     const char *name;
     bool on;
 } Nested;
@@ -66,8 +66,8 @@ export void test_format_struct_is_its_fields() {
 
 export void test_format_pieces_in_order() {
     char out[capacity];
-    u32 n = 3;
-    usize total = 10;
+    U32 n = 3;
+    Usize total = 10;
     format::Written written = format::to(out, sizeof out, "count: ", n, " of ", total, "\n");
     test::check(written.fits);
     test::check(is(out, "count: 3 of 10\n"));
@@ -113,21 +113,21 @@ export void test_format_strings_and_text() {
 export void test_format_integers_at_their_limits() {
     char out[capacity];
     char expected[capacity];
-    i8 a = -128;
-    i16 b = -32768;
-    i32 c = -2147483647 - 1;
-    i64 d = i64_min;
-    u8 e = 255;
-    u16 f = 65535;
-    u32 g = 4294967295U;
-    u64 h = u64_max;
-    usize i = (usize)u64_max;
-    isize j = (isize)i64_max;
+    I8 a = -128;
+    I16 b = -32768;
+    I32 c = -2147483647 - 1;
+    I64 d = i64_min;
+    U8 e = 255;
+    U16 f = 65535;
+    U32 g = 4294967295U;
+    U64 h = u64_max;
+    Usize i = (Usize)u64_max;
+    Isize j = (Isize)i64_max;
     (void)format::to(out, sizeof out, a, " ", b, " ", c, " ", d, " ", e, " ", f, " ", g, " ", h, " ", i, " ", j);
     __builtin_snprintf(expected, sizeof expected, "%d %d %d %jd %u %u %u %ju %zu %zd", a, b, c, (c::intmax_t)d, e, f, g,
                        (c::uintmax_t)h, i, j);
     test::check(is(out, expected));
-    (void)format::to(out, sizeof out, (i8)0, (u64)0, (i64)-1, (i64)i64_max);
+    (void)format::to(out, sizeof out, (I8)0, (U64)0, (I64)-1, (I64)i64_max);
     test::check(is(out, "00-19223372036854775807"));
 }
 
@@ -135,7 +135,7 @@ export void test_format_signed_matches_libc(random::Key key) {
     random::Key *key_stream = &key;
     char out[capacity];
     char expected[capacity];
-    i64 value = (i64)test_format_draw(take(key_stream));
+    I64 value = (I64)test_format_draw(take(key_stream));
     if ((random::key_bits(take(key_stream)) & 1) != 0) value = -value;
     (void)format::to(out, sizeof out, value);
     __builtin_snprintf(expected, sizeof expected, "%jd", (c::intmax_t)value);
@@ -145,10 +145,10 @@ export void test_format_signed_matches_libc(random::Key key) {
 export void test_format_unsigned_matches_libc(random::Key key) {
     char out[capacity];
     char expected[capacity];
-    u64 value = test_format_draw(key);
-    (void)format::to(out, sizeof out, value, "/", (u32)value, "/", (u16)value, "/", (u8)value);
-    __builtin_snprintf(expected, sizeof expected, "%ju/%u/%u/%u", (c::uintmax_t)value, (u32)value, (u16)value,
-                       (u8)value);
+    U64 value = test_format_draw(key);
+    (void)format::to(out, sizeof out, value, "/", (U32)value, "/", (U16)value, "/", (U8)value);
+    __builtin_snprintf(expected, sizeof expected, "%ju/%u/%u/%u", (c::uintmax_t)value, (U32)value, (U16)value,
+                       (U8)value);
     test::check(is(out, expected));
 }
 
@@ -156,11 +156,11 @@ export void test_format_hex_matches_libc(random::Key key) {
     random::Key *key_stream = &key;
     char out[capacity];
     char expected[capacity];
-    u64 value = test_format_draw(take(key_stream));
-    u32 width = (u32)(random::key_bits(take(key_stream)) % 20); // past 16 stops at 16
+    U64 value = test_format_draw(take(key_stream));
+    U32 width = (U32)(random::key_bits(take(key_stream)) % 20); // past 16 stops at 16
     (void)format::to(out, sizeof out, format::hex(value, width));
-    u32 libc_width = width < 16 ? width : 16;
-    __builtin_snprintf(expected, sizeof expected, "%0*jx", (i32)libc_width, (c::uintmax_t)value);
+    U32 libc_width = width < 16 ? width : 16;
+    __builtin_snprintf(expected, sizeof expected, "%0*jx", (I32)libc_width, (c::uintmax_t)value);
     test::check(is(out, expected));
 }
 
@@ -174,37 +174,37 @@ export void test_format_hex_known() {
 // The shortest text that reads back as the same value, and the strings std::text documents.
 export void test_format_floats_known() {
     char out[capacity];
-    f64 tiny = 5e-324;
-    f64 big = 1e22;
-    f64 negative_zero = -0.0;
-    f32 half = 0.5F;
+    F64 tiny = 5e-324;
+    F64 big = 1e22;
+    F64 negative_zero = -0.0;
+    F32 half = 0.5F;
     (void)format::to(out, sizeof out, 0.1, " ", 2.5, " ", -3.0, " ", big, " ", tiny, " ", negative_zero, " ", half);
     test::check(is(out, "0.1 2.5 -3 1e22 5e-324 -0 0.5"));
-    f32 tenth = 0.1F;
+    F32 tenth = 0.1F;
     (void)format::to(out, sizeof out, tenth, " ", 16777216.0F, " ", 3.14159265F);
     test::check(is(out, "0.1 16777216 3.1415927")); // a f32's own shortest digits, not its f64 value's
-    (void)format::to(out, sizeof out, math::infinity(f64), " ", -math::infinity(f64), " ", math::nan(f64), " ",
-                     math::infinity(f32));
+    (void)format::to(out, sizeof out, math::infinity(F64), " ", -math::infinity(F64), " ", math::nan(F64), " ",
+                     math::infinity(F32));
     test::check(is(out, "inf -inf nan inf"));
 }
 
 export void test_format_floats_read_back(random::Key key) {
     random::Key *key_stream = &key;
-    u64 bits = random::key_bits(take(key_stream));
-    f64 value = __builtin_bit_cast(f64, bits);
+    U64 bits = random::key_bits(take(key_stream));
+    F64 value = __builtin_bit_cast(F64, bits);
     if (!math::is_finite(value)) return;
     char out[capacity];
     format::Written written = format::to(out, sizeof out, value);
-    f64 back = 0;
+    F64 back = 0;
     test::check(text::parse_f64(out[0:written.length], &back));
     test::check_same_bits(back, value);
 }
 
-static void check_fixed(f64 value, u32 places) {
+static void check_fixed(F64 value, U32 places) {
     char out[capacity];
     char expected[capacity];
     (void)format::to(out, sizeof out, format::fixed(value, places));
-    __builtin_snprintf(expected, sizeof expected, "%.*f", (i32)places, value);
+    __builtin_snprintf(expected, sizeof expected, "%.*f", (I32)places, value);
     if (!is(out, expected)) {
         test::check_equal(countof(text::make(out)), countof(text::make(expected))); // the failure shows both lengths
         test::check(is(out, expected));
@@ -221,21 +221,21 @@ export void test_format_fixed_known() {
 
 // Ties, and the numbers just either side of them: a halfway case rounds to even, and one binary digit off does not.
 export void test_format_fixed_ties_match_libc() {
-    for (u32 places = 0; places <= 12; places++) {
-        for (u32 k = 0; k < 4096; k++) {
-            check_fixed((f64)k / 1024.0, places);
-            check_fixed(-(f64)k / 1024.0, places);
-            check_fixed((f64)k / 8.0 + 0.5, places);
+    for (U32 places = 0; places <= 12; places++) {
+        for (U32 k = 0; k < 4096; k++) {
+            check_fixed((F64)k / 1024.0, places);
+            check_fixed(-(F64)k / 1024.0, places);
+            check_fixed((F64)k / 8.0 + 0.5, places);
         }
     }
 }
 
 export void test_format_fixed_places_up_to_the_limit() {
-    f64 values[_] = {0.0,   1.0,        0.1,    0.2,          0.3,   1.0 / 3.0, 2.0 / 3.0,          1e-5,
+    F64 values[_] = {0.0,   1.0,        0.1,    0.2,          0.3,   1.0 / 3.0, 2.0 / 3.0,          1e-5,
                      1e-10, 123456.789, 99.995, 0.9999999999, 4.35,  1e15,      4503599627370496.5, 9007199254740993.0,
                      1e18,  9.2e18,     3e-20,  2e-20,        4e-21, 5.5e-300};
-    for (usize v = 0; v < sizeof values / sizeof values[0]; v++) {
-        for (u32 places = 0; places <= 20; places++) {
+    for (Usize v = 0; v < sizeof values / sizeof values[0]; v++) {
+        for (U32 places = 0; places <= 20; places++) {
             check_fixed(values[v], places);
             check_fixed(-values[v], places);
         }
@@ -244,25 +244,25 @@ export void test_format_fixed_places_up_to_the_limit() {
 
 export void test_format_fixed_matches_libc(random::Key key) {
     random::Key *key_stream = &key;
-    u64 bits = random::key_bits(take(key_stream));
-    f64 value = __builtin_bit_cast(f64, bits);
-    u32 places = (u32)(random::key_bits(take(key_stream)) % 21);
+    U64 bits = random::key_bits(take(key_stream));
+    F64 value = __builtin_bit_cast(F64, bits);
+    U32 places = (U32)(random::key_bits(take(key_stream)) % 21);
     if (!math::is_finite(value)) return;
-    f64 magnitude = value < 0 ? -value : value;
+    F64 magnitude = value < 0 ? -value : value;
     if (magnitude >= 9.2e18) return; // past 2^63 is written as a float
     check_fixed(value, places);
     // A value spread over the useful range, which random bits rarely give: a mantissa times a small power of two.
-    u64 mantissa = random::key_bits(take(key_stream)) >> 11;
-    i32 exponent = (i32)(random::key_bits(take(key_stream)) % 80) - 70;
-    f64 near = (f64)mantissa * __builtin_ldexp(1.0, exponent);
+    U64 mantissa = random::key_bits(take(key_stream)) >> 11;
+    I32 exponent = (I32)(random::key_bits(take(key_stream)) % 80) - 70;
+    F64 near = (F64)mantissa * __builtin_ldexp(1.0, exponent);
     check_fixed(near, places);
 }
 
 export void test_format_fixed_special_values() {
     char out[capacity];
-    f64 big = 1e30;
-    (void)format::to(out, sizeof out, format::fixed(math::infinity(f64), 2), " ",
-                     format::fixed(-math::infinity(f64), 2), " ", format::fixed(math::nan(f64), 2), " ",
+    F64 big = 1e30;
+    (void)format::to(out, sizeof out, format::fixed(math::infinity(F64), 2), " ",
+                     format::fixed(-math::infinity(F64), 2), " ", format::fixed(math::nan(F64), 2), " ",
                      format::fixed(big, 2), " ", format::fixed(-0.0, 1));
     test::check(is(out, "inf -inf nan 1e30 -0.0"));
     (void)format::to(out, sizeof out, format::fixed(1.5, 30)); // more than 20 places is 20
@@ -291,7 +291,7 @@ export void test_format_cut_at_the_capacity() {
 }
 
 export void test_format_capacity_zero_measures() {
-    format::Written written = format::to(nullptr, 0, "value ", (i64)-12345, " ", format::hex(255, 4), " ", 1.5);
+    format::Written written = format::to(nullptr, 0, "value ", (I64)-12345, " ", format::hex(255, 4), " ", 1.5);
     test::check(!written.fits);
     test::check_equal(written.length, 6 + 6 + 1 + 4 + 1 + 3);
     test::check_equal(format::length("abc", 12345), 8);
@@ -305,16 +305,16 @@ export void test_format_capacity_zero_measures() {
 // A number cut in the middle keeps the digits before the cut, and the length is the whole number's.
 export void test_format_cut_in_a_number(random::Key key) {
     random::Key *key_stream = &key;
-    u64 value = test_format_draw(take(key_stream));
+    U64 value = test_format_draw(take(key_stream));
     char whole[capacity];
-    usize length = format::to(whole, sizeof whole, value).length;
-    usize room = (usize)(random::key_bits(take(key_stream)) % (length + 2));
+    Usize length = format::to(whole, sizeof whole, value).length;
+    Usize room = (Usize)(random::key_bits(take(key_stream)) % (length + 2));
     char out[capacity];
     format::Written written = format::to(out, room, value);
     test::check_equal(written.length, length);
     test::check_equal(written.fits, room > length);
     if (room > 0) {
-        usize kept = room - 1 < length ? room - 1 : length;
+        Usize kept = room - 1 < length ? room - 1 : length;
         test::check_condition(mem::equal(out[0:kept], whole[0:kept]));
         test::check_equal(out[kept], '\0');
     }
@@ -323,7 +323,7 @@ export void test_format_cut_in_a_number(random::Key key) {
 // push allocates only through the allocator in force: with an arena installed, every byte comes from it.
 export void test_format_push_allocates_only_through_the_current_allocator() {
     static struct {
-        alignas(arena::align_max) u8 bytes[1024];
+        alignas(arena::align_max) U8 bytes[1024];
     } memory;
     arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
     arena::ArenaAllocator allocator = arena::allocator(&a);
@@ -333,8 +333,8 @@ export void test_format_push_allocates_only_through_the_current_allocator() {
     test::check_equal(countof(path), 22);
     test::check(is(path.data, "build/meshes/ship.mesh"));         // terminated after its length
     test::check(allocator.base.owns(&allocator.base, path.data)); // from the arena, not the heap
-    usize used = a.used;
-    char number[:] = format::push((u64)42);
+    Usize used = a.used;
+    char number[:] = format::push((U64)42);
     test::check_equal(countof(number), 2);
     test::check(is(number.data, "42"));
     test::check(allocator.base.owns(&allocator.base, number.data));
@@ -354,8 +354,8 @@ export void test_format_push_freed_leaks_nothing() {
     char nothing[:] = format::push();
     test::check_equal(nothing.data[0], '\0');
     mem::free(nothing.data);
-    for (usize i = 0; i < 100; i++) {
-        char number[:] = format::push((u64)i, " of ", (u64)100);
+    for (Usize i = 0; i < 100; i++) {
+        char number[:] = format::push((U64)i, " of ", (U64)100);
         test::check(countof(number) >= 7);
         mem::free(number.data);
     }
@@ -371,27 +371,27 @@ export void test_format_callers() {
     (void)format::to(out, sizeof out, folder, "/", name);
     test::check(is(out, expected));
     const char *line = "a line";
-    usize length = 4;
-    __builtin_snprintf(expected, sizeof expected, "%.*s", (i32)length, line);
+    Usize length = 4;
+    __builtin_snprintf(expected, sizeof expected, "%.*s", (I32)length, line);
     (void)format::to(out, sizeof out, format::bytes(line, length));
     test::check(is(out, expected));
-    u64 key = 0x0123456789abcdefULL;
+    U64 key = 0x0123456789abcdefULL;
     __builtin_snprintf(expected, sizeof expected, "%016jx", (c::uintmax_t)key);
     (void)format::to(out, sizeof out, format::hex(key, 16));
     test::check(is(out, expected));
-    f64 ratio = 12.0 / 7.0;
+    F64 ratio = 12.0 / 7.0;
     __builtin_snprintf(expected, sizeof expected, "%.1f (%.0f, %.0f)", ratio, ratio * 3, ratio * 5);
     (void)format::to(out, sizeof out, format::fixed(ratio, 1), " (", format::fixed(ratio * 3, 0), ", ",
                      format::fixed(ratio * 5, 0), ")");
     test::check(is(out, expected));
-    u32 jobs = 8;
+    U32 jobs = 8;
     __builtin_snprintf(expected, sizeof expected, "%u", jobs);
     (void)format::to(out, sizeof out, jobs);
     test::check(is(out, expected));
-    __builtin_snprintf(expected, sizeof expected, "push of %zu bytes (align %zu) with %zu of %zu bytes used", (usize)8,
-                       (usize)16, (usize)100, (usize)4096);
-    (void)format::to(out, sizeof out, "push of ", (usize)8, " bytes (align ", (usize)16, ") with ", (usize)100, " of ",
-                     (usize)4096, " bytes used");
+    __builtin_snprintf(expected, sizeof expected, "push of %zu bytes (align %zu) with %zu of %zu bytes used", (Usize)8,
+                       (Usize)16, (Usize)100, (Usize)4096);
+    (void)format::to(out, sizeof out, "push of ", (Usize)8, " bytes (align ", (Usize)16, ") with ", (Usize)100, " of ",
+                     (Usize)4096, " bytes used");
     test::check(is(out, expected));
 }
 
@@ -411,11 +411,11 @@ static void remove_trailing_zeros(char *text) {
     __builtin_strcpy(last, tail);
 }
 
-static void check_general(f64 value, u32 digits) {
+static void check_general(F64 value, U32 digits) {
     char out[capacity];
     char expected[capacity];
     (void)format::to(out, sizeof out, format::general(value, digits));
-    __builtin_snprintf(expected, sizeof expected, "%.*g", (i32)(digits == 0 ? 1 : (digits < 40 ? digits : 40)), value);
+    __builtin_snprintf(expected, sizeof expected, "%.*g", (I32)(digits == 0 ? 1 : (digits < 40 ? digits : 40)), value);
     remove_trailing_zeros(expected);
     if (!is(out, expected)) {
         test::check_equal(countof(text::make(out)), countof(text::make(expected))); // the failure shows both lengths
@@ -423,11 +423,11 @@ static void check_general(f64 value, u32 digits) {
     }
 }
 
-static void check_scientific(f64 value, u32 places) {
+static void check_scientific(F64 value, U32 places) {
     char out[capacity];
     char expected[capacity];
     (void)format::to(out, sizeof out, format::scientific(value, places));
-    __builtin_snprintf(expected, sizeof expected, "%.*e", (i32)(places < 40 ? places : 40), value);
+    __builtin_snprintf(expected, sizeof expected, "%.*e", (I32)(places < 40 ? places : 40), value);
     if (!is(out, expected)) {
         test::check_equal(countof(text::make(out)), countof(text::make(expected)));
         test::check(is(out, expected));
@@ -440,7 +440,7 @@ export void test_format_general_known() {
                      format::general(100000.0, 6), " ", format::general(1000000.0, 6), " ", format::general(0.0001, 6),
                      " ", format::general(0.00001, 6), " ", format::general(-0.0, 6), " ",
                      format::general(3.14159265358979, 9), " ", format::general(0.1, 17), " ",
-                     format::general(math::infinity(f64), 6), " ", format::general(2.5, 0));
+                     format::general(math::infinity(F64), 6), " ", format::general(2.5, 0));
     test::check(is(out, "0.1 1e+22 100000 1e+06 0.0001 1e-05 -0 3.14159265 0.10000000000000001 inf 2"));
 }
 
@@ -454,11 +454,11 @@ export void test_format_scientific_known() {
 
 // Ties: values with an exact binary fraction halfway between two rounded outputs round to even, as printf does.
 export void test_format_general_and_scientific_ties_match_libc() {
-    for (u32 digits = 0; digits <= 12; digits++) {
-        for (u32 k = 0; k < 2048; k++) {
-            f64 values[_] = {(f64)k / 1024.0, (f64)k / 8.0 + 0.5, (f64)k * 125.0, (f64)k / 64.0 / 1024.0,
-                             (f64)k * 1e15};
-            for (usize v = 0; v < sizeof values / sizeof values[0]; v++) {
+    for (U32 digits = 0; digits <= 12; digits++) {
+        for (U32 k = 0; k < 2048; k++) {
+            F64 values[_] = {(F64)k / 1024.0, (F64)k / 8.0 + 0.5, (F64)k * 125.0, (F64)k / 64.0 / 1024.0,
+                             (F64)k * 1e15};
+            for (Usize v = 0; v < sizeof values / sizeof values[0]; v++) {
                 check_general(values[v], digits);
                 check_general(-values[v], digits);
                 check_scientific(values[v], digits);
@@ -468,7 +468,7 @@ export void test_format_general_and_scientific_ties_match_libc() {
 }
 
 export void test_format_general_and_scientific_extremes_match_libc() {
-    f64 values[_] = {0.0,
+    F64 values[_] = {0.0,
                      1.0,
                      0.1,
                      1.0 / 3.0,
@@ -486,8 +486,8 @@ export void test_format_general_and_scientific_extremes_match_libc() {
                      9.5,
                      0.95,
                      4.35};
-    for (usize v = 0; v < sizeof values / sizeof values[0]; v++) {
-        for (u32 digits = 0; digits <= 42; digits++) {
+    for (Usize v = 0; v < sizeof values / sizeof values[0]; v++) {
+        for (U32 digits = 0; digits <= 42; digits++) {
             check_general(values[v], digits);
             check_general(-values[v], digits);
             check_scientific(values[v], digits);
@@ -498,14 +498,14 @@ export void test_format_general_and_scientific_extremes_match_libc() {
 
 export void test_format_general_and_scientific_match_libc(random::Key key) {
     random::Key *key_stream = &key;
-    u64 bits = random::key_bits(take(key_stream));
-    f64 value = __builtin_bit_cast(f64, bits);
-    u32 digits = (u32)(random::key_bits(take(key_stream)) % 25);
+    U64 bits = random::key_bits(take(key_stream));
+    F64 value = __builtin_bit_cast(F64, bits);
+    U32 digits = (U32)(random::key_bits(take(key_stream)) % 25);
     if (!math::is_finite(value)) return;
     check_general(value, digits);
     check_scientific(value, digits);
-    f64 near =
-        (f64)(random::key_bits(take(key_stream)) % 100000) / 1000.0; // values with few digits, where rounding is near
+    F64 near =
+        (F64)(random::key_bits(take(key_stream)) % 100000) / 1000.0; // values with few digits, where rounding is near
     check_general(near, digits);
     check_scientific(near, digits);
 }
@@ -540,15 +540,15 @@ export void test_format_padding_matches_libc(random::Key key) {
     random::Key *key_stream = &key;
     char out[capacity];
     char expected[capacity];
-    u32 width = (u32)(random::key_bits(take(key_stream)) % 14);
-    i64 number = (i64)(random::key_bits(take(key_stream)) >> (random::key_bits(take(key_stream)) % 64));
-    u64 unsigned_number = random::key_bits(take(key_stream)) >> (random::key_bits(take(key_stream)) % 64);
-    f64 value = (f64)(random::key_bits(take(key_stream)) % 2000000) / 1000.0 - 1000.0;
+    U32 width = (U32)(random::key_bits(take(key_stream)) % 14);
+    I64 number = (I64)(random::key_bits(take(key_stream)) >> (random::key_bits(take(key_stream)) % 64));
+    U64 unsigned_number = random::key_bits(take(key_stream)) >> (random::key_bits(take(key_stream)) % 64);
+    F64 value = (F64)(random::key_bits(take(key_stream)) % 2000000) / 1000.0 - 1000.0;
     const char *words[_] = {"", "a", "knight", "a longer name than most"};
     const char *word = words[random::key_bits(take(key_stream)) % 4];
-    __builtin_snprintf(expected, sizeof expected, "[%*jd|%-*jd|%*ju|%*s|%-*s|%*.2f|%*.0f|%*g]", (i32)width,
-                       (c::intmax_t)number, (i32)width, (c::intmax_t)number, (i32)width, (c::uintmax_t)unsigned_number,
-                       (i32)width, word, (i32)width, word, (i32)width, value, (i32)width, value, (i32)width, value);
+    __builtin_snprintf(expected, sizeof expected, "[%*jd|%-*jd|%*ju|%*s|%-*s|%*.2f|%*.0f|%*g]", (I32)width,
+                       (c::intmax_t)number, (I32)width, (c::intmax_t)number, (I32)width, (c::uintmax_t)unsigned_number,
+                       (I32)width, word, (I32)width, word, (I32)width, value, (I32)width, value, (I32)width, value);
     (void)format::to(out, sizeof out, "[", format::pad(number, width), "|", format::left(number, width), "|",
                      format::pad(unsigned_number, width), "|", format::pad(word, width), "|", format::left(word, width),
                      "|", format::pad(format::fixed(value, 2), width), "|", format::pad(format::fixed(value, 0), width),
@@ -561,19 +561,19 @@ export void test_format_report_rows_match_libc() {
     char out[capacity];
     char expected[capacity];
     const char *label = "health taken off the other";
-    u32 a = 12;
-    u32 b = 7;
+    U32 a = 12;
+    U32 b = 7;
     __builtin_snprintf(expected, sizeof expected, "  %-34s %10u %10u\n", label, a, b);
     (void)format::to(out, sizeof out, "  ", format::left(label, 34), " ", format::pad(a, 10), " ", format::pad(b, 10),
                      "\n");
     test::check(is(out, expected));
-    f64 percent = 56.789;
+    F64 percent = 56.789;
     __builtin_snprintf(expected, sizeof expected, "    %-16s %5.1f%%  %s\n", "knight", percent, "ok");
     (void)format::to(out, sizeof out, "    ", format::left("knight", 16), " ",
                      format::pad(format::fixed(percent, 1), 5), "%  ", "ok", "\n");
     test::check(is(out, expected));
     __builtin_snprintf(expected, sizeof expected, "%.9g %g", 0.1F + 0.2F, 1e-7);
-    (void)format::to(out, sizeof out, format::general((f64)(0.1F + 0.2F), 9), " ", format::general(1e-7, 6));
+    (void)format::to(out, sizeof out, format::general((F64)(0.1F + 0.2F), 9), " ", format::general(1e-7, 6));
     test::check(is(out, expected));
 }
 
@@ -584,7 +584,7 @@ export void test_format_no_rule_error_names_the_piece() {
     scratch::write(&p, "bad.smith",
                    "import std::format;\n"
                    "typedef void *Point;\n"
-                   "i32 main(void) {\n"
+                   "I32 main(void) {\n"
                    "    char buffer[64];\n"
                    "    Point point = nullptr;\n"
                    "    (void)format::to(buffer, sizeof buffer, \"a\", 1, point, 2);\n"

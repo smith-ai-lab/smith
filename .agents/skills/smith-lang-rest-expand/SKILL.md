@@ -1,6 +1,6 @@
 ---
 name: smith-lang-rest-expand
-description: "Pack expansion in a generic: `pattern...` writes one copy of an expression per element of `auto... rest` (`f(leaf(rest, off)...)`, `{(f64)rest...}`), an empty pack and its comma, and the errors '`...` expands nothing', 'an expansion does not nest'. Load when a generic writes `...` after an expression that names the pack."
+description: "Pack expansion in a generic: `pattern...` writes one copy of an expression per element of `auto... rest` (`f(leaf(rest, off)...)`, `{(F64)rest...}`), an empty pack and its comma, and the errors '`...` expands nothing', 'an expansion does not nest'. Load when a generic writes `...` after an expression that names the pack."
 ---
 
 # Pack expansion: `pattern...`
@@ -10,14 +10,14 @@ description: "Pack expansion in a generic: `pattern...` writes one copy of an ex
 ```smith
 module packs;
 
-export f64 largest(auto first, auto... rest) {
-    f64 values[1 + countof(rest)] = {(f64)first, (f64)rest...};   // one cast per argument
-    f64 best = values[0];
-    for (usize i = 1; i < 1 + countof(rest); i++) best = values[i] > best ? values[i] : best;
+export F64 largest(auto first, auto... rest) {
+    F64 values[1 + countof(rest)] = {(F64)first, (F64)rest...};   // one cast per argument
+    F64 best = values[0];
+    for (Usize i = 1; i < 1 + countof(rest); i++) best = values[i] > best ? values[i] : best;
     return best;
 }
 
-export f64 demo() {
+export F64 demo() {
     return largest(4, 9.5, 2);                                    // 9.5
 }
 ```

@@ -11,7 +11,7 @@
 // runtime interposes them); the other members of the handler (stat, mkdir, remove, rename, list, map, unmap) are called
 // here, and a null member is libc's own call.
 //
-// What goes wrong in the world is a value: a call returns `result(T, files::Error)` and the error is one of the
+// What goes wrong in the world is a value: a call returns `Result(T, files::Error)` and the error is one of the
 // real conditions (not found, exists, denied...). What is a bug is a checked failure that names the call: a mode a
 // call does not take, a descriptor that is not open (files owns its descriptors, so a read, write or close of one that
 // is not open is a double close or a stray number) and a limit of the fake. Memory a call returns (the bytes of a
@@ -42,59 +42,59 @@ import <unistd.h>;
 
 // The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
 // NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
-constexpr i32 ebadf = c::EBADF;
-constexpr i32 eexist = c::EEXIST;
-constexpr i32 eintr = c::EINTR;
-constexpr i32 einval = c::EINVAL;
-constexpr i32 eisdir = c::EISDIR;
-constexpr i32 emfile = c::EMFILE;
-constexpr i32 enametoolong = c::ENAMETOOLONG;
-constexpr i32 enfile = c::ENFILE;
-constexpr i32 enoent = c::ENOENT;
-constexpr i32 enospc = c::ENOSPC;
-constexpr i32 enotdir = c::ENOTDIR;
-constexpr i32 enotempty = c::ENOTEMPTY;
-constexpr i32 eacces = c::EACCES;
-constexpr i32 eperm = c::EPERM;
-constexpr i32 erofs = c::EROFS;
-constexpr i32 access_mask = c::O_ACCMODE;
-constexpr i32 open_read = c::O_RDONLY | c::O_CLOEXEC;
-constexpr i32 open_replace = c::O_WRONLY | c::O_CREAT | c::O_TRUNC | c::O_CLOEXEC;
-constexpr i32 open_append = c::O_WRONLY | c::O_CREAT | c::O_APPEND | c::O_CLOEXEC;
-constexpr i32 open_new = c::O_WRONLY | c::O_CREAT | c::O_EXCL | c::O_CLOEXEC;
-constexpr i32 flag_write_only = c::O_WRONLY;
-constexpr i32 flag_read_write = c::O_RDWR;
-constexpr i32 flag_create = c::O_CREAT;
-constexpr i32 flag_truncate = c::O_TRUNC;
-constexpr i32 flag_append = c::O_APPEND;
-constexpr i32 flag_exclusive = c::O_EXCL;
-constexpr i32 write_ok = c::W_OK;
-constexpr i32 protect_both = c::PROT_READ | c::PROT_WRITE;
-constexpr i32 map_file = c::MAP_PRIVATE;
-constexpr usize path_max = c::PATH_MAX;
-constexpr u32 mode_kind_mask = 0xF000;
-constexpr u32 mode_folder = 0x4000;
+constexpr I32 ebadf = c::EBADF;
+constexpr I32 eexist = c::EEXIST;
+constexpr I32 eintr = c::EINTR;
+constexpr I32 einval = c::EINVAL;
+constexpr I32 eisdir = c::EISDIR;
+constexpr I32 emfile = c::EMFILE;
+constexpr I32 enametoolong = c::ENAMETOOLONG;
+constexpr I32 enfile = c::ENFILE;
+constexpr I32 enoent = c::ENOENT;
+constexpr I32 enospc = c::ENOSPC;
+constexpr I32 enotdir = c::ENOTDIR;
+constexpr I32 enotempty = c::ENOTEMPTY;
+constexpr I32 eacces = c::EACCES;
+constexpr I32 eperm = c::EPERM;
+constexpr I32 erofs = c::EROFS;
+constexpr I32 access_mask = c::O_ACCMODE;
+constexpr I32 open_read = c::O_RDONLY | c::O_CLOEXEC;
+constexpr I32 open_replace = c::O_WRONLY | c::O_CREAT | c::O_TRUNC | c::O_CLOEXEC;
+constexpr I32 open_append = c::O_WRONLY | c::O_CREAT | c::O_APPEND | c::O_CLOEXEC;
+constexpr I32 open_new = c::O_WRONLY | c::O_CREAT | c::O_EXCL | c::O_CLOEXEC;
+constexpr I32 flag_write_only = c::O_WRONLY;
+constexpr I32 flag_read_write = c::O_RDWR;
+constexpr I32 flag_create = c::O_CREAT;
+constexpr I32 flag_truncate = c::O_TRUNC;
+constexpr I32 flag_append = c::O_APPEND;
+constexpr I32 flag_exclusive = c::O_EXCL;
+constexpr I32 write_ok = c::W_OK;
+constexpr I32 protect_both = c::PROT_READ | c::PROT_WRITE;
+constexpr I32 map_file = c::MAP_PRIVATE;
+constexpr Usize path_max = c::PATH_MAX;
+constexpr U32 mode_kind_mask = 0xF000;
+constexpr U32 mode_folder = 0x4000;
 // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
-constexpr i32 folder_mode = 0b111111111; // rwxrwxrwx, before the umask
-constexpr i32 file_mode = 0b110100100;   // rw-r--r--, before the umask
-constexpr usize chunk = 4096;
-export constexpr usize fake_files_max = 64;
-export constexpr usize fake_path_max = 256;
-export constexpr usize fake_open_max = 16;
-constexpr usize first_descriptor = 3; // the handlers' files start here (0, 1 and 2 are the console's)
+constexpr I32 folder_mode = 0b111111111; // rwxrwxrwx, before the umask
+constexpr I32 file_mode = 0b110100100;   // rw-r--r--, before the umask
+constexpr Usize chunk = 4096;
+export constexpr Usize fake_files_max = 64;
+export constexpr Usize fake_path_max = 256;
+export constexpr Usize fake_open_max = 16;
+constexpr Usize first_descriptor = 3; // the handlers' files start here (0, 1 and 2 are the console's)
 
 // errno, which is a macro for the system's function.
 if constexpr (target::os == target::macos) {
-    i32 *errno_slot() {
+    I32 *errno_slot() {
         return c::__error();
     }
 } else {
-    i32 *errno_slot() {
+    I32 *errno_slot() {
         return c::__errno_location();
     }
 }
 
-i32 errno_now() {
+I32 errno_now() {
     return *errno_slot();
 }
 
@@ -130,37 +130,37 @@ i32 errno_now() {
 
 // An open file. It is the caller's to close, once.
 [[std::c_name("SmithFilesFile")]] export typedef struct {
-    i32 descriptor;
+    I32 descriptor;
 } File;
 
 // What a path is.
 [[std::c_name("SmithFilesInfo")]] export typedef struct {
     bool folder;
     bool writable; // the program may write here: to a file, or make files in a folder
-    usize size;    // bytes of a file; 0 for a folder
+    Usize size;    // bytes of a file; 0 for a folder
 } Info;
 
 // One thing in a folder.
 [[std::c_name("SmithFilesEntry")]] export typedef struct {
     char name[:]; // the name alone (with a NUL after it, not counted), not the path
     bool folder;
-    usize size; // bytes of a file; 0 for a folder
+    Usize size; // bytes of a file; 0 for a folder
 } Entry;
 
 // What a call that has nothing to return returns on success.
 [[std::c_name("SmithFilesDone")]] export typedef struct {
-    u8 unused;
+    U8 unused;
 } Done;
 
-export typedef result(File, Error) OpenResult;
-export typedef result(usize, Error) CountResult;
-export typedef result(Done, Error) DoneResult;
-export typedef result(Info, Error) InfoResult;
-export typedef typeof(u8[:]) Bytes;
+export typedef Result(File, Error) OpenResult;
+export typedef Result(Usize, Error) CountResult;
+export typedef Result(Done, Error) DoneResult;
+export typedef Result(Info, Error) InfoResult;
+export typedef typeof(U8[:]) Bytes;
 export typedef typeof(Entry[:]) Entries;
-export typedef result(Bytes, Error) BytesResult;
-export typedef result(Entries, Error) EntriesResult;
-export typedef option(Error) CloseResult;
+export typedef Result(Bytes, Error) BytesResult;
+export typedef Result(Entries, Error) EntriesResult;
+export typedef Option(Error) CloseResult;
 
 // The handler type (the files of include/smith/handlers.h) and its setter, which returns the one the thread had:
 //   files::Handler *before = files::set_handler(&fake.base);
@@ -184,7 +184,7 @@ export typedef option(Error) CloseResult;
 }
 
 // The value of an errno the world can answer. The codes of a bug stop the program.
-Error error_from(i32 code) {
+Error error_from(I32 code) {
     if (code == ebadf) misuse("files: a descriptor that is not open (a double close, or a number files did not give)");
     if (code == einval) misuse("files: an invalid argument (a mode the call does not take)");
     if (code == enoent) return NotFound;
@@ -201,13 +201,13 @@ Error error_from(i32 code) {
 }
 
 // Copies count bytes (the one place bytes behind a pointer become a slice).
-void put(void *to, const void *from, usize count) {
+void put(void *to, const void *from, Usize count) {
     contract::trusted(); // it makes slices of the two pointers
     if (count == 0) {
         return;
     }
-    u8 destination[:] = ((u8 *)to)[0:count];
-    const u8 source[:] = ((const u8 *)from)[0:count];
+    U8 destination[:] = ((U8 *)to)[0:count];
+    const U8 source[:] = ((const U8 *)from)[0:count];
     mem::copy(destination, source);
 }
 
@@ -229,31 +229,31 @@ Path path_make(const char path[:]) {
 
 // Each of these returns 0 for success and otherwise the errno, so a caller turns it into an Error once.
 
-i32 raw_stat(const char *path, c::SmithFileStatus *status) {
+I32 raw_stat(const char *path, c::SmithFileStatus *status) {
     c::SmithFileHandler *handler = c::smith_handlers_files();
     if (handler != nullptr && handler->stat != nullptr)
         return handler->stat(handler, path, status) == 0 ? 0 : errno_now();
     struct c::stat info = {};
     if (c::stat(path, &info) != 0) return errno_now();
     status->folder = (info.st_mode & mode_kind_mask) == mode_folder;
-    status->size = status->folder ? 0 : (usize)info.st_size;
+    status->size = status->folder ? 0 : (Usize)info.st_size;
     status->writable = c::access(path, write_ok) == 0;
     return 0;
 }
 
-i32 raw_mkdir(const char *path) {
+I32 raw_mkdir(const char *path) {
     c::SmithFileHandler *handler = c::smith_handlers_files();
     if (handler != nullptr && handler->mkdir != nullptr) return handler->mkdir(handler, path) == 0 ? 0 : errno_now();
     return c::mkdir(path, folder_mode) == 0 ? 0 : errno_now();
 }
 
-i32 raw_remove(const char *path) {
+I32 raw_remove(const char *path) {
     c::SmithFileHandler *handler = c::smith_handlers_files();
     if (handler != nullptr && handler->remove != nullptr) return handler->remove(handler, path) == 0 ? 0 : errno_now();
     return c::unlink(path) == 0 ? 0 : errno_now();
 }
 
-i32 raw_rename(const char *from, const char *to) {
+I32 raw_rename(const char *from, const char *to) {
     c::SmithFileHandler *handler = c::smith_handlers_files();
     if (handler != nullptr && handler->rename != nullptr)
         return handler->rename(handler, from, to) == 0 ? 0 : errno_now();
@@ -265,10 +265,10 @@ typedef struct {
     c::SmithFileHandler *handler;
     c::DIR *directory;
     const char *folder;
-    usize index;
+    Usize index;
 } Lister;
 
-i32 lister_open(Lister *lister, const char *folder) {
+I32 lister_open(Lister *lister, const char *folder) {
     contract::trusted(); // the edge: it asks the handler of the thread and opens the folder
     lister->handler = c::smith_handlers_files();
     lister->folder = folder;
@@ -276,7 +276,7 @@ i32 lister_open(Lister *lister, const char *folder) {
     lister->directory = nullptr;
     if (lister->handler != nullptr && lister->handler->list != nullptr) {
         c::SmithFileItem probe = {};
-        i32 found = lister->handler->list(lister->handler, folder, 0, &probe);
+        I32 found = lister->handler->list(lister->handler, folder, 0, &probe);
         return found < 0 ? errno_now() : 0;
     }
     lister->handler = nullptr;
@@ -285,25 +285,25 @@ i32 lister_open(Lister *lister, const char *folder) {
 }
 
 // 1 when item is filled, 0 past the last entry, -1 on an error (the errno is in `code`).
-i32 lister_next(Lister *lister, c::SmithFileItem *item, i32 *code) {
+I32 lister_next(Lister *lister, c::SmithFileItem *item, I32 *code) {
     contract::trusted(); // the edge: it calls the handler's list or readdir
     if (lister->handler != nullptr) {
-        i32 found = lister->handler->list(lister->handler, lister->folder, lister->index++, item);
+        I32 found = lister->handler->list(lister->handler, lister->folder, lister->index++, item);
         if (found < 0) *code = errno_now();
         return found;
     }
-    for (usize tries = 0; tries < 3; tries++) { // "." and ".." are skipped: at most two reads are theirs
+    for (Usize tries = 0; tries < 3; tries++) { // "." and ".." are skipped: at most two reads are theirs
         struct c::dirent *entry = c::readdir(lister->directory);
         if (entry == nullptr) return 0;
         if (c::strcmp(entry->d_name, ".") == 0 || c::strcmp(entry->d_name, "..") == 0) continue;
-        usize length = c::strlen(entry->d_name);
+        Usize length = c::strlen(entry->d_name);
         if (length >= sizeof item->name) length = sizeof item->name - 1;
         put(item->name, entry->d_name, length);
         item->name[length] = 0;
         struct c::stat status = {};
         bool known = c::fstatat(c::dirfd(lister->directory), entry->d_name, &status, 0) == 0;
         item->folder = known && (status.st_mode & mode_kind_mask) == mode_folder;
-        item->size = known && !item->folder ? (usize)status.st_size : 0;
+        item->size = known && !item->folder ? (Usize)status.st_size : 0;
         return 1;
     }
     return 0;
@@ -317,7 +317,7 @@ void lister_close(Lister *lister) {
 // ---------------------------------------------------------------- one file
 
 // The flags of an open mode; Atomic is a way of writing a whole file, not of opening one.
-i32 open_flags(Mode mode) {
+I32 open_flags(Mode mode) {
     switch (mode) {
     case Read:
         return open_read;
@@ -342,15 +342,15 @@ void reads_log_append(const char *log, const char *path) {
     if (log[0] == '\0') return;
     char resolved[path_max];
     if (c::realpath(path, resolved) == nullptr) return; // a path that is not there has nothing to hash
-    usize length = c::strlen(resolved);
+    Usize length = c::strlen(resolved);
     if (length + 3 >= path_max) return;
     struct c::stat status = {};
     bool folder = c::stat(resolved, &status) == 0 && (status.st_mode & mode_kind_mask) == mode_folder;
     if (folder) resolved[length++] = '/';
     resolved[length++] = '\n';
-    i32 descriptor = c::open(log, open_append, file_mode);
+    I32 descriptor = c::open(log, open_append, file_mode);
     if (descriptor < 0) return;
-    isize written = c::write(descriptor, resolved, length);
+    Isize written = c::write(descriptor, resolved, length);
     (void)written; // a line lost makes the record a path short; the next change to it is judged by the graph
     c::close(descriptor);
 }
@@ -364,12 +364,12 @@ void reads_log(const char *path) {
 
 // Opens the file. A mode the call does not take is a checked failure.
 [[std::c_name("smith_fs_open")]] export [[nodiscard]] OpenResult open(const char path[:], Mode mode) {
-    i32 flags = open_flags(mode);
+    I32 flags = open_flags(mode);
     Path where = path_make(path);
     if (!where.fits) {
         return {.error = NameTooLong};
     }
-    i32 descriptor = c::open(where.text, flags, file_mode);
+    I32 descriptor = c::open(where.text, flags, file_mode);
     if (descriptor < 0) {
         return {.error = error_from(errno_now())};
     }
@@ -378,12 +378,12 @@ void reads_log(const char *path) {
 }
 
 // Reads up to the length of the buffer into it and returns how many bytes it read: 0 is the end of the file.
-[[std::c_name("smith_fs_read")]] export [[nodiscard]] CountResult read(File file, u8 buffer[:]) {
+[[std::c_name("smith_fs_read")]] export [[nodiscard]] CountResult read(File file, U8 buffer[:]) {
     contract::trusted(); // the edge: it calls the system's read
-    if (countof(buffer) == 0) return (usize)0;
-    for (usize tries = 0; tries < 64; tries++) { // a signal may interrupt the read
-        isize count = c::read(file.descriptor, buffer.data, countof(buffer));
-        if (count >= 0) return (usize)count;
+    if (countof(buffer) == 0) return (Usize)0;
+    for (Usize tries = 0; tries < 64; tries++) { // a signal may interrupt the read
+        Isize count = c::read(file.descriptor, buffer.data, countof(buffer));
+        if (count >= 0) return (Usize)count;
         if (errno_now() != eintr) {
             return {.error = error_from(errno_now())};
         }
@@ -392,13 +392,13 @@ void reads_log(const char *path) {
 }
 
 // Writes all of data and returns how many bytes it wrote (all of them, or an error).
-[[std::c_name("smith_fs_write")]] export [[nodiscard]] CountResult write(File file, const u8 data[:]) {
-    usize done = 0;
-    for (usize tries = 0; done < countof(data) && tries < countof(data) + 64; tries++) { // each round writes or ends
-        const u8 rest[:] = data[done:];
-        isize count = c::write(file.descriptor, rest.data, countof(rest));
+[[std::c_name("smith_fs_write")]] export [[nodiscard]] CountResult write(File file, const U8 data[:]) {
+    Usize done = 0;
+    for (Usize tries = 0; done < countof(data) && tries < countof(data) + 64; tries++) { // each round writes or ends
+        const U8 rest[:] = data[done:];
+        Isize count = c::write(file.descriptor, rest.data, countof(rest));
         if (count > 0) {
-            done += (usize)count;
+            done += (Usize)count;
         } else if (count < 0 && errno_now() != eintr) {
             return {.error = error_from(errno_now())};
         }
@@ -410,7 +410,7 @@ void reads_log(const char *path) {
 // checked failure.
 [[std::c_name("smith_fs_close")]] export CloseResult close(File file) {
     if (c::close(file.descriptor) != 0) {
-        i32 code = errno_now();
+        I32 code = errno_now();
         if (code != eintr) return error_from(code);
     }
     return .none;
@@ -419,18 +419,18 @@ void reads_log(const char *path) {
 // ---------------------------------------------------------------- whole files
 
 // Reads the open file to its end into a block of the current allocator; hint is the size to start with.
-BytesResult read_open(File file, usize hint) {
+BytesResult read_open(File file, Usize hint) {
     contract::trusted(); // reads to the end of the file: its passes are the file's size
-    u8 buffer[:] = mem::alloc_slice(u8, hint);
-    usize filled = 0;
+    U8 buffer[:] = mem::alloc_slice(U8, hint);
+    Usize filled = 0;
     bool ended = false;
-    for (usize rounds = 0; rounds < ~(usize)0 && !ended; rounds++) { // each round reads a byte or ends
+    for (Usize rounds = 0; rounds < ~(Usize)0 && !ended; rounds++) { // each round reads a byte or ends
         if (filled == countof(buffer)) {
-            u8 bigger[:] = mem::alloc_slice(u8, countof(buffer) * 2);
+            U8 bigger[:] = mem::alloc_slice(U8, countof(buffer) * 2);
             mem::copy(bigger[0:filled], buffer[0:filled]);
             buffer = bigger; // the old block stays in the region
         }
-        u8 room[:] = buffer[filled:];
+        U8 room[:] = buffer[filled:];
         CountResult step = read(file, room);
         switch (step) {
         case .error:
@@ -441,14 +441,14 @@ BytesResult read_open(File file, usize hint) {
             break;
         }
     }
-    u8 whole[:] = buffer[0:filled];
+    U8 whole[:] = buffer[0:filled];
     return {.ok = whole};
 }
 
 // The whole file, in a block of the current allocator that the caller's region holds.
 [[std::c_name("smith_fs_read_file")]] export [[nodiscard]] BytesResult read_file(const char path[:]) {
     OpenResult opened = open(path, Read);
-    usize hint = chunk;
+    Usize hint = chunk;
     Path where = path_make(path);
     c::SmithFileStatus status = {};
     if (raw_stat(where.text, &status) == 0 && !status.folder) hint = status.size + 1; // one more to see the end
@@ -466,7 +466,7 @@ BytesResult read_open(File file, usize hint) {
 }
 
 // Opens, writes all of data and closes: Replace, Append or New.
-CountResult write_in_place(const char path[:], const u8 data[:], Mode mode) {
+CountResult write_in_place(const char path[:], const U8 data[:], Mode mode) {
     OpenResult opened = open(path, mode);
     switch (opened) {
     case .error:
@@ -482,19 +482,19 @@ CountResult write_in_place(const char path[:], const u8 data[:], Mode mode) {
 }
 
 // Writes all of data to the path as the mode says (Replace, Append, New or Atomic) and returns the bytes written.
-[[std::c_name("smith_fs_write_file")]] export [[nodiscard]] CountResult write_file(const char path[:], const u8 data[:],
+[[std::c_name("smith_fs_write_file")]] export [[nodiscard]] CountResult write_file(const char path[:], const U8 data[:],
                                                                                    Mode mode) {
     if (mode != Atomic) return write_in_place(path, data, mode);
     char temporary[path_max];
-    i32 length = __builtin_snprintf(temporary, sizeof temporary, "%.*s.tmp", (i32)countof(path), path.data);
-    if (length < 0 || (usize)length >= sizeof temporary) {
+    I32 length = __builtin_snprintf(temporary, sizeof temporary, "%.*s.tmp", (I32)countof(path), path.data);
+    if (length < 0 || (Usize)length >= sizeof temporary) {
         return {.error = NameTooLong};
     }
-    const char temporary_name[:] = temporary[0:(usize)length];
-    usize count = try write_in_place(temporary_name, data, Replace);
+    const char temporary_name[:] = temporary[0:(Usize)length];
+    Usize count = try write_in_place(temporary_name, data, Replace);
     Path from = path_make(temporary_name);
     Path to = path_make(path);
-    i32 code = to.fits ? raw_rename(from.text, to.text) : enametoolong;
+    I32 code = to.fits ? raw_rename(from.text, to.text) : enametoolong;
     if (code != 0) {
         raw_remove(from.text);
         return {.error = error_from(code)};
@@ -511,7 +511,7 @@ CountResult write_in_place(const char path[:], const u8 data[:], Mode mode) {
         return {.error = NameTooLong};
     }
     c::SmithFileStatus status = {};
-    i32 code = raw_stat(where.text, &status);
+    I32 code = raw_stat(where.text, &status);
     if (code != 0) {
         return {.error = error_from(code)};
     }
@@ -524,11 +524,11 @@ CountResult write_in_place(const char path[:], const u8 data[:], Mode mode) {
     if (!where.fits || countof(path) == 0) {
         return {.error = countof(path) == 0 ? NotFound : NameTooLong};
     }
-    for (usize at = 1; at <= countof(path); at++) {
+    for (Usize at = 1; at <= countof(path); at++) {
         if (where.text[at] != '/' && where.text[at] != 0) continue;
         char kept = where.text[at];
         where.text[at] = 0;
-        i32 code = raw_mkdir(where.text);
+        I32 code = raw_mkdir(where.text);
         if (code != 0) {
             c::SmithFileStatus status = {};
             if (code != eexist || raw_stat(where.text, &status) != 0 || !status.folder) {
@@ -546,7 +546,7 @@ CountResult write_in_place(const char path[:], const u8 data[:], Mode mode) {
     if (!where.fits) {
         return {.error = NameTooLong};
     }
-    i32 code = raw_remove(where.text);
+    I32 code = raw_remove(where.text);
     if (code != 0) {
         return {.error = error_from(code)};
     }
@@ -560,14 +560,14 @@ CountResult write_in_place(const char path[:], const u8 data[:], Mode mode) {
     if (!source.fits || !target_path.fits) {
         return {.error = NameTooLong};
     }
-    i32 code = raw_rename(source.text, target_path.text);
+    I32 code = raw_rename(source.text, target_path.text);
     if (code != 0) {
         return {.error = error_from(code)};
     }
     return (Done){};
 }
 
-i32 entry_compare(const void *a, const void *b) {
+I32 entry_compare(const void *a, const void *b) {
     return c::strcmp(((const Entry *)a)->name.data, ((const Entry *)b)->name.data);
 }
 
@@ -579,15 +579,15 @@ i32 entry_compare(const void *a, const void *b) {
         return {.error = NameTooLong};
     }
     Lister counter = {};
-    i32 code = lister_open(&counter, where.text);
+    I32 code = lister_open(&counter, where.text);
     if (code != 0) {
         return {.error = error_from(code)};
     }
     reads_log(where.text);
-    usize total = 0;
+    Usize total = 0;
     c::SmithFileItem item = {};
-    for (usize rounds = 0; rounds < ((usize)1 << 20); rounds++) { // each round reads an entry or ends
-        i32 found = lister_next(&counter, &item, &code);
+    for (Usize rounds = 0; rounds < ((Usize)1 << 20); rounds++) { // each round reads an entry or ends
+        I32 found = lister_next(&counter, &item, &code);
         if (found <= 0) break;
         total++;
     }
@@ -601,9 +601,9 @@ i32 entry_compare(const void *a, const void *b) {
     if (code != 0) {
         return {.error = error_from(code)};
     }
-    usize filled = 0;
+    Usize filled = 0;
     while (filled < total && lister_next(&lister, &item, &code) > 0) {
-        usize length = c::strlen(item.name);
+        Usize length = c::strlen(item.name);
         char name[:] = mem::alloc_slice(char, length + 1);
         put(name.data, item.name, length);
         entries[filled++] = (Entry){.name = name[0:length], .folder = item.folder, .size = item.size};
@@ -627,23 +627,23 @@ i32 entry_compare(const void *a, const void *b) {
     }
     c::SmithFileHandler *handler = c::smith_handlers_files();
     if (handler != nullptr && handler->map != nullptr) {
-        usize size = 0;
+        Usize size = 0;
         void *bytes = handler->map(handler, where.text, &size);
         if (bytes == nullptr) {
             return {.error = error_from(errno_now())};
         }
-        u8 view[:] = ((u8 *)bytes)[0:size];
+        U8 view[:] = ((U8 *)bytes)[0:size];
         return {.ok = view};
     }
-    i32 descriptor = c::open(where.text, open_read);
+    I32 descriptor = c::open(where.text, open_read);
     if (descriptor < 0) {
         return {.error = error_from(errno_now())};
     }
     reads_log(where.text);
     struct c::stat info_of = {};
-    i32 code = c::fstat(descriptor, &info_of) == 0 ? 0 : errno_now();
+    I32 code = c::fstat(descriptor, &info_of) == 0 ? 0 : errno_now();
     bool is_folder = code == 0 && (info_of.st_mode & mode_kind_mask) == mode_folder;
-    usize size = code == 0 ? (usize)info_of.st_size : 0;
+    Usize size = code == 0 ? (Usize)info_of.st_size : 0;
     void *bytes = nullptr;
     if (code == 0 && !is_folder && size > 0) {
         bytes = c::mmap(nullptr, size, protect_both, map_file, descriptor, 0);
@@ -658,12 +658,12 @@ i32 entry_compare(const void *a, const void *b) {
     if (is_folder) {
         return {.error = IsFolder};
     }
-    u8 view[:] = ((u8 *)(size == 0 ? (void *)where.text : bytes))[0:size];
+    U8 view[:] = ((U8 *)(size == 0 ? (void *)where.text : bytes))[0:size];
     return {.ok = view};
 }
 
 // Gives a mapping back. An empty slice is nothing to give back.
-[[std::c_name("smith_fs_unmap")]] export void unmap(u8 bytes[:]) {
+[[std::c_name("smith_fs_unmap")]] export void unmap(U8 bytes[:]) {
     if (countof(bytes) == 0) {
         return;
     }
@@ -681,15 +681,15 @@ i32 entry_compare(const void *a, const void *b) {
     char path[fake_path_max];
     bool used;
     bool folder; // a folder made by make_folder; the folders of a file's path need no entry
-    u8 *data;
-    usize size;
-    usize capacity;
+    U8 *data;
+    Usize size;
+    Usize capacity;
 } FakeFile;
 
 [[std::c_name("SmithFilesFakeOpen")]] export typedef struct {
     bool open;
-    usize file;
-    usize offset;
+    Usize file;
+    Usize offset;
     bool can_read;
     bool can_write;
     bool append;
@@ -705,13 +705,13 @@ i32 entry_compare(const void *a, const void *b) {
     FakeOpen opens[fake_open_max];
 } Fake;
 
-void fake_fail(i32 code) {
+void fake_fail(I32 code) {
     *errno_slot() = code;
 }
 
 // The index of the entry at the path, or the size of the table when there is none.
-usize fake_find(const Fake *fake, const char *path) {
-    for (usize i = 0; i < fake_files_max; i++) {
+Usize fake_find(const Fake *fake, const char *path) {
+    for (Usize i = 0; i < fake_files_max; i++) {
         if (fake->files[i].used && c::strcmp(fake->files[i].path, path) == 0) return i;
     }
     return fake_files_max;
@@ -719,8 +719,8 @@ usize fake_find(const Fake *fake, const char *path) {
 
 // Whether a folder is at the path: made on purpose, or the start of the path of a file or folder of the fake.
 bool fake_folder_exists(const Fake *fake, const char *path) {
-    usize length = c::strlen(path);
-    for (usize i = 0; i < fake_files_max; i++) {
+    Usize length = c::strlen(path);
+    for (Usize i = 0; i < fake_files_max; i++) {
         const FakeFile *file = &fake->files[i];
         if (!file->used) continue;
         if (file->folder && c::strcmp(file->path, path) == 0) return true;
@@ -730,10 +730,10 @@ bool fake_folder_exists(const Fake *fake, const char *path) {
 }
 
 // A free slot of the table for the path (checked: the fixture's limits).
-usize fake_new(Fake *fake, const char *path) {
-    usize length = c::strlen(path);
+Usize fake_new(Fake *fake, const char *path) {
+    Usize length = c::strlen(path);
     if (length >= fake_path_max) misuse("files fake: a path longer than 255 bytes");
-    for (usize i = 0; i < fake_files_max; i++) {
+    for (Usize i = 0; i < fake_files_max; i++) {
         if (fake->files[i].used) continue;
         fake->files[i] = (FakeFile){.used = true};
         put(fake->files[i].path, path, length);
@@ -743,40 +743,40 @@ usize fake_new(Fake *fake, const char *path) {
 }
 
 // The capacity to grow to: double the old one (a chunk at first) until size fits.
-usize grown(usize capacity, usize size) {
-    usize result = capacity == 0 ? chunk : capacity * 2;
+Usize grown(Usize capacity, Usize size) {
+    Usize result = capacity == 0 ? chunk : capacity * 2;
     while (result < size)
         result *= 2;
     return result;
 }
 
 // Makes sure the file holds room for size bytes, in the allocator in force.
-void fake_reserve(FakeFile *file, usize size) {
+void fake_reserve(FakeFile *file, Usize size) {
     if (size <= file->capacity) {
         return;
     }
-    usize capacity = grown(file->capacity, size);
-    u8 bigger[:] = mem::alloc_slice(u8, capacity);
+    Usize capacity = grown(file->capacity, size);
+    U8 bigger[:] = mem::alloc_slice(U8, capacity);
     put(bigger.data, file->data, file->size);
     file->data = bigger.data; // the old block stays in the region
     file->capacity = capacity;
 }
 
 // NOLINTBEGIN(bugprone-signed-bitwise): the flags of open are ints OR-ed together
-i32 fake_open(c::SmithFileHandler *self, const char *path, i32 flags, i32 mode) {
+I32 fake_open(c::SmithFileHandler *self, const char *path, I32 flags, I32 mode) {
     (void)mode; // the creating mode means nothing in memory
     Fake *fake = (Fake *)self;
-    usize slot = fake_files_max;
-    for (usize i = 0; i < fake_open_max; i++) {
+    Usize slot = fake_files_max;
+    for (Usize i = 0; i < fake_open_max; i++) {
         if (!fake->opens[i].open) {
             slot = i;
             break;
         }
     }
     if (slot == fake_files_max) misuse("files fake: more than 16 files open at once");
-    i32 access = flags & access_mask;
+    I32 access = flags & access_mask;
     bool writing = access == flag_write_only || access == flag_read_write;
-    usize found = fake_find(fake, path);
+    Usize found = fake_find(fake, path);
     if (found != fake_files_max && fake->files[found].folder) {
         fake_fail(eisdir);
         return -1;
@@ -805,18 +805,18 @@ i32 fake_open(c::SmithFileHandler *self, const char *path, i32 flags, i32 mode) 
         .can_write = writing,
         .append = (flags & flag_append) != 0,
     };
-    return (i32)(first_descriptor + slot);
+    return (I32)(first_descriptor + slot);
 }
 
 // NOLINTEND(bugprone-signed-bitwise)
 
 // The open file of a descriptor, or null (and EBADF) when it is not one.
-FakeOpen *fake_descriptor(Fake *fake, i32 descriptor) {
-    if (descriptor < (i32)first_descriptor || (usize)descriptor >= first_descriptor + fake_open_max) {
+FakeOpen *fake_descriptor(Fake *fake, I32 descriptor) {
+    if (descriptor < (I32)first_descriptor || (Usize)descriptor >= first_descriptor + fake_open_max) {
         fake_fail(ebadf);
         return nullptr;
     }
-    FakeOpen *open_file = &fake->opens[(usize)descriptor - first_descriptor];
+    FakeOpen *open_file = &fake->opens[(Usize)descriptor - first_descriptor];
     if (!open_file->open) {
         fake_fail(ebadf);
         return nullptr;
@@ -824,7 +824,7 @@ FakeOpen *fake_descriptor(Fake *fake, i32 descriptor) {
     return open_file;
 }
 
-isize fake_read(c::SmithFileHandler *self, i32 descriptor, void *buffer, usize size) {
+Isize fake_read(c::SmithFileHandler *self, I32 descriptor, void *buffer, Usize size) {
     Fake *fake = (Fake *)self;
     FakeOpen *open_file = fake_descriptor(fake, descriptor);
     if (open_file == nullptr) return -1;
@@ -834,14 +834,14 @@ isize fake_read(c::SmithFileHandler *self, i32 descriptor, void *buffer, usize s
     }
     const FakeFile *file = &fake->files[open_file->file];
     if (open_file->offset >= file->size) return 0;
-    usize count = file->size - open_file->offset;
+    Usize count = file->size - open_file->offset;
     if (count > size) count = size;
     put(buffer, file->data + open_file->offset, count);
     open_file->offset += count;
-    return (isize)count;
+    return (Isize)count;
 }
 
-isize fake_write(c::SmithFileHandler *self, i32 descriptor, const void *buffer, usize size) {
+Isize fake_write(c::SmithFileHandler *self, I32 descriptor, const void *buffer, Usize size) {
     Fake *fake = (Fake *)self;
     FakeOpen *open_file = fake_descriptor(fake, descriptor);
     if (open_file == nullptr) return -1;
@@ -855,19 +855,19 @@ isize fake_write(c::SmithFileHandler *self, i32 descriptor, const void *buffer, 
     put(file->data + open_file->offset, buffer, size);
     open_file->offset += size;
     if (open_file->offset > file->size) file->size = open_file->offset;
-    return (isize)size;
+    return (Isize)size;
 }
 
-i32 fake_close(c::SmithFileHandler *self, i32 descriptor) {
+I32 fake_close(c::SmithFileHandler *self, I32 descriptor) {
     FakeOpen *open_file = fake_descriptor((Fake *)self, descriptor);
     if (open_file == nullptr) return -1;
     *open_file = (FakeOpen){};
     return 0;
 }
 
-i32 fake_stat(c::SmithFileHandler *self, const char *path, c::SmithFileStatus *status) {
+I32 fake_stat(c::SmithFileHandler *self, const char *path, c::SmithFileStatus *status) {
     const Fake *fake = (const Fake *)self;
-    usize found = fake_find(fake, path);
+    Usize found = fake_find(fake, path);
     if (found != fake_files_max && !fake->files[found].folder) {
         *status = (c::SmithFileStatus){.folder = false, .writable = true, .size = fake->files[found].size};
         return 0;
@@ -880,7 +880,7 @@ i32 fake_stat(c::SmithFileHandler *self, const char *path, c::SmithFileStatus *s
     return -1;
 }
 
-i32 fake_mkdir(c::SmithFileHandler *self, const char *path) {
+I32 fake_mkdir(c::SmithFileHandler *self, const char *path) {
     Fake *fake = (Fake *)self;
     if (fake_find(fake, path) != fake_files_max || fake_folder_exists(fake, path)) {
         fake_fail(eexist);
@@ -890,9 +890,9 @@ i32 fake_mkdir(c::SmithFileHandler *self, const char *path) {
     return 0;
 }
 
-i32 fake_remove(c::SmithFileHandler *self, const char *path) {
+I32 fake_remove(c::SmithFileHandler *self, const char *path) {
     Fake *fake = (Fake *)self;
-    usize found = fake_find(fake, path);
+    Usize found = fake_find(fake, path);
     if (found == fake_files_max && !fake_folder_exists(fake, path)) {
         fake_fail(enoent);
         return -1;
@@ -905,16 +905,16 @@ i32 fake_remove(c::SmithFileHandler *self, const char *path) {
     return 0;
 }
 
-i32 fake_rename(c::SmithFileHandler *self, const char *from, const char *to) {
+I32 fake_rename(c::SmithFileHandler *self, const char *from, const char *to) {
     Fake *fake = (Fake *)self;
-    usize found = fake_find(fake, from);
+    Usize found = fake_find(fake, from);
     if (found == fake_files_max) {
         fake_fail(enoent);
         return -1;
     }
-    usize length = c::strlen(to);
+    Usize length = c::strlen(to);
     if (length >= fake_path_max) misuse("files fake: a path longer than 255 bytes");
-    usize target_found = fake_find(fake, to);
+    Usize target_found = fake_find(fake, to);
     if (target_found != fake_files_max && target_found != found) fake->files[target_found] = (FakeFile){};
     fake->files[found].path[0] = 0;
     put(fake->files[found].path, to, length);
@@ -925,13 +925,13 @@ i32 fake_rename(c::SmithFileHandler *self, const char *from, const char *to) {
 // What the file shows in the listed folder: the first name of its path below the folder, a folder if the path goes on
 // (or is a folder). False when the file is not inside the folder.
 bool fake_child(const FakeFile *file, const char *folder, c::SmithFileItem *item) {
-    usize length = c::strlen(folder);
+    Usize length = c::strlen(folder);
     const char *rest = file->path;
     if (length > 0) {
         if (c::strncmp(file->path, folder, length) != 0 || file->path[length] != '/') return false;
         rest = file->path + length + 1;
     }
-    usize name = 0;
+    Usize name = 0;
     while (rest[name] != 0 && rest[name] != '/')
         name++;
     if (name == 0) return false;
@@ -944,19 +944,19 @@ bool fake_child(const FakeFile *file, const char *folder, c::SmithFileItem *item
     return true;
 }
 
-i32 fake_list(c::SmithFileHandler *self, const char *folder, usize index, c::SmithFileItem *item) {
+I32 fake_list(c::SmithFileHandler *self, const char *folder, Usize index, c::SmithFileItem *item) {
     const Fake *fake = (const Fake *)self;
     if (!fake_folder_exists(fake, folder) && c::strlen(folder) > 0) {
-        usize found = fake_find(fake, folder);
+        Usize found = fake_find(fake, folder);
         fake_fail(found != fake_files_max && !fake->files[found].folder ? enotdir : enoent);
         return -1;
     }
-    usize seen = 0;
-    for (usize i = 0; i < fake_files_max; i++) {
+    Usize seen = 0;
+    for (Usize i = 0; i < fake_files_max; i++) {
         c::SmithFileItem child = {};
         if (!fake->files[i].used || !fake_child(&fake->files[i], folder, &child)) continue;
         bool again = false; // a folder shown by an earlier file is one entry
-        for (usize j = 0; j < i && !again; j++) {
+        for (Usize j = 0; j < i && !again; j++) {
             c::SmithFileItem earlier = {};
             again = fake->files[j].used && fake_child(&fake->files[j], folder, &earlier) &&
                     c::strcmp(earlier.name, child.name) == 0;
@@ -970,9 +970,9 @@ i32 fake_list(c::SmithFileHandler *self, const char *folder, usize index, c::Smi
     return 0;
 }
 
-void *fake_map(c::SmithFileHandler *self, const char *path, usize *size) {
+void *fake_map(c::SmithFileHandler *self, const char *path, Usize *size) {
     Fake *fake = (Fake *)self;
-    usize found = fake_find(fake, path);
+    Usize found = fake_find(fake, path);
     if (found == fake_files_max || fake->files[found].folder) {
         fake_fail(found == fake_files_max && !fake_folder_exists(fake, path) ? enoent : eisdir);
         return nullptr;
@@ -982,7 +982,7 @@ void *fake_map(c::SmithFileHandler *self, const char *path, usize *size) {
     return fake->files[found].data;
 }
 
-void fake_unmap(c::SmithFileHandler *self, void *data, usize size) {
+void fake_unmap(c::SmithFileHandler *self, void *data, Usize size) {
     (void)self; // the view is the file's own bytes: nothing to give back
     (void)data;
     (void)size;
@@ -1008,10 +1008,10 @@ void fake_unmap(c::SmithFileHandler *self, void *data, usize size) {
 }
 
 // Puts a file in the fake (the bytes are copied, from the allocator in force), replacing one of the same path.
-[[std::c_name("smith_fs_fake_add")]] export void fake_add(Fake *fake, const char path[:], const u8 data[:]) {
+[[std::c_name("smith_fs_fake_add")]] export void fake_add(Fake *fake, const char path[:], const U8 data[:]) {
     Path where = path_make(path);
     if (!where.fits) misuse("files fake: a path longer than 255 bytes");
-    usize found = fake_find(fake, where.text);
+    Usize found = fake_find(fake, where.text);
     if (found == fake_files_max) found = fake_new(fake, where.text);
     FakeFile *file = &fake->files[found];
     file->folder = false;

@@ -4,7 +4,7 @@ import <stdio.h>;
 import "local.h";
 
 int main(void) {
-    f32 root = c::sqrtf(81.0f);
+    F32 root = c::sqrtf(81.0f);
     int status = 256 * 3;
     c::FILE *f = c::stdin;
     c::printf("%.1f %d %d eof=%d %d\n", (double)root, c::WIFEXITED(status), c::WEXITSTATUS(status), c::EOF, c::local_value());

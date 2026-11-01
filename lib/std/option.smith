@@ -3,12 +3,12 @@
 // in scope in every module with no import: the lowering reads this module's header (its `// smith-eshape:` line) as the
 // definition, and a module cannot declare an `option` of its own.
 //
-// `option(T)` is an enum with a payload: `some` carries a `T`, `none` carries nothing. It is a type function, so it
-// stands where a type does, and `option(usize)` written anywhere is one type (the struct
+// `Option(T)` is an enum with a payload: `some` carries a `T`, `none` carries nothing. It is a type function, so it
+// stands where a type does, and `Option(Usize)` written anywhere is one type (the struct
 // `smith_enum_option_usize`, which C callers see too).
 //
-//   option(usize) find(const char *text, char wanted) {
-//       for (usize i = 0; text[i] != 0; i++) {
+//   Option(Usize) find(const char *text, char wanted) {
+//       for (Usize i = 0; text[i] != 0; i++) {
 //           if (text[i] == wanted) return i;
 //       }
 //       return .none;
@@ -16,7 +16,7 @@
 module std::option;
 
 // The type of a value that may be absent: `.none`, or a value, which converts to `{.some = value}`.
-export type option(type T) {
+export Type Option(Type T) {
     return enum {
         T some;
         none;

@@ -4,7 +4,7 @@ typedef I32 (*Call)(void);
 
 // `factor` is a run-time parameter of the generic: the lambda would capture it.
 Call scaled(constexpr Type T, I32 factor) {
-    return []() -> i32 { return factor * (I32)sizeof(T); };
+    return []() -> I32 { return factor * (I32)sizeof(T); };
 }
 
 I32 main() {

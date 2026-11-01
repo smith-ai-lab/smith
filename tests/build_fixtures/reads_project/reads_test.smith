@@ -26,7 +26,7 @@ export void test_copies_a_folder() {
     files::EntriesResult list = files::list("data/b");
     test::check(list == .ok);
     if (list == .ok) {
-        for (usize i = 0; i < countof(list.ok); i++) {
+        for (Usize i = 0; i < countof(list.ok); i++) {
             const char *path = format::push("data/b/", list.ok[i].name).data;
             files::BytesResult file = files::read_file(path[0:c::strlen(path)]);
             test::check(file == .ok);

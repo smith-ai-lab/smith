@@ -1,1 +1,1 @@
-src/num.smith:3:8: a type parameter is compile-time: write `constexpr type T`
+src/num.smith:3:8: a type parameter is compile-time: write `constexpr Type T`

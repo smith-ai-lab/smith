@@ -513,10 +513,10 @@ static bool smith_lang_nested_write(SmithLang *lang, const SmithHost *host, Smit
     return true;
 }
 
-// ---- A lambda passed to a `lambda(F)` parameter (issue #957)
+// ---- A lambda passed to a `Lambda(F)` parameter (issue #957)
 // -----------------------------------------------------------------------------------------------------------
 //
-//   export void sort(auto xs[:], lambda(bool (typeof(xs[0]) *, typeof(xs[0]) *)) less);
+//   export void sort(auto xs[:], Lambda(bool (typeof(xs[0]) *, typeof(xs[0]) *)) less);
 //   sort(xs, [](arithmetic *a, arithmetic *b) -> bool { return *a < *b; });
 //
 // The slot is a `constexpr auto` one: the lambda's tokens are the argument, so two lambdas that differ are two
@@ -649,7 +649,7 @@ static bool smith_lang_argl_f_split(uint32_t from, uint32_t to, SmithLangArglF *
     return out->count != SIZE_MAX;
 }
 
-// The tokens [*from, *to) of F in `lambda(F) name`, the parameter of slot `slot`: false when it is no such parameter.
+// The tokens [*from, *to) of F in `Lambda(F) name`, the parameter of slot `slot`: false when it is no such parameter.
 static bool smith_lang_argl_slot(const SmithLangGeneric *generic, size_t slot, uint32_t *from, uint32_t *to) {
     if (slot >= generic->type_count || generic->type_kind[slot] != SmithLangSlot_Function) return false;
     SmithLangParam params[smith_lang_call_params_max];
@@ -700,7 +700,7 @@ static bool smith_lang_argl_check(SmithLang *lang, const SmithHost *host, const 
         return false;
     }
     if (!smith_lang_argl_f_split(fa, fb, &f)) {
-        smith_lang_error(lang, host, place, "`lambda(%s)` of `%s` is not a function type: write `lambda(R (P0, P1))`",
+        smith_lang_error(lang, host, place, "`Lambda(%s)` of `%s` is not a function type: write `Lambda(R (P0, P1))`",
                          shown, smith_lang_str(generic->member));
         return false;
     }
@@ -709,7 +709,7 @@ static bool smith_lang_argl_check(SmithLang *lang, const SmithHost *host, const 
     size_t count = smith_lang_argl_split_list(&smith_lang_gt, code.params_from, code.params_to, starts, ends);
     if (count != f.count) {
         smith_lang_error(
-            lang, host, place, "the lambda passed to `%s` takes %zu parameter%s, but its type `lambda(%s)` has %zu",
+            lang, host, place, "the lambda passed to `%s` takes %zu parameter%s, but its type `Lambda(%s)` has %zu",
             smith_lang_str(generic->member), count == SIZE_MAX ? 0 : count, count == 1 ? "" : "s", shown, f.count);
         return false;
     }
@@ -717,7 +717,7 @@ static bool smith_lang_argl_check(SmithLang *lang, const SmithHost *host, const 
         if (ends[k] - starts[k] >= 2) continue;
         smith_lang_error(lang, host, place,
                          "a parameter of the lambda passed to `%s` needs a type: write `auto %.*s` or a concept "
-                         "(`arithmetic %.*s`), whose type comes from `lambda(%s)`",
+                         "(`Num %.*s`), whose type comes from `Lambda(%s)`",
                          smith_lang_str(generic->member), (int)smith_lang_gt.tokens[starts[k]].length,
                          smith_lang_gt_str(&smith_lang_gt.tokens[starts[k]]),
                          (int)smith_lang_gt.tokens[starts[k]].length,
@@ -803,7 +803,7 @@ static void smith_lang_argl_write_one(const SmithLangNestedWriter *w, const Smit
     char shown[256];
     smith_lang_infer_written((SmithLangSpan){fa, fb}, shown, sizeof shown);
     char message[512];
-    snprintf(message, sizeof message, "\"smith: the argument for `%s` of `%s` does not have the type of `lambda(%s)`\"",
+    snprintf(message, sizeof message, "\"smith: the argument for `%s` of `%s` does not have the type of `Lambda(%s)`\"",
              smith_lang_gt_str(&smith_lang_gt.tokens[generic->first + generic->type_token[slot]]),
              smith_lang_str(generic->member), shown);
     for (char *c = message + 1; *c != 0 && c[1] != 0; c++) { // the text sits in a string
@@ -830,7 +830,7 @@ static void smith_lang_argl_write_one(const SmithLangNestedWriter *w, const Smit
     smith_lang_nested_say(w, SmithTokenKind_Punctuator, ";");
 }
 
-// The functions of the instance's lambdas, and the check of every `lambda(F)` argument, before the instance.
+// The functions of the instance's lambdas, and the check of every `Lambda(F)` argument, before the instance.
 static void smith_lang_argl_write(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                   const SmithLangInstance *instance, uint32_t location, uint32_t id) {
     const SmithLangGeneric *generic = &smith_lang_generics[instance->generic];

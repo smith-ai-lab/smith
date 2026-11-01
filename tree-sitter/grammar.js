@@ -13,13 +13,13 @@
 // `smith build` puts the pinned tree-sitter-c here before it generates the parser.
 const C = require('./.vendor/tree-sitter-c/grammar');
 
-const sized = ['u8', 'u16', 'u32', 'u64', 'i8', 'i16', 'i32', 'i64', 'usize', 'isize', 'f16', 'f32', 'f64'];
+const sized = ['U8', 'U16', 'U32', 'U64', 'I8', 'I16', 'I32', 'I64', 'Usize', 'Isize', 'F16', 'F32', 'F64'];
 // Words .smith gives a meaning only where its rules say so; an ordinary name elsewhere (and where the grammar could
 // take either, it takes the .smith meaning: prec.dynamic below).
 function commaSep(rule) { return optional(commaSep1(rule)); }
 function commaSep1(rule) { return seq(rule, repeat(seq(',', rule))); }
 
-const soft = ['module', 'import', 'export', 'type'];
+const soft = ['module', 'import', 'export', 'Type'];
 
 module.exports = grammar(C, {
   name: 'smith',
@@ -138,9 +138,9 @@ module.exports = grammar(C, {
       field('function', $.expression), field('arguments', $.argument_list),
       choice($.compound_statement, $.lambda_expression)))),
 
-    // lambda(bool (T *, T *)): the type of a parameter that takes a lambda, with the lifetime attributes before it
+    // Lambda(bool (T *, T *)): the type of a parameter that takes a lambda, with the lifetime attributes before it
     lambda_type: $ => prec.dynamic(2, seq(
-      alias(token(prec(1, /lambda/)), 'lambda'), '(', $.type_descriptor, ')')),
+      alias(token(prec(1, /Lambda/)), 'Lambda'), '(', $.type_descriptor, ')')),
 
     // module game::replay;
     module_declaration: $ => prec.dynamic(1, seq('module', $.module_path, ';')),
@@ -212,7 +212,7 @@ module.exports = grammar(C, {
       original,
       $.atomic_type_specifier,
       $.bit_int_type,
-      alias(choice('module', 'import', 'type'), $.type_identifier),
+      alias(choice('module', 'import', 'Type'), $.type_identifier),
     ),
 
     _type_identifier: ($, original) => choice(original, $.scoped_type_identifier),
@@ -256,7 +256,7 @@ module.exports = grammar(C, {
       prec.dynamic(2, $.element_parameter),
     ),
     element_parameter: $ => seq(optional('const'), 'auto', field('declarator', choice($.pointer_declarator, $.array_declarator))),
-    type_parameter: $ => seq('constexpr', 'type', field('name', $.identifier)),
+    type_parameter: $ => seq('constexpr', 'Type', field('name', $.identifier)),
     pack_parameter: $ => seq('auto', '...', field('name', $.identifier)),
 
     // if constexpr (T == f32) { ... }

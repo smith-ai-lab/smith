@@ -2,7 +2,7 @@ module main;
 
 import <stdio.h>;
 
-// A type function that returns an enum (issue #198): `maybe(usize)` is one struct for every use, defined at the first
+// A type function that returns an enum (issue #198): `maybe(Usize)` is one struct for every use, defined at the first
 // declaration that names it.
 
 typedef struct {

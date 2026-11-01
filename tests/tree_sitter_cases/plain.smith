@@ -5,8 +5,8 @@ typedef int import;
 struct S { int module; int export; int type; };
 
 static int throw_it(int new, int class) {
-    int u8 = new + class;
-    return u8 + 1;
+    int U8 = new + class;
+    return U8 + 1;
 }
 
 int main() {

@@ -1,1 +1,1 @@
-src/main.smith:5:5: smith-main: main in a module takes no arguments or str args[:]; write i32 main(str args[:]) (the characters are not copied)
+src/main.smith:5:5: smith-main: main in a module takes no arguments or Str args[:]; write I32 main(Str args[:]) (the characters are not copied)

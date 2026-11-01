@@ -17,8 +17,8 @@ import <smith_core.h>;
 import <string.h>;
 
 // The bytes of a buffer, for the calls of files that take a slice.
-static typeof(const u8[:]) bytes_of(const void *data, usize size) {
-    const u8 *bytes = (const u8 *)data;
+static typeof(const U8[:]) bytes_of(const void *data, Usize size) {
+    const U8 *bytes = (const U8 *)data;
     return bytes[0:size];
 }
 
@@ -30,7 +30,7 @@ export typedef struct {
 } Project;
 
 export typedef struct {
-    i32 status; // the exit status; 128 and the signal when killed
+    I32 status; // the exit status; 128 and the signal when killed
     const char *out;
     const char *err;
 } Run;
@@ -43,13 +43,13 @@ export typedef struct {
 
 // Gives back a text that scratch returned (a Run's out and err, `read`, `capture`).
 export void release(const char *text) {
-    mem::free((void *)(usize)text);
+    mem::free((void *)(Usize)text);
 }
 
 // The bytes as a terminated text of its own.
 static const char *bytes_text(process::Bytes bytes) {
     char *copy = mem::alloc_slice(char, countof(bytes) + 1).data;
-    for (usize i = 0; i < countof(bytes); i++) {
+    for (Usize i = 0; i < countof(bytes); i++) {
         copy[i] = (char)bytes[i];
     }
     copy[countof(bytes)] = '\0';
@@ -58,7 +58,7 @@ static const char *bytes_text(process::Bytes bytes) {
 
 // A text of its own: the pieces one after another.
 static const char *join_free(const char *a, const char *b, const char *c) {
-    usize length = format::length(a, b, c);
+    Usize length = format::length(a, b, c);
     char *text = mem::alloc_slice(char, length + 1).data;
     (void)format::to(text, length + 1, a, b, c);
     return text;
@@ -170,8 +170,8 @@ export void copy_tree(const Project *p, const char *source, const char *name) {
 }
 
 static bool ends_with(const char *text, const char *suffix) {
-    usize length = c::strlen(text);
-    usize tail = c::strlen(suffix);
+    Usize length = c::strlen(text);
+    Usize tail = c::strlen(suffix);
     return length >= tail && c::strcmp(text + length - tail, suffix) == 0;
 }
 
@@ -207,7 +207,7 @@ export const char *untested_names(const char *folder, const char *test_source, c
     }
     const char *text = bytes_text(source);
     const char *missing = join_free("", "", "");
-    for (usize i = 0; i < countof(entries); i++) {
+    for (Usize i = 0; i < countof(entries); i++) {
         const char *name = entries[i].name.data;
         bool wanted = (suffix_a == nullptr && suffix_b == nullptr) ||
                       (suffix_a != nullptr && ends_with(name, suffix_a)) ||
@@ -241,7 +241,7 @@ export const char *untested_names(const char *folder, const char *test_source, c
 export Project make(const char *name, const char *fixture) {
     const char *made =
         script_free("d=${TMPDIR:-/tmp}; [ -d \"$d\" ] || d=/tmp; mktemp -d \"$d/smith-scratch-XXXXXX\"", "", "");
-    usize length = c::strlen(made);
+    Usize length = c::strlen(made);
     while (length > 0 && made[length - 1] == '\n') {
         length--;
     }
@@ -296,8 +296,8 @@ export void write(const Project *p, const char *name, const char *text) {
     release(path);
 }
 
-constexpr usize lowered_capacity = 1U << 23;
-constexpr usize lowered_errors_capacity = 1U << 16;
+constexpr Usize lowered_capacity = 1U << 23;
+constexpr Usize lowered_errors_capacity = 1U << 16;
 static char lowered_text[lowered_capacity];
 static char lowered_errors[lowered_errors_capacity];
 
@@ -306,7 +306,7 @@ static void write_in_new_folder(const Project *p, const char *name, const char *
     // through std::files: a lowered text is larger than one argument of a command may be
     const char *path = path_in(p, name);
     const char *slash = c::strrchr(path, '/');
-    files::DoneResult made = files::make_folder(path[0:(usize)(slash - path)]);
+    files::DoneResult made = files::make_folder(path[0:(Usize)(slash - path)]);
     test::check_condition(made == .ok);
     files::CountResult written =
         files::write_file(path[0:c::strlen(path)], bytes_of(text, c::strlen(text)), files::Replace);
@@ -398,8 +398,8 @@ export bool exists(const Project *p, const char *name) {
 }
 
 // The number of lines of a file, 0 when it is absent.
-export usize lines(const Project *p, const char *name) {
-    usize count = 0;
+export Usize lines(const Project *p, const char *name) {
+    Usize count = 0;
     const char *text = read(p, name); // freed here
     for (const char *c = text; *c != '\0'; c++)
         count += *c == '\n' ? 1U : 0U;
@@ -408,7 +408,7 @@ export usize lines(const Project *p, const char *name) {
 }
 
 // Through the clock handler of the thread: a fake clock advances and returns.
-export void sleep(const Project *p, u64 milliseconds) {
+export void sleep(const Project *p, U64 milliseconds) {
     (void)p;
     clock::sleep(milliseconds * clock::millisecond);
 }
@@ -418,15 +418,15 @@ export bool contains(const char *text, const char *needle) {
 }
 
 // Both texts as a shell's $(...) gives them: without trailing newlines.
-static usize trimmed(const char *text) {
-    usize length = c::strlen(text);
+static Usize trimmed(const char *text) {
+    Usize length = c::strlen(text);
     while (length > 0 && text[length - 1] == '\n')
         length--;
     return length;
 }
 
 export bool same(const char *a, const char *b) {
-    usize length = trimmed(a);
+    Usize length = trimmed(a);
     return length == trimmed(b) && c::strncmp(a, b, length) == 0;
 }
 
@@ -452,7 +452,7 @@ export void expect_text(const char *name, const char *expected, const char *actu
     test::check_condition(same(expected, actual));
 }
 
-export void expect_status(const char *name, i32 expected, const Run *run) {
+export void expect_status(const char *name, I32 expected, const Run *run) {
     if (run->status != expected) {
         test::note("%s: status %d\n%s\n%s", name, run->status, run->out, run->err);
     }
@@ -466,7 +466,7 @@ export void expect_failure(const char *name, const Run *run) {
     test::check_not_equal(run->status, 0);
 }
 
-export void expect_count(const char *name, usize expected, usize actual) {
+export void expect_count(const char *name, Usize expected, Usize actual) {
     if (expected != actual) {
         test::note("%s: expected %zu, got %zu", name, expected, actual);
     }
@@ -477,7 +477,7 @@ export void expect_count(const char *name, usize expected, usize actual) {
 export const char *capture(const Project *p, const char *command) {
     // a text of its own for the caller to free; the run's err is freed here
     Run run = sh(p, command);
-    usize length = trimmed(run.out);
+    Usize length = trimmed(run.out);
     char *copy = mem::alloc_slice(char, length + 1).data;
     mem::copy(copy[0:length], run.out[0:length]);
     copy[length] = '\0';

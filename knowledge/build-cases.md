@@ -274,7 +274,7 @@ pub fn build(b: *std.Build) void {
     defer dir.close(io);
     var it = dir.iterate();
     while (it.next(io) catch @panic("iterate")) |entry| {
-        if (!std.mem.endsWith(u8, entry.name, ".in")) continue;
+        if (!std.mem.endsWith(U8, entry.name, ".in")) continue;
         const stem = entry.name[0 .. entry.name.len - ".in".len];
         const cp = b.addSystemCommand(&.{"cp"});
         cp.addFileArg(b.path(b.dupe(entry.name)));
@@ -402,7 +402,7 @@ pub fn build(b: *std.Build) void {
     b.dependOnFileContents(b.path("list")); // the configure result is cached; rerun it when list changes
     const list = b.root.root_dir.handle.readFileAlloc(io, "list", b.allocator, .limited(1 << 20)) catch @panic("list");
     const cat = b.addSystemCommand(&.{"cat"});
-    var lines = std.mem.tokenizeScalar(u8, list, '\n');
+    var lines = std.mem.tokenizeScalar(U8, list, '\n');
     while (lines.next()) |name| cat.addFileArg(b.path(name));
     const output = cat.captureStdOut(.{});
     b.getInstallStep().dependOn(&b.addInstallFile(output, "output").step);
@@ -626,7 +626,7 @@ pub fn build(b: *std.Build) void {
     b.dependOnFileContents(b.path("list"));
 
     const cat = b.addSystemCommand(&.{"cat"});
-    var names = std.mem.tokenizeScalar(u8, text, '\n');
+    var names = std.mem.tokenizeScalar(U8, text, '\n');
     while (names.next()) |n| {
         const conv = b.addSystemCommand(&.{ "tr", "a-z", "A-Z" });
         conv.setStdIn(.{ .lazy_path = b.path(b.fmt("m/{s}.src", .{n})) });
@@ -1275,7 +1275,7 @@ build baz.out: run baz.in
 const std = @import("std");
 
 // Edit this list between builds: the first build used { "foo", "bar" }, the second { "foo", "baz" }.
-const names = [_][]const u8{ "foo", "baz" };
+const names = [_][]const U8{ "foo", "baz" };
 
 pub fn build(b: *std.Build) void {
     const outputs = b.addWriteFiles(); // a directory in the cache holding exactly the current outputs
@@ -1514,9 +1514,9 @@ const std = @import("std");
 
 fn addApp(
     b: *std.Build,
-    folder: []const u8,
+    folder: []const U8,
     sanitize_c: std.zig.SanitizeC,
-    flags: []const []const u8,
+    flags: []const []const U8,
 ) *std.Build.Step.Compile {
     const module = b.createModule(.{
         .target = b.graph.host,
@@ -1763,8 +1763,8 @@ This block was updated to the v1 decisions (the task edge and the default) and n
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    const test_name = b.option([]const u8, "TEST", "run the test with this name");
-    const seed = b.option([]const u8, "SEED", "run each property test on this seed alone");
+    const test_name = b.option([]const U8, "TEST", "run the test with this name");
+    const seed = b.option([]const U8, "SEED", "run each property test on this seed alone");
 
     const tests = b.addExecutable(.{
         .name = "tests",
@@ -1888,7 +1888,7 @@ pub fn build(b: *std.Build) void {
     const check = b.addSystemCommand(&.{ "sh", "check-libc.sh" });
     check.addFileInput(b.path("check-libc.sh"));
     check.expectExitCode(0);
-    for ([_][]const u8{ "base", "game" }) |name| {
+    for ([_][]const U8{ "base", "game" }) |name| {
         const object = b.addObject(.{
             .name = name,
             .root_module = b.createModule(.{ .target = b.graph.host, .optimize = .Debug, .link_libc = true }),

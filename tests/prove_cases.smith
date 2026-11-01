@@ -18,14 +18,14 @@ export scratch::Run prove(const scratch::Project *p, const char *args) {
 }
 
 // The word number `index` of a text separated by spaces copied into `out`, or false when there are fewer.
-static bool word(const char *text, usize index, char out[:]) {
-    usize at = 0;
-    for (usize n = 0; n <= index; n++) {
+static bool word(const char *text, Usize index, char out[:]) {
+    Usize at = 0;
+    for (Usize n = 0; n <= index; n++) {
         while (text[at] == ' ') {
             at++;
         }
         if (text[at] == '\0') return false;
-        usize start = at;
+        Usize start = at;
         while (text[at] != ' ' && text[at] != '\0') {
             at++;
         }
@@ -51,7 +51,7 @@ export void each_proved(const scratch::Project *p, const char *what, const char 
                         const char *names) {
     bool failed = false;
     char name[256];
-    for (usize i = 0; word(names, i, name); i++) {
+    for (Usize i = 0; word(names, i, name); i++) {
         scratch::Run run = function(p, file, prefix, name);
         if (run.status != 0) {
             test::note("%s: %s is not proved (status %d)\n%s", what, name, run.status, run.out);
@@ -66,7 +66,7 @@ export void each_refuted(const scratch::Project *p, const char *what, const char
                          const char *needle, const char *names) {
     bool failed = false;
     char name[256];
-    for (usize i = 0; word(names, i, name); i++) {
+    for (Usize i = 0; word(names, i, name); i++) {
         scratch::Run run = function(p, file, prefix, name);
         if (run.status != 1 || !scratch::contains(run.out, needle)) {
             test::note("%s: %s is not refuted with `%s` (status %d)\n%s", what, name, needle, run.status, run.out);
@@ -82,7 +82,7 @@ export void each_value_counterexample(const scratch::Project *p, const char *wha
                                       const char *names) {
     bool failed = false;
     char name[256];
-    for (usize i = 0; word(names, i, name); i++) {
+    for (Usize i = 0; word(names, i, name); i++) {
         scratch::Run run = function(p, file, "", name);
         if (scratch::contains(run.out, "poison") || scratch::contains(run.out, "undefined behaviour")) {
             test::note("%s: %s names poison or undefined behaviour\n%s", what, name, run.out);

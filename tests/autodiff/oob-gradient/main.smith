@@ -8,16 +8,16 @@ import std::format;
 import <string.h>;
 
 typedef struct {
-    f64 v[4];
+    F64 v[4];
 } Data;
 
-f64 pick(Data *d, usize n) {
+F64 pick(Data *d, Usize n) {
     return d->v[n] * d->v[n];
 }
 
-i32 main(str args[:]) {
+I32 main(Str args[:]) {
     Data d = {.v = {1.0, 2.0, 3.0, 4.0}};
-    usize n = c::strcmp(args[1].data, "ok") == 0 ? 3 : 4;
+    Usize n = c::strcmp(args[1].data, "ok") == 0 ? 3 : 4;
     Data g = autodiff::gradient(pick, &d, n);
     (void)console::print("gradient ", format::fixed(g.v[0], 3), " ", format::fixed(g.v[3], 3), "\n");
     return 0;

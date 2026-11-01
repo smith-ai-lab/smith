@@ -76,13 +76,13 @@ extern double reflect_sum__Mixed(main_Mixed value) __asm__("_reflect::sum(main_M
     }
     {
         {
-            typeof(u8) part = value.bits;
+            typeof(U8) part = value.bits;
             total += (double) part;
         }
     }
     {
         {
-            typeof(u8) part = value.more;
+            typeof(U8) part = value.more;
             total += (double) part;
         }
     }

@@ -93,7 +93,7 @@ export void test_tuple_types_and_slice_declarators_stay_as_written() {
 static const char *next_line(arena::Arena *arena, const char **at) {
     if (**at == '\0') return nullptr;
     const char *end = c::strchr(*at, '\n');
-    usize length = end != nullptr ? (usize)(end - *at) : c::strlen(*at);
+    Usize length = end != nullptr ? (Usize)(end - *at) : c::strlen(*at);
     char *copy = arena::push_slice(arena, char, length + 1).data;
     const char *line = *at;
     mem::copy(copy[0:length], line[0:length]);
@@ -106,7 +106,7 @@ static const char *next_line(arena::Arena *arena, const char **at) {
 // of files compared, the first that differs noted. The files (and the .clang-format files among them, so each gets
 // its folder's style) are copied into two folders, c/ as they are and s/ named .smith, and one `smith fmt -i` per
 // folder formats them all, instead of two processes per file.
-static usize same_as_c(const char *root) {
+static Usize same_as_c(const char *root) {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 27);
@@ -130,10 +130,10 @@ static usize same_as_c(const char *root) {
                 .data);
     scratch::expect_text("the files format without a message", "", copied.out);
     const char *listing = scratch::read(&p, "list");
-    usize same = 0;
-    usize different = 0;
+    Usize same = 0;
+    Usize different = 0;
     for (const char *file = next_line(&memory, &listing); file != nullptr; file = next_line(&memory, &listing)) {
-        usize length = c::strlen(file);
+        Usize length = c::strlen(file);
         if (length < 2 || c::strcmp(file + length - 2, ".c") != 0) continue; // a .clang-format
         const char *as_smith = format::push("s/", file[0:length - 2], ".smith").data;
         const char *text_c = scratch::read(&p, format::push("c/", file).data);
@@ -144,14 +144,14 @@ static usize same_as_c(const char *root) {
             test::note("differs as .smith: %s/%s", root, file);
         }
     }
-    test::check_equal(different, (usize)0);
+    test::check_equal(different, (Usize)0);
     return same;
 }
 
 export void test_the_c_files_of_smith_format_the_same_as_c_and_as_smith() {
-    usize same = same_as_c(variable("SMITH_REPO"));
+    Usize same = same_as_c(variable("SMITH_REPO"));
     // smith's own files among those checked: in an agent's worktree, under .claude/worktrees, they are not skipped
-    test::check_greater(same, (usize)20);
+    test::check_greater(same, (Usize)20);
 }
 
 export void test_the_c_files_of_game_format_the_same_as_c_and_as_smith() {
@@ -176,8 +176,8 @@ export void test_a_c_name_that_is_a_cpp_keyword_stays_c() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::expect_text("a C name that is a C++ keyword stays C",
-                         "u32 f(u32 throw, u32 reach) {\n    return throw * reach;\n}",
-                         formatted(&p, "x.smith", "u32 f(u32 throw, u32 reach) {\nreturn throw*reach;\n}\n"));
+                         "U32 f(U32 throw, U32 reach) {\n    return throw * reach;\n}",
+                         formatted(&p, "x.smith", "U32 f(U32 throw, U32 reach) {\nreturn throw*reach;\n}\n"));
 }
 
 export void test_a_statement_that_starts_with_a_type_named_import_is_indented() {
@@ -188,8 +188,8 @@ export void test_a_statement_that_starts_with_a_type_named_import_is_indented() 
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::expect_text("a statement that starts with a type named import is indented",
-                         "u32 f(void) {\n    import value = c.x + c.y;\n    return 1;\n}",
-                         formatted(&p, "x.smith", "u32 f(void) {\nimport value = c.x + c.y;\nreturn 1;\n}\n"));
+                         "U32 f(void) {\n    import value = c.x + c.y;\n    return 1;\n}",
+                         formatted(&p, "x.smith", "U32 f(void) {\nimport value = c.x + c.y;\nreturn 1;\n}\n"));
 }
 
 export void test_import_of_a_header_is_kept_whole() {
@@ -235,8 +235,8 @@ export void test_export_lines_are_laid_out() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::expect_text(
-        "export lines", "export u32 counter = 7;\nexport u64 checksum(const u8 *data, usize size);",
-        formatted(&p, "x.smith", "export   u32 counter=7;\nexport u64 checksum(const u8*data,usize size);\n"));
+        "export lines", "export U32 counter = 7;\nexport U64 checksum(const U8 *data, Usize size);",
+        formatted(&p, "x.smith", "export   U32 counter=7;\nexport U64 checksum(const U8*data,Usize size);\n"));
 }
 
 export void test_a_name_import_or_module_in_a_function_is_a_name() {
@@ -259,8 +259,8 @@ export void test_c_files_still_read_import_as_a_name() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::expect_text(".c files still read import as a name",
-                         "u32 f(void) {\n    import value = 1;\n    return value;\n}",
-                         formatted(&p, "x.c", "u32 f(void) {\nimport value = 1;\nreturn value;\n}\n"));
+                         "U32 f(void) {\n    import value = 1;\n    return value;\n}",
+                         formatted(&p, "x.c", "U32 f(void) {\nimport value = 1;\nreturn value;\n}\n"));
 }
 
 // A file's own header sorts first (patches/smith-format-source-extension.patch): `#include "foo.h"` in foo.smith, as in
@@ -305,17 +305,17 @@ export void test_lambda_forms_are_laid_out_like_a_function_body() {
     defer mem::set_allocator(outside);
     scratch::expect_text(
         "the full form, the short forms, an argument and a trailing block",
-        "void f(i32 n) {\n    auto a = [x, y](i32 a) -> i32 { return a * x; };\n"
-        "    auto b = [](i32 a) { return a * 2; };\n    auto c = [] { g(); };\n"
+        "void f(I32 n) {\n    auto a = [x, y](I32 a) -> I32 { return a * x; };\n"
+        "    auto b = [](I32 a) { return a * 2; };\n    auto c = [] { g(); };\n"
         "    auto d = [x] { g(x); };\n    run([x] { g(); });\n    each(xs) {\n        g(it);\n    }\n}",
         formatted(&p, "x.smith",
-                  "void f(i32 n) {\nauto a = [x,y](i32 a)->i32{return a*x;};\nauto b=[](i32 a){return a*2;};\n"
+                  "void f(I32 n) {\nauto a = [x,y](I32 a)->I32{return a*x;};\nauto b=[](I32 a){return a*2;};\n"
                   "auto c = []{ g(); };\nauto d=[x]{g(x);};\nrun([x]{ g(); });\neach(xs) {\n g(it);\n}\n}\n"));
     scratch::expect_text(
-        "lambda(F) as a parameter type",
-        "void s(lambda(bool(typeof(xs[0]) *, typeof(xs[0]) *)) less, [[std::until(g)]] lambda(void(i32)) h);",
+        "Lambda(F) as a parameter type",
+        "void s(Lambda(bool(typeof(xs[0]) *, typeof(xs[0]) *)) less, [[std::until(g)]] Lambda(void(I32)) h);",
         formatted(&p, "x.smith",
-                  "void s(lambda(bool (typeof(xs[0]) *, typeof(xs[0]) *)) less, [[std::until(g)]] lambda(void (i32)) "
+                  "void s(Lambda(bool (typeof(xs[0]) *, typeof(xs[0]) *)) less, [[std::until(g)]] Lambda(void (I32)) "
                   "h);\n"));
 }
 
@@ -346,14 +346,14 @@ export void test_smith_fmt_with_no_arguments_formats_the_projects_smith_files() 
     scratch::Run made = scratch::sh(&p, "mkdir -p src/a && git init -q");
     scratch::expect_status("a project", 0, &made);
     scratch::write(&p, "src/a/b.smith",
-                   "module   a::b ;\nimport <sys/wait.h> ;\nexport u32 f(x::T*p){\nimport value=1;\nreturn c::EOF;}\n");
+                   "module   a::b ;\nimport <sys/wait.h> ;\nexport U32 f(x::T*p){\nimport value=1;\nreturn c::EOF;}\n");
     scratch::Run checked = scratch::sh(&p, "smith fmt --dry-run --Werror src/a/b.smith");
     scratch::expect_failure("the project's .smith file is reported unformatted by clang-format", &checked);
     scratch::Run run = scratch::sh(&p, "smith fmt");
     scratch::expect_status("smith fmt with no arguments", 0, &run);
     scratch::expect_text(
         "smith fmt with no arguments formats the project's .smith files",
-        "module a::b;\nimport <sys/wait.h>;\nexport u32 f(x::T *p) {\n    import value = 1;\n    return c::EOF;\n}",
+        "module a::b;\nimport <sys/wait.h>;\nexport U32 f(x::T *p) {\n    import value = 1;\n    return c::EOF;\n}",
         scratch::read(&p, "src/a/b.smith"));
 }
 

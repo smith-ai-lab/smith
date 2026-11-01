@@ -1,6 +1,6 @@
 module first;
 
-// `maybe(usize)` written in a module and exported: its struct is in the module's header, guarded, so that the other
+// `maybe(Usize)` written in a module and exported: its struct is in the module's header, guarded, so that the other
 // module that writes it, and the importer that writes it too, share one type.
 
 Type maybe(Type T) {

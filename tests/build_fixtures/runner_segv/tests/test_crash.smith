@@ -1,7 +1,7 @@
 import std::test;
 
 void test_crash(void) {
-    volatile i32 *pointer = nullptr;
+    volatile I32 *pointer = nullptr;
     test::note("about to crash");
     *pointer = 1;
 }

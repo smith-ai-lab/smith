@@ -9,7 +9,7 @@ import std::mem;
 import std::test;
 import scratch;
 
-constexpr usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
+constexpr Usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
 
 // Copies the variant (`<name>.txt` of the fixture) over build.c and builds.
 static scratch::Run build_variant(const scratch::Project *p, const char *name, const char *arguments) {

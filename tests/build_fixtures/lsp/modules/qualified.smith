@@ -1,6 +1,6 @@
 module qualified;
 import foo;
 
-i32 g() {
+I32 g() {
     return foo::;
 }

@@ -6,7 +6,7 @@ typedef I32 (*Size)(void);
 
 // A lambda in a generic uses the generic's `T`: each instance gets a function of its own.
 Size size_of_type(constexpr Type T) {
-    return []() -> i32 { return (I32)sizeof(T); };
+    return []() -> I32 { return (I32)sizeof(T); };
 }
 
 I32 main() {

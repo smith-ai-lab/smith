@@ -1,2 +1,2 @@
 src/main.smith:10:17: a pointer is no slice: say how many elements it points at, `p[0:n]`
-src/main.smith:10:17: passing 'i32 *' (aka 'int *') to parameter of incompatible type 'struct smith_array_i32_n'
+src/main.smith:10:17: passing 'I32 *' (aka 'int *') to parameter of incompatible type 'struct smith_array_i32_n'

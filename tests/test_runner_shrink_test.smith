@@ -12,7 +12,7 @@ import runner;
 import scratch;
 
 // Each test's memory: what the helpers build and what the commands print, given back after the test.
-constexpr usize memory_size = 1U << 22;
+constexpr Usize memory_size = 1U << 22;
 
 // A runner of its own build, for the cases that read symbolized paths, which a shared runner cannot give until #782.
 static scratch::Project shrink_project(const char *files, const char *arguments) {
@@ -31,14 +31,14 @@ static const char *number_in(const scratch::Project *p, const char *iso, const c
     return scratch::capture(p, command);
 }
 
-static void case_a_uniform_failure_shrinks_to_the_boundary(usize mode) {
+static void case_a_uniform_failure_shrinks_to_the_boundary(Usize mode) {
     scratch::Project p = shrink_project("runner_shrink", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    usize line = runner::line_of(&p, "tests/test_shrink.smith", "test::check_less(x, 500);");
+    Usize line = runner::line_of(&p, "tests/test_shrink.smith", "test::check_less(x, 500);");
     const char *iso = runner::flag(mode);
     // One run: its seed and its shrunk runs are read from the text it saved, which is also what is reported.
     (void)scratch::sh(
@@ -49,7 +49,7 @@ static void case_a_uniform_failure_shrinks_to_the_boundary(usize mode) {
     if (runner::can_symbolize(&p)) {
         const char *wanted = format::push("FAIL shrink_int with seed ", seed, ", shrunk in ", runs,
                                           " runs\n check failed at ", "tests/test_shrink.smith:", line, "\n ", line,
-                                          " | test::check_less(x, 500);\n x = 500, 500 (i64)\n",
+                                          " | test::check_less(x, 500);\n x = 500, 500 (I64)\n",
                                           " called from\n tests/test_shrink.smith:", line,
                                           " test_shrink_int\n rerun: smith test --test shrink_int ", "--seed ", seed,
                                           "\n\n0 passed, 1 failed")
@@ -59,18 +59,18 @@ static void case_a_uniform_failure_shrinks_to_the_boundary(usize mode) {
     }
     scratch::Run alone = runner::tests(&p, iso, "--test shrink_int --shrink-seconds 3600");
     runner::expect_has(iso, "shrink: the runner on its own shows 500 and 500", &alone,
-                       "    a = 500   (i64)\n    b = 500   (i64)");
+                       "    a = 500   (I64)\n    b = 500   (I64)");
     scratch::expect_count(runner::label(iso, "shrink: ... in at most 1000 runs"), 1,
-                          (usize)(runs[0] != '\0' && runner::number(runs) <= 1000));
+                          (Usize)(runs[0] != '\0' && runner::number(runs) <= 1000));
 
     scratch::Run unshrunk = runner::tests(&p, iso, "--test shrink_int --shrink 0");
     const char *first = number_in(&p, iso, "--test shrink_int --shrink 0", "s/^    a = \\([0-9]*\\) .*/\\1/p");
     scratch::expect_count(runner::label(iso, "shrink: --shrink 0 shows the unshrunk failure"), 1,
-                          (usize)(first[0] != '\0' && runner::number(first) > 500));
+                          (Usize)(first[0] != '\0' && runner::number(first) > 500));
     runner::expect_lacks(iso, "shrink: ... without 'shrunk'", &unshrunk, "shrunk");
 
     scratch::Run rerun = runner::smith_test(&p, iso, format::push("--test shrink_int --seed ", seed).data);
-    runner::expect_has(iso, "shrink: the rerun line shrinks to the same case", &rerun, "    x = 500, 500   (i64)");
+    runner::expect_has(iso, "shrink: the rerun line shrinks to the same case", &rerun, "    x = 500, 500   (I64)");
 }
 
 export void test_runner_shrink_a_uniform_failure_shrinks_to_the_boundary_workers() {
@@ -83,7 +83,7 @@ export void test_runner_shrink_a_uniform_failure_shrinks_to_the_boundary_isolate
 
 // Shrinking does not make another test depend on it: while one test shrinks for seconds, a healthy test that writes
 // more than 64 KiB, waits a second and writes more, still passes with --timeout 2.
-static void case_a_healthy_test_is_not_disturbed_by_another_shrinking(usize mode) {
+static void case_a_healthy_test_is_not_disturbed_by_another_shrinking(Usize mode) {
     scratch::Project p = runner::built_project("runner_base", "runner_alongside", "-DSAN=0");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);

@@ -4,14 +4,14 @@ module main;
 import std::autodiff;
 
 typedef struct {
-    f64 *v;
+    F64 *v;
 } Pointers;
 
-f64 twice(f64 x) {
+F64 twice(F64 x) {
     return 2.0 * x;
 }
 
-i32 main() {
+I32 main() {
     Pointers p = {};
     autodiff::map(twice, &p, &p);
     return 0;

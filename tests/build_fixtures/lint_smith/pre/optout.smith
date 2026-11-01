@@ -2,6 +2,6 @@ module pre::optout;
 
 #define LIMIT 4 // NOLINT(smith-preprocessor)
 
-export i32 g(void) {
+export I32 g(void) {
     return LIMIT;
 }

@@ -186,12 +186,12 @@ static void smith_lang_reset_declaration(SmithLang *lang) {
 // slice's count is its strlen), written as source, so the rest of the lowering reads them like the program's own.
 
 constexpr char smith_lang_main_wrong[] =
-    "smith-main: main in a module takes no arguments or str args[:]; write i32 main(str args[:]) (the characters are "
+    "smith-main: main in a module takes no arguments or Str args[:]; write I32 main(Str args[:]) (the characters are "
     "not copied)";
 
 // Whether the queue holds `main ( str NAME [ : ] ) {`.
 static bool smith_lang_main_args_ahead(SmithLang *lang, const SmithHost *host) {
-    return smith_lang_ident(smith_lang_peek(lang, host, 2, false), "str") &&
+    return smith_lang_ident(smith_lang_peek(lang, host, 2, false), "Str") &&
            smith_lang_peek(lang, host, 3, false)->kind == SmithTokenKind_Identifier &&
            smith_lang_punct(smith_lang_peek(lang, host, 4, false), "[") &&
            smith_lang_punct(smith_lang_peek(lang, host, 5, false), ":") &&
@@ -363,12 +363,12 @@ static void smith_lang_module_main_begin(SmithLang *lang, const SmithHost *host,
     if (!lang->is_module || (host->expr_type != nullptr && !host->maybe_main) || lang->brace_depth != 0 ||
         lang->recording)
         return;
-    bool returns = smith_lang_ident(first, "i32") || smith_lang_ident(first, "int");
+    bool returns = smith_lang_ident(first, "I32") || smith_lang_ident(first, "int");
     if (!returns && !smith_lang_ident(first, "void")) return;
     const SmithToken *name = smith_lang_peek(lang, host, 0, false);
     if (!smith_lang_ident(name, "main") || !smith_lang_punct(smith_lang_peek(lang, host, 1, false), "(")) return;
     if (!returns) {
-        smith_lang_error(lang, host, first->location, "smith-main: main returns i32: write i32 main()");
+        smith_lang_error(lang, host, first->location, "smith-main: main returns I32: write I32 main()");
         return;
     }
     const SmithToken *third = smith_lang_peek(lang, host, 2, false);
@@ -1253,7 +1253,7 @@ static bool smith_lang_slice_process(SmithLang *lang, const SmithHost *host, con
     smith_lang_slice_equals(lang, host, token);
     if (smith_lang_slice_init_compound(lang, host, token)) return true;
     bool is_typeof = token->kind == SmithTokenKind_Identifier && smith_lang_ident(token, "typeof");
-    // `export typeof(T[:]) f(constexpr type T)`: a declaration that begins with its result type is a generic's head
+    // `export typeof(T[:]) f(constexpr Type T)`: a declaration that begins with its result type is a generic's head
     // before its slice is written (as after an attribute), or the slice would be written with the `T` of no instance.
     if (is_typeof && lang->state == SmithLangState_Start && smith_lang_generic_candidate(lang, host, token) &&
         smith_lang_generic_ahead(lang, host, token)) {

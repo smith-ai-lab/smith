@@ -3,19 +3,19 @@ module idiom::realloc_pointers;
 import std::mem;
 
 struct Node {
-    i32 value;
+    I32 value;
 };
 
 typedef Node *NodeRef;
 typedef NodeRef NodeList[:];
 
 // A list of pointers grown through the typed function (#1178): no cast to void * is written at the call.
-NodeList grow(NodeList xs, usize n) {
+NodeList grow(NodeList xs, Usize n) {
     return mem::realloc(xs, n);
 }
 
-i32 main() {
+I32 main() {
     NodeList xs = {};
     xs = grow(xs, 4);
-    return (i32)countof(xs);
+    return (I32)countof(xs);
 }

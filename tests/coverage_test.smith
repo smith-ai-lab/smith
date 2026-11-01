@@ -17,8 +17,8 @@ import <smith_core_changed.h>;
 import <smith_core_coverage.h>;
 import <string.h>;
 
-constexpr usize memory_size = (usize)16 << 20; // 16 MiB
-constexpr usize report_capacity = 1U << 16;
+constexpr Usize memory_size = (Usize)16 << 20; // 16 MiB
+constexpr Usize report_capacity = 1U << 16;
 
 // Exit status 77 (the test is skipped) for a smith with no LLVM inside (the stage0), which cannot read profiles.
 constexpr char find_tools[_] = "smith symbolize --available || exit 77; ";
@@ -159,26 +159,26 @@ constexpr Source repository[_] = {
 static void write(const char *folder, Source file) {
     const char *path = format::push(folder, "/", file.path).data;
     const char *slash = c::strrchr(path, '/');
-    files::DoneResult made = files::make_folder(path[0:(usize)(slash - path)]);
+    files::DoneResult made = files::make_folder(path[0:(Usize)(slash - path)]);
     test::check_condition(made == .ok);
-    const u8 *bytes = (const u8 *)file.text;
+    const U8 *bytes = (const U8 *)file.text;
     files::CountResult written =
         files::write_file(path[0:c::strlen(path)], bytes[0:c::strlen(file.text)], files::Replace);
     test::check_condition(written == .ok);
 }
 
-static void record(const char *folder, const char *test, bool pass, const c::SmithCoreFunction *ran, usize count) {
+static void record(const char *folder, const char *test, bool pass, const c::SmithCoreFunction *ran, Usize count) {
     test::check_equal(c::smith_core_coverage_record(folder, test, pass, ran, count), true);
 }
 
 // What `smith test --changed --base HEAD --dry-run` prints after the files `edits` are written over the repository
 // (and `changes` happened: `A`, `M` or `D`, a tab and a path a line). `records` makes the records of a and b first;
 // `result` is what a's run was.
-static const char *selected(bool records, const char *result, const Source *edits, usize count, const char *changes) {
+static const char *selected(bool records, const char *result, const Source *edits, Usize count, const char *changes) {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     const char *names = "";
-    for (usize i = 0; i < countof(repository); i++) {
+    for (Usize i = 0; i < countof(repository); i++) {
         write(p.dir, repository[i]);
         names = format::push(names, repository[i].path, "\n").data;
     }
@@ -190,10 +190,10 @@ static const char *selected(bool records, const char *result, const Source *edit
         record(p.dir, "runs_test::a", c::strcmp(result, "pass") == 0, first_run, countof(first_run));
         record(p.dir, "runs_test::b", true, second_run, countof(second_run));
     }
-    for (usize i = 0; i < count; i++) {
+    for (Usize i = 0; i < count; i++) {
         write(p.dir, edits[i]);
         bool known = false;
-        for (usize j = 0; j < countof(repository); j++)
+        for (Usize j = 0; j < countof(repository); j++)
             known = known || c::strcmp(repository[j].path, edits[i].path) == 0;
         if (!known) names = format::push(names, edits[i].path, "\n").data;
     }
@@ -314,7 +314,7 @@ export void test_a_file_with_an_import_and_a_variable_compiles_with_coverage() {
     scratch::expect_status("coverage: the compile finishes", 0, &run);
 }
 
-// An indexed for-each over a slice (`for (usize i, T x : xs)`) once made its object's coverage map malformed, so a
+// An indexed for-each over a slice (`for (Usize i, T x : xs)`) once made its object's coverage map malformed, so a
 // test that linked it made no record (issue #1008, std::process's vector_make). A program with one runs, and its
 // record is made.
 export void test_an_indexed_for_each_makes_a_record() {
@@ -327,9 +327,9 @@ export void test_an_indexed_for_each_makes_a_record() {
     scratch::Run run = scratch::sh(
         &p, format::push(
                 "set -e; r=$(pwd -P); ", find_tools,
-                "printf 'module main;\\ni32 sum(i32 xs[:]) {\\n    i32 total = 0;\\n    for (usize i, i32 x : xs) {\\n"
-                "        total += (i32)i + x;\\n    }\\n    return total;\\n}\\n"
-                "i32 main() {\\n    i32 xs[3] = {1, 2, 3};\\n    return sum(xs) > 100;\\n}\\n' > main.smith; "
+                "printf 'module main;\\nI32 sum(I32 xs[:]) {\\n    I32 total = 0;\\n    for (Usize i, I32 x : xs) {\\n"
+                "        total += (I32)i + x;\\n    }\\n    return total;\\n}\\n"
+                "I32 main() {\\n    I32 xs[3] = {1, 2, 3};\\n    return sum(xs) > 100;\\n}\\n' > main.smith; "
                 "smith cc -fprofile-instr-generate -fcoverage-mapping -c main.smith -o prog.o; "
                 "smith cc -fprofile-instr-generate -fcoverage-mapping prog.o -o prog; "
                 "export SMITH_COVERAGE_DIR=$r/cov SMITH_COVERAGE_BINARY=$r/prog.o SMITH_REPO=$r; "

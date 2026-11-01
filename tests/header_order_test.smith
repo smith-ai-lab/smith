@@ -13,10 +13,10 @@ import std::mem;
 import std::test;
 import <smith_core.h>;
 
-constexpr usize modules_max = 8;
+constexpr Usize modules_max = 8;
 
 // The wave of each module named, in the order given; `texts[i]` is the source of `names[i]`.
-static usize waves_of(const char *names[:], const char *texts[:], usize waves[:]) {
+static Usize waves_of(const char *names[:], const char *texts[:], Usize waves[:]) {
     return c::smith_core_header_waves(names.data, texts.data, countof(names), waves.data);
 }
 
@@ -29,8 +29,8 @@ export void test_a_module_waits_for_the_modules_it_imports() {
         "module std::random;\nimport std::contract;\n",
         "module std::contract;\n",
     };
-    usize waves[4] = {};
-    usize count = waves_of(names, texts, waves);
+    Usize waves[4] = {};
+    Usize count = waves_of(names, texts, waves);
     test::check_equal(count, 3);
     test::check_equal(waves[3], 0); // contract imports nothing
     test::check_equal(waves[1], 1);
@@ -41,7 +41,7 @@ export void test_a_module_waits_for_the_modules_it_imports() {
 export void test_modules_that_import_nothing_are_all_in_the_first_wave() {
     const char *names[3] = {"ascii", "math", "effects"};
     const char *texts[3] = {"module std::ascii;\n", "module std::math;\n", "module std::effects;\n"};
-    usize waves[3] = {7, 7, 7};
+    Usize waves[3] = {7, 7, 7};
     test::check_equal(waves_of(names, texts, waves), 1);
     test::check_equal(waves[0], 0);
     test::check_equal(waves[1], 0);
@@ -52,7 +52,7 @@ export void test_an_import_that_is_no_module_of_the_set_is_ignored() {
     const char *names[2] = {"format", "text"};
     const char *texts[2] = {"module std::format;\nimport std::arena;\nimport <string.h>;\nimport std::text;\n",
                             "module std::text;\n// import std::format;\n"};
-    usize waves[2] = {};
+    Usize waves[2] = {};
     test::check_equal(waves_of(names, texts, waves), 2);
     test::check_equal(waves[1], 0); // a comment imports nothing
     test::check_equal(waves[0], 1); // arena is not among the modules
@@ -61,7 +61,7 @@ export void test_an_import_that_is_no_module_of_the_set_is_ignored() {
 export void test_an_import_cycle_does_not_hang() {
     const char *names[3] = {"a", "b", "c"};
     const char *texts[3] = {"import std::b;\n", "import std::a;\n", "import std::a;\nimport std::c;\n"};
-    usize waves[3] = {};
+    Usize waves[3] = {};
     test::check_equal(waves_of(names, texts, waves), 1);
     test::check_equal(waves[0], 0);
     test::check_equal(waves[1], 0);
@@ -71,7 +71,7 @@ export void test_an_import_cycle_does_not_hang() {
 export void test_an_import_with_leading_blanks_and_no_final_newline_counts() {
     const char *names[2] = {"a", "b"};
     const char *texts[2] = {"module std::a;\nif constexpr (x) {\n\timport std::b;", "module std::b;"};
-    usize waves[2] = {};
+    Usize waves[2] = {};
     test::check_equal(waves_of(names, texts, waves), 2);
     test::check_equal(waves[0], 1);
     test::check_equal(waves[1], 0);
@@ -89,7 +89,7 @@ static const char *read_module(arena::Arena *memory, const char *name) {
         test::check(false);
         return "";
     }
-    usize size = countof(file.ok);
+    Usize size = countof(file.ok);
     const char *bytes = (const char *)file.ok.data;
     char *text = arena::push_slice(memory, char, size + 1).data;
     mem::copy(text[0:size], bytes[0:size]);
@@ -99,17 +99,17 @@ static const char *read_module(arena::Arena *memory, const char *name) {
 
 // The sources smith embeds: files imports arena, contract, env and mem, the modules whose names its header got wrong.
 export void test_files_is_written_after_the_modules_it_imports() {
-    arena::Arena memory = test::memory((usize)1 << 20);
+    arena::Arena memory = test::memory((Usize)1 << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     const char *names[modules_max] = {"files", "arena", "contract", "env", "mem"};
     const char *texts[modules_max] = {};
-    for (usize i = 0; i < 5; i++)
+    for (Usize i = 0; i < 5; i++)
         texts[i] = read_module(&memory, names[i]);
-    usize waves[modules_max] = {};
-    usize count = c::smith_core_header_waves(names, texts, 5, waves);
+    Usize waves[modules_max] = {};
+    Usize count = c::smith_core_header_waves(names, texts, 5, waves);
     test::check(count >= 2);
-    for (usize i = 1; i < 5; i++)
+    for (Usize i = 1; i < 5; i++)
         test::check(waves[i] < waves[0]);
 }

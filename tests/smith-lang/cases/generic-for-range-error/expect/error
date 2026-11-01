@@ -1,2 +1,2 @@
-src/main.smith:5:5: `for constexpr` over a list is written `for constexpr (auto x : list)` or `for constexpr (usize i, auto x : list)`
-src/main.smith:8:5: `for constexpr` over a list is written `for constexpr (auto x : list)` or `for constexpr (usize i, auto x : list)`
+src/main.smith:5:5: `for constexpr` over a list is written `for constexpr (auto x : list)` or `for constexpr (Usize i, auto x : list)`
+src/main.smith:8:5: `for constexpr` over a list is written `for constexpr (auto x : list)` or `for constexpr (Usize i, auto x : list)`

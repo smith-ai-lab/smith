@@ -14,21 +14,21 @@ import <string.h>;
 typedef struct {
     console::Handler base; // first: &fake.base is what set_handler takes
     char out[256];
-    usize used;
+    Usize used;
 } Fake;
 
-isize fake_write(console::Handler *self, i32 fd, const void *buffer, usize size) {
+Isize fake_write(console::Handler *self, I32 fd, const void *buffer, Usize size) {
     Fake *fake = (Fake *)self;
     test::check_condition(fd == 1 && fake->used + size < countof(fake->out));
-    u8 *destination = (u8 *)fake->out + fake->used;
-    const u8 *source = (const u8 *)buffer;
+    U8 *destination = (U8 *)fake->out + fake->used;
+    const U8 *source = (const U8 *)buffer;
     mem::copy(destination[0:size], source[0:size]);
     fake->used += size;
     fake->out[fake->used] = 0;
-    return (isize)size;
+    return (Isize)size;
 }
 
-isize fake_read(console::Handler *self, void *buffer, usize size) {
+Isize fake_read(console::Handler *self, void *buffer, Usize size) {
     (void)self;
     (void)buffer;
     (void)size;
@@ -45,7 +45,7 @@ export void test_no_primes_add_up_to_nothing() {
 
 // A slice of an array is written `values[from:to]`.
 export void test_total_adds_a_slice() {
-    i32 values[_] = {2, 3, 5, 7};
+    I32 values[_] = {2, 3, 5, 7};
     test::check_equal(primes::total(values[1:3]), 8);
 }
 

@@ -23,7 +23,7 @@ module std::build;
     const char *os;
     const char *arch; // `uname -m` exactly: "arm64", "x86_64", "aarch64"
     const char *root; // the project's absolute folder, where the build file is
-    i32 cpus;         // the number of cores
+    I32 cpus;         // the number of cores
 } Build;
 
 // Steps written as C functions. A step or task with .run (and no .command) calls it when the executor runs the step.
@@ -58,7 +58,7 @@ module std::build;
     const char *pool;        // a name from build::pool, or "console" for the terminal
     bool restat;             // an output the command left unchanged does not rerun what depends on it
     bool always;             // run on every build
-    i32 (*run)(Run *run);    // a C function in the build file instead of .command; 0 succeeds
+    I32 (*run)(Run *run);    // a C function in the build file instead of .command; 0 succeeds
     const char *const *args; // given to .run as run->args
     bool content_hash;       // later: rerun only when the inputs' bytes changed
     bool test;               // `smith test` runs this task or builds this step (build::tests sets it on its task)
@@ -92,11 +92,11 @@ module std::build;
 [[std::c_name("smith_alias")]] export void alias(Build *b, const char *name, const char *const *targets);
 // the targets `smith build` builds when it is given none
 [[std::c_name("smith_default")]] export void default_targets(Build *b, const char *const *targets);
-[[std::c_name("smith_pool")]] export void pool(Build *b, const char *name, i32 depth);
+[[std::c_name("smith_pool")]] export void pool(Build *b, const char *name, I32 depth);
 
 // -Dname. An option can be read again: the same name and kind returns the same value and the description may then be
 // nullptr, so a build::defer callback can read what build() read. The other kind is an error
-[[std::c_name("smith_option")]] export bool option(Build *b, const char *name, const char *description);
+[[std::c_name("smith_option")]] export bool Option(Build *b, const char *name, const char *description);
 // -Dname=value; fallback may be nullptr
 [[std::c_name("smith_option_value")]] export const char *option_value(Build *b, const char *name, const char *fallback,
                                                                       const char *description);
@@ -159,7 +159,7 @@ module std::build;
     const char *message; // names the URL (and both hashes for a wrong hash), in the arena
 } PackageError;
 // A build.c writes the type smith_build_PackageResult, the lowering's name for the typedef.
-export typedef result(const char *, PackageError) PackageResult; // NOLINT(readability-identifier-naming)
+export typedef Result(const char *, PackageError) PackageResult; // NOLINT(readability-identifier-naming)
 
 // The absolute path of the package's extracted contents, in smith's cache: $XDG_CACHE_HOME/smith/packages/<hex>/, or
 // ~/.cache/smith/packages/<hex>/ when that is unset, keyed by the archive's hash, as `.ok`. Fetched, verified and
@@ -210,7 +210,7 @@ export typedef result(const char *, PackageError) PackageResult; // NOLINT(reada
 // NOLINTEND(readability-identifier-naming)
 
 // A build.c writes the type smith_build_Lines, the lowering's name for the typedef.
-export typedef result(const char *const *, LinesError) Lines; // NOLINT(readability-identifier-naming)
+export typedef Result(const char *const *, LinesError) Lines; // NOLINT(readability-identifier-naming)
 
 // One entry per line of the file, without the newline, as `.ok`; a final newline adds no entry and an empty line is "".
 // The file is read on every `smith build`. A file that a step makes is read inside build::defer's `more`, never in
@@ -224,11 +224,11 @@ export typedef result(const char *const *, LinesError) Lines; // NOLINT(readabil
 // Like build::run_lines, but the exit status is the answer: the program's exit status, 128 plus the signal that killed
 // it, or 127 when it cannot start. *lines (may be nullptr) receives its stdout lines, or nullptr when it did not start.
 // It prints no message.
-[[std::c_name("smith_run_status")]] export i32 run_status(Run *run, const char *const *argv, const char *const **lines);
+[[std::c_name("smith_run_status")]] export I32 run_status(Run *run, const char *const *argv, const char *const **lines);
 // Like build::run_status, but the program's stderr goes into the same pipe as its stdout, so *lines holds both in the
 // order the program wrote them, as 2>&1 does. For comparing a program's whole output with an expected text. The 1 MiB
 // limit covers both streams together.
-[[std::c_name("smith_run_combined")]] export i32 run_combined(Run *run, const char *const *argv,
+[[std::c_name("smith_run_combined")]] export I32 run_combined(Run *run, const char *const *argv,
                                                               const char *const **lines);
 // Records that this run read path, so a change to it reruns the step: the program writes the step's .depfile from
 // these paths when the function returns. A .run step that records a path must have a .depfile.
@@ -238,7 +238,7 @@ export typedef result(const char *const *, LinesError) Lines; // NOLINT(readabil
 // replaces a variable of the same name. Returns the exit status, 128 plus the signal that killed it, or 127 when it
 // cannot start. stdout and stderr are flushed first, so the function's own printing comes before the program's. The
 // same flush happens before build::run_lines and build::run_status spawn.
-[[std::c_name("smith_run_program")]] export i32 run_program(Run *run, const char *const *argv,
+[[std::c_name("smith_run_program")]] export I32 run_program(Run *run, const char *const *argv,
                                                             const char *const *environment);
 
 // High level: compiles and links that smith knows are compiles and links, so it can write compile_commands.json.

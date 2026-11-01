@@ -2,16 +2,16 @@ module affine_random_split;
 
 import std::random;
 
-export f64 two_draws(random::Key key) {
+export F64 two_draws(random::Key key) {
     random::Key keys[3];
     random::split(key, keys);
     random::NormalDouble normal = {.mean = 0, .deviation = 1};
-    f64 a = random::normal_double_sample(keys[0], normal);
-    f64 b = random::normal_double_sample(keys[0], normal);
+    F64 a = random::normal_double_sample(keys[0], normal);
+    F64 b = random::normal_double_sample(keys[0], normal);
     return a + b;
 }
 
-export f64 three_draws(random::Key key) {
+export F64 three_draws(random::Key key) {
     random::Key keys[3];
     random::split(key, keys);
     random::NormalDouble normal = {.mean = 0, .deviation = 1};

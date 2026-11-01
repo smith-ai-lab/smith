@@ -6,13 +6,13 @@ static I32 triple(I32 x) {
     return x * 3;
 }
 
-// `lambda(F)` takes a lambda or a plain function: one instance for each, and the call of `f` is a direct call.
-I32 apply(lambda(I32 (I32)) f, I32 x) {
+// `Lambda(F)` takes a lambda or a plain function: one instance for each, and the call of `f` is a direct call.
+I32 apply(Lambda(I32 (I32)) f, I32 x) {
     return f(x) + 1;
 }
 
 I32 main() {
-    c::printf("%d\n", apply([](I32 a) -> i32 { return a * 2; }, 4));
+    c::printf("%d\n", apply([](I32 a) -> I32 { return a * 2; }, 4));
     c::printf("%d\n", apply([](auto a) { return a * 5; }, 4));
     c::printf("%d\n", apply([](Num a) { return a + 1; }, 4));
     c::printf("%d\n", apply(triple, 4));

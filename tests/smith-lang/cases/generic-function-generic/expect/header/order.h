@@ -3,10 +3,10 @@
 // smith-module: order
 // smith-imports:
 // smith-names: smallest smallest_of descending
-// smith-generic: order ascending order_ascending src/order.smith p@4 1 2 8 9 | i@0:1=bool iw@0:6=order_ascending p@0:15=( iP1@0:16=arithmetic iw@0:20=a p@0:21=, iP1w@0:23=typeof(a) iw@0:33=b p@0:34=) pw@0:36={ iw@1:5=return iw@1:12=a pw@1:14=< iw@1:16=b p@1:17=; p@2:1=}
+// smith-generic: order ascending order_ascending src/order.smith p@4 1 2 8 9 | i@0:1=bool iw@0:6=order_ascending p@0:15=( iP1@0:16=Num iw@0:20=a p@0:21=, iP1w@0:23=typeof(a) iw@0:33=b p@0:34=) pw@0:36={ iw@1:5=return iw@1:12=a pw@1:14=< iw@1:16=b p@1:17=; p@2:1=}
 // smith-generic: order smallest order_smallest src/order.smith -@10 1 2 13 14 | ixw@0:8=__SIZE_TYPE__ iw@0:14=order_smallest p@0:22=( i@0:23=constexpr iw@0:33=auto iP1w@0:38=less p@0:42=, iw@0:44=const iP2w@0:50=auto iw@0:55=xs p@0:57=[ p@0:58=: p@0:59=] p@0:60=) pw@0:62={ ixw@1:5=__SIZE_TYPE__ iw@1:11=best pw@1:16== nw@1:18=0 p@1:19=; iw@2:5=for pw@2:9=( ix@2:10=__SIZE_TYPE__ iw@2:16=i pw@2:18== nw@2:20=1 p@2:21=; iw@2:23=i pw@2:25=< iw@2:27=countof p@2:34=( i@2:35=xs p@2:37=) p@2:38=; iw@2:40=i p@2:41=++ p@2:43=) pw@2:45={ iw@3:9=if pw@3:12=( iP1@3:13=less p@3:17=( i@3:18=xs p@3:20=[ i@3:21=i p@3:22=] p@3:23=, iw@3:25=xs p@3:27=[ i@3:28=best p@3:32=] p@3:33=) p@3:34=) iw@3:36=best pw@3:41== iw@3:43=i p@3:44=; pw@4:5=} iw@5:5=return iw@5:12=best p@5:16=; p@6:1=}
-// smith-generic: order smallest_of order_smallest_of src/order.smith -@19 1 2 8 9 | ixw@0:8=__SIZE_TYPE__ iw@0:14=order_smallest_of p@0:25=( iP1@0:26=arithmetic iw@0:30=xs p@0:32=[ p@0:33=: p@0:34=] p@0:35=) pw@0:37={ iw@1:5=return B@1:12=order::smallest p@1:20=( i@1:21=order::ascending p@1:30=, iw@1:32=xs p@1:34=) E@1:12= p@1:35=; p@2:1=}
-// smith-generic: order descending order_descending src/order.smith -@24 1 2 8 9 | iw@0:8=bool iw@0:13=order_descending p@0:23=( iP1@0:24=arithmetic iw@0:28=a p@0:29=, iP1w@0:31=typeof(a) iw@0:41=b p@0:42=) pw@0:44={ iw@1:5=return iw@1:12=a pw@1:14=> iw@1:16=b p@1:17=; p@2:1=}
+// smith-generic: order smallest_of order_smallest_of src/order.smith -@19 1 2 8 9 | ixw@0:8=__SIZE_TYPE__ iw@0:14=order_smallest_of p@0:25=( iP1@0:26=Num iw@0:30=xs p@0:32=[ p@0:33=: p@0:34=] p@0:35=) pw@0:37={ iw@1:5=return B@1:12=order::smallest p@1:20=( i@1:21=order::ascending p@1:30=, iw@1:32=xs p@1:34=) E@1:12= p@1:35=; p@2:1=}
+// smith-generic: order descending order_descending src/order.smith -@24 1 2 8 9 | iw@0:8=bool iw@0:13=order_descending p@0:23=( iP1@0:24=Num iw@0:28=a p@0:29=, iP1w@0:31=typeof(a) iw@0:41=b p@0:42=) pw@0:44={ iw@1:5=return iw@1:12=a pw@1:14=> iw@1:16=b p@1:17=; p@2:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>
