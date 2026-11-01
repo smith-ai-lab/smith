@@ -28,16 +28,18 @@ mkdir -p "$HOME/smith-runner-logs"
 while :; do
   top=$(gh api repos/$R/issues/73 --jq '.body|split("\n")[0]' 2>/dev/null)
   if [[ $top == *"pool: running"* ]]; then
+    start=$(date +%s)
     SMITH_RUNNER_LOOP=1 claude -p "You are a smith runner on the owner's Mac. Load the skill smith-dev-runner and follow it. Take mac tickets first." \
       --model "$MODEL" --permission-mode auto --settings "$SETTINGS" \
       > "$HOME/smith-runner-logs/$(date +%Y%m%dT%H%M%S).log" 2>&1
+    (( $(date +%s) - start < 120 )) && sleep 600   # no ticket, locked 1Password or a crash: don't spin
   else
     sleep 300
   fi
 done
 ```
 - **Model:** the runner knows its ticket only after it claims it, so the loop starts it on the medium model from [providers/anthropic.md](../smith-dev-factory/providers/anthropic.md). The runner then hands the work to subagents on the model its ticket's difficulty maps to. Run the loop in your own worktree of the checkout.
-- **Paused:** when #73 says `pool: paused`, it sleeps 5 minutes and checks again. A running runner finishes its ticket first.
+- **Paused:** a run under 2 minutes (no ticket, 1Password locked, a crash) waits 10 minutes, so it never spins. When #73 says `pool: paused`, it sleeps 5 minutes and checks again. A running runner finishes its ticket first.
 
 ## The mailbox #1406
 For rare cases only (a Touch ID prompt, a question): comments on #1406 starting `@mac:` or `@lead:`. A zero-token watcher wakes you on a new `@mac:` comment; restart it after each wake and answer with an `@lead:` comment:
