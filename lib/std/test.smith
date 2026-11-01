@@ -3828,6 +3828,76 @@ void suggest_names(const char *filter) {
     if (shown > 0) say("\n");
 }
 
+// Whether some test is selected by the single `--test` item.
+Bool item_selects_any_test(const char *item) {
+    for (Usize i = 0; i < table_size; i++)
+        if (selects_item(table[i].name, item)) return true;
+    return false;
+}
+
+// The form of one `--test` item that would match: the item without a `test_` prefix (on the name, or after the last
+// `::`), or with a `*` around it. Writes it to `out` and returns true, or returns false when none of them matches.
+Bool better_form(const char *item, char out[256]) {
+    Usize size = c::strlen(item);
+    if (size == 0 || size > 120) return false;
+    const char *last = nullptr;
+    for (const char *at = c::strstr(item, "::"); at != nullptr; at = c::strstr(at + 2, "::"))
+        last = at;
+    Usize head = last == nullptr ? 0 : (Usize)(last - item) + 2;
+    Bool prefixed = c::strncmp(item + head, "test_", 5) == 0;
+    char plain[256];
+    __builtin_memcpy(plain, item, head);
+    __builtin_memcpy(plain + head, item + head + (prefixed ? 5 : 0), size - head - (prefixed ? 5 : 0) + 1);
+    if (prefixed && item_selects_any_test(plain)) {
+        __builtin_memcpy(out, plain, c::strlen(plain) + 1);
+        return true;
+    }
+    if (c::strchr(item, '*') != nullptr) return false;
+    // a `*` goes around the part after the last `::`, or around the whole item
+    const char *base = plain + head;
+    __builtin_memcpy(out, plain, head);
+    Usize at = head;
+    out[at++] = '*';
+    Usize rest = c::strlen(base);
+    __builtin_memcpy(out + at, base, rest);
+    at += rest;
+    out[at++] = '*';
+    out[at] = '\0';
+    return item_selects_any_test(out);
+}
+
+// After "no test matches": says how the filter is matched, and the form of the filter that would match.
+void explain_filter(const char *filter) {
+    say("tried \"%s\": a name matches exactly, the shown names have no `test_` prefix, and `*` is the wildcard (a "
+        "substring needs it)\n",
+        filter);
+    char joined[1024];
+    Usize used = 0;
+    Bool changed = false;
+    for (const char *list = filter; *list != '\0';) {
+        Usize length = c::strcspn(list, ",");
+        char item[256];
+        char form[256];
+        if (length > 0 && length < sizeof item) {
+            __builtin_memcpy(item, list, length);
+            item[length] = '\0';
+            const char *use = item;
+            if (!item_selects_any_test(item) && better_form(item, form)) {
+                use = form;
+                changed = true;
+            }
+            Usize size = c::strlen(use);
+            if (used + size + 2 >= sizeof joined) return;
+            if (used > 0) joined[used++] = ',';
+            __builtin_memcpy(joined + used, use, size);
+            used += size;
+        }
+        list += length + (list[length] == ',' ? 1 : 0);
+    }
+    joined[used] = '\0';
+    if (changed) say("did you mean: --test '%s'\n", joined);
+}
+
 // Whether the filter matches a test of either platform: a CI part of `--macos-only` or `--skip-macos` whose filter (a
 // pull request's `--changed` selection) names only the other part's tests has nothing to run, which is no error.
 Bool filter_matches_any(const Options *options) {
@@ -4204,6 +4274,7 @@ static Usize report_run(const Plan *plan, const Options *options, F64 start) {
         }
         say("no test matches \"%s\"%s\n", options.filter,
             options.others != nullptr ? " in this runner or the other one (units, front)" : "");
+        explain_filter(options.filter);
         suggest_files(options.filter);
         suggest_names(options.filter);
         say("--test takes a test file's path (tests/x_test.smith) or a name (x_test, or x_test::name); a substring "
