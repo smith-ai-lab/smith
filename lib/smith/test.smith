@@ -530,10 +530,11 @@ Shared *shared = &fallback;
 Shared *shared_slots; // the runner's: one per job, and one more for shrinking
 u32 *workers_to_kill; // SMITH_TEST_KILL_WORKERS=n: the next n commands kill their worker before it begins (a test of
                       // the runner)
+// the --test selection, nullptr when there is none
+const char *selection_text;
 u8 *memory_block;
 usize memory_used;  // a multiple of arena::align_max
 bool full_run;      // the runner was given --full; set before any test forks, so every child sees it
-const char *selection_text; // the --test selection, nullptr when there is none
 bool update_run;    // the runner was given --update: test::golden writes its file and passes
 u8 *golden_log;     // shared by every process: the files --update wrote, each path ended by a zero byte
 usize *golden_used; // the bytes of golden_log in use, shared likewise
@@ -3896,8 +3897,9 @@ void say_written() {
         say("wrote %s\n", (const char *)golden_log + at);
         count++;
     }
-    if (update_run) say("--update wrote %zu file%s%s\n", count, count == 1 ? "" : "s",
-                        selection_text == nullptr ? " (no --test: every test was updated)" : "");
+    if (!update_run) return;
+    const char *scope = selection_text == nullptr ? " (no --test: every test was updated)" : "";
+    say("--update wrote %zu file%s%s\n", count, count == 1 ? "" : "s", scope);
 }
 
 // How many tests may run at once: the share of a slot (SMITH_CORES, runtime/slots.c) or the machine's logical cores.

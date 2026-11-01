@@ -309,8 +309,7 @@ static void check_case(arena::Arena *arena, const char *kase, Pass pass, const c
         bool made =
             c::smith_core_header(folder, file, nullptr, header_text, header_capacity, report_text, report_capacity);
         const char *header_golden = join3(folder, "/expect/header/", format::push(module, ".h").data);
-        if (made && (exists(header_golden) || (creates)))
-            corpus::golden(arena, differing, header_golden, header_text);
+        if (made && (exists(header_golden) || (creates))) corpus::golden(arena, differing, header_golden, header_text);
     }
     const char *error_golden = join3(folder, "/expect/lower-error", "");
     const char *joined = sorted_unique(errors, error_count);
