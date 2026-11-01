@@ -7,8 +7,8 @@ I32 main() {
     I32 a[:] = ints;
     F64 reals[3] = {0.5, 1.5, 1.0};
     F64 b[:] = reals;
-    order::adjacent(a, [](Num *x, Num *y) -> bool { return *x < *y; });
-    order::adjacent(a, [](auto x, auto y) -> bool { return *x > *y; });
-    order::adjacent(b, [](Num *x, Num *y) -> bool { return *x < *y; });
+    order::adjacent(a, [](Num *x, Num *y) -> Bool { return *x < *y; });
+    order::adjacent(a, [](auto x, auto y) -> Bool { return *x > *y; });
+    order::adjacent(b, [](Num *x, Num *y) -> Bool { return *x < *y; });
     return 0;
 }

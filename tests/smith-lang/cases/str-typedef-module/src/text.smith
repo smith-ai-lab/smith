@@ -17,7 +17,7 @@ export str first_word(str xs) {
     return xs[0:n];
 }
 
-export bool pop(str *p) {
+export Bool pop(str *p) {
     if (countof(*p) == 0) return false;
     *p = (*p)[1:];
     return true;

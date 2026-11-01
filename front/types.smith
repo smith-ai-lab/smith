@@ -720,6 +720,8 @@ export struct Error {
 export struct NodeType {
     const ast::Expr *node;
     TypeRef type;
+    Bool cast_checked; // a written cast that can lose a value: the emitter checks it at run time (K1, #1328)
+    TypeRef cast_from; // the operand's type, when `cast_checked`
 };
 
 export struct Checked;
@@ -789,7 +791,8 @@ export void set_type(Checked *r, const ast::Expr *node, TypeRef type) {
     if (r->nodes[at].node == nullptr) {
         r->node_count += 1;
     }
-    r->nodes[at] = (NodeType){.node = node, .type = type};
+    r->nodes[at].node = node;
+    r->nodes[at].type = type;
 }
 
 // The type recorded for an expression, or null when there is none.
@@ -802,6 +805,50 @@ export TypeRef type_of(const Checked *r, const ast::Expr *node) {
         at = (at + 1) & (capacity - 1);
     }
     return nullptr;
+}
+
+// What the emitter needs to know about a cast: whether it asserts that the value fits (checked in every build, and
+// removed only by a proof), and the types of the operand and of the result.
+export struct CastCheck {
+    Bool needed;
+    TypeRef from;
+    TypeRef to;
+};
+
+static NodeType *entry_of(Checked *r, const ast::Expr *node) {
+    Usize capacity = countof(r->nodes);
+    if (capacity == 0) return nullptr;
+    Usize at = slot_of(node, capacity);
+    while (r->nodes[at].node != nullptr) {
+        if (r->nodes[at].node == node) return &r->nodes[at];
+        at = (at + 1) & (capacity - 1);
+    }
+    return nullptr;
+}
+
+// Marks the cast `node` (whose type is already recorded) as needing a run-time check; `from` is its operand's type.
+export void mark_cast_checked(Checked *r, const ast::Expr *node, TypeRef from) {
+    NodeType *entry = entry_of(r, node);
+    if (entry == nullptr) return;
+    entry->cast_checked = true;
+    entry->cast_from = from;
+}
+
+// Whether the cast `node` needs a run-time check, with its source and target type; `needed` is false for every other
+// node and for a cast that cannot lose anything.
+export CastCheck cast_checked(const Checked *r, const ast::Expr *node) {
+    Usize capacity = countof(r->nodes);
+    if (capacity == 0) return (CastCheck){};
+    Usize at = slot_of(node, capacity);
+    while (r->nodes[at].node != nullptr) {
+        if (r->nodes[at].node == node) {
+            const NodeType *entry = &r->nodes[at];
+            if (!entry->cast_checked) return (CastCheck){};
+            return (CastCheck){.needed = true, .from = entry->cast_from, .to = entry->type};
+        }
+        at = (at + 1) & (capacity - 1);
+    }
+    return (CastCheck){};
 }
 
 // ---------------------------------------------------------------------------------------------------------------
