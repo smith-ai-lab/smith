@@ -27,6 +27,8 @@ installed smith is always main's; nobody runs `smith build install`.
 
 **Every job has a `timeout-minutes`** set from the observed maximum with headroom (#1139): 3 for `changes`, `ci`, `publish`, `install` and llvm.yml's `pick`; 12 for `docs`; 15 for `build`, `mechanical`, `test`, `warm`, `release` and `release-linux`; 20 for `test-linux`; 240 for llvm.yml's `macos` and `linux` packs (observed 131 and 162). A job that grows past its limit raises the limit with the measurement.
 
+**The `mechanical` job** runs `fmt` and `docs` (under a second), then `lint` (about 105 s) and `prove` (about 130 s) at the same time instead of one after the other (#1139): both draw from the one `SMITH_CORES` pool, so they share the runner's cores rather than oversubscribe them. Each stage's output goes to its own log and is printed after both end (the last 60 lines of a failed one, then `FAIL <stage>`), and the job summary has a line `took <stage> <n>s (exit <code>)` for each stage. A job that was one hosted macOS job stays one (the free cap is 5 hosted macOS jobs at once across the organization, and a pull request run already uses 3 or 4).
+
 **Where a failure shows.** A failing job does not cancel the run (#1139): it records as `failure`, and the sibling shards
 run to completion, so one push shows every failure. Only a new push to a pull request cancels (the concurrency group).
 `ci` waits for all jobs and is red when any is `failure` or `cancelled`, or when a job its scope owes (see the

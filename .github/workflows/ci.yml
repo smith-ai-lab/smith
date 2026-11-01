@@ -177,11 +177,26 @@ jobs:
       - name: Mechanical checks
         shell: bash
         run: |
-          # every stage runs, and each failure ends in a line `FAIL <stage>`, so one run names all of them
+          # every stage runs, and each failure ends in a line `FAIL <stage>`, so one run names all of them. fmt and docs
+          # take under a second; lint and prove take about 105 and 130 s and ran one after the other, so they run
+          # together (#1139): both draw from the one SMITH_CORES pool, so they share the runner's cores and never
+          # oversubscribe them. Each writes its own log and prints it after both ended, so the output does not mix.
+          stage() { # name, then the smith arguments
+            local name=$1 start=$SECONDS code=0
+            shift
+            "$SMITH" "$@" >"$RUNNER_TEMP/$name.log" 2>&1 || code=$?
+            echo "$code $((SECONDS - start))" >"$RUNNER_TEMP/$name.status"
+          }
+          stage fmt fmt --dry-run --Werror
+          stage docs docs
+          stage lint lint &
+          stage prove prove &
+          wait
           failed=0
-          for stage in "fmt --dry-run --Werror" docs lint prove; do
-            name=${stage%% *}
-            if ! "$SMITH" $stage >"$RUNNER_TEMP/$name.log" 2>&1; then
+          for name in fmt docs lint prove; do
+            read -r code took <"$RUNNER_TEMP/$name.status"
+            echo "took $name ${took}s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+            if [ "$code" != 0 ]; then
               tail -n 60 "$RUNNER_TEMP/$name.log"
               echo "FAIL $name"
               echo "::error::smith $name failed"
