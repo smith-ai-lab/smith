@@ -7,6 +7,18 @@ description: Load when you are the lead and write a ticket (a GitHub issue) for 
 
 The reader has no context: not this conversation, not the owner's words. The ticket is the whole brief. Never write "as discussed".
 
+## Labels
+Every ticket has exactly one difficulty label and one priority label, set when it is filed.
+- **Difficulty:**
+  - `difficulty:easy`: docs, a README, or a change spelled out line by line in the ticket.
+  - `difficulty:medium`: ordinary code with a clear spec. Most tickets.
+  - `difficulty:hard`: a high bar, for design judgment or a change across many parts that cannot be split. Owner: "It should be a high bar to set something as hard."
+- **Priority:** `p0` (main is red), `p1` (friction over 60 minutes), `p2` (the current goal), `p3` (everything else).
+- `task` marks a ticket in the backlog; `friction` marks a friction ticket.
+
+## Split rule
+A ticket is one PR of about an hour, with its files listed. No two tickets share a file. A bigger ticket is split before anyone claims it: each piece gets its own files, difficulty and the parent's priority.
+
 ## Sections
 1. **Why**: one paragraph. The problem and what it costs.
 2. **The design as decided**: every decision stated, with the owner's words (quoted) where they matter. Leave nothing to be guessed.

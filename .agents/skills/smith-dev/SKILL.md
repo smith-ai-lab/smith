@@ -19,7 +19,7 @@ description: "Start here for any change to smith itself (smith.c, runtime/, shim
 | add a library or port one to `.smith` | [smith-dev-library](../smith-dev-library/SKILL.md) |
 | write smith's own C | [smith-dev-c](../smith-dev-c/SKILL.md) |
 | change a concept or a skill | [smith-dev-docs](../smith-dev-docs/SKILL.md) |
-| be the owner's one point of contact: lanes, handing out work, decisions | [smith-dev-lead](../smith-dev-lead/SKILL.md) |
+| be the owner's one point of contact: the backlog, the pool, decisions | [smith-dev-lead](../smith-dev-lead/SKILL.md) |
 | run the factory: roadmap, fundamentals before features, test beds, the owner's Mac | [smith-dev-factory](../smith-dev-factory/SKILL.md) |
-| run one lane of tickets as its orchestrator | [smith-dev-orchestrate](../smith-dev-orchestrate/SKILL.md) |
+| run one ticket as a runner in the pool | [smith-dev-runner](../smith-dev-runner/SKILL.md) |
 | write a ticket someone with no context can do | [smith-dev-ticket](../smith-dev-ticket/SKILL.md) |
