@@ -1,0 +1,16 @@
+module main;
+
+import <stdio.h>;
+
+// `Char` is the capitalized spelling of C's `char` (K5): a variable, a parameter, a result and a pointer.
+
+static Char first(const Char *text) {
+    return text[0];
+}
+
+I32 main(void) {
+    Char letter = 'x';
+    const Char *word = "hello";
+    c::printf("%c %c\n", letter, first(word));
+    return 0;
+}

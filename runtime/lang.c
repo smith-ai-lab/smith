@@ -892,6 +892,7 @@ typedef struct {
 
 static const SmithLangCapital smith_lang_capitals[] = {
     {"Bool", "bool"},
+    {"Char", "char"},
 };
 
 // The capitalized name number `index` and the lowercase name it stands for; false past the last.
