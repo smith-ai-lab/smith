@@ -40,6 +40,34 @@ export void trap_if(state::Emitter *e, c::LLVMValueRef bad) {
     c::LLVMPositionBuilderAtEnd(e->builder, next);
 }
 
+// The external function `name` returning nothing, with the types of `args`: declared once in the module.
+static void report_callee(state::Emitter *e, Str name, c::LLVMValueRef *args, Usize count, c::LLVMValueRef *callee,
+                          c::LLVMTypeRef *type) {
+    c::LLVMTypeRef params[4] = {};
+    for (Usize i = 0; i < count; i++)
+        params[i] = c::LLVMTypeOf(args[i]);
+    *type = c::LLVMFunctionType(c::LLVMVoidTypeInContext(e->context), params, (U32)count, 0);
+    char *label = format::push(name).data;
+    *callee = c::LLVMGetNamedFunction(e->module, label);
+    if (*callee == nullptr) *callee = c::LLVMAddFunction(e->module, label, *type);
+}
+
+// Branch, when `bad` is true, to a block of its own that calls the check function `name` with `args` (it reports and
+// does not return: a `.smith` function of std::contract, so the call stack is the report) and then traps; the code
+// goes on in a new block (K6, #1389).
+export void report_if(state::Emitter *e, c::LLVMValueRef bad, Str name, c::LLVMValueRef *args, Usize count) {
+    c::LLVMBasicBlockRef failing = c::LLVMAppendBasicBlockInContext(e->context, e->function, "fail");
+    c::LLVMBasicBlockRef next = c::LLVMAppendBasicBlockInContext(e->context, e->function, "ok");
+    c::LLVMBuildCondBr(e->builder, bad, failing, next);
+    c::LLVMPositionBuilderAtEnd(e->builder, failing);
+    c::LLVMValueRef callee = nullptr;
+    c::LLVMTypeRef type = nullptr;
+    report_callee(e, name, args, count, &callee, &type);
+    c::LLVMBuildCall2(e->builder, type, callee, args, (U32)count, "");
+    c::LLVMBuildBr(e->builder, trap_block(e));
+    c::LLVMPositionBuilderAtEnd(e->builder, next);
+}
+
 // Leave the function by the trap block: the end of a function with a result, reached without a `return`.
 export void trap_here(state::Emitter *e) {
     c::LLVMBuildBr(e->builder, trap_block(e));

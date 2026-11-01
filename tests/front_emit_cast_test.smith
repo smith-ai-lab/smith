@@ -2,8 +2,10 @@
 // front::parser, checked by front::types_decl (which marks the casts, K1) and emitted with `Options.checked`. Golden IR
 // per kind (narrowing, signed to unsigned, unsigned to signed, and the casts with no check), and run tests: a value
 // that fits comes back, one that does not reaches the function's trap block (a forked child dies).
-// Float to integer waits for floats in the emitter. Memory as in tests/front_emit_memory_test.smith: the tree and the
-// checker's table are in an arena, the emitter and LLVM use the system's allocator.
+// The failing block calls std::contract's fail_cast / fail_index (K6, #1389): the IR names the call, and a run test
+// reads the report a failed check writes. Float to integer waits for floats in the emitter. Memory as in
+// tests/front_emit_memory_test.smith: the tree and the checker's table are in an arena, the emitter and LLVM use the
+// system's allocator.
 module front_emit_cast_test;
 
 import front::ast;
@@ -17,6 +19,7 @@ import std::mem;
 import std::test;
 import <llvm-c/Core.h>;
 import <string.h>;
+import <smith/trace.h>;
 import <unistd.h>;
 import <sys/wait.h>;
 
@@ -135,6 +138,7 @@ static Bool traps(Usize address, Usize argument) {
     Probe call = (Probe)address;
     I32 child = c::fork();
     if (child == 0) {
+        c::smith_failure_hook = nullptr; // the runner's hook would only mark the test; the child just dies
         call(argument);
         c::_exit(0);
     }
@@ -167,5 +171,61 @@ export void test_front_emit_cast_run_passes_a_value_that_fits_and_fails_one_that
     test::check_equal(traps(sign_at, (Usize)-1), true);
     test::check_equal(traps(narrow_at, 0x100000000ULL), true);
     test::check_equal(traps(unsign_at, 0x80000000ULL), true);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_cast_failing_block_calls_the_report_function() {
+    char *ir = ir_of("export U8 f(I32 a) { return (U8)a; }");
+    test::check_equal(contains(ir, "call void @smith_contract_fail_cast(i64 %"), true);
+    test::check_equal(contains(ir, "i32 1, ptr @type)"), true); // the source is signed
+    test::check_equal(contains(ir, "c\"U8\\00\""), true);
+    char *index = ir_of("export I32 f(U64 i) { I32 xs[3]; xs[1] = 5; return xs[i]; }");
+    test::check_equal(contains(index, "call void @smith_contract_fail_index(i64 %"), true);
+    test::check_equal(contains(index, "i32 0, i64 3)"), true); // an unsigned index, and the count
+    test::check_equal(contains(index, "llvm.trap"), true);
+}
+
+// Runs the function at `address` in a child with the default failure report (no test hook) and its standard error in a
+// pipe; the text the child wrote, in `out`.
+static void report_of(Usize address, Usize argument, char *out, Usize size) {
+    I32 fds[2] = {};
+    test::check_equal(c::pipe(fds), 0);
+    I32 child = c::fork();
+    if (child == 0) {
+        c::smith_failure_hook = nullptr;
+        c::dup2(fds[1], 2);
+        c::close(fds[0]);
+        Probe call = (Probe)address;
+        call(argument);
+        c::_exit(0);
+    }
+    c::close(fds[1]);
+    Usize used = 0;
+    Isize got = 1;
+    while (got > 0 && used + 1 < size) {
+        got = c::read(fds[0], out + used, size - 1 - used);
+        if (got > 0) used += (Usize)got;
+    }
+    out[used] = 0;
+    c::close(fds[0]);
+    I32 status = 0;
+    c::waitpid(child, &status, 0);
+}
+
+export void test_front_emit_cast_run_report_names_the_value_and_the_type() {
+    Scenario s = {};
+    begin(&s, "export U8 byte(I32 a) { return (U8)a; } "
+              "export I32 at(U64 i) { I32 xs[3]; xs[1] = 5; return xs[i]; }");
+    emit_jit::Jit host = start_jit();
+    jit_scenario(&host, &s);
+    Usize byte_at = symbol_of(&host, "byte");
+    Usize at_at = symbol_of(&host, "at");
+    char text[2048] = {};
+    report_of(byte_at, (Usize)-5, text, sizeof text);
+    test::check_equal(contains(text, "smith-trace detail cast of -5 does not fit U8"), true);
+    report_of(byte_at, 300, text, sizeof text);
+    test::check_equal(contains(text, "smith-trace detail cast of 300 does not fit U8"), true);
+    report_of(at_at, 7, text, sizeof text);
+    test::check_equal(contains(text, "smith-trace detail index 7 is outside 0 to 3"), true);
     emit_jit::stop(&host);
 }
