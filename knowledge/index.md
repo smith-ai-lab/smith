@@ -30,6 +30,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [std::slice and std::ascii replace text's slice operations](slice-library.md): A slice library generic over the element does what text did for chars, with no allocation, option for a search that may find nothing, and a character test that reads no locale.
 - [The .smith language](smith-language.md): A .smith file is C with modules, lowered to C as clang reads it by a token hook, with sized types, the rules, one command, and what the language does not do yet.
 - [std::task, fibers, groups, one worker per core and kqueue I/O](task.md): Tasks on 256 KB mmap stacks with a guard page, switched by assembly, run by one worker thread per core, parked on sockets and pipes in the worker's kqueue (macOS), waited for in a task::Group, with the scheduler a handler (issues #241, #940, #941).
+- [Upstream's LLVM 23.1.3 release against smith's own build](upstream-llvm.md): What llvm/llvm-project's release archives for macOS arm64 and Linux x86_64 ship and how they differ from what scripts/llvm.sh builds, so smith knows which parts it could take from upstream.
 - [std::wrapping is the written way out of a module's overflow checks](wrapping-arithmetic.md): Signed arithmetic that wraps in two's complement, by name, so a module can mean wrapping where the checked default would fail the task (issue #351).
 
 ## Conventions
