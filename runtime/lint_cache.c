@@ -7,10 +7,12 @@
 // a compile, the file's name and compile command, and the chain of `.clang-tidy` files from its folder up to /. Under
 // it, `m/<xx>/<key>` is the MANIFEST of the last run: the files clang-tidy read (its own dependency file, written by a
 // miss through `-Xclang -dependency-file`). The SECOND key adds the content of those files, and `r/<xx>/<key>` holds
-// the RESULT: the exit status and the output. So a header edited, a file edited, a `.clang-tidy` edited or another
-// smith make another key, and a hit needs no build and no object. The project's root is replaced by a fixed word in the
-// command and the output, so a clone in another folder shares the entries. A result is stored only when the run
-// completed (exit status 0 or 1) and no file it read was changed during or just before the run.
+// the RESULT: the exit status and the output. A .smith file's first key also holds the generated headers of the
+// modules (.smith/include), which its imports read without the preprocessor. So a header edited, a file edited, a
+// `.clang-tidy` edited or another smith make another key, and a hit needs no build and no object. The project's root is
+// replaced by a fixed word in the command and the output, so a clone in another folder shares the entries. A result is
+// stored only when the run completed (exit status 0 or 1) and no file it read was changed during or just before the
+// run.
 #include <sys/stat.h>
 
 constexpr size_t smith_lc_files_max = (size_t)1 << 15;
@@ -54,6 +56,9 @@ typedef struct {
     size_t root_length;
     char folder[PATH_MAX];
     SmithSha256 base; // the parts of every key that do not depend on the file
+    bool headers_made;
+    bool headers_ok;                     // headers is the digest of the generated headers
+    char headers[smith_sha256_hex_size]; // the headers of the modules a .smith file may import
 } SmithLc;
 
 static SmithLc smith_lc;
@@ -186,6 +191,64 @@ static bool smith_lc_add_configs(SmithSha256 *sha, const char *file) {
         if (folder[0] == '\0') break;
     }
     return true;
+}
+
+constexpr size_t smith_lc_walk_max = (size_t)1 << 20;
+constexpr size_t smith_lc_headers_max = (size_t)1 << 13;
+static char smith_lc_walk[smith_lc_walk_max];
+static const char *smith_lc_walk_headers[smith_lc_headers_max];
+
+static int smith_lc_compare_names(const void *a, const void *b) {
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+// Appends a folder's entries to the queue of the walk; false when the queue is full.
+static bool smith_lc_walk_folder(const char *folder, size_t *used) {
+    DIR *dir = opendir(folder);
+    if (dir == nullptr) return true;
+    bool fits = true;
+    for (struct dirent *entry = readdir(dir); entry != nullptr && fits; entry = readdir(dir)) { // bounded by the folder
+        if (entry->d_name[0] == '.') continue;
+        int written = snprintf(smith_lc_walk + *used, smith_lc_walk_max - *used, "%s/%s", folder, entry->d_name);
+        fits = written > 0 && (size_t)written + 1 < smith_lc_walk_max - *used;
+        if (fits) *used += (size_t)written + 1;
+    }
+    closedir(dir);
+    return fits;
+}
+
+// The digest of every header under .smith/include, which `smith build` writes for the modules: a .smith file reads
+// those through its imports without the preprocessor, so clang-tidy's dependency file never names them. Made once.
+static bool smith_lc_add_generated_headers(SmithSha256 *sha) {
+    if (!smith_lc.headers_made) {
+        smith_lc.headers_made = true;
+        size_t count = 0;
+        bool fits = snprintf(smith_lc_walk, smith_lc_walk_max, ".smith/include") > 0;
+        size_t used = strlen(smith_lc_walk) + 1;
+        for (size_t at = 0; at < used && fits;) { // bounded by the queue
+            const char *path = smith_lc_walk + at;
+            size_t length = strlen(path);
+            struct stat info;
+            if (stat(path, &info) == 0 && S_ISDIR(info.st_mode)) {
+                fits = smith_lc_walk_folder(path, &used);
+            } else if (length > 2 && strcmp(path + length - 2, ".h") == 0) {
+                fits = count < smith_lc_headers_max;
+                if (fits) smith_lc_walk_headers[count++] = path;
+            }
+            at += length + 1;
+        }
+        if (fits) {
+            qsort(smith_lc_walk_headers, count, sizeof smith_lc_walk_headers[0], smith_lc_compare_names);
+            SmithSha256 all;
+            smith_sha256_init(&all);
+            for (size_t i = 0; i < count; i++) // bounded by the headers
+                smith_lc_add_file(&all, smith_lc_walk_headers[i]);
+            smith_sha256_final(&all, smith_lc.headers);
+        }
+        smith_lc.headers_ok = fits;
+    }
+    if (smith_lc.headers_ok) smith_lc_text_add(sha, smith_lc.headers);
+    return smith_lc.headers_ok;
 }
 
 // The environment that changes a compile or the tool's answer.
@@ -337,6 +400,11 @@ static void smith_lc_plan(size_t number, const char *file, const char *flags) {
         return;
     }
     if (!smith_lc_add_configs(&sha, smith_lc_relative(file))) return;
+    size_t name_length = strlen(file);
+    if (name_length > 6 && strcmp(file + name_length - 6, ".smith") == 0 && !smith_lc_add_generated_headers(&sha)) {
+        smith_lc_why(file, "too many generated headers to key on");
+        return;
+    }
     smith_sha256_final(&sha, job->first);
     job->usable = true;
     smith_lc_read_manifest(job);
