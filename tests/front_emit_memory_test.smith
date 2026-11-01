@@ -567,6 +567,27 @@ export void test_front_emit_memory_global_counter_incremented_by_a_function() {
     emit_jit::stop(&host);
 }
 
+// A global read and assigned by its bare name.
+// I32 counter = 5;  I32 bump() { counter = counter + 1; return counter; }
+export void test_front_emit_memory_global_read_and_assigned_by_bare_name() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Decl *counter = ast::variable("counter", i32_type(), number(5));
+    counter->exported = true;
+    ast::StmtRef items[2] = {
+        expression(assign(.plain, name("counter"), binary(.add, name("counter"), number(1)))),
+        give(name("counter")),
+    };
+    ast::Module m = module2(counter, function_of0("bump", i32_type(), items));
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    NoArgFn bump = (NoArgFn)symbol_of(&host, "front::test::bump");
+    test::check_equal(bump(), 6);
+    test::check_equal(bump(), 7);
+    emit_jit::stop(&host);
+}
+
 // A global record with a compound initializer, read through a member of its address.
 // Point origin = {.y = -2};  I32 read() { return (&origin)->y; }
 export void test_front_emit_memory_global_record_with_a_compound_initializer() {

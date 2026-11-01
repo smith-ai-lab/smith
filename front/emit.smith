@@ -172,7 +172,10 @@ static state::Status dispatch_binary(state::Emitter *e, const ast::Expr *x, ast:
 static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
     try debug::expr_location(e, x);
     if (x->kind == .integer) return arith::integer_literal(e, x, hint);
-    if (x->kind == .name) return arith::name_ref(e, x, hint);
+    if (x->kind == .name) {
+        if (memory::is_global_name(e, x)) return memory::name_ref(e, x);
+        return arith::name_ref(e, x, hint);
+    }
     if (x->kind == .unary) return dispatch_unary(e, x, x->kind.unary.op, hint);
     if (x->kind == .binary) return dispatch_binary(e, x, x->kind.binary.op, hint);
     if (x->kind == .assign) return arith::assign_op(e, x, hint);
@@ -191,7 +194,10 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
 
 // The handler that pushes the address of an lvalue.
 static state::Status dispatch_place(state::Emitter *e, const ast::Expr *x) {
-    if (x->kind == .name) return arith::place_name(e, x);
+    if (x->kind == .name) {
+        if (memory::is_global_name(e, x)) return memory::place_name(e, x);
+        return arith::place_name(e, x);
+    }
     if (x->kind == .unary && x->kind.unary.op == .dereference) return memory::place_dereference(e, x);
     if (x->kind == .index) return memory::place_index(e, x);
     if (x->kind == .member) return memory::place_member(e, x);
@@ -581,6 +587,7 @@ export ModuleResult module(c::LLVMContextRef context, const ast::Module *m, stat
     e.builder = c::LLVMCreateBuilderInContext(context);
     e.alloca_builder = c::LLVMCreateBuilderInContext(context);
     state::Status status = emit_all(&e);
+    memory::release(&e);
     c::LLVMDisposeBuilder(e.builder);
     c::LLVMDisposeBuilder(e.alloca_builder);
     if (e.target_data != nullptr) c::LLVMDisposeTargetData(e.target_data);
