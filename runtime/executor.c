@@ -55,7 +55,7 @@ typedef struct {
     uint32_t edge;     // the edge that makes it, plus one; 0 for a file nothing makes
     uint32_t consumer; // the first of its consumer links, plus one; 0 for none
     uint8_t scan;      // SmithScan
-    uint32_t cause; // when dirty, the node whose own reason (-d explain) started it, plus one
+    uint32_t cause;    // when dirty, the node whose own reason (-d explain) started it, plus one
     bool dirty;
     bool from_deps; // first seen in a depfile: a missing one is not an error
 } SmithNode;
