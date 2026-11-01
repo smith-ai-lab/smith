@@ -247,10 +247,25 @@ static const char *smith_cache_name(SmithCacheKind kind) {
                                          : "lint";
 }
 
+#ifdef SMITH_CORE
+// While smith_core_package_fetch runs: the two variables it is given in place of the process's own (a test sets none).
+static struct {
+    bool given;
+    const char *xdg;
+    const char *home;
+} smith_core_environment;
+#endif
+
 // $XDG_CACHE_HOME/smith, or ~/.cache/smith: the folder of every smith cache.
 static bool smith_cache_base(char *out, SmithPackageFault *error) {
     const char *xdg = getenv("XDG_CACHE_HOME");
     const char *home = getenv("HOME");
+#ifdef SMITH_CORE
+    if (smith_core_environment.given) {
+        xdg = smith_core_environment.xdg;
+        home = smith_core_environment.home;
+    }
+#endif
     int written = 0;
     if (xdg != nullptr && *xdg != '\0') {
         if (xdg[0] != '/') return smith_package_fail(error, "XDG_CACHE_HOME is not an absolute path: %s", xdg);
@@ -699,6 +714,26 @@ bool smith_core_extract(const uint8_t *archive, size_t size, const char *url, co
     if (!ok) smith_package_extract_failed(url, &fault);
     snprintf(contents, contents_size, "%s", ok ? found : "");
     snprintf(error, error_size, "%s", ok ? "" : fault.text);
+    return ok;
+}
+
+// include/smith_core_package.h: the fetch in process. It returns the fault in `errors`, never ends the process.
+bool smith_core_package_fetch(const char *xdg_cache_home, const char *home, const char *url, const char *hash,
+                              bool offline, char *folder_out, size_t size, char *hash_out, char *errors,
+                              size_t errors_size) {
+    SmithPackageFault fault = {};
+    char folder[PATH_MAX] = "";
+    char actual[smith_package_hash_size] = "";
+    smith_core_environment.given = true;
+    smith_core_environment.xdg = xdg_cache_home;
+    smith_core_environment.home = home;
+    bool ok = smith_package_ensure(url, hash, offline, folder, actual, &fault);
+    smith_core_environment.given = false; // the next call, and the runtime, read the process's own again
+    smith_core_environment.xdg = nullptr;
+    smith_core_environment.home = nullptr;
+    snprintf(folder_out, size, "%s", ok ? folder : "");
+    if (hash_out != nullptr) snprintf(hash_out, smith_package_hash_size, "%s", ok ? actual : "");
+    snprintf(errors, errors_size, "%s", ok ? "" : fault.text);
     return ok;
 }
 

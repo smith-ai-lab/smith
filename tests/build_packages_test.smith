@@ -1,10 +1,15 @@
-// Packages, from tests/build.sh section 11: a URL and a hash, fetched over file:// (the network is tested in
-// tests/package.sh) into a cache of its own. Each test makes the archives in `pk/` of its project.
+// Packages: a URL and a hash, fetched over file:// (the network is tested in tests/package_checks_test.smith) into a
+// cache of their own. Each test makes the archives in `pk/` of its project. The fetch (download, SHA-256, extract,
+// cache by hash, offline use, nothing left after a failure) is a function of a URL, a hash and a cache folder, so the
+// tests call it in process through `smith_core_package_fetch` (include/smith_core_package.h; issue #1298, part of
+// #646): no smith starts. Two tests keep a process each, for what only a process shows: a build.c with a package
+// builds (the wiring from `smith_package(...)` to the fetch), and `smith fetch` prints the line to paste.
 module build_packages_test;
 
 import std::arena;
 import std::format;
 import std::test;
+import <smith_core_package.h>;
 import <string.h>;
 import scratch;
 import std::mem;
@@ -31,9 +36,10 @@ static const char *cache_in(const scratch::Project *p, const char *name) {
     return path;
 }
 
-// A project with the archives made and the cache `cache` (a name in the project's scratch folder).
-static Fixture fixture(arena::Arena *memory, const char *cache) {
-    Fixture f = {.p = scratch::make("p", "packages"), .memory = memory};
+// A project with the archives made and the cache `cache` (a name in the project's scratch folder). `fixture_name` is
+// the build.c fixture of the test that builds, null for the others.
+static Fixture fixture(arena::Arena *memory, const char *cache, const char *fixture_name) {
+    Fixture f = {.p = scratch::make("p", fixture_name), .memory = memory};
     scratch::Run made = scratch::sh(&f.p, make_archives);
     test::check_equal(made.status, 0);
     f.pk = format::push(f.p.dir, "/pk").data;
@@ -63,12 +69,46 @@ static const char *temporaries(const Fixture *f) {
         &f->p, format::push("ls -A ", f->p.cache, "/smith/packages 2>/dev/null | grep -c '^\\.tmp'; true").data);
 }
 
+typedef struct {
+    Bool ok;
+    char *folder; // the package's folder, empty on failure
+    char *hash;   // sha256:<hex> of the archive, empty on failure
+    char *errors; // what the command prints, empty on success
+} Fetched;
+
+constexpr Usize path_capacity = 4096;
+constexpr Usize hash_capacity = 72;
+constexpr Usize errors_capacity = 4096;
+
+// The fetch in process into the cache `xdg` or, with `xdg` null, into `home`/.cache. `hash` is null for the way
+// `smith fetch` runs it (always downloaded). The texts are the test's arena's.
+static Fetched fetch_into(const char *xdg, const char *home, const char *url, const char *hash, Bool offline) {
+    Fetched r = {.folder = mem::alloc_slice(char, path_capacity).data,
+                 .hash = mem::alloc_slice(char, hash_capacity).data,
+                 .errors = mem::alloc_slice(char, errors_capacity).data};
+    r.ok = c::smith_core_package_fetch(xdg, home, url, hash, offline, r.folder, path_capacity, r.hash, r.errors,
+                                       errors_capacity);
+    return r;
+}
+
+static Fetched fetch(const Fixture *f, const char *url, const char *hash, Bool offline) {
+    return fetch_into(f->p.cache, nullptr, url, hash, offline);
+}
+
+static void expect_ok(const char *what, const Fetched *r) {
+    scratch::expect_text(what, "", r->errors);
+    test::check_condition(r->ok);
+}
+
+// The end-to-end test: a build.c with `smith_package(...)` builds. This stays a process because the wiring from the
+// build library to the fetch (the options, the path it returns, the step that copies from it) is what it shows; what
+// the fetch itself does is tested in process below.
 export void test_build_package_is_fetched_extracted_and_cached_by_hash() {
     arena::Arena memory = test::memory(1 << 26);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Fixture f = fixture(&memory, "cache");
+    Fixture f = fixture(&memory, "cache", "packages");
     defer scratch::clean(&f.p);
     scratch::Run first = build_with(&f, f.url, f.hash, "");
     scratch::expect_status("package: the first build exits 0", 0, &first);
@@ -82,21 +122,39 @@ export void test_build_package_is_fetched_extracted_and_cached_by_hash() {
     scratch::expect_text("package: no temporary file is left in the cache", "0", temporaries(&f));
 }
 
+export void test_build_package_fetch_extracts_and_caches_by_hash() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Fixture f = fixture(&memory, "cache", nullptr);
+    defer scratch::clean(&f.p);
+    Fetched r = fetch(&f, f.url, f.hash, false);
+    expect_ok("package: the fetch succeeds", &r);
+    scratch::expect_text("package: the path is in the cache, by hash", package_dir(&f, f.hex), r.folder);
+    scratch::expect_text("package: and the hash is the archive's", f.hash, r.hash);
+    scratch::expect_text("package: the archive's one top folder is stripped and its files are used", "hello package",
+                         scratch::capture(&f.p, format::push("cat ", r.folder, "/hello.txt").data));
+    scratch::expect_text("package: modes survive extraction", "tool ran",
+                         scratch::capture(&f.p, format::push(r.folder, "/bin/tool 2>&1").data));
+    scratch::expect_text("package: no temporary file is left in the cache", "0", temporaries(&f));
+}
+
 export void test_build_package_cached_builds_need_no_archive_and_offline_works() {
     arena::Arena memory = test::memory(1 << 26);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Fixture f = fixture(&memory, "cache");
+    Fixture f = fixture(&memory, "cache", nullptr);
     defer scratch::clean(&f.p);
-    (void)build_with(&f, f.url, f.hash, "");
+    Fetched first = fetch(&f, f.url, f.hash, false);
+    expect_ok("package: the first fetch succeeds", &first);
     (void)scratch::sh(&f.p, "mv pk/pkg.tar.gz pk/pkg.tar.gz.away");
-    scratch::Run second = build_with(&f, f.url, f.hash, "");
-    scratch::expect_status("package: a second build exits 0 with the archive gone", 0, &second);
-    scratch::expect_lacks("package: a second build says nothing about fetching", second.err, "fetching");
-    (void)scratch::sh(&f.p, "mv pk/pkg.tar.gz.away pk/pkg.tar.gz");
-    scratch::Run offline = build_with(&f, f.url, f.hash, " -DOFFLINE");
-    scratch::expect_status("package: -DOFFLINE succeeds when it is cached", 0, &offline);
+    Fetched second = fetch(&f, f.url, f.hash, false);
+    expect_ok("package: a second fetch succeeds with the archive gone", &second);
+    scratch::expect_text("package: ... at the same folder", first.folder, second.folder);
+    Fetched offline = fetch(&f, f.url, f.hash, true);
+    expect_ok("package: offline succeeds when it is cached", &offline);
 }
 
 export void test_build_package_a_wrong_or_malformed_hash_fails() {
@@ -104,111 +162,115 @@ export void test_build_package_a_wrong_or_malformed_hash_fails() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Fixture f = fixture(&memory, "cache");
+    Fixture f = fixture(&memory, "cache", nullptr);
     defer scratch::clean(&f.p);
-    (void)build_with(&f, f.url, f.hash, "");
+    Fetched good = fetch(&f, f.url, f.hash, false);
+    expect_ok("package: the right hash fetches", &good);
     const char *wrong = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
-    scratch::Run run = build_with(&f, f.url, wrong, "");
-    scratch::expect_failure("package: a wrong hash fails", &run);
-    scratch::expect_contains("package: the message names the URL", run.err, f.url);
-    scratch::expect_contains("package: and the expected hash", run.err, format::push("expected ", wrong).data);
-    scratch::expect_contains("package: and the actual hash", run.err, format::push("actual   ", f.hash).data);
+    Fetched run = fetch(&f, f.url, wrong, false);
+    test::check_condition(!run.ok);
+    scratch::expect_contains("package: the message names the URL", run.errors, f.url);
+    scratch::expect_contains("package: and the expected hash", run.errors, format::push("expected ", wrong).data);
+    scratch::expect_contains("package: and the actual hash", run.errors, format::push("actual   ", f.hash).data);
     scratch::expect_text("package: a wrong hash leaves nothing under it", "no", in_cache(&f, wrong + 7));
     scratch::expect_text("package: and no temporary file", "0", temporaries(&f));
-    scratch::Run malformed = build_with(&f, f.url, "sha256:abc", "");
-    scratch::expect_failure("package: a malformed hash fails", &malformed);
-    scratch::expect_contains("package: the message says what a hash looks like", malformed.err, "64 hex digits");
+    Fetched malformed = fetch(&f, f.url, "sha256:abc", false);
+    test::check_condition(!malformed.ok);
+    scratch::expect_contains("package: the message says what a hash looks like", malformed.errors, "64 hex digits");
 }
 
-// A fetch that fails (the file is not there) leaves no complete package and no temporary file; the next build is fine.
+// A fetch that fails (the file is not there) leaves no complete package and no temporary file; the next one is fine.
 export void test_build_package_a_failed_fetch_leaves_nothing_and_the_next_build_is_fine() {
     arena::Arena memory = test::memory(1 << 26);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Fixture f = fixture(&memory, "cache2");
+    Fixture f = fixture(&memory, "cache2", nullptr);
     defer scratch::clean(&f.p);
     const char *absent = format::push("file://", f.pk, "/absent.tar.gz").data;
-    scratch::Run failed = build_with(&f, absent, f.hash, "");
-    scratch::expect_failure("package: a failed fetch fails the build", &failed);
-    scratch::expect_contains("package: ... naming the URL", failed.err, absent);
+    Fetched failed = fetch(&f, absent, f.hash, false);
+    test::check_condition(!failed.ok);
+    scratch::expect_contains("package: ... naming the URL", failed.errors, absent);
     scratch::expect_text("package: nothing is in the cache under the hash", "no", in_cache(&f, f.hex));
     scratch::expect_text("package: and no temporary file is left", "0", temporaries(&f));
-    scratch::Run next = build_with(&f, f.url, f.hash, "");
-    char text[128];
-    __builtin_snprintf(text, sizeof text, "%d %s", next.status, scratch::read(&f.p, "out.txt"));
-    scratch::expect_text("package: the next build fetches it properly", "0 hello package", text);
+    Fetched next = fetch(&f, f.url, f.hash, false);
+    expect_ok("package: the next fetch works properly", &next);
+    scratch::expect_text("package: ... and the package is there", "hello package",
+                         scratch::capture(&f.p, format::push("cat ", next.folder, "/hello.txt").data));
 }
 
-// -DOFFLINE with an empty cache is an error that names the URL and fetches nothing.
+// Offline with an empty cache is an error that names the URL and fetches nothing.
 export void test_build_package_offline_with_an_empty_cache_fails() {
     arena::Arena memory = test::memory(1 << 26);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Fixture f = fixture(&memory, "cache3");
+    Fixture f = fixture(&memory, "cache3", nullptr);
     defer scratch::clean(&f.p);
-    scratch::Run run = build_with(&f, f.url, f.hash, " -DOFFLINE");
-    scratch::expect_failure("package: -DOFFLINE fails when the package is missing", &run);
-    scratch::expect_contains("package: the message names the URL", run.err, f.url);
+    Fetched run = fetch(&f, f.url, f.hash, true);
+    test::check_condition(!run.ok);
+    scratch::expect_contains("package: the message names the URL", run.errors, f.url);
+    scratch::expect_contains("package: and says what forbids it", run.errors, "-DOFFLINE forbids fetching");
     scratch::expect_text("package: and makes no package", "no", in_cache(&f, f.hex));
 }
 
-// smith fetch prints the line to paste, and leaves the package in the cache.
-export void test_build_package_smith_fetch_prints_the_hash_line_and_caches() {
+// With no hash (the way `smith fetch` runs it) the archive is always downloaded, its hash is the answer, and the
+// package is left in the cache for an offline build.
+export void test_build_package_fetch_without_a_hash_answers_the_hash_and_caches() {
     arena::Arena memory = test::memory(1 << 26);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Fixture f = fixture(&memory, "cache3");
+    Fixture f = fixture(&memory, "cache3", nullptr);
+    defer scratch::clean(&f.p);
+    Fetched fetched = fetch(&f, f.url, nullptr, false);
+    expect_ok("package: a fetch with no hash succeeds", &fetched);
+    scratch::expect_text("package: and answers the archive's hash", f.hash, fetched.hash);
+    scratch::expect_text("package: and leaves the package in the cache", "hello package",
+                         scratch::capture(&f.p, format::push("cat ", package_dir(&f, f.hex), "/hello.txt").data));
+    Fetched offline = fetch(&f, f.url, f.hash, true);
+    expect_ok("package: a build offline then uses it", &offline);
+    const char *missing = format::push("file://", f.pk, "/missing.tar.gz").data;
+    Fetched none = fetch(&f, missing, nullptr, false);
+    test::check_condition(!none.ok);
+    scratch::expect_contains("package: a missing file fails, naming it", none.errors, missing);
+}
+
+// What only the command shows: `smith fetch` prints the line to paste, and wants a URL.
+export void test_build_package_smith_fetch_prints_the_hash_line_and_wants_a_url() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Fixture f = fixture(&memory, "cache4", nullptr);
     defer scratch::clean(&f.p);
     scratch::Run fetched = scratch::sh(&f.p, format::push("smith fetch ", f.url).data);
     scratch::expect_text("package: smith fetch prints the hash line", format::push(".hash = \"", f.hash, "\",").data,
                          fetched.out);
-    scratch::expect_text(
-        "package: and leaves the package in the cache", "hello package",
-        scratch::capture(&f.p, format::push("cat ", package_dir(&f, f.hex), "/hello.txt 2>/dev/null").data));
-    scratch::Run offline = build_with(&f, f.url, f.hash, " -DOFFLINE");
-    char text[128];
-    __builtin_snprintf(text, sizeof text, "%d %s", offline.status, scratch::read(&f.p, "out.txt"));
-    scratch::expect_text("package: a build offline then uses it", "0 hello package", text);
     scratch::Run none = scratch::sh(&f.p, "smith fetch");
     scratch::expect_status("package: smith fetch needs a URL", 2, &none);
-    scratch::Run missing = scratch::sh(&f.p, format::push("smith fetch file://", f.pk, "/missing.tar.gz").data);
-    scratch::expect_failure("package: smith fetch of a missing file fails", &missing);
 }
 
-// .tar.xz extracts the same way, a zip is refused by name, and the XDG default is ~/.cache.
+// .tar.xz extracts the same way and a zip is refused by name.
 export void test_build_package_xz_extracts_and_a_zip_is_refused() {
     arena::Arena memory = test::memory(1 << 26);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Fixture f = fixture(&memory, "cache-xz");
+    Fixture f = fixture(&memory, "cache-xz", nullptr);
     defer scratch::clean(&f.p);
-    scratch::Run fetched = scratch::sh(&f.p, format::push("smith fetch file://", f.pk, "/pkg.tar.xz").data);
-    const char *line = fetched.out;
-    const char *start = c::strchr(line, '"');
-    char hash[128] = "";
-    if (start != nullptr) {
-        const char *end = c::strchr(start + 1, '"');
-        Usize length = end != nullptr ? (Usize)(end - start - 1) : 0;
-        if (length < sizeof hash) {
-            mem::copy(hash[0:length], start[1:1 + length]);
-            hash[length] = '\0';
-        }
-    }
+    Fetched fetched = fetch(&f, format::push("file://", f.pk, "/pkg.tar.xz").data, nullptr, false);
+    expect_ok("package: .tar.xz extracts", &fetched);
     scratch::expect_text(
         "package: .tar.xz has the hash shasum gives",
-        format::push("sha256:", scratch::capture(&f.p, "shasum -a 256 pk/pkg.tar.xz | cut -d' ' -f1")).data, hash);
-    scratch::expect_text(
-        "package: .tar.xz extracts", "hello package",
-        scratch::capture(&f.p,
-                         format::push("cat ", f.p.cache, "/smith/packages/", hash + 7, "/hello.txt 2>/dev/null").data));
+        format::push("sha256:", scratch::capture(&f.p, "shasum -a 256 pk/pkg.tar.xz | cut -d' ' -f1")).data,
+        fetched.hash);
+    scratch::expect_text("package: ... and its files are there", "hello package",
+                         scratch::capture(&f.p, format::push("cat ", fetched.folder, "/hello.txt").data));
     f.p.cache = cache_in(&f.p, "cache-zip");
-    scratch::Run zip = scratch::sh(&f.p, format::push("smith fetch file://", f.pk, "/pkg.zip").data);
-    scratch::expect_failure("package: a .zip is refused", &zip);
-    scratch::expect_contains("package: and the message names the format and the archive", zip.err,
+    Fetched zip = fetch(&f, format::push("file://", f.pk, "/pkg.zip").data, nullptr, false);
+    test::check_condition(!zip.ok);
+    scratch::expect_contains("package: a .zip is refused, and the message names the format and the archive", zip.errors,
                              "zip archives are not supported");
     scratch::expect_text("package: and nothing is left in the cache", "0",
                          scratch::capture(&f.p, format::push("ls ", f.p.cache,
@@ -217,20 +279,42 @@ export void test_build_package_xz_extracts_and_a_zip_is_refused() {
                                                     .data));
 }
 
+// Without XDG_CACHE_HOME the cache is ~/.cache (HOME is the argument, no variable is set in this process).
 export void test_build_package_without_xdg_cache_home_the_cache_is_dot_cache() {
     arena::Arena memory = test::memory(1 << 26);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Fixture f = fixture(&memory, "cache");
+    Fixture f = fixture(&memory, "cache", nullptr);
     defer scratch::clean(&f.p);
-    scratch::Run run = scratch::sh(&f.p, format::push("mkdir pk/home && env -u XDG_CACHE_HOME HOME=$PWD/pk/home "
-                                                      "smith fetch ",
-                                                      f.url)
-                                             .data);
-    test::check_equal(run.status, 0);
+    const char *home = format::push(f.pk, "/home").data;
+    Fetched r = fetch_into(nullptr, home, f.url, nullptr, false);
+    expect_ok("package: the fetch succeeds with only HOME", &r);
     scratch::expect_text(
         "package: with no XDG_CACHE_HOME the cache is ~/.cache", "hello package",
         scratch::capture(&f.p,
-                         format::push("cat pk/home/.cache/smith/packages/", f.hex, "/hello.txt 2>/dev/null").data));
+                         format::push("cat ", home, "/.cache/smith/packages/", f.hex, "/hello.txt 2>/dev/null").data));
+}
+
+// The fetch keeps no state between calls (a test sets no environment variable, so two caches are told apart by the
+// argument): two caches, two hashes, one after the other in this process, and a failure between them.
+export void test_build_package_fetch_twice_in_one_process_keeps_nothing() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Fixture f = fixture(&memory, "cache-a", nullptr);
+    defer scratch::clean(&f.p);
+    Fetched first = fetch(&f, f.url, f.hash, false);
+    expect_ok("package: the first fetch succeeds", &first);
+    Fetched bad = fetch(&f, f.url, "sha256:abc", false);
+    test::check_condition(!bad.ok);
+    const char *other = cache_in(&f.p, "cache-b");
+    Fetched second = fetch_into(other, nullptr, format::push("file://", f.pk, "/pkg.tar.xz").data, nullptr, false);
+    expect_ok("package: a second fetch into another cache succeeds", &second);
+    scratch::expect_contains("package: ... in that cache", second.folder, "/cache-b/smith/packages/");
+    scratch::expect_text("package: the first cache is as it was", "yes", in_cache(&f, f.hex));
+    Fetched third = fetch(&f, f.url, f.hash, true);
+    expect_ok("package: the first cache still serves it offline", &third);
+    scratch::expect_text("package: ... at the folder it had", first.folder, third.folder);
 }
