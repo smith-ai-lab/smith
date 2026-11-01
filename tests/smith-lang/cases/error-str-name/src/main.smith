@@ -6,11 +6,11 @@ struct Holder {
     const char *str;
 };
 
-static int measure(const char *str) {
-    return str[0];
+static int measure(const char *Str) {
+    return Str[0];
 }
 
-i32 main() {
+I32 main() {
     const char *str = "abcd";
-    return measure(str);
+    return measure(Str);
 }

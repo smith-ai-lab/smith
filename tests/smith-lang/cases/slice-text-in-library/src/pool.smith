@@ -4,13 +4,13 @@ module pool;
 // slice mode, where the head `T *grab(` of a generic is not read (issue #121).
 
 typedef struct {
-    i32 a;
-    f64 b;
+    I32 a;
+    F64 b;
 } Pair;
 
 static char storage[256];
 
-T *grab(constexpr type T, usize count, i32 flags) {
+T *grab(constexpr Type T, Usize count, I32 flags) {
     (void)flags;
     (void)count;
     return (T *)storage;
@@ -18,10 +18,10 @@ T *grab(constexpr type T, usize count, i32 flags) {
 
 export const char *note = "a string with zs[:] in it";
 
-export f64 first() {
+export F64 first() {
     Pair *p = grab(Pair, 1, 0);
     p->b = 2.5;
-    usize *n = grab(usize, 2, 0);
+    Usize *n = grab(Usize, 2, 0);
     n[0] = 3;
-    return p->b + (f64)n[0];
+    return p->b + (F64)n[0];
 }

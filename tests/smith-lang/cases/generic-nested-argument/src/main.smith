@@ -3,11 +3,11 @@ module main;
 import apply;
 import <stdio.h>;
 
-static i32 inc(i32 x) {
+static I32 inc(I32 x) {
     return x + 1;
 }
 
-static f64 half(f64 x) {
+static F64 half(F64 x) {
     return x / 2;
 }
 

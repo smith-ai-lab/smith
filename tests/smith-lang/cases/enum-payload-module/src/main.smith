@@ -8,7 +8,7 @@ static shapes::Shape grown(shapes::Shape s) {
     return s;
 }
 
-i32 main() {
+I32 main() {
     shapes::Shape a = shapes::unit();
     shapes::Shape b = .empty;
     shapes::Shape c = {.rect = {.w = 2, .h = 5}};

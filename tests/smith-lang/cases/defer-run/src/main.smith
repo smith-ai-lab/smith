@@ -3,7 +3,7 @@ import <stdio.h>;
 
 // `defer` is C2y's defer TS in a module: the deferred statement runs when its block exits, last deferred first, on
 // the end of the block, `return`, `break`, `continue` and a `goto` out (issue #210).
-static i32 early(i32 n) {
+static I32 early(I32 n) {
     defer c::puts("leave early");
     if (n > 0) return 1;
     c::puts("not early");
@@ -19,13 +19,13 @@ out:
     c::puts("after the jump");
 }
 
-i32 main() {
+I32 main() {
     {
         defer c::puts("first deferred, runs last");
         defer c::puts("second deferred, runs first");
         c::puts("body");
     }
-    for (i32 i = 0; i < 3; i++) {
+    for (I32 i = 0; i < 3; i++) {
         defer c::printf("end of iteration %d\n", i);
         if (i == 0) continue;
         if (i == 2) break;

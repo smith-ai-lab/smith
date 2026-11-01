@@ -1,6 +1,6 @@
 module finder;
 
-export option(typeof(v)) maybe(auto v, bool keep) {
+export Option(typeof(v)) maybe(auto v, Bool keep) {
     if (keep) return {.some = v};
     return .none;
 }

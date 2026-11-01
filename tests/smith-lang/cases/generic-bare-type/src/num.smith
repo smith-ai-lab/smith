@@ -1,5 +1,5 @@
 module num;
 
-export T add(type T, T a, T b) {
+export T add(Type T, T a, T b) {
     return a + b;
 }

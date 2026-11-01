@@ -1,9 +1,9 @@
 import arr;
 import <stdio.h>;
 
-i32 main(i32 argc, char **argv) {
-    i32 xs[4] = {7, 8, 9, 10};
-    f32 m[3][2] = {};
-    c::printf("%d %g\n", arr::pick(xs, 2), (f64)arr::corner(m));
+I32 main(I32 argc, char **argv) {
+    I32 xs[4] = {7, 8, 9, 10};
+    F32 m[3][2] = {};
+    c::printf("%d %g\n", arr::pick(xs, 2), (F64)arr::corner(m));
     return 0;
 }

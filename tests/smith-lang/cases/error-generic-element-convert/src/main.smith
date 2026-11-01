@@ -1,12 +1,12 @@
 module main;
 import stats;
-i32 main() {
-    u8 raw[3] = {1, 2, 3};
-    u8 bs[:] = raw;
-    f32 fl[2] = {1, 2};
-    f32 fs[:] = fl;
-    i32 wide = 5;
-    u8 small = 4;
+I32 main() {
+    U8 raw[3] = {1, 2, 3};
+    U8 bs[:] = raw;
+    F32 fl[2] = {1, 2};
+    F32 fs[:] = fl;
+    I32 wide = 5;
+    U8 small = 4;
     stats::find(bs, 3);
     stats::find(bs, small);
     stats::find(bs, 300);

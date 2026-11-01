@@ -1,32 +1,32 @@
 module main;
 import <stdio.h>;
 
-typedef result(i32, u8) Step;
-typedef option(i32) Found;
+typedef Result(I32, U8) Step;
+typedef Option(I32) Found;
 
 // `try` gives the success value, so `return try f();` returns it as `.ok` (`.some` for an option), as `return v;` does
 // (issue #358).
-static Step step(i32 n) {
+static Step step(I32 n) {
     if (n < 0) return {.error = 3};
     return n * 2;
 }
 
-static Step forward(i32 n) {
+static Step forward(I32 n) {
     return try step(n);
 }
 
-static Found first(i32 n) {
+static Found first(I32 n) {
     if (n == 0) return .none;
     return n;
 }
 
-static Found again(i32 n) {
+static Found again(I32 n) {
     defer c::puts("again leaves");
     errdefer c::puts("again failed");
     return try first(n);
 }
 
-i32 main() {
+I32 main() {
     Step a = forward(4);
     Step b = forward(-1);
     Found c = again(5);

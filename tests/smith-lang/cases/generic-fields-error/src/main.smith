@@ -3,25 +3,25 @@ module main;
 import reflect;
 
 typedef union {
-    i32 a;
-    f32 b;
+    I32 a;
+    F32 b;
 } Either;
 
 typedef struct {
-    i32 a;
+    I32 a;
     struct {
-        i32 b;
-        i32 c;
+        I32 b;
+        I32 c;
     };
 } Anonymous;
 
 typedef struct {
-    i32 a;
+    I32 a;
 } One;
 
-i32 main() {
-    i32 total = 0;
-    total += reflect::count_int(i32);
+I32 main() {
+    I32 total = 0;
+    total += reflect::count_int(I32);
     total += reflect::count_union(Either);
     total += reflect::count_anonymous(Anonymous);
     One one = {1};

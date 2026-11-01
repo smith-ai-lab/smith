@@ -3,62 +3,62 @@ module conv;
 // A slice local in a generic's body (issue #135): declared from a parameter, counted, indexed, cut, passed to a
 // function, and the cut of a cut. The replay writes the declaration as an ordinary function's is lowered.
 
-static usize read_sum(const u8 xs[:]) {
-    usize total = 0;
-    for (usize i = 0; i < countof(xs); i++) {
+static Usize read_sum(const U8 xs[:]) {
+    Usize total = 0;
+    for (Usize i = 0; i < countof(xs); i++) {
         total += xs[i];
     }
     return total;
 }
 
-static usize plain_sum(u8 xs[:]) {
+static Usize plain_sum(U8 xs[:]) {
     return read_sum(xs);
 }
 
-export usize total(auto xs) {
-    u8 v[:] = xs;
-    usize t = 0;
-    for (usize i = 0; i < countof(v); i++) {
+export Usize total(auto xs) {
+    U8 v[:] = xs;
+    Usize t = 0;
+    for (Usize i = 0; i < countof(v); i++) {
         t += v[i];
     }
     return t;
 }
 
-export usize from_cut(auto xs) {
-    u8 v[:] = xs[1:];
-    u8 w[:] = v[1:3];
+export Usize from_cut(auto xs) {
+    U8 v[:] = xs[1:];
+    U8 w[:] = v[1:3];
     return countof(v) * 100 + countof(w) * 10 + w[0];
 }
 
-export usize passed(auto xs) {
-    u8 v[:] = xs;
+export Usize passed(auto xs) {
+    U8 v[:] = xs;
     return plain_sum(v);
 }
 
-export usize fixed() {
-    u8 raw[3] = {7, 8, 9};
-    u8 v[:] = raw;
+export Usize fixed() {
+    U8 raw[3] = {7, 8, 9};
+    U8 v[:] = raw;
     return plain_sum(v) + countof(v);
 }
 
-export usize read_only(auto xs) {
-    const u8 v[:] = xs;
+export Usize read_only(auto xs) {
+    const U8 v[:] = xs;
     return read_sum(v);
 }
 
-export usize restricted(auto xs) {
-    u8 v[restrict :] = xs;
+export Usize restricted(auto xs) {
+    U8 v[restrict :] = xs;
     return countof(v);
 }
 
-export usize twice(auto xs, auto ys) {
-    usize t = 0;
+export Usize twice(auto xs, auto ys) {
+    Usize t = 0;
     {
-        u8 v[:] = xs;
+        U8 v[:] = xs;
         t += countof(v);
     }
     {
-        u8 v[:] = ys;
+        U8 v[:] = ys;
         t += v[0];
     }
     return t;

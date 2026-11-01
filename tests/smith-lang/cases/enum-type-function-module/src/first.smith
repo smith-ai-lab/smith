@@ -3,14 +3,14 @@ module first;
 // `maybe(usize)` written in a module and exported: its struct is in the module's header, guarded, so that the other
 // module that writes it, and the importer that writes it too, share one type.
 
-type maybe(type T) {
+Type maybe(Type T) {
     return enum {
         T some;
         none;
     };
 }
 
-export maybe(usize) head(usize v) {
+export maybe(Usize) head(Usize v) {
     if (v == 0) return .none;
     return {.some = v};
 }

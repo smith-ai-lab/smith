@@ -4,18 +4,18 @@ module shapes;
 // the members of a union, and a variant with nothing to carry is a name alone.
 
 export typedef struct {
-    f32 radius;
+    F32 radius;
 } Circle;
 
 export typedef struct {
-    f32 w;
-    f32 h;
+    F32 w;
+    F32 h;
 } Rect;
 
 export typedef enum {
     Circle circle;
     Rect rect;
-    struct { i32 a; } inline_one;
+    struct { I32 a; } inline_one;
     empty;
 } Shape;
 
@@ -24,11 +24,11 @@ export typedef enum {
     some;
 } Mark;
 
-export f32 area(Shape s) {
+export F32 area(Shape s) {
     switch (s) {
     case .circle: return s.circle.radius * s.circle.radius * 3;
     case .rect: return s.rect.w * s.rect.h;
-    case .inline_one: return (f32)s.inline_one.a;
+    case .inline_one: return (F32)s.inline_one.a;
     case .empty: return 0;
     }
     return -1;
@@ -38,6 +38,6 @@ export Shape unit() {
     return {.circle = {.radius = 1}};
 }
 
-export bool is_empty(Shape s) {
+export Bool is_empty(Shape s) {
     return s == .empty;
 }

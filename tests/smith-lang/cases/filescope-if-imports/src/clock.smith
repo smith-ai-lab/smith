@@ -15,7 +15,7 @@ if constexpr (target::os == target::macos) {
 
 import <stdint.h>;
 
-export bool ticks(void) {
+export Bool ticks(void) {
     if constexpr (target::os == target::macos) {
         return c::mach_absolute_time() > 0;
     } else {
@@ -25,5 +25,5 @@ export bool ticks(void) {
 }
 
 export void say(void) {
-    c::printf("%d %d\n", ticks() ? 1 : 0, (i32)sizeof(c::uint32_t));
+    c::printf("%d %d\n", ticks() ? 1 : 0, (I32)sizeof(c::uint32_t));
 }

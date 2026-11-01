@@ -1,12 +1,12 @@
 module parser;
 
-export option(usize) position(const char *text, char wanted) {
-    for (usize i = 0; text[i] != 0; i++)
+export Option(Usize) position(const char *text, char wanted) {
+    for (Usize i = 0; text[i] != 0; i++)
         if (text[i] == wanted) return {.some = i};
     return .none;
 }
 
-export result(f64, i32) divide(f64 a, f64 b) {
+export Result(F64, I32) divide(F64 a, F64 b) {
     if (b == 0) return {.error = 7};
     return {.ok = a / b};
 }

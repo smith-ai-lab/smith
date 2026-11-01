@@ -4,7 +4,7 @@ import key;
 
 // A fixed array passed to a slice parameter of an imported module's type, in a file that imports a C header: the
 // lowering's own spelling of the type is no C name of the user's (issue #203).
-i32 main() {
+I32 main() {
     key::Key ks[2] = {{1, 2}, {3, 4}};
     c::printf("%llu\n", (unsigned long long)key::total(ks));
     return 0;

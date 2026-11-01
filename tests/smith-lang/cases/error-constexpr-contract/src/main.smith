@@ -3,13 +3,13 @@
 import std::contract;
 
 typedef struct {
-    i32 v[4];
+    I32 v[4];
 } Table;
 
-static Table make_table(i32 n) {
+static Table make_table(I32 n) {
     contract::requires(n > 0);
     Table t = {};
-    for (i32 i = 0; i < 4; i++)
+    for (I32 i = 0; i < 4; i++)
         t.v[i] = n * i;
     return t;
 }

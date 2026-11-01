@@ -2,8 +2,8 @@ module main;
 import <stdio.h>;
 
 // `args` is a slice of the program's arguments: argc slices on the stack that point into argv's own characters.
-i32 main(str args[:]) {
-    str program = args[0];
+I32 main(Str args[:]) {
+    Str program = args[0];
     c::printf("%zu argument, the program's name is not empty: %d\n", countof(args), countof(program) > 0);
     return 5;
 }

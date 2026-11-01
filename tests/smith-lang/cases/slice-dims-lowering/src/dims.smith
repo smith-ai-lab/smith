@@ -3,23 +3,23 @@ module dims;
 // Run-time arrays of more dimensions: the struct is named after the element and the shape (`n` a run-time size).
 
 export struct Image {
-    f32 pixels[:][:];
-    u8 rows[:][3];
+    F32 pixels[:][:];
+    U8 rows[:][3];
 };
 
-export f32 at(f32 xs[:][2], usize i, usize j) {
+export F32 at(F32 xs[:][2], Usize i, Usize j) {
     return xs[i][j];
 }
 
-export typeof(f32[:][2]) tail(f32 xs[:][2]) {
+export typeof(F32[:][2]) tail(F32 xs[:][2]) {
     return xs[1:countof(xs)];
 }
 
-export usize width(i32 cube[:][2][:], usize i) {
+export Usize width(I32 cube[:][2][:], Usize i) {
     return countof(cube[i]);
 }
 
-export f32 first(f32 xs[:][:]) {
-    f32 row[:] = xs[0];
+export F32 first(F32 xs[:][:]) {
+    F32 row[:] = xs[0];
     return row[0] + xs[0][1] + xs[1][countof(xs[0]) - 1];
 }

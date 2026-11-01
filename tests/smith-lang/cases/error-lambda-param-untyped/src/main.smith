@@ -1,9 +1,9 @@
 module main;
 
-i32 apply(lambda(i32 (i32)) f, i32 x) {
+I32 apply(lambda(I32 (I32)) f, I32 x) {
     return f(x);
 }
 
-i32 main() {
+I32 main() {
     return apply([](a) -> i32 { return a; }, 4);
 }

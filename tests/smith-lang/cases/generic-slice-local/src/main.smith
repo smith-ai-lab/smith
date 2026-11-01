@@ -3,15 +3,15 @@ module main;
 import conv;
 import <stdio.h>;
 
-i32 main() {
-    u8 raw[5] = {1, 2, 3, 4, 5};
-    u8 xs[:] = raw;
-    u8 big[:] = raw;
-    u8 res[restrict :] = raw;
+I32 main() {
+    U8 raw[5] = {1, 2, 3, 4, 5};
+    U8 xs[:] = raw;
+    U8 big[:] = raw;
+    U8 res[restrict :] = raw;
     c::printf("%zu %zu\n", conv::total(xs), conv::from_cut(xs));
     c::printf("%zu %zu\n", conv::passed(xs), conv::fixed());
     c::printf("%zu\n", conv::twice(xs, big));
-    const u8 read[:] = xs;
+    const U8 read[:] = xs;
     c::printf("%zu %zu\n", conv::read_only(read), conv::restricted(res));
     return 0;
 }

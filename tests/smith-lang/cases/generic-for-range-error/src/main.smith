@@ -1,16 +1,16 @@
 module main;
 
-export i32 bad(auto... rest) {
-    i32 sum = 0;
-    for constexpr (usize i, usize j, auto x : rest) {
-        sum += (i32)x;
+export I32 bad(auto... rest) {
+    I32 sum = 0;
+    for constexpr (Usize i, Usize j, auto x : rest) {
+        sum += (I32)x;
     }
-    for constexpr (usize i, usize j, usize k, auto x : rest) {
+    for constexpr (Usize i, Usize j, Usize k, auto x : rest) {
         sum += 1;
     }
     return sum;
 }
 
-i32 main() {
+I32 main() {
     return bad(1, 2);
 }

@@ -5,10 +5,10 @@ import <assert.h>;
 import <stdint.h>;
 import <stdio.h>;
 
-static_assert(sizeof(usize) == sizeof(u64));
+static_assert(sizeof(Usize) == sizeof(U64));
 
 int main() {
-    usize small = 3;
+    Usize small = 3;
     c::assert(small < c::SIZE_MAX);
     c::assert(c::UINT64_MAX > 0 && small != c::SIZE_MAX);
     c::printf("%zu\n", small);

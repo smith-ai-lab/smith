@@ -1,5 +1,5 @@
 module num;
 
-export T add(constexpr type T, i32 short, i32 long, T a, T b) {
+export T add(constexpr Type T, I32 short, I32 long, T a, T b) {
     return a + b;
 }

@@ -3,14 +3,14 @@ module lone;
 // A module that imports nothing still has `option` and `result` in scope, in a plain declaration, in a typedef and in
 // a generic.
 
-option(usize) nothing(void) {
+Option(Usize) nothing(void) {
     return .none;
 }
 
-typedef option(usize) Index;
-typedef result(f64, i32) Quotient;
+typedef Option(Usize) Index;
+typedef Result(F64, I32) Quotient;
 
-static Index something(usize at) {
+static Index something(Usize at) {
     return {.some = at};
 }
 
@@ -18,17 +18,17 @@ static Quotient failed(void) {
     return {.error = 7};
 }
 
-option(T) first(constexpr type T, T *xs, usize n) {
+Option(T) first(constexpr Type T, T *xs, Usize n) {
     if (n == 0) return .none;
     return {.some = xs[0]};
 }
 
-static usize or_else(Index at, usize otherwise) {
+static Usize or_else(Index at, Usize otherwise) {
     if (at == .some) return at.some;
     return otherwise;
 }
 
-static usize use_first(void) {
-    usize xs[1] = {5};
-    return or_else(first(usize, xs, 1), 0);
+static Usize use_first(void) {
+    Usize xs[1] = {5};
+    return or_else(first(Usize, xs, 1), 0);
 }

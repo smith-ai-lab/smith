@@ -3,36 +3,36 @@ module main;
 import args;
 import <stdio.h>;
 
-static i32 add1(i32 a) {
+static I32 add1(I32 a) {
     return a + 1;
 }
 
-static i32 plus(i32 a, i32 b) {
+static I32 plus(I32 a, I32 b) {
     return a + b;
 }
 
-static i32 add3(i32 a, i32 b, i32 c) {
+static I32 add3(I32 a, I32 b, I32 c) {
     return a + b + c;
 }
 
 int main() {
-    usize n0 = args::count(1);
-    usize n1 = args::count(1, 2.5);
-    usize n3 = args::count(1, 2.5, (u8)3, "four");
-    i32 r1 = args::call_all(add1, 5);
-    i32 r2 = args::call_all(plus, 5, 6);
-    i32 r3 = args::call_all(add3, 5, 6, 7);
-    f64 s0 = args::second_or(1);
-    f64 s1 = args::second_or(1, 2);
-    f64 s2 = args::second_or(1, 2, 3.5f);
-    usize z0 = args::size_of_first();
-    usize z1 = args::size_of_first((u16)1, 2.0);
-    usize z2 = args::size_of_first(2.0, (u16)1);
-    i32 f1 = args::forward(add3, 1, 2, 3);
-    i32 f2 = args::forward(add1, 1);
-    usize c1 = args::forward_count(1);
-    usize c2 = args::forward_count(1, 2, 3);
-    usize b = args::at_least_two(1, 2, 3);
+    Usize n0 = args::count(1);
+    Usize n1 = args::count(1, 2.5);
+    Usize n3 = args::count(1, 2.5, (U8)3, "four");
+    I32 r1 = args::call_all(add1, 5);
+    I32 r2 = args::call_all(plus, 5, 6);
+    I32 r3 = args::call_all(add3, 5, 6, 7);
+    F64 s0 = args::second_or(1);
+    F64 s1 = args::second_or(1, 2);
+    F64 s2 = args::second_or(1, 2, 3.5f);
+    Usize z0 = args::size_of_first();
+    Usize z1 = args::size_of_first((U16)1, 2.0);
+    Usize z2 = args::size_of_first(2.0, (U16)1);
+    I32 f1 = args::forward(add3, 1, 2, 3);
+    I32 f2 = args::forward(add1, 1);
+    Usize c1 = args::forward_count(1);
+    Usize c2 = args::forward_count(1, 2, 3);
+    Usize b = args::at_least_two(1, 2, 3);
     c::printf("%zu %zu %zu | %d %d %d | %.1f %.1f %.1f | %zu %zu %zu | %d %d | %zu %zu | %zu\n", n0, n1, n3, r1, r2, r3,
               s0, s1, s2, z0, z1, z2, f1, f2, c1, c2, b);
     return 0;

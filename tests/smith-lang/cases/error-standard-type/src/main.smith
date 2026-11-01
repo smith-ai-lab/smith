@@ -1,6 +1,6 @@
 import <stddef.h>;
 import <stdint.h>;
 
-u64 widen(uint32_t x, size_t n, ptrdiff_t d) {
+U64 widen(uint32_t x, size_t n, ptrdiff_t d) {
     return x + n + d;
 }

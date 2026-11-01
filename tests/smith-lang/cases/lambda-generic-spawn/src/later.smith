@@ -4,7 +4,7 @@ export typedef void (*Entry)(void *);
 
 export typedef struct {
     Entry entry;
-    alignas(16) u8 data[64];
+    alignas(16) U8 data[64];
 } Slot;
 
 // The `task::spawn` shape: the entry is a lambda of the instance, the arguments are `typeof(rest)`.

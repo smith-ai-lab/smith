@@ -2,6 +2,6 @@ module lib::user;
 
 import lib::shape;
 
-export usize size_of(shape::Box *box) {
+export Usize size_of(shape::Box *box) {
     return box->size;
 }

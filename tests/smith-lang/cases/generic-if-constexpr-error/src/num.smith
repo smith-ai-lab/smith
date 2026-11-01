@@ -1,6 +1,6 @@
 module num;
 
-export i32 sign(constexpr type T, T value) {
+export I32 sign(constexpr Type T, T value) {
     if constexpr (value > 0) {
         return 1;
     } else {
@@ -8,7 +8,7 @@ export i32 sign(constexpr type T, T value) {
     }
 }
 
-export i32 many(constexpr type T) {
-    if constexpr (sizeof(T) == 4 && T == i32 / 0) return 1;
+export I32 many(constexpr Type T) {
+    if constexpr (sizeof(T) == 4 && T == I32 / 0) return 1;
     return 2;
 }

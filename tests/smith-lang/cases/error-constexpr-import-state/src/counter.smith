@@ -1,12 +1,12 @@
 module counter;
 
-static i32 count = 0;
+static I32 count = 0;
 
-export i32 next() {
+export I32 next() {
     count += 1;
     return count;
 }
 
-export i32 plain(i32 n) {
+export I32 plain(I32 n) {
     return n + 1;
 }

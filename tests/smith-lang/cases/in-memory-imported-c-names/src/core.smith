@@ -1,9 +1,9 @@
 module core;
 
 [[std::c_name("CoreThing")]] export typedef struct {
-    i32 x;
+    I32 x;
 } Thing;
 
-[[std::c_name("core_make")]] export Thing make(i32 x) {
+[[std::c_name("core_make")]] export Thing make(I32 x) {
     return (Thing){x};
 }

@@ -4,8 +4,8 @@ import bad;
 import plain;
 
 int main() {
-    i32 a = bad::built(1);
-    i32 b = bad::grown(1);
-    i32 p = plain::not_a_list(1);
+    I32 a = bad::built(1);
+    I32 b = bad::grown(1);
+    I32 p = plain::not_a_list(1);
     return a + b + p;
 }

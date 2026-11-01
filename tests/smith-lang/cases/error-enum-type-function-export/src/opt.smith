@@ -1,13 +1,13 @@
 module opt;
 
-type maybe(type T) {
+Type maybe(Type T) {
     return enum {
         T some;
         none;
     };
 }
 
-export maybe(T) first(constexpr type T, T *xs, usize n) {
+export maybe(T) first(constexpr Type T, T *xs, Usize n) {
     if (n == 0) return .none;
     return {.some = xs[0]};
 }

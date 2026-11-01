@@ -4,14 +4,14 @@ import <stdio.h>;
 
 // `fields(T)` is a compile-time list of the named fields of a struct, like an argument list: `countof`, a constant
 // index, `for constexpr`. `.name` is a string literal; `x.[f]` and `x->[f]` are the member; `typeof(T.[f])` is its type.
-export void show(constexpr type T, T *x) {
-    c::printf("%zu fields:", (usize)countof(fields(T)));
-    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
-        if constexpr (is_float(typeof(x->[fields(T)[i]]))) {
-            c::printf(" %s=%g", fields(T)[i].name, (f64)x->[fields(T)[i]]);
-        } else if constexpr (is_integer(typeof(T.[fields(T)[i]]))) {
+export void show(constexpr Type T, T *x) {
+    c::printf("%zu fields:", (Usize)countof(fields(T)));
+    for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
+        if constexpr (Float(typeof(x->[fields(T)[i]]))) {
+            c::printf(" %s=%g", fields(T)[i].name, (F64)x->[fields(T)[i]]);
+        } else if constexpr (Int(typeof(T.[fields(T)[i]]))) {
             c::printf(" %s=%lld", fields(T)[i].name, (long long)x->[fields(T)[i]]);
-        } else if constexpr (is_array(typeof(x->[fields(T)[i]]))) {
+        } else if constexpr (Array(typeof(x->[fields(T)[i]]))) {
             c::printf(" %s=array(%zu)", fields(T)[i].name, sizeof(x->[fields(T)[i]]) / sizeof(x->[fields(T)[i]][0]));
         } else {
             c::printf(" %s=?", fields(T)[i].name);
@@ -21,23 +21,23 @@ export void show(constexpr type T, T *x) {
 }
 
 // A field's type without a value, and the member of a value, in code.
-export f64 sum(constexpr type T, T value) {
-    f64 total = 0;
-    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
-        if constexpr (is_float(typeof(T.[fields(T)[i]])) || is_integer(typeof(T.[fields(T)[i]]))) {
+export F64 sum(constexpr Type T, T value) {
+    F64 total = 0;
+    for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
+        if constexpr (Float(typeof(T.[fields(T)[i]])) || Int(typeof(T.[fields(T)[i]]))) {
             typeof(T.[fields(T)[i]]) part = value.[fields(T)[i]];
-            total += (f64)part;
+            total += (F64)part;
         }
     }
     return total;
 }
 
-export usize last_index(constexpr type T) {
+export Usize last_index(constexpr Type T) {
     return countof(fields(T)) - 1;
 }
 
 // The fields of the type of a parameter: `fields(typeof(x))`.
-export usize field_count(auto x) {
+export Usize field_count(auto x) {
     return countof(fields(typeof(x)));
 }
 

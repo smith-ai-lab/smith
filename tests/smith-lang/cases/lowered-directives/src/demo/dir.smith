@@ -21,14 +21,14 @@ static const char *machine = "other";
 
 // A branch the machine does not take is lowered like the rest: sized types need no parser's answer.
 #if defined(__x86_64__)
-export u32 width(u32 x) {
-    u64 wide = x;
-    return (u32)(wide + 1);
+export U32 width(U32 x) {
+    U64 wide = x;
+    return (U32)(wide + 1);
 }
 #elif defined(__aarch64__)
-export u32 width(u32 x) {
-    u64 wide = x;
-    return (u32)(wide + 2);
+export U32 width(U32 x) {
+    U64 wide = x;
+    return (U32)(wide + 2);
 }
 #else
 #error "unsupported machine"
@@ -37,13 +37,13 @@ export u32 width(u32 x) {
 // An exported variable's definition has no declaration before it in the module's own compile.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmissing-variable-declarations"
-export u32 counter = 7;
+export U32 counter = 7;
 #pragma clang diagnostic pop
 
-export u32 pair(u32 a, u32 b) {
+export U32 pair(U32 a, U32 b) {
     return PAIR(a, b);
 }
 
-export usize name_length() {
+export Usize name_length() {
     return strlen(machine);
 }

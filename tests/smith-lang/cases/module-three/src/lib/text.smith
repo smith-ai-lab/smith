@@ -1,16 +1,16 @@
 module lib::text;
 import <string.h>;
 
-export typedef struct { const char *data; usize length; } Text;
+export typedef struct { const char *data; Usize length; } Text;
 
 export Text make(const char *data) {
     return (Text){data, c::strlen(data)};
 }
 
-export usize length(Text text) {
+export Usize length(Text text) {
     return text.length;
 }
 
-usize unused_helper() {
+Usize unused_helper() {
     return 0;
 }

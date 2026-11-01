@@ -3,21 +3,21 @@ module scale;
 import <stdio.h>;
 
 // Private code that the exported generics below use: instances are compiled in the importer's file.
-constexpr i32 base = 10;
-constexpr i32 slots = base / 2;
+constexpr I32 base = 10;
+constexpr I32 slots = base / 2;
 
 typedef enum { Plain, Boosted } Mode;
 
 typedef struct {
-    i32 low;
-    i32 high;
+    I32 low;
+    I32 high;
 } Range;
 
 struct Counter {
-    i32 calls;
+    I32 calls;
 };
 
-static i32 table[slots] = {1, 2, 3, 4, 5};
+static I32 table[slots] = {1, 2, 3, 4, 5};
 static struct Counter counter;
 
 // A prototype that names a private type and a C type: both reach the instance section.
@@ -30,20 +30,20 @@ static Range widen(Range r, c::FILE *log) {
 }
 
 // Never used by a generic: it stays static, and is in no header.
-static i32 unused(i32 x) {
+static I32 unused(I32 x) {
     return x + 1;
 }
 
 // An inline helper: the instance links to a function, so `inline` is dropped.
-static inline i32 clamp_to_base(i32 x) {
+static inline I32 clamp_to_base(I32 x) {
     return x > base ? base : x;
 }
 
-export i32 calls() {
+export I32 calls() {
     return counter.calls + unused(0) - 1;
 }
 
-export typeof(x) spread(auto x, i32 boosted) {
+export typeof(x) spread(auto x, I32 boosted) {
     Range r = widen((Range){0, 1}, nullptr);
     typeof(x) result = (typeof(x))((Mode)boosted == Boosted ? r.high : r.low);
     return result + (typeof(x))table[slots - 1] + (typeof(x))clamp_to_base(100);

@@ -1,5 +1,5 @@
 module vector_check;
 
-export i32 sum(i32 a, i32 b) {
+export I32 sum(I32 a, I32 b) {
     return a + b;
 }

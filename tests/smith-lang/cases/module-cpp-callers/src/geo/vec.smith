@@ -1,7 +1,7 @@
 module geo::vec;
 
-export typedef struct { f64 x; f64 y; } Vec;
-export constexpr u32 dimensions = 2;
-export f64 length_squared(Vec v) { return v.x * v.x + v.y * v.y; }
-export f64 dot(Vec a, Vec b);
-export u32 counter = 5;
+export typedef struct { F64 x; F64 y; } Vec;
+export constexpr U32 dimensions = 2;
+export F64 length_squared(Vec v) { return v.x * v.x + v.y * v.y; }
+export F64 dot(Vec a, Vec b);
+export U32 counter = 5;

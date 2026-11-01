@@ -2,15 +2,15 @@ module lib;
 
 // Doc comments are not kept in the interface read in memory; conditionals and inline bodies are.
 #ifdef FAST
-export inline u32 cost(u32 n) {
+export inline U32 cost(U32 n) {
     return n;
 }
 #else
-export u32 cost(u32 n) {
+export U32 cost(U32 n) {
     return n * 10;
 }
 #endif
 
-export inline u32 twice(u32 n) {
+export inline U32 twice(U32 n) {
     return cost(n) * 2;
 }

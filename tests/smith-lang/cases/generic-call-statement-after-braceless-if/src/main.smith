@@ -4,7 +4,7 @@ import count;
 import <stdio.h>;
 
 int main() {
-    for (i32 i = 0; i < 3; i++) {
+    for (I32 i = 0; i < 3; i++) {
         if (i == 1) continue;
         count::show(i, 3);
     }

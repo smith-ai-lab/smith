@@ -3,13 +3,13 @@ module main;
 import <stdio.h>;
 import lists;
 
-static i32 get(i32 *p, usize n) {
-    option(i32) r = lists::first(i32, p, n);
+static I32 get(I32 *p, Usize n) {
+    Option(I32) r = lists::first(I32, p, n);
     return r == .some ? r.some : -1;
 }
 
-i32 main(void) {
-    i32 xs[2] = {7, 8};
+I32 main(void) {
+    I32 xs[2] = {7, 8};
     c::printf("%d %d\n", get(&xs[0], 2), get(&xs[0], 0));
     return 0;
 }

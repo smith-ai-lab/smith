@@ -3,14 +3,14 @@ module main;
 import conv;
 import <stdio.h>;
 
-static usize through_restrict(u8 xs[restrict :]) {
+static Usize through_restrict(U8 xs[restrict :]) {
     return conv::call_plain(xs) + conv::call_read(xs) + conv::call_fast(xs) + conv::pass_on(xs);
 }
 
-i32 main() {
-    u8 raw[4] = {1, 2, 3, 4};
-    u8 xs[:] = raw;
-    const u8 read[:] = xs;
+I32 main() {
+    U8 raw[4] = {1, 2, 3, 4};
+    U8 xs[:] = raw;
+    const U8 read[:] = xs;
     c::printf("%zu %zu\n", conv::call_plain(xs), conv::call_read(xs));
     c::printf("%zu %zu\n", conv::call_read(read), conv::call_fast(xs));
     c::printf("%zu %zu\n", conv::call_both(xs, read), conv::pass_on(xs));

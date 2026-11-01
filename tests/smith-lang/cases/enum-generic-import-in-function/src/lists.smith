@@ -1,6 +1,6 @@
 module lists;
 
-export option(T) first(constexpr type T, T *p, usize n) {
+export Option(T) first(constexpr Type T, T *p, Usize n) {
     if (n == 0) {
         return .none;
     }

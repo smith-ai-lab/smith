@@ -4,7 +4,7 @@ import finder;
 import <stdio.h>;
 
 // `== .some` and `!= .some` with a generic's call directly as the operand type as they do for a plain function's.
-i32 main() {
+I32 main() {
     const char s[:] = "banana";
     if (finder::find(s, 'n') == .some) c::printf("some\n");
     if (finder::find(s, 'z') != .some) c::printf("none\n");

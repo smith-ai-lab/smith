@@ -3,7 +3,7 @@ module main;
 import inc::chain;
 import <stdio.h>;
 
-i32 main() {
+I32 main() {
     c::printf("%u %.1f\n", chain::length("smith"), chain::root(16.0));
     return 0;
 }

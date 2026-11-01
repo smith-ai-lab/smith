@@ -3,27 +3,27 @@ module main;
 import <stdio.h>;
 
 // Ordinary functions over types and numbers: they run in the compiler.
-static type by_count(type T, usize k) {
-    return k == 0 ? T : k == 1 ? i16 : f64;
+static Type by_count(Type T, Usize k) {
+    return k == 0 ? T : k == 1 ? I16 : F64;
 }
 
-static type wide_of(type T) {
-    return sizeof(T) <= 2 ? i64 : T;
+static Type wide_of(Type T) {
+    return sizeof(T) <= 2 ? I64 : T;
 }
 
 // The result type is computed from `countof(rest)`: one body, the type settled for each instance.
-export by_count(T, countof(rest)) from_count(constexpr type T, auto... rest) {
+export by_count(T, countof(rest)) from_count(constexpr Type T, auto... rest) {
     return 7;
 }
 
 // ... or from a `constexpr type` parameter alone.
-export wide_of(T) widen(constexpr type T, auto x) {
+export wide_of(T) widen(constexpr Type T, auto x) {
     return x;
 }
 
 int main() {
-    c::printf("%zu %zu %zu\n", sizeof(from_count(u8)), sizeof(from_count(u8, (u8)1)),
-              sizeof(from_count(u8, (u8)1, (u8)2)));
-    c::printf("%zu %zu\n", sizeof(widen(u8, (u8)3)), sizeof(widen(f32, 3.0f)));
+    c::printf("%zu %zu %zu\n", sizeof(from_count(U8)), sizeof(from_count(U8, (U8)1)),
+              sizeof(from_count(U8, (U8)1, (U8)2)));
+    c::printf("%zu %zu\n", sizeof(widen(U8, (U8)3)), sizeof(widen(F32, 3.0f)));
     return 0;
 }

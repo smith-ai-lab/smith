@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <sys/stat.h>
 
-i32 main() {
+I32 main() {
   struct stat info;
   printf("hello smith %d\n", EOF + (int)sizeof info - (int)sizeof info);
   return 0;

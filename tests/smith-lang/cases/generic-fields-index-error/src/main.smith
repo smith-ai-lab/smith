@@ -1,18 +1,18 @@
 module main;
 
 typedef struct {
-    f32 rows[:][2];
+    F32 rows[:][2];
 } Grid;
 
 // Part of the rows of a slice member is not written by a generic yet.
-f32 one(constexpr type T, T *x) {
+F32 one(constexpr Type T, T *x) {
     constexpr Field f = fields(T)[0];
     return x->[f][1][0:1][0];
 }
 
-i32 main() {
-    f32 r[3][2] = {};
-    f32 rows[:][2] = r;
+I32 main() {
+    F32 r[3][2] = {};
+    F32 rows[:][2] = r;
     Grid g = {.rows = rows};
-    return (i32)one(Grid, &g);
+    return (I32)one(Grid, &g);
 }

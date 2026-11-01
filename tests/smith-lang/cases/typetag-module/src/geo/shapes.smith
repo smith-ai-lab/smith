@@ -1,12 +1,12 @@
 module geo::shapes;
 
 export struct Point {
-    f32 x, y;
+    F32 x, y;
 };
 
 export struct Node {
     Node *next;
-    i32 value;
+    I32 value;
 };
 
 export enum Color { red, green };
@@ -17,16 +17,16 @@ export enum Shape {
 };
 
 struct Hidden {
-    i32 secret;
+    I32 secret;
 };
 
-export Point make(f32 x, f32 y) {
+export Point make(F32 x, F32 y) {
     Hidden h = {.secret = 1};
-    return (Point){.x = x + (f32)h.secret - 1, .y = y};
+    return (Point){.x = x + (F32)h.secret - 1, .y = y};
 }
 
-export i32 sum(Node *list) {
-    i32 total = 0;
+export I32 sum(Node *list) {
+    I32 total = 0;
     for (Node *n = list; n != nullptr; n = n->next)
         total += n->value;
     return total;

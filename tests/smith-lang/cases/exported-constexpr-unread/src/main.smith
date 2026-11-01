@@ -3,7 +3,7 @@ module main;
 import shape::board as board;
 import <stdio.h>;
 
-i32 main() {
+I32 main() {
     c::printf("%u %u\n", board::width, board::cells[2]);
     return 0;
 }

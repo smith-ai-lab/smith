@@ -7,15 +7,15 @@ typedef struct {
     int size;
 } Item;
 
-constexpr type wide = i64;
+constexpr Type wide = I64;
 
-static int scaled(int type, int n) {
-    return (type * n + 1) * 2;
+static int scaled(int Type, int n) {
+    return (Type * n + 1) * 2;
 }
 
 static int total(const Item *item, int n) {
     int type = item->type;
-    int sum = type * n;
+    int sum = Type * n;
     sum += item->type * item->size;
     return sum;
 }

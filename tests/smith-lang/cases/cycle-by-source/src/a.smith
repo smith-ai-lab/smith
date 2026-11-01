@@ -1,4 +1,4 @@
 module a;
 import b;
 
-export i32 from_a() { return b::from_b(); }
+export I32 from_a() { return b::from_b(); }

@@ -4,15 +4,15 @@ import <stdio.h>;
 
 typedef struct {
     /// Port to listen on.
-    u16 port;
-    u16 plain; // a plain comment is no doc comment
+    U16 port;
+    U16 plain; // a plain comment is no doc comment
     /// Backlog.
-    u16 backlog;
+    U16 backlog;
 } Options;
 
 // A condition reads the same doc the code does.
-void show(constexpr type T) {
-    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+void show(constexpr Type T) {
+    for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         constexpr Field f = fields(T)[i];
         if constexpr (f.doc.count[0] > 0) {
             c::printf("%s: [%s]\n", f.name.data, f.doc.data);
@@ -25,7 +25,7 @@ void show(constexpr type T) {
     }
 }
 
-i32 main() {
+I32 main() {
     show(Options);
     return 0;
 }

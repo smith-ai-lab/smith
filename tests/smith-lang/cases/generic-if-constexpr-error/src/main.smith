@@ -1,5 +1,5 @@
 import num;
 
 int main() {
-    return num::sign(i32, 3) + num::many(i32);
+    return num::sign(I32, 3) + num::many(I32);
 }

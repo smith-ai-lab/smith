@@ -1,21 +1,21 @@
 module stats;
 
-export typeof(xs[0]) sum(const arithmetic xs[:]) {
+export typeof(xs[0]) sum(const Num xs[:]) {
     return xs[0];
 }
 
-export typeof(x) twice(arithmetic x) {
+export typeof(x) twice(Num x) {
     return x + x;
 }
 
-export typeof(*p) read(const integer *p) {
+export typeof(*p) read(const Int *p) {
     return *p;
 }
 
-export usize count(const auto xs[:]) {
+export Usize count(const auto xs[:]) {
     return countof(xs);
 }
 
-export bool same_kind(pointer p, typeof(p) q) {
+export Bool same_kind(Pointer p, typeof(p) q) {
     return p == q;
 }

@@ -1,18 +1,18 @@
 module shape::box;
 
 export typedef struct {
-    i32 width;
-    i32 height;
+    I32 width;
+    I32 height;
 } Box;
 
 // A parameter is not the export that shares its name: the header keeps it.
-export i32 width(Box *box);
-export i32 height(Box *box) { return box->height; }
-export i32 area(Box *width, i32 height) { return width->width * height; }
-export i32 scaled(i32 area, i32 width, i32 height) { return area * width + height; }
-export i32 apply(i32 (*width)(Box *box), Box *box) { return width(box); }
-i32 helper(i32 area, i32 height);
-i32 helper(i32 area, i32 height) { return area + height + width(&(Box){.width = 1, .height = 2}); }
-export i32 combined(i32 x) { return helper(x, height(&(Box){.width = 1, .height = 2})); }
-export i32 width(Box *box) { return box->width; }
-export T larger(constexpr type T, T width, T height) { return width > height ? width : height; }
+export I32 width(Box *box);
+export I32 height(Box *box) { return box->height; }
+export I32 area(Box *width, I32 height) { return width->width * height; }
+export I32 scaled(I32 area, I32 width, I32 height) { return area * width + height; }
+export I32 apply(I32 (*width)(Box *box), Box *box) { return width(box); }
+I32 helper(I32 area, I32 height);
+I32 helper(I32 area, I32 height) { return area + height + width(&(Box){.width = 1, .height = 2}); }
+export I32 combined(I32 x) { return helper(x, height(&(Box){.width = 1, .height = 2})); }
+export I32 width(Box *box) { return box->width; }
+export T larger(constexpr Type T, T width, T height) { return width > height ? width : height; }

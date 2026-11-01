@@ -3,12 +3,12 @@ module main;
 import order;
 
 typedef struct {
-    i32 x;
+    I32 x;
 } Point;
 
 int main() {
     Point points[2] = {{1}, {2}};
     // `ascending` takes arithmetic types: the instance for a `Point` cannot be made.
-    usize a = order::smallest_of(points[0:2]);
+    Usize a = order::smallest_of(points[0:2]);
     return (int)a;
 }

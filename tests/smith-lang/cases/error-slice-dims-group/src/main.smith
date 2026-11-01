@@ -1,9 +1,9 @@
 module main;
 
-i32 take(f32 xs[:][2][n]) {
+I32 take(F32 xs[:][2][n]) {
     return 0;
 }
 
-i32 main() {
+I32 main() {
     return 0;
 }

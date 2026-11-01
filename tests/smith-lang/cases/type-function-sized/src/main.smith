@@ -4,7 +4,7 @@ import <stdio.h>;
 import sizes;
 
 int main() {
-    c::printf("%zu %zu %d\n", sizeof(sizes::convert(f64, 2.5)), sizeof(sizes::convert(u8, (u8)1)),
-              (int)sizes::convert(f64, 2.5));
+    c::printf("%zu %zu %d\n", sizeof(sizes::convert(F64, 2.5)), sizeof(sizes::convert(U8, (U8)1)),
+              (int)sizes::convert(F64, 2.5));
     return 0;
 }

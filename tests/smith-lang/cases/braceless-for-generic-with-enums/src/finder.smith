@@ -1,6 +1,6 @@
 module finder;
 
-export option(i32) first_positive(i32 a, i32 b) {
+export Option(I32) first_positive(I32 a, I32 b) {
     if (a > 0) return a;
     if (b > 0) return b;
     return .none;

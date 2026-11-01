@@ -1,9 +1,9 @@
 // No module and no import: `countof` of a fixed array is C's own (issue #167).
-u32 plain() {
-    u32 xs[] = {1, 2, 3};
-    return (u32)countof(xs);
+U32 plain() {
+    U32 xs[] = {1, 2, 3};
+    return (U32)countof(xs);
 }
 
-i32 main() {
-    return (i32)plain() - 3;
+I32 main() {
+    return (I32)plain() - 3;
 }

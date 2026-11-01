@@ -1,17 +1,17 @@
 module grid;
 import "k.h";
 
-struct Plain { u8 cells[c::SIDE]; };
-typedef struct { u8 cells[c::SIDE][c::depth]; u32 n; } Typed;
-struct Nested { struct { u8 x[c::SIDE * 2]; } in; u8 y[c::SIDE + 1]; };
-u8 table[c::SIDE];
+struct Plain { U8 cells[c::SIDE]; };
+typedef struct { U8 cells[c::SIDE][c::depth]; U32 n; } Typed;
+struct Nested { struct { U8 x[c::SIDE * 2]; } in; U8 y[c::SIDE + 1]; };
+U8 table[c::SIDE];
 
-export struct Board { u8 cells[c::SIDE * c::SIDE]; u32 n; };
+export struct Board { U8 cells[c::SIDE * c::SIDE]; U32 n; };
 
-export usize board_size() {
+export Usize board_size() {
     return sizeof(struct Board);
 }
 
-export usize other_sizes() {
+export Usize other_sizes() {
     return sizeof(struct Plain) + sizeof(Typed) + sizeof(struct Nested) + sizeof table;
 }

@@ -1,7 +1,7 @@
 module finder;
 
-export option(usize) find(const char *text, char wanted) {
-    for (usize i = 0; text[i] != 0; i++)
+export Option(Usize) find(const char *text, char wanted) {
+    for (Usize i = 0; text[i] != 0; i++)
         if (text[i] == wanted) return {.some = i};
     return .none;
 }

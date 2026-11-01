@@ -6,18 +6,18 @@ import <stdio.h>;
 // context gives, and lowered to a struct that holds a tag and a union.
 
 typedef struct {
-    f32 radius;
+    F32 radius;
 } Circle;
 
 typedef struct {
-    f32 w;
-    f32 h;
+    F32 w;
+    F32 h;
 } Rect;
 
 typedef enum {
     Circle circle;
     Rect rect;
-    struct { i32 a; } inline_one;
+    struct { I32 a; } inline_one;
     empty;
 } Shape;
 
@@ -26,26 +26,26 @@ typedef enum {
     full;
 } Token;
 
-static f32 area(Shape s) {
+static F32 area(Shape s) {
     switch (s) {
     case .circle: return s.circle.radius * s.circle.radius * 3;
     case .rect: return s.rect.w * s.rect.h;
-    case .inline_one: return (f32)s.inline_one.a;
+    case .inline_one: return (F32)s.inline_one.a;
     case .empty: return 0;
     }
     return -1;
 }
 
-static Shape make(bool big) {
+static Shape make(Bool big) {
     if (big) return {.rect = {.w = 2, .h = 3}};
     return .empty;
 }
 
-static bool is_empty(Shape s) {
+static Bool is_empty(Shape s) {
     return s == .empty;
 }
 
-static bool is_big_circle(Shape s) {
+static Bool is_big_circle(Shape s) {
     return s == .circle && s.circle.radius > 1.0f;
 }
 
@@ -63,11 +63,11 @@ static Token flip(Token t) {
     return .empty;
 }
 
-static f32 twice(Shape s) {
+static F32 twice(Shape s) {
     return area(s) * 2;
 }
 
-i32 main() {
+I32 main() {
     Shape a = {.circle = {.radius = 2}};
     Shape b = .empty;
     Shape c = make(true);

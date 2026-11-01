@@ -4,26 +4,26 @@ import <stdio.h>;
 
 // The same type is first named in two sibling blocks, then at the top of another function.
 
-static usize first(bool left) {
+static Usize first(Bool left) {
     if (left) {
-        option(usize) a = {.some = 1};
+        Option(Usize) a = {.some = 1};
         if (a == .some) return a.some;
     } else {
-        option(usize) b = {.some = 2};
+        Option(Usize) b = {.some = 2};
         if (b == .some) return b.some;
     }
     return 0;
 }
 
-static usize second(void) {
-    option(usize) c = {.some = 3};
+static Usize second(void) {
+    Option(Usize) c = {.some = 3};
     c = .none;
     if (c == .none) c = {.some = 4};
     if (c == .some) return c.some;
     return 0;
 }
 
-i32 main(void) {
+I32 main(void) {
     c::printf("%zu %zu %zu\n", first(true), first(false), second());
     return 0;
 }

@@ -2,9 +2,9 @@ module counting;
 
 // A slice named by a typedef is the same slice to a generic as an unnamed one: `typeof(xs[0])` is its element.
 
-export usize count(auto xs, typeof(xs[0]) v) {
-    usize n = 0;
-    for (usize i = 0; i < countof(xs); i++)
+export Usize count(auto xs, typeof(xs[0]) v) {
+    Usize n = 0;
+    for (Usize i = 0; i < countof(xs); i++)
         if (xs[i] == v) n++;
     return n;
 }

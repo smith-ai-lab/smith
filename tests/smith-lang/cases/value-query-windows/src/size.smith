@@ -1,10 +1,10 @@
 module size;
 
-static usize long_size() {
+static Usize long_size() {
     return sizeof(long);
 }
 
-i32 long_is_four(constexpr type T) {
+I32 long_is_four(constexpr Type T) {
     if constexpr (long_size() == 4) {
         static_assert(false, "long is four bytes here");
         return 4;
@@ -12,6 +12,6 @@ i32 long_is_four(constexpr type T) {
     return 8;
 }
 
-export i32 use() {
-    return long_is_four(i32);
+export I32 use() {
+    return long_is_four(I32);
 }

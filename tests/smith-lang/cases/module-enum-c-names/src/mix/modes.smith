@@ -12,6 +12,6 @@ export enum Level {
     High,
 };
 
-export i32 score(Mode mode, enum Level level) {
+export I32 score(Mode mode, enum Level level) {
     return (mode == Slow ? 10 : 1) + (level == High ? 100 : 0);
 }
