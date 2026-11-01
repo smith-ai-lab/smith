@@ -769,6 +769,40 @@ static size_t build_library_objects(SmithBuild *b, const BuildConfig *config, co
     return count;
 }
 
+// The modules of front/ that smith links; emit_jit is a test helper and cimport needs the edge files of track C.
+static const char *const build_front_modules[] = {
+    "ast",        "lex",         "parse",      "parse_expr",   "parse_type",    "parse_stmt",
+    "parse_decl", "parser",      "types",      "types_expr",   "types_convert", "types_decl",
+    "emit_state", "emit",        "emit_arith", "emit_control", "emit_call",     "emit_memory",
+    "emit_debug", "emit_object", "roots",      "compile",
+};
+constexpr size_t build_front_module_count = sizeof build_front_modules / sizeof build_front_modules[0];
+
+// Objects of the header modules the front end calls (ascii, format, clock), each a compile step beside the header
+// steps.
+static const char *const *build_header_library_objects(SmithBuild *b, const BuildConfig *config, const char *folder) {
+    const char *const names[] = {"ascii", "format", "clock"};
+    const char *const *outputs = smith_list(b, nullptr);
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+        const char *source = smith_fmt(b, "%s/%s.smith", build_library_folder, names[i]);
+        const char *object = smith_fmt(b, "%s/header_%s.o", folder, names[i]);
+        const char *depfile = smith_fmt(b, "%s/header_%s.d", folder, names[i]);
+        SmithStep step = {
+            .command = smith_cat(b, smith_list(b, config->cc, nullptr), build_smith_flags(b, config),
+                                 smith_list(b, "-MD", "-MF", depfile, "-c", source, "-o", object, nullptr), nullptr),
+            .inputs = smith_list(b, source, nullptr),
+            .implicit_inputs =
+                smith_cat(b, smith_list(b, build_compiler_file(b, config), nullptr), config->headers, nullptr),
+            .outputs = smith_list(b, object, nullptr),
+            .description = smith_fmt(b, "compile %s", source),
+            .depfile = depfile,
+        };
+        smith_step(b, &step);
+        outputs = smith_cat(b, outputs, smith_list(b, object, nullptr), nullptr);
+    }
+    return outputs;
+}
+
 static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *pack = build_resource_pack(b, config, folder);
     const char *const *flags = smith_cat(
@@ -790,9 +824,10 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
         .flags = flags,
-        .implicit_inputs =
-            smith_cat(b, (const char *[]){"scripts/pack.h", nullptr}, build_smith_inputs, build_library_sources(b),
-                      config->headers, config->protocol, build_llvm_required(b, config), nullptr),
+        .implicit_inputs = smith_cat(
+            b, (const char *[]){"scripts/pack.h", ".smith/include/front/compile.h", "runtime/front_flag.c", nullptr},
+            build_smith_inputs, build_library_sources(b), config->headers, config->protocol,
+            build_llvm_required(b, config), nullptr),
     };
     smith_object(b, &object);
     SmithObject commit = build_commit_object(b, config, folder);
@@ -810,15 +845,33 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .flags = flags,
     };
     smith_object(b, &runtime_io);
-    // smith.c, the commit, the io layer, the libraries, the shims (a table of 16, the packed data and the parser) and
-    // the prover's four, ended by nullptr
-    const SmithObject *objects[3 + linked_count + 16 + 2 + 4 + 1];
+    // smith's own front end (issue #1221, `smith cc --front-end=new`): front/*.smith but the JIT helper and track C
+    SmithObject front_objects[build_front_module_count];
+    for (size_t i = 0; i < build_front_module_count; i++) {
+        front_objects[i] = (SmithObject){
+            .compiler = config->cc,
+            .source = smith_fmt(b, "front/%s.smith", build_front_modules[i]),
+            .output = smith_fmt(b, "%s/front_%s.o", folder, build_front_modules[i]),
+            .flags = smith_cat(b, flags,
+                               smith_list(b, "-std=gnu2y", "-I", smith_fmt(b, "%s/include", config->llvm), nullptr),
+                               nullptr),
+        };
+        smith_object(b, &front_objects[i]);
+    }
+    // The front end also calls ascii, format and clock, which are header modules (their headers have steps of their
+    // own): plain compile steps, linked as files.
+    const char *const *header_libraries = build_header_library_objects(b, config, folder);
+    // smith.c, the commit, the io layer, the front end, the libraries, the shims (a table of 16, the packed data and
+    // the parser) and the prover's four, ended by nullptr
+    const SmithObject *objects[3 + build_front_module_count + linked_count + 16 + 2 + 4 + 1];
     for (size_t i = 0; i < sizeof objects / sizeof objects[0]; i++)
         objects[i] = nullptr;
     objects[0] = &object;
     objects[1] = &commit;
     objects[2] = &runtime_io;
     size_t count = 3;
+    for (size_t i = 0; i < build_front_module_count; i++)
+        objects[count++] = &front_objects[i];
     count += build_library_objects(b, config, folder, flags, linked, libraries, objects + count);
     build_shims(b, config, folder, pack, &shims, objects + count);
     SmithProgram program = {
@@ -829,13 +882,24 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
             smith_when(b, config->enzyme[0] != '\0', (const char *[]){config->platform->enzyme_export, nullptr}),
             smith_when(b, config->coverage, (const char *[]){"-fprofile-instr-generate", nullptr}), nullptr),
         .objects = objects,
-        .libraries = smith_cat(b, build_prove_group(b, config, &shims.prove), build_enzyme_libraries(b, config),
-                               build_clang_libraries(b, config), build_lldb_libraries(b, config),
-                               config->platform->system_libraries, nullptr),
+        .libraries = smith_cat(b, header_libraries, build_prove_group(b, config, &shims.prove),
+                               build_enzyme_libraries(b, config), build_clang_libraries(b, config),
+                               build_lldb_libraries(b, config), config->platform->system_libraries, nullptr),
     };
     smith_program(b, &program);
     smith_default(b, build_links(b, &program.step, folder));
     return program.step;
+}
+
+// Whether front/<name>.smith is linked into smith: its header is made by its smith_object, not by the tests' step.
+static bool build_front_linked(const char *source) {
+    for (size_t i = 0; i < build_front_module_count; i++) {
+        if (strncmp(source, "front/", 6) == 0 &&
+            strncmp(source + 6, build_front_modules[i], strlen(build_front_modules[i])) == 0 &&
+            strcmp(source + 6 + strlen(build_front_modules[i]), ".smith") == 0)
+            return true;
+    }
+    return false;
 }
 
 static const char *build_test_header(SmithBuild *b, const char *source) {
@@ -854,8 +918,11 @@ static const char *const *build_test_header_step(SmithBuild *b, const char *smit
                                                  const char *const *tests) {
     const char *const *pairs = smith_list(b, nullptr);
     const char *const *outputs = smith_list(b, nullptr);
+    const char *const *headers = smith_list(b, nullptr); // one per test, in order
     for (size_t i = 0; tests[i] != nullptr; i++) {
         const char *header = build_test_header(b, tests[i]);
+        headers = smith_cat(b, headers, smith_list(b, header, nullptr), nullptr);
+        if (build_front_linked(tests[i])) continue; // made by its smith_object
         pairs = smith_cat(b, pairs, smith_list(b, tests[i], header, nullptr), nullptr);
         outputs = smith_cat(b, outputs, smith_list(b, header, nullptr), nullptr);
     }
@@ -869,7 +936,7 @@ static const char *const *build_test_header_step(SmithBuild *b, const char *smit
         .restat = true, // written only when its bytes change
     };
     smith_step(b, &write);
-    return outputs;
+    return headers;
 }
 
 // The modules of tests/*.smith and the *_test.smith beside the libraries in lib/, for lint: each one's header

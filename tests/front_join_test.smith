@@ -1,0 +1,316 @@
+// Tests of front::compile (#1221, J2 of #1112): `.smith` through the new front end to an object, linked with a C file
+// and run. The in-process tests call `compile::file`; the ones named `driver` run the smith under test ($SMITH_SELF)
+// as `smith cc --front-end=new`. Processes run through std::process (tests/scratch.smith builds whole projects and
+// needs the repository's layout, which the front runner does not have). The diagnostics' goldens are in
+// tests/front/join/, with the scratch folder's name replaced by `<dir>`.
+module front_join_test;
+
+import front::compile;
+import front::roots;
+import std::clock;
+import std::files;
+import std::format;
+import std::mem;
+import std::process;
+import std::test;
+import <stdio.h>;
+import <stdlib.h>;
+import <string.h>;
+import <sys/stat.h>;
+import <unistd.h>;
+
+// ---------------------------------------------------------------------------------------------------------------
+// Files and processes
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+static const char *smith_path() {
+    const char *self = c::getenv("SMITH_SELF");
+    return self != nullptr ? self : "smith";
+}
+
+// A folder of this test's own, named by the process id and the test's name.
+static Str folder_for(Str name) {
+    Str path = as_str(format::push("/tmp/front_join_", (I64)c::getpid(), "_", name));
+    c::mkdir(path.data, 0o700);
+    return path;
+}
+
+static void write_text(Str path, Str text) {
+    c::FILE *file = c::fopen(path.data, "w");
+    test::check_equal(file != nullptr, true);
+    if (file == nullptr) return;
+    c::fwrite(text.data, 1, countof(text), file);
+    c::fclose(file);
+}
+
+static Bool exists(Str path) {
+    return c::access(path.data, 0) == 0;
+}
+
+static void remove_all(Str folder) {
+    const char *const argv[4] = {"rm", "-rf", folder.data, nullptr};
+    process::OutputResult done = process::run(argv[0:3]);
+    test::check_equal(done == .ok, true);
+}
+
+// What `sh -c command` did: its exit status (-1 when it did not start or a signal ended it) and standard error.
+struct Ran {
+    I32 status;
+    Str errors;
+};
+
+static Ran sh(Str command) {
+    const char *const argv[4] = {"sh", "-c", command.data, nullptr};
+    Ran ran = {.status = -1, .errors = ""};
+    process::OutputResult done = process::run(argv[0:3]);
+    if (done == .ok) {
+        ran.status = done.ok.exit.signal == 0 ? done.ok.exit.status : -1;
+        format::Chars chars = mem::view(done.ok.errors, char);
+        ran.errors = chars;
+    }
+    return ran;
+}
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        if (roots::same(text[i:i + countof(needle)], needle)) return true;
+    }
+    return false;
+}
+
+// `text` with every `from` replaced by `to`.
+static Str replace(Str text, Str from, Str to) {
+    Str result = "";
+    Usize i = 0;
+    while (i < countof(text)) {
+        if (i + countof(from) <= countof(text) && roots::same(text[i:i + countof(from)], from)) {
+            result = as_str(format::push(result, to));
+            i += countof(from);
+        } else {
+            result = as_str(format::push(result, text[i:i + 1]));
+            i += 1;
+        }
+    }
+    return result;
+}
+
+static Bool apple() {
+    return exists("/System/Library/CoreServices");
+}
+
+// A C program that calls std::ascii by the label the object defines and returns 0 when the answers are right. The
+// labels are the new front end's (`std::ascii::digit`, with a leading `_` on macOS, as in front_emit_object_test).
+static Str main_for(Str prefix) {
+    return as_str(format::push("_Bool digit(char) __asm__(\"", prefix, "std::ascii::digit\");\n",
+                               "_Bool space(char) __asm__(\"", prefix, "std::ascii::space\");\n",
+                               "_Bool alpha(char) __asm__(\"", prefix, "std::ascii::alpha\");\n", "int main(void) {\n",
+                               "    if (!digit('7') || digit('x')) return 1;\n",
+                               "    if (!space(' ') || space('a')) return 2;\n",
+                               "    if (!alpha('q') || alpha('3')) return 3;\n", "    return 0;\n", "}\n"));
+}
+
+// std::ascii as lib/std/ascii.smith writes it needs `char` and character literals, which front::emit does not emit
+// yet (#1221's report names the gap). The demonstration is the same module over U8 and integer literals, written into
+// a folder's own lib/std/ascii.smith so the library root names it `std::ascii`.
+static Str ascii_fixture() {
+    return "module std::ascii;\n\n"
+           "export Bool space(U8 c) {\n    return c == 32 || c == 9 || c == 10 || c == 13;\n}\n\n"
+           "export Bool digit(U8 c) {\n    return c >= 48 && c <= 57;\n}\n\n"
+           "export Bool alpha(U8 c) {\n    return (c >= 97 && c <= 122) || (c >= 65 && c <= 90);\n}\n";
+}
+
+// A folder with lib/std/ascii.smith in it; the library root of `folders` is its lib.
+static Str ascii_folder(Str name) {
+    Str folder = folder_for(name);
+    sh(as_str(format::push("mkdir -p ", folder, "/lib/std")));
+    write_text(as_str(format::push(folder, "/lib/std/ascii.smith")), ascii_fixture());
+    return folder;
+}
+
+static roots::Roots roots_of(Str folder) {
+    return (roots::Roots){.source = as_str(format::push(folder, "/src")),
+                          .library = as_str(format::push(folder, "/lib"))};
+}
+
+// Links main.c with ascii.o in `folder` and runs the program: its exit status.
+static I32 link_and_run(Str folder, Str prefix) {
+    write_text(as_str(format::push(folder, "/main.c")), main_for(prefix));
+    Ran linked =
+        sh(as_str(format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/ascii.o -o ", folder, "/prog")));
+    test::check_equal(linked.status, 0);
+    if (linked.status != 0) return -1;
+    return sh(as_str(format::push(folder, "/prog"))).status;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Tests
+
+// lib/std/ascii.smith through parse, check, emit and write, linked with a C file and run.
+export void test_front_join_ascii_in_process_links_with_a_c_file_and_runs() {
+    Str folder = ascii_folder("proc");
+    compile::Report report = compile::file(as_str(format::push(folder, "/lib/std/ascii.smith")),
+                                           as_str(format::push(folder, "/ascii.o")), "", roots_of(folder));
+    test::check_equal(report.ok, true);
+    test::check_equal(countof(report.text), (Usize)0);
+    test::check_equal(exists(as_str(format::push(folder, "/ascii.o"))), true);
+    if (report.ok) test::check_equal(link_and_run(folder, apple() ? "_" : ""), 0);
+    remove_all(folder);
+}
+
+// `smith cc --front-end=new -c lib/std/ascii.smith -o ascii.o` prints nothing and writes the object.
+export void test_front_join_driver_ascii_links_with_a_c_file_and_runs() {
+    Str folder = ascii_folder("driver");
+    Ran ran = sh(as_str(
+        format::push("cd ", folder, " && ", smith_path(), " cc --front-end=new -c lib/std/ascii.smith -o ascii.o")));
+    test::check_equal(ran.status, 0);
+    test::check_equal(countof(ran.errors), (Usize)0);
+    test::check_equal(exists(as_str(format::push(folder, "/ascii.o"))), true);
+    if (ran.status == 0) test::check_equal(link_and_run(folder, apple() ? "_" : ""), 0);
+    remove_all(folder);
+}
+
+// Mixed command line: the `.smith` file and the `.c` file in one `smith cc`, no object made by hand.
+export void test_front_join_driver_a_mixed_command_line_links() {
+    Str folder = ascii_folder("mixed");
+    write_text(as_str(format::push(folder, "/main.c")), main_for(apple() ? "_" : ""));
+    Ran ran = sh(as_str(
+        format::push("cd ", folder, " && ", smith_path(), " cc --front-end=new main.c lib/std/ascii.smith -o prog")));
+    test::check_equal(ran.status, 0);
+    if (ran.status == 0) test::check_equal(sh(as_str(format::push(folder, "/prog"))).status, 0);
+    remove_all(folder);
+}
+
+// Today's pipeline defines the same functions: the same answers from the object `smith cc` makes without the flag
+// (its labels start with `_` on every system).
+export void test_front_join_the_token_lowering_gives_the_same_answers() {
+    Str folder = ascii_folder("old");
+    Ran ran = sh(as_str(format::push("cd ", folder, " && ", smith_path(), " cc -c lib/std/ascii.smith -o ascii.o")));
+    test::check_equal(ran.status, 0);
+    if (ran.status == 0) test::check_equal(link_and_run(folder, "_"), 0);
+    remove_all(folder);
+}
+
+// Without the flag nothing changes: two builds of the same file are the same bytes.
+export void test_front_join_without_the_flag_the_build_is_what_it_was() {
+    Str folder = ascii_folder("off");
+    Ran first = sh(as_str(format::push("cd ", folder, " && ", smith_path(), " cc -c lib/std/ascii.smith -o a.o")));
+    Ran second = sh(as_str(format::push("cd ", folder, " && ", smith_path(), " cc -c lib/std/ascii.smith -o b.o")));
+    test::check_equal(first.status, 0);
+    test::check_equal(second.status, 0);
+    test::check_equal(sh(as_str(format::push("cmp ", folder, "/a.o ", folder, "/b.o"))).status, 0);
+    remove_all(folder);
+}
+
+// Diagnostics: one per error with file, line and column, and no object written.
+static void diagnostics_case(Str name, Str file, Str source, Str golden) {
+    Str folder = folder_for(name);
+    Str path = as_str(format::push(folder, "/", file));
+    Str object = as_str(format::push(folder, "/out.o"));
+    write_text(path, source);
+    compile::Report report = compile::file(path, object, "", roots::default_roots());
+    test::check_equal(report.ok, false);
+    test::check_equal(exists(object), false);
+    test::golden(golden, replace(report.text, folder, "<dir>"));
+    remove_all(folder);
+}
+
+export void test_front_join_a_type_error_stops_before_any_object() {
+    diagnostics_case("type", "bad.smith", "module bad;\n\nexport I32 f(I32 a) {\n    return a > 1;\n}\n",
+                     "tests/front/join/type_error.txt");
+}
+
+export void test_front_join_a_parse_error_has_file_line_and_column() {
+    diagnostics_case("parse", "broken.smith", "module broken;\n\nexport I32 f( {\n}\n",
+                     "tests/front/join/parse_error.txt");
+}
+
+export void test_front_join_a_module_line_that_disagrees_with_the_path_is_an_error() {
+    Str folder = folder_for("line");
+    Str source_root = as_str(format::push(folder, "/src"));
+    c::mkdir(source_root.data, 0o700);
+    c::mkdir(as_str(format::push(source_root, "/game")).data, 0o700);
+    Str path = as_str(format::push(source_root, "/game/replay.smith"));
+    write_text(path, "module other::name;\n\nexport I32 f() {\n    return 1;\n}\n");
+    roots::Roots folders = {.source = source_root, .library = as_str(format::push(folder, "/lib"))};
+    compile::Report report = compile::file(path, as_str(format::push(folder, "/out.o")), "", folders);
+    test::check_equal(report.ok, false);
+    test::golden("tests/front/join/module_line.txt", replace(report.text, folder, "<dir>"));
+    remove_all(folder);
+}
+
+export void test_front_join_a_file_without_a_module_line_is_named_by_its_path() {
+    Str folder = folder_for("named");
+    Str source_root = as_str(format::push(folder, "/src"));
+    c::mkdir(source_root.data, 0o700);
+    c::mkdir(as_str(format::push(source_root, "/game")).data, 0o700);
+    Str path = as_str(format::push(source_root, "/game/replay.smith"));
+    write_text(path, "export I32 five() {\n    return 5;\n}\n");
+    Str object = as_str(format::push(folder, "/out.o"));
+    roots::Roots folders = {.source = source_root, .library = as_str(format::push(folder, "/lib"))};
+    compile::Report report = compile::file(path, object, "", folders);
+    test::check_equal(report.ok, true);
+    test::check_equal(sh(as_str(format::push("nm ", object, " | grep -q 'game::replay::five'"))).status, 0);
+    remove_all(folder);
+}
+
+export void test_front_join_driver_two_files_with_one_name_are_an_error_naming_both() {
+    Str folder = folder_for("dup");
+    sh(as_str(format::push("mkdir -p ", folder, "/src ", folder, "/lib")));
+    write_text(as_str(format::push(folder, "/src/dup.smith")), "export I32 one() {\n    return 1;\n}\n");
+    write_text(as_str(format::push(folder, "/lib/dup.smith")), "export I32 two() {\n    return 2;\n}\n");
+    Ran ran = sh(as_str(
+        format::push("cd ", folder, " && ", smith_path(), " cc --front-end=new -c src/dup.smith lib/dup.smith")));
+    test::check_condition(ran.status != 0);
+    test::check_condition(has(ran.errors, "`dup`"));
+    test::check_condition(has(ran.errors, "src/dup.smith"));
+    test::check_condition(has(ran.errors, "lib/dup.smith"));
+    remove_all(folder);
+}
+
+// The real lib/std/ascii.smith: parsed and checked clean, then front::emit stops at `char`. This documents the gap
+// (nothing is asserted about the outcome, so the day the emitter handles `char` this test needs no change).
+export void test_front_join_the_real_ascii_module_reports_where_it_stops() {
+    Str folder = folder_for("real");
+    compile::Report report =
+        compile::file("lib/std/ascii.smith", as_str(format::push(folder, "/ascii.o")), "", roots::default_roots());
+    c::printf("front-join lib/std/ascii.smith: %s", report.ok ? "compiled\n" : report.text.data);
+    remove_all(folder);
+}
+
+// J3's input: the stages of the new front end and the whole of today's pipeline, for the U8 form of std::ascii that
+// both can compile, and the parse and check of the real lib/std/ascii.smith. Printed; nothing is asserted about the
+// numbers (owner: "There are no hard time limits").
+export void test_front_join_compile_time_comparison_is_printed() {
+    Str folder = ascii_folder("time");
+    Str object = as_str(format::push(folder, "/ascii.o"));
+    compile::Report report =
+        compile::file(as_str(format::push(folder, "/lib/std/ascii.smith")), object, "", roots_of(folder));
+    test::check_equal(report.ok, true);
+    compile::Report real =
+        compile::file("lib/std/ascii.smith", as_str(format::push(folder, "/real.o")), "", roots::default_roots());
+    write_text(as_str(format::push(folder, "/empty.c")), "int empty;\n");
+    U64 mark = clock::monotonic();
+    Ran old = sh(as_str(format::push("cd ", folder, " && ", smith_path(), " cc -c lib/std/ascii.smith -o old.o")));
+    U64 old_ns = clock::monotonic() - mark;
+    mark = clock::monotonic();
+    Ran base = sh(as_str(format::push("cd ", folder, " && ", smith_path(), " cc -c empty.c -o empty.o")));
+    U64 base_ns = clock::monotonic() - mark;
+    test::check_equal(old.status, 0);
+    test::check_equal(base.status, 0);
+    U64 total = report.times.parse + report.times.check + report.times.emit + report.times.write;
+    c::printf("front-compare, std::ascii over U8 (microseconds)\n");
+    c::printf("  new front end, in process: parse %llu, check %llu, emit %llu, write %llu, total %llu\n",
+              (unsigned long long)(report.times.parse / 1000), (unsigned long long)(report.times.check / 1000),
+              (unsigned long long)(report.times.emit / 1000), (unsigned long long)(report.times.write / 1000),
+              (unsigned long long)(total / 1000));
+    c::printf("  today's pipeline, `smith cc -c` of the file (a whole process): %llu\n",
+              (unsigned long long)(old_ns / 1000));
+    c::printf("  `smith cc -c` of a one-line C file (a whole process, the start-up): %llu\n",
+              (unsigned long long)(base_ns / 1000));
+    c::printf("  real lib/std/ascii.smith with the new front end: parse %llu, check %llu\n",
+              (unsigned long long)(real.times.parse / 1000), (unsigned long long)(real.times.check / 1000));
+    remove_all(folder);
+}

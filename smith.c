@@ -3565,6 +3565,8 @@ static int smith_headers_main(int count, char **args) {
     return failed;
 }
 
+#include "runtime/front_flag.c"
+
 // The compiler: `smith cc <args>` and `smith c++ <args>`, and the links smith-cc and smith-c++, which act as them by
 // their name. The program is argv[at]; --smith-which, when it comes first, names the compiler without running it,
 // and --smith-header, --smith-lower and --smith-tree-sitter are the .smith helpers.
@@ -3588,6 +3590,16 @@ static int smith_compile_main(int argc, char **argv, int at, bool plus, const ch
     if (which) first++;
     int count = argc - first;
     char **args = argv + first;
+#ifndef SMITH_CORE
+    if (!which && smith_front_requested(count, args)) { // experimental, off by default (runtime/front_flag.c)
+        int forwarded = smith_front_rewrite(argv, first, count, args);
+        if (forwarded <= 0) return forwarded < 0 ? 1 : 0;
+        argv = smith_front_arguments;
+        argc = forwarded;
+        count = argc - first;
+        args = argv + first;
+    }
+#endif
 #ifdef SMITH_HOOK
     if (!which) {
         int status = smith_check_effects(count, args);
