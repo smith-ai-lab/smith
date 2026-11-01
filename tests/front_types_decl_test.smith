@@ -89,6 +89,49 @@ static void golden(Str path, Str source) {
     test::golden(path, join(types_decl::locals_dump(), types::dump(&r)));
 }
 
+// How many casts of the module the checker marked for a run-time check, through `types::cast_checked`.
+static Usize checked_casts(const types::Checked *r) {
+    Usize n = 0;
+    for (Usize i = 0; i < countof(r->nodes); i++) {
+        if (r->nodes[i].node == nullptr) continue;
+        types::CastCheck cc = types::cast_checked(r, r->nodes[i].node);
+        if (cc.needed) {
+            test::check_condition(cc.from != nullptr);
+            test::check_condition(cc.to == r->nodes[i].type);
+            n += 1;
+        }
+    }
+    return n;
+}
+
+static void casts(Str source, Usize want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    test::check_equal(r.error_count, (Usize)0);
+    test::check_equal(checked_casts(&r), want);
+}
+
+export void test_front_types_decl_casts_that_can_lose_a_value_are_marked_checked() {
+    casts("U8 a(I32 x) { return (U8)x; }", 1);
+    casts("U32 a(I32 x) { return (U32)x; }", 1);
+    casts("I32 a(F64 x) { return (I32)x; }", 1);
+    casts("I32 a(I64 x, I64 y) { return (I32)x + (I32)y; }", 2);
+    casts("I64 a(I32 x) { return (I64)x; }", 0);
+    casts("U8 a() { return (U8)200; }", 0);
+    casts("F64 a(I32 x) { return (F64)x; }", 0);
+    casts("U32 a(U8 x) { return (U32)x; }", 0);
+}
+
+export void test_front_types_decl_a_refused_cast_and_the_decided_implicit_rules_report() {
+    fails("I32 f(I32 *p) { return (I32)p; }", "expected I32", "cast through Usize");
+    fails("F64 x = 1;\nF32 y = 16777217;", "16777217 is not exactly an F32", "write a cast");
+    clean("F64 x = 0;");
+    fails("I32 xs[3];\nI32 *p = xs;", "expected I32 *", "&xs[0]");
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // The five use cases
 

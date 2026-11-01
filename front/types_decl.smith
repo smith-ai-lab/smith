@@ -131,6 +131,23 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     return false;
 }
 
+// Whether the cast `e` may be written; a cast that can lose a value is marked for a run-time check (K1, #1328).
+static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
+    types_convert::Literal lit = types_convert::no_literal();
+    if (e->kind == .cast) {
+        lit = literal_of(e->kind.cast.operand);
+    }
+    types_convert::Verdict verdict = types_convert::cast_ok(&c->table, from, to, lit);
+    if (!verdict.ok) {
+        types::fail(c, e->span, verdict.message);
+        return false;
+    }
+    if (verdict.checked) {
+        types::mark_cast_checked(c, e, from);
+    }
+    return true;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // The work stack
 
@@ -476,7 +493,7 @@ export void check_body(types::Checked *r, const ast::Decl *function) {
 }
 
 export void install() {
-    types_expr::set_hooks((types_expr::Hooks){.convert = convert_hook, .lambda_body = lambda_hook});
+    types_expr::set_hooks((types_expr::Hooks){.convert = convert_hook, .cast = cast_hook, .lambda_body = lambda_hook});
 }
 
 // Takes the hooks out again (the default of front::types_expr is exact equality).
