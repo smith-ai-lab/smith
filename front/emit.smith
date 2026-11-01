@@ -2,8 +2,9 @@
 // through LLVM's C API (`c::LLVM...`) only. Modules are never turned into C. Internal: not wired into `smith cc`, and
 // its concept (knowledge/) comes with J2.
 //
-// WHAT IT EMITS TODAY (B1): functions with a body, parameters and a result of `I8 I16 I32 I64 U8 U16 U32 U64 Bool`;
-// blocks, `return value;`, locals (`I32 t = a * b;`, `auto t = ...`); integer literals, names, unary `- + ~`, binary
+// WHAT IT EMITS TODAY (B1): functions with a body, parameters and a result of `I8 I16 I32 I64 U8 U16 U32 U64 char
+// Bool`; blocks, `return value;`, locals (`I32 t = a * b;`, `auto t = ...`); integer literals, names, unary `- + ~`,
+// binary
 // `+ - * / % << >> & ^ |`, assignment, plain and compound. Signed overflow, division by zero, `MIN / -1` and bad shift
 // amounts are checks in every build (`llvm.*.with.overflow`, `llvm.trap`); unsigned arithmetic wraps. Everything else
 // is an `Error` naming the node, with its span ("not emitted yet: while"); no node makes a crash. The first problem
@@ -167,11 +168,25 @@ static state::Status dispatch_binary(state::Emitter *e, const ast::Expr *x, ast:
     }
 }
 
+// A character literal is a `char` (8 bits, unsigned) whatever the hint says; escapes were decoded by the parser.
+static state::Status character_literal(state::Emitter *e, const ast::Expr *x) {
+    if (x->kind != .character) {
+        return state::fail("not a character literal", x->span);
+    }
+    state::Ty ty = {};
+    state::scalar_type(e, "char", &ty);
+    U64 value = x->kind.character.value;
+    if (value > 255) return state::failf(x->span, "character literal ", value, " does not fit char");
+    state::push_value(e, (state::Value){.llvm = c::LLVMConstInt(ty.llvm, value, 0), .ty = ty});
+    return state::success();
+}
+
 // The handler of an expression's kind: it pushes work or one Value. Every kind of front::ast's Expr is named here; the
 // ones nobody emits yet are the last line. (A chain of `if`, see `type_of`.)
 static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
     try debug::expr_location(e, x);
     if (x->kind == .integer) return arith::integer_literal(e, x, hint);
+    if (x->kind == .character) return character_literal(e, x);
     if (x->kind == .name) {
         if (memory::is_global_name(e, x)) return memory::name_ref(e, x);
         return arith::name_ref(e, x, hint);
@@ -188,7 +203,7 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     if (x->kind == .cast) return memory::cast(e, x, hint);
     if (x->kind == .query) return memory::query(e, x, hint);
     if (x->kind == .compound) return memory::compound(e, x, hint);
-    // floating, character, string, variant, type_value, slice_of, lambda, try_expr
+    // floating, string, variant, type_value, slice_of, lambda, try_expr
     return state::not_emitted("this kind of expression", x->span);
 }
 

@@ -379,7 +379,7 @@ export void end_scope(Emitter *e) {
     e->local_count = e->scope_marks[e->scope_count];
 }
 
-// The type a name says, for the names of the integer types and Bool; `found` false for any other.
+// The type a name says, for the names of the integer types, `char` and Bool; `found` false for any other.
 export Bool scalar_type(Emitter *e, Str name, Ty *ty) {
     U32 bits = 0;
     Bool is_signed = false;
@@ -396,8 +396,8 @@ export Bool scalar_type(Emitter *e, Str name, Ty *ty) {
     } else if (same_text(name, "I64")) {
         bits = 64;
         is_signed = true;
-    } else if (same_text(name, "U8")) {
-        bits = 8;
+    } else if (same_text(name, "U8") || same_text(name, "char")) {
+        bits = 8; // `char` is the checker's character type: unsigned, the layout of U8
     } else if (same_text(name, "U16")) {
         bits = 16;
     } else if (same_text(name, "U32")) {
