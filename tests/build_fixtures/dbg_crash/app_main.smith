@@ -1,6 +1,6 @@
 module main;
 
-import smith::contract;
+import std::contract;
 
 i32 total(i32 xs[:], usize i) {
     i32 v = xs[i];

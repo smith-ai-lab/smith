@@ -10,7 +10,7 @@ When you need a step the high level has no field for (a shader, a data-baking st
 ```smith fragment
 module build;
 
-import smith::build;
+import std::build;
 
 export void build(build::Build *b) {
     auto flags = build::list(b, "-std=gnu2y", "-Wall", "-Wextra", "-Werror", "-I", ".", "-I", ".smith/include", "-g", "-O0",

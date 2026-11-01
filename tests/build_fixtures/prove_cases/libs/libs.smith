@@ -1,7 +1,7 @@
 module libs;
 
-import smith::contract;
-import smith::random;
+import std::contract;
+import std::random;
 
 export u64 pick(u64 index) {
     contract::requires(index < 10);

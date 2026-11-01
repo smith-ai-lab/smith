@@ -1,12 +1,12 @@
 ---
 type: architecture
-title: smith::process, the direct-call child process module
+title: std::process, the direct-call child process module
 description: Child processes as direct calls returning result(T, process::Error) (run, spawn, start with pipes, wait, kill), over a process handler of the thread, with a scripted fake and memory from the current allocator.
 tags: [process, handlers, result, mem]
 ---
-# smith::process
+# std::process
 
-`lib/smith/process.smith` (skill smith-process) is the direct-call process module (issue #240). Sockets to a child belong here (a child's stdio is a pair of pipes, `start`), and `net` keeps TCP and TLS only.
+`lib/std/process.smith` (skill smith-process) is the direct-call process module (issue #240). Sockets to a child belong here (a child's stdio is a pair of pipes, `start`), and `net` keeps TCP and TLS only.
 
 - **A handler of its own.** `SmithProcessHandler` (`include/smith/handlers.h`) has `start`, `read`, `write`, `close_input`, `wait`, `kill`, `close` and `cores`. No libc function is interposed (posix_spawn and waitpid are not reachable that way and pipes are plain descriptors the files handler would take): the module calls the members itself, so a thread with a handler never starts a real process, and none set is posix_spawn, pipes and waitpid. A child is an id the handler chooses; the module's `Child` keeps the descriptors of a real one. The setter returns the previous handler, as the others do.
 - **Modes.** `start` makes a pipe to stdin and from stdout and leads a process group (`kill` reaches its children); `spawn` has no pipes; `run` captures stdout and stderr apart, reading both with `poll` so neither pipe fills while the other is read, then waits.

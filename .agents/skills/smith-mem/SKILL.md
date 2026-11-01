@@ -1,16 +1,16 @@
 ---
 name: smith-mem
-description: "Using smith::mem (import smith::mem; mem::alloc, alloc_slice, realloc, try_alloc, set_allocator): memory from the allocator in force on the thread, never null. Load when code imports smith::mem or includes <smith/mem.h>, or on swapping the allocator around code with defer."
+description: "Using std::mem (import std::mem; mem::alloc, alloc_slice, realloc, try_alloc, set_allocator): memory from the allocator in force on the thread, never null. Load when code imports std::mem or includes <smith/mem.h>, or on swapping the allocator around code with defer."
 ---
 
-# Memory from the allocator in force: smith::mem
+# Memory from the allocator in force: std::mem
 
 `mem::alloc(T)` is a zeroed `T *` from the allocator of the calling thread: the system's by default, an arena or a fake after `mem::set_allocator`. It is never null: a refusal (the OS out of memory, a fixed arena's budget) is a checked failure naming the size, which aborts for now (with tasks, #324, it fails the task and unwinds through `defer`). Code that can do something about a refusal calls `mem::try_alloc` or `mem::try_alloc_slice`, which return an `option`. `malloc` keeps C's contract (null when refused).
 
 ```smith
 module scratch;
-import smith::arena;
-import smith::mem;
+import std::arena;
+import std::mem;
 
 export typedef option(i32 *) MaybeInt; // an option type is named at file scope before a body uses it
 
@@ -44,7 +44,7 @@ The allocator that refuses by chance is its own module, [smith-failing](../smith
 ## Copies, fills and comparisons: typed, in place of memcpy and friends
 ```smith
 module copies;
-import smith::mem;
+import std::mem;
 
 export bool demo(u8 dst[:], const u8 src[:]) {
     mem::copy(dst, src);                    // two slices of one element type and one length: unequal lengths fail a check

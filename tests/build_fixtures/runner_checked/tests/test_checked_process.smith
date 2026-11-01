@@ -1,8 +1,8 @@
 module test_checked_process;
 
-import smith::mem;
-import smith::process;
-import smith::test;
+import std::mem;
+import std::process;
+import std::test;
 
 // What a process returns to a test belongs to the test (issue #815): freed, the test passes; kept, it fails naming the
 // allocation.

@@ -3,10 +3,10 @@
 // smith_modules, and every header of smith's libraries importing alone and together.
 module build_isolation_test;
 
-import smith::arena;
-import smith::mem;
-import smith::format;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::format;
+import std::test;
 import scratch;
 
 // 11d. Modules: isolation. A header that only worked after another include fails, and a textual header works.

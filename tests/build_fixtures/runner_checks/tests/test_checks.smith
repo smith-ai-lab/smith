@@ -1,7 +1,7 @@
 import <assert.h>;
 import <stdio.h>;
-import smith::math;
-import smith::test;
+import std::math;
+import std::test;
 
 void test_passing(void) {
     c::printf("this output is hidden\n");

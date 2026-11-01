@@ -1,0 +1,22 @@
+// `smith test` keeps going after a failed task (#1171). A scratch project is needed: the behavior is the verb's wiring
+// of the executor's -k, which a unit test of the runtime cannot show. Without it, a failed test-front left
+// units-build unstarted and the units runner's binary stale.
+module test_keep_going_test;
+
+import smith::arena;
+import smith::mem;
+import smith::test;
+import scratch;
+
+export void test_smith_test_builds_the_independent_task_after_one_fails() {
+    scratch::Project p = scratch::make("keep_going", "test_keep_going");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = scratch::sh(&p, "smith test");
+    scratch::expect_failure("the failed task still fails the run", &run);
+    test::check_condition(scratch::exists(&p, "failed"));
+    test::check_condition(scratch::exists(&p, "prepared"));
+}

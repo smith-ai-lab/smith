@@ -1,6 +1,6 @@
 ---
 name: smith-autodiff-c
-description: "smith::autodiff from C (#include <smith/autodiff.h>, __enzyme_autodiff, __enzyme_fwddiff, enzyme_dup, enzyme_out, enzyme_const) with the table of names and the rules about the markers. Load when C calls __enzyme_autodiff or on 'failed to find fn to differentiate'."
+description: "std::autodiff from C (#include <smith/autodiff.h>, __enzyme_autodiff, __enzyme_fwddiff, enzyme_dup, enzyme_out, enzyme_const) with the table of names and the rules about the markers. Load when C calls __enzyme_autodiff or on 'failed to find fn to differentiate'."
 ---
 
 # autodiff from C

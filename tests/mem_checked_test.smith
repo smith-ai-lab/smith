@@ -1,11 +1,11 @@
-// mem::checked (issue #239, lib/smith/mem.smith): the allocator the test runner sets around every test, which finds a
+// mem::checked (issue #239, lib/std/mem.smith): the allocator the test runner sets around every test, which finds a
 // leak (naming its allocation site), a double free, a free of a foreign block and a use after free. The runner cases
 // use the fixture tests/build_fixtures/runner_checked; the arena cases a C program, tests/mem_checked/main.c.
 module mem_checked_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import runner;
 import scratch;
 

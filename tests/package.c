@@ -1,4 +1,4 @@
-// Tests of packages (runtime/package.c) on a scripted network: the download is smith's HTTPS client over smith::net,
+// Tests of packages (runtime/package.c) on a scripted network: the download is smith's HTTPS client over std::net,
 // and its fake network, set as the thread's handler, stands in for the internet, so the cache, the files and tar are
 // all real. Usage: package-test <archive.tar.gz> <scratch folder>
 

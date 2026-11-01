@@ -360,7 +360,7 @@ function tests.dap_test_name_in_module()
   local buffer = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {
     "module test_primes;",
-    "import smith::test;",
+    "import std::test;",
     "",
     "export void test_one(void) {",
     "    test::check_equal_i32(1, 1);",
@@ -523,7 +523,7 @@ end
 
 local smith_test_source = table.concat({
   "module geometry::box_test;",
-  "import smith::test;",
+  "import std::test;",
   "",
   "export void test_area(void) {",
   "    test::check_equal_i32(1, 1);",
@@ -674,7 +674,7 @@ slowest:
             primes::sum(0) = 0, 1   (i32)
   called from
     tests/test_primes.smith:12     test_primes::test_no_primes_add_up_to_nothing
-    .smith/lib/smith/test.smith:1065   smith_test_execute
+    .smith/lib/std/test.smith:1065   smith_test_execute
 smith: test: failed (status 1)
 ]]
 piped_output = piped_output:gsub("<ESC>", "\27")

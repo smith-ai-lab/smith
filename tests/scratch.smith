@@ -2,17 +2,17 @@
 // (removed when the test passes), a fixture copied into it, and commands run there through the process module with the
 // smith under test first on PATH. The smith under test is the one running the tests, `$SMITH_SELF` (set by
 // `smith test`; set it to run a runner by hand). Each test is a process of its own, so the environment it sets is its.
-// NOLINTBEGIN(smith-mem): #421: importing smith::mem breaks every test that imports scratch; convert to mem:: after it
+// NOLINTBEGIN(smith-mem): #421: importing std::mem breaks every test that imports scratch; convert to mem:: after it
 module scratch;
 
-import smith::arena;
-import smith::clock;
-import smith::env;
-import smith::files;
-import smith::format;
-import smith::mem;
-import smith::process;
-import smith::test;
+import std::arena;
+import std::clock;
+import std::env;
+import std::files;
+import std::format;
+import std::mem;
+import std::process;
+import std::test;
 import <smith_core.h>;
 import <string.h>;
 
@@ -177,7 +177,7 @@ static bool ends_with(const char *text, const char *suffix) {
 
 // The names in a folder of the repository (`folder`, relative to $SMITH_REPO) that the source of a test file never
 // calls as `<call>"<name>")`: the ones that end in `suffix_a` or `suffix_b` (every name when both are nullptr). A table
-// of cases whose test file must name each of them uses it. The folder and the source are read through smith::files,
+// of cases whose test file must name each of them uses it. The folder and the source are read through std::files,
 // and the text returned ("" when nothing is missing) belongs to the caller.
 export const char *untested_names(const char *folder, const char *test_source, const char *call, const char *suffix_a,
                                   const char *suffix_b) {
@@ -303,7 +303,7 @@ static char lowered_errors[lowered_errors_capacity];
 
 // A file of the project, in a folder made for it.
 static void write_in_new_folder(const Project *p, const char *name, const char *text) {
-    // through smith::files: a lowered text is larger than one argument of a command may be
+    // through std::files: a lowered text is larger than one argument of a command may be
     const char *path = path_in(p, name);
     const char *slash = c::strrchr(path, '/');
     files::DoneResult made = files::make_folder(path[0:(usize)(slash - path)]);
@@ -314,7 +314,7 @@ static void write_in_new_folder(const Project *p, const char *name, const char *
     release(path);
 }
 
-// The in-process lowering reads its source in C: the file is read through smith::files first, so that a source that
+// The in-process lowering reads its source in C: the file is read through std::files first, so that a source that
 // cannot be read fails the test with its path (the modules it imports are not named).
 static void open_source(const char *folder, const char *source) {
     const char *path = join_free(folder, "/", source);

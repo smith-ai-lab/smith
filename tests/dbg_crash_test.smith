@@ -7,10 +7,10 @@
 // texts, a file it reads) is given back with that memory, and scratch::clean frees what make holds.
 module dbg_crash_test;
 
-import smith::format;
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::format;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
 import target;
 

@@ -12,11 +12,11 @@
 // that the tests run side by side. A case added to the folder needs no test here: every case is read.
 module smith_lang_lowering_test;
 
-import smith::arena;
-import smith::format;
-import smith::files;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::files;
+import std::mem;
+import std::test;
 import corpus;
 import <smith_core.h>;
 import <string.h>;

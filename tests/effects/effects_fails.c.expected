@@ -1,3 +1,3 @@
 status 1
-effects_fails.c:18:16: error: smith-effect: `aborts` is [[smith::pure]], but it has the effects fails: aborts -> abort (effects_fails.c:18)
-effects_fails.c:23:12: error: smith-effect: `via` is [[smith::pure]], but it has the effects fails: via -> may_fail (effects_fails.c:23)
+effects_fails.c:18:16: error: smith-effect: `aborts` is [[std::pure]], but it has the effects fails: aborts -> abort (effects_fails.c:18)
+effects_fails.c:23:12: error: smith-effect: `via` is [[std::pure]], but it has the effects fails: via -> may_fail (effects_fails.c:23)

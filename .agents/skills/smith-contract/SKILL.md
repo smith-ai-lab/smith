@@ -1,18 +1,18 @@
 ---
 name: smith-contract
-description: "Writing contracts with smith::contract (import smith::contract; contract::requires, ensures, invariant, assert, trusted): checks written as calls that run at run time and that smith prove proves. Load when code imports smith::contract, on a question about preconditions, postconditions or loop invariants."
+description: "Writing contracts with std::contract (import std::contract; contract::requires, ensures, invariant, assert, trusted): checks written as calls that run at run time and that smith prove proves. Load when code imports std::contract, on a question about preconditions, postconditions or loop invariants."
 ---
 
 # Contracts: smith's assertions about a function
 
 A contract is a call that stops the program when its condition is false, as `assert` does. The header is `.smith/include/smith/contract.h`; read it first.
 
-**contract is the module `smith::contract`** (`lib/smith/contract.smith`): a `.smith` file writes `import smith::contract;` and `contract::requires(c)`, `ensures`, `invariant`, `assert` and `trusted`. C includes `<smith/contract.h>` and calls `smith_requires`, `smith_ensures`, `smith_invariant`, `smith_assert` and `smith_trusted`; the prose below uses the C names. The assert is `contract::assert`, not `assert` (a macro; `smith lint` refuses `c::assert`). A contract is a plain function call, so a failure's report is read from the call stack (`smith-trace`).
+**contract is the module `std::contract`** (`lib/std/contract.smith`): a `.smith` file writes `import std::contract;` and `contract::requires(c)`, `ensures`, `invariant`, `assert` and `trusted`. C includes `<smith/contract.h>` and calls `smith_requires`, `smith_ensures`, `smith_invariant`, `smith_assert` and `smith_trusted`; the prose below uses the C names. The assert is `contract::assert`, not `assert` (a macro; `smith lint` refuses `c::assert`). A contract is a plain function call, so a failure's report is read from the call stack (`smith-trace`).
 
 ```smith
 module geometry::box;
 
-import smith::contract;
+import std::contract;
 
 export i32 clamp(i32 x, i32 low, i32 high) {
     contract::requires(low <= high);                     // the caller's job

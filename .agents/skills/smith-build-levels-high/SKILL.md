@@ -15,7 +15,7 @@ It prints exactly what level 0 does and changes nothing (on a project that has a
 // build.smith
 module build;
 
-import smith::build;
+import std::build;
 
 export void build(build::Build *b) {
     build::app(b, &(build::App){

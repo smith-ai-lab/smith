@@ -12,7 +12,7 @@ description: "Moving code from many key_derive calls to random::split: a key is 
 Where a key was derived by names (`Draw_A`, `Draw_B`), make the enum 0-based with a count, split once, use each lane once:
 
 ```smith
-import smith::random;
+import std::random;
 
 typedef enum : usize { Draw_A, Draw_B, Draw_count } Draw;
 
@@ -28,7 +28,7 @@ f64 pair(random::Key key) {
 One key per item: an array sized by the count (a constant bound, or an arena slice), used in the plain loop `for (usize i = 0; i < countof(keys); i++)` with `keys[i]` once in the body. The loop bound must be `countof(keys)`; another bound, an `i32` counter or an index computed from `i` is reported (`smith-lang-affine`). An item that also needs lanes splits its own key.
 
 ```smith
-import smith::random;
+import std::random;
 
 f64 total(random::Key key) {
     random::Key items[8];

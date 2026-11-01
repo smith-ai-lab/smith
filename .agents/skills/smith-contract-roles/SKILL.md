@@ -8,7 +8,7 @@ description: "Where each contract call goes: a precondition at entry is requires
 ```smith
 module checks;
 
-import smith::contract;
+import std::contract;
 
 export i32 first(const i32 *xs, usize count) {
     contract::requires(count > 0);                // the precondition: callers prove it, the body assumes it
@@ -40,7 +40,7 @@ A lemma's `requires` is its hypothesis and its `ensures` its claim; using it is 
 ```smith
 module squares;
 
-import smith::contract;
+import std::contract;
 
 export void square_is_nonnegative(i32 n) {
     contract::ensures((i64)n * (i64)n >= 0);

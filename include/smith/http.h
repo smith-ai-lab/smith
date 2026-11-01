@@ -5,8 +5,8 @@
 //   SmithHttpResult result = smith_http_get("https://example.com/a.tar.gz", "a.tar.gz");
 //   if (result.error.code != 0) { fprintf(stderr, "%s\n", result.error.message); ... }
 //
-// The body goes to the file as it arrives, through smith::files, a block at a time: a 150 MB download holds about 400
-// KiB from the current allocator (smith::mem), never the body. A download that fails leaves the file as far as it got,
+// The body goes to the file as it arrives, through std::files, a block at a time: a 150 MB download holds about 400
+// KiB from the current allocator (std::mem), never the body. A download that fails leaves the file as far as it got,
 // so the caller removes it (or writes to a temporary name and renames, as the package cache does).
 //
 // Redirects (301, 302, 303, 307 and 308) are followed up to ten times, and only to https: a redirect to http:// or any
@@ -14,7 +14,7 @@
 // tests). Certificates are the system's (see <smith/net.h>) and cannot be turned off.
 //
 // A server that sends nothing for smith_http_idle_ns (60 s) fails the download with ETIMEDOUT and a message that names
-// the URL and the bytes received so far; the deadline is smith::net's `read_within`, which the fake net answers at
+// the URL and the bytes received so far; the deadline is std::net's `read_within`, which the fake net answers at
 // once, so a test never waits.
 //
 // Errors are values with messages that name the URL: a TLS or network failure keeps its code (a refused certificate or
@@ -47,5 +47,5 @@ typedef struct {
 constexpr uint64_t smith_http_idle_ns = 60'000'000'000;
 
 // Downloads url to the file at path, replacing what is there. The buffers for the call come from the current allocator
-// (smith::mem) and are freed when it returns.
+// (std::mem) and are freed when it returns.
 [[nodiscard]] SmithHttpResult smith_http_get(const char *url, const char *path);

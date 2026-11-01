@@ -1,6 +1,6 @@
 // The evaluator runs under -fmodules: a contract that holds is a no-op at compile time, and the program links the library.
 import <stdio.h>;
-import smith::contract;
+import std::contract;
 
 static i32 clamp(i32 x, i32 low, i32 high) {
     contract::requires(low <= high);

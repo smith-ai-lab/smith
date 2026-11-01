@@ -2,9 +2,9 @@
 // on stdin, which holds stdin's lock, and the failure path used to flush every FILE and wait for it forever.
 module failure_flush_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
 
 constexpr char program[_] = "#include <pthread.h>\n"

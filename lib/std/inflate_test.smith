@@ -1,0 +1,792 @@
+// Tests of <smith/inflate.h>, in smith's own test library; tests/library_modes_test.smith builds them in a scratch
+// project as lib/std/inflate_test.smith. Fixed vectors made once outside the repository (the system's gzip command,
+// Python's zlib for the zlib and raw forms) cover stored, fixed and dynamic Huffman blocks, matches that wrap the 32
+// KiB window, and a gzip header with every optional field, each with the bytes it must decode to; stored blocks written
+// here round-trip through every format and through decode and stream; truncated, damaged and random input fails with a
+// status and never reads or writes outside its buffers (the buffers are exact-size arena pushes, which the sanitizer
+// poisons around). The vectors are read from tests/fixtures/inflate with std::files into the test's own memory.
+module std::inflate_test;
+
+import std::arena;
+import std::files;
+import std::format;
+import std::inflate;
+import std::random;
+import std::test;
+import std::mem;
+
+constexpr usize arena_size = (usize)8 << 20; // 8 MiB
+
+typedef struct {
+    const char *name;
+    u32 block_type; // the BTYPE of the first block of the gzip file
+} Vector;
+
+const Vector vectors[_] = {
+    {"fixed", 1},
+    {"dynamic", 2},
+    {"stored", 0},
+    {"mixed", 2},
+};
+
+// The vector `repeat` is 30,000 random bytes ten times: its matches reach back almost the whole window.
+constexpr usize repeat_period = 30000;
+constexpr usize repeat_size = repeat_period * 10;
+
+// The next key of a stream: `stream` moves on (the reassignment pattern) and the key returned is for one use.
+static random::Key take(random::Key *stream) {
+    random::Key next[2];
+    random::split(*stream, next);
+    *stream = next[0];
+    return next[1];
+}
+
+// A fixture's bytes, in the arena: read_file allocates through the current allocator, which is the arena's while it
+// reads, so the bytes are given back with the arena and the test frees nothing.
+static const u8 *load(arena::Arena *arena, const char *name, const char *extension, usize *size) {
+    char path[128];
+    format::Written written = format::to(path, sizeof path, "tests/fixtures/inflate/", name, ".", extension);
+    test::check_condition(written.fits);
+    arena::ArenaAllocator allocator = arena::allocator(arena);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::BytesResult file = files::read_file(path[0:written.length]);
+    switch (file) {
+    case .ok:
+        *size = countof(file.ok);
+        return file.ok.data;
+    case .error:
+        test::note("cannot read %s", path);
+        test::check_condition(false); // ends the test
+        *size = 0;
+        return nullptr;
+    }
+}
+
+static bool same(const u8 *a, const u8 *b, usize size) {
+    for (usize i = 0; i < size; i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+// The output of a repeat vector is its first period over and over.
+static bool is_repeat(const u8 *bytes, usize size) {
+    if (size != repeat_size) return false;
+    for (usize i = repeat_period; i < size; i++) {
+        if (bytes[i] != bytes[i - repeat_period]) return false;
+    }
+    return true;
+}
+
+// An exact-size copy in the arena, so reading past its end is a sanitizer report.
+static u8 *exact_copy(arena::Arena *arena, const u8 *bytes, usize size) {
+    u8 *copy = arena::push_slice(arena, u8, size == 0 ? 1 : size).data;
+    if (size > 0) mem::copy(copy[0:size], bytes[0:size]);
+    return copy;
+}
+
+// A status is compared as its type, so a failure prints the numbers of both.
+static void expect(inflate::Status actual, inflate::Status expected) {
+    test::check_equal(actual, expected);
+}
+
+static void expect_not(inflate::Status actual, inflate::Status unexpected) {
+    test::check_not_equal(actual, unexpected);
+}
+
+static i64 between(random::Key key, i64 low, i64 high) {
+    return random::uniform_int64_sample(key, (random::UniformInt64){.low = low, .high = high});
+}
+
+// Where a sink puts what it is given, and what it was asked to do.
+typedef struct {
+    u8 *data;
+    usize capacity;
+    usize size;
+    usize calls;
+    usize largest;
+    usize stop_after; // refuse the call after this many (0: never)
+    bool overflowed;
+} Collect;
+
+static bool collect(void *context, const u8 *data, usize size) {
+    Collect *sink = (Collect *)context;
+    sink->calls += 1;
+    if (size > sink->largest) sink->largest = size;
+    if (size > sink->capacity - sink->size) {
+        sink->overflowed = true;
+        return false;
+    }
+    mem::copy(sink->data[sink->size:sink->size + size], data[0:size]);
+    sink->size += size;
+    return sink->stop_after == 0 || sink->calls < sink->stop_after;
+}
+
+static Collect make_sink(arena::Arena *arena, usize capacity) {
+    return (Collect){.data = arena::push_slice(arena, u8, capacity == 0 ? 1 : capacity).data, .capacity = capacity};
+}
+
+// The reference the library's CRC-32 is checked against: a bit at a time.
+static u32 crc_by_bits(u32 crc, const u8 *bytes, usize size) {
+    u32 value = ~crc;
+    for (usize i = 0; i < size; i++) {
+        value ^= bytes[i];
+        for (u32 bit = 0; bit < 8; bit++) {
+            value = (value >> 1) ^ (0xEDB88320U & (0U - (value & 1U)));
+        }
+    }
+    return ~value;
+}
+
+static u32 adler_by_bytes(u32 adler, const u8 *bytes, usize size) {
+    u32 low = adler & 0xFFFFU;
+    u32 high = adler >> 16;
+    for (usize i = 0; i < size; i++) {
+        low = (low + bytes[i]) % 65521U;
+        high = (high + low) % 65521U;
+    }
+    return (high << 16) | low;
+}
+
+// Writers of stored blocks, of at most `block` bytes each (1 to 65,535); an empty input is one empty block. They return
+// the bytes written, which are at most store_bound.
+constexpr u32 block_max = 65535;
+
+static usize store_bound(usize size, u32 block) {
+    usize blocks = size == 0 ? 1 : (size + block - 1) / block;
+    return size + 5 * blocks + 18;
+}
+
+static usize store_raw(const u8 *input, usize size, u32 block, u8 *output) {
+    usize in = 0;
+    usize out = 0;
+    bool last = false;
+    while (!last) {
+        usize length = size - in < block ? size - in : block;
+        last = in + length == size;
+        output[out] = last ? 1 : 0;
+        output[out + 1] = (u8)length;
+        output[out + 2] = (u8)(length >> 8);
+        output[out + 3] = (u8)~length;
+        output[out + 4] = (u8)(~length >> 8);
+        if (length > 0) mem::copy(output[out + 5:out + 5 + length], input[in:in + length]);
+        in += length;
+        out += 5 + length;
+    }
+    return out;
+}
+
+static usize store_zlib(const u8 *input, usize size, u32 block, u8 *output) {
+    output[0] = 0x78;
+    output[1] = 0x01;
+    usize out = 2 + store_raw(input, size, block, output + 2);
+    u32 adler = inflate::adler32(1, input, size);
+    for (u32 i = 0; i < 4; i++) {
+        output[out + i] = (u8)(adler >> (24 - 8 * i));
+    }
+    return out + 4;
+}
+
+static usize store_gzip(const u8 *input, usize size, u32 block, u8 *output) {
+    const u8 header[10] = {0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff};
+    mem::copy(output[0:sizeof header], header[0:sizeof header]);
+    usize out = sizeof header + store_raw(input, size, block, output + sizeof header);
+    u32 crc = inflate::crc32(0, input, size);
+    for (u32 i = 0; i < 4; i++) {
+        output[out + i] = (u8)(crc >> (8 * i));
+        output[out + 4 + i] = (u8)((u32)size >> (8 * i));
+    }
+    return out + 8;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Checksums
+
+export void test_inflate_checksums_match_known_values() {
+    const u8 wikipedia[_] = "Wikipedia";
+    test::check_equal(inflate::adler32(1, wikipedia, 9), 0x11e60398U);
+    const u8 digits[_] = "123456789";
+    test::check_equal(inflate::crc32(0, digits, 9), 0xcbf43926U);
+    test::check_equal(inflate::adler32(1, digits, 0), 1U);
+    test::check_equal(inflate::crc32(0, digits, 0), 0U);
+}
+
+// The slicing-by-8 CRC-32 equals the bit-at-a-time one for every length and alignment, and a checksum continued in
+// parts equals one made whole. The Adler-32 the same, over lengths that cross the 5552 bytes of its reduction.
+export void test_prop_inflate_checksums_equal_their_references_and_continue(random::Key key) {
+    random::Key *key_stream = &key;
+    arena::Arena arena = test::memory(arena_size);
+    usize size = (usize)between(take(key_stream), 0, 20000);
+    usize offset = (usize)between(take(key_stream), 0, 7);
+    u8 *buffer = arena::push_slice(&arena, u8, size + offset + 1).data;
+    for (usize i = 0; i < size; i++) {
+        buffer[offset + i] = (u8)random::key_bits(take(key_stream));
+    }
+    const u8 *bytes = buffer + offset;
+    usize cut = (usize)between(take(key_stream), 0, (i64)size);
+    u32 crc = inflate::crc32(0, bytes, size);
+    test::check_equal(crc, crc_by_bits(0, bytes, size));
+    test::check_equal(inflate::crc32(inflate::crc32(0, bytes, cut), bytes + cut, size - cut), crc);
+    u32 adler = inflate::adler32(1, bytes, size);
+    test::check_equal(adler, adler_by_bytes(1, bytes, size));
+    test::check_equal(inflate::adler32(inflate::adler32(1, bytes, cut), bytes + cut, size - cut), adler);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Known vectors
+
+export void test_inflate_decodes_vectors_of_every_block_type() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
+    for (usize v = 0; v < _Countof(vectors); v++) {
+        const Vector *vector = &vectors[v];
+        test::note("vector %s", vector->name);
+        usize expected_size = 0;
+        usize gzip_size = 0;
+        usize zlib_size = 0;
+        const u8 *expected = load(arena, vector->name, "bin", &expected_size);
+        const u8 *gzip = load(arena, vector->name, "gz", &gzip_size);
+        const u8 *zlib = load(arena, vector->name, "zlib", &zlib_size);
+        test::check_equal((u32)(gzip[10] >> 1U) & 3U, vector->block_type);
+
+        arena::Scope scope = arena::scope_begin(arena);
+        u8 *output = arena::push_slice(arena, u8, expected_size).data;
+        usize used = 0;
+        usize produced = 0;
+        expect(inflate::decode(inflate::Gzip, gzip, gzip_size, output, expected_size, &used, &produced), inflate::Ok);
+        test::check_equal(used, gzip_size);
+        test::check_equal(produced, expected_size);
+        test::check(same(output, expected, expected_size));
+
+        mem::zero(output[0:expected_size]);
+        expect(inflate::decode(inflate::Zlib, zlib, zlib_size, output, expected_size, &used, &produced), inflate::Ok);
+        test::check_equal(used, zlib_size);
+        test::check(same(output, expected, expected_size));
+
+        mem::zero(output[0:expected_size]); // the DEFLATE stream inside the gzip member
+        expect(inflate::decode(inflate::Raw, gzip + 10, gzip_size - 18, output, expected_size, &used, &produced),
+               inflate::Ok);
+        test::check_equal(used, gzip_size - 18);
+        test::check(same(output, expected, expected_size));
+        arena::scope_end(scope);
+    }
+}
+
+export void test_inflate_decodes_matches_that_reach_across_the_window() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
+    usize gzip_size = 0;
+    usize zlib_size = 0;
+    usize raw_size = 0;
+    const u8 *gzip = load(arena, "repeat", "gz", &gzip_size);
+    const u8 *zlib = load(arena, "repeat", "zlib", &zlib_size);
+    const u8 *raw = load(arena, "repeat", "raw", &raw_size);
+    u8 *output = arena::push_slice(arena, u8, repeat_size).data;
+    usize used = 0;
+    usize produced = 0;
+    expect(inflate::decode(inflate::Gzip, gzip, gzip_size, output, repeat_size, &used, &produced), inflate::Ok);
+    test::check_equal(used, gzip_size);
+    test::check(is_repeat(output, produced));
+    expect(inflate::decode(inflate::Zlib, zlib, zlib_size, output, repeat_size, &used, &produced), inflate::Ok);
+    test::check(is_repeat(output, produced));
+    expect(inflate::decode(inflate::Raw, raw, raw_size, output, repeat_size, &used, &produced), inflate::Ok);
+    test::check_equal(used, raw_size);
+    test::check(is_repeat(output, produced));
+}
+
+export void test_inflate_decodes_an_empty_stream() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
+    usize size = 0;
+    const u8 *gzip = load(arena, "empty", "gz", &size);
+    u8 output[1] = {7};
+    usize used = 0;
+    usize produced = 99;
+    expect(inflate::decode(inflate::Gzip, gzip, size, output, 0, &used, &produced), inflate::Ok);
+    test::check_equal(produced, 0U);
+    test::check_equal(used, size);
+    expect(inflate::decode(inflate::Gzip, gzip, size, nullptr, 0, &used, &produced), inflate::Ok);
+}
+
+export void test_inflate_a_null_output_with_a_capacity_stops() {
+    u8 input[1] = {};
+    usize used = 0;
+    usize produced = 0;
+    test::expect_abort();
+    (void)inflate::decode(inflate::Raw, input, sizeof input, nullptr, 4, &used, &produced);
+}
+
+export void test_inflate_a_null_input_with_a_size_stops() {
+    u8 output[4];
+    usize used = 0;
+    usize produced = 0;
+    test::expect_abort();
+    (void)inflate::decode(inflate::Raw, nullptr, 1, output, sizeof output, &used, &produced);
+}
+
+static bool inflate_test_sink(void *context, const u8 *data, usize size) {
+    (void)context;
+    (void)data;
+    (void)size;
+    return true;
+}
+
+export void test_inflate_a_null_sink_stops() {
+    static u8 window[inflate::window];
+    u8 input[1] = {};
+    usize used = 0;
+    u64 produced = 0;
+    test::expect_abort();
+    (void)inflate::stream(inflate::Raw, input, sizeof input, window, nullptr, nullptr, &used, &produced);
+}
+
+export void test_inflate_a_null_window_stops() {
+    u8 input[1] = {};
+    usize used = 0;
+    u64 produced = 0;
+    test::expect_abort();
+    (void)inflate::stream(inflate::Raw, input, sizeof input, nullptr, inflate_test_sink, nullptr, &used, &produced);
+}
+
+export void test_inflate_reads_every_gzip_header_field() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
+    usize size = 0;
+    const u8 *fields = load(arena, "fields", "gz", &size);
+    u8 output[32];
+    usize used = 0;
+    usize produced = 0;
+    expect(inflate::decode(inflate::Gzip, fields, size, output, sizeof output, &used, &produced), inflate::Ok);
+    test::check_equal(used, size);
+    test::check_equal(produced, 12U);
+    test::check(same(output, (const u8 *)"hello fields", 12));
+
+    u8 *file = exact_copy(arena, fields, size);
+    file[12] ^= 1; // a byte of the extra field, which the header's CRC covers
+    expect(inflate::decode(inflate::Gzip, file, size, output, sizeof output, &used, &produced), inflate::BadChecksum);
+    file[12] ^= 1;
+    file[2] = 7; // a method other than deflate
+    expect(inflate::decode(inflate::Gzip, file, size, output, sizeof output, &used, &produced), inflate::BadHeader);
+    file[2] = 8;
+    file[3] |= 0x20; // a flag that is reserved
+    expect(inflate::decode(inflate::Gzip, file, size, output, sizeof output, &used, &produced), inflate::BadHeader);
+    file[3] &= 0x1F;
+    // Cut anywhere inside the header (extra field, name, comment, header CRC): truncated, never read past the cut.
+    for (usize cut = 0; cut < 40; cut++) {
+        u8 *part = exact_copy(arena, fields, cut);
+        test::note("cut at %zu", cut);
+        inflate::Status status = inflate::decode(inflate::Gzip, part, cut, output, sizeof output, &used, &produced);
+        expect(status, inflate::Truncated);
+    }
+}
+
+export void test_inflate_checks_a_zlib_header_and_trailer() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
+    usize size = 0;
+    const u8 *zlib = load(arena, "dynamic", "zlib", &size);
+    usize expected_size = 0;
+    (void)load(arena, "dynamic", "bin", &expected_size);
+    u8 *file = exact_copy(arena, zlib, size);
+    u8 *output = arena::push_slice(arena, u8, expected_size).data;
+    usize used = 0;
+    usize produced = 0;
+    file[1] |= 0x20; // a preset dictionary, which is refused (and the header check bits no longer fit)
+    expect(inflate::decode(inflate::Zlib, file, size, output, expected_size, &used, &produced), inflate::BadHeader);
+    file[1] = zlib[1];
+    file[0] = 0x79; // the check bits do not fit
+    expect(inflate::decode(inflate::Zlib, file, size, output, expected_size, &used, &produced), inflate::BadHeader);
+    file[0] = 0x18; // method 8 but a window of 2^9, with check bits that fit 0x1800 % 31 == 0 only by luck
+    file[0] = zlib[0];
+    file[size - 1] ^= 1;
+    expect(inflate::decode(inflate::Zlib, file, size, output, expected_size, &used, &produced), inflate::BadChecksum);
+    test::check_equal(used, size);
+    file[size - 1] ^= 1;
+    expect(inflate::decode(inflate::Zlib, file, size - 1, output, expected_size, &used, &produced), inflate::Truncated);
+    expect(inflate::decode(inflate::Zlib, file, size, output, expected_size, &used, &produced), inflate::Ok);
+}
+
+export void test_inflate_refuses_output_that_is_too_small_or_checksums_that_disagree() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
+    usize expected_size = 0;
+    usize gzip_size = 0;
+    (void)load(arena, "dynamic", "bin", &expected_size);
+    const u8 *gzip = load(arena, "dynamic", "gz", &gzip_size);
+    u8 *small = arena::push_slice(arena, u8, expected_size - 1).data;
+    usize used = 0;
+    usize produced = 0;
+    expect(inflate::decode(inflate::Gzip, gzip, gzip_size, small, expected_size - 1, &used, &produced),
+           inflate::Overflow);
+    test::check_equal(produced, expected_size - 1); // as much as fits is written
+
+    u8 *file = exact_copy(arena, gzip, gzip_size);
+    u8 *output = arena::push_slice(arena, u8, expected_size).data;
+    file[gzip_size - 8] ^= 1; // the CRC
+    expect(inflate::decode(inflate::Gzip, file, gzip_size, output, expected_size, &used, &produced),
+           inflate::BadChecksum);
+    file[gzip_size - 8] ^= 1;
+    file[gzip_size - 1] ^= 1; // the length
+    expect(inflate::decode(inflate::Gzip, file, gzip_size, output, expected_size, &used, &produced),
+           inflate::BadLength);
+    file[gzip_size - 1] ^= 1;
+    file[0] = 0x1e;
+    expect(inflate::decode(inflate::Gzip, file, gzip_size, output, expected_size, &used, &produced),
+           inflate::BadHeader);
+    file[0] = 0x1f;
+    expect(inflate::decode(inflate::Gzip, file, gzip_size, output, expected_size, &used, &produced), inflate::Ok);
+    expect(inflate::decode(inflate::Gzip, file, gzip_size - 4, output, expected_size, &used, &produced),
+           inflate::Truncated);
+}
+
+export void test_inflate_refuses_a_stored_block_whose_length_check_is_wrong() {
+    u8 stream[_] = {1, 3, 0, 0xfc, 0xff, 'a', 'b', 'c'}; // should be 3, ~3 = 0xfffc
+    u8 output[8];
+    usize used = 0;
+    usize produced = 0;
+    expect(inflate::decode(inflate::Raw, stream, sizeof stream, output, sizeof output, &used, &produced), inflate::Ok);
+    test::check_equal(produced, 3U);
+    test::check_equal(used, sizeof stream);
+    stream[3] = 0xfd;
+    expect(inflate::decode(inflate::Raw, stream, sizeof stream, output, sizeof output, &used, &produced),
+           inflate::Corrupt);
+    const u8 reserved[_] = {7, 0, 0}; // block type 3
+    expect(inflate::decode(inflate::Raw, reserved, sizeof reserved, output, sizeof output, &used, &produced),
+           inflate::Corrupt);
+}
+
+export void test_inflate_refuses_a_distance_before_the_start() {
+    // A fixed block: the literal 'a' (0x61, code 0x91), then length 3 (code 257, 7 bits 0000001) at distance 2
+    // (code 1, 5 bits 00001), which reaches before the start.
+    const u8 stream[_] = {0x4b, 0x04, 0x42, 0x00};
+    u8 output[16];
+    usize used = 0;
+    usize produced = 0;
+    expect(inflate::decode(inflate::Raw, stream, sizeof stream, output, sizeof output, &used, &produced),
+           inflate::Corrupt);
+}
+
+export void test_inflate_stops_at_the_end_of_one_stream_and_says_where_it_ended() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
+    usize first_size = 0;
+    usize second_size = 0;
+    usize expected_size = 0;
+    const u8 *first = load(arena, "fixed", "gz", &first_size);
+    const u8 *second = load(arena, "dynamic", "gz", &second_size);
+    const u8 *expected = load(arena, "dynamic", "bin", &expected_size);
+    u8 *both = arena::push_slice(arena, u8, first_size + second_size).data;
+    mem::copy(both[0:first_size], first[0:first_size]);
+    mem::copy(both[first_size:first_size + second_size], second[0:second_size]);
+    u8 *output = arena::push_slice(arena, u8, expected_size).data;
+    usize used = 0;
+    usize produced = 0;
+    // A gzip file may be several members (as `cat a.gz b.gz` makes): the caller reads the next where `used` says.
+    expect(inflate::decode(inflate::Gzip, both, first_size + second_size, output, expected_size, &used, &produced),
+           inflate::Ok);
+    test::check_equal(used, first_size);
+    test::check_equal(produced, 49U);
+    expect(inflate::decode(inflate::Gzip, both + used, second_size, output, expected_size, &used, &produced),
+           inflate::Ok);
+    test::check_equal(used, second_size);
+    test::check(same(output, expected, expected_size));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Streaming to a sink
+
+export void test_inflate_stream_gives_the_bytes_that_decode_gives() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
+    for (usize v = 0; v < _Countof(vectors); v++) {
+        const Vector *vector = &vectors[v];
+        test::note("vector %s", vector->name);
+        usize expected_size = 0;
+        usize gzip_size = 0;
+        const u8 *expected = load(arena, vector->name, "bin", &expected_size);
+        const u8 *gzip = load(arena, vector->name, "gz", &gzip_size);
+        arena::Scope scope = arena::scope_begin(arena);
+        u8 *window = arena::push_slice(arena, u8, inflate::window).data;
+        Collect sink = make_sink(arena, expected_size);
+        usize used = 0;
+        u64 produced = 0;
+        expect(inflate::stream(inflate::Gzip, gzip, gzip_size, window, collect, &sink, &used, &produced), inflate::Ok);
+        test::check_equal(used, gzip_size);
+        test::check_equal(produced, (u64)expected_size);
+        test::check_equal(sink.size, expected_size);
+        test::check_less_equal(sink.largest, inflate::window);
+        test::check(same(sink.data, expected, expected_size));
+        arena::scope_end(scope);
+    }
+}
+
+export void test_inflate_stream_passes_the_window_over_a_long_output() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
+    usize gzip_size = 0;
+    usize raw_size = 0;
+    const u8 *gzip = load(arena, "repeat", "gz", &gzip_size);
+    const u8 *raw = load(arena, "repeat", "raw", &raw_size);
+    u8 *window = arena::push_slice(arena, u8, inflate::window).data;
+    Collect sink = make_sink(arena, repeat_size);
+    usize used = 0;
+    u64 produced = 0;
+    expect(inflate::stream(inflate::Gzip, gzip, gzip_size, window, collect, &sink, &used, &produced), inflate::Ok);
+    test::check_equal(produced, (u64)repeat_size);
+    test::check(is_repeat(sink.data, sink.size));
+    test::check_greater_equal(sink.calls, repeat_size / inflate::window); // in pieces, not all at the end
+    test::check_less_equal(sink.largest, inflate::window);
+
+    sink = make_sink(arena, repeat_size);
+    expect(inflate::stream(inflate::Raw, raw, raw_size, window, collect, &sink, &used, &produced), inflate::Ok);
+    test::check_equal(used, raw_size);
+    test::check(is_repeat(sink.data, sink.size));
+}
+
+export void test_inflate_stream_stops_when_the_sink_refuses() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
+    usize gzip_size = 0;
+    const u8 *gzip = load(arena, "repeat", "gz", &gzip_size);
+    u8 *window = arena::push_slice(arena, u8, inflate::window).data;
+    Collect sink = make_sink(arena, repeat_size);
+    sink.stop_after = 2;
+    usize used = 0;
+    u64 produced = 0;
+    expect(inflate::stream(inflate::Gzip, gzip, gzip_size, window, collect, &sink, &used, &produced), inflate::Stopped);
+    test::check_equal(sink.calls, 2U);
+    test::check_less(produced, (u64)repeat_size);
+}
+
+// The checksum is of the bytes the sink was given, so a damaged trailer is found after every byte was delivered.
+export void test_inflate_stream_finds_a_wrong_trailer_after_the_bytes() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
+    usize expected_size = 0;
+    usize gzip_size = 0;
+    const u8 *expected = load(arena, "mixed", "bin", &expected_size);
+    const u8 *gzip = load(arena, "mixed", "gz", &gzip_size);
+    u8 *file = exact_copy(arena, gzip, gzip_size);
+    u8 *window = arena::push_slice(arena, u8, inflate::window).data;
+    Collect sink = make_sink(arena, expected_size);
+    usize used = 0;
+    u64 produced = 0;
+    file[gzip_size - 7] ^= 1;
+    expect(inflate::stream(inflate::Gzip, file, gzip_size, window, collect, &sink, &used, &produced),
+           inflate::BadChecksum);
+    test::check_equal(sink.size, expected_size);
+    test::check(same(sink.data, expected, expected_size));
+    file[gzip_size - 7] ^= 1;
+    file[gzip_size - 2] ^= 1;
+    sink = make_sink(arena, expected_size);
+    expect(inflate::stream(inflate::Gzip, file, gzip_size, window, collect, &sink, &used, &produced),
+           inflate::BadLength);
+    sink = make_sink(arena, expected_size);
+    expect(inflate::stream(inflate::Gzip, file, gzip_size - 1, window, collect, &sink, &used, &produced),
+           inflate::Truncated);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Property tests
+
+// The draws of the round trip test, and of each byte.
+typedef enum {
+    StoreDraw_Empty,
+    StoreDraw_Size,
+    StoreDraw_BlockWide,
+    StoreDraw_Block,
+    StoreDraw_Bytes,
+} StoreDraw;
+
+typedef enum {
+    ByteDraw_Narrow,
+    ByteDraw_Value,
+} ByteDraw;
+
+// The draws of the truncation test.
+typedef enum {
+    CutDraw_Vector,
+    CutDraw_Gzip,
+    CutDraw_Zlib,
+    CutDraw_Raw,
+    CutDraw_Stream,
+} CutDraw;
+
+// The draws of the corruption test.
+typedef enum {
+    CorruptDraw_Vector,
+    CorruptDraw_Whole,
+    CorruptDraw_Capacity,
+    CorruptDraw_Flips,
+    CorruptDraw_Flip,
+    CorruptDraw_NoiseSize,
+    CorruptDraw_Noise,
+} CorruptDraw;
+
+typedef enum {
+    FlipDraw_Position,
+    FlipDraw_Bit,
+} FlipDraw;
+
+// Stored blocks we write ourselves, of random contents, sizes and block sizes, come back through every format, by
+// decode and by stream.
+export void test_prop_inflate_round_trips_stored_blocks(random::Key key) {
+    random::Key *key_stream = &key;
+    arena::Arena arena = test::memory(arena_size);
+    bool empty = between(take(key_stream), 0, 5) == 0;
+    // 200,000 bytes with --full, else 70,000: still past the 65,535 a stored block holds, and a third of the time under
+    // ASan
+    usize size = empty ? 0 : (usize)between(take(key_stream), 0, test::full() ? 199'999 : 69'999);
+    bool short_blocks = random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.5});
+    u32 block = (u32)between(take(key_stream), 1, short_blocks ? 70 : block_max);
+    u8 *data = arena::push_slice(&arena, u8, size == 0 ? 1 : size).data;
+    random::Key byte_keys = take(key_stream);
+    random::Key *byte_keys_stream = &byte_keys;
+    for (usize i = 0; i < size; i++) {
+        random::Key byte = take(byte_keys_stream);
+        random::Key *byte_stream = &byte;
+        bool narrow = random::bernoulli_sample(take(byte_stream), (random::Bernoulli){.probability = 0.5});
+        data[i] = (u8)between(take(byte_stream), 0, narrow ? 3 : 255);
+    }
+    usize capacity = store_bound(size, block);
+    u8 *encoded = arena::push_slice(&arena, u8, capacity).data;
+    u8 *decoded = arena::push_slice(&arena, u8, size == 0 ? 1 : size).data;
+    u8 *window = arena::push_slice(&arena, u8, inflate::window).data;
+    usize used = 0;
+    usize produced = 0;
+
+    for (u32 f = 0; f < 3; f++) {
+        inflate::Format format = f == 0 ? inflate::Raw : f == 1 ? inflate::Zlib : inflate::Gzip;
+        usize length = f == 0   ? store_raw(data, size, block, encoded)
+                       : f == 1 ? store_zlib(data, size, block, encoded)
+                                : store_gzip(data, size, block, encoded);
+        test::check_less_equal(length, capacity);
+        mem::zero(decoded[0:size]);
+        expect(inflate::decode(format, encoded, length, decoded, size, &used, &produced), inflate::Ok);
+        test::check_equal(used, length);
+        test::check_equal(produced, size);
+        test::check(same(decoded, data, size));
+
+        Collect sink = make_sink(&arena, size);
+        u64 streamed = 0;
+        expect(inflate::stream(format, encoded, length, window, collect, &sink, &used, &streamed), inflate::Ok);
+        test::check_equal(used, length);
+        test::check_equal(streamed, (u64)size);
+        test::check(same(sink.data, data, size));
+    }
+}
+
+constexpr usize trials = 3; // per key of the two property tests below: the runner's 100 keys make 300 trials
+
+// A stream cut anywhere before its end is refused, for every kind of block and every format, by decode and by stream,
+// and nothing is read past the cut.
+export void test_inflate_refuses_truncated_input(random::Key key) {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
+    u8 *window = arena::push_slice(arena, u8, inflate::window).data;
+    random::Key *trial_keys = &key;
+    for (usize trial = 0; trial < trials; trial++) {
+        random::Key trial_key = take(trial_keys);
+        random::Key *key_stream = &trial_key;
+        test::note("trial %zu", trial);
+        arena::Scope scope = arena::scope_begin(arena);
+        const Vector *vector = &vectors[between(take(key_stream), 0, _Countof(vectors) - 1)];
+        usize expected_size = 0;
+        usize gzip_size = 0;
+        usize zlib_size = 0;
+        (void)load(arena, vector->name, "bin", &expected_size);
+        const u8 *gzip = load(arena, vector->name, "gz", &gzip_size);
+        const u8 *zlib = load(arena, vector->name, "zlib", &zlib_size);
+        u8 *output = arena::push_slice(arena, u8, expected_size == 0 ? 1 : expected_size).data;
+        usize used = 0;
+        usize produced = 0;
+
+        usize cut = (usize)between(take(key_stream), 0, (i64)gzip_size - 1);
+        u8 *part = exact_copy(arena, gzip, cut);
+        expect_not(inflate::decode(inflate::Gzip, part, cut, output, expected_size, &used, &produced), inflate::Ok);
+        test::check_less_equal(used, cut);
+        test::check_less_equal(produced, expected_size);
+
+        cut = (usize)between(take(key_stream), 0, (i64)zlib_size - 1);
+        part = exact_copy(arena, zlib, cut);
+        expect_not(inflate::decode(inflate::Zlib, part, cut, output, expected_size, &used, &produced), inflate::Ok);
+        test::check_less_equal(used, cut);
+
+        // The raw stream cut inside its blocks (the gzip trailer excluded) is truncated too.
+        usize raw_size = gzip_size - 18;
+        if (raw_size > 1) {
+            cut = (usize)between(take(key_stream), 0, (i64)raw_size - 2); // never the whole stream
+            part = exact_copy(arena, gzip + 10, cut);
+            expect_not(inflate::decode(inflate::Raw, part, cut, output, expected_size, &used, &produced), inflate::Ok);
+        }
+
+        cut = (usize)between(take(key_stream), 0, (i64)gzip_size - 1);
+        part = exact_copy(arena, gzip, cut);
+        Collect sink = make_sink(arena, expected_size);
+        u64 streamed = 0;
+        expect_not(inflate::stream(inflate::Gzip, part, cut, window, collect, &sink, &used, &streamed), inflate::Ok);
+        test::check_less_equal(used, cut);
+        arena::scope_end(scope);
+    }
+}
+
+// Flipped bits and random bytes decode to a status or to bytes within the buffer, whichever, and never anything else;
+// when the decode succeeds it made the bytes of the vector.
+export void test_inflate_survives_corrupt_input(random::Key key) {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
+    u8 *window = arena::push_slice(arena, u8, inflate::window).data;
+    random::Key *trial_keys = &key;
+    for (usize trial = 0; trial < trials; trial++) {
+        random::Key trial_key = take(trial_keys);
+        random::Key *key_stream = &trial_key;
+        test::note("trial %zu", trial);
+        arena::Scope scope = arena::scope_begin(arena);
+        const Vector *vector = &vectors[between(take(key_stream), 0, _Countof(vectors) - 1)];
+        usize expected_size = 0;
+        usize gzip_size = 0;
+        (void)load(arena, vector->name, "bin", &expected_size);
+        const u8 *gzip = load(arena, vector->name, "gz", &gzip_size);
+        u8 *file = exact_copy(arena, gzip, gzip_size);
+        bool whole = random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.5});
+        usize capacity = whole ? expected_size : (usize)between(take(key_stream), 0, (i64)expected_size);
+        u8 *output = arena::push_slice(arena, u8, capacity == 0 ? 1 : capacity).data;
+        u32 flips = (u32)between(take(key_stream), 1, 4);
+        for (u32 i = 0; i < flips; i++) {
+            random::Key flip = take(key_stream);
+            random::Key *flip_stream = &flip;
+            usize at = (usize)between(take(flip_stream), 0, (i64)gzip_size - 1);
+            file[at] ^= (u8)(1U << (u32)between(take(flip_stream), 0, 7));
+        }
+        usize used = 0;
+        usize produced = 0;
+        inflate::Status status = inflate::decode(inflate::Gzip, file, gzip_size, output, capacity, &used, &produced);
+        test::check_less_equal(used, gzip_size);
+        test::check_less_equal(produced, capacity);
+        if (status == inflate::Ok) test::check_equal(produced, expected_size);
+        Collect sink = make_sink(arena, expected_size + 4 * inflate::window);
+        u64 streamed = 0;
+        status = inflate::stream(inflate::Gzip, file, gzip_size, window, collect, &sink, &used, &streamed);
+        test::check_less_equal(used, gzip_size);
+        if (status == inflate::Ok) test::check_equal(sink.size, expected_size);
+
+        usize noise_size = (usize)between(take(key_stream), 0, 2999);
+        u8 *noise = arena::push_slice(arena, u8, noise_size == 0 ? 1 : noise_size).data;
+        random::Key noise_keys = take(key_stream);
+        random::Key *noise_keys_stream = &noise_keys;
+        for (usize i = 0; i < noise_size; i++) {
+            noise[i] = (u8)random::key_bits(take(noise_keys_stream));
+        }
+        for (u32 f = 0; f < 3; f++) {
+            inflate::Format format = f == 0 ? inflate::Raw : f == 1 ? inflate::Zlib : inflate::Gzip;
+            status = inflate::decode(format, noise, noise_size, output, capacity, &used, &produced);
+            test::check_less_equal(used, noise_size);
+            test::check_less_equal(produced, capacity);
+            sink = make_sink(arena, 64 * inflate::window);
+            status = inflate::stream(format, noise, noise_size, window, collect, &sink, &used, &streamed);
+            test::check_less_equal(used, noise_size);
+        }
+        arena::scope_end(scope);
+    }
+}

@@ -1,4 +1,4 @@
-[[smith::affine]] typedef struct {
+[[std::affine]] typedef struct {
     unsigned long long bits;
 } Key;
 typedef struct {

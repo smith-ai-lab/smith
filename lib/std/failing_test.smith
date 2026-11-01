@@ -1,0 +1,115 @@
+// Tests of std::failing, in smith's own test library (build.c's `test-units` runner links them with the module).
+module std::failing_test;
+
+import std::failing;
+import std::mem;
+import std::random;
+import std::test;
+
+typedef struct {
+    u8 bytes[8192];
+} Huge;
+
+typedef option(Huge *) MaybeHuge;
+
+MaybeHuge try_huge() {
+    return mem::try_alloc(Huge);
+}
+
+bool is_some(MaybeHuge huge) {
+    return huge == .some;
+}
+
+typedef struct {
+    f64 value;
+    i32 count;
+} Record;
+
+constexpr usize calls = 200;
+
+// Asks calls times for 64 bytes through mem::try_alloc_raw under f, frees what it got, and records which were refused.
+usize ask(failing::Failing *f, bool refused[calls]) {
+    mem::Allocator *before = mem::set_allocator(&f->base);
+    defer mem::set_allocator(before);
+    usize count = 0;
+    for (usize i = 0; i < calls; i++) {
+        void *block = mem::try_alloc_raw(64, 16);
+        refused[i] = block == nullptr;
+        if (block == nullptr) {
+            count += 1;
+        } else {
+            mem::free(block);
+        }
+    }
+    return count;
+}
+
+export void test_failing_every_allocation_refused_reaches_each_none_path() {
+    failing::Failing f = failing::make(nullptr, random::key_make(1));
+    f.one_in = 1;
+    mem::Allocator *before = mem::set_allocator(&f.base);
+    defer mem::set_allocator(before);
+    test::check_condition(mem::try_alloc_raw(64, 16) == nullptr);
+    test::check_condition(mem::try_alloc_raw(64, 64) == nullptr); // the aligned path
+    test::check_condition(!is_some(try_huge()));
+    test::check_condition(f.base.realloc(&f.base, nullptr, 64, 16) == nullptr);
+    test::check_equal(f.refused, 4);
+    test::check_equal(f.calls, 4);
+}
+
+export void test_failing_with_a_rate_of_zero_refuses_nothing() {
+    failing::Failing f = failing::make(nullptr, random::key_make(2));
+    f.one_in = 0;
+    bool refused[calls];
+    test::check_equal(ask(&f, refused), 0);
+    test::check_equal(f.calls, calls);
+    test::check_equal(f.refused, 0);
+}
+
+export void test_failing_the_same_key_refuses_the_same_allocations() {
+    bool first[calls];
+    bool second[calls];
+    bool other[calls];
+    failing::Failing a = failing::make(nullptr, random::key_make(7));
+    failing::Failing b = failing::make(nullptr, random::key_make(7));
+    failing::Failing c = failing::make(nullptr, random::key_make(8));
+    a.one_in = 4;
+    b.one_in = 4;
+    c.one_in = 4;
+    usize refused_first = ask(&a, first);
+    usize refused_second = ask(&b, second);
+    ask(&c, other);
+    test::check_equal(refused_first, refused_second);
+    test::check_condition(refused_first > 0 && refused_first < calls); // a quarter, give or take
+    bool differs = false;
+    for (usize i = 0; i < calls; i++) {
+        test::check_condition(first[i] == second[i]);
+        differs = differs || first[i] != other[i];
+    }
+    test::check_condition(differs); // another key is another set of refusals
+}
+
+export void test_failing_the_default_rate_is_one_in_eight() {
+    failing::Failing f = failing::make(nullptr, random::key_make(3));
+    test::check_equal(f.one_in, 8);
+}
+
+export void test_failing_alloc_after_a_refusal_is_a_checked_failure() {
+    failing::Failing f = failing::make(nullptr, random::key_make(4));
+    f.one_in = 1;
+    mem::set_allocator(&f.base);
+    test::expect_abort();
+    Record *record = mem::alloc(Record);
+    test::check_condition(record == nullptr);
+}
+
+// The runner gives a test a Failing beside its key: the allocator in force is that one, and it refuses by the key's
+// draws.
+export void test_failing_the_runner_installs_the_one_it_gives(random::Key key, failing::Failing *f) {
+    (void)random::key_bits(key); // the test's own key, not the allocator's
+    test::check_condition(mem::allocator() == &f->base);
+    bool refused[calls];
+    usize count = ask(f, refused);
+    test::check_equal(f->refused, count);
+    test::check_condition(count < calls); // one in eight: never all of them
+}

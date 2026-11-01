@@ -3,9 +3,9 @@
 // tests/build_fixtures/runner_shard has the test files shard::alpha_test (3 tests), beta_test, gamma_test, delta_test.
 module test_runner_select_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import runner;
 import scratch;
 

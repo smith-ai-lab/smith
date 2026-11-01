@@ -1,6 +1,6 @@
 module affine_issue_reassign;
 
-export [[smith::affine]] typedef struct {
+export [[std::affine]] typedef struct {
     u64 bits;
 } Key;
 export typedef struct {

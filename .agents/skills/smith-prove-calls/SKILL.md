@@ -8,7 +8,7 @@ description: "smith prove across calls: a callee with smith_ensures is used thro
 ```smith
 module bytes;
 
-import smith::contract;
+import std::contract;
 
 export void copy(u8 dst[restrict :], const u8 src[const restrict :]) {
     contract::requires(countof(dst) >= countof(src));

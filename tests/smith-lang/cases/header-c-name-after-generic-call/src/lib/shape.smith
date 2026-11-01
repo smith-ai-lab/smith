@@ -2,7 +2,7 @@ module lib::shape;
 
 import lib::gen;
 
-[[smith::c_name("ShapeBox")]] export typedef struct {
+[[std::c_name("ShapeBox")]] export typedef struct {
     usize size;
 } Box;
 

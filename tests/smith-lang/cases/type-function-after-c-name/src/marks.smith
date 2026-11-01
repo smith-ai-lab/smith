@@ -1,7 +1,7 @@
 module marks;
 
 // A declaration with a C name, then a function over `type`: the attribute must not leave the file inside brackets.
-[[smith::c_name("marks_const")]] export extern i32 marker;
+[[std::c_name("marks_const")]] export extern i32 marker;
 
 static type leaf_of(type t) {
     if (is_pointer(t)) return typeof(*(t)nullptr);

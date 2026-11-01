@@ -18,7 +18,7 @@ typedef union main_Number main_Number;
 enum main_Color { main_red, main_green, main_blue };
 typedef enum main_Color main_Color;struct smith_enum_main_Shape {enum main_Shape_tag {main_Shape_tag_circle, main_Shape_tag_empty } tag; union {
 main_Point circle; };
-} __attribute__((annotate("smith::enum")));
+} __attribute__((annotate("std::enum")));
 typedef struct smith_enum_main_Shape main_Shape;
 struct main_Pending;
 typedef struct main_Pending main_Pending;

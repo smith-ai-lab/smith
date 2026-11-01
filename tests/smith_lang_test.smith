@@ -33,13 +33,13 @@
 // it. The expectations are golden files: `smith test --update` writes what each case produced (read the diff).
 module smith_lang_test;
 
-import smith::arena;
-import smith::format;
-import smith::files;
-import smith::test;
+import std::arena;
+import std::format;
+import std::files;
+import std::test;
 import <string.h>;
 import scratch;
-import smith::mem;
+import std::mem;
 import target;
 import <smith_core.h>;
 
@@ -149,7 +149,7 @@ static bool ends_with(const char *text, const char *suffix) {
 
 // The files below a folder of the case (`from`, "src" or "expect/generics") whose names end in `suffix_a` or `suffix_b`
 // (every file when both are nullptr), as paths relative to it, in the order of LC_ALL=C sort, one a line. It does what
-// `cd src && find . -name '*.smith' | LC_ALL=C sort` did, through smith::files, in place of a process for each.
+// `cd src && find . -name '*.smith' | LC_ALL=C sort` did, through std::files, in place of a process for each.
 static const char *found(const Case *kase, const char *from, const char *suffix_a, const char *suffix_b,
                          bool files_only_here) {
     arena::Arena *arena = kase->arena;
@@ -193,6 +193,12 @@ static const char *found(const Case *kase, const char *from, const char *suffix_
     return lines;
 }
 
+// Where C finds the header of a module: the standard library's headers are in smith/, as std::arena is smith/arena.h.
+static const char *include_stem(const char *stem) {
+    if (c::strncmp(stem, "std/", 4) != 0) return stem;
+    return format::push("smith/", stem + 4).data;
+}
+
 // The header of a module, made in process into out/include, with the errors it reports added to out/stderr.
 static void write_header(const Case *kase, const char *file, const char *stem) {
     arena::Arena *arena = kase->arena;
@@ -208,7 +214,7 @@ static void write_header(const Case *kase, const char *file, const char *stem) {
         test::check(added == .ok);
     }
     if (!made) return;
-    const char *path = format::push(p->dir, "/out/include/", stem, ".h").data;
+    const char *path = format::push(p->dir, "/out/include/", include_stem(stem), ".h").data;
     const char *slash = c::strrchr(path, '/');
     char *folder = arena::push_slice(arena, char, (usize)(slash - path) + 1).data;
     mem::copy(folder[0:(usize)(slash - path)], path[0:(usize)(slash - path)]);
@@ -234,11 +240,12 @@ static Built build_sources(const Case *kase) {
     for (const char *at = sources, *file = next_line(arena, &at); file != nullptr; file = next_line(arena, &at)) {
         // the headers first, as the build will: no compile waits on another
         const char *stem = stem_of(arena, file);
+        const char *place = include_stem(stem);
         if (header_by_command(kase->name)) {
             const char *command =
-                format::push("mkdir -p \"out/include/$(dirname ", file, ")\" && smith cc --smith-header src/", file,
-                             " -o out/include/", stem, ".h 2>>out/stderr; [ -f out/include/", stem,
-                             ".h ] && cp out/include/", stem, ".h out/header/", module_of(arena, file), ".h")
+                format::push("mkdir -p \"out/include/$(dirname ", place, ".h)\" && smith cc --smith-header src/", file,
+                             " -o out/include/", place, ".h 2>>out/stderr; [ -f out/include/", place,
+                             ".h ] && cp out/include/", place, ".h out/header/", module_of(arena, file), ".h")
                     .data;
             (void)scratch::sh(p, command);
         } else {
@@ -486,8 +493,8 @@ static void corpus_case(const char *name) {
     }
     scratch::write(&p, "out/stderr", "");
     if (scratch::exists(&p, "cmd")) { // the files of smith's own that a command may name, as @REPO@
-        scratch::copy_tree(&p, "lib/smith/contract.smith", "mirror/lib/smith/contract.smith");
-        scratch::copy_tree(&p, "lib/smith/text.smith", "mirror/lib/smith/text.smith");
+        scratch::copy_tree(&p, "lib/std/contract.smith", "mirror/lib/std/contract.smith");
+        scratch::copy_tree(&p, "lib/std/text.smith", "mirror/lib/std/text.smith");
         scratch::copy_tree(&p, "lib/trace.c", "mirror/lib/trace.c");
         scratch::copy_tree(&p, "include", "mirror/include");
     }

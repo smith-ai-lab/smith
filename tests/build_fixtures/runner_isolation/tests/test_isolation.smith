@@ -1,7 +1,7 @@
 import <stdlib.h>;
 import <string.h>;
 import <unistd.h>;
-import smith::test;
+import std::test;
 
 void test_overflow(void) {
     u8 *buffer = (u8 *)c::malloc(8);

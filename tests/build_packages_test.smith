@@ -2,12 +2,12 @@
 // tests/package.sh) into a cache of its own. Each test makes the archives in `pk/` of its project.
 module build_packages_test;
 
-import smith::arena;
-import smith::format;
-import smith::test;
+import std::arena;
+import std::format;
+import std::test;
 import <string.h>;
 import scratch;
-import smith::mem;
+import std::mem;
 
 typedef struct {
     scratch::Project p;

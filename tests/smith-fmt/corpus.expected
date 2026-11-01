@@ -248,16 +248,16 @@ int main() {
     c::printf("%zu\n", small);
     return 0;
 }
-==> c-name/src/smith/arena.smith <==
-module smith::arena;
+==> c-name/src/std/arena.smith <==
+module std::arena;
 
 // A C API that keeps its names: the module's prefix would make smith_arena_Arena of these.
-[[smith::c_name("SmithArena")]] export typedef struct {
+[[std::c_name("SmithArena")]] export typedef struct {
     u64 used;
     u64 capacity;
 } Arena;
 
-[[smith::c_name("smith_arena_create")]] export Arena make(u64 capacity) {
+[[std::c_name("smith_arena_create")]] export Arena make(u64 capacity) {
     return (Arena){.used = 0, .capacity = capacity};
 }
 
@@ -268,13 +268,13 @@ export u64 take(Arena *arena, u64 size) {
     return arena->used;
 }
 
-[[smith::c_name("smith_arena_limit")]] export u64 limit = 4096;
+[[std::c_name("smith_arena_limit")]] export u64 limit = 4096;
 
 // Defined in C, by its C name.
-[[smith::c_name("smith_arena_checksum")]] export u64 checksum(const u8 *data, usize size);
-==> c-name/src/smith/text.smith <==
-module smith::text;
-import smith::arena;
+[[std::c_name("smith_arena_checksum")]] export u64 checksum(const u8 *data, usize size);
+==> c-name/src/std/text.smith <==
+module std::text;
+import std::arena;
 
 // A .smith importer writes the module's names, and gets the C names.
 export u64 fill(u64 capacity) {
@@ -427,7 +427,7 @@ static_assert(shapes::second(3) == 6);
 constexpr i32 chosen = shapes::second(shapes::dot(1) - 28);
 
 // What a failed check of an index calls (the library's, in a real program).
-[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+[[std::c_name("smith_failure")]] export void failure(u8 code) {
     c::exit(code);
 }
 
@@ -523,7 +523,7 @@ import bytes;
 static_assert(bytes::fill(3) == 3);
 
 // What a failed check of an index calls (the library's, in a real program).
-[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+[[std::c_name("smith_failure")]] export void failure(u8 code) {
     c::exit(code);
 }
 
@@ -605,7 +605,7 @@ export i32 fib_plus(i32 n) {
 // The evaluator runs under -fmodules: a contract that holds is a no-op at compile time, and the program links the
 // library.
 import <stdio.h>;
-import smith::contract;
+import std::contract;
 
 static i32 clamp(i32 x, i32 low, i32 high) {
     contract::requires(low <= high);
@@ -1257,7 +1257,7 @@ i32 main(void) {
 ==> enum-option-slice/src/main.smith <==
 module main;
 import <stdio.h>;
-import smith::arena;
+import std::arena;
 
 static option(f32[:]) first(f32 x[:]) {
     if (countof(x) == 0) return .none;
@@ -2011,20 +2011,20 @@ export int size_ok() {
     struct c::stat info;
     return (int)sizeof info;
 }
-==> error-c-name/src/smith/names.smith <==
-module smith::names;
+==> error-c-name/src/std/names.smith <==
+module std::names;
 
-[[smith::c_name("smith_names_one")]] export int first() {
+[[std::c_name("smith_names_one")]] export int first() {
     return 1;
 }
 
 // the same C name twice
-[[smith::c_name("smith_names_one")]] export int second() {
+[[std::c_name("smith_names_one")]] export int second() {
     return 2;
 }
 
 // the name the prefix makes of an export with no C name
-[[smith::c_name("smith_names_plain")]] export int third() {
+[[std::c_name("smith_names_plain")]] export int third() {
     return 3;
 }
 export int plain() {
@@ -2035,12 +2035,12 @@ export int plain() {
 int hidden() {
     return 5;
 }
-[[smith::c_name("smith_names_hidden")]] export int fourth() {
+[[std::c_name("smith_names_hidden")]] export int fourth() {
     return 6;
 }
 
 // a chosen name that a later declaration would also get
-[[smith::c_name("smith_names_later")]] export int fifth() {
+[[std::c_name("smith_names_later")]] export int fifth() {
     return 7;
 }
 int later() {
@@ -2048,31 +2048,31 @@ int later() {
 }
 
 // not an export
-[[smith::c_name("smith_names_private")]] int sixth() {
+[[std::c_name("smith_names_private")]] int sixth() {
     return 9;
 }
 
 // not a C identifier, not a keyword, not a string, nor the only thing in the attribute
-[[smith::c_name("not an identifier")]] export int seventh() {
+[[std::c_name("not an identifier")]] export int seventh() {
     return 10;
 }
-[[smith::c_name("int")]] export int eighth() {
+[[std::c_name("int")]] export int eighth() {
     return 11;
 }
-[[smith::c_name(ninth)]] export int ninth() {
+[[std::c_name(ninth)]] export int ninth() {
     return 12;
 }
-[[smith::c_name("a"), gnu::unused]] export int tenth() {
+[[std::c_name("a"), gnu::unused]] export int tenth() {
     return 13;
 }
 
 // two on one export
-[[smith::c_name("smith_names_a")]] [[smith::c_name("smith_names_b")]] export int eleventh() {
+[[std::c_name("smith_names_a")]] [[std::c_name("smith_names_b")]] export int eleventh() {
     return 14;
 }
 
 // an export that declares nothing a C name could name
-[[smith::c_name("smith_names_k")]] export enum { Alpha, Beta };
+[[std::c_name("smith_names_k")]] export enum { Alpha, Beta };
 ==> error-concept-notes/src/main.smith <==
 module main;
 
@@ -2156,7 +2156,7 @@ constexpr int outside = at(9);
 ==> error-constexpr-contract-deep/src/main.smith <==
 // A static_assert over a function whose contract::assert fails three calls deep; the evaluator runs under -fmodules
 // too.
-import smith::contract;
+import std::contract;
 
 static i32 deep3(i32 n) {
     contract::assert(n > 0);
@@ -2174,7 +2174,7 @@ static_assert(deep1(0) == 2);
 ==> error-constexpr-contract/src/main.smith <==
 // A failed contract in a compile-time call is a compile error at the outermost call, with the contract's line and the
 // stack of calls, innermost first.
-import smith::contract;
+import std::contract;
 
 typedef struct {
     i32 v[4];
@@ -3189,28 +3189,28 @@ i32 main() {
 }
 ==> error-main-io-make/src/main.smith <==
 module main;
-import smith::io;
+import std::io;
 
 // The io form of main is an error in a module: the arguments are `str args[:]`.
 i32 main(io::Io *io) {
     return io->count;
 }
-==> error-main-io-make/src/smith/io.smith <==
-// A stand-in for smith::io, which the language knows by its name: an io that counts its arguments and says when it is
+==> error-main-io-make/src/std/io.smith <==
+// A stand-in for std::io, which the language knows by its name: an io that counts its arguments and says when it is
 // closed.
-module smith::io;
+module std::io;
 import <stdio.h>;
 
-[[smith::c_name("SmithIo")]] export typedef struct {
+[[std::c_name("SmithIo")]] export typedef struct {
     i32 count;
 } Io;
 
-[[smith::c_name("smith_io_make")]] export Io make(i32 argc, char **argv) {
+[[std::c_name("smith_io_make")]] export Io make(i32 argc, char **argv) {
     (void)argv;
     return (Io){.count = argc};
 }
 
-[[smith::c_name("smith_io_close")]] export void close(Io *io) {
+[[std::c_name("smith_io_close")]] export void close(Io *io) {
     c::printf("closed after %d argument\n", io->count);
 }
 ==> error-module-first/src/late.smith <==
@@ -3915,9 +3915,9 @@ i32 main() {
 ==> export-inline-attributes/src/hint.smith <==
 module hint;
 
-// Attributes after `export` stay before `static inline` in the module and in the header, beside [[smith::c_name]]: an
+// Attributes after `export` stay before `static inline` in the module and in the header, beside [[std::c_name]]: an
 // inline function nothing calls is not an unused function, and always_inline needs no __attribute__ spelling.
-[[smith::c_name("hint_first")]] export [[gnu::always_inline, maybe_unused]] inline void first(bool condition) {
+[[std::c_name("hint_first")]] export [[gnu::always_inline, maybe_unused]] inline void first(bool condition) {
     (void)condition;
 }
 
@@ -3981,7 +3981,7 @@ module counter::state;
 export u32 total = 3;
 export u32 spare;
 export const char *const names[2] = {"low", "high"};
-[[smith::c_name("counter_state_chosen")]] export u64 chosen = 9;
+[[std::c_name("counter_state_chosen")]] export u64 chosen = 9;
 export constexpr u32 limit = 4;
 u32 hidden = 2;
 
@@ -4166,11 +4166,11 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
 
 // The same export, with its C name, in each branch: the header has both, between the `#if` lines.
 if constexpr (target::os == target::macos) {
-    [[smith::c_name("shape_sides")]] export i32 sides(void) {
+    [[std::c_name("shape_sides")]] export i32 sides(void) {
         return 4;
     }
 } else {
-    [[smith::c_name("shape_sides")]] export i32 sides(void) {
+    [[std::c_name("shape_sides")]] export i32 sides(void) {
         return 4;
     }
 }
@@ -4251,7 +4251,7 @@ module hook::table;
 
 // A function pointer whose result type is a typedef name: the name in `(*Name)` is the declaration, as with
 // `unsigned long`.
-[[smith::c_name("HookFn")]] export typedef uint64_t (*Hook)(uint64_t bits);
+[[std::c_name("HookFn")]] export typedef uint64_t (*Hook)(uint64_t bits);
 export typedef uint64_t (*Plain)(uint64_t bits);
 export typedef u32 (*Sized)(u32 bits);
 export typedef unsigned long (*Builtin)(uint64_t bits);
@@ -4267,7 +4267,7 @@ static uint64_t twice(uint64_t bits) {
 }
 
 uint64_t (*chosen)(uint64_t bits) = twice;
-[[smith::c_name("hook_table_hook")]] export uint64_t (*hook)(uint64_t bits) = twice;
+[[std::c_name("hook_table_hook")]] export uint64_t (*hook)(uint64_t bits) = twice;
 
 export Plain plain() {
     Private private_twice = twice;
@@ -5949,7 +5949,7 @@ typedef struct {
 } Outer;
 
 // What a failed check of an index calls.
-[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+[[std::c_name("smith_failure")]] export void failure(u8 code) {
     c::exit(code);
 }
 
@@ -6050,7 +6050,7 @@ typedef struct {
 } Table;
 
 // What a failed check of an index calls.
-[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+[[std::c_name("smith_failure")]] export void failure(u8 code) {
     c::exit(code);
 }
 
@@ -6467,7 +6467,7 @@ import <stdio.h>;
 import <stdlib.h>;
 
 // What a failed check of an index calls.
-[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+[[std::c_name("smith_failure")]] export void failure(u8 code) {
     c::exit(code);
 }
 
@@ -6581,7 +6581,7 @@ import <stdio.h>;
 import <stdlib.h>;
 
 // What a failed check of an index calls.
-[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+[[std::c_name("smith_failure")]] export void failure(u8 code) {
     c::exit(code);
 }
 
@@ -7104,7 +7104,7 @@ export option(slice_of(T, 1)) view(constexpr type T, T *xs, usize n) {
 ==> generic-own-names/src/main.smith <==
 module main;
 
-import smith::tools;
+import std::tools;
 import <stdio.h>;
 
 int main() {
@@ -7117,8 +7117,8 @@ int main() {
     c::printf("%d %d %d %d %d\n", a, b, c, d, e);
     return 0;
 }
-==> generic-own-names/src/smith/tools.smith <==
-module smith::tools;
+==> generic-own-names/src/std/tools.smith <==
+module std::tools;
 
 import <stdio.h>;
 
@@ -8682,7 +8682,7 @@ module lib::shape;
 
 import lib::gen;
 
-[[smith::c_name("ShapeBox")]] export typedef struct {
+[[std::c_name("ShapeBox")]] export typedef struct {
     usize size;
 } Box;
 
@@ -8842,7 +8842,7 @@ export u64 norm2(Point p) {
 export u32 origin_count = 1; // how many origins there are
 
 /** Whether the point is the origin. */
-[[smith::c_name("geo_is_origin")]] export bool is_origin(Point p) {
+[[std::c_name("geo_is_origin")]] export bool is_origin(Point p) {
     return norm2(p) == 0;
 }
 
@@ -9133,11 +9133,11 @@ int main() {
 ==> in-memory-imported-c-names/src/core.smith <==
 module core;
 
-[[smith::c_name("CoreThing")]] export typedef struct {
+[[std::c_name("CoreThing")]] export typedef struct {
     i32 x;
 } Thing;
 
-[[smith::c_name("core_make")]] export Thing make(i32 x) {
+[[std::c_name("core_make")]] export Thing make(i32 x) {
     return (Thing){x};
 }
 ==> in-memory-imported-c-names/src/main.smith <==
@@ -9606,10 +9606,10 @@ i32 main() {
     return 0;
 }
 ==> library-smith-text/src/main.smith <==
-// smith::text from .smith: its generated header (include/smith/text.h) is the interface, and the names are written as
+// std::text from .smith: its generated header (include/smith/text.h) is the interface, and the names are written as
 // the module's, text::make, though C calls them smith_text_make.
 import <stdio.h>;
-import smith::text;
+import std::text;
 
 i32 main() {
     const char input[:] = "move 3 4 # go\nturn -90.5\n\nhash 00ff\n";
@@ -9911,7 +9911,7 @@ export u32 counter = 5;
 module mix::modes;
 
 // An exported enum's constants are `<CType>_<Value>` in C, the type's C name and the constant: `MixMode_Fast`.
-[[smith::c_name("MixMode")]] export typedef enum {
+[[std::c_name("MixMode")]] export typedef enum {
     Fast,
     Slow,
 } Mode;
@@ -10370,7 +10370,7 @@ import <stdlib.h>;
 import loops;
 
 // What a failed check of a cut or of an index in a generic's body calls.
-[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+[[std::c_name("smith_failure")]] export void failure(u8 code) {
     c::exit(code);
 }
 
@@ -10490,7 +10490,7 @@ static i32 pairs(const i32 a[:], const i32 b[:]) {
 }
 
 // What a failed check of a cut or of an index in a generic's body calls.
-[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+[[std::c_name("smith_failure")]] export void failure(u8 code) {
     c::exit(code);
 }
 
@@ -11215,7 +11215,7 @@ i32 main() {
 ==> slice-text-in-comment/src/hold.smith <==
 module hold;
 
-import smith::contract;
+import std::contract;
 
 // The scan for slices skips comments and strings: neither this `xs[:]` nor the `a[1:2]` below puts the file in slice
 // mode, where a head such as `T *reset(` of a generic is not read (issue #121).
@@ -12055,7 +12055,7 @@ int main() {
 module marks;
 
 // A declaration with a C name, then a function over `type`: the attribute must not leave the file inside brackets.
-[[smith::c_name("marks_const")]] export extern i32 marker;
+[[std::c_name("marks_const")]] export extern i32 marker;
 
 static type leaf_of(type t) {
     if (is_pointer(t)) return typeof(*(t) nullptr);
@@ -12319,7 +12319,7 @@ export constexpr type Handler = i32 (*)(Request *);
 export constexpr type Block = u8[4];
 export constexpr type Row = i32 (*)[4];
 export constexpr type Pointers = Request *[2];
-[[smith::c_name("geo_feet")]] export constexpr type Feet = f32;
+[[std::c_name("geo_feet")]] export constexpr type Feet = f32;
 
 export Meters add(Meters a, Meters b) {
     return a + b;

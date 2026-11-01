@@ -2,7 +2,7 @@
 // on an assert that scanned the root along with the pack's own paths.
 module home_dotdot_test;
 
-import smith::test;
+import std::test;
 import scratch;
 
 export void test_home_dotdot_a_home_with_a_parent_segment_unpacks_clang_and_compiles() {

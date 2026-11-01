@@ -1,6 +1,6 @@
 module main;
 
-import smith::arena;
+import std::arena;
 
 // A variable with an initializer after the import: the import's functions over types are defined before it.
 i32 limit = 9;

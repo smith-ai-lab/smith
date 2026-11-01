@@ -3,7 +3,7 @@
 // tests/smith-lang/cases/tuple-*.
 module tuple_test;
 
-import smith::test;
+import std::test;
 
 typedef struct { i32, f32 } Pair;
 

@@ -132,7 +132,7 @@ static SmithLangAct smith_lang_head_begin(SmithLang *lang, const SmithHost *host
         return smith_lang_act(SmithLangAct_Slow);
     }
     if (smith_lang_punct(token, ";")) return smith_lang_act(SmithLangAct_Keep);
-    if (!forced && smith_lang_punct(token, "[")) return smith_lang_act(SmithLangAct_Slow); // [[smith::c_name("...")]]
+    if (!forced && smith_lang_punct(token, "[")) return smith_lang_act(SmithLangAct_Slow); // [[std::c_name("...")]]
     if (!forced && smith_lang_generic_candidate(lang, host, token)) return smith_lang_act(SmithLangAct_Slow);
     if (!forced && lang->linked_count > 0) return smith_lang_act(SmithLangAct_Slow); // held, as an export's is
     bool slow = false;

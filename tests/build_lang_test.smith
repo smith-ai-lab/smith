@@ -5,10 +5,10 @@
 // token hook.
 module build_lang_test;
 
-import smith::arena;
-import smith::mem;
-import smith::format;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::format;
+import std::test;
 import scratch;
 
 constexpr char expected_output[_] =
@@ -217,7 +217,7 @@ export void test_build_lang_a_header_is_written_again_when_a_module_it_imports_r
                              scratch::read(&p, ".smith/include/game/replay.h"), "lib_text_Text name;");
     scratch::sleep(&p, 1000);
     (void)scratch::sh(&p,
-                      "sed -i.bak 's/^export typedef/[[smith::c_name(\"Words\")]] export typedef/' src/lib/text.smith");
+                      "sed -i.bak 's/^export typedef/[[std::c_name(\"Words\")]] export typedef/' src/lib/text.smith");
     (void)scratch::build(&p, "");
     scratch::expect_contains("headers: lib::text's header has the new name",
                              scratch::read(&p, ".smith/include/lib/text.h"), "} Words;");

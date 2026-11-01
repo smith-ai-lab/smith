@@ -9,9 +9,9 @@ typedef struct smith_enum_shapes_Shape {enum shapes_Shape_tag {shapes_Shape_tag_
 shapes_Circle circle;
 shapes_Rect rect;
 struct { __INT32_TYPE__ a; } inline_one; };
-} __attribute__((annotate("smith::enum"))) shapes_Shape;
+} __attribute__((annotate("std::enum"))) shapes_Shape;
 typedef struct smith_enum_shapes_Mark {enum shapes_Mark_tag {shapes_Mark_tag_none, shapes_Mark_tag_some } tag;
-} __attribute__((annotate("smith::enum"))) shapes_Mark;
+} __attribute__((annotate("std::enum"))) shapes_Mark;
 float shapes_area(shapes_Shape s) __asm__("_shapes::area");
 float shapes_area(shapes_Shape s) {
 switch (s) {

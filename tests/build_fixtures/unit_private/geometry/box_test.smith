@@ -1,7 +1,7 @@
 module geometry::box_test;
 
 import geometry::box;
-import smith::test;
+import std::test;
 
 export void test_the_private_scale_is_out_of_reach() {
     test::check_equal(box::scale(2), 2);

@@ -3,10 +3,10 @@
 // build.c in tests/build_fixtures that the test copies over build.c (the variants are `.txt` files).
 module build_stamps_errors_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 
 constexpr usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it

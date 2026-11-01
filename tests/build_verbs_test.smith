@@ -3,10 +3,10 @@
 // .smith/compile_commands.json (knowledge/build-execution.md).
 module build_verbs_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 
 constexpr usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it

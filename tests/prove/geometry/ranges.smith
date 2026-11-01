@@ -1,6 +1,6 @@
 // contract::modifies (#54): a slice names a range, `xs` or `p[a:b]`; what is outside it is kept.
 module geometry::ranges;
-import smith::contract;
+import std::contract;
 
 // The first two elements of a slice, and nothing else.
 export void set_two(i32 xs[:], i32 value) {

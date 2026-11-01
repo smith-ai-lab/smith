@@ -6,10 +6,10 @@
 // arena.
 module release_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 
 // Every command: the stub gh first on PATH, its releases in ../gh and its log in ../gh.log, the script, and the file

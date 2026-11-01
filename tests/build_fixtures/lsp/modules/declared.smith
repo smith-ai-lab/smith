@@ -1,5 +1,5 @@
 module declared;
 
-[[smith::effects(alloc)]] i32 grab(i32 x) {
+[[std::effects(alloc)]] i32 grab(i32 x) {
     return x;
 }

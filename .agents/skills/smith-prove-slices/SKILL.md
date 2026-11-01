@@ -10,7 +10,7 @@ A slice carries its count, so an index is proved against it with no contract. Th
 ```smith
 module stats;
 
-import smith::contract;
+import std::contract;
 
 export i32 largest(i32 xs[:]) {
     contract::requires(countof(xs) > 0);

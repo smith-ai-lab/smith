@@ -22,12 +22,12 @@
 // added to the README needs one: `test_every_project_has_a_test` says which.
 module readme_test;
 
-import smith::arena;
-import smith::env;
-import smith::files;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::env;
+import std::files;
+import std::format;
+import std::mem;
+import std::test;
 import <string.h>;
 import scratch;
 
@@ -433,7 +433,7 @@ export void test_readme_smith_blocks_are_not_c_renamed() {
     }
 }
 
-// Whether `path` (relative to $SMITH_REPO) is there: the folder that holds it is listed through smith::files, so that
+// Whether `path` (relative to $SMITH_REPO) is there: the folder that holds it is listed through std::files, so that
 // the record of the test names the listing, and a file added or removed there selects the test.
 static bool repo_has(arena::Arena *arena, const char *path) {
     env::Value repo = env::get("SMITH_REPO");

@@ -2,7 +2,7 @@
 // the prover for the arguments passed (#1053). A function called inside a contract is read through its body or its
 // contract.
 module geometry::lemmas;
-import smith::contract;
+import std::contract;
 
 // The claim has no result: it is used for what it says of its arguments.
 export void square_is_nonnegative(i32 n) {

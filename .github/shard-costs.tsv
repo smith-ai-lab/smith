@@ -224,8 +224,8 @@ cpu	4.948	resource_test::resource_eight_workers_of_two_smiths_all_link_and_run
 cpu	2.369	runner_discovery_test::runner_discovery_a_test_file_with_no_test_is_an_error
 cpu	5.195	runner_discovery_test::runner_discovery_a_test_file_written_with_std_runs
 cpu	2.214	runner_discovery_test::runner_discovery_a_test_that_takes_an_io_is_an_error_naming_the_io_free_form
-cpu	7.947	smith::inflate_test::prop_inflate_round_trips_stored_blocks
-cpu	2.169	smith::random_test::random_normal_stays_within_its_reach
+cpu	7.947	std::inflate_test::prop_inflate_round_trips_stored_blocks
+cpu	2.169	std::random_test::random_normal_stays_within_its_reach
 cpu	4.358	smith_fmt_test::the_c_files_of_smith_format_the_same_as_c_and_as_smith
 cpu	2.671	smith_fmt_test::the_corpus_formats_to_its_expected_file
 cpu	48.930	smith_lang_c_test::smith_c_compiles_the_same_as_smith

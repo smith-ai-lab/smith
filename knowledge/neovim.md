@@ -92,7 +92,7 @@ changes a debug configuration of yours.
     smith's for `.smith`), and each is named as `--test` takes it: `test_x`, or `a::b::test_x` when the file has
     `module a::b;`.
   - **What runs.** Nearest: `smith test --test <name> --verbose`. File: `--test` is exact when a test has that name and
-    a substring otherwise (`lib/smith/test.smith`), so a `.smith` module's file runs `--test <module>:: --verbose`, which selects the
+    a substring otherwise (`lib/std/test.smith`), so a `.smith` module's file runs `--test <module>:: --verbose`, which selects the
     module's tests, and a `.c` file, which has no module to select by, runs the suite and keeps its own tests' results.
     Suite or directory: `smith test --verbose`. The command runs in the project root.
   - **Debug nearest** (neotest's `dap` strategy): the runner is built as the launch configuration builds it (`smith build
@@ -117,7 +117,7 @@ changes a debug configuration of yours.
 ## The grammar
 
 `tree-sitter-smith` extends tree-sitter-c (v0.24.2) as C++, CUDA and GLSL do, adding what `.smith` adds
-([the language](smith-language.md), issue #11): `module a::b;`, `import a::b [as x];`, `import <h>;`, `export` (with `[[smith::c_name]]` attributes before it, on a
+([the language](smith-language.md), issue #11): `module a::b;`, `import a::b [as x];`, `import <h>;`, `export` (with `[[std::c_name]]` attributes before it, on a
 declaration, a function, a typedef or a tag, at file scope), `a::b` paths in expressions and types, `constexpr type T` parameters,
 `if constexpr`, a type where an argument goes, and the sized types `u8` ... `usize`, `f16`, `f32`, `f64`. It also reads
 what smith's own C needs and tree-sitter-c does not: `#embed`, `_Atomic(T)`, `_BitInt(N)`, `enum : unsigned char`, types

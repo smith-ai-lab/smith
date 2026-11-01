@@ -10,7 +10,7 @@ A `.smith` file is C. Renaming `x.c` to `x.smith` changes nothing; the file opts
 ```smith
 module stats;                                  // a module: exports, private names, no header to write
 
-import smith::contract;                        // an import: smith's contract module
+import std::contract;                        // an import: smith's contract module
 
 export typeof(x) clamp(auto x, typeof(x) low, typeof(x) high) {   // generic: the type is the argument's
     contract::requires(low <= high);           // a precondition that runs and that `smith prove` proves
@@ -36,9 +36,9 @@ export u32 total(const u32 xs[:]) {            // a slice: a pointer and its cou
 | argument lists, reflection | `auto... rest`, `fields(T)` | `smith-lang-rest`, `smith-lang-reflection` |
 | concepts | `arithmetic x`, `integer n = 3;` | `smith-lang-concepts` |
 | compile time, type values | `constexpr i32 x = fib(10);`, `constexpr type t = i32;` | `smith-lang-constexpr`, `smith-lang-type-values` |
-| tuples, used once, lambdas | `struct { i32, f32 }`, `[[smith::affine]]`, `[](i32 a) -> i32 { return a * 2; }` | `smith-lang-tuples`, `smith-lang-affine`, `smith-lang-lambdas`, `smith-lang-lambda-param` |
+| tuples, used once, lambdas | `struct { i32, f32 }`, `[[std::affine]]`, `[](i32 a) -> i32 { return a * 2; }` | `smith-lang-tuples`, `smith-lang-affine`, `smith-lang-lambdas`, `smith-lang-lambda-param` |
 | enums with payloads | `typedef enum { Circle circle; empty; } Shape;`, `s == .circle` | `smith-lang-enums` |
-| cleanup on every exit, a failure passed up, what a function may touch, unused on purpose | `defer c::close(fd);`, `try f()`, `[[smith::pure]]`, `_ = f();` | `smith-lang-defer`, `smith-lang-try`, `smith-lang-effects`, `smith-lang-unused` |
+| cleanup on every exit, a failure passed up, what a function may touch, unused on purpose | `defer c::close(fd);`, `try f()`, `[[std::pure]]`, `_ = f();` | `smith-lang-defer`, `smith-lang-try`, `smith-lang-effects`, `smith-lang-unused` |
 | the target, the arguments | `import target;`, `i32 main(str args[:])` | `smith-lang-target` |
 
 Formatting, linting, building, the editor: `smith-lang-tools`. Good style: `smith-idiom`.

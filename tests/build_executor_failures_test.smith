@@ -2,10 +2,10 @@
 // reads the same language as ninja and behaves as ninja did. A failed job and -k, the options, depfiles and restat.
 module build_executor_failures_test;
 
-import smith::mem;
-import smith::arena;
-import smith::format;
-import smith::test;
+import std::mem;
+import std::arena;
+import std::format;
+import std::test;
 import scratch;
 
 // The text with its newlines as spaces, for the order in which words were printed.

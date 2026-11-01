@@ -2,9 +2,9 @@
 // becomes a step), and the parallel build of 80 sources that share Clang modules (section 11c).
 module build_defer_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
 
 static scratch::Project defer_project() {

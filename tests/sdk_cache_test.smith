@@ -4,11 +4,11 @@
 // CommandLineTools), so it is macOS-only (`macos` in the name) and says why when it has fewer than two.
 module sdk_cache_test;
 
-import smith::arena;
-import smith::format;
-import smith::test;
+import std::arena;
+import std::format;
+import std::test;
 import scratch;
-import smith::mem;
+import std::mem;
 
 constexpr usize memory_size = (usize)1 << 20; // 1 MiB
 

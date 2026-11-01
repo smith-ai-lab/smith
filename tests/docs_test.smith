@@ -5,12 +5,12 @@
 // which.
 module docs_test;
 
-import smith::arena;
-import smith::env;
-import smith::files;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::env;
+import std::files;
+import std::format;
+import std::mem;
+import std::test;
 import <smith_core_docs.h>;
 import <string.h>;
 import scratch;

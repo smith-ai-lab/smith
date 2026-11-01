@@ -1,5 +1,5 @@
 module main;
-import smith::io;
+import std::io;
 
 // The io form of main is an error in a module: the arguments are `str args[:]`.
 i32 main(io::Io *io) {

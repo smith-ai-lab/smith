@@ -1,0 +1,13 @@
+// Tests of std::wrapping.
+module std::wrapping_test;
+
+import std::test;
+import std::wrapping;
+
+export void test_wrapping() {
+    test::check_equal(wrapping::add((i32)2147483647, (i32)1), (i32)-2147483647 - 1);
+    test::check_equal(wrapping::sub((i32)-2147483647 - 1, (i32)1), (i32)2147483647);
+    test::check_equal(wrapping::mul((i8)100, (i8)2), (i8)-56);
+    test::check_equal(wrapping::neg((i8)-128), (i8)-128);
+    test::check_equal(wrapping::add((u8)255, (u8)1), (u8)0);
+}

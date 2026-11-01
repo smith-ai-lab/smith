@@ -1,4 +1,4 @@
-import smith::test;
+import std::test;
 
 void test_conflict(void) {
     u32 small = 3;

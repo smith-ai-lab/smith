@@ -1,4 +1,4 @@
-import smith::test;
+import std::test;
 
 void test_crash(void) {
     volatile i32 *pointer = nullptr;

@@ -1,5 +1,5 @@
 status 1
 effects_args.c:10:18: error: smith-effect: `too_much` is limited to alloc, but it has the effects files, globals: too_much -> fopen (effects_args.c:10)
 effects_args.c:10:18: note: this call is the first of the effects beyond the declared ones
-effects_args.c:24:12: error: smith-effect: `breaks` is [[smith::pure]], but it has the effects alloc, net: breaks -> promised (effects_args.c:24)
+effects_args.c:24:12: error: smith-effect: `breaks` is [[std::pure]], but it has the effects alloc, net: breaks -> promised (effects_args.c:24)
 effects_args.c:24:12: note: this call is the first of the effects beyond the declared ones

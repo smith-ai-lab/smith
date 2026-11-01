@@ -1,7 +1,7 @@
 import <stdio.h>;
 import <stdlib.h>;
 import <unistd.h>;
-import smith::test;
+import std::test;
 
 void test_inproc_pass(void) {
     c::printf("in-process output\n");

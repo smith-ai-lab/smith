@@ -1,11 +1,11 @@
 ---
 name: smith-test-checks
-description: "The checks of smith::test: check_equal, check_less, check_near and the rest, what a failure prints, and expect_abort. Load when choosing a check or reading a failed check's report."
+description: "The checks of std::test: check_equal, check_less, check_near and the rest, what a failure prints, and expect_abort. Load when choosing a check or reading a failed check's report."
 ---
 
 # The checks
 
-The checks are generic functions of `smith::test`: the type is the first argument's (`auto a`, smith-lang-generics), so there is nothing to spell. A failure shows the line that called the check and the call chain, read from the stack and the source file, so a check needs no macro.
+The checks are generic functions of `std::test`: the type is the first argument's (`auto a`, smith-lang-generics), so there is nothing to spell. A failure shows the line that called the check and the call chain, read from the stack and the source file, so a check needs no macro.
 
 ```smith fragment
 test::check(condition)                      // a bool
@@ -27,8 +27,8 @@ test::expect_abort()                        // from this call on the test must a
 - `test::expect_abort()` is a plain function that says "from this call on, the test must abort". Call it, then run the code that aborts, as the test's last statements (`(void)expr;` where an unused result would warn):
 
   ```smith
-  import smith::contract;
-  import smith::test;
+  import std::contract;
+  import std::test;
 
   static i32 halve(i32 x) {
       contract::requires(x % 2 == 0);
