@@ -1,0 +1,51 @@
+// `smith lint FILE` names what it adds and what it cannot check (issues #1251 and #1260, smith.c): a front module's
+// imports of the other front modules are headers under `build/<os>/front-project/.smith/include`, which no compile
+// command names, so the verb adds that folder as `--extra-arg=-I` when it exists; and a host that is not macOS says in
+// one line that CI's Mac lints with different C types for u64 and usize. A scratch project of the lint_cache fixture
+// with a header in such a folder and a C file that includes it.
+module lint_front_include_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+static scratch::Project prepared() {
+    scratch::Project p = scratch::make("p", "lint_cache");
+    scratch::own_cache(&p);
+    scratch::Run made =
+        scratch::sh(&p, "mkdir -p build/Any-arch/front-project/.smith/include && "
+                        "printf 'extern int from_front;\\n' > build/Any-arch/front-project/.smith/include/hdr.h && "
+                        "printf '#include \"hdr.h\"\\nint use(void) { return from_front; }\\n' > user.c");
+    scratch::expect_status("the project is prepared", 0, &made);
+    scratch::release(made.out);
+    scratch::release(made.err);
+    return p;
+}
+
+export void test_lint_of_a_file_finds_the_front_include_folder_by_itself() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = scratch::sh(&p, "smith lint --quiet --checks='-*,bugprone-*' user.c -- -std=gnu23 2>&1");
+    scratch::expect_status("hdr.h is found", 0, &run);
+    scratch::expect_lacks("no missing header", run.out, "file not found");
+}
+
+export void test_lint_of_a_file_names_what_a_host_that_is_not_macos_cannot_check() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = scratch::sh(&p, "out=$(smith lint --quiet --checks='-*,bugprone-*' user.c -- -std=gnu23 2>&1); "
+                                       "if printf %s \"$out\" | grep -q 'this host is not macOS'; then said=yes; "
+                                       "else said=no; fi; "
+                                       "if [ \"$(uname)\" = Darwin ]; then want=no; else want=yes; fi; "
+                                       "if [ $said = $want ]; then echo right; else echo \"wrong said=$said\"; fi");
+    scratch::expect_text("the line is there only off macOS", "right", run.out);
+}
