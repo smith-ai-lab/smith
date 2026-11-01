@@ -451,6 +451,7 @@ keyword-after-comment/a.smith: ok
 keyword-after-comment/main.smith: ok
 keyword-names-fine/main.smith: C, out of scope
 lambda-basic/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (5:15)
+lambda-bool/main.smith: ok
 lambda-capture-list-not-a-lambda/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (10:9)
 lambda-generic-handler/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (5:13)
 lambda-generic-infer/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (7:7)
@@ -612,4 +613,4 @@ value-query-plain/main.smith: C, out of scope
 value-query-windows/size.smith: ok
 void-pointer-cast/main.smith: ok
 void-pointer-plain/main.smith: C, out of scope
-total 614, ok 383, error 107, C 124, skipped 0
+total 615, ok 384, error 107, C 124, skipped 0

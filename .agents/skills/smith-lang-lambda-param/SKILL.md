@@ -1,6 +1,6 @@
 ---
 name: smith-lang-lambda-param
-description: "`Lambda(F)`, the parameter type for code to run (`export void sort(auto xs[:], Lambda(bool (typeof(xs[0]) *, typeof(xs[0]) *)) less)`): a lambda or a plain function as an argument, one instance each, F naming earlier parameters' types. Load when a parameter is `Lambda(...)`, when passing `[](Num *a, Num *b) -> bool {...}` to such a function, or on 'does not have the type of `Lambda(', 'takes N parameters, but its type' or 'needs a type: write `auto'."
+description: "`Lambda(F)`, the parameter type for code to run (`export void sort(auto xs[:], Lambda(Bool (typeof(xs[0]) *, typeof(xs[0]) *)) less)`): a lambda or a plain function as an argument, one instance each, F naming earlier parameters' types. Load when a parameter is `Lambda(...)`, when passing `[](Num *a, Num *b) -> Bool {...}` to such a function, or on 'does not have the type of `Lambda(', 'takes N parameters, but its type' or 'needs a type: write `auto'."
 ---
 
 # `Lambda(F)`: code to run as a parameter
@@ -20,7 +20,7 @@ export void bubble(auto xs[:], Lambda(Bool (typeof(xs[0]) *, typeof(xs[0]) *)) l
 }
 
 export void ascending(I32 xs[:]) {
-    bubble(xs, [](Num *a, Num *b) -> bool { return *a < *b; });   // a, b are xs's element type
+    bubble(xs, [](Num *a, Num *b) -> Bool { return *a < *b; });   // a, b are xs's element type
 }
 ```
 

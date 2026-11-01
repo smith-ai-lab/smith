@@ -103,8 +103,8 @@ jobs:
         id: linux
         # Linux carries the tests: `--skip-macos` in parts, each building smith itself (no artifact egress). The Mac
         # runs the few tests only macOS can run (`--macos-only`, one part). A pull request tests what its change
-        # reaches, split into 4 parts (one part took 10 to 17 min); the queue and main run everything in 8. A push to
-        # main runs only the Linux parts (the Mac's work is the release).
+        # reaches, split into 4 parts (one part took 10 to 17 min); the queue runs everything in 8. A push to main
+        # runs no tests (the queue tested that exact commit; #1139): its work is the release and the cache.
         run: |
           flags="--skip-macos"
           macflags="--macos-only"
@@ -340,7 +340,7 @@ jobs:
     # Linux carries the tests (required): 6 hosted shards of `--skip-macos`, each builds smith itself (a hosted
     # runner is free, and no ~1 GB artifact travels: storage egress), so none waits for `build`
     needs: [changes, pack]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'release') }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -461,13 +461,13 @@ jobs:
             ;;
           esac
           # A skipped job passes only where `changes` said the area was not touched (#1139). The scope says which jobs
-          # the run owes: `full` owes mechanical, prove, test and test-linux, `docs` owes docs, `release` (a push to main)
-          # owes test-linux, `none` owes nothing. A job that was owed and skipped (a skipped `pack` skipped the three
+          # the run owes: `full` owes mechanical, prove, test and test-linux, `docs` owes docs, `release` (a push to main,
+          # whose commit the queue already tested) owes no tests, `none` owes nothing. A job that was owed and skipped (a skipped `pack` skipped the three
           # macOS jobs for hours) fails the check.
           case "$SCOPE" in
           full) owed="MECHANICAL PROVE TEST TEST_LINUX" ;;
           docs) owed="DOCS" ;;
-          release) owed="TEST_LINUX" ;;
+          release) owed="" ;;
           *) owed="" ;;
           esac
           for name in $owed; do
