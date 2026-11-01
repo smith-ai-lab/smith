@@ -8,9 +8,15 @@
 module new_test;
 
 import smith::arena;
+import smith::files;
+import smith::format;
 import smith::mem;
 import smith::test;
 import scratch;
+import <smith_core_docs.h>;
+import <smith_core_new.h>;
+import <string.h>;
+import <sys/stat.h>;
 
 constexpr char git_environment[_] =
     "export HOME=\"$PWD/.home\" GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=Tester GIT_AUTHOR_EMAIL=tester@example.com "
@@ -73,12 +79,6 @@ static void expect_exists(const scratch::Project *p, const char *label, const ch
     scratch::expect_text(label, expected, exists_in(p, path));
 }
 
-static const char *named(const char *format, const char *a, const char *b) {
-    static char text[1024];
-    __builtin_snprintf(text, sizeof text, format, a, b);
-    return text;
-}
-
 constexpr char smith_files[_] =
     ".agents/skills/hello-docs/SKILL.md .claude/settings.json .claude/skills .gitignore knowledge/index.md "
     "knowledge/program.md main.smith primes.smith primes_test.smith";
@@ -86,31 +86,226 @@ constexpr char c_files[_] =
     ".agents/skills/hellc-docs/SKILL.md .claude/settings.json .claude/skills .gitignore knowledge/index.md "
     "knowledge/program.md main.c primes.c primes.h primes_test.c";
 
-// What smith new hello writes, and the files of the C program it leaves out.
-static void expect_the_written_files(const scratch::Project *p) {
-    const char *files[_] = {"main.smith",
-                            "primes.smith",
-                            "primes_test.smith",
-                            ".gitignore",
-                            ".claude/settings.json",
-                            "knowledge/index.md",
-                            "knowledge/program.md",
-                            ".agents/skills/hello-docs/SKILL.md"};
-    for (usize i = 0; i < _Countof(files); i++) {
-        char path[256];
-        __builtin_snprintf(path, sizeof path, "hello/%s", files[i]);
-        expect_exists(p, named("new hello: creates %s%s", files[i], ""), path, "yes");
+// In process (issue #968): `smith new` as a function, through smith_core_new (include/smith_core_new.h), which writes
+// the files and the commit and prints what the command prints, with no first build. The cases below that read which
+// files it writes, with which contents, what it refuses and what it says, take it from there: no smith, no compiler.
+// What needs the built project (its first build, `smith run`, the verbs) runs the command, further down.
+constexpr usize said_capacity = 1U << 16;
+
+typedef struct {
+    i32 status;
+    const char *out; // standard output and standard error together
+} Said;
+
+// The environment smith_core_new sets in its child: "NAME=value" and "-NAME", ended by nullptr. It stays where it is
+// made (the entries point into it).
+typedef struct {
+    char home[1024];
+    const char *entries[16];
+} Saved;
+
+static void ensure_folder(const char *path, usize length) {
+    files::DoneResult made = files::make_folder(path[0:length]);
+    test::check_condition(made == .ok);
+}
+
+// The pieces one after another, from the current allocator (the test's arena).
+const char *joined(auto... pieces) {
+    usize length = format::length(pieces...);
+    char *text = mem::alloc_slice(char, length + 1).data;
+    (void)format::to(text, length + 1, pieces...);
+    return text;
+}
+
+// Git as the project's own: HOME a folder of the test, and the identity from the environment, or none at all.
+static void git_isolate(const scratch::Project *p, bool identity, Saved *saved) {
+    const char *folder = joined(p->root, "/.home");
+    ensure_folder(folder, c::strlen(folder));
+    (void)format::to(saved->home, sizeof saved->home, "HOME=", folder);
+    usize n = 0;
+    saved->entries[n++] = saved->home;
+    saved->entries[n++] = "GIT_CONFIG_NOSYSTEM=1";
+    if (identity) {
+        saved->entries[n++] = "GIT_AUTHOR_NAME=Tester";
+        saved->entries[n++] = "GIT_AUTHOR_EMAIL=tester@example.com";
+        saved->entries[n++] = "GIT_COMMITTER_NAME=Tester";
+        saved->entries[n++] = "GIT_COMMITTER_EMAIL=tester@example.com";
+    } else {
+        saved->entries[n++] = "-GIT_AUTHOR_NAME";
+        saved->entries[n++] = "-GIT_AUTHOR_EMAIL";
+        saved->entries[n++] = "-GIT_COMMITTER_NAME";
+        saved->entries[n++] = "-GIT_COMMITTER_EMAIL";
+        saved->entries[n++] = "-EMAIL";
+        saved->entries[n++] = "GIT_CONFIG_COUNT=1";
+        saved->entries[n++] = "GIT_CONFIG_KEY_0=user.useConfigOnly";
+        saved->entries[n++] = "GIT_CONFIG_VALUE_0=true";
     }
-    const char *absent[_] = {"build.c", "build.smith", ".clang-format", ".clang-tidy", "compile_commands.json",
-                             "main.c",  "primes.c",    "primes.h"};
-    for (usize i = 0; i < _Countof(absent); i++) {
-        char path[256];
-        __builtin_snprintf(path, sizeof path, "hello/%s", absent[i]);
-        expect_exists(p, named("new hello: writes no %s%s", absent[i], ""), path, "no");
+    saved->entries[n] = nullptr;
+}
+
+// `smith new [--language <language>] [<name>]` in the folder `in` of the project ("" for the project's own), with git's
+// environment of `saved` (nullptr: the runner's own).
+static Said smith_new(const scratch::Project *p, const char *in, const char *name, const char *language,
+                      const Saved *saved) {
+    char *out = mem::alloc_slice(char, said_capacity).data;
+    const char *folder = in[0] == '\0' ? p->dir : joined(p->dir, "/", in);
+    const char *const *environment = saved != nullptr ? &saved->entries[0] : nullptr;
+    i32 status = c::smith_core_new(folder, name, language, environment, out, said_capacity);
+    return (Said){.status = status, .out = out};
+}
+
+static void make_folder(const scratch::Project *p, const char *name) {
+    const char *folder = joined(p->dir, "/", name);
+    ensure_folder(folder, c::strlen(folder));
+}
+
+// A file of the project with its text, in a folder made for it.
+static void put(const scratch::Project *p, const char *name, const char *text) {
+    const char *path = joined(p->dir, "/", name);
+    const char *slash = c::strrchr(path, '/');
+    ensure_folder(path, (usize)(slash - path));
+    const u8 *bytes = (const u8 *)text;
+    files::CountResult written = files::write_file(path[0:c::strlen(path)], bytes[0:c::strlen(text)], files::Replace);
+    test::check_condition(written == .ok);
+}
+
+static bool present(const scratch::Project *p, const char *name) {
+    struct c::stat info = {};
+    return c::lstat(joined(p->dir, "/", name), &info) == 0;
+}
+
+static const char *slurp(const scratch::Project *p, const char *name) {
+    const char *path = joined(p->dir, "/", name);
+    files::BytesResult file = files::read_file(path[0:c::strlen(path)]);
+    test::check_condition(file == .ok);
+    if (file != .ok) return "";
+    usize size = countof(file.ok);
+    char *text = mem::alloc_slice(char, size + 1).data;
+    for (usize i = 0; i < size; i++) {
+        text[i] = (char)file.ok[i];
+    }
+    text[size] = '\0';
+    return text;
+}
+
+static void expect_present(const scratch::Project *p, const char *label, const char *name, bool expected) {
+    scratch::expect_text(label, yes_if(expected), yes_if(present(p, name)));
+}
+
+// What the program of a language is made of, in the folder `dir`, and the files its template leaves out.
+static void expect_the_written_files(const scratch::Project *p, const char *label, const char *dir,
+                                     const char *const present_files[:], const char *const absent_files[:]) {
+    for (usize i = 0; i < countof(present_files); i++) {
+        expect_present(p, joined(label, ": creates ", present_files[i]), joined(dir, "/", present_files[i]), true);
+    }
+    for (usize i = 0; i < countof(absent_files); i++) {
+        expect_present(p, joined(label, ": writes no ", absent_files[i]), joined(dir, "/", absent_files[i]), false);
     }
 }
 
-// 1. smith new hello: a .smith project, the default.
+static const char *tracked(const scratch::Project *p, const char *dir) {
+    return capture(p, ".", joined("git -C ", dir, " ls-files | tr '\\n' ' ' | sed 's/ $//'"));
+}
+
+// 1. smith new hello: a .smith project, the default; what it writes and commits.
+export void test_new_hello_the_smith_project_it_writes() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Saved saved = {};
+    git_isolate(&p, true, &saved);
+    Said created = smith_new(&p, "", "hello", nullptr, &saved);
+    test::check_equal(created.status, 0);
+    const char *const files[_] = {"main.smith",
+                                  "primes.smith",
+                                  "primes_test.smith",
+                                  ".gitignore",
+                                  ".claude/settings.json",
+                                  "knowledge/index.md",
+                                  "knowledge/program.md",
+                                  ".agents/skills/hello-docs/SKILL.md"};
+    const char *const absent[_] = {"build.c", "build.smith", ".clang-format", ".clang-tidy", "compile_commands.json",
+                                   "main.c",  "primes.c",    "primes.h"};
+    expect_the_written_files(&p, "new hello", "hello", files[0:countof(files)], absent[0:countof(absent)]);
+    scratch::expect_contains("new hello: primes.smith names the program", slurp(&p, "hello/primes.smith"),
+                             "console::print(\"hello from hello\\n\");");
+    scratch::expect_text(
+        "new hello: no placeholder is left", "",
+        scratch::capture(
+            &p, "grep -rF -e '@NAME@' -e '@KEBAB@' hello --exclude-dir=.git --exclude-dir=build --exclude-dir=.smith"));
+    scratch::copy_tree(&p, "templates/new", "template");
+    scratch::expect_text("new hello: the .smith template has no C or header file beside it, which an import would read",
+                         "", scratch::capture(&p, "ls -A template | grep -E '[.][ch]$'"));
+    scratch::expect_text("new hello: .gitignore is the template", slurp(&p, "template/gitignore"),
+                         slurp(&p, "hello/.gitignore"));
+    scratch::expect_text("new hello: .claude/settings.json is the template", slurp(&p, "template/claude-settings.json"),
+                         slurp(&p, "hello/.claude/settings.json"));
+    scratch::expect_text("new hello: .claude/settings.json is exactly the plugin settings",
+                         "{\n  \"enabledPlugins\": {\n    \"smith@smith\": true\n  },\n  \"extraKnownMarketplaces\": "
+                         "{\n    \"smith\": {\n"
+                         "      \"source\": {\n        \"source\": \"github\",\n        \"repo\": "
+                         "\"smith-ai-lab/smith\"\n      }\n    }\n  }\n}",
+                         slurp(&p, "hello/.claude/settings.json"));
+    scratch::expect_text("new hello: .claude/skills links to the skills", "../.agents/skills",
+                         scratch::capture(&p, "readlink hello/.claude/skills"));
+    expect_present(&p, "new hello: no CLAUDE.md", "hello/CLAUDE.md", false);
+    expect_present(&p, "new hello: no AGENTS.md", "hello/AGENTS.md", false);
+    scratch::expect_contains("new hello: the concept describes the .smith program",
+                             slurp(&p, "hello/knowledge/program.md"), "primes::sum");
+    scratch::expect_contains("new hello: the summary names the plugin", created.out,
+                             "/plugin marketplace add smith-ai-lab/smith");
+    scratch::expect_contains("new hello: the summary names the install", created.out, "/plugin install smith@smith");
+    scratch::expect_lacks("new hello: no missing-entry report", created.out, "lacks \"smith@smith\"");
+    scratch::expect_contains("new hello: the summary names the next step", created.out, "smith run");
+    scratch::expect_contains("new hello: the summary says a repository was made", created.out,
+                             "created a repository on main with one commit");
+    scratch::expect_text("new hello: git is on main", "main",
+                         capture(&p, ".", "git -C hello symbolic-ref --short HEAD"));
+    scratch::expect_text("new hello: one commit", "1", capture(&p, ".", "git -C hello rev-list --count HEAD"));
+    scratch::expect_text("new hello: the commit message", "chore: create hello with smith new",
+                         capture(&p, ".", "git -C hello log -1 --format=%s"));
+    scratch::expect_text("new hello: git tracks exactly the written files", smith_files, tracked(&p, "hello"));
+    scratch::expect_text("new hello: the tree is clean after the commit", "",
+                         capture(&p, ".", "git -C hello status --porcelain"));
+}
+
+// 1a. The same for smith new --language c hellc.
+export void test_new_language_c_the_c_project_it_writes() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Saved saved = {};
+    git_isolate(&p, true, &saved);
+    Said created = smith_new(&p, "", "hellc", "c", &saved);
+    test::check_equal(created.status, 0);
+    const char *const files[_] = {"main.c",
+                                  "primes.c",
+                                  "primes.h",
+                                  "primes_test.c",
+                                  ".gitignore",
+                                  ".claude/settings.json",
+                                  "knowledge/index.md",
+                                  "knowledge/program.md",
+                                  ".agents/skills/hellc-docs/SKILL.md"};
+    const char *const absent[_] = {"build.c",    "build.smith", ".clang-format", ".clang-tidy", "compile_commands.json",
+                                   "main.smith", "primes.smith"};
+    expect_the_written_files(&p, "new --language c", "hellc", files[0:countof(files)], absent[0:countof(absent)]);
+    scratch::expect_contains("new --language c: main.c names the program", slurp(&p, "hellc/main.c"),
+                             "hello from hellc\\n\", sum);");
+    scratch::expect_contains("new --language c: the concept describes the C program",
+                             slurp(&p, "hellc/knowledge/program.md"), "primes_sum");
+    scratch::expect_text("new --language c: git tracks exactly the written files", c_files, tracked(&p, "hellc"));
+    scratch::expect_text("new --language c: the tree is clean after the commit", "",
+                         capture(&p, ".", "git -C hellc status --porcelain"));
+}
+
+// 1b. smith new hello: the first build, the program it makes and the greeting (a real compiler).
 export void test_new_hello_a_smith_project_is_written_and_committed() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
@@ -120,46 +315,6 @@ export void test_new_hello_a_smith_project_is_written_and_committed() {
     defer mem::set_allocator(outside);
     scratch::Run created = run(&p, "smith new hello");
     scratch::expect_status("new hello: exits 0", 0, &created);
-    expect_the_written_files(&p);
-    scratch::expect_contains("new hello: primes.smith names the program", scratch::read(&p, "hello/primes.smith"),
-                             "console::print(\"hello from hello\\n\");");
-    scratch::expect_text(
-        "new hello: no placeholder is left", "",
-        scratch::capture(
-            &p, "grep -rF -e '@NAME@' -e '@KEBAB@' hello --exclude-dir=.git --exclude-dir=build --exclude-dir=.smith"));
-    scratch::copy_tree(&p, "templates/new", "template");
-    scratch::expect_text("new hello: the .smith template has no C or header file beside it, which an import would read",
-                         "", scratch::capture(&p, "ls -A template | grep -E '[.][ch]$'"));
-    scratch::expect_text("new hello: .gitignore is the template", scratch::read(&p, "template/gitignore"),
-                         scratch::read(&p, "hello/.gitignore"));
-    scratch::expect_text("new hello: .claude/settings.json is the template",
-                         scratch::read(&p, "template/claude-settings.json"),
-                         scratch::read(&p, "hello/.claude/settings.json"));
-    scratch::expect_text("new hello: .claude/settings.json is exactly the plugin settings",
-                         "{\n  \"enabledPlugins\": {\n    \"smith@smith\": true\n  },\n  \"extraKnownMarketplaces\": "
-                         "{\n    \"smith\": {\n"
-                         "      \"source\": {\n        \"source\": \"github\",\n        \"repo\": "
-                         "\"smith-ai-lab/smith\"\n      }\n    }\n  }\n}",
-                         scratch::read(&p, "hello/.claude/settings.json"));
-    scratch::expect_text("new hello: .claude/skills links to the skills", "../.agents/skills",
-                         scratch::capture(&p, "readlink hello/.claude/skills"));
-    expect_exists(&p, "new hello: no CLAUDE.md", "hello/CLAUDE.md", "no");
-    expect_exists(&p, "new hello: no AGENTS.md", "hello/AGENTS.md", "no");
-    scratch::expect_contains("new hello: the concept describes the .smith program",
-                             scratch::read(&p, "hello/knowledge/program.md"), "primes::sum");
-    scratch::expect_contains("new hello: the summary names the plugin", created.out,
-                             "/plugin marketplace add smith-ai-lab/smith");
-    scratch::expect_contains("new hello: the summary names the install", created.out, "/plugin install smith@smith");
-    scratch::expect_lacks("new hello: no missing-entry report", created.out, "lacks \"smith@smith\"");
-    scratch::expect_text("new hello: git is on main", "main",
-                         capture(&p, ".", "git -C hello symbolic-ref --short HEAD"));
-    scratch::expect_text("new hello: one commit", "1", capture(&p, ".", "git -C hello rev-list --count HEAD"));
-    scratch::expect_text("new hello: the commit message", "chore: create hello with smith new",
-                         capture(&p, ".", "git -C hello log -1 --format=%s"));
-    scratch::expect_text("new hello: git tracks exactly the written files", smith_files,
-                         capture(&p, ".", "git -C hello ls-files | tr '\\n' ' ' | sed 's/ $//'"));
-    scratch::expect_text("new hello: the tree is clean after the commit", "",
-                         capture(&p, ".", "git -C hello status --porcelain"));
     expect_exists(&p, "new hello: the first build made the debug program", "hello/build/debug/hello", "yes");
     scratch::expect_text("new hello: the summary names the next step", "yes",
                          yes_if(scratch::contains(created.out, "smith run")));
@@ -178,14 +333,16 @@ export void test_new_a_second_run_creates_nothing() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    (void)run(&p,
-              "smith new hello"); // not a copy: the bytes of a project a second run leaves alone are the ones it made
+    Saved saved = {};
+    git_isolate(&p, true, &saved);
+    (void)smith_new(&p, "", "hello", nullptr,
+                    &saved); // not a copy: the bytes of a project a second run leaves alone are the ones it made
     const char *sum =
         "cd hello && find . -path ./.git -prune -o \\( -type f -o -type l \\) -print | sort | while read -r f; do "
         "if [ -L \"$f\" ]; then echo \"$f -> $(readlink \"$f\")\"; else echo \"$f $(cksum <\"$f\")\"; fi; done";
     const char *before = scratch::capture(&p, sum);
-    scratch::Run again = run(&p, "smith new hello");
-    scratch::expect_status("second run: exits 0", 0, &again);
+    Said again = smith_new(&p, "", "hello", nullptr, &saved);
+    test::check_equal(again.status, 0);
     scratch::expect_text("second run: changes no bytes", before, scratch::capture(&p, sum));
     scratch::expect_text("second run: no new commit", "1", capture(&p, ".", "git -C hello rev-list --count HEAD"));
     scratch::expect_contains("second run: everything is kept", again.out, "0 created, 9 kept");
@@ -393,35 +550,6 @@ export void test_new_language_c_a_c_project_is_written_and_committed() {
     defer mem::set_allocator(outside);
     scratch::Run created = run(&p, "smith new --language c hellc");
     scratch::expect_status("new --language c: exits 0", 0, &created);
-    const char *files[_] = {"main.c",
-                            "primes.c",
-                            "primes.h",
-                            "primes_test.c",
-                            ".gitignore",
-                            ".claude/settings.json",
-                            "knowledge/index.md",
-                            "knowledge/program.md",
-                            ".agents/skills/hellc-docs/SKILL.md"};
-    for (usize i = 0; i < _Countof(files); i++) {
-        char path[256];
-        __builtin_snprintf(path, sizeof path, "hellc/%s", files[i]);
-        expect_exists(&p, named("new --language c: creates %s%s", files[i], ""), path, "yes");
-    }
-    const char *absent[_] = {"build.c",    "build.smith", ".clang-format", ".clang-tidy", "compile_commands.json",
-                             "main.smith", "primes.smith"};
-    for (usize i = 0; i < _Countof(absent); i++) {
-        char path[256];
-        __builtin_snprintf(path, sizeof path, "hellc/%s", absent[i]);
-        expect_exists(&p, named("new --language c: writes no %s%s", absent[i], ""), path, "no");
-    }
-    scratch::expect_contains("new --language c: main.c names the program", scratch::read(&p, "hellc/main.c"),
-                             "hello from hellc\\n\", sum);");
-    scratch::expect_contains("new --language c: the concept describes the C program",
-                             scratch::read(&p, "hellc/knowledge/program.md"), "primes_sum");
-    scratch::expect_text("new --language c: git tracks exactly the written files", c_files,
-                         capture(&p, ".", "git -C hellc ls-files | tr '\\n' ' ' | sed 's/ $//'"));
-    scratch::expect_text("new --language c: the tree is clean after the commit", "",
-                         capture(&p, ".", "git -C hellc status --porcelain"));
     expect_exists(&p, "new --language c: the first build made the debug program", "hellc/build/debug/hellc", "yes");
     scratch::expect_text("new --language c: smith run prints the greeting", "hello from hellc",
                          scratch::capture(&p, "cd hellc && smith run | tail -n 1"));
@@ -660,6 +788,13 @@ export void test_new_two_programs_that_link_one_source_are_each_proved_with_the_
     }
 }
 
+// The check of smith docs on a folder of the project, in process: the summary line is all it says when it passes.
+static void expect_docs_pass(const scratch::Project *p, const char *label, const char *name) {
+    char *out = mem::alloc_slice(char, said_capacity).data;
+    test::check_condition(c::smith_core_docs_check(joined(p->dir, "/", name), out, said_capacity));
+    scratch::expect_contains(label, out, " 0 problems");
+}
+
 // 3. No argument: the folder's name, and its own main.c kept, with no program of the template beside it.
 export void test_new_with_no_argument_the_folders_name_and_its_own_main() {
     scratch::Project p = scratch::make("p", nullptr);
@@ -668,24 +803,26 @@ export void test_new_with_no_argument_the_folders_name_and_its_own_main() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    (void)run(&p, "mkdir demo && printf 'int main(void) { return 0; }\\n' >demo/main.c");
-    scratch::Run created = run_in(&p, "demo", "smith new");
-    scratch::expect_status("no argument: exits 0", 0, &created);
-    scratch::expect_text("no argument: keeps main.c", "int main(void) { return 0; }", scratch::read(&p, "demo/main.c"));
-    expect_exists(&p, "no argument: names the program demo", "demo/build/debug/demo", "yes");
+    Saved saved = {};
+    git_isolate(&p, true, &saved);
+    put(&p, "demo/main.c", "int main(void) { return 0; }\n");
+    Said created = smith_new(&p, "demo", nullptr, nullptr, &saved);
+    test::check_equal(created.status, 0);
+    scratch::expect_text("no argument: keeps main.c", "int main(void) { return 0; }\n", slurp(&p, "demo/main.c"));
+    scratch::expect_contains("no argument: names the program demo", created.out, "smith new: demo");
     scratch::expect_lacks("no argument: leaves out cd", created.out, "cd demo");
-    expect_exists(&p, "no argument: no concept about a main.c it did not write", "demo/knowledge/program.md", "no");
-    scratch::expect_lacks("no argument: the index lists no such concept", scratch::read(&p, "demo/knowledge/index.md"),
+    expect_present(&p, "no argument: no concept about a main.c it did not write", "demo/knowledge/program.md", false);
+    scratch::expect_lacks("no argument: the index lists no such concept", slurp(&p, "demo/knowledge/index.md"),
                           "program.md");
-    scratch::Run docs = run_in(&p, "demo", "smith docs .");
-    scratch::expect_status("no argument: the docs pass", 0, &docs);
-    scratch::expect_text("no argument: writes no program beside the project's own", "",
-                         capture(&p, "demo", "ls primes.* main.smith tests 2>/dev/null"));
-    (void)run(&p, "mkdir own_smith && printf 'int main(void) {\\n    return 0;\\n}\\n' >own_smith/main.smith");
-    scratch::Run own = run(&p, "smith new --language c own_smith");
-    scratch::expect_status("an own main.smith: exits 0", 0, &own);
-    scratch::expect_text("an own main.smith: --language c writes no C program beside it", "",
-                         scratch::capture(&p, "ls own_smith/main.c own_smith/primes.* 2>/dev/null"));
+    expect_docs_pass(&p, "no argument: the docs pass", "demo");
+    expect_present(&p, "no argument: writes no program beside the project's own", "demo/primes.c", false);
+    expect_present(&p, "no argument: ... nor a .smith one", "demo/main.smith", false);
+    expect_present(&p, "no argument: ... nor tests", "demo/tests", false);
+    put(&p, "own_smith/main.smith", "int main(void) {\n    return 0;\n}\n");
+    Said own = smith_new(&p, "", "own_smith", "c", &saved);
+    test::check_equal(own.status, 0);
+    expect_present(&p, "an own main.smith: --language c writes no C main beside it", "own_smith/main.c", false);
+    expect_present(&p, "an own main.smith: ... nor its primes", "own_smith/primes.c", false);
 }
 
 // 4. Inside an existing repository. 5. No git identity.
@@ -696,21 +833,22 @@ export void test_new_inside_a_repository_and_with_no_git_identity() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    (void)run(&p, "mkdir outer && git -C outer init -q -b main && git -C outer commit -q --allow-empty -m first");
-    scratch::Run inner = run_in(&p, "outer", "smith new inner");
-    scratch::expect_status("inside a repository: exits 0", 0, &inner);
-    expect_exists(&p, "inside a repository: no new repository", "outer/inner/.git", "no");
+    Saved saved = {};
+    git_isolate(&p, true, &saved);
+    make_folder(&p, "outer");
+    (void)run(&p, "git -C outer init -q -b main && git -C outer commit -q --allow-empty -m first");
+    Said inner = smith_new(&p, "outer", "inner", nullptr, &saved);
+    test::check_equal(inner.status, 0);
+    expect_present(&p, "inside a repository: no new repository", "outer/inner/.git", false);
     scratch::expect_text("inside a repository: no commit", "1", capture(&p, ".", "git -C outer rev-list --count HEAD"));
     scratch::expect_text("inside a repository: nothing staged", "",
                          capture(&p, ".", "git -C outer diff --cached --name-only"));
-    (void)run(&p, "mkdir noid");
-    scratch::Run noid =
-        scratch::sh(&p, "export HOME=\"$PWD/.home\" GIT_CONFIG_NOSYSTEM=1; mkdir -p \"$HOME\"; "
-                        "unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL EMAIL; "
-                        "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.useConfigOnly GIT_CONFIG_VALUE_0=true; "
-                        "cd noid && smith new proj; echo \"status $?\"");
-    scratch::expect_contains("no identity: exits 0", noid.out, "status 0");
-    expect_exists(&p, "no identity: files written", "noid/proj/main.smith", "yes");
+    make_folder(&p, "noid");
+    Saved without = {};
+    git_isolate(&p, false, &without);
+    Said noid = smith_new(&p, "noid", "proj", nullptr, &without);
+    scratch::expect_text("no identity: exits 0", "0", joined(noid.status));
+    expect_present(&p, "no identity: files written", "noid/proj/main.smith", true);
     scratch::expect_text(
         "no identity: files staged", "yes",
         capture(&p, ".", "git -C noid/proj diff --cached --name-only | grep -q '^main.smith$' && echo yes || echo no"));
@@ -719,7 +857,7 @@ export void test_new_inside_a_repository_and_with_no_git_identity() {
     scratch::expect_contains("no identity: the message says the commit was skipped", noid.out, "commit skipped");
 }
 
-// 6. Errors.
+// 6. Errors (a second name and the flag's own errors are in test_new_the_language_flag).
 export void test_new_errors() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
@@ -727,24 +865,24 @@ export void test_new_errors() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run bad = run(&p, "smith new -bad");
-    scratch::expect_status("bad name: exit status", 2, &bad);
-    scratch::expect_text("bad name: message", "smith: -bad cannot name a program; use letters, digits, _, . and -",
-                         bad.err);
-    scratch::Run space = run(&p, "smith new 'a b'");
-    scratch::expect_status("bad name with a space: exit status", 2, &space);
-    (void)run(&p, "mkdir 'bad name'");
-    scratch::Run folder = run_in(&p, "bad name", "smith new");
-    scratch::expect_status("bad folder name: exit status", 2, &folder);
-    scratch::expect_contains("bad folder name: names the parent folder way", folder.err,
+    Said bad = smith_new(&p, "", "-bad", nullptr, nullptr);
+    test::check_equal(bad.status, 2);
+    scratch::expect_text("bad name: message", "smith: -bad cannot name a program; use letters, digits, _, . and -\n",
+                         bad.out);
+    Said space = smith_new(&p, "", "a b", nullptr, nullptr);
+    test::check_equal(space.status, 2);
+    make_folder(&p, "bad name");
+    Said folder = smith_new(&p, "bad name", nullptr, nullptr, nullptr);
+    test::check_equal(folder.status, 2);
+    scratch::expect_contains("bad folder name: names the parent folder way", folder.out,
                              "smith new <name> from the parent folder picks another name");
-    expect_exists(&p, "bad folder name: writes nothing", "bad name/main.smith", "no");
-    scratch::Run two = run(&p, "smith new one two");
-    scratch::expect_status("two arguments: exit status", 2, &two);
-    scratch::expect_contains("two arguments: usage", two.err, "at most one name");
-    expect_exists(&p, "two arguments: creates nothing", "one", "no");
+    expect_present(&p, "bad folder name: writes nothing", "bad name/main.smith", false);
+    Said language = smith_new(&p, "", "bad", "rust", nullptr);
+    test::check_equal(language.status, 2);
+    scratch::expect_contains("new --language rust: names both languages", language.out,
+                             "--language is smith or c, not: rust");
+    expect_present(&p, "new --language rust: creates nothing", "bad", false);
 }
-
 // 9. An existing build.c is kept and gets no program; the first build is the project's own.
 export void test_new_an_existing_build_c_is_kept() {
     scratch::Project p = scratch::make("p", nullptr);
@@ -776,20 +914,22 @@ export void test_new_another_build_system_gets_no_program() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    (void)run(&p, "mkdir has_make && printf 'all:\\n\\t@echo made\\n' >has_make/Makefile && "
-                  "printf 'int main(void) { return 0; }\\n' >has_make/other.c");
-    scratch::Run created = run(&p, "smith new has_make");
-    scratch::expect_status("Makefile: exits 0", 0, &created);
-    expect_exists(&p, "Makefile: writes no build.c", "has_make/build.c", "no");
-    expect_exists(&p, "Makefile: no main.smith", "has_make/main.smith", "no");
-    expect_exists(&p, "Makefile: no first build", "has_make/.smith", "no");
-    expect_exists(&p, "Makefile: no concept about the program", "has_make/knowledge/program.md", "no");
+    Saved saved = {};
+    git_isolate(&p, true, &saved);
+    put(&p, "has_make/Makefile", "all:\n\t@echo made\n");
+    put(&p, "has_make/other.c", "int main(void) { return 0; }\n");
+    Said created = smith_new(&p, "", "has_make", nullptr, &saved);
+    test::check_equal(created.status, 0);
+    expect_present(&p, "Makefile: writes no build.c", "has_make/build.c", false);
+    expect_present(&p, "Makefile: no main.smith", "has_make/main.smith", false);
+    expect_present(&p, "Makefile: no first build", "has_make/.smith", false);
+    expect_present(&p, "Makefile: no concept about the program", "has_make/knowledge/program.md", false);
     scratch::expect_text("Makefile: the index lists nothing but is there", "okf_version",
                          scratch::capture(&p, "sed -n 's/^\\(okf_version\\):.*/\\1/p' has_make/knowledge/index.md"));
     scratch::expect_contains("Makefile: the index ends with its text, not a dangling item",
                              scratch::capture(&p, "tail -n 1 has_make/knowledge/index.md"), "Read only the concepts");
-    expect_exists(&p, "Makefile: writes no rules", "has_make/.clang-format", "no");
-    expect_exists(&p, "Makefile: writes the plugin settings", "has_make/.claude/settings.json", "yes");
+    expect_present(&p, "Makefile: writes no rules", "has_make/.clang-format", false);
+    expect_present(&p, "Makefile: writes the plugin settings", "has_make/.claude/settings.json", true);
     scratch::expect_contains("Makefile: the message names the Makefile", created.out,
                              "This project builds with a Makefile, so smith new wrote no program");
     scratch::expect_contains("Makefile: the message says to port it", created.out,
@@ -798,14 +938,13 @@ export void test_new_another_build_system_gets_no_program() {
     scratch::expect_text("Makefile: commits only the files written",
                          ".agents/skills/has-make-docs/SKILL.md .claude/settings.json .claude/skills .gitignore "
                          "knowledge/index.md",
-                         capture(&p, ".", "git -C has_make ls-files | tr '\\n' ' ' | sed 's/ $//'"));
-    scratch::Run docs = run(&p, "smith docs has_make");
-    scratch::expect_status("Makefile: the docs pass", 0, &docs);
-    (void)run(&p, "mkdir has_cmake && : >has_cmake/CMakeLists.txt");
-    scratch::Run cmake = run(&p, "smith new has_cmake");
+                         tracked(&p, "has_make"));
+    expect_docs_pass(&p, "Makefile: the docs pass", "has_make");
+    put(&p, "has_cmake/CMakeLists.txt", "");
+    Said cmake = smith_new(&p, "", "has_cmake", nullptr, &saved);
     scratch::expect_contains("CMakeLists.txt: the message names it", cmake.out,
                              "This project builds with a CMakeLists.txt, so smith new wrote no program");
-    expect_exists(&p, "CMakeLists.txt: no main.smith", "has_cmake/main.smith", "no");
+    expect_present(&p, "CMakeLists.txt: no main.smith", "has_cmake/main.smith", false);
 }
 
 // 11. An existing .gitignore is kept; the lines it lacks are reported. 11b. The same for .claude/settings.json.
@@ -816,22 +955,21 @@ export void test_new_an_existing_gitignore_and_settings_are_kept() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    (void)run(&p, "mkdir has_ignore && printf '/build/  \\nnode_modules/\\n' >has_ignore/.gitignore");
-    scratch::Run created = run(&p, "smith new has_ignore");
-    scratch::expect_text("gitignore: kept untouched", "/build/  \nnode_modules/",
-                         scratch::read(&p, "has_ignore/.gitignore"));
+    Saved saved = {};
+    git_isolate(&p, true, &saved);
+    put(&p, "has_ignore/.gitignore", "/build/  \nnode_modules/\n");
+    Said created = smith_new(&p, "", "has_ignore", nullptr, &saved);
+    scratch::expect_text("gitignore: kept untouched", "/build/  \nnode_modules/\n", slurp(&p, "has_ignore/.gitignore"));
     scratch::expect_contains("gitignore: reports /.cache/", created.out, "lacks /.cache/");
     scratch::expect_lacks("gitignore: does not report /build/ (trailing spaces ignored)", created.out, "lacks /build/");
-    (void)run(&p,
-              "mkdir -p has_settings/.claude && printf '{\"permissions\": {}}\\n' >has_settings/.claude/settings.json");
-    scratch::Run settings = run(&p, "smith new has_settings");
-    scratch::expect_text("settings: kept untouched", "{\"permissions\": {}}",
-                         scratch::read(&p, "has_settings/.claude/settings.json"));
+    put(&p, "has_settings/.claude/settings.json", "{\"permissions\": {}}\n");
+    Said settings = smith_new(&p, "", "has_settings", nullptr, &saved);
+    scratch::expect_text("settings: kept untouched", "{\"permissions\": {}}\n",
+                         slurp(&p, "has_settings/.claude/settings.json"));
     scratch::expect_contains("settings: reports the missing entry", settings.out, "lacks \"smith@smith\"");
     scratch::expect_contains("settings: says what to add", settings.out, "\"smith@smith\": true under enabledPlugins");
-    (void)run(&p, "mkdir -p has_settings2/.claude && printf '{\"enabledPlugins\": {\"smith@smith\": false}}\\n' "
-                  ">has_settings2/.claude/settings.json");
-    scratch::Run second = run(&p, "smith new has_settings2");
+    put(&p, "has_settings2/.claude/settings.json", "{\"enabledPlugins\": {\"smith@smith\": false}}\n");
+    Said second = smith_new(&p, "", "has_settings2", nullptr, &saved);
     scratch::expect_lacks("settings with the entry: no report", second.out, "lacks \"smith@smith\"");
 }
 
