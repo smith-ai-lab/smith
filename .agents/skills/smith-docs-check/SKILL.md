@@ -16,7 +16,8 @@ description: "The checks of smith docs with their messages (path: message), conc
 | a field the type requires is missing | `knowledge/x.md: type 'dataset' needs license_class: commercial-ok, research-only, unknown` |
 | there are concepts and no index | `knowledge/index.md: missing` |
 | the index has no `okf_version` | `knowledge/index.md: frontmatter lacks okf_version` |
-| the index lists a concept twice, or not at all, or lists a file that is no concept | `knowledge/index.md: x.md is listed twice`, `does not list x.md`, `lists x.md, which is not a concept on disk` |
+| the index lists a concept twice, or not at all, or lists a file that is no concept | `knowledge/index.md:8: x.md is listed twice; remove one`, `does not list x.md`, `lists x.md, which is not a concept on disk` |
+| an index entry sorts before the entry above it in its section | `knowledge/index.md:9: entry a.md is out of order; sort the entries of each section by file name (after b.md)` |
 | an index description differs from the concept's | `knowledge/index.md: description of x.md differs from its own` |
 | a skill folder has no `SKILL.md`, no frontmatter, a wrong `name`, no `description` | `.agents/skills/a/SKILL.md: missing`, `no frontmatter`, `name 'b' does not match its folder`, `frontmatter lacks description` |
 | a skill has more than 60 lines | `.agents/skills/a/SKILL.md: 61 lines; a skill stays under 60: split it or shorten it` |
