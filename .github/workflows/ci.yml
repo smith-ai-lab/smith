@@ -1,7 +1,7 @@
 name: ci
 
 # The full check (#798, knowledge/ci-hosted.md): Linux carries the tests (8 hosted shards, each building smith itself,
-# no artifact travels) and the owner's Mac runs what only macOS can (`build`, `mechanical`, the `--macos-only` tests);
+# no artifact travels) and the owner's Mac runs what only macOS can (`build`, `mechanical`, `prove`, the `--macos-only` tests);
 # the one job `ci` gathers them, so the ruleset and the merge queue name a single required check. The first job that
 # fails cancels the run. A push to main (a commit the queue checked) also publishes the release and saves the cache.
 on:
@@ -156,7 +156,7 @@ jobs:
         with:
           name: macos-26
   mechanical:
-    # fmt, docs, lint and the proofs of the project (the stages of `smith check` that are not tests)
+    # fmt, docs and lint (the stages of `smith check` that are not tests or proofs); `prove` is its own job
     needs: [changes, build]
     # `!cancelled()` and the build's result: without a status function the implicit success() also looks at the skipped
     # ancestor `pack` and skips this job, which left fmt, lint, prove and the macOS tests unrun from #1067 on (#1139)
@@ -177,10 +177,8 @@ jobs:
       - name: Mechanical checks
         shell: bash
         run: |
-          # every stage runs, and each failure ends in a line `FAIL <stage>`, so one run names all of them. fmt and docs
-          # take under a second; lint and prove take about 105 and 130 s and ran one after the other, so they run
-          # together (#1139): both draw from the one SMITH_CORES pool, so they share the runner's cores and never
-          # oversubscribe them. Each writes its own log and prints it after both ended, so the output does not mix.
+          # every stage runs, and each failure ends in a line `FAIL <stage>`, so one run names all of them; each stage
+          # prints a `took` line in the job summary (#1139)
           stage() { # name, then the smith arguments
             local name=$1 start=$SECONDS code=0
             shift
@@ -189,11 +187,53 @@ jobs:
           }
           stage fmt fmt --dry-run --Werror
           stage docs docs
-          stage lint lint &
-          stage prove prove &
-          wait
+          stage lint lint
           failed=0
-          for name in fmt docs lint prove; do
+          for name in fmt docs lint; do
+            read -r code took <"$RUNNER_TEMP/$name.status"
+            echo "took $name ${took}s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+            if [ "$code" != 0 ]; then
+              tail -n 60 "$RUNNER_TEMP/$name.log"
+              echo "FAIL $name"
+              echo "::error::smith $name failed"
+              failed=1
+            else
+              echo "ok $name"
+            fi
+          done
+          exit $failed
+  prove:
+    # the proofs of the project, in a job of their own: lint and prove each run the build in this checkout
+    # (`.smith/build.ninja`), so two verbs cannot share one tree, and apart they end at about the same time (#1139)
+    needs: [changes, build]
+    # `!cancelled()` and the build's result: without a status function the implicit success() also looks at the skipped
+    # ancestor `pack` and skips this job, which left fmt, lint, prove and the macOS tests unrun from #1067 on (#1139)
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: ${{ needs.changes.outputs.cores }}
+      SMITH_OUTPUT: full
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/use-smith
+        with:
+          name: macos-26
+      - name: Proofs
+        shell: bash
+        run: |
+          stage() { # name, then the smith arguments
+            local name=$1 start=$SECONDS code=0
+            shift
+            "$SMITH" "$@" >"$RUNNER_TEMP/$name.log" 2>&1 || code=$?
+            echo "$code $((SECONDS - start))" >"$RUNNER_TEMP/$name.status"
+          }
+          stage prove prove
+          failed=0
+          for name in prove; do
             read -r code took <"$RUNNER_TEMP/$name.status"
             echo "took $name ${took}s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
             if [ "$code" != 0 ]; then
@@ -398,7 +438,7 @@ jobs:
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
-    needs: [changes, pack, build, mechanical, test, test-linux, docs]
+    needs: [changes, pack, build, mechanical, prove, test, test-linux, docs]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -408,6 +448,7 @@ jobs:
           RESULTS: ${{ join(needs.*.result, ' ') }}
           SCOPE: ${{ needs.changes.outputs.scope }}
           MECHANICAL: ${{ needs.mechanical.result }}
+          PROVE: ${{ needs.prove.result }}
           TEST: ${{ needs.test.result }}
           DOCS: ${{ needs.docs.result }}
           TEST_LINUX: ${{ needs.test-linux.result }}
@@ -420,11 +461,11 @@ jobs:
             ;;
           esac
           # A skipped job passes only where `changes` said the area was not touched (#1139). The scope says which jobs
-          # the run owes: `full` owes mechanical, test and test-linux, `docs` owes docs, `release` (a push to main)
+          # the run owes: `full` owes mechanical, prove, test and test-linux, `docs` owes docs, `release` (a push to main)
           # owes test-linux, `none` owes nothing. A job that was owed and skipped (a skipped `pack` skipped the three
           # macOS jobs for hours) fails the check.
           case "$SCOPE" in
-          full) owed="MECHANICAL TEST TEST_LINUX" ;;
+          full) owed="MECHANICAL PROVE TEST TEST_LINUX" ;;
           docs) owed="DOCS" ;;
           release) owed="TEST_LINUX" ;;
           *) owed="" ;;
