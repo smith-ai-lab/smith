@@ -1,0 +1,1 @@
+<dir>/src/game/replay.smith: the module line says `other::name` but the path says `game::replay`; change the module line or move the file

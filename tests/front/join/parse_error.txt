@@ -1,0 +1,2 @@
+<dir>/broken.smith:3:15: error: expected a type, found `{`
+<dir>/broken.smith:3:15: error: expected `)`, found `{`
