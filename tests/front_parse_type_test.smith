@@ -25,8 +25,8 @@ static ast::Expr *stub_expression(parse::Parser *p) {
 }
 
 // A parser over the tokens of source with the type hook and the stub; a lexing error fails the test.
-static parse::Parser parser_of(Str source) {
-    lex::Lexed lexed = lex::tokenize(source);
+static parse::Parser parser_in(Str source, Bool new_syntax) {
+    lex::Lexed lexed = new_syntax ? lex::tokenize_new(source) : lex::tokenize(source);
     lex::Tokens tokens = {};
     switch (lexed) {
     case .ok:
@@ -42,9 +42,13 @@ static parse::Parser parser_of(Str source) {
     return p;
 }
 
+static parse::Parser parser_of(Str source) {
+    return parser_in(source, false);
+}
+
 // The dump of one type, as the type of a variable `t` of a module, then the errors, one a line.
-static Str dump_one(Str source) {
-    parse::Parser p = parser_of(source);
+static Str dump_one(Str source, Bool new_syntax) {
+    parse::Parser p = parser_in(source, new_syntax);
     ast::TypeExpr *type = parse::type(&p);
     ast::DeclRef decls[1] = {ast::variable("t", type, nullptr)};
     ast::Module m = ast::new_module("m", decls);
@@ -60,23 +64,27 @@ static Str dump_one(Str source) {
 }
 
 // Every source, dumped one after the other with a blank line between.
-static Str dump_all(Str lines) {
+static Str dump_all(Str lines, Bool new_syntax) {
     char all[:] = {};
     Usize start = 0;
     for (Usize i = 0; i <= countof(lines); i += 1) {
         if (i < countof(lines) && lines[i] != '\n') continue;
-        all = format::push(all, dump_one(lines[start:i]), "\n");
+        all = format::push(all, dump_one(lines[start:i], new_syntax), "\n");
         start = i + 1;
     }
     return all;
 }
 
-static void check_golden(Str path, Str lines) {
+static void check_golden_in(Str path, Str lines, Bool new_syntax) {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    test::golden(path, dump_all(lines));
+    test::golden(path, dump_all(lines, new_syntax));
+}
+
+static void check_golden(Str path, Str lines) {
+    check_golden_in(path, lines, false);
 }
 
 // The message of the first error of a source.
@@ -197,4 +205,49 @@ export void test_parse_type_starts_type_follows_case_and_c() {
     defer mem::set_allocator(outside);
     check_starts("I32\ngeometry::Box\nconst x\nunsigned\ntypeof(x)\nstruct S", true);
     check_starts("x\nascii::digit\nc::FILE\nc::size_t\n5", false);
+}
+
+export void test_parse_type_new_pointers_and_options() {
+    check_golden_in("tests/front/parse_type/new_pointers.txt",
+                    "*i32\n*mut i32\n**mut Point\n?i32\n?*Point\n*?i32\nstr\nvoid\nbool\ntype\n*type", true);
+}
+
+export void test_parse_type_new_arrays_slices_and_blocks() {
+    check_golden_in("tests/front/parse_type/new_arrays.txt",
+                    "[5]i32\n[_]u8\n[]i32\n[][]i32\n[5][]i32\n[5][3]f32\n[5,3]f32\n[,3]f32\n[,]f32\n[,,]f32\n[n,]u8\n"
+                    "[]*mut Point",
+                    true);
+}
+
+export void test_parse_type_new_tuples_and_functions() {
+    check_golden_in(
+        "tests/front/parse_type/new_functions.txt",
+        "(i32, f64)\n(i32,)\n()\n((i32, i32), str)\nfn()\nfn(i32) -> i32\nfn(i32, *mut Point) -> (i32, i32)\n"
+        "fn_once(i32) -> ?i32\nfn(fn(i32) -> i32) -> fn() -> bool\nPair(i32)\nPair(*i32, [3]u8)",
+        true);
+}
+
+// Whether starts_new_type says `expected` for each line, lexed in smith's own syntax.
+static void check_starts_new(Str lines, Bool expected) {
+    Usize start = 0;
+    for (Usize i = 0; i <= countof(lines); i += 1) {
+        if (i < countof(lines) && lines[i] != '\n') continue;
+        parse::Parser p = parser_in(lines[start:i], true);
+        test::check_equal(parse_type::starts_new_type(&p, 0), expected);
+        start = i + 1;
+    }
+}
+
+export void test_parse_type_new_starts_new_type() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    check_starts_new("*i32\n?i32\n[5]i32\n[]i32\n[,3]i32\nfn(i32) -> i32", true);
+    check_starts_new("[1, 2]\n[x]\nx\n(i32, i32)", false);
+}
+
+export void test_parse_type_new_malformed_forms() {
+    check_golden_in("tests/front/parse_type/new_errors.txt",
+                    "*\n?\n[5\n[5]\n[,3\n(i32\n(i32)\nfn i32\nfn(i32\nfn(i32) ->", true);
 }

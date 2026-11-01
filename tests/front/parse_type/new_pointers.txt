@@ -1,0 +1,44 @@
+*i32
+(module m
+  (variable t (pointer (named i32))))
+
+*mut i32
+(module m
+  (variable t (pointer mut (named i32))))
+
+**mut Point
+(module m
+  (variable t (pointer (pointer mut (named Point)))))
+
+?i32
+(module m
+  (variable t (option (named i32))))
+
+?*Point
+(module m
+  (variable t (option (pointer (named Point)))))
+
+*?i32
+(module m
+  (variable t (pointer (option (named i32)))))
+
+str
+(module m
+  (variable t (named str)))
+
+void
+(module m
+  (variable t (named void)))
+
+bool
+(module m
+  (variable t (named bool)))
+
+type
+(module m
+  (variable t (named type)))
+
+*type
+(module m
+  (variable t (pointer (named type))))
+
