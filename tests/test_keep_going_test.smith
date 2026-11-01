@@ -1,6 +1,9 @@
 // `smith test` keeps going after a failed task (#1171). A scratch project is needed: the behavior is the verb's wiring
 // of the executor's -k, which a unit test of the runtime cannot show. Without it, a failed test-front left
 // units-build unstarted and the units runner's binary stale.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: include/smith/ tests/build_fixtures/test_keep_going/
 module test_keep_going_test;
 
 import smith::arena;

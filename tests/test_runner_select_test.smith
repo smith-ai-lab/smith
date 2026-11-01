@@ -1,6 +1,13 @@
 // `--test` of the test runner and of `smith test` (#1156): a test file's path, a bare file name exactly, `file::test`,
 // a comma list, `*` for a substring, and the closest test files when nothing matches. The fixture
 // tests/build_fixtures/runner_shard has the test files shard::alpha_test (3 tests), beta_test, gamma_test, delta_test.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: runtime/symbolize.c runtime/explain.c shim/symbolize.cpp shim/lldb_explain.* shim/clang.cpp
+// smith-covers: shim/hook.cpp shim/lld.cpp include/smith/ lib/trace.c lib/std/test.smith lib/std/arena.smith
+// smith-covers: lib/std/random.smith lib/std/mem.smith lib/std/contract.smith lib/std/clock.smith lib/std/console.smith
+// smith-covers: lib/std/env.smith lib/std/files.smith lib/std/math.smith lib/std/failing.smith tests/runner.smith
+// smith-covers: tests/build_fixtures/runner_*/
 module test_runner_select_test;
 
 import std::arena;

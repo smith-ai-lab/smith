@@ -5,6 +5,10 @@
 // `smith test --changed --dry-run` prints. No git and no smith starts. What needs git or the verb (build.c judged by
 // the functions of its diff, the listing of thousands of tests, `--list`, the refusal of `--dry-run` alone) is a
 // scratch test on a scratch git repository.
+// smith-covers: smith.c runtime/changed.c runtime/verbs.c runtime/lint_cache.c runtime/build_runtime.c runtime/quiet.c
+// smith-covers: runtime/base.h runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/executor*.c
+// smith-covers: include/smith_core.h include/smith_core_changed.h
+// smith.c is the core the in-process cases link and holds smith lint.
 module changed_test;
 
 import std::arena;

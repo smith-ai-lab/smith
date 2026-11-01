@@ -6,6 +6,9 @@
 // the script waits for, and a job that holds a token waits for the file `free`. A test makes its project, then sets its
 // own memory as the current allocator: what scratch returns to it is given back with that memory, and scratch::clean
 // frees what make holds.
+// smith-covers: smith.c runtime/slots.c runtime/executor*.c runtime/verbs.c runtime/quiet.c runtime/base.h
+// smith-covers: runtime/build_runtime.c runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c include/smith/
+// smith.c holds --smith-slots and --smith-exec, which most cases run.
 module slots_test;
 
 import std::arena;

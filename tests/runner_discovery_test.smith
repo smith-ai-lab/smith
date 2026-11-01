@@ -1,5 +1,11 @@
 // The test runner's discovery (#366): a test file written with std:: is found and run, and a *_test.smith file in which
 // no test is found is an error naming the file, so a test is never skipped silently.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: shim/clang.cpp shim/hook.cpp shim/lld.cpp include/smith/ lib/trace.c lib/std/test.smith
+// smith-covers: lib/std/arena.smith lib/std/random.smith lib/std/mem.smith lib/std/contract.smith lib/std/clock.smith
+// smith-covers: lib/std/console.smith lib/std/env.smith lib/std/files.smith lib/std/math.smith lib/std/failing.smith
+// smith-covers: tests/build_fixtures/std_tests/ tests/build_fixtures/std_tests_empty/ tests/build_fixtures/std_tests_io/
 module runner_discovery_test;
 
 import std::arena;
