@@ -356,3 +356,33 @@ export void test_build_step_cache_serves_the_build_program_to_a_second_folder() 
     scratch::Run same = scratch::sh(&b, "cmp .smith/build-program/runtime.o ../a/.smith/build-program/runtime.o");
     scratch::expect_status("program: and its objects are the first's", 0, &same);
 }
+
+// A debug object holds no folder (the build gives its compiles -ffile-prefix-map=<folder>=., #1351), so the debug
+// profile is shared by folders like release: the second folder's first build compiles nothing, and only the link runs.
+// `smith dbg` still stops by file and line in an object the cache served and shows its source from any folder, because
+// it maps `.` back to the project. This stays end to end: the flag and the debug info are the real compiler's.
+export void test_build_step_cache_a_debug_build_is_shared_by_a_second_folder() {
+    scratch::Project a = made("a");
+    defer scratch::clean(&a);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project b = sibling(&a, "b");
+    (void)scratch::sh(&a, "env SMITH_STEP_CACHE=1 smith build -v >log.txt 2>&1");
+    scratch::Run second = scratch::sh(&b, "env SMITH_STEP_CACHE=1 smith build -v >log.txt 2>&1");
+    scratch::expect_status("debug: the second folder builds", 0, &second);
+    scratch::expect_text("debug: its three compiles are served", "3",
+                         scratch::capture(&b, "grep -c '(cached)' log.txt"));
+    scratch::expect_contains("debug: and the link runs", scratch::read(&b, "log.txt"), "-o build/debug/b");
+    scratch::expect_text("debug: the object holds no folder", "0",
+                         scratch::capture(&b, "grep -c \"$PWD\" build/debug/main.o || true"));
+    scratch::Run usable = scratch::sh(&b, "smith dbg --version >/dev/null 2>&1");
+    if (usable.status != 0) {
+        return; // a smith without lldb inside (the stage0) has nothing to debug with
+    }
+    scratch::Run stopped = scratch::sh(&b, "B=$PWD; cd / && smith dbg -b -o 'breakpoint set -f main.c -l 5' -o run -o "
+                                           "'source list' \"$B/build/debug/b\" 2>&1");
+    scratch::expect_contains("debug: stops at main.c:5 in a served object", stopped.out, "main.c:5");
+    scratch::expect_contains("debug: and shows its source from another folder", stopped.out, "return util() + other()");
+}

@@ -9,9 +9,10 @@
 //             for a system file.
 //   result    r/<xx>/<rkey>/: the object, its .fx effects summary if any, and the depfile, for the variant whose specs
 //             all hold now. rkey = SHA-256 of (the key, the variant, and the root when an output holds it).
-// The worktree's root is a token in everything stored. An output that holds the root as bytes (the debug info of a -g
-// object names the folder it was compiled in) is stored under a key that has the root in it: a hit must be what a
-// rebuild here makes, byte for byte, and a rebuild here writes this root.
+// The worktree's root is a token in everything stored. An output that holds the root as bytes is stored under a key
+// that has the root in it: a hit must be what a rebuild here makes, byte for byte, and a rebuild here writes this root.
+// A -g compile of a manifest from build.c holds none: it is given -ffile-prefix-map=<root>=. (#1351), so a debug object
+// is shared by every worktree like a release one.
 // A hit is only ever a compile with no output (a warning is not hidden), whose inputs were all older than the compile.
 
 constexpr size_t smith_stepcache_hex = 65;

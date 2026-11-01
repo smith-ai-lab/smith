@@ -87,6 +87,16 @@ templates of LLVM) were exported, and dyld binds each of them at every start aga
 instructions to start, against 52 million). The flag takes the 4 ms of that off the smith without lldb too. `smith dbg
 --version` took 27 to 29 ms on the busy machine.
 
+## Sources in a build that names no folder
+
+A debug compile is given `-ffile-prefix-map=<project>=.` (the manifest, [executor](executor.md), #1351), so its object
+names `.` where the folder was and is the same in every worktree. lldb resolves such a path against its own folder, so
+the tools map it back: `smith dbg` runs `settings set target.source-map . <project>` first (the project is the nearest
+folder with a `.smith` above a file named on its command line, else above the current folder), `smith mcp` puts the same
+command in the launch request's `initCommands`, and `smith dbg --crash` and `--at` print a relative source as
+`<project>/<path>`. A breakpoint by file and line needs none of it. An editor that starts `smith dap` in the project
+folder needs none either; from another folder it sends `"sourceMap": [[".", "<project>"]]` in its launch request.
+
 ## `.smith` names in the debugger
 
 The debugger shows a `.smith` declaration with its whole module name, the same in every object (issue #27): `bt` says
