@@ -870,7 +870,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .output = smith_fmt(b, "%s/smith.o", folder),
         .flags = flags,
         .implicit_inputs = smith_cat(
-            b, (const char *[]){"scripts/pack.h", ".smith/include/front/compile.h", "runtime/front_flag.c", nullptr},
+            b, (const char *[]){"scripts/pack.h", "runtime/front_flag.c", nullptr},
             build_smith_inputs, build_library_sources(b), config->headers, config->protocol,
             build_llvm_required(b, config), nullptr),
     };

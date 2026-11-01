@@ -4,7 +4,11 @@
 // `.smith` file still goes through the token lowering. Included by smith.c; the units runner (SMITH_CORE) has no front
 // end linked, so it has none of this.
 #ifndef SMITH_CORE
-#include "front/compile.h"
+
+// front::compile's entry (front/compile.smith, `front_compile_run`), declared here by hand: the generated header
+// .smith/include/front/compile.h is made by the compile of a module, which the previous release's build (the lag rule)
+// does not do for the sources under .smith/front/.
+int32_t front_compile_run(const char *const *sources, const char *const *outputs, size_t count, const char *triple);
 
 constexpr size_t smith_front_args_max = 1024;
 constexpr size_t smith_front_sources_max = 64;
