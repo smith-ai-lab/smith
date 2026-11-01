@@ -1,6 +1,6 @@
 module opt;
 
-export Type maybe(Type T) {
+export Type maybe(constexpr Type T) {
     return enum {
         T some;
         none;

@@ -1,1 +1,1 @@
-enum-body-result-generic/main.smith: error: expected a tag name after `struct`, `union` or `enum` (5:34) [undecided_c]
+enum-body-result-generic/main.smith: error: expected a tag name after `struct`, `union` or `enum` (5:44) [undecided_c]

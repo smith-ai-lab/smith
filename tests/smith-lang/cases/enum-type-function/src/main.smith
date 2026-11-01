@@ -9,14 +9,14 @@ typedef struct {
     F32 radius;
 } Circle;
 
-Type maybe(Type T) {
+Type maybe(constexpr Type T) {
     return enum {
         T some;
         none;
     };
 }
 
-Type outcome(Type T, Type E) {
+Type outcome(constexpr Type T, constexpr Type E) {
     return enum {
         T ok;
         E error;

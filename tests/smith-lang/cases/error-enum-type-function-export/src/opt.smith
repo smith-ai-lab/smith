@@ -1,6 +1,6 @@
 module opt;
 
-Type maybe(Type T) {
+Type maybe(constexpr Type T) {
     return enum {
         T some;
         none;

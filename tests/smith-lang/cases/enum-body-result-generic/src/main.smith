@@ -2,7 +2,7 @@ module main;
 
 import <stdio.h>;
 
-Type maybe(Type T) { return enum { T some; none; }; }
+Type maybe(constexpr Type T) { return enum { T some; none; }; }
 
 // `result` and a user's type function, first named in a body; a generic names them with written arguments.
 

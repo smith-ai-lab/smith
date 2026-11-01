@@ -1,0 +1,12 @@
+module main;
+
+Type maybe(Type T) {
+    return enum {
+        T some;
+        none;
+    };
+}
+
+I32 main(void) {
+    return 0;
+}

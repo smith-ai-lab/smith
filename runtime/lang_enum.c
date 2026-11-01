@@ -1328,8 +1328,15 @@ static bool smith_lang_eshape_declare(SmithLang *lang, const SmithHost *host, co
         bool good = smith_lang_ident(word, "Type") && param->kind == SmithTokenKind_Identifier &&
                     (at + width - 1 == right ? smith_lang_punct(after, ")") : smith_lang_punct(after, ",")) &&
                     shape->param_count < smith_lang_eshape_params_max;
-        if (!good) {
+        if (good && !written) { // one rule everywhere: a compile-time parameter is written `constexpr`
+            smith_lang_error(lang, host, word->location,
+                             "parameter `%.*s` has type `Type`, so it is compile-time: write `constexpr Type %.*s`",
+                             (int)param->length, param->text, (int)param->length, param->text);
+            good = false;
+        } else if (!good) {
             smith_lang_error(lang, host, word->location, "%s", smith_lang_eshape_gap);
+        }
+        if (!good) {
             smith_lang_eshape_start = true;
             static SmithToken nothing[1]; // the function is dropped, so that nothing else is said of it
             return smith_lang_tuple_replace(lang, count, nothing, 0);

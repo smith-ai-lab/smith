@@ -4,7 +4,7 @@ import <stdio.h>;
 import first;
 import second;
 
-Type maybe(Type T) {
+Type maybe(constexpr Type T) {
     return enum {
         T some;
         none;

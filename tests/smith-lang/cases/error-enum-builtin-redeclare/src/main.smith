@@ -2,14 +2,14 @@ module main;
 
 // `option` and `result` are built in: a module cannot declare its own.
 
-Type Option(Type T) {
+Type Option(constexpr Type T) {
     return enum {
         T some;
         none;
     };
 }
 
-Type Result(Type T, Type E) {
+Type Result(constexpr Type T, constexpr Type E) {
     return enum {
         T ok;
         E error;

@@ -748,8 +748,8 @@ export void test_constexpr_type_function() {
     corpus_case("constexpr-type-function");
 }
 
-export void test_constexpr_type_function_mixed() {
-    corpus_case("constexpr-type-function-mixed");
+export void test_error_type_function_no_constexpr() {
+    corpus_case("error-type-function-no-constexpr");
 }
 
 export void test_enum_type_function() {

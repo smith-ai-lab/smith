@@ -1,0 +1,1 @@
+src/main.smith:3:12: parameter `T` has type `Type`, so it is compile-time: write `constexpr Type T`

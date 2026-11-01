@@ -2,24 +2,24 @@ module main;
 
 // Each line below is an error with its fix; none is accepted and misread. The limits are the implementation's.
 
-Type pair(Type T) {
+Type pair(constexpr Type T) {
     return enum {
         T first;
         T second;
     };
 }
 
-Type many(Type T, Usize n) {
+Type many(constexpr Type T, Usize n) {
     return enum {
         T some;
     };
 }
 
-Type branchy(Type T) {
+Type branchy(constexpr Type T) {
     if (sizeof(T) > 4) return enum { T big; };
     return enum { T small; };
 }
 
-Type opt(Type T) { return enum { T some; none; }; }
+Type opt(constexpr Type T) { return enum { T some; none; }; }
 
 static opt(Usize, Usize) two(void);

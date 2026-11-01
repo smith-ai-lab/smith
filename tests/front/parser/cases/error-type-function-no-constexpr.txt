@@ -1,0 +1,1 @@
+error-type-function-no-constexpr/main.smith: error: expected a tag name after `struct`, `union` or `enum` (4:17) [undecided_c]
