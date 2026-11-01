@@ -37,6 +37,10 @@ typedef struct {
     size_t builtin_first; // the first built-in pattern rule
     const char **missing;
     size_t missing_count;
+    const char **listed;    // the names in the folder, for smith_make_exists_here
+    uint32_t *listed_slots; // an open-addressed table of indexes into `listed`, plus one
+    size_t listed_mask;
+    int listing; // 0 not read yet, 1 usable, 2 not used
 } SmithMakeGraph;
 
 static SmithMakeGraph smith_make_graph;
@@ -66,6 +70,7 @@ static void smith_make_graph_init(void) {
     g->nodes = smith_make_alloc(smith_make_nodes_max * sizeof(SmithMakeNode));
     g->slots = smith_make_alloc(smith_make_nodes_max * 2 * sizeof(uint32_t));
     g->missing = smith_make_new_list(4096);
+    g->listing = 0;
     g->builtin_first = r->rule_count;
     for (size_t i = 0; i < sizeof smith_make_builtins / sizeof smith_make_builtins[0]; i++) {
         const SmithMakeBuiltin *builtin = &smith_make_builtins[i];
@@ -121,6 +126,85 @@ static const SmithMakeRule *smith_make_recipe_rule(const SmithMakeRule *rule) {
     return &smith_make_reader.rules[rule->recipe_from];
 }
 
+// ---- The folder's names
+
+// Whether a name relative to the folder is a file, asked of a listing of the folder, read once: a name the folder does
+// not list is not a file, and the pattern search asks about ~100 made-up names (x.h.cc.o, x.h.c.cpp, ...) for each
+// prerequisite, each a system call. A name the listing has is confirmed by stat (a dangling link is listed). The
+// listing is not used where the file system may match names other than by their bytes: a name with a '/' or a byte
+// outside ASCII is always asked, and a folder in which the other case of an entry is also a file (macOS) is not listed.
+static bool smith_make_swapped_case_exists(const char *name) {
+    char other[256];
+    size_t length = strlen(name);
+    if (length >= sizeof other) return false;
+    bool changed = false;
+    for (size_t i = 0; i <= length; i++) {
+        char c = name[i];
+        if (c >= 'a' && c <= 'z') {
+            c = (char)(c - 'a' + 'A');
+            changed = true;
+        } else if (c >= 'A' && c <= 'Z') {
+            c = (char)(c - 'A' + 'a');
+            changed = true;
+        }
+        other[i] = c;
+    }
+    return changed && smith_make_exists(other);
+}
+
+static void smith_make_list_folder(void) {
+    SmithMakeGraph *g = &smith_make_graph;
+    g->listing = 2;
+    DIR *folder = opendir(".");
+    if (folder == nullptr) return;
+    size_t capacity = 1024;
+    const char **names = smith_make_new_list(capacity);
+    size_t count = 0;
+    bool sensitive = true;
+    for (const struct dirent *entry = readdir(folder); entry != nullptr; entry = readdir(folder)) {
+        if (count == capacity) {
+            const char **bigger = smith_make_new_list(capacity * 2);
+            for (size_t i = 0; i < count; i++)
+                bigger[i] = names[i];
+            names = bigger;
+            capacity *= 2;
+        }
+        names[count++] = smith_make_copy(entry->d_name);
+        if (sensitive && smith_make_swapped_case_exists(entry->d_name)) sensitive = false;
+    }
+    closedir(folder);
+    if (!sensitive) return;
+    size_t slots = 1024;
+    while (slots < count * 2)
+        slots *= 2;
+    g->listed_slots = smith_make_alloc(slots * sizeof(uint32_t));
+    g->listed_mask = slots - 1;
+    memset(g->listed_slots, 0, slots * sizeof(uint32_t));
+    for (size_t i = 0; i < count; i++) {
+        size_t at = smith_make_hash(names[i], strlen(names[i])) & g->listed_mask;
+        while (g->listed_slots[at] != 0)
+            at = (at + 1) & g->listed_mask;
+        g->listed_slots[at] = (uint32_t)i + 1;
+    }
+    g->listed = names;
+    g->listing = 1;
+}
+
+static bool smith_make_exists_here(const char *name) {
+    SmithMakeGraph *g = &smith_make_graph;
+    if (g->listing == 0) smith_make_list_folder();
+    if (g->listing != 1) return smith_make_exists(name);
+    for (const char *c = name; *c != '\0'; c++) {
+        if (*c == '/' || (unsigned char)*c >= 0x80) return smith_make_exists(name);
+    }
+    size_t at = smith_make_hash(name, strlen(name)) & g->listed_mask;
+    for (uint32_t slot = g->listed_slots[at]; slot != 0; slot = g->listed_slots[at]) {
+        if (strcmp(g->listed[slot - 1], name) == 0) return smith_make_exists(name);
+        at = (at + 1) & g->listed_mask;
+    }
+    return false;
+}
+
 // A file that is there, or a target some rule names.
 static bool smith_make_check_exists(const char *name) {
     const SmithMakeTarget *target = smith_make_target_find(name);
@@ -131,7 +215,7 @@ static bool smith_make_check_exists(const char *name) {
         }
     }
     if (target != nullptr && target->phony) return true;
-    return smith_make_exists(name);
+    return smith_make_exists_here(name);
 }
 
 typedef struct {
@@ -317,10 +401,18 @@ static void smith_make_graph_build(void) {
 static const char *smith_make_join_unique(const char *const *list, size_t count, bool unique) {
     SmithMakeBuffer out;
     smith_make_buffer_init(&out, 65536 + count * 256);
+    size_t slots = 16; // the words met so far, as indexes plus one in an open-addressed table (a list may hold 65536)
+    while (slots < count * 2)
+        slots *= 2;
+    uint32_t *met = unique ? smith_make_alloc(slots * sizeof(uint32_t)) : nullptr;
+    if (met != nullptr) memset(met, 0, slots * sizeof(uint32_t));
     for (size_t i = 0; i < count; i++) {
         bool seen = false;
-        for (size_t k = 0; unique && k < i; k++) {
-            if (strcmp(list[k], list[i]) == 0) seen = true;
+        if (unique) {
+            size_t at = smith_make_hash(list[i], strlen(list[i])) & (slots - 1);
+            for (; met[at] != 0 && !seen; at = (at + 1) & (slots - 1))
+                seen = strcmp(list[met[at] - 1], list[i]) == 0;
+            if (!seen) met[at] = (uint32_t)i + 1;
         }
         if (seen) continue;
         if (out.length > 0) smith_make_put_char(&out, ' ');
