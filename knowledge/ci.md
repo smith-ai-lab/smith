@@ -37,6 +37,15 @@ When the tests do not build, the step `Build the tests` of `setup-smith` ends wi
 `file:line:col: error:` lines and the command that failed (also in the job summary, #1118). The errors go to stdout and
 only the full output of the nested build is in `.smith/log/.smith_task_units-build.log` (a hidden file).
 
+**Why each Linux shard builds smith itself** (measured on 2026-10-31 over 60 runs of each event, #1139). A shard spends
+about 2.5 min before its first test: restore of the pack and step cache 0.5, `fetch` 0.2, `build` 1.2, `tests built` 1.1;
+its tests then take 1.4 (a pull request's 4 `--changed` shards) to 2.4 min (the queue's 8). One `build-linux` job that
+saved `build/` and `.smith/` for the shards to restore would put that 2.5 min, plus a save (about 0.5) and a restore
+(0.3 to 0.5) of a build of about 1 GB, in series ahead of every shard: the verdict gets about 1 min later, and only the
+runner minutes drop (about 17 of 41 per queue run). So the shards stay independent; the cut that does shorten the wall
+clock is balance (`.github/shard-costs.tsv`, queue shard medians 3.5 to 5.7 min, about 0.5 min to gain) or a smith that
+builds only the shard's own test programs (about 1 min).
+
 **A red pull request** is its author's: read the failing job (`gh run view --log-failed`), fix it on the branch, push.
 A conflict with main is fixed by merging main into the branch, never by a rebase or a force-push.
 
