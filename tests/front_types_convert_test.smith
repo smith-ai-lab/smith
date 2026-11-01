@@ -158,7 +158,7 @@ export void test_front_types_convert_arrays_slices_and_text() {
     test::check_condition(is(conv(&t, three, read_xs), types_convert::array_to_slice));
     test::check_condition(is(conv(&t, xs, read_xs), types_convert::add_const));
     test::check_condition(is(conv(&t, three, address), types_convert::array_decay));
-    refused(conv(&t, read_xs, xs), "expected I32[:]", "found I32[:]", "drops const");
+    refused(conv(&t, read_xs, xs), "expected I32[:]", "found const I32[:]", "drops const");
     refused(conv(&t, xs, address), "expected I32 *", "found I32[:]", "&xs[0]");
     refused(conv(&t, three, types::slice_of(&t, named(&t, "I64"), false)), "expected I64[:]", "found I32[3]",
             "write a cast: (I64[:])x");

@@ -553,9 +553,11 @@ static void expand(Piece stack[:], Usize *top, Output *text, TypeRef t) {
     } else if (t->kind == .array) {
         push_piece(stack, top, word(msg(format::push("[", t->count, "]"))));
         push_piece(stack, top, of(t->element));
+        if (t->pointee_const) put(text, "const ");
     } else if (t->kind == .slice) {
         push_piece(stack, top, word("[:]"));
         push_piece(stack, top, of(t->element));
+        if (t->pointee_const) put(text, "const ");
     } else if (t->kind == .option) {
         push_piece(stack, top, word(")"));
         push_piece(stack, top, of(t->element));
@@ -855,17 +857,30 @@ static Bool is_concept_name(Str name) {
            same_text(name, "Struct") || same_text(name, "Enum");
 }
 
-// A named type: a builtin, or a type name in scope. An unknown name is an error that says what to write.
+// Whether `path` starts with `c::`: a name from a C header, which waits for the C importer (#1124).
+static Bool is_c_path(ast::Path path) {
+    return countof(path.segments) > 1 && same_text(path.segments[0].text, "c");
+}
+
+// A named type: a builtin, or a type name in scope. The tree is not rewritten to the final spelling yet (#366), so the
+// two keyword types it uses, `bool` and `char`, are `Bool` and `U8` (the type of a character literal). An unknown
+// name is an error that says what to write.
 static TypeRef resolve_name(Checked *r, ast::Span span, ast::Path path) {
     if (countof(path.segments) == 1) {
         TypeRef known = builtin(&r->table, path.segments[0].text);
         if (known != nullptr) return known;
+        if (same_text(path.segments[0].text, "bool")) return r->table.bool_type;
+        if (same_text(path.segments[0].text, "char")) return builtin(&r->table, "U8");
         if (is_concept_name(path.segments[0].text)) {
             failf(r, span, "not yet typed: the concept `", path.segments[0].text, "`; only `Auto` is typed so far");
             return r->table.invalid;
         }
     }
     const Symbol *found = lookup_path(&r->scopes, path);
+    if (found == nullptr && is_c_path(path)) {
+        failf(r, span, "not yet typed: c:: name `", path_text(path), "`");
+        return r->table.invalid;
+    }
     if (found == nullptr) {
         failf(r, span, "unknown type `", path_text(path),
               "`; declare it before it is used, and write a type name with a capital letter");

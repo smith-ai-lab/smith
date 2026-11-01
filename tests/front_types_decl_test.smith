@@ -1,0 +1,223 @@
+// Tests of front::types_decl (#1220, J1d): declarations, statements, calls and `Fn` values, checked over source text
+// read by front::parser. Each scenario builds in an arena it sets as the current allocator. One test per error
+// message, each checking that the message names the expected type and what to write; goldens of the typed dump for the
+// five use cases of the ticket are in tests/front/types/ (rewritten with the runner's `--update`).
+module front_types_decl_test;
+
+import front::ast;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::files;
+import std::format;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str join(Str a, Str b) {
+    char out[:] = mem::alloc_slice(char, countof(a) + countof(b));
+    for (Usize i = 0; i < countof(a); i++) {
+        out[i] = a[i];
+    }
+    for (Usize i = 0; i < countof(b); i++) {
+        out[countof(a) + i] = b[i];
+    }
+    return out;
+}
+
+static types::Checked check_text(Str source) {
+    parser::Parsed p = parser::parse("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    return types_decl::check_module(&p.module, types::lp64());
+}
+
+// The errors, one per line.
+static Str errors_of(const types::Checked *r) {
+    Str text = "";
+    for (Usize i = 0; i < r->error_count; i++) {
+        text = join(text, join(r->errors[i].message, "\n"));
+    }
+    return text;
+}
+
+// `source` checks with no error.
+static void clean(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    Str errors = errors_of(&r);
+    test::check_equal(r.error_count, (Usize)0);
+    test::check_condition(has(errors, ""));
+}
+
+// `source` gives exactly one error, which says `first` and `second`.
+static void fails(Str source, Str first, Str second) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    Str errors = errors_of(&r);
+    test::check_equal(r.error_count, (Usize)1);
+    test::check_condition(has(errors, first));
+    test::check_condition(has(errors, second));
+}
+
+// The golden: the module's names, the locals and the errors.
+static void golden(Str path, Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    test::golden(path, join(types_decl::locals_dump(), types::dump(&r)));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The five use cases
+
+static Str use_ascii() {
+    files::BytesResult read = files::read_file("lib/std/ascii.smith");
+    if (read == .error) return "";
+    format::Chars text = mem::view(read.ok, char);
+    Str shown = text;
+    return shown;
+}
+
+export void test_front_types_decl_the_ascii_module_checks_clean() {
+    Str source = use_ascii();
+    test::check_condition(countof(source) > 0);
+    clean(source);
+}
+
+export void test_front_types_decl_a_function_returns_its_result_type() {
+    clean("I32 f(I32 a) { return a + 1; }");
+}
+
+export void test_front_types_decl_a_return_of_the_wrong_type_names_both() {
+    fails("I32 f(Str s) { return s; }", "expected I32", "found Str");
+}
+
+export void test_front_types_decl_a_literal_that_does_not_fit_is_refused() {
+    fails("U8 big = 300;", "300 does not fit U8", "wider type");
+}
+
+export void test_front_types_decl_a_lambda_takes_its_parameter_types_from_fn() {
+    clean("Bool apply(Fn(Bool (I32, I32)) cmp) { return cmp(1, 2); }\n"
+          "Bool run() { return apply([](I32 a, I32 b) { return a < b; }); }");
+}
+
+export void test_front_types_decl_a_value_converts_to_some_but_option_is_not_a_value() {
+    clean("Option(I32) x = 3;");
+    fails("Option(I32) x = 3;\nI32 y = x;", "expected I32", "Option(I32)");
+}
+
+export void test_front_types_decl_golden_of_the_use_cases() {
+    golden("tests/front/types/decl_returns.txt",
+           "I32 f(I32 a) { I32 b = a + 1; return b; }\nI32 g(Str s) { return s; }\nU8 big = 300;");
+    golden("tests/front/types/decl_lambda.txt", "Bool apply(Fn(Bool (I32, I32)) cmp) { return cmp(1, 2); }\n"
+                                                "Bool run() { return apply([](I32 a, I32 b) { return a < b; }); }");
+    golden("tests/front/types/decl_option.txt", "Option(I32) x = 3;\nI32 f() { I32 y = x; return y; }");
+    golden("tests/front/types/decl_ascii.txt", use_ascii());
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Statements and locals
+
+export void test_front_types_decl_locals_scopes_and_loops_check() {
+    clean("I32 sum(const I32 *xs, I32 n) {\n"
+          "    I32 total = 0;\n"
+          "    for (I32 i = 0; i < n; i++) { total += xs[i]; }\n"
+          "    while (total > 100) { total -= 100; }\n"
+          "    if (total == 0) { return 1; } else { return total; }\n"
+          "}\n"
+          "Void g() { Auto n = 5; { I32 n = 2; } return; }");
+}
+
+export void test_front_types_decl_a_condition_that_is_not_bool_says_to_compare() {
+    fails("Void f(I32 n) { if (n) { return; } }", "expected Bool", "found I32");
+}
+
+export void test_front_types_decl_a_bare_return_in_a_function_with_a_result() {
+    fails("I32 f() { return; }", "expected `I32`, found `Void`", "return value;");
+}
+
+export void test_front_types_decl_a_value_returned_from_a_void_function() {
+    fails("Void f() { return 1; }", "returns `Void`", "result type");
+}
+
+export void test_front_types_decl_auto_without_a_value() {
+    fails("Void f() { Auto x; }", "`Auto x` has no value", "Auto x = value;");
+}
+
+export void test_front_types_decl_auto_from_null() {
+    fails("Void f() { Auto p = nullptr; }", "`nullptr` has no type of its own", "U8 *p = nullptr;");
+}
+
+export void test_front_types_decl_a_name_declared_twice_in_a_scope() {
+    fails("Void f() { I32 a = 1; I32 a = 2; }", "`a` is already declared", "another name");
+}
+
+export void test_front_types_decl_a_parameter_declared_twice() {
+    fails("Void f(I32 a, I32 a) { }", "`a` is already declared in `f`", "another name");
+}
+
+export void test_front_types_decl_a_lambda_parameter_declared_twice() {
+    fails("Void f() { Fn(Void (I32, I32)) g = [](I32 a, I32 a) { }; }", "`a` is already declared in this lambda",
+          "another name");
+}
+
+export void test_front_types_decl_a_c_name_is_not_yet_typed() {
+    fails("Void f() { c::exit(1); }", "not yet typed: c:: name `c::exit`", "");
+}
+
+export void test_front_types_decl_switch_is_not_yet_typed() {
+    fails("Void f(I32 n) { switch (n) { default: return; } }", "not yet typed: switch", "");
+}
+
+export void test_front_types_decl_static_assert_in_a_body_is_not_yet_typed() {
+    fails("Void f() { static_assert(true); }", "not yet typed: static_assert in a body", "");
+}
+
+export void test_front_types_decl_if_constexpr_in_a_body_is_not_yet_typed() {
+    fails("Void f() { if constexpr (true) { return; } }", "not yet typed: if constexpr in a body", "");
+}
+
+export void test_front_types_decl_for_constexpr_is_not_yet_typed() {
+    fails("Void f() { for constexpr (I32 i = 0; i < 2; i++) { } }", "not yet typed: for constexpr", "");
+}
+
+export void test_front_types_decl_a_range_for_is_not_yet_typed() {
+    fails("Void f(I32 xs[:]) { for (I32 x : xs) { } }", "not yet typed: a range for", "");
+}
+
+export void test_front_types_decl_a_type_declared_in_a_function_is_not_yet_typed() {
+    fails("Void f() { struct P { I32 x; }; }", "not yet typed: a type or function declared inside a function", "");
+}
+
+export void test_front_types_decl_show_keeps_const_on_slice_and_array_elements() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types::TypeRef byte = types::builtin(&t, "U8");
+    test::check_condition(has(types::show(types::slice_of(&t, byte, true)), "const U8[:]"));
+    test::check_condition(has(types::show(types::array_of(&t, byte, 3, true)), "const U8[3]"));
+}

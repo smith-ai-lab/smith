@@ -1,0 +1,4 @@
+local run.a: I32
+local run.b: I32
+function apply: Bool (Fn(Bool (I32, I32)))
+function run: Bool ()

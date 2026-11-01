@@ -1,0 +1,532 @@
+// front::types_decl: declarations, statements and bodies (#1112, ticket J1d of #1220). The last piece of the checker:
+// it joins front::types (J1a: types, scopes, signatures), front::types_expr (J1b: expressions) and front::types_convert
+// (J1c: conversions). Not wired into `smith cc`.
+//
+// THE API
+//
+//   check_module(module, target)   Checks a whole module and gives the `types::Checked`: the module's names and
+//                                  signatures (types::check), each function body, each module-level initializer, and
+//                                  every lambda body. Errors are in `Checked.errors`, each at a span and each naming
+//                                  what was expected and what to write.
+//   options(target)                The `types::Options` that make `types::check` call `check_body` for every function
+//                                  with a body, after wiring the hooks below. For a caller that wants `types::check`
+//                                  itself.
+//   install()                      Wires J1c and J1d into J1b: `types_expr::Hooks.convert` is `types_convert::convert`
+//                                  (a refusal is reported at the expression's span with the verdict's message, which
+//                                  names the expected type, the found type and what to write) and `.lambda_body`
+//                                  checks a lambda's body. `check_module` and `options` call it; `check_module` takes
+//                                  the hooks out again with `uninstall()` when it is done, `options` leaves them for
+//                                  the caller.
+//   check_body(r, function)        The `types::BodyChecker`: declares the parameters in a scope, walks the statements
+//                                  and pops the scope.
+//   locals_dump()                  The locals and returns that the bodies declared, one line each, for the golden
+//                                  tests: `local <function>.<name>: <type>`.
+//
+// WHAT IS CHECKED
+//   Statements     blocks (each its own scope), expression statements, locals (`I32 n = count(xs);`, `Auto x = e;`,
+//                  an array local), `if`, `while`, `do`/`while`, `for (init; condition; step)`, `return`, `defer`, a
+//                  label's statement, `break`, `continue`, `goto`. A condition is checked against `Bool`; a `return`
+//                  value against the function's result type (a plain `return;` in a function that returns a value is
+//                  an error, a value in a `Void` function too).
+//   Locals         The type is written, or `Auto` takes the initializer's type. A name already in the same scope is an
+//                  error. A local is `const` through the written type.
+//   Calls, Fn      Calls and the `Fn(F)` values are typed by front::types_expr; this module supplies the conversions
+//                  they ask for (a function name for a parameter `Fn(F)` of its own type, a lambda from the expected
+//                  `Fn(F)`).
+//   Lambdas        A lambda's parameters take the types of the expected `Fn(F)`. Its body is checked after the body
+//                  that holds it: the hook keeps a copy of the scopes as they were at the lambda and the statement
+//                  walk, which has no recursion, runs on it when the enclosing walk is done.
+//   Not yet        Each reported as `not yet typed: <kind>` at its span, never accepted: `switch`, `static_assert` in a
+//                  body, `if constexpr` and `for constexpr`, a range `for`, a local type or function, a name from a C
+//                  header (`c::printf`, until front::cimport lands, #1124), a function that falls off its end is not
+//                  yet reported.
+//
+// No recursion: the statement walk has a work stack of frames (a statement and what to do with it); no malloc: the
+// stack and the copies are the current allocator's (std::mem).
+module front::types_decl;
+
+import front::ast;
+import front::types;
+import front::types_convert;
+import front::types_expr;
+import std::arena;
+import std::format;
+import std::mem;
+
+// ---------------------------------------------------------------------------------------------------------------
+// State of one check (reset by check_module)
+
+// What a frame of the work stack means for its statement or expression.
+// NOLINTBEGIN(readability-identifier-naming)
+enum Step {
+    enter,     // read the statement
+    leave,     // leave the scope entered for a block or a `for`
+    condition, // the expression must be a Bool
+    advance,   // the expression is a statement of its own (a `for`'s step)
+};
+// NOLINTEND(readability-identifier-naming)
+
+struct Frame {
+    const ast::Stmt *stmt;
+    const ast::Expr *expr;
+    Step step;
+};
+
+// A local that a body declared, for the golden tests.
+struct Local {
+    Str function;
+    Str name;
+    types::TypeRef type;
+};
+
+// A lambda body to check once the walk that met the lambda is done: the lambda, its type and the scopes it sees.
+struct Pending {
+    const ast::Expr *lambda;
+    types::TypeRef type;
+    types::Scopes scopes;
+    Str function;
+};
+
+struct State {
+    Frame work[:];
+    Usize top;
+    Local locals[:];
+    Usize local_count;
+    Pending pending[:];
+    Usize pending_count;
+    Str function;
+    types::TypeRef result; // what `return` is checked against
+};
+
+static State state;
+
+static Str msg(char chars[:]) {
+    return chars;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The conversion hook (J1c into J1b)
+
+// The constant that `e` is, when it is an integer literal (possibly negated).
+static types_convert::Literal literal_of(const ast::Expr *e) {
+    if (e->kind == .integer) {
+        return types_convert::constant_unsigned(e->kind.integer.value);
+    }
+    if (e->kind == .unary) {
+        const ast::Expr *operand = e->kind.unary.operand;
+        if (e->kind.unary.op == .negate && operand->kind == .integer) {
+            return (types_convert::Literal){
+                .is_constant = true, .negative = true, .magnitude = operand->kind.integer.value};
+        }
+    }
+    return types_convert::no_literal();
+}
+
+static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
+    types_convert::Verdict verdict = types_convert::convert(&c->table, from, to, literal_of(e));
+    if (verdict.ok) {
+        return true;
+    }
+    types::fail(c, e->span, verdict.message);
+    return false;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The work stack
+
+static void push(const ast::Stmt *stmt, const ast::Expr *expr, Step step) {
+    if (state.top == countof(state.work)) {
+        Usize capacity = countof(state.work) * 2;
+        if (capacity < 32) {
+            capacity = 32;
+        }
+        state.work = mem::realloc(state.work, capacity);
+    }
+    state.work[state.top] = (Frame){.stmt = stmt, .expr = expr, .step = step};
+    state.top += 1;
+}
+
+static void note_local(Str name, types::TypeRef type) {
+    if (state.local_count == countof(state.locals)) {
+        Usize capacity = countof(state.locals) * 2;
+        if (capacity < 16) {
+            capacity = 16;
+        }
+        state.locals = mem::realloc(state.locals, capacity);
+    }
+    state.locals[state.local_count] = (Local){.function = state.function, .name = name, .type = type};
+    state.local_count += 1;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Locals
+
+static Bool is_auto(types::TypeRef t) {
+    return t->kind == .automatic;
+}
+
+static void declare_local(types::Checked *r, const ast::Decl *d, Str name, types::TypeRef type, Bool is_const) {
+    types::Symbol symbol = {.name = name, .kind = .variable, .type = type, .decl = d, .is_const = is_const};
+    if (!types::declare(&r->scopes, symbol)) {
+        types::failf(r, d->span, "`", name, "` is already declared in this scope; choose another name");
+        return;
+    }
+    note_local(name, type);
+}
+
+// The type an `Auto` local takes from its initializer.
+static types::TypeRef auto_type(types::Checked *r, const ast::Decl *d, Str name, const ast::Expr *init) {
+    if (init == nullptr) {
+        types::failf(r, d->span, "`Auto ", name, "` has no value to take its type from; write `Auto ", name,
+                     " = value;` or write the type");
+        return r->table.invalid;
+    }
+    types::TypeRef found = types_expr::infer(r, init);
+    if (found->kind == .null_type) {
+        types::failf(r, init->span, "`nullptr` has no type of its own; write the pointer type, such as `U8 *", name,
+                     " = nullptr;`");
+        return r->table.invalid;
+    }
+    return found;
+}
+
+static void local_variable(types::Checked *r, const ast::Decl *d) {
+    if (!(d->kind == .variable)) {
+        return;
+    }
+    Str name = d->kind.variable.name;
+    const ast::TypeExpr *written = d->kind.variable.type;
+    const ast::Expr *init = d->kind.variable.init;
+    Bool is_constexpr = d->kind.variable.is_constexpr;
+    types::TypeRef type = r->table.automatic;
+    if (!(written->kind == .auto_type)) {
+        type = types::resolve(r, written);
+    }
+    if (is_auto(type)) {
+        type = auto_type(r, d, name, init);
+    } else if (init != nullptr) {
+        types_expr::check(r, init, type);
+    }
+    Bool is_const = written->qualifiers.is_const || is_constexpr;
+    declare_local(r, d, name, type, is_const);
+}
+
+static void local_declaration(types::Checked *r, const ast::Decl *d) {
+    if (d->kind == .variable) {
+        local_variable(r, d);
+        return;
+    }
+    types::failf(r, d->span, "not yet typed: a type or function declared inside a function; declare it at the top ",
+                 "of the module");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// return
+
+static void return_statement(types::Checked *r, const ast::Stmt *s) {
+    if (!(s->kind == .return_stmt)) {
+        return;
+    }
+    const ast::Expr *value = s->kind.return_stmt.value;
+    types::TypeRef want = state.result;
+    if (want == nullptr || is_auto(want)) {
+        if (value != nullptr) {
+            types_expr::infer(r, value);
+        }
+        return;
+    }
+    if (value == nullptr) {
+        if (want->kind != .void_type && want != r->table.invalid) {
+            Str shown = types::show(want);
+            types::failf(r, s->span, "expected `", shown,
+                         "`, found `Void`; write `return value;` with a value of type `", shown, "`");
+        }
+        return;
+    }
+    if (want->kind == .void_type) {
+        types_expr::infer(r, value);
+        types::failf(r, s->span,
+                     "this function returns `Void`, so it has no value to return; remove the value after `return`, or "
+                     "give the function a result type");
+        return;
+    }
+    types_expr::check(r, value, want);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The statement walk
+
+static void not_yet(types::Checked *r, const ast::Stmt *s, Str what) {
+    types::failf(r, s->span, "not yet typed: ", what);
+}
+
+static void block_statement(types::Checked *r, const ast::Stmt *s) {
+    if (!(s->kind == .block)) {
+        return;
+    }
+    ast::StmtRef items[:] = s->kind.block.items;
+    types::push_scope(&r->scopes);
+    push(nullptr, nullptr, leave);
+    for (Usize i = countof(items); i > 0; i--) {
+        push(items[i - 1], nullptr, enter);
+    }
+}
+
+static void if_statement(types::Checked *r, const ast::Stmt *s) {
+    if (!(s->kind == .if_stmt)) {
+        return;
+    }
+    Bool is_constexpr = s->kind.if_stmt.is_constexpr;
+    const ast::Expr *test = s->kind.if_stmt.condition;
+    const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
+    const ast::Stmt *else_branch = s->kind.if_stmt.else_branch;
+    if (is_constexpr) {
+        not_yet(r, s, "if constexpr in a body");
+        return;
+    }
+    types_expr::check(r, test, r->table.bool_type);
+    if (else_branch != nullptr) {
+        push(else_branch, nullptr, enter);
+    }
+    push(then_branch, nullptr, enter);
+}
+
+static void for_statement(types::Checked *r, const ast::Stmt *s) {
+    if (!(s->kind == .for_stmt)) {
+        return;
+    }
+    Bool is_constexpr = s->kind.for_stmt.is_constexpr;
+    const ast::Expr *range = s->kind.for_stmt.range;
+    const ast::Stmt *init = s->kind.for_stmt.init;
+    const ast::Expr *test = s->kind.for_stmt.condition;
+    const ast::Expr *step = s->kind.for_stmt.step;
+    const ast::Stmt *body = s->kind.for_stmt.body;
+    if (is_constexpr) {
+        not_yet(r, s, "for constexpr");
+        return;
+    }
+    if (range != nullptr) {
+        not_yet(r, s, "a range for");
+        return;
+    }
+    types::push_scope(&r->scopes);
+    push(nullptr, nullptr, leave);
+    push(body, nullptr, enter);
+    if (step != nullptr) {
+        push(nullptr, step, advance);
+    }
+    if (test != nullptr) {
+        push(nullptr, test, condition);
+    }
+    if (init != nullptr) {
+        push(init, nullptr, enter);
+    }
+}
+
+// Reads one statement: does what needs no children now, and pushes the children.
+static void enter_statement(types::Checked *r, const ast::Stmt *s) {
+    if (s->kind == .expression) {
+        types_expr::infer(r, s->kind.expression.value);
+    } else if (s->kind == .declaration) {
+        local_declaration(r, s->kind.declaration.decl);
+    } else if (s->kind == .block) {
+        block_statement(r, s);
+    } else if (s->kind == .if_stmt) {
+        if_statement(r, s);
+    } else if (s->kind == .while_stmt) {
+        types_expr::check(r, s->kind.while_stmt.condition, r->table.bool_type);
+        push(s->kind.while_stmt.body, nullptr, enter);
+    } else if (s->kind == .do_while) {
+        push(nullptr, s->kind.do_while.condition, condition);
+        push(s->kind.do_while.body, nullptr, enter);
+    } else if (s->kind == .for_stmt) {
+        for_statement(r, s);
+    } else if (s->kind == .return_stmt) {
+        return_statement(r, s);
+    } else if (s->kind == .defer_stmt) {
+        push(s->kind.defer_stmt.body, nullptr, enter);
+    } else if (s->kind == .labeled) {
+        push(s->kind.labeled.body, nullptr, enter);
+    } else if (s->kind == .switch_stmt) {
+        not_yet(r, s, "switch");
+    } else if (s->kind == .static_assert_stmt) {
+        not_yet(r, s, "static_assert in a body");
+    }
+}
+
+// Walks `root` with the function's result type `result`.
+static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result) {
+    types::TypeRef outer = state.result;
+    state.result = result;
+    state.top = 0;
+    push(root, nullptr, enter);
+    while (state.top > 0) {
+        state.top -= 1;
+        Frame f = state.work[state.top];
+        if (f.step == leave) {
+            types::pop_scope(&r->scopes);
+        } else if (f.step == condition) {
+            types_expr::check(r, f.expr, r->table.bool_type);
+        } else if (f.step == advance) {
+            types_expr::infer(r, f.expr);
+        } else {
+            enter_statement(r, f.stmt);
+        }
+    }
+    state.result = outer;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Lambdas
+
+static types::Scopes copy_scopes(const types::Scopes *s) {
+    types::Scopes copy = {};
+    copy.symbols = mem::alloc_slice(types::Symbol, s->count + 8);
+    for (Usize i = 0; i < s->count; i++) {
+        copy.symbols[i] = s->symbols[i];
+    }
+    copy.count = s->count;
+    copy.marks = mem::alloc_slice(Usize, s->depth + 8);
+    for (Usize i = 0; i < s->depth; i++) {
+        copy.marks[i] = s->marks[i];
+    }
+    copy.depth = s->depth;
+    return copy;
+}
+
+// The hook J1b calls with a lambda whose type was decided: keep it, with the scopes it sees, for `drain`.
+static void lambda_hook(types::Checked *c, const ast::Expr *lambda, types::TypeRef type) {
+    if (state.pending_count == countof(state.pending)) {
+        Usize capacity = countof(state.pending) * 2;
+        if (capacity < 8) {
+            capacity = 8;
+        }
+        state.pending = mem::realloc(state.pending, capacity);
+    }
+    state.pending[state.pending_count] =
+        (Pending){.lambda = lambda, .type = type, .scopes = copy_scopes(&c->scopes), .function = state.function};
+    state.pending_count += 1;
+}
+
+static void lambda_body(types::Checked *r, Pending p) {
+    const ast::Expr *lambda = p.lambda;
+    if (!(lambda->kind == .lambda)) {
+        return;
+    }
+    ast::Param params[:] = lambda->kind.lambda.params;
+    const ast::Stmt *body = lambda->kind.lambda.body;
+    types::Scopes outer = r->scopes;
+    r->scopes = p.scopes;
+    types::push_scope(&r->scopes);
+    types::TypeRef function = p.type->element;
+    Str outer_function = state.function;
+    state.function = p.function;
+    for (Usize i = 0; i < countof(params) && i < countof(function->slots); i++) {
+        types::Symbol symbol = {.name = params[i].name, .kind = .variable, .type = function->slots[i].type};
+        if (!types::declare(&r->scopes, symbol)) {
+            types::failf(r, params[i].span, "the parameter `", params[i].name,
+                         "` is already declared in this lambda; choose another name");
+        } else {
+            note_local(params[i].name, function->slots[i].type);
+        }
+    }
+    walk(r, body, function->element);
+    state.function = outer_function;
+    types::pop_scope(&r->scopes);
+    r->scopes = outer;
+}
+
+// Checks every lambda body kept so far, and those they hold in turn.
+static void drain(types::Checked *r) {
+    for (Usize i = 0; i < state.pending_count; i++) {
+        lambda_body(r, state.pending[i]);
+    }
+    state.pending_count = 0;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Functions and the module
+
+// The types::BodyChecker: the body of one function of the module.
+export void check_body(types::Checked *r, const ast::Decl *function) {
+    if (function->kind != .function || function->kind.function.body == nullptr) {
+        return;
+    }
+    Str name = function->kind.function.name;
+    const types::Symbol *symbol = types::lookup(&r->scopes, name);
+    if (symbol == nullptr || symbol->decl != function || symbol->type->kind != .function) {
+        return;
+    }
+    types::TypeRef signature = symbol->type;
+    ast::Param params[:] = function->kind.function.params;
+    types::push_scope(&r->scopes);
+    for (Usize i = 0; i < countof(params) && i < countof(signature->slots); i++) {
+        Bool is_const = params[i].type != nullptr && params[i].type->qualifiers.is_const;
+        types::Symbol parameter = {
+            .name = params[i].name, .kind = .variable, .type = signature->slots[i].type, .is_const = is_const};
+        if (!types::declare(&r->scopes, parameter)) {
+            types::failf(r, params[i].span, "the parameter `", params[i].name, "` is already declared in `", name,
+                         "`; choose another name");
+        }
+    }
+    state.function = name;
+    walk(r, function->kind.function.body, signature->element);
+    types::pop_scope(&r->scopes);
+    drain(r);
+}
+
+export void install() {
+    types_expr::set_hooks((types_expr::Hooks){.convert = convert_hook, .lambda_body = lambda_hook});
+}
+
+// Takes the hooks out again (the default of front::types_expr is exact equality).
+export void uninstall() {
+    types_expr::set_hooks((types_expr::Hooks){});
+}
+
+export types::Options options(types::Target target) {
+    install();
+    return (types::Options){.target = target, .bodies = check_body};
+}
+
+// A module-level variable's initializer, against its declared type.
+static void check_initializer(types::Checked *r, const ast::Decl *d) {
+    if (d->kind != .variable || d->from_c || d->kind.variable.init == nullptr) {
+        return;
+    }
+    Str name = d->kind.variable.name;
+    const types::Symbol *symbol = types::lookup(&r->scopes, name);
+    if (symbol == nullptr || symbol->decl != d) {
+        return;
+    }
+    state.function = name;
+    types::TypeRef type = symbol->type;
+    if (is_auto(type)) {
+        types_expr::infer(r, d->kind.variable.init);
+    } else {
+        types_expr::check(r, d->kind.variable.init, type);
+    }
+}
+
+// Checks a whole module for `target`.
+export types::Checked check_module(const ast::Module *m, types::Target target) {
+    state = (State){};
+    types::Checked r = types::check(m, options(target));
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        check_initializer(&r, m->decls[i]);
+    }
+    drain(&r);
+    uninstall();
+    return r;
+}
+
+// The locals the bodies declared, one line each: `local <function>.<name>: <type>`.
+export Str locals_dump() {
+    Str text = "";
+    for (Usize i = 0; i < state.local_count; i++) {
+        Local l = state.locals[i];
+        Str line = msg(format::push("local ", l.function, ".", l.name, ": ", types::show(l.type), "\n"));
+        text = msg(format::push(text, line));
+    }
+    return text;
+}
