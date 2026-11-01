@@ -753,7 +753,7 @@ static bool smith_docs_item(SmithDocsText line, SmithDocsItem *item) {
     return true;
 }
 
-// Index items by file; a file listed again replaces the earlier item and is reported.
+// Index items by file; a file listed again replaces the earlier item (smith_docs_index_order reports it).
 static uint32_t smith_docs_items(SmithDocs *docs, SmithDocsText index, SmithDocsItem *items) {
     SmithDocsText body = smith_docs_body(docs, index);
     uint32_t count = 0;
@@ -765,10 +765,7 @@ static uint32_t smith_docs_items(SmithDocs *docs, SmithDocsText index, SmithDocs
         for (uint32_t i = 0; i < count; i++) {
             if (smith_docs_same(items[i].target, item.target)) at = i;
         }
-        if (at < count) {
-            smith_docs_report(docs, "knowledge/index.md: %.*s is listed twice", (int)item.target.length,
-                              item.target.begin);
-        } else if (count < smith_docs_listed_max) {
+        if (at == count && count < smith_docs_listed_max) {
             count += 1;
         }
         items[at] = item;
@@ -789,6 +786,44 @@ static bool smith_docs_less(SmithDocsText a, SmithDocsText b) {
     uint64_t common = a.length < b.length ? a.length : b.length;
     int order = memcmp(a.begin, b.begin, common);
     return order != 0 ? order < 0 : a.length < b.length;
+}
+
+// Whether the line opens or closes a fenced code block.
+static bool smith_docs_is_fence(SmithDocsText line) {
+    return smith_docs_starts(line, "```") || smith_docs_starts(line, "~~~");
+}
+
+// Reports, with the line, an item listed twice and an item that sorts before the one above it in the same section (a
+// run of item lines): the entries are one to a line, sorted by file name, so a bad merge shows at once.
+static void smith_docs_index_order(SmithDocs *docs, SmithDocsText index) {
+    SmithDocsItem *seen = SMITH_DOCS_PUSH(&docs->arena, SmithDocsItem, smith_docs_listed_max);
+    uint32_t count = 0;
+    SmithDocsText previous = {};
+    bool fenced = false;
+    SmithDocsText line = {};
+    for (uint32_t number = 1; smith_docs_line(&index, &line); number++) {
+        if (smith_docs_is_fence(line)) fenced = !fenced;
+        SmithDocsItem item;
+        if (fenced || !smith_docs_item(line, &item)) {
+            previous = (SmithDocsText){};
+            continue;
+        }
+        bool twice = false;
+        for (uint32_t i = 0; i < count; i++) {
+            twice = twice || smith_docs_same(seen[i].target, item.target);
+        }
+        if (twice) {
+            smith_docs_report(docs, "knowledge/index.md:%u: %.*s is listed twice; remove one", number,
+                              (int)item.target.length, item.target.begin);
+        } else if (previous.begin != nullptr && smith_docs_less(item.target, previous)) {
+            smith_docs_report(docs,
+                              "knowledge/index.md:%u: entry %.*s is out of order; sort the entries of each section by "
+                              "file name (after %.*s)",
+                              number, (int)item.target.length, item.target.begin, (int)previous.length, previous.begin);
+        }
+        if (!twice && count < smith_docs_listed_max) seen[count++] = item;
+        previous = item.target;
+    }
 }
 
 // Reports each item that is no concept on disk, in the order of the targets.
@@ -828,6 +863,7 @@ static void smith_docs_index(SmithDocs *docs, const char **names, uint32_t name_
     if (smith_docs_get(&own_fields, "okf_version").length == 0) {
         smith_docs_report(docs, "knowledge/index.md: frontmatter lacks okf_version");
     }
+    smith_docs_index_order(docs, index);
     SmithDocsItem *items = SMITH_DOCS_PUSH(&docs->arena, SmithDocsItem, smith_docs_listed_max);
     uint32_t count = smith_docs_items(docs, index, items);
     for (uint32_t i = 0; i < name_count; i++) {
