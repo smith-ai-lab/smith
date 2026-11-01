@@ -1,1 +1,1 @@
-error-type-function-pointee/main.smith: error: expected `)` to end `typeof`, found `nullptr` (7:42) [undecided_c]
+error-type-function-pointee/main.smith: ok

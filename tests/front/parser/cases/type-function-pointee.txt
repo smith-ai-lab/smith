@@ -1,2 +1,2 @@
-type-function-pointee/leaves.smith: error: expected `)` to end `typeof`, found `nullptr` (6:42) [undecided_c]
+type-function-pointee/leaves.smith: ok
 type-function-pointee/main.smith: ok

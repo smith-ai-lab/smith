@@ -1,1 +1,1 @@
-error-errdefer-plain/main.smith: error: expected `;`, found `c` (6:14) [undecided_c]
+error-errdefer-plain/main.smith: error: expected `;` after the declaration, found `::` (6:15) [undecided_c]

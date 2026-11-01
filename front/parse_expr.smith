@@ -1088,10 +1088,44 @@ static Step query(parse::Parser *p, Stack *st) {
     return .more;
 }
 
+// Whether a token starts an operand that no binary operator continues: after `(x)` it makes `(x)` a cast.
+static Bool starts_bare_operand(lex::TokenKind kind) {
+    switch (kind) {
+    case lex::kw_nullptr:
+    case lex::kw_true:
+    case lex::kw_false:
+    case lex::integer:
+    case lex::floating:
+    case lex::character:
+    case lex::string:
+    case lex::name:
+    case lex::type_name:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Whether `(x) operand` is a cast to a type value: the path `x` (lowercase, not `c::`) alone in the parentheses, then a
+// token that starts an operand and cannot continue an expression (`(t)nullptr`). `(x) - 1` stays a difference and
+// `(x)(y)` a call. Whether `x` IS a type is the checker's.
+static Bool type_value_cast(const parse::Parser *p) {
+    Usize last = 0;
+    if (parse::peek_at(p, 0).kind != lex::name) return false;
+    while (parse::peek_at(p, last + 1).kind == lex::colon_colon) {
+        lex::TokenKind next = parse::peek_at(p, last + 2).kind;
+        if (next != lex::name && next != lex::type_name) break;
+        last += 2;
+    }
+    if (text::is(parse::text(p, parse::peek_at(p, 0)), "c")) return false;
+    if (parse::peek_at(p, last + 1).kind != lex::right_paren) return false;
+    return starts_bare_operand(parse::peek_at(p, last + 2).kind);
+}
+
 // `(`: a cast `(T)x`, a compound literal `(T){...}` or a parenthesized expression.
 static Step paren(parse::Parser *p, Stack *st) {
     U32 start = parse::advance(p).span.start;
-    if (parse_type::starts_type(p, 0)) {
+    if (parse_type::starts_type(p, 0) || type_value_cast(p)) {
         ast::TypeExpr *type = parse::type(p);
         parse::expect(p, lex::right_paren, "`)` to end the cast's type");
         if (type == nullptr) return .failed;
