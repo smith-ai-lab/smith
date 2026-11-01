@@ -43,7 +43,7 @@ done
 For rare cases only (a Touch ID prompt, a question): comments on #1406 starting `@mac:` or `@lead:`. A zero-token watcher wakes you on a new `@mac:` comment; restart it after each wake and answer with an `@lead:` comment:
 
 ```bash
-c() { gh api repos/smith-ai-lab/smith/issues/1406/comments --jq "$1" 2>/dev/null; }
+c() { gh api 'repos/smith-ai-lab/smith/issues/1406/comments?per_page=100' --jq "$1" 2>/dev/null; }
 seen=$(c length)
 while :; do sleep 60; n=$(c length) || continue; [ -z "$n" ] && continue
   [ "$(c "[.[$seen:][]|select(.body|startswith(\"@mac:\"))]|length")" -gt 0 ] && exit 0; seen=$n; done
