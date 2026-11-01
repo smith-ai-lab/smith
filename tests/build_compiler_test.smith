@@ -59,6 +59,7 @@ export void test_build_a_change_of_compiler_rebuilds_every_object() {
 export void test_build_smith_routes_to_an_external_clang() {
     scratch::Project p = scratch::make("p", "external_clang");
     defer scratch::clean(&p);
+    scratch::uncached(&p); // it counts the compiles: "and back again" would be a step cache hit
     arena::Arena memory = test::memory(memory_size);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
