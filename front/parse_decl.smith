@@ -372,7 +372,8 @@ static Str type_text(const parse::Parser *p, const ast::TypeExpr *type) {
     return source_between(p, type->span.start, type->span.end);
 }
 
-// `T (*p)[:]`: the position is at the `(`. A pointer to a slice is written `T[:] *p` (A7i, #1344); says so with the
+// `T (*p)[:]` or `T (*p)[4]`: the position is at the `(`. A pointer to a slice is written `T[:] *p` (A7i, #1344) and a
+// pointer to an array `T[4] *p` (A7u, #1390); says so with the
 // type, the stars, the name and the brackets as written, and skips the declarator.
 static void slice_pointer_error(parse::Parser *p, const ast::TypeExpr *type) {
     U32 start = parse::peek(p).span.start;
@@ -387,6 +388,7 @@ static void slice_pointer_error(parse::Parser *p, const ast::TypeExpr *type) {
     parse::accept(p, lex::right_paren);
     U32 brackets_start = parse::peek(p).span.start;
     U32 brackets_end = brackets_start;
+    Bool is_slice = parse_type::slice_bracket_at(p, 0);
     while (parse::at(p, lex::left_bracket)) {
         while (!parse::at(p, lex::right_bracket) && !parse::at(p, lex::end_of_file))
             parse::advance(p);
@@ -398,7 +400,8 @@ static void slice_pointer_error(parse::Parser *p, const ast::TypeExpr *type) {
     Str text = type_text(p, type);
     Bool spelled = countof(text) >= countof(const_word) && mem::equal(text[0:countof(const_word)], const_word);
     Str lead = type->qualifiers.is_const && !spelled ? "const " : "";
-    char message[:] = format::push("a pointer to a slice is written `", lead, text, brackets, " ", stars, name,
+    Str kind = is_slice ? "a slice" : "an array";
+    char message[:] = format::push("a pointer to ", kind, " is written `", lead, text, brackets, " ", stars, name,
                                    "`, not `", lead, text, " (", stars, name, ")", brackets, "`");
     parse::error(p, parse::span_from(p, start), message);
 }
