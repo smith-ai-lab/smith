@@ -1053,6 +1053,17 @@ static void smith_verb_take_keep_going(SmithVerbArgs *split) {
     split->own_count = kept;
 }
 
+// `smith test` keeps going by default (#1171): a task that fails (test-front) must not stop the build of another
+// runner (units-build) that was not started yet, or the runner's binary stays old and a later run, by hand or not,
+// tests code that is gone. The exit status is still the failure's; an explicit -k keeps its own count.
+static void smith_test_default_keep_going(SmithVerbArgs *split) {
+    static char keep_going[] = "-k0";
+    for (size_t i = 0; i < split->option_count; i++) {
+        if (strncmp(split->options[i], "-k", 2) == 0) return;
+    }
+    if (split->option_count < smith_build_args_max) split->options[split->option_count++] = keep_going;
+}
+
 // Whether `--changed` is among the arguments, so `--list` is the selection's and not the runner's.
 static bool smith_test_wants_list(const SmithVerbArgs *split) {
     for (size_t i = 0; i < split->own_count; i++) {
@@ -1266,6 +1277,7 @@ static int smith_test_project(int count, char **args, const char *self) {
         if (strcmp(split->own[i], "-v") == 0) split->own[i] = (char *)"--verbose";
     }
     smith_verb_take_keep_going(split);
+    smith_test_default_keep_going(split);
     int changed = smith_test_take_changed(split, self);
     if (changed >= 0) return changed;
     const char *const targets[] = {"smith_tests", nullptr};
