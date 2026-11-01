@@ -1,27 +1,24 @@
-struct Point {
-    x: I32
-    y: F64
-}
-struct Opaque (opaque)
-struct Holder {
-    inner: *struct Opaque
-    compare: Compare = Fn of Fn#6
-    callback: Fn of Fn#11
-    name: *const I8
-    id: Id = U64
-    weights: [4]F32
-}
-struct Flags {
-    ready: unsupported(bit-field int)
-}
-fn add(a: I32, b: I32) -> I32
-fn log_line(format: *const I8, ...) -> I32
-fn origin() -> struct Point
-fn sort(holder: *struct Holder, compare: Compare = Fn of Fn#23) -> Void
-fn precise() -> unsupported(long double)
-Fn#6 = Fn(*const Void, *const Void) -> I32
-Fn#11 = Fn(*Void, I32) -> I32
-Fn#23 = Fn(*const Void, *const Void) -> I32
+(module fixture
+  (struct Point from_c
+    (field x (named I32))
+    (field y (named F64)))
+  (struct Opaque opaque from_c)
+  (struct Holder from_c
+    (field inner (pointer (named Opaque)))
+    (field compare (named Compare))
+    (field callback (applied Fn (type_arg (function_type (pointer (named Void)) (named I32) (result (named I32))))))
+    (field name (pointer (named I8 const)))
+    (field id (named Id))
+    (field weights (array (named F32) (integer 4))))
+  (struct Flags from_c
+    (field ready (unsupported_c "bit-field int")))
+  (typedef Compare from_c (applied Fn (type_arg (function_type (pointer (named Void const)) (pointer (named Void const)) (result (named I32))))))
+  (typedef Id from_c (named U64))
+  (function add from_c (param a (named I32)) (param b (named I32)) (result (named I32)))
+  (function log_line variadic from_c (param format (pointer (named I8 const))) (result (named I32)))
+  (function origin from_c (result (named Point)))
+  (function sort from_c (param holder (pointer (named Holder))) (param compare (named Compare)) (result (named Void)))
+  (function precise from_c (result (unsupported_c "long double"))))
 not imported union Either: a union is not imported
 not imported struct Flags: the field `ready` is a bit-field
 not imported precise: the type `long double` is not imported

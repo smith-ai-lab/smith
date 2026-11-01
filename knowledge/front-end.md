@@ -6,7 +6,7 @@ tags: [front-end, parser, ast]
 ---
 # smith's own front end
 
-Plan: #1112 (the plan of record is its first comment). Today's `.smith` files are lowered to C through a token hook in clang; the new front end reads `.smith` itself and emits LLVM IR through LLVM's C API, with no patches on LLVM. It lives in `front/` (modules `front::ast`, later `front::lex`, `front::parse`, `front::types`, `front::emit`, `front::cimport`), is not wired into `smith cc`, and shows its work through tests (`tests/front_*_test.smith`, run by `smith build test-front`, golden files under `tests/front/`). Later front tickets each add a section here.
+Plan: #1112 (the plan of record is its first comment). Today's `.smith` files are lowered to C through a token hook in clang; the new front end reads `.smith` itself and emits LLVM IR through LLVM's C API, with no patches on LLVM. It lives in `front/` (modules `front::ast`, later `front::lex`, `front::parse`, `front::types`, `front::emit`, [`front::cimport`](c-header-import.md)), is not wired into `smith cc`, and shows its work through tests (`tests/front_*_test.smith`, run by `smith build test-front`, golden files under `tests/front/`). Later front tickets each add a section here.
 
 ## front::ast (`front/ast.smith`, #1116)
 
