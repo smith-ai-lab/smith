@@ -1405,7 +1405,7 @@ bool golden_write(const char *path, const char *text, usize size) {
 void golden_note(const char *path, const char *summary) {
     if (golden_log == nullptr) return;
     char entry[path_capacity + 128];
-    int made = __builtin_snprintf(entry, sizeof entry, "%s %s%s%s%s", summary == nullptr ? "+" : "~", path,
+    i32 made = __builtin_snprintf(entry, sizeof entry, "%s %s%s%s%s", summary == nullptr ? "+" : "~", path,
                                   summary == nullptr ? "" : " (", summary == nullptr ? "" : summary,
                                   summary == nullptr ? "" : ")");
     if (made <= 0) return;
