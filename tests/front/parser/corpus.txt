@@ -406,7 +406,7 @@ generic-slice-pointer-result/repro.smith: ok
 generic-slice-qualifiers-auto/copy.smith: ok
 generic-slice-qualifiers-auto/main.smith: ok
 generic-slice-restrict/main.smith: ok
-generic-slice-restrict/pair.smith: error: expected an expression, found `_Generic` (7:12)
+generic-slice-restrict/pair.smith: ok
 generic-slice-type-argument/main.smith: ok
 generic-slice-type-argument/probe.smith: ok
 generic-slice-typedef/counting.smith: ok
@@ -612,4 +612,4 @@ value-query-plain/main.smith: C, out of scope
 value-query-windows/size.smith: ok
 void-pointer-cast/main.smith: ok
 void-pointer-plain/main.smith: C, out of scope
-total 614, ok 379, error 111, C 124, skipped 0
+total 614, ok 380, error 110, C 124, skipped 0

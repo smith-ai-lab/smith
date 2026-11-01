@@ -1,0 +1,91 @@
+// Tests of `_Generic(x, T: a, default: b)` in front::parse_expr (#1285, part of #1112): the control, the type
+// associations and `default` are read into a `generic_select`; a `_Generic` with no association is an error.
+module front_parse_generic_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_expr;
+import front::parse_type;
+
+// A parser over the tokens of source with the real expression and type hooks; a lexing error fails the test.
+static parse::Parser parser_of(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    lex::Tokens tokens = {};
+    switch (lexed) {
+    case .ok:
+        tokens = lexed.ok;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    parse::Parser p = parse::make(tokens, source);
+    p.hooks.expression = parse_expr::expression;
+    p.hooks.type = parse_type::type;
+    return p;
+}
+
+static Bool contains(Str text, Str piece) {
+    if (countof(piece) > countof(text)) return false;
+    for (Usize i = 0; i + countof(piece) <= countof(text); i += 1) {
+        if (mem::equal(text[i:i + countof(piece)], piece)) return true;
+    }
+    return false;
+}
+
+// The first error message of a source; the test fails when there is none.
+static Str first_error(Str source) {
+    parse::Parser p = parser_of(source);
+    _ = parse::expression(&p);
+    test::check_condition(countof(p.errors) > 0);
+    return p.errors[0].message;
+}
+
+export void test_parse_generic_types_and_default() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("_Generic(x, I32: 1, F64[:]: 2, default: 3)");
+    ast::Expr *e = parse::expression(&p);
+    test::check_equal(countof(p.errors), 0);
+    test::check_condition(e != nullptr);
+    if (e->kind != .generic_select) {
+        test::check_condition(false);
+        return;
+    }
+    ast::GenericAssoc assocs[:] = e->kind.generic_select.assocs;
+    test::check_equal(countof(assocs), 3);
+    ast::Expr *control = e->kind.generic_select.control;
+    test::check_condition(control->kind == .name);
+    test::check_condition(assocs[0].type != nullptr && assocs[1].type != nullptr);
+    test::check_condition(assocs[2].type == nullptr);
+    ast::Expr *last = assocs[2].value;
+    test::check_condition(last->kind == .integer);
+}
+
+export void test_parse_generic_in_an_expression() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("!_Generic(a, Bool: true, default: false)");
+    ast::Expr *e = parse::expression(&p);
+    test::check_equal(countof(p.errors), 0);
+    test::check_condition(e != nullptr && e->kind == .unary);
+}
+
+export void test_parse_generic_without_association() {
+    Str message = first_error("_Generic(x)");
+    test::check_condition(contains(message, "needs an association"));
+    test::check_condition(contains(message, "default: value"));
+}
+
+export void test_parse_generic_missing_colon() {
+    Str message = first_error("_Generic(x, I32 1)");
+    test::check_condition(contains(message, "`:` after the type of the association"));
+}
