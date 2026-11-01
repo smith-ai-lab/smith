@@ -3244,13 +3244,270 @@ static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count
     return true;
 }
 
+// ---- --shard i/n (#1200)
+//
+// `smith test --shard i/n` compiles only the test files that hold a test of part i. The runner assigns the tests at run
+// time (shard_plan in lib/smith/test.smith: a file's tests stay together, the heaviest file goes to the part with the
+// least so far, by the --costs file); this is that assignment again, in C, because the build must know it before it
+// compiles. tests/test_runner_shard_test.smith checks that a part built alone and the same part of a full build list
+// the same tests, so the two cannot drift apart unseen.
+
+static SmithTestFound smith_tests_found[smith_tests_max];
+
+constexpr size_t smith_shard_filter_max = 4096;
+constexpr double smith_shard_cost_unknown = 0.4; // CPU seconds assumed for a test the --costs file does not name
+
+typedef struct {
+    size_t index; // --shard i/n: part i (1 to n) of n; count 0 keeps every test
+    size_t count;
+    const char *costs;
+    char filter[smith_shard_filter_max]; // the --test values joined by commas, as the runner joins them; "" for none
+    int macos;                           // 1: --macos-only, 2: --skip-macos
+} SmithTestShard;
+
+// Whether `text` matches `pattern`, `*` standing for any run of characters (glob in lib/smith/test.smith).
+static bool smith_shard_glob(const char *pattern, const char *text) {
+    const char *star = nullptr;
+    const char *resume = nullptr;
+    while (*text != '\0') { // bounded by the text
+        if (*pattern == '*') {
+            star = pattern++;
+            resume = text;
+        } else if (*pattern == *text) {
+            pattern++;
+            text++;
+        } else if (star != nullptr) {
+            pattern = star + 1;
+            text = ++resume;
+        } else {
+            return false;
+        }
+    }
+    while (*pattern == '*') // bounded by the pattern
+        pattern++;
+    return *pattern == '\0';
+}
+
+static bool smith_shard_ends_with_part(const char *text, size_t length, const char *item) {
+    size_t size = strlen(item);
+    if (size == 0 || size > length || strncmp(text + length - size, item, size) != 0) return false;
+    return size == length || (length - size >= 2 && text[length - size - 1] == ':' && text[length - size - 2] == ':');
+}
+
+// Whether the test `name` is selected by one `--test` item (selects_item in lib/smith/test.smith).
+static bool smith_shard_item(const char *name, const char *item) {
+    size_t size = strlen(item);
+    if (strchr(item, '*') != nullptr) {
+        if (smith_shard_glob(item, name)) return true;
+        for (const char *at = strstr(name, "::"); at != nullptr; at = strstr(at + 2, "::")) // bounded by the name
+            if (smith_shard_glob(item, at + 2)) return true;
+        return false;
+    }
+    if (size >= 2 && item[size - 1] == ':' && item[size - 2] == ':') {
+        if (strncmp(name, item, size) == 0) return true;
+        for (const char *at = strstr(name, "::"); at != nullptr; at = strstr(at + 2, "::")) // bounded by the name
+            if (strncmp(at + 2, item, size) == 0) return true;
+        return false;
+    }
+    if (smith_shard_ends_with_part(name, strlen(name), item)) return true;
+    const char *last = nullptr;
+    for (const char *at = strstr(name, "::"); at != nullptr; at = strstr(at + 2, "::")) // bounded by the name
+        last = at;
+    return last != nullptr && smith_shard_ends_with_part(name, (size_t)(last - name), item);
+}
+
+static bool smith_shard_any(const char *name, const char *list) {
+    char item[256];
+    while (*list != '\0') { // bounded by the list
+        size_t length = strcspn(list, ",");
+        if (length > 0 && length < sizeof item) {
+            memcpy(item, list, length);
+            item[length] = '\0';
+            if (smith_shard_item(name, item)) return true;
+        }
+        list += length + (list[length] == ',' ? 1 : 0);
+    }
+    return false;
+}
+
+// macos_only in lib/smith/test.smith: the word `macos` in the name.
+static bool smith_shard_macos_only(const char *name) {
+    for (const char *at = strstr(name, "macos"); at != nullptr; at = strstr(at + 1, "macos")) { // bounded by the name
+        bool starts = at == name || at[-1] == '_' || at[-1] == ':';
+        bool ends = at[5] == '\0' || at[5] == '_' || at[5] == ':';
+        if (starts && ends) return true;
+    }
+    return false;
+}
+
+static bool smith_shard_selects(const SmithTestShard *shard, bool exact, const char *name) {
+    if (shard->macos != 0 && smith_shard_macos_only(name) != (shard->macos == 1)) return false;
+    if (shard->filter[0] == '\0') return true;
+    return exact ? strcmp(name, shard->filter) == 0 : smith_shard_any(name, shard->filter);
+}
+
+// Adds one `--test` value to the filter as parse_filter does: a bare `test_x` that names a test is `x`.
+static void smith_shard_add_filter(SmithTestShard *shard, const SmithTestFound *found, size_t count,
+                                   const char *value) {
+    char written[512];
+    const char *last = strrchr(value, ':');
+    const char *tail = last != nullptr ? last + 1 : value;
+    bool known = last != nullptr;
+    for (size_t i = 0; !known && strncmp(tail, "test_", 5) == 0 && i < count; i++) // bounded by the tests
+        known = strcmp(found[i].name, tail + 5) == 0;
+    if (strncmp(tail, "test_", 5) == 0 && tail[5] != '\0' && known && strlen(value) < sizeof written) {
+        snprintf(written, sizeof written, "%.*s%s", (int)(tail - value), value, tail + 5);
+        value = written;
+    }
+    size_t used = strlen(shard->filter);
+    size_t more = strlen(value);
+    size_t comma = used > 0 ? 1 : 0;
+    if (used + comma + more >= sizeof shard->filter) return;
+    if (comma == 1) shard->filter[used] = ',';
+    memcpy(shard->filter + used + comma, value, more + 1);
+}
+
+static bool smith_shard_parse_part(const char *text, size_t *index, size_t *count) {
+    char *slash = nullptr;
+    unsigned long first = strtoul(text, &slash, 10);
+    if (slash == text || *slash != '/' || slash[1] < '0' || slash[1] > '9') return false;
+    char *end = nullptr;
+    unsigned long second = strtoul(slash + 1, &end, 10);
+    if (*end != '\0' || first < 1 || first > second || second > 1000) return false;
+    *index = first;
+    *count = second;
+    return true;
+}
+
+// The options of the runner that choose the tests and the part, out of the arguments `smith test` was given. A
+// malformed one is the runner's to refuse: here it means no part.
+static void smith_shard_parse(SmithTestShard *shard, const SmithTestFound *found, size_t count,
+                              const char *const *args) {
+    *shard = (SmithTestShard){};
+    for (size_t i = 0; args[i] != nullptr; i++) { // bounded by smith_args
+        bool value = args[i + 1] != nullptr;
+        if (strcmp(args[i], "--macos-only") == 0) shard->macos = 1;
+        if (strcmp(args[i], "--skip-macos") == 0) shard->macos = 2;
+        if (value && strcmp(args[i], "--shard") == 0 &&
+            !smith_shard_parse_part(args[i + 1], &shard->index, &shard->count))
+            shard->index = shard->count = 0;
+        if (value && strcmp(args[i], "--costs") == 0) shard->costs = args[i + 1];
+        if (value && strcmp(args[i], "--test") == 0) smith_shard_add_filter(shard, found, count, args[i + 1]);
+    }
+}
+
+// The length of the file part of a test's name: `geometry::box_test::area` is in `geometry::box_test`; 0 for a name
+// with no `::` (file_length in lib/smith/test.smith).
+static size_t smith_shard_file_length(const char *name) {
+    size_t length = 0;
+    for (size_t at = 0; name[at] != '\0'; at++) // bounded by the name
+        if (name[at] == ':' && name[at + 1] == ':') length = at;
+    return length;
+}
+
+// The CPU seconds the --costs file gives each test of `chosen` (lines `cpu<TAB>seconds<TAB>name`), -1 for one it does
+// not name (read_costs in lib/smith/test.smith).
+static void smith_shard_costs(const SmithTestShard *shard, const SmithTestFound *found, const size_t *chosen,
+                              size_t chosen_count, double *cost) {
+    for (size_t i = 0; i < chosen_count; i++)
+        cost[i] = -1;
+    FILE *file = shard->costs != nullptr ? fopen(shard->costs, "r") : nullptr;
+    if (file == nullptr) return;
+    char line[512];
+    for (size_t guard = 0; guard < ((size_t)1 << 24) && fgets(line, sizeof line, file) != nullptr; guard++) {
+        char *seconds = strchr(line, '\t');
+        char *name = seconds != nullptr ? strchr(seconds + 1, '\t') : nullptr;
+        if (name == nullptr) continue;
+        name += 1;
+        name[strcspn(name, "\n")] = '\0';
+        for (size_t i = 0; i < chosen_count; i++)
+            if (strcmp(found[chosen[i]].name, name) == 0) cost[i] = strtod(seconds + 1, nullptr);
+    }
+    fclose(file);
+}
+
+// The part of each chosen test's file: the files, heaviest first, each to the part with the least so far
+// (assign_shards in lib/smith/test.smith). owner[i] is the part (0 based) of chosen test i.
+static void smith_shard_assign(const SmithTestShard *shard, const SmithTestFound *found, const size_t *chosen,
+                               size_t chosen_count, size_t *owner) {
+    size_t *leader = smith_alloc((chosen_count + 1) * sizeof *leader);
+    double *weight = smith_alloc((chosen_count + 1) * sizeof *weight);
+    double *cost = smith_alloc((chosen_count + 1) * sizeof *cost);
+    double *load = smith_alloc((shard->count + 1) * sizeof *load);
+    bool *done = smith_alloc((chosen_count + 1) * sizeof *done);
+    smith_shard_costs(shard, found, chosen, chosen_count, cost);
+    for (size_t i = 0; i < chosen_count; i++) { // bounded by the tests
+        const char *name = found[chosen[i]].name;
+        size_t length = smith_shard_file_length(name);
+        leader[i] = i;
+        weight[i] = 0;
+        done[i] = false;
+        for (size_t other = 0; length > 0 && other < i; other++) { // bounded by the tests
+            const char *earlier = found[chosen[other]].name;
+            if (smith_shard_file_length(earlier) != length || strncmp(earlier, name, length) != 0) continue;
+            leader[i] = other;
+            break;
+        }
+    }
+    for (size_t i = 0; i < chosen_count; i++)
+        weight[leader[i]] += cost[i] >= 0 ? cost[i] : smith_shard_cost_unknown;
+    for (size_t part = 0; part < shard->count; part++)
+        load[part] = 0;
+    for (size_t round = 0; round < chosen_count; round++) { // one file a round
+        size_t heaviest = chosen_count;
+        for (size_t i = 0; i < chosen_count; i++) // bounded by the tests
+            if (leader[i] == i && !done[i] && (heaviest == chosen_count || weight[i] > weight[heaviest])) heaviest = i;
+        if (heaviest == chosen_count) break;
+        size_t lightest = 0;
+        for (size_t part = 1; part < shard->count; part++) // bounded by the parts
+            if (load[part] < load[lightest]) lightest = part;
+        owner[heaviest] = lightest;
+        load[lightest] += weight[heaviest];
+        done[heaviest] = true;
+    }
+    for (size_t i = 0; i < chosen_count; i++)
+        owner[i] = owner[leader[i]];
+}
+
+// Which of the tests the part keeps: keep[i] is 1 for found[i] in part shard->index. Without a part, every test.
+static void smith_shard_keep(const SmithTestShard *shard, const SmithTestFound *found, size_t count, bool *keep) {
+    bool exact = false;
+    for (size_t i = 0; shard->filter[0] != '\0' && i < count; i++) // bounded by the tests
+        exact = exact || strcmp(found[i].name, shard->filter) == 0;
+    size_t *chosen = smith_alloc((count + 1) * sizeof *chosen);
+    size_t *owner = smith_alloc((count + 1) * sizeof *owner);
+    size_t chosen_count = 0;
+    for (size_t i = 0; i < count; i++) {
+        keep[i] = false;
+        if (smith_shard_selects(shard, exact, found[i].name)) chosen[chosen_count++] = i;
+    }
+    if (shard->count == 0) { // no part: the tests the options choose
+        for (size_t i = 0; i < chosen_count; i++)
+            keep[chosen[i]] = true;
+        return;
+    }
+    smith_shard_assign(shard, found, chosen, chosen_count, owner);
+    for (size_t i = 0; i < chosen_count; i++)
+        keep[chosen[i]] = owner[i] == shard->index - 1;
+}
+
 // The step that finds the tests: .inputs are the files, .outputs the prototypes (tests_list.h) and the table
-// (tests_list.c). It rewrites a file only when its bytes change, so the step is restat.
+// (tests_list.c). It rewrites a file only when its bytes change, so the step is restat. With a part in .args (the
+// runner's --shard, --costs, --test, --macos-only and --skip-macos), the table lists only the tests of that part; the
+// runner then knows its part is built in (smith_test_shard_index).
 static int smith_tests_scan(SmithRun *run) {
-    static SmithTestFound found[smith_tests_max];
+    SmithTestFound *found = smith_tests_found;
     size_t count = 0;
     SMITH_ASSERT(run->outputs[0] != nullptr && run->outputs[1] != nullptr);
     if (!smith_tests_find(run, found, &count)) return 1;
+    SmithTestShard *shard = smith_alloc(sizeof *shard);
+    smith_shard_parse(shard, found, count, run->args);
+    bool *keep = smith_alloc(count + 1);
+    smith_shard_keep(shard, found, count, keep);
+    size_t kept = 0;
+    for (size_t i = 0; shard->count > 0 && i < count; i++) // the part's tests, in order
+        if (keep[i]) found[kept++] = found[i];
+    if (shard->count > 0) count = kept;
     const char **prototypes = smith_new_list(count);
     const char **rows = smith_new_list(count);
     const char **thunks = smith_new_list(count);
@@ -3283,7 +3540,9 @@ static int smith_tests_scan(SmithRun *run) {
         "static const SmithTest smith_test_rows[] = {\n%s    {nullptr, nullptr, nullptr, nullptr},\n};\n"
         "const SmithTest *const smith_test_table = smith_test_rows;\n"
         "const size_t smith_test_count = sizeof smith_test_rows / sizeof "
-        "smith_test_rows[0] - 1;\n\n"
+        "smith_test_rows[0] - 1;\n"
+        // The part this table was built for (0 of 0: the whole suite), so the runner does not split it again.
+        "const size_t smith_test_shard_index = %zu;\nconst size_t smith_test_shard_count = %zu;\n\n"
         // The runner's way to the profile runtime when `smith test --changed` built it with the counters (issue #456):
         // compiler-rt's functions are hidden, so only code linked with them can name them.
         "#ifdef SMITH_PROFILING\n"
@@ -3295,7 +3554,8 @@ static int smith_tests_scan(SmithRun *run) {
         "#else\n"
         "const SmithProfile smith_profile = {nullptr, nullptr, nullptr};\n"
         "#endif\n",
-        base != nullptr ? base + 1 : run->outputs[0], smith_join(run->b, thunks, ""), smith_join(run->b, rows, ""));
+        base != nullptr ? base + 1 : run->outputs[0], smith_join(run->b, thunks, ""), smith_join(run->b, rows, ""),
+        shard->index, shard->count);
     smith_write(run->b, run->outputs[0], header);
     smith_write(run->b, run->outputs[1], table);
     return 0;
@@ -3389,6 +3649,72 @@ static size_t smith_tests_libraries(SmithBuild *b, const SmithTests *copy, const
     return used;
 }
 
+// The runner's options that choose the tests and the part, out of the arguments of `smith test`, for the scan step's
+// .args (it sees nothing else of the build); empty without a --shard.
+static const char *const *smith_tests_shard_args(SmithBuild *b) {
+    const char *const *given = smith_args(b);
+    const char **kept = smith_new_list(smith_count(given));
+    size_t used = 0;
+    bool sharded = false;
+    for (size_t i = 0; given[i] != nullptr; i++) { // bounded by smith_args
+        sharded = sharded || strcmp(given[i], "--shard") == 0;
+        bool flag = strcmp(given[i], "--macos-only") == 0 || strcmp(given[i], "--skip-macos") == 0;
+        bool option =
+            strcmp(given[i], "--shard") == 0 || strcmp(given[i], "--costs") == 0 || strcmp(given[i], "--test") == 0;
+        if (flag) kept[used++] = given[i];
+        if (option && given[i + 1] != nullptr) {
+            kept[used++] = given[i];
+            kept[used++] = given[++i];
+        }
+    }
+    kept[used] = nullptr;
+    return sharded ? kept : smith_list(b, nullptr);
+}
+
+// The sources the build compiles: with a part, the files that hold one of its tests and the files with no test of their
+// own (the helpers); else all.
+static const char *const *smith_tests_shard_sources(SmithBuild *b, const char *const *sources,
+                                                    const char *const *args) {
+    if (args[0] == nullptr) return sources;
+    SmithRun probe = {.b = b, .inputs = sources};
+    size_t count = 0;
+    if (!smith_tests_find(&probe, smith_tests_found, &count)) return sources; // the scan step reports it
+    SmithTestShard *shard = smith_alloc(sizeof *shard);
+    smith_shard_parse(shard, smith_tests_found, count, args);
+    if (shard->count == 0) return sources;
+    bool *keep = smith_alloc(count + 1);
+    smith_shard_keep(shard, smith_tests_found, count, keep);
+    const char **kept = smith_new_list(smith_count(sources));
+    size_t used = 0;
+    for (size_t i = 0; sources[i] != nullptr; i++) { // bounded by the sources
+        bool has_tests = false;
+        bool wanted = false;
+        for (size_t j = 0; j < count; j++) { // bounded by the tests
+            if (strcmp(smith_tests_found[j].file, sources[i]) != 0) continue;
+            has_tests = true;
+            wanted = wanted || keep[j];
+        }
+        if (wanted || !has_tests) kept[used++] = sources[i];
+    }
+    kept[used] = nullptr;
+    return kept;
+}
+
+// The step that finds the tests (smith_tests_scan), over every file.
+static void smith_tests_declare_scan(SmithBuild *b, const SmithTests *copy, const char *const *shard_args,
+                                     const char *list_header, const char *list_table) {
+    SmithStep scan = {
+        .run = smith_tests_scan,
+        .inputs = copy->sources, // every file: the part of a test depends on all of them
+        .args = shard_args,
+        .always = shard_args[0] != nullptr, // the --costs file may have changed; restat keeps an equal table
+        .outputs = smith_list(b, list_header, list_table, nullptr),
+        .description = "find the tests",
+        .restat = true,
+    };
+    smith_step(b, &scan);
+}
+
 void smith_tests(SmithBuild *b, SmithTests *tests) {
     SMITH_ASSERT(b != nullptr && tests != nullptr);
     smith_tests_check(tests);
@@ -3404,20 +3730,18 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     const char *folder = slash != nullptr ? smith_text("%.*s", (int)(slash - copy.output + 1), copy.output) : "";
     const char *list_header = smith_text("%stests_list.h", folder);
     const char *list_table = smith_text("%stests_list.c", folder);
-    SmithStep scan = {
-        .run = smith_tests_scan,
-        .inputs = copy.sources,
-        .outputs = smith_list(b, list_header, list_table, nullptr),
-        .description = "find the tests",
-        .restat = true,
-    };
-    smith_step(b, &scan);
+    const char *const *shard_args = smith_tests_shard_args(b);
+    smith_tests_declare_scan(b, &copy, shard_args, list_header, list_table);
+    const char *const *every_source = copy.sources;
+    copy.sources = smith_tests_shard_sources(b, copy.sources, shard_args);
     const char *const *test_flags = smith_cat(
         b, copy.flags, smith_list(b, "-include", list_header, "-Werror=missing-prototypes", nullptr), nullptr);
     size_t count = smith_count(copy.sources);
     // The libraries the test files import or include, and those they use, besides the five below: found as smith_app
     // finds a program's, so a test of smith::inflate links it with nothing named.
-    const char *const *imported = smith_tests_imported(b, copy.sources);
+    // Of every file, not the part's: the project's own objects (.objects) may need a library no file of the part
+    // imports.
+    const char *const *imported = smith_tests_imported(b, every_source);
     const char **objects =
         smith_new_list(count + 7 + smith_app_libraries_max + smith_count((const char *const *)tests->objects));
     size_t used = 0;
