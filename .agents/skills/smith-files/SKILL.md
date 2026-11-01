@@ -25,6 +25,7 @@ export Usize bytes_in(const char path[:], arena::Arena *a) {
 | Call | Does |
 | --- | --- |
 | `read_file(path)` / `write_file(path, data, mode)` | the whole file as `U8[:]`; write returns the bytes written. Modes: `Replace`, `Append`, `New` (`Exists` if taken), `Atomic` (`<path>.tmp` then rename) |
+| `read_line(file, buffer)` | the next line into `buffer`: `Option(Usize)` of its length without the `\n`, `none` at the end of the file, `LineTooLong` if it does not fit (never cut) |
 | `open(path, mode)` `read(file, buffer)` `write(file, data)` `close(file)` | by pieces; `mode` is `Read`, `Replace`, `Append` or `New`; read fills the buffer and returns the count (0 is the end); close returns an `Option(Error)` |
 | `info(path)` / `list(folder)` | `Info{folder, writable, size}`; entries sorted by name (name, folder, size), without `.` and `..` |
 | `make_folder(path)` / `remove(path)` / `move(from, to)` | `mkdir -p`; delete a file (a folder is `Denied`); rename |
