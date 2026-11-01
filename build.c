@@ -2053,6 +2053,8 @@ static int build_llvm_run(SmithRun *run) {
     return smith_run_program(run, done, nullptr);
 }
 
+static int build_llvm_source(SmithRun *run);
+
 static void build_llvm(SmithBuild *b) {
     SmithStep llvm = {
         .run = build_llvm_run,
@@ -2088,6 +2090,13 @@ static void build_llvm(SmithBuild *b) {
         .description = "publishing the LLVM pack as the release llvm-<name>-<os>-<arch>",
     };
     smith_task(b, "llvm-publish", &publish);
+    SmithStep llvm_source = {
+        .run = build_llvm_source,
+        .args =
+            smith_list(b, smith_option_value(b, "source", ".smith/llvm-source", "llvm-source: the folder"), nullptr),
+        .description = "fetching the pinned LLVM sources that the patches touch (sparse git)",
+    };
+    smith_task(b, "llvm-source", &llvm_source);
     SmithStep enzyme = {
         .run = build_enzyme_only,
         .description = "building Enzyme (static, against the LLVM install)",
@@ -2096,6 +2105,26 @@ static void build_llvm(SmithBuild *b) {
     };
     smith_step(b, &enzyme);
     smith_alias(b, "enzyme", enzyme.outputs);
+}
+
+// `smith build llvm-source` (#1168): the pinned LLVM sources that smith's patches touch, for a session that has none,
+// to `git apply --check` a patch and to search callers before CI builds a pack. A sparse, blobless, depth-1 git
+// checkout of the tag (about 170 MB and 10 seconds, against the 150 MB archive that `smith build llvm` unpacks to more
+// than a gigabyte), into -Dsource (default .smith/llvm-source). Run again, it only refreshes the sparse folders.
+static int build_llvm_source(SmithRun *run) {
+    SmithBuild *b = run->b;
+    const char *out = run->args[0];
+    if (access(smith_fmt(b, "%s/.git", out), F_OK) != 0) {
+        int status = build_exec(smith_list(b, "git", "-c", "advice.detachedHead=false", "clone", "-q", "--depth", "1",
+                                           "--filter=blob:none", "--sparse", "--branch", "llvmorg-23.1.3",
+                                           "https://github.com/llvm/llvm-project", out, nullptr));
+        if (status != 0) return status;
+    }
+    int status =
+        build_exec(smith_list(b, "git", "-C", out, "sparse-checkout", "set", "clang/lib", "clang/include",
+                              "llvm/include", "clang-tools-extra/clangd", "compiler-rt/lib/sanitizer_common", nullptr));
+    if (status == 0) printf("LLVM 23.1.3 sources in %s\n", out);
+    return status;
 }
 
 // `smith build friction -Dsince=2026-10-24` (AGENTS.md, How to work): the friction sections of merged pull requests,
