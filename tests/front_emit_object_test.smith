@@ -9,6 +9,7 @@ import front::ast;
 import front::emit;
 import front::emit_jit;
 import front::emit_object;
+import front::emit_state as state;
 import std::arena;
 import std::format;
 import std::mem;
@@ -18,6 +19,8 @@ import <llvm-c/Core.h>;
 import <stdio.h>;
 import <stdlib.h>;
 import <string.h>;
+import <sys/stat.h>;
+import <unistd.h>;
 
 // ---------------------------------------------------------------------------------------------------------------
 // The tree: `export I32 add(I32 a, I32 b) { return a + b; }` in module front::test
@@ -82,15 +85,17 @@ export void test_front_emit_object_links_with_a_c_file_and_runs() {
     test::check_equal(started == .ok, true);
     if (started != .ok) return;
     host = started.ok;
-    char folder[] = "/tmp/front_emit_object_XXXXXX";
-    test::check_equal(c::mkdtemp(folder) != nullptr, true);
+    // A folder of this process's own, named by its id (mkdtemp has no idiom in smith's C table).
+    const char *folder = format::push("/tmp/front_emit_object_", (I64)c::getpid()).data;
+    test::check_equal(c::mkdir(folder, 0o700), 0);
     c::LLVMContextRef context = c::LLVMContextCreate();
     c::LLVMModuleRef ir = emit_add(context, host.target);
     emit_object::ObjectOptions options = {.target = host.target, .optimization = 2};
-    Str object = format::push(folder, "/add.o");
+    Str object = state::msg(format::push(folder, "/add.o"));
     emit_object::WriteResult written = emit_object::write(ir, options, object);
     test::check_equal(written == .ok, true);
-    if (written == .error) test::check_equal(written.error.message, "");
+    if (written == .error)
+        test::check_equal(countof(written.error.message), 0); // the message is lost; a failure shows its size
     c::LLVMDisposeModule(ir);
     c::LLVMContextDispose(context);
     Bool apple = contains(host.target.triple.data, "apple");

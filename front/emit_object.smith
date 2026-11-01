@@ -21,15 +21,12 @@ export struct ObjectOptions {
     I32 optimization;    // 0..3, LLVMCodeGenOptLevel
 };
 
-export typedef Result(Str, emit::Error) WriteResult;
-
-static emit::Error error_of(auto... args) {
-    return (emit::Error){.message = state::msg(format::push(args...))};
-}
+export typedef typeof(Str) Path; // a typedef first: a slice named in Result(...) directly is a known gap
+export typedef Result(Path, emit::Error) WriteResult;
 
 // An LLVM message (consumed: LLVM's string is disposed of) as an Error in the allocator in force.
 static emit::Error llvm_error(Str what, char *text) {
-    emit::Error error = error_of(what, ": ", (const char *)text);
+    emit::Error error = {.message = state::msg(format::push(what, ": ", (const char *)text))};
     c::LLVMDisposeMessage(text);
     return error;
 }
@@ -81,8 +78,9 @@ export WriteResult write(c::LLVMModuleRef module, ObjectOptions options, Str pat
     defer c::LLVMDisposeMessage(wanted);
     const char *have = c::LLVMGetDataLayoutStr(module);
     if (c::strcmp(wanted, have) != 0) {
-        return {.error = error_of("the module was emitted for another target: its data layout is \"", have,
-                                  "\", the machine's is \"", (const char *)wanted, "\"")};
+        Str message = state::msg(format::push("the module was emitted for another target: its data layout is \"", have,
+                                              "\", the machine's is \"", (const char *)wanted, "\""));
+        return {.error = (emit::Error){.message = message}};
     }
     if (c::LLVMTargetMachineEmitToFile(machine, module, file, c::LLVMObjectFile, &text) != 0) {
         return {.error = llvm_error("cannot write the object", text)};
