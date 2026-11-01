@@ -40,6 +40,9 @@ static emit::Error message_of(c::LLVMErrorRef error) {
 
 // The check functions emitted code calls (std::contract's fail_cast and fail_index), defined as symbols of the JIT at
 // their addresses in this process: nothing exports them for a lookup by name.
+// Exported (bit 0) and callable (bit 2), the LLVMJITSymbolGenericFlags written as the unsigned byte the field is.
+constexpr U8 exported_callable = 5;
+
 static c::LLVMErrorRef define_checks(c::LLVMOrcLLJITRef handle) {
     c::LLVMOrcCSymbolMapPair pairs[2] = {};
     Usize addresses[2] = {(Usize)contract::fail_cast, (Usize)contract::fail_index};
@@ -47,7 +50,7 @@ static c::LLVMErrorRef define_checks(c::LLVMOrcLLJITRef handle) {
     for (Usize i = 0; i < 2; i++) {
         pairs[i].Name = c::LLVMOrcLLJITMangleAndIntern(handle, names[i]);
         pairs[i].Sym.Address = addresses[i];
-        pairs[i].Sym.Flags.GenericFlags = c::LLVMJITSymbolGenericFlagsExported | c::LLVMJITSymbolGenericFlagsCallable;
+        pairs[i].Sym.Flags.GenericFlags = exported_callable;
     }
     return c::LLVMOrcJITDylibDefine(c::LLVMOrcLLJITGetMainJITDylib(handle), c::LLVMOrcAbsoluteSymbols(pairs, 2));
 }
