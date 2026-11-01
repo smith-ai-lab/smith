@@ -36,8 +36,7 @@ static Str gap_a1() {
            "error-type-value-import/main.smith\n";
 }
 static Str gap_a2() {
-    return "tuple-modules/geo/b.smith\n"
-           "type-value-import/main.smith\n";
+    return "type-value-import/main.smith\n";
 }
 static Str removed_b() {
     return "type-value-declarator/main.smith\n" // C's function-pointer type as a type value: `Fn(F)` is the spelling
@@ -71,7 +70,6 @@ static Str removed_b() {
 
 static Str undecided_c() {
     return "attribute-c-names/log/fmt.smith\n"
-           "constexpr-import-header/shapes.smith\n"
            "constexpr-import-result-type/main.smith\n"
            "enum-body-result-generic/main.smith\n"
            "enum-type-function-export/main.smith\n"
@@ -89,7 +87,6 @@ static Str undecided_c() {
            "error-errdefer-plain/main.smith\n"
            "error-generic-return-type/main.smith\n"
            "error-slice-pointer-discards/main.smith\n"
-           "error-tuple-generic/pairs.smith\n"
            "error-type-function-pointee/main.smith\n"
            "error-type-value-slice-bounds/main.smith\n"
            "exported-constexpr-unread/main.smith\n"
@@ -98,7 +95,6 @@ static Str undecided_c() {
            "function-pointer-typedef-result/main.smith\n"
            "generic-bare-type-then-code/num.smith\n"
            "generic-bare-type/num.smith\n"
-           "generic-fields-values/walk.smith\n"
            "generic-pack-expand/expand.smith\n"
            "generic-return-type/main.smith\n"
            "generic-slice-option-typedef/cursor.smith\n"
@@ -115,9 +111,6 @@ static Str undecided_c() {
            "str-run/main.smith\n"
            "try-generic/main.smith\n"
            "try-return-value/main.smith\n"
-           "tuple-c/geo/a.smith\n"
-           "tuple-import-index/geo/a.smith\n"
-           "tuple-modules/geo/a.smith\n"
            "type-function-after-c-name/marks.smith\n"
            "type-function-pointee/leaves.smith\n"
            "type-function-private/shapes.smith\n"
