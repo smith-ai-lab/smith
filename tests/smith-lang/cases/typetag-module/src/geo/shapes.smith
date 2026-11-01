@@ -1,7 +1,8 @@
 module geo::shapes;
 
 export struct Point {
-    F32 x, y;
+    F32 x;
+    F32 y;
 };
 
 export struct Node {
