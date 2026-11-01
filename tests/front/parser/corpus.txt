@@ -142,7 +142,7 @@ error-keyword-after-type/shapes.smith: error: expected `)`, found `double` (8:21
 error-keyword-function/foo.smith: error: expected a name, found `double` (3:12)
 error-keyword-module/shapes.smith: error: expected a field name, found `char` (5:9)
 error-keyword-plain/main.smith: C, out of scope
-error-lambda-capture-generic/main.smith: error: expected `)`, found `(` (3:17)
+error-lambda-capture-generic/main.smith: ok
 error-lambda-capture-no-module/main.smith: C, out of scope
 error-lambda-capture-not-local/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (8:9)
 error-lambda-capture-to-pointer/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (8:9)
@@ -150,10 +150,10 @@ error-lambda-captures-local/main.smith: error: C's function-pointer declarator i
 error-lambda-generic-nested/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (5:9)
 error-lambda-generic-return-type/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (5:9)
 error-lambda-generic-runtime-capture/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (3:13)
-error-lambda-param-count/main.smith: error: expected `)`, found `(` (3:17)
-error-lambda-param-untyped/main.smith: error: expected `)`, found `(` (3:17)
+error-lambda-param-count/main.smith: ok
+error-lambda-param-untyped/main.smith: error: a lambda parameter needs a type: write `auto a` (8:21)
 error-lambda-returns-disagree/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (4:9)
-error-lambda-wrong-signature/main.smith: error: expected `)`, found `(` (3:17)
+error-lambda-wrong-signature/main.smith: ok
 error-main-io-make/main.smith: ok
 error-main-io-make/std/io.smith: ok
 error-module-first/late.smith: error: expected a type, found `module` (2:1)
@@ -460,10 +460,10 @@ lambda-generic-table/main.smith: error: C's function-pointer declarator is not S
 lambda-generic-type/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (5:13)
 lambda-nested/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (6:9)
 lambda-no-parameters/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (6:9)
-lambda-param/main.smith: error: expected `)`, found `(` (10:17)
+lambda-param/main.smith: ok
 lambda-param-element/main.smith: ok
-lambda-param-element/order.smith: error: expected `)`, found `(` (6:40)
-lambda-param-two/main.smith: error: expected `)`, found `(` (5:22)
+lambda-param-element/order.smith: ok
+lambda-param-two/main.smith: ok
 lambda-plain/main.smith: C, out of scope
 lambda-qsort/main.smith: ok
 lambda-static/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (5:12)
@@ -612,4 +612,4 @@ value-query-plain/main.smith: C, out of scope
 value-query-windows/size.smith: ok
 void-pointer-cast/main.smith: ok
 void-pointer-plain/main.smith: C, out of scope
-total 614, ok 334, error 156, C 124, skipped 0
+total 614, ok 340, error 150, C 124, skipped 0
