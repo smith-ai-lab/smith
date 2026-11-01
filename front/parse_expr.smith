@@ -26,6 +26,8 @@
 //   a lambda   `[x, y](I32 a, I32 b) -> I32 { ... }`, `[] { ... }`, `[](I32 a) { ... }`: a capture is a name, a
 //              parameter a type, `auto` or a concept then a name (a lone name is an error that says to write `auto a`),
 //              the body is read by `parse::statement`
+//   _Generic   `_Generic(x, T: a, default: b)`: a `generic_select` of the control and its associations (a type or
+//              `default`, then a value)
 //   binary     `* / %`, `+ -`, `<< >>`, `< > <= >=`, `== !=`, `&`, `^`, `|`, `&&`, `||` left associative; `?:` and
 //              `= += -= *= /= %= <<= >>= &= ^= |=` right associative
 //
@@ -559,6 +561,52 @@ static ast::Expr *name_or_type(parse::Parser *p) {
     return make(path.span, {.name = {.path = path}});
 }
 
+// Takes a token of the kind, or records the error and says false.
+static Bool expect_ok(parse::Parser *p, lex::TokenKind kind, Str what) {
+    Usize before = countof(p->errors);
+    _ = parse::expect(p, kind, what);
+    return countof(p->errors) == before;
+}
+
+// One association of `_Generic`: `T: value` or `default: value`; the value is null after an error.
+static ast::GenericAssoc generic_assoc(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    ast::GenericAssoc assoc = {};
+    if (parse::at(p, lex::kw_default)) {
+        parse::advance(p);
+    } else {
+        assoc.type = parse::type(p);
+        if (assoc.type == nullptr) return assoc;
+    }
+    if (!expect_ok(p, lex::colon, "`:` after the type of the association")) return assoc;
+    assoc.value = parse::expression(p);
+    assoc.span = parse::span_from(p, start);
+    return assoc;
+}
+
+// `_Generic(control, T: a, default: b)`: the position is at the keyword.
+static ast::Expr *generic_select(parse::Parser *p) {
+    U32 start = parse::advance(p).span.start;
+    if (!expect_ok(p, lex::left_paren, "`(` after `_Generic`")) return nullptr;
+    ast::Expr *control = parse::expression(p);
+    if (control == nullptr) return nullptr;
+    if (!parse::at(p, lex::comma)) {
+        parse::error(p, parse::peek(p).span,
+                     "`_Generic` needs an association after the controlling expression: write `, T: value` or `, "
+                     "default: value`");
+        return nullptr;
+    }
+    ast::GenericAssoc assocs[:] = {};
+    while (parse::accept(p, lex::comma)) {
+        ast::GenericAssoc next = generic_assoc(p);
+        if (next.value == nullptr) return nullptr;
+        assocs = mem::realloc(assocs, countof(assocs) + 1);
+        assocs[countof(assocs) - 1] = next;
+    }
+    if (!expect_ok(p, lex::right_paren, "`)` to end the `_Generic`")) return nullptr;
+    return make(parse::span_from(p, start), {.generic_select = {.control = control, .assocs = assocs}});
+}
+
 // A primary expression at the position, or null after an error. Parentheses are the caller's.
 static ast::Expr *primary(parse::Parser *p) {
     lex::Token token = parse::peek(p);
@@ -584,6 +632,8 @@ static ast::Expr *primary(parse::Parser *p) {
         return initializer_list(p, nullptr, token.span.start);
     case lex::left_bracket:
         return lambda(p);
+    case lex::kw_generic:
+        return generic_select(p);
     default:
         return name_or_type(p);
     }

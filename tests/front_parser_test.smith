@@ -49,7 +49,6 @@ static Str gap_a1() {
 static Str gap_a2() {
     return "generic-for-range/reflect.smith\n"
            "generic-private-names/scale.smith\n"
-           "generic-slice-restrict/pair.smith\n"
            "module-basic/shapes/area.smith\n"
            "module-enum-c-names/mix/modes.smith\n"
            "tuple-modules/geo/b.smith\n"

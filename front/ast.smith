@@ -226,6 +226,13 @@ export struct Param {
     Span span;
 };
 
+// One association of `_Generic`: `T: value`, or `default: value` (a null type).
+export struct GenericAssoc {
+    TypeExpr *type;
+    Expr *value;
+    Span span;
+};
+
 export typedef enum {
     struct {
         U64 value;
@@ -321,6 +328,10 @@ export typedef enum {
     struct {
         Expr *pattern;
     } expand; // `pattern...` as an argument or a list item; `rest...` expands the name `rest`
+    struct {
+        Expr *control;
+        GenericAssoc assocs[:];
+    } generic_select; // C's `_Generic(control, T: a, default: b)`
 } ExprKind;
 
 export struct Expr {
@@ -819,6 +830,7 @@ typedef enum {
     SwitchCase *switch_case;
     Attribute *attribute;
     Initializer *initializer;
+    GenericAssoc *generic_assoc;
     Designator *designator;
     struct {
         Text label;
@@ -951,6 +963,11 @@ static void expr_children_more(Items *items, Expr *e) {
     if (e->kind == .expand) {
         add_expr(items, e->kind.expand.pattern, false);
     }
+    if (e->kind == .generic_select) {
+        add_expr(items, e->kind.generic_select.control, false);
+        for (Usize i = 0; i < countof(e->kind.generic_select.assocs); i++)
+            add(items, {.generic_assoc = &e->kind.generic_select.assocs[i]});
+    }
 }
 
 // The children of an expression.
@@ -1007,6 +1024,7 @@ static void expr_children(Items *items, Expr *e) {
     case .try_expr:
     case .reflect_member:
     case .expand:
+    case .generic_select:
         expr_children_more(items, e);
         break;
     }
@@ -1193,6 +1211,10 @@ static void other_children(Items *items, Node node) {
     case .attribute:
         add_exprs(items, node.attribute->args);
         break;
+    case .generic_assoc:
+        add_type(items, node.generic_assoc->type, false);
+        add_expr(items, node.generic_assoc->value, false);
+        break;
     case .initializer:
         for (Usize i = 0; i < countof(node.initializer->designators); i++)
             add(items, {.designator = &node.initializer->designators[i]});
@@ -1375,6 +1397,9 @@ static void expr_head_more(Output *text, Expr *e) {
     if (e->kind == .expand) {
         put(text, "expand");
     }
+    if (e->kind == .generic_select) {
+        put(text, "generic_select");
+    }
 }
 
 // The head of an expression: its kind and scalars, without the parentheses.
@@ -1431,6 +1456,7 @@ static void expr_head(Output *text, Expr *e) {
     case .try_expr:
     case .reflect_member:
     case .expand:
+    case .generic_select:
         expr_head_more(text, e);
         break;
     }
@@ -1626,6 +1652,9 @@ static void other_head(Output *text, Node node) {
         put(text, "attribute ");
         put_path(text, node.attribute->name);
         break;
+    case .generic_assoc:
+        put(text, pick(node.generic_assoc->type == nullptr, "default", "association"));
+        break;
     case .initializer:
         put(text, "initializer");
         break;
@@ -1686,6 +1715,7 @@ static Bool breaks_line(Node node) {
     case .field:
     case .enumerator:
     case .attribute:
+    case .generic_assoc:
     case .initializer:
     case .designator:
     case .typed:
