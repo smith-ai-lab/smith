@@ -17,7 +17,6 @@ concurrency:
 
 permissions:
   contents: read
-  actions: write # `gh run cancel`: the first failing job ends the run
 
 env:
   GH_REPO: ${{ github.repository }}
@@ -156,10 +155,6 @@ jobs:
       - uses: ./.github/actions/pack-smith
         with:
           name: macos-26
-      - name: Fail fast
-        if: failure()
-        run: gh run cancel ${{ github.run_id }}
-
   mechanical:
     # fmt, docs, lint and the proofs of the project (the stages of `smith check` that are not tests)
     needs: [changes, build]
@@ -196,10 +191,6 @@ jobs:
             fi
           done
           exit $failed
-      - name: Fail fast
-        if: failure()
-        run: gh run cancel ${{ github.run_id }}
-
   test:
     # the macOS-only tests (`smith test --macos-only`, 3 of them, one part), on the Mac with the build of this run
     needs: [changes, build]
@@ -259,7 +250,7 @@ jobs:
           # a failure names its test: the line `FAIL <name>` of the runner, as an annotation and in the summary
           if [ "$rc" -ne 0 ]; then
             # each failed test's name and the lines under it (where the check failed, its error), kept for the
-            # `Fail fast` step, which prints them last, before it cancels the other shards
+            # `Failed tests` step, which prints them last
             grep -hE -A6 '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" 2>/dev/null | grep -vE '^--$' | head -n 80 >"$RUNNER_TEMP/failed.txt" || true
             { echo '```'; cat "$RUNNER_TEMP/failed.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
             grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 20 |
@@ -277,15 +268,14 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
-      - name: Fail fast
+      - name: Failed tests
         if: failure()
-        # the failed tests are the last lines of this shard's log (#1086): the run then shows only cancelled jobs
+        # the failed tests are the last lines of this shard's log (#1086); the other shards run on (#1139)
         run: |
           if [ -s "$RUNNER_TEMP/failed.txt" ]; then
-            echo "FAILED TESTS of this shard (the other shards are cancelled):"
+            echo "FAILED TESTS of this shard:"
             cat "$RUNNER_TEMP/failed.txt"
           fi
-          gh run cancel ${{ github.run_id }}
 
   test-linux:
     # Linux carries the tests (required): 6 hosted shards of `--skip-macos`, each builds smith itself (a hosted
@@ -334,7 +324,7 @@ jobs:
           } >>"$GITHUB_STEP_SUMMARY"
           if [ "$rc" -ne 0 ]; then
             # each failed test's name and the lines under it (where the check failed, its error), kept for the
-            # `Fail fast` step, which prints them last, before it cancels the other shards
+            # `Failed tests` step, which prints them last
             grep -hE -A6 '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" 2>/dev/null | grep -vE '^--$' | head -n 80 >"$RUNNER_TEMP/failed.txt" || true
             { echo '```'; cat "$RUNNER_TEMP/failed.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
             grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 20 |
@@ -351,15 +341,14 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
-      - name: Fail fast
+      - name: Failed tests
         if: failure()
-        # the failed tests are the last lines of this shard's log (#1086): the run then shows only cancelled jobs
+        # the failed tests are the last lines of this shard's log (#1086); the other shards run on (#1139)
         run: |
           if [ -s "$RUNNER_TEMP/failed.txt" ]; then
-            echo "FAILED TESTS of this shard (the other shards are cancelled):"
+            echo "FAILED TESTS of this shard:"
             cat "$RUNNER_TEMP/failed.txt"
           fi
-          gh run cancel ${{ github.run_id }}
   docs:
     # a change of the README, AGENTS.md, knowledge/ or the skills only: the docs check and the tests that read them
     # (a change that also touches code runs the full check, whose parts include both)
@@ -383,13 +372,9 @@ jobs:
         run: |
           "$SMITH" docs
           "$SMITH" test --test readme_test,skills_test
-      - name: Fail fast
-        if: failure()
-        run: gh run cancel ${{ github.run_id }}
-
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
-    # do not count against it. It runs when a job failed too (the failing job cancels the run): red at once.
+    # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
     needs: [changes, pack, build, mechanical, test, test-linux, docs]
     if: always()
     runs-on: ubuntu-latest
