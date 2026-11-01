@@ -43,6 +43,7 @@ import std::slice;
 typedef ast::DeclRef DeclRefList[:];
 typedef ast::ExprRef ExprRefList[:];
 typedef ast::Param ParamList[:];
+typedef ast::Identifier IdentifierList[:];
 typedef ast::FieldDecl FieldList[:];
 typedef ast::Enumerator EnumeratorList[:];
 
@@ -50,6 +51,7 @@ typedef ast::Enumerator EnumeratorList[:];
 struct Prefixes {
     ast::Attribute attributes[:];
     Bool exported;
+    Bool is_pub;
     Bool is_static;
     Bool is_extern;
     Bool is_inline;
@@ -146,6 +148,66 @@ static void recover(parse::Parser *p) {
             return;
         }
         parse::advance(p);
+    }
+}
+
+// Whether the token just taken ends its line.
+static Bool line_ended(const parse::Parser *p) {
+    return p->position > 0 && p->tokens[p->position - 1].line_break;
+}
+
+// Skips to the end of the line of a declaration in smith's own syntax (the line break after a token outside any `{ }`),
+// or up to a `}` that closes something outside it.
+static void recover_line(parse::Parser *p) {
+    Usize depth = 0;
+    if (line_ended(p)) return;
+    while (!parse::at(p, lex::end_of_file)) {
+        lex::Token token = parse::peek(p);
+        if (token.kind == lex::right_brace && depth == 0) return;
+        if (token.kind == lex::left_brace) depth += 1;
+        if (token.kind == lex::right_brace) depth -= 1;
+        parse::advance(p);
+        if (token.line_break && depth == 0) return;
+    }
+}
+
+// The end of a declaration, field or enumerator in smith's own syntax: a line break (or the `}` or the end of the file
+// that follows it). A `;` or a `,` is an error with a fix that removes it; anything else on the line is an error.
+static void end_line(parse::Parser *p, Str what) {
+    lex::Token token = parse::peek(p);
+    if (token.kind == lex::semicolon || token.kind == lex::comma) {
+        Str mark = token.kind == lex::semicolon ? ";" : ",";
+        char message[:] = format::push("a ", what, " ends with the line, not `", mark, "`: remove it");
+        parse::Edits edits = mem::alloc_slice(parse::Edit, 1);
+        Str nothing = "";
+        edits[0] = (parse::Edit){.span = token.span, .text = nothing};
+        parse::error_fix(p, token.span, message, edits);
+        parse::advance(p);
+        return;
+    }
+    if (token.kind == lex::right_brace || token.kind == lex::end_of_file || line_ended(p)) {
+        return;
+    }
+    char message[:] =
+        format::push("a ", what, " is one line: expected a line break after it, found `", parse::text(p, token), "`");
+    parse::error(p, token.span, message);
+    recover_line(p);
+}
+
+static void skip_braces(parse::Parser *p);
+
+// Skips to the end of the head of a function that went wrong, and the body when there is one.
+static void skip_new_function(parse::Parser *p) {
+    Usize depth = 0;
+    while (!parse::at(p, lex::end_of_file)) {
+        if (depth == 0 && parse::at(p, lex::left_brace)) {
+            skip_braces(p);
+            return;
+        }
+        lex::Token token = parse::advance(p);
+        if (token.kind == lex::left_paren) depth += 1;
+        if (token.kind == lex::right_paren && depth > 0) depth -= 1;
+        if (token.line_break && depth == 0 && !parse::at(p, lex::left_brace)) return;
     }
 }
 
@@ -320,6 +382,38 @@ static void parse_attribute_group(parse::Parser *p, Prefixes *out) {
     parse::expect(p, lex::right_bracket, "`]`");
 }
 
+// The attribute name after `@`: a name, or a keyword that is also an attribute (`@inline`).
+static Bool at_attribute_name(const parse::Parser *p) {
+    lex::TokenKind kind = parse::peek(p).kind;
+    return is_name(kind) || lex::is_keyword(kind);
+}
+
+// One `@name` or `@name(args)` (smith's own spelling; the position is at the `@`). The names carry no namespace.
+static void parse_at_attribute(parse::Parser *p, Prefixes *out) {
+    U32 start = parse::advance(p).span.start;
+    ast::Attribute attribute = {};
+    if (!at_attribute_name(p)) {
+        parse::error(p, parse::peek(p).span, "an attribute has a name: write `@inline` or `@c_name(\"f\")`");
+        return;
+    }
+    lex::Token name = parse::advance(p);
+    attribute.name.segments = mem::alloc_slice(ast::Identifier, 1);
+    attribute.name.segments[0] = (ast::Identifier){.text = parse::text(p, name), .span = name.span};
+    attribute.name.span = name.span;
+    if (parse::accept(p, lex::left_paren)) {
+        while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
+            ast::Expr *argument = parse::expression(p);
+            if (argument == nullptr) break;
+            attribute.args = push_expr(attribute.args, argument);
+            if (!parse::accept(p, lex::comma)) break;
+        }
+        parse::expect(p, lex::right_paren, "`)` after the attribute's arguments");
+    }
+    attribute.span = parse::span_from(p, start);
+    out->attributes = mem::realloc(out->attributes, countof(out->attributes) + 1);
+    out->attributes[countof(out->attributes) - 1] = attribute;
+}
+
 static Bool at_attribute(const parse::Parser *p) {
     return parse::at(p, lex::left_bracket) && parse::peek_at(p, 1).kind == lex::left_bracket;
 }
@@ -329,6 +423,9 @@ static Bool take_prefix_keyword(Prefixes *pre, lex::TokenKind kind) {
     switch (kind) {
     case lex::kw_export:
         pre->exported = true;
+        return true;
+    case lex::kw_pub:
+        pre->is_pub = true;
         return true;
     case lex::kw_static:
         pre->is_static = true;
@@ -359,6 +456,10 @@ static Prefixes parse_prefixes(parse::Parser *p) {
             parse_attribute_group(p, &pre);
             continue;
         }
+        if (kind == lex::at) {
+            parse_at_attribute(p, &pre);
+            continue;
+        }
         if (reject_gnu_spelling(p)) continue;
         if (!take_prefix_keyword(&pre, kind)) break;
         parse::advance(p);
@@ -370,6 +471,7 @@ static ast::Decl *make(const parse::Parser *p, U32 start, const Prefixes *pre, a
     ast::Decl d = {.span = parse::span_from(p, start),
                    .attributes = pre->attributes,
                    .exported = pre->exported,
+                   .is_pub = pre->is_pub,
                    .is_static = pre->is_static,
                    .is_extern = pre->is_extern,
                    .is_inline = pre->is_inline};
@@ -826,6 +928,34 @@ static ast::FieldDecl parse_field(parse::Parser *p) {
     return finish_field(p, field, false, start);
 }
 
+// Which spelling the members of a record or an enum used: the old (`I32 x;`, `red,`) or smith's own (`x: I32` and a
+// member that ends with the line). A body with neither (`struct E {}`) takes the `;` of the old form or none.
+struct Style {
+    Bool saw_old;
+    Bool saw_new;
+};
+
+// A field in smith's own syntax starts with a lowercase name and `:` (the old form starts with a type).
+static Bool new_field_ahead(const parse::Parser *p) {
+    return parse::at(p, lex::name) && parse::peek_at(p, 1).kind == lex::colon;
+}
+
+// `x: f64`, one to a line, with no `;` or `,` (the position is at the name).
+static ast::FieldDecl parse_new_field(parse::Parser *p) {
+    ast::FieldDecl field = {};
+    U32 start = parse::peek(p).span.start;
+    field.name = parse::text(p, parse::advance(p));
+    parse::advance(p);
+    field.type = parse::type(p);
+    if (field.type == nullptr) {
+        recover_line(p);
+        return field;
+    }
+    end_line(p, "field");
+    field.span = parse::span_from(p, start);
+    return field;
+}
+
 // A record being read: its fields so far, and where the field it is the type of began.
 struct OpenRecord {
     FieldList fields;
@@ -842,7 +972,7 @@ static void add_field(FieldList *fields, ast::FieldDecl field) {
 
 // The fields up to the closing `}` (not taken). A field of type `struct { ... }` or `union { ... }` opens a record on
 // an explicit stack, so a nest of them is a loop, not a recursion.
-static FieldList parse_fields(parse::Parser *p) {
+static FieldList parse_fields(parse::Parser *p, Style *style) {
     OpenRecord stack[max_nesting] = {};
     Usize depth = 0;
     Usize limit = 2 * countof(p->tokens) + max_nesting;
@@ -861,6 +991,14 @@ static FieldList parse_fields(parse::Parser *p) {
             continue;
         }
         Usize before = p->position;
+        if (new_field_ahead(p)) {
+            style->saw_new = true;
+            ast::FieldDecl made = parse_new_field(p);
+            if (made.type != nullptr) add_field(&stack[depth].fields, made);
+            if (p->position == before) parse::advance(p);
+            continue;
+        }
+        style->saw_old = true;
         if (at_anonymous_record(p) && depth + 1 < max_nesting) {
             OpenRecord child = {.is_union = parse::peek(p).kind == lex::kw_union,
                                 .field_start = parse::peek(p).span.start};
@@ -891,7 +1029,8 @@ static ast::TypeExpr *parse_anonymous_record(parse::Parser *p) {
     U32 start = parse::peek(p).span.start;
     Bool is_union = parse::advance(p).kind == lex::kw_union;
     parse::expect(p, lex::left_brace, "`{`");
-    FieldList fields = parse_fields(p);
+    Style style = {};
+    FieldList fields = parse_fields(p, &style);
     parse::expect(p, lex::right_brace, "`}`");
     ast::TypeKind kind = {.record = {.fields = fields, .is_union = is_union}};
     ast::TypeExpr node = {.span = parse::span_from(p, start)};
@@ -901,13 +1040,13 @@ static ast::TypeExpr *parse_anonymous_record(parse::Parser *p) {
 
 // `struct Name { fields }` or `union`, the position at the keyword. A `typedef struct {...} Name;` has no tag name: the
 // caller gives it.
-static ast::DeclKind record_kind(parse::Parser *p) {
+static ast::DeclKind record_kind(parse::Parser *p, Style *style) {
     Bool is_union = parse::advance(p).kind == lex::kw_union;
     Str name = tag_name(p);
     FieldList fields = {};
     Bool opaque = false;
     if (parse::accept(p, lex::left_brace)) {
-        fields = parse_fields(p);
+        fields = parse_fields(p, style);
         parse::expect(p, lex::right_brace, "`}`");
     } else if (parse::at(p, lex::semicolon)) {
         opaque = true;
@@ -925,14 +1064,32 @@ static Bool ends_variant(lex::TokenKind kind) {
 
 // One enumerator: `red`, `Red`, `green = 2`, `Fib7 = f(7)`, `Circle circle;` or `empty;` (a name alone, with or without
 // a value, is a value; a payload has a type before its name), then `,` or `;`.
-static ast::Enumerator parse_enumerator(parse::Parser *p) {
+static ast::Enumerator parse_enumerator(parse::Parser *p, Style *style) {
     ast::Enumerator item = {};
     U32 start = parse::peek(p).span.start;
+    lex::Token head = parse::peek(p);
+    // smith's own syntax: `circle: Circle`, and a lowercase name that ends its line (`red`, the next on its own line).
+    Bool payload_ahead = head.kind == lex::name && parse::peek_at(p, 1).kind == lex::colon;
+    Bool line_variant = head.kind == lex::name && head.line_break;
+    if (payload_ahead) {
+        style->saw_new = true;
+        item.name = parse::text(p, parse::advance(p));
+        parse::advance(p);
+        item.payload = parse::type(p);
+        if (item.payload == nullptr) {
+            recover_line(p);
+            return item;
+        }
+        end_line(p, "member");
+        item.span = parse::span_from(p, start);
+        return item;
+    }
     if (at_anonymous_record(p)) {
         item.payload = parse_anonymous_record(p);
         lex::Token name = parse::expect(p, lex::name, "a variant name");
         if (name.kind == lex::name) item.name = parse::text(p, name);
-    } else if ((parse::at(p, lex::name) || parse::at(p, lex::type_name)) && ends_variant(parse::peek_at(p, 1).kind)) {
+    } else if ((parse::at(p, lex::name) || parse::at(p, lex::type_name)) &&
+               (ends_variant(parse::peek_at(p, 1).kind) || line_variant)) {
         item.name = parse::text(p, parse::advance(p));
         if (parse::accept(p, lex::equal)) item.value = parse::expression(p);
     } else {
@@ -944,14 +1101,21 @@ static ast::Enumerator parse_enumerator(parse::Parser *p) {
         lex::Token name = parse::expect(p, lex::name, "a variant name");
         if (name.kind == lex::name) item.name = parse::text(p, name);
     }
-    Bool ended = parse::accept(p, lex::comma) || parse::accept(p, lex::semicolon) || parse::at(p, lex::right_brace);
-    if (!ended) parse::expect(p, lex::comma, "`,`, `;` or `}`");
+    if (parse::accept(p, lex::comma) || parse::accept(p, lex::semicolon)) {
+        style->saw_old = true;
+    } else if (parse::at(p, lex::right_brace)) {
+        // the last member of either spelling
+    } else if (line_ended(p)) {
+        style->saw_new = true;
+    } else {
+        parse::expect(p, lex::comma, "`,`, `;` or `}`");
+    }
     item.span = parse::span_from(p, start);
     return item;
 }
 
 // `enum Name : Underlying { items }`, the position at the keyword.
-static ast::DeclKind enum_kind(parse::Parser *p) {
+static ast::DeclKind enum_kind(parse::Parser *p, Style *style) {
     parse::advance(p);
     Str name = tag_name(p);
     ast::TypeExpr *underlying = nullptr;
@@ -960,7 +1124,7 @@ static ast::DeclKind enum_kind(parse::Parser *p) {
     parse::expect(p, lex::left_brace, "`{`");
     while (!parse::at(p, lex::right_brace) && !parse::at(p, lex::end_of_file)) {
         Usize before = p->position;
-        ast::Enumerator item = parse_enumerator(p);
+        ast::Enumerator item = parse_enumerator(p, style);
         if (countof(item.name) > 0) {
             items = mem::realloc(items, countof(items) + 1);
             items[countof(items) - 1] = item;
@@ -972,17 +1136,19 @@ static ast::DeclKind enum_kind(parse::Parser *p) {
     return kind;
 }
 
-static ast::DeclKind tag_kind(parse::Parser *p) {
-    if (parse::at(p, lex::kw_enum)) return enum_kind(p);
-    return record_kind(p);
+static ast::DeclKind tag_kind(parse::Parser *p, Style *style) {
+    if (parse::at(p, lex::kw_enum)) return enum_kind(p, style);
+    return record_kind(p, style);
 }
 
 // `struct Name {...};`, `union`, `enum`: a declaration of the type by itself.
 static ast::Decl *parse_tag(parse::Parser *p, const Prefixes *pre, U32 start) {
     Usize errors_before = countof(p->errors);
-    ast::DeclKind kind = tag_kind(p);
+    Style style = {};
+    ast::DeclKind kind = tag_kind(p, &style);
     if (failed_since(p, errors_before)) {
-        recover(p);
+        // A body in smith's own syntax recovered line by line and is closed; the old form skips to its `;`.
+        if (!style.saw_new) recover(p);
         return nullptr;
     }
     if (parse::at(p, lex::name) || parse::at(p, lex::star)) {
@@ -991,7 +1157,12 @@ static ast::Decl *parse_tag(parse::Parser *p, const Prefixes *pre, U32 start) {
         recover(p);
         return nullptr;
     }
-    parse::expect(p, lex::semicolon, "`;` after the type");
+    if (style.saw_new) {
+        // smith's own syntax ends with the line: a `;` after the `}` is removed.
+        if (parse::at(p, lex::semicolon)) end_line(p, "type");
+    } else if (style.saw_old || parse::at(p, lex::semicolon)) {
+        parse::expect(p, lex::semicolon, "`;` after the type");
+    }
     return make(p, start, pre, kind);
 }
 
@@ -1002,7 +1173,8 @@ static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start
     Usize errors_before = countof(p->errors);
     if (!parse_type::tuple_ahead(p) &&
         (parse::at(p, lex::kw_struct) || parse::at(p, lex::kw_union) || parse::at(p, lex::kw_enum))) {
-        ast::DeclKind kind = tag_kind(p);
+        Style style = {};
+        ast::DeclKind kind = tag_kind(p, &style);
         lex::Token alias = parse::expect(p, lex::type_name, "the type's name after `}`");
         if (failed_since(p, errors_before)) {
             recover(p);
@@ -1111,11 +1283,229 @@ static ast::Decl *parse_static_assert(parse::Parser *p, const Prefixes *pre, U32
     return make(p, start, pre, kind);
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// smith's own syntax (#1428): `a := v`, `a: T = v`, `mut a := 0`, `const X := v`, `(q, r) := f()`, `fn`
+//
+// What tells the new form from the old one is the first one or two tokens, never the rest: `fn`, `mut` and `@` start
+// only the new forms; a name followed by `:=` or `:` is a binding (the old forms start with a type and never have a
+// name before a `:`); `const` followed by such a name is a constant (the old `const` is followed by a type, and a type
+// is never followed by `:=` or `:`); a field is a lowercase name and `:` (an old field starts with a type); an
+// enumerator is a lowercase name that ends its line, or a name and `:`.
+
+// Whether the token at `at` is a name and the one after it is `:=` or `:`.
+static Bool binding_at(const parse::Parser *p, Usize at) {
+    lex::TokenKind next = parse::peek_at(p, at + 1).kind;
+    return is_name(parse::peek_at(p, at).kind) && (next == lex::colon_equal || next == lex::colon);
+}
+
+// `a := v`, `a: T = v`, `mut ...` and `const X := v`; a `const` and `mut` together is read to be told off.
+static Bool starts_binding(const parse::Parser *p) {
+    lex::TokenKind kind = parse::peek(p).kind;
+    if (kind == lex::kw_mut) return true;
+    if (kind == lex::kw_const) return binding_at(p, 1) || parse::peek_at(p, 1).kind == lex::kw_mut;
+    return binding_at(p, 0);
+}
+
+// The value of a binding after its name: `:= v`, or `: T` and then `= v`. A `: T` alone is a variable that is
+// assigned later (`mut`) and starts at zero. False after an error.
+static Bool parse_binding_value(parse::Parser *p, lex::Token name, Bool is_mut, ast::TypeExpr **type,
+                                ast::Expr **init) {
+    if (parse::at(p, lex::colon_equal)) {
+        *type = auto_type(parse::advance(p).span);
+        *init = parse::expression(p);
+        return *init != nullptr;
+    }
+    if (!parse::accept(p, lex::colon)) {
+        parse::expect(p, lex::colon_equal, "`:=` or `:` after the name");
+        return false;
+    }
+    *type = parse::type(p);
+    if (*type == nullptr) return false;
+    if (parse::accept(p, lex::equal)) {
+        *init = parse::expression(p);
+        return *init != nullptr;
+    }
+    if (!is_mut) {
+        Str word = parse::text(p, name);
+        char message[:] = format::push("`", word, "` needs a value: write `", word, ": ", type_text(p, *type),
+                                       " = value`, or `mut ", word, ": ", type_text(p, *type), "` to start at zero");
+        parse::error(p, name.span, message);
+        return false;
+    }
+    return true;
+}
+
+// `a := v`, `a: T = v`, `mut a := 0`, `mut a: usize`, `const X := v`; the position is at the first of them.
+static ast::Decl *parse_binding(parse::Parser *p, const Prefixes *pre, U32 start) {
+    Bool is_mut = parse::accept(p, lex::kw_mut);
+    Bool is_const = parse::accept(p, lex::kw_const);
+    if (!is_mut && parse::at(p, lex::kw_mut)) {
+        parse::advance(p);
+        is_mut = true;
+    }
+    if (is_mut && is_const) {
+        parse::error(p, parse::span_from(p, start), "`const` and `mut` cannot be combined: a constant never changes");
+        recover_line(p);
+        return nullptr;
+    }
+    lex::Token name = parse::peek(p);
+    Str opener = is_mut ? "mut" : "const";
+    if (!is_name(name.kind)) {
+        char message[:] = format::push("expected a name after `", opener, "`, found `", parse::text(p, name), "`");
+        parse::error(p, name.span, message);
+        recover_line(p);
+        return nullptr;
+    }
+    parse::advance(p);
+    ast::TypeExpr *type = nullptr;
+    ast::Expr *init = nullptr;
+    if (!parse_binding_value(p, name, is_mut, &type, &init)) {
+        recover_line(p);
+        return nullptr;
+    }
+    end_line(p, "declaration");
+    ast::DeclKind kind = {
+        .variable = {
+            .name = parse::text(p, name), .type = type, .init = init, .is_constexpr = is_const, .is_mut = is_mut}};
+    return make(p, start, pre, kind);
+}
+
+// Whether the position starts `(q, r) := f()` or `mut (q, r) := f()`: a parenthesized list and then `:=`, which no
+// expression is.
+export Bool at_destructure(const parse::Parser *p) {
+    Usize at = parse::peek(p).kind == lex::kw_mut ? 1 : 0;
+    if (parse::peek_at(p, at).kind != lex::left_paren) return false;
+    Usize depth = 0;
+    for (Usize step = 0; step < countof(p->tokens); step++) {
+        lex::TokenKind kind = parse::peek_at(p, at).kind;
+        if (kind == lex::end_of_file) return false;
+        if (kind == lex::left_paren) depth += 1;
+        if (kind == lex::right_paren) {
+            depth -= 1;
+            if (depth == 0) return parse::peek_at(p, at + 1).kind == lex::colon_equal;
+        }
+        at += 1;
+    }
+    return false;
+}
+
+// `(q, r) := f()` and `mut (q, r) := f()`: a statement, not a declaration (it declares no one thing), so it is not
+// behind the declaration hook: the statement parser calls this where `at_destructure` says so.
+export ast::Stmt *destructure(parse::Parser *p) {
+    Bool is_mut = parse::accept(p, lex::kw_mut);
+    parse::expect(p, lex::left_paren, "`(`");
+    IdentifierList names = {};
+    while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
+        lex::Token token = parse::peek(p);
+        if (!is_name(token.kind)) {
+            char message[:] =
+                format::push("a destructuring lists names: write `(q, r) := f()`, found `", parse::text(p, token), "`");
+            parse::error(p, token.span, message);
+            recover_line(p);
+            return nullptr;
+        }
+        parse::advance(p);
+        names = mem::realloc(names, countof(names) + 1);
+        names[countof(names) - 1] = (ast::Identifier){.text = parse::text(p, token), .span = token.span};
+        if (!parse::accept(p, lex::comma)) break;
+    }
+    lex::Token close = parse::expect(p, lex::right_paren, "`)`");
+    if (countof(names) == 0) {
+        parse::error(p, close.span, "a destructuring lists names: write `(q, r) := f()`");
+        recover_line(p);
+        return nullptr;
+    }
+    parse::expect(p, lex::colon_equal, "`:=` after the names");
+    ast::Expr *init = parse::expression(p);
+    if (init == nullptr) {
+        recover_line(p);
+        return nullptr;
+    }
+    end_line(p, "declaration");
+    return ast::destructure(names, is_mut, init);
+}
+
+// One parameter: `a: i32`, `mut b: i32`, `const n: usize`, `T: type`, `rest: ...`, after any `@attribute`. False after
+// an error.
+static Bool parse_new_param(parse::Parser *p, ast::Param *param) {
+    U32 start = parse::peek(p).span.start;
+    Prefixes pre = {};
+    while (parse::at(p, lex::at))
+        parse_at_attribute(p, &pre);
+    param->is_mut = parse::accept(p, lex::kw_mut);
+    param->is_const = parse::accept(p, lex::kw_const);
+    lex::Token name = parse::peek(p);
+    if (!is_name(name.kind) || parse::peek_at(p, 1).kind != lex::colon) {
+        Str word = parse::text(p, name);
+        char message[:] = format::push("a parameter is written `name: type`, found `", word, "`");
+        if (is_name(name.kind)) message = format::push("a parameter is written `name: type`: `", word, "` has no type");
+        if (name.kind == lex::end_of_file)
+            message = format::push("a parameter is written `name: type`, found the end of the file");
+        parse::error(p, name.span, message);
+        return false;
+    }
+    param->name = parse::text(p, parse::advance(p));
+    parse::advance(p);
+    if (parse::at(p, lex::ellipsis)) {
+        param->type = auto_type(parse::advance(p).span);
+        param->is_rest = true;
+    } else {
+        param->type = parse::type(p);
+        if (param->type == nullptr) return false;
+    }
+    param->attributes = pre.attributes;
+    param->span = parse::span_from(p, start);
+    return true;
+}
+
+// `fn name(a: i32, mut b: i32) -> r { body }`, the `-> r` optional (no result is none, not `void`); the position is at
+// `fn`.
+static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 start) {
+    parse::advance(p);
+    Usize errors_before = countof(p->errors);
+    lex::Token name = parse::peek(p);
+    if (!is_name(name.kind)) {
+        parse::error(p, name.span, "a function has a name: write `fn name(a: i32) -> i32 { ... }`");
+    } else {
+        parse::advance(p);
+        parse::expect(p, lex::left_paren, "`(` after the function's name");
+    }
+    ParamList params = {};
+    while (!failed_since(p, errors_before) && !parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
+        ast::Param param = {};
+        if (!parse_new_param(p, &param)) break;
+        params = mem::realloc(params, countof(params) + 1);
+        params[countof(params) - 1] = param;
+        if (!parse::accept(p, lex::comma)) break;
+    }
+    if (!failed_since(p, errors_before)) parse::expect(p, lex::right_paren, "`)`");
+    ast::TypeExpr *result = nullptr;
+    if (!failed_since(p, errors_before) && parse::accept(p, lex::arrow)) result = parse::type(p);
+    if (!failed_since(p, errors_before) && !parse::at(p, lex::left_brace)) {
+        parse::error(p, parse::peek(p).span, "a function has a body: expected `{` after the parameters");
+    }
+    if (failed_since(p, errors_before)) {
+        skip_new_function(p);
+        return nullptr;
+    }
+    ast::Stmt *body = parse::statement(p);
+    ast::DeclKind kind = {.function = {.name = parse::text(p, name), .params = params, .result = result, .body = body}};
+    return make(p, start, pre, kind);
+}
+
 // One declaration that opens no block of its own.
 static ast::Decl *parse_simple(parse::Parser *p) {
     U32 start = parse::peek(p).span.start;
     Prefixes pre = parse_prefixes(p);
     lex::TokenKind kind = parse::peek(p).kind;
+    if (kind == lex::kw_fn) return parse_new_function(p, &pre, start);
+    if (at_destructure(p)) {
+        parse::error(p, parse::peek(p).span,
+                     "a destructuring `(q, r) := f()` is a statement, not a declaration of a module");
+        recover_line(p);
+        return nullptr;
+    }
+    if (starts_binding(p)) return parse_binding(p, &pre, start);
     if (kind == lex::kw_import) return parse_import(p, &pre, start);
     if (kind == lex::kw_static_assert) return parse_static_assert(p, &pre, start);
     if (kind == lex::kw_typedef) return parse_typedef(p, &pre, start);
