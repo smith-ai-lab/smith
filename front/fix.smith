@@ -1,0 +1,134 @@
+// front::fix, `smith lint --fix` (#1442, S6 of #1428): the fixes that parse errors carry (front::parse's `Edit`),
+// applied to a file's text.
+//
+//   fix::apply_fixes(source, errors)  the text with the fixes of the errors applied: a fix (all its edits or none) is
+//                                     taken when no edit of it overlaps one already taken, else it is skipped
+//   fix::fix_file(path)               one file mended in place: parse, apply, and again until nothing applies (at most
+//                                     8 passes); the number of fixes applied, -1 when the file cannot be read or
+//                                     written
+//   fix::fix_text(file, source)       the same on a text; `store(path, text)` writes a file
+//   fix::fix_run(paths, count)        what the driver calls (C: `front_parser_fix_run`): `path: N fixes applied` on
+//                                     standard output for each file, 0 when every file could be read and written
+module front::fix;
+
+import front::parse as core;
+import front::parser;
+import std::files;
+import std::format;
+import std::mem;
+import <unistd.h>;
+
+// The text with the fixes applied, and how many fixes that was and how many were left out because an edit of theirs
+// overlapped one already taken (the first, in the order of the errors, wins).
+export struct Fixed {
+    Str text;
+    Usize applied;
+    Usize skipped;
+};
+
+static Bool overlaps(core::Edit a, core::Edit b) {
+    if (a.span.start == b.span.start) return true;
+    return a.span.start < b.span.end && b.span.start < a.span.end;
+}
+
+static Bool clashes(core::Edits taken, core::Edits fix) {
+    for (Usize i = 0; i < countof(fix); i++) {
+        for (Usize j = 0; j < countof(taken); j++) {
+            if (overlaps(fix[i], taken[j])) return true;
+        }
+        for (Usize j = 0; j < i; j++) {
+            if (overlaps(fix[i], fix[j])) return true;
+        }
+    }
+    return false;
+}
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+// Applies the fixes of `errors` to `source`.
+export Fixed apply_fixes(Str source, core::Errors errors) {
+    core::Edits taken = {};
+    Fixed result = {.text = source};
+    for (Usize i = 0; i < countof(errors); i++) {
+        core::Edits fix = errors[i].fix;
+        if (countof(fix) == 0) continue;
+        if (clashes(taken, fix)) {
+            result.skipped += 1;
+            continue;
+        }
+        result.applied += 1;
+        for (Usize j = 0; j < countof(fix); j++) {
+            Usize at = countof(taken);
+            taken = mem::realloc(taken, at + 1);
+            while (at > 0 && taken[at - 1].span.start > fix[j].span.start) {
+                taken[at] = taken[at - 1];
+                at -= 1;
+            }
+            taken[at] = fix[j];
+        }
+    }
+    if (result.applied == 0) return result;
+    Str out = "";
+    Usize from = 0;
+    for (Usize i = 0; i < countof(taken); i++) {
+        out = as_str(format::push(out, source[from:taken[i].span.start], taken[i].text));
+        from = taken[i].span.end;
+    }
+    result.text = as_str(format::push(out, source[from:countof(source)]));
+    return result;
+}
+
+constexpr Usize fix_passes = 8;
+
+// Writes `text` over the file `path`. False when it cannot.
+export Bool store(Str path, Str text) {
+    U8 bytes[:] = {};
+    bytes = mem::realloc(bytes, countof(text));
+    for (Usize i = 0; i < countof(text); i++)
+        bytes[i] = (U8)text[i];
+    files::CountResult written = files::write_file(path, bytes, files::Replace);
+    return written != .error;
+}
+
+// Mends the text of the file called `file`: parses, applies the fixes, and parses the result again, until a pass
+// applies none (at most 8 passes). `applied` counts the fixes of all the passes.
+export Fixed fix_text(Str file, Str source) {
+    Fixed total = {.text = source};
+    for (Usize pass = 0; pass < fix_passes; pass++) {
+        parser::Parsed parsed = parser::parse(file, total.text);
+        Fixed fixed = apply_fixes(total.text, parsed.errors);
+        if (fixed.applied == 0) break;
+        total.text = fixed.text;
+        total.applied += fixed.applied;
+        total.skipped = fixed.skipped;
+    }
+    return total;
+}
+
+// Fixes one file in place. Returns the number of fixes applied, or -1 when the file cannot be read or written.
+export I64 fix_file(Str path) {
+    files::BytesResult loaded = files::read_file(path);
+    if (loaded == .error) return -1;
+    format::Chars chars = mem::view(loaded.ok, char);
+    Str source = chars;
+    Fixed fixed = fix_text(path, source);
+    if (fixed.applied > 0 && !store(path, fixed.text)) return -1;
+    return (I64)fixed.applied;
+}
+
+// The driver's entry for `smith lint --fix FILE...`: each file fixed, `path: N fixes applied` on standard output,
+// 0 when every file could be read and written.
+[[std::c_name("front_parser_fix_run")]] export I32 fix_run(const char *const *paths, Usize count) {
+    I32 status = 0;
+    for (Usize i = 0; i < count; i++) {
+        Str path = as_str(format::push((const char *)paths[i]));
+        I64 n = fix_file(path);
+        Str line = n < 0 ? as_str(format::push(path, ": cannot read or write the file\n"))
+                         : as_str(format::push(path, ": ", n, n == 1 ? " fix applied\n" : " fixes applied\n"));
+        (void)c::write(n < 0 ? 2 : 1, line.data, countof(line));
+        if (n < 0) status = 1;
+    }
+    return status;
+}
