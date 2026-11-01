@@ -517,7 +517,7 @@ static bool smith_lang_nested_write(SmithLang *lang, const SmithHost *host, Smit
 // -----------------------------------------------------------------------------------------------------------
 //
 //   export void sort(auto xs[:], Lambda(bool (typeof(xs[0]) *, typeof(xs[0]) *)) less);
-//   sort(xs, [](arithmetic *a, arithmetic *b) -> bool { return *a < *b; });
+//   sort(xs, [](arithmetic *a, arithmetic *b) -> Bool { return *a < *b; });
 //
 // The slot is a `constexpr auto` one: the lambda's tokens are the argument, so two lambdas that differ are two
 // instances. The instance writes the lambda as a function before itself, `static R <instance>__arg<slot>(P) {...}`,

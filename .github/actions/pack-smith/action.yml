@@ -39,6 +39,6 @@ runs:
       with:
         name: smith-tree-${{ inputs.name }}
         path: ${{ runner.temp }}/tree.tar
-        compression-level: 0
+        compression-level: 1
         retention-days: 1
         overwrite: true

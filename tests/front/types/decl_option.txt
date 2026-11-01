@@ -1,0 +1,4 @@
+local f.y: I32
+variable x: Option(I32)
+function f: I32 ()
+error 37-38: expected I32, found Option(I32): a value that may be absent is not a value; test whether it holds a value first

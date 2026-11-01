@@ -19,7 +19,7 @@
 //   set_hooks(Hooks)       The two functions J1c and J1d wire in. Until they are set:
 //                          - `convert(c, e, from, to)` (J1c, `types_convert::convert`) says whether a value of type
 //                            `from` may stand where `to` is expected and reports the error itself when it may not.
-//                            DEFAULT, to be replaced by J1d's wiring (TODO(J1d)): exact type equality, plus `null`
+//                            DEFAULT while unset (types_decl::install sets J1c's): exact type equality, plus `null`
 //                            where a pointer is expected and a function where `Fn(F)` of its own type is. Nothing
 //                            else converts: not integer widening, not a value to `Option(T)`'s `.some`, not an array
 //                            to a slice.
@@ -426,7 +426,7 @@ static void literal_character(types::Checked *c, Frame f) {
         }
         return;
     }
-    types::TypeRef t = types::builtin(&c->table, "U8");
+    types::TypeRef t = types::builtin(&c->table, "char");
     if (value > 255) {
         t = types::builtin(&c->table, "U32");
     }
@@ -484,6 +484,10 @@ static void unknown_name(types::Checked *c, const ast::Expr *e, ast::Path path) 
             not_yet(c, e, msg(format::push("`", name, "`, a name from another module")));
             return;
         }
+    }
+    if (countof(path.segments) > 1 && same_text(path.segments[0].text, "c")) {
+        not_yet(c, e, msg(format::push("c:: name `", name, "`")));
+        return;
     }
     types::failf(c, e->span, "unknown name `", name, "`; declare it before it is used, for example `I32 ", name,
                  " = 0;`, or import the module that has it");

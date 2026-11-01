@@ -2104,6 +2104,10 @@ export void test_lambda_param_two() {
     corpus_case("lambda-param-two");
 }
 
+export void test_lambda_bool() {
+    corpus_case("lambda-bool");
+}
+
 export void test_error_lambda_wrong_signature() {
     corpus_case("error-lambda-wrong-signature");
 }
