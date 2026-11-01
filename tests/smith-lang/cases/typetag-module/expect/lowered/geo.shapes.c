@@ -1,5 +1,6 @@
 struct geo_shapes_Point {
-float x, y;
+float x;
+float y;
 };
 typedef struct geo_shapes_Point geo_shapes_Point;
 struct geo_shapes_Node {

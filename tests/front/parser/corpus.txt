@@ -553,10 +553,10 @@ str-lowering/words.smith: ok
 str-module/main.smith: error: declare the type by itself: write `struct Name {...};`, then `Name x;` for the variable (12:12)
 str-module/words.smith: ok
 str-run/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (26:23)
-str-typedef-lowering/text.smith: error: expected the type's name, found `str` (3:27)
+str-typedef-lowering/text.smith: ok
 str-typedef-module/main.smith: error: expected `;`, found `s` (7:15)
 str-typedef-module/text.smith: error: expected the type's name, found `str` (3:27)
-str-typedef-run/main.smith: error: expected the type's name, found `str` (7:20)
+str-typedef-run/main.smith: error: expected the type's name, found `bytes` (8:14)
 target-facts/main.smith: C, out of scope
 try-generic/main.smith: error: expected `;`, found `c` (22:14)
 try-return-value/main.smith: error: expected `;`, found `c` (25:14)
@@ -598,8 +598,8 @@ type-value-use/main.smith: C, out of scope
 type-value-use/pool.smith: ok
 type-value-windows/wide.smith: ok
 typetag-module/main.smith: error: declare the type by itself: write `struct Name {...};`, then `Name x;` for the variable (12:12)
-typetag-module/geo/shapes.smith: error: one name per declaration: write `F32 x;` and `F32 y;` (4:10)
-typetag-run/main.smith: error: one name per declaration: write `F32 x;` and `F32 y;` (8:10)
+typetag-module/geo/shapes.smith: ok
+typetag-run/main.smith: error: `struct Point` is C's spelling: a tag is a type name, write `Point` (72:18)
 unused-name-library/barrier.smith: ok
 unused-name-library/main.smith: ok
 unused-run/main.smith: ok
@@ -612,4 +612,4 @@ value-query-plain/main.smith: C, out of scope
 value-query-windows/size.smith: ok
 void-pointer-cast/main.smith: ok
 void-pointer-plain/main.smith: C, out of scope
-total 614, ok 321, error 169, C 124, skipped 0
+total 614, ok 323, error 167, C 124, skipped 0

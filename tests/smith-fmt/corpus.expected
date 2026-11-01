@@ -11454,31 +11454,31 @@ I32 main() {
 ==> str-typedef-lowering/src/text.smith <==
 module text;
 
-export typedef const char str[:];
+export typedef const char Str[:];
 
 export struct Pair {
-    str key;
-    str value;
+    Str key;
+    Str value;
 };
 
-export usize total(str xs) {
+export Usize total(Str xs) {
     return countof(xs);
 }
 
-export str first_word(str xs) {
-    usize n = 0;
+export Str first_word(Str xs) {
+    Usize n = 0;
     while (n < countof(xs) && xs[n] != ' ')
         n++;
     return xs[0:n];
 }
 
-export bool pop(str *p) {
+export Bool pop(Str *p) {
     if (countof(*p) == 0) return false;
     *p = (*p)[1:];
     return true;
 }
 
-export usize count_of(auto x) {
+export Usize count_of(auto x) {
     if constexpr (is_slice(typeof(x))) return countof(x);
     return 0;
 }
@@ -11537,25 +11537,25 @@ module main;
 
 import <stdio.h>;
 
-// C's typedef of an array declarator names a slice type (issue #148): `typedef const char str[:];`, `typedef char
+// C's typedef of an array declarator names a slice type (issue #148): `typedef const char Str[:];`, `typedef char
 // bytes[:];`.
 
-typedef const char str[:];
+typedef const char Str[:];
 typedef char bytes[:];
 
 struct Named {
-    str name;
+    Str name;
 };
 
-static usize length(str xs) {
+static Usize length(Str xs) {
     return countof(xs);
 }
 
-static str tail(str xs) {
+static Str tail(Str xs) {
     return xs[1:];
 }
 
-static bool next(str *p) {
+static Bool next(Str *p) {
     if (countof(*p) == 0) return false;
     *p = (*p)[1:];
     return true;
@@ -11565,20 +11565,20 @@ static void poke(bytes *b) {
     (*b)[0] = 'Z';
 }
 
-i32 main() {
-    str s = "abc";
+I32 main() {
+    Str s = "abc";
     c::printf("%zu %c %zu %zu\n", countof(s), s[1], length(s), length(s[1:]));
-    str cut = s[0:2];
-    str *p = &s;
-    usize steps = 0;
+    Str cut = s[0:2];
+    Str *p = &s;
+    Usize steps = 0;
     while (next(p))
         steps++;
     c::printf("%zu %zu %zu\n", countof(cut), steps, countof(s));
 
     char raw[4] = {'a', 'b', 'c', 'd'};
     bytes w = raw;
-    str r = w;    // const is added implicitly
-    str *pr = &w; // a pointer to bytes is a pointer to str (C23, N2607)
+    Str r = w;    // const is added implicitly
+    Str *pr = &w; // a pointer to bytes is a pointer to Str (C23, N2607)
     poke(&w);
     c::printf("%zu %c %zu %c\n", length(w), (*pr)[0], countof(tail(r)), tail(w)[0]);
 
@@ -12688,7 +12688,8 @@ int main() {
 module geo::shapes;
 
 export struct Point {
-    F32 x, y;
+    F32 x;
+    F32 y;
 };
 
 export struct Node {
@@ -12752,7 +12753,8 @@ import <stdio.h>;
 // In a module a struct's, union's or enum's tag is also a type name: no typedef beside it.
 
 struct Point {
-    F32 x, y;
+    F32 x;
+    F32 y;
 };
 
 struct Node {
