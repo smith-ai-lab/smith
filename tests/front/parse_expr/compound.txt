@@ -1,0 +1,78 @@
+(Point){.x = 1, .y = 2}
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (compound (named Point) (initializer (field_designator x) (integer 1)) (initializer (field_designator y) (integer 2)))))))
+
+(I32[3]){1, 2, 3}
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (compound (array (named I32) (integer 3)) (initializer (integer 1)) (initializer (integer 2)) (initializer (integer 3)))))))
+
+{1, 2}
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (compound (absent) (initializer (integer 1)) (initializer (integer 2)))))))
+
+{}
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (compound (absent))))))
+
+{.x = 1, [2] = 3, .a.b = 4}
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (compound (absent) (initializer (field_designator x) (integer 1)) (initializer (index_designator (integer 2)) (integer 3)) (initializer (field_designator a) (field_designator b) (integer 4)))))))
+
+{{1, 2}, {3, 4}}
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (compound (absent) (initializer (compound (absent) (initializer (integer 1)) (initializer (integer 2)))) (initializer (compound (absent) (initializer (integer 3)) (initializer (integer 4)))))))))
+
+{.none}
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (compound (absent) (initializer (variant none)))))))
+
+{1,}
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (compound (absent) (initializer (integer 1)))))))
+
+(Point){.x = f(1), .y = a + b}
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (compound (named Point) (initializer (field_designator x) (call (name f) (integer 1))) (initializer (field_designator y) (binary add (name a) (name b))))))))
+
+f((Point){1, 2})
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (call (name f) (compound (named Point) (initializer (integer 1)) (initializer (integer 2))))))))
+
+{.p = (Point){1, 2}, .name = "x"}
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (compound (absent) (initializer (field_designator p) (compound (named Point) (initializer (integer 1)) (initializer (integer 2)))) (initializer (field_designator name) (string "x")))))))
+

@@ -1,0 +1,133 @@
+x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (name x)))))
+
+ascii::digit
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (name ascii::digit)))))
+
+c::printf
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (name c::printf)))))
+
+c::EOF
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (name c::EOF)))))
+
+std::mem::alloc
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (name std::mem::alloc)))))
+
+.empty
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (variant empty)))))
+
+f(I32)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (call (name f) (type_value (named I32)))))))
+
+sizeof(Point)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (query sizeof (named Point))))))
+
+Option(I32)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (type_value (applied Option (type_arg (named I32))))))))
+
+geometry::Box
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (type_value (named geometry::Box))))))
+
+U8 *
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (type_value (pointer (named U8)))))))
+
+const I32
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (type_value (named I32 const))))))
+
+f(Option(I32), x)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (call (name f) (type_value (applied Option (type_arg (named I32)))) (name x))))))
+
+Fn(Bool (I32, I32))
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (type_value (applied Fn (type_arg (function_type (named I32) (named I32) (result (named Bool))))))))))
+
+Point
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (type_value (named Point))))))
+
+unsigned long
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (type_value (named unsigned long))))))
+
+make(Point, 3)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (call (name make) (type_value (named Point)) (integer 3))))))
+
+I32[:]
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (type_value (slice (named I32)))))))
+
+list::make(I32)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (call (name list::make) (type_value (named I32)))))))
+

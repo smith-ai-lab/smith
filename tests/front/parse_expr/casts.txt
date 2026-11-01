@@ -1,0 +1,120 @@
+(I32)x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (named I32) (name x))))))
+
+(x) - 1
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary subtract (name x) (integer 1))))))
+
+(I32) - 1
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (named I32) (unary negate (integer 1)))))))
+
+(Point *)p
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (pointer (named Point)) (name p))))))
+
+(const char *)s
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (pointer (named char const)) (name s))))))
+
+(geometry::Box)b
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (named geometry::Box) (name b))))))
+
+(unsigned long)n
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (named unsigned long) (name n))))))
+
+(I32)x + 1
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary add (cast (named I32) (name x)) (integer 1))))))
+
+(I32)(x + 1)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (named I32) (binary add (name x) (integer 1)))))))
+
+(U8)(I32)x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (named U8) (cast (named I32) (name x)))))))
+
+(typeof(x))y
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (type_of (name x)) (name y))))))
+
+(x)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (name x)))))
+
+(x + y) * z
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary multiply (binary add (name x) (name y)) (name z))))))
+
+(a)(b)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (call (name a) (name b))))))
+
+(c::size_t)x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (name c::size_t)))))
+left over: `x`
+
+(Option(I32))x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (applied Option (type_arg (named I32))) (name x))))))
+
+(I32)f(x)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (named I32) (call (name f) (name x)))))))
+

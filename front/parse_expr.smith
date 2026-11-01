@@ -1,0 +1,1091 @@
+// front::parse_expr, the expressions of smith's own front end (#1145, A3 of track A of #1112; internal, not wired into
+// `smith cc`).
+//
+// `parse_expr::expression(p)` reads one expression at the parser's position into `ast::Expr` and is installed as the
+// hook `parse::Hooks.expression`. It is an operator-precedence parser with C's precedence and associativity, without
+// the comma operator, and it has no recursion: prefix operators, binary operators, `?:` and assignments live on two
+// stacks of this function, and a construct that nests another expression (parentheses, call arguments, an index, a
+// `?:` middle, an initializer, a lambda) reads it through the hooks of the parser, `parse::expression`, `parse::type`
+// and `parse::statement`, which the wiring points back at these modules (A6 makes that chain iterative).
+//
+//   primary    integer literals (decimal, hex, octal, binary, `'` separators, suffixes; the value is a U64, a literal
+//              that does not fit is an error), floating literals (decimal and hex, an F64), characters and strings
+//              (escapes decoded to UTF-8; adjacent strings joined; `u8"..."` is a plain string, and the prefixes `u U
+//              L` are errors: wide strings are not supported yet), `true`, `false`, `nullptr`, a name or a path (`x`,
+//              `ascii::digit`, `c::printf`), `.variant`, `( e )`
+//   a type     a `type_name` token or a path that ends in one starts a type, read by `parse::type` into a
+//   as a value `type_value` (`f(I32)`, `Option(I32)`): see parse_type::starts_type
+//   postfix    call `f(a, b)`, index `xs[i]`, slice `xs[a:b]` `xs[a:]` `xs[:b]` `xs[:]`, `.name`, `->name`, `++`, `--`
+//   prefix     `- + ! ~ & * ++ --`; `sizeof`, `alignof` and `countof` of a type (`sizeof(Point)`) or an expression
+//              (`sizeof x`, `countof(xs)`); a cast `(T)x`, where T starts a type; `try e`, at the precedence of the
+//              other prefix operators
+//   a compound `(Point){...}`; `{...}` alone is a `compound` with no type: items are `e`, `.x = e`, `[2] = e`, nested
+//   literal    designators `.a.b = e`, and a lone `.name` item is a variant value
+//   a lambda   `[x, y](I32 a, I32 b) -> I32 { ... }`, `[] { ... }`, `[](I32 a) { ... }`: a capture is a name, a
+//              parameter a type, `auto` or a concept then a name (a lone name is an error that says to write `auto a`),
+//              the body is read by `parse::statement`
+//   binary     `* / %`, `+ -`, `<< >>`, `< > <= >=`, `== !=`, `&`, `^`, `|`, `&&`, `||` left associative; `?:` and
+//              `= += -= *= /= %= <<= >>= &= ^= |=` right associative
+//
+// A cast and a parenthesized value: `(T)x` is a cast when T starts a type (a `type_name`, a path ending in one such as
+// `geometry::Box`, a keyword type, `typeof`...), so `(I32) - 1` is a cast of `-1` and `(x) - 1` a difference. A
+// parenthesized `c::` path is a value, never a cast (#1112): the one decision is parse_type::c_path_is_type.
+//
+// Errors are recorded through parse::error and parsing goes on or gives null. A comma where the operator would be
+// (`(a, b)`, `xs[a, b]`) says that there is no comma operator.
+module front::parse_expr;
+
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_type;
+import std::format;
+import std::mem;
+import std::text;
+
+// ---------------------------------------------------------------------------------------------------------------
+// Literals
+
+// Whether a character is a digit of a base.
+static Bool digit_of(char c, U32 base, U32 *value) {
+    U32 d = 99;
+    if (c >= '0' && c <= '9') d = (U32)(c - '0');
+    if (c >= 'a' && c <= 'f') d = (U32)(c - 'a') + 10;
+    if (c >= 'A' && c <= 'F') d = (U32)(c - 'A') + 10;
+    *value = d;
+    return d < base;
+}
+
+// What reading an integer literal found: whether the digits fit in 64 bits, the value, and where the suffix starts.
+struct Number {
+    Bool fits;
+    U64 value;
+    Usize suffix;
+};
+
+// Decodes the digits of an integer literal: its base from the prefix, `'` separators skipped.
+static Number decode_integer(Str t) {
+    Number number = {.fits = true};
+    U32 base = 10;
+    Usize i = 0;
+    if (countof(t) > 1 && t[0] == '0') {
+        char c = t[1];
+        if (c == 'x' || c == 'X') {
+            base = 16;
+            i = 2;
+        } else if (c == 'b' || c == 'B') {
+            base = 2;
+            i = 2;
+        } else {
+            base = 8;
+            i = 1;
+        }
+    }
+    for (; i < countof(t); i += 1) {
+        if (t[i] == '\'') continue;
+        U32 d = 0;
+        if (!digit_of(t[i], base, &d)) break;
+        if (number.value > (0xFFFFFFFFFFFFFFFFULL - d) / base) number.fits = false;
+        number.value = number.value * base + d;
+    }
+    number.suffix = i;
+    return number;
+}
+
+// What reading a floating literal found.
+struct Real {
+    Bool ok;
+    F64 value;
+    Usize suffix;
+};
+
+// Doubles a value `count` times (a negative `count` halves it): the binary exponent of a hex float.
+static F64 scale(F64 value, I64 count) {
+    F64 result = value;
+    for (I64 i = 0; i < count && i < 2200; i += 1)
+        result *= 2.0;
+    for (I64 i = 0; i > count && i > -2200; i -= 1)
+        result /= 2.0;
+    return result;
+}
+
+// A hexadecimal float, `0x1.8p3`: the position is after `0x`.
+static Real decode_hex_float(Str t) {
+    Real real = {.ok = true};
+    I64 exponent = 0;
+    Bool fraction = false;
+    Usize i = 2;
+    for (; i < countof(t); i += 1) {
+        U32 d = 0;
+        if (t[i] == '\'') continue;
+        if (t[i] == '.') {
+            fraction = true;
+            continue;
+        }
+        if (!digit_of(t[i], 16, &d)) break;
+        real.value = real.value * 16.0 + (F64)d;
+        if (fraction) exponent -= 4;
+    }
+    if (i < countof(t) && (t[i] == 'p' || t[i] == 'P')) {
+        i += 1;
+        Bool negative = i < countof(t) && t[i] == '-';
+        if (i < countof(t) && (t[i] == '-' || t[i] == '+')) i += 1;
+        I64 power = 0;
+        for (; i < countof(t) && t[i] >= '0' && t[i] <= '9'; i += 1) {
+            if (power < 100000) power = power * 10 + (I64)(t[i] - '0');
+        }
+        exponent += negative ? -power : power;
+    }
+    real.value = scale(real.value, exponent);
+    real.suffix = i;
+    return real;
+}
+
+// A decimal float: the characters up to the suffix (`f F l L` and the decimal-float ones `d D`), separators dropped.
+static Real decode_decimal_float(Str t) {
+    Real real = {};
+    Usize end = 0;
+    char clean[:] = {};
+    clean = mem::realloc(clean, countof(t) + 1);
+    Usize n = 0;
+    for (; end < countof(t); end += 1) {
+        char c = t[end];
+        if (c == 'f' || c == 'F' || c == 'l' || c == 'L' || c == 'd' || c == 'D') break;
+        if (c != '\'') {
+            clean[n] = c;
+            n += 1;
+        }
+    }
+    real.suffix = end;
+    real.ok = text::parse_f64(clean[0:n], &real.value);
+    return real;
+}
+
+static Real decode_float(Str t) {
+    bool hex = countof(t) > 1 && t[0] == '0' && (t[1] == 'x' || t[1] == 'X');
+    return hex ? decode_hex_float(t) : decode_decimal_float(t);
+}
+
+// Appends the UTF-8 bytes of a code point to `out` at `n`; gives the new count.
+static Usize put_utf8(char out[:], Usize n, U32 cp) {
+    Usize at = n;
+    if (cp < 0x80) {
+        out[at] = (char)cp;
+        return at + 1;
+    }
+    if (cp < 0x800) {
+        out[at] = (char)(0xC0 | (cp >> 6));
+        out[at + 1] = (char)(0x80 | (cp & 0x3F));
+        return at + 2;
+    }
+    if (cp < 0x10000) {
+        out[at] = (char)(0xE0 | (cp >> 12));
+        out[at + 1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[at + 2] = (char)(0x80 | (cp & 0x3F));
+        return at + 3;
+    }
+    out[at] = (char)(0xF0 | (cp >> 18));
+    out[at + 1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+    out[at + 2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+    out[at + 3] = (char)(0x80 | (cp & 0x3F));
+    return at + 4;
+}
+
+// The value of a simple escape (`\n`), or -1 when the letter is not one.
+static I32 simple_escape(char c) {
+    switch (c) {
+    case 'n':
+        return '\n';
+    case 't':
+        return '\t';
+    case 'r':
+        return '\r';
+    case 'a':
+        return 7;
+    case 'b':
+        return 8;
+    case 'f':
+        return 12;
+    case 'v':
+        return 11;
+    case '\\':
+        return '\\';
+    case '\'':
+        return '\'';
+    case '"':
+        return '"';
+    case '?':
+        return '?';
+    default:
+        return -1;
+    }
+}
+
+// What one escape sequence decoded to: its value, whether it is a code point to write as UTF-8 (`\u`, `\U`) or a byte,
+// and how many characters it took after the backslash.
+struct Escape {
+    U32 value;
+    Bool code_point;
+    Bool valid;
+    Usize length;
+};
+
+// Reads the escape that starts at `body[at]`, the character after the backslash.
+static Escape read_escape(Str body, Usize at) {
+    Escape escape = {.valid = true, .length = 1};
+    char c = body[at];
+    I32 simple = simple_escape(c);
+    if (simple >= 0) {
+        escape.value = (U32)simple;
+        return escape;
+    }
+    U32 base = 16;
+    Usize most = 8;
+    Usize i = at + 1;
+    if (c >= '0' && c <= '7') {
+        base = 8;
+        most = 3;
+        i = at;
+    } else if (c == 'u') {
+        most = 4;
+        escape.code_point = true;
+    } else if (c == 'U') {
+        escape.code_point = true;
+    } else if (c != 'x') {
+        escape.valid = false;
+        return escape;
+    }
+    Usize taken = 0;
+    for (; i < countof(body) && taken < most; i += 1) {
+        U32 d = 0;
+        if (!digit_of(body[i], base, &d)) break;
+        escape.value = escape.value * base + d;
+        taken += 1;
+    }
+    escape.valid = taken > 0 && (escape.code_point || escape.value <= 0xFF) && escape.value <= 0x10FFFF;
+    escape.length = i - at;
+    return escape;
+}
+
+// Decodes the body of a string or character literal (between the quotes) into bytes; reports an unknown or malformed
+// escape at `where` and goes on.
+static Str unescape(parse::Parser *p, ast::Span where, Str body) {
+    char out[:] = {};
+    out = mem::realloc(out, countof(body) + 4);
+    Usize n = 0;
+    for (Usize i = 0; i < countof(body); i += 1) {
+        if (body[i] != '\\' || i + 1 >= countof(body)) {
+            out[n] = body[i];
+            n += 1;
+            continue;
+        }
+        Escape escape = read_escape(body, i + 1);
+        if (!escape.valid) {
+            parse::error(p, where, "unknown or malformed escape sequence in a literal");
+        } else if (escape.code_point) {
+            n = put_utf8(out, n, escape.value);
+        } else {
+            out[n] = (char)escape.value;
+            n += 1;
+        }
+        i += escape.length;
+    }
+    return out[0:n];
+}
+
+// The text between the quotes of a string or character literal, without its prefix (`u8`, `u`, `U`, `L`).
+static Str quoted(Str t) {
+    Usize open = 0;
+    while (open < countof(t) && t[open] != '"' && t[open] != '\'')
+        open += 1;
+    if (open + 1 >= countof(t)) return t[0:0];
+    return t[open + 1:countof(t) - 1];
+}
+
+// Where the quote of a string or character literal is: the length of its prefix (`u8`, `u`, `U`, `L`).
+static Usize prefix_length(Str t) {
+    Usize open = 0;
+    while (open < countof(t) && t[open] != '"' && t[open] != '\'')
+        open += 1;
+    return open;
+}
+
+// The code point at the start of UTF-8 bytes, and how many bytes it took; a stray byte is its own value.
+static U32 first_code_point(Str bytes, Usize *length) {
+    U32 lead = (U32)(U8)bytes[0];
+    Usize need = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1;
+    if (need == 1 || need > countof(bytes)) {
+        *length = 1;
+        return lead;
+    }
+    U32 value = lead & (0xFFU >> (need + 1));
+    for (Usize i = 1; i < need; i += 1)
+        value = (value << 6) | ((U32)(U8)bytes[i] & 0x3F);
+    *length = need;
+    return value;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Nodes of literals and names
+
+static ast::Expr *make(ast::Span span, ast::ExprKind kind) {
+    ast::Expr *node = mem::alloc(ast::Expr);
+    node->span = span;
+    node->kind = kind;
+    return node;
+}
+
+static ast::Expr *integer_literal(parse::Parser *p) {
+    lex::Token token = parse::advance(p);
+    Str t = parse::text(p, token);
+    Number number = decode_integer(t);
+    if (!number.fits) parse::error(p, token.span, "this integer literal does not fit in 64 bits");
+    return make(token.span, {.integer = {.value = number.value, .suffix = t[number.suffix:]}});
+}
+
+static ast::Expr *floating_literal(parse::Parser *p) {
+    lex::Token token = parse::advance(p);
+    Str t = parse::text(p, token);
+    Real real = decode_float(t);
+    if (!real.ok) parse::error(p, token.span, "cannot decode this floating literal");
+    return make(token.span, {.floating = {.value = real.value, .suffix = t[real.suffix:]}});
+}
+
+static ast::Expr *character_literal(parse::Parser *p) {
+    lex::Token token = parse::advance(p);
+    if (prefix_length(parse::text(p, token)) > 0) {
+        parse::error(p, token.span, "prefixed character literals are not supported in .smith yet: write 'a'");
+    }
+    Str bytes = unescape(p, token.span, quoted(parse::text(p, token)));
+    U32 value = 0;
+    if (countof(bytes) == 0) {
+        parse::error(p, token.span, "an empty character literal: write the character between the quotes");
+    } else {
+        Usize length = 0;
+        value = first_code_point(bytes, &length);
+        if (length != countof(bytes)) parse::error(p, token.span, "a character literal holds one character");
+    }
+    return make(token.span, {.character = {.value = value}});
+}
+
+// A string literal, and the string literals right after it: they are one string.
+static ast::Expr *string_literal(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    char all[:] = {};
+    for (Usize i = 0; i < countof(p->tokens) && parse::at(p, lex::string); i += 1) {
+        lex::Token token = parse::advance(p);
+        Str written = parse::text(p, token);
+        Usize prefix = prefix_length(written);
+        if (prefix > 0 && !(prefix == 2 && written[0] == 'u' && written[1] == '8')) {
+            parse::error(p, token.span, "wide strings are not supported in .smith yet: write \"...\" or u8\"...\"");
+        }
+        Str piece = unescape(p, token.span, quoted(written));
+        all = format::push(all, piece);
+    }
+    Str bytes = all;
+    return make(parse::span_from(p, start), {.string = {.bytes = bytes}});
+}
+
+// `.name` as a value.
+static ast::Expr *variant_value(parse::Parser *p) {
+    U32 start = parse::advance(p).span.start;
+    lex::Token name = parse::peek(p);
+    if (name.kind != lex::name && name.kind != lex::type_name) {
+        parse::expect(p, lex::name, "a variant name after `.`");
+        return nullptr;
+    }
+    parse::advance(p);
+    return make(parse::span_from(p, start), {.variant = {.name = parse::text(p, name)}});
+}
+
+// A type where a value is expected: `f(I32)`, `Option(I32)`.
+static ast::Expr *type_value(parse::Parser *p) {
+    ast::TypeExpr *type = parse::type(p);
+    if (type == nullptr) return nullptr;
+    return make(type->span, {.type_value = {.type = type}});
+}
+
+// `)`-less message for a token that starts no expression.
+static void not_an_expression(parse::Parser *p) {
+    lex::Token token = parse::peek(p);
+    if (token.kind == lex::end_of_file) {
+        parse::error(p, token.span, "expected an expression, found the end of the file");
+    } else {
+        char message[:] = format::push("expected an expression, found `", parse::text(p, token), "`");
+        parse::error(p, token.span, message);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Initializer lists and lambdas
+
+// One designator: `.x` or `[2]`, or none when neither is at the position.
+static Bool designator(parse::Parser *p, ast::Designator ds[:], Usize *count) {
+    if (parse::at(p, lex::dot) &&
+        (parse::peek_at(p, 1).kind == lex::name || parse::peek_at(p, 1).kind == lex::type_name)) {
+        parse::advance(p);
+        ast::Designator d = {.field = {.name = parse::text(p, parse::advance(p))}};
+        ds[*count] = d;
+        *count += 1;
+        return true;
+    }
+    if (parse::at(p, lex::left_bracket)) {
+        parse::advance(p);
+        ast::Designator d = {.index = {.index = parse::expression(p)}};
+        parse::expect(p, lex::right_bracket, "`]` to end the designator");
+        ds[*count] = d;
+        *count += 1;
+        return true;
+    }
+    return false;
+}
+
+// One item of an initializer list: designators then `=` then a value, or a value.
+static ast::Initializer item(parse::Parser *p) {
+    U32 first = parse::peek(p).span.start;
+    ast::Designator found[:] = {};
+    found = mem::realloc(found, 16);
+    Usize count = 0;
+    while (count < 16 && designator(p, found, &count)) {
+    }
+    ast::Initializer result = {};
+    if (count == 0) {
+        result.value = parse::expression(p);
+        return result;
+    }
+    ast::Designator only = found[0];
+    if (count == 1 && only == .field && !parse::at(p, lex::equal)) {
+        result.value = make(parse::span_from(p, first), {.variant = {.name = only.field.name}});
+        return result;
+    }
+    parse::expect(p, lex::equal, "`=` after the designator");
+    result.designators = found[0:count];
+    result.value = parse::expression(p);
+    return result;
+}
+
+// `{ items }`: the position is at the brace. `type` is null for a list alone.
+static ast::Expr *initializer_list(parse::Parser *p, ast::TypeExpr *type, U32 start) {
+    parse::expect(p, lex::left_brace, "`{`");
+    ast::Initializer items[:] = {};
+    while (!parse::at(p, lex::right_brace) && !parse::at(p, lex::end_of_file)) {
+        ast::Initializer next = item(p);
+        if (next.value == nullptr) break;
+        items = mem::realloc(items, countof(items) + 1);
+        items[countof(items) - 1] = next;
+        if (!parse::accept(p, lex::comma)) break;
+    }
+    parse::expect(p, lex::right_brace, "`}` to end the list");
+    return make(parse::span_from(p, start), {.compound = {.type = type, .items = items}});
+}
+
+// One parameter of a lambda: a type then a name, or a lone name.
+static ast::Param lambda_param(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    ast::Param param = {};
+    lex::TokenKind after = parse::peek_at(p, 1).kind;
+    if (parse::at(p, lex::name) && (after == lex::comma || after == lex::right_paren)) {
+        lex::Token lone = parse::advance(p);
+        param.name = parse::text(p, lone);
+        char message[:] = format::push("a lambda parameter needs a type: write `auto ", param.name, "`");
+        parse::error(p, lone.span, message);
+    } else {
+        param.type = parse::type(p);
+        lex::Token name = parse::expect(p, lex::name, "a parameter name");
+        if (name.kind == lex::name) param.name = parse::text(p, name);
+    }
+    param.span = parse::span_from(p, start);
+    return param;
+}
+
+// `[x, y](I32 a) -> I32 { ... }`: the position is at the bracket.
+static ast::Expr *lambda(parse::Parser *p) {
+    U32 start = parse::advance(p).span.start;
+    ast::Identifier captures[:] = {};
+    while (parse::at(p, lex::name)) {
+        lex::Token name = parse::advance(p);
+        captures = mem::realloc(captures, countof(captures) + 1);
+        ast::Identifier capture = {.text = parse::text(p, name), .span = name.span};
+        captures[countof(captures) - 1] = capture;
+        if (!parse::accept(p, lex::comma)) break;
+    }
+    parse::expect(p, lex::right_bracket, "`]` to end the captures");
+    ast::Param params[:] = {};
+    if (parse::accept(p, lex::left_paren)) {
+        while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
+            params = mem::realloc(params, countof(params) + 1);
+            params[countof(params) - 1] = lambda_param(p);
+            if (!parse::accept(p, lex::comma)) break;
+        }
+        parse::expect(p, lex::right_paren, "`)` to end the parameters");
+    }
+    ast::TypeExpr *result = parse::accept(p, lex::arrow) ? parse::type(p) : nullptr;
+    if (!parse::at(p, lex::left_brace)) {
+        parse::expect(p, lex::left_brace, "`{` to start the lambda's body");
+        return nullptr;
+    }
+    ast::Stmt *body = parse::statement(p);
+    if (body == nullptr) return nullptr;
+    return make(parse::span_from(p, start),
+                {.lambda = {.captures = captures, .params = params, .result = result, .body = body}});
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Primary expressions
+
+// A name or path as a value, or a type as a value.
+static ast::Expr *name_or_type(parse::Parser *p) {
+    if (parse_type::starts_type(p, 0)) return type_value(p);
+    lex::TokenKind kind = parse::peek(p).kind;
+    if (kind != lex::name && kind != lex::type_name) {
+        not_an_expression(p);
+        return nullptr;
+    }
+    ast::Path path = parse_type::path(p);
+    return make(path.span, {.name = {.path = path}});
+}
+
+// A primary expression at the position, or null after an error. Parentheses are the caller's.
+static ast::Expr *primary(parse::Parser *p) {
+    lex::Token token = parse::peek(p);
+    switch (token.kind) {
+    case lex::integer:
+        return integer_literal(p);
+    case lex::floating:
+        return floating_literal(p);
+    case lex::character:
+        return character_literal(p);
+    case lex::string:
+        return string_literal(p);
+    case lex::kw_true:
+    case lex::kw_false:
+        parse::advance(p);
+        return make(token.span, {.boolean = {.value = token.kind == lex::kw_true}});
+    case lex::kw_nullptr:
+        parse::advance(p);
+        return make(token.span, .null_pointer);
+    case lex::dot:
+        return variant_value(p);
+    case lex::left_brace:
+        return initializer_list(p, nullptr, token.span.start);
+    case lex::left_bracket:
+        return lambda(p);
+    default:
+        return name_or_type(p);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Operators
+
+// What a pending operator is: it waits on the stack for its operands.
+typedef enum {
+    infix;
+    assignment;
+    conditional_form;
+    prefix;
+    cast_form;
+    query_form;
+    try_form;
+} Form;
+
+// The precedence of the prefix operators, above every binary one.
+constexpr U32 prefix_prec = 14;
+
+struct Pending {
+    Form form;
+    U32 prec;
+    U32 start;
+    ast::UnaryOp unary;
+    ast::BinaryOp binary;
+    ast::AssignOp assign;
+    ast::QueryOp query;
+    ast::TypeExpr *type;
+    ast::Expr *middle;
+};
+
+// The two stacks of one expression: operators waiting for operands, and finished operands.
+struct Stack {
+    Pending ops[:];
+    Usize op_count;
+    ast::ExprRef values[:];
+    Usize value_count;
+};
+
+typedef enum {
+    more;
+    value;
+    failed;
+} Step;
+
+typedef enum {
+    absent;
+    done;
+    broken;
+} Outcome;
+
+static void push_op(Stack *st, Pending op) {
+    st->ops = mem::realloc(st->ops, st->op_count + 1);
+    st->ops[st->op_count] = op;
+    st->op_count += 1;
+}
+
+static void push_value(Stack *st, ast::Expr *e) {
+    st->values = parse_type::with_expr(st->values[0:st->value_count], e);
+    st->value_count += 1;
+}
+
+static ast::Expr *pop_value(Stack *st) {
+    st->value_count -= 1;
+    return st->values[st->value_count];
+}
+
+// Replaces the last operand.
+static void replace_top(Stack *st, ast::Expr *e) {
+    st->values[st->value_count - 1] = e;
+}
+
+static ast::Span between(U32 start, const ast::Expr *last) {
+    ast::Span span = {.start = start, .end = last->span.end};
+    return span;
+}
+
+// Takes the last pending operator and applies it to its operands.
+static void reduce(Stack *st) {
+    st->op_count -= 1;
+    Pending op = st->ops[st->op_count];
+    ast::Expr *right = pop_value(st);
+    switch (op.form) {
+    case .infix: {
+        ast::Expr *left = pop_value(st);
+        push_value(st,
+                   make(between(left->span.start, right), {.binary = {.op = op.binary, .left = left, .right = right}}));
+        break;
+    }
+    case .assignment: {
+        ast::Expr *left = pop_value(st);
+        push_value(
+            st, make(between(left->span.start, right), {.assign = {.op = op.assign, .target = left, .value = right}}));
+        break;
+    }
+    case .conditional_form: {
+        ast::Expr *condition = pop_value(st);
+        push_value(st, make(between(condition->span.start, right),
+                            {.conditional = {.condition = condition, .then_value = op.middle, .else_value = right}}));
+        break;
+    }
+    case .prefix:
+        push_value(st, make(between(op.start, right), {.unary = {.op = op.unary, .operand = right}}));
+        break;
+    case .cast_form:
+        push_value(st, make(between(op.start, right), {.cast = {.type = op.type, .operand = right}}));
+        break;
+    case .query_form:
+        push_value(st, make(between(op.start, right), {.query = {.op = op.query, .type = nullptr, .operand = right}}));
+        break;
+    case .try_form:
+        push_value(st, make(between(op.start, right), {.try_expr = {.operand = right}}));
+        break;
+    }
+}
+
+// Applies the pending operators that bind at least as tight as an incoming one (tighter only, when it is right
+// associative).
+static void reduce_above(Stack *st, U32 prec, Bool right) {
+    for (Usize i = 0; i < st->op_count + 1 && st->op_count > 0; i += 1) {
+        U32 top = st->ops[st->op_count - 1].prec;
+        if (top < prec || (top == prec && right)) break;
+        reduce(st);
+    }
+}
+
+// The precedence of a binary operator token, or 0 when the token is none.
+static U32 binary_prec(lex::TokenKind kind) {
+    switch (kind) {
+    case lex::star:
+    case lex::slash:
+    case lex::percent:
+        return 12;
+    case lex::plus:
+    case lex::minus:
+        return 11;
+    case lex::less_less:
+    case lex::greater_greater:
+        return 10;
+    case lex::less:
+    case lex::greater:
+    case lex::less_equal:
+    case lex::greater_equal:
+        return 9;
+    case lex::equal_equal:
+    case lex::bang_equal:
+        return 8;
+    case lex::ampersand:
+        return 7;
+    case lex::caret:
+        return 6;
+    case lex::pipe:
+        return 5;
+    case lex::ampersand_ampersand:
+        return 4;
+    case lex::pipe_pipe:
+        return 3;
+    default:
+        return 0;
+    }
+}
+
+static ast::BinaryOp binary_op(lex::TokenKind kind) {
+    switch (kind) {
+    case lex::star:
+        return .multiply;
+    case lex::slash:
+        return .divide;
+    case lex::percent:
+        return .remainder;
+    case lex::plus:
+        return .add;
+    case lex::minus:
+        return .subtract;
+    case lex::less_less:
+        return .shift_left;
+    case lex::greater_greater:
+        return .shift_right;
+    case lex::less:
+        return .less;
+    case lex::greater:
+        return .greater;
+    case lex::less_equal:
+        return .less_equal;
+    case lex::greater_equal:
+        return .greater_equal;
+    case lex::equal_equal:
+        return .equal;
+    case lex::bang_equal:
+        return .not_equal;
+    case lex::ampersand:
+        return .bit_and;
+    case lex::caret:
+        return .bit_xor;
+    case lex::pipe:
+        return .bit_or;
+    case lex::ampersand_ampersand:
+        return .logical_and;
+    default:
+        return .logical_or;
+    }
+}
+
+// Whether a token is `=` or a compound assignment.
+static Bool is_assign(lex::TokenKind kind) {
+    switch (kind) {
+    case lex::equal:
+    case lex::star_equal:
+    case lex::slash_equal:
+    case lex::percent_equal:
+    case lex::plus_equal:
+    case lex::minus_equal:
+    case lex::less_less_equal:
+    case lex::greater_greater_equal:
+    case lex::ampersand_equal:
+    case lex::caret_equal:
+    case lex::pipe_equal:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static ast::AssignOp assign_op(lex::TokenKind kind) {
+    switch (kind) {
+    case lex::star_equal:
+        return .multiply;
+    case lex::slash_equal:
+        return .divide;
+    case lex::percent_equal:
+        return .remainder;
+    case lex::plus_equal:
+        return .add;
+    case lex::minus_equal:
+        return .subtract;
+    case lex::less_less_equal:
+        return .shift_left;
+    case lex::greater_greater_equal:
+        return .shift_right;
+    case lex::ampersand_equal:
+        return .bit_and;
+    case lex::caret_equal:
+        return .bit_xor;
+    case lex::pipe_equal:
+        return .bit_or;
+    default:
+        return .plain;
+    }
+}
+
+// Whether a token is a prefix operator, and which.
+static Bool is_prefix(lex::TokenKind kind) {
+    switch (kind) {
+    case lex::minus:
+    case lex::plus:
+    case lex::bang:
+    case lex::tilde:
+    case lex::ampersand:
+    case lex::star:
+    case lex::plus_plus:
+    case lex::minus_minus:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static ast::UnaryOp prefix_op(lex::TokenKind kind) {
+    switch (kind) {
+    case lex::minus:
+        return .negate;
+    case lex::plus:
+        return .plus;
+    case lex::bang:
+        return .logical_not;
+    case lex::tilde:
+        return .bit_not;
+    case lex::ampersand:
+        return .address_of;
+    case lex::star:
+        return .dereference;
+    case lex::plus_plus:
+        return .pre_increment;
+    default:
+        return .pre_decrement;
+    }
+}
+
+// An infix operator at the position: binary, assignment or the `?:`. Absent when the token is none.
+static Outcome infix_step(parse::Parser *p, Stack *st) {
+    lex::TokenKind kind = parse::peek(p).kind;
+    U32 prec = binary_prec(kind);
+    if (prec > 0) {
+        reduce_above(st, prec, false);
+        Pending op = {.form = .infix, .prec = prec, .binary = binary_op(kind)};
+        push_op(st, op);
+        parse::advance(p);
+        return .done;
+    }
+    if (is_assign(kind)) {
+        reduce_above(st, 1, true);
+        Pending op = {.form = .assignment, .prec = 1, .assign = assign_op(kind)};
+        push_op(st, op);
+        parse::advance(p);
+        return .done;
+    }
+    if (kind != lex::question) return .absent;
+    reduce_above(st, 2, true);
+    parse::advance(p);
+    ast::Expr *middle = parse::expression(p);
+    if (middle == nullptr) return .broken;
+    if (!parse::accept(p, lex::colon)) {
+        parse::expect(p, lex::colon, "`:` of the conditional");
+        return .broken;
+    }
+    Pending op = {.form = .conditional_form, .prec = 2, .middle = middle};
+    push_op(st, op);
+    return .done;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Postfix operators
+
+// The error for a comma where the operator would be; says whether there was one.
+static Bool comma_operator(parse::Parser *p) {
+    if (!parse::at(p, lex::comma)) return false;
+    Str message =
+        "there is no comma operator in Smith: write two statements, or call a function that takes both values";
+    parse::error(p, parse::peek(p).span, message);
+    return true;
+}
+
+// `f(a, b)`: the position is at the parenthesis.
+static ast::Expr *call(parse::Parser *p, ast::Expr *callee) {
+    parse::advance(p);
+    ast::ExprRef args[:] = {};
+    while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
+        ast::Expr *arg = parse::expression(p);
+        if (arg == nullptr) return nullptr;
+        args = parse_type::with_expr(args, arg);
+        if (!parse::accept(p, lex::comma)) break;
+    }
+    parse::expect(p, lex::right_paren, "`)` to end the arguments");
+    return make(parse::span_from(p, callee->span.start), {.call = {.callee = callee, .args = args}});
+}
+
+// `xs[i]`, `xs[a:b]`, `xs[a:]`, `xs[:b]`, `xs[:]`: the position is at the bracket.
+static ast::Expr *index_or_slice(parse::Parser *p, ast::Expr *base) {
+    parse::advance(p);
+    ast::Expr *first = nullptr;
+    ast::Expr *last = nullptr;
+    Bool is_slice = false;
+    if (!parse::at(p, lex::colon)) {
+        first = parse::expression(p);
+        if (first == nullptr || comma_operator(p)) return nullptr;
+    }
+    if (parse::accept(p, lex::colon)) {
+        is_slice = true;
+        if (!parse::at(p, lex::right_bracket)) {
+            last = parse::expression(p);
+            if (last == nullptr) return nullptr;
+        }
+    }
+    parse::expect(p, lex::right_bracket, "`]` to end the index");
+    ast::Span span = parse::span_from(p, base->span.start);
+    if (is_slice) return make(span, {.slice_of = {.base = base, .start = first, .end = last}});
+    return make(span, {.index = {.base = base, .index = first}});
+}
+
+// `.name` and `->name`: the position is at the operator.
+static ast::Expr *member(parse::Parser *p, ast::Expr *base) {
+    Bool arrow = parse::advance(p).kind == lex::arrow;
+    lex::Token name = parse::peek(p);
+    if (name.kind != lex::name && name.kind != lex::type_name) {
+        parse::expect(p, lex::name, "a member name");
+        return nullptr;
+    }
+    parse::advance(p);
+    return make(parse::span_from(p, base->span.start),
+                {.member = {.base = base, .name = parse::text(p, name), .arrow = arrow}});
+}
+
+// A postfix operator applied to the last operand, if one is at the position.
+static Outcome postfix_step(parse::Parser *p, Stack *st) {
+    lex::Token token = parse::peek(p);
+    ast::Expr *base = st->values[st->value_count - 1];
+    ast::Expr *result = nullptr;
+    switch (token.kind) {
+    case lex::left_paren:
+        result = call(p, base);
+        break;
+    case lex::left_bracket:
+        result = index_or_slice(p, base);
+        break;
+    case lex::dot:
+    case lex::arrow:
+        result = member(p, base);
+        break;
+    case lex::plus_plus:
+    case lex::minus_minus:
+        parse::advance(p);
+        ast::UnaryOp op = .post_decrement;
+        if (token.kind == lex::plus_plus) op = .post_increment;
+        result = make(parse::span_from(p, base->span.start), {.unary = {.op = op, .operand = base}});
+        break;
+    default:
+        return .absent;
+    }
+    if (result == nullptr) return .broken;
+    replace_top(st, result);
+    return .done;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Operands: prefix operators, parentheses, casts, `sizeof`
+
+// `sizeof(T)`, `sizeof x`, `alignof`, `countof`: the position is at the keyword.
+static Step query(parse::Parser *p, Stack *st) {
+    lex::Token keyword = parse::advance(p);
+    ast::QueryOp op = .count_of;
+    if (keyword.kind == lex::kw_sizeof) op = .size_of;
+    if (keyword.kind == lex::kw_alignof) op = .align_of;
+    if (parse::at(p, lex::left_paren) && parse_type::starts_type(p, 1)) {
+        parse::advance(p);
+        ast::TypeExpr *type = parse::type(p);
+        parse::expect(p, lex::right_paren, "`)` to end the type");
+        if (type == nullptr) return .failed;
+        push_value(
+            st, make(parse::span_from(p, keyword.span.start), {.query = {.op = op, .type = type, .operand = nullptr}}));
+        return .value;
+    }
+    Pending pending = {.form = .query_form, .prec = prefix_prec, .start = keyword.span.start, .query = op};
+    push_op(st, pending);
+    return .more;
+}
+
+// `(`: a cast `(T)x`, a compound literal `(T){...}` or a parenthesized expression.
+static Step paren(parse::Parser *p, Stack *st) {
+    U32 start = parse::advance(p).span.start;
+    if (parse_type::starts_type(p, 0)) {
+        ast::TypeExpr *type = parse::type(p);
+        parse::expect(p, lex::right_paren, "`)` to end the cast's type");
+        if (type == nullptr) return .failed;
+        if (parse::at(p, lex::left_brace)) {
+            push_value(st, initializer_list(p, type, start));
+            return .value;
+        }
+        Pending cast = {.form = .cast_form, .prec = prefix_prec, .start = start, .type = type};
+        push_op(st, cast);
+        return .more;
+    }
+    ast::Expr *inner = parse::expression(p);
+    if (inner == nullptr || comma_operator(p)) return .failed;
+    parse::expect(p, lex::right_paren, "`)` to close the `(`");
+    inner->span = parse::span_from(p, start);
+    push_value(st, inner);
+    return .value;
+}
+
+// One operand position: a prefix operator (more to come), or a value.
+static Step operand_step(parse::Parser *p, Stack *st) {
+    lex::Token token = parse::peek(p);
+    if (is_prefix(token.kind) || token.kind == lex::kw_try) {
+        parse::advance(p);
+        Pending op = {.form = .prefix, .prec = prefix_prec, .start = token.span.start};
+        if (token.kind == lex::kw_try) {
+            op.form = .try_form;
+        } else {
+            op.unary = prefix_op(token.kind);
+        }
+        push_op(st, op);
+        return .more;
+    }
+    switch (token.kind) {
+    case lex::kw_sizeof:
+    case lex::kw_alignof:
+    case lex::kw_countof:
+        return query(p, st);
+    case lex::left_paren:
+        return paren(p, st);
+    default:
+        break;
+    }
+    ast::Expr *e = primary(p);
+    if (e == nullptr) return .failed;
+    push_value(st, e);
+    return .value;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The expression
+
+// Reads an expression at the position, or records an error and gives null. The hook `parse::Hooks.expression`.
+export ast::Expr *expression(parse::Parser *p) {
+    Stack st = {};
+    Bool want_operand = true;
+    for (Usize i = 0; i <= countof(p->tokens); i += 1) {
+        if (want_operand) {
+            Step step = operand_step(p, &st);
+            if (step == .failed) return nullptr;
+            want_operand = step == .more;
+            continue;
+        }
+        Outcome postfix = postfix_step(p, &st);
+        if (postfix == .broken) return nullptr;
+        if (postfix == .done) continue;
+        Outcome infix_result = infix_step(p, &st);
+        if (infix_result == .broken) return nullptr;
+        if (infix_result == .absent) break;
+        want_operand = true;
+    }
+    if (want_operand) return nullptr;
+    for (Usize i = 0; i <= st.op_count && st.op_count > 0; i += 1)
+        reduce(&st);
+    return pop_value(&st);
+}

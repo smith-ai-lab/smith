@@ -1,0 +1,8 @@
+typeof(x)
+(module m
+  (variable t (type_of (name x))))
+
+typeof(I32[:])
+(module m
+  (variable t (type_of (type_value (slice (named I32))))))
+
