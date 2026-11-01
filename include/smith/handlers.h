@@ -99,11 +99,14 @@ SmithConsoleHandler *smith_handlers_set_console(SmithConsoleHandler *console);
 SmithConsoleHandler *smith_handlers_console(void);
 
 // The environment of the calling thread: getenv reaches it while one is set. `get` returns the value of a variable, or
-// null when it is not set; the handler owns the string. No env handler set is libc's.
+// null when it is not set; the handler owns the string. `set` and `remove` (std::env's env::set and env::remove) return
+// 0 or an errno; a handler that leaves one null refuses it with ENOSYS. No env handler set is libc's.
 typedef struct SmithEnvHandler SmithEnvHandler;
 
 struct SmithEnvHandler {
     char *(*get)(SmithEnvHandler *self, const char *name);
+    int (*set)(SmithEnvHandler *self, const char *name, const char *value);
+    int (*remove)(SmithEnvHandler *self, const char *name);
 };
 
 // Sets the environment of the calling thread (null: libc's), returning the one it had.

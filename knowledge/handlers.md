@@ -108,7 +108,7 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
   its backing refuses. `arena::try_push` is the `option` form of `push` (`.none` instead of the stop or the checked failure, nothing
   pushed), built on `try_push_raw` as `mem::try_alloc` is on `try_alloc_raw`; `arena::try_push_slice` is the slice form (an `option` of the slice, `.none` on a refusal or an overflow, nothing pushed), as `mem::try_alloc_slice`.
 
-- **Environment and clock (issue #240):** `SmithEnvHandler {get}` answers `getenv`; `SmithClockHandler {now, sleep}` (nanoseconds)
+- **Environment and clock (issue #240):** `SmithEnvHandler {get, set, remove}` answers `getenv` (`set` and `remove` are what std::env writes through; a null one is refused); `SmithClockHandler {now, sleep}` (nanoseconds)
   answers `clock_gettime`, `nanosleep`, `usleep` and `sleep`. Each is per thread with a setter that returns the previous
   handler, and none set is libc's. `gettimeofday`, `time` and the Mach clocks are not reached. A fake clock's `sleep`
   advances its time and returns, so sleeping on it never blocks. See [direct-call-modules](direct-call-modules.md).
