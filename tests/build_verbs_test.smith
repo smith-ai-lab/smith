@@ -8,8 +8,44 @@ import std::format;
 import std::mem;
 import std::test;
 import scratch;
+import corpus;
+import <smith_core_verbs.h>;
+import <string.h>;
 
 constexpr Usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
+
+// What smith_task and smith_alias say about a name, in process (runtime/build_runtime.c compiled with
+// -DSMITH_BUILD_CORE, include/smith_core_verbs.h): all seven verbs for each, and names that are no verb's.
+export void test_build_verbs_the_seven_verbs_are_refused_as_task_and_alias_names() {
+    arena::Arena memory = test::memory(1U << 20);
+    const char *differing = "";
+    char actual[16384] = "";
+    const char *names[_] = {"fmt", "lint", "docs", "prove", "check", "run", "test", "tests", "other", "Test"};
+    const char *kinds[_] = {"task", "alias"};
+    for (Usize k = 0; k < 2; k++) {
+        for (Usize n = 0; n < countof(names); n++) {
+            char message[512];
+            bool refused = c::smith_core_verb_name_refused(kinds[k], names[n], message, sizeof message);
+            Usize used = c::strlen(actual);
+            (void)format::to(actual + used, sizeof actual - used, kinds[k], " ", names[n],
+                             refused ? ": refused: " : ": allowed", message, "\n");
+        }
+    }
+    corpus::golden(&memory, &differing, "tests/build-verbs/refusals.txt", actual);
+    corpus::finish(differing);
+}
+
+// Calling again starts from nothing: a refusal does not remember the one before it.
+export void test_build_verbs_a_refusal_does_not_remember_the_last() {
+    char message[512];
+    test::check_condition(c::smith_core_verb_name_refused("task", "fmt", message, sizeof message));
+    char first[512];
+    c::strcpy(first, message);
+    test::check_condition(!c::smith_core_verb_name_refused("task", "other", message, sizeof message));
+    test::check_condition(message[0] == '\0');
+    test::check_condition(c::smith_core_verb_name_refused("task", "fmt", message, sizeof message));
+    test::check_condition(c::strcmp(first, message) == 0);
+}
 
 static void refuses_a_task_and_an_alias_named(const char *verb) {
     scratch::Project p = scratch::make("p", nullptr);
@@ -47,32 +83,10 @@ static void refuses_a_task_and_an_alias_named(const char *verb) {
     scratch::expect_contains(name, alias.err, text);
 }
 
-export void test_build_verbs_fmt_is_not_a_task_or_an_alias() {
-    refuses_a_task_and_an_alias_named("fmt");
-}
-
-export void test_build_verbs_lint_is_not_a_task_or_an_alias() {
+// The one end-to-end case of the refusal, with a real build.c run by `smith build`: the build program prints it and
+// ends with status 2, for a task and an alias alike. The text for every verb is the in-process test above.
+export void test_build_verbs_a_verb_name_stops_the_build_program() {
     refuses_a_task_and_an_alias_named("lint");
-}
-
-export void test_build_verbs_docs_is_not_a_task_or_an_alias() {
-    refuses_a_task_and_an_alias_named("docs");
-}
-
-export void test_build_verbs_prove_is_not_a_task_or_an_alias() {
-    refuses_a_task_and_an_alias_named("prove");
-}
-
-export void test_build_verbs_check_is_not_a_task_or_an_alias() {
-    refuses_a_task_and_an_alias_named("check");
-}
-
-export void test_build_verbs_run_is_not_a_task_or_an_alias() {
-    refuses_a_task_and_an_alias_named("run");
-}
-
-export void test_build_verbs_test_is_not_a_task_or_an_alias() {
-    refuses_a_task_and_an_alias_named("test");
 }
 
 export void test_build_verbs_a_test_step_is_built_incrementally_by_smith_tests() {
