@@ -2,6 +2,9 @@
 // with nm, a step that writes its output with smith_write, editing the function, smith_run_status and smith_run_lines,
 // the data a function gets from its command, and smith_run_program. The section 9o that timed a trivial .run task
 // asserted nothing and is not ported. Each fixture is tests/build_fixtures/steps_<name>/build.c.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: include/smith/ lib/std/build.smith lib/std/test.smith tests/build_fixtures/
 module build_steps_run_test;
 
 import std::arena;

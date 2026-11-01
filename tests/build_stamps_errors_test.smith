@@ -1,6 +1,9 @@
 // What `smith build` says when a build.c uses the high-level and the step calls wrongly, from tests/build.sh sections
 // 9i, 9j (smith_compile_command), 9q (.stamp errors), 10 (ninja arguments) and 13a (name collisions): each case is a
 // build.c in tests/build_fixtures that the test copies over build.c (the variants are `.txt` files).
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: include/smith/ lib/std/build.smith lib/std/test.smith tests/build_fixtures/
 module build_stamps_errors_test;
 
 import std::arena;

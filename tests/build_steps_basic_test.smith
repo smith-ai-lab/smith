@@ -5,6 +5,9 @@
 // that build.c writes for each fixture (tests/build_fixtures/steps_<name>/build.c), with a fake command that makes the
 // outputs its text names and times the test gives. What needs build.c compiled and run by the real smith (the verb's
 // wiring, its options, the environment, the regeneration when build.c changes) is a scratch project of the fixture.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: include/smith/ include/smith_core*.h lib/std/test.smith tests/build_fixtures/
 module build_steps_basic_test;
 
 import std::arena;
