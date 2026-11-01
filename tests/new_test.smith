@@ -204,7 +204,7 @@ static void expect_the_written_files(const scratch::Project *p, const char *labe
 }
 
 static const char *tracked(const scratch::Project *p, const char *dir) {
-    return scratch::capture(p, joined("git -C ", dir, " ls-files | tr '\\n' ' ' | sed 's/ $//'"));
+    return capture(p, ".", joined("git -C ", dir, " ls-files | tr '\\n' ' ' | sed 's/ $//'"));
 }
 
 // 1. smith new hello: a .smith project, the default; what it writes and commits.
@@ -263,13 +263,13 @@ export void test_new_hello_the_smith_project_it_writes() {
     scratch::expect_contains("new hello: the summary says a repository was made", created.out,
                              "created a repository on main with one commit");
     scratch::expect_text("new hello: git is on main", "main",
-                         scratch::capture(&p, "git -C hello symbolic-ref --short HEAD"));
-    scratch::expect_text("new hello: one commit", "1", scratch::capture(&p, "git -C hello rev-list --count HEAD"));
+                         capture(&p, ".", "git -C hello symbolic-ref --short HEAD"));
+    scratch::expect_text("new hello: one commit", "1", capture(&p, ".", "git -C hello rev-list --count HEAD"));
     scratch::expect_text("new hello: the commit message", "chore: create hello with smith new",
-                         scratch::capture(&p, "git -C hello log -1 --format=%s"));
+                         capture(&p, ".", "git -C hello log -1 --format=%s"));
     scratch::expect_text("new hello: git tracks exactly the written files", smith_files, tracked(&p, "hello"));
     scratch::expect_text("new hello: the tree is clean after the commit", "",
-                         scratch::capture(&p, "git -C hello status --porcelain"));
+                         capture(&p, ".", "git -C hello status --porcelain"));
 }
 
 // 1a. The same for smith new --language c hellc.
@@ -302,7 +302,7 @@ export void test_new_language_c_the_c_project_it_writes() {
                              slurp(&p, "hellc/knowledge/program.md"), "primes_sum");
     scratch::expect_text("new --language c: git tracks exactly the written files", c_files, tracked(&p, "hellc"));
     scratch::expect_text("new --language c: the tree is clean after the commit", "",
-                         scratch::capture(&p, "git -C hellc status --porcelain"));
+                         capture(&p, ".", "git -C hellc status --porcelain"));
 }
 
 // 1b. smith new hello: the first build, the program it makes and the greeting (a real compiler).
@@ -344,7 +344,7 @@ export void test_new_a_second_run_creates_nothing() {
     Said again = smith_new(&p, "", "hello", nullptr, &saved);
     test::check_equal(again.status, 0);
     scratch::expect_text("second run: changes no bytes", before, scratch::capture(&p, sum));
-    scratch::expect_text("second run: no new commit", "1", scratch::capture(&p, "git -C hello rev-list --count HEAD"));
+    scratch::expect_text("second run: no new commit", "1", capture(&p, ".", "git -C hello rev-list --count HEAD"));
     scratch::expect_contains("second run: everything is kept", again.out, "0 created, 9 kept");
 }
 
@@ -836,14 +836,13 @@ export void test_new_inside_a_repository_and_with_no_git_identity() {
     Saved saved = {};
     git_isolate(&p, true, &saved);
     make_folder(&p, "outer");
-    (void)scratch::sh(&p, "git -C outer init -q -b main && git -C outer commit -q --allow-empty -m first");
+    (void)run(&p, "git -C outer init -q -b main && git -C outer commit -q --allow-empty -m first");
     Said inner = smith_new(&p, "outer", "inner", nullptr, &saved);
     test::check_equal(inner.status, 0);
     expect_present(&p, "inside a repository: no new repository", "outer/inner/.git", false);
-    scratch::expect_text("inside a repository: no commit", "1",
-                         scratch::capture(&p, "git -C outer rev-list --count HEAD"));
+    scratch::expect_text("inside a repository: no commit", "1", capture(&p, ".", "git -C outer rev-list --count HEAD"));
     scratch::expect_text("inside a repository: nothing staged", "",
-                         scratch::capture(&p, "git -C outer diff --cached --name-only"));
+                         capture(&p, ".", "git -C outer diff --cached --name-only"));
     make_folder(&p, "noid");
     Saved without = {};
     git_isolate(&p, false, &without);
@@ -852,10 +851,9 @@ export void test_new_inside_a_repository_and_with_no_git_identity() {
     expect_present(&p, "no identity: files written", "noid/proj/main.smith", true);
     scratch::expect_text(
         "no identity: files staged", "yes",
-        scratch::capture(&p,
-                         "git -C noid/proj diff --cached --name-only | grep -q '^main.smith$' && echo yes || echo no"));
+        capture(&p, ".", "git -C noid/proj diff --cached --name-only | grep -q '^main.smith$' && echo yes || echo no"));
     scratch::expect_text("no identity: no commit", "0",
-                         scratch::capture(&p, "git -C noid/proj rev-list --count HEAD 2>/dev/null || echo 0"));
+                         capture(&p, ".", "git -C noid/proj rev-list --count HEAD 2>/dev/null || echo 0"));
     scratch::expect_contains("no identity: the message says the commit was skipped", noid.out, "commit skipped");
 }
 
