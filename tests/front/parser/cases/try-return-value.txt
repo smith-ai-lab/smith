@@ -1,1 +1,1 @@
-try-return-value/main.smith: error: expected `;`, found `c` (25:14) [undecided_c]
+try-return-value/main.smith: error: expected `;` after the declaration, found `::` (25:15) [undecided_c]

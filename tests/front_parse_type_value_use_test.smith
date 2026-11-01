@@ -1,0 +1,61 @@
+// Tests of a type value used as a type in front::parser (A7o #1360, part of #1112): `name name;` is a declaration, and
+// `(name) operand` is a cast; `(x) - 1` and `(x)(y)` are unchanged. Whether the name is a type is the checker's.
+module front_parse_type_value_use_test;
+
+import front::parser;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+
+static Str errors_of(Str source) {
+    parser::Parsed parsed = parser::parse("m.smith", source);
+    format::Chars joined = {};
+    for (Usize i = 0; i < countof(parsed.errors); i += 1) {
+        joined = format::push(joined, parsed.errors[i].message, "\n");
+    }
+    Str result = joined;
+    return result;
+}
+
+static Str function_with(Str body) {
+    format::Chars source = format::push("module m;\nexport void f(I32 x, I32 y) {\n", body, "\n}\n");
+    Str result = source;
+    return result;
+}
+
+export void test_parse_type_value_file_scope_variable() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str none = "";
+    test::check_equal(errors_of("module m;\nconstexpr Type big = U32;\nbig total = 7;\n"), none);
+}
+
+export void test_parse_type_value_local_declaration() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str none = "";
+    test::check_equal(errors_of(function_with("once z = 1.5;")), none);
+}
+
+export void test_parse_type_value_cast() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str none = "";
+    test::check_equal(errors_of(function_with("auto p = (t)nullptr;")), none);
+}
+
+export void test_parse_type_value_difference_and_call_unchanged() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str none = "";
+    test::check_equal(errors_of(function_with("auto d = (x) - 1;\nauto c = (x)(y);")), none);
+}

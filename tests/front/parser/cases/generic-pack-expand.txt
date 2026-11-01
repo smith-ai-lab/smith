@@ -1,2 +1,2 @@
-generic-pack-expand/expand.smith: error: expected `;`, found `list` (13:23) [undecided_c]
+generic-pack-expand/expand.smith: ok
 generic-pack-expand/main.smith: ok
