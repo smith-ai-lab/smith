@@ -14,6 +14,13 @@
 //             parenthesis group is the result of a function type (`Fn(Bool (I32, I32))`), unless a second group
 //             follows it, which makes the name an applied type (`Fn(Option(I32) (I32))`)
 //
+// Smith's own syntax (S2, #1443, part of #1428) is read beside those, by `new_type`, when a type starts with a token
+// that no C type starts with: `*T` and `*mut T` (a pointer), `?T` (an option), `[5]T` `[_]T` `[]T` (an array, a slice),
+// `[5,3]T` `[,3]T` `[,]T` (a contiguous block: one size per dimension, a null size when empty), `(A, B)` `(T,)` `()` (a
+// tuple), `fn(A) -> R` and `fn_once(A) -> R` (a function; no `->` means no result). The lowercase built-ins are names
+// (`i32`, `str`) or keywords (`void`, `bool`, `char`) and parse as `named`; `type` is the keyword `kw_type`. A new type
+// has no suffixes: `*T` takes the whole type after it. `starts_new_type` tells a caller where a new type starts.
+//
 // No symbol table: a name's case says what it is, and after `c::` the position in the grammar decides. A path is a type
 // when its last segment is a `type_name` token (`I32`, `geometry::Box`), but never a path that starts with `c` in
 // `starts_type` (a parenthesized `(c::name)` is a value, #1112); `c_path_is_type` is the one place that says so. C's
@@ -144,6 +151,29 @@ export Bool starts_type(const parse::Parser *p, Usize offset) {
     default:
         return path_is_type(p, offset) || call_type_ahead(p, offset);
     }
+}
+
+// Whether the tokens from `offset` start a type of the new syntax that no expression starts: `*`, `?`, `fn`, `fn_once`,
+// `type`, or a bracket group followed directly by a type (`[5]T`, `[]T`, `[,3]T`). A parenthesis is never judged here:
+// `(A, B)` is a tuple type where a type is expected, and a parenthesized value where it is not.
+export Bool starts_new_type(const parse::Parser *p, Usize offset) {
+    lex::TokenKind kind = parse::peek_at(p, offset).kind;
+    if (kind == lex::star || kind == lex::question || kind == lex::kw_fn || kind == lex::kw_fn_once) return true;
+    if (kind != lex::left_bracket) return false;
+    Usize depth = 0;
+    Usize at = offset;
+    for (Usize i = 0; i < countof(p->tokens); i += 1) {
+        lex::TokenKind inside = parse::peek_at(p, at).kind;
+        if (inside == lex::end_of_file) return false;
+        if (inside == lex::left_bracket || inside == lex::left_paren) depth += 1;
+        if (inside == lex::right_bracket || inside == lex::right_paren) depth -= 1;
+        at += 1;
+        if (depth == 0) break;
+    }
+    lex::TokenKind after = parse::peek_at(p, at).kind;
+    return after == lex::star || after == lex::question || after == lex::left_bracket || after == lex::left_paren ||
+           after == lex::kw_fn || after == lex::kw_fn_once || after == lex::kw_type || after == lex::type_name ||
+           after == lex::name || is_keyword_type(after);
 }
 
 // Reads a path: `x`, `ascii::digit`, `c::printf`. The caller has checked that one starts here.
@@ -539,13 +569,24 @@ static ast::TypeExpr *function_argument(parse::Parser *p) {
     return node(start, p, plain_q, kind);
 }
 
+// Whether a name is one of the lowercase built-in types of the new syntax (`i32`, `usize`, `str`...): a fixed list, so
+// no symbol table. Where a type or a value may stand, as an argument of a type function, such a name is a type.
+static Bool is_builtin_name(Str word) {
+    return text::is(word, "i8") || text::is(word, "i16") || text::is(word, "i32") || text::is(word, "i64") ||
+           text::is(word, "isize") || text::is(word, "u8") || text::is(word, "u16") || text::is(word, "u32") ||
+           text::is(word, "u64") || text::is(word, "usize") || text::is(word, "f32") || text::is(word, "f64") ||
+           text::is(word, "str");
+}
+
 // One argument of a type function: a type, or a value when no type starts there.
 static ast::TypeArg argument(parse::Parser *p, Bool is_function) {
     if (is_function) {
         ast::TypeArg arg = {.type = {.type = function_argument(p)}};
         return arg;
     }
-    if (starts_type(p, 0)) {
+    Bool builtin =
+        parse::at(p, lex::name) && is_builtin_name(parse::text(p, parse::peek(p))) && !parse::at(p, lex::colon_colon);
+    if (starts_type(p, 0) || starts_new_type(p, 0) || builtin) {
         ast::TypeArg arg = {.type = {.type = parse::type(p)}};
         return arg;
     }
@@ -568,14 +609,131 @@ static ast::TypeExpr *applied(parse::Parser *p, U32 start, ast::Qualifiers q, as
     return node(start, p, q, {.applied = {.name = name, .args = args}});
 }
 
+// Whether the type at the position is written in the new syntax and only there (`read` uses it).
+static Bool at_new_type(const parse::Parser *p) {
+    lex::TokenKind kind = parse::peek(p).kind;
+    return starts_new_type(p, 0) || kind == lex::left_bracket || kind == lex::left_paren || kind == lex::kw_type;
+}
+
+// `*T` or `*mut T`: the position is at the `*`.
+static ast::TypeExpr *new_pointer(parse::Parser *p, U32 start) {
+    parse::advance(p);
+    Bool is_mut = parse::accept(p, lex::kw_mut);
+    ast::TypeExpr *pointee = parse::type(p);
+    ast::Qualifiers none = {};
+    return node(start, p, none, {.pointer = {.pointee = pointee, .is_mut = is_mut}});
+}
+
+// `?T`: the position is at the `?`.
+static ast::TypeExpr *new_option(parse::Parser *p, U32 start) {
+    parse::advance(p);
+    ast::TypeExpr *inner = parse::type(p);
+    ast::Qualifiers none = {};
+    return node(start, p, none, {.option = {.inner = inner}});
+}
+
+// `[5]T`, `[_]T`, `[]T`, `[5,3]T`, `[,3]T`, `[,]T`: the position is at the `[`. One dimension is an array (a slice when
+// empty); two or more are a block, with a null size for each empty one.
+static ast::TypeExpr *new_brackets(parse::Parser *p, U32 start) {
+    parse::advance(p);
+    ast::ExprRef dims[:] = {};
+    for (Usize i = 0; i < countof(p->tokens); i += 1) {
+        ast::Expr *size = nullptr;
+        if (!parse::at(p, lex::comma) && !parse::at(p, lex::right_bracket)) size = parse::expression(p);
+        dims = with_expr(dims, size);
+        if (!parse::accept(p, lex::comma)) break;
+    }
+    parse::expect(p, lex::right_bracket, "`]` to end the array size");
+    ast::TypeExpr *element = parse::type(p);
+    ast::Qualifiers none = {};
+    if (countof(dims) > 1) return node(start, p, none, {.block_type = {.element = element, .dims = dims}});
+    if (dims[0] == nullptr) return node(start, p, none, {.slice = {.element = element}});
+    return node(start, p, none, {.array = {.element = element, .count = dims[0]}});
+}
+
+// `(A, B)`, `(T,)` and `()`: the position is at the `(`. A single type with no comma is no tuple.
+static ast::TypeExpr *new_tuple(parse::Parser *p, U32 start) {
+    parse::advance(p);
+    ast::TypeRef elements[:] = {};
+    Bool comma = false;
+    while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
+        elements = with_type(elements, parse::type(p));
+        comma = parse::accept(p, lex::comma);
+        if (!comma) break;
+    }
+    Bool closed = parse::at(p, lex::right_paren);
+    parse::expect(p, lex::right_paren, "`)` to end the tuple type");
+    if (closed && countof(elements) == 1 && !comma) {
+        parse::error(p, parse::span_from(p, start),
+                     "a tuple of one type is written with a comma, `(T,)`; a type needs no parentheses");
+    }
+    ast::Qualifiers none = {};
+    return node(start, p, none, {.tuple = {.elements = elements}});
+}
+
+// `fn(A, B) -> R` and `fn_once(A) -> R`: the position is at the keyword. Without `->` the function has no result.
+static ast::TypeExpr *new_function(parse::Parser *p, U32 start) {
+    Bool is_once = parse::advance(p).kind == lex::kw_fn_once;
+    parse::expect(p, lex::left_paren, "`(` after `fn`");
+    ast::TypeRef params[:] = {};
+    while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
+        params = with_type(params, parse::type(p));
+        if (!parse::accept(p, lex::comma)) break;
+    }
+    parse::expect(p, lex::right_paren, "`)` to end the parameters of the function type");
+    ast::TypeExpr *result = nullptr;
+    if (parse::accept(p, lex::arrow)) result = parse::type(p);
+    ast::Qualifiers none = {};
+    return node(start, p, none, {.function = {.params = params, .result = result, .is_once = is_once}});
+}
+
+// One type of the new syntax; the position is at its first token.
+static ast::TypeExpr *new_type(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    switch (parse::peek(p).kind) {
+    case lex::star:
+        return new_pointer(p, start);
+    case lex::question:
+        return new_option(p, start);
+    case lex::left_bracket:
+        return new_brackets(p, start);
+    case lex::left_paren:
+        return new_tuple(p, start);
+    case lex::kw_type:
+        parse::advance(p);
+        return spelled(p, start, (ast::Qualifiers){});
+    default:
+        return new_function(p, start);
+    }
+}
+
+// Whether the `(` at the position starts one of C's declarators, `(*f)(I32)`, `(*p)[4]` or `(*table[2])(I32)`: a star
+// first and the matching `)` followed by `(` or `[`. `Pair(*i32)` is a type function's call with a pointer argument.
+static Bool c_declarator_ahead(const parse::Parser *p) {
+    if (!parse::at(p, lex::left_paren) || parse::peek_at(p, 1).kind != lex::star) return false;
+    Usize depth = 0;
+    Usize at = 0;
+    for (Usize i = 0; i < countof(p->tokens); i += 1) {
+        lex::TokenKind kind = parse::peek_at(p, at).kind;
+        if (kind == lex::end_of_file) return false;
+        if (kind == lex::left_paren) depth += 1;
+        if (kind == lex::right_paren) depth -= 1;
+        at += 1;
+        if (depth == 0) break;
+    }
+    lex::TokenKind after = parse::peek_at(p, at).kind;
+    return after == lex::left_paren || after == lex::left_bracket;
+}
+
 // Reads one type: qualifiers, the base, the applied form of a type name followed by `(`, the suffixes.
 static ast::TypeExpr *read(parse::Parser *p) {
+    if (at_new_type(p)) return new_type(p);
     U32 start = parse::peek(p).span.start;
     ast::Qualifiers q = {};
     take_qualifiers(p, &q);
     ast::TypeExpr *base = plain(p, start, q);
     if (base == nullptr) return nullptr;
-    Bool call_shape = parse::at(p, lex::left_paren) && parse::peek_at(p, 1).kind != lex::star;
+    Bool call_shape = parse::at(p, lex::left_paren) && !c_declarator_ahead(p);
     if (call_shape && base->kind == .named) {
         ast::Path name = base->kind.named.path;
         Str last = name.segments[countof(name.segments) - 1].text;
