@@ -193,13 +193,32 @@ export void test_front_types_convert_arrays_slices_and_text() {
     refused(conv(&t, t.text, chars), "expected char[:]", "found Str", "const");
     refused(conv(&t, xs, t.text), "expected Str", "found I32[:]", "array of char");
     // Bytes are not text: U8[:] and I8[:] need an explicit conversion, and a Str is never a U8 slice.
-    refused(conv(&t, types::slice_of(&t, named(&t, "U8"), false), t.text), "expected Str", "found U8[:]", "explicitly");
+    refused(conv(&t, types::slice_of(&t, named(&t, "U8"), false), t.text), "expected Str", "found U8[:]", "(Str)xs");
     refused(conv(&t, types::slice_of(&t, named(&t, "I8"), true), t.text), "expected Str", "found const I8[:]",
-            "explicitly");
+            "(Str)xs");
     refused(conv(&t, types::array_of(&t, named(&t, "U8"), 4, true), t.text), "expected Str", "found const U8[4]",
-            "explicitly");
+            "(Str)xs");
     refused(conv(&t, t.text, types::slice_of(&t, named(&t, "U8"), true)), "expected const U8[:]", "found Str",
             "const char[:]");
+}
+
+export void test_front_types_convert_bytes_cast_to_text_for_free() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types::TypeRef forms[_] = {types::slice_of(&t, named(&t, "U8"), false), types::slice_of(&t, named(&t, "U8"), true),
+                               types::slice_of(&t, named(&t, "I8"), false), types::slice_of(&t, named(&t, "I8"), true)};
+    for (Usize i = 0; i < countof(forms); i++) {
+        types_convert::Verdict v = cast(&t, forms[i], t.text);
+        test::check_condition(is(v, types_convert::cast));
+        test::check_condition(!v.checked);
+        test::check_condition(!conv(&t, forms[i], t.text).ok);
+    }
+    test::check_condition(cast(&t, types::slice_of(&t, named(&t, "I32"), false), t.text).ok == false);
+    refused(cast(&t, types::slice_of(&t, named(&t, "I32"), false), t.text), "expected Str", "found I32[:]",
+            "convert the parts one at a time");
 }
 
 export void test_front_types_convert_values_become_some_and_ok() {

@@ -35,15 +35,16 @@
 //                 type, which is an array parameter of the same size. A slice converts to a slice of the same element,
 //                 const added. There is no slice to pointer.
 //   Str           A `Str` converts to a `Str`; only a `char` slice or array (the checker's own 8-bit `char`) converts
-//                 to a `Str`, a `U8[:]` or `I8[:]` needs an explicit conversion. A `Str` converts to a slice only when
+//                 to a `Str`; a `U8[:]` or `I8[:]` needs the cast `(Str)xs`. A `Str` converts to a slice only when
 //                 the slice's element is const `char`.
 //   Option, Result  A value converts to `Option(T)`'s `.some` and `Result(T, E)`'s `.ok` wherever one is expected, if
 //                 it converts to `T` (owner, 2026-10-25). Absence and errors stay explicit: an `Option(T)` is not a
 //                 `T`, a `Result(T, E)` is not a `T`, and `null` is not an `Option(T)` (write `.none`).
-//   casts         `cast_ok(table, from, to, lit)`. Between integers, floats, enumerations and integers, `Bool` and
-//                 integers; between pointers if no `const` is dropped (`void *` to `T *` included); between a pointer
-//                 and an integer as wide as a pointer. A cast to `Void` is refused: write `_ = x;`. Functions and
-//                 records are cast to nothing.
+//   casts         `cast_ok(table, from, to, lit)`. `(Str)xs` for a `U8[:]` or `I8[:]` (const or not; also arrays of
+//                 them) is free: no check, no UTF-8 validation (owner, 2026-11-01). Between integers, floats,
+//                 enumerations and integers, `Bool` and integers; between pointers if no `const` is dropped (`void *`
+//                 to `T *` included); between a pointer and an integer as wide as a pointer. A cast to `Void` is
+//                 refused: write `_ = x;`. Functions and records are cast to nothing.
 //   checked casts A written cast that can lose a value asserts that the value fits, checked in every build; the task
 //                 fails with a report naming the value and the target type, and `smith prove` removes the check when
 //                 it proves the value fits. That is integer narrowing, a change of sign out of range, and float to
@@ -299,7 +300,7 @@ static Verdict to_text(const Ctx *c) {
     types::TypeRef element = c->from->element;
     if (element == c->char_type) return accept(text_from_chars);
     if (element->kind == .integer && element->bits == 8)
-        return refuse(c, "only a char slice makes a Str, not a U8 or I8 slice", "convert the bytes to text explicitly");
+        return refuse(c, "only a char slice makes a Str, not a U8 or I8 slice", "write the cast (Str)xs");
     return refuse(c, "only characters make a Str", "write a slice or an array of char");
 }
 
@@ -415,6 +416,9 @@ static Verdict cast_by_kind(const Ctx *c) {
     types::Kind from = c->from->kind;
     types::Kind to = c->to->kind;
     if (to == .void_type) return refuse(c, "a cast to Void discards a value", "write _ = x;");
+    if (to == .text && (from == .slice || from == .array) && c->from->element->kind == .integer &&
+        c->from->element->bits == 8)
+        return accept(cast); // bytes to text: free, every byte is a char, no UTF-8 check (owner, 2026-11-01)
     if (from == .integer && to == .integer) {
         if (c->lit.is_constant && !c->lit.is_float) return never_fits(c, literal_text(c->lit));
         return checked_cast();
