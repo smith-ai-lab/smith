@@ -1,0 +1,88 @@
+// Tests of the rule for compile-time parameters (#1339): a parameter of type `Type` is compile-time, so it is written
+// `constexpr Type T`, in a type function and in a generic alike. Each scenario checks source text read by
+// front::parser in an arena it sets as the current allocator.
+module front_constexpr_param_test;
+
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str errors_of(const types::Checked *r) {
+    Str text = "";
+    for (Usize i = 0; i < r->error_count; i++) {
+        Str line = r->errors[i].message;
+        char joined[:] = mem::alloc_slice(char, countof(text) + countof(line) + 1);
+        for (Usize k = 0; k < countof(text); k++) {
+            joined[k] = text[k];
+        }
+        for (Usize k = 0; k < countof(line); k++) {
+            joined[countof(text) + k] = line[k];
+        }
+        joined[countof(joined) - 1] = '\n';
+        text = joined;
+    }
+    return text;
+}
+
+// The errors `source` gives, one per line.
+static Str check(Str source) {
+    parser::Parsed p = parser::parse("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module(&p.module, types::lp64());
+    return errors_of(&r);
+}
+
+export void test_front_constexpr_type_function_checks_clean() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str errors = check("Type maybe(constexpr Type T);\n");
+    test::check_equal(countof(errors), (Usize)0);
+}
+
+export void test_front_type_function_without_constexpr_says_what_to_write() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str errors = check("Type maybe(Type T);\n");
+    test::check_condition(
+        has(errors, "parameter `T` has type `Type`, so it is compile-time: write `constexpr Type T`"));
+}
+
+export void test_front_generic_without_constexpr_says_what_to_write() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str errors = check("export I32 size_of(Type E, I32 n) {\n    return n;\n}\n");
+    test::check_condition(
+        has(errors, "parameter `E` has type `Type`, so it is compile-time: write `constexpr Type E`"));
+}
+
+export void test_front_generic_with_constexpr_type_checks_clean() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str errors = check("export I32 size_of(constexpr Type E, I32 n) {\n    return n;\n}\n");
+    test::check_equal(countof(errors), (Usize)0);
+}

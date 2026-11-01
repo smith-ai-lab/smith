@@ -309,6 +309,23 @@ int main() {
     printf("%d %d %d\n", u32(1), f64(4), local(1));
     return 0;
 }
+==> char-capital/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// `Char` is the capitalized spelling of C's `char` (K5): a variable, a parameter, a result and a pointer.
+
+static Char first(const Char *text) {
+    return text[0];
+}
+
+I32 main(void) {
+    Char letter = 'x';
+    const Char *word = "hello";
+    c::printf("%c %c\n", letter, first(word));
+    return 0;
+}
 ==> compile-alone-by-path/src/foo.smith <==
 module foo;
 
@@ -655,6 +672,170 @@ static_assert(length(prefix.ptr) == 11);
 I32 main() {
     static constexpr const I32 *kept = nums;
     c::printf("%c %d %s %d\n", word[0], *kept, small.ptr, length(inside));
+    return 0;
+}
+==> constexpr-type-function-mixed/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// A type function that returns an enum (issue #198): `maybe(Usize)` is one struct for every use, defined at the first
+// declaration that names it.
+
+typedef struct {
+    F32 radius;
+} Circle;
+
+Type maybe(constexpr Type T) {
+    return enum {
+        T some;
+        none;
+    };
+}
+
+Type outcome(Type T, constexpr Type E) {
+    return enum {
+        T ok;
+        E error;
+    };
+}
+
+static maybe(Usize) find(const char *text, char wanted) {
+    for (Usize i = 0; text[i] != 0; i++)
+        if (text[i] == wanted) return {.some = i};
+    return .none;
+}
+
+static maybe(Usize) again(Usize v) {
+    maybe(Usize) x = {.some = v};
+    return x;
+}
+
+static outcome(Circle, I32) make(Bool good) {
+    if (good) return {.ok = {.radius = 2}};
+    return {.error = 7};
+}
+
+typedef maybe(Circle *) MaybeCircle;
+
+static F32 radius_of(MaybeCircle c) {
+    if (c == .some) return c.some->radius;
+    return -1;
+}
+
+static Usize unwrap(maybe(Usize) o, Usize otherwise) {
+    if (o == .some) return o.some;
+    return otherwise;
+}
+
+I32 main(void) {
+    maybe(Usize) at = find("key=value", '=');
+    maybe(Usize) missing = find("none", '=');
+    outcome(Circle, I32) good = make(true);
+    outcome(Circle, I32) bad = make(false);
+    c::printf("%zu %zu\n", unwrap(at, 99), unwrap(missing, 99));
+    c::printf("%zu\n", unwrap(again(5), 0));
+    Circle unit = {.radius = 3};
+    MaybeCircle held = {.some = &unit};
+    c::printf("%.0f %.0f\n", (double)radius_of(held), (double)radius_of(.none));
+    switch (good) {
+    case .ok:
+        c::printf("ok %.0f\n", (double)good.ok.radius);
+        break;
+    case .error:
+        c::printf("error %d\n", good.error);
+        break;
+    }
+    switch (bad) {
+    case .ok:
+        c::printf("ok\n");
+        break;
+    case .error:
+        c::printf("error %d\n", bad.error);
+        break;
+    }
+    return 0;
+}
+==> constexpr-type-function/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// A type function that returns an enum (issue #198): `maybe(Usize)` is one struct for every use, defined at the first
+// declaration that names it.
+
+typedef struct {
+    F32 radius;
+} Circle;
+
+Type maybe(constexpr Type T) {
+    return enum {
+        T some;
+        none;
+    };
+}
+
+Type outcome(constexpr Type T, constexpr Type E) {
+    return enum {
+        T ok;
+        E error;
+    };
+}
+
+static maybe(Usize) find(const char *text, char wanted) {
+    for (Usize i = 0; text[i] != 0; i++)
+        if (text[i] == wanted) return {.some = i};
+    return .none;
+}
+
+static maybe(Usize) again(Usize v) {
+    maybe(Usize) x = {.some = v};
+    return x;
+}
+
+static outcome(Circle, I32) make(Bool good) {
+    if (good) return {.ok = {.radius = 2}};
+    return {.error = 7};
+}
+
+typedef maybe(Circle *) MaybeCircle;
+
+static F32 radius_of(MaybeCircle c) {
+    if (c == .some) return c.some->radius;
+    return -1;
+}
+
+static Usize unwrap(maybe(Usize) o, Usize otherwise) {
+    if (o == .some) return o.some;
+    return otherwise;
+}
+
+I32 main(void) {
+    maybe(Usize) at = find("key=value", '=');
+    maybe(Usize) missing = find("none", '=');
+    outcome(Circle, I32) good = make(true);
+    outcome(Circle, I32) bad = make(false);
+    c::printf("%zu %zu\n", unwrap(at, 99), unwrap(missing, 99));
+    c::printf("%zu\n", unwrap(again(5), 0));
+    Circle unit = {.radius = 3};
+    MaybeCircle held = {.some = &unit};
+    c::printf("%.0f %.0f\n", (double)radius_of(held), (double)radius_of(.none));
+    switch (good) {
+    case .ok:
+        c::printf("ok %.0f\n", (double)good.ok.radius);
+        break;
+    case .error:
+        c::printf("error %d\n", good.error);
+        break;
+    }
+    switch (bad) {
+    case .ok:
+        c::printf("ok\n");
+        break;
+    case .error:
+        c::printf("error %d\n", bad.error);
+        break;
+    }
     return 0;
 }
 ==> countof-fixed-array-plain/src/main.smith <==

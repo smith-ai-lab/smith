@@ -1221,6 +1221,13 @@ static void fill_enumeration(Checked *r, Str name, ast::Enumerator members[:]) {
     if (made != nullptr) set_fields(made, items);
 }
 
+// Whether the written type is the bare name `Type`: a type argument as a parameter, the result of a type function.
+static Bool is_type_name(const ast::TypeExpr *written) {
+    if (written == nullptr || written->kind != .named) return false;
+    ast::Path path = written->kind.named.path;
+    return countof(path.segments) == 1 && same_text(path.segments[0].text, "Type");
+}
+
 static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Param list[:],
                              const ast::TypeExpr *result_type, Bool variadic) {
     Usize n = countof(list);
@@ -1228,7 +1235,13 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
     for (Usize i = 0; i < n; i++) {
         const ast::Param *p = &list[i];
         params[i].name = p->name;
-        if (p->is_constexpr || p->is_rest) {
+        if (is_type_name(p->type)) {
+            if (!p->is_constexpr) {
+                failf(r, p->span, "parameter `", p->name,
+                      "` has type `Type`, so it is compile-time: write `constexpr Type ", p->name, "`");
+            }
+            params[i].type = r->table.invalid; // a type argument is not typed yet: the call site will say what it is
+        } else if (p->is_constexpr || p->is_rest) {
             failf(r, p->span, "not yet typed: a compile-time or rest parameter");
             params[i].type = r->table.invalid;
         } else if (p->type == nullptr) {
@@ -1239,7 +1252,8 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
         }
     }
     TypeRef result = r->table.void_type;
-    if (result_type != nullptr) result = resolve(r, result_type);
+    if (result_type != nullptr && !is_type_name(result_type))
+        result = resolve(r, result_type); // (`Type`: a type function)
     TypeRef type = function_of(&r->table, params, result, variadic);
     Symbol symbol = {.name = name, .kind = .function_symbol, .type = type, .decl = d, .exported = d->exported};
     declare_in_module(r, symbol, d->span);
