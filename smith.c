@@ -3356,6 +3356,42 @@ static void smith_fmt_rewrite(int *argc, char ***argv) {
     *argv = smith_fmt_rewrite_argv;
 }
 
+// `smith lint FILE` in a smith project (a build file in the folder) that has not been built: clang-tidy finds no
+// compile_commands.json, runs the file with no flags and reports the generated headers (.smith/include) as missing, an
+// error about the checkout and not the file. Says so with the command that makes them and stops (#1197). Not for
+// `-p`, `--` (the caller gave the flags), or a folder with no build file, where clang-tidy's own way is right.
+static bool smith_lint_has_database(const char *file) {
+    char folder[PATH_MAX];
+    if (realpath(file, folder) == nullptr) return true; // clang-tidy names a file that is not there
+    for (char *slash = strrchr(folder, '/'); slash != nullptr; slash = strrchr(folder, '/')) { // bounded by the depth
+        *slash = '\0';
+        char database[PATH_MAX + 32];
+        snprintf(database, sizeof database, "%s/compile_commands.json", folder[0] != '\0' ? folder : "");
+        if (access(database, R_OK) == 0) return true;
+        if (folder[0] == '\0') break;
+    }
+    return false;
+}
+
+static void smith_lint_needs_build(int argc, char **argv) {
+    bool file = false;
+    for (int i = 2; i < argc; i++) { // bounded by the arguments
+        const char *arg = argv[i];
+        if (strcmp(arg, "--") == 0 || strncmp(arg, "-p", 2) == 0 || strncmp(arg, "--config", 8) == 0) return;
+        if (arg[0] != '-') file = true;
+    }
+    if (!file || (access("build.c", F_OK) != 0 && access("build.smith", F_OK) != 0)) return;
+    for (int i = 2; i < argc; i++) { // bounded by the arguments
+        if (argv[i][0] == '-' || smith_lint_has_database(argv[i])) continue;
+        fprintf(
+            stderr,
+            "smith lint: %s: this checkout is not built, so its compile flags and generated headers are missing.\n"
+            "smith lint: run `smith build smith_needs` once (or `smith lint`, which builds them), then lint again.\n",
+            argv[i]);
+        exit(smith_exit_usage);
+    }
+}
+
 // The tool, after smith's defaults: its arguments with smith's style or tidy config where the project has none
 // (`smith fmt`, `smith lint`), or with the compile commands of .smith/ (`smith lsp`).
 static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const char *self) {
@@ -3369,6 +3405,7 @@ static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const c
         smith_die(smith_exit_usage, "too many arguments for smith's defaults (limit 262136, found):", found);
     }
     if (strcmp(tool->command, "fmt") == 0) smith_fmt_rewrite(&argc, &argv);
+    if (strcmp(tool->command, "lint") == 0) smith_lint_needs_build(argc, argv);
     if (strcmp(tool->command, "fmt") == 0 || strcmp(tool->command, "lint") == 0) {
         before = smith_defaults_apply(tool, &argc, &argv, self);
     } else if (strcmp(tool->command, "lsp") == 0 && smith_lsp_commands_option(argc, argv)) {
