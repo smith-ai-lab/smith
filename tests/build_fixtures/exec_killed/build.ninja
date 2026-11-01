@@ -1,0 +1,5 @@
+rule r
+  command = $cmd
+build killed: r
+  cmd = kill -9 $$$$
+default killed

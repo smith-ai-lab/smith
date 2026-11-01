@@ -95,6 +95,12 @@ export void free_error(state::Error error) {
 // ---------------------------------------------------------------------------------------------------------------
 // Types
 
+// `Void`: an LLVM `void`, kind `integer`, zero bits, named `Void`. Only a function's result and a call's value have it.
+static state::Ty void_type(state::Emitter *e) {
+    state::Ty none = {.kind = .integer, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
+    return none;
+}
+
 // The LLVM type of a type expression.
 export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
     // Chains of `if`, not a `switch`: a `case` label that spells the name of one of front::ast's functions (`named`,
@@ -103,6 +109,7 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
         ast::Path path = t->kind.named.path;
         state::Ty ty = {};
         if (countof(path.segments) == 1 && state::scalar_type(e, path.segments[0].text, &ty)) return ty;
+        if (countof(path.segments) == 1 && state::same_text(path.segments[0].text, "Void")) return void_type(e);
         return memory::type_record(e, t);
     }
     if (t->kind == .pointer) return memory::type_pointer(e, t);
@@ -165,7 +172,10 @@ static state::Status dispatch_binary(state::Emitter *e, const ast::Expr *x, ast:
 static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
     try debug::expr_location(e, x);
     if (x->kind == .integer) return arith::integer_literal(e, x, hint);
-    if (x->kind == .name) return arith::name_ref(e, x, hint);
+    if (x->kind == .name) {
+        if (memory::is_global_name(e, x)) return memory::name_ref(e, x);
+        return arith::name_ref(e, x, hint);
+    }
     if (x->kind == .unary) return dispatch_unary(e, x, x->kind.unary.op, hint);
     if (x->kind == .binary) return dispatch_binary(e, x, x->kind.binary.op, hint);
     if (x->kind == .assign) return arith::assign_op(e, x, hint);
@@ -184,7 +194,10 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
 
 // The handler that pushes the address of an lvalue.
 static state::Status dispatch_place(state::Emitter *e, const ast::Expr *x) {
-    if (x->kind == .name) return arith::place_name(e, x);
+    if (x->kind == .name) {
+        if (memory::is_global_name(e, x)) return memory::place_name(e, x);
+        return arith::place_name(e, x);
+    }
     if (x->kind == .unary && x->kind.unary.op == .dereference) return memory::place_dereference(e, x);
     if (x->kind == .index) return memory::place_index(e, x);
     if (x->kind == .member) return memory::place_member(e, x);
@@ -372,7 +385,6 @@ static state::Status check_function(const ast::Decl *d) {
         return state::fail("not a function", d->span);
     }
     Bool variadic = d->kind.function.variadic;
-    Bool has_result = d->kind.function.result != nullptr;
     ast::Param params[:] = d->kind.function.params;
     for (Usize i = 0; i < countof(d->attributes); i++) {
         ast::Path name = d->attributes[i].name;
@@ -380,7 +392,6 @@ static state::Status check_function(const ast::Decl *d) {
             return state::not_emitted("c_name", d->attributes[i].span);
     }
     if (variadic) return state::not_emitted("variadic function", d->span);
-    if (!has_result) return state::not_emitted("function without a result", d->span);
     for (Usize i = 0; i < countof(params); i++) {
         if (params[i].is_constexpr || params[i].is_rest)
             return state::not_emitted("constexpr or rest parameter", params[i].span);
@@ -422,11 +433,14 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
         params[i] = made.ok;
         types[i] = params[i].llvm;
     }
-    state::TyResult made_result = type_of(e, result_type);
-    if (made_result == .error) {
-        return {.error = made_result.error};
+    state::Ty result = void_type(e);
+    if (result_type != nullptr) {
+        state::TyResult made_result = type_of(e, result_type);
+        if (made_result == .error) {
+            return {.error = made_result.error};
+        }
+        result = made_result.ok;
     }
-    state::Ty result = made_result.ok;
     c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, types, (U32)count, 0);
     Str symbol = symbol_of(e->tree, name);
     char *label = state::cstr(symbol);
@@ -494,9 +508,15 @@ static state::Status emit_function(state::Emitter *e, const ast::Decl *d, state:
     state::push_statement(e, body);
     try run(e);
     state::end_scope(e);
-    // The end of a function that returns a value, reached without `return`.
+    // The end of a function reached without `return`: a `Void` function returns, any other traps.
     c::LLVMBasicBlockRef last = c::LLVMGetInsertBlock(e->builder);
-    if (c::LLVMGetBasicBlockTerminator(last) == nullptr) arith::trap_here(e);
+    if (c::LLVMGetBasicBlockTerminator(last) != nullptr) return state::success();
+    if (c::LLVMGetTypeKind(info.result.llvm) == c::LLVMVoidTypeKind) {
+        try control::before_return(e, d->span);
+        c::LLVMBuildRetVoid(e->builder);
+    } else {
+        arith::trap_here(e);
+    }
     return state::success();
 }
 
@@ -567,6 +587,7 @@ export ModuleResult module(c::LLVMContextRef context, const ast::Module *m, stat
     e.builder = c::LLVMCreateBuilderInContext(context);
     e.alloca_builder = c::LLVMCreateBuilderInContext(context);
     state::Status status = emit_all(&e);
+    memory::release(&e);
     c::LLVMDisposeBuilder(e.builder);
     c::LLVMDisposeBuilder(e.alloca_builder);
     if (e.target_data != nullptr) c::LLVMDisposeTargetData(e.target_data);

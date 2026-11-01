@@ -1,8 +1,7 @@
 // Tests of front::emit_call (#1132, B3a of #1112): calls between the functions of a module, prototypes standing for
 // functions of a second LLVM module in the same JIT, and the errors of a call with their spans. The trees are built by
 // hand as in front_emit_arith_test.smith, which says why a test keeps its tree in an arena and emits with the system's
-// allocator. Not here yet: `fact(n)` calling itself (it needs B2's `if`), and a function that returns `Void` (the
-// declaration of one is emit.smith's, see #1132).
+// allocator. Functions that return `Void` with a body, and `fact(n)` calling itself, are at the end.
 module front_emit_call_test;
 
 import front::ast;
@@ -16,6 +15,7 @@ import <string.h>;
 
 typedef I32 (*UnaryI32)(I32);
 typedef I32 (*BinaryI32)(I32, I32);
+typedef void (*VoidOfI32)(I32);
 
 // ---------------------------------------------------------------------------------------------------------------
 // Building trees
@@ -72,6 +72,41 @@ static ast::Decl *prototype_i32(Str name, Usize count) {
 static ast::Decl *prototype_void(Str name) {
     ast::Param params[1] = {ast::param("a", ast::named("I32"))};
     return ast::function(name, params, ast::named("Void"), nullptr);
+}
+
+// `return;`
+static ast::Stmt *leave() {
+    ast::StmtKind kind = {.return_stmt = {.value = nullptr}};
+    return ast::stmt(kind);
+}
+
+static ast::Stmt *if_else(ast::Expr *condition, ast::Stmt *then_branch, ast::Stmt *else_branch) {
+    ast::StmtKind kind = {.if_stmt = {.condition = condition, .then_branch = then_branch, .else_branch = else_branch}};
+    return ast::stmt(kind);
+}
+
+static ast::Expr *choose(ast::Expr *condition, ast::Expr *then_value, ast::Expr *else_value) {
+    ast::ExprKind kind = {.conditional = {.condition = condition, .then_value = then_value, .else_value = else_value}};
+    return ast::expr(kind);
+}
+
+// An exported `Void name(I32 a) { items }`.
+static ast::Decl *void_function(Str name, ast::StmtRef items[:]) {
+    ast::Param params[1] = {ast::param("a", ast::named("I32"))};
+    ast::Decl *function = ast::function(name, params, ast::named("Void"), ast::block(items));
+    function->exported = true;
+    return function;
+}
+
+static I32 seen_in(emit_jit::Jit *host) {
+    emit_jit::AddressResult seen = emit_jit::lookup(host, "front::test::seen");
+    test::check_equal(seen == .ok, true);
+    I32 value = -1;
+    if (seen == .ok) {
+        I32 *where = (I32 *)seen.ok;
+        value = *where;
+    }
+    return value;
 }
 
 static ast::Module module_of(ast::DeclRef decls[:]) {
@@ -355,4 +390,68 @@ export void test_front_emit_two_prototypes_of_one_name_are_an_error() {
     emit::Error error = failure_of(&m);
     test::check_equal(contains(error.message.data, "cube is declared twice"), true);
     emit::free_error(error);
+}
+
+// `Void note(I32 a) { tick(a); }`: a function that returns nothing, with a body; its end returns. `tick` writes a
+// global.
+export void test_front_emit_call_a_void_function_with_a_body_returns_at_its_end() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[1] = {expression(call1("tick", name("a")))};
+    ast::DeclRef decls[2] = {prototype_void("tick"), void_function("note", items)};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    add_tick(&host);
+    VoidOfI32 note = (VoidOfI32)jit_function(&host, &m, "front::test::note");
+    note(7);
+    test::check_equal(seen_in(&host), 7);
+    note(9);
+    test::check_equal(seen_in(&host), 9);
+    emit_jit::stop(&host);
+}
+
+// `Void note(I32 a) { if (a > 0) { tick(a); return; } tick(0); }`: an early `return;` and a reachable end.
+export void test_front_emit_call_a_void_function_with_an_early_return() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef then_items[2] = {expression(call1("tick", name("a"))), leave()};
+    ast::StmtRef items[2] = {if_else(ast::binary(.greater, name("a"), number(0)), ast::block(then_items), nullptr),
+                             expression(call1("tick", number(0)))};
+    ast::DeclRef decls[2] = {prototype_void("tick"), void_function("note", items)};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    add_tick(&host);
+    VoidOfI32 note = (VoidOfI32)jit_function(&host, &m, "front::test::note");
+    note(5);
+    test::check_equal(seen_in(&host), 5);
+    note(-3);
+    test::check_equal(seen_in(&host), 0);
+    emit_jit::stop(&host);
+}
+
+// `I32 fact(I32 a) { return a <= 1 ? 1 : a * fact(a - 1); }` and the statement form with `if`.
+export void test_front_emit_call_fact_calls_itself() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Expr *rest = ast::binary(.multiply, name("a"), call1("fact", ast::binary(.subtract, name("a"), number(1))));
+    ast::StmtRef items[1] = {give(choose(ast::binary(.less_equal, name("a"), number(1)), number(1), rest))};
+    ast::DeclRef decls[1] = {function1("fact", "I32", "I32", items)};
+    ast::Module m = module_of(decls);
+    ast::Expr *again = ast::binary(.multiply, name("a"), call1("fact2", ast::binary(.subtract, name("a"), number(1))));
+    ast::StmtRef base[1] = {give(number(1))};
+    ast::StmtRef items2[2] = {if_else(ast::binary(.less_equal, name("a"), number(1)), ast::block(base), nullptr),
+                              give(again)};
+    ast::DeclRef decls2[1] = {function1("fact2", "I32", "I32", items2)};
+    ast::Module m2 = module_of(decls2);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    UnaryI32 fact = (UnaryI32)jit_function(&host, &m, "front::test::fact");
+    test::check_equal(fact(1), 1);
+    test::check_equal(fact(5), 120);
+    test::check_equal(fact(10), 3628800);
+    UnaryI32 fact2 = (UnaryI32)jit_function(&host, &m2, "front::test::fact2");
+    test::check_equal(fact2(6), 720);
+    emit_jit::stop(&host);
 }
