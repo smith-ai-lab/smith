@@ -23,22 +23,22 @@ A plain bash loop costs no tokens. It starts a runner, waits for it, and starts 
 ```bash
 R=smith-ai-lab/smith
 SETTINGS='{"apiKeyHelper":"security find-generic-password -a $USER -s anthropic-api-smith -w"}'
-MODEL=<the medium model in providers/anthropic.md>
-mkdir -p "$HOME/smith-runner-logs"
+MODEL=<the medium model in providers/anthropic.md>; LOOP=<this worktree's name, such as mac-runner-2>
+L="$HOME/smith-runner-logs"; mkdir -p "$L"
 while :; do
   top=$(gh api repos/$R/issues/73 --jq '.body|split("\n")[0]' 2>/dev/null)
   if [[ $top == *"pool: running"* ]]; then
-    start=$(date +%s)
+    f="$L/$(date +%Y%m%dT%H%M%S)-$LOOP"; start=$(date +%s)
     SMITH_RUNNER_LOOP=1 claude -p "You are a smith runner on the owner's Mac. Load the skill smith-dev-runner and follow it. Take mac tickets first." \
-      --model "$MODEL" --permission-mode auto --settings "$SETTINGS" \
-      > "$HOME/smith-runner-logs/$(date +%Y%m%dT%H%M%S).log" 2>&1
+      --model "$MODEL" --permission-mode auto --settings "$SETTINGS" --output-format json > "$f.json" 2> "$f.err"
+    jq -r --arg l "$LOOP" '[(now|todate),$l,.duration_ms/1000,.total_cost_usd,.num_turns,.is_error]|@tsv' "$f.json" >> "$L/cost.tsv" 2>/dev/null
     (( $(date +%s) - start < 120 )) && sleep 600   # no ticket, no key or a crash: don't spin
   else
     sleep 300
   fi
 done
 ```
-- **Model:** the runner knows its ticket only after it claims it, so the loop starts it on the medium model from [providers/anthropic.md](../smith-dev-factory/providers/anthropic.md). The runner then hands the work to subagents on the model its ticket's difficulty maps to. Run the loop in your own worktree of the checkout.
+- **Model:** the runner knows its ticket only after it claims it, so the loop starts it on the medium model from [providers/anthropic.md](../smith-dev-factory/providers/anthropic.md). The runner then hands the work to subagents on the model its ticket's difficulty maps to. Each loop runs in its own worktree of main; #73's N counts the Mac's loops. `cost.tsv` holds a line per run (time, loop, seconds, `total_cost_usd`, turns, error): `column -t ~/smith-runner-logs/cost.tsv`.
 - **Paused:** a run under 2 minutes (no ticket, no key, a crash) waits 10 minutes, so it never spins. When #73 says `pool: paused`, it sleeps 5 minutes and checks again. A running runner finishes its ticket first.
 
 ## The mailbox #1406
