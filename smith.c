@@ -3396,6 +3396,61 @@ static void smith_lint_needs_build(int argc, char **argv) {
     }
 }
 
+// `smith lint FILE` of a front module (#1260): its imports of the other front modules are headers the front runner's
+// project writes under `build/<os>/front-project/.smith/include`, which no compile command names. When a file is named
+// and that folder exists, it is added as `--extra-arg=-I<folder>` (the first one found), unless the caller named it.
+static char *smith_lint_front_argv[smith_defaults_args_max];
+static char smith_lint_front_flag[PATH_MAX + 32];
+
+static bool smith_lint_front_include(int *argc, char ***argv) {
+    bool file = false;
+    for (int i = 2; i < *argc; i++) { // bounded by the arguments
+        if (strstr((*argv)[i], "front-project") != nullptr) return false;
+        file = file || (*argv)[i][0] != '-';
+    }
+    DIR *builds = file ? opendir("build") : nullptr;
+    if (builds == nullptr) return false;
+    bool found = false;
+    for (struct dirent *entry = readdir(builds); entry != nullptr && !found;
+         entry = readdir(builds)) { // bounded by build/
+        char folder[PATH_MAX];
+        char absolute[PATH_MAX];
+        snprintf(folder, sizeof folder, "build/%s/front-project/.smith/include", entry->d_name);
+        found = realpath(folder, absolute) != nullptr &&
+                snprintf(smith_lint_front_flag, sizeof smith_lint_front_flag, "--extra-arg=-I%s", absolute) > 0;
+    }
+    closedir(builds);
+    if (!found) return false;
+    int out = 0; // the flag goes first, before any `--` that starts the caller's compile flags
+    smith_lint_front_argv[out++] = (*argv)[0];
+    smith_lint_front_argv[out++] = (*argv)[1];
+    smith_lint_front_argv[out++] = smith_lint_front_flag;
+    for (int i = 2; i < *argc && out < smith_defaults_args_max - 1; i++)
+        smith_lint_front_argv[out++] = (*argv)[i];
+    smith_lint_front_argv[out] = nullptr;
+    *argc = out;
+    *argv = smith_lint_front_argv;
+    return true;
+}
+
+// One line when the host is not macOS (#1251): CI lints on a Mac, where `u64` is `unsigned long long` and `usize` is
+// `unsigned long`, so `(u64)(i + 1)` with a `usize` is a bugprone-misplaced-widening-cast finding only there.
+static void smith_lint_host_note(int argc, char **argv) {
+#ifndef __APPLE__
+    bool file = false;
+    for (int i = 2; i < argc; i++) // bounded by the arguments
+        file = file || argv[i][0] != '-';
+    if (file)
+        fputs(
+            "smith lint: this host is not macOS: CI also lints on a Mac, where u64 and usize are different C types, so "
+            "checks that compare them (bugprone-misplaced-widening-cast on (U64)(i + 1)) can report there only\n",
+            stderr);
+#else
+    (void)argc;
+    (void)argv;
+#endif
+}
+
 // The tool, after smith's defaults: its arguments with smith's style or tidy config where the project has none
 // (`smith fmt`, `smith lint`), or with the compile commands of .smith/ (`smith lsp`).
 static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const char *self) {
@@ -3409,7 +3464,13 @@ static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const c
         smith_die(smith_exit_usage, "too many arguments for smith's defaults (limit 262136, found):", found);
     }
     if (strcmp(tool->command, "fmt") == 0) smith_fmt_rewrite(&argc, &argv);
+    bool by_project = false; // the project lint runs the tool with `-p .smith` itself, and says its own things
+    for (int i = 2; i < argc && strcmp(tool->command, "lint") == 0; i++) // bounded by the arguments
+        by_project = by_project || strcmp(argv[i], "-p") == 0;
     if (strcmp(tool->command, "lint") == 0) smith_lint_needs_build(argc, argv);
+    if (strcmp(tool->command, "lint") == 0 && !by_project) {
+        (void)smith_lint_front_include(&argc, &argv);
+    }
     if (strcmp(tool->command, "fmt") == 0 || strcmp(tool->command, "lint") == 0) {
         before = smith_defaults_apply(tool, &argc, &argv, self);
     } else if (strcmp(tool->command, "lsp") == 0 && smith_lsp_commands_option(argc, argv)) {
@@ -3420,6 +3481,8 @@ static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const c
         argv = smith_defaults_argv;
     }
     int status = smith_tool_launch(tool, argc, argv, self);
+    // after a lint that passed, so a failing or unrunnable clang-tidy prints only its own words
+    if (status == 0 && !by_project && strcmp(tool->command, "lint") == 0) smith_lint_host_note(argc, argv);
     return status != 0 ? status : (before > 0 ? before : 0);
 }
 

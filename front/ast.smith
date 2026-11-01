@@ -313,6 +313,14 @@ export typedef enum {
     struct {
         Expr *operand;
     } try_expr;
+    struct {
+        Expr *base;
+        Expr *field;
+        Bool arrow;
+    } reflect_member; // `x.[f]`, `x->[f]`: the field is any expression, such as `fields(T)[i]`
+    struct {
+        Expr *pattern;
+    } expand; // `pattern...` as an argument or a list item; `rest...` expands the name `rest`
 } ExprKind;
 
 export struct Expr {
@@ -360,6 +368,8 @@ export typedef enum {
         Expr *step;
         Stmt *body;
         Bool is_constexpr;
+        Expr *range; // a range `for (T x : range)`: init is the variable, condition and step are null
+        Stmt *index; // a range `for (Usize i, T x : range)`: the declaration of the index, else null
     } for_stmt;
     struct {
         Expr *value;
@@ -911,6 +921,38 @@ static void add_params(Items *items, Param params[:]) {
         add(items, {.param = &params[i]});
 }
 
+// The children of the expressions from a cast on.
+static void expr_children_more(Items *items, Expr *e) {
+    if (e->kind == .cast) {
+        add_type(items, e->kind.cast.type, false);
+        add_expr(items, e->kind.cast.operand, false);
+    }
+    if (e->kind == .query) {
+        add_type(items, e->kind.query.type, false);
+        add_expr(items, e->kind.query.operand, false);
+    }
+    if (e->kind == .compound) {
+        add_type(items, e->kind.compound.type, true);
+        for (Usize i = 0; i < countof(e->kind.compound.items); i++)
+            add(items, {.initializer = &e->kind.compound.items[i]});
+    }
+    if (e->kind == .lambda) {
+        add_params(items, e->kind.lambda.params);
+        add_result(items, e->kind.lambda.result);
+        add_stmt(items, e->kind.lambda.body, false);
+    }
+    if (e->kind == .try_expr) {
+        add_expr(items, e->kind.try_expr.operand, false);
+    }
+    if (e->kind == .reflect_member) {
+        add_expr(items, e->kind.reflect_member.base, false);
+        add_expr(items, e->kind.reflect_member.field, false);
+    }
+    if (e->kind == .expand) {
+        add_expr(items, e->kind.expand.pattern, false);
+    }
+}
+
 // The children of an expression.
 static void expr_children(Items *items, Expr *e) {
     switch (e->kind) {
@@ -959,25 +1001,13 @@ static void expr_children(Items *items, Expr *e) {
         add_expr(items, e->kind.member.base, false);
         break;
     case .cast:
-        add_type(items, e->kind.cast.type, false);
-        add_expr(items, e->kind.cast.operand, false);
-        break;
     case .query:
-        add_type(items, e->kind.query.type, false);
-        add_expr(items, e->kind.query.operand, false);
-        break;
     case .compound:
-        add_type(items, e->kind.compound.type, true);
-        for (Usize i = 0; i < countof(e->kind.compound.items); i++)
-            add(items, {.initializer = &e->kind.compound.items[i]});
-        break;
     case .lambda:
-        add_params(items, e->kind.lambda.params);
-        add_result(items, e->kind.lambda.result);
-        add_stmt(items, e->kind.lambda.body, false);
-        break;
     case .try_expr:
-        add_expr(items, e->kind.try_expr.operand, false);
+    case .reflect_member:
+    case .expand:
+        expr_children_more(items, e);
         break;
     }
 }
@@ -1011,6 +1041,8 @@ static void stmt_children(Items *items, Stmt *s) {
         add_stmt(items, s->kind.for_stmt.init, true);
         add_expr(items, s->kind.for_stmt.condition, true);
         add_expr(items, s->kind.for_stmt.step, true);
+        add_stmt(items, s->kind.for_stmt.index, false);
+        add_expr(items, s->kind.for_stmt.range, false);
         add_stmt(items, s->kind.for_stmt.body, false);
         break;
     case .switch_stmt:
@@ -1315,6 +1347,36 @@ static void literal_head(Output *text, Expr *e) {
     }
 }
 
+// The head line of the expressions from a cast on.
+static void expr_head_more(Output *text, Expr *e) {
+    if (e->kind == .cast) {
+        put(text, "cast");
+    }
+    if (e->kind == .query) {
+        put(text, "query ");
+        put(text, query_word(e->kind.query.op));
+    }
+    if (e->kind == .compound) {
+        put(text, "compound");
+    }
+    if (e->kind == .lambda) {
+        put(text, "lambda");
+        for (Usize i = 0; i < countof(e->kind.lambda.captures); i++) {
+            put_word(text, e->kind.lambda.captures[i].text);
+        }
+    }
+    if (e->kind == .try_expr) {
+        put(text, "try");
+    }
+    if (e->kind == .reflect_member) {
+        put(text, "reflect_member");
+        put_flag(text, e->kind.reflect_member.arrow, "arrow");
+    }
+    if (e->kind == .expand) {
+        put(text, "expand");
+    }
+}
+
 // The head of an expression: its kind and scalars, without the parentheses.
 static void expr_head(Output *text, Expr *e) {
     switch (e->kind) {
@@ -1363,23 +1425,13 @@ static void expr_head(Output *text, Expr *e) {
         put_flag(text, e->kind.member.arrow, "arrow");
         break;
     case .cast:
-        put(text, "cast");
-        break;
     case .query:
-        put(text, "query ");
-        put(text, query_word(e->kind.query.op));
-        break;
     case .compound:
-        put(text, "compound");
-        break;
     case .lambda:
-        put(text, "lambda");
-        for (Usize i = 0; i < countof(e->kind.lambda.captures); i++) {
-            put_word(text, e->kind.lambda.captures[i].text);
-        }
-        break;
     case .try_expr:
-        put(text, "try");
+    case .reflect_member:
+    case .expand:
+        expr_head_more(text, e);
         break;
     }
 }
