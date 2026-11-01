@@ -162,6 +162,75 @@ export void test_cimport_stdio_h_printf_is_variadic_and_fopen_returns_a_pointer_
     test::check_condition(slice::equal(file, want_file));
 }
 
+// The constant `name` (a constexpr variable) of the header, or null.
+static const ast::Decl *find_constant(const Header *h, Str name) {
+    for (Usize i = 0; i < countof(h->decls); i++) {
+        const ast::Decl *d = h->decls[i];
+        if (d->kind == .variable && slice::equal(d->kind.variable.name, name)) return d;
+    }
+    return nullptr;
+}
+
+// Whether the constant is a constexpr of the named type whose value is the integer `magnitude`, negated or not.
+static Bool is_integer_constant(const Header *h, Str name, Str type, U64 magnitude, Bool negative) {
+    const ast::Decl *d = find_constant(h, name);
+    if (d == nullptr || d->kind != .variable || !d->from_c || !d->kind.variable.is_constexpr) return false;
+    Str spelled = type_text(d->kind.variable.type);
+    if (!slice::equal(spelled, type)) return false;
+    const ast::Expr *value = d->kind.variable.init;
+    if (negative) {
+        if (value->kind != .unary) return false;
+        value = value->kind.unary.operand;
+    }
+    return value->kind == .integer && value->kind.integer.value == magnitude;
+}
+
+export void test_cimport_stdio_h_has_eof_seek_set_and_bufsiz_as_constants() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Header h = read(&memory, "stdio.h", false);
+    test::check_equal(countof(h.error), 0);
+    test::check_condition(is_integer_constant(&h, "EOF", "I32", 1, true));
+    test::check_condition(is_integer_constant(&h, "SEEK_SET", "I32", 0, false));
+    const ast::Decl *size = find_constant(&h, "BUFSIZ");
+    test::check_condition(size != nullptr && size->kind == .variable);
+    if (size == nullptr || size->kind != .variable) return;
+    Str want_size = "I32";
+    Str size_type = type_text(size->kind.variable.type);
+    test::check_condition(slice::equal(size_type, want_size));
+    test::check_condition(size->kind.variable.init->kind == .integer &&
+                          size->kind.variable.init->kind.integer.value > 0);
+}
+
+export void test_cimport_limits_h_has_int_max_and_char_bit() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Header h = read(&memory, "limits.h", false);
+    test::check_equal(countof(h.error), 0);
+    test::check_condition(is_integer_constant(&h, "INT_MAX", "I32", 2147483647, false));
+    test::check_condition(is_integer_constant(&h, "CHAR_BIT", "I32", 8, false));
+}
+
+export void test_cimport_math_h_has_pi_as_a_float() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Header h = read(&memory, "math.h", false);
+    test::check_equal(countof(h.error), 0);
+    const ast::Decl *pi = find_constant(&h, "M_PI");
+    test::check_condition(pi != nullptr && pi->kind == .variable);
+    if (pi == nullptr || pi->kind != .variable) return;
+    Str want_pi = "F64";
+    Str pi_type = type_text(pi->kind.variable.type);
+    test::check_condition(slice::equal(pi_type, want_pi));
+    test::check_condition(pi->kind.variable.init->kind == .floating);
+}
+
 export void test_cimport_a_missing_header_is_an_error_naming_the_header_and_the_folders() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);

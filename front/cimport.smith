@@ -26,6 +26,11 @@ constexpr U32 kind_struct = 7;      // a = index in Header.structs
 constexpr U32 kind_function = 8;    // a = result, parameters, variadic
 constexpr U32 kind_fn_pointer = 10; // a = the function type: `Fn` applied to it, never a pointer
 constexpr U32 kind_unsupported = 9; // name = the C type's spelling: a union, `long double`, a bit-field
+constexpr U32 kind_string = 11;     // `Str`: the type of a string macro
+
+constexpr U32 value_integer = 0;
+constexpr U32 value_floating = 1;
+constexpr U32 value_string = 2;
 
 constexpr U32 flag_const = 1;
 constexpr U32 flag_restrict = 2;
@@ -67,6 +72,23 @@ struct Record {
     Field fields[:];
 };
 
+struct EnumInfo {
+    Str name;
+    U32 underlying; // an index in Table.types
+    U32 first;      // in Table.items
+    U32 count;
+};
+
+// An enumerator or a constant: the value is a magnitude and a sign.
+struct Item {
+    Str name;
+    U32 type; // constants only
+    U32 kind;
+    Bool negative;
+    U64 bits; // the integer, or the IEEE double
+    Str text; // a string constant's bytes
+};
+
 export struct NotImported {
     U32 kind;
     Str name;
@@ -77,11 +99,16 @@ struct Table {
     CType types[:];
     Function functions[:];
     Record structs[:];
+    EnumInfo enums[:];
+    Item items[:];
+    Item constants[:];
     NotImported not_imported[:];
     Str error;
 };
 
-// What a header declares: structs, then the typedefs, then the functions, each a `from_c` declaration.
+// What a header declares: structs, then the typedefs, the named enums, the functions and last the constants (an
+// anonymous enum's enumerators, object-like macros with a constant value, `static const` variables), each a `from_c`
+// declaration.
 export struct Header {
     ast::DeclRef decls[:];
     NotImported not_imported[:];
@@ -98,6 +125,10 @@ struct Request {
 
 extern Usize smith_cimport_read(const Request *request, U32 *words, Usize capacity);
 
+static U64 join(U32 low, U32 high) {
+    return (U64)low | ((U64)high << 32);
+}
+
 static Str text(const char *pool, U32 at) {
     Usize length = c::strlen(pool + at);
     return pool[at:at + length];
@@ -106,6 +137,33 @@ static Str text(const char *pool, U32 at) {
 static Parameter parameter_at(const U32 w[:], const char *pool, U32 first, U32 index) {
     Usize at = first + 2 * (Usize)index;
     return (Parameter){.name = text(pool, w[at]), .type = w[at + 1]};
+}
+
+// The enums, their items and the constants of the shim's words.
+static void read_values(arena::Arena *a, Table *header, const U32 w[:], const char *pool) {
+    header->enums = arena::push_slice(a, EnumInfo, w[18]);
+    for (U32 i = 0; i < w[18]; i++) {
+        Usize at = w[17] + 4 * (Usize)i;
+        header->enums[i] =
+            (EnumInfo){.name = text(pool, w[at]), .underlying = w[at + 1], .first = w[at + 2], .count = w[at + 3]};
+    }
+    header->items = arena::push_slice(a, Item, w[20]);
+    for (U32 i = 0; i < w[20]; i++) {
+        Usize at = w[19] + 4 * (Usize)i;
+        header->items[i] =
+            (Item){.name = text(pool, w[at]), .negative = w[at + 3] != 0, .bits = join(w[at + 1], w[at + 2])};
+    }
+    header->constants = arena::push_slice(a, Item, w[22]);
+    for (U32 i = 0; i < w[22]; i++) {
+        Usize at = w[21] + 6 * (Usize)i;
+        Item item = {.name = text(pool, w[at]), .type = w[at + 1], .kind = w[at + 2], .negative = w[at + 3] != 0};
+        item.bits = join(w[at + 4], w[at + 5]);
+        if (item.kind == value_string) {
+            const char *bytes = pool + w[at + 4];
+            item.text = bytes[0:w[at + 5]];
+        }
+        header->constants[i] = item;
+    }
 }
 
 // Reads `name` (written `<name>` or, with quoted, "name" beside `folder`) with the compile flags `flags`, one on each
@@ -167,6 +225,7 @@ static Table read_table(arena::Arena *a, const char *name, Bool quoted, const ch
         }
         header.structs[i] = s;
     }
+    read_values(a, &header, w, pool);
     header.not_imported = arena::push_slice(a, NotImported, w[15]);
     for (U32 i = 0; i < w[15]; i++) {
         Usize at = w[14] + 3 * (Usize)i;
@@ -212,6 +271,7 @@ static ast::TypeExpr *build_type(const Table *t, TypeList done, U32 index) {
     if (c.kind == kind_floating) return ast::named(c.a == 32 ? "F32" : "F64");
     if (c.kind == kind_typedef) return ast::named(c.name);
     if (c.kind == kind_struct) return ast::named(t->structs[c.a].name);
+    if (c.kind == kind_string) return ast::named("Str");
     if (c.kind == kind_unsupported) {
         ast::TypeKind kind = {.unsupported_c = {.spelling = c.name}};
         return ast::make_type(kind);
@@ -298,6 +358,41 @@ static ast::Decl *function_decl(const Function *f, TypeList types) {
     return from_c(ast::decl((ast::Decl){}, kind));
 }
 
+// A value as an expression: an integer literal, a floating literal or a string, negated when it is below zero.
+static ast::Expr *value_expr(const Item *item) {
+    ast::Expr *literal = nullptr;
+    if (item->kind == value_string) {
+        literal = ast::string(item->text);
+    } else if (item->kind == value_floating) {
+        F64 value = __builtin_bit_cast(F64, item->bits);
+        literal = ast::expr({.floating = {.value = value}});
+    } else if (item->kind == value_integer) {
+        literal = ast::integer(item->bits);
+    }
+    if (literal == nullptr || !item->negative) {
+        return literal;
+    }
+    ast::UnaryOp negate = .negate;
+    return ast::expr({.unary = {.op = negate, .operand = literal}});
+}
+
+static ast::Decl *enumeration_decl(const Table *t, const EnumInfo *e, TypeList types) {
+    ast::Enumerator items[:] = mem::alloc_slice(ast::Enumerator, e->count);
+    for (U32 i = 0; i < e->count; i++) {
+        const Item *item = &t->items[e->first + i];
+        items[i] = ast::enumerator(item->name, value_expr(item), nullptr);
+    }
+    return from_c(ast::enumeration(e->name, types[e->underlying], items));
+}
+
+static ast::Decl *constant_decl(const Item *item, TypeList types) {
+    ast::Decl *d = from_c(ast::variable(item->name, types[item->type], value_expr(item)));
+    if (d->kind == .variable) {
+        d->kind.variable.is_constexpr = true;
+    }
+    return d;
+}
+
 // Reads `name` (written `<name>` or, with quoted, "name" beside `folder`) with the compile flags `flags`, one on each
 // line. All three are NUL-terminated. The declarations are allocated in the allocator in force; `a` holds the
 // tables read from the shim.
@@ -309,7 +404,7 @@ export Header read(arena::Arena *a, const char *name, Bool quoted, const char *f
     Usize typedefs = 0;
     for (Usize i = 0; i < countof(t.types); i++)
         if (first_typedef(&t, i)) typedefs += 1;
-    Usize total = countof(t.structs) + typedefs + countof(t.functions);
+    Usize total = countof(t.structs) + typedefs + countof(t.enums) + countof(t.functions) + countof(t.constants);
     ast::DeclRef *block = (ast::DeclRef *)mem::alloc_array_raw(sizeof(ast::DeclRef), total, alignof(ast::DeclRef));
     Usize at = 0;
     for (Usize i = 0; i < countof(t.structs); i++)
@@ -320,8 +415,12 @@ export Header read(arena::Arena *a, const char *name, Bool quoted, const char *f
         }
         block[at++] = from_c(ast::type_alias(t.types[i].name, types[t.types[i].a]));
     }
+    for (Usize i = 0; i < countof(t.enums); i++)
+        block[at++] = enumeration_decl(&t, &t.enums[i], types);
     for (Usize i = 0; i < countof(t.functions); i++)
         block[at++] = function_decl(&t.functions[i], types);
+    for (Usize i = 0; i < countof(t.constants); i++)
+        block[at++] = constant_decl(&t.constants[i], types);
     header.decls = block[0:total];
     return header;
 }

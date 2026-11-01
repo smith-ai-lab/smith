@@ -17,17 +17,34 @@
 //   words[12..13] parameters: first word, count (2 words each: name, type)
 //   words[14..15] not imported: first word, count (3 words each: kind, name, reason)
 //   words[16]     error text (a string offset), 0 when the header was read
+//   words[17..18] enums: first word, count      (4 words each: name, underlying type, first item, item count; named
+//                 enums only)
+//   words[19..20] enum items: first word, count (4 words each: name, low word, high word, 1 when negative; the value is
+//                 the magnitude)
+//   words[21..22] constants: first word, count  (6 words each: name, type, kind, negative, low, high; kind 0 integer
+//                 (the magnitude), 1 floating (the magnitude's IEEE double), 2 string (low = byte offset in the pool,
+//                 high = byte count). The enumerators of an anonymous enum, the object-like macros whose value clang
+//                 folds to a constant, and the header's `static const` variables with a constant initializer.)
 //
 // Type kinds: 0 void; 1 bool; 2 integer (a = bits, b = 1 when signed); 3 floating (a = bits); 4 pointer (a = pointee);
 // 5 array (a = element, b = count); 6 typedef (a = name, b = underlying); 7 struct (a = struct index); 8 function
 // (a = return type, b = first parameter, c = parameter count; flags bit 2 = variadic); 9 unsupported (a = the spelling
-// of the C type that has no smith equivalent: a union, `long double`, a bit-field); 10 function pointer (a = the
-// function type; smith has no pointer-to-function syntax, it is `Fn` applied to the function type). Type flags: 1
-// const, 2 restrict. A declaration that uses an unsupported type is still read, with that type, and is also in the not
-// imported list with the reason: the use is what reports it. Struct flags: 1 opaque (no definition). Not imported
-// kinds: 0 declaration, 1 attribute (name is the declaration's, reason the attribute's spelling).
+// of the C type that has no smith equivalent: a union, `long double`, a bit-field); 11 string (smith's `Str`, the type
+// of a string macro); 10 function pointer (a = the function type; smith has no pointer-to-function syntax, it is `Fn`
+// applied to the function type). Type flags: 1 const, 2 restrict. A declaration that uses an unsupported type is still
+// read, with that type, and is also in the not imported list with the reason: the use is what reports it. Struct flags:
+// 1 opaque (no definition). Not imported kinds: 0 declaration, 1 attribute (name is the declaration's, reason the
+// attribute's spelling).
+//
+// Macros (#1127): a first run only preprocesses the header, to list its object-like macros. The one parse then reads
+// the header and, after it, one line `static const __typeof__((M)) __smith_m_M = (M);` for each candidate, so clang
+// folds each value; an error on such a line (line 2 and after of the source) is that macro's reason for not being a
+// constant. The rule for the preprocessor's own plumbing, left out silently: a name that starts with `__`, an empty
+// macro (include guards among them) and a macro whose tokens are all keywords or punctuation (`#define restrict
+// __restrict`). A function-like macro is listed as such.
 //
 // Memory: the caller's buffer. When it is too small the call returns the words needed and the caller calls again.
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -36,15 +53,20 @@
 #include <string>
 #include <vector>
 
+#include "clang/AST/APValue.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Attr.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclBase.h"
+#include "clang/AST/Expr.h"
 #include "clang/AST/Type.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Frontend/ASTUnit.h"
+#include "clang/Frontend/CompilerInstance.h"
+#include "clang/Frontend/FrontendActions.h"
 #include "clang/Lex/HeaderSearch.h"
+#include "clang/Lex/MacroInfo.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Tooling/Tooling.h"
 #include "llvm/Support/raw_ostream.h"
@@ -88,8 +110,17 @@ enum Kind : uint32_t {
     Struct,
     Function,
     Unsupported,
-    FnPointer
+    FnPointer,
+    String
 };
+
+// An object-like or function-like macro of the header, in source order.
+struct Macro {
+    std::string name;
+    bool function_like;
+};
+
+constexpr const char *source_name = "smith_cimport.c";
 
 struct Reader {
     clang::ASTContext *context_ptr;
@@ -105,6 +136,8 @@ struct Reader {
     std::map<const clang::RecordDecl *, uint32_t> struct_index;
     std::vector<std::array<uint32_t, 2>> fields, parameters;
     std::vector<std::array<uint32_t, 3>> not_imported;
+    std::vector<std::array<uint32_t, 4>> enums, enum_items;
+    std::vector<std::array<uint32_t, 6>> constants;
     std::string failure; // why the first type of the declaration in hand could not be imported
     void fail(const std::string &why) {
         if (failure.empty()) failure = why;
@@ -146,7 +179,15 @@ struct Reader {
     uint32_t builtin(const clang::BuiltinType *type, uint32_t flags);
     uint32_t function_type(const clang::FunctionProtoType *proto, uint32_t flags);
     void function(const clang::FunctionDecl *decl);
-    void walk(const clang::TranslationUnitDecl *unit);
+    void walk(const clang::TranslationUnitDecl *unit, const std::vector<Macro> &macros,
+              const std::map<unsigned, std::string> &errors);
+    // The magnitude of an integer, as two words and a sign.
+    static std::array<uint32_t, 3> split(const llvm::APInt &magnitude, bool negative);
+    // A constant of `type` whose value clang folded in `init`; false, with `why`, when it cannot be one.
+    bool constant(const std::string &name, clang::QualType type, const clang::Expr *init, std::string &why);
+    void enumeration(const clang::EnumDecl *decl);
+    void macros_of(const clang::TranslationUnitDecl *unit, const std::vector<Macro> &macros,
+                   const std::map<unsigned, std::string> &errors);
 };
 
 constexpr uint32_t bad = UINT32_MAX;
@@ -155,7 +196,7 @@ bool from_header(const clang::Decl *decl, const clang::SourceManager &sm) {
     if (decl->isImplicit()) return false;
     clang::PresumedLoc loc = sm.getPresumedLoc(decl->getLocation());
     if (!loc.isValid()) return false;
-    return loc.getFilename()[0] != '<' && std::strcmp(loc.getFilename(), "smith_cimport.c") != 0;
+    return loc.getFilename()[0] != '<' && std::strcmp(loc.getFilename(), source_name) != 0;
 }
 
 uint32_t Reader::builtin(const clang::BuiltinType *type, uint32_t flags) {
@@ -314,7 +355,123 @@ void Reader::function(const clang::FunctionDecl *decl) {
         if (!a->isImplicit()) skip(1, name, a->getSpelling());
 }
 
-void Reader::walk(const clang::TranslationUnitDecl *unit) {
+std::array<uint32_t, 3> Reader::split(const llvm::APInt &magnitude, bool negative) {
+    uint64_t v = magnitude.getZExtValue();
+    return {static_cast<uint32_t>(v), static_cast<uint32_t>(v >> 32), negative ? 1U : 0U};
+}
+
+bool Reader::constant(const std::string &name, clang::QualType type, const clang::Expr *init, std::string &why) {
+    type = type.getUnqualifiedType();
+    const clang::Expr *bare = init->IgnoreParenImpCasts();
+    if (const auto *literal = llvm::dyn_cast<clang::StringLiteral>(bare)) {
+        if (!literal->isOrdinary() && !literal->isUTF8()) {
+            why = "a wide string is not imported";
+            return false;
+        }
+        std::string bytes = literal->getBytes().str();
+        uint32_t at = static_cast<uint32_t>(pool.size());
+        pool += bytes;
+        pool += '\0';
+        constants.push_back({text(name), type_node(String, 0, 0, 0, 0), 2, 0, at, static_cast<uint32_t>(bytes.size())});
+        return true;
+    }
+    clang::Expr::EvalResult result;
+    if (init->isValueDependent() || !init->EvaluateAsRValue(result, context())) {
+        why = "not a constant";
+        return false;
+    }
+    failure.clear();
+    if (result.Val.isInt() && (type->isIntegerType() || type->isBooleanType())) {
+        uint32_t t = convert(type, false);
+        if (types[t][0] == Unsupported) {
+            why = failure.empty() ? "its type is not imported" : failure;
+            return false;
+        }
+        const llvm::APSInt &value = result.Val.getInt();
+        bool negative = value.isSigned() && value.isNegative();
+        std::array<uint32_t, 3> parts = split(negative ? llvm::APInt(-value) : llvm::APInt(value), negative);
+        constants.push_back({text(name), t, 0, parts[2], parts[0], parts[1]});
+        return true;
+    }
+    if (result.Val.isFloat() && type->isRealFloatingType()) {
+        uint32_t t = convert(type, false);
+        if (types[t][0] == Unsupported) {
+            why = failure.empty() ? "its type is not imported" : failure;
+            return false;
+        }
+        llvm::APFloat value = result.Val.getFloat();
+        if (!value.isFinite()) {
+            why = "its value is not a finite number";
+            return false;
+        }
+        bool negative = value.isNegative();
+        if (negative) value.changeSign();
+        bool lost = false;
+        value.convert(llvm::APFloat::IEEEdouble(), llvm::APFloat::rmNearestTiesToEven, &lost);
+        uint64_t bits = value.bitcastToAPInt().getZExtValue();
+        constants.push_back(
+            {text(name), t, 1, negative ? 1U : 0U, static_cast<uint32_t>(bits), static_cast<uint32_t>(bits >> 32)});
+        return true;
+    }
+    why = "its value is not an integer, a floating-point number or a string";
+    return false;
+}
+
+void Reader::enumeration(const clang::EnumDecl *decl) {
+    if (!decl->isCompleteDefinition()) return;
+    std::string name = decl->getName().str();
+    uint32_t underlying = convert(decl->getIntegerType(), false);
+    // An anonymous enum (a typedef gives it a name for the type, which is already its integer type) is a constant for
+    // each enumerator; a named one is an enumeration.
+    bool named = !name.empty();
+    uint32_t first = static_cast<uint32_t>(enum_items.size());
+    uint32_t count = 0;
+    for (const clang::EnumConstantDecl *item : decl->enumerators()) {
+        const llvm::APSInt &value = item->getInitVal();
+        bool negative = value.isSigned() && value.isNegative();
+        std::array<uint32_t, 3> parts = split(negative ? llvm::APInt(-value) : llvm::APInt(value), negative);
+        if (named) {
+            enum_items.push_back({text(item->getName().str()), parts[0], parts[1], parts[2]});
+            count++;
+        } else {
+            constants.push_back({text(item->getName().str()), underlying, 0, parts[2], parts[0], parts[1]});
+        }
+    }
+    if (named) enums.push_back({text(name), underlying, first, count});
+}
+
+void Reader::macros_of(const clang::TranslationUnitDecl *unit, const std::vector<Macro> &list,
+                       const std::map<unsigned, std::string> &errors) {
+    const clang::SourceManager &sm = context().getSourceManager();
+    std::map<std::string, const clang::VarDecl *> values;
+    for (const clang::Decl *d : unit->decls()) {
+        const auto *v = llvm::dyn_cast<clang::VarDecl>(d);
+        clang::PresumedLoc loc = v != nullptr ? sm.getPresumedLoc(v->getLocation()) : clang::PresumedLoc();
+        if (v != nullptr && loc.isValid() && std::strcmp(loc.getFilename(), source_name) == 0)
+            values[v->getName().str()] = v;
+    }
+    unsigned line = 2;
+    for (const Macro &macro : list) {
+        if (macro.function_like) {
+            skip(0, macro.name, "a function-like macro");
+            continue;
+        }
+        unsigned here = line++;
+        auto found = values.find("__smith_m_" + macro.name);
+        std::string why;
+        const clang::VarDecl *v = found != values.end() ? found->second : nullptr;
+        if (v != nullptr && !v->isInvalidDecl() && v->getInit() != nullptr) {
+            if (constant(macro.name, v->getType(), v->getInit(), why)) continue;
+        } else {
+            auto error = errors.find(here);
+            why = "not a constant" + (error != errors.end() ? ": " + error->second : std::string());
+        }
+        skip(0, macro.name, why);
+    }
+}
+
+void Reader::walk(const clang::TranslationUnitDecl *unit, const std::vector<Macro> &macros,
+                  const std::map<unsigned, std::string> &errors) {
     const clang::SourceManager &sm = context().getSourceManager();
     std::map<std::string, bool> seen;
     for (const clang::Decl *d : unit->decls()) {
@@ -332,8 +489,16 @@ void Reader::walk(const clang::TranslationUnitDecl *unit) {
                 continue;
             }
             if (r->isThisDeclarationADefinition() || r->getDefinition() == nullptr) record(r);
+        } else if (const auto *e = llvm::dyn_cast<clang::EnumDecl>(d)) {
+            enumeration(e);
+        } else if (const auto *v = llvm::dyn_cast<clang::VarDecl>(d)) {
+            // A `static const` or `constexpr` variable with a constant initializer; other variables are not read.
+            std::string why;
+            if (v->getType().isConstQualified() && v->getInit() != nullptr && !v->getType()->isPointerType())
+                constant(v->getName().str(), v->getType(), v->getInit(), why);
         }
     }
+    macros_of(unit, macros, errors);
 }
 
 std::vector<std::string> lines(const char *text) {
@@ -367,13 +532,53 @@ std::vector<std::string> folders_of(const std::vector<std::string> &flags) {
 class Capture : public clang::DiagnosticConsumer {
   public:
     std::string first_error;
+    std::map<unsigned, std::string> line_errors; // by line of smith_cimport.c, from line 2: a macro's candidate
     void HandleDiagnostic(clang::DiagnosticsEngine::Level level, const clang::Diagnostic &info) override {
         clang::DiagnosticConsumer::HandleDiagnostic(level, info);
-        if (level < clang::DiagnosticsEngine::Error || !first_error.empty()) return;
+        if (level < clang::DiagnosticsEngine::Error) return;
         llvm::SmallString<256> text;
         info.FormatDiagnostic(text);
-        first_error = text.str().str();
+        if (info.hasSourceManager() && info.getLocation().isValid()) {
+            clang::PresumedLoc loc = info.getSourceManager().getPresumedLoc(info.getLocation());
+            if (loc.isValid() && std::strcmp(loc.getFilename(), source_name) == 0 && loc.getLine() >= 2) {
+                line_errors.emplace(loc.getLine(), text.str().str());
+                return;
+            }
+        }
+        if (first_error.empty()) first_error = text.str().str();
     }
+};
+
+// A preprocess-only run that lists the header's macros: no parse, so it costs a fraction of one.
+class ScanMacros : public clang::PreprocessOnlyAction {
+  public:
+    explicit ScanMacros(std::vector<Macro> *out) : out_(out) {}
+    void ExecuteAction() override {
+        clang::PreprocessOnlyAction::ExecuteAction();
+        clang::Preprocessor &pp = getCompilerInstance().getPreprocessor();
+        const clang::SourceManager &sm = pp.getSourceManager();
+        std::vector<std::pair<clang::SourceLocation, Macro>> found;
+        for (const auto &entry : pp.macros()) {
+            const clang::MacroInfo *info = pp.getMacroInfo(entry.first);
+            if (info == nullptr || info->isBuiltinMacro() || info->tokens_empty()) continue;
+            std::string name = entry.first->getName().str();
+            if (name.rfind("__", 0) == 0) continue; // implementation plumbing
+            clang::PresumedLoc loc = sm.getPresumedLoc(info->getDefinitionLoc());
+            if (!loc.isValid() || loc.getFilename()[0] == '<' || std::strcmp(loc.getFilename(), source_name) == 0)
+                continue;
+            bool value = info->isFunctionLike();
+            for (const clang::Token &t : info->tokens())
+                if (t.isLiteral() || t.is(clang::tok::identifier)) value = true;
+            if (value) found.push_back({info->getDefinitionLoc(), {name, info->isFunctionLike()}});
+        }
+        std::sort(found.begin(), found.end(),
+                  [&](const auto &a, const auto &b) { return sm.isBeforeInTranslationUnit(a.first, b.first); });
+        for (auto &item : found)
+            out_->push_back(item.second);
+    }
+
+  private:
+    std::vector<Macro> *out_;
 };
 
 } // namespace
@@ -386,16 +591,24 @@ extern "C" size_t smith_cimport_read(const SmithCimportRequest *request, uint32_
     std::vector<std::string> flags = lines(request->flags);
     std::string code = std::string("#include ") + (request->quoted != 0 ? "\"" : "<") + header +
                        (request->quoted != 0 ? "\"" : ">") + "\n";
-    std::vector<std::string> args = {"-x", "c", "-std=gnu23", "-fno-color-diagnostics", "-fsyntax-only"};
+    std::vector<std::string> args = {"-x", "c", "-std=gnu23", "-fno-color-diagnostics", "-ferror-limit=0"};
     if (request->quoted != 0 && request->folder != nullptr && request->folder[0] != '\0') {
         args.push_back("-iquote");
         args.push_back(request->folder);
     }
     for (const std::string &f : flags)
         args.push_back(f);
+    // The macros first (a preprocess-only run), then one parse of the header and a line for each candidate.
+    std::vector<Macro> macros;
+    clang::tooling::runToolOnCodeWithArgs(std::make_unique<ScanMacros>(&macros), code, args, source_name,
+                                          "smith-cimport");
+    for (const Macro &m : macros)
+        if (!m.function_like)
+            code += "static const __typeof__((" + m.name + ")) __smith_m_" + m.name + " = (" + m.name + ");\n";
+    args.push_back("-fsyntax-only");
     Capture diagnostics;
     std::unique_ptr<clang::ASTUnit> unit = clang::tooling::buildASTFromCodeWithArgs(
-        code, args, "smith_cimport.c", "smith-cimport", std::make_shared<clang::PCHContainerOperations>(),
+        code, args, source_name, "smith-cimport", std::make_shared<clang::PCHContainerOperations>(),
         clang::tooling::getClangStripDependencyFileAdjuster(), clang::tooling::FileContentMappings(), &diagnostics);
     std::string error;
     if (unit == nullptr) {
@@ -415,17 +628,19 @@ extern "C" size_t smith_cimport_read(const SmithCimportRequest *request, uint32_
     }
     Reader reader(unit != nullptr ? &unit->getASTContext() : nullptr);
     uint32_t error_at = 0;
-    if (unit != nullptr && error.empty()) reader.walk(unit->getASTContext().getTranslationUnitDecl());
+    if (unit != nullptr && error.empty())
+        reader.walk(unit->getASTContext().getTranslationUnitDecl(), macros, diagnostics.line_errors);
     if (!error.empty()) error_at = reader.text(error);
 
     // Lay the tables out: header, types, functions, structs, fields, parameters, not imported, then the pool.
-    constexpr size_t head = 17;
+    constexpr size_t head = 23;
     size_t at = head;
     size_t types_at = at, functions_at = types_at + reader.types.size() * 5,
            structs_at = functions_at + reader.functions.size() * 5;
     size_t fields_at = structs_at + reader.structs.size() * 4, parameters_at = fields_at + reader.fields.size() * 2;
     size_t skipped_at = parameters_at + reader.parameters.size() * 2,
-           pool_at = skipped_at + reader.not_imported.size() * 3;
+           enums_at = skipped_at + reader.not_imported.size() * 3, items_at = enums_at + reader.enums.size() * 4,
+           constants_at = items_at + reader.enum_items.size() * 4, pool_at = constants_at + reader.constants.size() * 6;
     size_t pool_words = (reader.pool.size() + 3) / 4, total = pool_at + pool_words;
     if (total > capacity || words == nullptr) return total;
     std::memset(words, 0, total * 4);
@@ -441,6 +656,9 @@ extern "C" size_t smith_cimport_read(const SmithCimportRequest *request, uint32_
     w[12] = static_cast<uint32_t>(parameters_at), w[13] = static_cast<uint32_t>(reader.parameters.size());
     w[14] = static_cast<uint32_t>(skipped_at), w[15] = static_cast<uint32_t>(reader.not_imported.size());
     w[16] = error_at;
+    w[17] = static_cast<uint32_t>(enums_at), w[18] = static_cast<uint32_t>(reader.enums.size());
+    w[19] = static_cast<uint32_t>(items_at), w[20] = static_cast<uint32_t>(reader.enum_items.size());
+    w[21] = static_cast<uint32_t>(constants_at), w[22] = static_cast<uint32_t>(reader.constants.size());
     auto copy = [&](size_t where, const auto &rows) {
         for (const auto &row : rows)
             for (uint32_t v : row)
@@ -452,6 +670,9 @@ extern "C" size_t smith_cimport_read(const SmithCimportRequest *request, uint32_
     copy(fields_at, reader.fields);
     copy(parameters_at, reader.parameters);
     copy(skipped_at, reader.not_imported);
+    copy(enums_at, reader.enums);
+    copy(items_at, reader.enum_items);
+    copy(constants_at, reader.constants);
     std::memcpy(reinterpret_cast<char *>(w) + pool_at * 4, reader.pool.data(), reader.pool.size());
     return total;
 }
