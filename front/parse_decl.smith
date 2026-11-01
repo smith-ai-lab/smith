@@ -246,6 +246,53 @@ static void reject_gnu_attribute(parse::Parser *p, ast::Path name) {
     parse::error(p, name.span, message);
 }
 
+// The GNU attribute names that have a `[[std::]]` spelling: the GNU name and the `std` one. One table (#1348).
+static Str gnu_to_std(Str word) {
+    if (same_text(word, "pure") || same_text(word, "__pure__")) return "pure";
+    if (same_text(word, "always_inline") || same_text(word, "__always_inline__")) return "inline";
+    if (same_text(word, "noinline") || same_text(word, "__noinline__")) return "noinline";
+    if (same_text(word, "cold") || same_text(word, "__cold__")) return "cold";
+    return "";
+}
+
+// A GNU `__attribute__((a, b(1)))` is not Smith's: one error per attribute name (the first word of each), at the
+// name, then the group is skipped. False when the position is not at `__attribute__`.
+static Bool reject_gnu_spelling(parse::Parser *p) {
+    lex::Token head = parse::peek(p);
+    if (head.kind != lex::name || !same_text(parse::text(p, head), "__attribute__")) return false;
+    parse::advance(p);
+    Usize depth = 0;
+    Bool at_name = false;
+    while (!parse::at(p, lex::end_of_file)) {
+        lex::Token token = parse::peek(p);
+        parse::advance(p);
+        if (token.kind == lex::left_paren) {
+            depth += 1;
+            at_name = depth == 2;
+            continue;
+        }
+        if (token.kind == lex::right_paren) {
+            if (depth <= 1) break;
+            depth -= 1;
+            continue;
+        }
+        if (token.kind == lex::comma && depth == 2) {
+            at_name = true;
+            continue;
+        }
+        if (at_name && depth == 2) {
+            Str word = parse::text(p, token);
+            Str std_word = gnu_to_std(word);
+            char message[:] = format::push("there is no Smith spelling of `", word, "` yet");
+            if (countof(std_word) > 0)
+                message = format::push("`__attribute__` is a C extension: write `[[std::", std_word, "]]`");
+            parse::error(p, token.span, message);
+        }
+        at_name = false;
+    }
+    return true;
+}
+
 // One `[[a, b::c(args)]]` group (the position is at its first `[`).
 static void parse_attribute_group(parse::Parser *p, Prefixes *out) {
     parse::advance(p);
@@ -312,6 +359,7 @@ static Prefixes parse_prefixes(parse::Parser *p) {
             parse_attribute_group(p, &pre);
             continue;
         }
+        if (reject_gnu_spelling(p)) continue;
         if (!take_prefix_keyword(&pre, kind)) break;
         parse::advance(p);
     }
@@ -987,6 +1035,7 @@ static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start
         several_names_error(p, type, name);
         return nullptr;
     }
+    reject_gnu_spelling(p);
     parse::expect(p, lex::semicolon, "`;` after the type");
     ast::DeclKind kind = {.type_alias = {.name = name, .type = full}};
     return make(p, start, pre, kind);

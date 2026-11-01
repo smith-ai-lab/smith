@@ -1,1 +1,1 @@
-postfix-after-compound-literal/main.smith: error: expected `;` after the type, found `__attribute__` (10:18) [undecided_c]
+postfix-after-compound-literal/main.smith: error: there is no Smith spelling of `ext_vector_type` yet (10:33) [undecided_c]
