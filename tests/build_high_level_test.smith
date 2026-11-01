@@ -1,6 +1,10 @@
 // The high level of build.c, from tests/build.sh section 9h: smith_object, smith_program and smith_compile_commands:
 // the commands -v shows, compile_commands.json whole, what a no-op and an edit rebuild, and the entry for build.c
 // itself.
+// The verbs it starts (smith build, cc) are dispatched in smith.c, so smith.c is declared.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: runtime/package.c include/smith/ tests/build_fixtures/
 module build_high_level_test;
 
 import std::arena;

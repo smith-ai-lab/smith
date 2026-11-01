@@ -1,6 +1,11 @@
 // Clang modules in `smith build`, from tests/build.sh sections 11d to 11g: isolation (a header that only worked after
 // another include fails, a textual header works), sanitized and plain builds with caches of their own, the errors of
 // smith_modules, and every header of smith's libraries importing alone and together.
+// The verbs it starts (smith build, cc, lsp) are dispatched in smith.c, so smith.c is declared. The libraries'
+// headers come from lib/ and the module maps from the clang in shim/.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: runtime/package.c include/smith/ tests/build_fixtures/ lib/ shim/
 module build_isolation_test;
 
 import std::arena;

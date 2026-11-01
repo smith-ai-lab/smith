@@ -1,5 +1,10 @@
 // The test layout (issue #294): a unit test sits beside its module as `<module>_test.smith` and is an ordinary module
 // that sees only the exports; `smith test` finds any `*_test.smith` or `*_test.c`; `smith build` never links one.
+// The verbs it starts (smith build, test) are dispatched in smith.c, so smith.c is declared. The tests it finds are
+// built with the test library in lib/std and the token hook in shim/.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: runtime/package.c include/smith/ tests/build_fixtures/ lib/std/ shim/
 module build_layout_test;
 
 import std::arena;

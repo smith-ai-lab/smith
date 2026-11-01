@@ -1,6 +1,10 @@
 // The executor's tools, the manifests it refuses and what it keeps between builds, from tests/build.sh sections 14f and
 // 14g: `smith --smith-exec <manifest>` with -t targets, commands, compdb, clean and cleandead, a damaged log that is
 // never trusted, and a tree that ninja built (SMITH_NINJA).
+// The verbs it starts (smith build, --smith-exec) are dispatched in smith.c, so smith.c is declared.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: runtime/package.c include/smith/ tests/build_fixtures/
 module build_executor_tools_test;
 
 import std::arena;
