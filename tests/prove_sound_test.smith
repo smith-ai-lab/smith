@@ -23,13 +23,42 @@ import smith::mem;
 // the files every harness links.
 constexpr char cc_flags[_] = "-std=gnu23 -g -O0 -fsanitize=address,undefined -fno-sanitize-recover=all "
                              "-ftrivial-auto-var-init=pattern -I \"$SMITH_REPO/.smith/include\" -I lowered -w";
-constexpr char cc_common[_] = "lib/trace.c lib/smith/contract.smith";
 
-// The files every harness links, in the project.
+// The two files every harness links, compiled once for each smith under test and each content of the sources, into
+// $SMITH_TEST_CACHE/prove-sound/<key>/ (#967): built in a folder of their own, moved into place by a rename, so
+// tests that start together build them at most a few times and never read half an object. The command prints the
+// folder.
+constexpr char common_script[_] =
+    "c=\"$SMITH_TEST_CACHE/prove-sound\"; r=\"$SMITH_REPO\"; s=$(command -v smith); "
+    "id=$(stat -L -c %s.%Y \"$s\" 2>/dev/null || stat -L -f %z.%m \"$s\"); "
+    "k=$( (cat \"$r/lib/trace.c\" \"$r/lib/smith/contract.smith\" \"$r/.smith/include/smith/trace.h\" "
+    "\"$r/.smith/include/smith/handlers.h\"; echo \"$id $F\") | cksum | cut -d\" \" -f1); d=\"$c/$k\"; "
+    "if [ ! -f \"$d/trace.o\" ] || [ ! -f \"$d/contract.o\" ]; then "
+    "mkdir -p \"$c\" && t=$(mktemp -d \"$c/tmp-XXXXXX\") && mkdir -p \"$t/lib/smith\" && "
+    "cp \"$r/lib/trace.c\" \"$t/lib/\" && cp \"$r/lib/smith/contract.smith\" \"$t/lib/smith/\" && cd \"$t\" && "
+    "eval \"smith cc $F -c lib/trace.c -o trace.o\" 2>&1 && "
+    "eval \"smith cc $F -c lib/smith/contract.smith -o contract.o\" 2>&1 "
+    "|| exit 1; cd \"$c\" && rm -rf \"$t/lib\"; if [ -d \"$d\" ]; then rm -rf \"$t\"; else mv \"$t\" \"$d\"; fi; fi; "
+    "echo \"$d\"";
+
+// The folder of the common objects (built when no test has yet), as a path.
+static const char *common_objects(const scratch::Project *p) {
+    scratch::Run run = scratch::sh(p, format::push("F='", cc_flags, "'; ", common_script).data);
+    scratch::expect_status("prove_sound: the common objects build", 0, &run);
+    usize length = c::strlen(run.out);
+    while (length > 0 && run.out[length - 1] == '\n') {
+        length--;
+    }
+    char *folder = mem::alloc_slice(char, length + 1).data;
+    mem::copy(folder[0:length], run.out[0:length]);
+    folder[length] = '\0';
+    return folder;
+}
+
+// The files the harnesses include, in the project: the programs beside them. A case that links the library's sources
+// or the runtime's has them copied by name (`link_sources`, `prove_files`), not the whole trees.
 static void copy_common(const scratch::Project *p) {
-    scratch::copy_tree(p, "tests/prove", "tests/prove"); // the harnesses include the programs beside them
-    scratch::copy_tree(p, "lib", "lib");                 // the harnesses link its libraries and include its sources
-    scratch::copy_tree(p, "runtime", "runtime");
+    scratch::copy_tree(p, "tests/prove", "tests/prove");
 }
 
 // Two harnesses reach the modules' static functions by including their raw lowering (`smith cc --smith-lower`), made
@@ -118,12 +147,17 @@ static void sound(const char *name) {
     defer mem::set_allocator(outside);
     lower_modules(&p);
     copy_common(&p);
+    const char *objects = common_objects(&p);
     const char *source = format::push("tests/prove/sound/", name, ".c").data;
     scratch::copy_tree(&p, source, source);
     const char *text = scratch::read(&p, source);
     const char *proves = directive(memory, text, "// proves:");
     const char *files = directive(memory, text, "// prove-files:");
     const char *links = directive(memory, text, "// link:");
+    if (word(memory, links, 0) != nullptr || word(memory, files, 0) != nullptr) {
+        scratch::copy_tree(&p, "runtime/protocol", "runtime/protocol"); // protocol.c and its header
+        scratch::copy_tree(&p, "include/smith", "include/smith");       // what protocol.c includes
+    }
     const char *prove_files = c::strlen(files) > 0 ? files : source;
     const char *arguments = "";
     for (usize i = 0; word(memory, prove_files, i) != nullptr; i++) {
@@ -140,9 +174,10 @@ static void sound(const char *name) {
         test::check_condition(scratch::contains(proved.out, format::push("ok    ", fn, "  (").data));
     }
     const char *sources = link_sources(memory, &p, name, links);
-    scratch::Run built = scratch::sh(&p, format::push("mkdir -p ", name, " && smith cc ", cc_flags, " ", source,
-                                                      sources, " ", cc_common, " -o ", name, "/run 2>&1")
-                                             .data);
+    scratch::Run built =
+        scratch::sh(&p, format::push("mkdir -p ", name, " && smith cc ", cc_flags, " ", source, sources, " ", objects,
+                                     "/trace.o ", objects, "/contract.o -o ", name, "/run 2>&1")
+                            .data);
     scratch::expect_status("prove_sound: the harness builds", 0, &built);
     const char *seeds = test::full() ? "1 2 3 4 5 6 7 8" : "1";
     const char *count = test::full() ? "50000" : "2000";
@@ -167,13 +202,15 @@ static void unsound(const char *name) {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     copy_common(&p);
+    const char *objects = common_objects(&p);
     const char *source = format::push("tests/prove/unsound/", name, ".c").data;
     scratch::copy_tree(&p, source, source);
     const char *text = scratch::read(&p, source);
     scratch::Run proved =
         scratch::sh(&p, format::push("smith prove -v ", source, " -- -I \"$SMITH_REPO/.smith/include\" 2>&1").data);
-    scratch::Run built =
-        scratch::sh(&p, format::push("smith cc ", cc_flags, " ", source, " ", cc_common, " -o claims 2>&1").data);
+    scratch::Run built = scratch::sh(&p, format::push("smith cc ", cc_flags, " ", source, " ", objects, "/trace.o ",
+                                                      objects, "/contract.o -o claims 2>&1")
+                                             .data);
     scratch::expect_status("prove_sound: the corpus builds", 0, &built);
     for (const char *line = text; *line != '\0';) {
         usize length = 0;
