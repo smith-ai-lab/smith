@@ -86,6 +86,14 @@ The types of the front end and the checker's entry point; the API is the comment
 - **`types::check(module, options)`** returns a `Checked`: the table, the module's scope, the errors and a side table of expression types keyed by node (`set_type`, `type_of`; no field in `front/ast.smith`, the interface to the emitter is #1220's open question). `options.bodies` is the hook J1d fills to check function bodies, since J1a cannot import it. A construct J1 does not type is reported as `not yet typed: <kind>`.
 - **No recursion**: `resolve` (a `TypeExpr` as a `TypeRef`), `layout` and `show` use explicit stacks. Tests: `tests/front_types_test.smith`, golden `tests/front/types/`.
 
+## front::types_convert (`front/types_convert.smith`, #1220 J1c)
+
+The conversion rules of a module (#414's baseline, #398) as pure functions over `types::Ty`; the rules are the comment at the top of the file. `convert(table, from, to, lit)` says whether a value of `from` may stand where `to` is expected, with `lit` (`no_literal()`, `constant(n)`, `constant_unsigned(n)`) letting `U8 small = 200;` pass and `U8 big = 300;` fail with "300 does not fit U8"; `cast_ok(table, from, to)` says whether `(to)x` may be written. Both return a `Verdict {ok, kind, message}`: `kind` is the `How` of the rule that allowed it (`widening`, `constant_fits`, `to_some`, `to_ok`, `array_to_slice`, `add_const`, ...) and a refusal's message names the expected type, the found type and what to write. J1b and J1d turn a refusal into an error at the expression's span.
+
+- **Lossless is implicit, the rest is a cast**: same-sign widening and unsigned to a wider signed; float to float widening. Narrowing, a sign change, integer to or from float, `Bool`, enumeration and `void *` to `T *` need a written cast; const is added, never dropped.
+- **Absence and errors stay explicit**: a value converts to `Option(T)`'s `.some` and `Result(T, E)`'s `.ok`; `Option(T)`, `Result(T, E)` and `null` do not convert to a `T` or an `Option`.
+- Tests: `tests/front_types_convert_test.smith`, one per message.
+
 ## front::cimport (track C)
 
 Declarations read from C headers become these same nodes; its concept comes with #1117 (`c-header-import.md`), and links here once that file exists.
