@@ -482,7 +482,7 @@ static ast::TypeExpr *stub_new_type(parse::Parser *p) {
     return type;
 }
 
-// A parser over smith's own syntax: the lexer that reads `fn pub mut` and the rest as keywords, and the type stub above.
+// A parser over smith's own syntax: the lexer that reads `fn pub mut` as keywords, and the type stub above.
 static parse::Parser new_parser_of(Str source) {
     lex::Lexed lexed = lex::tokenize_new(source);
     lex::Tokens tokens = {};
