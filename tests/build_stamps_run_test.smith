@@ -7,7 +7,7 @@ import std::mem;
 import std::test;
 import scratch;
 
-constexpr usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
+constexpr Usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
 
 static const char *yes_no(bool value) {
     return value ? "yes" : "no";

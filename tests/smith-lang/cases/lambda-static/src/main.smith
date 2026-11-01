@@ -2,7 +2,7 @@ module main;
 
 import <stdio.h>;
 
-static I32 (*const square)(I32) = [](I32 a) -> i32 { return a * a; };
+static I32 (*const square)(I32) = [](I32 a) -> I32 { return a * a; };
 
 struct Op {
     const char *name;

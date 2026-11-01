@@ -9,7 +9,7 @@ import std::mem;
 import std::test;
 import scratch;
 
-constexpr usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
+constexpr Usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
 
 static void refuses_a_task_and_an_alias_named(const char *verb) {
     scratch::Project p = scratch::make("p", nullptr);

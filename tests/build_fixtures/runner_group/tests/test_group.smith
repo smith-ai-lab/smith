@@ -4,7 +4,7 @@ import <time.h>;
 import <unistd.h>;
 import std::test;
 
-constexpr i32 hang_up = c::SIGHUP; // NOLINT(smith-preprocessor)
+constexpr I32 hang_up = c::SIGHUP; // NOLINT(smith-preprocessor)
 
 // A test that signals its whole process group (#754): only its own processes are in it, never the runner's.
 void test_group_1_hangs_up_its_group(void) {

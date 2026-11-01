@@ -4,7 +4,7 @@ import <stdio.h>;
 
 int main() {
     box::Box b = {2.0f, 3.0f};
-    f32 a = box::area(b);
+    F32 a = box::area(b);
     c::printf("area %f\n", (double)a);
     return 0;
 }

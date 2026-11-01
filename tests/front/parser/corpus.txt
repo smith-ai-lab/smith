@@ -182,7 +182,7 @@ error-slice-qualifier-bracket/main.smith: error: `static` has no meaning for a s
 error-slice-step/main.smith: error: expected `]` to end the index, found `:` (10:33)
 error-stale-header/main.smith: C, out of scope
 error-standard-type/main.smith: C, out of scope
-error-str-name/main.smith: ok
+error-str-name/main.smith: error: expected a field name, found `Str` (6:17)
 error-target-fact/bad.smith: ok
 error-try-error-type/main.smith: ok
 error-try-expression/main.smith: ok
@@ -553,10 +553,10 @@ str-lowering/words.smith: ok
 str-module/main.smith: ok
 str-module/words.smith: ok
 str-run/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (26:23)
-str-typedef-lowering/text.smith: ok
+str-typedef-lowering/text.smith: error: expected the type's name, found `str` (3:27)
 str-typedef-module/main.smith: error: expected `;`, found `s` (7:15)
 str-typedef-module/text.smith: error: expected the type's name, found `str` (3:27)
-str-typedef-run/main.smith: error: expected the type's name, found `bytes` (8:14)
+str-typedef-run/main.smith: error: expected the type's name, found `str` (7:20)
 target-facts/main.smith: C, out of scope
 try-generic/main.smith: error: expected `;`, found `c` (22:14)
 try-return-value/main.smith: error: expected `;`, found `c` (25:14)
@@ -612,4 +612,4 @@ value-query-plain/main.smith: C, out of scope
 value-query-windows/size.smith: ok
 void-pointer-cast/main.smith: ok
 void-pointer-plain/main.smith: C, out of scope
-total 614, ok 369, error 121, C 124, skipped 0
+total 614, ok 367, error 123, C 124, skipped 0

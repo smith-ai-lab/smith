@@ -10,11 +10,11 @@ A `.smith` file needs no `#if`. A fact of the target is a constant of the module
 ```smith
 import target;
 
-constexpr usize size = 4;                                   // not `#define SIZE 4`
+constexpr Usize size = 4;                                   // not `#define SIZE 4`
 constexpr bool sanitized = target::address_sanitizer;       // a constant expression: static_assert, array sizes, initializers
 static_assert(target::f32_mantissa_bits == 24 && target::float_radix == 2);
 
-i32 opaque(i32 value) {
+I32 opaque(I32 value) {
     if constexpr (target::arch == target::aarch64) {        // the branch not taken is dropped: it may not compile here
         __asm__("" : "+w"(value));
     } else {
@@ -23,7 +23,7 @@ i32 opaque(i32 value) {
     return value;
 }
 
-usize capacity() {
+Usize capacity() {
     return size;
 }
 
@@ -46,6 +46,6 @@ The facts: `arch` (`aarch64`, `x86_64`), `os` (`macos`, `linux`), `address_sanit
 ## Errors
 
 - ``in `if constexpr`: `n` is not a constant``: anything else in a condition, at the name.
-- `smith lint`, check `smith-preprocessor`: `` `#define` is the preprocessor, and a .smith file has none: a constant is `constexpr usize name = value;` ``. A macro of a C header used as `c::EOF` compiles but is reported the same way (`smith-lang-c-interop`).
+- `smith lint`, check `smith-preprocessor`: `` `#define` is the preprocessor, and a .smith file has none: a constant is `constexpr Usize name = value;` ``. A macro of a C header used as `c::EOF` compiles but is reported the same way (`smith-lang-c-interop`).
 
 Details: [smith-language](../../../knowledge/smith-language.md). Overview: `smith-lang`.

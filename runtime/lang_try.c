@@ -233,8 +233,8 @@ static void smith_lang_try_open(SmithLang *lang, const SmithHost *host, const Sm
     SmithLangTryKind kind = smith_lang_try_kind(type);
     if (kind == SmithLangTryKind_None) {
         smith_lang_error(lang, host, token->location,
-                         "`try` returns the failure from the function, so the function must return a `result(T, E)` "
-                         "or an `option(T)`; this one returns something else. Test the value by hand: `if (r == "
+                         "`try` returns the failure from the function, so the function must return a `Result(T, E)` "
+                         "or an `Option(T)`; this one returns something else. Test the value by hand: `if (r == "
                          ".error) return ...;`");
         return;
     }

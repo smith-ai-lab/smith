@@ -102,9 +102,9 @@ static bool smith_explain_reserved(const char *text, size_t length) {
         "if",     "else",      "for",      "while",  "do",     "switch", "case",    "break", "return",
         "sizeof", "alignof",   "countof",  "typeof", "true",   "false",  "nullptr", "NULL",  "auto",
         "const",  "constexpr", "static",   "void",   "bool",   "char",   "short",   "int",   "long",
-        "float",  "double",    "unsigned", "signed", "struct", "enum",   "union",   "u8",    "u16",
-        "u32",    "u64",       "i8",       "i16",    "i32",    "i64",    "usize",   "isize", "f16",
-        "f32",    "f64",       "size_t",   "export", "import", "module", "type"};
+        "float",  "double",    "unsigned", "signed", "struct", "enum",   "union",   "U8",    "U16",
+        "U32",    "U64",       "I8",       "I16",    "I32",    "I64",    "Usize",   "Isize", "F16",
+        "F32",    "F64",       "size_t",   "export", "import", "module", "Type"};
     for (size_t i = 0; i < sizeof words / sizeof words[0]; i++)
         if (strlen(words[i]) == length && strncmp(words[i], text, length) == 0) return true;
     return false;

@@ -2,6 +2,6 @@ module main;
 
 // The arguments' form of main: the lowering writes the statements that make `args`. Issue #523: clangd's token buffer
 // never ended on them.
-i32 main(str args[:]) {
-    return (i32)countof(args) - 1;
+I32 main(Str args[:]) {
+    return (I32)countof(args) - 1;
 }

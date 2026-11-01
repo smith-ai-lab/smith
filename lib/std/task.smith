@@ -42,7 +42,7 @@ if constexpr (target::os == target::macos) {
 
 // The tasks a `wait` waits for. Start it as `task::Group group = {};` and end it with `defer task::wait(&group)`.
 [[std::c_name("SmithTaskGroup")]] export struct Group {
-    usize pending;                // tasks spawned into it that have not ended
+    Usize pending;                // tasks spawned into it that have not ended
     c::SmithScheduler *scheduler; // the scheduler that spawned the last of them: its `wait` waits for them
 };
 
@@ -51,15 +51,15 @@ export typedef c::SmithScheduler Scheduler;
 
 // The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
 // NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
-constexpr i32 protect_none = c::PROT_NONE;
-constexpr i32 protect_both = c::PROT_READ | c::PROT_WRITE;
-constexpr i32 map_private_anonymous = c::MAP_PRIVATE | c::MAP_ANON;
-constexpr i32 page_size_name = c::_SC_PAGESIZE;
-constexpr i32 processors_name = c::_SC_NPROCESSORS_ONLN;
+constexpr I32 protect_none = c::PROT_NONE;
+constexpr I32 protect_both = c::PROT_READ | c::PROT_WRITE;
+constexpr I32 map_private_anonymous = c::MAP_PRIVATE | c::MAP_ANON;
+constexpr I32 page_size_name = c::_SC_PAGESIZE;
+constexpr I32 processors_name = c::_SC_NPROCESSORS_ONLN;
 // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
 
 // The usable stack of a task: 256 KB, below a record of the task itself, above one guard page.
-constexpr usize stack_size = 262144;
+constexpr Usize stack_size = 262144;
 
 struct Worker;
 
@@ -72,13 +72,13 @@ struct Task {
     void *context;
     void *fake_stack;   // AddressSanitizer: the fake stack of this fiber while it is parked
     const void *bottom; // the lowest address of the stack, for AddressSanitizer
-    usize size;         // the bytes of the stack
+    Usize size;         // the bytes of the stack
     void *region;       // the mapping, null for a thread's first task
-    usize region_size;
+    Usize region_size;
     bool finished;
     c::SmithHandlers handlers; // the handlers this task sees; a copy of its spawner's at spawn
     c::SmithHandlers *table;   // what smith_handlers_set_table gets when it is entered: &handlers, null for the first
-    i32 saved_errno;           // its errno while it is not running
+    I32 saved_errno;           // its errno while it is not running
     // The default scheduler's.
     bool keep_fake_stack; // AddressSanitizer: its fake stack outlives it, for the next task on the same stack
     bool managed;         // run by a worker: its record is not in its mapping, and its stack comes and goes with it
@@ -229,7 +229,7 @@ Task *current() {
 }
 
 // The calling thread's errno.
-i32 *errno_location() {
+I32 *errno_location() {
     contract::trusted(); // the address of a libc variable
     if constexpr (target::os == target::macos) {
         return c::__error();
@@ -255,7 +255,7 @@ void transfer(Task *from, Task *to) {
     switch_stacks(&from->sp, to->sp);
     if constexpr (target::address_sanitizer) {
         const void *bottom = nullptr;
-        usize size = 0;
+        Usize size = 0;
         c::__sanitizer_finish_switch_fiber(from->fake_stack, &bottom, &size);
         if (from->resumer != nullptr && from->resumer->size == 0) {
             from->resumer->bottom = bottom;
@@ -278,7 +278,7 @@ bool stack_will_be_kept(Task *task);
 void task_main(Task *task) {
     if constexpr (target::address_sanitizer) {
         const void *bottom = nullptr;
-        usize size = 0;
+        Usize size = 0;
         c::__sanitizer_finish_switch_fiber(task->fake_stack, &bottom, &size);
         if (task->resumer->size == 0) {
             task->resumer->bottom = bottom;
@@ -302,37 +302,37 @@ void task_main(Task *task) {
 
 // One mapping: a guard page and `stack_size` bytes above it. Never null: the system refusing the memory is a checked
 // failure.
-void *map_stack(usize extra) {
+void *map_stack(Usize extra) {
     contract::trusted(); // it lays out raw memory
     // NOLINTBEGIN(smith-effects): the system's memory is the edge of this module
-    usize page = (usize)c::sysconf(page_size_name);
+    Usize page = (Usize)c::sysconf(page_size_name);
     void *region = c::mmap(nullptr, page + stack_size + extra, protect_both, map_private_anonymous, -1, 0);
-    if ((usize)region == ~(usize)0) refuse("task: the system refused a stack");
+    if ((Usize)region == ~(Usize)0) refuse("task: the system refused a stack");
     if (c::mprotect(region, page, protect_none) != 0) refuse("task: the system refused a guard page");
     // NOLINTEND(smith-effects)
     return region;
 }
 
 // Writes the first frame of a task on the stack whose usable bytes end at `end`: the task starts in task_main.
-void lay_frame(Task *task, u8 *end) {
+void lay_frame(Task *task, U8 *end) {
     contract::trusted(); // it writes the first frame
-    usize top = (usize)end & ~(usize)15;
-    usize entry_address = (usize)task_main;
-    usize boot = (usize)boot_stub;
+    Usize top = (Usize)end & ~(Usize)15;
+    Usize entry_address = (Usize)task_main;
+    Usize boot = (Usize)boot_stub;
     if constexpr (target::arch == target::aarch64) {
-        usize *frame = (usize *)(top - 176);
-        for (usize i = 0; i < 22; i++)
+        Usize *frame = (Usize *)(top - 176);
+        for (Usize i = 0; i < 22; i++)
             frame[i] = 0;
-        frame[0] = (usize)task;   // x19
+        frame[0] = (Usize)task;   // x19
         frame[1] = entry_address; // x20
         frame[11] = boot;         // x30
         task->sp = frame;
     } else {
-        usize *frame = (usize *)(top - 56);
-        for (usize i = 0; i < 7; i++)
+        Usize *frame = (Usize *)(top - 56);
+        for (Usize i = 0; i < 7; i++)
             frame[i] = 0;
         frame[3] = entry_address; // r12
-        frame[4] = (usize)task;   // rbx
+        frame[4] = (Usize)task;   // rbx
         frame[6] = boot;          // the return address
         task->sp = frame;
     }
@@ -353,10 +353,10 @@ void init_task(Task *task, Group *group, void (*entry)(void *context), void *con
 // record, so no allocator is involved.
 Task *make_task(Group *group, void (*entry)(void *context), void *context) {
     contract::trusted();                            // it lays out raw memory
-    usize page = (usize)c::sysconf(page_size_name); // NOLINT(smith-effects)
-    usize record = (sizeof(Task) + 63) / 64 * 64;
-    u8 *base = (u8 *)map_stack(0);
-    usize region_size = page + stack_size;
+    Usize page = (Usize)c::sysconf(page_size_name); // NOLINT(smith-effects)
+    Usize record = (sizeof(Task) + 63) / 64 * 64;
+    U8 *base = (U8 *)map_stack(0);
+    Usize region_size = page + stack_size;
     Task *task = (Task *)(base + region_size - record);
     init_task(task, group, entry, context);
     task->region = base;
@@ -379,13 +379,13 @@ bool resume(Task *task) {
 // The frames an ended task left poisoned for AddressSanitizer must not be poison in the next mapping that lands there.
 // Every frame but the last two (task_main and transfer, which never return) unpoisoned itself as it returned, so the
 // top of the mapping is all there is to clean.
-constexpr usize unpoison_bytes = 16384;
+constexpr Usize unpoison_bytes = 16384;
 
-void unpoison(void *region, usize size) {
+void unpoison(void *region, Usize size) {
     contract::trusted(); // the mapping is the task's own, and no one holds the task any more
-    [[maybe_unused]] usize start = size - unpoison_bytes;
+    [[maybe_unused]] Usize start = size - unpoison_bytes;
     if constexpr (target::address_sanitizer) {
-        c::__asan_unpoison_memory_region((u8 *)region + start, unpoison_bytes);
+        c::__asan_unpoison_memory_region((U8 *)region + start, unpoison_bytes);
     } else {
         (void)region;
         (void)size;
@@ -396,7 +396,7 @@ void unpoison(void *region, usize size) {
 void release_inline(Task *task) {
     contract::trusted(); // the mapping is the task's own, and no one holds the task any more
     void *region = task->region;
-    usize size = task->region_size;
+    Usize size = task->region_size;
     unpoison(region, size);
     c::munmap(region, size); // NOLINT(smith-effects)
 }
@@ -492,39 +492,39 @@ export Scheduler *inline_scheduler() {
 // own condition variable. A task is queued on one worker at spawn and never leaves it. The records of the tasks and the
 // memory under them come from pools: a record from a global one (a short spin lock of its own), a stack from the cache
 // of the worker that runs the task, so a finished task's stack serves the next one that starts there.
-constexpr usize workers_max = 64;
-constexpr usize stack_cache_max = 16;        // stacks a worker keeps for the next tasks; the rest are unmapped
-constexpr usize chunk_size = 65536;          // the records of tasks come in chunks of this many bytes
-constexpr usize thread_stack_size = 1048576; // under the worker's loop; a task runs on a stack of its own
-constexpr usize chunk_header = 64;           // the link to the next chunk
+constexpr Usize workers_max = 64;
+constexpr Usize stack_cache_max = 16;        // stacks a worker keeps for the next tasks; the rest are unmapped
+constexpr Usize chunk_size = 65536;          // the records of tasks come in chunks of this many bytes
+constexpr Usize thread_stack_size = 1048576; // under the worker's loop; a task runs on a stack of its own
+constexpr Usize chunk_header = 64;           // the link to the next chunk
 
 struct Worker {
     Task *head; // the run queue: tasks ready to run on this worker, in order
     Task *tail;
-    usize ready; // tasks in the queue
-    usize load;  // tasks alive on this worker: spawn gives the next one to the least loaded
+    Usize ready; // tasks in the queue
+    Usize load;  // tasks alive on this worker: spawn gives the next one to the least loaded
     c::pthread_cond_t wake;
     c::pthread_t thread; // unused for worker 0, which is the thread of `main`
     void *thread_stack;  // the mapping under the thread: it is ours, so the C library keeps nothing of the thread
     void *cache;         // stacks of finished tasks, linked through their lowest word
-    usize cached;
-    i32 queue;       // macOS: the worker's kqueue; -1 elsewhere
-    usize io_parked; // tasks of this worker waiting in the kqueue
+    Usize cached;
+    I32 queue;       // macOS: the worker's kqueue; -1 elsewhere
+    Usize io_parked; // tasks of this worker waiting in the kqueue
 };
 
 Worker workers[workers_max];
-usize worker_count;
+Usize worker_count;
 bool active;        // the workers exist
 bool stopping;      // they are to exit
-usize live;         // tasks spawned and not ended
-usize busy;         // workers running a task right now
-usize ready_total;  // tasks in all the queues
-usize io_total;     // tasks waiting in a kqueue, on any worker
-usize worker_limit; // at most this many workers (0: one per core); see limit_workers
-usize page_bytes;
+Usize live;         // tasks spawned and not ended
+Usize busy;         // workers running a task right now
+Usize ready_total;  // tasks in all the queues
+Usize io_total;     // tasks waiting in a kqueue, on any worker
+Usize worker_limit; // at most this many workers (0: one per core); see limit_workers
+Usize page_bytes;
 c::pthread_mutex_t sched_lock;
 Task *waiters; // tasks waiting for a group
-u8 pool_lock;  // the spin lock of the two pools below
+U8 pool_lock;  // the spin lock of the two pools below
 Task *free_records;
 void *chunks;
 thread_local Worker *home; // the worker whose thread this is
@@ -555,12 +555,12 @@ Task *record_take() {
         // NOLINTBEGIN(smith-effects): the system's memory is the edge of this module
         void *chunk = c::mmap(nullptr, chunk_size, protect_both, map_private_anonymous, -1, 0);
         // NOLINTEND(smith-effects)
-        if ((usize)chunk == ~(usize)0) refuse("task: the system refused memory for tasks");
+        if ((Usize)chunk == ~(Usize)0) refuse("task: the system refused memory for tasks");
         *(void **)chunk = chunks;
         chunks = chunk;
-        usize record = (sizeof(Task) + 63) / 64 * 64;
-        for (usize offset = chunk_header; offset + record <= chunk_size; offset += record) {
-            Task *free_one = (Task *)((u8 *)chunk + offset);
+        Usize record = (sizeof(Task) + 63) / 64 * 64;
+        for (Usize offset = chunk_header; offset + record <= chunk_size; offset += record) {
+            Task *free_one = (Task *)((U8 *)chunk + offset);
             free_one->wait_next = free_records;
             free_records = free_one;
         }
@@ -641,14 +641,14 @@ void finish_managed(Task *task) {
 // and by no other, and only that worker reads the kqueue, so a task is never queued while it is still switching out.
 if constexpr (target::os == target::macos) {
     // NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
-    constexpr i32 filter_read = c::EVFILT_READ;
-    constexpr i32 filter_write = c::EVFILT_WRITE;
-    constexpr i32 filter_user = c::EVFILT_USER;
-    constexpr i32 add_oneshot = c::EV_ADD | c::EV_ONESHOT;
-    constexpr i32 add_clear = c::EV_ADD | c::EV_CLEAR;
-    constexpr u32 trigger = c::NOTE_TRIGGER;
+    constexpr I32 filter_read = c::EVFILT_READ;
+    constexpr I32 filter_write = c::EVFILT_WRITE;
+    constexpr I32 filter_user = c::EVFILT_USER;
+    constexpr I32 add_oneshot = c::EV_ADD | c::EV_ONESHOT;
+    constexpr I32 add_clear = c::EV_ADD | c::EV_CLEAR;
+    constexpr U32 trigger = c::NOTE_TRIGGER;
     // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
-    constexpr usize events_max = 16;
+    constexpr Usize events_max = 16;
 
     void queue_open(Worker *worker) {
         contract::trusted(); // the system's queue is the edge
@@ -656,8 +656,8 @@ if constexpr (target::os == target::macos) {
         if (worker->queue < 0) refuse("task: the system refused a kqueue");
         struct c::kevent change = {};
         change.ident = 0;
-        change.filter = (i16)filter_user;
-        change.flags = (u16)add_clear;
+        change.filter = (I16)filter_user;
+        change.flags = (U16)add_clear;
         if (c::kevent(worker->queue, &change, 1, nullptr, 0, nullptr) != 0) refuse("task: the system refused a kevent");
     }
 
@@ -672,7 +672,7 @@ if constexpr (target::os == target::macos) {
         if (worker == home) return;
         struct c::kevent change = {};
         change.ident = 0;
-        change.filter = (i16)filter_user;
+        change.filter = (I16)filter_user;
         change.fflags = trigger;
         c::kevent(worker->queue, &change, 1, nullptr, 0, nullptr); // NOLINT(smith-effects)
     }
@@ -684,11 +684,11 @@ if constexpr (target::os == target::macos) {
         struct c::kevent events[events_max] = {};
         struct c::timespec none = {};
         if (block) unlock_scheduler();
-        i32 count = c::kevent(worker->queue, nullptr, 0, events, (i32)events_max,
+        I32 count = c::kevent(worker->queue, nullptr, 0, events, (I32)events_max,
                               block ? nullptr : &none); // NOLINT(smith-effects)
         if (block) lock_scheduler();
-        for (i32 i = 0; i < count; i++) {
-            if (events[i].filter == (i16)filter_user) continue;
+        for (I32 i = 0; i < count; i++) {
+            if (events[i].filter == (I16)filter_user) continue;
             Task *ready = (Task *)events[i].udata;
             ready->io_waiting = false;
             worker->io_parked -= 1;
@@ -726,13 +726,13 @@ bool stack_will_be_kept(Task *task) {
 // A task that has not run yet gets a stack: the worker's cache first.
 void start_managed(Task *task, Worker *worker) {
     contract::trusted(); // it lays out raw memory
-    u8 *region = (u8 *)worker->cache;
+    U8 *region = (U8 *)worker->cache;
     if (region != nullptr) {
         worker->cache = *(void **)(region + page_bytes);
         worker->cached -= 1;
         task->fake_stack = *(void **)(region + page_bytes + sizeof(void *));
     } else {
-        region = (u8 *)map_stack(0);
+        region = (U8 *)map_stack(0);
     }
     task->region = region;
     task->region_size = page_bytes + stack_size;
@@ -744,8 +744,8 @@ void start_managed(Task *task, Worker *worker) {
 // An ended task gives its stack to its worker's cache, or back to the system, and its record to the pool.
 void release_managed(Task *task, Worker *worker) {
     contract::trusted(); // the mapping is the task's own, and no one holds the task any more
-    u8 *region = (u8 *)task->region;
-    usize size = task->region_size;
+    U8 *region = (U8 *)task->region;
+    Usize size = task->region_size;
     unpoison(region, size);
     if (task->keep_fake_stack) {
         *(void **)(region + page_bytes) = worker->cache;
@@ -793,16 +793,16 @@ if constexpr (target::os == target::macos) {
     c::SmithHandlers empty_handlers; // the table a real call runs under: no scheduler, so it is not routed again
 
     // NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
-    constexpr i32 get_flags = c::F_GETFL;
-    constexpr i32 set_flags = c::F_SETFL;
-    constexpr i32 non_blocking = c::O_NONBLOCK;
-    constexpr i32 kind_mask = c::S_IFMT;
-    constexpr i32 kind_socket = c::S_IFSOCK;
-    constexpr i32 kind_pipe = c::S_IFIFO;
-    constexpr i32 would_block = c::EAGAIN;
-    constexpr i32 in_progress = c::EINPROGRESS;
-    constexpr i32 socket_level = c::SOL_SOCKET;
-    constexpr i32 socket_error = c::SO_ERROR;
+    constexpr I32 get_flags = c::F_GETFL;
+    constexpr I32 set_flags = c::F_SETFL;
+    constexpr I32 non_blocking = c::O_NONBLOCK;
+    constexpr I32 kind_mask = c::S_IFMT;
+    constexpr I32 kind_socket = c::S_IFSOCK;
+    constexpr I32 kind_pipe = c::S_IFIFO;
+    constexpr I32 would_block = c::EAGAIN;
+    constexpr I32 in_progress = c::EINPROGRESS;
+    constexpr I32 socket_level = c::SOL_SOCKET;
+    constexpr I32 socket_error = c::SO_ERROR;
     // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
 
     // One try of the request on the descriptor, under a table with no scheduler so it is the real call.
@@ -810,7 +810,7 @@ if constexpr (target::os == target::macos) {
         contract::trusted(); // the request names raw buffers
         c::SmithHandlers *previous = c::smith_handlers_set_table(&empty_handlers);
         *errno_location() = 0;
-        isize result = -1;
+        Isize result = -1;
         // NOLINTBEGIN(smith-effects): the system's descriptors are this module's edge
         if (request->operation == c::SmithIoOperation_Read) {
             result = c::read(request->fd, request->buffer, request->size);
@@ -840,15 +840,15 @@ if constexpr (target::os == target::macos) {
     }
 
     // Whether the task may park on this descriptor. A socket or a pipe is made non-blocking (once: the flag stays).
-    bool parkable(i32 fd) {
+    bool parkable(I32 fd) {
         contract::trusted(); // the system's descriptors are the edge
         // NOLINTBEGIN(smith-effects, bugprone-signed-bitwise): fcntl's flags and st_mode are ints OR-ed and masked
-        i32 flags = c::fcntl(fd, get_flags);
+        I32 flags = c::fcntl(fd, get_flags);
         if (flags < 0) return false;
         if ((flags & non_blocking) != 0) return true;
         struct c::stat info = {};
         if (c::fstat(fd, &info) != 0) return false;
-        i32 kind = (i32)info.st_mode & kind_mask;
+        I32 kind = (I32)info.st_mode & kind_mask;
         if (kind != kind_socket && kind != kind_pipe) return false;
         return c::fcntl(fd, set_flags, flags | non_blocking) == 0;
         // NOLINTEND(smith-effects, bugprone-signed-bitwise)
@@ -857,14 +857,14 @@ if constexpr (target::os == target::macos) {
     // Registers the descriptor with the worker's kqueue and parks the calling task until it is ready. False when the
     // system refused the registration (errno says why). `main` has no stack to leave: it runs its worker's tasks, or
     // sleeps in the kqueue, until it is ready.
-    bool park_on(i32 fd, i32 filter) {
+    bool park_on(I32 fd, I32 filter) {
         contract::trusted(); // the system's queue is the edge
         Task *self = current();
         Worker *worker = home;
         struct c::kevent change = {};
-        change.ident = (usize)fd;
-        change.filter = (i16)filter;
-        change.flags = (u16)add_oneshot;
+        change.ident = (Usize)fd;
+        change.filter = (I16)filter;
+        change.flags = (U16)add_oneshot;
         change.udata = self;
         if (c::kevent(worker->queue, &change, 1, nullptr, 0, nullptr) != 0) return false; // NOLINT(smith-effects)
         lock_scheduler();
@@ -889,14 +889,14 @@ if constexpr (target::os == target::macos) {
     // A connect that returned EINPROGRESS has finished when the descriptor is writable: SO_ERROR says how.
     void finish_connect(c::SmithIoRequest *request) {
         contract::trusted(); // the system's descriptor is the edge
-        i32 error = 0;
+        I32 error = 0;
         c::socklen_t length = sizeof(error);
         c::getsockopt(request->fd, socket_level, socket_error, &error, &length); // NOLINT(smith-effects)
         request->result = error == 0 ? 0 : -1;
         request->error = error;
     }
 
-    bool waits_for_write(i32 operation) {
+    bool waits_for_write(I32 operation) {
         return operation == c::SmithIoOperation_Write || operation == c::SmithIoOperation_Writev ||
                operation == c::SmithIoOperation_Send || operation == c::SmithIoOperation_Connect;
     }
@@ -945,15 +945,15 @@ void *worker_main(void *argument) {
 void start_workers() {
     contract::trusted(); // threads and their primitives are the edge
     // NOLINTBEGIN(smith-effects): threads are this module's process effect
-    page_bytes = (usize)c::sysconf(page_size_name);
-    isize processors = c::sysconf(processors_name);
-    usize count = processors < 1 ? 1 : (usize)processors;
+    page_bytes = (Usize)c::sysconf(page_size_name);
+    Isize processors = c::sysconf(processors_name);
+    Usize count = processors < 1 ? 1 : (Usize)processors;
     if (count > workers_max) count = workers_max;
     if (worker_limit != 0 && count > worker_limit) count = worker_limit;
     c::pthread_mutex_init(&sched_lock, nullptr);
     stopping = false;
     worker_count = count;
-    for (usize i = 0; i < count; i++) {
+    for (Usize i = 0; i < count; i++) {
         workers[i] = (Worker){};
         workers[i].queue = -1;
         c::pthread_cond_init(&workers[i].wake, nullptr);
@@ -961,12 +961,12 @@ void start_workers() {
     }
     home = &workers[0];
     active = true;
-    for (usize i = 1; i < count; i++) {
+    for (Usize i = 1; i < count; i++) {
         c::pthread_attr_t attributes = {};
         c::pthread_attr_init(&attributes);
         workers[i].thread_stack = map_stack(thread_stack_size - stack_size);
-        c::pthread_attr_setstack(&attributes, (u8 *)workers[i].thread_stack + page_bytes, thread_stack_size);
-        i32 failed = c::pthread_create(&workers[i].thread, &attributes, worker_main, (void *)&workers[i]);
+        c::pthread_attr_setstack(&attributes, (U8 *)workers[i].thread_stack + page_bytes, thread_stack_size);
+        I32 failed = c::pthread_create(&workers[i].thread, &attributes, worker_main, (void *)&workers[i]);
         c::pthread_attr_destroy(&attributes);
         if (failed != 0) refuse("task: the system refused a worker thread");
     }
@@ -979,15 +979,15 @@ void stop_workers() {
     contract::trusted(); // threads and mappings are the edge
     // NOLINTBEGIN(smith-effects): threads are this module's process effect
     stopping = true;
-    for (usize i = 1; i < worker_count; i++)
+    for (Usize i = 1; i < worker_count; i++)
         wake_worker(&workers[i]);
     unlock_scheduler();
-    for (usize i = 1; i < worker_count; i++)
+    for (Usize i = 1; i < worker_count; i++)
         c::pthread_join(workers[i].thread, nullptr);
-    for (usize i = 0; i < worker_count; i++) {
+    for (Usize i = 0; i < worker_count; i++) {
         while (workers[i].cache != nullptr) {
             void *region = workers[i].cache;
-            workers[i].cache = *(void **)((u8 *)region + page_bytes);
+            workers[i].cache = *(void **)((U8 *)region + page_bytes);
             c::munmap(region, page_bytes + stack_size);
         }
         c::pthread_cond_destroy(&workers[i].wake);
@@ -1008,7 +1008,7 @@ void stop_workers() {
 
 // Starts no more than `count` workers the next time they start (0: one per core). For tests that need tasks on one
 // worker; call it while no task is alive.
-export void limit_workers(usize count) {
+export void limit_workers(Usize count) {
     contract::requires(!active);
     worker_limit = count;
 }
@@ -1016,7 +1016,7 @@ export void limit_workers(usize count) {
 // The worker threads started and not yet joined: none before the first spawn, and none again once the last task has
 // ended, because the thread that ends it joins them all before it returns. The system may take a moment more to drop a
 // joined thread from its own lists, so a count from the system is not a promise of this one.
-export usize workers_running() {
+export Usize workers_running() {
     return active ? worker_count - 1 : 0;
 }
 
@@ -1032,7 +1032,7 @@ void default_spawn(Scheduler *self, Group *group, void (*entry)(void *context), 
     if (task->handlers.scheduler == nullptr) task->handlers.scheduler = self; // its I/O reaches `io`
     lock_scheduler();
     Worker *target = home;
-    for (usize i = 0; i < worker_count; i++) {
+    for (Usize i = 0; i < worker_count; i++) {
         if (workers[i].load < target->load) target = &workers[i];
     }
     task->worker = target;
@@ -1097,7 +1097,7 @@ void default_pause([[maybe_unused]] Scheduler *self) {
     if (!active) return;
     lock_scheduler();
     if (home->io_parked > 0) poll_io(home, false);
-    for (usize round = home->ready; round > 0 && home->head != nullptr; round--)
+    for (Usize round = home->ready; round > 0 && home->head != nullptr; round--)
         run_ready(home);
     unlock_scheduler();
 }
@@ -1144,7 +1144,7 @@ export void spawn(Group *group, auto f, auto *arg) {
     static_assert(__builtin_types_compatible_p(typeof(f), void (*)(typeof(arg))),
                   "task::spawn: f must be void (*)(T *) for the T * of arg");
     contract::trusted(); // f(arg) is called as f(void *): a pointer to any object has one representation
-    usize address = (usize)f;
+    Usize address = (Usize)f;
     spawn_raw(group, (void (*)(void *))address, (void *)arg);
 }
 

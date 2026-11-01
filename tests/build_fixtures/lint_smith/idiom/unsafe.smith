@@ -10,7 +10,7 @@ export void jump_out() {
     c::longjmp(env, 1);
 }
 
-export i32 jump_in() {
+export I32 jump_in() {
     return c::setjmp(env);
 }
 
@@ -20,50 +20,50 @@ export void jump_trusted() {
     c::longjmp(env, 1);
 }
 
-// `u32 xs[10]` is a checked parameter in a module (`xs[static 10]`): no finding.
-export u32 first(u32 xs[10]) {
+// `U32 xs[10]` is a checked parameter in a module (`xs[static 10]`): no finding.
+export U32 first(U32 xs[10]) {
     return xs[0];
 }
 
-export u32 first_slice(u32 xs[:]) {
+export U32 first_slice(U32 xs[:]) {
     return xs[0];
 }
 
-export u32 first_fixed(u32 (*xs)[10]) {
+export U32 first_fixed(U32 (*xs)[10]) {
     return (*xs)[0];
 }
 
-export u32 first_rows(u32 xs[2][3]) {
+export U32 first_rows(U32 xs[2][3]) {
     return xs[0][0];
 }
 
 // A bound that is no constant expression cannot be counted.
-export u32 first_run_time(usize n, u32 xs[n]) {
+export U32 first_run_time(Usize n, U32 xs[n]) {
     return xs[0];
 }
 
 // The forms the lowering leaves a plain pointer.
-export u32 first_const(u32 xs[const 10]) {
+export U32 first_const(U32 xs[const 10]) {
     return xs[0];
 }
 
-export typedef u32 Row[10];
+export typedef U32 Row[10];
 
-export u32 first_row(Row xs) {
+export U32 first_row(Row xs) {
     return xs[0];
 }
 
-constexpr usize limit = 16;
+constexpr Usize limit = 16;
 
-export u32 sized(usize n) {
-    u32 fixed[16] = {};
-    u32 named[limit] = {};
-    u32 run_time[n];
+export U32 sized(Usize n) {
+    U32 fixed[16] = {};
+    U32 named[limit] = {};
+    U32 run_time[n];
     void *raw = c::alloca(n);
     return fixed[0] + named[0] + run_time[0] + (raw == nullptr ? 0 : 1);
 }
 
 // va_list is the platform's own type, an array on x86_64 that C passes as a pointer: no finding.
-export i32 next_argument(__builtin_va_list arguments) {
-    return __builtin_va_arg(arguments, i32);
+export I32 next_argument(__builtin_va_list arguments) {
+    return __builtin_va_arg(arguments, I32);
 }

@@ -19,7 +19,7 @@ import <string.h>;
 
 // What a test's commands print, and the texts made from it, go to an arena of the runner's (test::memory), the
 // current allocator from enter to leave, so the test frees none of it; its projects are made and cleaned inside it.
-constexpr usize memory_size = 1U << 24;
+constexpr Usize memory_size = 1U << 24;
 static arena::Arena memory;
 static arena::ArenaAllocator allocator;
 static mem::Allocator *outside;
@@ -42,12 +42,12 @@ typedef struct {
 // The repository, committed on main: a module a, tests of it, a test of b that imports a, a test of c that imports
 // nothing, a test that runs smith and a test that lists the tree.
 constexpr Source base[_] = {
-    {"lib/a.smith", "module a;\nexport i32 one() { return 1; }\n"},
+    {"lib/a.smith", "module a;\nexport I32 one() { return 1; }\n"},
     {"lib/a_test.smith", "module a_test;\nimport a;\nexport void test_one() {}\n"},
-    {"lib/b.smith", "module b;\nimport a;\nexport i32 two() { return 2; }\n"},
+    {"lib/b.smith", "module b;\nimport a;\nexport I32 two() { return 2; }\n"},
     {"lib/b_test.smith", "module b_test;\nimport b;\nexport void test_two() {}\n"},
     {"lib/c_test.smith", "module c_test;\nexport void test_three() {}\n"},
-    {"src/lone.smith", "module lone;\nexport i32 four() { return 4; }\n"},
+    {"src/lone.smith", "module lone;\nexport I32 four() { return 4; }\n"},
     {"tests/runs_test.smith", "module runs_test;\nimport scratch;\nexport void test_runs() { scratch::sh(); }\n"},
     {"tests/scratch.smith", "module scratch;\n"},
     {"tests/tree_test.smith", "module tree_test;\nexport void test_tree() { sh(\"find $SMITH_REPO -name x.c\"); }\n"},
@@ -62,9 +62,9 @@ constexpr Source base[_] = {
 static void write(const char *folder, Source file) {
     const char *path = format::push(folder, "/", file.path).data;
     const char *slash = c::strrchr(path, '/');
-    files::DoneResult made = files::make_folder(path[0:(usize)(slash - path)]);
+    files::DoneResult made = files::make_folder(path[0:(Usize)(slash - path)]);
     test::check_condition(made == .ok);
-    const u8 *bytes = (const u8 *)file.text;
+    const U8 *bytes = (const U8 *)file.text;
     files::CountResult written =
         files::write_file(path[0:c::strlen(path)], bytes[0:c::strlen(file.text)], files::Replace);
     test::check_condition(written == .ok);
@@ -72,22 +72,22 @@ static void write(const char *folder, Source file) {
 
 // What `smith test --changed --dry-run` prints for `changes` (`A`, `M` or `D`, a tab and a path a line) on the
 // repository with the files `extra` added to it (or replaced in it).
-static const char *changed(const Source *extra, usize count, const char *changes) {
+static const char *changed(const Source *extra, Usize count, const char *changes) {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     const char *names = "";
-    for (usize i = 0; i < countof(base); i++) {
+    for (Usize i = 0; i < countof(base); i++) {
         write(p.dir, base[i]);
         names = format::push(names, base[i].path, "\n").data;
     }
-    for (usize i = 0; i < count; i++) {
+    for (Usize i = 0; i < count; i++) {
         write(p.dir, extra[i]);
         bool known = false;
-        for (usize j = 0; j < countof(base); j++)
+        for (Usize j = 0; j < countof(base); j++)
             known = known || c::strcmp(base[j].path, extra[i].path) == 0;
         if (!known) names = format::push(names, extra[i].path, "\n").data;
     }
-    constexpr usize capacity = 1U << 16;
+    constexpr Usize capacity = 1U << 16;
     char *out = mem::alloc_slice(char, capacity).data;
     bool done = c::smith_core_changed_select(p.dir, names, changes, out, capacity);
     test::check_equal(done, true);
@@ -249,12 +249,12 @@ export void test_a_selection_twice_in_one_process_is_the_same() {
 constexpr char repository[_] =
     "export SMITH_OUTPUT=full; git init -q -b main . && "
     "mkdir -p lib tests docs runtime src && "
-    "printf 'module a;\\nexport i32 one() { return 1; }\\n' > lib/a.smith && "
+    "printf 'module a;\\nexport I32 one() { return 1; }\\n' > lib/a.smith && "
     "printf 'module a_test;\\nimport a;\\nexport void test_one() {}\\n' > lib/a_test.smith && "
-    "printf 'module b;\\nimport a;\\nexport i32 two() { return 2; }\\n' > lib/b.smith && "
+    "printf 'module b;\\nimport a;\\nexport I32 two() { return 2; }\\n' > lib/b.smith && "
     "printf 'module b_test;\\nimport b;\\nexport void test_two() {}\\n' > lib/b_test.smith && "
     "printf 'module c_test;\\nexport void test_three() {}\\n' > lib/c_test.smith && "
-    "printf 'module lone;\\nexport i32 four() { return 4; }\\n' > src/lone.smith && "
+    "printf 'module lone;\\nexport I32 four() { return 4; }\\n' > src/lone.smith && "
     "printf 'module runs_test;\\nimport scratch;\\nexport void test_runs() { scratch::sh(); }\\n' > "
     "tests/runs_test.smith && "
     "printf 'module scratch;\\n' > tests/scratch.smith && "
@@ -379,11 +379,11 @@ export void test_lint_chooses_the_changed_files_and_their_importers_twice() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     const char *names = "";
-    for (usize i = 0; i < countof(base); i++) {
+    for (Usize i = 0; i < countof(base); i++) {
         write(p.dir, base[i]);
         names = format::push(names, base[i].path, "\n").data;
     }
-    constexpr usize capacity = 1U << 16;
+    constexpr Usize capacity = 1U << 16;
     char *out = mem::alloc_slice(char, capacity).data;
     test::check_equal(c::smith_core_changed_lint(p.dir, names, "M\tlib/a.smith\n", out, capacity), true);
     scratch::expect_contains("a", out, "lib/a.smith\n");
@@ -413,7 +413,7 @@ static const char *base_of(const char *setup, const char *folder) {
     defer scratch::clean(&p);
     scratch::Run run = scratch::sh(&p, format::push(origin_repository, setup).data);
     scratch::expect_status("the repository is made", 0, &run);
-    constexpr usize capacity = 1U << 10;
+    constexpr Usize capacity = 1U << 10;
     char *out = mem::alloc_slice(char, capacity).data;
     test::check_equal(c::smith_core_changed_base(format::push(p.dir, "/", folder).data, out, capacity), true);
     return out;
@@ -448,7 +448,7 @@ export void test_no_base_fails_naming_the_ref_to_pass_and_a_local_main_is_not_on
     defer scratch::clean(&p);
     scratch::Run made = scratch::sh(&p, format::push(origin_repository, "cd o && git checkout -q dev").data);
     scratch::expect_status("the repository is made", 0, &made);
-    constexpr usize capacity = 1U << 10;
+    constexpr Usize capacity = 1U << 10;
     char *out = mem::alloc_slice(char, capacity).data;
     test::check_equal(c::smith_core_changed_base(format::push(p.dir, "/o").data, out, capacity), true);
     scratch::expect_text("a local main is no base", "", out);

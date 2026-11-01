@@ -1,7 +1,7 @@
 #include <stdio.h>
 
-static constexpr type main_big = __UINT32_TYPE__;
-static constexpr type main_small = float;
+static constexpr Type main_big = __UINT32_TYPE__;
+static constexpr Type main_small = float;
 static main_big main_total = 7;
 __INT32_TYPE__ main(void) {
 main_big x = 1;

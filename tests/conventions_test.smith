@@ -13,7 +13,7 @@ import scratch;
 import <smith/json.h>;
 import <string.h>;
 
-constexpr usize memory_size = (usize)16 << 20; // 16 MiB
+constexpr Usize memory_size = (Usize)16 << 20; // 16 MiB
 
 // The last line of a command's output: the program's output follows the build's.
 static const char *last_line(const scratch::Project *p, const char *command) {
@@ -94,7 +94,7 @@ export void test_conventions_smith_project_builds_runs_tests_and_follows_a_new_i
                    "module geometry::volume;\n"
                    "import geometry::box;\n"
                    "\n"
-                   "export i32 of(i32 w, i32 h, i32 d) {\n"
+                   "export I32 of(I32 w, I32 h, I32 d) {\n"
                    "    return box::area(w, h) * d;\n"
                    "}\n");
     scratch::write(&p, "main.smith",
@@ -383,7 +383,7 @@ export void test_conventions_compile_commands_of_a_project_with_no_build_file_is
     test::check(valid);
     bool found = false;
     if (valid && root->kind == c::SmithJsonKind_Array) {
-        for (usize i = 0; i < root->count; i++) {
+        for (Usize i = 0; i < root->count; i++) {
             const c::SmithJsonValue *file = c::smith_json_member(root->items[i], "file");
             if (file != nullptr && file->kind == c::SmithJsonKind_String && countof(file->text) >= 6 &&
                 c::strncmp(file->text.data + countof(file->text) - 6, "main.c", 6) == 0) {

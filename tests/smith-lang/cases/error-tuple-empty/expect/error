@@ -1,1 +1,1 @@
-src/main.smith:1:8: a tuple has at least one field: `struct { i32, f32 }`; C has no empty struct
+src/main.smith:1:8: a tuple has at least one field: `struct { I32, F32 }`; C has no empty struct

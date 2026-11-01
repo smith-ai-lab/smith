@@ -6,12 +6,12 @@ description: "The porting checklist from C to idiomatic Smith, step by step with
 # Porting checklist
 
 What changed, by rule:
-- 1: `uint32_t`, `size_t`, `uint64_t`, `double` became `u32`, `usize`, `u64`, `f64`.
+- 1: `uint32_t`, `size_t`, `uint64_t`, `double` became `U32`, `Usize`, `U64`, `F64`.
 - 2: no `c::` name is left: the C headers it included were smith's libraries, which are modules (`import std::console;`, `console::print`); `<smith/console.h>` is their C API for C callers, and `smith-module-library` reports it in a `.smith` file.
-- `main` is `i32 main()` or `i32 main(str args[:])`; `i32 main(i32 argc, char **argv)` is what a renamed `.c` file has.
+- `main` is `I32 main()` or `I32 main(Str args[:])`; `I32 main(I32 argc, char **argv)` is what a renamed `.c` file has.
 - 3: `rolls.h` is gone; `import std::arena;`, `import std::console;`, `import std::entropy;` and `import std::random;` replace three includes and their C names (`SmithArena` is `arena::Arena`, `SmithKey` is `random::Key`). `main` imports `rolls`.
-- 4: `smith_arena_push_array(arena, sizeof(uint32_t), count, alignof(uint32_t))` is `arena::push_slice(arena, u32, count)` (a `u32[:]`; `.data` is the `u32 *`): the size and alignment cannot disagree, and the result is typed.
-- 5: `ROLLS_SIDES` is `constexpr i64 sides`.
+- 4: `smith_arena_push_array(arena, sizeof(uint32_t), count, alignof(uint32_t))` is `arena::push_slice(arena, U32, count)` (a `U32[:]`; `.data` is the `U32 *`): the size and alignment cannot disagree, and the result is typed.
+- 5: `ROLLS_SIDES` is `constexpr I64 sides`.
 - 6: `print` takes only the rolls and calls `console::print`; `make` takes the arena and the key; `main` makes the arena and the key (`entropy::seed()`). `smith lint` would report `c::printf` here.
 - 9: `rolls_make` is `rolls::make`; the module name is the prefix.
 

@@ -5,7 +5,7 @@ description: "The distributions of std::random (uniform_float_sample, uniform_in
 
 # Distributions
 
-Typed names, as `sqrtf` and `sqrt`: real distributions come in `f32` and `f64`, integers use `i64`. A distribution is a struct of parameters and `random::<name>_sample(key, d)`:
+Typed names, as `sqrtf` and `sqrt`: real distributions come in `F32` and `F64`, integers use `I64`. A distribution is a struct of parameters and `random::<name>_sample(key, d)`:
 
 ```smith
 import std::arena;
@@ -14,16 +14,16 @@ import std::random;
 void distributions(random::Key key, arena::Arena *a) {
     random::Key k[8];
     random::split(key, k);                                  // each draw below has its own key
-    f32 x = random::uniform_float_sample(k[0], (random::UniformFloat){.low = 0, .high = 1});        // [low, high)
-    f64 y = random::uniform_double_sample(k[1], (random::UniformDouble){.low = -1, .high = 1});     // [low, high)
-    i64 die = random::uniform_int64_sample(k[2], (random::UniformInt64){.low = 1, .high = 6});      // [low, high], unbiased
-    f32 gauss = random::normal_float_sample(k[3], (random::NormalFloat){.mean = 0, .deviation = 1});
-    f64 gauss64 = random::normal_double_sample(k[4], (random::NormalDouble){.mean = 0, .deviation = 1});
+    F32 x = random::uniform_float_sample(k[0], (random::UniformFloat){.low = 0, .high = 1});        // [low, high)
+    F64 y = random::uniform_double_sample(k[1], (random::UniformDouble){.low = -1, .high = 1});     // [low, high)
+    I64 die = random::uniform_int64_sample(k[2], (random::UniformInt64){.low = 1, .high = 6});      // [low, high], unbiased
+    F32 gauss = random::normal_float_sample(k[3], (random::NormalFloat){.mean = 0, .deviation = 1});
+    F64 gauss64 = random::normal_double_sample(k[4], (random::NormalDouble){.mean = 0, .deviation = 1});
     bool coin = random::bernoulli_sample(k[5], (random::Bernoulli){.probability = 0.3});
 
-    usize pick = 0;                                         // a weighted index: std::categorical (smith-categorical)
+    Usize pick = 0;                                         // a weighted index: std::categorical (smith-categorical)
 
-    usize *order = arena::push_slice(a, usize, 52).data;
+    Usize *order = arena::push_slice(a, Usize, 52).data;
     random::permutation_sample(k[7], (random::Permutation){.count = 52}, order);         // 0..51, uniformly ordered
     (void)x, (void)y, (void)die, (void)gauss, (void)gauss64, (void)coin, (void)pick;
 }
@@ -43,8 +43,8 @@ There is no `fill`. Filling is one loop that works for any distribution: each tu
 ```smith
 import std::random;
 
-void fill(random::Key key, f32 out[:]) {
-    for (usize i = 0; i < countof(out); i++) {
+void fill(random::Key key, F32 out[:]) {
+    for (Usize i = 0; i < countof(out); i++) {
         random::Key next[2];
         random::split(key, next);
         key = next[0];                      // the key moves on; next[1] is for this item

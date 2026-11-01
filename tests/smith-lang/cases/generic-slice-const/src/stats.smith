@@ -2,7 +2,7 @@ module stats;
 
 import <stdio.h>;
 
-// The qualifiers of a slice reach a generic: an instance for `const u8[:]` is not the instance for `u8[:]`.
+// The qualifiers of a slice reach a generic: an instance for `const U8[:]` is not the instance for `U8[:]`.
 
 export Usize count(auto xs) {
     return countof(xs);

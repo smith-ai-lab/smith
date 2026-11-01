@@ -2,7 +2,7 @@ module main;
 
 import <stdio.h>;
 
-// `str` is a type of every module, `const char[:]` (issue #85), as `u8` is a type: no typedef, no import.
+// `str` is a type of every module, `const char[:]` (issue #85), as `U8` is a type: no typedef, no import.
 
 struct Named {
     Str name;

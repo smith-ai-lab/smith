@@ -2,9 +2,9 @@
 // (include/smith/handlers.h), so a test can stand in for them: a fake clock answers `now` and `monotonic` from a time
 // it holds, and its `sleep` advances that time and returns at once. Called directly, with no capability value to pass:
 //
-//   u64 start = clock::monotonic();
+//   U64 start = clock::monotonic();
 //   clock::sleep(250 * clock::millisecond);
-//   u64 elapsed = clock::monotonic() - start;
+//   U64 elapsed = clock::monotonic() - start;
 //
 // Its C API is the generated header include/smith/clock.h (committed; `smith build headers` regenerates it); the names
 // follow the rule of arena.smith: `clock::monotonic` is `smith_clock_monotonic`; `clock::now` is
@@ -19,10 +19,10 @@ import <errno.h>;
 import <smith/handlers.h>; // SmithClockHandler, smith_handlers_set_clock
 import <time.h>;           // clock_gettime and nanosleep: the functions the handler of the thread answers
 
-// Nanoseconds in a microsecond, a millisecond and a second: durations are `u64` nanoseconds.
-export [[maybe_unused]] constexpr u64 microsecond = 1'000;
-export [[maybe_unused]] constexpr u64 millisecond = 1'000'000;
-export constexpr u64 second = 1'000'000'000;
+// Nanoseconds in a microsecond, a millisecond and a second: durations are `U64` nanoseconds.
+export [[maybe_unused]] constexpr U64 microsecond = 1'000;
+export [[maybe_unused]] constexpr U64 millisecond = 1'000'000;
+export constexpr U64 second = 1'000'000'000;
 
 // The clock handler of the thread (include/smith/handlers.h): `now` fills the time of a clock, `sleep` waits.
 [[std::c_name("SmithClockHandler")]] export typedef c::SmithClockHandler Handler;
@@ -39,46 +39,46 @@ export constexpr u64 second = 1'000'000'000;
 // NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
 constexpr c::clockid_t clock_monotonic = c::CLOCK_MONOTONIC;
 constexpr c::clockid_t clock_realtime = c::CLOCK_REALTIME;
-constexpr i32 eintr = c::EINTR;
+constexpr I32 eintr = c::EINTR;
 // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
 
 // errno, which is a macro for the system's function.
 if constexpr (target::os == target::macos) {
-    i32 errno_now() {
+    I32 errno_now() {
         return *c::__error();
     }
 } else {
-    i32 errno_now() {
+    I32 errno_now() {
         return *c::__errno_location();
     }
 }
 
-u64 time_ns(c::clockid_t which) {
+U64 time_ns(c::clockid_t which) {
     contract::trusted(); // a call into the system, the edge a proof cannot read
     struct c::timespec time = {};
-    i32 status = c::clock_gettime(which, &time); // NOLINT(smith-effects): the edge, as the handler answers it
+    I32 status = c::clock_gettime(which, &time); // NOLINT(smith-effects): the edge, as the handler answers it
     contract::assert(status == 0);               // a valid clock always answers
-    return (u64)time.tv_sec * second + (u64)time.tv_nsec;
+    return (U64)time.tv_sec * second + (U64)time.tv_nsec;
 }
 
 // Monotonic nanoseconds: they never go back, and mean nothing but as a difference.
-[[std::c_name("smith_clock_monotonic")]] export [[nodiscard]] u64 monotonic() {
+[[std::c_name("smith_clock_monotonic")]] export [[nodiscard]] U64 monotonic() {
     return time_ns(clock_monotonic);
 }
 
 // Nanoseconds since the Unix epoch, the wall clock: it can jump when the system sets it.
-[[std::c_name("smith_clock_now_epoch")]] export [[nodiscard]] i64 now() {
-    return (i64)time_ns(clock_realtime);
+[[std::c_name("smith_clock_now_epoch")]] export [[nodiscard]] I64 now() {
+    return (I64)time_ns(clock_realtime);
 }
 
 // Blocks for ns nanoseconds (a signal does not cut it short). On a fake clock the clock's time moves forward by ns and
 // this returns at once, so sleeping on it never blocks and never fails. A duration past the half of u64 is a bug: a
 // checked failure.
-[[std::c_name("smith_clock_sleep_ns")]] export void sleep(u64 ns) {
+[[std::c_name("smith_clock_sleep_ns")]] export void sleep(U64 ns) {
     contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
-    contract::requires(ns <= math::max(u64) >> 1);
-    struct c::timespec left = {.tv_sec = (c::time_t)(ns / second), .tv_nsec = (i64)(ns % second)};
-    for (u32 passes = 0; passes < 4096; passes++) { // each pass ends the sleep or follows a signal
+    contract::requires(ns <= math::max(U64) >> 1);
+    struct c::timespec left = {.tv_sec = (c::time_t)(ns / second), .tv_nsec = (I64)(ns % second)};
+    for (U32 passes = 0; passes < 4096; passes++) { // each pass ends the sleep or follows a signal
         struct c::timespec asked = left;
         if (c::nanosleep(&asked, &left) == 0 || errno_now() != eintr) return; // NOLINT(smith-effects): the edge
     }

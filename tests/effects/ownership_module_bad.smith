@@ -2,11 +2,11 @@ module ownership_module_bad;
 
 import <stdlib.h>;
 
-[[std::returns_borrowed(2)]] u8 *bad_index(u8 xs[:], i32 n);
-[[std::returns_internal]] i32 returns_no_pointer(void);
-[[std::returns_internal]] [[std::returns_borrowed(1)]] u8 *two(u8 *p);
-[[std::returns_owned(nonexistent)]] u8 *unknown_release(u8 *p);
+[[std::returns_borrowed(2)]] U8 *bad_index(U8 xs[:], I32 n);
+[[std::returns_internal]] I32 returns_no_pointer(void);
+[[std::returns_internal]] [[std::returns_borrowed(1)]] U8 *two(U8 *p);
+[[std::returns_owned(nonexistent)]] U8 *unknown_release(U8 *p);
 
-i32 main() {
+I32 main() {
     return 0;
 }

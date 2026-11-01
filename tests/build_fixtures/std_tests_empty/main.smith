@@ -1,7 +1,7 @@
 module main;
 import <stdio.h>;
 
-i32 main() {
+I32 main() {
     c::printf("ok\n");
     return 0;
 }

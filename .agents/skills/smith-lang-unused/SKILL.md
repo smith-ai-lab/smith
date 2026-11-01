@@ -1,6 +1,6 @@
 ---
 name: smith-lang-unused
-description: "`_` and `_name` in .smith modules: a name that is unused on purpose (`void on_key(Window *_window, Key key)`, `i32 pick(i32 _, i32 _, i32 third)`), `_ = f();` to discard a value, and the error when a `_` name is read. Load when a parameter or local is unused, when discarding a [[nodiscard]] result, or on '`_x` is marked unused (it starts with `_`)'."
+description: "`_` and `_name` in .smith modules: a name that is unused on purpose (`void on_key(Window *_window, Key key)`, `I32 pick(I32 _, I32 _, I32 third)`), `_ = f();` to discard a value, and the error when a `_` name is read. Load when a parameter or local is unused, when discarding a [[nodiscard]] result, or on '`_x` is marked unused (it starts with `_`)'."
 ---
 
 # Unused on purpose: `_` and `_name`
@@ -12,20 +12,20 @@ module main;
 
 import <stdio.h>;
 
-[[nodiscard]] i32 compute(i32 x) {
+[[nodiscard]] I32 compute(I32 x) {
     return x * 2;
 }
 
-i32 pick(i32 _, i32 _, i32 third) {      // several `_` in one scope
+I32 pick(I32 _, I32 _, I32 third) {      // several `_` in one scope
     return third;
 }
 
-void on_key(i32 *_window, i32 key) {     // `_window` keeps the name as documentation
+void on_key(I32 *_window, I32 key) {     // `_window` keeps the name as documentation
     c::printf("key %d\n", key);
 }
 
-i32 main() {
-    i32 window = 0;
+I32 main() {
+    I32 window = 0;
     _ = compute(3);                      // discards a value, a [[nodiscard]] result too
     on_key(&window, pick(1, 2, 3));
     return 0;

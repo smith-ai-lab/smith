@@ -8,9 +8,9 @@ import std::test;
 import toy;
 
 export void test_loss_gradient() {
-    f64 p[2] = {1.0, 3.0};
-    f64 dp[2] = {};
-    autodiff::reverse((void *)toy::loss, autodiff::dup, p, dp, autodiff::constant, (usize)2);
+    F64 p[2] = {1.0, 3.0};
+    F64 dp[2] = {};
+    autodiff::reverse((void *)toy::loss, autodiff::dup, p, dp, autodiff::constant, (Usize)2);
     test::check_near(dp[0], 2.0, 1e-12);
     test::check_near(dp[1], 12.0, 1e-12);
 }
@@ -26,13 +26,13 @@ export void test_gradient() {
 }
 
 struct Line {
-    f64 w[:];
-    f64 b;
+    F64 w[:];
+    F64 b;
 };
 
-f64 line_loss(struct Line *line, f64 x) {
-    f64 sum = line->b;
-    for (usize i = 0; i < countof(line->w); i++) sum += line->w[i] * x;
+F64 line_loss(struct Line *line, F64 x) {
+    F64 sum = line->b;
+    for (Usize i = 0; i < countof(line->w); i++) sum += line->w[i] * x;
     return sum * sum;
 }
 
@@ -43,7 +43,7 @@ export void test_gradient_and_zeros_allocate_only_through_the_current_allocator(
     arena::ArenaAllocator allocator = arena::allocator(&a);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
 
-    struct Line line = {.w = mem::alloc_slice(f64, 3), .b = 1.0};
+    struct Line line = {.w = mem::alloc_slice(F64, 3), .b = 1.0};
     line.w[0] = 1.0;
     line.w[1] = 2.0;
     line.w[2] = 3.0;

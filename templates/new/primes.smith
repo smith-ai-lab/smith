@@ -6,22 +6,22 @@ import std::console;
 
 // The sum of the first `count` primes, which is at most five. A precondition is `requires` and a promise is `ensures`:
 // `smith prove` proves the promise from the precondition, and every caller must meet the precondition.
-export i32 sum(usize count) {
+export I32 sum(Usize count) {
     contract::requires(count <= 5);
-    constexpr i32 first[_] = {2, 3, 5, 7, 11};
-    i32 total = 0;
-    for (usize i = 0; i < count; i++) {
+    constexpr I32 first[_] = {2, 3, 5, 7, 11};
+    I32 total = 0;
+    for (Usize i = 0; i < count; i++) {
         total += first[i];
     }
     contract::ensures(total <= 28);
     return total;
 }
 
-// A run-time array is a slice, `i32 xs[:]`: a pointer and a count; `countof(xs)` is its length, `xs[i]` is checked,
-// and `for (i32 x : xs)` visits each element with no bounds to get wrong.
-export i32 total(i32 xs[:]) {
-    i32 sum = 0;
-    for (i32 x : xs) {
+// A run-time array is a slice, `I32 xs[:]`: a pointer and a count; `countof(xs)` is its length, `xs[i]` is checked,
+// and `for (I32 x : xs)` visits each element with no bounds to get wrong.
+export I32 total(I32 xs[:]) {
+    I32 sum = 0;
+    for (I32 x : xs) {
         sum += x;
     }
     return sum;
@@ -29,7 +29,7 @@ export i32 total(i32 xs[:]) {
 
 // console::print takes typed pieces, as format::to does. It is called directly: what a function touches is inferred
 // from what it calls, and a test stands in for the console with a handler (console::set_handler).
-export void report(i32 sum) {
+export void report(I32 sum) {
     (void)console::print("the first 5 primes add up to ", sum, "\n");
     (void)console::print("hello from @NAME@\n");
 }

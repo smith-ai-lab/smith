@@ -8,24 +8,24 @@ static void log_it(const char *text) {
     c::printf("%s\n", text);
 }
 
-export [[std::pure]] i32 length(const char *text) {
-    return (i32)c::strlen(text);
+export [[std::pure]] I32 length(const char *text) {
+    return (I32)c::strlen(text);
 }
 
-export [[std::pure]] i32 bad(const char *text) {
+export [[std::pure]] I32 bad(const char *text) {
     log_it(text);
     return 0;
 }
 
-export [[std::effects(alloc)]] void *grab(u32 size) {
+export [[std::effects(alloc)]] void *grab(U32 size) {
     return c::malloc(size);
 }
 
-export [[std::effects(alloc)]] i32 too_much(const char *path) {
+export [[std::effects(alloc)]] I32 too_much(const char *path) {
     return c::fopen(path, "r") != nullptr;
 }
 
 // A checked slice index is `fails`, which a ceiling lists.
-export [[std::effects(fails)]] i32 at(i32 values[:], usize index) {
+export [[std::effects(fails)]] I32 at(I32 values[:], Usize index) {
     return values[index];
 }

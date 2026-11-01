@@ -1,19 +1,19 @@
 module kinds;
 
 export typedef struct {
-    u32 a;
+    U32 a;
 } Good;
 
 export typedef struct {
-    u32 a;
+    U32 a;
 } bad_type;
 
 export struct Tag {
-    u32 a;
+    U32 a;
 };
 
 export struct tag_bad {
-    u32 a;
+    U32 a;
 };
 
 export typedef enum {
@@ -26,9 +26,9 @@ export typedef enum {
     bad_shade,
 } Shade;
 
-export constexpr u32 limit = 4;
-export constexpr u32 BadLimit = 4;
+export constexpr U32 limit = 4;
+export constexpr U32 BadLimit = 4;
 
-export u32 f(u32 good_param, u32 BadParam) {
+export U32 f(U32 good_param, U32 BadParam) {
     return good_param + BadParam + limit + BadLimit;
 }

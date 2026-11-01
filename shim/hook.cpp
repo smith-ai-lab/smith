@@ -691,14 +691,10 @@ class SmithHook final : public TokenHook, public NameSource {
             mainName = entry->getName().str();
         }
         host.main_file = mainName.c_str();
-        // The text the scans below read has the lowercase names for the capitalized ones (issue #366).
-        StringRef buffer = SM.getBufferData(MainFile);
-        std::string lowered(buffer.size() * 3 + 1, '\0');
-        lowered.resize(smith_lang_capitals_lower(buffer.data(), buffer.size(), lowered.data(), true));
-        const StringRef scan = lowered;
+        const StringRef scan = SM.getBufferData(MainFile);
         host.maybe_main = scan.contains("main");
-        host.maybe_generic = scan.contains("type ") || scan.contains("auto ") || scan.contains("auto...") ||
-                             scan.contains("lambda(") || namesConcept(scan);
+        host.maybe_generic = scan.contains("Type ") || scan.contains("auto ") || scan.contains("auto...") ||
+                             scan.contains("Lambda(") || namesConcept(scan);
         host.maybe_if_constexpr = hasIfConstexpr(scan);
         host.maybe_local_tag = hasNestedTag(scan);
         host.maybe_slice = hasSlice(scan) || hasStr(scan);
@@ -1026,7 +1022,7 @@ class SmithHook final : public TokenHook, public NameSource {
     Fast tryFast(Token &tok) {
         if (host.maybe_slice || host.maybe_brackets || smith_lang_slices_on(lang))
             return Fast::No; // the lowering reads every token
-        // A name of the module may hold a type (`constexpr type big = u32;`, then `big x = 1;`): the lowering reads its
+        // A name of the module may hold a type (`constexpr Type big = u32;`, then `big x = 1;`): the lowering reads its
         // neighbours, so it is not renamed here (issue #165).
         if (host.maybe_type_value && tok.is(tok::identifier) && renames.count(tok.getIdentifierInfo()) != 0)
             return Fast::No;
@@ -1166,13 +1162,13 @@ class SmithHook final : public TokenHook, public NameSource {
         const char *keyword; // else the keyword
     };
     static constexpr SizedName sizedTable[13] = {
-        {"u8", "__UINT8_TYPE__", nullptr},   {"u16", "__UINT16_TYPE__", nullptr},
-        {"u32", "__UINT32_TYPE__", nullptr}, {"u64", "__UINT64_TYPE__", nullptr},
-        {"i8", "__INT8_TYPE__", nullptr},    {"i16", "__INT16_TYPE__", nullptr},
-        {"i32", "__INT32_TYPE__", nullptr},  {"i64", "__INT64_TYPE__", nullptr},
-        {"usize", "__SIZE_TYPE__", nullptr}, {"isize", "__PTRDIFF_TYPE__", nullptr},
-        {"f16", nullptr, "_Float16"},        {"f32", nullptr, "float"},
-        {"f64", nullptr, "double"}};
+        {"U8", "__UINT8_TYPE__", nullptr},   {"U16", "__UINT16_TYPE__", nullptr},
+        {"U32", "__UINT32_TYPE__", nullptr}, {"U64", "__UINT64_TYPE__", nullptr},
+        {"I8", "__INT8_TYPE__", nullptr},    {"I16", "__INT16_TYPE__", nullptr},
+        {"I32", "__INT32_TYPE__", nullptr},  {"I64", "__INT64_TYPE__", nullptr},
+        {"Usize", "__SIZE_TYPE__", nullptr}, {"Isize", "__PTRDIFF_TYPE__", nullptr},
+        {"F16", nullptr, "_Float16"},        {"F32", nullptr, "float"},
+        {"F64", nullptr, "double"}};
     llvm::DenseMap<const IdentifierInfo *, unsigned> sizedNames; // the sized type names, by IdentifierInfo
     IdentifierInfo *sizedInfos[13];
     NamedDecl *sizedDecls[13] = {};                                   // the typedefs this hook made
@@ -2252,7 +2248,7 @@ class SmithHook final : public TokenHook, public NameSource {
             const llvm::fltSemantics &semantics = value.getFloat().getSemantics();
             bool single = &semantics == &llvm::APFloat::IEEEsingle();
             if (!single && &semantics != &llvm::APFloat::IEEEdouble()) {
-                why = "only an f32 or an f64 is a float value";
+                why = "only an F32 or an F64 is a float value";
                 return false;
             }
             node->kind = SmithValue_Float;
@@ -2717,12 +2713,11 @@ class SmithHook final : public TokenHook, public NameSource {
     }
 
     // Whether the code (not its comments or strings) has `type` before a name or a `*`, other than in a generic's
-    // `constexpr type T`, which is inside parentheses: a type value is declared (runtime/lang_type.c).
+    // `constexpr Type T`, which is inside parentheses: a type value is declared (runtime/lang_type.c).
     // Whether the text has a concept's name and a space (`arithmetic x`, issue #193): it may declare a generic.
     static bool namesConcept(StringRef text) {
-        static const char *const concepts[] = {"integer ",    "floating ", "signed_integer ", "unsigned_integer ",
-                                               "arithmetic ", "boolean ",  "pointer ",        "enumeration ",
-                                               "structure ",  "array ",    "slice "};
+        static const char *const concepts[] = {"Int ",     "Float ", "Signed ", "Unsigned ", "Num ",
+                                               "Pointer ", "Enum ",  "Struct ", "Array ",    "Slice "};
         for (const char *name : concepts) {
             if (text.contains(name)) return true;
         }
@@ -2752,7 +2747,7 @@ class SmithHook final : public TokenHook, public NameSource {
                 while (next < text.size() && isWhitespace(text[next]))
                     next += 1;
                 bool named = next < text.size() && (isAsciiIdentifierStart(text[next]) || text[next] == '*');
-                if (word == "type" && named && !(paren > 0 && previous == "constexpr")) return true;
+                if (word == "Type" && named && !(paren > 0 && previous == "constexpr")) return true;
                 previous = word;
                 at = end;
             } else {
@@ -2802,7 +2797,7 @@ class SmithHook final : public TokenHook, public NameSource {
                 size_t next = end;
                 while (next < text.size() && isWhitespace(text[next]))
                     next += 1;
-                if ((word == "option" || word == "result") && next < text.size() && text[next] == '(') return true;
+                if ((word == "Option" || word == "Result") && next < text.size() && text[next] == '(') return true;
                 at = end;
             } else {
                 at += 1;
@@ -2914,7 +2909,7 @@ class SmithHook final : public TokenHook, public NameSource {
             }
             bool before = at > 0 && (isalnum((unsigned char)text[at - 1]) || text[at - 1] == '_');
             bool follows = at + 3 < text.size() && (isalnum((unsigned char)text[at + 3]) || text[at + 3] == '_');
-            if (!before && !follows && text.substr(at, 3) == "str") return true;
+            if (!before && !follows && text.substr(at, 3) == "Str") return true;
         }
         return false;
     }

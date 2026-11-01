@@ -14,7 +14,7 @@ export void test_entropy_seed_draws_from_the_entropy_handler() {
     defer entropy::set_handler(before);
     random::Key key = entropy::seed();
     test::check_equal(key.bits, 0x0123456789abcdefULL);
-    test::check_equal(fake.asked, (usize)1);
+    test::check_equal(fake.asked, (Usize)1);
 }
 
 // With no handler set, the system answers: two seeds differ, and the handler of the thread is null again.
@@ -26,7 +26,7 @@ export void test_entropy_seed_without_a_handler_is_the_systems() {
     random::Key first = entropy::seed();
     random::Key second = entropy::seed();
     test::check(first.bits != second.bits);
-    test::check_equal(fake.asked, (usize)0);
+    test::check_equal(fake.asked, (Usize)0);
 }
 
 // seed() has the entropy effect and no other: a ceiling that lists it holds. (The `fails` of its checked failure is

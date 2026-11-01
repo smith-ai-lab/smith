@@ -13,7 +13,7 @@ void test_abort_assert(void) {
 void test_abort_arena(void) {
     arena::Arena memory = test::memory(128);
     test::expect_abort();
-    (void)arena::push_slice(&memory, u8, 1000).data;
+    (void)arena::push_slice(&memory, U8, 1000).data;
 }
 
 void test_abort_abort(void) {
@@ -27,8 +27,8 @@ void test_abort_trap(void) {
 }
 
 void test_sanitized_read(void) {
-    u8 *bytes = (u8 *)c::malloc(8);
-    volatile usize index = 8;
+    U8 *bytes = (U8 *)c::malloc(8);
+    volatile Usize index = 8;
     test::expect_abort();
     c::printf("before\n");
     (void)bytes[index];
@@ -36,7 +36,7 @@ void test_sanitized_read(void) {
 }
 
 void test_sanitized_overflow(void) {
-    volatile i32 largest = 2147483647;
+    volatile I32 largest = 2147483647;
     test::expect_abort();
     (void)(largest + 1);
 }

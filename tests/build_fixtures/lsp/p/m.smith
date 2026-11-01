@@ -1,3 +1,3 @@
 module m;
-export i32 a(f32 g[:]) { return (i32)countof(g); }
-export i32 b(i32 m[:]) { return (i32)countof(m); }
+export I32 a(F32 g[:]) { return (I32)countof(g); }
+export I32 b(I32 m[:]) { return (I32)countof(m); }

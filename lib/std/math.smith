@@ -15,9 +15,9 @@ module std::math;
 // The constants are functions of a type no argument carries, called with the type where a value goes, as
 // `arena::push(&a, Point)` is:
 //
-//   math::max(usize)       the largest value of an unsigned integer type
-//   math::infinity(f64)    positive infinity of a floating type (negate it for the other)
-//   math::nan(f32)         a quiet not-a-number of a floating type
+//   math::max(Usize)       the largest value of an unsigned integer type
+//   math::infinity(F64)    positive infinity of a floating type (negate it for the other)
+//   math::nan(F32)         a quiet not-a-number of a floating type
 //
 // They are always-inline functions of no arguments, so the optimizer folds each to the literal. A generic call is not a
 // constant expression in C: in a `static_assert` or an array size write the number or a `constexpr` of the file.
@@ -36,18 +36,18 @@ export inline typeof(x) abs(auto x) {
     return __builtin_elementwise_abs(x);
 }
 
-// The largest value of the unsigned integer type T: `math::max(usize)` is what `SIZE_MAX` is.
-export inline T max(constexpr type T) {
+// The largest value of the unsigned integer type T: `math::max(Usize)` is what `SIZE_MAX` is.
+export inline T max(constexpr Type T) {
     static_assert((T)-1 > 0, "math::max: the type is unsigned");
     return (T)-1;
 }
 
 // Positive infinity of the floating type T.
-export inline T infinity(constexpr type T) {
+export inline T infinity(constexpr Type T) {
     return (T)__builtin_inf();
 }
 
 // A quiet not-a-number of the floating type T.
-export inline T nan(constexpr type T) {
+export inline T nan(constexpr Type T) {
     return (T)__builtin_nan("");
 }

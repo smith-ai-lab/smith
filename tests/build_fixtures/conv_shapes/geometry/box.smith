@@ -1,6 +1,6 @@
 module geometry::box;
 import geometry::scale;
 
-export i32 area(i32 w, i32 h) {
+export I32 area(I32 w, I32 h) {
     return scale::times(w, h);
 }

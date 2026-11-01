@@ -1,19 +1,19 @@
 #include "pool.h"
 #include <stdio.h>
 typedef char *Text;
-constexpr type element = double;
-constexpr type kinds[3] = {__UINT16_TYPE__, __INT64_TYPE__, Text};
+constexpr Type element = double;
+constexpr Type kinds[3] = {__UINT16_TYPE__, __INT64_TYPE__, Text};
 typedef struct {
-constexpr type of;
+constexpr Type of;
 __INT32_TYPE__ count;
 } Column;
 constexpr Column column = {.of = __UINT8_TYPE__, .count = 3};
 int main() {
-constexpr type t = __INT32_TYPE__;
+constexpr Type t = __INT32_TYPE__;
 t a = 7;
 element b = 2.5;
-constexpr type second = kinds[1];
-constexpr type of = column.of;
+constexpr Type second = kinds[1];
+constexpr Type of = column.of;
 second c = 1;
 of d = 200;
 t *p = &a;

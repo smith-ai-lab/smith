@@ -12,7 +12,7 @@ import scratch;
 
 // What a test's commands print, and the texts made from it, go to an arena of the runner's (test::memory), the
 // current allocator from start to finish, so the test frees none of it; the project is made and cleaned inside it.
-constexpr usize memory_size = 1U << 24;
+constexpr Usize memory_size = 1U << 24;
 static arena::Arena memory;
 static arena::ArenaAllocator allocator;
 static mem::Allocator *outside;
@@ -32,7 +32,7 @@ static void finish(scratch::Project *p) {
 // The output of a command as $(...) gives it, without trailing newlines (scratch::capture reads a project's io).
 static const char *captured(const scratch::Project *p, const char *command) {
     const char *out = scratch::sh(p, command).out;
-    usize length = 0;
+    Usize length = 0;
     while (out[length] != '\0')
         length++;
     while (length > 0 && out[length - 1] == '\n')

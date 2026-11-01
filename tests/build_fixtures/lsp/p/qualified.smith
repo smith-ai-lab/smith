@@ -1,6 +1,6 @@
 module qualified;
 import geometry::box;
 
-f32 g(box::Box b) {
+F32 g(box::Box b) {
     return box::;
 }

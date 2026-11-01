@@ -12,32 +12,32 @@ This skill ships in the smith plugin, from `.agents/skills/smith-math/SKILL.md` 
 ```smith
 import std::math;
 
-f64 length(f64 x, f64 y) {
+F64 length(F64 x, F64 y) {
     return math::sqrt(x * x + y * y);          // the square root, correctly rounded: libm's sqrt, as an instruction
 }
 
-bool usable(f32 value) {
+bool usable(F32 value) {
     return math::is_finite(value) && math::abs(value) < 1000.0f;  // the type is the type of the argument
 }
 
-usize count_limit() {
-    return math::max(usize);                         // SIZE_MAX
+Usize count_limit() {
+    return math::max(Usize);                         // SIZE_MAX
 }
 
-f64 missing(bool negative) {
-    return negative ? -math::infinity(f64) : math::nan(f64);  // INFINITY and NAN, in the type asked
+F64 missing(bool negative) {
+    return negative ? -math::infinity(F64) : math::nan(F64);  // INFINITY and NAN, in the type asked
 }
 ```
 
 | Call | Replaces | Meaning |
 |---|---|---|
-| `math::is_finite(x)` | `c::isfinite` | neither infinite nor not-a-number; `x` is `f32` or `f64` |
+| `math::is_finite(x)` | `c::isfinite` | neither infinite nor not-a-number; `x` is `F32` or `F64` |
 | `math::sqrt(x)` | `c::sqrt`, `c::sqrtf` | the square root, correctly rounded |
 | `math::abs(x)` | `c::fabs`, `c::fabsf` | the absolute value (the sign bit cleared) |
-| `math::max(usize)` | `c::SIZE_MAX` | the largest value of an unsigned integer type |
-| `math::infinity(f64)` | `c::INFINITY` | positive infinity of a floating type; negate it for the other |
-| `math::nan(f32)` | `c::NAN` | a quiet not-a-number of a floating type |
+| `math::max(Usize)` | `c::SIZE_MAX` | the largest value of an unsigned integer type |
+| `math::infinity(F64)` | `c::INFINITY` | positive infinity of a floating type; negate it for the other |
+| `math::nan(F32)` | `c::NAN` | a quiet not-a-number of a floating type |
 
-- **`is_finite`, `sqrt` and `abs` take `auto x`**: the type is the argument's (a name, a field chain, `*e`, `e[i]`, a call, a cast, a literal, or arithmetic over them: `math::is_finite(high - low)`), and `sqrt` and `abs` return it (`export typeof(x) sqrt(auto x)`). The constants carry no argument, so they take the type where a value goes (`math::max(usize)`). A module read by the raw lowering (`smith cc --smith-lower`, the headers) cannot call the `auto` functions, because the lowering without a compiler cannot type the argument: it calls the builtins they wrap (`__builtin_isfinite(x)`, `__builtin_elementwise_sqrt(x)`, `__builtin_elementwise_abs(x)`).
-- **They are always-inline functions**, so the optimizer folds `math::max(usize)` to the literal. A generic call is not a constant expression in C, so in a `static_assert` or an array size write the number or a `constexpr` of the file. What is a constant is a `target::` fact (`target::f64_mantissa_bits`), which the lowering writes as a literal.
+- **`is_finite`, `sqrt` and `abs` take `auto x`**: the type is the argument's (a name, a field chain, `*e`, `e[i]`, a call, a cast, a literal, or arithmetic over them: `math::is_finite(high - low)`), and `sqrt` and `abs` return it (`export typeof(x) sqrt(auto x)`). The constants carry no argument, so they take the type where a value goes (`math::max(Usize)`). A module read by the raw lowering (`smith cc --smith-lower`, the headers) cannot call the `auto` functions, because the lowering without a compiler cannot type the argument: it calls the builtins they wrap (`__builtin_isfinite(x)`, `__builtin_elementwise_sqrt(x)`, `__builtin_elementwise_abs(x)`).
+- **They are always-inline functions**, so the optimizer folds `math::max(Usize)` to the literal. A generic call is not a constant expression in C, so in a `static_assert` or an array size write the number or a `constexpr` of the file. What is a constant is a `target::` fact (`target::f64_mantissa_bits`), which the lowering writes as a literal.
 - **Get the library in build.c** with `smith_library(b, "math")` like any library; it has no symbols of its own, only the instances a caller makes (weak and hidden), so nothing is linked for it. A module that imports it needs nothing more.

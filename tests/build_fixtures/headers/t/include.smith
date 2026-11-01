@@ -1,7 +1,7 @@
 module t::include;
 #include <stdio.h>
 #include <string.h>
-export u32 include_only(u32 x) {
+export U32 include_only(U32 x) {
     puts("x");
-    return x + (u32)strlen("y");
+    return x + (U32)strlen("y");
 }
