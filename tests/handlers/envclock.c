@@ -57,6 +57,11 @@ static void fake_fill(SmithEntropyHandler *self, unsigned char *buffer, size_t s
         buffer[i] = fake->next++;
 }
 
+static int fake_pid(SmithProcessHandler *self) {
+    (void)self;
+    return 4242;
+}
+
 int main(void) {
     check("no env handler: getenv is libc's", getenv("PATH") != nullptr && smith_handlers_env() == nullptr);
     FakeEnv env = {.env = {fake_get}};
@@ -67,6 +72,12 @@ int main(void) {
     check("a name the handler does not know is null", getenv("PATH") == nullptr && env.asked == 2);
     smith_handlers_set_env(before_env);
     check("the handler is gone", getenv("PATH") != nullptr && env.asked == 2);
+
+    SmithProcessHandler process = {.id = fake_pid};
+    SmithProcessHandler *before_process = smith_handlers_set_process(&process);
+    check("the process handler has an id member and leaves the others null",
+          process.id(&process) == 4242 && process.parent_id == nullptr && process.set_open_files_max == nullptr);
+    smith_handlers_set_process(before_process);
 
     struct timespec real = {};
     check("no clock handler: clock_gettime is libc's", clock_gettime(CLOCK_MONOTONIC, &real) == 0 && real.tv_sec >= 0);

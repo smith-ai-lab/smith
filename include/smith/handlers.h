@@ -160,6 +160,14 @@ struct SmithProcessHandler {
     int (*close)(SmithProcessHandler *self, int child);
     // How many processes can run at once; null means the machine's logical cores.
     size_t (*cores)(SmithProcessHandler *self);
+    // The calling process: its id, its parent's id and its user id (std::process's process::id, parent_id and user_id).
+    // A null member answers the real getpid, getppid or getuid.
+    int (*id)(SmithProcessHandler *self);
+    int (*parent_id)(SmithProcessHandler *self);
+    unsigned (*user_id)(SmithProcessHandler *self);
+    // The open-file limit (the soft RLIMIT_NOFILE) and its setter: 0 or an errno. A null member is the real call.
+    unsigned long long (*open_files_max)(SmithProcessHandler *self);
+    int (*set_open_files_max)(SmithProcessHandler *self, unsigned long long limit);
 };
 
 // Sets the processes of the calling thread (null: the real ones), returning the ones it had.

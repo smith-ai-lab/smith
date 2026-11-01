@@ -112,7 +112,7 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
   answers `clock_gettime`, `nanosleep`, `usleep` and `sleep`. Each is per thread with a setter that returns the previous
   handler, and none set is libc's. `gettimeofday`, `time` and the Mach clocks are not reached. A fake clock's `sleep`
   advances its time and returns, so sleeping on it never blocks. See [direct-call-modules](direct-call-modules.md).
-- **Processes (issue #240):** `SmithProcessHandler {start, read, write, close_input, wait, kill, close, cores}` is called by `std::process` itself (no libc function is interposed); per thread, with a setter returning the previous handler, and none set is the real posix_spawn, pipes and waitpid. See [process](process.md).
+- **Processes (issue #240):** `SmithProcessHandler {start, read, write, close_input, wait, kill, close, cores, id, parent_id, user_id, open_files_max, set_open_files_max}` is called by `std::process` itself (no libc function is interposed); per thread, with a setter returning the previous handler, and none set is the real posix_spawn, pipes and waitpid. See [process](process.md).
 - **Network (issue #240):** `SmithNetHandler {connect, listen, port, accept, read, write, close, read_within}` is called by `std::net` itself (no libc function is interposed); per thread, with a setter returning the previous handler, and none set is the real sockets and TLS; `read_within` is a read with a deadline (-1 with `ETIMEDOUT`), and a handler that leaves it null gets `read`. See [net](net.md).
 - **Entropy (issue #240):** `SmithEntropyHandler {fill}` answers `getentropy` (per thread, setter returns the previous
   one, none set is the system's; `fill` writes the bytes and never fails). `arc4random` and `getrandom` are not reached.
