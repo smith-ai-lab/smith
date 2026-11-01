@@ -27,7 +27,7 @@ jobs:
     # what the change touches decides what runs: a document no build reads runs nothing, the README, AGENTS.md,
     # knowledge/ and the skills run `smith docs` and their tests, everything else runs the full check
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
       mode: ${{ steps.scope.outputs.mode }}
@@ -142,7 +142,7 @@ jobs:
     # macOS only: the Linux shards build smith themselves. A push to main builds nothing here (the release does).
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs') }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
-    timeout-minutes: 40
+    timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: ${{ needs.changes.outputs.cores }}
@@ -167,7 +167,7 @@ jobs:
     # ancestor `pack` and skips this job, which left fmt, lint, prove and the macOS tests unrun from #1067 on (#1139)
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
-    timeout-minutes: 40
+    timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: ${{ needs.changes.outputs.cores }}
@@ -207,7 +207,7 @@ jobs:
     # ancestor `pack` and skips this job, which left fmt, lint, prove and the macOS tests unrun from #1067 on (#1139)
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
-    timeout-minutes: 45
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
@@ -293,7 +293,7 @@ jobs:
     needs: [changes, pack]
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'release') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.linux) }}
@@ -366,7 +366,7 @@ jobs:
     needs: [changes, build]
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'docs' }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
-    timeout-minutes: 30
+    timeout-minutes: 12
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: ${{ needs.changes.outputs.cores }}
@@ -393,7 +393,7 @@ jobs:
     needs: [changes, pack, build, mechanical, test, test-linux, docs]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
     steps:
       - name: Verdict
         env:
@@ -440,7 +440,7 @@ jobs:
       matrix:
         os: [macos-26, ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -466,7 +466,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.scope == 'release'
     runs-on: macos-26
-    timeout-minutes: 40
+    timeout-minutes: 15
     permissions:
       contents: write
     concurrency:
@@ -490,7 +490,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.scope == 'release'
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 15
     permissions:
       contents: write
     concurrency:
@@ -515,7 +515,7 @@ jobs:
     needs: [release, release-linux]
     if: always() && needs.release.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 3
     permissions:
       contents: write
     env:
@@ -531,7 +531,7 @@ jobs:
     # waits, and only the newest commit's install is kept waiting, so the Mac installs once when it returns.
     needs: publish
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 10
+    timeout-minutes: 3
     concurrency:
       group: install-mac
       cancel-in-progress: true

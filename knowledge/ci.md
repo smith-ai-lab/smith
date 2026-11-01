@@ -25,6 +25,8 @@ publishes the stage0 release `stage0-<commit>` ([release](release.md)). Then `in
 self-hosted runner, used for nothing else), downloads that release, checks it and puts it in `~/.local/bin`, so the
 installed smith is always main's; nobody runs `smith build install`.
 
+**Every job has a `timeout-minutes`** set from the observed maximum with headroom (#1139): 3 for `changes`, `ci`, `publish`, `install` and llvm.yml's `pick`; 12 for `docs`; 15 for `build`, `mechanical`, `test`, `warm`, `release` and `release-linux`; 20 for `test-linux`; 240 for llvm.yml's `macos` and `linux` packs (observed 131 and 162). A job that grows past its limit raises the limit with the measurement.
+
 **Where a failure shows.** The first failing job cancels the run, so the other shards show as cancelled. The failing
 shard names its tests: the last lines of its log (the `Fail fast` step) and its job summary hold each failed test's
 `FAIL <name>` line with the check and error lines under it (#1086); look there before re-running.
