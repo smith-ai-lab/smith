@@ -1,1 +1,1 @@
-error-c-name/std/names.smith: ok
+error-c-name/std/names.smith: error: `[[gnu::unused]]` is not part of Smith and `[[std::unused]]` is not available yet (27:21) [removed_b]

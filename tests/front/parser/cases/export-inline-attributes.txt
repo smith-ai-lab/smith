@@ -1,1 +1,1 @@
-export-inline-attributes/hint.smith: ok
+export-inline-attributes/hint.smith: error: `[[gnu::always_inline]]` is not part of Smith and `[[std::always_inline]]` is not available yet (5:40) [removed_b]

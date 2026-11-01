@@ -213,6 +213,24 @@ static ast::Path parse_path(parse::Parser *p, Str what) {
 // ---------------------------------------------------------------------------------------------------------------
 // Prefixes and attributes
 
+// Whether a text is the same as another.
+static Bool same_text(Str a, Str b) {
+    return countof(a) == countof(b) && (countof(a) == 0 || mem::equal(a, b));
+}
+
+// A `[[gnu::x]]` is not Smith's: the error names `[[std::x]]` where the std set has `x`, else says there is none.
+static void reject_gnu_attribute(parse::Parser *p, ast::Path name) {
+    if (countof(name.segments) != 2 || !same_text(name.segments[0].text, "gnu")) return;
+    Str word = name.segments[1].text;
+    if (same_text(word, "pure")) {
+        parse::error(p, name.span, "`[[gnu::pure]]` is not part of Smith; use `[[std::pure]]`");
+        return;
+    }
+    char message[:] =
+        format::push("`[[gnu::", word, "]]` is not part of Smith and `[[std::", word, "]]` is not available yet");
+    parse::error(p, name.span, message);
+}
+
 // One `[[a, b::c(args)]]` group (the position is at its first `[`).
 static void parse_attribute_group(parse::Parser *p, Prefixes *out) {
     parse::advance(p);
@@ -221,6 +239,7 @@ static void parse_attribute_group(parse::Parser *p, Prefixes *out) {
         U32 start = parse::peek(p).span.start;
         ast::Attribute attribute = {};
         attribute.name = parse_path(p, "an attribute name");
+        reject_gnu_attribute(p, attribute.name);
         if (parse::accept(p, lex::left_paren)) {
             while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
                 ast::Expr *argument = parse::expression(p);

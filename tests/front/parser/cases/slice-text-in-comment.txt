@@ -1,2 +1,2 @@
-slice-text-in-comment/hold.smith: error: expected `;`, found `arguments` (27:23) [undecided_c]
+slice-text-in-comment/hold.smith: error: `[[gnu::format]]` is not part of Smith and `[[std::format]]` is not available yet (25:3) [undecided_c]
 slice-text-in-comment/main.smith: ok
