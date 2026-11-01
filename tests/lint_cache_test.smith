@@ -6,6 +6,11 @@
 // common.h, c.c includes nothing) in a scratch folder, with a fake clang-tidy that reads the files a case names. What
 // needs the real clang-tidy (that a second lint runs it on no file) or the verb (its summary of the files that failed,
 // `smith cache`) is a scratch project of that fixture and the build file in a cache of its own, run by the real smith.
+// smith.c holds the lint verb and its summary of failed files.
+// smith-covers: smith.c runtime/verbs.c runtime/quiet.c runtime/base.h runtime/platform_*.c runtime/slots.c
+// smith-covers: runtime/lint_cache.c shim/tidy.cpp shim/clang.cpp templates/defaults/ runtime/build_runtime.c
+// smith-covers: runtime/executor*.c runtime/cache.c runtime/sdk_cache.c include/smith_core_lint_cache.h
+// smith-covers: include/smith_core.h tests/build_fixtures/lint_cache/
 module lint_cache_test;
 
 import std::arena;
