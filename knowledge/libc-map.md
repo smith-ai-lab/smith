@@ -79,7 +79,10 @@ tags: [libc, lint, idiom, libraries]
 | `clock_gettime(CLOCK_MONOTONIC)`, `mach_absolute_time`, `clock_gettime_nsec_np` | `clock::monotonic()` (platform: the two OS calls behind it) |
 | `clock_gettime(CLOCK_REALTIME)` | `clock::now()` |
 | `nanosleep`, `usleep`, `sleep` | `clock::sleep(ns)` |
-| `clock`, `getrusage`, `proc_pid_rusage`, `clock_getcpuclockid` | gap: [#922](https://github.com/smith-ai-lab/smith/issues/922) |
+| `clock`, `clock_gettime(CLOCK_PROCESS_CPUTIME_ID)` | `clock::cpu()` (nanoseconds, user plus system; the clock handler's `cpu` in a test) |
+| `getrusage(RUSAGE_SELF)` | `process::usage_self()` (`Usage`: `user_ns`, `system_ns`, `peak_bytes`) |
+| `getrusage(RUSAGE_CHILDREN)`, `wait4`'s rusage, `proc_pid_rusage` | `process::usage(&child)` after `process::wait` (a running child's figures are not read: [#922](https://github.com/smith-ai-lab/smith/issues/922)) |
+| `clock_getcpuclockid` | none: no `.smith` caller |
 | `setitimer`, `alarm` | gap (design): [#924](https://github.com/smith-ai-lab/smith/issues/924) |
 
 ## assert.h, errno.h, stdarg.h, setjmp.h, signal.h

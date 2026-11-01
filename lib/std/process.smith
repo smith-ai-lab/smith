@@ -32,6 +32,7 @@ import <smith/trace.h>;
 import <stdlib.h>;
 import <spawn.h>;
 import <string.h>;
+import <sys/resource.h>;
 import <sys/wait.h>;
 import <unistd.h>;
 
@@ -68,6 +69,7 @@ constexpr I16 poll_in = c::POLLIN;
 constexpr I32 mode_inherit = c::SmithProcessMode_Inherit;
 constexpr I32 mode_piped = c::SmithProcessMode_Piped;
 constexpr I32 mode_captured = c::SmithProcessMode_Captured;
+constexpr I32 rusage_self = c::RUSAGE_SELF;
 // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
 constexpr Usize chunk = 4096;
 constexpr Usize argv_max = 255;
@@ -145,7 +147,17 @@ export typedef typeof(U8[:]) Bytes;
     Bool reaped;       // wait has completed: the id may be another program's now
     Bool closed;       // close has been called
     Bool handled;      // started under a handler
+    U64 user_ns;       // user CPU time, set by wait
+    U64 system_ns;     // system CPU time, set by wait
+    U64 peak_bytes;    // peak resident memory, set by wait
 } Child;
+
+// What a process used, in fixed units on every system: CPU time in nanoseconds and peak resident memory in bytes.
+[[std::c_name("SmithProcessUsage")]] export typedef struct {
+    U64 user_ns;
+    U64 system_ns;
+    U64 peak_bytes;
+} Usage;
 
 // What a call that has nothing to return returns on success.
 [[std::c_name("SmithProcessDone")]] export typedef struct {
@@ -157,6 +169,7 @@ export typedef Result(Usize, Error) CountResult;
 export typedef Result(Done, Error) DoneResult;
 export typedef Result(Exit, Error) ExitResult;
 export typedef Result(Output, Error) OutputResult;
+export typedef Result(Usage, Error) UsageResult;
 
 // The handler type (the process members of include/smith/handlers.h) and its setter, which returns the one the thread
 // had:
@@ -278,13 +291,32 @@ I32 spawn_real(const char *const *argv, I32 mode, Bool leader, Child *child) {
     return 0;
 }
 
-// Waits for the process: 0 and its wait status, or the errno.
-I32 wait_real(I32 id, I32 *wait_status) {
-    for (Usize tries = 0; tries < 64; tries++) { // a signal may interrupt the wait
-        if (c::waitpid(id, wait_status, 0) >= 0) return 0;
-        if (errno_now() != eintr) return errno_now();
+constexpr U64 nanoseconds_per_second = 1'000'000'000;
+constexpr U64 nanoseconds_per_microsecond = 1'000;
+
+// Waits for the process `id` (0 and its wait status), or, when id is below 0, reads this process's own usage; `used`
+// is filled in the units of Usage (ru_maxrss is bytes on macOS and kilobytes elsewhere). 0, or the errno.
+I32 measure(I32 id, I32 *wait_status, Usage *used) {
+    struct c::rusage raw = {};
+    Bool done = false;
+    for (Usize tries = 0; tries < 64 && !done; tries++) { // a signal may interrupt the wait
+        if (id < 0) {
+            if (c::getrusage(rusage_self, &raw) != 0) return errno_now();
+            done = true;
+        } else if (c::wait4(id, wait_status, 0, &raw) >= 0) {
+            done = true;
+        } else if (errno_now() != eintr) {
+            return errno_now();
+        }
     }
-    return eintr;
+    if (!done) return eintr;
+    U64 kilobyte = target::os == target::macos ? 1 : 1024;
+    used->user_ns =
+        (U64)raw.ru_utime.tv_sec * nanoseconds_per_second + (U64)raw.ru_utime.tv_usec * nanoseconds_per_microsecond;
+    used->system_ns =
+        (U64)raw.ru_stime.tv_sec * nanoseconds_per_second + (U64)raw.ru_stime.tv_usec * nanoseconds_per_microsecond;
+    used->peak_bytes = (U64)raw.ru_maxrss * kilobyte;
+    return 0;
 }
 
 // Reads from a descriptor: the count (0 at the end) or -1 with the errno in `code`.
@@ -480,14 +512,46 @@ void child_open(const Child *child) {
         ended = (Exit){.status = status, .signal = killed_by};
     } else {
         I32 wait_status = 0;
-        I32 code = wait_real(child->id, &wait_status);
+        Usage measured = {};
+        I32 code = measure(child->id, &wait_status, &measured);
         if (code != 0) {
             return {.error = error_from(code)};
         }
         ended = exit_of(wait_status);
+        child->user_ns = measured.user_ns;
+        child->system_ns = measured.system_ns;
+        child->peak_bytes = measured.peak_bytes;
     }
     child->reaped = true;
     return ended;
+}
+
+// What a child used: its user and system CPU time in nanoseconds and its peak memory in bytes. It is known once the
+// child has been waited for (a real child is measured by wait); asking before is a checked failure. A fake answers what
+// its script says; a handler without figures answers zeros.
+[[std::c_name("smith_process_usage")]] export [[nodiscard]] UsageResult usage(Child *child) {
+    child_open(child);
+    if (!child->reaped) misuse("process: usage is known once the child has been waited for");
+    if (child->handled) {
+        c::SmithProcessHandler *handler = c::smith_handlers_process();
+        Usage figures = {};
+        if (handler->usage != nullptr &&
+            handler->usage(handler, child->id, &figures.user_ns, &figures.system_ns, &figures.peak_bytes) != 0) {
+            return {.error = error_from(errno_now())};
+        }
+        return figures;
+    }
+    return (Usage){.user_ns = child->user_ns, .system_ns = child->system_ns, .peak_bytes = child->peak_bytes};
+}
+
+// What this process has used so far, in the same units.
+[[std::c_name("smith_process_usage_self")]] export [[nodiscard]] UsageResult usage_self() {
+    Usage used = {};
+    I32 code = measure(-1, nullptr, &used);
+    if (code != 0) {
+        return {.error = error_from(code)};
+    }
+    return used;
 }
 
 // Sends the signal to the child and to the processes of its group (a started child leads one). Gone when there is
@@ -634,6 +698,9 @@ void drain_real(Grow *output, I32 out_fd, Grow *errors, I32 err_fd) {
     Usize chunk;
     ExitOn exit_on;
     I32 status;
+    U64 user_ns; // the CPU time `usage` says the program used
+    U64 system_ns;
+    U64 peak_bytes;
 } Script;
 
 // A scripted child's state, which the fake keeps.
@@ -798,6 +865,17 @@ I32 fake_close(c::SmithProcessHandler *self, I32 id) {
     return 0;
 }
 
+I32 fake_usage(c::SmithProcessHandler *self, I32 id, U64 *user_ns, U64 *system_ns, U64 *peak_bytes) {
+    Fake *fake = (Fake *)self;
+    FakeChild *child = fake_child(fake, id);
+    if (child == nullptr) return -1;
+    const Script *script = &fake->scripts[(Usize)id - 1];
+    *user_ns = script->user_ns;
+    *system_ns = script->system_ns;
+    *peak_bytes = script->peak_bytes;
+    return 0;
+}
+
 Usize fake_cores(c::SmithProcessHandler *self) {
     return ((Fake *)self)->cores;
 }
@@ -816,6 +894,7 @@ Usize fake_cores(c::SmithProcessHandler *self) {
         .kill = fake_kill,
         .close = fake_close,
         .cores = fake_cores,
+        .usage = fake_usage,
     };
     return result;
 }

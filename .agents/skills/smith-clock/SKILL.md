@@ -1,6 +1,6 @@
 ---
 name: smith-clock
-description: "Using std::clock (import std::clock; clock::now, monotonic, sleep, set_handler): the time and sleeping called directly, and a fake clock where sleep advances time. Load when code imports std::clock or includes <smith/clock.h>, or on timing, deadlines or sleeping in .smith, or testing code that waits."
+description: "Using std::clock (import std::clock; clock::now, monotonic, cpu, sleep, set_handler): the time and sleeping called directly, and a fake clock where sleep advances time. Load when code imports std::clock or includes <smith/clock.h>, or on timing, deadlines or sleeping in .smith, or testing code that waits."
 ---
 
 # Time and sleeping: std::clock
@@ -25,6 +25,6 @@ export I64 epoch_seconds() {
 }
 ```
 
-- **`monotonic()`** never goes back and means nothing but as a difference. **`now()`** is nanoseconds since the Unix epoch and can jump when the system sets it. **`sleep(ns)`** blocks for `ns` (a signal does not cut it short). None can fail: an OS error here is a bug, and a `sleep` past half of `U64` is a checked failure. The effect is `clock` (`smith-lang-effects`).
+- **`monotonic()`** never goes back and means nothing but as a difference. **`now()`** is nanoseconds since the Unix epoch and can jump when the system sets it. **`cpu()`** is this process's CPU time (user plus system) in nanoseconds, also only for differences; a fake clock answers its handler's `cpu` member (null: the system's). **`sleep(ns)`** blocks for `ns` (a signal does not cut it short). None can fail: an OS error here is a bug, and a `sleep` past half of `U64` is a checked failure. The effect is `clock` (`smith-lang-effects`).
 - **Test with a fake clock**: `clock::set_handler(&fake.base)` installs a `clock::Handler` (C: `SmithClockHandler`, `smith_handlers_set_clock`) for the thread and returns the previous one; restore it with `defer`. `now(self, which)` returns the nanoseconds of the clock `which` (CLOCK_REALTIME or CLOCK_MONOTONIC); `sleep(self, ns)` is where the fake advances its time and returns at once, so **sleeping on a fake never blocks and never fails** (no EDEADLK). `clock_gettime`, `nanosleep`, `usleep` and `sleep` of any other code on the thread reach it too; `gettimeofday`, `time` and the Mach clocks do not. See `lib/std/clock_test.smith`.
 - **From C**: `<smith/clock.h>` has `smith_clock_monotonic`, `smith_clock_now_epoch`, `smith_clock_sleep_ns` and `smith_clock_set_handler`.
