@@ -20,7 +20,7 @@ export void bubble(auto xs[:], Lambda(Bool (typeof(xs[0]) *, typeof(xs[0]) *)) l
 }
 
 export void ascending(I32 xs[:]) {
-    bubble(xs, [](Num *a, Num *b) -> Bool { return *a < *b; });   // a, b are xs's element type
+    bubble(xs, [](Num *a, Num *b) -> bool { return *a < *b; });   // a, b are xs's element type
 }
 ```
 
