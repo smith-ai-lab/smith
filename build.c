@@ -714,10 +714,14 @@ static const char *const *build_linked_libraries(SmithBuild *b) {
 // Only the default target runs it, so `smith build llvm` works on a smith with no LLVM install.
 static const char *const *build_llvm_required(SmithBuild *b, const BuildConfig *config) {
     if (config->linkable) return smith_list(b, nullptr);
-    const char *message =
-        smith_fmt(b, "smith: no usable LLVM install at %s: run smith build llvm (9 minutes once)", config->llvm);
+    // Names the installs beside it, so a cached older pack is found: SMITH_LLVM_NAME builds with that one.
+    const char *script = "echo \"smith: no usable LLVM install at $0: run smith build llvm (9 minutes once)\" >&2; "
+                         "d=$(dirname \"$(dirname \"$0\")\"); names=$(ls \"$d\" 2>/dev/null | tr '\\n' ' '); "
+                         "if [ -n \"$names\" ]; then echo \"smith: installed under $d: $names; "
+                         "set SMITH_LLVM_NAME=<one of them> to build with that one (a smith under test for a change "
+                         "that does not touch the LLVM pack), or run smith build llvm\" >&2; fi; exit 1";
     SmithStep stop = {
-        .command = (const char *[]){"sh", "-c", "echo \"$0\" >&2; exit 1", message, nullptr},
+        .command = (const char *[]){"sh", "-c", script, config->llvm, nullptr},
         .outputs = (const char *[]){"build/llvm-required", nullptr},
     };
     smith_step(b, &stop);
