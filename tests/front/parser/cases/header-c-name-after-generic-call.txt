@@ -1,0 +1,4 @@
+header-c-name-after-generic-call/main.smith: C, out of scope
+header-c-name-after-generic-call/lib/gen.smith: ok
+header-c-name-after-generic-call/lib/shape.smith: ok
+header-c-name-after-generic-call/lib/user.smith: ok

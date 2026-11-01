@@ -1,0 +1,1 @@
+error-try-plain-function/main.smith: ok

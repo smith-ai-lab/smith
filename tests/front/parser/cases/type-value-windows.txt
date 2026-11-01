@@ -1,0 +1,1 @@
+type-value-windows/wide.smith: ok

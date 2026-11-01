@@ -1,0 +1,2 @@
+param-names/main.smith: ok
+param-names/shape/box.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (13:22) [removed_b]

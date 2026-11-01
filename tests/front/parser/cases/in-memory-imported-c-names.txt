@@ -1,0 +1,3 @@
+in-memory-imported-c-names/core.smith: ok
+in-memory-imported-c-names/main.smith: C, out of scope
+in-memory-imported-c-names/rolls.smith: ok

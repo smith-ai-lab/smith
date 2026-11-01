@@ -1,0 +1,2 @@
+generic-slice/main.smith: error: expected `)`, found `T` (12:27) [undecided_c]
+generic-slice/stats.smith: ok

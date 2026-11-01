@@ -1,0 +1,1 @@
+plain-names/main.smith: C, out of scope

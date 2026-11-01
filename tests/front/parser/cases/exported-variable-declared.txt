@@ -1,0 +1,2 @@
+exported-variable-declared/main.smith: error: expected `;` after the import, found `as` (3:23) [undecided_c]
+exported-variable-declared/counter/state.smith: ok

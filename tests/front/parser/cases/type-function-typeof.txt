@@ -1,0 +1,1 @@
+type-function-typeof/main.smith: error: expected `;`, found `x` (12:10) [undecided_c]

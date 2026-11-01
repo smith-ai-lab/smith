@@ -1,0 +1,2 @@
+range-for-generic/loops.smith: ok
+range-for-generic/main.smith: ok

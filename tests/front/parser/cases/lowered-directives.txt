@@ -1,0 +1,1 @@
+lowered-directives/demo/dir.smith: C, out of scope

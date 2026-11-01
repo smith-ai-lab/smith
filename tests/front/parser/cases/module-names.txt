@@ -1,0 +1,2 @@
+module-names/main.smith: C, out of scope
+module-names/names/fields.smith: ok

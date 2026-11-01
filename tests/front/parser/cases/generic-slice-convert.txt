@@ -1,0 +1,2 @@
+generic-slice-convert/conv.smith: ok
+generic-slice-convert/main.smith: ok

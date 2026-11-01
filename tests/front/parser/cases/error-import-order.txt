@@ -1,0 +1,2 @@
+error-import-order/main.smith: C, out of scope
+error-import-order/lib/text.smith: ok

@@ -1,0 +1,2 @@
+generic-function/apply.smith: ok
+generic-function/main.smith: ok

@@ -1,0 +1,1 @@
+error-module-first/late.smith: error: expected a type, found `module` (2:1) [must_fail_d]

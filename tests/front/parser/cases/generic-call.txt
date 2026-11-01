@@ -1,0 +1,2 @@
+generic-call/arena.smith: ok
+generic-call/main.smith: C, out of scope

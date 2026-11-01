@@ -1,0 +1,2 @@
+generic-slice-pointer-result/main.smith: ok
+generic-slice-pointer-result/repro.smith: ok

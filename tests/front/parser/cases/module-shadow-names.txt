@@ -1,0 +1,3 @@
+module-shadow-names/main.smith: C, out of scope
+module-shadow-names/lib/gnu.smith: ok
+module-shadow-names/lib/text.smith: ok

@@ -1,0 +1,2 @@
+generic-fields-doc/docs.smith: ok
+generic-fields-doc/main.smith: ok

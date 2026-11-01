@@ -1,0 +1,2 @@
+module-name-linux/main.smith: ok
+module-name-linux/demo/linux.smith: ok

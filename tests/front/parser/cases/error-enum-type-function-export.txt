@@ -1,0 +1,2 @@
+error-enum-type-function-export/main.smith: ok
+error-enum-type-function-export/opt.smith: error: expected `)`, found `T` (3:17) [undecided_c]

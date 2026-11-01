@@ -1,0 +1,1 @@
+type-value-module-variable/main.smith: error: expected `;`, found `x` (11:9) [undecided_c]

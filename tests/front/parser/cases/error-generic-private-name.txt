@@ -1,0 +1,2 @@
+error-generic-private-name/main.smith: ok
+error-generic-private-name/scale.smith: ok

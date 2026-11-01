@@ -1,0 +1,2 @@
+generic-fields/main.smith: ok
+generic-fields/reflect.smith: ok

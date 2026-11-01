@@ -1,0 +1,2 @@
+filescope-if-dropped-macro/errors.smith: ok
+filescope-if-dropped-macro/main.smith: C, out of scope

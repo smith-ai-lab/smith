@@ -1,0 +1,1 @@
+error-str-name/main.smith: error: expected a field name, found `Str` (6:17) [must_fail_d]

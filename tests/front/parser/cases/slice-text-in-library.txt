@@ -1,0 +1,2 @@
+slice-text-in-library/main.smith: ok
+slice-text-in-library/pool.smith: ok

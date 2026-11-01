@@ -1,0 +1,2 @@
+generic-call-unclosed-statement/main.smith: C, out of scope
+generic-call-unclosed-statement/num.smith: ok

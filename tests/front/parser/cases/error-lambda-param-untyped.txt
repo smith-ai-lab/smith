@@ -1,0 +1,1 @@
+error-lambda-param-untyped/main.smith: error: a lambda parameter needs a type: write `auto a` (8:21) [gap_a1]

@@ -1,0 +1,2 @@
+generic-call-statement-after-braceless-if/count.smith: ok
+generic-call-statement-after-braceless-if/main.smith: ok

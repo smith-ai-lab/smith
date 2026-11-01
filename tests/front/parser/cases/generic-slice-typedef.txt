@@ -1,0 +1,2 @@
+generic-slice-typedef/counting.smith: ok
+generic-slice-typedef/main.smith: ok

@@ -1,0 +1,1 @@
+tuple-pointer-param/main.smith: C, out of scope

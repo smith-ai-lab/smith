@@ -1,0 +1,2 @@
+generic-nested-argument/apply.smith: ok
+generic-nested-argument/main.smith: ok

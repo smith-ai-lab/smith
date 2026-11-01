@@ -1,0 +1,1 @@
+error-void-pointer/main.smith: ok

@@ -1,0 +1,2 @@
+type-function-after-c-name/main.smith: ok
+type-function-after-c-name/marks.smith: error: expected `)` to end `typeof`, found `nullptr` (7:42) [undecided_c]

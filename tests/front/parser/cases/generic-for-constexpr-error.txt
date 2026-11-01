@@ -1,0 +1,2 @@
+generic-for-constexpr-error/bad.smith: error: expected `)`, found `,` (5:45) [must_fail_d]
+generic-for-constexpr-error/main.smith: ok

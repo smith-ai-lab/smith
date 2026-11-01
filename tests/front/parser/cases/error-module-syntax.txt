@@ -1,0 +1,1 @@
+error-module-syntax/syntax.smith: error: expected a module name, found `;` (1:8) [must_fail_d]

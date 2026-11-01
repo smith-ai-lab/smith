@@ -1,0 +1,2 @@
+generic-number-parameter/main.smith: ok
+generic-number-parameter/number.smith: ok

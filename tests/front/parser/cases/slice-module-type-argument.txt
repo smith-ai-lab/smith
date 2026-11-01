@@ -1,0 +1,2 @@
+slice-module-type-argument/key.smith: ok
+slice-module-type-argument/main.smith: ok

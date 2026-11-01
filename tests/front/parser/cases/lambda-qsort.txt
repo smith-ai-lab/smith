@@ -1,0 +1,1 @@
+lambda-qsort/main.smith: ok

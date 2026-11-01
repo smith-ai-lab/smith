@@ -1,0 +1,1 @@
+error-slice-const-discards/main.smith: ok

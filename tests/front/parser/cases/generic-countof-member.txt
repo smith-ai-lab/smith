@@ -1,0 +1,2 @@
+generic-countof-member/main.smith: ok
+generic-countof-member/walk.smith: ok

@@ -1,0 +1,2 @@
+error-generic-auto-element/main.smith: ok
+error-generic-auto-element/stats.smith: ok

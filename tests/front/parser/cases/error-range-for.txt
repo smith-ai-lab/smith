@@ -1,0 +1,1 @@
+error-range-for/main.smith: error: a range `for` declares an index and an element at most: `for (Usize i, T x : xs)` (11:26) [gap_a1]

@@ -1,0 +1,1 @@
+enum-option-slice/main.smith: error: `struct smith_array_T_n` names a C tag; write `struct c::smith_array_T_n` (11:12) [gap_a1]

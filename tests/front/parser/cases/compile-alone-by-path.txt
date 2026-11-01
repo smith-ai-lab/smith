@@ -1,0 +1,2 @@
+compile-alone-by-path/foo.smith: ok
+compile-alone-by-path/main.smith: ok

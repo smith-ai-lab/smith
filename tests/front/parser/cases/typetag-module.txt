@@ -1,0 +1,2 @@
+typetag-module/main.smith: ok
+typetag-module/geo/shapes.smith: ok

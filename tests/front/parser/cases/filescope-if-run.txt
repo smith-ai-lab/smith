@@ -1,0 +1,2 @@
+filescope-if-run/main.smith: C, out of scope
+filescope-if-run/shape.smith: ok

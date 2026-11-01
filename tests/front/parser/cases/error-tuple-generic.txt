@@ -1,0 +1,1 @@
+error-tuple-generic/pairs.smith: ok

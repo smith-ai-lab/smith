@@ -1,0 +1,2 @@
+lambda-param-element/main.smith: ok
+lambda-param-element/order.smith: ok

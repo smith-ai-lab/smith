@@ -1,0 +1,2 @@
+tuple-import-index/main.smith: C, out of scope
+tuple-import-index/geo/a.smith: ok

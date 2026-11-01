@@ -1,0 +1,2 @@
+module-basic/main.smith: C, out of scope
+module-basic/shapes/area.smith: ok

@@ -1,0 +1,1 @@
+error-try-error-type/main.smith: ok

@@ -1,0 +1,2 @@
+generic-slice-const/main.smith: ok
+generic-slice-const/stats.smith: ok

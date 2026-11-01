@@ -1,0 +1,1 @@
+error-slice-qualifier-bracket/main.smith: error: `static` has no meaning for a slice: write `const` or `restrict` in the bracket, and `volatile` on the element (`volatile U8 xs[:]`) (6:25) [must_fail_d]

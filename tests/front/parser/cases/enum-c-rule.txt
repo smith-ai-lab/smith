@@ -1,0 +1,1 @@
+enum-c-rule/main.smith: C, out of scope

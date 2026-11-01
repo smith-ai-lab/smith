@@ -1,0 +1,2 @@
+generic-function-error/apply.smith: ok
+generic-function-error/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (14:9) [removed_b]

@@ -1,0 +1,1 @@
+error-tuple-empty/main.smith: C, out of scope

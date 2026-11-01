@@ -1,0 +1,2 @@
+inline-if-constexpr/main.smith: C, out of scope
+inline-if-constexpr/pick/inl.smith: ok

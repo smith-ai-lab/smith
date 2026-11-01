@@ -1,0 +1,2 @@
+constexpr-import-header/main.smith: ok
+constexpr-import-header/shapes.smith: ok

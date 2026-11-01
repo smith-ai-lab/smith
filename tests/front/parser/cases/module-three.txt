@@ -1,0 +1,3 @@
+module-three/main.smith: C, out of scope
+module-three/lib/text.smith: ok
+module-three/game/replay.smith: error: expected `;` after the import, found `as` (2:18) [undecided_c]

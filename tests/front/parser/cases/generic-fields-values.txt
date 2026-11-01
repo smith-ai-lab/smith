@@ -1,0 +1,2 @@
+generic-fields-values/main.smith: ok
+generic-fields-values/walk.smith: ok

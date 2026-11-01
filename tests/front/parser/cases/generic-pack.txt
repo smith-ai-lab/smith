@@ -1,0 +1,2 @@
+generic-pack/args.smith: ok
+generic-pack/main.smith: ok

@@ -1,0 +1,3 @@
+nested-module-by-path/lib/text.smith: ok
+nested-module-by-path/game/main.smith: ok
+nested-module-by-path/game/util.smith: ok

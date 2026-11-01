@@ -1,0 +1,2 @@
+generic-option-slice-of/main.smith: ok
+generic-option-slice-of/rows.smith: ok

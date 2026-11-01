@@ -1,0 +1,1 @@
+constexpr-modules/main.smith: C, out of scope

@@ -1,0 +1,2 @@
+braceless-for-generic-with-enums/finder.smith: ok
+braceless-for-generic-with-enums/main.smith: ok

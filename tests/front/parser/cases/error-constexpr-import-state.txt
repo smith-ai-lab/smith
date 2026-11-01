@@ -1,0 +1,2 @@
+error-constexpr-import-state/counter.smith: ok
+error-constexpr-import-state/main.smith: ok

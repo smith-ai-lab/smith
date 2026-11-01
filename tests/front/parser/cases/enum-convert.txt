@@ -1,0 +1,1 @@
+enum-convert/main.smith: ok

@@ -1,0 +1,1 @@
+error-constexpr-pointers/main.smith: C, out of scope

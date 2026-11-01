@@ -1,0 +1,2 @@
+generic-if-constexpr-target/guard.smith: ok
+generic-if-constexpr-target/main.smith: C, out of scope

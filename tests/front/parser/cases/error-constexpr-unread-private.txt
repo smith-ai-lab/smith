@@ -1,0 +1,1 @@
+error-constexpr-unread-private/main.smith: ok

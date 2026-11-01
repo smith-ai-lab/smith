@@ -1,0 +1,1 @@
+header-nolint-pair/pair.smith: ok

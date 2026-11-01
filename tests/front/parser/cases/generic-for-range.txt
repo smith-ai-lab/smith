@@ -1,0 +1,2 @@
+generic-for-range/main.smith: ok
+generic-for-range/reflect.smith: ok

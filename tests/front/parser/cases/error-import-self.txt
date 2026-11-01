@@ -1,0 +1,1 @@
+error-import-self/me.smith: ok

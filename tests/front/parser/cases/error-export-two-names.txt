@@ -1,0 +1,1 @@
+error-export-two-names/two.smith: error: one name per declaration: write `int a;` and `int b;` (2:13) [must_fail_d]

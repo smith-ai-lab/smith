@@ -1,0 +1,1 @@
+error-try-expression/main.smith: ok

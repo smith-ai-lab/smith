@@ -1,0 +1,2 @@
+enum-body-from-file-scope/finder.smith: ok
+enum-body-from-file-scope/main.smith: ok

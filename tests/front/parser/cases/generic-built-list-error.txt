@@ -1,0 +1,3 @@
+generic-built-list-error/bad.smith: ok
+generic-built-list-error/main.smith: ok
+generic-built-list-error/plain.smith: ok

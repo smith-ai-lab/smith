@@ -1,0 +1,2 @@
+generic-concept-param/main.smith: ok
+generic-concept-param/stats.smith: ok

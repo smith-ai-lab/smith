@@ -1,0 +1,1 @@
+error-lambda-capture-generic/main.smith: ok

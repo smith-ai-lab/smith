@@ -1,0 +1,2 @@
+generic-pack-expand-typed/main.smith: ok
+generic-pack-expand-typed/typed.smith: ok
