@@ -775,6 +775,21 @@ export void test_lsp_query_diag_of_a_clean_file() {
     scratch::expect_status("query diag: and exit status 0", 0, &run);
 }
 
+export void test_lsp_query_diag_does_not_wait_for_the_index() {
+    scratch::Project root = scratch::make("lsp", "lsp");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p;
+    if (!make_built(&root, &p, "q")) {
+        return;
+    }
+    scratch::expect_text("query diag: the file's own parse is its answer, so it never waits for the index (#1217)", "",
+                         scratch::capture(&p, "smith lsp diag user.smith 2>&1 >/dev/null | grep -i index"));
+}
+
 export void test_lsp_query_diag_of_an_edit_made_outside_the_editor() {
     scratch::Project root = scratch::make("lsp", "lsp");
     defer scratch::clean(&root);
