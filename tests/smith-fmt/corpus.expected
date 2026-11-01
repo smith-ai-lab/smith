@@ -3545,13 +3545,13 @@ struct Holder {
     const char *str;
 };
 
-static int measure(const char *Str) {
-    return Str[0];
+static int measure(const char *str) {
+    return str[0];
 }
 
 I32 main() {
     const char *str = "abcd";
-    return measure(Str);
+    return measure(str);
 }
 ==> error-target-fact/src/bad.smith <==
 module bad;
@@ -4480,7 +4480,7 @@ typedef struct {
     };
 } Cell;
 
-typedef enum : U8 { Small = 3, Large = 200 } Size;
+typedef enum : u8 { Small = 3, Large = 200 } Size;
 
 static I32 triple(I32 v) {
     return v * 3;
