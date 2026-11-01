@@ -1013,6 +1013,13 @@ export void limit_workers(usize count) {
     worker_limit = count;
 }
 
+// The worker threads started and not yet joined: none before the first spawn, and none again once the last task has
+// ended, because the thread that ends it joins them all before it returns. The system may take a moment more to drop a
+// joined thread from its own lists, so a count from the system is not a promise of this one.
+export usize workers_running() {
+    return active ? worker_count - 1 : 0;
+}
+
 // The default scheduler's spawn: the task is queued on the least loaded worker (ties to the spawner's own) and runs
 // there, never anywhere else.
 void default_spawn(Scheduler *self, Group *group, void (*entry)(void *context), void *context) {

@@ -93,9 +93,9 @@ export void test_golden_update_writes_the_files_and_passes() {
     defer mem::set_allocator(outside);
     scratch::Run run = scratch::sh(&p, "env SMITH_OUTPUT=full smith test --update");
     scratch::expect_status("golden: --update passes", 0, &run);
-    scratch::expect_contains("golden: it lists a file it made", run.out, "wrote expected/made/new.txt");
-    scratch::expect_contains("golden: and one it changed", run.out, "wrote expected/differs.txt");
-    scratch::expect_lacks("golden: but not one that was right", run.out, "wrote expected/matches.txt");
+    scratch::expect_contains("golden: it lists a file it made", run.out, "wrote + expected/made/new.txt");
+    scratch::expect_contains("golden: and one it changed", run.out, "wrote ~ expected/differs.txt");
+    scratch::expect_lacks("golden: but not one that was right", run.out, "expected/matches.txt");
     scratch::expect_text("golden: the new file", "fresh", scratch::read(&p, "expected/made/new.txt"));
     scratch::expect_contains("golden: the changed file", scratch::read(&p, "expected/differs.txt"), "TWO");
     scratch::Run again = scratch::sh(&p, "env SMITH_OUTPUT=full smith test");

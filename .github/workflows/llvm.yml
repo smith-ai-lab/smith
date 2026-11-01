@@ -31,7 +31,7 @@ permissions:
 jobs:
   pick:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
     outputs:
       mac: ${{ steps.mac.outputs.mac }}
     env:
@@ -50,7 +50,7 @@ jobs:
     needs: pick
     runs-on: ${{ fromJSON(needs.pick.outputs.mac) }}
     # the hosted job limit is 6 hours; a build that would not fit is split into chained jobs that hand the build folder on
-    timeout-minutes: 350
+    timeout-minutes: 240
     concurrency:
       group: llvm-macos
       cancel-in-progress: false
@@ -114,7 +114,7 @@ jobs:
 
   linux:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 240
     concurrency:
       group: llvm-linux
       cancel-in-progress: false

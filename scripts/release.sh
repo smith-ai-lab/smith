@@ -68,9 +68,16 @@ prune() {
 # allows that): each job then deletes every draft of the tag but the oldest, so one is left to upload into.
 draft() {
     if ! gh release view "$1" >/dev/null 2>&1; then
-        gh release create "$1" --draft --target "$2" --title "$1" \
+        # GitHub answered one push's two jobs with a 403 ("Resource not accessible by integration") on a token that
+        # could write, and the next push's passed (#1139): the create is tried three times, 20 seconds apart
+        n=0
+        until gh release create "$1" --draft --target "$2" --title "$1" \
             --notes "The smith of commit $2, for building the next commits (knowledge/release.md)." >/dev/null ||
-            gh release view "$1" >/dev/null 2>&1 || die "cannot create the draft $1"
+            gh release view "$1" >/dev/null 2>&1; do
+            n=$((n + 1))
+            [ "$n" -lt 3 ] || die "cannot create the draft $1"
+            sleep 20
+        done
         for id in $(gh api 'repos/{owner}/{repo}/releases' --paginate \
             --jq ".[]|select(.draft and .tag_name==\"$1\")|.id" 2>/dev/null | sort -n | tail -n +2); do
             gh api -X DELETE "repos/{owner}/{repo}/releases/$id" >/dev/null 2>&1 || true

@@ -1103,7 +1103,7 @@ static int build_prove_sound_full(SmithRun *run) {
     snprintf(self_entry, sizeof self_entry, "SMITH_SELF=%s/%s", root, binary);
     snprintf(repo_entry, sizeof repo_entry, "SMITH_REPO=%s", root);
     snprintf(runner, sizeof runner, "%s/%s", root, run->args[1]);
-    const char *const argv[] = {runner, "--full", "--test", "prove_sound_", nullptr};
+    const char *const argv[] = {runner, "--full", "--test", "*prove_sound_*", nullptr};
     const char *const environment[] = {path_entry, self_entry, repo_entry, "SMITH_OUTPUT=full", nullptr};
     return smith_run_program(run, argv, environment);
 }

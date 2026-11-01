@@ -2795,6 +2795,9 @@ static const char *smith_new_parse(int count, char **args, SmithNewLanguage *lan
     return name;
 }
 
+// False in smith_core_new: the first build is a verb of its own, which the units runner has no compiler for.
+static bool smith_new_first_build = true;
+
 static int smith_new_main(int count, char **args, const char *self) {
     SMITH_ASSERT(count >= 0);
     SmithNewLanguage language = SmithNewLanguage_Smith;
@@ -2814,7 +2817,7 @@ static int smith_new_main(int count, char **args, const char *self) {
     smith_new_files_write(name, language, skip_main, skip_main || had_main, &counts);
     fflush(stdout);
     // The program is not built beside another build system, which the project builds with.
-    if (other == nullptr) {
+    if (other == nullptr && smith_new_first_build) {
         char *build_argv[] = {(char *)self, (char *)"build", nullptr};
         if (smith_build_spawn(self, build_argv) != 0) {
             smith_die(smith_exit_usage,
@@ -3786,6 +3789,7 @@ int main(int argc, char **argv) {
 #endif
 
 #ifdef SMITH_CORE
+#include "smith_core_new.h"
 #include "smith_core_route.h"
 
 constexpr int smith_route_arguments_max = 4096;
@@ -3863,5 +3867,66 @@ bool smith_core_route(const SmithCoreRoute *route, SmithCoreRouted *routed) {
     for (FILE *file = record; file != nullptr; file = file == record ? out : file == out ? err : nullptr)
         fclose(file);
     return ok;
+}
+#endif
+
+#ifdef SMITH_CORE
+// The child of smith_core_new: it enters the folder, which a caller could not leave again, and ends in smith_die or
+// the exit of smith_new_main, as the command does.
+static void smith_new_child(const char *folder, const char *name, const char *language, const char *const *environment,
+                            FILE *out) {
+    if (chdir(folder) != 0) _exit(smith_exit_missing);
+    for (size_t i = 0; environment != nullptr && environment[i] != nullptr; i++) { // ended by nullptr
+        if (environment[i][0] == '-') {
+            unsetenv(environment[i] + 1);
+            continue;
+        }
+        const char *equals = strchr(environment[i], '=');
+        SMITH_ASSERT(equals != nullptr && equals != environment[i]);
+        char variable[256];
+        SMITH_ASSERT((size_t)(equals - environment[i]) < sizeof variable);
+        smith_copy_bytes(variable, environment[i], (size_t)(equals - environment[i]));
+        variable[equals - environment[i]] = '\0';
+        setenv(variable, equals + 1, 1);
+    }
+    char *args[4] = {};
+    int count = 0;
+    if (language != nullptr) {
+        args[count++] = (char *)"--language";
+        args[count++] = (char *)language;
+    }
+    if (name != nullptr) args[count++] = (char *)name;
+    smith_new_first_build = false;
+    dup2(fileno(out), 1);
+    dup2(fileno(out), 2);
+    int status = smith_new_main(count, args, "smith");
+    fflush(nullptr);
+    _exit(status);
+}
+
+// include/smith_core_new.h: `smith new` without the first build, in process.
+int smith_core_new(const char *folder, const char *name, const char *language, const char *const *environment,
+                   char *out, size_t out_size) {
+    SMITH_ASSERT(folder != nullptr && out != nullptr && out_size > 0);
+    FILE *text = tmpfile();
+    pid_t pid = -1;
+    if (text != nullptr) {
+        fflush(nullptr); // what is buffered would be written twice
+        pid = fork();
+    }
+    if (pid == 0) smith_new_child(folder, name, language, environment, text);
+    int wait_status = 0;
+    pid_t waited = -1;
+    for (int tries = 0; pid > 0 && tries < 1000 && waited < 0; tries++) // bounded; a signal
+        waited = waitpid(pid, &wait_status, 0);
+    int status = -1;
+    if (waited == pid && WIFEXITED(wait_status)) {
+        rewind(text);
+        size_t got = fread(out, 1, out_size - 1, text);
+        out[got] = '\0';
+        status = WEXITSTATUS(wait_status);
+    }
+    if (text != nullptr) fclose(text);
+    return status;
 }
 #endif

@@ -530,6 +530,8 @@ Shared *shared = &fallback;
 Shared *shared_slots; // the runner's: one per job, and one more for shrinking
 u32 *workers_to_kill; // SMITH_TEST_KILL_WORKERS=n: the next n commands kill their worker before it begins (a test of
                       // the runner)
+// the --test selection, nullptr when there is none
+const char *selection_text;
 u8 *memory_block;
 usize memory_used;  // a multiple of arena::align_max
 bool full_run;      // the runner was given --full; set before any test forks, so every child sees it
@@ -1399,12 +1401,71 @@ bool golden_write(const char *path, const char *text, usize size) {
     stop();
 }
 
-// Records a file --update wrote, for the runner to list.
-void golden_note(const char *path) {
+// Records a file --update wrote, for the runner to list: `+ path` for a new file, `~ path (summary)` for one that
+// changed. Each entry ends with a zero byte.
+void golden_note(const char *path, const char *summary) {
     if (golden_log == nullptr) return;
-    usize length = c::strlen(path) + 1;
+    char entry[path_capacity + 128];
+    i32 made = __builtin_snprintf(entry, sizeof entry, "%s %s%s%s%s", summary == nullptr ? "+" : "~", path,
+                                  summary == nullptr ? "" : " (", summary == nullptr ? "" : summary,
+                                  summary == nullptr ? "" : ")");
+    if (made <= 0) return;
+    usize length = (usize)made < sizeof entry ? (usize)made + 1 : sizeof entry;
+    entry[length - 1] = '\0';
     usize at = __atomic_fetch_add(golden_used, length, __ATOMIC_RELAXED);
-    if (at + length <= golden_log_capacity) __builtin_memcpy(golden_log + at, path, length);
+    if (at + length <= golden_log_capacity) __builtin_memcpy(golden_log + at, entry, length);
+}
+
+// The end of the line that starts at `at`, after its newline.
+usize golden_line_end(const char *text, usize size, usize at) {
+    while (at < size && text[at] != '\n')
+        at++;
+    return at < size ? at + 1 : size;
+}
+
+// How many lines text[from:to] holds (a last line with no newline counts).
+usize golden_line_count(const char *text, usize from, usize to) {
+    usize lines = 0;
+    for (usize at = from; at < to; at = golden_line_end(text, to, at))
+        lines++;
+    return lines;
+}
+
+// One line saying how a golden changed: the lines left and the lines put in, once the lines both share at the start
+// and at the end are set aside.
+void golden_summary(char *out, usize capacity, const char *old_text, usize old_size, const char *new_text,
+                    usize new_size) {
+    usize a = 0;
+    usize b = 0;
+    while (a < old_size && b < new_size) {
+        usize a_end = golden_line_end(old_text, old_size, a);
+        usize b_end = golden_line_end(new_text, new_size, b);
+        if (a_end - a != b_end - b || c::memcmp(old_text + a, new_text + b, a_end - a) != 0) break;
+        a = a_end;
+        b = b_end;
+    }
+    usize a_end = old_size;
+    usize b_end = new_size;
+    while (a_end > a && b_end > b) {
+        usize a_start = a_end - 1;
+        while (a_start > a && old_text[a_start - 1] != '\n')
+            a_start--;
+        usize b_start = b_end - 1;
+        while (b_start > b && new_text[b_start - 1] != '\n')
+            b_start--;
+        usize length = a_end - a_start;
+        if (length != b_end - b_start || c::memcmp(old_text + a_start, new_text + b_start, length) != 0) break;
+        a_end = a_start;
+        b_end = b_start;
+    }
+    __builtin_snprintf(out, capacity, "-%zu +%zu lines", golden_line_count(old_text, a, a_end),
+                       golden_line_count(new_text, b, b_end));
+}
+
+// The `--test` selection of this run, or nullptr when it runs every test. A test that loops over many cases uses it
+// under --update to write a new file only for a case the run names (never for one it did not select).
+export [[nodiscard]] const char *selection() {
+    return selection_text;
 }
 
 // Whether this run is `smith test --update`: every test::golden writes its file and passes.
@@ -1431,8 +1492,10 @@ void golden_check(const char path[:], const char actual[:]) {
     if (expected != nullptr && size == actual_size && (size == 0 || c::memcmp(expected, actual_text, size) == 0))
         return;
     if (update_run) {
+        char summary[64];
+        if (expected != nullptr) golden_summary(summary, sizeof summary, expected, size, actual_text, actual_size);
         if (!golden_write(file, actual_text, actual_size)) golden_fail("cannot write ", file, "");
-        golden_note(file);
+        golden_note(file, expected != nullptr ? summary : nullptr);
         return;
     }
     if (expected == nullptr) golden_fail("no file ", file, "; run smith test --update to write it");
@@ -3294,13 +3357,23 @@ bool parse(const char *text, u64 *value) {
     return true;
 }
 
+// Whether a test has exactly this shown name.
+bool is_test_name(const char *name) {
+    for (usize i = 0; i < table_size; i++)
+        if (c::strcmp(table[i].name, name) == 0) return true;
+    return false;
+}
+
 // Parses --test's value (repeated --test values add up): the name as written, `test_area` or
 // `geometry::box_test::test_area`, selects what the shown name does.
 void parse_filter(Options *options, const char *value) {
     static char written[512];
     const char *last = c::strrchr(value, ':');
     const char *tail = last != nullptr ? last + 1 : value;
-    if (c::strncmp(tail, "test_", 5) == 0 && tail[5] != '\0' && c::strlen(value) < sizeof written) {
+    // A bare `test_x` is a C test written as in the source only when there is such a test (a file may be
+    // `test_x_test`).
+    bool written_name = last != nullptr || is_test_name(tail + 5);
+    if (c::strncmp(tail, "test_", 5) == 0 && tail[5] != '\0' && written_name && c::strlen(value) < sizeof written) {
         __builtin_snprintf(written, sizeof written, "%.*s%s", (i32)(tail - value), value, tail + 5);
         value = written;
     }
@@ -3452,7 +3525,63 @@ bool parse_options(i32 argc, char **argv, Options *options) {
     return true;
 }
 
-// Whether `name` contains one of the comma-separated substrings of `list`.
+// Whether `text` matches `pattern`, where `*` stands for any run of characters (and nothing else is special).
+bool glob(const char *pattern, const char *text) {
+    const char *star = nullptr;
+    const char *resume = nullptr;
+    while (*text != '\0') {
+        if (*pattern == '*') {
+            star = pattern++;
+            resume = text;
+        } else if (*pattern == *text) {
+            pattern++;
+            text++;
+        } else if (star != nullptr) {
+            pattern = star + 1;
+            text = ++resume;
+        } else {
+            return false;
+        }
+    }
+    while (*pattern == '*')
+        pattern++;
+    return *pattern == '\0';
+}
+
+// Whether `text` (of `length` chars) is `item` or ends with `::item`: the item names the last part of a module path.
+bool ends_with_part(const char *text, usize length, const char *item) {
+    usize size = c::strlen(item);
+    if (size == 0 || size > length || c::strncmp(text + length - size, item, size) != 0) return false;
+    return size == length || (length - size >= 2 && text[length - size - 1] == ':' && text[length - size - 2] == ':');
+}
+
+// Whether the test `name` (`file::test`, or `a::b_test::test`, or a bare name when the test file has no module) is
+// selected by one `--test` item: `file::test` one test, `file::` or a bare `file` the tests of a module by its exact
+// name (the last parts of the module path are enough), a bare name a test of a file with no module, and `*` for any
+// run of characters (`smith_lang*`). A substring needs its `*`.
+bool selects_item(const char *name, const char *item) {
+    usize length = c::strlen(name);
+    usize size = c::strlen(item);
+    if (c::strchr(item, '*') != nullptr) {
+        if (glob(item, name)) return true;
+        for (const char *at = c::strstr(name, "::"); at != nullptr; at = c::strstr(at + 2, "::"))
+            if (glob(item, at + 2)) return true;
+        return false;
+    }
+    if (size >= 2 && item[size - 1] == ':' && item[size - 2] == ':') { // `file::`: the tests of that module
+        if (c::strncmp(name, item, size) == 0) return true;
+        for (const char *at = c::strstr(name, "::"); at != nullptr; at = c::strstr(at + 2, "::"))
+            if (c::strncmp(at + 2, item, size) == 0) return true;
+        return false;
+    }
+    if (ends_with_part(name, length, item)) return true; // the test, or `file::test`
+    const char *last = nullptr;
+    for (const char *at = c::strstr(name, "::"); at != nullptr; at = c::strstr(at + 2, "::"))
+        last = at;
+    return last != nullptr && ends_with_part(name, (usize)(last - name), item); // `file`: a test of that module
+}
+
+// Whether `name` is selected by one of the comma-separated items of `list`.
 bool selects_any(const char *name, const char *list) {
     char item[256];
     while (*list != '\0') {
@@ -3460,7 +3589,7 @@ bool selects_any(const char *name, const char *list) {
         if (length > 0 && length < sizeof item) {
             __builtin_memcpy(item, list, length);
             item[length] = '\0';
-            if (c::strstr(name, item) != nullptr) return true;
+            if (selects_item(name, item)) return true;
         }
         list += length + (list[length] == ',' ? 1 : 0);
     }
@@ -3482,8 +3611,94 @@ bool selects(const Options *options, const char *name) {
     if (options->macos != 0 && macos_only(name) != (options->macos == 1)) return false;
     if (options->filter == nullptr) return true;
     if (options->exact) return c::strcmp(name, options->filter) == 0;
-    if (c::strchr(options->filter, ',') != nullptr) return selects_any(name, options->filter);
-    return c::strstr(name, options->filter) != nullptr;
+    return selects_any(name, options->filter);
+}
+
+usize least(usize a, usize b) {
+    return a < b ? a : b;
+}
+
+// The edit distance of a and b with swaps of neighbours (optimal string alignment), 255 at most; both are short.
+usize distance(const char *a, const char *b) {
+    constexpr usize width = 64;
+    usize la = c::strlen(a);
+    usize lb = c::strlen(b);
+    if (la >= width || lb >= width) return 255;
+    static usize rows[3][width + 1];
+    for (usize j = 0; j <= lb; j++)
+        rows[1][j] = j;
+    for (usize i = 1; i <= la; i++) {
+        usize *now = rows[i % 3];
+        usize *prev = rows[(i + 2) % 3];
+        usize *before = rows[(i + 1) % 3];
+        now[0] = i;
+        for (usize j = 1; j <= lb; j++) {
+            usize cost = a[i - 1] == b[j - 1] ? 0 : 1;
+            usize best = least(least(prev[j] + 1, now[j - 1] + 1), prev[j - 1] + cost);
+            if (i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1]) best = least(best, before[j - 2] + 1);
+            now[j] = best;
+        }
+    }
+    return rows[la % 3][lb];
+}
+
+// After "no test matches": up to 3 test files (the module part of a test's name) closest to the item, by the rule of
+// the CLI's suggestions: at most 1 edit for a name of 4 letters or fewer, at most 2 for a longer one.
+void suggest_files(const char *filter) {
+    char item[64];
+    usize length = c::strcspn(filter, ",");
+    const char *colons = c::strstr(filter, "::");
+    const char *base = filter;
+    if (colons != nullptr && (usize)(colons - filter) < length) length = (usize)(colons - filter);
+    for (const char *slash = c::strchr(filter, '/'); slash != nullptr && (usize)(slash - filter) < length;
+         slash = c::strchr(slash + 1, '/'))
+        base = slash + 1;
+    length -= (usize)(base - filter);
+    if (length >= sizeof item) return;
+    __builtin_memcpy(item, base, length);
+    item[length] = '\0';
+    if (length > 6 && c::strcmp(item + length - 6, ".smith") == 0) item[length - 6] = '\0';
+    usize limit = c::strlen(item) <= 4 ? 1 : 2;
+    static char best[3][64];
+    usize best_distance[3] = {};
+    usize found = 0;
+    for (usize i = 0; i < table_size; i++) {
+        const char *name = table[i].name;
+        const char *last = nullptr;
+        for (const char *at = c::strstr(name, "::"); at != nullptr; at = c::strstr(at + 2, "::"))
+            last = at;
+        if (last == nullptr) continue; // no module: no file name
+        char file[64];
+        usize size = (usize)(last - name);
+        const char *part = name;
+        for (const char *at = c::strstr(name, "::"); at != nullptr && at < last; at = c::strstr(at + 2, "::"))
+            part = at + 2;
+        size -= (usize)(part - name);
+        if (size >= sizeof file) continue;
+        __builtin_memcpy(file, part, size);
+        file[size] = '\0';
+        usize d = distance(item, file);
+        bool seen = false;
+        for (usize k = 0; k < found; k++)
+            seen = seen || c::strcmp(best[k], file) == 0;
+        if (d > limit || seen) continue;
+        usize place = found < 3 ? found : 3;
+        while (place > 0 && best_distance[place - 1] > d)
+            place--;
+        if (place >= 3) continue;
+        for (usize k = (found < 3 ? found : 2); k > place; k--) {
+            __builtin_memcpy(best[k], best[k - 1], sizeof best[k]);
+            best_distance[k] = best_distance[k - 1];
+        }
+        __builtin_memcpy(best[place], file, size + 1);
+        best_distance[place] = d;
+        if (found < 3) found++;
+    }
+    if (found == 0) return;
+    say("closest test files:");
+    for (usize k = 0; k < found; k++)
+        say(" %s", best[k]);
+    say("\n");
 }
 
 // Whether the filter matches a test of either platform: a CI part of `--macos-only` or `--skip-macos` whose filter (a
@@ -3669,6 +3884,7 @@ void say_explained(const Options *options) {
 // What test::golden needs, made before any test forks: --update, the runner and the log of the files it wrote.
 void golden_begin(const Options *options) {
     update_run = options->update;
+    selection_text = options->filter;
     golden_log = (u8 *)map_bytes(golden_log_capacity, map_shared);
     golden_used = (usize *)map_bytes(sizeof(usize), map_shared);
 }
@@ -3676,10 +3892,14 @@ void golden_begin(const Options *options) {
 // The files --update wrote, which test::golden recorded as it went.
 void say_written() {
     usize used = *golden_used < golden_log_capacity ? *golden_used : golden_log_capacity;
-    for (usize at = 0; at < used;) {
+    usize count = 0;
+    for (usize at = 0; at < used; at += c::strlen((const char *)golden_log + at) + 1) {
         say("wrote %s\n", (const char *)golden_log + at);
-        at += c::strlen((const char *)golden_log + at) + 1;
+        count++;
     }
+    if (!update_run) return;
+    const char *scope = selection_text == nullptr ? " (no --test: every test was updated)" : "";
+    say("--update wrote %zu file%s%s\n", count, count == 1 ? "" : "s", scope);
 }
 
 // How many tests may run at once: the share of a slot (SMITH_CORES, runtime/slots.c) or the machine's logical cores.
@@ -3791,6 +4011,9 @@ static usize report_run(const Plan *plan, const Options *options, f64 start) {
             return 0;
         }
         say("no test matches \"%s\"\n", options.filter);
+        suggest_files(options.filter);
+        say("--test takes a test file's path (tests/x_test.smith) or a name (x_test, or x_test::name); a substring "
+            "needs a * (x*)\n");
         return 1;
     }
     if (options.shard_count > 0)

@@ -84,7 +84,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
     `tests_list.h` declares it with that `__asm__` label. The runner shows and `--test` selects a module's test by its name
     as written: `geometry::box_test::area` (the written `geometry::box_test::test_area`, `test_` of the last part dropped as
     for a C test); `--test` also takes the written form, `--test geometry::box_test::test_area` (or `test_area` for a C
-    test). Two tests with the same C name are an error that names both files.
+    test). `--test` also takes a test file's path (`tests/box_test.smith`), a bare file name exactly (`box_test`, not `big_box_test`) and `*` for a substring (`'box*'`); a name that matches nothing lists the closest test files (issue #1156). Two tests with the same C name are an error that names both files.
 - **The runner's own effects are a capability.** The runner is `std::test`'s `main`: it hands `run_tests` a `Runner` (`smith_test_run`, which holds the command line), a type marked as a capability
   whose implementation is the module, so the forked workers, their pipes and sockets, the signals they catch and the
   memory they share are the module's own calls, and `smith lint` checks them like any other module's:

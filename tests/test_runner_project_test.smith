@@ -99,19 +99,14 @@ export void test_runner_project_no_objects_at_all_builds_and_the_test_runs() {
 }
 
 // Section 8b. Full size, check_same_bits and .inputs.
-static void build_extras(const scratch::Project *p) {
-    scratch::Run run = runner::build(p, "");
-    scratch::expect_status("extras: the runner builds", 0, &run);
-}
 
 export void test_runner_project_a_test_sees_full_only_with_the_full_option() {
-    scratch::Project p = runner::project("runner_base", "runner_extras");
+    scratch::Project p = runner::built_copy("runner_base", "runner_extras", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_extras(&p);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run size = runner::plain(&p, iso, "--test size");
@@ -126,13 +121,12 @@ export void test_runner_project_a_test_sees_full_only_with_the_full_option() {
 }
 
 export void test_runner_project_repeated_test_filters_add_up() {
-    scratch::Project p = runner::project("runner_base", "runner_extras");
+    scratch::Project p = runner::built_copy("runner_base", "runner_extras", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_extras(&p);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run one = runner::tests(&p, iso, "--test bits_equal");
@@ -151,7 +145,9 @@ export void test_runner_project_check_same_bits_compares_the_bits_and_shows_them
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_extras(&p);
+    // Its own build: the failure block reads symbolized paths, which a shared runner cannot give until #782.
+    scratch::Run built = runner::build(&p, "");
+    scratch::expect_status("extras: the runner builds", 0, &built);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run equal = runner::tests(&p, iso, "--test bits_equal");
@@ -171,13 +167,12 @@ export void test_runner_project_check_same_bits_compares_the_bits_and_shows_them
 }
 
 export void test_runner_project_inputs_are_built_before_the_tests_and_rerun_them_when_they_change() {
-    scratch::Project p = runner::project("runner_base", "runner_extras");
+    scratch::Project p = runner::built_copy("runner_base", "runner_extras", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_extras(&p);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::write(&p, "gen.txt", "one\n");
@@ -199,15 +194,13 @@ export void test_runner_project_inputs_are_built_before_the_tests_and_rerun_them
 // Section 9. Tools: clangd reads a test file without errors, and the analyzer takes test::check(p != nullptr) as an
 // assumption.
 export void test_runner_project_clangd_reads_a_test_file_without_errors() {
-    scratch::Project p = runner::project("runner_base", "runner_checks");
+    scratch::Project p = runner::built_copy("runner_base", "runner_checks", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     if (scratch::sh(&p, "smith lsp --version").status != 0) return;
-    scratch::Run built = runner::build(&p, "");
-    scratch::expect_status("clangd: the project builds", 0, &built);
     // The sample is not what the lint tests; its checks are off.
     scratch::write(&p, ".clang-tidy", "Checks: \"-*\"\n");
     scratch::expect_text(
@@ -294,13 +287,12 @@ static void build_lang(const scratch::Project *p) {
 }
 
 export void test_runner_project_smith_tests_are_found_and_selected_by_the_name_as_written() {
-    scratch::Project p = runner::project("runner_base", "runner_lang");
+    scratch::Project p = runner::built_copy("runner_base", "runner_lang", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    build_lang(&p);
     scratch::Run prototype = scratch::sh(&p, "grep -F 'void geometry_box_test_test_area(void)' build/tests_list.h");
     scratch::expect_contains("smith tests: ... the prototype has the symbol of the export", prototype.out,
                              "__asm__(\"_geometry::box_test::test_area\")");
@@ -352,6 +344,7 @@ export void test_runner_project_the_same_test_in_two_files_fails_the_build() {
     scratch::expect_status("smith tests: ... and builds again without it", 0, &again);
 }
 
+// Its own build: the report reads symbolized paths, which a shared runner cannot give until #782.
 export void test_runner_project_a_failing_smith_test_names_the_smith_line_and_the_function_as_written() {
     scratch::Project p = runner::project("runner_base", "runner_lang");
     defer scratch::clean(&p);

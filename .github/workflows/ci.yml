@@ -1,7 +1,7 @@
 name: ci
 
 # The full check (#798, knowledge/ci-hosted.md): Linux carries the tests (8 hosted shards, each building smith itself,
-# no artifact travels) and the owner's Mac runs what only macOS can (`build`, `mechanical`, the `--macos-only` tests);
+# no artifact travels) and the owner's Mac runs what only macOS can (`build`, `mechanical`, `prove`, the `--macos-only` tests);
 # the one job `ci` gathers them, so the ruleset and the merge queue name a single required check. The first job that
 # fails cancels the run. A push to main (a commit the queue checked) also publishes the release and saves the cache.
 on:
@@ -17,7 +17,6 @@ concurrency:
 
 permissions:
   contents: read
-  actions: write # `gh run cancel`: the first failing job ends the run
 
 env:
   GH_REPO: ${{ github.repository }}
@@ -27,7 +26,7 @@ jobs:
     # what the change touches decides what runs: a document no build reads runs nothing, the README, AGENTS.md,
     # knowledge/ and the skills run `smith docs` and their tests, everything else runs the full check
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
       mode: ${{ steps.scope.outputs.mode }}
@@ -142,7 +141,7 @@ jobs:
     # macOS only: the Linux shards build smith themselves. A push to main builds nothing here (the release does).
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs') }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
-    timeout-minutes: 40
+    timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: ${{ needs.changes.outputs.cores }}
@@ -156,18 +155,14 @@ jobs:
       - uses: ./.github/actions/pack-smith
         with:
           name: macos-26
-      - name: Fail fast
-        if: failure()
-        run: gh run cancel ${{ github.run_id }}
-
   mechanical:
-    # fmt, docs, lint and the proofs of the project (the stages of `smith check` that are not tests)
+    # fmt, docs and lint (the stages of `smith check` that are not tests or proofs); `prove` is its own job
     needs: [changes, build]
     # `!cancelled()` and the build's result: without a status function the implicit success() also looks at the skipped
     # ancestor `pack` and skips this job, which left fmt, lint, prove and the macOS tests unrun from #1067 on (#1139)
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
-    timeout-minutes: 40
+    timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: ${{ needs.changes.outputs.cores }}
@@ -182,11 +177,22 @@ jobs:
       - name: Mechanical checks
         shell: bash
         run: |
-          # every stage runs, and each failure ends in a line `FAIL <stage>`, so one run names all of them
+          # every stage runs, and each failure ends in a line `FAIL <stage>`, so one run names all of them; each stage
+          # prints a `took` line in the job summary (#1139)
+          stage() { # name, then the smith arguments
+            local name=$1 start=$SECONDS code=0
+            shift
+            "$SMITH" "$@" >"$RUNNER_TEMP/$name.log" 2>&1 || code=$?
+            echo "$code $((SECONDS - start))" >"$RUNNER_TEMP/$name.status"
+          }
+          stage fmt fmt --dry-run --Werror
+          stage docs docs
+          stage lint lint
           failed=0
-          for stage in "fmt --dry-run --Werror" docs lint prove; do
-            name=${stage%% *}
-            if ! "$SMITH" $stage >"$RUNNER_TEMP/$name.log" 2>&1; then
+          for name in fmt docs lint; do
+            read -r code took <"$RUNNER_TEMP/$name.status"
+            echo "took $name ${took}s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+            if [ "$code" != 0 ]; then
               tail -n 60 "$RUNNER_TEMP/$name.log"
               echo "FAIL $name"
               echo "::error::smith $name failed"
@@ -196,10 +202,50 @@ jobs:
             fi
           done
           exit $failed
-      - name: Fail fast
-        if: failure()
-        run: gh run cancel ${{ github.run_id }}
-
+  prove:
+    # the proofs of the project, in a job of their own: lint and prove each run the build in this checkout
+    # (`.smith/build.ninja`), so two verbs cannot share one tree, and apart they end at about the same time (#1139)
+    needs: [changes, build]
+    # `!cancelled()` and the build's result: without a status function the implicit success() also looks at the skipped
+    # ancestor `pack` and skips this job, which left fmt, lint, prove and the macOS tests unrun from #1067 on (#1139)
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: ${{ needs.changes.outputs.cores }}
+      SMITH_OUTPUT: full
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/use-smith
+        with:
+          name: macos-26
+      - name: Proofs
+        shell: bash
+        run: |
+          stage() { # name, then the smith arguments
+            local name=$1 start=$SECONDS code=0
+            shift
+            "$SMITH" "$@" >"$RUNNER_TEMP/$name.log" 2>&1 || code=$?
+            echo "$code $((SECONDS - start))" >"$RUNNER_TEMP/$name.status"
+          }
+          stage prove prove
+          failed=0
+          for name in prove; do
+            read -r code took <"$RUNNER_TEMP/$name.status"
+            echo "took $name ${took}s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+            if [ "$code" != 0 ]; then
+              tail -n 60 "$RUNNER_TEMP/$name.log"
+              echo "FAIL $name"
+              echo "::error::smith $name failed"
+              failed=1
+            else
+              echo "ok $name"
+            fi
+          done
+          exit $failed
   test:
     # the macOS-only tests (`smith test --macos-only`, 3 of them, one part), on the Mac with the build of this run
     needs: [changes, build]
@@ -207,7 +253,7 @@ jobs:
     # ancestor `pack` and skips this job, which left fmt, lint, prove and the macOS tests unrun from #1067 on (#1139)
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
-    timeout-minutes: 45
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
@@ -252,6 +298,10 @@ jobs:
           "$SMITH" test $shard ${{ matrix.flags }} --costs "$PWD/.github/shard-costs.tsv" 2>&1 |
             tee "$RUNNER_TEMP/test.log" || rc=${PIPESTATUS[0]}
           took=$(( $(date +%s) - start ))
+          # the artifact below holds .smith/log; `smith test` writes no log there, so keep its output (with the
+          # SMITH_TEST_STATS lines) as test.log, which `smith build ci-times` reads (#1139)
+          mkdir -p .smith/log
+          cp "$RUNNER_TEMP/test.log" .smith/log/test.log
           {
             echo "### tests ${{ matrix.os }} ${{ matrix.shard }}/${{ matrix.count }}: $took s"
             grep -E '^[0-9]+ passed' "$RUNNER_TEMP/test.log" || true
@@ -259,7 +309,7 @@ jobs:
           # a failure names its test: the line `FAIL <name>` of the runner, as an annotation and in the summary
           if [ "$rc" -ne 0 ]; then
             # each failed test's name and the lines under it (where the check failed, its error), kept for the
-            # `Fail fast` step, which prints them last, before it cancels the other shards
+            # `Failed tests` step, which prints them last
             grep -hE -A6 '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" 2>/dev/null | grep -vE '^--$' | head -n 80 >"$RUNNER_TEMP/failed.txt" || true
             { echo '```'; cat "$RUNNER_TEMP/failed.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
             grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 20 |
@@ -277,15 +327,14 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
-      - name: Fail fast
+      - name: Failed tests
         if: failure()
-        # the failed tests are the last lines of this shard's log (#1086): the run then shows only cancelled jobs
+        # the failed tests are the last lines of this shard's log (#1086); the other shards run on (#1139)
         run: |
           if [ -s "$RUNNER_TEMP/failed.txt" ]; then
-            echo "FAILED TESTS of this shard (the other shards are cancelled):"
+            echo "FAILED TESTS of this shard:"
             cat "$RUNNER_TEMP/failed.txt"
           fi
-          gh run cancel ${{ github.run_id }}
 
   test-linux:
     # Linux carries the tests (required): 6 hosted shards of `--skip-macos`, each builds smith itself (a hosted
@@ -293,7 +342,7 @@ jobs:
     needs: [changes, pack]
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'release') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.linux) }}
@@ -328,13 +377,17 @@ jobs:
           "$SMITH" test $shard ${{ matrix.flags }} --costs "$PWD/.github/shard-costs.tsv" 2>&1 |
             tee "$RUNNER_TEMP/test.log" || rc=${PIPESTATUS[0]}
           took=$(( $(date +%s) - start ))
+          # the artifact below holds .smith/log; `smith test` writes no log there, so keep its output (with the
+          # SMITH_TEST_STATS lines) as test.log, which `smith build ci-times` reads (#1139)
+          mkdir -p .smith/log
+          cp "$RUNNER_TEMP/test.log" .smith/log/test.log
           {
             echo "### tests linux ${{ matrix.shard }}/${{ matrix.count }}: $took s"
             grep -E '^[0-9]+ passed' "$RUNNER_TEMP/test.log" || true
           } >>"$GITHUB_STEP_SUMMARY"
           if [ "$rc" -ne 0 ]; then
             # each failed test's name and the lines under it (where the check failed, its error), kept for the
-            # `Fail fast` step, which prints them last, before it cancels the other shards
+            # `Failed tests` step, which prints them last
             grep -hE -A6 '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" 2>/dev/null | grep -vE '^--$' | head -n 80 >"$RUNNER_TEMP/failed.txt" || true
             { echo '```'; cat "$RUNNER_TEMP/failed.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
             grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 20 |
@@ -351,22 +404,21 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
-      - name: Fail fast
+      - name: Failed tests
         if: failure()
-        # the failed tests are the last lines of this shard's log (#1086): the run then shows only cancelled jobs
+        # the failed tests are the last lines of this shard's log (#1086); the other shards run on (#1139)
         run: |
           if [ -s "$RUNNER_TEMP/failed.txt" ]; then
-            echo "FAILED TESTS of this shard (the other shards are cancelled):"
+            echo "FAILED TESTS of this shard:"
             cat "$RUNNER_TEMP/failed.txt"
           fi
-          gh run cancel ${{ github.run_id }}
   docs:
     # a change of the README, AGENTS.md, knowledge/ or the skills only: the docs check and the tests that read them
     # (a change that also touches code runs the full check, whose parts include both)
     needs: [changes, build]
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'docs' }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
-    timeout-minutes: 30
+    timeout-minutes: 12
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: ${{ needs.changes.outputs.cores }}
@@ -383,23 +435,20 @@ jobs:
         run: |
           "$SMITH" docs
           "$SMITH" test --test readme_test,skills_test
-      - name: Fail fast
-        if: failure()
-        run: gh run cancel ${{ github.run_id }}
-
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
-    # do not count against it. It runs when a job failed too (the failing job cancels the run): red at once.
-    needs: [changes, pack, build, mechanical, test, test-linux, docs]
+    # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
+    needs: [changes, pack, build, mechanical, prove, test, test-linux, docs]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
     steps:
       - name: Verdict
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
           SCOPE: ${{ needs.changes.outputs.scope }}
           MECHANICAL: ${{ needs.mechanical.result }}
+          PROVE: ${{ needs.prove.result }}
           TEST: ${{ needs.test.result }}
           DOCS: ${{ needs.docs.result }}
           TEST_LINUX: ${{ needs.test-linux.result }}
@@ -412,11 +461,11 @@ jobs:
             ;;
           esac
           # A skipped job passes only where `changes` said the area was not touched (#1139). The scope says which jobs
-          # the run owes: `full` owes mechanical, test and test-linux, `docs` owes docs, `release` (a push to main)
+          # the run owes: `full` owes mechanical, prove, test and test-linux, `docs` owes docs, `release` (a push to main)
           # owes test-linux, `none` owes nothing. A job that was owed and skipped (a skipped `pack` skipped the three
           # macOS jobs for hours) fails the check.
           case "$SCOPE" in
-          full) owed="MECHANICAL TEST TEST_LINUX" ;;
+          full) owed="MECHANICAL PROVE TEST TEST_LINUX" ;;
           docs) owed="DOCS" ;;
           release) owed="TEST_LINUX" ;;
           *) owed="" ;;
@@ -440,7 +489,7 @@ jobs:
       matrix:
         os: [macos-26, ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -466,7 +515,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.scope == 'release'
     runs-on: macos-26
-    timeout-minutes: 40
+    timeout-minutes: 15
     permissions:
       contents: write
     concurrency:
@@ -490,7 +539,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.scope == 'release'
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 15
     permissions:
       contents: write
     concurrency:
@@ -515,7 +564,7 @@ jobs:
     needs: [release, release-linux]
     if: always() && needs.release.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 3
     permissions:
       contents: write
     env:
@@ -531,7 +580,7 @@ jobs:
     # waits, and only the newest commit's install is kept waiting, so the Mac installs once when it returns.
     needs: publish
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 10
+    timeout-minutes: 3
     concurrency:
       group: install-mac
       cancel-in-progress: true

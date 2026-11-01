@@ -266,6 +266,19 @@ static bool header_by_command(const char *name) {
     return false;
 }
 
+// Whether `smith test --update` may write goldens for a new case: the run has no --test, or its selection names the
+// case (its folder name, with `_` for `-`, as the case's own test is named). A shard never makes an unselected case's.
+static bool selected(const char *kase) {
+    const char *selection = test::selection();
+    if (selection == nullptr) return true;
+    char name[96];
+    usize length = c::strlen(kase);
+    if (length >= sizeof name) return false;
+    for (usize i = 0; i <= length; i++)
+        name[i] = kase[i] == '-' ? '_' : kase[i];
+    return c::strstr(selection, name) != nullptr;
+}
+
 typedef enum { Pass_Files, Pass_Record, Pass_Compare } Pass;
 
 // A case lowered: the C of each file, the header of each module and the errors. `Pass_Files` compares them with the
@@ -280,6 +293,7 @@ static void check_case(arena::Arena *arena, const char *kase, Pass pass, const c
     // new: nothing of the lowering is held yet (the build's own goldens, expect/stdout and the rest, may be: an update
     // of both tests at once writes them side by side)
     bool fresh = !exists(join3(folder, "/expect/lowered", "")) && !exists(join3(folder, "/expect/header", ""));
+    bool creates = test::updating() && fresh && selected(kase);
     for (usize i = 0; i < count; i++) {
         const char *file = join3("src/", files[i], "");
         const char *module = module_of(arena, files[i]);
@@ -289,18 +303,17 @@ static void check_case(arena::Arena *arena, const char *kase, Pass pass, const c
         if (pass == Pass_Compare && i < slots_per_case) test::check_equal(c::strcmp(slots[i], lowered_text), 0);
         if (pass != Pass_Files) continue;
         const char *golden = join3(folder, "/expect/lowered/", format::push(module, ".c").data);
-        if (exists(golden) || (test::updating() && fresh)) corpus::golden(arena, differing, golden, lowered_text);
+        if (exists(golden) || (creates)) corpus::golden(arena, differing, golden, lowered_text);
         // the header of the module, as `smith cc --smith-header` writes it
         if (header_by_command(kase)) continue;
         bool made =
             c::smith_core_header(folder, file, nullptr, header_text, header_capacity, report_text, report_capacity);
         const char *header_golden = join3(folder, "/expect/header/", format::push(module, ".h").data);
-        if (made && (exists(header_golden) || (test::updating() && fresh)))
-            corpus::golden(arena, differing, header_golden, header_text);
+        if (made && (exists(header_golden) || (creates))) corpus::golden(arena, differing, header_golden, header_text);
     }
     const char *error_golden = join3(folder, "/expect/lower-error", "");
     const char *joined = sorted_unique(errors, error_count);
-    if (pass == Pass_Files && (exists(error_golden) || (test::updating() && fresh && joined[0] != '\0')))
+    if (pass == Pass_Files && (exists(error_golden) || (creates && joined[0] != '\0')))
         corpus::golden(arena, differing, error_golden, joined);
 }
 
