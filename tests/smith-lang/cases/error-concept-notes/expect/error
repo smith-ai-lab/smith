@@ -1,4 +1,4 @@
-main.smith:13:24: `const char *` is not `arithmetic`: the initializer of `local` has that type
+main.smith:13:17: `const char *` is not `arithmetic`: the initializer of `local` has that type
 main.smith:14:16: `char *` is not `arithmetic`: the elements of `ns` have that type
 main.smith:15:18: `const char *` is not `arithmetic`
 main.smith:16:18: `enum Colour` is not `arithmetic`

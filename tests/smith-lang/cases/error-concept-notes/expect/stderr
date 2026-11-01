@@ -1,6 +1,6 @@
-main.smith:13:24: error: `const char *` is not `arithmetic`: the initializer of `local` has that type
+main.smith:13:17: error: `const char *` is not `arithmetic`: the initializer of `local` has that type
    13 |     Num local = name;
-      |                        ^
+      |                 ^
 note: `arithmetic(const char *)` is false: `integer(const char *)` and `floating(const char *)` are both false; `const char *` is a pointer type
 main.smith:14:16: error: `char *` is not `arithmetic`: the elements of `ns` have that type
    14 |     stats::sum(ns);
