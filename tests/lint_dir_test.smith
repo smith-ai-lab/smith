@@ -1,0 +1,68 @@
+// `smith lint DIR` lints the C, C++ and .smith sources under DIR that git sees and `.clang-format-ignore` does not name
+// (issue #1262, `smith_lint_expand_dirs`, runtime/verbs.c), the way the project lint picks them, instead of handing the
+// folder to clang-tidy ("Is a directory"). A scratch git repository of the lint_cache fixture with a folder `sub`: a
+// clean source, a source in a deeper folder, and files that do not compile and must therefore never be read (one
+// git-ignored, one named in `.clang-format-ignore`).
+module lint_dir_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+static scratch::Project prepared() {
+    scratch::Project p = scratch::make("p", "lint_cache");
+    scratch::own_cache(&p);
+    scratch::Run made = scratch::sh(&p, "mkdir -p sub/deep sub/gen empty && "
+                                        "printf 'build/\\nsub/hidden.c\\n' > .gitignore && "
+                                        "printf 'sub/gen/*\\n' > .clang-format-ignore && "
+                                        "printf 'int one(void) { return 1; }\\n' > sub/a.c && "
+                                        "printf 'this is not C\\n' > sub/hidden.c && "
+                                        "printf 'this is not C\\n' > sub/gen/g.c && "
+                                        "printf 'this is not C\\n' > sub/notes.txt && "
+                                        "printf 'int two(void) { return 2; }\\n' > sub/deep/b.c && "
+                                        "git init -q -b main . && git add -A && "
+                                        "git -c user.name=t -c user.email=t@t commit -q -m base && "
+                                        "printf 'this is not C\\n' > sub/hidden.c");
+    scratch::expect_status("the project is prepared", 0, &made);
+    scratch::release(made.out);
+    scratch::release(made.err);
+    return p;
+}
+
+export void test_lint_of_a_folder_lints_its_sources_and_leaves_ignored_ones_alone() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = scratch::sh(&p, "smith lint --quiet --checks='-*,bugprone-*' sub -- -std=gnu23 2>&1");
+    scratch::expect_status("the clean folder passes", 0, &run);
+    scratch::expect_lacks("no folder error", run.out, "Is a directory");
+}
+
+export void test_lint_of_a_folder_reads_the_sources_in_its_subfolders() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = scratch::sh(&p, "printf 'this is not C\\n' > sub/deep/c.c && git add sub/deep/c.c && "
+                                       "smith lint --quiet --checks='-*,bugprone-*' sub/ -- -std=gnu23 2>&1");
+    scratch::expect_failure("the broken source in the subfolder is read", &run);
+    scratch::expect_contains("it is named", run.out, "sub/deep/c.c");
+}
+
+export void test_lint_of_a_folder_with_no_source_says_so() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = scratch::sh(&p, "mkdir -p empty && smith lint --quiet empty -- -std=gnu23 2>&1");
+    scratch::expect_failure("a folder with no source fails", &run);
+    scratch::expect_contains("it says what is missing", run.out, "no C, C++ or .smith source under the folder");
+}

@@ -52,9 +52,9 @@ Each rule says what enforces it today. "Review" means nothing checks it: you and
 17. **An array's brackets say what it is.** `I32 xs[3]` (size written), `I32 xs[_] = {1, 2, 3}` (size from the initializer), `I32 xs[:]` (a slice); a bare `[]` is an error in a module, also as a compound literal `(T[_]){...}`, an `extern` and a flexible member (`smith-lang-arrays`).
     - Enforced by: the compiler.
 18. **Report friction.** When a skill was wrong, unclear or contradicted another, or something was hard to find, say so in one line at the end of your report, as smith's own agents do.
+19. **A string literal is at most 4095 bytes.** A longer one fails with `-Woverlength-strings` under `-Wpedantic -Werror` (the conventions' flags): split it, or read a file.
+    - Enforced by: the compiler.
 
 ## Examples in skills are compiled
 
-Every ` ```smith ` block in the plugin's skills is a complete file that `tests/skills_test.smith` compiles with the smith under test (`smith test --test skills_test`, a test for each skill). A block that is only part of a file is marked ` ```smith fragment ` and skipped; use it sparingly. C is ` ```c `. A block that must fail (an error message's cause) is ` ```text `. `smith-docs` has nothing to do with this; it checks structure and links.
-
-Also in this family: [smith-idiom-before](../smith-idiom-before/SKILL.md), [smith-idiom-after](../smith-idiom-after/SKILL.md), [smith-idiom-port](../smith-idiom-port/SKILL.md).
+Every ` ```smith ` block in the plugin's skills is a complete file that `tests/skills_test.smith` compiles with the smith under test (`smith test --test skills_test`, a test for each skill). A block that is only part of a file is marked ` ```smith fragment ` and skipped; use it sparingly. C is ` ```c `. A block that must fail (an error message's cause) is ` ```text `. `smith-docs` has nothing to do with this; it checks structure and links. Also in this family: [smith-idiom-before](../smith-idiom-before/SKILL.md), [smith-idiom-after](../smith-idiom-after/SKILL.md), [smith-idiom-port](../smith-idiom-port/SKILL.md).

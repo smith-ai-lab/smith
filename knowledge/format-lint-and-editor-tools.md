@@ -43,6 +43,8 @@ folder is not seen (`git diff --relative`), and a file a source `#embed`s is not
 
 **`smith lint FILE` is the tool, with two additions** (issues #1251 and #1260, `smith_lint_front_include` and `smith_lint_host_note`, smith.c): when a file is named and `build/<os>/front-project/.smith/include` exists (the headers the front runner's project writes for the front modules), it is added as `--extra-arg=-I<folder>`, so a front module's imports of the others are found; and a host that is not macOS prints one line saying that CI lints on a Mac, where `u64` is `unsigned long long` and `usize` is `unsigned long`, so a check that compares the two (`bugprone-misplaced-widening-cast` on `(U64)(i + 1)`) can report there only. The project lint (`-p`) does neither. Tests: `tests/lint_front_include_test.smith`.
 
+**`smith lint DIR` lints the sources under DIR** (issue #1262, `smith_lint_expand_dirs`, runtime/verbs.c): a folder among the arguments (before any `--`) is replaced by the C, C++, Objective-C and `.smith` sources under it (headers are read through their sources) that git sees (`smith_fmt_list`, so ignored and generated folders stay out) and `.clang-format-ignore` does not name (`smith_lint_ignored`), the same two filters the project lint uses; files and flags among the arguments are untouched. A folder with no such source is an error saying so. Outside a git repository it says to name the files. Tests: `tests/lint_dir_test.smith`.
+
 **`smith lint` builds what the files it lints wait for, not the program.** Plain `smith lint` builds `smith_needs`: the
 generated files every compile reads (and, in smith's own build.c, the smith-cc link and the header of each of ~120 test
 modules, which the smith under test must make). With `--changed` the build first runs only to write `.smith/build.info`
@@ -53,6 +55,8 @@ relink and the 116 headers); a chosen source with no such line (a `.smith` modul
 build.c declares none yet, so its test modules and unbuilt sources do. A no-op `smith lint` after a build by the same smith builds nothing
 (0.8 s); a build by another smith (a new compiler) rebuilds every object, which is that smith's doing, not the
 executor's.
+
+**`smith lsp def|refs|hover|diag|symbols` in a project that has not been built stops with the same kind of message as `smith lint FILE`** (`smith_lsp_needs_build`, smith.c, #1252): no compile database means clangd parses with no flags and reports the generated headers as missing, so it names what is missing and says `smith build smith_needs`. The editor's server (no query word) is not stopped. `smith lsp diag FILE` opens FILE first to start the server (shim/lsp.cpp `Session::start`); opening the project's first source (build.c) instead built its AST with clang-tidy on, which crashed in `NotNullTerminatedResultCheck` for a new file. A parse that never ends (a range `for` hangs clangd's `TokenCollector::Builder::discard`, a clang-side bug) ends the query after 120 s with status 1.
 
 **The editor finds `.smith/compile_commands.json`:** `smith lsp` adds clangd's `--compile-commands-dir` for it when
 the project has no root or `build/` one. **The editor has smith's defaults too** (`patches/smith-editor-defaults.patch`):

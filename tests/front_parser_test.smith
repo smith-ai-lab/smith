@@ -36,8 +36,7 @@ static Str gap_a1() {
            "error-type-value-import/main.smith\n";
 }
 static Str gap_a2() {
-    return "generic-slice-restrict/pair.smith\n"
-           "tuple-modules/geo/b.smith\n"
+    return "tuple-modules/geo/b.smith\n"
            "type-value-import/main.smith\n";
 }
 static Str removed_b() {

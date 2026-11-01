@@ -811,6 +811,46 @@ export void test_lsp_query_diag_of_an_edit_made_outside_the_editor() {
     scratch::expect_status("query diag: and exit status 1", 1, &run);
 }
 
+// A project that was never built has no compile database: the query says what is missing and the command that makes
+// it, instead of clangd's errors about missing headers or a wait (#1252).
+export void test_lsp_query_of_an_unbuilt_project_names_the_command() {
+    scratch::Project root = scratch::make("lsp", "lsp");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!prepare(&root, true)) {
+        return;
+    }
+    scratch::Project p = folder(&root, "q");
+    const char *said = scratch::sh(&p, "smith lsp diag user.smith 2>&1").out;
+    scratch::expect_contains("unbuilt: says what is missing", said, "has no compile database");
+    scratch::expect_contains("unbuilt: and the command that makes it", said, "smith build smith_needs");
+    scratch::Run run = scratch::sh(&p, "smith lsp diag user.smith >/dev/null 2>&1");
+    scratch::expect_status("unbuilt: and stops with the usage status", 2, &run);
+}
+
+// A file that no build has seen (new, not committed) is read with the command of a similar one, and the project's
+// first source (build.c) is not opened for it (#1252).
+export void test_lsp_query_diag_of_a_new_file() {
+    scratch::Project root = scratch::make("lsp", "lsp");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p;
+    if (!make_built(&root, &p, "q")) {
+        return;
+    }
+    scratch::Run copied = scratch::sh(&p, "sed 's/^module user;/module fresh;/' user.smith >fresh.smith");
+    scratch::expect_status("new file: the copy", 0, &copied);
+    scratch::expect_text("new file: no error, no output", "", query(&p, "diag fresh.smith"));
+    scratch::Run run = scratch::sh(&p, "smith lsp diag fresh.smith >/dev/null 2>&1");
+    scratch::expect_status("new file: and exit status 0", 0, &run);
+}
+
 export void test_lsp_query_batch_from_the_standard_input() {
     scratch::Project root = scratch::make("lsp", "lsp");
     defer scratch::clean(&root);
