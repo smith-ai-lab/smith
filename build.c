@@ -803,6 +803,36 @@ static const char *const *build_header_library_objects(SmithBuild *b, const Buil
     return outputs;
 }
 
+// smith's private io layer (runtime/io.smith, issue #903), compiled by the same compiler and linked beside them
+static void build_io_object(SmithBuild *b, const BuildConfig *config, const char *folder, const char *const *flags,
+                            SmithObject *io) {
+    *io = (SmithObject){
+        .compiler = config->cc,
+        .source = "runtime/io.smith",
+        .output = smith_fmt(b, "%s/runtime_io.o", folder),
+        .flags = flags,
+    };
+    smith_object(b, io);
+}
+
+// smith's own front end (issue #1221, `smith cc --front-end=new`): front/*.smith but the JIT helper and track C.
+static size_t build_front_objects(SmithBuild *b, const BuildConfig *config, const char *folder,
+                                  const char *const *flags, SmithObject *objects, const SmithObject **list) {
+    for (size_t i = 0; i < build_front_module_count; i++) {
+        objects[i] = (SmithObject){
+            .compiler = config->cc,
+            .source = smith_fmt(b, "front/%s.smith", build_front_modules[i]),
+            .output = smith_fmt(b, "%s/front_%s.o", folder, build_front_modules[i]),
+            .flags = smith_cat(b, flags,
+                               smith_list(b, "-std=gnu2y", "-I", smith_fmt(b, "%s/include", config->llvm), nullptr),
+                               nullptr),
+        };
+        smith_object(b, &objects[i]);
+        list[i] = &objects[i];
+    }
+    return build_front_module_count;
+}
+
 static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *pack = build_resource_pack(b, config, folder);
     const char *const *flags = smith_cat(
@@ -837,30 +867,9 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     while (linked[linked_count] != nullptr) // bounded by the tree
         linked_count++;
     SmithObject libraries[linked_count + 1];
-    // smith's private io layer (runtime/io.smith, issue #903), compiled by the same compiler and linked beside them
-    SmithObject runtime_io = {
-        .compiler = config->cc,
-        .source = "runtime/io.smith",
-        .output = smith_fmt(b, "%s/runtime_io.o", folder),
-        .flags = flags,
-    };
-    smith_object(b, &runtime_io);
-    // smith's own front end (issue #1221, `smith cc --front-end=new`): front/*.smith but the JIT helper and track C
+    SmithObject runtime_io;
+    build_io_object(b, config, folder, flags, &runtime_io);
     SmithObject front_objects[build_front_module_count];
-    for (size_t i = 0; i < build_front_module_count; i++) {
-        front_objects[i] = (SmithObject){
-            .compiler = config->cc,
-            .source = smith_fmt(b, "front/%s.smith", build_front_modules[i]),
-            .output = smith_fmt(b, "%s/front_%s.o", folder, build_front_modules[i]),
-            .flags = smith_cat(b, flags,
-                               smith_list(b, "-std=gnu2y", "-I", smith_fmt(b, "%s/include", config->llvm), nullptr),
-                               nullptr),
-        };
-        smith_object(b, &front_objects[i]);
-    }
-    // The front end also calls ascii, format and clock, which are header modules (their headers have steps of their
-    // own): plain compile steps, linked as files.
-    const char *const *header_libraries = build_header_library_objects(b, config, folder);
     // smith.c, the commit, the io layer, the front end, the libraries, the shims (a table of 16, the packed data and
     // the parser) and the prover's four, ended by nullptr
     const SmithObject *objects[3 + build_front_module_count + linked_count + 16 + 2 + 4 + 1];
@@ -870,8 +879,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     objects[1] = &commit;
     objects[2] = &runtime_io;
     size_t count = 3;
-    for (size_t i = 0; i < build_front_module_count; i++)
-        objects[count++] = &front_objects[i];
+    count += build_front_objects(b, config, folder, flags, front_objects, objects + count);
     count += build_library_objects(b, config, folder, flags, linked, libraries, objects + count);
     build_shims(b, config, folder, pack, &shims, objects + count);
     SmithProgram program = {
@@ -882,9 +890,10 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
             smith_when(b, config->enzyme[0] != '\0', (const char *[]){config->platform->enzyme_export, nullptr}),
             smith_when(b, config->coverage, (const char *[]){"-fprofile-instr-generate", nullptr}), nullptr),
         .objects = objects,
-        .libraries = smith_cat(b, header_libraries, build_prove_group(b, config, &shims.prove),
-                               build_enzyme_libraries(b, config), build_clang_libraries(b, config),
-                               build_lldb_libraries(b, config), config->platform->system_libraries, nullptr),
+        .libraries =
+            smith_cat(b, build_header_library_objects(b, config, folder), build_prove_group(b, config, &shims.prove),
+                      build_enzyme_libraries(b, config), build_clang_libraries(b, config),
+                      build_lldb_libraries(b, config), config->platform->system_libraries, nullptr),
     };
     smith_program(b, &program);
     smith_default(b, build_links(b, &program.step, folder));

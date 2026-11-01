@@ -301,16 +301,14 @@ export void test_front_join_compile_time_comparison_is_printed() {
     test::check_equal(old.status, 0);
     test::check_equal(base.status, 0);
     U64 total = report.times.parse + report.times.check + report.times.emit + report.times.write;
-    c::printf("front-compare, std::ascii over U8 (microseconds)\n");
-    c::printf("  new front end, in process: parse %llu, check %llu, emit %llu, write %llu, total %llu\n",
-              (unsigned long long)(report.times.parse / 1000), (unsigned long long)(report.times.check / 1000),
-              (unsigned long long)(report.times.emit / 1000), (unsigned long long)(report.times.write / 1000),
-              (unsigned long long)(total / 1000));
-    c::printf("  today's pipeline, `smith cc -c` of the file (a whole process): %llu\n",
-              (unsigned long long)(old_ns / 1000));
-    c::printf("  `smith cc -c` of a one-line C file (a whole process, the start-up): %llu\n",
-              (unsigned long long)(base_ns / 1000));
-    c::printf("  real lib/std/ascii.smith with the new front end: parse %llu, check %llu\n",
-              (unsigned long long)(real.times.parse / 1000), (unsigned long long)(real.times.check / 1000));
+    Str lines = as_str(format::push(
+        "front-compare, std::ascii over U8 (microseconds)\n", "  new front end, in process: parse ",
+        (U64)(report.times.parse / 1000), ", check ", (U64)(report.times.check / 1000), ", emit ",
+        (U64)(report.times.emit / 1000), ", write ", (U64)(report.times.write / 1000), ", total ", (U64)(total / 1000),
+        "\n", "  today's pipeline, `smith cc -c` of the file (a whole process): ", (U64)(old_ns / 1000), "\n",
+        "  `smith cc -c` of a one-line C file (a whole process, the start-up): ", (U64)(base_ns / 1000), "\n",
+        "  real lib/std/ascii.smith with the new front end: parse ", (U64)(real.times.parse / 1000), ", check ",
+        (U64)(real.times.check / 1000), "\n"));
+    c::printf("%s", lines.data);
     remove_all(folder);
 }
