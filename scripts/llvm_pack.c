@@ -421,7 +421,12 @@ static void move_in(const char *stage, const char *cache, const char *name) {
     join(to, "%s/llvm", cache, "");
     make_folders(to);
     join(to, "%s/llvm/%s", cache, name);
-    if (rename(from, to) != 0) die("cannot move into place", to);
+    if (rename(from, to) != 0) { // a run in another worktree may have won: its folder, with the same identity, is ours
+        char id[path_max];
+        join(id, "%s/install/lib/smith-clang.id", to, "");
+        if (!exists(id)) die("cannot move into place", to);
+        printf("llvm_pack: %s was put there by another run; using it\n", to);
+    }
     join(from, "%s/enzyme", stage, "");
     DIR *dir = opendir(from);
     if (dir == nullptr) return;
@@ -433,7 +438,7 @@ static void move_in(const char *stage, const char *cache, const char *name) {
         if (entry->d_name[0] == '.') continue;
         join(source, "%s/enzyme/%s", stage, entry->d_name);
         join(target, "%s/enzyme/%s", cache, entry->d_name);
-        if (!exists(target) && rename(source, target) != 0) die("cannot move into place", target);
+        if (!exists(target) && rename(source, target) != 0 && !exists(target)) die("cannot move into place", target);
     }
     closedir(dir);
 }
