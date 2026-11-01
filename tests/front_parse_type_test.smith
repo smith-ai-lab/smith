@@ -1,0 +1,200 @@
+// Tests of front::parse_type (#1145, A3 of track A of #1112): types read from text, dumped through front::ast and
+// compared with the golden files of tests/front/parse_type (`smith test --update` writes a changed one), and one test
+// for each error. The expression hook is a stub that reads one name or one number.
+module front_parse_type_test;
+
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_type;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+import std::text;
+
+// The stub of the expression hook: a name or a number, one token.
+static ast::Expr *stub_expression(parse::Parser *p) {
+    lex::Token token = parse::advance(p);
+    if (token.kind == lex::integer) {
+        u64 value = 0;
+        _ = text::parse_u64(parse::text(p, token), &value);
+        return ast::integer(value);
+    }
+    return ast::name(parse::text(p, token));
+}
+
+// A parser over the tokens of source with the type hook and the stub; a lexing error fails the test.
+static parse::Parser parser_of(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    lex::Tokens tokens = {};
+    switch (lexed) {
+    case .ok:
+        tokens = lexed.ok;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    parse::Parser p = parse::make(tokens, source);
+    p.hooks.type = parse_type::type;
+    p.hooks.expression = stub_expression;
+    return p;
+}
+
+// The dump of one type, as the type of a variable `t` of a module, then the errors, one a line.
+static Str dump_one(Str source) {
+    parse::Parser p = parser_of(source);
+    ast::TypeExpr *type = parse::type(&p);
+    ast::DeclRef decls[1] = {ast::variable("t", type, nullptr)};
+    ast::Module m = ast::new_module("m", decls);
+    char body[:] = format::push(source, "\n", ast::dump(&m));
+    for (usize i = 0; i < countof(p.errors); i += 1) {
+        body = format::push(body, "error ", p.errors[i].span.start, "-", p.errors[i].span.end, ": ",
+                            p.errors[i].message, "\n");
+    }
+    if (p.position < countof(p.tokens) - 1) {
+        body = format::push(body, "left over: `", parse::text(&p, parse::peek(&p)), "`\n");
+    }
+    return body;
+}
+
+// Every source, dumped one after the other with a blank line between.
+static Str dump_all(Str lines) {
+    char all[:] = {};
+    usize start = 0;
+    for (usize i = 0; i <= countof(lines); i += 1) {
+        if (i < countof(lines) && lines[i] != '\n') continue;
+        all = format::push(all, dump_one(lines[start:i]), "\n");
+        start = i + 1;
+    }
+    return all;
+}
+
+static void check_golden(Str path, Str lines) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::golden(path, dump_all(lines));
+}
+
+// The message of the first error of a source.
+static Str first_error(Str source) {
+    parse::Parser p = parser_of(source);
+    _ = parse::type(&p);
+    test::check_condition(countof(p.errors) > 0);
+    return p.errors[0].message;
+}
+
+// Two texts are the same (a literal converts to Str in a parameter, not in a generic).
+static void same(Str actual, Str expected) {
+    test::check_equal(actual, expected);
+}
+
+static bool contains(Str text, Str piece) {
+    if (countof(piece) > countof(text)) return false;
+    for (usize i = 0; i + countof(piece) <= countof(text); i += 1) {
+        if (mem::equal(text[i:i + countof(piece)], piece)) return true;
+    }
+    return false;
+}
+
+export void test_parse_type_names_and_paths() {
+    check_golden("tests/front/parse_type/names.txt",
+                 "I32\nPoint\ngeometry::Box\nc::FILE\nc::size_t\nstd::mem::Allocator");
+}
+
+export void test_parse_type_qualifiers_and_pointers() {
+    check_golden("tests/front/parse_type/pointers.txt",
+                 "const I32\nI32 const\nconst U8 *\nU8 *const\nconst char *const *\nvolatile I32 *restrict\nPoint **");
+}
+
+export void test_parse_type_slices_and_arrays() {
+    check_golden("tests/front/parse_type/arrays.txt", "U8[:]\nI32[4]\nI32[n]\nI32[:][3]\nPoint *[:]");
+}
+
+export void test_parse_type_keyword_types_auto_and_tags() {
+    check_golden("tests/front/parse_type/keywords.txt",
+                 "int\nunsigned long\nunsigned  long long int\nchar *\nauto\nstruct Point *\nenum Color");
+}
+
+export void test_parse_type_applied_types() {
+    check_golden("tests/front/parse_type/applied.txt",
+                 "Option(I32)\nResult(I32, Str)\nOption(Point *)\nArray(I32, 4)\nList(Option(I32))\nOption(I32)[:]");
+}
+
+export void test_parse_type_function_types_inside_fn() {
+    check_golden("tests/front/parse_type/functions.txt",
+                 "Fn(Bool (I32, I32))\nFn(I32 ())\nFn(I32 (I32, ...))\nFn(void (U8 *, Usize))\nFn(Option(I32) "
+                 "(I32))\nFn(Bool (Fn(I32 (I32)), I32))\nconst Fn(I32 (I32))\nFn(const char *(Str))");
+}
+
+export void test_parse_type_typeof() {
+    check_golden("tests/front/parse_type/typeof.txt", "typeof(x)\ntypeof(I32[:])");
+}
+
+export void test_parse_type_a_function_pointer_declarator_names_fn() {
+    Str message = first_error("I32 (*f)(I32)");
+    test::check_condition(contains(message, "Fn(I32 (I32))"));
+    Str anonymous = first_error("I32 (*)(I32)");
+    test::check_condition(contains(anonymous, "Fn(I32 (I32))"));
+}
+
+export void test_parse_type_a_function_pointer_error_skips_the_declarator() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("I32 (*f)(I32) x");
+    ast::TypeExpr *type = parse::type(&p);
+    test::check_condition(type != nullptr);
+    test::check_equal(countof(p.errors), 1);
+    same(parse::text(&p, parse::peek(&p)), "x");
+}
+
+export void test_parse_type_not_a_type() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    same(first_error("+"), "expected a type, found `+`");
+    same(first_error(""), "expected a type, found the end of the file");
+}
+
+export void test_parse_type_unclosed_applied_type() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str message = first_error("Option(I32");
+    same(message, "expected `)` to end the type's arguments, found the end of the file");
+}
+
+export void test_parse_type_missing_tag_name() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    same(first_error("struct *"), "expected a tag name after `struct`, `union` or `enum`");
+}
+
+// Whether starts_type says `expected` for each line.
+static void check_starts(Str lines, bool expected) {
+    usize start = 0;
+    for (usize i = 0; i <= countof(lines); i += 1) {
+        if (i < countof(lines) && lines[i] != '\n') continue;
+        parse::Parser p = parser_of(lines[start:i]);
+        test::check_equal(parse_type::starts_type(&p, 0), expected);
+        start = i + 1;
+    }
+}
+
+export void test_parse_type_starts_type_follows_case_and_c() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    check_starts("I32\ngeometry::Box\nconst x\nunsigned\ntypeof(x)\nstruct S", true);
+    check_starts("x\nascii::digit\nc::FILE\nc::size_t\n5", false);
+}

@@ -1,0 +1,28 @@
+int
+(module m
+  (variable t (named int)))
+
+unsigned long
+(module m
+  (variable t (named unsigned long)))
+
+unsigned  long long int
+(module m
+  (variable t (named unsigned  long long int)))
+
+char *
+(module m
+  (variable t (pointer (named char))))
+
+auto
+(module m
+  (variable t (auto)))
+
+struct Point *
+(module m
+  (variable t (pointer (named struct Point))))
+
+enum Color
+(module m
+  (variable t (named enum Color)))
+

@@ -1,0 +1,201 @@
+a +
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 3-3: expected an expression, found the end of the file
+
+)
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 0-1: expected an expression, found `)`
+left over: `)`
+
+(a + b
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary add (name a) (name b))))))
+error 6-6: expected `)` to close the `(`, found the end of the file
+
+f(a, 
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (call (name f) (name a))))))
+error 5-5: expected `)` to end the arguments, found the end of the file
+
+xs[1
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (index (name xs) (integer 1))))))
+error 4-4: expected `]` to end the index, found the end of the file
+
+a ? b
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 5-5: expected `:` of the conditional, found the end of the file
+
+x.
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 2-2: expected a member name, found the end of the file
+
+.
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 1-1: expected a variant name after `.`, found the end of the file
+
+18446744073709551616
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (integer 0)))))
+error 0-20: this integer literal does not fit in 64 bits
+
+"\q"
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (string "")))))
+error 0-4: unknown or malformed escape sequence in a literal
+
+'ab'
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (character 97)))))
+error 0-4: a character literal holds one character
+
+'\xfff'
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (character 0)))))
+error 0-7: unknown or malformed escape sequence in a literal
+error 0-7: an empty character literal: write the character between the quotes
+
+(a, b)
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 2-3: there is no comma operator in Smith: write two statements, or call a function that takes both values
+left over: `,`
+
+xs[a, b]
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 4-5: there is no comma operator in Smith: write two statements, or call a function that takes both values
+left over: `,`
+
+(I32 (*)(I32))x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (named I32) (name x))))))
+error 5-6: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)`
+
+[x
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 2-2: expected `]` to end the captures, found the end of the file
+error 2-2: expected `{` to start the lambda's body, found the end of the file
+
+[]
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 2-2: expected `{` to start the lambda's body, found the end of the file
+
+[] 1
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 3-4: expected `{` to start the lambda's body, found `1`
+left over: `1`
+
+sizeof(Point
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (query sizeof (named Point))))))
+error 12-12: expected `)` to end the type, found the end of the file
+
+}
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 0-1: expected an expression, found `}`
+left over: `}`
+
+(c::size_t)x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (name c::size_t)))))
+left over: `x`
+
+[](a, b) { }
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (lambda
+          (param a)
+          (param b)
+          (block))))))
+error 3-4: a lambda parameter needs a type: write `auto a`
+error 6-7: a lambda parameter needs a type: write `auto b`
+
+L"w"
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (string "w")))))
+error 0-4: wide strings are not supported in .smith yet: write "..." or u8"..."
+
+u'a'
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (character 97)))))
+error 0-4: prefixed character literals are not supported in .smith yet: write 'a'
+
+U"x"
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (string "x")))))
+error 0-4: wide strings are not supported in .smith yet: write "..." or u8"..."
+

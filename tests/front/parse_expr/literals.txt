@@ -1,0 +1,224 @@
+42
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (integer 42)))))
+
+0
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (integer 0)))))
+
+0xFF
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (integer 255)))))
+
+0b1010
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (integer 10)))))
+
+0777
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (integer 511)))))
+
+1'000'000
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (integer 1000000)))))
+
+10u
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (integer 10 u)))))
+
+10UL
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (integer 10 UL)))))
+
+0xFFull
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (integer 255 ull)))))
+
+18446744073709551615
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (integer 18446744073709551615)))))
+
+1.5
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (floating 1.5)))))
+
+2e3
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (floating 2000)))))
+
+1.5f
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (floating 1.5 f)))))
+
+.5
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (floating 0.5)))))
+
+0x1.8p3
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (floating 12)))))
+
+0x10p-1
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (floating 8)))))
+
+1'0.2'5
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (floating 10.25)))))
+
+'a'
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (character 97)))))
+
+'\n'
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (character 10)))))
+
+'\x41'
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (character 65)))))
+
+'\u00e9'
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (character 233)))))
+
+'\0'
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (character 0)))))
+
+'\''
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (character 39)))))
+
+"hi"
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (string "hi")))))
+
+"a\tb\n"
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (string "a\x09b\n")))))
+
+"a" "b"
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (string "ab")))))
+
+"\u00e9\x41"
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (string "\xc3\xa9A")))))
+
+"q\"q"
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (string "q\"q")))))
+
+true
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (boolean true)))))
+
+false
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (boolean false)))))
+
+nullptr
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (null_pointer)))))
+
+u8"x"
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (string "x")))))
+

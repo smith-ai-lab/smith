@@ -1,0 +1,28 @@
+const I32
+(module m
+  (variable t (named I32 const)))
+
+I32 const
+(module m
+  (variable t (named I32 const)))
+
+const U8 *
+(module m
+  (variable t (pointer (named U8 const))))
+
+U8 *const
+(module m
+  (variable t (pointer const (named U8))))
+
+const char *const *
+(module m
+  (variable t (pointer (pointer const (named char const)))))
+
+volatile I32 *restrict
+(module m
+  (variable t (pointer restrict (named I32 volatile))))
+
+Point **
+(module m
+  (variable t (pointer (pointer (named Point)))))
+
