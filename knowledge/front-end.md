@@ -58,7 +58,7 @@ Turns a `front::ast` module into an LLVM module through LLVM's C API: `emit::mod
 `parse_expr::expression(p)` and `parse_type::type(p)` are the hooks `Parser.hooks.expression` and `.type`; a nested construct is read through `parse::expression`, `type` and `statement`, never directly. Goldens: `tests/front/parse_expr/`, `tests/front/parse_type/`.
 
 - **Expressions**: C's precedence and associativity with no comma operator (`(a, b)` and `xs[a, b]` are errors). No recursion: operators wait on two stacks. `try e` is prefix at unary precedence. A `c::` path is a value, never a cast. A lambda parameter needs a type (`[](a, b)` says to write `auto a`). `u8"..."` is a plain string; `u`, `U` and `L` strings and characters are errors.
-- **Reflection and packs** (#1264): `x.[f]` and `x->[f]` are `reflect_member { base, field, arrow }` (`field` is any expression, such as `fields(T)[i]`); `pattern...` after a call argument or a braced-list item is `expand { pattern }` (`rest...` expands the name `rest`). A second `...` is an error (`an expansion does not nest`), and `x.[]` says to write `x.[fields(T)[i]]`.
+- **Reflection and packs** (#1264): `parse_expr` reads these as postfix and argument forms. `x.[f]` and `x->[f]` are `reflect_member { base, field, arrow }` (`field` is any expression, such as `fields(T)[i]`); `pattern...` after a call argument or a braced-list item is `expand { pattern }` (`rest...` expands the name `rest`). `...` is read only after a call argument or a list item, never after another operand. A second `...` is an error (`an expansion does not nest: write one ... after the pattern`), and `x.[]` says to write `x.[fields(T)[i]]`.
 - **Types**: qualifiers, paths, `auto`, keyword types, `struct X`, `typeof`, `*`, `[:]`, `[N]`, applied types `Option(I32)`. `T[:][3]` is a slice of arrays. `R (P...)` inside `Fn(...)` is a function type; `I32 (*f)(I32)` is an error naming `Fn(I32 (I32))`.
 
 ## front::parse_decl (`front/parse_decl.smith`, #1147)
@@ -81,6 +81,16 @@ A type is used by its tag as a type name: `struct Pair a = {...};` as a local, a
 ## front::emit_object (`front/emit_object.smith`, #1134)
 
 `emit_object::write(module, ObjectOptions, path)` writes an LLVM module to an object file and gives `path` back, or an `emit::Error`. The target is the caller's (`options.target.triple`, plus `cpu` and `features`, empty for the triple's defaults; `optimization` 0..3 only sets the code generator's level, no passes run); nothing reads the host. It registers every target the linked LLVM has (`LLVMInitializeAll*`), makes a PIC machine, and refuses a module whose data layout is not the machine's ("emitted for another target") before writing. LLVM's messages are copied into the current allocator. `tests/front_emit_object_test.smith` writes `add.o`, links it with a `main.c` through `smith cc` (lld in smith's process) and runs it; the C side names the symbol with `__asm__("front::test::add")`, with a leading `_` on macOS.
+
+## front::types (`front/types.smith`, #1220 J1a)
+
+The types of the front end and the checker's entry point; the API is the comment at the top of the file. J1b (expressions), J1c (conversions) and J1d (declarations, statements, calls) build on it.
+
+- **`Ty` is interned** in a `Table` (named `Ty`, not `Type`, which is the type of types; the result is `Checked`, as a struct named `Result` reads as the type function `result`): two types are the same exactly when their `TypeRef`s are equal. A record and an enumeration are nominal (one per declaration); every other type is equal by structure. `const` on a pointee, array element or slice element is part of the type; `const` on a variable is the variable's `Symbol.is_const`.
+- **Sizes belong to the target**: `layout(&target, t)` takes a `Target` (pointer width, largest alignment), never the host, so a GPU target has its own. `Usize` and `Isize` are the pointer's width and are their own types.
+- **Names are resolved here**: `Scopes` is a stack of `Symbol`s (`declare`, `lookup`, `lookup_path`); a name from a C header is declared as `c::name`. Records and enumerations are declared first, then typedefs in order, then fields, signatures and variables, so use before declaration works for records only.
+- **`types::check(module, options)`** returns a `Checked`: the table, the module's scope, the errors and a side table of expression types keyed by node (`set_type`, `type_of`; no field in `front/ast.smith`, the interface to the emitter is #1220's open question). `options.bodies` is the hook J1d fills to check function bodies, since J1a cannot import it. A construct J1 does not type is reported as `not yet typed: <kind>`.
+- **No recursion**: `resolve` (a `TypeExpr` as a `TypeRef`), `layout` and `show` use explicit stacks. Tests: `tests/front_types_test.smith`, golden `tests/front/types/`.
 
 ## front::cimport (track C)
 

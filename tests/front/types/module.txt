@@ -1,0 +1,8 @@
+type Point: Point
+type Color: Color
+type Pt: Point
+function area: I32 (const Point *, Str)
+variable limit: U8
+module arena: <error>
+variable bad: <error>
+error 0-0: unknown type `Missing`; declare it before it is used, and write a type name with a capital letter
