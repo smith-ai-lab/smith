@@ -4,7 +4,7 @@
 // gone.
 // smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
 // smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
-// smith-covers: include/smith/ lib/std/ lib/*.c tests/build_fixtures/
+// smith-covers: include/smith/ lib/std/ lib/text* tests/build_fixtures/
 module build_tail_test;
 
 import std::arena;
