@@ -41,6 +41,8 @@ changed files since <sha>: M of K files to lint` says what was chosen, and no fi
 and `linted 0 files`. Plain `smith lint` still lints everything, as CI does. A path outside the project
 folder is not seen (`git diff --relative`), and a file a source `#embed`s is not an edge of the graph. Tests: `tests/lint_changed_test.smith`.
 
+**`smith lint FILE` is the tool, with two additions** (issues #1251 and #1260, `smith_lint_front_include` and `smith_lint_host_note`, smith.c): when a file is named and `build/<os>/front-project/.smith/include` exists (the headers the front runner's project writes for the front modules), it is added as `--extra-arg=-I<folder>`, so a front module's imports of the others are found; and a host that is not macOS prints one line saying that CI lints on a Mac, where `u64` is `unsigned long long` and `usize` is `unsigned long`, so a check that compares the two (`bugprone-misplaced-widening-cast` on `(U64)(i + 1)`) can report there only. The project lint (`-p`) does neither. Tests: `tests/lint_front_include_test.smith`.
+
 **`smith lint` builds what the files it lints wait for, not the program.** Plain `smith lint` builds `smith_needs`: the
 generated files every compile reads (and, in smith's own build.c, the smith-cc link and the header of each of ~120 test
 modules, which the smith under test must make). With `--changed` the build first runs only to write `.smith/build.info`
