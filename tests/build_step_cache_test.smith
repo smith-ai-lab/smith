@@ -12,9 +12,11 @@ module build_step_cache_test;
 
 import std::arena;
 import std::format;
+import std::env;
 import std::mem;
 import std::test;
 import scratch;
+import corpus;
 import <smith_core_step_cache.h>;
 import <time.h>;
 
@@ -426,4 +428,29 @@ export void test_build_step_cache_a_debug_build_is_shared_by_a_second_folder() {
                                            "'source list' \"$B/build/debug/b\" 2>&1");
     scratch::expect_contains("debug: stops at main.c:5 in a served object", stopped.out, "main.c:5");
     scratch::expect_contains("debug: and shows its source from another folder", stopped.out, "return util() + other()");
+}
+
+// A file that spells a time macro is never cached (its compile may differ at each run), so smith.o would be rebuilt in
+// every worktree if a file smith.c includes spelled one (#1414). The cache's own scan therefore writes the names in
+// pieces. The names are written in pieces here too, so this file passes its own rule.
+export void test_build_step_cache_a_file_smith_c_includes_names_no_time_macro() {
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    env::Value repo = env::get("SMITH_REPO");
+    const char *base = repo == .some ? repo.some.data : ".";
+    const char *files[_] = {"smith.c", "runtime/executor_cache.c", "runtime/executor.c"};
+    const char *names[_] = {"__TI"
+                            "ME__",
+                            "__DA"
+                            "TE__",
+                            "__TIMES"
+                            "TAMP__"};
+    for (Usize i = 0; i < countof(files); i++) {
+        const char *text = corpus::read_file(&memory, format::push(base, "/", files[i]).data);
+        test::check(text != nullptr);
+        for (Usize k = 0; k < countof(names); k++)
+            test::check(c::strstr(text, names[k]) == nullptr);
+    }
 }

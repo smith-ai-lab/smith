@@ -70,7 +70,7 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
   and `smith mcp` map `.` back to the project (lldb's `target.source-map`) so a source is shown from any folder
   ([debugger](debugger.md)). The `.d` and `.fx` are stored with the
   folder a token and restored with this one. A compile that printed anything (a warning), read a file written after it
-  began, or names `__TIME__`, `__DATE__` or `__TIMESTAMP__` is not stored; nor are compiles with a flag that reads or
+  began, or names `__TIME__`, `__DATE__` or `__TIMESTAMP__` is not stored (so a file that smith.c includes never spells these names whole: executor_cache.c writes them in pieces, or smith.o would be rebuilt in every worktree, #1414); nor are compiles with a flag that reads or
   writes more than the depfile names (`@file`, `-fprofile-*`, `--coverage`, `-save-temps`, plugins, ...), nor a
   precompiled header, read or written (`-include-pch`, `-x *-header`, a `.pch` or `.gch`) without
   `-Xclang -fvalidate-ast-input-files-content` (the only `-Xclang` argument accepted): a header records each input's
