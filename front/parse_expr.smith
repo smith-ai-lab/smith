@@ -15,7 +15,9 @@
 //              `ascii::digit`, `c::printf`), `.variant`, `( e )`
 //   a type     a `type_name` token or a path that ends in one starts a type, read by `parse::type` into a
 //   as a value `type_value` (`f(I32)`, `Option(I32)`): see parse_type::starts_type
-//   postfix    call `f(a, b)`, index `xs[i]`, slice `xs[a:b]` `xs[a:]` `xs[:b]` `xs[:]`, `.name`, `->name`, `++`, `--`
+//   postfix    call `f(a, b)`, index `xs[i]`, slice `xs[a:b]` `xs[a:]` `xs[:b]` `xs[:]`, `.name`, `->name`, `.[f]`,
+//              `->[f]` (a reflected member, any expression for f), `++`, `--`
+//   expansion  `pattern...` as a call argument or an item of a braced list (`f(rest...)`, `{(F64)rest...}`)
 //   prefix     `- + ! ~ & * ++ --`; `sizeof`, `alignof` and `countof` of a type (`sizeof(Point)`) or an expression
 //              (`sizeof x`, `countof(xs)`); a cast `(T)x`, where T starts a type; `try e`, at the precedence of the
 //              other prefix operators
@@ -440,6 +442,18 @@ static Bool designator(parse::Parser *p, ast::Designator ds[:], Usize *count) {
     return false;
 }
 
+// `pattern...` after an argument or a list item: wraps `value` in an `expand` when `...` follows. A second `...` is an
+// error that says what to write.
+static ast::Expr *expansion(parse::Parser *p, ast::Expr *value) {
+    if (value == nullptr || !parse::at(p, lex::ellipsis)) return value;
+    parse::advance(p);
+    if (parse::at(p, lex::ellipsis)) {
+        parse::error(p, parse::peek(p).span, "an expansion does not nest: write one `...` after the pattern");
+        parse::advance(p);
+    }
+    return make(parse::span_from(p, value->span.start), {.expand = {.pattern = value}});
+}
+
 // One item of an initializer list: designators then `=` then a value, or a value.
 static ast::Initializer item(parse::Parser *p) {
     U32 first = parse::peek(p).span.start;
@@ -450,7 +464,7 @@ static ast::Initializer item(parse::Parser *p) {
     }
     ast::Initializer result = {};
     if (count == 0) {
-        result.value = parse::expression(p);
+        result.value = expansion(p, parse::expression(p));
         return result;
     }
     ast::Designator only = found[0];
@@ -910,7 +924,7 @@ static ast::Expr *call(parse::Parser *p, ast::Expr *callee) {
     parse::advance(p);
     ast::ExprRef args[:] = {};
     while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
-        ast::Expr *arg = parse::expression(p);
+        ast::Expr *arg = expansion(p, parse::expression(p));
         if (arg == nullptr) return nullptr;
         args = parse_type::with_expr(args, arg);
         if (!parse::accept(p, lex::comma)) break;
@@ -942,9 +956,24 @@ static ast::Expr *index_or_slice(parse::Parser *p, ast::Expr *base) {
     return make(span, {.index = {.base = base, .index = first}});
 }
 
+// `x.[f]` and `x->[f]`: the position is at the bracket, after the operator. The field is any expression.
+static ast::Expr *reflect_member(parse::Parser *p, ast::Expr *base, Bool arrow) {
+    parse::advance(p);
+    if (parse::at(p, lex::right_bracket)) {
+        parse::error(p, parse::peek(p).span, "expected a field in `.[ ]`: write `x.[fields(T)[i]]` or `x.[f]`");
+        return nullptr;
+    }
+    ast::Expr *field = parse::expression(p);
+    if (field == nullptr) return nullptr;
+    parse::expect(p, lex::right_bracket, "`]` to end the reflected member");
+    ast::Span span = parse::span_from(p, base->span.start);
+    return make(span, {.reflect_member = {.base = base, .field = field, .arrow = arrow}});
+}
+
 // `.name` and `->name`: the position is at the operator.
 static ast::Expr *member(parse::Parser *p, ast::Expr *base) {
     Bool arrow = parse::advance(p).kind == lex::arrow;
+    if (parse::at(p, lex::left_bracket)) return reflect_member(p, base, arrow);
     lex::Token name = parse::peek(p);
     if (name.kind != lex::name && name.kind != lex::type_name) {
         parse::expect(p, lex::name, "a member name");
