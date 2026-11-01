@@ -1423,7 +1423,7 @@ usize golden_line_end(const char *text, usize size, usize at) {
 }
 
 // How many lines text[from:to] holds (a last line with no newline counts).
-usize golden_lines(const char *text, usize from, usize to) {
+usize golden_line_count(const char *text, usize from, usize to) {
     usize lines = 0;
     for (usize at = from; at < to; at = golden_line_end(text, to, at))
         lines++;
@@ -1457,8 +1457,8 @@ void golden_summary(char *out, usize capacity, const char *old_text, usize old_s
         a_end = a_start;
         b_end = b_start;
     }
-    __builtin_snprintf(out, capacity, "-%zu +%zu lines", golden_lines(old_text, a, a_end),
-                       golden_lines(new_text, b, b_end));
+    __builtin_snprintf(out, capacity, "-%zu +%zu lines", golden_line_count(old_text, a, a_end),
+                       golden_line_count(new_text, b, b_end));
 }
 
 // The `--test` selection of this run, or nullptr when it runs every test. A test that loops over many cases uses it
