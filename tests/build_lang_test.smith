@@ -225,6 +225,29 @@ export void test_build_lang_a_header_is_written_again_when_a_module_it_imports_r
                              scratch::read(&p, ".smith/include/game/replay.h"), "Words name;");
 }
 
+// A module that imports one of smith's own (`import std::arena;`) has the header of std::arena, smith/arena.h, as an
+// input of its header step: the name std::arena is the file .smith/include/smith/arena.h, not std/arena.h (#1254: the
+// step had no such input, so io.h was sometimes written before arena.h and smith.c's compile died on
+// `unknown type name 'smith_arena_Arena'`).
+export void test_build_lang_a_header_step_waits_for_the_header_of_a_std_module_it_imports() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = lang_project("module-three");
+    defer scratch::clean(&p);
+    scratch::write(&p, "src/lib/pool.smith",
+                   "module lib::pool;\n\nimport std::arena;\n\nexport arena::Arena *pool_of(arena::Arena *a) { "
+                   "return a; }\n");
+    (void)scratch::build(&p, "");
+    scratch::expect_contains("headers: the importer's header names the std type",
+                             scratch::read(&p, ".smith/include/lib/pool.h"), "smith_arena_Arena");
+    scratch::expect_text("headers: and its step lists smith/arena.h as an input", "1",
+                         scratch::sh(&p, "grep '^build .smith/include/lib/pool.h:' .smith/build.ninja | "
+                                         "grep -c ' .smith/include/smith/arena.h'")
+                             .out);
+}
+
 // A folder of headers (SMITH_HEADERS_FROM) stamped by this smith is copied, not generated: the marked copy of arena.h
 // shows which. Unset, the project generates its own, as before.
 constexpr char headers_marked[_] = "rm -rf marked && cp -R \"$SMITH_HEADERS_FROM\" marked && "
