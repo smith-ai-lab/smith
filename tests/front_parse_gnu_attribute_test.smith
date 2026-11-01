@@ -1,0 +1,45 @@
+// Tests of the GNU `__attribute__` in a .smith file (#1348, A7j of track A of #1112): it is an error at the attribute's
+// name, which says `[[std::name]]` where the std set has one and that there is no Smith spelling otherwise.
+module front_parse_gnu_attribute_test;
+
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+// The first error of a file, or `no error`.
+static Str first_error(Str source) {
+    parser::Parsed parsed = parser::parse("x.smith", source);
+    if (countof(parsed.errors) == 0) return "no error";
+    return parsed.errors[0].message;
+}
+
+export void test_an_attribute_with_a_std_spelling_names_it() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("export __attribute__((always_inline)) void f(void) {}");
+    Str want = "`__attribute__` is a C extension: write `[[std::inline]]`";
+    test::check_equal(got, want);
+}
+
+export void test_an_attribute_with_no_std_spelling_says_so() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("export __attribute__((format(printf, 1, 2))) void f(void) {}");
+    Str want = "there is no Smith spelling of `format` yet";
+    test::check_equal(got, want);
+}
+
+export void test_a_typedef_attribute_is_an_error() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("typedef float V3 __attribute__((ext_vector_type(3)));");
+    Str want = "there is no Smith spelling of `ext_vector_type` yet";
+    test::check_equal(got, want);
+}
