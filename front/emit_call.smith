@@ -204,7 +204,7 @@ static state::Status call_finish(state::Emitter *e, const state::Work *w) {
     c::LLVMValueRef argv[64];
     for (Usize i = 0; i < count; i++) {
         if (!state::same_type(values[i].ty, sig.params[i])) {
-            state::Status wrong = state::failf(args[i]->span, "argument ", (U64)(i + 1), " of ", key, " is ",
+            state::Status wrong = state::failf(args[i]->span, "argument ", (U64)i + 1, " of ", key, " is ",
                                                values[i].ty.name, ", the parameter is ", sig.params[i].name);
             state::free_text(key);
             release(sig);
