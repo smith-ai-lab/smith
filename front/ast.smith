@@ -458,6 +458,7 @@ export typedef enum {
     } type_alias; // `typedef`
     struct {
         Path path;
+        Text alias; // `import m as n;`, empty when absent
     } import_module;
     struct {
         Text header;
@@ -1599,6 +1600,10 @@ static void decl_head(Output *text, Decl *d) {
     case .import_module:
         put(text, "import ");
         put_path(text, d->kind.import_module.path);
+        if (countof(d->kind.import_module.alias) > 0) {
+            put(text, " as ");
+            put(text, d->kind.import_module.alias);
+        }
         break;
     case .import_c:
         put(text, pick(d->kind.import_c.angled, "import_c angled ", "import_c "));

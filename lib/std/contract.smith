@@ -84,6 +84,24 @@ check_assert(Bool condition) {
     if (!condition) c::smith_failure(c::SmithFailure_Assert);
 }
 
+// What the front end's emitted code calls when a run-time check of its own fails (K6, #1389 of #1112): the failing
+// block of a checked cast or an index calls one of these with the value and the type or length, and the call stack is
+// the report, as for a contract. `bits` is the value widened to 64 bits, signed when `is_signed` is not 0.
+// A cast that cannot hold its value stops here, naming the value and the target type.
+[[std::c_name("smith_contract_fail_cast")]] export [[noreturn]] void fail_cast(U64 bits, I32 is_signed,
+                                                                               const char *to) {
+    if (is_signed != 0) c::smith_failure_format(c::SmithFailure_Check, "cast of %zd does not fit %s", (Isize)bits, to);
+    c::smith_failure_format(c::SmithFailure_Check, "cast of %zu does not fit %s", (Usize)bits, to);
+}
+
+// An index outside an array stops here, naming the index and the length.
+[[std::c_name("smith_contract_fail_index")]] export [[noreturn]] void fail_index(U64 bits, I32 is_signed, U64 length) {
+    if (is_signed != 0) {
+        c::smith_failure_format(c::SmithFailure_Check, "index %zd is outside 0 to %zu", (Isize)bits, (Usize)length);
+    }
+    c::smith_failure_format(c::SmithFailure_Check, "index %zu is outside 0 to %zu", (Usize)bits, (Usize)length);
+}
+
 // What an optimized build writes in place of `ensures`, `invariant` and `assert` when `smith prove` proved the check
 // holds (issue #325, `.smith/proved/<source>.pts`): the lowering names it where the call stood, never you. It checks
 // nothing and has no effect, so a function whose only failure point was that check does not `fail`.

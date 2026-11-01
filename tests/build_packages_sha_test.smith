@@ -1,5 +1,6 @@
 // SHA-256 of `smith --smith-sha256`, from tests/build.sh section 11: the NIST vectors (FIPS 180-2 examples, and the
 // empty message), and shasum on random data around the padding boundaries.
+// smith-covers: smith.c
 module build_packages_sha_test;
 
 import std::arena;

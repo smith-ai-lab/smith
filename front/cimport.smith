@@ -2,42 +2,49 @@
 // file, shim/cimport.cpp. `read` parses the header and returns its functions and structs as records; whatever it
 // cannot express is in `not_imported` with a reason, never guessed and never dropped silently.
 //
-// The shape is one to one with the declarations track A's front::ast will have (A1, #1112): the conversion to those
-// nodes is its own small ticket. Types are a table; a type refers to another by its index in `Header.types`.
+// What it returns is front::ast: `Decl` and `TypeExpr` nodes with `from_c` set (#1124). The shim's flat table of types
+// stays private; a type refers to another by its index there, and `read` builds the tree of each from the table.
 //
 // Not wired into `smith cc`: the work shows through tests/front_cimport_test.smith.
 module front::cimport;
 
 import <string.h>;
 
+import front::ast;
 import std::arena;
+import std::mem;
 
 // The kinds of CType. The layout of the shim's flat result (shim/cimport.cpp) is the source of these numbers.
-export constexpr U32 kind_void = 0;
-export constexpr U32 kind_bool = 1;
-export constexpr U32 kind_integer = 2;     // a = bits, b = 1 when signed
-export constexpr U32 kind_floating = 3;    // a = bits
-export constexpr U32 kind_pointer = 4;     // a = pointee
-export constexpr U32 kind_array = 5;       // a = element, b = count
-export constexpr U32 kind_typedef = 6;     // name, a = underlying
-export constexpr U32 kind_struct = 7;      // a = index in Header.structs
-export constexpr U32 kind_function = 8;    // a = result, parameters, variadic
-export constexpr U32 kind_fn_pointer = 10; // a = the function type: `Fn` applied to it, never a pointer
-export constexpr U32 kind_unsupported = 9; // name = the C type's spelling: a union, `long double`, a bit-field
+constexpr U32 kind_void = 0;
+constexpr U32 kind_bool = 1;
+constexpr U32 kind_integer = 2;     // a = bits, b = 1 when signed
+constexpr U32 kind_floating = 3;    // a = bits
+constexpr U32 kind_pointer = 4;     // a = pointee
+constexpr U32 kind_array = 5;       // a = element, b = count
+constexpr U32 kind_typedef = 6;     // name, a = underlying
+constexpr U32 kind_struct = 7;      // a = index in Header.structs
+constexpr U32 kind_function = 8;    // a = result, parameters, variadic
+constexpr U32 kind_fn_pointer = 10; // a = the function type: `Fn` applied to it, never a pointer
+constexpr U32 kind_unsupported = 9; // name = the C type's spelling: a union, `long double`, a bit-field
+constexpr U32 kind_string = 11;     // `Str`: the type of a string macro
 
-export constexpr U32 flag_const = 1;
-export constexpr U32 flag_restrict = 2;
+constexpr U32 value_integer = 0;
+constexpr U32 value_floating = 1;
+constexpr U32 value_string = 2;
+
+constexpr U32 flag_const = 1;
+constexpr U32 flag_restrict = 2;
 
 // What was left out: a declaration (kind_declaration) or an attribute of one (kind_attribute).
 export constexpr U32 not_imported_declaration = 0;
 export constexpr U32 not_imported_attribute = 1;
 
-export struct Parameter {
+struct Parameter {
     Str name; // empty when the declaration has none
     U32 type;
 };
 
-export struct CType {
+struct CType {
     U32 kind;
     U32 flags;
     U32 a;
@@ -47,22 +54,39 @@ export struct CType {
     Bool variadic;
 };
 
-export struct Function {
+struct Function {
     Str name;
     U32 result; // an index in Header.types
     Parameter parameters[:];
     Bool variadic;
 };
 
-export struct Field {
+struct Field {
     Str name;
     U32 type;
 };
 
-export struct Record {
+struct Record {
     Str name;    // empty for an anonymous struct that no typedef names
     Bool opaque; // no definition, or members that could not be imported
     Field fields[:];
+};
+
+struct EnumInfo {
+    Str name;
+    U32 underlying; // an index in Table.types
+    U32 first;      // in Table.items
+    U32 count;
+};
+
+// An enumerator or a constant: the value is a magnitude and a sign.
+struct Item {
+    Str name;
+    U32 type; // constants only
+    U32 kind;
+    Bool negative;
+    U64 bits; // the integer, or the IEEE double
+    Str text; // a string constant's bytes
 };
 
 export struct NotImported {
@@ -71,10 +95,22 @@ export struct NotImported {
     Str reason;
 };
 
-export struct Header {
+struct Table {
     CType types[:];
     Function functions[:];
     Record structs[:];
+    EnumInfo enums[:];
+    Item items[:];
+    Item constants[:];
+    NotImported not_imported[:];
+    Str error;
+};
+
+// What a header declares: structs, then the typedefs, the named enums, the functions and last the constants (an
+// anonymous enum's enumerators, object-like macros with a constant value, `static const` variables), each a `from_c`
+// declaration.
+export struct Header {
+    ast::DeclRef decls[:];
     NotImported not_imported[:];
     Str error; // empty when the header was read
 };
@@ -89,6 +125,10 @@ struct Request {
 
 extern Usize smith_cimport_read(const Request *request, U32 *words, Usize capacity);
 
+static U64 join(U32 low, U32 high) {
+    return (U64)low | ((U64)high << 32);
+}
+
 static Str text(const char *pool, U32 at) {
     Usize length = c::strlen(pool + at);
     return pool[at:at + length];
@@ -99,9 +139,36 @@ static Parameter parameter_at(const U32 w[:], const char *pool, U32 first, U32 i
     return (Parameter){.name = text(pool, w[at]), .type = w[at + 1]};
 }
 
+// The enums, their items and the constants of the shim's words.
+static void read_values(arena::Arena *a, Table *header, const U32 w[:], const char *pool) {
+    header->enums = arena::push_slice(a, EnumInfo, w[18]);
+    for (U32 i = 0; i < w[18]; i++) {
+        Usize at = w[17] + 4 * (Usize)i;
+        header->enums[i] =
+            (EnumInfo){.name = text(pool, w[at]), .underlying = w[at + 1], .first = w[at + 2], .count = w[at + 3]};
+    }
+    header->items = arena::push_slice(a, Item, w[20]);
+    for (U32 i = 0; i < w[20]; i++) {
+        Usize at = w[19] + 4 * (Usize)i;
+        header->items[i] =
+            (Item){.name = text(pool, w[at]), .negative = w[at + 3] != 0, .bits = join(w[at + 1], w[at + 2])};
+    }
+    header->constants = arena::push_slice(a, Item, w[22]);
+    for (U32 i = 0; i < w[22]; i++) {
+        Usize at = w[21] + 6 * (Usize)i;
+        Item item = {.name = text(pool, w[at]), .type = w[at + 1], .kind = w[at + 2], .negative = w[at + 3] != 0};
+        item.bits = join(w[at + 4], w[at + 5]);
+        if (item.kind == value_string) {
+            const char *bytes = pool + w[at + 4];
+            item.text = bytes[0:w[at + 5]];
+        }
+        header->constants[i] = item;
+    }
+}
+
 // Reads `name` (written `<name>` or, with quoted, "name" beside `folder`) with the compile flags `flags`, one on each
 // line. All three are NUL-terminated. The records are allocated in `a`.
-export Header read(arena::Arena *a, const char *name, Bool quoted, const char *folder, const char *flags) {
+static Table read_table(arena::Arena *a, const char *name, Bool quoted, const char *folder, const char *flags) {
     Request request = {.name = name, .quoted = quoted ? 1 : 0, .folder = folder, .flags = flags};
     Usize capacity = 1U << 16;
     U32 words[:] = arena::push_slice(a, U32, capacity);
@@ -112,7 +179,7 @@ export Header read(arena::Arena *a, const char *name, Bool quoted, const char *f
     }
     const U32 w[:] = words;
     const char *pool = (const char *)words.data + w[2];
-    Header header = {};
+    Table header = {};
     header.error = text(pool, w[16]);
     header.types = arena::push_slice(a, CType, w[5]);
     for (U32 i = 0; i < w[5]; i++) {
@@ -158,11 +225,202 @@ export Header read(arena::Arena *a, const char *name, Bool quoted, const char *f
         }
         header.structs[i] = s;
     }
+    read_values(a, &header, w, pool);
     header.not_imported = arena::push_slice(a, NotImported, w[15]);
     for (U32 i = 0; i < w[15]; i++) {
         Usize at = w[14] + 3 * (Usize)i;
         header.not_imported[i] =
             (NotImported){.kind = w[at], .name = text(pool, w[at + 1]), .reason = text(pool, w[at + 2])};
     }
+    return header;
+}
+
+static Str integer_name(U32 bits, Bool is_signed) {
+    if (bits == 8) return is_signed ? "I8" : "U8";
+    if (bits == 16) return is_signed ? "I16" : "U16";
+    if (bits == 32) return is_signed ? "I32" : "U32";
+    if (bits == 128) return is_signed ? "I128" : "U128";
+    return is_signed ? "I64" : "U64";
+}
+
+typedef ast::TypeRef TypeList[:];
+
+static ast::TypeRef *type_block(Usize count) {
+    // Not mem::alloc_slice: its instance for a pointer element draws the lint of a multilevel conversion.
+    return (ast::TypeRef *)mem::alloc_array_raw(sizeof(ast::TypeRef), count, alignof(ast::TypeRef));
+}
+
+static ast::TypeExpr *build_function(const CType *c, TypeList done) {
+    if (done[c->a] == nullptr) return nullptr;
+    ast::TypeRef *params = type_block(countof(c->parameters));
+    for (Usize i = 0; i < countof(c->parameters); i++) {
+        if (done[c->parameters[i].type] == nullptr) return nullptr;
+        params[i] = done[c->parameters[i].type];
+    }
+    ast::TypeKind kind = {
+        .function = {.params = params[0:countof(c->parameters)], .result = done[c->a], .variadic = c->variadic}};
+    return ast::make_type(kind);
+}
+
+// The type at `index` when everything it is made of is in `done`; null when not yet.
+static ast::TypeExpr *build_type(const Table *t, TypeList done, U32 index) {
+    CType c = t->types[index];
+    if (c.kind == kind_void) return ast::named("Void");
+    if (c.kind == kind_bool) return ast::named("Bool");
+    if (c.kind == kind_integer) return ast::named(integer_name(c.a, c.b == 1));
+    if (c.kind == kind_floating) return ast::named(c.a == 32 ? "F32" : "F64");
+    if (c.kind == kind_typedef) return ast::named(c.name);
+    if (c.kind == kind_struct) return ast::named(t->structs[c.a].name);
+    if (c.kind == kind_string) return ast::named("Str");
+    if (c.kind == kind_unsupported) {
+        ast::TypeKind kind = {.unsupported_c = {.spelling = c.name}};
+        return ast::make_type(kind);
+    }
+    if (c.kind == kind_function) return build_function(&c, done);
+    if (done[c.a] == nullptr) return nullptr;
+    if (c.kind == kind_pointer) {
+        ast::TypeKind kind = {.pointer = {.pointee = done[c.a]}};
+        return ast::make_type(kind);
+    }
+    if (c.kind == kind_array) {
+        ast::TypeKind kind = {.array = {.element = done[c.a], .count = ast::integer(c.b)}};
+        return ast::make_type(kind);
+    }
+    if (c.kind != kind_fn_pointer) {
+        return nullptr;
+    }
+    // `Fn` applied to the function type.
+    ast::TypeArg args[:] = mem::alloc_slice(ast::TypeArg, 1);
+    ast::TypeArg arg = {.type = {.type = done[c.a]}};
+    args[0] = arg;
+    ast::TypeKind kind = {.applied = {.name = ast::path("Fn"), .args = args}};
+    return ast::make_type(kind);
+}
+
+// Every type of the table as a tree: passes until none is left, because the table's order is not promised (and a
+// module has no recursion). A struct and a typedef are named, so they need no pass.
+static TypeList build_types(const Table *t) {
+    Usize count = countof(t->types);
+    ast::TypeRef *block = type_block(count);
+    for (Usize i = 0; i < count; i++)
+        block[i] = nullptr;
+    TypeList done = block[0:count];
+    Bool progress = true;
+    while (progress) {
+        progress = false;
+        for (Usize i = 0; i < countof(done); i++) {
+            if (done[i] != nullptr) continue;
+            ast::TypeExpr *node = build_type(t, done, (U32)i);
+            if (node == nullptr) continue;
+            node->qualifiers.is_const = (t->types[i].flags & flag_const) != 0;
+            node->qualifiers.is_restrict = (t->types[i].flags & flag_restrict) != 0;
+            done[i] = node;
+            progress = true;
+        }
+    }
+    return done;
+}
+
+// Whether the typedef at `index` is the first of its name: the table holds one per use, with qualifiers.
+static Bool first_typedef(const Table *t, Usize index) {
+    if (t->types[index].kind != kind_typedef) {
+        return false;
+    }
+    for (Usize i = 0; i < index; i++) {
+        if (t->types[i].kind == kind_typedef && c::strcmp(t->types[i].name.data, t->types[index].name.data) == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static ast::Decl *from_c(ast::Decl *d) {
+    d->from_c = true;
+    return d;
+}
+
+static ast::Decl *record_decl(const Record *s, TypeList types) {
+    ast::FieldDecl fields[:] = mem::alloc_slice(ast::FieldDecl, countof(s->fields));
+    for (Usize i = 0; i < countof(fields); i++) {
+        fields[i] = ast::field(s->fields[i].name, types[s->fields[i].type]);
+    }
+    ast::DeclKind kind = {.record = {.name = s->name, .opaque = s->opaque, .fields = fields}};
+    return from_c(ast::decl((ast::Decl){}, kind));
+}
+
+static ast::Decl *function_decl(const Function *f, TypeList types) {
+    ast::Param params[:] = mem::alloc_slice(ast::Param, countof(f->parameters));
+    for (Usize i = 0; i < countof(params); i++) {
+        params[i] = ast::param(f->parameters[i].name, types[f->parameters[i].type]);
+    }
+    ast::DeclKind kind = {
+        .function = {.name = f->name, .params = params, .result = types[f->result], .variadic = f->variadic}};
+    return from_c(ast::decl((ast::Decl){}, kind));
+}
+
+// A value as an expression: an integer literal, a floating literal or a string, negated when it is below zero.
+static ast::Expr *value_expr(const Item *item) {
+    ast::Expr *literal = nullptr;
+    if (item->kind == value_string) {
+        literal = ast::string(item->text);
+    } else if (item->kind == value_floating) {
+        F64 value = __builtin_bit_cast(F64, item->bits);
+        literal = ast::expr({.floating = {.value = value}});
+    } else if (item->kind == value_integer) {
+        literal = ast::integer(item->bits);
+    }
+    if (literal == nullptr || !item->negative) {
+        return literal;
+    }
+    ast::UnaryOp negate = .negate;
+    return ast::expr({.unary = {.op = negate, .operand = literal}});
+}
+
+static ast::Decl *enumeration_decl(const Table *t, const EnumInfo *e, TypeList types) {
+    ast::Enumerator items[:] = mem::alloc_slice(ast::Enumerator, e->count);
+    for (U32 i = 0; i < e->count; i++) {
+        const Item *item = &t->items[e->first + i];
+        items[i] = ast::enumerator(item->name, value_expr(item), nullptr);
+    }
+    return from_c(ast::enumeration(e->name, types[e->underlying], items));
+}
+
+static ast::Decl *constant_decl(const Item *item, TypeList types) {
+    ast::Decl *d = from_c(ast::variable(item->name, types[item->type], value_expr(item)));
+    if (d->kind == .variable) {
+        d->kind.variable.is_constexpr = true;
+    }
+    return d;
+}
+
+// Reads `name` (written `<name>` or, with quoted, "name" beside `folder`) with the compile flags `flags`, one on each
+// line. All three are NUL-terminated. The declarations are allocated in the allocator in force; `a` holds the
+// tables read from the shim.
+export Header read(arena::Arena *a, const char *name, Bool quoted, const char *folder, const char *flags) {
+    Table t = read_table(a, name, quoted, folder, flags);
+    Header header = {.not_imported = t.not_imported, .error = t.error};
+    if (countof(t.error) != 0) return header;
+    TypeList types = build_types(&t);
+    Usize typedefs = 0;
+    for (Usize i = 0; i < countof(t.types); i++)
+        if (first_typedef(&t, i)) typedefs += 1;
+    Usize total = countof(t.structs) + typedefs + countof(t.enums) + countof(t.functions) + countof(t.constants);
+    ast::DeclRef *block = (ast::DeclRef *)mem::alloc_array_raw(sizeof(ast::DeclRef), total, alignof(ast::DeclRef));
+    Usize at = 0;
+    for (Usize i = 0; i < countof(t.structs); i++)
+        block[at++] = record_decl(&t.structs[i], types);
+    for (Usize i = 0; i < countof(t.types); i++) {
+        if (!first_typedef(&t, i)) {
+            continue;
+        }
+        block[at++] = from_c(ast::type_alias(t.types[i].name, types[t.types[i].a]));
+    }
+    for (Usize i = 0; i < countof(t.enums); i++)
+        block[at++] = enumeration_decl(&t, &t.enums[i], types);
+    for (Usize i = 0; i < countof(t.functions); i++)
+        block[at++] = function_decl(&t.functions[i], types);
+    for (Usize i = 0; i < countof(t.constants); i++)
+        block[at++] = constant_decl(&t.constants[i], types);
+    header.decls = block[0:total];
     return header;
 }

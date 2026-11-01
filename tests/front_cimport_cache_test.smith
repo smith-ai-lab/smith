@@ -1,0 +1,388 @@
+// front::cimport_cache (#1130, #1112 track C): the cache of what a C header declares. Each test works in a cache of its
+// own (a scratch XDG_CACHE_HOME) and counts the reads by the hits and misses the cache reports, never by timing; the
+// one timing test, for <stdio.h>, compares CPU time. The headers are the fixtures in tests/front/cimport_cache (copied
+// into the scratch folder when a test changes one) and the system's <stdio.h>.
+module front_cimport_cache_test;
+
+import front::ast;
+import front::cimport;
+import front::cimport_cache;
+import std::arena;
+import std::files;
+import std::format;
+import std::mem;
+import std::process;
+import std::slice;
+import std::test;
+import <stdio.h>;
+import <stdlib.h>;
+import <string.h>;
+import <time.h>;
+import <unistd.h>;
+
+typedef cimport::Header Header;
+
+static Str str_of(format::Chars text) {
+    return format::bytes(text.data, countof(text));
+}
+
+// The header's declarations as a module's dump, then what was not imported.
+static Str dump(const Header *h) {
+    if (countof(h->error) != 0) return str_of(format::push("error: ", h->error, "\n"));
+    ast::Module m = ast::new_module("fixture", h->decls);
+    Str out = ast::dump(&m);
+    for (Usize i = 0; i < countof(h->not_imported); i++) {
+        cimport::NotImported n = h->not_imported[i];
+        out = str_of(format::push(out, "not imported ", n.name, ": ", n.reason, "\n"));
+    }
+    return out;
+}
+
+static Str run_line(const char *const argv[:]) {
+    process::OutputResult done = process::run(argv);
+    switch (done) {
+    case .ok: {
+        Usize n = countof(done.ok.output);
+        while (n > 0 && done.ok.output[n - 1] == '\n')
+            n -= 1;
+        return format::bytes((const char *)done.ok.output.data, n);
+    }
+    case .error:
+        return "";
+    }
+}
+
+// The flags a driver would give: smith's own clang resource folder, and the SDK on macOS (as front_cimport_test).
+static Str driver_flags() {
+    const char *self = c::getenv("SMITH_SELF");
+    const char *smith = self != nullptr ? self : "smith";
+    const char *const resource_argv[3] = {smith, "cc", "-print-resource-dir"};
+    Str resource = run_line(resource_argv[0:3]);
+    const char *const sdk_argv[2] = {"xcrun", "--show-sdk-path"};
+    Str sdk = run_line(sdk_argv[0:2]);
+    Str flags = str_of(format::push("-resource-dir\n", resource, "\n"));
+    if (countof(sdk) == 0) return flags;
+    return str_of(format::push(flags, "-isysroot\n", sdk, "\n"));
+}
+
+// A folder of this test's own (named by the process and the test), with a cache folder in it that this process uses.
+static Str scratch(const char *name) {
+    Str folder = str_of(format::push("/tmp/front_cimport_cache_", (I64)c::getpid(), "_", name));
+    const char *const clean[4] = {"rm", "-rf", folder.data};
+    process::OutputResult cleaned = process::run(clean[0:3]);
+    (void)cleaned;
+    files::DoneResult made = files::make_folder(str_of(format::push(folder, "/cache")));
+    test::check_condition(made == .ok);
+    c::setenv("XDG_CACHE_HOME", format::push(folder, "/cache").data, 1);
+    return folder;
+}
+
+static void remove_scratch(Str folder) {
+    const char *const clean[3] = {"rm", "-rf", folder.data};
+    process::OutputResult cleaned = process::run(clean[0:3]);
+    (void)cleaned;
+}
+
+static void write_text(Str path, Str text) {
+    const U8 *bytes = (const U8 *)text.data;
+    files::CountResult written = files::write_file(path, bytes[0:countof(text)], files::Replace);
+    test::check_condition(written == .ok);
+}
+
+static Str read_text(Str path) {
+    files::BytesResult loaded = files::read_file(path);
+    if (loaded == .error) {
+        return "";
+    }
+    return format::bytes((const char *)loaded.ok.data, countof(loaded.ok));
+}
+
+// Copies a fixture of tests/front/cimport_cache into `folder`.
+static void copy_fixture(Str folder, Str name) {
+    write_text(str_of(format::push(folder, "/", name)),
+               read_text(str_of(format::push("tests/front/cimport_cache/", name))));
+}
+
+// The modification time of the file is set far in the past: a new time with the same content.
+static void age(Str path) {
+    const char *const touch[4] = {"touch", "-t", "200001010000", path.data};
+    process::OutputResult done = process::run(touch[0:4]);
+    (void)done;
+}
+
+static Header read_quoted(arena::Arena *memory, const char *name, Str folder, Str flags) {
+    return cimport_cache::read(memory, name, true, folder.data, flags.data);
+}
+
+static Bool has(Str text, const char *part) {
+    return c::strstr(text.data, part) != nullptr;
+}
+
+// ---------------------------------------------------------------- 1. a round trip
+
+static ast::Decl *every_kind_of_declaration_counter() {
+    return ast::variable("counter", ast::named("I32"), ast::binary(.add, ast::integer(1), ast::integer(2)));
+}
+
+static ast::DeclRef *hand_built(Usize *count) {
+    ast::TypeExpr *size = ast::named("size_t");
+    size->qualifiers.is_const = true;
+    ast::TypeKind pointer_kind = {.pointer = {.pointee = size}};
+    ast::TypeExpr *pointer = ast::make_type(pointer_kind);
+    ast::TypeKind array_kind = {.array = {.element = ast::named("U8"), .count = ast::integer(16)}};
+    ast::TypeExpr *array = ast::make_type(array_kind);
+    Str spelling = "long double";
+    ast::TypeKind unsupported_kind = {.unsupported_c = {.spelling = spelling}};
+    ast::TypeExpr *unsupported = ast::make_type(unsupported_kind);
+    ast::TypeRef *parameters = (ast::TypeRef *)mem::alloc_array_raw(sizeof(ast::TypeRef), 1, alignof(ast::TypeRef));
+    parameters[0] = pointer;
+    ast::TypeKind function_kind = {
+        .function = {.params = parameters[0:1], .result = ast::named("Void"), .variadic = true}};
+    ast::TypeArg fn_args[:] = mem::alloc_slice(ast::TypeArg, 1);
+    fn_args[0] = (ast::TypeArg){.type = {.type = ast::make_type(function_kind)}};
+    ast::TypeKind applied_kind = {.applied = {.name = ast::path("Fn"), .args = fn_args}};
+    ast::FieldDecl fields[:] = mem::alloc_slice(ast::FieldDecl, 3);
+    fields[0] = ast::field("name", pointer);
+    fields[1] = ast::field("bytes", array);
+    fields[2] = ast::field("extra", unsupported);
+    ast::Param params[:] = mem::alloc_slice(ast::Param, 2);
+    params[0] = ast::param("format", pointer);
+    params[1] = ast::param("", ast::make_type(applied_kind));
+    ast::Enumerator items[:] = mem::alloc_slice(ast::Enumerator, 2);
+    items[0] = ast::enumerator("first", ast::integer(0), nullptr);
+    ast::UnaryOp negate = .negate;
+    ast::ExprKind negative_kind = {.unary = {.op = negate, .operand = ast::integer(7)}};
+    items[1] = ast::enumerator("second", ast::expr(negative_kind), nullptr);
+    ast::DeclRef *block = (ast::DeclRef *)mem::alloc_array_raw(sizeof(ast::DeclRef), 6, alignof(ast::DeclRef));
+    block[0] = ast::record_decl("Box", fields);
+    block[1] = ast::type_alias("Size", size);
+    block[2] = ast::function("printer", params, ast::named("I32"), nullptr);
+    block[3] = ast::enumeration("Color", ast::named("U32"), items);
+    block[4] = every_kind_of_declaration_counter();
+    block[5] = ast::record_decl("Opaque", fields[0:0]);
+    for (Usize i = 0; i < 6; i++)
+        block[i]->from_c = true;
+    block[4]->exported = true;
+    ast::Decl *printer = block[2];
+    ast::Decl *counter = block[4];
+    ast::Decl *opaque = block[5];
+    if (printer->kind == .function) {
+        printer->kind.function.variadic = true;
+    }
+    if (counter->kind == .variable) {
+        counter->kind.variable.is_constexpr = true;
+    }
+    if (opaque->kind == .record) {
+        opaque->kind.record.opaque = true;
+    }
+    *count = 6;
+    return block;
+}
+
+export void test_cimport_cache_round_trip_keeps_every_kind_of_declaration() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Usize count = 0;
+    ast::DeclRef *block = hand_built(&count);
+    cimport::NotImported skipped[:] = mem::alloc_slice(cimport::NotImported, 1);
+    skipped[0].kind = cimport::not_imported_attribute;
+    skipped[0].name = "printer";
+    skipped[0].reason = "format";
+    Header original = {.decls = block[0:count], .not_imported = skipped};
+    Header back = {};
+    test::check_condition(cimport_cache::round_trip(&memory, &original, &back));
+    test::check_equal(countof(back.decls), count);
+    test::check_condition(slice::equal(dump(&original), dump(&back)));
+    for (Usize i = 0; i < count && i < countof(back.decls); i++)
+        test::check_condition(back.decls[i]->from_c);
+    test::check_condition(back.decls[4]->exported);
+    const ast::Decl *printer = back.decls[2];
+    const ast::Decl *counter = back.decls[4];
+    const ast::Decl *opaque = back.decls[5];
+    if (printer->kind == .function) {
+        test::check_condition(printer->kind.function.variadic);
+    }
+    if (counter->kind == .variable) {
+        test::check_condition(counter->kind.variable.is_constexpr);
+    }
+    if (opaque->kind == .record) {
+        test::check_condition(opaque->kind.record.opaque);
+    }
+    test::check_equal(countof(back.not_imported), 1);
+}
+
+export void test_cimport_cache_does_not_keep_a_function_with_a_body() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::DeclRef *block = (ast::DeclRef *)mem::alloc_array_raw(sizeof(ast::DeclRef), 1, alignof(ast::DeclRef));
+    ast::Param none_given[:] = mem::alloc_slice(ast::Param, 0);
+    ast::StmtRef *none_block = (ast::StmtRef *)mem::alloc_array_raw(sizeof(ast::StmtRef), 1, alignof(ast::StmtRef));
+    ast::Stmt *body = ast::block(none_block[0:0]);
+    block[0] = ast::function("f", none_given, ast::named("Void"), body);
+    Header original = {.decls = block[0:1]};
+    Header back = {};
+    test::check_condition(!cimport_cache::round_trip(&memory, &original, &back));
+}
+
+// ---------------------------------------------------------------- 2. a miss, then a hit
+
+export void test_cimport_cache_first_read_misses_and_second_hits_with_equal_declarations() {
+    Str folder = scratch("hit");
+    defer remove_scratch(folder);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    cimport_cache::reset_counts();
+    Str flags = driver_flags();
+    Header first = read_quoted(&memory, "outer.h", "tests/front/cimport_cache", flags);
+    test::check_equal(countof(first.error), 0);
+    test::check_equal(cimport_cache::misses(), 1);
+    test::check_equal(cimport_cache::hits(), 0);
+    Str entry = cimport_cache::path_of(&memory, "outer.h", true, "tests/front/cimport_cache", flags.data);
+    test::check_condition(countof(entry) != 0);
+    test::check_condition(files::info(entry) == .ok);
+    Header second = read_quoted(&memory, "outer.h", "tests/front/cimport_cache", flags);
+    test::check_equal(cimport_cache::misses(), 1);
+    test::check_equal(cimport_cache::hits(), 1);
+    test::check_equal(cimport_cache::content_checks(), 0);
+    test::check_condition(has(dump(&first), "outer_add"));
+    test::check_condition(slice::equal(dump(&first), dump(&second)));
+}
+
+// ---------------------------------------------------------------- 3. a touched file, a changed file
+
+export void test_cimport_cache_touching_an_included_header_still_hits_and_changing_it_misses() {
+    Str folder = scratch("touch");
+    defer remove_scratch(folder);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    copy_fixture(folder, "outer.h");
+    copy_fixture(folder, "inner.h");
+    cimport_cache::reset_counts();
+    Str flags = driver_flags();
+    Header first = read_quoted(&memory, "outer.h", folder, flags);
+    test::check_equal(cimport_cache::misses(), 1);
+    // A new time and the same content: a hit, after one content check; the entry then has the new time.
+    age(str_of(format::push(folder, "/inner.h")));
+    Header touched = read_quoted(&memory, "outer.h", folder, flags);
+    test::check_equal(cimport_cache::hits(), 1);
+    test::check_equal(cimport_cache::content_checks(), 1);
+    test::check_condition(slice::equal(dump(&first), dump(&touched)));
+    Header again = read_quoted(&memory, "outer.h", folder, flags);
+    test::check_equal(cimport_cache::hits(), 2);
+    test::check_equal(cimport_cache::content_checks(), 1);
+    // Another content: a miss, and the new declaration is there.
+    write_text(str_of(format::push(folder, "/inner.h")), "int inner_origin(void);\nint inner_other(void);\n");
+    Header changed = read_quoted(&memory, "outer.h", folder, flags);
+    test::check_equal(cimport_cache::misses(), 2);
+    test::check_condition(has(dump(&changed), "inner_other"));
+    test::check_condition(!has(dump(&again), "inner_other"));
+    Header after = read_quoted(&memory, "outer.h", folder, flags);
+    test::check_equal(cimport_cache::hits(), 3);
+    test::check_condition(has(dump(&after), "inner_other"));
+}
+
+// ---------------------------------------------------------------- 4. the flags are in the key
+
+export void test_cimport_cache_a_different_define_is_a_different_key() {
+    Str folder = scratch("define");
+    defer remove_scratch(folder);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    cimport_cache::reset_counts();
+    Str flags = driver_flags();
+    Str wide = str_of(format::push(flags, "-D\nWIDE=1\n"));
+    Str loud = str_of(format::push(flags, "-Wall\n-O2\n"));
+    Header plain = read_quoted(&memory, "wide.h", "tests/front/cimport_cache", flags);
+    Header defined = read_quoted(&memory, "wide.h", "tests/front/cimport_cache", wide);
+    test::check_equal(cimport_cache::misses(), 2);
+    test::check_equal(cimport_cache::hits(), 0);
+    test::check_condition(!slice::equal(dump(&plain), dump(&defined)));
+    Str key_plain = cimport_cache::path_of(&memory, "wide.h", true, "tests/front/cimport_cache", flags.data);
+    Str key_wide = cimport_cache::path_of(&memory, "wide.h", true, "tests/front/cimport_cache", wide.data);
+    Str key_loud = cimport_cache::path_of(&memory, "wide.h", true, "tests/front/cimport_cache", loud.data);
+    test::check_condition(!slice::equal(key_plain, key_wide));
+    test::check_condition(slice::equal(key_plain, key_loud)); // warnings and optimization do not change what is read
+    Header again = read_quoted(&memory, "wide.h", "tests/front/cimport_cache", wide);
+    test::check_equal(cimport_cache::hits(), 1);
+    test::check_condition(slice::equal(dump(&defined), dump(&again)));
+}
+
+// ---------------------------------------------------------------- 5. a damaged entry
+
+export void test_cimport_cache_a_truncated_or_garbage_entry_is_a_miss_and_is_rewritten() {
+    Str folder = scratch("damaged");
+    defer remove_scratch(folder);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    cimport_cache::reset_counts();
+    Str flags = driver_flags();
+    Header first = read_quoted(&memory, "outer.h", "tests/front/cimport_cache", flags);
+    Str entry = cimport_cache::path_of(&memory, "outer.h", true, "tests/front/cimport_cache", flags.data);
+    files::BytesResult whole = files::read_file(entry);
+    test::check_condition(whole == .ok);
+    if (whole != .ok) return;
+    Usize size = countof(whole.ok);
+    for (Usize cut = 1; cut <= 3; cut++) {
+        U8 kept[:] = whole.ok;
+        files::CountResult written = files::write_file(entry, kept[0:size * cut / 4], files::Replace);
+        test::check_condition(written == .ok);
+        U32 before = cimport_cache::misses();
+        Header repeat = read_quoted(&memory, "outer.h", "tests/front/cimport_cache", flags);
+        test::check_equal(cimport_cache::misses(), before + 1);
+        test::check_condition(slice::equal(dump(&first), dump(&repeat)));
+    }
+    write_text(entry, "this is not an entry");
+    U32 before = cimport_cache::misses();
+    Header garbage = read_quoted(&memory, "outer.h", "tests/front/cimport_cache", flags);
+    test::check_equal(cimport_cache::misses(), before + 1);
+    test::check_condition(slice::equal(dump(&first), dump(&garbage)));
+    U32 hits_before = cimport_cache::hits();
+    Header rewritten = read_quoted(&memory, "outer.h", "tests/front/cimport_cache", flags);
+    test::check_equal(cimport_cache::hits(), hits_before + 1);
+    test::check_condition(slice::equal(dump(&first), dump(&rewritten)));
+}
+
+// ---------------------------------------------------------------- 6. <stdio.h>
+
+export void test_cimport_cache_stdio_h_hit_takes_under_a_tenth_of_the_miss() {
+    Str folder = scratch("stdio");
+    defer remove_scratch(folder);
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    cimport_cache::reset_counts();
+    Str flags = driver_flags();
+    Header none_yet = cimport_cache::read(&memory, "stdio.h", false, "", flags.data); // asks smith for its identity
+    (void)none_yet;
+    const char *const clean[3] = {"rm", "-rf", str_of(format::push(folder, "/cache/smith")).data};
+    process::OutputResult cleaned = process::run(clean[0:3]);
+    (void)cleaned;
+    cimport_cache::reset_counts();
+    c::clock_t start = c::clock();
+    Header miss = cimport_cache::read(&memory, "stdio.h", false, "", flags.data);
+    c::clock_t middle = c::clock();
+    Header hit = cimport_cache::read(&memory, "stdio.h", false, "", flags.data);
+    c::clock_t end = c::clock();
+    test::check_equal(cimport_cache::misses(), 1);
+    test::check_equal(cimport_cache::hits(), 1);
+    test::check_equal(countof(miss.error), 0);
+    test::check_condition(slice::equal(dump(&miss), dump(&hit)));
+    // POSIX gives clock() in millionths of a second, whatever the system's tick.
+    I64 miss_us = (I64)(middle - start);
+    I64 hit_us = (I64)(end - middle);
+    c::puts(format::push("cimport_cache <stdio.h>: miss ", miss_us, " us of CPU, hit ", hit_us, " us of CPU").data);
+    test::check_condition(hit_us * 10 < miss_us);
+}

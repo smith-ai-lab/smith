@@ -1,2 +1,2 @@
-exported-constexpr-unread/main.smith: error: expected `;` after the import, found `as` (3:21) [undecided_c]
+exported-constexpr-unread/main.smith: ok
 exported-constexpr-unread/shape/board.smith: ok

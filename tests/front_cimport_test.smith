@@ -5,6 +5,7 @@
 // test --update` writes them.
 module front_cimport_test;
 
+import front::ast;
 import front::cimport;
 import std::arena;
 import <stdlib.h>;
@@ -21,93 +22,40 @@ static Str str_of(format::Chars text) {
     return format::bytes(text.data, countof(text));
 }
 
-// The spelling of a type, in smith's terms: sized types, `*` for a pointer, `const` first, `[n]` for an array, a
-// typedef as `name = underlying`. A function type is `Fn#n`; its own line, in `dump`, says what it is (no recursion
-// in a module, so a type is spelled along its one chain).
-static Str type_text(const Header *h, U32 index) {
+// The spelling of a type along its one chain, in smith's terms: `*` for a pointer, `const` first, `Fn of` for a
+// function pointer, a named type as its name (a typedef or a struct stays a name: the alias is its own declaration).
+static Str type_text(const ast::TypeExpr *type) {
     Str out = "";
-    U32 at = index;
-    for (Usize guard = 0; guard <= countof(h->types); guard++) {
-        cimport::CType t = h->types[at];
-        Str constant = (t.flags & cimport::flag_const) != 0 ? "const " : "";
-        if (t.kind == cimport::kind_pointer) {
+    const ast::TypeExpr *at = type;
+    for (Usize guard = 0; guard < 16; guard++) {
+        Str constant = at->qualifiers.is_const ? "const " : "";
+        if (at->kind == .pointer) {
             out = str_of(format::push(out, constant, "*"));
-            at = t.a;
-        } else if (t.kind == cimport::kind_fn_pointer) {
-            out = str_of(format::push(out, constant, "Fn of "));
-            at = t.a;
-        } else if (t.kind == cimport::kind_array) {
-            out = str_of(format::push(out, constant, "[", t.b, "]"));
-            at = t.a;
-        } else if (t.kind == cimport::kind_typedef) {
-            out = str_of(format::push(out, constant, t.name, " = "));
-            at = t.a;
-        } else if (t.kind == cimport::kind_void) {
-            return str_of(format::push(out, constant, "Void"));
-        } else if (t.kind == cimport::kind_bool) {
-            return str_of(format::push(out, constant, "Bool"));
-        } else if (t.kind == cimport::kind_integer) {
-            return str_of(format::push(out, constant, t.b == 1 ? "I" : "U", t.a));
-        } else if (t.kind == cimport::kind_floating) {
-            return str_of(format::push(out, constant, "F", t.a));
-        } else if (t.kind == cimport::kind_struct) {
-            return str_of(format::push(out, constant, "struct ", h->structs[t.a].name));
-        } else if (t.kind == cimport::kind_function) {
-            return str_of(format::push(out, "Fn#", at));
+            at = at->kind.pointer.pointee;
+        } else if (at->kind == .array) {
+            out = str_of(format::push(out, constant, "[]"));
+            at = at->kind.array.element;
+        } else if (at->kind == .applied) {
+            ast::TypeArg arg = at->kind.applied.args[0];
+            out = str_of(format::push(out, "Fn of "));
+            if (arg != .type) return "other";
+            at = arg.type.type;
+        } else if (at->kind == .named) {
+            return str_of(format::push(out, constant, at->kind.named.path.segments[0].text));
+        } else if (at->kind == .function) {
+            return str_of(format::push(out, "function"));
         } else {
-            return str_of(format::push(out, constant, "unsupported(", t.name, ")"));
+            return str_of(format::push(out, "other"));
         }
     }
     return "cycle";
 }
 
-static Str parameters_text(const Header *h, const cimport::Parameter params[:], Bool variadic) {
-    Str out = "";
-    for (Usize i = 0; i < countof(params); i++) {
-        out = str_of(format::push(out, i == 0 ? "" : ", ", type_text(h, params[i].type)));
-    }
-    return variadic ? str_of(format::push(out, ", ...")) : out;
-}
-
-static Str function_text(const Header *h, const cimport::Function *f) {
-    Str params = "";
-    for (Usize i = 0; i < countof(f->parameters); i++) {
-        Str given = f->parameters[i].name;
-        Str name = given;
-        if (countof(given) == 0) {
-            name = "_";
-        }
-        params = str_of(format::push(params, i == 0 ? "" : ", ", name, ": ", type_text(h, f->parameters[i].type)));
-    }
-    return str_of(
-        format::push("fn ", f->name, "(", params, f->variadic ? ", ..." : "", ") -> ", type_text(h, f->result), "\n"));
-}
-
-static Str struct_text(const Header *h, const cimport::Record *s) {
-    if (s->opaque) return str_of(format::push("struct ", s->name, " (opaque)\n"));
-    Str out = str_of(format::push("struct ", s->name, " {\n"));
-    for (Usize i = 0; i < countof(s->fields); i++)
-        out = str_of(format::push(out, "    ", s->fields[i].name, ": ", type_text(h, s->fields[i].type), "\n"));
-    return str_of(format::push(out, "}\n"));
-}
-
-// Everything the header declares, in order, then what was not imported.
+// The header's declarations as a module's dump, then what was not imported.
 static Str dump(const Header *h) {
-    Str out = "";
     if (countof(h->error) != 0) return str_of(format::push("error: ", h->error, "\n"));
-    for (Usize i = 0; i < countof(h->structs); i++) {
-        out = str_of(format::push(out, struct_text(h, &h->structs[i])));
-    }
-    for (Usize i = 0; i < countof(h->functions); i++) {
-        out = str_of(format::push(out, function_text(h, &h->functions[i])));
-    }
-    for (Usize i = 0; i < countof(h->types); i++) {
-        cimport::CType t = h->types[i];
-        if (t.kind == cimport::kind_function) {
-            out = str_of(format::push(out, "Fn#", i, " = Fn(", parameters_text(h, t.parameters, t.variadic), ") -> ",
-                                      type_text(h, t.a), "\n"));
-        }
-    }
+    ast::Module m = ast::new_module("fixture", h->decls);
+    Str out = ast::dump(&m);
     for (Usize i = 0; i < countof(h->not_imported); i++) {
         cimport::NotImported n = h->not_imported[i];
         out = str_of(format::push(out, "not imported ", n.kind == cimport::not_imported_attribute ? "attribute " : "",
@@ -151,9 +99,11 @@ static Header read(arena::Arena *memory, const char *name, Bool quoted) {
     return cimport::read(memory, name, quoted, "tests/front/cimport", flags.data);
 }
 
-static const cimport::Function *find(const Header *h, Str name) {
-    for (Usize i = 0; i < countof(h->functions); i++)
-        if (slice::equal(h->functions[i].name, name)) return &h->functions[i];
+static const ast::Decl *find(const Header *h, Str name) {
+    for (Usize i = 0; i < countof(h->decls); i++) {
+        const ast::Decl *d = h->decls[i];
+        if (d->kind == .function && slice::equal(d->kind.function.name, name)) return d;
+    }
     return nullptr;
 }
 
@@ -173,31 +123,112 @@ export void test_cimport_string_h_has_strlen_returning_usize_of_a_const_char_poi
     defer mem::set_allocator(outside);
     Header h = read(&memory, "string.h", false);
     test::check_equal(countof(h.error), 0);
-    const cimport::Function *length_fn = find(&h, "strlen");
-    test::check_condition(length_fn != nullptr);
-    // A system header's spelling differs by platform (macOS: size_t = __darwin_size_t = U64), so the checks are on
-    // what holds everywhere: the typedef name first, the sized type last, and a pointer to a const char.
-    Str result = type_text(&h, length_fn->result);
-    test::check_condition(c::strncmp(result.data, "size_t = ", 9) == 0);
-    test::check_condition(result[countof(result) - 3] == 'U' && result[countof(result) - 2] == '6');
-    Str param = type_text(&h, length_fn->parameters[0].type);
+    const ast::Decl *length_fn = find(&h, "strlen");
+    if (length_fn == nullptr || length_fn->kind != .function) {
+        test::check_condition(false);
+        return;
+    }
+    test::check_condition(length_fn->from_c);
+    // A system header's spelling differs by platform, so the checks are on what holds everywhere: the result is the
+    // typedef's name, and the parameter a pointer to a const char.
+    Str want_result = "size_t";
+    Str result = type_text(length_fn->kind.function.result);
+    test::check_condition(slice::equal(result, want_result));
     Str want_param = "*const I8";
+    Str param = type_text(length_fn->kind.function.params[0].type);
     test::check_condition(slice::equal(param, want_param));
 }
 
-export void test_cimport_stdio_h_printf_is_variadic_and_file_is_a_typedef_of_a_struct() {
+export void test_cimport_stdio_h_printf_is_variadic_and_fopen_returns_a_pointer_to_file() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     Header h = read(&memory, "stdio.h", false);
     test::check_equal(countof(h.error), 0);
-    const cimport::Function *printf_fn = find(&h, "printf");
-    test::check_condition(printf_fn != nullptr && printf_fn->variadic);
-    const cimport::Function *open_fn = find(&h, "fopen");
-    test::check_condition(open_fn != nullptr);
-    Str file = type_text(&h, open_fn->result);
-    test::check_condition(c::strncmp(file.data, "*FILE = struct ", 15) == 0);
+    const ast::Decl *printf_fn = find(&h, "printf");
+    if (printf_fn == nullptr || printf_fn->kind != .function) {
+        test::check_condition(false);
+        return;
+    }
+    test::check_condition(printf_fn->kind.function.variadic);
+    const ast::Decl *open_fn = find(&h, "fopen");
+    if (open_fn == nullptr || open_fn->kind != .function) {
+        test::check_condition(false);
+        return;
+    }
+    Str want_file = "*FILE";
+    Str file = type_text(open_fn->kind.function.result);
+    test::check_condition(slice::equal(file, want_file));
+}
+
+// The constant `name` (a constexpr variable) of the header, or null.
+static const ast::Decl *find_constant(const Header *h, Str name) {
+    for (Usize i = 0; i < countof(h->decls); i++) {
+        const ast::Decl *d = h->decls[i];
+        if (d->kind == .variable && slice::equal(d->kind.variable.name, name)) return d;
+    }
+    return nullptr;
+}
+
+// Whether the constant is a constexpr of the named type whose value is the integer `magnitude`, negated or not.
+static Bool is_integer_constant(const Header *h, Str name, Str type, U64 magnitude, Bool negative) {
+    const ast::Decl *d = find_constant(h, name);
+    if (d == nullptr || d->kind != .variable || !d->from_c || !d->kind.variable.is_constexpr) return false;
+    Str spelled = type_text(d->kind.variable.type);
+    if (!slice::equal(spelled, type)) return false;
+    const ast::Expr *value = d->kind.variable.init;
+    if (negative) {
+        if (value->kind != .unary) return false;
+        value = value->kind.unary.operand;
+    }
+    return value->kind == .integer && value->kind.integer.value == magnitude;
+}
+
+export void test_cimport_stdio_h_has_eof_seek_set_and_bufsiz_as_constants() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Header h = read(&memory, "stdio.h", false);
+    test::check_equal(countof(h.error), 0);
+    test::check_condition(is_integer_constant(&h, "EOF", "I32", 1, true));
+    test::check_condition(is_integer_constant(&h, "SEEK_SET", "I32", 0, false));
+    const ast::Decl *size = find_constant(&h, "BUFSIZ");
+    test::check_condition(size != nullptr && size->kind == .variable);
+    if (size == nullptr || size->kind != .variable) return;
+    Str want_size = "I32";
+    Str size_type = type_text(size->kind.variable.type);
+    test::check_condition(slice::equal(size_type, want_size));
+    test::check_condition(size->kind.variable.init->kind == .integer &&
+                          size->kind.variable.init->kind.integer.value > 0);
+}
+
+export void test_cimport_limits_h_has_int_max_and_char_bit() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Header h = read(&memory, "limits.h", false);
+    test::check_equal(countof(h.error), 0);
+    test::check_condition(is_integer_constant(&h, "INT_MAX", "I32", 2147483647, false));
+    test::check_condition(is_integer_constant(&h, "CHAR_BIT", "I32", 8, false));
+}
+
+export void test_cimport_math_h_has_pi_as_a_float() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Header h = read(&memory, "math.h", false);
+    test::check_equal(countof(h.error), 0);
+    const ast::Decl *pi = find_constant(&h, "M_PI");
+    test::check_condition(pi != nullptr && pi->kind == .variable);
+    if (pi == nullptr || pi->kind != .variable) return;
+    Str want_pi = "F64";
+    Str pi_type = type_text(pi->kind.variable.type);
+    test::check_condition(slice::equal(pi_type, want_pi));
+    test::check_condition(pi->kind.variable.init->kind == .floating);
 }
 
 export void test_cimport_a_missing_header_is_an_error_naming_the_header_and_the_folders() {
@@ -207,7 +238,7 @@ export void test_cimport_a_missing_header_is_an_error_naming_the_header_and_the_
     defer mem::set_allocator(outside);
     Header h = read(&memory, "no_such_header_anywhere.h", false);
     test::check_condition(countof(h.error) != 0);
-    test::check_equal(countof(h.functions), 0);
+    test::check_equal(countof(h.decls), 0);
     test::check_condition(c::strstr(h.error.data, "no_such_header_anywhere.h") != nullptr);
     test::check_condition(c::strstr(h.error.data, "folders searched") != nullptr);
     test::check_condition(c::strstr(h.error.data, "/include") != nullptr);

@@ -796,7 +796,7 @@ void explain_join(const char *text, Usize used, U64 ended, I32 status) {
     }
 }
 
-[[gnu::noinline]] void explain_failure() {
+[[std::noinline]] void explain_failure() {
     if (!explaining || explain_path == nullptr || explained == nullptr) return;
     if (__atomic_fetch_add(explained + explain_stat_explained, 1, __ATOMIC_RELAXED) >= explain_limit) {
         __atomic_fetch_add(explained + explain_stat_skipped, 1, __ATOMIC_RELAXED);
@@ -1997,7 +1997,7 @@ void coverage_end(const Test *test, Bool passed, F64 cpu) {
 
 // Runs the test: once, or a property test on its one key or on all of them. A failure's stack ends in this function's
 // frame (smith_trace_stop), so it is the same whichever way the runner reached it, which shrinking compares.
-[[gnu::noinline]] void execute(const Test *test, const Options *options, const Command *command) {
+[[std::noinline]] void execute(const Test *test, const Options *options, const Command *command) {
     c::smith_trace_stop = (Usize)__builtin_frame_address(0);
     explaining = command->explain;
     if (test->plain != nullptr) {

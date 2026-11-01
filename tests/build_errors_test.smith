@@ -1,6 +1,10 @@
 // What `smith build` says and does when build.c is wrong or missing (tests/build.sh sections 9 and 9g): no build.c, no
 // default, an empty default, a failing step, a compile error, an unimplemented field, and a step, a task or an alias
 // declared twice.
+// The verbs it starts (smith build, cc, --smith-exec) are dispatched in smith.c, so smith.c is declared.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: runtime/package.c include/smith/ tests/build_fixtures/
 module build_errors_test;
 
 import std::arena;

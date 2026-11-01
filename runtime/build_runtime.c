@@ -5464,6 +5464,7 @@ static int smith_run_command(SmithBuild *b, int argc, char **argv) {
     return status;
 }
 
+#ifndef SMITH_BUILD_CORE // the tests link this file without a build file (include/smith_core_verbs.h)
 int main(int argc, char **argv) {
     SMITH_ASSERT(argc >= 2 && argv[1] != nullptr);
     if (strcmp(argv[1], "--run") == 0) {
@@ -5492,3 +5493,30 @@ int main(int argc, char **argv) {
     smith_write_build_info(&b);
     return 0;
 }
+#endif
+
+#ifdef SMITH_BUILD_CORE
+#include "smith_core_verbs.h"
+
+// The mistake smith_refuse_verb_name records, as text (include/smith_core_verbs.h).
+bool smith_core_verb_name_refused(const char *what, const char *name, char *message, size_t message_size) {
+    SMITH_ASSERT(message != nullptr && message_size > 0);
+    smith_problem_count = 0;
+    smith_context = nullptr;
+    smith_verb_task_allowed = false;
+    message[0] = '\0';
+    bool refused = smith_refuse_verb_name(what, name);
+    if (refused) {
+        const char *text = smith_problems[0];
+        const char *body = strstr(text, "smith: ");
+        body = body != nullptr ? text + 7 : text;
+        if (strncmp(body, "build.c: ", 9) == 0)
+            body += 9;
+        else if (strncmp(body, "build.smith: ", 13) == 0)
+            body += 13;
+        snprintf(message, message_size, "%s", body);
+    }
+    smith_problem_count = 0;
+    return refused;
+}
+#endif

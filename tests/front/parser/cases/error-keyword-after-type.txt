@@ -1,1 +1,1 @@
-error-keyword-after-type/shapes.smith: error: expected `)`, found `double` (8:21) [must_fail_d]
+error-keyword-after-type/shapes.smith: error: the C keyword `double` cannot name a parameter (8:21) [must_fail_d]

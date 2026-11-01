@@ -1,1 +1,1 @@
-generic-two-keyword-params/num.smith: error: expected `)`, found `short` (3:36) [undecided_c]
+generic-two-keyword-params/num.smith: error: the C keyword `short` cannot name a parameter (3:36) [must_fail_d]

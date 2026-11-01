@@ -1082,6 +1082,44 @@ struct AffineAttr final : ParsedAttrInfo {
     }
 };
 
+// ---- [[std::inline]], [[std::noinline]], [[std::cold]]: the GNU attributes under std:: (issue #1420)
+// Each means exactly what its GNU spelling means (`always_inline`, `noinline`, `cold`), so the declaration gets clang's
+// own attribute. The scope is std:: because the new front end rejects [[gnu::x]].
+template <typename Made> struct FunctionAttr : ParsedAttrInfo {
+    bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr, const Decl *D) const override {
+        if (isa<FunctionDecl>(D)) return true;
+        S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+            << Attr << Attr.isRegularKeywordAttribute() << ExpectedFunction;
+        return false;
+    }
+    AttrHandling handleDeclAttribute(Sema &S, Decl *D, const ParsedAttr &Attr) const override {
+        D->addAttr(Made::Create(S.Context, Attr.getRange()));
+        return AttributeApplied;
+    }
+};
+
+struct InlineAttr final : FunctionAttr<AlwaysInlineAttr> {
+    InlineAttr() {
+        static constexpr Spelling spellings[] = {{ParsedAttr::AS_C23, "std::inline"},
+                                                 {ParsedAttr::AS_CXX11, "std::inline"}};
+        Spellings = spellings;
+    }
+};
+struct NoInlineStdAttr final : FunctionAttr<NoInlineAttr> {
+    NoInlineStdAttr() {
+        static constexpr Spelling spellings[] = {{ParsedAttr::AS_C23, "std::noinline"},
+                                                 {ParsedAttr::AS_CXX11, "std::noinline"}};
+        Spellings = spellings;
+    }
+};
+struct ColdStdAttr final : FunctionAttr<ColdAttr> {
+    ColdStdAttr() {
+        static constexpr Spelling spellings[] = {{ParsedAttr::AS_C23, "std::cold"},
+                                                 {ParsedAttr::AS_CXX11, "std::cold"}};
+        Spellings = spellings;
+    }
+};
+
 struct AffinePlugin final : PluginASTAction {
     std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &instance, StringRef) override {
         if (!pluginEnabled) return std::make_unique<ASTConsumer>(); // never null: the multiplexer calls it
@@ -1096,6 +1134,9 @@ struct AffinePlugin final : PluginASTAction {
 };
 
 const ParsedAttrInfoRegistry::Add<AffineAttr> attribute("smith-affine-attr", "[[std::affine]]");
+const ParsedAttrInfoRegistry::Add<InlineAttr> inline_attribute("smith-inline-attr", "[[std::inline]]");
+const ParsedAttrInfoRegistry::Add<NoInlineStdAttr> noinline_attribute("smith-noinline-attr", "[[std::noinline]]");
+const ParsedAttrInfoRegistry::Add<ColdStdAttr> cold_attribute("smith-cold-attr", "[[std::cold]]");
 const FrontendPluginRegistry::Add<AffinePlugin> plugin("smith-affine", "a value of an affine type is used once");
 
 } // namespace

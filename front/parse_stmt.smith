@@ -35,6 +35,7 @@ module front::parse_stmt;
 import front::ast;
 import front::lex;
 import front::parse;
+import front::parse_type;
 import std::mem;
 
 // What an open construct waits for.
@@ -316,7 +317,7 @@ static Bool starts_declaration(const parse::Parser *p) {
     lex::TokenKind kind = parse::peek(p).kind;
     if (kind == lex::type_name || declaration_keyword(kind)) return true;
     if (kind == lex::left_bracket) return parse::peek_at(p, 1).kind == lex::left_bracket;
-    if (kind == lex::name) return path_declaration(p);
+    if (kind == lex::name) return path_declaration(p) || parse_type::call_type_ahead(p, 0);
     return false;
 }
 

@@ -5,6 +5,7 @@ module front::emit_jit;
 
 import front::emit;
 import front::emit_state as state;
+import std::contract;
 import std::format;
 import std::mem;
 import <llvm-c/Core.h>;
@@ -37,6 +38,23 @@ static emit::Error message_of(c::LLVMErrorRef error) {
 // system's allocator in force, never an arena it frees at the end of the test, since LLVM keeps allocations of its own
 // from one test to the next.
 
+// The check functions emitted code calls (std::contract's fail_cast and fail_index), defined as symbols of the JIT at
+// their addresses in this process: nothing exports them for a lookup by name.
+// Exported (bit 0) and callable (bit 2), the LLVMJITSymbolGenericFlags written as the unsigned byte the field is.
+constexpr U8 exported_callable = 5;
+
+static c::LLVMErrorRef define_checks(c::LLVMOrcLLJITRef handle) {
+    c::LLVMOrcCSymbolMapPair pairs[2] = {};
+    Usize addresses[2] = {(Usize)contract::fail_cast, (Usize)contract::fail_index};
+    const char *names[2] = {"smith_contract_fail_cast", "smith_contract_fail_index"};
+    for (Usize i = 0; i < 2; i++) {
+        pairs[i].Name = c::LLVMOrcLLJITMangleAndIntern(handle, names[i]);
+        pairs[i].Sym.Address = addresses[i];
+        pairs[i].Sym.Flags.GenericFlags = exported_callable;
+    }
+    return c::LLVMOrcJITDylibDefine(c::LLVMOrcLLJITGetMainJITDylib(handle), c::LLVMOrcAbsoluteSymbols(pairs, 2));
+}
+
 // A JIT for the host. Its triple and data layout are in `target`.
 export JitResult start() {
     c::LLVMInitializeNativeTarget();
@@ -45,6 +63,7 @@ export JitResult start() {
     c::LLVMErrorRef error = c::LLVMOrcCreateLLJIT(&handle, nullptr);
     const char *triple = nullptr;
     const char *layout = nullptr;
+    if (error == nullptr) error = define_checks(handle);
     if (error == nullptr) {
         triple = c::LLVMOrcLLJITGetTripleString(handle);
         layout = c::LLVMOrcLLJITGetDataLayoutStr(handle);

@@ -36,7 +36,7 @@
 #include <smith/arena.h>
 #include <smith/contract.h>
 #include <smith/random.h>
-#ifdef SMITH_CORE // the units runner links these two as objects of its own (include/smith_core.h)
+#if defined(SMITH_CORE) || defined(SMITH_BUILD_CORE) // the units runner links these two as objects of its own
 #include <smith/http.h>
 #include <smith/trace.h>
 #elif __has_include("internal/http.c")

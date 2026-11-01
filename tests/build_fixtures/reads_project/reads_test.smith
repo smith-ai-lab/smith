@@ -1,3 +1,4 @@
+// smith-covers: lib/std/files.smith lib/std/format.smith lib/std/test.smith
 module reads_test;
 
 import std::arena;

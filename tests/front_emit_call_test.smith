@@ -455,3 +455,49 @@ export void test_front_emit_call_fact_calls_itself() {
     test::check_equal(fact2(6), 720);
     emit_jit::stop(&host);
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// [[std::inline]], [[std::noinline]], [[std::cold]] (#1420): the LLVM function attributes of the same meaning
+
+// The text of the IR of `f(a) { return a; }` carrying the attribute `[[std::<word>]]`.
+static Bool ir_has_attribute(Str word, Str llvm_name) {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[1] = {give(name("a"))};
+    ast::Decl *f = function1("f", "I32", "I32", items);
+    ast::Attribute attributes[1] = {ast::attribute(word)};
+    f->attributes = attributes;
+    ast::DeclRef decls[1] = {f};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::Target target = {};
+    target.triple = "x86_64-unknown-linux-gnu";
+    emit::ModuleResult emitted = emit::module(context, &m, options_for(target));
+    test::check_equal(emitted == .ok, true);
+    Bool found = false;
+    if (emitted == .ok) {
+        char *ir = c::LLVMPrintModuleToString(emitted.ok);
+        found = contains(ir, llvm_name);
+        c::LLVMDisposeMessage(ir);
+        c::LLVMDisposeModule(emitted.ok);
+    }
+    c::LLVMContextDispose(context);
+    return found;
+}
+
+export void test_front_emit_attribute_std_inline_is_alwaysinline() {
+    test::check_equal(ir_has_attribute("std::inline", "alwaysinline"), true);
+}
+
+export void test_front_emit_attribute_std_noinline_is_noinline() {
+    test::check_equal(ir_has_attribute("std::noinline", "noinline"), true);
+}
+
+export void test_front_emit_attribute_std_cold_is_cold() {
+    test::check_equal(ir_has_attribute("std::cold", "cold"), true);
+}
+
+export void test_front_emit_attribute_pure_adds_no_inline_attribute() {
+    test::check_equal(ir_has_attribute("std::pure", "alwaysinline"), false);
+}

@@ -1,0 +1,86 @@
+// Tests of `import m as n;` (#1353, A7k of track A of #1112): an import with an alias, one without, the alias in an
+// `if constexpr` block, `as` as an ordinary name elsewhere, and one test per error message.
+module front_parse_import_as_test;
+
+import front::ast;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+// The dump of a file that must parse without errors.
+static Str dump_of(Str source) {
+    parser::Parsed parsed = parser::parse("x.smith", source);
+    if (countof(parsed.errors) > 0) {
+        Str expected = "no error";
+        test::check_equal(parsed.errors[0].message, expected);
+    }
+    return ast::dump(&parsed.module);
+}
+
+// The first error of a file, or `no error`.
+static Str first_error(Str source) {
+    parser::Parsed parsed = parser::parse("x.smith", source);
+    if (countof(parsed.errors) == 0) return "no error";
+    return parsed.errors[0].message;
+}
+
+export void test_import_with_alias() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = dump_of("import lib::text as tx;");
+    Str want = "(module \n  (import lib::text as tx))\n";
+    test::check_equal(got, want);
+}
+
+export void test_import_without_alias() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = dump_of("import lib::text;");
+    Str want = "(module \n  (import lib::text))\n";
+    test::check_equal(got, want);
+}
+
+export void test_import_alias_in_if_constexpr() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("if constexpr (true) { import lib::text as tx; }");
+    Str want = "no error";
+    test::check_equal(got, want);
+}
+
+export void test_as_is_a_name_elsewhere() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("I32 as(I32 x);");
+    Str want = "no error";
+    test::check_equal(got, want);
+}
+
+export void test_import_alias_without_name() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("import lib::text as;");
+    Str want = "expected a name after `as`: write `import path as name;`, found `;`";
+    test::check_equal(got, want);
+}
+
+export void test_c_header_with_alias() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("import <stdio.h> as x;");
+    Str want = "a C header has no alias: write `import path as name;` for a module";
+    test::check_equal(got, want);
+}

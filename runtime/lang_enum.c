@@ -1318,12 +1318,15 @@ static bool smith_lang_eshape_declare(SmithLang *lang, const SmithHost *host, co
     SmithLangEnumShape *shape = &smith_lang_eshapes[smith_lang_eshape_count];
     memset(shape, 0, sizeof *shape);
     snprintf(shape->name, sizeof shape->name, "%.*s", (int)name->length, name->text);
-    for (size_t at = 3; at < right; at += 3) { // `type T` then `,` or `)`
-        const SmithToken *word = smith_lang_eshape_at(lang, host, token, at);
-        const SmithToken *param = smith_lang_eshape_at(lang, host, token, at + 1);
-        const SmithToken *after = smith_lang_eshape_at(lang, host, token, at + 2);
+    size_t width = 3;
+    for (size_t at = 3; at < right; at += width) { // `Type T` or `constexpr Type T`, then `,` or `)`
+        bool written = smith_lang_ident(smith_lang_eshape_at(lang, host, token, at), "constexpr");
+        width = written ? 4 : 3;
+        const SmithToken *word = smith_lang_eshape_at(lang, host, token, at + (written ? 1 : 0));
+        const SmithToken *param = smith_lang_eshape_at(lang, host, token, at + width - 2);
+        const SmithToken *after = smith_lang_eshape_at(lang, host, token, at + width - 1);
         bool good = smith_lang_ident(word, "Type") && param->kind == SmithTokenKind_Identifier &&
-                    (at + 2 == right ? smith_lang_punct(after, ")") : smith_lang_punct(after, ",")) &&
+                    (at + width - 1 == right ? smith_lang_punct(after, ")") : smith_lang_punct(after, ",")) &&
                     shape->param_count < smith_lang_eshape_params_max;
         if (!good) {
             smith_lang_error(lang, host, word->location, "%s", smith_lang_eshape_gap);
