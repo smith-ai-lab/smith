@@ -34,7 +34,7 @@ constexpr char common_script[_] =
     "k=$( (cat \"$r/lib/trace.c\" \"$r/lib/std/contract.smith\" \"$r/.smith/include/smith/trace.h\" "
     "\"$r/.smith/include/smith/handlers.h\"; echo \"$id $F\") | cksum | cut -d\" \" -f1); d=\"$c/$k\"; "
     "if [ ! -f \"$d/trace.o\" ] || [ ! -f \"$d/contract.o\" ]; then "
-    "mkdir -p \"$c\" && t=$(mktemp -d \"$c/tmp-XXXXXX\") && mkdir -p \"$t/lib/smith\" && "
+    "mkdir -p \"$c\" && t=$(mktemp -d \"$c/tmp-XXXXXX\") && mkdir -p \"$t/lib/std\" && "
     "cp \"$r/lib/trace.c\" \"$t/lib/\" && cp \"$r/lib/std/contract.smith\" \"$t/lib/std/\" && cd \"$t\" && "
     "eval \"smith cc $F -c lib/trace.c -o trace.o\" 2>&1 && "
     "eval \"smith cc $F -c lib/std/contract.smith -o contract.o\" 2>&1 "
