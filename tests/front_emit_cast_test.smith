@@ -1,0 +1,171 @@
+// Tests of the run-time check of a cast that can lose a value (K2, #1329 of #1112): source text is read by
+// front::parser, checked by front::types_decl (which marks the casts, K1) and emitted with `Options.checked`. Golden IR
+// per kind (narrowing, signed to unsigned, unsigned to signed, and the casts with no check), and run tests: a value
+// that fits comes back, one that does not reaches the function's trap block (a forked child dies).
+// Float to integer waits for floats in the emitter. Memory as in tests/front_emit_memory_test.smith: the tree and the
+// checker's table are in an arena, the emitter and LLVM use the system's allocator.
+module front_emit_cast_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <string.h>;
+import <unistd.h>;
+import <sys/wait.h>;
+
+typedef I32 (*NarrowFn)(I64);
+typedef U8 (*ByteFn)(I32);
+typedef U32 (*SignFn)(I32);
+typedef I32 (*UnsignFn)(U32);
+typedef I32 (*Probe)(Usize);
+
+struct Scenario {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    parser::Parsed parsed;
+    types::Checked checked;
+};
+
+static void begin(Scenario *s, Str source) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parser::parse("t.smith", source);
+    test::check_equal(countof(s->parsed.errors), (Usize)0);
+    s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+    test::check_equal(s->checked.error_count, (Usize)0);
+    mem::set_allocator(outside);
+}
+
+static emit::Options options_for(emit::Target target, const types::Checked *checked) {
+    emit::Options options = {};
+    options.target = target;
+    options.checked = checked;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static void jit_scenario(emit_jit::Jit *host, Scenario *s) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s->parsed.module, options_for(host->target, &s->checked));
+    test::check_equal(emitted == .ok, true);
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    }
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+static char *ir_of(Str source) {
+    Scenario s = {};
+    begin(&s, source);
+    emit_jit::Jit host = start_jit();
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s.parsed.module, options_for(host.target, &s.checked));
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        c::LLVMDisposeModule(emitted.ok);
+    }
+    c::LLVMContextDispose(context);
+    emit_jit::stop(&host);
+    return text;
+}
+
+static Bool contains(const char *text, Str needle) {
+    return c::strstr(text, needle.data) != nullptr; // a literal's text ends with a terminator
+}
+
+export void test_front_emit_cast_narrowing_compares_the_round_trip() {
+    char *ir = ir_of("export I32 f(I64 a) { return (I32)a; }");
+    test::check_equal(contains(ir, "trunc i64 %0 to i32"), true);
+    test::check_equal(contains(ir, "sext i32 %1 to i64"), true);
+    test::check_equal(contains(ir, "icmp ne i64"), true);
+    test::check_equal(contains(ir, "br i1 %lost"), true);
+    test::check_equal(contains(ir, "llvm.trap"), true);
+}
+
+export void test_front_emit_cast_signed_to_unsigned_also_checks_the_sign() {
+    char *ir = ir_of("export U32 f(I32 a) { return (U32)a; }");
+    test::check_equal(contains(ir, "icmp slt i32 %0, 0"), true);
+    test::check_equal(contains(ir, "icmp ne"), false); // the same width: the sign is all that can be lost
+}
+
+export void test_front_emit_cast_unsigned_to_signed_checks_the_result() {
+    char *ir = ir_of("export I32 f(U32 a) { return (I32)a; }");
+    test::check_equal(contains(ir, "icmp slt i32 %0, 0"), true);
+    test::check_equal(contains(ir, "icmp ne"), false);
+}
+
+export void test_front_emit_cast_with_nothing_to_lose_has_no_check() {
+    char *widen = ir_of("export I64 f(I32 a) { return (I64)a; }");
+    test::check_equal(contains(widen, "sext i32 %0 to i64"), true);
+    test::check_equal(contains(widen, "lost"), false);
+    char *same = ir_of("export I32 f(I32 a) { return (I32)a; }");
+    test::check_equal(contains(same, "lost"), false);
+    char *unsigned_widen = ir_of("export I64 f(U32 a) { return (I64)a; }");
+    test::check_equal(contains(unsigned_widen, "lost"), false);
+}
+
+// Runs the function at `address` in a child and says whether it died (a trap ends the child with a signal, or with the
+// runner's crash report as a nonzero exit).
+static Bool traps(Usize address, Usize argument) {
+    Probe call = (Probe)address;
+    I32 child = c::fork();
+    if (child == 0) {
+        call(argument);
+        c::_exit(0);
+    }
+    I32 status = 0;
+    c::waitpid(child, &status, 0);
+    return status != 0;
+}
+
+export void test_front_emit_cast_run_passes_a_value_that_fits_and_fails_one_that_does_not() {
+    Scenario s = {};
+    begin(&s, "export U8 byte(I32 a) { return (U8)a; } export U32 sign(I32 a) { return (U32)a; } "
+              "export I32 narrow(I64 a) { return (I32)a; } export I32 unsign(U32 a) { return (I32)a; }");
+    emit_jit::Jit host = start_jit();
+    jit_scenario(&host, &s);
+    Usize byte_at = symbol_of(&host, "byte");
+    Usize sign_at = symbol_of(&host, "sign");
+    Usize narrow_at = symbol_of(&host, "narrow");
+    Usize unsign_at = symbol_of(&host, "unsign");
+    ByteFn byte = (ByteFn)byte_at;
+    SignFn sign = (SignFn)sign_at;
+    NarrowFn narrow = (NarrowFn)narrow_at;
+    UnsignFn unsign = (UnsignFn)unsign_at;
+    test::check_equal(byte(255), (U8)255);
+    test::check_equal(sign(7), (U32)7);
+    test::check_equal(narrow(-5), -5);
+    test::check_equal(unsign(5), 5);
+    // Outside the range: each call would trap, so each runs in a child of its own.
+    test::check_equal(traps(byte_at, 256), true);
+    test::check_equal(traps(byte_at, (Usize)-1), true);
+    test::check_equal(traps(sign_at, (Usize)-1), true);
+    test::check_equal(traps(narrow_at, 0x100000000ULL), true);
+    test::check_equal(traps(unsign_at, 0x80000000ULL), true);
+    emit_jit::stop(&host);
+}

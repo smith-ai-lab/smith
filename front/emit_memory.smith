@@ -24,6 +24,7 @@ module front::emit_memory;
 import front::ast;
 import front::emit_arith as arith;
 import front::emit_state as state;
+import front::types;
 import std::arena;
 import std::format;
 import std::mem;
@@ -465,6 +466,28 @@ static Bool is_integer_like(state::Ty ty) {
     return ty.kind == .integer || ty.kind == .boolean;
 }
 
+// A cast the checker marked asserts that the value fits the target: lost when the value does not survive the trip to
+// the target and back, or when a signed value is negative and the target unsigned, or the result negative and the
+// source unsigned. A failed assertion reaches the function's trap block, like a failed index (K2, #1329).
+static void check_fits(state::Emitter *e, state::Value from, state::Ty to, c::LLVMValueRef converted) {
+    c::LLVMValueRef lost = c::LLVMConstInt(c::LLVMInt1TypeInContext(e->context), 0, 0);
+    if (from.ty.bits != to.bits) {
+        c::LLVMValueRef back = c::LLVMBuildIntCast2(e->builder, converted, from.ty.llvm, to.is_signed, "");
+        lost = c::LLVMBuildICmp(e->builder, c::LLVMIntNE, back, from.llvm, "lost");
+    }
+    if (from.ty.is_signed && !to.is_signed) {
+        c::LLVMValueRef zero = c::LLVMConstInt(from.ty.llvm, 0, 0);
+        c::LLVMValueRef negative = c::LLVMBuildICmp(e->builder, c::LLVMIntSLT, from.llvm, zero, "negative");
+        lost = c::LLVMBuildOr(e->builder, lost, negative, "lost");
+    }
+    if (!from.ty.is_signed && to.is_signed) {
+        c::LLVMValueRef zero = c::LLVMConstInt(to.llvm, 0, 0);
+        c::LLVMValueRef negative = c::LLVMBuildICmp(e->builder, c::LLVMIntSLT, converted, zero, "negative");
+        lost = c::LLVMBuildOr(e->builder, lost, negative, "lost");
+    }
+    arith::trap_if(e, lost);
+}
+
 static state::Status cast_finish(state::Emitter *e, const state::Work *w) {
     state::Value from = state::pop_value(e);
     state::Ty to = w->ty;
@@ -475,6 +498,7 @@ static state::Status cast_finish(state::Emitter *e, const state::Work *w) {
             out = c::LLVMBuildICmp(e->builder, c::LLVMIntNE, from.llvm, zero, "");
         } else {
             out = c::LLVMBuildIntCast2(e->builder, from.llvm, to.llvm, from.ty.is_signed, "");
+            if (w->flag && from.ty.kind == .integer) check_fits(e, from, to, out);
         }
         state::push_value(e, (state::Value){.llvm = out, .ty = to});
         return state::success();
@@ -500,7 +524,8 @@ export state::Status cast(state::Emitter *e, const ast::Expr *x, state::Hint _) 
     }
     state::Hint hint = state::no_hint();
     if (operand->kind == .null_pointer) hint = state::hint_of(made.ok);
-    state::push_then(e, (state::Work){.then = cast_finish, .ty = made.ok, .span = x->span});
+    Bool checked = e->options.checked != nullptr && types::cast_checked(e->options.checked, x).needed;
+    state::push_then(e, (state::Work){.then = cast_finish, .ty = made.ok, .flag = checked, .span = x->span});
     state::push_eval(e, operand, hint);
     return state::success();
 }
