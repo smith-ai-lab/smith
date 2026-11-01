@@ -296,7 +296,7 @@ generic-error-instance/num.smith: ok
 generic-field-element/main.smith: ok
 generic-field-element/walk.smith: ok
 generic-fields/main.smith: ok
-generic-fields/reflect.smith: error: expected `)` to end `typeof`, found `.` (12:49)
+generic-fields/reflect.smith: ok
 generic-fields-doc/docs.smith: ok
 generic-fields-doc/main.smith: ok
 generic-fields-error/main.smith: error: expected a tag name after `struct`, `union` or `enum` (12:12)
@@ -314,7 +314,7 @@ generic-fields-values/walk.smith: error: expected a field name, found `,` (13:8)
 generic-for-constexpr-error/bad.smith: error: expected `)`, found `,` (5:45)
 generic-for-constexpr-error/main.smith: ok
 generic-for-range/main.smith: ok
-generic-for-range/reflect.smith: error: expected `)` to end `typeof`, found `.` (12:49)
+generic-for-range/reflect.smith: ok
 generic-for-range-error/main.smith: error: a range `for` declares an index and an element at most: `for (Usize i, T x : xs)` (5:36)
 generic-function/apply.smith: ok
 generic-function/main.smith: ok
@@ -612,4 +612,4 @@ value-query-plain/main.smith: C, out of scope
 value-query-windows/size.smith: ok
 void-pointer-cast/main.smith: ok
 void-pointer-plain/main.smith: C, out of scope
-total 614, ok 377, error 113, C 124, skipped 0
+total 614, ok 379, error 111, C 124, skipped 0

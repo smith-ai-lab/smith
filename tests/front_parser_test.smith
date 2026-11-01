@@ -36,12 +36,10 @@ static Str gap_a1() {
            "error-range-for/main.smith\n"
            "error-slice-initializer-unread/main.smith\n"
            "error-type-value-import/main.smith\n"
-           "generic-fields-error/main.smith\n"
-           "generic-fields/reflect.smith\n";
+           "generic-fields-error/main.smith\n";
 }
 static Str gap_a2() {
-    return "generic-for-range/reflect.smith\n"
-           "generic-slice-restrict/pair.smith\n"
+    return "generic-slice-restrict/pair.smith\n"
            "tuple-modules/geo/b.smith\n"
            "type-value-import/main.smith\n";
 }
