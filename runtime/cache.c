@@ -18,6 +18,9 @@ typedef struct {
 
 static SmithCacheEntry smith_cache_entries[smith_cache_entries_max];
 
+// Where the listing and the "removed" lines go: stdout, or the memory of smith_core_cache.
+static FILE *smith_cache_out;
+
 // <base>/lock: smith build holds it shared for as long as the build runs, `smith cache clean` takes it exclusively.
 static bool smith_cache_lock_path(char *out) {
     SmithPackageFault error;
@@ -99,7 +102,7 @@ static void smith_cache_show_one(SmithCacheKind kind, bool verbose) {
         smith_cache_format_size(used, text);
         char cap[32];
         smith_cache_format_size(smith_cache_limit(), cap);
-        printf("steps: %s\n  %s (cap %s)\n", folder, text, cap);
+        fprintf(smith_cache_out, "steps: %s\n  %s (cap %s)\n", folder, text, cap);
         return;
     }
     size_t kept = 0;
@@ -111,8 +114,8 @@ static void smith_cache_show_one(SmithCacheKind kind, bool verbose) {
     smith_cache_format_size(bytes, size);
     char cap[32];
     smith_cache_format_size(smith_cache_limit(), cap);
-    printf("%s: %s\n  %zu %s, %s (cap %s)\n", smith_cache_name(kind), folder, total, total == 1 ? "entry" : "entries",
-           size, cap);
+    fprintf(smith_cache_out, "%s: %s\n  %zu %s, %s (cap %s)\n", smith_cache_name(kind), folder, total,
+            total == 1 ? "entry" : "entries", size, cap);
     if (!verbose) return;
     for (size_t i = 0; i < kept; i++) {
         char entry_size[32];
@@ -121,9 +124,9 @@ static void smith_cache_show_one(SmithCacheKind kind, bool verbose) {
         struct tm utc;
         time_t last = smith_cache_entries[i].last_used;
         if (gmtime_r(&last, &utc) != nullptr) strftime(when, sizeof when, "%Y-%m-%d %H:%M UTC", &utc);
-        printf("  %.16s  %10s  last used %s\n", smith_cache_entries[i].name, entry_size, when);
+        fprintf(smith_cache_out, "  %.16s  %10s  last used %s\n", smith_cache_entries[i].name, entry_size, when);
     }
-    if (total > kept) printf("  and %zu more\n", total - kept);
+    if (total > kept) fprintf(smith_cache_out, "  and %zu more\n", total - kept);
 }
 
 // The lint cache (runtime/lint_cache.c) is files in two levels of folders, so it is counted by its files.
@@ -140,7 +143,8 @@ static void smith_cache_show_lint(void) {
     }
     char size[32];
     smith_cache_format_size(bytes, size);
-    printf("lint: %s\n  %llu %s, %s\n", folder, (unsigned long long)files, files == 1 ? "file" : "files", size);
+    fprintf(smith_cache_out, "lint: %s\n  %llu %s, %s\n", folder, (unsigned long long)files,
+            files == 1 ? "file" : "files", size);
 }
 
 static void smith_cache_show(bool verbose) {
@@ -148,20 +152,26 @@ static void smith_cache_show(bool verbose) {
     smith_cache_show_one(SmithCache_Packages, verbose);
     smith_cache_show_lint();
     smith_cache_show_one(SmithCache_Steps, verbose);
-    printf("an entry unused for %d days is removed, checked at most once a week\n",
-           smith_cache_prune_after / (24 * 60 * 60));
+    fprintf(smith_cache_out, "an entry unused for %d days is removed, checked at most once a week\n",
+            smith_cache_prune_after / (24 * 60 * 60));
 }
 
-// Takes the lock exclusively, or stops with a message when a build holds it. With no lock file there is no build.
-// The descriptor stays open until the process ends, so no build starts while the clean runs: it waits for the lock.
-static void smith_cache_exclude_builds(void) {
-    char lock[PATH_MAX];
-    if (!smith_cache_lock_path(lock)) return;
+// The descriptor that holds the lock exclusively: open until the process ends (no build starts while the clean runs: it
+// waits for the lock), or until smith_core_cache closes it.
+static int smith_cache_exclusive_fd = -1;
+
+// Takes the lock exclusively and returns true, or false (and its path) when a build holds it. With no lock file there
+// is no build.
+static bool smith_cache_exclude_builds(char lock[PATH_MAX]) {
+    if (!smith_cache_lock_path(lock)) return true;
     int fd = open(lock, O_RDWR);
-    if (fd < 0) return;
+    if (fd < 0) return true;
     if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
-        smith_die(smith_exit_usage, "a smith build is using the cache; clean it when the build has finished", lock);
+        close(fd);
+        return false;
     }
+    smith_cache_exclusive_fd = fd;
+    return true;
 }
 
 static void smith_cache_clean_one(SmithCacheKind kind) {
@@ -176,7 +186,7 @@ static void smith_cache_clean_one(SmithCacheKind kind) {
     smith_package_remove(folder);
     char size[32];
     smith_cache_format_size(bytes, size);
-    printf("removed %s: %zu %s, %s\n", folder, total, total == 1 ? "entry" : "entries", size);
+    fprintf(smith_cache_out, "removed %s: %zu %s, %s\n", folder, total, total == 1 ? "entry" : "entries", size);
 }
 
 static void smith_cache_clean_lint(void) {
@@ -193,26 +203,92 @@ static void smith_cache_clean_lint(void) {
     smith_package_remove(folder);
     char size[32];
     smith_cache_format_size(bytes, size);
-    printf("removed %s: %llu %s, %s\n", folder, (unsigned long long)files, files == 1 ? "file" : "files", size);
+    fprintf(smith_cache_out, "removed %s: %llu %s, %s\n", folder, (unsigned long long)files,
+            files == 1 ? "file" : "files", size);
+}
+
+constexpr char smith_cache_usage[] = "usage: smith cache [-v] | smith cache clean [modules|packages|lint|steps]";
+constexpr char smith_cache_busy[] = "a smith build is using the cache; clean it when the build has finished";
+
+// Whether the arguments are one of the forms of the usage line.
+static bool smith_cache_args_ok(int count, char **args) {
+    if (count == 0 || (count == 1 && strcmp(args[0], "-v") == 0)) return true;
+    if (strcmp(args[0], "clean") != 0 || count > 2) return false;
+    return count == 1 || strcmp(args[1], "modules") == 0 || strcmp(args[1], "packages") == 0 ||
+           strcmp(args[1], "lint") == 0 || strcmp(args[1], "steps") == 0;
 }
 
 // `smith cache [-v]` and `smith cache clean [modules|packages|lint]`.
 static int smith_cache_main(int count, char **args) {
-    constexpr char usage[] = "usage: smith cache [-v] | smith cache clean [modules|packages|lint|steps]";
+    if (smith_cache_out == nullptr) smith_cache_out = stdout;
+    if (!smith_cache_args_ok(count, args)) smith_die(smith_exit_usage, smith_cache_usage, nullptr);
     if (count == 0 || (count == 1 && strcmp(args[0], "-v") == 0)) {
         smith_cache_show(count == 1);
         return 0;
     }
-    if (strcmp(args[0], "clean") != 0 || count > 2) smith_die(smith_exit_usage, usage, nullptr);
     bool modules = count == 1 || strcmp(args[1], "modules") == 0;
     bool packages = count == 1 || strcmp(args[1], "packages") == 0;
     bool lint = count == 1 || strcmp(args[1], "lint") == 0;
     bool steps = count == 1 || strcmp(args[1], "steps") == 0;
-    if (!modules && !packages && !lint && !steps) smith_die(smith_exit_usage, usage, nullptr);
-    smith_cache_exclude_builds();
+    char lock[PATH_MAX];
+    if (!smith_cache_exclude_builds(lock)) smith_die(smith_exit_usage, smith_cache_busy, lock);
     if (modules) smith_cache_clean_one(SmithCache_Modules);
     if (packages) smith_cache_clean_one(SmithCache_Packages);
     if (lint) smith_cache_clean_lint();
     if (steps) smith_cache_clean_one(SmithCache_Steps);
     return 0;
 }
+
+#ifdef SMITH_CORE
+// include/smith_core_cache.h: `smith cache` in process on an explicit cache folder. What the verb would end the process
+// for is returned as its status (2) with the message in `out`.
+int smith_core_cache(const char *xdg_cache_home, const char *home, int count, char **args, char *out, size_t out_size) {
+    smith_core_environment.given = true;
+    smith_core_environment.xdg = xdg_cache_home;
+    smith_core_environment.home = home;
+    int status = 0;
+    char text[PATH_MAX + 128] = "";
+    char base[PATH_MAX];
+    SmithPackageFault fault = {};
+    char *memory = nullptr;
+    size_t length = 0;
+    FILE *stream = open_memstream(&memory, &length);
+    if (stream == nullptr) {
+        snprintf(out, out_size, "cannot make a stream");
+        smith_core_environment.given = false;
+        return 1;
+    }
+    char lock[PATH_MAX];
+    if (!smith_cache_args_ok(count, args)) {
+        snprintf(text, sizeof text, "%s\n", smith_cache_usage);
+        status = smith_exit_usage;
+    } else if (!smith_cache_base(base, &fault)) {
+        snprintf(text, sizeof text, "smith: cache: %s\n", fault.text);
+        status = smith_exit_usage;
+    } else if (count == 0 || (count == 1 && strcmp(args[0], "-v") == 0)) {
+        smith_cache_out = stream;
+        smith_cache_show(count == 1);
+    } else if (!smith_cache_exclude_builds(lock)) {
+        snprintf(text, sizeof text, "smith: %s: %s\n", smith_cache_busy, lock);
+        status = smith_exit_usage;
+    } else {
+        smith_cache_out = stream;
+        bool all = count == 1;
+        if (all || strcmp(args[1], "modules") == 0) smith_cache_clean_one(SmithCache_Modules);
+        if (all || strcmp(args[1], "packages") == 0) smith_cache_clean_one(SmithCache_Packages);
+        if (all || strcmp(args[1], "lint") == 0) smith_cache_clean_lint();
+        if (all || strcmp(args[1], "steps") == 0) smith_cache_clean_one(SmithCache_Steps);
+    }
+    smith_cache_out = nullptr;
+    fputs(text, stream);
+    fclose(stream);
+    if (smith_cache_exclusive_fd >= 0) close(smith_cache_exclusive_fd); // the lock goes with it
+    smith_cache_exclusive_fd = -1;
+    snprintf(out, out_size, "%s", memory != nullptr ? memory : "");
+    free(memory);
+    smith_core_environment.given = false;
+    smith_core_environment.xdg = nullptr;
+    smith_core_environment.home = nullptr;
+    return status;
+}
+#endif
