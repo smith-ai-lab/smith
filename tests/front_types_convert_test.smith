@@ -99,11 +99,23 @@ export void test_front_types_convert_floats_and_integers_need_casts() {
     test::check_condition(is(conv(&t, named(&t, "F32"), named(&t, "F64")), types_convert::widening));
     refused(conv(&t, named(&t, "F64"), named(&t, "F32")), "expected F32", "found F64", "write a cast: (F32)x");
     refused(conv(&t, named(&t, "F64"), named(&t, "I32")), "expected I32", "found F64", "write a cast: (I32)x");
-    refused(conv(&t, named(&t, "I32"), named(&t, "F64")), "expected F64", "found I32", "write a cast: (F64)x");
+    // Always exact: the integer's bits fit the mantissa (24 for F32, 53 for F64).
+    test::check_condition(is(conv(&t, named(&t, "I32"), named(&t, "F64")), types_convert::widening));
+    test::check_condition(is(conv(&t, named(&t, "U32"), named(&t, "F64")), types_convert::widening));
+    test::check_condition(is(conv(&t, named(&t, "I16"), named(&t, "F32")), types_convert::widening));
+    test::check_condition(is(conv(&t, named(&t, "U16"), named(&t, "F32")), types_convert::widening));
+    test::check_condition(is(conv(&t, named(&t, "I8"), named(&t, "F32")), types_convert::widening));
+    test::check_condition(is(conv(&t, named(&t, "U8"), named(&t, "F64")), types_convert::widening));
+    // Could round: a cast.
+    refused(conv(&t, named(&t, "I32"), named(&t, "F32")), "expected F32", "found I32", "write a cast: (F32)x");
+    refused(conv(&t, named(&t, "U32"), named(&t, "F32")), "expected F32", "found U32", "write a cast: (F32)x");
+    refused(conv(&t, named(&t, "I64"), named(&t, "F64")), "expected F64", "found I64", "may round");
+    refused(conv(&t, named(&t, "U64"), named(&t, "F64")), "expected F64", "found U64", "write a cast: (F64)x");
+    refused(conv(&t, named(&t, "Usize"), named(&t, "F64")), "expected F64", "found Usize", "may round");
     // An integer constant a float holds exactly converts; any other does not.
     types_convert::Literal zero = types_convert::constant(0);
     test::check_condition(
-        is(types_convert::convert(&t, named(&t, "I32"), named(&t, "F64"), zero), types_convert::constant_fits));
+        is(types_convert::convert(&t, named(&t, "I64"), named(&t, "F64"), zero), types_convert::constant_fits));
     test::check_condition(
         is(types_convert::convert(&t, named(&t, "I32"), named(&t, "F32"), types_convert::constant(-16777216)),
            types_convert::constant_fits));
@@ -294,6 +306,25 @@ export void test_front_types_convert_casts() {
     refused(cast(&t, t.text, int32), "expected I32", "found Str", "convert the parts one at a time");
     refused(cast(&t, types::option_of(&t, int32), int32), "expected I32", "found Option(I32)",
             "test whether it holds a value first");
+}
+
+export void test_front_types_convert_float_casts_round_and_are_not_checked() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types_convert::Verdict a = cast(&t, named(&t, "I32"), named(&t, "F32"));
+    test::check_condition(is(a, types_convert::cast));
+    test::check_condition(!a.checked);
+    test::check_condition(cast(&t, named(&t, "I64"), named(&t, "F64")).ok);
+    test::check_condition(!cast(&t, named(&t, "I64"), named(&t, "F64")).checked);
+    test::check_condition(cast(&t, named(&t, "F64"), named(&t, "F32")).ok);
+    test::check_condition(!cast(&t, named(&t, "F64"), named(&t, "F32")).checked);
+    test::check_condition(cast(&t, named(&t, "U64"), named(&t, "F32")).ok);
+    test::check_condition(!cast(&t, named(&t, "U64"), named(&t, "F32")).checked);
+    // Float to integer stays checked.
+    test::check_condition(cast(&t, named(&t, "F32"), named(&t, "I64")).checked);
 }
 
 export void test_front_types_convert_lossy_casts_are_checked() {

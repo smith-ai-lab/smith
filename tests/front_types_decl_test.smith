@@ -123,6 +123,8 @@ export void test_front_types_decl_casts_that_can_lose_a_value_are_marked_checked
     casts("U8 a() { return (U8)200; }", 0);
     casts("F64 a(I32 x) { return (F64)x; }", 0);
     casts("U32 a(U8 x) { return (U32)x; }", 0);
+    casts("F32 a(I64 x) { return (F32)x; }", 0);
+    casts("F64 a(I32 x) { return x; }", 0);
     casts("Str a(U8 xs[:]) { return (Str)xs; }", 0);
 }
 
@@ -130,6 +132,7 @@ export void test_front_types_decl_a_refused_cast_and_the_decided_implicit_rules_
     fails("I32 f(I32 *p) { return (I32)p; }", "expected I32", "cast through Usize");
     fails("F64 x = 1;\nF32 y = 16777217;", "16777217 is not exactly an F32", "write a cast");
     clean("F64 x = 0;");
+    fails("F32 a(I32 x) { return x; }", "found I32", "write a cast: (F32)x");
     fails("Str a(U8 xs[:]) { return xs; }", "found U8[:]", "(Str)xs");
     fails("U8 a() { return (U8)300; }", "300 does not fit U8", "wrapping::to(U8, x)");
     fails("U32 a() { return (U32)-1; }", "-1 does not fit U32", "wrapping::to(U32, x)");

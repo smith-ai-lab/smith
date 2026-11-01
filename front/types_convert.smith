@@ -24,8 +24,10 @@
 //   integers      Widening of the same signedness is implicit (`I32` to `I64`, `U8` to `U32`), and so is unsigned to
 //                 a strictly wider signed (`U32` to `I64`). Narrowing and a change of sign are refused unless the value
 //                 is a constant that fits. `U64` to `Usize` is widening only where the target's `Usize` is 64 bits.
-//   floats        `F32` to `F64` is implicit. `F64` to `F32`, integer to float and float to integer need a cast, but
-//                 an integer constant that the float holds exactly converts (`F64 x = 0;`).
+//   floats        `F32` to `F64` is implicit, and so is an integer whose bits fit the float's mantissa (24 for `F32`,
+//                 53 for `F64`: `I16` to `F32`, `I32` to `F64`). Anything that could round needs a cast (`F64` to
+//                 `F32`, `I32` to `F32`, `I64` to `F64`, any float to an integer), but an integer constant that the
+//                 float holds exactly converts (`F64 x = 0;`). A written `(F32)x` rounds to nearest, unchecked.
 //   Bool          Only a `Bool` is a `Bool`; write a comparison (`x != 0`, `p != null`). A `Bool` is not an integer.
 //   enumerations  An enumeration converts only to itself; to or from an integer needs a cast.
 //   pointers      `const` may be added, never dropped. `T *` converts to `void *`; `void *` never converts to `T *`
@@ -222,17 +224,28 @@ static Bool exact_in(U32 bits, Literal lit) {
     return used <= digits;
 }
 
+// Whether every value of the integer type `from` is exact in a float of `bits` bits (its significant bits fit the
+// mantissa).
+static Bool always_exact(types::TypeRef from, U32 bits) {
+    U32 digits = 24;
+    if (bits >= 64) digits = 53;
+    U32 used = from->bits;
+    if (from->is_signed) used -= 1;
+    return used <= digits;
+}
+
 static Verdict to_floating(const Ctx *c) {
     types::Kind kind = c->from->kind;
     if (kind == .floating && c->to->bits >= c->from->bits) return accept(widening);
     if (kind == .floating) return needs_cast(c, "narrowing may lose precision");
+    if (kind == .integer && always_exact(c->from, c->to->bits)) return accept(widening);
     if (kind == .integer && c->lit.is_constant) {
         if (exact_in(c->to->bits, c->lit)) return accept(constant_fits);
         Str number = literal_text(c->lit);
         Str reason = msg(format::push(number, " is not exactly an ", types::show(c->to)));
         return refuse(c, reason, msg(format::push("write a cast: (", types::show(c->to), ")", number)));
     }
-    if (kind == .integer) return needs_cast(c, "an integer converts to a float only by a cast, which may round");
+    if (kind == .integer) return needs_cast(c, "this integer may not be exact in the float, so it may round");
     return no_rule(c);
 }
 
