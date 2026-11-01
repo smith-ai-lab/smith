@@ -1,0 +1,170 @@
+// Tests of `Char` and character literals in the emitter (K4, #1345 of #1112): `Char` is an 8-bit unsigned integer in
+// the IR, a character literal (escapes included, the parser decoded them) is that constant. Golden IR, and a run test:
+// a function that returns `c == ' '` and one that returns a character literal. Memory rules as in
+// tests/front_emit_memory_test.smith.
+module front_emit_char_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <string.h>;
+
+static ast::Expr *letter(U32 value) {
+    ast::ExprKind kind = {.character = {.value = value}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *name(Str text) {
+    return ast::name(text);
+}
+
+static ast::Expr *binary(ast::BinaryOp op, ast::Expr *left, ast::Expr *right) {
+    return ast::binary(op, left, right);
+}
+
+static ast::Stmt *declare(ast::Decl *variable) {
+    ast::StmtKind kind = {.declaration = {.decl = variable}};
+    return ast::stmt(kind);
+}
+
+static ast::Stmt *give(ast::Expr *value) {
+    return ast::return_value(value);
+}
+
+static ast::Decl *function_of(Str text, ast::Param params[:], ast::TypeExpr *result, ast::StmtRef items[:]) {
+    ast::Decl *function = ast::function(text, params, result, ast::block(items));
+    function->exported = true;
+    return function;
+}
+
+static ast::Decl *function_of0(Str text, ast::TypeExpr *result, ast::StmtRef items[:]) {
+    ast::Param none[1] = {};
+    return function_of(text, none[0:0], result, items);
+}
+
+struct TreeMemory {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    mem::Allocator *outside;
+};
+
+static void tree_begin(TreeMemory *trees) {
+    trees->memory = test::memory(1U << 22);
+    trees->allocator = arena::allocator(&trees->memory);
+    trees->outside = mem::set_allocator(&trees->allocator.base);
+}
+
+static void tree_end(TreeMemory *trees) {
+    mem::set_allocator(trees->outside);
+}
+
+static emit::Options options_for(emit::Target target) {
+    emit::Options options = {};
+    options.target = target;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static void jit_module(emit_jit::Jit *host, const ast::Module *m) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, m, options_for(host->target));
+    test::check_equal(emitted == .ok, true);
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    }
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+static char *ir_of(emit_jit::Jit *host, const ast::Module *m) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, m, options_for(host->target));
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        c::LLVMDisposeModule(emitted.ok);
+    }
+    c::LLVMContextDispose(context);
+    return text;
+}
+
+static Bool contains(const char *text, Str needle) {
+    return c::strstr(text, needle.data) != nullptr; // a literal's text ends with a terminator
+}
+
+// Bool is_space(char c) { return c == ' '; }
+static ast::Decl *is_space_function() {
+    ast::StmtRef items[1] = {give(binary(.equal, name("c"), letter(' ')))};
+    ast::Param params[1] = {ast::param("c", ast::named("Char"))};
+    return function_of("is_space", params, ast::named("Bool"), items);
+}
+
+// char newline() { return '\n'; }
+static ast::Decl *newline_function() {
+    ast::StmtRef items[1] = {give(letter(10))};
+    return function_of0("newline", ast::named("Char"), items);
+}
+
+// char top() { char c = 'z'; return c; }
+static ast::Decl *top_function() {
+    ast::StmtRef items[2] = {declare(ast::variable("c", ast::named("Char"), letter('z'))), give(name("c"))};
+    return function_of0("top", ast::named("Char"), items);
+}
+
+export void test_front_emit_char_golden_ir() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::DeclRef decls[3] = {is_space_function(), newline_function(), top_function()};
+    ast::Module m = ast::new_module("front::test", decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    char *text = ir_of(&host, &m);
+    test::check_equal(contains(text, "define i1 @\"front::test::is_space\"(i8 %c)"), true);
+    test::check_equal(contains(text, "icmp eq i8 %0, 32"), true);
+    test::check_equal(contains(text, "define i8 @\"front::test::newline\"()"), true);
+    test::check_equal(contains(text, "ret i8 10"), true);
+    test::check_equal(contains(text, "store i8 122, ptr %c"), true);
+    c::LLVMDisposeMessage(text);
+    emit_jit::stop(&host);
+}
+
+typedef U8 (*ByteFn)();
+typedef Bool (*SpaceFn)(U8);
+
+export void test_front_emit_char_runs() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::DeclRef decls[3] = {is_space_function(), newline_function(), top_function()};
+    ast::Module m = ast::new_module("front::test", decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    SpaceFn is_space = (SpaceFn)symbol_of(&host, "front::test::is_space");
+    ByteFn newline = (ByteFn)symbol_of(&host, "front::test::newline");
+    ByteFn top = (ByteFn)symbol_of(&host, "front::test::top");
+    test::check_equal(is_space(' '), true);
+    test::check_equal(is_space('x'), false);
+    test::check_equal(is_space(0xA0), false); // unsigned: 0xA0 is no space
+    test::check_equal((I32)newline(), 10);
+    test::check_equal((I32)top(), 'z');
+    emit_jit::stop(&host);
+}
