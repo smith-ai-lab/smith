@@ -22,6 +22,8 @@ The verbs mean the same in every project and read what its `build.c` declares; a
 
 ## On files: with arguments
 
+`smith lint DIR` (a folder among the arguments) lints the C, C++, Objective-C and `.smith` sources under it that git sees and `.clang-format-ignore` does not name, like the project lint (no headers, which are read through their sources); `smith lint front -- <flags>` and `smith lint front/ main.c` mix with files. A folder with no such source is an error.
+
 clang-tidy's analyzer (`clang-analyzer-*`) reads `smith_requires`, `smith_ensures`, `smith_invariant` and `smith_assert` of `<smith/contract.h>` as assumptions (`target::static_analyzer`), so an index a contract bounds is not reported by `clang-analyzer-security.ArrayBound`.
 
 smith's default `.clang-tidy` turns off two analyzer checks that were noise (on game, learner and smith: 546 of 616 findings): `clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling` (every `memcpy`) and `clang-analyzer-optin.performance.Padding`. Turn one back on in the project's own `.clang-tidy` (`smith lint --dump-config > .clang-tidy` writes the effective file) by deleting its `-clang-analyzer-...` line.
