@@ -343,12 +343,17 @@ static Bool in_range_constant(state::Value at, U64 count) {
     return c::LLVMConstIntGetZExtValue(at.llvm) < count;
 }
 
-// An array's element: the index is checked against the count (a failed check reaches `llvm.trap`).
+// An array's element: the index is checked against the count (a failed check calls `contract::fail_index`).
 static void array_element(state::Emitter *e, state::Value base, state::Value at, c::LLVMValueRef position) {
     c::LLVMTypeRef word = index_word(e);
     if (!in_range_constant(at, base.ty.count)) {
         c::LLVMValueRef count = c::LLVMConstInt(word, base.ty.count, 0);
-        arith::trap_if(e, c::LLVMBuildICmp(e->builder, c::LLVMIntUGE, position, count, "outside"));
+        c::LLVMValueRef bad = c::LLVMBuildICmp(e->builder, c::LLVMIntUGE, position, count, "outside");
+        c::LLVMTypeRef wide = c::LLVMInt64TypeInContext(e->context);
+        c::LLVMValueRef args[3] = {c::LLVMBuildIntCast2(e->builder, at.llvm, wide, at.ty.is_signed, ""),
+                                   c::LLVMConstInt(c::LLVMInt32TypeInContext(e->context), at.ty.is_signed, 0),
+                                   c::LLVMConstInt(wide, base.ty.count, 0)};
+        arith::report_if(e, bad, "smith_contract_fail_index", args, 3);
     }
     c::LLVMValueRef indices[2] = {c::LLVMConstInt(word, 0, 0), position};
     c::LLVMValueRef address = c::LLVMBuildInBoundsGEP2(e->builder, base.ty.llvm, base.llvm, indices, 2, "element");
@@ -468,7 +473,8 @@ static Bool is_integer_like(state::Ty ty) {
 
 // A cast the checker marked asserts that the value fits the target: lost when the value does not survive the trip to
 // the target and back, or when a signed value is negative and the target unsigned, or the result negative and the
-// source unsigned. A failed assertion reaches the function's trap block, like a failed index (K2, #1329).
+// source unsigned. A failed assertion calls `contract::fail_cast` with the value and the target type's name, which
+// reports and stops (K6, #1389).
 static void check_fits(state::Emitter *e, state::Value from, state::Ty to, c::LLVMValueRef converted) {
     c::LLVMValueRef lost = c::LLVMConstInt(c::LLVMInt1TypeInContext(e->context), 0, 0);
     if (from.ty.bits != to.bits) {
@@ -485,7 +491,12 @@ static void check_fits(state::Emitter *e, state::Value from, state::Ty to, c::LL
         c::LLVMValueRef negative = c::LLVMBuildICmp(e->builder, c::LLVMIntSLT, converted, zero, "negative");
         lost = c::LLVMBuildOr(e->builder, lost, negative, "lost");
     }
-    arith::trap_if(e, lost);
+    c::LLVMTypeRef wide = c::LLVMInt64TypeInContext(e->context);
+    char *target = format::push(to.name).data;
+    c::LLVMValueRef args[3] = {c::LLVMBuildIntCast2(e->builder, from.llvm, wide, from.ty.is_signed, ""),
+                               c::LLVMConstInt(c::LLVMInt32TypeInContext(e->context), from.ty.is_signed, 0),
+                               c::LLVMBuildGlobalStringPtr(e->builder, target, "type")};
+    arith::report_if(e, lost, "smith_contract_fail_cast", args, 3);
 }
 
 static state::Status cast_finish(state::Emitter *e, const state::Work *w) {
