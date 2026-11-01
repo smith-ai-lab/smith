@@ -1,0 +1,50 @@
+// front::parser, the whole parser of smith's own front end (#1112, A6 of track A; internal, not wired into `smith cc`).
+//
+//   parser::parse(file, source)       a file's text as a `Parsed`: the `ast::Module` and the errors found
+//
+// It tokenizes (front::lex), makes a `parse::Parser`, installs the four real hooks (expressions and types from A3,
+// statements from A4, declarations from A5) and reads the file with `parse_decl::file`. It never aborts: a lexer error
+// comes back as the one error with an empty module, and parse errors come back in the order they were found. The tree
+// and the errors are the current allocator's, so a caller that sets an arena frees both at once.
+//
+// The hooks reach each other only through `parse::Parser.hooks`, so nesting (a lambda body, a declaration in a
+// statement, an expression in a type) goes through function values, never through a call of one module's function by
+// another's: no module here recurses by name.
+module front::parser;
+
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import std::mem;
+
+// What reading a file gave: the module (the declarations read before and after each error) and the errors.
+export struct Parsed {
+    ast::Module module;
+    parse::Errors errors;
+};
+
+// Reads the text of the file called `file`. A file with errors still has the module of what could be read.
+export Parsed parse(Str file, Str source) {
+    Parsed result = {};
+    result.module.file = file;
+    lex::Lexed lexed = lex::tokenize(source);
+    if (lexed == .error) {
+        lex::LexError failure = lexed.error;
+        parse::ParseError first = {.span = failure.span, .message = failure.message};
+        result.errors = mem::realloc(result.errors, 1);
+        result.errors[0] = first;
+        return result;
+    }
+    parse::Parser p = parse::make(lexed.ok, source);
+    p.hooks.expression = parse_expr::expression;
+    p.hooks.type = parse_type::type;
+    p.hooks.statement = parse_stmt::statement;
+    p.hooks.declaration = parse_decl::declaration;
+    result.module = parse_decl::file(&p, file);
+    result.errors = p.errors;
+    return result;
+}
