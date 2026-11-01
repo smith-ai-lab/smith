@@ -13,8 +13,8 @@ Every ticket has exactly one difficulty label and one priority label, set when i
   - `difficulty:easy`: docs, a README, or a change spelled out line by line in the ticket.
   - `difficulty:medium`: ordinary code with a clear spec. Most tickets.
   - `difficulty:hard`: a high bar, for design judgment or a change across many parts that cannot be split. Owner: "It should be a high bar to set something as hard."
-- **Priority:** `p0` (main is red), `p1` (friction over 60 minutes), `p2` (the current goal), `p3` (everything else).
-- `task` marks a ticket in the backlog; `friction` marks a friction ticket.
+- **Priority:** `p0` (main is red), `p1` (an urgent non-friction blocker, set by the lead), `p2` (the current goal), `p3` (everything else).
+- `task` marks a ticket in the backlog; `friction` marks a friction ticket; its priority is its comment count, not a `p` label. `mac` marks a ticket that needs the macOS SDK.
 
 ## Split rule
 A ticket is one PR of about an hour, with its files listed. No two tickets share a file. A bigger ticket is split before anyone claims it: each piece gets its own files, difficulty and the parent's priority.
