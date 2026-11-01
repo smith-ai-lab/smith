@@ -1,0 +1,19 @@
+(module syntax
+  (variable values
+    (tuple_literal
+      (call (name Point) (named_arg x (integer 1)))
+      (variant circle (name r))
+      (variant empty)
+      (tuple_literal (name a) (name b))
+      (array_literal (integer 1) (integer 2))
+      (unary dereference (name p))
+      (cast (named U8) (name x))
+      (lambda a
+        (param x)
+        (block
+          (return (name x))))
+      (statement_expr
+        (if
+          (name ok)
+          (block)
+          (block))))))
