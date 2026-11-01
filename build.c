@@ -2138,15 +2138,28 @@ static int build_llvm_source(SmithRun *run) {
 
 // `smith build friction -Dsince=2026-10-24` (smith-dev-rules): the friction sections of merged pull requests,
 // for the lead's review across PRs. Each pull request's body ends with `## Friction`; this prints that section of every
-// PR merged since a date, newest first, each under its PR's number and title.
+// PR merged since a date, newest first, each under its PR's number and title, then its minutes. A bullet (a line
+// starting `- `, not `- none`) ends with `(~N min)`, the author's estimate; one without counts 0 and is listed as
+// unmeasured. A `#N` in a bullet adds its minutes to friction issue N. The last lines are the per-issue and grand
+// totals.
 static int build_friction(SmithRun *run) {
     const char *since = run->args[0];
     if (since[0] == '\0') {
         fputs("usage: smith build friction -Dsince=YYYY-MM-DD\n", stderr);
         return 2;
     }
-    const char *filter = ".[] | select(.body | test(\"(?m)^## Friction\")) | \"#\\(.number) \\(.title)\\n\\(.body | "
-                         "split(\"## Friction\")[1] | split(\"\\n## \")[0] | ltrimstr(\"\\n\"))\\n\"";
+    const char *filter =
+        "def mins: [scan(\"[(]~([0-9]+) min[)]\") | .[0] | tonumber] | add // 0;"
+        "def sec: split(\"## Friction\")[1] | split(\"\\n## \")[0];"
+        "def bullets: sec | split(\"\\n\") | map(select(test(\"^[-*] \"))) | map(select(test(\"^[-*] none\\\\b\") | "
+        "not));"
+        "[.[] | select(.body | test(\"(?m)^## Friction\")) | {n: .number, t: .title, s: (.body | sec), b: (.body | "
+        "bullets)}] as $p"
+        " | ($p[] | \"#\\(.n) \\(.t)\\n\\(.s | ltrimstr(\"\\n\"))\\n  minutes: \\(.b | map(mins) | add // 0)\\n\"),"
+        " ([$p[] | .b[] as $l | ($l | [scan(\"#([0-9]+)\") | .[0]] | unique[]) as $i | {i: $i, m: ($l | mins)}]"
+        " | group_by(.i)[] | \"friction #\\(.[0].i): \\(map(.m) | add) min\"),"
+        " ([$p[] | .n as $n | .b[] | select(test(\"[(]~[0-9]+ min[)]\") | not) | \"unmeasured #\\($n): \\(.)\"][]),"
+        " \"total: \\([$p[].b[] | mins] | add // 0) min\"";
     return build_exec(smith_list(run->b, "gh", "pr", "list", "--state", "merged", "--limit", "200", "--search",
                                  smith_fmt(run->b, "merged:>=%s", since), "--json", "number,title,body", "--jq", filter,
                                  nullptr));
