@@ -576,6 +576,7 @@ struct SmithLang {
     size_t queue_head;
     size_t queue_count;
     size_t batch_in;
+    uint8_t taken_close; // how the last tokens taken read: 1 after a `)`, 2 after `) ->` (a lambda's return type)
     size_t out_count;
     bool changed;
     bool pending_kept_set;

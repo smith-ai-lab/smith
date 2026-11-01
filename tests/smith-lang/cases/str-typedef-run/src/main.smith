@@ -19,7 +19,7 @@ static str tail(str xs) {
     return xs[1:];
 }
 
-static bool next(str *p) {
+static Bool next(str *p) {
     if (countof(*p) == 0) return false;
     *p = (*p)[1:];
     return true;

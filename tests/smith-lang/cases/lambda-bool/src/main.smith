@@ -1,0 +1,17 @@
+module main;
+
+import <stdio.h>;
+
+I32 count_if(Lambda(Bool (I32)) pred, I32 n) {
+    I32 total = 0;
+    for (I32 i = 0; i < n; i++) {
+        if (pred(i)) total += 1;
+    }
+    return total;
+}
+
+I32 main() {
+    // the lambda's return type is written with the capitalized Bool
+    c::printf("%d\n", count_if([](I32 a) -> Bool { return a % 2 == 0; }, 10));
+    return 0;
+}
