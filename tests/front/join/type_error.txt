@@ -1,0 +1,1 @@
+<dir>/bad.smith:4:12: error: expected I32, found Bool: a Bool is not an integer; write a cast: (I32)x

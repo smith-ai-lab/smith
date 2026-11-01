@@ -328,13 +328,21 @@ static bool smith_mcp_launch_initialize(SmithMcpServer *server, SmithMcpSession 
 static bool smith_mcp_launch_send(SmithMcpServer *server, SmithMcpSession *session, const char *program,
                                   const char *const *list, size_t count, bool stop_on_entry, int64_t *seq,
                                   SmithMcpText *out) {
+    // A debug object names `.` for the project folder (-ffile-prefix-map, #1351): map it back, so sources are found.
+    bool map = strpbrk(session->cwd, "\"\\") == nullptr;
+    size_t map_size = strlen(session->cwd) + 48;
+    char *map_command = smith_arena_push(&server->scratch, map_size, 1);
+    snprintf(map_command, map_size, "settings set target.source-map . \"%s\"", session->cwd);
+    const char *const init[] = {map_command};
     struct smith_array_const_char_n keys[] = {smith_text_make("program"), smith_text_make("args"),
-                                              smith_text_make("cwd"), smith_text_make("stopOnEntry")};
+                                              smith_text_make("cwd"), smith_text_make("initCommands"),
+                                              smith_text_make("stopOnEntry")};
     SmithProtocolAny values[] = {smith_mcp_json_string(&server->scratch, smith_text_make(program)),
                                  smith_mcp_json_strings(&server->scratch, list, count),
                                  smith_mcp_json_string(&server->scratch, smith_text_make(session->cwd)),
+                                 smith_mcp_json_strings(&server->scratch, init, map ? 1 : 0),
                                  stop_on_entry ? smith_mcp_json_true(&server->scratch) : nullptr};
-    SmithDapLaunchRequest request = {.arguments = {.additionalProperties = {keys, values, stop_on_entry ? 4 : 3}}};
+    SmithDapLaunchRequest request = {.arguments = {.additionalProperties = {keys, values, stop_on_entry ? 5 : 4}}};
     bool sent = false;
     SMITH_MCP_DAP_SEND(server, session, launch_request, request, sent);
     *seq = request.seq;

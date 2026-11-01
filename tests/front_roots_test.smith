@@ -1,0 +1,72 @@
+// Tests of front::roots (#1221, J2 of #1112): a module's name follows its path from a root, a `module` line that
+// disagrees is an error naming both, and two files with one name are an error naming both files.
+module front_roots_test;
+
+import front::roots;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        if (roots::same(text[i:i + countof(needle)], needle)) return true;
+    }
+    return false;
+}
+
+static roots::Source source(Str path) {
+    roots::Source one = {};
+    one.path = path;
+    return one;
+}
+
+static Bool empty(Str text) {
+    return countof(text) == 0;
+}
+
+export void test_front_roots_the_source_folder_names_a_module_by_its_path() {
+    roots::Named named = roots::name_for("src/game/replay.smith", roots::default_roots());
+    test::check_condition(named.rooted);
+    test::check_condition(roots::same(named.name, "game::replay"));
+}
+
+export void test_front_roots_the_library_folder_names_std() {
+    roots::Named named = roots::name_for("lib/std/ascii.smith", roots::default_roots());
+    test::check_condition(named.rooted);
+    test::check_condition(roots::same(named.name, "std::ascii"));
+}
+
+export void test_front_roots_a_leading_dot_slash_is_dropped() {
+    roots::Named named = roots::name_for("./src/main.smith", roots::default_roots());
+    test::check_condition(named.rooted);
+    test::check_condition(roots::same(named.name, "main"));
+}
+
+export void test_front_roots_a_file_under_no_root_has_no_name_from_its_path() {
+    test::check_condition(!roots::name_for("scratch/x.smith", roots::default_roots()).rooted);
+    test::check_condition(!roots::name_for("srcs/x.smith", roots::default_roots()).rooted);
+    test::check_condition(!roots::name_for("src/x.c", roots::default_roots()).rooted);
+}
+
+export void test_front_roots_a_module_line_that_disagrees_names_both() {
+    Str message = roots::disagreement("src/game/replay.smith", "game::replay", "other::name");
+    test::check_condition(has(message, "game::replay"));
+    test::check_condition(has(message, "other::name"));
+    test::check_condition(has(message, "src/game/replay.smith"));
+}
+
+export void test_front_roots_a_module_line_that_agrees_or_is_absent_is_no_error() {
+    test::check_condition(empty(roots::disagreement("f.smith", "a::b", "a::b")));
+    test::check_condition(empty(roots::disagreement("f.smith", "a::b", "")));
+}
+
+export void test_front_roots_two_files_with_one_name_are_an_error_naming_both() {
+    roots::Source paths[3] = {source("src/x.smith"), source("src/y.smith"), source("lib/x.smith")};
+    Str message = roots::clash(paths[0:3], roots::default_roots());
+    test::check_condition(has(message, "`x`"));
+    test::check_condition(has(message, "src/x.smith"));
+    test::check_condition(has(message, "lib/x.smith"));
+}
+
+export void test_front_roots_distinct_names_are_no_clash() {
+    roots::Source paths[2] = {source("src/x.smith"), source("src/y.smith")};
+    test::check_condition(empty(roots::clash(paths[0:2], roots::default_roots())));
+}

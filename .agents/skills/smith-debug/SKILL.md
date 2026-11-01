@@ -9,6 +9,8 @@ This skill ships in the smith plugin, from `.agents/skills/smith-debug/SKILL.md`
 
 `smith dbg` is lldb's own command line and `smith dap` is `lldb-dap`'s own main, both from the LLVM linked into smith (23.1.3), with the arguments unchanged. A stage0 smith runs an external one instead (`$SMITH_LLDB`, `$SMITH_LLDB_DAP`). Build the program with `-g -O0` (`smith new` projects have a debug build). Details: [knowledge/debugger.md](../../../knowledge/debugger.md).
 
+A debug object built by `smith build` names `.` for the project folder (it is shared between worktrees), so `smith dbg` and `smith mcp` map `.` to the project themselves. In an editor that runs `smith dap` outside the project folder, add `"sourceMap": [[".", "/path/to/project"]]` to the launch request.
+
 ## smith dbg --crash and --at: what an agent runs first
 
 One command, one answer: the program's state at a crash or a line, with no edit and no rebuild.

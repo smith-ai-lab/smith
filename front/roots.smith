@@ -1,0 +1,121 @@
+// front::roots: a module's name follows its path (#1221, J2 of #1112; owner, 2026-10-31).
+//
+//   name_for(path, roots)           the name a `.smith` file has: its path from the root that holds it, `/` becoming
+//                                   `::`, `.smith` dropped (`src/game/replay.smith` under the root `src` is
+//                                   `game::replay`, `lib/std/ascii.smith` under `lib` is `std::ascii`)
+//   disagreement(file, path_name, line_name)
+//                                   the error text when a `module` line names another module than the path does, naming
+//                                   both; empty when they agree or there is no line
+//   clash(sources, roots)           the error text when two files would get the same name, naming both files; empty
+//                                   when every name is its own
+//
+// The roots are folders given by the caller: the project's source folder and smith's library folder by default
+// (`default_roots`). Roots added in `build.smith` are a later ticket. A file under no root has no name from its path:
+// the caller falls back to its `module` line, or to the file's own name. Paths are compared as written, after a leading
+// `./` is dropped; no file is read here.
+module front::roots;
+
+import std::format;
+
+// The name a path has and whether a root held it.
+export struct Named {
+    Str name;
+    Bool rooted;
+};
+
+// The folders names start from, relative to the project. A list of texts cannot be a parameter today (a slice of
+// slices is a two-dimensional block), so the roots are two fields.
+export struct Roots {
+    Str source;  // the project's source folder
+    Str library; // smith's library folder
+};
+
+export Roots default_roots() {
+    return (Roots){.source = "src", .library = "lib"};
+}
+
+// One file of the command line.
+export struct Source {
+    Str path;
+};
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+export Bool same(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+// `path` without a leading `./`.
+static Str clean(Str path) {
+    Str result = path;
+    while (countof(result) >= 2 && result[0] == '.' && result[1] == '/') {
+        result = result[2:countof(result)];
+    }
+    return result;
+}
+
+// What follows `root/` in `path`, or empty when `path` is not inside `root`.
+static Str below(Str path, Str root) {
+    Str folder = clean(root);
+    if (countof(path) <= countof(folder) + 1) return "";
+    for (Usize i = 0; i < countof(folder); i++) {
+        if (path[i] != folder[i]) return "";
+    }
+    if (path[countof(folder)] != '/') return "";
+    return path[countof(folder) + 1:countof(path)];
+}
+
+static Bool ends_with_smith(Str text) {
+    Str suffix = ".smith";
+    if (countof(text) <= countof(suffix)) return false;
+    return same(text[countof(text) - countof(suffix):countof(text)], suffix);
+}
+
+// `game/replay.smith` as `game::replay`.
+static Str dotted(Str relative) {
+    Str stem = relative[0:countof(relative) - 6];
+    Str name = "";
+    Usize start = 0;
+    for (Usize i = 0; i <= countof(stem); i++) {
+        if (i < countof(stem) && stem[i] != '/') continue;
+        Str part = stem[start:i];
+        name = as_str(format::push(name, countof(name) == 0 ? "" : "::", part));
+        start = i + 1;
+    }
+    return name;
+}
+
+export Named name_for(Str path, Roots roots) {
+    Str clear = clean(path);
+    Str relative = below(clear, roots.source);
+    if (countof(relative) == 0) relative = below(clear, roots.library);
+    if (countof(relative) > 0 && ends_with_smith(relative)) return (Named){.name = dotted(relative), .rooted = true};
+    return (Named){.name = "", .rooted = false};
+}
+
+export Str disagreement(Str file, Str path_name, Str line_name) {
+    if (countof(line_name) == 0 || countof(path_name) == 0 || same(path_name, line_name)) return "";
+    return as_str(format::push(file, ": the module line says `", line_name, "` but the path says `", path_name,
+                               "`; change the module line or move the file"));
+}
+
+export Str clash(Source paths[:], Roots roots) {
+    for (Usize i = 0; i < countof(paths); i++) {
+        Named first = name_for(paths[i].path, roots);
+        if (!first.rooted) continue;
+        for (Usize j = i + 1; j < countof(paths); j++) {
+            Named second = name_for(paths[j].path, roots);
+            if (second.rooted && same(first.name, second.name)) {
+                return as_str(format::push("two files are the module `", first.name, "`: ", paths[i].path, " and ",
+                                           paths[j].path));
+            }
+        }
+    }
+    return "";
+}

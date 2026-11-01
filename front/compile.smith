@@ -1,0 +1,237 @@
+// front::compile: `smith cc --front-end=new` (#1221, J2 of #1112). The new front end, joined for the first time: a
+// `.smith` file is read, parsed (front::parser), type checked (front::types_decl), emitted (front::emit) and written to
+// an object file (front::emit_object). Experimental: the flag is off by default and without it a `.smith` file still
+// goes through the token lowering.
+//
+//   file(path, output, triple, roots)   one file to the object `output` for `triple` (empty: the driver's default
+//                                       target); a `Report`: whether it worked, the diagnostics, the time of each stage
+//   run(sources, outputs, count, triple)
+//                                       what the driver calls (C: `front_compile_run`): every file of the command line
+//                                       with the default roots, diagnostics on stderr, 0 when every object was written
+//
+// A diagnostic is `file:line:column: error: message`, one per error, and a stage that fails stops the next ones. The
+// module's name is its path from a root (front::roots); a `module` line that disagrees is an error naming both. The
+// target comes from the caller: the triple is the driver's, the data layout is the machine's for it, and the checker's
+// pointer width follows the triple. Nothing reads the host here but the default triple when none is given.
+module front::compile;
+
+import front::ast;
+import front::emit;
+import front::emit_object;
+import front::emit_state as state;
+import front::parser;
+import front::roots;
+import front::types;
+import front::types_decl;
+import std::clock;
+import std::files;
+import std::format;
+import std::mem;
+import <llvm-c/Core.h>;
+import <llvm-c/Target.h>;
+import <llvm-c/TargetMachine.h>;
+import <unistd.h>;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+// Nanoseconds of each stage.
+export struct Times {
+    U64 parse;
+    U64 check;
+    U64 emit;
+    U64 write;
+};
+
+export struct Report {
+    Bool ok;
+    Str text; // the diagnostics, one line each; empty when it worked
+    Times times;
+};
+
+// The 1-based line and column (in bytes) of the byte `offset` of `source`, as `line:column`.
+static Str position(Str source, U32 offset) {
+    U64 line = 1;
+    U64 column = 1;
+    for (Usize i = 0; i < countof(source) && i < offset; i++) {
+        if (source[i] == '\n') {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+    return as_str(format::push(line, ":", column));
+}
+
+static Str diagnostic(Str file, Str source, ast::Span span, Str message) {
+    return as_str(format::push(file, ":", position(source, span.start), ": error: ", message, "\n"));
+}
+
+// 64-bit unless the triple's architecture says otherwise (`x86_64`, `aarch64`, `arm64`, `wasm64`).
+static types::Target target_of(Str triple) {
+    Usize end = 0;
+    while (end < countof(triple) && triple[end] != '-')
+        end += 1;
+    for (Usize i = 0; i + 1 < end; i++) {
+        if (triple[i] == '6' && triple[i + 1] == '4') return types::lp64();
+    }
+    return (types::Target){.pointer_bytes = 4, .max_align = 8};
+}
+
+// The data layout the machine of `triple` has, as text; empty when the triple has no target. The text is the current
+// allocator's.
+static Str layout_of(Str triple) {
+    c::LLVMInitializeAllTargetInfos();
+    c::LLVMInitializeAllTargets();
+    c::LLVMInitializeAllTargetMCs();
+    c::LLVMInitializeAllAsmPrinters();
+    char *name = state::cstr(triple);
+    defer mem::free(name);
+    c::LLVMTargetRef target = nullptr;
+    char *failure = nullptr;
+    if (c::LLVMGetTargetFromTriple(name, &target, &failure) != 0) {
+        c::LLVMDisposeMessage(failure);
+        return "";
+    }
+    c::LLVMTargetMachineRef machine = c::LLVMCreateTargetMachine(target, name, "", "", c::LLVMCodeGenLevelNone,
+                                                                 c::LLVMRelocPIC, c::LLVMCodeModelDefault);
+    defer c::LLVMDisposeTargetMachine(machine);
+    c::LLVMTargetDataRef data = c::LLVMCreateTargetDataLayout(machine);
+    char *chars = c::LLVMCopyStringRepOfTargetData(data);
+    c::LLVMDisposeTargetData(data);
+    Str layout = as_str(format::push((const char *)chars));
+    c::LLVMDisposeMessage(chars);
+    return layout;
+}
+
+// The name of the module in the tree: from the path when a root holds the file, else the `module` line, else the
+// file's own name. Returns an error text, empty when it worked.
+static Str name_module(ast::Module *m, Str path, roots::Roots folders) {
+    Str line_name = "";
+    for (Usize i = 0; i < countof(m->name.segments); i++) {
+        line_name = as_str(format::push(line_name, i == 0 ? "" : "::", m->name.segments[i].text));
+    }
+    roots::Named named = roots::name_for(path, folders);
+    if (!named.rooted) return "";
+    Str problem = roots::disagreement(path, named.name, line_name);
+    if (countof(problem) > 0) {
+        return problem;
+    }
+    ast::Identifier parts[:] = {};
+    Usize start = 0;
+    for (Usize i = 0; i <= countof(named.name); i++) {
+        if (i < countof(named.name) && !(named.name[i] == ':' && i + 1 < countof(named.name))) continue;
+        parts = mem::realloc(parts, countof(parts) + 1);
+        parts[countof(parts) - 1] = (ast::Identifier){.text = named.name[start:i]};
+        start = i + 2;
+        i += 1;
+    }
+    m->name.segments = parts;
+    return "";
+}
+
+// Standard error, written whole.
+static void report(Str message) {
+    (void)c::write(2, message.data, countof(message));
+}
+
+static files::BytesResult load(Str path) {
+    return files::read_file(path);
+}
+
+static Report failed(Str message, Times times) {
+    return (Report){.ok = false, .text = message, .times = times};
+}
+
+// Compiles `path` to the object `output` for `triple`; `roots` are the folders names start from.
+export Report file(Str path, Str output, Str triple, roots::Roots folders) {
+    Times times = {};
+    files::BytesResult loaded = load(path);
+    if (loaded == .error) return failed(as_str(format::push(path, ": error: cannot read the file\n")), times);
+    format::Chars chars = mem::view(loaded.ok, char);
+    Str source = chars;
+
+    U64 mark = clock::monotonic();
+    parser::Parsed parsed = parser::parse(path, source);
+    times.parse = clock::monotonic() - mark;
+    if (countof(parsed.errors) > 0) {
+        Str all = "";
+        for (Usize i = 0; i < countof(parsed.errors); i++) {
+            all = as_str(format::push(all, diagnostic(path, source, parsed.errors[i].span, parsed.errors[i].message)));
+        }
+        return failed(all, times);
+    }
+    Str problem = name_module(&parsed.module, path, folders);
+    if (countof(problem) > 0) return failed(as_str(format::push(problem, "\n")), times);
+
+    Str wanted = triple;
+    char *default_triple = nullptr;
+    if (countof(wanted) == 0) {
+        default_triple = c::LLVMGetDefaultTargetTriple();
+        wanted = as_str(format::push((const char *)default_triple));
+        c::LLVMDisposeMessage(default_triple);
+    }
+    mark = clock::monotonic();
+    types::Checked checked = types_decl::check_module(&parsed.module, target_of(wanted));
+    times.check = clock::monotonic() - mark;
+    if (checked.error_count > 0) {
+        Str all = "";
+        for (Usize i = 0; i < checked.error_count; i++) {
+            all =
+                as_str(format::push(all, diagnostic(path, source, checked.errors[i].span, checked.errors[i].message)));
+        }
+        return failed(all, times);
+    }
+
+    emit::Options options = {};
+    options.target = (emit::Target){.triple = wanted, .data_layout = layout_of(wanted)};
+    options.source = source;
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    defer c::LLVMContextDispose(context);
+    mark = clock::monotonic();
+    emit::ModuleResult emitted = emit::module(context, &parsed.module, options);
+    times.emit = clock::monotonic() - mark;
+    if (emitted == .error) return failed(diagnostic(path, source, emitted.error.span, emitted.error.message), times);
+    c::LLVMModuleRef ir = emitted.ok;
+    defer c::LLVMDisposeModule(ir);
+
+    emit_object::ObjectOptions object_options = {.target = options.target, .optimization = 0};
+    mark = clock::monotonic();
+    emit_object::WriteResult written = emit_object::write(ir, object_options, output);
+    times.write = clock::monotonic() - mark;
+    if (written == .error) return failed(as_str(format::push(path, ": error: ", written.error.message, "\n")), times);
+    return (Report){.ok = true, .text = "", .times = times};
+}
+
+// The driver's entry: `count` sources and their objects, the default roots, the triple of the compile (null: the
+// default). Nothing is compiled when two files would get one module name. Diagnostics go to stderr.
+[[std::c_name("front_compile_run")]] export I32 run(const char *const *sources, const char *const *outputs, Usize count,
+                                                    const char *triple) {
+    roots::Roots folders = roots::default_roots();
+    roots::Source paths[:] = {};
+    for (Usize i = 0; i < count; i++) {
+        paths = mem::realloc(paths, countof(paths) + 1);
+        paths[i] = (roots::Source){.path = as_str(format::push((const char *)sources[i]))};
+    }
+    Str conflict = roots::clash(paths, folders);
+    if (countof(conflict) > 0) {
+        report(as_str(format::push("error: ", conflict, "\n")));
+        return 1;
+    }
+    Str target = "";
+    if (triple != nullptr) {
+        target = as_str(format::push((const char *)triple));
+    }
+    I32 status = 0;
+    for (Usize i = 0; i < count; i++) {
+        Str output = as_str(format::push((const char *)outputs[i]));
+        Report done = file(paths[i].path, output, target, folders);
+        if (!done.ok) {
+            report(done.text);
+            status = 1;
+        }
+    }
+    return status;
+}

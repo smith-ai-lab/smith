@@ -5137,6 +5137,38 @@ static void smith_put_run_words(FILE *file, const char *flag, const char *const 
     }
 }
 
+// A compile with debug info names the folder it ran in (DW_AT_comp_dir, and the paths of the files it read), so its
+// object would differ by worktree and the executor's step cache could only serve it to a build at the same path
+// (#1351). Such a compile gets -ffile-prefix-map=<project>=. : its bytes no longer hold the folder, and the debugger
+// maps `.` back with a source map.
+static const char *smith_manifest_root;
+
+static bool smith_is_compiler_word(const char *word) {
+    const char *name = strrchr(word, '/') != nullptr ? strrchr(word, '/') + 1 : word;
+    return strcmp(name, "smith-cc") == 0 || strcmp(name, "smith-c++") == 0 || strcmp(name, "clang") == 0 ||
+           strcmp(name, "clang++") == 0;
+}
+
+static bool smith_is_debug_word(const char *word) {
+    return strcmp(word, "-g") == 0 || strcmp(word, "-g2") == 0 || strcmp(word, "-g3") == 0 ||
+           strcmp(word, "-ggdb") == 0 || strncmp(word, "-gdwarf", 7) == 0;
+}
+
+// Whether the command is a compile that writes debug info and names no prefix map of its own.
+static bool smith_wants_prefix_map(const SmithStep *step) {
+    if (smith_manifest_root == nullptr || step->command[0] == nullptr || !smith_is_compiler_word(step->command[0]))
+        return false;
+    bool debug = false;
+    bool compile = false;
+    for (size_t i = 1; step->command[i] != nullptr; i++) {
+        const char *word = step->command[i];
+        if (strncmp(word, "-f", 2) == 0 && strstr(word, "prefix-map") != nullptr) return false;
+        debug = debug || smith_is_debug_word(word);
+        compile = compile || strcmp(word, "-c") == 0;
+    }
+    return debug && compile;
+}
+
 // The command line as sh reads it: the words, then the stamp's touch. It is built in a fixed buffer and ends with a
 // 0 byte; *length is its size.
 static const char *smith_render_command(const SmithEntry *entry, size_t *length) {
@@ -5161,6 +5193,10 @@ static const char *smith_render_command(const SmithEntry *entry, size_t *length)
     for (size_t i = 0; step->run == nullptr && step->command[i] != nullptr; i++) {
         if (i > 0) fputc(' ', file);
         smith_put_word(file, step, step->command[i]);
+        if (i == 0 && smith_wants_prefix_map(step)) {
+            fputc(' ', file);
+            smith_put_quoted(file, smith_text("-ffile-prefix-map=%s=.", smith_manifest_root), false);
+        }
     }
     if (entry->stamp) {
         fputs(" && touch ", file);
@@ -5275,6 +5311,7 @@ static void smith_put_regenerate_edge(FILE *out) {
 }
 
 static void smith_put_manifest(FILE *out, SmithBuild *b) {
+    smith_manifest_root = b->root;
     fputs("# Written by smith build from build.c. Edit build.c, not this file.\n", out);
     fputs("ninja_required_version = 1.10\nbuilddir = .smith\nrule step\n  command = $cmd\n", out);
     if (smith_defer_count > 0) smith_put_regenerate_rule(out);
