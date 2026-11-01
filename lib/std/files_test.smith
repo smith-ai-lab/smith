@@ -514,3 +514,79 @@ export void test_files_the_reads_log_is_not_written_without_the_variable_or_over
     files::InfoResult none = files::info(log[0:__builtin_strlen(log)]);
     test::check_condition(none == .error);
 }
+
+// The line read_line returned: its text, "" at an empty line; `end` is set when there is no line (none).
+typedef struct {
+    Bool end;
+    Bool failed;
+    Bool too_long;
+    Usize count;
+} Line;
+
+Line next_line(files::File file, U8 buffer[:]) {
+    files::LineResult r = files::read_line(file, buffer);
+    switch (r) {
+    case .ok:
+        if (r.ok == .none) return (Line){.end = true};
+        return (Line){.count = r.ok.some};
+    case .error:
+        return (Line){.failed = true, .too_long = r.error == files::LineTooLong};
+    }
+}
+
+export void test_files_read_line_reads_the_lines_of_a_file() {
+    arena::Arena a = test::memory(1 << 16);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::Fake fake = files::fake();
+    files::Handler *before = files::set_handler(&fake.base);
+    defer files::set_handler(before);
+
+    const char *text = "one\n\ntwo words\nlast";
+    files::CountResult written =
+        files::write_file("lines.txt", bytes_of(text)[0:__builtin_strlen(text)], files::Replace);
+    test::check_condition(written == .ok);
+    files::OpenResult opened = files::open("lines.txt", files::Read);
+    test::check_condition(opened == .ok);
+    files::File file = value_file(opened);
+    U8 buffer[16] = {};
+    Line first = next_line(file, buffer[0:16]);
+    test::check_condition(!first.end && !first.failed);
+    test::check_equal(first.count, 3);
+    test::check_condition(buffer[0] == 'o' && buffer[2] == 'e');
+    Line empty = next_line(file, buffer[0:16]);
+    test::check_condition(!empty.end && !empty.failed);
+    test::check_equal(empty.count, 0);
+    Line second = next_line(file, buffer[0:16]);
+    test::check_equal(second.count, 9);
+    Line final = next_line(file, buffer[0:16]); // no newline at the end of the file
+    test::check_condition(!final.end && !final.failed);
+    test::check_equal(final.count, 4);
+    Line done = next_line(file, buffer[0:16]);
+    test::check_condition(done.end);
+    test::check_condition(files::close(file) == .none);
+}
+
+export void test_files_read_line_too_long_is_an_error_and_a_full_buffer_fits() {
+    arena::Arena a = test::memory(1 << 16);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::Fake fake = files::fake();
+    files::Handler *before = files::set_handler(&fake.base);
+    defer files::set_handler(before);
+
+    const char *text = "abcd\nabcde\n";
+    files::CountResult written =
+        files::write_file("long.txt", bytes_of(text)[0:__builtin_strlen(text)], files::Replace);
+    test::check_condition(written == .ok);
+    files::File file = value_file(files::open("long.txt", files::Read));
+    U8 buffer[4] = {};
+    Line fits = next_line(file, buffer[0:4]); // exactly the buffer
+    test::check_condition(!fits.failed);
+    test::check_equal(fits.count, 4);
+    Line over = next_line(file, buffer[0:4]);
+    test::check_condition(over.failed && over.too_long);
+    test::check_condition(files::close(file) == .none);
+}

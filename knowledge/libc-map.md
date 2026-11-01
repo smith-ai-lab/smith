@@ -22,7 +22,7 @@ tags: [libc, lint, idiom, libraries]
 | `fprintf(stderr, ...)`, `fputs(s, stderr)`, `dprintf`, `perror` | `console::print_error(pieces...)` |
 | `snprintf` | `format::to(buffer, capacity, pieces...)` ([format-library](format-library.md)); `format::hex`, `fixed`, `general`, `scientific`, `pad` for the conversions |
 | `fopen`, `fclose`, `FILE` | `files::open(path, mode)` returning `Result(File, files::Error)`, `files::close` ([files](files.md)) |
-| `fgets` | gap: [#918](https://github.com/smith-ai-lab/smith/issues/918) |
+| `fgets`, `getline` | `files::read_line(file, buffer)` returning `Result(Option(Usize), files::Error)`: the line's length without its newline, `none` at the end, `LineTooLong` when it does not fit ([files](files.md)) |
 | `fflush`, `setvbuf`, `_IONBF`, `_IOFBF` | not needed: the console writes each call unbuffered |
 | `stdout`, `stderr`, `stdin`, `EOF` | `console::write`, `console::write_error`, `console::read` (a count of 0 is the end) and `console::read_line` |
 
