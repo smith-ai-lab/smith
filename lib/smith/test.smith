@@ -533,6 +533,7 @@ u32 *workers_to_kill; // SMITH_TEST_KILL_WORKERS=n: the next n commands kill the
 u8 *memory_block;
 usize memory_used;  // a multiple of arena::align_max
 bool full_run;      // the runner was given --full; set before any test forks, so every child sees it
+const char *selection_text; // the --test selection, nullptr when there is none
 bool update_run;    // the runner was given --update: test::golden writes its file and passes
 u8 *golden_log;     // shared by every process: the files --update wrote, each path ended by a zero byte
 usize *golden_used; // the bytes of golden_log in use, shared likewise
@@ -1399,12 +1400,71 @@ bool golden_write(const char *path, const char *text, usize size) {
     stop();
 }
 
-// Records a file --update wrote, for the runner to list.
-void golden_note(const char *path) {
+// Records a file --update wrote, for the runner to list: `+ path` for a new file, `~ path (summary)` for one that
+// changed. Each entry ends with a zero byte.
+void golden_note(const char *path, const char *summary) {
     if (golden_log == nullptr) return;
-    usize length = c::strlen(path) + 1;
+    char entry[path_capacity + 128];
+    int made = __builtin_snprintf(entry, sizeof entry, "%s %s%s%s%s", summary == nullptr ? "+" : "~", path,
+                                  summary == nullptr ? "" : " (", summary == nullptr ? "" : summary,
+                                  summary == nullptr ? "" : ")");
+    if (made <= 0) return;
+    usize length = (usize)made < sizeof entry ? (usize)made + 1 : sizeof entry;
+    entry[length - 1] = '\0';
     usize at = __atomic_fetch_add(golden_used, length, __ATOMIC_RELAXED);
-    if (at + length <= golden_log_capacity) __builtin_memcpy(golden_log + at, path, length);
+    if (at + length <= golden_log_capacity) __builtin_memcpy(golden_log + at, entry, length);
+}
+
+// The end of the line that starts at `at`, after its newline.
+usize golden_line_end(const char *text, usize size, usize at) {
+    while (at < size && text[at] != '\n')
+        at++;
+    return at < size ? at + 1 : size;
+}
+
+// How many lines text[from:to] holds (a last line with no newline counts).
+usize golden_lines(const char *text, usize from, usize to) {
+    usize lines = 0;
+    for (usize at = from; at < to; at = golden_line_end(text, to, at))
+        lines++;
+    return lines;
+}
+
+// One line saying how a golden changed: the lines left and the lines put in, once the lines both share at the start
+// and at the end are set aside.
+void golden_summary(char *out, usize capacity, const char *old_text, usize old_size, const char *new_text,
+                    usize new_size) {
+    usize a = 0;
+    usize b = 0;
+    while (a < old_size && b < new_size) {
+        usize a_end = golden_line_end(old_text, old_size, a);
+        usize b_end = golden_line_end(new_text, new_size, b);
+        if (a_end - a != b_end - b || c::memcmp(old_text + a, new_text + b, a_end - a) != 0) break;
+        a = a_end;
+        b = b_end;
+    }
+    usize a_end = old_size;
+    usize b_end = new_size;
+    while (a_end > a && b_end > b) {
+        usize a_start = a_end - 1;
+        while (a_start > a && old_text[a_start - 1] != '\n')
+            a_start--;
+        usize b_start = b_end - 1;
+        while (b_start > b && new_text[b_start - 1] != '\n')
+            b_start--;
+        usize length = a_end - a_start;
+        if (length != b_end - b_start || c::memcmp(old_text + a_start, new_text + b_start, length) != 0) break;
+        a_end = a_start;
+        b_end = b_start;
+    }
+    __builtin_snprintf(out, capacity, "-%zu +%zu lines", golden_lines(old_text, a, a_end),
+                       golden_lines(new_text, b, b_end));
+}
+
+// The `--test` selection of this run, or nullptr when it runs every test. A test that loops over many cases uses it
+// under --update to write a new file only for a case the run names (never for one it did not select).
+export [[nodiscard]] const char *selection() {
+    return selection_text;
 }
 
 // Whether this run is `smith test --update`: every test::golden writes its file and passes.
@@ -1431,8 +1491,10 @@ void golden_check(const char path[:], const char actual[:]) {
     if (expected != nullptr && size == actual_size && (size == 0 || c::memcmp(expected, actual_text, size) == 0))
         return;
     if (update_run) {
+        char summary[64];
+        if (expected != nullptr) golden_summary(summary, sizeof summary, expected, size, actual_text, actual_size);
         if (!golden_write(file, actual_text, actual_size)) golden_fail("cannot write ", file, "");
-        golden_note(file);
+        golden_note(file, expected != nullptr ? summary : nullptr);
         return;
     }
     if (expected == nullptr) golden_fail("no file ", file, "; run smith test --update to write it");
@@ -3821,6 +3883,7 @@ void say_explained(const Options *options) {
 // What test::golden needs, made before any test forks: --update, the runner and the log of the files it wrote.
 void golden_begin(const Options *options) {
     update_run = options->update;
+    selection_text = options->filter;
     golden_log = (u8 *)map_bytes(golden_log_capacity, map_shared);
     golden_used = (usize *)map_bytes(sizeof(usize), map_shared);
 }
@@ -3828,10 +3891,13 @@ void golden_begin(const Options *options) {
 // The files --update wrote, which test::golden recorded as it went.
 void say_written() {
     usize used = *golden_used < golden_log_capacity ? *golden_used : golden_log_capacity;
-    for (usize at = 0; at < used;) {
+    usize count = 0;
+    for (usize at = 0; at < used; at += c::strlen((const char *)golden_log + at) + 1) {
         say("wrote %s\n", (const char *)golden_log + at);
-        at += c::strlen((const char *)golden_log + at) + 1;
+        count++;
     }
+    if (update_run) say("--update wrote %zu file%s%s\n", count, count == 1 ? "" : "s",
+                        selection_text == nullptr ? " (no --test: every test was updated)" : "");
 }
 
 // How many tests may run at once: the share of a slot (SMITH_CORES, runtime/slots.c) or the machine's logical cores.
