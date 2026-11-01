@@ -67,6 +67,10 @@ Declarations and whole files. `parse_decl::declaration(p)` is the hook `parse::H
 
 **Statements** (`front/parse_stmt.smith`, A4): `parse_stmt::statement(p)` is the `statement` hook. It reads every statement form (blocks, `if` / `if constexpr`, loops, `switch`, jumps, labels, `defer`, `static_assert`) and a declaration-or-expression with no symbol table. Nesting is an explicit stack of frames, never recursion; after an error the rest of the statement is skipped and an `empty` placeholder stands in, so one mistake gives one error. Tests: `tests/front_parse_stmt_test.smith` with stub hooks and goldens in `tests/front/parse_stmt/`.
 
+## front::emit_object (`front/emit_object.smith`, #1134)
+
+`emit_object::write(module, ObjectOptions, path)` writes an LLVM module to an object file and gives `path` back, or an `emit::Error`. The target is the caller's (`options.target.triple`, plus `cpu` and `features`, empty for the triple's defaults; `optimization` 0..3 only sets the code generator's level, no passes run); nothing reads the host. It registers every target the linked LLVM has (`LLVMInitializeAll*`), makes a PIC machine, and refuses a module whose data layout is not the machine's ("emitted for another target") before writing. LLVM's messages are copied into the current allocator. `tests/front_emit_object_test.smith` writes `add.o`, links it with a `main.c` through `smith cc` (lld in smith's process) and runs it; the C side names the symbol with `__asm__("front::test::add")`, with a leading `_` on macOS.
+
 ## front::cimport (track C)
 
 Declarations read from C headers become these same nodes; its concept comes with #1117 (`c-header-import.md`), and links here once that file exists.

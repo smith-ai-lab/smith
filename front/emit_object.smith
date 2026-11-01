@@ -1,0 +1,91 @@
+// front::emit_object: write an LLVM module to an object file for a target (#1134, B4 of #1112). A real build links
+// objects, and C files link with Smith ones, so the object is the same one `smith cc` hands to lld. Nothing here reads
+// the host: the triple comes from the caller's `emit::Target`, the CPU and features from the options (empty: the
+// triple's defaults). Optimization passes are not run (`LLVMRunPasses` is out of scope); `optimization` only sets the
+// code generator's level. Not part of `smith cc` yet.
+module front::emit_object;
+
+import front::emit;
+import front::emit_state as state;
+import std::format;
+import std::mem;
+import <llvm-c/Core.h>;
+import <llvm-c/Target.h>;
+import <llvm-c/TargetMachine.h>;
+import <string.h>;
+
+export struct ObjectOptions {
+    emit::Target target; // the triple; the module's data layout must be the machine's for it
+    Str cpu;             // empty: the triple's default
+    Str features;        // empty: the triple's default
+    I32 optimization;    // 0..3, LLVMCodeGenOptLevel
+};
+
+export typedef Result(Str, emit::Error) WriteResult;
+
+static emit::Error error_of(auto... args) {
+    return (emit::Error){.message = state::msg(format::push(args...))};
+}
+
+// An LLVM message (consumed: LLVM's string is disposed of) as an Error in the allocator in force.
+static emit::Error llvm_error(Str what, char *text) {
+    emit::Error error = error_of(what, ": ", (const char *)text);
+    c::LLVMDisposeMessage(text);
+    return error;
+}
+
+// Every target the linked LLVM has: the front end never asks which one the host is.
+static void register_targets() {
+    c::LLVMInitializeAllTargetInfos();
+    c::LLVMInitializeAllTargets();
+    c::LLVMInitializeAllTargetMCs();
+    c::LLVMInitializeAllAsmPrinters();
+}
+
+static c::LLVMCodeGenOptLevel level_of(I32 optimization) {
+    if (optimization <= 0) return c::LLVMCodeGenLevelNone;
+    if (optimization == 1) return c::LLVMCodeGenLevelLess;
+    if (optimization == 2) return c::LLVMCodeGenLevelDefault;
+    return c::LLVMCodeGenLevelAggressive;
+}
+
+// The data layout of the machine as text, to compare with the module's. Dispose of it with LLVMDisposeMessage.
+static char *machine_layout(c::LLVMTargetMachineRef machine) {
+    c::LLVMTargetDataRef data = c::LLVMCreateTargetDataLayout(machine);
+    char *text = c::LLVMCopyStringRepOfTargetData(data);
+    c::LLVMDisposeTargetData(data);
+    return text;
+}
+
+// Write `module` to the object file `path` for `options`, and give `path` back. An Error (message in the allocator in
+// force) when the triple has no target, the module was emitted for another data layout, or LLVM refuses to write.
+export WriteResult write(c::LLVMModuleRef module, ObjectOptions options, Str path) {
+    register_targets();
+    char *triple = state::cstr(options.target.triple);
+    defer mem::free(triple);
+    char *cpu = state::cstr(options.cpu);
+    defer mem::free(cpu);
+    char *features = state::cstr(options.features);
+    defer mem::free(features);
+    char *file = state::cstr(path);
+    defer mem::free(file);
+    c::LLVMTargetRef target = nullptr;
+    char *text = nullptr;
+    if (c::LLVMGetTargetFromTriple(triple, &target, &text) != 0) {
+        return {.error = llvm_error("no target for the triple", text)};
+    }
+    c::LLVMTargetMachineRef machine = c::LLVMCreateTargetMachine(
+        target, triple, cpu, features, level_of(options.optimization), c::LLVMRelocPIC, c::LLVMCodeModelDefault);
+    defer c::LLVMDisposeTargetMachine(machine);
+    char *wanted = machine_layout(machine);
+    defer c::LLVMDisposeMessage(wanted);
+    const char *have = c::LLVMGetDataLayoutStr(module);
+    if (c::strcmp(wanted, have) != 0) {
+        return {.error = error_of("the module was emitted for another target: its data layout is \"", have,
+                                  "\", the machine's is \"", (const char *)wanted, "\"")};
+    }
+    if (c::LLVMTargetMachineEmitToFile(machine, module, file, c::LLVMObjectFile, &text) != 0) {
+        return {.error = llvm_error("cannot write the object", text)};
+    }
+    return path;
+}

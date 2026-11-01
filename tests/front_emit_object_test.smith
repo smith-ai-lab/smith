@@ -1,0 +1,158 @@
+// Tests of front::emit_object (#1134, B4 of #1112): a module written to an object file and linked with a C file by
+// `smith cc` (lld in smith's process), run as a program; and a module emitted for another data layout, which is an
+// Error. The tree is built by hand as in front_emit_arith_test.smith, which says why it lives in an arena while the
+// emitter and LLVM use the system's allocator. The processes run through std::process (tests/scratch.smith builds whole
+// projects and needs the repository's layout, which the front runner does not have).
+module front_emit_object_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::emit_object;
+import std::arena;
+import std::format;
+import std::mem;
+import std::process;
+import std::test;
+import <llvm-c/Core.h>;
+import <stdio.h>;
+import <stdlib.h>;
+import <string.h>;
+
+// ---------------------------------------------------------------------------------------------------------------
+// The tree: `export I32 add(I32 a, I32 b) { return a + b; }` in module front::test
+
+static ast::Module add_module() {
+    ast::StmtRef items[1] = {ast::return_value(ast::binary(.add, ast::name("a"), ast::name("b")))};
+    ast::Param params[2] = {ast::param("a", ast::named("I32")), ast::param("b", ast::named("I32"))};
+    ast::Decl *function = ast::function("add", params, ast::named("I32"), ast::block(items));
+    function->exported = true;
+    ast::DeclRef decls[1] = {function};
+    return ast::new_module("front::test", decls);
+}
+
+// The module emitted for `target`, with the tree in an arena that is gone when this returns.
+static c::LLVMModuleRef emit_add(c::LLVMContextRef context, emit::Target target) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    ast::Module m = add_module();
+    mem::set_allocator(outside);
+    emit::Options options = {};
+    options.target = target;
+    emit::ModuleResult emitted = emit::module(context, &m, options);
+    test::check_equal(emitted == .ok, true);
+    c::LLVMModuleRef ir = nullptr;
+    if (emitted == .ok) ir = emitted.ok;
+    return ir;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Files and processes
+
+static Bool contains(const char *text, const char *needle) {
+    return c::strstr(text, needle) != nullptr;
+}
+
+static void write_text(const char *path, const char *text) {
+    c::FILE *file = c::fopen(path, "w");
+    test::check_equal(file != nullptr, true);
+    if (file == nullptr) return;
+    c::fputs(text, file);
+    c::fclose(file);
+}
+
+// The exit status of `argv`, or -1 when it did not start or a signal ended it. Paths are absolute: the runner's folder
+// is the repository's, and other tests read files relative to it.
+static I32 run_status(const char *const argv[:]) {
+    I32 status = -1;
+    process::OutputResult done = process::run(argv);
+    if (done == .ok) status = done.ok.exit.signal == 0 ? done.ok.exit.status : -1;
+    return status;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Tests
+
+// The object defines `front::test::add`; main.c declares it with an `__asm__` label (macOS prepends `_` to the symbol,
+// as the generated headers write) and checks `add(2, 3) == 5`. smith cc links the two; the program exits 0.
+export void test_front_emit_object_links_with_a_c_file_and_runs() {
+    emit_jit::Jit host = {};
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    if (started != .ok) return;
+    host = started.ok;
+    char folder[] = "/tmp/front_emit_object_XXXXXX";
+    test::check_equal(c::mkdtemp(folder) != nullptr, true);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    c::LLVMModuleRef ir = emit_add(context, host.target);
+    emit_object::ObjectOptions options = {.target = host.target, .optimization = 2};
+    Str object = format::push(folder, "/add.o");
+    emit_object::WriteResult written = emit_object::write(ir, options, object);
+    test::check_equal(written == .ok, true);
+    if (written == .error) test::check_equal(written.error.message, "");
+    c::LLVMDisposeModule(ir);
+    c::LLVMContextDispose(context);
+    Bool apple = contains(host.target.triple.data, "apple");
+    write_text(format::push(folder, "/main.c").data,
+               format::push("int add(int, int) __asm__(\"", apple ? "_" : "", "front::test::add\");\n",
+                            "int main(void) { return add(2, 3) == 5 ? 0 : 1; }\n")
+                   .data);
+    const char *self = c::getenv("SMITH_SELF");
+    const char *smith = self != nullptr ? self : "smith";
+    const char *main_c = format::push(folder, "/main.c").data;
+    const char *prog = format::push(folder, "/prog").data;
+    const char *const link[6] = {smith, "cc", main_c, object.data, "-o", prog};
+    test::check_equal(run_status(link[0:6]), 0);
+    const char *const program[1] = {prog};
+    test::check_equal(run_status(program[0:1]), 0);
+    c::remove(prog);
+    c::remove(main_c);
+    c::remove(object.data);
+    c::rmdir(folder);
+    emit_jit::stop(&host);
+}
+
+// A module emitted for one data layout is not written for a machine with another: an Error that says so, and no file.
+export void test_front_emit_object_another_data_layout_is_an_error() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    if (started != .ok) return;
+    emit_jit::Jit host = started.ok;
+    emit::Target odd = {.triple = host.target.triple, .data_layout = "e-m:e-p:32:32-i64:64-n32-S128"};
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    c::LLVMModuleRef ir = emit_add(context, odd);
+    Str path = "/tmp/front_emit_object_never.o";
+    c::remove(path.data);
+    emit_object::ObjectOptions options = {.target = host.target};
+    emit_object::WriteResult written = emit_object::write(ir, options, path);
+    test::check_equal(written == .error, true);
+    if (written == .error) {
+        test::check_equal(contains(written.error.message.data, "another target"), true);
+        emit::free_error(written.error);
+    }
+    c::FILE *file = c::fopen(path.data, "r");
+    test::check_equal(file == nullptr, true);
+    if (file != nullptr) c::fclose(file);
+    c::LLVMDisposeModule(ir);
+    c::LLVMContextDispose(context);
+    emit_jit::stop(&host);
+}
+
+// A triple no target has is an Error too.
+export void test_front_emit_object_an_unknown_triple_is_an_error() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    if (started != .ok) return;
+    emit_jit::Jit host = started.ok;
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    c::LLVMModuleRef ir = emit_add(context, host.target);
+    emit::Target nowhere = {.triple = "nowhere-unknown-none"};
+    emit_object::ObjectOptions options = {.target = nowhere};
+    emit_object::WriteResult written = emit_object::write(ir, options, "/tmp/front_emit_object_never.o");
+    test::check_equal(written == .error, true);
+    if (written == .error) emit::free_error(written.error);
+    c::LLVMDisposeModule(ir);
+    c::LLVMContextDispose(context);
+    emit_jit::stop(&host);
+}
