@@ -8,6 +8,11 @@
 //   - parses every .c and .h file of smith (the C++ of shim/ excepted) the same way.
 // The runtime is fetched into the shared test cache, so that it is downloaded once; the tests do nothing when it is not
 // available (no network).
+// smith.c prints the parser; every C file of smith is parsed by it.
+// smith-covers: smith.c runtime/verbs.c runtime/quiet.c runtime/base.h runtime/platform_*.c runtime/slots.c
+// smith-covers: runtime/build_runtime.c runtime/executor*.c runtime/cache.c runtime/sdk_cache.c
+// smith-covers: runtime/tree_sitter_data.c tree-sitter/ tests/tree_sitter.c tests/tree_sitter_cases/ tests/smith-
+// smith-covers: lang/cases/ runtime/*.c lib/ include/ scripts/*.c tests/*.c
 module tree_sitter_test;
 
 import std::arena;

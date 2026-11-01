@@ -6,6 +6,11 @@
 // in process, tests/make_translate_test.smith (issue #646); a case is here because it needs a real make, a compiler,
 // the lint and format of the result, or the verb (which Makefile `smith build` and `--dump-config` look at). Each case
 // is a test of its own, so they run side by side.
+// smith.c holds `smith build --dump-config`, lint and fmt of the result.
+// smith-covers: smith.c runtime/verbs.c runtime/quiet.c runtime/base.h runtime/platform_*.c runtime/slots.c
+// smith-covers: runtime/build_runtime.c runtime/executor*.c runtime/cache.c runtime/sdk_cache.c shim/tidy.cpp
+// smith-covers: shim/clang.cpp templates/defaults/ shim/format.cpp runtime/make*.c include/smith_core.h
+// smith-covers: tests/build_fixtures/make_*/
 module make_test;
 
 import std::arena;

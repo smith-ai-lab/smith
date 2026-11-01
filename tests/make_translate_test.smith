@@ -6,6 +6,9 @@
 // compiler or the verb (the translation built and compared with make's, lint and format of the result, which Makefile
 // `smith build --dump-config` picks) is in tests/make_test.smith. The text here is the translation before `smith fmt`
 // has laid it out.
+// smith.c is compiled as the library that holds smith_core_make_translate.
+// smith-covers: smith.c runtime/make*.c runtime/base.h include/smith_core.h tests/units/build.c
+// smith-covers: tests/build_fixtures/make_*/
 module make_translate_test;
 
 import std::arena;

@@ -7,6 +7,13 @@
 //    lines on its standard input: a C program, a .smith program (its names as written), and a test of a project
 //    launched by its name. It launches processes under a debugger, so it needs a smith with lldb inside and the
 //    Developer Tools permission (knowledge/debugger.md); without them these tests do nothing.
+// smith.c dispatches `smith mcp` and the `smith dap` child.
+// smith-covers: smith.c runtime/verbs.c runtime/quiet.c runtime/base.h runtime/platform_*.c runtime/slots.c
+// smith-covers: runtime/lang*.c shim/hook.cpp runtime/build_runtime.c runtime/executor*.c runtime/cache.c
+// smith-covers: runtime/sdk_cache.c shim/lldb*.cpp shim/lldb/ runtime/explain.c runtime/symbolize.c
+// smith-covers: shim/symbolize.cpp runtime/mcp*.c runtime/io.smith scripts/protocol.c schemas/ tests/mcp_fake.c
+// smith-covers: tests/cpu_wait.h tests/build_fixtures/mcp/ lib/std/test.smith lib/std/arena.smith lib/std/mem.smith
+// smith-covers: lib/std/format.smith lib/std/files.smith include/smith/
 module mcp_test;
 
 import std::arena;
