@@ -3,6 +3,12 @@
 // depfile, the options, the verb in a folder, and the types an index declares. They need no compiler except for the
 // tests of a build.c. A folder added to tests/docs/fixtures needs a test here: `test_every_fixture_has_a_test` says
 // which.
+// smith-covers: smith.c runtime/docs.c runtime/verbs.c runtime/build_runtime.c tests/docs/ knowledge/
+// smith-covers: .agents/skills/ README.md smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c
+// smith-covers: runtime/lang*.c runtime/verbs.c runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c
+// smith-covers: runtime/quiet.c runtime/base.h runtime/symbolize.c runtime/explain.c shim/symbolize.cpp
+// smith-covers: shim/lldb_explain.* shim/clang.cpp shim/hook.cpp shim/lld.cpp include/smith/ lib/trace.c lib/std/
+// smith-covers: build.c
 module docs_test;
 
 import std::arena;

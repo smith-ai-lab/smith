@@ -3,6 +3,11 @@
 // __interpose tuples send malloc and its family to the allocator of the calling thread, for the program, a library
 // linked beside it and one loaded with dlopen. macOS only (the tuples are dyld's); each test returns at once elsewhere.
 // The C programs are tests/handlers/*.c and print one `ok` or `FAIL` line per check.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: runtime/symbolize.c runtime/explain.c shim/symbolize.cpp shim/lldb_explain.* shim/clang.cpp
+// smith-covers: shim/hook.cpp shim/lld.cpp include/smith/ lib/trace.c lib/std/ build.c lib/handlers.c
+// smith-covers: tests/handlers/
 module handlers_test;
 
 import std::arena;

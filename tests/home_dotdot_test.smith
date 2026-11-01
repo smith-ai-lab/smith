@@ -1,5 +1,7 @@
 // A HOME that holds a ".." segment (issue #428): smith unpacks clang's files under it and works, where it used to abort
 // on an assert that scanned the root along with the pack's own paths.
+// smith-covers: smith.c runtime/untar.c runtime/xz.c runtime/gzip.c runtime/pack_data.c runtime/package.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/base.h
 module home_dotdot_test;
 
 import std::test;

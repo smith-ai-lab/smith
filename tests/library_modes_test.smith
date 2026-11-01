@@ -6,6 +6,11 @@
 // Also the heavy runs on more keys under the sanitizers, JSONTestSuite (fetched into $SMITH_JSON_SUITE_CACHE, else
 // ~/.cache/smith-tests, pinned by hash; skipped offline), the C and .smith callers of one text header, and each
 // library compiled alone under the warnings of a new project and naming no libc function.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: runtime/symbolize.c runtime/explain.c shim/symbolize.cpp shim/lldb_explain.* shim/clang.cpp
+// smith-covers: shim/hook.cpp shim/lld.cpp include/smith/ lib/trace.c lib/std/ build.c lib/
+// smith-covers: tests/build_fixtures/library_units/
 module library_modes_test;
 
 import std::arena;
