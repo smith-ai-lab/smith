@@ -1,0 +1,62 @@
+// Tests of the errors for GNU spellings in front::parser (#1363, part of #1112): an extended `__asm__` statement, and
+// a `[[gnu::x]]` attribute, each with a message that names the fix.
+module front_parse_asm_test;
+
+import front::parser;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+
+// The messages of reading a module whose function has `body` as its statements, joined by a newline.
+static Str errors_of(Str source) {
+    parser::Parsed parsed = parser::parse("m.smith", source);
+    format::Chars joined = {};
+    for (Usize i = 0; i < countof(parsed.errors); i += 1) {
+        joined = format::push(joined, parsed.errors[i].message, "\n");
+    }
+    Str result = joined;
+    return result;
+}
+
+static Str function_with(Str body) {
+    format::Chars source = format::push("module m;\nexport void f(I32 x) {\n", body, "\n}\n");
+    Str result = source;
+    return result;
+}
+
+export void test_parse_asm_extended_with_operands() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str expected = "extended asm is not part of Smith; use `hint::keep(x)`\n";
+    test::check_equal(errors_of(function_with("__asm__(\"\" : \"+r\"(x));")), expected);
+}
+
+export void test_parse_asm_volatile() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str expected = "extended asm is not part of Smith; use `hint::keep(x)`\n";
+    test::check_equal(errors_of(function_with("__asm__ volatile(\"nop\");")), expected);
+}
+
+export void test_parse_gnu_attribute_with_std_spelling() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str expected = "`[[gnu::pure]]` is not part of Smith; use `[[std::pure]]`\n";
+    test::check_equal(errors_of("module m;\n[[gnu::pure]] I32 g(I32 x);\n"), expected);
+}
+
+export void test_parse_gnu_attribute_without_std_spelling() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str expected = "`[[gnu::always_inline]]` is not part of Smith and `[[std::always_inline]]` is not available yet\n";
+    test::check_equal(errors_of("module m;\n[[gnu::always_inline]] inline I32 g(I32 x);\n"), expected);
+}

@@ -340,6 +340,35 @@ static ast::Stmt *expression_statement(parse::Parser *p) {
     return settle(p, start, before, new_stmt({.expression = {.value = value}}));
 }
 
+// Whether the statement starts an extended `__asm__`: `__asm__ volatile`, or a `:` among the tokens of its `( )`.
+static Bool extended_asm(const parse::Parser *p) {
+    lex::Token first = parse::peek(p);
+    if (first.kind != lex::name) return false;
+    Str word = parse::text(p, first);
+    Str extended = "__asm__";
+    Str plain = "__asm";
+    if (!mem::equal(word, extended) && !mem::equal(word, plain)) return false;
+    if (parse::peek_at(p, 1).kind == lex::kw_volatile) return true;
+    if (parse::peek_at(p, 1).kind != lex::left_paren) return false;
+    Usize depth = 0;
+    for (Usize i = 1; parse::peek_at(p, i).kind != lex::end_of_file; i += 1) {
+        lex::TokenKind kind = parse::peek_at(p, i).kind;
+        if (kind == lex::colon && depth == 1) return true;
+        if (opens(kind)) depth += 1;
+        if (closes(kind)) depth -= 1;
+        if (depth == 0) return false;
+    }
+    return false;
+}
+
+// An extended `__asm__` statement is an error that names the std function of the optimization barrier.
+static ast::Stmt *asm_statement(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    Usize before = countof(p->errors);
+    parse::error(p, parse::peek(p).span, "extended asm is not part of Smith; use `hint::keep(x)`");
+    return settle(p, start, before, empty_stmt());
+}
+
 // `break;` and `continue;`.
 static ast::Stmt *jump(parse::Parser *p, ast::StmtKind kind) {
     U32 start = parse::advance(p).span.start;
@@ -523,6 +552,7 @@ static ast::Stmt *start(parse::Parser *p, Stack *stack) {
         push(stack, open_label(p));
         return nullptr;
     }
+    if (extended_asm(p)) return asm_statement(p);
     if (starts_declaration(p)) return declaration_statement(p);
     return expression_statement(p);
 }

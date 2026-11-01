@@ -1,2 +1,2 @@
 attribute-c-names/main.smith: ok
-attribute-c-names/log/fmt.smith: error: a declaration needs a type (there is no implicit `int`): write the type before `__attribute__`, as in `I32 __attribute__` (18:8) [undecided_c]
+attribute-c-names/log/fmt.smith: error: `[[gnu::format]]` is not part of Smith and `[[std::format]]` is not available yet (6:3) [undecided_c]

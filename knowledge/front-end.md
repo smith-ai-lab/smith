@@ -142,3 +142,4 @@ Declarations, statements and bodies, joining J1a to J1c; the API is the comment 
 ## front::cimport (track C)
 
 Declarations read from C headers become these same nodes; its concept comes with #1117 (`c-header-import.md`), and links here once that file exists.
+- **GNU spellings are errors** (#1363): in a `.smith` file an extended `__asm__` statement (`__asm__ volatile ...`, or a `:` inside its parentheses) is the error "extended asm is not part of Smith; use `hint::keep(x)`" (`parse_stmt`), and `[[gnu::x]]` is an error naming `[[std::x]]` where the std set has it (today `pure`), else "is not part of Smith and `[[std::x]]` is not available yet" (`parse_decl`). The name `hint::keep` is the proposal of the ticket (the effect of `__asm__("" : "+r"(x))`); the barrier function and the move of `lib/std` to it are #1375. File-scope basic asm is not touched. Tests: `tests/front_parse_asm_test.smith`.
