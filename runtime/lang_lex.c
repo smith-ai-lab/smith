@@ -661,7 +661,7 @@ static void smith_raw_next_named(void *context, SmithToken *token, bool unexpand
 }
 
 // The headers of the modules an interface imports are read as `smith cc --smith-header` reads them (below), so that the
-// names an imported module chose with [[smith::c_name]] are the ones its importer's interface writes. The cache of
+// names an imported module chose with [[std::c_name]] are the ones its importer's interface writes. The cache of
 // modules read starts empty for each interface asked of the compiler (a long-lived editor process sees edits), and is
 // the run's own when an interface is asked by `--smith-header` or `--smith-lower`.
 static bool smith_raw_read_header(void *context, const char *relative, const char **text, uint32_t *length);
@@ -778,7 +778,7 @@ static bool smith_lang_ask_compiler(const SmithLang *lang, const char **spelling
 
 // ---- The headers of imported modules, for the lowering without a compiler
 //
-// `import smith::arena;` is lowered by what the module's header says of its names (`Arena=SmithArena`, the generics),
+// `import std::arena;` is lowered by what the module's header says of its names (`Arena=SmithArena`, the generics),
 // so the run reads it as the compiler's does: the header if the include paths given beside the file (`-I dir`) hold it,
 // else the module's source, found at the path its name implies under the root of the importing module (the same rule
 // as smith cc), and read as its interface (`meta`: the comment lines of its header, which is all an importer reads of
@@ -934,14 +934,21 @@ static void smith_raw_want(const char *file, const char *text, size_t length, Sm
                 }
             }
             memcpy(relative + used, ".h", 3);
+            char source_relative[smith_lang_name_max]; // where the source is: std/arena.h, though C calls it
+                                                       // smith/arena.h
+            memcpy(source_relative, relative, used + 3);
+            if (strncmp(relative, "std/", 4) == 0) { // the header of std::arena is smith/arena.h (#366)
+                memmove(relative + 6, relative + 4, used - 1);
+                memcpy(relative, "smith/", 6);
+            }
             bool known = cursor == name || strcmp(relative, "target.h") != 0 ? false : true;
             for (size_t i = 0; i < smith_raw_modules_count; i++) // read already
                 known = known || strcmp(smith_raw_modules[i].path, relative) == 0;
             for (size_t i = 0; i < *count; i++) // wanted already
                 known = known || strcmp(wanted[i].relative, relative) == 0;
             char path[PATH_MAX];
-            bool fits = (size_t)snprintf(path, sizeof path, "%s/%.*s.smith", root, (int)(strlen(relative) - 2),
-                                         relative) < sizeof path;
+            bool fits = (size_t)snprintf(path, sizeof path, "%s/%.*s.smith", root, (int)(strlen(source_relative) - 2),
+                                         source_relative) < sizeof path;
             if (!known && cursor > name && fits) {
                 if (*count >= smith_raw_modules_max - smith_raw_modules_count) smith_raw_modules_full();
                 snprintf(wanted[*count].relative, sizeof wanted[0].relative, "%s", relative);
@@ -1038,6 +1045,11 @@ static bool smith_raw_read_header(void *context, const char *relative, const cha
             char path[PATH_MAX];
             size_t stem = strlen(relative) - 2; // without the .h
             if ((size_t)snprintf(path, sizeof path, "%s/%.*s.smith", root, (int)stem, relative) < sizeof path) {
+                got = smith_raw_interface_meta(raw, path, into, smith_raw_meta_max);
+            }
+            if (got == SIZE_MAX && strncmp(relative, "smith/", 6) == 0 &&
+                (size_t)snprintf(path, sizeof path, "%s/std/%.*s.smith", root, (int)(stem - 6), relative + 6) <
+                    sizeof path) { // the header of std::arena is smith/arena.h, its source std/arena.smith (#366)
                 got = smith_raw_interface_meta(raw, path, into, smith_raw_meta_max);
             }
         }

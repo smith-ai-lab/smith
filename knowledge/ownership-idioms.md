@@ -12,7 +12,7 @@ borrowed from the current allocator (the default for smith code, so nothing is w
 free function (`strdup`, freed by `free`). `returns_static` is now `returns_static`. smith infers the rule where it
 can read the code and takes a declaration where it can't.
 
-- **Written** like `[[smith::effects]]`, in `shim/effects_infer.cpp`: `[[std::returns_owned(free)]]`,
+- **Written** like `[[std::effects]]`, in `shim/effects_infer.cpp`: `[[std::returns_owned(free)]]`,
   `[[std::returns_borrowed(1)]]` (1-based) and `[[std::returns_static]]`, spelled `smith_returns_owned(free)` as a GNU
   attribute. In a module, name the C function as C does (`free`, not `c::free`).
 - **Where**: on a function declaration, with or without a body; on a function pointer's typedef (put the attribute

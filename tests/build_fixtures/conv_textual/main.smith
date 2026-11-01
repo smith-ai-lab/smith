@@ -1,4 +1,4 @@
-import smith::text;
+import std::text;
 import <stdio.h>;
 
 int main(void) {

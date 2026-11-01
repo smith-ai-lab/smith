@@ -1,5 +1,5 @@
 status 1
-effects_chain.smith:16:5: error: smith-effect: `bad` is [[smith::pure]], but it has the effects console, globals: bad -> log_it (effects_chain.smith:16) -> printf (effects_chain.smith:8)
+effects_chain.smith:16:5: error: smith-effect: `bad` is [[std::pure]], but it has the effects console, globals: bad -> log_it (effects_chain.smith:16) -> printf (effects_chain.smith:8)
 effects_chain.smith:16:5: note: this call is the first of the effects beyond the declared ones
 effects_chain.smith:25:15: error: smith-effect: `too_much` is limited to alloc, but it has the effects files, globals: too_much -> fopen (effects_chain.smith:25)
 effects_chain.smith:25:15: note: this call is the first of the effects beyond the declared ones

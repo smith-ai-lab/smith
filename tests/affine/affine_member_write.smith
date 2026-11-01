@@ -1,6 +1,6 @@
 module affine_member_write;
 
-export [[smith::affine]] typedef struct {
+export [[std::affine]] typedef struct {
     u64 bits;
     const i32 *tap;
 } Key;

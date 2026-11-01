@@ -1,6 +1,6 @@
 ---
 name: smith-inflate-sink
-description: "Streaming inflate to a sink for any size, and smith::inflate from C (#include <smith/inflate.h>). Load when decompressing data bigger than memory or a .tar.gz, or from C."
+description: "Streaming inflate to a sink for any size, and std::inflate from C (#include <smith/inflate.h>). Load when decompressing data bigger than memory or a .tar.gz, or from C."
 ---
 
 # Inflate to a sink, and from C
@@ -8,7 +8,7 @@ description: "Streaming inflate to a sink for any size, and smith::inflate from 
 ## To a sink, for any size
 
 ```smith
-import smith::inflate;
+import std::inflate;
 
 typedef struct {
     u64 total;

@@ -22,7 +22,7 @@ FAIL moves_every_step
             moves.count = 3, expected = 4   (u64)
   called from
     tests/moves_test.smith:42  moves_every_step
-    .smith/lib/smith/test.smith:1065   smith_test_execute
+    .smith/lib/std/test.smith:1065   smith_test_execute
 ```
 
 **Values of the failing line.** For a `test::check(cond)`, a failed contract or an `assert`, `smith test` starts the runner with `--explain <smith>`: when the check fails, the test process waits while `smith --smith-explain` attaches lldb to it, reads the variables the source line names and lets it go, and the report prints them under the line, so `check(moves.count == expected)` shows both:

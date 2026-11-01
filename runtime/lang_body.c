@@ -450,17 +450,7 @@ static bool smith_body_words_have(const char *text, size_t length, const char *m
 }
 
 static void smith_body_prefix(const char *module, char *prefix, size_t capacity) {
-    size_t used = 0;
-    for (size_t i = 0; module[i] != 0 && used + 2 < capacity; i++) {
-        if (module[i] == ':' && module[i + 1] == ':') {
-            prefix[used++] = '_';
-            i += 1;
-        } else {
-            prefix[used++] = module[i];
-        }
-    }
-    prefix[used++] = '_';
-    prefix[used] = 0;
+    smith_lang_c_prefix(module, prefix, capacity);
 }
 
 static int smith_body_module_find(const char *name) {

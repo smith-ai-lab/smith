@@ -56,14 +56,14 @@ inline const char *directive_advice(llvm::StringRef name) {
 
 // What to write instead of a C macro, or the general advice.
 inline std::string macro_advice(llvm::StringRef name) {
-    if (name == "assert") return "write `contract::assert(condition)` (import smith::contract;)";
-    if (name == "isfinite") return "write `math::is_finite(x)` (import smith::math;)";
-    if (name == "memcpy") return "write `mem::copy(dst, src)` (import smith::mem;)";
-    if (name == "memmove") return "write `mem::move(dst, src)` (import smith::mem;)";
-    if (name == "memset") return "write `mem::zero(xs)` or `mem::fill(xs, value)` (import smith::mem;)";
-    if (name == "SIZE_MAX") return "write `math::max(usize)` (import smith::math;)";
-    if (name == "INFINITY") return "write `math::infinity(f32)` or `math::infinity(f64)` (import smith::math;)";
-    if (name == "NAN") return "write `math::nan(f32)` or `math::nan(f64)` (import smith::math;)";
+    if (name == "assert") return "write `contract::assert(condition)` (import std::contract;)";
+    if (name == "isfinite") return "write `math::is_finite(x)` (import std::math;)";
+    if (name == "memcpy") return "write `mem::copy(dst, src)` (import std::mem;)";
+    if (name == "memmove") return "write `mem::move(dst, src)` (import std::mem;)";
+    if (name == "memset") return "write `mem::zero(xs)` or `mem::fill(xs, value)` (import std::mem;)";
+    if (name == "SIZE_MAX") return "write `math::max(usize)` (import std::math;)";
+    if (name == "INFINITY") return "write `math::infinity(f32)` or `math::infinity(f64)` (import std::math;)";
+    if (name == "NAN") return "write `math::nan(f32)` or `math::nan(f64)` (import std::math;)";
     return "a C macro is the preprocessor's: the module that wraps the C API should provide it as a function or a "
            "constant";
 }

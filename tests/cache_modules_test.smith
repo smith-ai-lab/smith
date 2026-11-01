@@ -4,10 +4,10 @@
 // tests/build_fixtures/cache_modules/prelude count the cache's modules.
 module cache_modules_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 
 // What a test's commands print, and the texts made from it, go to an arena of the runner's (test::memory), the

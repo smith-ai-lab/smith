@@ -3,10 +3,10 @@
 // declared twice.
 module build_errors_test;
 
-import smith::arena;
-import smith::test;
+import std::arena;
+import std::test;
 import scratch;
-import smith::mem;
+import std::mem;
 
 static const char *first_line(const char *text) {
     static char line[512];

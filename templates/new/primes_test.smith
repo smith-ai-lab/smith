@@ -5,9 +5,9 @@
 module primes_test;
 
 import primes;
-import smith::console;
-import smith::mem;
-import smith::test;
+import std::console;
+import std::mem;
+import std::test;
 import <string.h>;
 
 // A fake console: it records what is written to it, so a test reads what a function printed.

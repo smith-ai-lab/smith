@@ -2,9 +2,9 @@ import <assert.h>;
 import <stdio.h>;
 import <stdlib.h>;
 import <unistd.h>;
-import smith::arena;
-import smith::random;
-import smith::test;
+import std::arena;
+import std::random;
+import std::test;
 
 void test_crash_1_before(void) {
     test::check_equal(1, 1);

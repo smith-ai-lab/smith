@@ -2,7 +2,7 @@
 // merge with no conflict, in a scratch repository that carries smith's own .gitattributes and index.
 module gitattributes_test;
 
-import smith::test;
+import std::test;
 import scratch;
 
 export void test_two_additions_to_the_index_merge_without_a_conflict() {

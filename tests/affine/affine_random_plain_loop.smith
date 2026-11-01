@@ -1,6 +1,6 @@
 module affine_random_plain_loop;
 
-import smith::random;
+import std::random;
 
 export void fixed_array(random::Key key, f64 xs[3]) {
     random::Key per_item[3];

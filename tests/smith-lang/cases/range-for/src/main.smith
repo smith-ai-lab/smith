@@ -102,7 +102,7 @@ static i32 pairs(const i32 a[:], const i32 b[:]) {
 }
 
 // What a failed check of a cut or of an index in a generic's body calls.
-[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+[[std::c_name("smith_failure")]] export void failure(u8 code) {
     c::exit(code);
 }
 

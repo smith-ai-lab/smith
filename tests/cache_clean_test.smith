@@ -2,10 +2,10 @@
 // Every case has a cache of its own (scratch::own_cache), so the real ~/.cache/smith is never touched.
 module cache_clean_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 
 // What a test's commands print, and the texts made from it, go to an arena of the runner's (test::memory), the

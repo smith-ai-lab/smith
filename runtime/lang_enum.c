@@ -7,7 +7,7 @@
 // (`Shape_tag_empty` and the others are module names like any: `main_Shape_tag_empty`). A variant is written with a dot
 // and looked up in the type the context gives, as a designated initializer's member is (`.circle`, `{.circle = {...}}`,
 // `s == .empty`, `case .rect:`): the lowering asks the compiler for that type and writes the tag, or a compound
-// literal. The generated struct carries `__attribute__((annotate("smith::enum")))` so a tool can tell it from other
+// literal. The generated struct carries `__attribute__((annotate("std::enum")))` so a tool can tell it from other
 // structs. Included by runtime/lang.c after runtime/lang_slice.c.
 
 constexpr size_t smith_lang_enum_variants_max = 64;
@@ -123,8 +123,7 @@ static size_t smith_lang_enum_build(SmithLang *lang, const SmithHost *host, cons
     }
     made[used] = span[close]; // the attribute that follows is placed before it in the source
     made[used++].synthetic = true;
-    static const char *const attribute[] = {"__attribute__",   "(", "(", "annotate", "(",
-                                            "\"smith::enum\"", ")", ")", ")"};
+    static const char *const attribute[] = {"__attribute__", "(", "(", "annotate", "(", "\"std::enum\"", ")", ")", ")"};
     for (size_t at = 0; at < sizeof attribute / sizeof attribute[0]; at++) { // the plugin knows the struct by it
         SmithTokenKind kind = at == 0 || at == 3 ? SmithTokenKind_Identifier
                               : at == 5          ? SmithTokenKind_String
@@ -1279,13 +1278,13 @@ static void smith_lang_enum_generic_dot(SmithLang *lang, const SmithHost *host, 
 // for any other function (the type values read it), true when this one was consumed (or reported).
 // A module that declares `option` or `result` (the library's own two are the exceptions): an error naming the built-in.
 static bool smith_lang_eshape_builtin_clash(SmithLang *lang, const SmithHost *host, const SmithToken *name) {
-    bool library = strcmp(lang->module, "smith::option") == 0 || strcmp(lang->module, "smith::result") == 0;
+    bool library = strcmp(lang->module, "std::option") == 0 || strcmp(lang->module, "std::result") == 0;
     if (library || !(smith_lang_equals(name->text, name->length, "option") ||
                      smith_lang_equals(name->text, name->length, "result"))) {
         return false;
     }
     smith_lang_error(lang, host, name->location,
-                     "`%.*s` is a built-in type function (smith::%.*s), in scope in every module: a module cannot "
+                     "`%.*s` is a built-in type function (std::%.*s), in scope in every module: a module cannot "
                      "declare its own; pick another name",
                      (int)name->length, name->text, (int)name->length, name->text);
     return true;
@@ -1785,7 +1784,7 @@ static bool smith_lang_eshape_header_text(SmithLang *lang, const SmithLangEnumSh
         length = 0;
     }
     used += (size_t)snprintf(out + used, capacity - used,
-                             " } tag; union {%s }; } __attribute__((annotate(\"smith::enum\")));\n#endif\n", members);
+                             " } tag; union {%s }; } __attribute__((annotate(\"std::enum\")));\n#endif\n", members);
     return used < capacity;
 }
 
@@ -2275,7 +2274,7 @@ static void smith_lang_eshape_import(const char *text, uint32_t length, const ch
 }
 
 // `option` and `result` are in scope in every module, with no import: their shapes are the ones the library modules
-// `smith::option` and `smith::result` (lib/smith/option.smith, result.smith) export. Those headers are not in git, so
+// `std::option` and `std::result` (lib/std/option.smith, result.smith) export. Those headers are not in git, so
 // the two lines the lowering needs of them are written here; `tests/headers_test.smith` checks that each module's
 // generated header has exactly its line.
 static constexpr char smith_option_header[] = "// smith-eshape: option(T) { T some ; none ; }\n";

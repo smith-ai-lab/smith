@@ -101,28 +101,41 @@ static const SmithLangCName *smith_lang_cname_find(const SmithLang *lang, const 
     return nullptr;
 }
 
+// The C prefix of a module's names: `a::b` is `a_b_`, and the standard library, which C writes without a namespace,
+// is `smith_`: `std::arena` is `smith_arena_` (#366).
+static void smith_lang_c_prefix(const char *module, char *prefix, size_t capacity) {
+    size_t used = 0;
+    if (strncmp(module, "std::", 5) == 0) {
+        memcpy(prefix, "smith_", 6);
+        used = 6;
+        module += 5;
+    }
+    for (size_t i = 0; module[i] != 0 && used + 2 < capacity; i++) {
+        if (module[i] == ':' && module[i + 1] == ':') {
+            prefix[used++] = '_';
+            i += 1;
+        } else {
+            prefix[used++] = module[i];
+        }
+    }
+    prefix[used++] = '_';
+    prefix[used] = 0;
+}
+
 // The exports a module's header lists (`// smith-names:`), written through `binding` (`box`), or, for a module reached
 // only through another's imports, by their whole module name (`geometry::box`).
 static void smith_lang_written_from_header(SmithLang *lang, const char *text, size_t length, const char *module,
                                            const char *bound, bool direct) {
     char prefix[smith_lang_name_max];
-    size_t prefix_length = 0;
-    for (const char *c = module; *c != 0 && prefix_length + 2 < sizeof prefix; c++) { // the module's name
-        if (*c == ':') {
-            if (c[1] == ':') c += 1;
-            prefix[prefix_length++] = '_';
-        } else {
-            prefix[prefix_length++] = *c;
-        }
-    }
-    prefix[prefix_length++] = '_';
+    smith_lang_c_prefix(module, prefix, sizeof prefix);
+    size_t prefix_length = strlen(prefix);
     SmithLangText module_text = smith_lang_store(lang, module, strlen(module));
     smith_lang_hidden_read(lang, text, length, prefix, prefix_length);
     size_t cursor = 0;
     size_t start = 0;
     size_t end = 0;
     while (smith_lang_header_word(text, length, "// smith-names:", &cursor, &start, &end)) { // each export
-        // `member`, or `member=CName` for an export whose C name was chosen with [[smith::c_name("CName")]]
+        // `member`, or `member=CName` for an export whose C name was chosen with [[std::c_name("CName")]]
         const char *equals = memchr(text + start, '=', end - start);
         size_t member = equals != nullptr ? (size_t)(equals - (text + start)) : end - start;
         size_t c_name = equals != nullptr ? end - start - member - 1 : 0;

@@ -1,12 +1,12 @@
 ---
 type: architecture
-title: smith::slice and smith::ascii replace text's slice operations
+title: std::slice and std::ascii replace text's slice operations
 description: A slice library generic over the element does what text did for chars, with no allocation, option for a search that may find nothing, and a character test that reads no locale.
 tags: [libraries, slice, generics]
 ---
-# smith::slice and smith::ascii
+# std::slice and std::ascii
 
-Owner (2026-10-24): "text is not anything special. It's just a slice." The operations a program does on a slice that are not an element access (compare, search, fill, reverse, cut) are one generic module, `smith::slice` (issue #199), and the tests of one character are `smith::ascii`. `text` is being replaced by them and by `format::parse` (part 2 of #199).
+Owner (2026-10-24): "text is not anything special. It's just a slice." The operations a program does on a slice that are not an element access (compare, search, fill, reverse, cut) are one generic module, `std::slice` (issue #199), and the tests of one character are `std::ascii`. `text` is being replaced by them and by `format::parse` (part 2 of #199).
 
 **Decisions.**
 - *The element is in the declarator and generic.* `const auto xs[:]` (#193) takes a slice of any element and reads it; the second slice of `equal`, `compare`, `starts_with` and `ends_with` is written `typeof(a) b`, the first's type.

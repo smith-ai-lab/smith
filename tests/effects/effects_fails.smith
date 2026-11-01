@@ -1,18 +1,18 @@
 module effects_fails;
 
-import smith::effects;
+import std::effects;
 
 // A checked index is a failure point.
-export [[smith::effects(fails)]] i32 at(i32 values[:], usize index) {
+export [[std::effects(fails)]] i32 at(i32 values[:], usize index) {
     return values[index];
 }
 
 // Inferred: the index brings `fails`, and a ceiling without it rejects the function.
-export [[smith::pure]] i32 pure_at(i32 values[:], usize index) {
+export [[std::pure]] i32 pure_at(i32 values[:], usize index) {
     return values[index];
 }
 
-export [[smith::effects(alloc)]] i32 alloc_at(i32 values[:], usize index) {
+export [[std::effects(alloc)]] i32 alloc_at(i32 values[:], usize index) {
     return values[index];
 }
 
@@ -21,7 +21,7 @@ static i32 first(i32 values[:]) {
 }
 
 // No failure point: pure holds.
-export [[smith::pure]] i32 safe(i32 x) {
+export [[std::pure]] i32 safe(i32 x) {
     return x + 1;
 }
 

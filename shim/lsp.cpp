@@ -1199,7 +1199,7 @@ class Session {
         }
     }
 
-    // A name of a symbol in a .smith file as the source writes it, with its module: `smith::arena::push`.
+    // A name of a symbol in a .smith file as the source writes it, with its module: `std::arena::push`.
     std::string qualified(const Place &place) {
         if (!open(place.path)) return "";
         awaitParsed(place.path);
@@ -1219,7 +1219,7 @@ class Session {
         std::string joined = name;
         for (size_t at; (at = joined.find("::")) != std::string::npos;)
             joined.replace(at, 2, "_");
-        // A function with a C name (`[[smith::c_name("smith_arena_push")]] push_raw`) is in the index under the C name,
+        // A function with a C name (`[[std::c_name("smith_arena_push")]] push_raw`) is in the index under the C name,
         // which the written name does not spell: when the joined name finds nothing, the module's own name is asked
         // for and every .smith symbol it brings is judged by what the source writes.
         std::string module = StringRef(name).rsplit("::").first.str();

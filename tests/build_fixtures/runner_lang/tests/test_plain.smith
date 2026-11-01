@@ -1,5 +1,5 @@
-import smith::random;
-import smith::test;
+import std::random;
+import std::test;
 
 void test_plain_works(void) {
     test::check_equal(2 + 2, 4);

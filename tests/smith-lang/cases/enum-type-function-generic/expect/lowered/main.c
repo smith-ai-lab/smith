@@ -1,6 +1,6 @@
 #include <stdio.h>
-struct smith_enum_maybe_usize {enum smith_enum_maybe_usize_tag {smith_enum_maybe_usize_tag_some, smith_enum_maybe_usize_tag_none } tag; union { __SIZE_TYPE__ some; }; } __attribute__((annotate("smith::enum")));
-typedef struct smith_enum_maybe_usize main_Maybe;struct smith_enum_maybe_f64 {enum smith_enum_maybe_f64_tag {smith_enum_maybe_f64_tag_some, smith_enum_maybe_f64_tag_none } tag; union { double some; }; } __attribute__((annotate("smith::enum")));
+struct smith_enum_maybe_usize {enum smith_enum_maybe_usize_tag {smith_enum_maybe_usize_tag_some, smith_enum_maybe_usize_tag_none } tag; union { __SIZE_TYPE__ some; }; } __attribute__((annotate("std::enum")));
+typedef struct smith_enum_maybe_usize main_Maybe;struct smith_enum_maybe_f64 {enum smith_enum_maybe_f64_tag {smith_enum_maybe_f64_tag_some, smith_enum_maybe_f64_tag_none } tag; union { double some; }; } __attribute__((annotate("std::enum")));
 typedef struct smith_enum_maybe_f64 main_MaybeF; [ [ clang :: unavailable ( "main::first is a generic function: call it from a .smith module" ) ] ] void main_first ( void ) ; [ [ clang :: unavailable ( "main::wrap is a generic function: call it from a .smith module" ) ] ] void main_wrap ( void ) ; [ [ clang :: unavailable ( "main::pass is a generic function: call it from a .smith module" ) ] ] void main_pass ( void ) ;
 static __SIZE_TYPE__ main_or_else(main_Maybe m, __SIZE_TYPE__ otherwise) {
 if (m == .some) return m.some;

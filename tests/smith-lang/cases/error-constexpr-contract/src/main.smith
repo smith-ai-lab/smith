@@ -1,6 +1,6 @@
 // A failed contract in a compile-time call is a compile error at the outermost call, with the contract's line and the
 // stack of calls, innermost first.
-import smith::contract;
+import std::contract;
 
 typedef struct {
     i32 v[4];

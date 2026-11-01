@@ -409,14 +409,13 @@ static void smith_lang_begin_declaration(SmithLang *lang, const SmithHost *host,
 
 static bool smith_lang_name_char(char c);
 
-// ---- [[smith::c_name("...")]]
+// ---- [[std::c_name("...")]]
 // ---------------------------------------------------------------------------------------------------
 
-// Whether the tokens from `at` on are `[smith::c_name`: the attribute that gives the export after it a C name.
+// Whether the tokens from `at` on are `[std::c_name`: the attribute that gives the export after it a C name.
 static bool smith_lang_c_name_at(SmithLang *lang, const SmithHost *host, size_t at) {
     return smith_lang_punct(smith_lang_peek(lang, host, at, false), "[") &&
-           (smith_lang_ident(smith_lang_peek(lang, host, at + 1, false), "smith") ||
-            smith_lang_ident(smith_lang_peek(lang, host, at + 1, false), "std")) &&
+           smith_lang_ident(smith_lang_peek(lang, host, at + 1, false), "std") &&
            smith_lang_punct(smith_lang_peek(lang, host, at + 2, false), "::") &&
            smith_lang_ident(smith_lang_peek(lang, host, at + 3, false), "c_name");
 }
@@ -438,13 +437,13 @@ static bool smith_lang_c_name_text(SmithLang *lang, const SmithHost *host, uint3
     }
     if (!identifier) {
         smith_lang_error(lang, host, location,
-                         "[[smith::c_name]] needs a C identifier that is no keyword, as in "
-                         "[[smith::c_name(\"SmithArena\")]]");
+                         "[[std::c_name]] needs a C identifier that is no keyword, as in "
+                         "[[std::c_name(\"SmithArena\")]]");
     }
     return identifier;
 }
 
-// After `[[smith::c_name`: `(` string `)` `]` `]`. Gives the name through `name`; false, with the error reported and
+// After `[[std::c_name`: `(` string `)` `]` `]`. Gives the name through `name`; false, with the error reported and
 // the attribute skipped, when it is some other shape.
 static bool smith_lang_c_name_argument(SmithLang *lang, const SmithHost *host, uint32_t location, char *name,
                                        size_t capacity) {
@@ -468,7 +467,7 @@ static bool smith_lang_c_name_argument(SmithLang *lang, const SmithHost *host, u
         smith_lang_take(lang, host);
     }
     if (shaped) return smith_lang_c_name_text(lang, host, string_location, quoted, strlen(quoted), name, capacity);
-    smith_lang_error(lang, host, location, "write [[smith::c_name(\"Name\")]]: the C name is one string");
+    smith_lang_error(lang, host, location, "write [[std::c_name(\"Name\")]]: the C name is one string");
     for (size_t guard = 0; guard < smith_lang_batch_max; guard++) { // to the end of the attribute
         const SmithToken *next = smith_lang_peek(lang, host, 0, false);
         if (next->kind == SmithTokenKind_Eof || smith_lang_punct(next, ";")) break;
@@ -482,7 +481,7 @@ static bool smith_lang_c_name_argument(SmithLang *lang, const SmithHost *host, u
     return false;
 }
 
-// Reads `[[smith::c_name("Name")]]` (the first `[` is the token being processed) and keeps the name for the export
+// Reads `[[std::c_name("Name")]]` (the first `[` is the token being processed) and keeps the name for the export
 // that must follow. Returns false when these tokens are some other attribute, which then goes on as a declaration.
 static bool smith_lang_c_name_attribute(SmithLang *lang, const SmithHost *host, const SmithToken *open) {
     if (!smith_lang_c_name_at(lang, host, 0)) return false;
@@ -509,7 +508,7 @@ static bool smith_lang_c_name_attribute(SmithLang *lang, const SmithHost *host, 
     const SmithToken *after = smith_lang_peek(lang, host, 0, false);
     if (!smith_lang_ident(after, "export") || smith_lang_is_own_word(lang, host, after)) {
         smith_lang_error(lang, host, open->location,
-                         "[[smith::c_name]] goes before `export`: it names an export's C API");
+                         "[[std::c_name]] goes before `export`: it names an export's C API");
         lang->pending_c_name = (SmithLangText){0, 0};
     }
     smith_lang_ty_attribute_taken();
@@ -806,8 +805,8 @@ static size_t smith_lang_kept_includes(SmithLang *lang, char *out, size_t capaci
     return used;
 }
 
-// The path by which a header finds another module's header from its own folder: for smith::random importing
-// smith::arena, `arena.h`; for game::main importing lib::text, `../lib/text.h`. A quoted include looks in the
+// The path by which a header finds another module's header from its own folder: for std::random importing
+// std::arena, `arena.h`; for game::main importing lib::text, `../lib/text.h`. A quoted include looks in the
 // including file's folder first, so a header that names its imports this way needs no include path of its own, and
 // the generated headers of one tree (include/smith, .smith/include/smith, an installed copy) find each other.
 static void smith_lang_relative_header(const char *from, const char *to, char *path, size_t capacity) {
@@ -1384,7 +1383,7 @@ bool smith_lang_feed(SmithLang *lang, const SmithHost *host, const SmithToken *t
     if (lang->unnamed_c_name) {
         lang->unnamed_c_name = false;
         smith_lang_error(lang, host, lang->unnamed_c_name_location,
-                         "[[smith::c_name]] names a typedef, a tag, a function or a variable; this export declares "
+                         "[[std::c_name]] names a typedef, a tag, a function or a variable; this export declares "
                          "none");
     }
     lang->queue[0] = *token;

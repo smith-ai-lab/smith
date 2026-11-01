@@ -1,11 +1,11 @@
-// A project's build file written in .smith (issue #43, part 3), from tests/build-smith.sh: `import smith::build;`, the
+// A project's build file written in .smith (issue #43, part 3), from tests/build-smith.sh: `import std::build;`, the
 // verbs on it, `smith build --dump-config`, and the build file that does what the conventions do.
 module build_smith_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 import <string.h>;
 
@@ -135,7 +135,7 @@ export void test_build_smith_dump_config_of_a_smith_project_is_a_build_smith() {
     defer mem::set_allocator(outside);
     scratch::Run dump = scratch::sh(&p, "smith build --dump-config");
     scratch::expect_status("dump: a .smith project: status 0", 0, &dump);
-    scratch::expect_contains("dump: ... is a build.smith of the high-level calls", dump.out, "import smith::build;");
+    scratch::expect_contains("dump: ... is a build.smith of the high-level calls", dump.out, "import std::build;");
     scratch::expect_contains("dump: ... is the module build", dump.out, "module build;");
     scratch::expect_contains("dump: ... exports the entry point", dump.out, "export void build(build::Build *b) {");
     scratch::expect_contains("dump: ... names the entry", dump.out, ".entry = \"main.smith\",");

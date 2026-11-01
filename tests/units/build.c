@@ -68,11 +68,10 @@ void build(SmithBuild *b) {
     kept[kept_count] = nullptr;
     SmithTests tests = {
         .objects = (const SmithObject *[]){&http, &core, &runtime_io, nullptr},
-        .sources =
-            smith_cat(b, smith_glob(b, smith_list(b, "lib/smith/*_test.smith", "lib/*_test.smith", nullptr)), kept,
-                      smith_list(b, "tests/scratch.smith", "tests/runner.smith", "tests/prove_cases.smith",
-                                 "tests/corpus.smith", nullptr),
-                      nullptr),
+        .sources = smith_cat(b, smith_glob(b, smith_list(b, "lib/std/*_test.smith", "lib/*_test.smith", nullptr)), kept,
+                             smith_list(b, "tests/scratch.smith", "tests/runner.smith", "tests/prove_cases.smith",
+                                        "tests/corpus.smith", nullptr),
+                             nullptr),
         .flags = flags,
         .link_flags = smith_list(b, "-fsanitize=address,undefined", nullptr),
     };

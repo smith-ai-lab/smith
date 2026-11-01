@@ -1,6 +1,6 @@
 ---
 name: smith-contract-proof
-description: "What smith::contract's modifies and invariant mean to smith prove: contract::modifies (what a function writes, what a caller keeps), a loop's invariant unrolled or by induction, and a failed contract at compile time. Load when writing contract::modifies or contract::invariant, or on 'the function writes here, outside the ranges' or 'smith_invariant(c) may be false after a pass'."
+description: "What std::contract's modifies and invariant mean to smith prove: contract::modifies (what a function writes, what a caller keeps), a loop's invariant unrolled or by induction, and a failed contract at compile time. Load when writing contract::modifies or contract::invariant, or on 'the function writes here, outside the ranges' or 'smith_invariant(c) may be false after a pass'."
 ---
 
 # Contracts: modifies, invariants and compile time
@@ -8,7 +8,7 @@ description: "What smith::contract's modifies and invariant mean to smith prove:
 ```smith
 module bag;
 
-import smith::contract;
+import std::contract;
 
 export typedef struct {
     u32 len;

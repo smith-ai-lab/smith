@@ -6,10 +6,10 @@
 // See tests/prove_test.smith for the proofs' cache and budget.
 module prove_memory_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 import prove_cases;
 
@@ -143,7 +143,7 @@ export void test_prove_after_call_a_store_through_sret_after_a_trusted_call_is_p
     defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "lib", "lib");
     proved(&p, "after_call: a store through sret after a trusted call with a writable pointer is proved (#74)",
-           "--function=replay_make --library=lib/smith/arena.smith \"$c/arena_sret.c\"");
+           "--function=replay_make --library=lib/std/arena.smith \"$c/arena_sret.c\"");
 }
 
 // 7c2c. A pointer returned under an smith_ensures is valid or null, proved at the return and assumed by callers (#74).

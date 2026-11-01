@@ -1,7 +1,7 @@
-// smith::text from .smith: its generated header (include/smith/text.h) is the interface, and the names are written as
+// std::text from .smith: its generated header (include/smith/text.h) is the interface, and the names are written as
 // the module's, text::make, though C calls them smith_text_make.
 import <stdio.h>;
-import smith::text;
+import std::text;
 
 i32 main() {
     const char input[:] = "move 3 4 # go\nturn -90.5\n\nhash 00ff\n";

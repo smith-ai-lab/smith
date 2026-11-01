@@ -13,6 +13,6 @@ export typeof(a) larger(auto a, typeof(a) b) {
     return a > b ? a : b;
 }
 
-[[smith::c_name("geom_vec_squared")]] export f32 length2(Vec a) {
+[[std::c_name("geom_vec_squared")]] export f32 length2(Vec a) {
     return a.x * a.x;
 }

@@ -5,10 +5,10 @@
 // texts, a file it reads) is given back with that memory, and scratch::clean frees what make holds.
 module conventions_test;
 
-import smith::format;
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::format;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
 import <smith/json.h>;
 import <string.h>;
@@ -262,7 +262,7 @@ export void test_conventions_library_import_smith_text_links_text() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::expect_text("library: import smith::text links text", "42", last_line(&p, "smith run"));
+    scratch::expect_text("library: import std::text links text", "42", last_line(&p, "smith run"));
 }
 
 export void test_conventions_library_import_a_header_in_a_smith_file_links_files() {

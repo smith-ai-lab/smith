@@ -2,7 +2,7 @@ import <signal.h>;
 import <stdlib.h>;
 import <time.h>;
 import <unistd.h>;
-import smith::test;
+import std::test;
 
 constexpr i32 hang_up = c::SIGHUP; // NOLINT(smith-preprocessor)
 

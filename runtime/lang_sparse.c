@@ -371,7 +371,7 @@ static void smith_lang_body(SmithLang *lang, const SmithHost *host, const SmithT
     if (name && smith_lang_countof_parameter(lang, host, token)) return;
     const SmithLangName *known = name ? smith_lang_name_find(lang, token->text, token->length) : nullptr;
     if (known != nullptr && known->generic != 0 && smith_lang_generic_call_here(lang, host, token, known)) return;
-    // An import named as a name of the module wins when it is written with `::` (`import smith::build;` in `module
+    // An import named as a name of the module wins when it is written with `::` (`import std::build;` in `module
     // build;`: `build::app` is the import's, `build(b)` the module's).
     if (known != nullptr && smith_lang_binding_find(lang, token->text, token->length) != nullptr &&
         smith_lang_punct(smith_lang_peek(lang, host, 0, false), "::")) {

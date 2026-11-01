@@ -4,10 +4,10 @@
 // fetch does when it must not take the pack. The real ~/.cache/smith is never read.
 module llvm_pack_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 
 constexpr usize memory_size = (usize)4 << 20; // 4 MiB

@@ -1,6 +1,6 @@
 module idiom::unsafe;
 
-import smith::contract;
+import std::contract;
 import <setjmp.h>;
 import <stdlib.h>;
 

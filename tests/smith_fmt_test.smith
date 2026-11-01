@@ -7,13 +7,13 @@
 //     `import`, and `import <sys/wait.h>;`, `import a::b as x;`, `module a::b;` kept whole.
 module smith_fmt_test;
 
-import smith::arena;
-import smith::format;
-import smith::env;
-import smith::test;
+import std::arena;
+import std::format;
+import std::env;
+import std::test;
 import <string.h>;
 import scratch;
-import smith::mem;
+import std::mem;
 import corpus;
 
 static typeof(const char[:]) slice_of(const char *text) {
@@ -313,9 +313,9 @@ export void test_lambda_forms_are_laid_out_like_a_function_body() {
                   "auto c = []{ g(); };\nauto d=[x]{g(x);};\nrun([x]{ g(); });\neach(xs) {\n g(it);\n}\n}\n"));
     scratch::expect_text(
         "lambda(F) as a parameter type",
-        "void s(lambda(bool(typeof(xs[0]) *, typeof(xs[0]) *)) less, [[smith::until(g)]] lambda(void(i32)) h);",
+        "void s(lambda(bool(typeof(xs[0]) *, typeof(xs[0]) *)) less, [[std::until(g)]] lambda(void(i32)) h);",
         formatted(&p, "x.smith",
-                  "void s(lambda(bool (typeof(xs[0]) *, typeof(xs[0]) *)) less, [[smith::until(g)]] lambda(void (i32)) "
+                  "void s(lambda(bool (typeof(xs[0]) *, typeof(xs[0]) *)) less, [[std::until(g)]] lambda(void (i32)) "
                   "h);\n"));
 }
 

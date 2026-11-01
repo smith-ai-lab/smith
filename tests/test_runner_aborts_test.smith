@@ -3,10 +3,10 @@
 // runs as workers and with --isolate. Fixtures: tests/build_fixtures/runner_*.
 module test_runner_aborts_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import runner;
 import scratch;
 

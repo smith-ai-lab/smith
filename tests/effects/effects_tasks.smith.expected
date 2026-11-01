@@ -1,3 +1,3 @@
 status 1
-effects_tasks.smith:9:5: error: smith-effect: `pure_spawner` is [[smith::pure]], but it has the effects tasks: pure_spawner -> start (effects_tasks.smith:9)
+effects_tasks.smith:9:5: error: smith-effect: `pure_spawner` is [[std::pure]], but it has the effects tasks: pure_spawner -> start (effects_tasks.smith:9)
 effects_tasks.smith:21:1: error: smith-effect: static assertion failed: g starts a task: `g` has the effects tasks beyond the allowed ones: g -> start (effects_tasks.smith:17)

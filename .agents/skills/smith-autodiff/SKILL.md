@@ -1,16 +1,16 @@
 ---
 name: smith-autodiff
-description: "Using smith::autodiff (import smith::autodiff; autodiff::gradient, reverse, forward, dup, out, constant): Enzyme's gradients and tangents of a function. Load when code imports smith::autodiff, on a question about gradients or automatic differentiation in .smith."
+description: "Using std::autodiff (import std::autodiff; autodiff::gradient, reverse, forward, dup, out, constant): Enzyme's gradients and tangents of a function. Load when code imports std::autodiff, on a question about gradients or automatic differentiation in .smith."
 ---
 
 # Derivatives of a function: smith's autodiff
 
-smith has [Enzyme](https://enzyme.mit.edu) (v0.0.303, LLVM's automatic differentiation) linked into its own linker. When a program is linked, Enzyme finds each call to `__enzyme_autodiff` (reverse mode, a gradient) or `__enzyme_fwddiff` (forward mode, a tangent), writes the derivative of the function it is given and replaces the call with it. The library is the raw interface (declarations, no source that defines them) and `gradient`, `map` and `zeros` built on it. It is `lib/smith/autodiff.smith` (the module `smith::autodiff`) and its generated header `<smith/autodiff.h>`; a program that imports or includes it is an **autodiff program**, and smith builds it differently (below).
+smith has [Enzyme](https://enzyme.mit.edu) (v0.0.303, LLVM's automatic differentiation) linked into its own linker. When a program is linked, Enzyme finds each call to `__enzyme_autodiff` (reverse mode, a gradient) or `__enzyme_fwddiff` (forward mode, a tangent), writes the derivative of the function it is given and replaces the call with it. The library is the raw interface (declarations, no source that defines them) and `gradient`, `map` and `zeros` built on it. It is `lib/std/autodiff.smith` (the module `std::autodiff`) and its generated header `<smith/autodiff.h>`; a program that imports or includes it is an **autodiff program**, and smith builds it differently (below).
 
 **`autodiff::gradient(f, &x, rest...)`** (`.smith` only) is the gradient of `f(&x, rest...)` with respect to `x`, a value of `x`'s type; every other argument is held constant. What it allocates (a new array for each `[:]` field) comes from the current allocator (smith-mem), so the result belongs to the caller's region and nothing is freed:
 
 ```smith fragment
-import smith::autodiff;
+import std::autodiff;
 
 typedef struct { f32 m; f32 b; } Model;                  // numbers only: nothing to allocate
 typedef struct { f64 w[:]; f64 b; } Layer;                // `[:]` fields (smith-lang-arrays), structs of them, a `[:]` of structs
@@ -23,14 +23,14 @@ autodiff::map(sgd, &net, &net, &g, rate);                    // net = sgd(net, g
 Net m = autodiff::zeros(net);                     // a struct of net's shape, all zero: an optimizer's state
 ```
 
-- The gradient has the shape of `*x`: a float field is differentiated, an integer, bool or enum field comes back zero, a fixed array of floats is filled, a nested struct is walked, a `[:]` field (one dimension) is a new array of the same length from the current allocator, and each element of a `[:]` or a fixed array of structs is walked in turn. A pointer field is an error at your call that says to use `[:]`; so is a call `f` does not accept ("too few arguments ... in instance smith::autodiff::gradient(...)").
+- The gradient has the shape of `*x`: a float field is differentiated, an integer, bool or enum field comes back zero, a fixed array of floats is filled, a nested struct is walked, a `[:]` field (one dimension) is a new array of the same length from the current allocator, and each element of a `[:]` or a fixed array of structs is walked in turn. A pointer field is an error at your call that says to use `[:]`; so is a call `f` does not accept ("too few arguments ... in instance std::autodiff::gradient(...)").
 - `f` is a function's name (`mod::loss` too), its first parameter a pointer and its result a float; the arguments after it are anything `f` takes (pointers there are read, never differentiated). A pointer to `const` is fine.
 - **`autodiff::map(f, &out, &a, &b, ..., x, y)`** sets every float leaf of `out` to `f` of the matching leaves of any number of structs of the same type (`out` may be one of them), walking nested structs, fixed arrays and `[:]` fields (equal lengths, checked); other leaves stay as they are. A struct pointer is walked to its leaf and anything else (the learning rate, the step) is passed to every call as it is, in its place. `f` is an ordinary function of one float per struct and one value per number (a generic cannot be passed); an `f32` leaf converts to `f`'s `f64` parameters and back. Adam (learner's shape) is `map(moment1, &m, &m, &g, beta1); map(moment2, &v, &v, &g, beta2); map(adam, &p, &p, &m, &v, lr, t)` with `f64 adam(f64 p, f64 m, f64 v, f64 lr, i32 t)` computing the bias corrections from `t`; SGD is `map(sgd, &p, &p, &g, lr)`. `zeros(&arena, x)` is `x` with every number zero and every `[:]` a new array of its length.
 
 The raw calls, which `gradient` is built on and C uses:
 
 ```smith
-import smith::autodiff;
+import std::autodiff;
 import <math.h>;
 
 f64 f(f64 x, f64 y) {

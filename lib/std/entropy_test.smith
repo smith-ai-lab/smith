@@ -1,0 +1,40 @@
+// Tests of std::entropy: the fake set on the thread scripts what `seed()` returns, and the system's answer when no
+// handler is set. A checked failure (a system that cannot answer) stops the process and is not a test here.
+module std::entropy_test;
+
+import std::effects;
+import std::entropy;
+import std::random;
+import std::test;
+
+// The fake is what seed() draws from, and the key is key_make of the 64 bits it wrote.
+export void test_entropy_seed_draws_from_the_entropy_handler() {
+    entropy::Fake fake = entropy::fake(0x0123456789abcdefULL);
+    entropy::Handler *before = entropy::set_handler(&fake.base);
+    defer entropy::set_handler(before);
+    random::Key key = entropy::seed();
+    test::check_equal(key.bits, 0x0123456789abcdefULL);
+    test::check_equal(fake.asked, (usize)1);
+}
+
+// With no handler set, the system answers: two seeds differ, and the handler of the thread is null again.
+export void test_entropy_seed_without_a_handler_is_the_systems() {
+    entropy::Fake fake = entropy::fake(7);
+    entropy::Handler *before = entropy::set_handler(&fake.base);
+    entropy::Handler *scripted = entropy::set_handler(before);
+    test::check(scripted == &fake.base);
+    random::Key first = entropy::seed();
+    random::Key second = entropy::seed();
+    test::check(first.bits != second.bits);
+    test::check_equal(fake.asked, (usize)0);
+}
+
+// seed() has the entropy effect and no other: a ceiling that lists it holds. (The `fails` of its checked failure is
+// part of it.)
+void seed_stays_within(constexpr auto f) {
+    static_assert(effects::within(f, effects::entropy | effects::fails), "seed: entropy and a checked failure only");
+}
+
+export void test_entropy_seed_has_the_entropy_effect() {
+    seed_stays_within(entropy::seed);
+}

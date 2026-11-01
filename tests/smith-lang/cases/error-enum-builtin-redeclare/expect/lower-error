@@ -1,2 +1,2 @@
-src/main.smith:12:6: `result` is a built-in type function (smith::result), in scope in every module: a module cannot declare its own; pick another name
-src/main.smith:5:6: `option` is a built-in type function (smith::option), in scope in every module: a module cannot declare its own; pick another name
+src/main.smith:12:6: `result` is a built-in type function (std::result), in scope in every module: a module cannot declare its own; pick another name
+src/main.smith:5:6: `option` is a built-in type function (std::option), in scope in every module: a module cannot declare its own; pick another name

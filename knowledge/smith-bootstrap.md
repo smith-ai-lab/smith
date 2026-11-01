@@ -20,10 +20,10 @@ the repository records which release to use. `~/.cache/smith/llvm` (`smith build
 already; `smith build` says so when it is not (the default target stops, `llvm` and `clean` still work).
 `SMITH_STAGE0_RELEASE=<tag>` names another release. With a smith installed, `smith build` is all it takes, and CI does that.
 
-**How the build uses it.** `CC` defaults to `smith-cc`. `build.c` compiles `lib/smith/{arena,contract,inflate,io,random,text}.smith`
+**How the build uses it.** `CC` defaults to `smith-cc`. `build.c` compiles `lib/std/{arena,contract,inflate,io,random,text}.smith`
 to objects with it and links them beside `smith.c`, which (and `runtime/package.c` in it) sees only their generated headers
 in `.smith/include/smith/` (written by the previous release during the build, never committed). The build program of a user project (`.smith/runtime.c` and `package.c`) links the same five
-libraries, compiled by `smith build` from the copies it writes to `.smith/lib/smith/` with the smith itself, even when
+libraries, compiled by `smith build` from the copies it writes to `.smith/lib/std/` with the smith itself, even when
 `SMITH_CLANG` makes an external clang compile `build.c` (`.smith/build-program/build.ninja` is that manifest). smith has
 no build with one `cc` command and no stage0 without clang inside any more.
 

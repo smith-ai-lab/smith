@@ -1,6 +1,6 @@
 module affine_random_split;
 
-import smith::random;
+import std::random;
 
 export f64 two_draws(random::Key key) {
     random::Key keys[3];

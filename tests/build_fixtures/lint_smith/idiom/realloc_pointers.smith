@@ -1,6 +1,6 @@
 module idiom::realloc_pointers;
 
-import smith::mem;
+import std::mem;
 
 struct Node {
     i32 value;

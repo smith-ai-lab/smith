@@ -1,6 +1,6 @@
 ---
 name: smith-lang-affine
-description: "[[smith::affine]] on a type: a value of it is used at most once, and a second use is a compile error naming the first (a key that must not be drawn from twice, a handle that must not be closed twice). Load when a type is marked [[smith::affine]], or on 'smith-affine:', 'is used again; it was already used at line', 'is used in a loop, so it would be used once per iteration' or 'an element of an array of affine values is used through a constant index'."
+description: "[[std::affine]] on a type: a value of it is used at most once, and a second use is a compile error naming the first (a key that must not be drawn from twice, a handle that must not be closed twice). Load when a type is marked [[std::affine]], or on 'smith-affine:', 'is used again; it was already used at line', 'is used in a loop, so it would be used once per iteration' or 'an element of an array of affine values is used through a constant index'."
 ---
 
 # Affine types
@@ -10,7 +10,7 @@ Draw twice from one random key and you get the same numbers twice. Mark the type
 ```smith
 module keys;
 
-export [[smith::affine]] typedef struct { u64 bits; } Key;
+export [[std::affine]] typedef struct { u64 bits; } Key;
 
 export u64 draw(Key key) { return key.bits; }
 
@@ -24,7 +24,7 @@ export u64 total(Key key, Key parts[:]) {
 }
 ```
 
-The mark is a valid C23 attribute (in C: `[[smith::affine]] typedef struct { ... } Key;`; `[[clang::annotate("smith::affine")]]` is the same mark, which a compiler without smith's plugin accepts without a warning). smith checks it on every compile and in the editor, with no flag.
+The mark is a valid C23 attribute (in C: `[[std::affine]] typedef struct { ... } Key;`; `[[clang::annotate("std::affine")]]` is the same mark, which a compiler without smith's plugin accepts without a warning). smith checks it on every compile and in the editor, with no flag.
 
 ## The rules
 

@@ -7,9 +7,9 @@
 // texts, a file it reads) is given back with that memory, and scratch::clean frees what make holds.
 module defaults_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
 
 constexpr usize memory_size = (usize)16 << 20; // 16 MiB

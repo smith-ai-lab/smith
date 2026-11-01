@@ -10,10 +10,10 @@
 // allocator, so what scratch returns goes back with the arena.
 module prove_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 import target;
 

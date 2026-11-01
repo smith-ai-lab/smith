@@ -1,6 +1,6 @@
-import smith::arena;
-import smith::math;
-import smith::test;
+import std::arena;
+import std::math;
+import std::test;
 
 void test_ordering_passes(void) {
     i32 one = 1;

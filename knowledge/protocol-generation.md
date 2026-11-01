@@ -19,7 +19,7 @@ schemas are in git.
 
 | Path | What |
 | --- | --- |
-| `scripts/protocol.c` | the generator, a program of the build like `scripts/pack.c` (built by build.c from `lib/smith/arena.smith`, `contract.smith`, `text.smith` and `mem.smith`, and `json.c`) |
+| `scripts/protocol.c` | the generator, a program of the build like `scripts/pack.c` (built by build.c from `lib/std/arena.smith`, `contract.smith`, `text.smith` and `mem.smith`, and `json.c`) |
 | `schemas/dap/`, `schemas/mcp/` | the vendored inputs: the schema (`debugAdapterProtocol.json`, `schema.json`) and the project's `LICENSE`, byte for byte as released |
 | `runtime/protocol/protocol.h`, `protocol.c` | hand-written: the error a parse reports, the types a schema starts from (string, integer, number, boolean, any JSON), the checks the generated code shares |
 | `.smith/protocol/dap.h`, `dap.c`, `mcp.h`, `mcp.c` | generated, not in git: a struct and four functions per type; smith.c includes `dap.c` and `mcp.c` with `-I .smith/protocol -I runtime/protocol` |

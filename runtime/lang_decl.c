@@ -230,7 +230,7 @@ static bool smith_lang_default_name_is(const SmithLang *lang, const SmithLangNam
            memcmp(c_name, lang->prefix, prefix) == 0 && memcmp(c_name + prefix, text, entry->name.length) == 0;
 }
 
-// A C name chosen with [[smith::c_name]] must be the C name of nothing else the module declares, private names
+// A C name chosen with [[std::c_name]] must be the C name of nothing else the module declares, private names
 // included (they are prefixed and `static`, but the compiler sees one set of names). Returns false, with the error
 // reported, when it is.
 static bool smith_lang_c_name_free(SmithLang *lang, const SmithHost *host, const char *c_name, size_t length,
@@ -240,13 +240,13 @@ static bool smith_lang_c_name_free(SmithLang *lang, const SmithHost *host, const
         bool same_chosen = other->c_name.length == length && memcmp(smith_lang_str(other->c_name), c_name, length) == 0;
         if (same_chosen) {
             smith_lang_error(lang, host, location,
-                             "[[smith::c_name]] on `%.*s` chooses the C name of `%s`; give one of them another name",
+                             "[[std::c_name]] on `%.*s` chooses the C name of `%s`; give one of them another name",
                              (int)name_length, name, smith_lang_str(other->name));
             return false;
         }
         if (smith_lang_default_name_is(lang, other, c_name, length)) {
             smith_lang_error(lang, host, location,
-                             "[[smith::c_name]] on `%.*s` chooses the C name the module's prefix gives `%s`; give one "
+                             "[[std::c_name]] on `%.*s` chooses the C name the module's prefix gives `%s`; give one "
                              "of them another name",
                              (int)name_length, name, smith_lang_str(other->name));
             return false;
@@ -265,7 +265,7 @@ static void smith_lang_c_name_taken(SmithLang *lang, const SmithHost *host, cons
         if (other->c_name.length == prefixed_length &&
             memcmp(smith_lang_str(other->c_name), prefixed, prefixed_length) == 0) {
             smith_lang_error(lang, host, location,
-                             "`%.*s` gets the C name that [[smith::c_name]] chose for `%s`; give one of them another "
+                             "`%.*s` gets the C name that [[std::c_name]] chose for `%s`; give one of them another "
                              "name",
                              (int)length, name, smith_lang_str(other->name));
             return;
@@ -273,14 +273,14 @@ static void smith_lang_c_name_taken(SmithLang *lang, const SmithHost *host, cons
     }
 }
 
-// The C name a new export takes from [[smith::c_name]]: the declaration's first name, but no enumeration constant.
+// The C name a new export takes from [[std::c_name]]: the declaration's first name, but no enumeration constant.
 static bool smith_lang_takes_c_name(const SmithLang *lang, SmithLangNameKind kind, bool exported) {
     return exported && kind != SmithLangName_Constant && lang->decl.c_name.length > 0 && !lang->decl.c_name_used;
 }
 
-// The C name of an exported enum's constant: the enum's C name (the one [[smith::c_name]] chose for it or its tag's),
+// The C name of an exported enum's constant: the enum's C name (the one [[std::c_name]] chose for it or its tag's),
 // an underscore and the constant, `SmithTestKind_Equal`, which is what C's naming rule for enumeration constants asks.
-// False when the enum has no C name yet (an anonymous typedef without [[smith::c_name]]): the constant is prefixed.
+// False when the enum has no C name yet (an anonymous typedef without [[std::c_name]]): the constant is prefixed.
 static bool smith_lang_enum_constant_name(const SmithLang *lang, SmithLangNameKind kind, bool exported,
                                           const char *name, size_t length, char *out, size_t capacity) {
     if (kind != SmithLangName_Constant || !exported) return false;
@@ -361,7 +361,7 @@ static const char *smith_lang_declare(SmithLang *lang, const SmithHost *host, co
     } else if (smith_lang_takes_c_name(lang, kind, exported) && known->c_name.length == 0) {
         lang->decl.c_name_used = true;
         smith_lang_error(lang, host, lang->decl.c_name_location,
-                         "`%.*s` was declared before; [[smith::c_name]] goes on its first declaration", (int)length,
+                         "`%.*s` was declared before; [[std::c_name]] goes on its first declaration", (int)length,
                          name);
     } else if (smith_lang_takes_c_name(lang, kind, exported)) {
         // Declared again with its C name: each branch of a file-scope `if constexpr` read by the raw lowering (issue

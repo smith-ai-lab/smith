@@ -1,6 +1,6 @@
 ---
 name: smith-inflate
-description: "Using smith::inflate (import smith::inflate): DEFLATE raw, zlib and gzip in memory with checksums. Load when code imports smith::inflate or includes <smith/inflate.h>, or on decompressing gzip, zlib, PNG or HDF5 data in .smith or C without zlib."
+description: "Using std::inflate (import std::inflate): DEFLATE raw, zlib and gzip in memory with checksums. Load when code imports std::inflate or includes <smith/inflate.h>, or on decompressing gzip, zlib, PNG or HDF5 data in .smith or C without zlib."
 ---
 
 # DEFLATE: smith's inflate
@@ -10,7 +10,7 @@ DEFLATE (RFC 1951) with the zlib and gzip wrappers, input whole in memory, no al
 ## In memory
 
 ```smith
-import smith::inflate;
+import std::inflate;
 
 // Inflates a zlib stream (an HDF5 chunk, a PNG's IDAT) into `out`. Returns the bytes written, or -1.
 isize unzip(const u8 *data, usize data_size, u8 *out, usize capacity) {

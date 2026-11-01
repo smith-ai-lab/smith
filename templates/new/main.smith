@@ -3,7 +3,7 @@ module main;
 
 import primes;
 
-import smith::contract;
+import std::contract;
 
 i32 main() {
     i32 sum = primes::sum(5);

@@ -1,16 +1,16 @@
 ---
 name: smith-files
-description: "Using smith::files (import smith::files; files::read_file, write_file, open, read, write, close, info, list, make_folder, remove, move, map, files::fake): files and folders by direct calls that return a result, with an in-memory fake for tests. Load when code imports smith::files or includes <smith/files.h>, or on reading or writing a file."
+description: "Using std::files (import std::files; files::read_file, write_file, open, read, write, close, info, list, make_folder, remove, move, map, files::fake): files and folders by direct calls that return a result, with an in-memory fake for tests. Load when code imports std::files or includes <smith/files.h>, or on reading or writing a file."
 ---
 
-# Files by direct calls: smith::files
+# Files by direct calls: std::files
 Call `files::` anywhere. A call returns `result(T, files::Error)`; the error is what the world said (`NotFound`, `Exists`, `Denied`, `IsFolder`, `NotFolder`, `NotEmpty`, `NameTooLong`, `NoSpace`, `ReadOnly`, `TooManyOpen`, `Other`). Paths are `const char path[:]` (a string literal converts). Memory a call returns comes from the current allocator (smith-mem) and is the caller's region: install an arena first and never free it one block at a time.
 
 ```smith
 module scratch;
-import smith::arena;
-import smith::files;
-import smith::mem;
+import std::arena;
+import std::files;
+import std::mem;
 export usize bytes_in(const char path[:], arena::Arena *a) {
     arena::ArenaAllocator allocator = arena::allocator(a);
     mem::Allocator *before = mem::set_allocator(&allocator.base);
@@ -36,9 +36,9 @@ export usize bytes_in(const char path[:], arena::Arena *a) {
 **The fake, for tests:**
 ```smith
 module scratch_fake;
-import smith::arena;
-import smith::files;
-import smith::mem;
+import std::arena;
+import std::files;
+import std::mem;
 export usize config_size(arena::Arena *a) {
     arena::ArenaAllocator allocator = arena::allocator(a);   // the fake's bytes come from the allocator in force
     mem::Allocator *outside = mem::set_allocator(&allocator.base);

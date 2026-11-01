@@ -20,7 +20,7 @@ docs_Max,
 } docs_Volume;
 typedef struct smith_enum_docs_Shape {enum docs_Shape_tag {docs_Shape_tag_round, docs_Shape_tag_none, docs_Shape_tag_plain } tag; union {
 float round; };
-} __attribute__((annotate("smith::enum"))) docs_Shape;
+} __attribute__((annotate("std::enum"))) docs_Shape;
 void docs_run() __asm__("_docs::run");
 void docs_run() {__extension__({extern void docs_show__Volume(void)__asm__("_docs::show(docs_Volume)");docs_show__Volume();});__extension__({extern void docs_show__Shape(void)__asm__("_docs::show(docs_Shape)");docs_show__Shape();});__extension__({extern void docs_show__Options(void)__asm__("_docs::show(docs_Options)");docs_show__Options();});__extension__({extern void docs_show__Pair(void)__asm__("_docs::show(docs_Pair)");docs_show__Pair();});__extension__({extern void docs_show__Plain(void)__asm__("_docs::show(docs_Plain)");docs_show__Plain();});__extension__({extern void docs_value__Options(void)__asm__("_docs::value(docs_Options)");docs_value__Options();});
 }

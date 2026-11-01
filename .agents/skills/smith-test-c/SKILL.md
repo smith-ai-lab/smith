@@ -3,7 +3,7 @@ name: smith-test-c
 description: "Writing tests from C with <smith/test.h>: the same checks and signatures under C names. Load when a C file includes <smith/test.h>."
 ---
 
-# smith::test from C
+# std::test from C
 
 The same tests in C include the header and use the C names, which are the generics' named instances: `smith_check(c)`, `smith_check_equal_<type>(a, b)` with `<type>` one of `bool`, `char`, `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f32`, `f64` and `ptr` (as `<math.h>` names `sinf` and `sin`), `smith_check_near_f32` and `_f64`, `smith_check_same_bits_f32` and `_f64`, `smith_test_expect_abort()`, `smith_test_note`, `smith_test_arena`, `smith_test_full` and `smith_test_scratch`. There are no ordering checks in C until a C caller needs one, and no macros: the old `SMITH_CHECK`, `SMITH_CHECK_NEAR` and `SMITH_CHECK_SAME_BITS` are gone (`SMITH_CHECK(a, ==, b)` is `test::check_equal(a, b)`, `<` is `check_less`, a lone condition is `test::check(c)`).
 

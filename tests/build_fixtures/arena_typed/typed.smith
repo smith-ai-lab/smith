@@ -1,6 +1,6 @@
 import <stdio.h>;
 import <stdlib.h>;
-import smith::arena;
+import std::arena;
 
 typedef struct {
     i32 id;

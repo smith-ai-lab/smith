@@ -4,7 +4,7 @@
 // is smith-idiom.
 //
 //   smith-sized-types     .smith    uint32_t, size_t, float, unsigned, long, int...: write the sized type (u32, usize,
-//   f32) smith-module-library  .smith    a library that is a module, used through its C header: import smith::arena
+//   f32) smith-module-library  .smith    a library that is a module, used through its C header: import std::arena
 //   smith-bounded-loop    .smith, C a loop with no condition or a constant one, outside main: bound it by a count
 //   smith-c23             .smith, C NULL, _Bool, <stdbool.h>, {0}, __attribute__((noreturn)): nullptr, bool, {},
 //   [[noreturn]] smith-constexpr       .smith, C a file-scope const object with a constant initializer: constexpr
@@ -176,7 +176,7 @@ class SizedTypesCheck final : public ClangTidyCheck {
 
 // ---- smith-module-library -------------------------------------------------------------------------------------------
 
-// A library that is a module has `// smith-module: smith::arena` in its generated header, and `// smith-names:
+// A library that is a module has `// smith-module: std::arena` in its generated header, and `// smith-names:
 // push_raw= smith_arena_push ...` pairs the module's names with the C names. Headers are read as the file includes
 // them.
 struct ModuleHeader {
@@ -289,7 +289,7 @@ class ModuleLibraryCheck final : public ClangTidyCheck {
         }
 
         static std::string example(const ModuleHeader &module) {
-            if (module.module == "smith::arena") return " (a typed push is `arena::push(&a, T)`)";
+            if (module.module == "std::arena") return " (a typed push is `arena::push(&a, T)`)";
             return "";
         }
 
