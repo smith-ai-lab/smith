@@ -502,6 +502,13 @@ static void unknown_name(types::Checked *c, const ast::Expr *e, ast::Path path) 
     poison(c, e);
 }
 
+// `undefined` written as a bare name: the opt-out of zero, valid only as a local's whole initializer (K3b, #1334).
+export Bool is_undefined(const ast::Expr *e) {
+    if (e == nullptr || !(e->kind == .name)) return false;
+    ast::Path path = e->kind.name.path;
+    return countof(path.segments) == 1 && same_text(path.segments[0].text, "undefined");
+}
+
 static void name_expr(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .name)) {
@@ -509,6 +516,11 @@ static void name_expr(types::Checked *c, Frame f) {
     }
     ast::Path path = e->kind.name.path;
     const types::Symbol *s = types::lookup_path(&c->scopes, path);
+    if (s == nullptr && is_undefined(e)) {
+        types::failf(c, e->span, "`undefined` is only valid as a whole initializer, e.g. `I32 x = undefined;`");
+        poison(c, e);
+        return;
+    }
     if (s == nullptr) {
         unknown_name(c, e, path);
         return;
