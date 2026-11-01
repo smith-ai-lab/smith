@@ -102,6 +102,8 @@ static Bool is_name(lex::TokenKind kind) {
     return kind == lex::name || kind == lex::type_name;
 }
 
+static Bool take_tag_keyword(parse::Parser *p);
+
 static Str source_between(const parse::Parser *p, U32 start, U32 end) {
     return p->source[start:end];
 }
@@ -407,7 +409,7 @@ static ast::Param parse_param(parse::Parser *p) {
             parse::advance(p);
         }
         return param;
-    } else {
+    } else if (take_tag_keyword(p)) {
         param.type = parse::type(p);
     }
     if (param.type == nullptr) return param;
@@ -447,10 +449,50 @@ static ParamList parse_params(parse::Parser *p, Bool *variadic) {
 static Bool at_anonymous_record(const parse::Parser *p);
 static ast::TypeExpr *parse_anonymous_record(parse::Parser *p);
 
+// The token after the path that follows the tag keyword at the position: `Name`, `a::B`, `c::stat`.
+static lex::Token after_tag_path(const parse::Parser *p) {
+    Usize at = 1;
+    for (Usize step = 0; step < 64; step++) {
+        if (!is_name(parse::peek_at(p, at).kind)) break;
+        if (parse::peek_at(p, at + 1).kind != lex::colon_colon) return parse::peek_at(p, at + 1);
+        at += 2;
+    }
+    return parse::peek_at(p, at);
+}
+
+// Whether the tag keyword at the position starts a use of the type (`struct Pair a = {...};`, `struct c::stat info;`),
+// not the declaration of the type by itself (`struct Pair {...};`, `struct Pair;`, `enum Small : U8 {...}`).
+static Bool at_tag_use(const parse::Parser *p) {
+    lex::TokenKind kind = parse::peek(p).kind;
+    if (kind != lex::kw_struct && kind != lex::kw_union && kind != lex::kw_enum) return false;
+    if (!is_name(parse::peek_at(p, 1).kind)) return false;
+    lex::TokenKind next = after_tag_path(p).kind;
+    return next != lex::left_brace && next != lex::semicolon && next != lex::colon;
+}
+
+// `struct Pair` as the type of a variable, field or parameter: the keyword is dropped and the type is the name that
+// follows (a tag is a type name). A lowercase name alone is a C tag, which is written `struct c::stat`. False after
+// an error.
+static Bool take_tag_keyword(parse::Parser *p) {
+    if (!at_tag_use(p)) return true;
+    lex::Token keyword = parse::advance(p);
+    lex::Token name = parse::peek(p);
+    Bool plain = parse::peek_at(p, 1).kind != lex::colon_colon;
+    if (name.kind == lex::name && plain) {
+        Str tag = parse::text(p, name);
+        Str word = parse::text(p, keyword);
+        char message[:] = format::push("`", word, " ", tag, "` names a C tag; write `", word, " c::", tag, "`");
+        parse::error(p, name.span, message);
+        return false;
+    }
+    return true;
+}
+
 // The type of a variable or function: `auto`, an anonymous record, or the type hook's.
 static ast::TypeExpr *declared_type(parse::Parser *p) {
     if (parse::at(p, lex::kw_auto)) return auto_type(parse::advance(p).span);
     if (at_anonymous_record(p)) return parse_anonymous_record(p);
+    if (!take_tag_keyword(p)) return nullptr;
     return parse::type(p);
 }
 
@@ -502,11 +544,18 @@ static ast::Decl *parse_variable(parse::Parser *p, const Prefixes *pre, U32 star
             return nullptr;
         }
     }
-    if (parse::at(p, lex::comma)) {
+    // `for (Usize i, T x : xs)`: after `Usize i` a `,` and a type is the statement's, which reads the element.
+    lex::TokenKind after_comma = parse::peek_at(p, 1).kind;
+    Bool index_of_range =
+        init == nullptr && parse::at(p, lex::comma) &&
+        (after_comma == lex::type_name || after_comma == lex::kw_auto || after_comma == lex::kw_const);
+    if (parse::at(p, lex::comma) && !index_of_range) {
         several_names_error(p, type, name);
         return nullptr;
     }
-    parse::expect(p, lex::semicolon, "`;` after the declaration");
+    // A range `for (T x : xs)`: the `:` is the statement's, which reads the range.
+    Bool before_range = index_of_range || (init == nullptr && parse::at(p, lex::colon));
+    if (!before_range) parse::expect(p, lex::semicolon, "`;` after the declaration");
     ast::DeclKind kind = {.variable = {.name = name,
                                        .type = full,
                                        .init = init,
@@ -536,8 +585,11 @@ static ast::Decl *parse_typed(parse::Parser *p, const Prefixes *pre, U32 start) 
         recover(p);
         return nullptr;
     }
-    lex::Token name_token = parse::expect(p, lex::name, "a name");
-    if (name_token.kind != lex::name) {
+    // `constexpr Type Meters = F64;`: a type value is named like a type.
+    Str type_word = "Type";
+    Bool type_value = pre->is_constexpr && parse::at(p, lex::type_name) && mem::equal(type_text(p, type), type_word);
+    lex::Token name_token = type_value ? parse::advance(p) : parse::expect(p, lex::name, "a name");
+    if (name_token.kind != lex::name && !type_value) {
         recover(p);
         return nullptr;
     }
@@ -566,7 +618,7 @@ static Str tag_name(parse::Parser *p) {
 static ast::FieldDecl parse_field(parse::Parser *p) {
     ast::FieldDecl field = {};
     U32 start = parse::peek(p).span.start;
-    field.type = parse::type(p);
+    if (take_tag_keyword(p)) field.type = parse::type(p);
     if (field.type == nullptr) {
         recover(p);
         return field;
@@ -816,7 +868,7 @@ static ast::Decl *parse_simple(parse::Parser *p) {
     if (kind == lex::kw_static_assert) return parse_static_assert(p, &pre, start);
     if (kind == lex::kw_typedef) return parse_typedef(p, &pre, start);
     Bool is_tag = kind == lex::kw_struct || kind == lex::kw_union || kind == lex::kw_enum;
-    if (is_tag && !at_anonymous_record(p)) return parse_tag(p, &pre, start);
+    if (is_tag && !at_anonymous_record(p) && !at_tag_use(p)) return parse_tag(p, &pre, start);
     return parse_typed(p, &pre, start);
 }
 
