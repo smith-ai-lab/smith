@@ -8,11 +8,19 @@ module front_emit_debug_test;
 
 import front::ast;
 import front::emit;
+import front::emit_jit;
+import front::emit_object;
+import front::emit_state as state;
 import std::arena;
+import std::files;
+import std::format;
 import std::mem;
 import std::test;
 import <llvm-c/Core.h>;
+import <llvm-c/DebugInfo.h>;
+import <stdio.h>;
 import <string.h>;
+import <unistd.h>;
 
 // Line 1 is a comment, `add` starts on line 2 and `return a + b;` is on line 3.
 static Str add_text() {
@@ -174,4 +182,126 @@ export void test_front_emit_debug_off_emits_nothing() {
     test::check_equal(has(text, "dbg_declare"), false);
     test::check_equal(has(text, "Debug Info Version"), false);
     c::LLVMDisposeMessage(text);
+}
+
+// `I32 f(I32 a, I32 b) { return a + b * a; }`: the add is built by a continuation after the product's, which set the
+// location to its own.
+static Str nested_text() {
+    return "// f\nI32 f(I32 a, I32 b) {\n    return a + b * a;\n}\n";
+}
+
+static ast::Module nested_module() {
+    Str text = nested_text();
+    ast::Expr *product = ast::binary(.multiply, ast::name("b"), ast::name("a"));
+    put(product, text, "b * a");
+    ast::Expr *sum = ast::binary(.add, ast::name("a"), product);
+    put(sum, text, "a + b * a");
+    ast::Stmt *give = ast::return_value(sum);
+    give->span.start = at(text, "return");
+    ast::StmtRef items[1] = {give};
+    ast::Param params[2] = {ast::param("a", ast::named("I32")), ast::param("b", ast::named("I32"))};
+    params[0].span.start = at(text, "I32 a");
+    params[1].span.start = at(text, "I32 b");
+    ast::Decl *function = ast::function("f", params, ast::named("I32"), ast::block(items));
+    function->exported = true;
+    function->span.start = at(text, "I32 f");
+    ast::DeclRef decls[1] = {function};
+    ast::Module m = ast::new_module("front::test", decls);
+    Str file = "nested.smith";
+    m.file = file;
+    return m;
+}
+
+// The column of the first call to an intrinsic whose name contains `callee`, or 0.
+static U32 column_of_call(c::LLVMModuleRef ir, const char *callee) {
+    U32 column = 0;
+    for (c::LLVMValueRef f = c::LLVMGetFirstFunction(ir); f != nullptr; f = c::LLVMGetNextFunction(f)) {
+        for (c::LLVMBasicBlockRef b = c::LLVMGetFirstBasicBlock(f); b != nullptr; b = c::LLVMGetNextBasicBlock(b)) {
+            for (c::LLVMValueRef i = c::LLVMGetFirstInstruction(b); i != nullptr; i = c::LLVMGetNextInstruction(i)) {
+                if (c::LLVMIsACallInst(i) == nullptr) continue;
+                Usize length = 0;
+                const char *name = c::LLVMGetValueName2(c::LLVMGetCalledValue(i), &length);
+                if (column == 0 && c::strstr(name, callee) != nullptr) column = c::LLVMGetDebugLocColumn(i);
+            }
+        }
+    }
+    return column;
+}
+
+export void test_front_emit_debug_a_continuation_has_the_binary_expressions_location() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Module m = nested_module();
+    tree_end(&trees);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::Options options = {};
+    options.target.triple = "x86_64-unknown-linux-gnu";
+    options.source = nested_text();
+    options.debug_info = true;
+    emit::ModuleResult emitted = emit::module(context, &m, options);
+    test::check_equal(emitted == .ok, true);
+    if (emitted == .ok) {
+        // `b * a` starts at column 16 and `a + b * a` at column 12: the add runs after the product, and keeps its own.
+        test::check_equal(column_of_call(emitted.ok, "smul.with.overflow"), 16);
+        test::check_equal(column_of_call(emitted.ok, "sadd.with.overflow"), 12);
+        c::LLVMDisposeModule(emitted.ok);
+    }
+    c::LLVMContextDispose(context);
+}
+
+// Whether the file at `path` holds `needle` anywhere in its bytes.
+static Bool file_holds(Str path, Str needle) {
+    files::BytesResult bytes = files::read_file(path);
+    test::check_equal(bytes == .ok, true);
+    if (bytes != .ok) return false;
+    Bool found = false;
+    Usize size = countof(bytes.ok);
+    for (Usize i = 0; i + countof(needle) <= size && !found; i++) {
+        Usize j = 0;
+        while (j < countof(needle) && bytes.ok[i + j] == (U8)needle[j])
+            j += 1;
+        found = j == countof(needle);
+    }
+    mem::free(bytes.ok.data);
+    return found;
+}
+
+// An object file written from a module emitted with debug info has a debug_info section (`.debug_info` in ELF,
+// `__debug_info` in Mach-O); one emitted without it has none.
+export void test_front_emit_debug_an_object_file_has_debug_info() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    if (started != .ok) return;
+    emit_jit::Jit host = started.ok;
+    Str with = state::msg(format::push("/tmp/front_emit_debug_", (I64)c::getpid(), "_on.o"));
+    Str without = state::msg(format::push("/tmp/front_emit_debug_", (I64)c::getpid(), "_off.o"));
+    Bool states[2] = {true, false};
+    Str paths[2] = {with, without};
+    for (Usize k = 0; k < 2; k++) {
+        TreeMemory trees = {};
+        tree_begin(&trees);
+        ast::Module m = add_module();
+        tree_end(&trees);
+        c::LLVMContextRef context = c::LLVMContextCreate();
+        emit::Options options = {};
+        options.target = host.target;
+        options.source = add_text();
+        options.debug_info = states[k];
+        emit::ModuleResult emitted = emit::module(context, &m, options);
+        test::check_equal(emitted == .ok, true);
+        if (emitted == .ok) {
+            emit_object::ObjectOptions object = {.target = host.target};
+            emit_object::WriteResult written = emit_object::write(emitted.ok, object, paths[k]);
+            test::check_equal(written == .ok, true);
+            c::LLVMDisposeModule(emitted.ok);
+        }
+        c::LLVMContextDispose(context);
+    }
+    Bool on = file_holds(with, ".debug_info") || file_holds(with, "__debug_info");
+    Bool off = file_holds(without, ".debug_info") || file_holds(without, "__debug_info");
+    test::check_equal(on, true);
+    test::check_equal(off, false);
+    c::remove(with.data);
+    c::remove(without.data);
+    emit_jit::stop(&host);
 }

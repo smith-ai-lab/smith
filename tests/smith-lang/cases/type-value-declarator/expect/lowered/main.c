@@ -8,12 +8,12 @@ struct main_Response {
 __INT32_TYPE__ code;
 };
 typedef struct main_Response main_Response;
-static constexpr type main_Handler = main_Response (*)(main_Request *, __INT32_TYPE__);
-static constexpr type main_Callback = void (*)(void);
-static constexpr type main_Block = __UINT8_TYPE__[16];
-static constexpr type main_Grid = float[2][3];
-static constexpr type main_Row = __INT32_TYPE__ (*)[4];
-static constexpr type main_Pointers = main_Request *[4];
+static constexpr Type main_Handler = main_Response (*)(main_Request *, __INT32_TYPE__);
+static constexpr Type main_Callback = void (*)(void);
+static constexpr Type main_Block = __UINT8_TYPE__[16];
+static constexpr Type main_Grid = float[2][3];
+static constexpr Type main_Row = __INT32_TYPE__ (*)[4];
+static constexpr Type main_Pointers = main_Request *[4];
 static_assert(is_pointer(main_Handler) && is_pointer(main_Callback) && is_pointer(main_Row));
 static_assert(is_array(main_Block) && is_array(main_Grid) && is_array(main_Pointers));
 static_assert(sizeof(main_Block) == 16 && sizeof(main_Grid) == 24 && sizeof(main_Pointers) == 32 && sizeof(main_Row) == 8);

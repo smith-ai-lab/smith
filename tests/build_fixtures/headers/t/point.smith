@@ -1,7 +1,7 @@
 module t::point;
 export typedef struct {
-    i32 x;
-    i32 y;
+    I32 x;
+    I32 y;
 } Point;
 export Point origin() {
     return (Point){0, 0};

@@ -1,1 +1,1 @@
-src/main.smith:6:9: static assertion failed due to requirement '__builtin_types_compatible_p(double, int)': this `return` has another type than the lambda's, i32, which is the type of its first `return`; write the return type: `[](...) -> T`
+src/main.smith:6:9: static assertion failed due to requirement '__builtin_types_compatible_p(double, int)': this `return` has another type than the lambda's, I32, which is the type of its first `return`; write the return type: `[](...) -> T`

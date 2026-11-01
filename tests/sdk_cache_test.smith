@@ -10,7 +10,7 @@ import std::test;
 import scratch;
 import std::mem;
 
-constexpr usize memory_size = (usize)1 << 20; // 1 MiB
+constexpr Usize memory_size = (Usize)1 << 20; // 1 MiB
 
 // The developer folders on this machine whose SDK paths differ (two folders can answer with the same SDK): the first
 // two, one per line.
@@ -21,9 +21,9 @@ constexpr char folders_script[_] =
     "printf '%s\\t%s\\n' \"$d\" \"$s\"; done | awk -F'\\t' '!seen[$2]++ { print $1 }' | head -2";
 
 // The text of a line, 1-based, of a command's output.
-static const char *line_of(arena::Arena *arena, const char *text, usize number) {
-    usize start = 0;
-    for (usize n = 1; n < number; n++) {
+static const char *line_of(arena::Arena *arena, const char *text, Usize number) {
+    Usize start = 0;
+    for (Usize n = 1; n < number; n++) {
         while (text[start] != '\0' && text[start] != '\n') {
             start++;
         }
@@ -31,7 +31,7 @@ static const char *line_of(arena::Arena *arena, const char *text, usize number) 
             start++;
         }
     }
-    usize end = start;
+    Usize end = start;
     while (text[end] != '\0' && text[end] != '\n') {
         end++;
     }

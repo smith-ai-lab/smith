@@ -10,7 +10,7 @@ import std::test;
 import scratch;
 import <string.h>;
 
-constexpr usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
+constexpr Usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
 
 static const char *stamp_exists(const scratch::Project *p) {
     return scratch::capture(p, "ls .smith/stamp/* >/dev/null 2>&1 && echo yes || echo no");
@@ -195,8 +195,8 @@ export void test_build_steps_a_run_step_gets_its_data_from_its_command() {
                           scratch::lines(&p, "calls.log"));
 }
 
-static usize count_of(const char *text, const char *needle) {
-    usize count = 0;
+static Usize count_of(const char *text, const char *needle) {
+    Usize count = 0;
     for (const char *at = c::strstr(text, needle); at != nullptr; at = c::strstr(at + 1, needle))
         count++;
     return count;

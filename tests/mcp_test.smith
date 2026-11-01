@@ -17,7 +17,7 @@ import scratch;
 
 // The pieces one after another, from the current allocator (the test's arena).
 const char *concatenated(auto... pieces) {
-    usize length = format::length(pieces...);
+    Usize length = format::length(pieces...);
     char *text = mem::alloc_slice(char, length + 1).data;
     (void)format::to(text, length + 1, pieces...);
     return text;
@@ -153,7 +153,7 @@ export void test_macos_mcp_the_connection_discover_initialize_and_tools() {
     const char *tools = scratch::capture(&root, "grep '^{\"id\":3,' hello.out");
     const char *names[11] = {"launch", "breakpoint", "continue",  "step_over", "step_in", "step_out",
                              "pause",  "stack",      "variables", "evaluate",  "stop"};
-    for (usize i = 0; i < 11; i++) {
+    for (Usize i = 0; i < 11; i++) {
         scratch::expect_contains(concatenated("tools/list has ", names[i]), tools,
                                  concatenated("\"name\":\"", names[i], "\""));
     }
@@ -316,13 +316,13 @@ export void test_macos_mcp_a_smith_program_session_has_names_as_written() {
     scratch::expect_text(
         "launch stops in the module's function, named as written",
         "session s1: DIR/lang/lang\nbreakpoint 1: geometry/box.smith:4 (verified)\nstopped: breakpoint "
-        "(breakpoint 1)\n  #0 geometry::box::area geometry/box.smith:4\n  > 4:   f32 r = b.w * b.h;",
+        "(breakpoint 1)\n  #0 geometry::box::area geometry/box.smith:4\n  > 4:   F32 r = b.w * b.h;",
         answer(&p, "1"));
     scratch::expect_contains("the stack goes through main.smith", answer(&p, "2"), "#1 main main.smith:5");
     scratch::expect_text("the type is named as written",
-                         "frame #0, scope locals\nb (geometry::box::Box)\n  w = 2 (f32)\n  h = 3 (f32)\nr = 0 (f32)",
-                         scratch::capture(&p, "sed 's/^r = [0-9.e-]* (f32)/r = 0 (f32)/' r3.txt"));
-    scratch::expect_text("evaluate in a module", "b.w * b.h = 6 (f32)", answer(&p, "4"));
+                         "frame #0, scope locals\nb (geometry::box::Box)\n  w = 2 (F32)\n  h = 3 (F32)\nr = 0 (F32)",
+                         scratch::capture(&p, "sed 's/^r = [0-9.e-]* (F32)/r = 0 (F32)/' r3.txt"));
+    scratch::expect_text("evaluate in a module", "b.w * b.h = 6 (F32)", answer(&p, "4"));
     scratch::expect_lacks("the C spelling does not show in the results", scratch::read(&p, "out.jsonl"),
                           "geometry_box");
 }

@@ -1,1 +1,1 @@
-src/main.smith:8:12: static assertion failed due to requirement '__builtin_types_compatible_p(int (double), int (int))': smith: the argument for `f` of `apply` does not have the type of `lambda(i32 (i32))`
+src/main.smith:8:12: static assertion failed due to requirement '__builtin_types_compatible_p(int (double), int (int))': smith: the argument for `f` of `apply` does not have the type of `Lambda(I32 (I32))`

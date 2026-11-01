@@ -21,16 +21,16 @@ import <stdlib.h>; // realloc: the interposed function the system's allocator an
 // (knowledge/handlers.md):
 //   void test_parse_survives_refusal(random::Key key, failing::Failing *failing) { ... }
 
-constexpr u32 failing_one_in = 8; // the default rate: one allocation in eight
+constexpr U32 failing_one_in = 8; // the default rate: one allocation in eight
 
 // The allocator. `base` comes first so &failing.base is what set_allocator takes; the value must not move while set.
 [[std::c_name("SmithFailing")]] export typedef struct Failing {
     mem::Allocator base;
     mem::Allocator *parent; // null: the system's
-    u64 state;              // the key the next decision is drawn from
-    u32 one_in;             // refuses one allocation in one_in: 1 every one, 0 none; make() starts at 8
-    usize calls;            // allocations and reallocations asked
-    usize refused;          // of them refused
+    U64 state;              // the key the next decision is drawn from
+    U32 one_in;             // refuses one allocation in one_in: 1 every one, 0 none; make() starts at 8
+    Usize calls;            // allocations and reallocations asked
+    Usize refused;          // of them refused
 } Failing;
 
 // Whether the next allocation is refused. It always draws, so the decision for call n depends on the key and n alone,
@@ -41,20 +41,20 @@ bool refuses(Failing *self) {
     random::Key pair[2];
     random::split(random::key_make(self->state), pair);
     self->state = random::key_bits(pair[0]);
-    u64 bits = random::key_bits(pair[1]);
+    U64 bits = random::key_bits(pair[1]);
     if (self->one_in == 0 || bits % self->one_in != 0) return false;
     self->refused += 1;
     return true;
 }
 
-void *failing_alloc(mem::Allocator *self, usize size, usize align) {
+void *failing_alloc(mem::Allocator *self, Usize size, Usize align) {
     contract::trusted();
     Failing *failing_self = (Failing *)self;
     if (refuses(failing_self)) return nullptr;
     return mem::from_parent(failing_self->parent, size, align);
 }
 
-void *failing_realloc(mem::Allocator *self, void *block, usize size, usize align) {
+void *failing_realloc(mem::Allocator *self, void *block, Usize size, Usize align) {
     contract::trusted();
     Failing *failing_self = (Failing *)self;
     if (block == nullptr) return failing_alloc(self, size, align);
@@ -78,7 +78,7 @@ bool failing_owns(mem::Allocator *self, const void *block) {
     return parent != nullptr && parent->owns(parent, block);
 }
 
-usize failing_size(mem::Allocator *self, const void *block) {
+Usize failing_size(mem::Allocator *self, const void *block) {
     contract::trusted();
     mem::Allocator *parent = ((Failing *)self)->parent;
     return parent != nullptr && parent->size != nullptr ? parent->size(parent, block) : 0;

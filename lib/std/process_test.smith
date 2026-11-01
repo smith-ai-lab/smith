@@ -39,12 +39,12 @@ process::Exit value_exit(process::ExitResult r) {
     }
 }
 
-usize value_count(process::CountResult r) {
+Usize value_count(process::CountResult r) {
     switch (r) {
     case .ok:
         return r.ok;
     case .error:
-        return ~(usize)0;
+        return ~(Usize)0;
     }
 }
 
@@ -68,25 +68,25 @@ process::Error failure_child(process::ChildResult r) {
 
 // Whether the bytes are the text.
 bool is_text(process::Bytes got, const char *text) {
-    usize length = __builtin_strlen(text);
+    Usize length = __builtin_strlen(text);
     if (countof(got) != length) return false;
-    for (usize i = 0; i < length; i++) {
-        if (got[i] != (u8)text[i]) return false;
+    for (Usize i = 0; i < length; i++) {
+        if (got[i] != (U8)text[i]) return false;
     }
     return true;
 }
 
-const u8 *bytes_of(const char *text) {
-    return (const u8 *)text;
+const U8 *bytes_of(const char *text) {
+    return (const U8 *)text;
 }
 
 // Reads a piped child's stdout to its end.
-usize read_all(process::Child *child, u8 buffer[:]) {
-    usize filled = 0;
-    for (usize rounds = 0; rounds < 64; rounds++) { // a test's child writes a few pieces
-        u8 room[:] = buffer[filled:];
+Usize read_all(process::Child *child, U8 buffer[:]) {
+    Usize filled = 0;
+    for (Usize rounds = 0; rounds < 64; rounds++) { // a test's child writes a few pieces
+        U8 room[:] = buffer[filled:];
         process::CountResult step = process::read(child, room);
-        usize count = value_count(step);
+        Usize count = value_count(step);
         if (step == .error || count == 0) break;
         filled += count;
     }
@@ -168,8 +168,8 @@ export void test_process_a_started_child_reads_what_it_is_written_until_its_inpu
     test::check_equal(value_count(sent), 8);
     process::close_input(&child);
     process::close_input(&child); // a second close of the input does nothing
-    u8 buffer[:] = mem::alloc_slice(u8, 16);
-    usize got = read_all(&child, buffer);
+    U8 buffer[:] = mem::alloc_slice(U8, 16);
+    Usize got = read_all(&child, buffer);
     test::check_condition(is_text(buffer[0:got], "hello"));
     process::ExitResult ended = process::wait(&child);
     test::check_condition(ended == .ok);
@@ -208,10 +208,10 @@ export void test_process_reads_come_in_pieces_of_the_scripted_size() {
 
     const char *const argv[_] = {"emit"};
     process::Child child = value_child(process::start(argv[0:1]));
-    u8 buffer[:] = mem::alloc_slice(u8, 16);
+    U8 buffer[:] = mem::alloc_slice(U8, 16);
     process::CountResult first = process::read(&child, buffer);
     test::check_equal(value_count(first), 3);
-    usize rest = read_all(&child, buffer[3:]);
+    Usize rest = read_all(&child, buffer[3:]);
     test::check_equal(rest, 4);
     test::check_condition(is_text(buffer[0:7], "abcdefg"));
     test::check_equal(value_exit(process::wait(&child)).status, 0);
@@ -295,8 +295,8 @@ export void test_process_a_real_child_with_pipes_echoes_what_it_is_written() {
     process::Child child = value_child(started);
     test::check_equal(value_count(process::write(&child, bytes_of("ping")[0:4])), 4);
     process::close_input(&child);
-    u8 buffer[:] = mem::alloc_slice(u8, 16);
-    usize got = read_all(&child, buffer);
+    U8 buffer[:] = mem::alloc_slice(U8, 16);
+    Usize got = read_all(&child, buffer);
     test::check_condition(is_text(buffer[0:got], "ping"));
     test::check_equal(value_exit(process::wait(&child)).status, 0);
     process::close(&child);

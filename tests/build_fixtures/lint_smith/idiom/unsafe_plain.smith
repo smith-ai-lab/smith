@@ -2,12 +2,12 @@ import <setjmp.h>;
 
 static c::jmp_buf env;
 
-u32 first(u32 xs[10]) {
+U32 first(U32 xs[10]) {
     return xs[0];
 }
 
-u32 sized(usize n) {
-    u32 run_time[n];
+U32 sized(Usize n) {
+    U32 run_time[n];
     if (c::setjmp(env) != 0) return 0;
     return run_time[0];
 }

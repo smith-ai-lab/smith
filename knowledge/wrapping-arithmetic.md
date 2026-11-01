@@ -13,4 +13,4 @@ Owner (2026-10-25): in a module, signed overflow, bad shifts, division by zero a
 - *It works today and means the same after the checks land:* the checks change what the plain operator does in a module, not what `wrapping::` does.
 - *No C spelling:* every export is generic.
 
-**What waits.** The checks themselves (sanitizer flags for module files, the handler route, `fails` inference, proofs removing them), `wrapping::shl` and `wrapping::to`, and `std::checked` (`checked::add` returns `option(T)`, which a generic cannot return yet; asked on #1084).
+**What waits.** The checks themselves (sanitizer flags for module files, the handler route, `fails` inference, proofs removing them), `wrapping::shl` and `wrapping::to`, and `std::checked` (`checked::add` returns `Option(T)`, which a generic cannot return yet; asked on #1084).

@@ -4,10 +4,10 @@ value grid.origin: {i32 7, f32 0.5}
 value ratio: f64 0.10000000000000001
 value name: [i8 104, i8 105, i8 0]
 value twice(21): i32 42
-value (f32)0.1: f32 0.10000000149011612
+value (F32)0.1: f32 0.10000000149011612
 value -5: i32 -5
-value (u8)200: u8 200
-value (i64)-1: i64 -1
+value (U8)200: u8 200
+value (I64)-1: i64 -1
 value grid.cells[1][2]: i32 -6
 value &grid: error: a pointer is not a value (C23: a `constexpr` pointer must be null)
 value counter: error: the expression is not a constant expression; subexpression not valid in a constant expression

@@ -1,7 +1,7 @@
 module gmain;
 import pick;
 int main() {
-    i32 a = 3;
-    f64 d = 2.5;
+    I32 a = 3;
+    F64 d = 2.5;
     return pick::larger(a, 8) + (int)pick::larger(d, 1.5) - 10;
 }

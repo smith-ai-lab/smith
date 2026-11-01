@@ -113,7 +113,20 @@ std::string writtenDimensions(StringRef &rest, const char *qualifiers) {
     return text;
 }
 
-// `f32[:]` for the lowering's `smith_array_f32_n`, the struct of a run-time array (runtime/lang_slice.c); "" when the
+// The sized types the lowering names with a lowercase word in a tag (`smith_array_f32_n`), written as the language
+// does.
+static std::string sized_capital(const std::string &word) {
+    static const char *const pairs[][2] = {{"i8", "I8"},       {"i16", "I16"},     {"i32", "I32"}, {"i64", "I64"},
+                                           {"u8", "U8"},       {"u16", "U16"},     {"u32", "U32"}, {"u64", "U64"},
+                                           {"isize", "Isize"}, {"usize", "Usize"}, {"f16", "F16"}, {"f32", "F32"},
+                                           {"f64", "F64"}};
+    size_t space = word.rfind(' ') == std::string::npos ? 0 : word.rfind(' ') + 1; // after `const `, `volatile `
+    for (const auto &pair : pairs)
+        if (word.compare(space, std::string::npos, pair[0]) == 0) return word.substr(0, space) + pair[1];
+    return word;
+}
+
+// `F32[:]` for the lowering's `smith_array_f32_n`, the struct of a run-time array (runtime/lang_slice.c); "" when the
 // word is another. `smith_array_f32_n_2` is `f32[:][2]`, `smith_array_const_char_n` is `const char[:]`,
 // `smith_array_restrict_u8_n` is `u8[restrict :]`, and `const_slice` (a `const struct ...`) is `[const :]`.
 std::string writtenSlice(StringRef word, const smith::FileNames &names, Style style, bool const_slice = false) {
@@ -136,7 +149,7 @@ std::string writtenSlice(StringRef word, const smith::FileNames &names, Style st
     }
     if (word.empty()) return "";
     const smith::WrittenName *element = word.contains('_') ? names.find(word) : nullptr;
-    return element_qualifiers + (element != nullptr ? shown(*element, style) : word.str()) + dimensions;
+    return element_qualifiers + (element != nullptr ? shown(*element, style) : sized_capital(word.str())) + dimensions;
 }
 
 // The text with the names of the table written in `style`. `moved` gets the old offset of each name changed and the new

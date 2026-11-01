@@ -11,7 +11,7 @@ Type maybe(Type T) {
     };
 }
 
-// `maybe(usize)` from `first`, from `second` and the importer's own is one type: a value of one is a value of the
+// `maybe(Usize)` from `first`, from `second` and the importer's own is one type: a value of one is a value of the
 // others.
 static Usize or_zero(maybe(Usize) o) {
     if (o == .some) return o.some;

@@ -14,7 +14,7 @@ import std::mem;
 import std::test;
 import scratch;
 
-constexpr usize memory_size = (usize)16 << 20; // 16 MiB
+constexpr Usize memory_size = (Usize)16 << 20; // 16 MiB
 
 // A folder of the project, as a project of its own; it shares the root's folders, which the root's clean removes.
 static scratch::Project folder(const scratch::Project *root, const char *name) {
@@ -183,10 +183,10 @@ export void test_macos_dap_dbg_stops_in_a_modules_function_named_as_written() {
     scratch::expect_contains("dbg's backtrace goes through main.smith", out, "main at main.smith:5");
     scratch::expect_contains("dbg prints a parameter's type as written", out,
                              "(geometry::box::Box) b = (w = 2, h = 3)");
-    scratch::expect_contains("dbg reads a field", out, "(f32) 2");
+    scratch::expect_contains("dbg reads a field", out, "(F32) 2");
     scratch::expect_contains("dbg casts to a type as written", out, "(geometry::box::Box)  (w = 2, h = 3)");
-    scratch::expect_contains("dbg looks the type up by its name as written", out, "f32 w;");
-    scratch::expect_contains("dbg's finish returns the value", out, "Return value: (f32) $0 = 6");
+    scratch::expect_contains("dbg looks the type up by its name as written", out, "F32 w;");
+    scratch::expect_contains("dbg's finish returns the value", out, "Return value: (F32) $0 = 6");
 }
 
 export void test_macos_dap_dbg_the_other_compile_unit_agrees_on_the_type() {
@@ -224,7 +224,7 @@ export void test_macos_dap_a_smith_session_has_names_as_written() {
     scratch::expect_contains("dap's variable has the type as written", session.out, "\"type\":\"geometry::box::Box\"");
 }
 
-// A generic's instance (issue #15): the frame is `pick::larger<i32>` with the types it was asked for, and it is in the
+// A generic's instance (issue #15): the frame is `pick::larger<I32>` with the types it was asked for, and it is in the
 // generic's own source, at the line written there, not in the compiler's copy of the tokens.
 export void test_macos_dap_dbg_a_generics_instance() {
     scratch::Project root = scratch::make("dap", "dap");
@@ -242,11 +242,11 @@ export void test_macos_dap_dbg_a_generics_instance() {
     const char *out = dbg(&p, "-o 'br set -r larger' -o run -o bt -o 'frame variable' -o c -o bt generic").out;
     scratch::expect_contains("dbg stops in an instance", out, "stop reason = breakpoint 1.1");
     scratch::expect_contains("dbg's frame is the instance, named with its types", out,
-                             "generic`pick::larger<i32>(a=3, b=8) at pick.smith:4");
+                             "generic`pick::larger<I32>(a=3, b=8) at pick.smith:4");
     scratch::expect_contains("dbg's other instance has its own types", out,
-                             "generic`pick::larger<f64>(a=2.5, b=1.5) at pick.smith:4");
+                             "generic`pick::larger<F64>(a=2.5, b=1.5) at pick.smith:4");
     scratch::expect_contains("dbg lists the generic's own source", out, "typeof(a) result = a > b ? a : b;");
-    scratch::expect_contains("dbg shows the parameter's type as written", out, "(i32) a = 3");
+    scratch::expect_contains("dbg shows the parameter's type as written", out, "(I32) a = 3");
     scratch::expect_lacks("dbg shows no compiler-made file or warning for an instance (a checksum mismatch)", out,
                           "checksum mismatch");
     scratch::expect_lacks("dbg shows no compiler-made file or warning for an instance (the copy of the tokens)", out,
@@ -270,7 +270,7 @@ export void test_macos_dap_dbg_an_argument_list_and_for_constexpr() {
     scratch::expect_status("the argument list program builds", 0, &built);
     const char *out =
         dbg(&p, "-o 'br set -r sum_with_marker' -o run -o next -o next -o 'frame variable' -o c lists").out;
-    scratch::expect_contains("dbg steps a for constexpr at the generic's own lines", out, "total += (i32)rest[i];");
+    scratch::expect_contains("dbg steps a for constexpr at the generic's own lines", out, "total += (I32)rest[i];");
     scratch::expect_contains("dbg names the argument list's elements", out, "(int) rest_1 = 2");
     scratch::expect_contains("dbg names the first argument", out, "(int) rest_0 = 1");
 }
@@ -295,10 +295,10 @@ export void test_macos_dap_dbg_a_slice() {
     const char *out =
         dbg(&p, "-o 'b main.smith:6' -o run -o 'frame variable xs name' -o 'frame variable xs[2]' slice").out;
     scratch::expect_contains("dbg shows a slice with its type as written and its count", out,
-                             "(i32[:]) xs = count=3 {");
+                             "(I32[:]) xs = count=3 {");
     scratch::expect_contains("dbg shows a slice's elements", out, "[2] = 6");
     scratch::expect_contains("dbg shows a char slice as text", out, "(char[:]) name = \"abc\" count=3");
-    scratch::expect_contains("dbg indexes a slice", out, "(i32) xs[2] = 6");
+    scratch::expect_contains("dbg indexes a slice", out, "(I32) xs[2] = 6");
 }
 
 export void test_macos_dap_a_slice_session() {
@@ -340,11 +340,11 @@ export void test_macos_dap_dbg_many_dimensions_and_qualifier_tags() {
     const char *out = dbg(&p, "-o 'b main.smith:11' -o run -o 'frame variable rows grid r c' -o 'frame variable "
                               "rows[1][0]' slices2")
                           .out;
-    scratch::expect_contains("dbg shows f32[:][2] with its counts", out, "(f32[:][2]) rows = count=3x2 {");
+    scratch::expect_contains("dbg shows F32[:][2] with its counts", out, "(F32[:][2]) rows = count=3x2 {");
     scratch::expect_contains("dbg shows the rows of a slice as children of children", out, "[2] = ([0] = 5, [1] = 6)");
-    scratch::expect_contains("dbg shows f32[:][:] with its counts", out, "(f32[:][:]) grid = count=3x2 {");
+    scratch::expect_contains("dbg shows F32[:][:] with its counts", out, "(F32[:][:]) grid = count=3x2 {");
     scratch::expect_contains("dbg indexes a row's element", out, "(float) rows[1][0] = 3");
-    scratch::expect_contains("dbg shows a restrict slice as u8[restrict :]", out, "(u8[restrict :]) r = ");
+    scratch::expect_contains("dbg shows a restrict slice as U8[restrict :]", out, "(U8[restrict :]) r = ");
     scratch::expect_contains("dbg shows a restrict slice's elements", out, "[3] = '\\n'");
     scratch::expect_contains("dbg shows a const slice as text with its written type", out,
                              "(const char[const :]) c = \"hey\" count=3");

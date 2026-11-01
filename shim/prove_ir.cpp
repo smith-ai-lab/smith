@@ -1811,23 +1811,23 @@ bool known_library_function(StringRef name) {
 }
 
 // The name of a function as the source writes it. A generic's instance is named by clang with C's types
-// (`clamp<int>`); in smith it is written with the sized types (`clamp<i32>`), so the arguments of the instance are.
+// (`clamp<int>`); in smith it is written with the sized types (`clamp<I32>`), so the arguments of the instance are.
 std::string as_written(const std::string &name) {
     static const std::pair<const char *, const char *> types[] = {
-        {"unsigned long long", "u64"},
-        {"long long", "i64"},
-        {"unsigned long", "usize"},
-        {"unsigned short", "u16"},
-        {"unsigned char", "u8"},
-        {"unsigned int", "u32"},
-        {"signed char", "i8"},
-        {"unsigned", "u32"},
-        {"long", "isize"},
-        {"short", "i16"},
-        {"int", "i32"},
-        {"float", "f32"},
-        {"double", "f64"},
-        {"_Float16", "f16"},
+        {"unsigned long long", "U64"},
+        {"long long", "I64"},
+        {"unsigned long", "Usize"},
+        {"unsigned short", "U16"},
+        {"unsigned char", "U8"},
+        {"unsigned int", "U32"},
+        {"signed char", "I8"},
+        {"unsigned", "U32"},
+        {"long", "Isize"},
+        {"short", "I16"},
+        {"int", "I32"},
+        {"float", "F32"},
+        {"double", "F64"},
+        {"_Float16", "F16"},
     };
     size_t open = name.find('<');
     if (open == std::string::npos) return name;

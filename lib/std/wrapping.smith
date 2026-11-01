@@ -3,32 +3,32 @@
 // module's overflow checks (issue #351). In a module `a + b` on a signed type fails its task when it overflows;
 // `wrapping::add(a, b)` keeps the low bits instead, as unsigned arithmetic does.
 //
-//   i32 next = wrapping::add(hash, 1);
+//   I32 next = wrapping::add(hash, 1);
 module std::wrapping;
 
 // a + b, wrapped to the type of a.
-export typeof(a) add(integer a, typeof(a) b) {
+export typeof(a) add(Int a, typeof(a) b) {
     typeof(a) result = 0;
     __builtin_add_overflow(a, b, &result);
     return result;
 }
 
 // a - b, wrapped to the type of a.
-export typeof(a) sub(integer a, typeof(a) b) {
+export typeof(a) sub(Int a, typeof(a) b) {
     typeof(a) result = 0;
     __builtin_sub_overflow(a, b, &result);
     return result;
 }
 
 // a * b, wrapped to the type of a.
-export typeof(a) mul(integer a, typeof(a) b) {
+export typeof(a) mul(Int a, typeof(a) b) {
     typeof(a) result = 0;
     __builtin_mul_overflow(a, b, &result);
     return result;
 }
 
 // -a, wrapped: the minimum of a signed type negates to itself.
-export typeof(a) neg(integer a) {
+export typeof(a) neg(Int a) {
     typeof(a) result = 0;
     __builtin_sub_overflow((typeof(a))0, a, &result);
     return result;

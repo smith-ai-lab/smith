@@ -6,22 +6,22 @@ module std::contract_test;
 import std::contract;
 import std::test;
 
-static i32 clamp(i32 x, i32 low, i32 high) {
+static I32 clamp(I32 x, I32 low, I32 high) {
     contract::requires(low <= high);
-    const i32 result = x < low ? low : x > high ? high : x;
+    const I32 result = x < low ? low : x > high ? high : x;
     contract::ensures(low <= result && result <= high);
     return result;
 }
 
-static i32 wrong(i32 x) {
-    const i32 result = x + 1;
+static I32 wrong(I32 x) {
+    const I32 result = x + 1;
     contract::ensures(result == x);
     return result;
 }
 
-static i32 sum(i32 count) {
-    i32 total = 0;
-    for (i32 i = 0; i < count; i++) {
+static I32 sum(I32 count) {
+    I32 total = 0;
+    for (I32 i = 0; i < count; i++) {
         contract::invariant(total == i * 2);
         total += 2;
         if (i == 2) total += 1; // breaks the invariant on the next pass

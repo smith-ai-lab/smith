@@ -1,1 +1,1 @@
-src/main.smith:5:24: '_Countof' requires an argument of array type; 'u32 *' (aka 'unsigned int *') invalid
+src/main.smith:5:24: '_Countof' requires an argument of array type; 'U32 *' (aka 'unsigned int *') invalid

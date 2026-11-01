@@ -31,7 +31,7 @@ or a `.smith` module `lib/std/<name>.smith` (`module std::<name>;`), one row of 
 `smith.c`. A C library's header is hand-written (`include/smith/<name>.h`). A `.smith` library's header is a build
 output, never committed ([smith-module-headers](smith-module-headers.md)): smith embeds the source and the installed
 smith writes the header into `.smith/include/smith/` at first use; its C API (names, symbols via `[[std::c_name]]`,
-doc comments) stays what it was. `option` and `result` (issue #198) are `.smith` modules, `std::option` and `std::result`, that export only a type function each; they are no library to link and are never imported: the lowering carries their `// smith-eshape:` lines itself (`runtime/lang_enum.c`) so that `option(T)` and `result(T, E)` are in scope in every module. `text`, `random`, `arena` and `test` are `.smith` (issue #39; #45). C passes `sizeof` and
+doc comments) stays what it was. `option` and `result` (issue #198) are `.smith` modules, `std::option` and `std::result`, that export only a type function each; they are no library to link and are never imported: the lowering carries their `// smith-eshape:` lines itself (`runtime/lang_enum.c`) so that `Option(T)` and `Result(T, E)` are in scope in every module. `text`, `random`, `arena` and `test` are `.smith` (issue #39; #45). C passes `sizeof` and
 `alignof` to `smith_arena_push`; `.smith` writes the type as an argument, `arena::push(&a, T)` and
 `arena::push_slice(&a, T, sizes...)` (a slice with a size for each `[:]`).
 

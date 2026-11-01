@@ -1,23 +1,23 @@
 module text;
 
-export typedef const char Str[:];
+export typedef const char str[:];
 
 export struct Pair {
-    Str key;
-    Str value;
+    str key;
+    str value;
 };
 
-export Usize total(Str xs) {
+export Usize total(str xs) {
     return countof(xs);
 }
 
-export Str first_word(Str xs) {
+export str first_word(str xs) {
     Usize n = 0;
     while (n < countof(xs) && xs[n] != ' ') n++;
     return xs[0:n];
 }
 
-export Bool pop(Str *p) {
+export bool pop(str *p) {
     if (countof(*p) == 0) return false;
     *p = (*p)[1:];
     return true;

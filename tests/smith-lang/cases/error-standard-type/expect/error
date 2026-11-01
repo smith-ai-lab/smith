@@ -1,3 +1,3 @@
-src/main.smith:4:11: `uint32_t` is a C type name; write `u32`
-src/main.smith:4:23: `size_t` is a C type name; write `usize`
-src/main.smith:4:33: `ptrdiff_t` is a C type name; write `isize`
+src/main.smith:4:11: `uint32_t` is a C type name; write `U32`
+src/main.smith:4:23: `size_t` is a C type name; write `Usize`
+src/main.smith:4:33: `ptrdiff_t` is a C type name; write `Isize`

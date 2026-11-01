@@ -1,6 +1,6 @@
 module cursor;
 
-// A generic's `option(slice)` result is named by a caller through a typedef of the slice.
+// A generic's `Option(slice)` result is named by a caller through a typedef of the slice.
 
 export Option(typeof((*xs)[0:0])) take_until(const auto (*xs)[:], typeof((*xs)[0]) stop) {
     for (Usize i = 0; i < countof(*xs); i++) {

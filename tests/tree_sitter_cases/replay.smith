@@ -3,27 +3,27 @@ import lib::text as tx;
 import <string.h>;
 import "local.h";
 
-export typedef struct { u64 frames; tx::Text name; } Replay;
-export constexpr u32 version = 3;
-export u32 counter = 7;
+export typedef struct { U64 frames; tx::Text name; } Replay;
+export constexpr U32 version = 3;
+export U32 counter = 7;
 
-export typedef struct Handle { i32 fd; } Handle;
+export typedef struct Handle { I32 fd; } Handle;
 export enum Mode { Fast, Slow };
-export union Word { u32 whole; u8 bytes[4]; };
+export union Word { U32 whole; U8 bytes[4]; };
 
-u32 helper() {
+U32 helper() {
     return version + counter;
 }
 
 export Replay open(Handle *handle, const char *path) {
     Replay replay = {0};
-    replay.frames = helper() + (u64)handle->fd;
+    replay.frames = helper() + (U64)handle->fd;
     replay.name = tx::make(path);
     counter += 1;
     return replay;
 }
 
-export u64 checksum(const u8 *data, usize size);
+export U64 checksum(const U8 *data, Usize size);
 
 #if defined(__APPLE__)
 export int only_here();
@@ -31,6 +31,6 @@ export int only_here();
 
 export int say(const char *text) {
     struct c::stat info;
-    f32 root = c::sqrtf(81.0f);
+    F32 root = c::sqrtf(81.0f);
     return c::puts(text) + (int)root + c::EOF + (int)sizeof(struct c::stat) + (int)sizeof(info);
 }

@@ -8,23 +8,23 @@ description: "Random numbers from keys with std::random (random::Key, split): th
 ```smith
 import std::random;
 
-f64 demo(u64 seed, f64 out[:]) {
+F64 demo(U64 seed, F64 out[:]) {
     random::Key key = random::key_make(seed);           // a seed is any u64
     random::Key parts[2];
     random::split(key, parts);                          // key is used here; parts are new, independent keys
-    f64 total = random::uniform_double_sample(parts[0], (random::UniformDouble){.low = 0, .high = 1});
+    F64 total = random::uniform_double_sample(parts[0], (random::UniformDouble){.low = 0, .high = 1});
     random::Key per_item[4];
     random::split(parts[1], per_item);
-    for (usize i = 0; i < 4; i++) total += random::key_unit_double(per_item[i]);   // the plain loop: one key per turn
-    return total + (f64)countof(out);
+    for (Usize i = 0; i < 4; i++) total += random::key_unit_double(per_item[i]);   // the plain loop: one key per turn
+    return total + (F64)countof(out);
 }
 ```
 
 A key is immutable and every draw is a pure function of a key, as in JAX: the same key gives the same numbers on every platform, in any thread. There is no generator that advances. **A key is used once**: `random::Key` is `[[std::affine]]` (`smith-lang-affine`), so drawing twice from one is a compile error at the second use, naming the first:
 
 ```smith fragment
-f64 a = random::normal_double_sample(parts[0], n);
-f64 b = random::normal_double_sample(parts[0], n);   // error: smith-affine: 'parts[0]' is used again; it was already used at line N
+F64 a = random::normal_double_sample(parts[0], n);
+F64 b = random::normal_double_sample(parts[0], n);   // error: smith-affine: 'parts[0]' is used again; it was already used at line N
 ```
 
 `random::split(key, keys)` uses `key` and fills an array or a slice with `countof(keys)` new keys (C: `smith_key_split_n(key, keys, count)`, also `random::split_n(key, keys, count)` for a pointer and a count); a count's keys are the first of a larger count's. The header is `.smith/include/smith/random.h`; read it first.
@@ -32,7 +32,7 @@ f64 b = random::normal_double_sample(parts[0], n);   // error: smith-affine: 'pa
 A loop that needs a key per turn without an array reassigns it:
 
 ```smith fragment
-for (usize i = 0; i < count; i++) {
+for (Usize i = 0; i < count; i++) {
     random::Key next[2];
     random::split(key, next);
     key = next[0];

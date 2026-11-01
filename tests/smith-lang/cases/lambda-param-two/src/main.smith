@@ -2,14 +2,14 @@ module main;
 
 import <stdio.h>;
 
-I32 twice_call(lambda(I32 (I32)) f, I32 x) {
+I32 twice_call(Lambda(I32 (I32)) f, I32 x) {
     return f(f(x));
 }
 
 I32 main() {
     // two different lambdas are two instances, the same lambda written twice is one
-    c::printf("%d\n", twice_call([](I32 a) -> i32 { return a + 1; }, 1));
-    c::printf("%d\n", twice_call([](I32 a) -> i32 { return a * 3; }, 1));
-    c::printf("%d\n", twice_call([](I32 a) -> i32 { return a + 1; }, 10));
+    c::printf("%d\n", twice_call([](I32 a) -> I32 { return a + 1; }, 1));
+    c::printf("%d\n", twice_call([](I32 a) -> I32 { return a * 3; }, 1));
+    c::printf("%d\n", twice_call([](I32 a) -> I32 { return a + 1; }, 10));
     return 0;
 }

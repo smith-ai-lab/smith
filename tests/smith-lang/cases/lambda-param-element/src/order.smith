@@ -3,7 +3,7 @@ module order;
 import <stdio.h>;
 
 // F names the element type of the argument before it: the signature depends on the arguments.
-export void adjacent(auto xs[:], lambda(Bool (typeof(xs[0]) *, typeof(xs[0]) *)) less) {
+export void adjacent(auto xs[:], Lambda(Bool (typeof(xs[0]) *, typeof(xs[0]) *)) less) {
     for (Usize i = 0; i + 1 < countof(xs); i++)
         c::printf("%d ", less(&xs[i], &xs[i + 1]) ? 1 : 0);
     c::printf("\n");

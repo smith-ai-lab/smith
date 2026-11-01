@@ -17,7 +17,7 @@ static I32 sum(const I32 xs[:]) {
     return total;
 }
 
-// A fixed array and an array parameter that keeps its size; the index comes first, a `usize` counted from 0.
+// A fixed array and an array parameter that keeps its size; the index comes first, a `Usize` counted from 0.
 static I32 weighted(I32 xs[4]) {
     I32 total = 0;
     for (Usize i, I32 x : xs) {

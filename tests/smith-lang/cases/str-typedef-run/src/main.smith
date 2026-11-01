@@ -2,24 +2,24 @@ module main;
 
 import <stdio.h>;
 
-// C's typedef of an array declarator names a slice type (issue #148): `typedef const char Str[:];`, `typedef char bytes[:];`.
+// C's typedef of an array declarator names a slice type (issue #148): `typedef const char str[:];`, `typedef char bytes[:];`.
 
-typedef const char Str[:];
+typedef const char str[:];
 typedef char bytes[:];
 
 struct Named {
-    Str name;
+    str name;
 };
 
-static Usize length(Str xs) {
+static Usize length(str xs) {
     return countof(xs);
 }
 
-static Str tail(Str xs) {
+static str tail(str xs) {
     return xs[1:];
 }
 
-static Bool next(Str *p) {
+static bool next(str *p) {
     if (countof(*p) == 0) return false;
     *p = (*p)[1:];
     return true;
@@ -30,18 +30,18 @@ static void poke(bytes *b) {
 }
 
 I32 main() {
-    Str s = "abc";
+    str s = "abc";
     c::printf("%zu %c %zu %zu\n", countof(s), s[1], length(s), length(s[1:]));
-    Str cut = s[0:2];
-    Str *p = &s;
+    str cut = s[0:2];
+    str *p = &s;
     Usize steps = 0;
     while (next(p)) steps++;
     c::printf("%zu %zu %zu\n", countof(cut), steps, countof(s));
 
     char raw[4] = {'a', 'b', 'c', 'd'};
     bytes w = raw;
-    Str r = w;               // const is added implicitly
-    Str *pr = &w;            // a pointer to bytes is a pointer to Str (C23, N2607)
+    str r = w;               // const is added implicitly
+    str *pr = &w;            // a pointer to bytes is a pointer to str (C23, N2607)
     poke(&w);
     c::printf("%zu %c %zu %c\n", length(w), (*pr)[0], countof(tail(r)), tail(w)[0]);
 

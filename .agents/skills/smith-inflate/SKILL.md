@@ -13,12 +13,12 @@ DEFLATE (RFC 1951) with the zlib and gzip wrappers, input whole in memory, no al
 import std::inflate;
 
 // Inflates a zlib stream (an HDF5 chunk, a PNG's IDAT) into `out`. Returns the bytes written, or -1.
-isize unzip(const u8 *data, usize data_size, u8 *out, usize capacity) {
-    usize used = 0;
-    usize size = 0;
+Isize unzip(const U8 *data, Usize data_size, U8 *out, Usize capacity) {
+    Usize used = 0;
+    Usize size = 0;
     inflate::Status status = inflate::decode(inflate::Zlib, data, data_size, out, capacity, &used, &size);
     if (status != inflate::Ok) return -1;
-    return (isize)size;
+    return (Isize)size;
 }
 ```
 

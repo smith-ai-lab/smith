@@ -14,7 +14,7 @@ maybe(T) first(constexpr Type T, T *xs, Usize n) {
 
 I32 main(void) {
     Usize xs[1] = {1};
-    // the struct of `maybe(usize)` is named nowhere at file scope before this call
+    // the struct of `maybe(Usize)` is named nowhere at file scope before this call
     first(Usize, xs, 1);
     return 0;
 }

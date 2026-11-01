@@ -1,3 +1,4 @@
 src/main.smith:11:30: the parameter 'xs' is an array of 2 elements: the argument is an array of another shape
 src/main.smith:11:45: the parameter 'xs' is an array of 2 elements: pass an array of that shape, not a pointer
+src/main.smith:11:45: use of undeclared identifier 'Pointer'; did you mean 'pointer'?
 src/main.smith:11:61: the parameter 'xs' is an array of 2 elements: pass an array of that shape, not a pointer

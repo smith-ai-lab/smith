@@ -78,8 +78,8 @@ inline bool is_generated(const SourceManager &sm, FileID file) {
 
 inline const char *sized_type(llvm::StringRef name) {
     static const std::map<std::string, const char *> table = {
-        {"uint8_t", "u8"},  {"uint16_t", "u16"}, {"uint32_t", "u32"}, {"uint64_t", "u64"}, {"int8_t", "i8"},
-        {"int16_t", "i16"}, {"int32_t", "i32"},  {"int64_t", "i64"},  {"size_t", "usize"}, {"ptrdiff_t", "isize"},
+        {"uint8_t", "U8"},  {"uint16_t", "U16"}, {"uint32_t", "U32"}, {"uint64_t", "U64"}, {"int8_t", "I8"},
+        {"int16_t", "I16"}, {"int32_t", "I32"},  {"int64_t", "I64"},  {"size_t", "Usize"}, {"ptrdiff_t", "Isize"},
     };
     auto found = table.find(name.str());
     return found == table.end() ? nullptr : found->second;
@@ -98,12 +98,12 @@ inline std::string sized_integer(const std::vector<std::string> &run) {
         if (word == "short") is_short = true;
         if (word == "char") is_char = true;
     }
-    if (is_double) return "f64";
-    if (is_float) return "f32";
-    if (is_char) return is_unsigned ? "u8" : is_signed ? "i8" : "";
-    if (is_short) return is_unsigned ? "u16" : "i16";
-    if (longs > 0) return is_unsigned ? "u64" : "i64";
-    return is_unsigned ? "u32" : "i32";
+    if (is_double) return "F64";
+    if (is_float) return "F32";
+    if (is_char) return is_unsigned ? "U8" : is_signed ? "I8" : "";
+    if (is_short) return is_unsigned ? "U16" : "I16";
+    if (longs > 0) return is_unsigned ? "U64" : "I64";
+    return is_unsigned ? "U32" : "I32";
 }
 
 class SizedTypesCheck final : public ClangTidyCheck {
@@ -167,8 +167,8 @@ class SizedTypesCheck final : public ClangTidyCheck {
 
         void report(const Token &token, const std::string &spelled, const std::string &sized) {
             check.diag(token.getLocation(),
-                       "`%0` is a C type, and a .smith file has the sized types: write `%1` (u8 u16 u32 u64, i8 i16 "
-                       "i32 i64, usize, isize, f32, f64)")
+                       "`%0` is a C type, and a .smith file has the sized types: write `%1` (U8 U16 U32 U64, I8 I16 "
+                       "I32 I64, Usize, Isize, F32, F64)")
                 << spelled << sized;
         }
     };
@@ -355,7 +355,7 @@ class BoundedLoopCheck final : public ClangTidyCheck {
             return;
         if (!seen.insert(sm.getExpansionLoc(loop->getBeginLoc()).getRawEncoding()).second) return;
         diag(loop->getBeginLoc(),
-             "%0 never ends on its own: bound the loop by a count (`for (usize i = 0; i < limit; i++)`); only `main` "
+             "%0 never ends on its own: bound the loop by a count (`for (Usize i = 0; i < limit; i++)`); only `main` "
              "runs forever")
             << spelled;
     }

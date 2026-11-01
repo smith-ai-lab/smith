@@ -14,12 +14,12 @@ module where_home;
 
 import std::env;
 
-export usize home_length(env::Value home) { // a function of its own reads an option (smith issue #353)
+export Usize home_length(env::Value home) { // a function of its own reads an option (smith issue #353)
     if (home == .some) return countof(home.some);
     return 0;
 }
 
-export usize ask() {
+export Usize ask() {
     return home_length(env::get("HOME"));
 }
 ```
@@ -29,4 +29,4 @@ export usize ask() {
 - **The effect is `env`** (`smith-lang-effects`), inferred from the call.
 - **Test with a fake**: `env::set_handler(&fake.base)` installs an `env::Handler` (C: `SmithEnvHandler {get}`, `smith_handlers_set_env`) for the thread and returns the previous one; restore it with `defer`. `getenv` of any other code on the thread reaches it too. `get(self, name)` returns the value or null. See `lib/std/env_test.smith`.
 - **From C**: `<smith/env.h>` has `smith_env_get(name)` (a slice) and `smith_env_set_handler`; `getenv` itself is faked by the handler.
-- The program's arguments are `main(str args[:])`, not this module.
+- The program's arguments are `main(Str args[:])`, not this module.

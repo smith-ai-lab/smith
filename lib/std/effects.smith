@@ -18,34 +18,34 @@
 module std::effects;
 
 // <smith/effects.h>: the empty set, a function with none is `[[std::pure]]`.
-export constexpr u32 none = 0;
+export constexpr U32 none = 0;
 // <smith/effects.h>: allocating and freeing memory.
-export constexpr u32 alloc = 1;
+export constexpr U32 alloc = 1;
 // <smith/effects.h>: reading and writing files.
-export constexpr u32 files = 2;
+export constexpr U32 files = 2;
 // <smith/effects.h>: the network.
-export constexpr u32 net = 4;
+export constexpr U32 net = 4;
 // <smith/effects.h>: the console, standard input, output and error.
-export constexpr u32 console = 8;
+export constexpr U32 console = 8;
 // <smith/effects.h>: the clock and sleeping.
-export constexpr u32 clock = 16;
+export constexpr U32 clock = 16;
 // <smith/effects.h>: processes and threads.
-export constexpr u32 process = 32;
+export constexpr U32 process = 32;
 // <smith/effects.h>: the environment.
-export constexpr u32 env = 64;
+export constexpr U32 env = 64;
 // <smith/effects.h>: OS randomness.
-export constexpr u32 entropy = 128;
+export constexpr U32 entropy = 128;
 // <smith/effects.h>: writing a global or a function-local `static`.
-export constexpr u32 globals = 256;
+export constexpr U32 globals = 256;
 // <smith/effects.h>: unknown: code smith cannot see into, a function with no source and no attribute.
-export constexpr u32 unknown = 512;
+export constexpr U32 unknown = 512;
 // <smith/effects.h>: a failure point, a checked index or slice, a contract or an assert, `abort` or a trap, or a call
 // to a function that has one. A proved check is not one.
-export constexpr u32 fails = 1024;
+export constexpr U32 fails = 1024;
 // <smith/effects.h>: making memory executable (`mmap` or `mprotect` with PROT_EXEC), code smith cannot read.
-export constexpr u32 code = 2048;
+export constexpr U32 code = 2048;
 // <smith/effects.h>: starting a task; its handler is the scheduler.
-export constexpr u32 tasks = 4096;
+export constexpr U32 tasks = 4096;
 
 // <smith/effects.h>: whether the function `f` has no effect beyond `set`. Written in a `static_assert` (see above).
 export inline bool within(...) {
@@ -54,7 +54,7 @@ export inline bool within(...) {
 
 // Every set, so that the compiler sees each constant used: a constant a module exports and does not use is a warning in
 // the project that compiles the module.
-[[maybe_unused]] u32 everything() {
+[[maybe_unused]] U32 everything() {
     (void)within(none, none);
     return none | alloc | files | net | console | clock | process | env | entropy | globals | unknown | fails | code |
            tasks;

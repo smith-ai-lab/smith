@@ -2,10 +2,10 @@ module main;
 struct smith_array_restrict_u8_n { unsigned char * __restrict data; unsigned long count[1]; };
 struct smith_array_const_char_n { const char *data; unsigned long count[1]; };
 int main() {
-  f32 raw[3][2] = {{1, 2}, {3, 4}, {5, 6}};
-  f32 rows[:][2] = raw;
-  f32 grid[:][:] = raw;
-  u8 bytes[4] = {7, 8, 9, 10};
+  F32 raw[3][2] = {{1, 2}, {3, 4}, {5, 6}};
+  F32 rows[:][2] = raw;
+  F32 grid[:][:] = raw;
+  U8 bytes[4] = {7, 8, 9, 10};
   struct smith_array_restrict_u8_n r = {bytes, {4}};
   const struct smith_array_const_char_n c = {"hey", {3}};
   return (int)countof(rows) + (int)countof(grid) + (int)r.count[0] + (int)c.count[0];

@@ -3,7 +3,7 @@ import <stdint.h>;
 import std::random;
 import std::test;
 
-[[gnu::always_inline]] static inline void check_positive(i32 value) {
+[[gnu::always_inline]] static inline void check_positive(I32 value) {
     test::check(value > 0);
 }
 
@@ -16,13 +16,13 @@ void test_passes(void) {
 }
 
 void test_check_fails(void) {
-    i32 moves = 0;
+    I32 moves = 0;
     test::check(moves > 0);
 }
 
 void test_equal_fails(void) {
-    u64 count = 3;
-    u64 expected = 4;
+    U64 count = 3;
+    U64 expected = 4;
     test::check_equal(count, expected);
 }
 
@@ -35,12 +35,12 @@ void test_same_bits_fails(void) {
 }
 
 void test_assert_fails(void) {
-    i32 moves = 1;
+    I32 moves = 1;
     c::assert(moves == 2);
 }
 
 void test_segfault(void) {
-    volatile i32 *nothing = nullptr;
+    volatile I32 *nothing = nullptr;
     *nothing = 7;
 }
 
@@ -49,12 +49,12 @@ void test_inlined(void) {
 }
 
 void test_ordering_fails(void) {
-    i32 total = 2 + 2;
+    I32 total = 2 + 2;
     test::check_less_equal(total, 3);
 }
 
 void test_prop_function(random::Key key) {
-    i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
+    I64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
     test::note("x = %jd", (c::intmax_t)x);
     test::check(x < 500);
 }

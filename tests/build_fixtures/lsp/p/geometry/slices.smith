@@ -1,5 +1,5 @@
 module geometry::slices;
 
-export f32 pick(f32 xs[:], usize i) {
+export F32 pick(F32 xs[:], Usize i) {
     return xs[i];
 }

@@ -3,8 +3,8 @@ module idiom::designated;
 import "shape.h";
 
 typedef struct {
-    i32 x;
-    i32 y;
+    I32 x;
+    I32 y;
 } Mine;
 
 export void use(void) {

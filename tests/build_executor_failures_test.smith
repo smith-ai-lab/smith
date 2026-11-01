@@ -10,9 +10,9 @@ import scratch;
 
 // The text with its newlines as spaces, for the order in which words were printed.
 static const char *flat(arena::Arena *memory, const char *text) {
-    usize length = __builtin_strlen(text);
+    Usize length = __builtin_strlen(text);
     char *copy = arena::push_slice(memory, char, length + 1).data;
-    for (usize i = 0; i < length; i++)
+    for (Usize i = 0; i < length; i++)
         copy[i] = text[i] == '\n' ? ' ' : text[i];
     copy[length] = '\0';
     return copy;

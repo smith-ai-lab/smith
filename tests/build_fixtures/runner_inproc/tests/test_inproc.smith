@@ -9,19 +9,19 @@ void test_inproc_pass(void) {
 }
 
 void test_inproc_fail(void) {
-    i32 total = 40;
+    I32 total = 40;
     total += 2;
     test::check_equal(total, 41);
 }
 
 void test_inproc_local(void) {
-    i32 answer = 41;
+    I32 answer = 41;
     answer += 1;
     test::check_equal(answer, 42);
 }
 
 void test_inproc_pid(void) {
-    c::printf("pid %d\n", (i32)c::getpid());
+    c::printf("pid %d\n", (I32)c::getpid());
 }
 
 void test_inabort_abort(void) {

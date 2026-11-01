@@ -9,14 +9,14 @@ import std::test;
 import scratch;
 import <string.h>;
 
-constexpr usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
+constexpr Usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
 
 // The last line of a text: the program's output follows the build's.
 static const char *last_line(const char *text) {
-    usize end = c::strlen(text);
+    Usize end = c::strlen(text);
     while (end > 0 && text[end - 1] == '\n')
         end--;
-    usize start = end;
+    Usize start = end;
     while (start > 0 && text[start - 1] != '\n')
         start--;
     return text + start; // expect_text ignores the newlines at its end

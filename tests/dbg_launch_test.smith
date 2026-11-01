@@ -11,7 +11,7 @@ import std::mem;
 import std::test;
 import target;
 
-constexpr usize memory_size = (usize)16 << 20; // 16 MiB
+constexpr Usize memory_size = (Usize)16 << 20; // 16 MiB
 
 constexpr char program[_] = "#include <stdio.h>\n"
                             "int main(int count, char **arguments) {\n"

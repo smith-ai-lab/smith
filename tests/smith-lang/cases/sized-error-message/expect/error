@@ -1,1 +1,1 @@
-src/main.smith:2:9: incompatible pointer to integer conversion initializing 'i32' (aka 'int') with an expression of type 'char[6]' [-Wint-conversion]
+src/main.smith:2:9: incompatible pointer to integer conversion initializing 'I32' (aka 'int') with an expression of type 'char[6]' [-Wint-conversion]

@@ -1,4 +1,4 @@
-src/main.smith:10:33: cannot tell the type of `(isize)-4`, the argument of `larger`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
-src/main.smith:9:106: cannot tell the type of `(u16)3`, the argument of `larger`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
-src/main.smith:9:39: cannot tell the type of `(usize)p % 64`, the argument of `larger`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
-src/main.smith:9:76: cannot tell the type of `(u8)200`, the argument of `larger`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:10:33: cannot tell the type of `(Isize)-4`, the argument of `larger`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:9:106: cannot tell the type of `(U16)3`, the argument of `larger`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:9:39: cannot tell the type of `(Usize)p % 64`, the argument of `larger`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:9:76: cannot tell the type of `(U8)200`, the argument of `larger`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

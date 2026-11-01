@@ -1,18 +1,18 @@
 module idiom::c23_ok;
 
 typedef struct {
-    u32 a;
-    u32 b;
+    U32 a;
+    U32 b;
 } Pair;
 
 [[noreturn]] void stop();
-[[nodiscard]] u32 compute();
+[[nodiscard]] U32 compute();
 
-export u32 f(const u8 *p) {
+export U32 f(const U8 *p) {
     bool flag = p == nullptr;
     Pair pair = {};
     Pair one = {1};
-    u8 bytes[4] = {};
+    U8 bytes[4] = {};
     const char empty[:] = ""; // the lowering counts it as {0}, which the source does not say
     return pair.a + one.a + bytes[0] + flag + countof(empty);
 }
