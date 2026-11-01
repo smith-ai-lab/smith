@@ -815,37 +815,47 @@ static void build_io_object(SmithBuild *b, const BuildConfig *config, const char
     smith_object(b, io);
 }
 
-// smith's own front end (issue #1221, `smith cc --front-end=new`): front/*.smith but the JIT helper and track C.
-static size_t build_front_objects(SmithBuild *b, const BuildConfig *config, const char *folder,
-                                  const char *const *flags, SmithObject *objects, const SmithObject **list) {
-    // The sources are compiled as .smith/front/<name>.smith, a link to front/: `smith prove` proves a program's own
-    // sources (the files that are no step's output and not under .smith/), and the front end is not proved (its
-    // bodies made one group that did not finish in 15 minutes).
+// smith's own front end (issue #1221, `smith cc --front-end=new`): front/*.smith but the JIT helper and track C. Plain
+// steps, not smith_object: the previous release builds this file (the lag rule) and its smith_object would look for
+// headers it cannot make, and a source that no step makes is one `smith prove` proves, which the front end is not (its
+// bodies made one group that did not finish in 15 minutes). Each module's header and object depend on the headers of
+// the modules before it in the list, which is in import order. Returns the objects.
+static const char *const *build_front_objects(SmithBuild *b, const BuildConfig *config, const char *folder,
+                                              const char *const *flags) {
+    const char *const *extra = smith_list(b, "-std=gnu2y", "-I", smith_fmt(b, "%s/include", config->llvm), nullptr);
+    const char *const *before = smith_cat(b, smith_list(b, build_compiler_file(b, config), nullptr), config->headers,
+                                          nullptr);
+    const char *const *objects = smith_list(b, nullptr);
     for (size_t i = 0; i < build_front_module_count; i++) {
-        const char *real = smith_fmt(b, "front/%s.smith", build_front_modules[i]);
-        const char *link = smith_fmt(b, ".smith/front/%s.smith", build_front_modules[i]);
-        SmithStep step = {
-            .command = smith_list(b, "ln", "-sf", smith_fmt(b, "../../%s", real), link, nullptr),
-            .inputs = smith_list(b, real, nullptr),
-            .outputs = smith_list(b, link, nullptr),
-            .description = smith_fmt(b, "link %s", link),
+        const char *name = build_front_modules[i];
+        const char *source = smith_fmt(b, "front/%s.smith", name);
+        const char *header = smith_fmt(b, ".smith/include/front/%s.h", name);
+        const char *object = smith_fmt(b, "%s/front_%s.o", folder, name);
+        const char *depfile = smith_fmt(b, "%s/front_%s.d", folder, name);
+        SmithStep made = {
+            .command = smith_cat(b, smith_list(b, config->cc, "--smith-header", source, "-o", header, nullptr), flags,
+                                 extra, nullptr),
+            .inputs = smith_list(b, source, nullptr),
+            .implicit_inputs = before,
+            .outputs = smith_list(b, header, nullptr),
+            .description = smith_fmt(b, "header %s", source),
+            .restat = true,
         };
-        smith_step(b, &step);
-    }
-    for (size_t i = 0; i < build_front_module_count; i++) {
-        objects[i] = (SmithObject){
-            .compiler = config->cc,
-            .source = smith_fmt(b, ".smith/front/%s.smith", build_front_modules[i]),
-
-            .output = smith_fmt(b, "%s/front_%s.o", folder, build_front_modules[i]),
-            .flags = smith_cat(b, flags,
-                               smith_list(b, "-std=gnu2y", "-I", smith_fmt(b, "%s/include", config->llvm), nullptr),
-                               nullptr),
+        smith_step(b, &made);
+        before = smith_cat(b, before, made.outputs, nullptr);
+        SmithStep compile = {
+            .command = smith_cat(b, smith_list(b, config->cc, nullptr), flags, extra,
+                                 smith_list(b, "-MD", "-MF", depfile, "-c", source, "-o", object, nullptr), nullptr),
+            .inputs = smith_list(b, source, nullptr),
+            .implicit_inputs = before,
+            .outputs = smith_list(b, object, nullptr),
+            .description = smith_fmt(b, "compile %s", source),
+            .depfile = depfile,
         };
-        smith_object(b, &objects[i]);
-        list[i] = &objects[i];
+        smith_step(b, &compile);
+        objects = smith_cat(b, objects, compile.outputs, nullptr);
     }
-    return build_front_module_count;
+    return objects;
 }
 
 static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const char *folder) {
@@ -884,17 +894,15 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     SmithObject libraries[linked_count + 1];
     SmithObject runtime_io;
     build_io_object(b, config, folder, flags, &runtime_io);
-    SmithObject front_objects[build_front_module_count];
     // smith.c, the commit, the io layer, the front end, the libraries, the shims (a table of 16, the packed data and
     // the parser) and the prover's four, ended by nullptr
-    const SmithObject *objects[3 + build_front_module_count + linked_count + 16 + 2 + 4 + 1];
+    const SmithObject *objects[3 + linked_count + 16 + 2 + 4 + 1];
     for (size_t i = 0; i < sizeof objects / sizeof objects[0]; i++)
         objects[i] = nullptr;
     objects[0] = &object;
     objects[1] = &commit;
     objects[2] = &runtime_io;
     size_t count = 3;
-    count += build_front_objects(b, config, folder, flags, front_objects, objects + count);
     count += build_library_objects(b, config, folder, flags, linked, libraries, objects + count);
     build_shims(b, config, folder, pack, &shims, objects + count);
     SmithProgram program = {
@@ -906,7 +914,8 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
             smith_when(b, config->coverage, (const char *[]){"-fprofile-instr-generate", nullptr}), nullptr),
         .objects = objects,
         .libraries =
-            smith_cat(b, build_header_library_objects(b, config, folder), build_prove_group(b, config, &shims.prove),
+            smith_cat(b, build_header_library_objects(b, config, folder), build_front_objects(b, config, folder, flags),
+                      build_prove_group(b, config, &shims.prove),
                       build_enzyme_libraries(b, config), build_clang_libraries(b, config),
                       build_lldb_libraries(b, config), config->platform->system_libraries, nullptr),
     };
