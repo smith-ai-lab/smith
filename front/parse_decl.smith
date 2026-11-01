@@ -198,13 +198,21 @@ static Str string_value(const parse::Parser *p, lex::Token token) {
     return result;
 }
 
+// Whether a text is the same as another.
+static Bool same_text(Str a, Str b) {
+    return countof(a) == countof(b) && (countof(a) == 0 || mem::equal(a, b));
+}
+
 // A path `a::b::c` (a name or a type name for each segment).
 static ast::Path parse_path(parse::Parser *p, Str what) {
     ast::Path path = {};
     U32 start = parse::peek(p).span.start;
     while (!parse::at(p, lex::end_of_file)) {
         lex::Token token = parse::peek(p);
-        if (!is_name(token.kind)) {
+        // `[[std::inline]]`: after `std::` the keyword is the attribute's name.
+        Bool std_inline =
+            token.kind == lex::kw_inline && countof(path.segments) == 1 && same_text(path.segments[0].text, "std");
+        if (!is_name(token.kind) && !std_inline) {
             parse::expect(p, lex::name, what);
             break;
         }
@@ -221,17 +229,16 @@ static ast::Path parse_path(parse::Parser *p, Str what) {
 // ---------------------------------------------------------------------------------------------------------------
 // Prefixes and attributes
 
-// Whether a text is the same as another.
-static Bool same_text(Str a, Str b) {
-    return countof(a) == countof(b) && (countof(a) == 0 || mem::equal(a, b));
-}
-
 // A `[[gnu::x]]` is not Smith's: the error names `[[std::x]]` where the std set has `x`, else says there is none.
 static void reject_gnu_attribute(parse::Parser *p, ast::Path name) {
     if (countof(name.segments) != 2 || !same_text(name.segments[0].text, "gnu")) return;
     Str word = name.segments[1].text;
-    if (same_text(word, "pure")) {
-        parse::error(p, name.span, "`[[gnu::pure]]` is not part of Smith; use `[[std::pure]]`");
+    Str std_word = word;
+    if (same_text(word, "always_inline")) std_word = "inline";
+    if (same_text(word, "pure") || same_text(word, "always_inline") || same_text(word, "noinline") ||
+        same_text(word, "cold")) {
+        char message[:] = format::push("`[[gnu::", word, "]]` is not part of Smith; use `[[std::", std_word, "]]`");
+        parse::error(p, name.span, message);
         return;
     }
     char message[:] =

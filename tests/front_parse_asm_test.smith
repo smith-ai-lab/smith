@@ -52,11 +52,29 @@ export void test_parse_gnu_attribute_with_std_spelling() {
     test::check_equal(errors_of("module m;\n[[gnu::pure]] I32 g(I32 x);\n"), expected);
 }
 
-export void test_parse_gnu_attribute_without_std_spelling() {
+export void test_parse_gnu_always_inline_names_std_inline() {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str expected = "`[[gnu::always_inline]]` is not part of Smith and `[[std::always_inline]]` is not available yet\n";
+    Str expected = "`[[gnu::always_inline]]` is not part of Smith; use `[[std::inline]]`\n";
     test::check_equal(errors_of("module m;\n[[gnu::always_inline]] inline I32 g(I32 x);\n"), expected);
+}
+
+export void test_parse_gnu_noinline_names_std_noinline() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str expected = "`[[gnu::noinline]]` is not part of Smith; use `[[std::noinline]]`\n";
+    test::check_equal(errors_of("module m;\n[[gnu::noinline]] inline I32 g(I32 x);\n"), expected);
+}
+
+export void test_parse_gnu_cold_names_std_cold() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str expected = "`[[gnu::cold]]` is not part of Smith; use `[[std::cold]]`\n";
+    test::check_equal(errors_of("module m;\n[[gnu::cold]] inline I32 g(I32 x);\n"), expected);
 }
