@@ -1,16 +1,20 @@
 // The translation of a Makefile into a build.c, end to end (issue #44, runtime/make*.c): `smith build --dump-config` in
 // a folder with a Makefile and no build file, as a user runs it. Each case is a small project with one Makefile for a
-// construct (tests/build_fixtures/make_NN): the build.c passes `smith lint` and `smith fmt --dry-run`, is built with
-// `smith build`, and what it makes is compared with what make makes from the same Makefile. Needs make. What the
-// translation says (its text, what it reports, the values of its flags as make computes them) is tests of a function
-// in process, tests/make_translate_test.smith (issue #646); a case is here because it needs a real make, a compiler,
-// the lint and format of the result, or the verb (which Makefile `smith build` and `--dump-config` look at). Each case
-// is a test of its own, so they run side by side.
+// construct (tests/build_fixtures/make_NN): the build.c is built with `smith build`, and what it makes is compared
+// with what make makes from the same Makefile. Needs make. What the translation says (its text, what it reports, the
+// values of its flags as make computes them) is tests of a function in process, tests/make_translate_test.smith (issue
+// #646); a case is here because it needs a real make, a compiler, or the verb (which Makefile `smith build` and
+// `--dump-config` look at). Each case is a test of its own, so they run side by side. The lint and the format of the
+// translations are one test (issue #1294): every case's Makefile is translated in process, and `smith fmt` and `smith
+// lint` run once over all of the build files. A case that is only translated and linted there (the wildcard of an
+// option, a rule under a test of the platform, what is outside the subset) is not built again: building a project
+// costs a build program, about 1.5 CPU-s, and the text it checks is a test in process.
 module make_test;
 
 import std::arena;
 import std::test;
 import scratch;
+import <smith_core.h>;
 import <string.h>;
 import std::mem;
 
@@ -21,12 +25,6 @@ static scratch::Run run(const scratch::Project *p, const char *command) {
     char text[4096];
     __builtin_snprintf(text, sizeof text, "%s%s", clean, command);
     return scratch::sh(p, text);
-}
-
-static const char *out_of(const scratch::Project *p, const char *command) {
-    char text[4096];
-    __builtin_snprintf(text, sizeof text, "%s%s", clean, command);
-    return scratch::capture(p, text);
 }
 
 static scratch::Project project(const char *fixture) {
@@ -48,21 +46,10 @@ static void printer(const scratch::Project *p, I32 count) {
     scratch::write(p, "main.c", text);
 }
 
-// The translation: build.c, and what was said on standard error. Returns the status. A translation that succeeded
-// passes `smith lint` and `smith fmt --dry-run` with smith's defaults (a project with no .clang-tidy or .clang-format
-// of its own): names in lower case, functions of at most 70 lines, formatted.
-static I32 translate(const scratch::Project *p, const char *name) {
-    scratch::Run dumped = run(p, "smith build --dump-config >build.c 2>dump.err");
-    if (dumped.status == 0) {
-        const char *findings = out_of(
-            p, "smith lint >lint.log 2>&1; findings=$(grep -E '^build\\.c:[0-9]+:[0-9]+: (warning|error)' lint.log); "
-               "formatting=$(smith fmt --dry-run build.c 2>&1 | grep -c 'clang-format-violations'); "
-               "echo \"${findings:-none} $formatting\"");
-        char label[256];
-        __builtin_snprintf(label, sizeof label, "translation %s: build.c is lint-clean and format-clean", name);
-        scratch::expect_text(label, "none 0", findings);
-    }
-    return dumped.status;
+// The translation as the verb writes it: build.c, and its status. Whether it passes `smith lint` and `smith fmt
+// --dry-run` is test_make_every_translation_is_lint_clean_and_format_clean, once for all the cases.
+static I32 translate(const scratch::Project *p) {
+    return run(p, "smith build --dump-config >build.c 2>dump.err").status;
 }
 
 static void expect_zero(const char *name, I32 status) {
@@ -71,8 +58,7 @@ static void expect_zero(const char *name, I32 status) {
 
 // Builds the program with make, then with the translation, and compares what they print. `arguments` are the
 // command-line variables of both (make's VAR=value, smith's -DVAR=value).
-static void same_output(const scratch::Project *p, const char *name, const char *program, const char *arguments,
-                        const char *number) {
+static void same_output(const scratch::Project *p, const char *name, const char *program, const char *arguments) {
     char command[1024];
     char label[512];
     // build/ and the program are removed, so that both builds make them; .smith is kept: it holds only the build
@@ -84,7 +70,7 @@ static void same_output(const scratch::Project *p, const char *name, const char 
     __builtin_snprintf(command, sizeof command, "./%s >make.out 2>&1; rm -rf build %s", program, program);
     (void)run(p, command);
     __builtin_snprintf(label, sizeof label, "%s: the translation exits 0", name);
-    expect_zero(label, translate(p, number));
+    expect_zero(label, translate(p));
     __builtin_snprintf(
         command, sizeof command,
         "options=; for option in %s; do case $option in *=*) options=\"$options -D$option\" ;; esac; done; "
@@ -378,9 +364,8 @@ export void test_make_variables() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     printer(&p, 12);
-    (void)translate(&p, "1");
-    same_output(&p, "variables", "prog", "", "1");
-    same_output(&p, "variables: C and D set on the command line", "prog", "C=cmd D=cmd2", "1");
+    same_output(&p, "variables", "prog", "");
+    same_output(&p, "variables: C and D set on the command line", "prog", "C=cmd D=cmd2");
 }
 
 // 3. Rules: explicit and pattern rules, order-only prerequisites, the automatic variables, a recipe that is not a
@@ -394,9 +379,8 @@ export void test_make_rules() {
     defer mem::set_allocator(outside);
     printer(&p, 1);
     (void)run(&p, "echo one >a.in; echo two >b.in");
-    (void)translate(&p, "3");
     (void)run(&p, "rm -f main.o");
-    same_output(&p, "rules", "prog", "", "3");
+    same_output(&p, "rules", "prog", "");
     (void)run(&p, "rm -f both.txt a.txt b.txt main.o; make >/dev/null 2>&1; cat both.txt a.txt b.txt >make.files; "
                   "rm -f both.txt a.txt b.txt main.o prog; smith build >/dev/null 2>&1; cat both.txt a.txt b.txt "
                   ">smith.files 2>&1");
@@ -412,7 +396,7 @@ export void test_make_recipes() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    (void)translate(&p, "4");
+    (void)translate(&p);
     (void)run(&p, "make >/dev/null 2>&1; cp out.txt make.out; rm out.txt; smith build >/dev/null 2>&1");
     scratch::expect_text("recipes: the lines run in order, - ignores a failure, a continuation joins",
                          scratch::read(&p, "make.out"), scratch::read(&p, "out.txt"));
@@ -427,13 +411,11 @@ export void test_make_phony_targets_and_the_default_goal() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     printer(&p, 1);
-    (void)translate(&p, "5");
+    (void)translate(&p);
     (void)run(&p, "smith build >/dev/null 2>&1");
     scratch::expect_text("phony: the default builds the program", "ok", run(&p, "[ -x prog ] && echo ok").out);
     (void)run(&p, "smith build extra >/dev/null 2>&1");
     scratch::expect_text("phony: smith build extra runs the task", "extra", scratch::read(&p, "extra.txt"));
-    (void)run(&p, "cp Makefile.default Makefile");
-    (void)translate(&p, "5b");
 }
 
 // 8. A test of the platform keeps both branches, as an if on b->os and b->arch.
@@ -445,8 +427,7 @@ export void test_make_platform() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     printer(&p, 5);
-    (void)translate(&p, "8");
-    same_output(&p, "platform", "prog", "", "8");
+    same_output(&p, "platform", "prog", "");
 }
 
 // 9. Command-line knobs are -D options of the build file.
@@ -458,10 +439,9 @@ export void test_make_knobs() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     printer(&p, 3);
-    (void)translate(&p, "9");
-    same_output(&p, "knobs: the defaults", "prog", "", "9");
-    same_output(&p, "knobs: DEBUG=1", "prog", "DEBUG=1", "9");
-    same_output(&p, "knobs: DEBUG=1 VERBOSE=yes EXTRA=more", "prog", "DEBUG=1 VERBOSE=yes EXTRA=more", "9");
+    same_output(&p, "knobs: the defaults", "prog", "");
+    same_output(&p, "knobs: DEBUG=1", "prog", "DEBUG=1");
+    same_output(&p, "knobs: DEBUG=1 VERBOSE=yes EXTRA=more", "prog", "DEBUG=1 VERBOSE=yes EXTRA=more");
 }
 
 // 11. An archive is a step, and the program that links it names it a library.
@@ -474,8 +454,7 @@ export void test_make_archive() {
     defer mem::set_allocator(outside);
     printer(&p, 1);
     scratch::write(&p, "lib.c", "const char *name(void) { return \"lib\"; }\n");
-    (void)translate(&p, "11");
-    same_output(&p, "archive", "prog", "", "11");
+    same_output(&p, "archive", "prog", "");
 }
 
 // 12. Recursive make: a goal of the same Makefile, and -C another folder.
@@ -488,25 +467,9 @@ export void test_make_recursive_make() {
     defer mem::set_allocator(outside);
     printer(&p, 1);
     scratch::write(&p, "sub/lib.c", "const char *name(void) { return \"sub\"; }\n");
-    (void)translate(&p, "12");
     (void)run(&p, "rm -f sub/lib.a sub/lib.o");
-    same_output(&p, "recursive make", "prog", "", "12");
+    same_output(&p, "recursive make", "prog", "");
     (void)run(&p, "rm -f sub/lib.a sub/lib.o");
-}
-
-// 13. What is outside the subset is reported, and the rest still translates (what is said is in
-// tests/make_translate_test.smith): the build.c still builds.
-export void test_make_what_is_outside_the_subset_is_reported() {
-    scratch::Project p = project("make_13");
-    defer scratch::clean(&p);
-    arena::Arena memory = test::memory(1U << 24);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    printer(&p, 1);
-    (void)run(&p, "echo other >other");
-    expect_zero("reported: the translation still exits 0", translate(&p, "13"));
-    scratch::expect_text("reported: and the build.c builds", "0", run(&p, "smith build >/dev/null 2>&1; echo $?").out);
 }
 
 // 14. The same commands as make for a small project with a flags variable and a pattern rule.
@@ -519,36 +482,9 @@ export void test_make_the_same_commands_as_make() {
     defer mem::set_allocator(outside);
     printer(&p, 1);
     (void)run(&p, "cp main.c second.c; sed -i.bak 's/int main(void) {/int second_main(void) {/' second.c");
-    (void)translate(&p, "14");
+    (void)translate(&p);
     (void)run(&p, "smith build >/dev/null 2>&1");
     same_commands(&p, "commands", "prog");
-}
-
-// 15. A rule under a test of the platform is a step that build.c declares only there; two that differ are reported.
-export void test_make_a_rule_under_a_test_of_the_platform() {
-    scratch::Project p = project("make_15");
-    defer scratch::clean(&p);
-    arena::Arena memory = test::memory(1U << 24);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    (void)translate(&p, "15");
-    (void)run(&p, "smith build >/dev/null 2>&1");
-    scratch::expect_text("guarded rule: and the build.c builds it", "here", scratch::read(&p, "here.txt"));
-}
-
-// A wildcard of a command-line variable is read at its default, and said so.
-export void test_make_a_wildcard_of_an_option_is_read_at_its_default() {
-    scratch::Project p = project("make_16");
-    defer scratch::clean(&p);
-    arena::Arena memory = test::memory(1U << 24);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    (void)run(&p, "echo font >font.bdf");
-    (void)translate(&p, "16");
-    (void)run(&p, "smith build >/dev/null 2>&1");
-    scratch::expect_text("wildcard of an option: the build uses the file", "font", scratch::read(&p, "out.txt"));
 }
 
 // 16. A folder with a build file is not translated (which Makefile comes first is in tests/make_translate_test.smith).
@@ -643,8 +579,72 @@ export void test_make_a_makefile_too_big_for_one_function() {
                   "while [ \"$i\" -le 30 ]; do printf 'step%s: $(DATA)\\n\\t@touch $(PREFIX)%s.txt $(DATA)\\n' \"$i\" "
                   "\"$i\"; i=$((i + 1)); done; "
                   "echo '.PHONY: all'; echo 'all: step1 step30'; } >Makefile");
-    expect_zero("split: the Makefile is translated", translate(&p, "19"));
+    expect_zero("split: the Makefile is translated", translate(&p));
     scratch::Run built = run(&p, "smith build -DPREFIX=pre");
     scratch::expect_status("split: smith build builds it", 0, &built);
     scratch::expect_text("split: the option reaches a recipe", "pre1.txt", run(&p, "ls pre1.txt 2>/dev/null").out);
+}
+
+// The cases of the batch below: the folder each is translated in, made from tests/build_fixtures/make_NN.
+constexpr Usize case_count = 14;
+const char *const case_names[case_count] = {"01", "03", "04", "05", "05b", "08", "09",
+                                            "11", "12", "13", "14", "15",  "16", "19"};
+
+// The folders, with what the tests of the cases add to a fixture before they translate it (a printer's main.c, files a
+// wildcard finds, a Makefile too big for one function). One process for all of them.
+constexpr char batch_setup[_] =
+    "for n in 01 03 04 05 08 09 11 12 13 14 15 16; do mkdir $n && cp -R \"$SMITH_REPO/tests/build_fixtures/make_$n/.\" "
+    "$n; done; mkdir 05b 19 && cp -R \"$SMITH_REPO/tests/build_fixtures/make_05/.\" 05b && cp 05b/Makefile.default "
+    "05b/Makefile; for n in 01 03 05 05b 08 09 11 12 13 14; do echo 'int main(void) { return 0; }' >$n/main.c; done; "
+    "echo one >03/a.in; echo two >03/b.in; echo 'const char *name(void) { return \"lib\"; }' >11/lib.c; "
+    "echo 'const char *name(void) { return \"sub\"; }' >12/sub/lib.c; echo other >13/other; "
+    "cp 14/main.c 14/second.c; echo font >16/font.bdf; cd 19; "
+    "i=1; while [ \"$i\" -le 45 ]; do : >\"src$i.dat\"; i=$((i + 1)); done; "
+    "{ echo 'DATA := $(sort $(wildcard src*.dat))'; echo 'PREFIX ?= out'; i=1; "
+    "while [ \"$i\" -le 30 ]; do printf 'step%s: $(DATA)\\n\\t@touch $(PREFIX)%s.txt $(DATA)\\n' \"$i\" \"$i\"; "
+    "i=$((i + 1)); done; echo '.PHONY: all'; echo 'all: step1 step30'; } >Makefile";
+
+// Translates the cases but the last in process and writes each build.c beside its Makefile. The text in process is the
+// translation before `smith fmt` (the verb formats it), so the batch formats it the same way before it lints.
+static void translate_cases(const scratch::Project *p) {
+    char *build = mem::alloc_slice(char, 1U << 20).data;
+    char *report = mem::alloc_slice(char, 1U << 16).data;
+    for (Usize i = 0; i + 1 < case_count; i++) {
+        char folder[512];
+        char file[64];
+        __builtin_snprintf(folder, sizeof folder, "%s/%s", p->dir, case_names[i]);
+        bool done = c::smith_core_make_translate(folder, nullptr, build, 1U << 20, report, 1U << 16);
+        test::check_equal(done, true);
+        __builtin_snprintf(file, sizeof file, "%s/build.c", case_names[i]);
+        scratch::write(p, file, build);
+    }
+}
+
+// The build.c of all the cases pass smith's lint and format (a project with no .clang-tidy or .clang-format of its own:
+// names in lower case, functions of at most 70 lines, formatted), in a few processes and not two for each case: one
+// `smith fmt -i` over the in-process translations and one `smith lint` over all, with the flags of a build file
+// (`-- -std=gnu23 -I .smith/include`, as the lint of a project has) and no build of a build program. The last case, the
+// Makefile too big for one function, is the verb's own output (how build.c is split into functions depends on the
+// formatter's measure of the lines, which only the verb's process can run), and `smith fmt --dry-run --Werror` checks
+// that it needs no formatting. A failure names the file. The build of the translations is in the tests of the cases.
+export void test_make_every_translation_is_lint_clean_and_format_clean() {
+    scratch::Project p = scratch::make("all", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run set_up = run(&p, batch_setup);
+    scratch::expect_status("batch: the folders are made", 0, &set_up);
+    translate_cases(&p);
+    scratch::Run verb = run(&p, "cd 19 && smith build --dump-config >build.c 2>dump.err");
+    scratch::expect_status("batch: the big Makefile is translated by the verb", 0, &verb);
+    scratch::Run formatted = run(&p, "smith fmt --dry-run --Werror 19/build.c 2>&1");
+    scratch::expect_text("batch: the verb's build.c needs no formatting", "", formatted.out);
+    scratch::expect_status("batch: smith fmt --dry-run exits 0", 0, &formatted);
+    scratch::Run laid_out = run(&p, "smith fmt -i */build.c");
+    scratch::expect_status("batch: smith fmt lays out the translations", 0, &laid_out);
+    scratch::Run linted = run(&p, "smith lint */build.c -- -std=gnu23 -I \"$SMITH_REPO/.smith/include\" 2>&1");
+    scratch::expect_lacks("batch: no build.c has an error", linted.out, "build.c:");
+    scratch::expect_status("batch: smith lint exits 0", 0, &linted);
 }
