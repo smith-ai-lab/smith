@@ -420,8 +420,8 @@ export void test_parse_decl_error_a_tag_spelled_as_c() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str expected = "`struct Point` is C's spelling: a tag is a type name, write `Point`";
-    expect_text(first_error("struct Point p;"), expected);
+    Str expected = "`struct point` names a C tag; write `struct c::point`";
+    expect_text(first_error("struct point p;"), expected);
     Str by_itself = "declare the type by itself: write `struct Name {...};`, then `Name x;` for the variable";
     expect_text(first_error("struct Point { I32 x; } p;"), by_itself);
     Str lowercase = "a type's name starts with a capital letter: `point` is the spelling of a value";

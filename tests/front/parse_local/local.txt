@@ -1,0 +1,11 @@
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (declaration
+        (variable a (named Pair) (compound (absent) (initializer (field_designator x) (integer 1)) (initializer (field_designator y) (integer 2)))))
+      (declaration
+        (variable b (named words::Pair) (name a)))
+      (declaration
+        (variable now (named c::timespec) (compound (absent))))
+      (return (member x (name a))))))

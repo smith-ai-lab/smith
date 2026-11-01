@@ -1,0 +1,11 @@
+(module m
+  (struct Line
+    (field from (named Pair))
+    (field to (pointer (named Pair))))
+  (variable config constexpr (named Config) (compound (absent) (initializer (field_designator count) (integer 4))))
+  (function length
+    (param a (named Pair))
+    (param b (pointer (named Pair)))
+    (result (named I32))
+    (block
+      (return (integer 0)))))
