@@ -1,0 +1,8 @@
+x + 1: U8
+x < 10: Bool
+f * 0.5: F32
+pp->x: I32
+&p: Point *
+-128 as I8: I8
+error: 300 does not fit U8 (0 to 255); write a value from 0 to 255, or give it a wider type
+error: the operands of `+` have different types, `U8` and `F32`; make both `U8` with a cast, for example `(U8)y`
