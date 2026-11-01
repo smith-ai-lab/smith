@@ -1,0 +1,15 @@
+// Tests of std::optimize.
+module optimize_test;
+
+import std::optimize;
+import std::test;
+
+export void test_opaque_returns_its_argument() {
+    test::check_equal(optimize::opaque((I32)-7), (I32)-7);
+    test::check_equal(optimize::opaque((U64)1 << 40), (U64)1 << 40);
+    test::check_equal(optimize::opaque(2.5), 2.5);
+    test::check_equal(optimize::opaque((F32)0.5f), (F32)0.5f);
+    I32 value = 3;
+    I32 *pointer = optimize::opaque(&value);
+    test::check_equal(pointer == &value, true);
+}

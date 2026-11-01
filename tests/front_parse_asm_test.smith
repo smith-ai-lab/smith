@@ -30,7 +30,7 @@ export void test_parse_asm_extended_with_operands() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str expected = "extended asm is not part of Smith; use `hint::keep(x)`\n";
+    Str expected = "extended asm is not part of Smith; use `optimize::opaque(x)`\n";
     test::check_equal(errors_of(function_with("__asm__(\"\" : \"+r\"(x));")), expected);
 }
 
@@ -39,7 +39,7 @@ export void test_parse_asm_volatile() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str expected = "extended asm is not part of Smith; use `hint::keep(x)`\n";
+    Str expected = "extended asm is not part of Smith; use `optimize::opaque(x)`\n";
     test::check_equal(errors_of(function_with("__asm__ volatile(\"nop\");")), expected);
 }
 
