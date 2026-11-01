@@ -482,7 +482,7 @@ export void test_front_emit_control_signed_and_unsigned_comparison() {
     ast::StmtRef signed_items[1] = {give(choose(binary(.less, name("a"), name("b")), number(1), number(0)))};
     ast::Module signed_module = module_of(function_of("less", "I32", "I32", signed_items));
     ast::StmtRef unsigned_items[1] = {give(choose(binary(.less, name("a"), name("b")), number(1), number(0)))};
-    ast::Module unsigned_module = module_of(function_of("less", "U32", "I32", unsigned_items));
+    ast::Module unsigned_module = module_of(function_of("below", "U32", "I32", unsigned_items));
     ast::StmtRef at_least[1] = {give(choose(binary(.greater_equal, name("a"), name("b")), number(1), number(0)))};
     ast::Module at_least_module = module_of(function_of("at_least", "U32", "I32", at_least));
     tree_end(&trees);
@@ -490,7 +490,7 @@ export void test_front_emit_control_signed_and_unsigned_comparison() {
     BinaryI32 less = (BinaryI32)jit_function(&host, &signed_module, "front::test::less");
     test::check_equal(less(-1, 0), 1);
     test::check_equal(less(0, -1), 0);
-    BinaryU32 below = (BinaryU32)jit_function(&host, &unsigned_module, "front::test::less");
+    BinaryU32 below = (BinaryU32)jit_function(&host, &unsigned_module, "front::test::below");
     test::check_equal(below(0xFFFFFFFFU, 0U), 0);
     test::check_equal(below(0U, 0xFFFFFFFFU), 1);
     BinaryU32 above = (BinaryU32)jit_function(&host, &at_least_module, "front::test::at_least");
