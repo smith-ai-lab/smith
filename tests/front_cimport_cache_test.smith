@@ -383,6 +383,6 @@ export void test_cimport_cache_stdio_h_hit_takes_under_a_tenth_of_the_miss() {
     // POSIX gives clock() in millionths of a second, whatever the system's tick.
     I64 miss_us = (I64)(middle - start);
     I64 hit_us = (I64)(end - middle);
-    c::printf("cimport_cache <stdio.h>: miss %lld us of CPU, hit %lld us of CPU\n", miss_us, hit_us);
+    c::puts(format::push("cimport_cache <stdio.h>: miss ", miss_us, " us of CPU, hit ", hit_us, " us of CPU").data);
     test::check_condition(hit_us * 10 < miss_us);
 }
