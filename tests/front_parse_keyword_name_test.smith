@@ -1,0 +1,59 @@
+// Tests of the C keyword that names a parameter (#1361, A7q of track A of #1112): `I32 f(I32 short)` is an error that
+// names the keyword, not the parser's `expected )`, at the keyword; a name that only starts with one (`shorty`) is
+// a name, and the parse goes on after the error, so the first error is the one reported.
+module front_parse_keyword_name_test;
+
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+// The first error of a file, or `no error`.
+static Str first_error(Str source) {
+    parser::Parsed parsed = parser::parse("x.smith", source);
+    if (countof(parsed.errors) == 0) return "no error";
+    return parsed.errors[0].message;
+}
+
+export void test_c_keyword_names_no_parameter() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("I32 f(I32 short);");
+    Str want = "the C keyword `short` cannot name a parameter";
+    test::check_equal(got, want);
+}
+
+export void test_each_c_type_word_names_no_parameter() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("I32 f(I32 int, I32 x);");
+    Str want = "the C keyword `int` cannot name a parameter";
+    test::check_equal(got, want);
+    got = first_error("I32 f(F64 long);");
+    want = "the C keyword `long` cannot name a parameter";
+    test::check_equal(got, want);
+}
+
+export void test_first_error_is_the_keyword_when_two_names_are_keywords() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("export T add(constexpr Type T, I32 short, I32 long, T a, T b) { return a + b; }");
+    Str want = "the C keyword `short` cannot name a parameter";
+    test::check_equal(got, want);
+}
+
+export void test_a_name_that_starts_with_a_keyword_is_a_name() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("I32 f(I32 shorty, I32 longer, I32 integer);");
+    Str want = "no error";
+    test::check_equal(got, want);
+}

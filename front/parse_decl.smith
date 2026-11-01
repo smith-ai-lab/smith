@@ -104,6 +104,13 @@ static Bool is_name(lex::TokenKind kind) {
     return kind == lex::name || kind == lex::type_name;
 }
 
+// A C keyword that names a type (`short`, `int`): a parameter cannot be named by one.
+static Bool is_c_type_word(lex::TokenKind kind) {
+    return kind == lex::kw_bool || kind == lex::kw_char || kind == lex::kw_double || kind == lex::kw_float ||
+           kind == lex::kw_int || kind == lex::kw_long || kind == lex::kw_short || kind == lex::kw_signed ||
+           kind == lex::kw_unsigned || kind == lex::kw_void;
+}
+
 static Bool take_tag_keyword(parse::Parser *p);
 
 static Str source_between(const parse::Parser *p, U32 start, U32 end) {
@@ -483,6 +490,13 @@ static ast::Param parse_param(parse::Parser *p) {
         return param;
     }
     lex::TokenKind named = parse::peek(p).kind;
+    if (is_c_type_word(named)) {
+        lex::Token word = parse::advance(p);
+        char message[:] = format::push("the C keyword `", parse::text(p, word), "` cannot name a parameter");
+        parse::error(p, word.span, message);
+        param.span = parse::span_from(p, start);
+        return param;
+    }
     Str type_word = "Type";
     // `Type T` without `constexpr` reads like the one with it (is_constexpr false); the checker reports it (N1, #1339).
     Bool type_param = named == lex::type_name && mem::equal(type_text(p, param.type), type_word);
