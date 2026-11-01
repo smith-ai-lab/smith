@@ -655,6 +655,12 @@ static ast::FieldDecl finish_field(parse::Parser *p, ast::FieldDecl field, Bool 
     if (parse::at(p, lex::name)) {
         field.name = parse::text(p, parse::advance(p));
     } else if (!parse::at(p, lex::colon)) {
+        if (parse::at(p, lex::right_brace)) {
+            Str message =
+                "a field has a name: a record is `struct { I32 a; }`, a tuple `struct { I32, F32 }`, not a mix";
+            parse::error(p, parse::peek(p).span, message);
+            return field;
+        }
         parse::expect(p, lex::name, "a field name");
     }
     if (parse::at(p, lex::comma)) {
@@ -735,7 +741,8 @@ static FieldList parse_fields(parse::Parser *p) {
 // `struct {` or `union {`: an anonymous record used as a type.
 static Bool at_anonymous_record(const parse::Parser *p) {
     lex::TokenKind kind = parse::peek(p).kind;
-    return (kind == lex::kw_struct || kind == lex::kw_union) && parse::peek_at(p, 1).kind == lex::left_brace;
+    return (kind == lex::kw_struct || kind == lex::kw_union) && parse::peek_at(p, 1).kind == lex::left_brace &&
+           !parse_type::tuple_ahead(p);
 }
 
 // `struct { fields }` or `union { fields }` as a type: a payload variant, or the type of a variable. Its fields' own
@@ -848,11 +855,13 @@ static ast::Decl *parse_tag(parse::Parser *p, const Prefixes *pre, U32 start) {
     return make(p, start, pre, kind);
 }
 
-// `typedef struct {...} Name;`, `typedef enum {...} Name;` and `typedef T Name;`.
+// `typedef struct {...} Name;`, `typedef enum {...} Name;` and `typedef T Name;` (a tuple is a type: `typedef struct {
+// I32, F32 } Pair;`).
 static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start) {
     parse::advance(p);
     Usize errors_before = countof(p->errors);
-    if (parse::at(p, lex::kw_struct) || parse::at(p, lex::kw_union) || parse::at(p, lex::kw_enum)) {
+    if (!parse_type::tuple_ahead(p) &&
+        (parse::at(p, lex::kw_struct) || parse::at(p, lex::kw_union) || parse::at(p, lex::kw_enum))) {
         ast::DeclKind kind = tag_kind(p);
         lex::Token alias = parse::expect(p, lex::type_name, "the type's name after `}`");
         if (failed_since(p, errors_before)) {
@@ -948,7 +957,8 @@ static ast::Decl *parse_simple(parse::Parser *p) {
     if (kind == lex::kw_static_assert) return parse_static_assert(p, &pre, start);
     if (kind == lex::kw_typedef) return parse_typedef(p, &pre, start);
     Bool is_tag = kind == lex::kw_struct || kind == lex::kw_union || kind == lex::kw_enum;
-    if (is_tag && !at_anonymous_record(p) && !at_tag_use(p)) return parse_tag(p, &pre, start);
+    if (is_tag && !at_anonymous_record(p) && !parse_type::tuple_ahead(p) && !at_tag_use(p))
+        return parse_tag(p, &pre, start);
     return parse_typed(p, &pre, start);
 }
 

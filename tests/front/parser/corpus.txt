@@ -22,7 +22,7 @@ constexpr-import/calc.smith: ok
 constexpr-import/main.smith: ok
 constexpr-import/mid.smith: ok
 constexpr-import-header/main.smith: ok
-constexpr-import-header/shapes.smith: error: expected a field name, found `,` (12:20)
+constexpr-import-header/shapes.smith: ok
 constexpr-import-result-type/counts.smith: ok
 constexpr-import-result-type/kinds.smith: ok
 constexpr-import-result-type/main.smith: error: expected a name, found `(` (8:23)
@@ -191,7 +191,7 @@ error-try-kind/main.smith: ok
 error-try-plain-function/main.smith: ok
 error-tuple-empty/main.smith: C, out of scope
 error-tuple-field/main.smith: C, out of scope
-error-tuple-generic/pairs.smith: error: expected a field name, found `,` (3:28)
+error-tuple-generic/pairs.smith: ok
 error-tuple-index/main.smith: C, out of scope
 error-tuple-typedef-distinct/main.smith: C, out of scope
 error-type-function-pointee/main.smith: error: expected `)` to end `typeof`, found `nullptr` (7:42)
@@ -310,7 +310,7 @@ generic-fields-index-error/main.smith: ok
 generic-fields-pointee/main.smith: ok
 generic-fields-star/main.smith: ok
 generic-fields-values/main.smith: ok
-generic-fields-values/walk.smith: error: expected a field name, found `,` (13:8)
+generic-fields-values/walk.smith: ok
 generic-for-constexpr-error/bad.smith: error: expected `)`, found `,` (5:45)
 generic-for-constexpr-error/main.smith: ok
 generic-for-range/main.smith: ok
@@ -562,12 +562,12 @@ try-generic/main.smith: error: expected `;`, found `c` (22:14)
 try-return-value/main.smith: error: expected `;`, found `c` (25:14)
 try-run/main.smith: ok
 tuple-basic/main.smith: C, out of scope
-tuple-c/geo/a.smith: error: expected a field name, found `,` (3:28)
+tuple-c/geo/a.smith: ok
 tuple-import-index/main.smith: C, out of scope
-tuple-import-index/geo/a.smith: error: expected a field name, found `,` (3:20)
+tuple-import-index/geo/a.smith: ok
 tuple-modules/main.smith: C, out of scope
-tuple-modules/geo/a.smith: error: expected a field name, found `,` (4:31)
-tuple-modules/geo/b.smith: error: expected a tag name after `struct`, `union` or `enum` (6:25)
+tuple-modules/geo/a.smith: ok
+tuple-modules/geo/b.smith: ok
 tuple-pointer-param/main.smith: C, out of scope
 tuple-spelling/main.smith: C, out of scope
 type-function-after-c-name/main.smith: ok
@@ -612,4 +612,4 @@ value-query-plain/main.smith: C, out of scope
 value-query-windows/size.smith: ok
 void-pointer-cast/main.smith: ok
 void-pointer-plain/main.smith: C, out of scope
-total 614, ok 383, error 107, C 124, skipped 0
+total 614, ok 390, error 100, C 124, skipped 0
