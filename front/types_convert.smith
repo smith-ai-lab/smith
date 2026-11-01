@@ -1,0 +1,358 @@
+// front::types_convert: which conversions a module allows, and the checks on explicit casts (#414, #398, #1112, ticket
+// J1c of #1220). Pure functions over `types::Ty`; nothing here reads a tree or reports into a `Checked`, the caller
+// (J1b expressions, J1d declarations and calls) turns a refused `Verdict` into an error at its span. Not wired into
+// `smith cc`.
+//
+// THE API
+//
+//   convert(table, from, to, lit)   Whether a value of type `from` may be used where `to` is expected, with no
+//                                   written cast. `lit` says whether the value is a constant (`constant(200)`,
+//                                   `constant_unsigned(n)`) or not (`no_literal()`): `U8 small = 200;` passes, `U8 big
+//                                   = 300;` is refused with "300 does not fit U8".
+//   cast_ok(table, from, to)        Whether `(to)x` may be written for a value of type `from`.
+//   Verdict {ok, kind, message}     `kind` says which rule allowed it (`How`: identity, widening, constant_fits,
+//                                   to_some, to_ok, array_to_slice, array_decay, add_const, to_void_pointer,
+//                                   null_to_pointer, text_from_chars, cast) or `none` when refused. `message` is empty
+//                                   when `ok`; when refused it names what was expected, what was found and what to
+//                                   write: "expected U8, found I32: narrowing may lose a value; write a cast: (U8)x".
+//                                   A type that is already an error (`invalid`) or `Auto` converts with kind
+//                                   `identity`, so one mistake is reported once.
+//
+// THE RULES (the baseline of #414, the owner's rules in AGENTS.md)
+//   integers      Widening of the same signedness is implicit (`I32` to `I64`, `U8` to `U32`), and so is unsigned to
+//                 a strictly wider signed (`U32` to `I64`). Narrowing and a change of sign are refused unless the value
+//                 is a constant that fits.
+//   floats        `F32` to `F64` is implicit. `F64` to `F32`, and integer to float and float to integer, in either
+//                 direction, need a cast (a constant included).
+//   Bool          Only a `Bool` is a `Bool`; write a comparison (`x != 0`, `p != null`). A `Bool` is not an integer.
+//   enumerations  An enumeration converts only to itself; to or from an integer needs a cast.
+//   pointers      `const` may be added, never dropped. `T *` converts to `void *`; `void *` never converts to `T *`
+//                 without a written cast (#398). `null` converts to any pointer. A fixed array decays to a pointer to
+//                 its element. Any other pointee needs a cast.
+//   arrays        A fixed array converts to a slice of the same element (const may be added). A slice converts to a
+//                 slice of the same element, const added. There is no slice to pointer.
+//   Str           A `Str` converts to a `Str`; a slice or an array of 8-bit integers converts to a `Str`. A `Str`
+//                 converts to a slice of 8-bit integers only when the slice's element is const.
+//   Option, Result  A value converts to `Option(T)`'s `.some` and `Result(T, E)`'s `.ok` wherever one is expected, if
+//   it
+//                 converts to `T` (owner, 2026-10-25). Absence and errors stay explicit: an `Option(T)` is not a `T`, a
+//                 `Result(T, E)` is not a `T`, and `null` is not an `Option(T)`.
+//   casts         Between integers, floats, enumerations and integers, `Bool` from an integer; between pointers if no
+//                 `const` is dropped (`void *` to `T *` included); between a pointer and an integer as wide as a
+//                 pointer. A cast to `Void` is refused: write `_ = x;`. A function value is cast to nothing else.
+module front::types_convert;
+
+import front::types;
+import std::format;
+
+// Which rule allowed a conversion.
+// NOLINTBEGIN(readability-identifier-naming)
+export enum How {
+    none,
+    identity,
+    widening,
+    constant_fits,
+    to_some,
+    to_ok,
+    array_to_slice,
+    array_decay,
+    add_const,
+    to_void_pointer,
+    null_to_pointer,
+    text_from_chars,
+    cast,
+};
+// NOLINTEND(readability-identifier-naming)
+
+// The value being converted, when it is a constant the checker knows: its magnitude and sign (so every U64 and I64
+// fits).
+export struct Literal {
+    Bool is_constant;
+    Bool negative;
+    U64 magnitude;
+};
+
+export struct Verdict {
+    Bool ok;
+    How kind;
+    Str message;
+};
+
+export Literal no_literal() {
+    return (Literal){};
+}
+
+export Literal constant(I64 value) {
+    if (value < 0) return (Literal){.is_constant = true, .negative = true, .magnitude = (U64)(-(value + 1)) + 1};
+    return (Literal){.is_constant = true, .magnitude = (U64)value};
+}
+
+export Literal constant_unsigned(U64 value) {
+    return (Literal){.is_constant = true, .magnitude = value};
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The question and its answers
+
+struct Ctx {
+    types::TypeRef from;
+    types::TypeRef to;    // the type the rule is applied to (inside an Option or a Result, its element)
+    types::TypeRef shown; // the type the caller expects, for messages
+    Literal lit;
+    U32 pointer_bits;
+};
+
+static Str msg(char chars[:]) {
+    return chars;
+}
+
+static Verdict accept(How how) {
+    return (Verdict){.ok = true, .kind = how};
+}
+
+// "expected X, found Y: reason; fix".
+static Verdict refuse(const Ctx *c, Str reason, Str fix) {
+    Str text = msg(
+        format::push("expected ", types::show(c->shown), ", found ", types::show(c->from), ": ", reason, "; ", fix));
+    return (Verdict){.message = text};
+}
+
+static Str write_cast(const Ctx *c) {
+    return msg(format::push("write a cast: (", types::show(c->to), ")x"));
+}
+
+static Verdict needs_cast(const Ctx *c, Str reason) {
+    return refuse(c, reason, write_cast(c));
+}
+
+static Verdict no_rule(const Ctx *c) {
+    return refuse(c, "there is no conversion between these types", "write the value as the expected type");
+}
+
+static Str literal_text(Literal lit) {
+    if (lit.negative) return msg(format::push("-", lit.magnitude));
+    return msg(format::push(lit.magnitude));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Numbers
+
+// Whether the constant is in the range of an integer of `bits` bits.
+static Bool fits(U32 bits, Bool is_signed, Literal lit) {
+    if (bits >= 64) {
+        if (is_signed) {
+            U64 limit = (U64)1 << 63;
+            if (lit.negative) return lit.magnitude <= limit;
+            return lit.magnitude < limit;
+        }
+        return !lit.negative || lit.magnitude == 0;
+    }
+    if (is_signed) {
+        U64 limit = (U64)1 << (bits - 1);
+        if (lit.negative) return lit.magnitude <= limit;
+        return lit.magnitude < limit;
+    }
+    if (lit.negative) return lit.magnitude == 0;
+    return lit.magnitude < ((U64)1 << bits);
+}
+
+static Verdict integer_to_integer(const Ctx *c) {
+    types::TypeRef from = c->from;
+    types::TypeRef to = c->to;
+    if (from->is_signed == to->is_signed && to->bits >= from->bits) return accept(widening);
+    if (!from->is_signed && to->is_signed && to->bits > from->bits) return accept(widening);
+    if (c->lit.is_constant) {
+        if (fits(to->bits, to->is_signed, c->lit)) return accept(constant_fits);
+        Str number = literal_text(c->lit);
+        Str reason = msg(format::push(number, " does not fit ", types::show(to)));
+        return refuse(c, reason,
+                      msg(format::push("write a value that fits ", types::show(to), " or a cast: (", types::show(to),
+                                       ")", number)));
+    }
+    if (from->is_signed != to->is_signed && to->bits >= from->bits)
+        return needs_cast(c, "a sign change may lose a value");
+    return needs_cast(c, "narrowing may lose a value");
+}
+
+static Verdict to_integer(const Ctx *c) {
+    types::Kind kind = c->from->kind;
+    if (kind == .integer) return integer_to_integer(c);
+    if (kind == .floating)
+        return needs_cast(c, "a float converts to an integer only by a cast, which drops the fraction");
+    if (kind == .bool_type) return needs_cast(c, "a Bool is not an integer");
+    if (kind == .enumeration) return needs_cast(c, "an enumeration is not an integer");
+    return no_rule(c);
+}
+
+static Verdict to_floating(const Ctx *c) {
+    types::Kind kind = c->from->kind;
+    if (kind == .floating && c->to->bits >= c->from->bits) return accept(widening);
+    if (kind == .floating) return needs_cast(c, "narrowing may lose precision");
+    if (kind == .integer) return needs_cast(c, "an integer converts to a float only by a cast, which may round");
+    return no_rule(c);
+}
+
+static Verdict to_bool(const Ctx *c) {
+    types::Kind kind = c->from->kind;
+    if (kind == .integer || kind == .floating) return refuse(c, "a number is not a Bool", "write a comparison: x != 0");
+    if (kind == .pointer) return refuse(c, "a pointer is not a Bool", "write a comparison: p != null");
+    return no_rule(c);
+}
+
+static Verdict to_enumeration(const Ctx *c) {
+    if (c->from->kind == .integer) return needs_cast(c, "an integer is not an enumeration");
+    return no_rule(c);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Pointers, arrays, slices and text
+
+static Verdict dropped_const(const Ctx *c) {
+    return refuse(c, "this drops const", "make the target's element const, or copy the data");
+}
+
+static Verdict pointer_to_pointer(const Ctx *c) {
+    const types::Ty *from = c->from;
+    const types::Ty *to = c->to;
+    if (from->pointee_const && !to->pointee_const) return dropped_const(c);
+    if (from->element == to->element) return accept(add_const);
+    if (to->element->kind == .void_type) return accept(to_void_pointer);
+    if (from->element->kind == .void_type)
+        return needs_cast(c, "a void pointer never converts to a typed pointer implicitly (#398)");
+    return needs_cast(c, "the pointers point to different types");
+}
+
+static Verdict to_pointer(const Ctx *c) {
+    types::Kind kind = c->from->kind;
+    if (kind == .null_type) return accept(null_to_pointer);
+    if (kind == .pointer) return pointer_to_pointer(c);
+    if (kind == .array) {
+        if (c->from->pointee_const && !c->to->pointee_const) return dropped_const(c);
+        if (c->from->element == c->to->element) return accept(array_decay);
+        return needs_cast(c, "the array's element is another type");
+    }
+    if (kind == .slice) return refuse(c, "a slice is not a pointer", "write the address of an element: &xs[0]");
+    if (kind == .integer) return needs_cast(c, "an integer is not a pointer");
+    return no_rule(c);
+}
+
+static Verdict to_slice(const Ctx *c) {
+    types::Kind kind = c->from->kind;
+    types::TypeRef element = c->to->element;
+    if (kind == .text && element->kind == .integer && element->bits == 8) {
+        if (c->to->pointee_const) return accept(text_from_chars);
+        return refuse(c, "a Str's characters are const", "expected a const element: write const U8 xs[:]");
+    }
+    if (kind != .slice && kind != .array) return no_rule(c);
+    if (c->from->element != element) return needs_cast(c, "the elements are different types");
+    if (c->from->pointee_const && !c->to->pointee_const) return dropped_const(c);
+    if (kind == .array) return accept(array_to_slice);
+    return accept(add_const);
+}
+
+static Verdict to_text(const Ctx *c) {
+    types::Kind kind = c->from->kind;
+    if (kind != .slice && kind != .array) return no_rule(c);
+    types::TypeRef element = c->from->element;
+    if (element->kind == .integer && element->bits == 8) return accept(text_from_chars);
+    return refuse(c, "only characters make a Str", "write a slice or an array of 8-bit integers");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The entry points
+
+// A target that is not an option or a result: the rule by its kind.
+static Verdict by_target(const Ctx *c) {
+    types::Kind kind = c->to->kind;
+    if (kind == .integer) return to_integer(c);
+    if (kind == .floating) return to_floating(c);
+    if (kind == .bool_type) return to_bool(c);
+    if (kind == .enumeration) return to_enumeration(c);
+    if (kind == .pointer) return to_pointer(c);
+    if (kind == .slice) return to_slice(c);
+    if (kind == .text) return to_text(c);
+    return no_rule(c);
+}
+
+// The source is an Option or a Result and the target is not that same type: absence and errors stay explicit.
+static Verdict from_wrapper(const Ctx *c) {
+    if (c->from->kind == .option)
+        return refuse(c, "a value that may be absent is not a value", "test whether it holds a value first");
+    return refuse(c, "a result that may be an error is not a value", "handle the error, or pass it on with try");
+}
+
+static Bool is_wrapper(types::TypeRef t) {
+    return t->kind == .option || t->kind == .result_type;
+}
+
+static Bool is_invalid_or_auto(types::TypeRef t) {
+    return t->kind == .invalid || t->kind == .automatic;
+}
+
+static How wrapped(types::TypeRef to) {
+    if (to->kind == .option) return to_some;
+    return to_ok;
+}
+
+// Whether a value of type `from` may be used where `to` is expected, with no written cast. `lit` is the value when it
+// is a constant. See the rules at the top of the file.
+export Verdict convert(types::Table *t, types::TypeRef from, types::TypeRef to, Literal lit) {
+    if (from == to || is_invalid_or_auto(from) || is_invalid_or_auto(to)) return accept(identity);
+    Ctx c = {.from = from, .to = to, .shown = to, .lit = lit, .pointer_bits = t->target.pointer_bytes * 8};
+    if (is_wrapper(from)) return from_wrapper(&c);
+    if (is_wrapper(to)) {
+        c.to = to->element;
+        if (is_invalid_or_auto(c.to)) return accept(wrapped(to));
+        if (c.to == from) return accept(wrapped(to));
+        if (from->kind == .null_type)
+            return refuse(&c, "null is not an Option", "write the absent case explicitly: .none");
+        Verdict inner = is_wrapper(c.to) ? no_rule(&c) : by_target(&c);
+        if (inner.ok) return accept(wrapped(to));
+        return inner;
+    }
+    return by_target(&c);
+}
+
+static Bool pointer_wide(const Ctx *c, types::TypeRef integer) {
+    return integer->kind == .integer && integer->bits == c->pointer_bits;
+}
+
+static Verdict cast_pointer(const Ctx *c) {
+    types::TypeRef from = c->from;
+    types::TypeRef to = c->to;
+    if (from->kind == .pointer && to->kind == .pointer) {
+        if (from->pointee_const && !to->pointee_const) return dropped_const(c);
+        return accept(cast);
+    }
+    if (from->kind == .pointer && pointer_wide(c, to)) return accept(cast);
+    if (to->kind == .pointer && pointer_wide(c, from)) return accept(cast);
+    return refuse(c, "a pointer and an integer cast only if the integer is as wide as a pointer", "cast through Usize");
+}
+
+static Bool is_number(types::TypeRef t) {
+    return t->kind == .integer || t->kind == .floating;
+}
+
+// Whether a cast between two types that are not a conversion is allowed.
+static Verdict cast_by_kind(const Ctx *c) {
+    types::Kind from = c->from->kind;
+    types::Kind to = c->to->kind;
+    if (to == .void_type) return refuse(c, "a cast to Void discards a value", "write _ = x;");
+    if (is_number(c->from) && is_number(c->to)) return accept(cast);
+    if (from == .enumeration && to == .integer) return accept(cast);
+    if (from == .integer && to == .enumeration) return accept(cast);
+    if (from == .bool_type && to == .integer) return accept(cast);
+    if (from == .integer && to == .bool_type) return accept(cast);
+    if (from == .pointer || to == .pointer) return cast_pointer(c);
+    return refuse(c, "there is no cast between these types", "convert the parts one at a time");
+}
+
+// Whether `(to)x` may be written for a value of type `from`: everything `convert` allows, and the explicit casts of
+// the rules at the top of the file.
+export Verdict cast_ok(types::Table *t, types::TypeRef from, types::TypeRef to) {
+    Verdict implicit = convert(t, from, to, no_literal());
+    if (implicit.ok) return implicit;
+    Ctx c = {.from = from, .to = to, .shown = to, .pointer_bits = t->target.pointer_bytes * 8};
+    if (is_wrapper(from) || is_wrapper(to)) return implicit;
+    return cast_by_kind(&c);
+}
