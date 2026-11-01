@@ -1,0 +1,263 @@
+// Tests of front::types (#1220, J1a): interned types, sizes on a target, scopes, type expressions, the module's
+// names and the side table. Trees are built by hand with the constructors of front::ast; each test builds in an arena
+// it sets as the current allocator.
+module front_types_test;
+
+import front::ast;
+import front::types;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Bool says(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+export void test_front_types_interning_compares_by_address() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types::TypeRef i32 = types::builtin(&t, "I32");
+    test::check_condition(i32 == types::integer(&t, 32, true));
+    test::check_condition(types::builtin(&t, "Nope") == nullptr);
+    test::check_condition(types::pointer_to(&t, i32, false) == types::pointer_to(&t, i32, false));
+    test::check_condition(types::pointer_to(&t, i32, false) != types::pointer_to(&t, i32, true));
+    test::check_condition(types::builtin(&t, "Usize") != types::builtin(&t, "U64"));
+    test::check_condition(types::array_of(&t, i32, 3, false) != types::array_of(&t, i32, 4, false));
+    test::check_condition(types::slice_of(&t, i32, false) != types::array_of(&t, i32, 3, false));
+    types::Slot params[2] = {{.name = "a", .type = i32}, {.name = "b", .type = i32}};
+    types::Slot renamed[2] = {{.name = "x", .type = i32}, {.name = "y", .type = i32}};
+    types::TypeRef f = types::function_of(&t, params, t.bool_type, false);
+    test::check_condition(f == types::function_of(&t, renamed, t.bool_type, false));
+    test::check_condition(f != types::function_of(&t, renamed, t.bool_type, true));
+    types::Type *a = types::new_record(&t, "Point", false);
+    types::Type *b = types::new_record(&t, "Point", false);
+    test::check_condition(a != b);
+}
+
+export void test_front_types_show_writes_the_types_as_a_user_does() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types::TypeRef i32 = types::builtin(&t, "I32");
+    types::Slot params[2] = {{.type = i32}, {.type = i32}};
+    types::TypeRef f = types::function_of(&t, params, t.bool_type, false);
+    test::check_condition(says(types::show(i32), "I32"));
+    test::check_condition(says(types::show(types::pointer_to(&t, builtin_u8(&t), true)), "const U8 *"));
+    test::check_condition(says(types::show(types::pointer_to(&t, types::pointer_to(&t, i32, false), false)), "I32 * *"));
+    test::check_condition(says(types::show(types::array_of(&t, i32, 3, false)), "I32[3]"));
+    test::check_condition(says(types::show(types::slice_of(&t, i32, false)), "I32[:]"));
+    test::check_condition(says(types::show(f), "Bool (I32, I32)"));
+    test::check_condition(says(types::show(types::fn_value_of(&t, f)), "Fn(Bool (I32, I32))"));
+    test::check_condition(says(types::show(types::option_of(&t, i32)), "Option(I32)"));
+    test::check_condition(says(types::show(types::result_of(&t, i32, t.text)), "Result(I32, Str)"));
+    test::check_condition(says(types::show(t.invalid), "<error>"));
+}
+
+static types::TypeRef builtin_u8(types::Table *t) {
+    return types::builtin(t, "U8");
+}
+
+export void test_front_types_layout_is_the_targets() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Target wide = types::lp64();
+    types::Target narrow = {.pointer_bytes = 4, .max_align = 8};
+    types::Table t = types::start(wide);
+    types::Table small = types::start(narrow);
+    types::TypeRef u8 = types::builtin(&t, "U8");
+    types::TypeRef u32 = types::builtin(&t, "U32");
+    test::check_equal(types::layout(&wide, types::pointer_to(&t, u8, false)).size, 8);
+    test::check_equal(types::layout(&narrow, types::pointer_to(&small, u8, false)).size, 4);
+    test::check_equal(types::layout(&wide, types::builtin(&t, "Usize")).size, 8);
+    test::check_equal(types::layout(&narrow, types::builtin(&small, "Usize")).size, 4);
+    test::check_equal(types::layout(&wide, t.text).size, 16);
+    test::check_equal(types::layout(&wide, types::array_of(&t, u32, 5, false)).size, 20);
+    types::Type *pair = types::new_record(&t, "Pair", false);
+    types::Slot fields[3] = {{.name = "a", .type = u8}, {.name = "b", .type = u32}, {.name = "c", .type = u8}};
+    types::set_fields(pair, fields);
+    types::Layout l = types::layout(&wide, pair);
+    test::check_condition(l.known);
+    test::check_equal(l.size, 12);
+    test::check_equal(l.align, 4);
+    types::Type *either = types::new_record(&t, "Either", true);
+    types::set_fields(either, fields);
+    test::check_equal(types::layout(&wide, either).size, 4);
+    types::Type *outer = types::new_record(&t, "Outer", false);
+    types::Slot nested[2] = {{.name = "p", .type = pair}, {.name = "tail", .type = u8}};
+    types::set_fields(outer, nested);
+    test::check_equal(types::layout(&wide, outer).size, 16);
+    test::check_condition(!types::layout(&wide, t.void_type).known);
+    types::Type *opaque = types::new_record(&t, "Opaque", false);
+    test::check_condition(!types::layout(&wide, opaque).known);
+}
+
+export void test_front_types_scopes_shadow_and_forget() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types::Scopes s = {};
+    types::TypeRef i32 = types::builtin(&t, "I32");
+    types::TypeRef u8 = types::builtin(&t, "U8");
+    test::check_condition(types::declare(&s, {.name = "x", .kind = .variable, .type = i32}));
+    test::check_condition(!types::declare(&s, {.name = "x", .kind = .variable, .type = u8}));
+    types::push_scope(&s);
+    test::check_condition(types::declare(&s, {.name = "x", .kind = .variable, .type = u8}));
+    test::check_condition(types::lookup(&s, "x")->type == u8);
+    types::pop_scope(&s);
+    test::check_condition(types::lookup(&s, "x")->type == i32);
+    test::check_condition(types::lookup(&s, "y") == nullptr);
+    test::check_condition(types::declare(&s, {.name = "c::printf", .kind = .function_symbol, .type = i32}));
+    test::check_condition(types::lookup_path(&s, ast::path("c::printf")) != nullptr);
+    test::check_condition(types::lookup_path(&s, ast::path("printf")) == nullptr);
+}
+
+// The module the checks below read:
+//   struct Point { I32 x; I32 y; };  typedef Point Pt;  enum Color : U8 { red; green = 5; blue; };
+//   I32 area(const Pt *p, Str name);  U8 limit;  import std::arena;  Missing bad;
+static ast::Module sample_module() {
+    ast::FieldDecl point_fields[2] = {ast::field("x", ast::named("I32")), ast::field("y", ast::named("I32"))};
+    ast::Enumerator colors[3] = {ast::enumerator("red", nullptr, nullptr),
+                                 ast::enumerator("green", ast::integer(5), nullptr),
+                                 ast::enumerator("blue", nullptr, nullptr)};
+    ast::TypeExpr *pointee = ast::named("Pt");
+    pointee->qualifiers.is_const = true;
+    ast::TypeExpr *pointer = ast::make_type({.pointer = {.pointee = pointee}});
+    ast::Param params[2] = {ast::param("p", pointer), ast::param("name", ast::named("Str"))};
+    ast::DeclRef decls[7] = {
+        ast::function("area", params, ast::named("I32"), nullptr),
+        ast::record_decl("Point", point_fields),
+        ast::type_alias("Pt", ast::named("Point")),
+        ast::enumeration("Color", ast::named("U8"), colors),
+        ast::variable("limit", ast::named("U8"), nullptr),
+        ast::import_module("std::arena"),
+        ast::variable("bad", ast::named("Missing"), nullptr),
+    };
+    return ast::new_module("sample", decls);
+}
+
+export void test_front_types_check_declares_the_modules_names() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::Module m = sample_module();
+    types::Result r = types::check(&m, {.target = types::lp64()});
+    test::golden("tests/front/types/module.txt", types::dump(&r));
+    const types::Symbol *point = types::lookup(&r.scopes, "Pt");
+    test::check_condition(point != nullptr);
+    test::check_condition(point->type == types::lookup(&r.scopes, "Point")->type);
+    test::check_equal(types::layout(&r.options.target, point->type).size, 8);
+    const types::Slot *y = types::member(point->type, "y");
+    test::check_condition(y != nullptr && y->type == types::builtin(&r.table, "I32"));
+    const types::Slot *blue = types::member(types::lookup(&r.scopes, "Color")->type, "blue");
+    test::check_condition(blue != nullptr);
+    test::check_equal(blue->value, 6);
+    test::check_equal(r.error_count, 1);
+}
+
+export void test_front_types_resolve_names_the_unknown_type_and_what_to_write() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::Module m = sample_module();
+    types::Result r = types::check(&m, {.target = types::lp64()});
+    test::check_condition(says(r.errors[0].message, "unknown type `Missing`; declare it before it is used, and write a type name with a capital letter"));
+    types::TypeRef again = types::resolve(&r, ast::named("Missing"));
+    test::check_condition(again == r.table.invalid);
+    test::check_equal(r.error_count, 2);
+}
+
+export void test_front_types_resolve_builds_function_and_applied_types() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::Module m = ast::new_module("sample", nullptr);
+    types::Result r = types::check(&m, {.target = types::lp64()});
+    ast::TypeRef params[2] = {ast::named("I32"), ast::named("I32")};
+    ast::TypeExpr *function = ast::make_type({.function = {.params = params, .result = ast::named("Bool")}});
+    ast::TypeArg args[1] = {{.type = {.type = function}}};
+    ast::TypeExpr *fn = ast::make_type({.applied = {.name = ast::path("Fn"), .args = args}});
+    test::check_condition(says(types::show(types::resolve(&r, fn)), "Fn(Bool (I32, I32))"));
+    ast::TypeArg some[1] = {{.type = {.type = ast::named("I32")}}};
+    ast::TypeExpr *option = ast::make_type({.applied = {.name = ast::path("Option"), .args = some}});
+    test::check_condition(types::resolve(&r, option) == types::option_of(&r.table, types::builtin(&r.table, "I32")));
+    ast::TypeExpr *bad = ast::make_type({.applied = {.name = ast::path("Fn"), .args = some}});
+    test::check_condition(types::resolve(&r, bad) == r.table.invalid);
+    test::check_equal(r.error_count, 1);
+    ast::TypeExpr *list = ast::make_type({.applied = {.name = ast::path("List"), .args = some}});
+    test::check_condition(types::resolve(&r, list) == r.table.invalid);
+    test::check_equal(r.error_count, 2);
+    ast::TypeExpr *deep = ast::named("U8");
+    for (Usize i = 0; i < 100; i++)
+        deep = ast::make_type({.pointer = {.pointee = deep}});
+    test::check_condition(types::resolve(&r, deep)->kind == .pointer);
+}
+
+export void test_front_types_side_table_keeps_a_type_per_node() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::Module m = ast::new_module("sample", nullptr);
+    types::Result r = types::check(&m, {.target = types::lp64()});
+    types::TypeRef i32 = types::builtin(&r.table, "I32");
+    ast::Expr *nodes[200];
+    for (Usize i = 0; i < 200; i++) {
+        nodes[i] = ast::integer(i);
+        types::set_type(&r, nodes[i], i32);
+    }
+    ast::Expr *other = ast::integer(1);
+    test::check_condition(types::type_of(&r, other) == nullptr);
+    test::check_equal(r.node_count, 200);
+    types::set_type(&r, nodes[7], r.table.bool_type);
+    test::check_equal(r.node_count, 200);
+    test::check_condition(types::type_of(&r, nodes[7]) == r.table.bool_type);
+    test::check_condition(types::type_of(&r, nodes[199]) == i32);
+}
+
+static Usize bodies_seen = 0;
+
+static void count_body(types::Result *r, const ast::Decl *function) {
+    bodies_seen += 1;
+    test::check_condition(types::lookup(&r->scopes, function->kind.function.name) != nullptr);
+}
+
+export void test_front_types_check_calls_the_body_hook_for_each_body() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::StmtRef none[1] = {ast::return_value(ast::integer(1))};
+    ast::DeclRef decls[2] = {ast::function("f", nullptr, ast::named("I32"), ast::block(none)),
+                             ast::function("g", nullptr, ast::named("I32"), nullptr)};
+    ast::Module m = ast::new_module("sample", decls);
+    bodies_seen = 0;
+    types::Result r = types::check(&m, {.target = types::lp64(), .bodies = count_body});
+    test::check_equal(bodies_seen, 1);
+    test::check_equal(r.error_count, 0);
+}
+
+export void test_front_types_check_needs_a_target() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::Module m = ast::new_module("sample", nullptr);
+    types::Result r = types::check(&m, {});
+    test::check_equal(r.error_count, 1);
+}
