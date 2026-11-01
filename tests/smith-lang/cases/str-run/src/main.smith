@@ -5,19 +5,19 @@ import <stdio.h>;
 // `str` is a type of every module, `const char[:]` (issue #85), as `u8` is a type: no typedef, no import.
 
 struct Named {
-    str name;
-    i32 id;
+    Str name;
+    I32 id;
 };
 
-static usize length(str xs) {
+static Usize length(Str xs) {
     return countof(xs);
 }
 
-static str tail(str xs) {
+static Str tail(Str xs) {
     return xs[1:];
 }
 
-static bool next(str *p) {
+static Bool next(Str *p) {
     if (countof(*p) == 0) return false;
     *p = (*p)[1:];
     return true;
@@ -27,27 +27,27 @@ static void poke(char (*b)[:]) {
     (*b)[0] = 'Z';
 }
 
-i32 main() {
-    str s = "abc";
+I32 main() {
+    Str s = "abc";
     c::printf("%zu %c %zu %zu\n", countof(s), s[1], length(s), length(s[1:]));
-    str cut = s[0:2];
-    str *p = &s;
-    usize steps = 0;
+    Str cut = s[0:2];
+    Str *p = &s;
+    Usize steps = 0;
     while (next(p)) steps++;
     c::printf("%zu %zu %zu\n", countof(cut), steps, countof(s));
 
     char raw[4] = {'a', 'b', 'c', 'd'};
     char w[:] = raw;
-    str r = w;               // const is added implicitly
-    str *pr = &w;            // a pointer to char[:] is a pointer to str (C23, N2607)
+    Str r = w;               // const is added implicitly
+    Str *pr = &w;            // a pointer to char[:] is a pointer to str (C23, N2607)
     poke(&w);
     c::printf("%zu %c %zu %c\n", length(w), (*pr)[0], countof(tail(r)), tail(w)[0]);
 
     struct Named n = {.name = "field", .id = 3};
     typeof(s) same = n.name;
     c::printf("%zu %zu %d\n", countof(n.name), countof(same), n.id);
-    const str k = "k";
-    static str fixed = "hello";
-    c::printf("%zu %zu %zu\n", countof(k), countof(fixed), (usize)sizeof(str));
+    const Str k = "k";
+    static Str fixed = "hello";
+    c::printf("%zu %zu %zu\n", countof(k), countof(fixed), (Usize)sizeof(Str));
     return 0;
 }

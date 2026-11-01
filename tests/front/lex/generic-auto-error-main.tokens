@@ -2,7 +2,7 @@
 1:8 name pick
 1:12 semicolon ;
 3:1 kw_constexpr constexpr
-3:11 name i32
+3:11 type_name I32
 3:15 name limit
 3:21 equal =
 3:23 integer 300
@@ -12,28 +12,28 @@
 5:9 left_paren (
 5:10 right_paren )
 5:12 left_brace {
-6:5 name u8
+6:5 type_name U8
 6:8 name small
 6:14 equal =
 6:16 integer 5
 6:17 semicolon ;
-7:5 name u32
+7:5 type_name U32
 7:9 name big
 7:13 equal =
 7:15 integer 7
 7:16 semicolon ;
-8:5 name i32
+8:5 type_name I32
 8:9 name neg
 8:13 equal =
 8:15 minus -
 8:16 integer 1
 8:17 semicolon ;
-9:5 name f32
+9:5 type_name F32
 9:9 name fl
 9:12 equal =
 9:14 floating 1.5f
 9:18 semicolon ;
-11:5 name u8
+11:5 type_name U8
 11:8 name r1
 11:11 equal =
 11:13 name pick
@@ -45,7 +45,7 @@
 11:33 integer 300
 11:36 right_paren )
 11:37 semicolon ;
-12:5 name u8
+12:5 type_name U8
 12:8 name r2
 12:11 equal =
 12:13 name pick
@@ -57,7 +57,7 @@
 12:33 name limit
 12:38 right_paren )
 12:39 semicolon ;
-13:5 name u8
+13:5 type_name U8
 13:8 name r3
 13:11 equal =
 13:13 name pick
@@ -69,7 +69,7 @@
 13:33 name big
 13:36 right_paren )
 13:37 semicolon ;
-14:5 name u8
+14:5 type_name U8
 14:8 name r4
 14:11 equal =
 14:13 name pick
@@ -82,7 +82,7 @@
 14:34 integer 1
 14:35 right_paren )
 14:36 semicolon ;
-15:5 name f32
+15:5 type_name F32
 15:9 name r5
 15:12 equal =
 15:14 name pick
@@ -94,7 +94,7 @@
 15:31 floating 0.1
 15:34 right_paren )
 15:35 semicolon ;
-16:5 name f32
+16:5 type_name F32
 16:9 name r6
 16:12 equal =
 16:14 name pick
@@ -106,7 +106,7 @@
 16:31 integer 16777217
 16:39 right_paren )
 16:40 semicolon ;
-17:5 name f32
+17:5 type_name F32
 17:9 name r7
 17:12 equal =
 17:14 name pick
@@ -118,7 +118,7 @@
 17:31 name neg
 17:34 right_paren )
 17:35 semicolon ;
-18:5 name u32
+18:5 type_name U32
 18:9 name r8
 18:12 equal =
 18:14 name pick
@@ -130,7 +130,7 @@
 18:32 name neg
 18:35 right_paren )
 18:36 semicolon ;
-19:5 name u8
+19:5 type_name U8
 19:8 name r9
 19:11 equal =
 19:13 name pick
@@ -144,7 +144,7 @@
 19:39 integer 1
 19:40 right_paren )
 19:41 semicolon ;
-20:5 name u8
+20:5 type_name U8
 20:8 name r10
 20:12 equal =
 20:14 name pick
@@ -158,7 +158,7 @@
 20:42 integer 1
 20:43 right_paren )
 20:44 semicolon ;
-22:5 name u8
+22:5 type_name U8
 22:8 name ok1
 22:12 equal =
 22:14 name pick
@@ -170,7 +170,7 @@
 22:34 integer 200
 22:37 right_paren )
 22:38 semicolon ;
-23:5 name f32
+23:5 type_name F32
 23:9 name ok2
 23:13 equal =
 23:15 name pick
@@ -182,7 +182,7 @@
 23:32 floating 0.5
 23:35 right_paren )
 23:36 semicolon ;
-24:5 name f32
+24:5 type_name F32
 24:9 name ok3
 24:13 equal =
 24:15 name pick
@@ -194,7 +194,7 @@
 24:32 floating 0.1f
 24:36 right_paren )
 24:37 semicolon ;
-25:5 name f32
+25:5 type_name F32
 25:9 name ok4
 25:13 equal =
 25:15 name pick
@@ -206,7 +206,7 @@
 25:32 name small
 25:37 right_paren )
 25:38 semicolon ;
-26:5 name u32
+26:5 type_name U32
 26:9 name ok5
 26:13 equal =
 26:15 name pick
@@ -218,7 +218,7 @@
 26:33 name small
 26:38 right_paren )
 26:39 semicolon ;
-27:5 name u32
+27:5 type_name U32
 27:9 name ok6
 27:13 equal =
 27:15 name pick
@@ -232,7 +232,7 @@
 27:38 integer 3
 27:39 right_paren )
 27:40 semicolon ;
-28:5 name u8
+28:5 type_name U8
 28:8 name ok8
 28:12 equal =
 28:14 name pick
@@ -246,7 +246,7 @@
 28:42 integer 200
 28:45 right_paren )
 28:46 semicolon ;
-29:5 name u8
+29:5 type_name U8
 29:8 name ok7
 29:12 equal =
 29:14 name pick
@@ -256,7 +256,7 @@
 29:27 name small
 29:32 comma ,
 29:34 left_paren (
-29:35 name u8
+29:35 type_name U8
 29:37 right_paren )
 29:38 name neg
 29:41 right_paren )

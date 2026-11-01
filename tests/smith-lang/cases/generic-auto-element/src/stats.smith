@@ -1,16 +1,16 @@
 module stats;
 
-export usize count(const auto xs[:]) {
+export Usize count(const auto xs[:]) {
     return countof(xs);
 }
 
-export usize find(const auto xs[:], typeof(xs[0]) v) {
-    for (usize i = 0; i < countof(xs); i++)
+export Usize find(const auto xs[:], typeof(xs[0]) v) {
+    for (Usize i = 0; i < countof(xs); i++)
         if (xs[i] == v) return i;
     return countof(xs);
 }
 
-export usize rows(auto grid[:][:]) {
+export Usize rows(auto grid[:][:]) {
     return countof(grid);
 }
 

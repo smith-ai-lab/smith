@@ -1,13 +1,13 @@
 module size;
 
 // An ordinary function over a type: it runs at compile time.
-static bool small(type t) {
+static Bool small(Type t) {
     return sizeof(t) <= 4;
 }
 
-typedef struct { u8 bytes[80]; } Big;
+typedef struct { U8 bytes[80]; } Big;
 
-i32 choose(constexpr type T) {
+I32 choose(constexpr Type T) {
     if constexpr (small(T)) {
         return 1;
     } else {
@@ -15,6 +15,6 @@ i32 choose(constexpr type T) {
     }
 }
 
-export i32 run() {
-    return choose(u8) * 100 + choose(Big) * 10 + choose(f64);
+export I32 run() {
+    return choose(U8) * 100 + choose(Big) * 10 + choose(F64);
 }

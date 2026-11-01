@@ -1,4 +1,4 @@
 module game::main;
 import lib::text;
 
-i32 main() { return (i32)text::length("abc") - 3; }
+I32 main() { return (I32)text::length("abc") - 3; }

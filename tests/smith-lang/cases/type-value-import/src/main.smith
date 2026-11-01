@@ -4,16 +4,16 @@ import <stdio.h>;
 import shapes;
 
 // The result type is computed by another module's function; the instance is written here.
-export shapes::slice_of(T, countof(sizes)) make(constexpr type T, auto... sizes) {
+export shapes::slice_of(T, countof(sizes)) make(constexpr Type T, auto... sizes) {
     static_assert(countof(sizes) > 0, "make needs a size");
     struct smith_array_T_n result = {};
-    for constexpr (usize i = 0; i < countof(sizes); i++)
-        result.count[i] = (usize)sizes[i];
+    for constexpr (Usize i = 0; i < countof(sizes); i++)
+        result.count[i] = (Usize)sizes[i];
     return result;
 }
 
 // ... and a condition asks it too.
-export i32 describe(constexpr type T) {
+export I32 describe(constexpr Type T) {
     if constexpr (shapes::small(T)) {
         return 1;
     } else {
@@ -22,25 +22,25 @@ export i32 describe(constexpr type T) {
 }
 
 typedef struct {
-    f64 a, b;
+    F64 a, b;
 } Pair;
 
 int main() {
-    f32 vector[:];
-    f32 grid[:][:];
-    f32 rows[:][2];
-    constexpr type of_vector = shapes::slice_of(f32, 1);
-    constexpr type of_grid = shapes::slice_of(f32, 2);
-    constexpr type of_rows = shapes::slice_of(f32[2], 1);
+    F32 vector[:];
+    F32 grid[:][:];
+    F32 rows[:][2];
+    constexpr Type of_vector = shapes::slice_of(F32, 1);
+    constexpr Type of_grid = shapes::slice_of(F32, 2);
+    constexpr Type of_rows = shapes::slice_of(F32[2], 1);
     static_assert(of_vector == typeof(vector));
     static_assert(of_grid == typeof(grid));
     static_assert(of_rows == typeof(rows));
-    static_assert(shapes::wider(u8, f64) == f64);
-    static_assert(shapes::small(u8) && !shapes::small(Pair));
-    constexpr type chosen = shapes::slice_if_small(i16);
+    static_assert(shapes::wider(U8, F64) == F64);
+    static_assert(shapes::small(U8) && !shapes::small(Pair));
+    constexpr Type chosen = shapes::slice_if_small(I16);
     static_assert(chosen == typeof(vector) || sizeof(chosen) == 16);
-    grid = make(f32, 3, 4);
-    rows = make(f32[2], 5);
-    c::printf("%zu %zu %zu %d %d\n", countof(grid), countof(grid[0]), countof(rows), describe(u8), describe(Pair));
+    grid = make(F32, 3, 4);
+    rows = make(F32[2], 5);
+    c::printf("%zu %zu %zu %d %d\n", countof(grid), countof(grid[0]), countof(rows), describe(U8), describe(Pair));
     return 0;
 }

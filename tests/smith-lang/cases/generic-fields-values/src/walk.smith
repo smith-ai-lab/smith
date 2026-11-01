@@ -3,24 +3,24 @@ module walk;
 import <stdio.h>;
 
 typedef struct {
-    i32 id;
-    f32 weight;
-    f64 scale;
-    u8 flag;
+    I32 id;
+    F32 weight;
+    F64 scale;
+    U8 flag;
 } Sample;
 
 typedef struct {
-    i32,
-    f32
+    I32,
+    F32
 } Pair;
 
 // `fields(T)` is an array of `Field`, a struct with a `name` (a `char[:]`) and a `type`. A field is an ordinary value:
 // it can be stored, passed to an ordinary function (which runs in the compiler), returned and compared.
-usize name_length(Field f) {
+Usize name_length(Field f) {
     return countof(f.name);
 }
 
-bool is_floating(Field f) {
+Bool is_floating(Field f) {
     return is_float(f.type);
 }
 
@@ -28,42 +28,42 @@ Field first_float(Field a, Field b) {
     return is_floating(a) ? a : b;
 }
 
-void show(constexpr type T, T *x) {
-    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+void show(constexpr Type T, T *x) {
+    for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         constexpr Field f = fields(T)[i];
-        c::printf("%.*s(%zu)", (i32)name_length(f), f.name.data, name_length(f));
+        c::printf("%.*s(%zu)", (I32)name_length(f), f.name.data, name_length(f));
         if constexpr (is_floating(f)) {
-            c::printf("=%g", (f64)x->[f]);
+            c::printf("=%g", (F64)x->[f]);
         }
         c::printf(" ");
     }
     c::printf("\n");
 }
 
-usize total_length(constexpr type T) {
-    usize total = 0;
-    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+Usize total_length(constexpr Type T) {
+    Usize total = 0;
+    for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         constexpr auto f = fields(T)[i];
         total += name_length(f);
     }
     return total;
 }
 
-f64 sum_floats(constexpr type T, T *x) {
-    f64 total = 0;
-    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+F64 sum_floats(constexpr Type T, T *x) {
+    F64 total = 0;
+    for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         constexpr Field f = fields(T)[i];
         if constexpr (is_float(f.type)) {
             typeof(x->[f]) copy = x->[f];
-            total += (f64)copy;
+            total += (F64)copy;
         }
     }
     return total;
 }
 
-usize count_integers(constexpr type T) {
-    usize n = 0;
-    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+Usize count_integers(constexpr Type T) {
+    Usize n = 0;
+    for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         constexpr Field f = fields(T)[i];
         if constexpr (is_integer(typeof(T.[f]))) {
             n += 1;
@@ -72,12 +72,12 @@ usize count_integers(constexpr type T) {
     return n;
 }
 
-const char *float_name(constexpr type T) {
+const char *float_name(constexpr Type T) {
     constexpr Field f = first_float(fields(T)[0], fields(T)[1]);
     return f.name.data;
 }
 
-usize second_length(constexpr type T) {
+Usize second_length(constexpr Type T) {
     const Field *all = fields(T);
     return all[1].name.count[0];
 }

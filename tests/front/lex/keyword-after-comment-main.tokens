@@ -12,14 +12,14 @@
 4:8 name a
 4:9 semicolon ;
 9:1 kw_static static
-9:8 name i32
+9:8 type_name I32
 9:12 name pick
 9:16 left_paren (
-9:17 name i32
+9:17 type_name I32
 9:21 name x
 9:22 right_paren )
 9:24 left_brace {
-10:5 name i32
+10:5 type_name I32
 10:9 name y
 10:11 equal =
 10:13 name x
@@ -59,7 +59,7 @@
 14:21 right_paren )
 14:22 semicolon ;
 15:1 right_brace }
-17:1 name i32
+17:1 type_name I32
 17:5 name main
 17:9 left_paren (
 17:10 kw_void void

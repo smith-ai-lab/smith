@@ -3,21 +3,21 @@ module math::small;
 import <stdint.h>;
 
 // Defined in the header, as `static inline`: the includer compiles it, so it has no symbol of the module's.
-export inline u32 twice(u32 x) {
+export inline U32 twice(U32 x) {
     return x * 2; // the body is the header's too
 }
 
-export inline u32 clamp(u32 x, u32 low, u32 high) {
+export inline U32 clamp(U32 x, U32 low, U32 high) {
     if (x < low) return low;
     if (x > high) return high;
     return x;
 }
 
 // Inline functions call each other, and the module's other exports.
-export inline u32 clamp_twice(u32 x) {
+export inline U32 clamp_twice(U32 x) {
     return clamp(twice(x), 10, 100);
 }
 
-export u32 regular(u32 x) {
+export U32 regular(U32 x) {
     return twice(x) + 1;
 }

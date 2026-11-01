@@ -1,4 +1,4 @@
 module main;
 import broken;
 
-i32 main() { return broken::f(); }
+I32 main() { return broken::f(); }

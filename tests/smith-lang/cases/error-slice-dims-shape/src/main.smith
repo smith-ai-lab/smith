@@ -1,10 +1,10 @@
 module main;
 
-i32 main() {
-    f32 three[4][3] = {};
-    f32 one[4] = {};
-    f32 rows[:][2] = three;
-    f32 flat[:][:] = one;
-    f32 fine[:][:] = three;
-    return (i32)(countof(rows) + countof(flat) + countof(fine));
+I32 main() {
+    F32 three[4][3] = {};
+    F32 one[4] = {};
+    F32 rows[:][2] = three;
+    F32 flat[:][:] = one;
+    F32 fine[:][:] = three;
+    return (I32)(countof(rows) + countof(flat) + countof(fine));
 }

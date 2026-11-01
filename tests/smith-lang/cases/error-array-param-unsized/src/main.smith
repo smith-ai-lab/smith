@@ -1,14 +1,14 @@
 module main;
 
-i32 first(i32 xs[]) {
+I32 first(I32 xs[]) {
     return xs[0];
 }
 
-export i32 second(const char *names[]) {
+export I32 second(const char *names[]) {
     return names[0][0];
 }
 
-i32 mine(i32 argc, char *argv[]) {
-    i32 xs[1] = {};
+I32 mine(I32 argc, char *argv[]) {
+    I32 xs[1] = {};
     return first(xs) + argc;
 }

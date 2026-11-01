@@ -5,10 +5,10 @@ import <stdio.h>;
 
 int main() {
     c::printf("%d %d\n", expand::shifted(10, 1, 2, 3), expand::shifted(10));
-    c::printf("%d %d %d\n", expand::around(), expand::around(2), expand::around((u8)3, 5));
+    c::printf("%d %d %d\n", expand::around(), expand::around(2), expand::around((U8)3, 5));
     c::printf("%d %d\n", expand::rest_empty(), expand::rest_empty(2, 3));
     c::printf("%d %d\n", expand::table(), expand::table(1, 2));
-    c::printf("%d %d\n", expand::over_generic(1, (u8)2, 3), expand::over_generic());
+    c::printf("%d %d\n", expand::over_generic(1, (U8)2, 3), expand::over_generic());
     expand::Pair p = {1, 2};
     expand::Pair q = {3, 4};
     c::printf("%d\n", expand::fields_of(expand::Pair, &p, &q));

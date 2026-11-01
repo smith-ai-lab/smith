@@ -3,21 +3,21 @@ module main;
 import later;
 import <stdio.h>;
 
-static void show(i32 a, i64 b) {
+static void show(I32 a, I64 b) {
     c::printf("show %d %ld\n", a, (long)b);
 }
 
-static void scale(f64 x) {
+static void scale(F64 x) {
     c::printf("scale %.1f\n", x);
 }
 
-i32 main() {
+I32 main() {
     later::Slot a;
     later::Slot b;
     later::Slot c;
-    later::defer(&a, show, 3, (i64)4);
+    later::defer(&a, show, 3, (I64)4);
     later::defer(&b, scale, 2.5);
-    later::defer(&c, show, 5, (i64)6); // the instance of the first call again
+    later::defer(&c, show, 5, (I64)6); // the instance of the first call again
     a.entry(a.data);
     b.entry(b.data);
     c.entry(c.data);

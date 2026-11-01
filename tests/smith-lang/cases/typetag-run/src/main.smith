@@ -5,18 +5,18 @@ import <stdio.h>;
 // In a module a struct's, union's or enum's tag is also a type name: no typedef beside it.
 
 struct Point {
-    f32 x, y;
+    F32 x, y;
 };
 
 struct Node {
     Node *next; // its own name, inside its own body
     Point at;
-    i32 value;
+    I32 value;
 };
 
 union Number {
-    i32 whole;
-    f32 real;
+    I32 whole;
+    F32 real;
 };
 
 enum Color { red, green, blue };
@@ -33,15 +33,15 @@ struct Holder {
 };
 
 struct Pending {
-    i32 count;
+    I32 count;
 };
 
 static Point origin() {
     return (Point){};
 }
 
-static i32 sum(Node *list) {
-    i32 total = 0;
+static I32 sum(Node *list) {
+    I32 total = 0;
     for (Node *n = list; n != nullptr; n = n->next)
         total += n->value;
     return total;
@@ -49,14 +49,14 @@ static i32 sum(Node *list) {
 
 // The typedef spellings of before still compile.
 typedef struct Legacy {
-    i32 a;
+    I32 a;
 } Legacy;
 
 typedef struct {
-    i32 b;
+    I32 b;
 } Bare;
 
-i32 main() {
+I32 main() {
     Point p = origin();
     Node second = {.value = 2};
     Node first = {.next = &second, .value = 1, .at = p};
@@ -71,7 +71,7 @@ i32 main() {
     struct Point q = {.x = 3}; // the keyword still works
     // A block's tag names its type too.
     struct Local {
-        i32 inner;
+        I32 inner;
     };
     Local l = {.inner = 8};
     c::printf("%d %d %d %d %d %d %d %d %d %d\n", sum(&first), n.whole, (int)c, s == .circle, e == .empty,

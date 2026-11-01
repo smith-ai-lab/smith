@@ -7,16 +7,16 @@ import <stdio.h>;
 
 typedef typeof(const char[:]) Text;
 
-static bool take_line(const char (*text)[:], const char (*line)[:]) {
+static Bool take_line(const char (*text)[:], const char (*line)[:]) {
     if (countof(*text) == 0) return false;
-    usize n = 0;
+    Usize n = 0;
     while (n < countof(*text) && (*text)[n] != '\n') n++;
     *line = (*text)[0:n];
     *text = (*text)[n < countof(*text) ? n + 1 : n:];
     return true;
 }
 
-static usize length(Text *text) {
+static Usize length(Text *text) {
     return countof(*text);
 }
 
@@ -24,15 +24,15 @@ static void upper_first(char (*xs)[:]) {
     (*xs)[0] = 'X';
 }
 
-static usize deep(const char (**pp)[:]) {
+static Usize deep(const char (**pp)[:]) {
     return countof(**pp);
 }
 
-static usize rows(const f32 (*m)[:][2]) {
+static Usize rows(const F32 (*m)[:][2]) {
     return countof(*m) * 10 + countof((*m)[0]);
 }
 
-i32 main() {
+I32 main() {
     const char s[:] = "a\nbc\nd";
     const char line[:];
     while (take_line(&s, &line)) {
@@ -42,7 +42,7 @@ i32 main() {
     // The same through a typedef, as text and json write their API
     Text t = "one\ntwo";
     Text l;
-    usize n = 0;
+    Usize n = 0;
     while (take_line(&t, &l)) n += length(&l);
     c::printf("%zu\n", n);
 
@@ -54,8 +54,8 @@ i32 main() {
     const char (*cw)[:] = pw;
     c::printf("%zu %zu %c\n", length(&w), length(pw), (*cw)[0]);
 
-    f32 grid[3][2] = {{1, 2}, {3, 4}, {5, 6}};
-    f32 g[:][2] = grid;
+    F32 grid[3][2] = {{1, 2}, {3, 4}, {5, 6}};
+    F32 g[:][2] = grid;
     const char (*pcs)[:] = &s;
     c::printf("%zu %zu\n", rows(&g), deep(&pcs));
 

@@ -1,17 +1,17 @@
 module stats;
 
-export usize count(const arithmetic xs[:]) {
+export Usize count(const Num xs[:]) {
     return countof(xs);
 }
 
-export usize rows(floating grid[:][:]) {
+export Usize rows(Float grid[:][:]) {
     return countof(grid);
 }
 
-export typeof(*p) read(const integer *p) {
+export typeof(*p) read(const Int *p) {
     return *p;
 }
 
-export typeof(xs[0]) third(arithmetic xs[4]) {
+export typeof(xs[0]) third(Num xs[4]) {
     return xs[2];
 }

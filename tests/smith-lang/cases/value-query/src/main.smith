@@ -1,20 +1,20 @@
 #include <stdio.h>
 
 struct Point {
-    i32 x;
-    f32 y;
+    I32 x;
+    F32 y;
 };
 struct Grid {
-    i32 cells[2][3];
+    I32 cells[2][3];
     struct Point origin;
 };
 
 constexpr struct Grid grid = {.cells = {{1, 2, 3}, {4, 5, -6}}, .origin = {7, 0.5f}};
-constexpr f64 ratio = 0.1;
+constexpr F64 ratio = 0.1;
 constexpr char name[] = "hi";
-i32 counter = 3;
+I32 counter = 3;
 
-static i32 twice(i32 n) {
+static I32 twice(I32 n) {
     return n * 2;
 }
 

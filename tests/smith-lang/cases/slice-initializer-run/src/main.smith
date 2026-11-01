@@ -5,7 +5,7 @@ import <stdio.h>;
 // A slice member takes a slice expression in an initializer list as it does in an assignment (issue #173): a string
 // literal, an array or another slice, by designator, by position, nested, as a typedef'd `str`, in a compound literal.
 
-typedef const char str[:];
+typedef const char Str[:];
 
 struct Pair {
     const char key[:];
@@ -13,21 +13,21 @@ struct Pair {
 };
 
 struct Named {
-    str name;
-    i32 id;
+    Str name;
+    I32 id;
 };
 
 struct Outer {
-    i32 first;
+    I32 first;
     struct Pair pair;
-    str tag;
+    Str tag;
 };
 
-static usize total(struct Pair p) {
+static Usize total(struct Pair p) {
     return countof(p.key) * 10 + countof(p.value);
 }
 
-i32 main() {
+I32 main() {
     struct Pair a = {.key = "k", .value = "xyz"};
     struct Pair b = {"kk", "v"};
     char raw[3] = {'a', 'b', 'c'};

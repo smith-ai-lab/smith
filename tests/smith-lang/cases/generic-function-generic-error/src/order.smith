@@ -1,18 +1,18 @@
 module order;
 
-bool ascending(arithmetic a, typeof(a) b) {
+Bool ascending(Num a, typeof(a) b) {
     return a < b;
 }
 
-export usize smallest(constexpr auto less, const auto xs[:]) {
-    usize best = 0;
-    for (usize i = 1; i < countof(xs); i++) {
+export Usize smallest(constexpr auto less, const auto xs[:]) {
+    Usize best = 0;
+    for (Usize i = 1; i < countof(xs); i++) {
         if (less(xs[i], xs[best])) best = i;
     }
     return best;
 }
 
-export usize smallest_of(auto xs[:]) {
+export Usize smallest_of(auto xs[:]) {
     return smallest(ascending, xs);
 }
 
@@ -25,11 +25,11 @@ export void take_use() {
 }
 
 // In an instance the parameter is only called: a generic function has no address.
-export usize address_of(constexpr auto f, auto x) {
+export Usize address_of(constexpr auto f, auto x) {
     (void)x;
     return (void *)f == nullptr ? 0 : 1;
 }
 
-export usize address_use() {
+export Usize address_use() {
     return address_of(ascending, 1);
 }

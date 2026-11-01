@@ -1,12 +1,12 @@
 module key;
 
 export typedef struct {
-    u64 a;
-    u64 b;
+    U64 a;
+    U64 b;
 } Key;
 
-export u64 total(Key ks[:]) {
-    u64 t = 0;
-    for (usize i = 0; i < countof(ks); i++) t += ks[i].a;
+export U64 total(Key ks[:]) {
+    U64 t = 0;
+    for (Usize i = 0; i < countof(ks); i++) t += ks[i].a;
     return t;
 }

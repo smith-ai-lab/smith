@@ -3,10 +3,10 @@ module main;
 import stats;
 import <stdio.h>;
 
-i32 main() {
-    i32 raw[3] = {1, 2, 3};
-    i32 xs[:] = raw;
-    const i32 read[:] = xs;
+I32 main() {
+    I32 raw[3] = {1, 2, 3};
+    I32 xs[:] = raw;
+    const I32 read[:] = xs;
     c::printf("%lld %lld\n", stats::total(xs), stats::total(read));
     stats::fill(xs, 5);
     c::printf("%lld %lld\n", stats::total(xs), stats::total(xs[1:3]));

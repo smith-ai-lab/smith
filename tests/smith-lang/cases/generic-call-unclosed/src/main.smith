@@ -1,3 +1,3 @@
 import num;
 
-int x = num::id(i32, 1
+int x = num::id(I32, 1

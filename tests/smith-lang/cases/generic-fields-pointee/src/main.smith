@@ -3,33 +3,33 @@ module main;
 import <stdio.h>;
 
 typedef struct {
-    i32 id;
-    f64 weight;
+    I32 id;
+    F64 weight;
 } Inner;
 
 typedef struct {
     Inner in;
     Inner *link;
-    i32 count;
+    I32 count;
 } Outer;
 
 // `fields(typeof(*p))` and `fields(typeof(p->f))` read like `fields(T)`.
 void show_pointee(auto p) {
     if constexpr (is_record(typeof(*p))) c::printf("record: ");
-    for constexpr (usize i = 0; i < countof(fields(typeof(*p))); i++) {
+    for constexpr (Usize i = 0; i < countof(fields(typeof(*p))); i++) {
         c::printf("%s ", fields(typeof(*p))[i].name);
     }
     c::printf("\n");
 }
 
 void show_member(auto p) {
-    for constexpr (usize i = 0; i < countof(fields(typeof(p->in))); i++) {
+    for constexpr (Usize i = 0; i < countof(fields(typeof(p->in))); i++) {
         c::printf("%s ", fields(typeof(p->in))[i].name);
     }
     c::printf("\n");
 }
 
-i32 main() {
+I32 main() {
     Outer o = {};
     show_pointee(&o);
     show_member(&o);

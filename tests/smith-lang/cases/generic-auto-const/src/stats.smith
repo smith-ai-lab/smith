@@ -1,15 +1,15 @@
 module stats;
 
 // `const auto xs[:]` takes a slice of any elements and reads them; the instance is the const slice.
-export i64 total(const auto xs[:]) {
-    i64 sum = 0;
-    for (usize i = 0; i < countof(xs); i++)
+export I64 total(const auto xs[:]) {
+    I64 sum = 0;
+    for (Usize i = 0; i < countof(xs); i++)
         sum += xs[i];
     return sum;
 }
 
 // A slice of non-const elements is written through `auto xs[:]`.
 export void fill(auto xs[:], typeof(xs[0]) v) {
-    for (usize i = 0; i < countof(xs); i++)
+    for (Usize i = 0; i < countof(xs); i++)
         xs[i] = v;
 }

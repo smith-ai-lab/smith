@@ -1,7 +1,7 @@
 module lib::text;
 
-export usize length(const char *s) {
-    usize n = 0;
+export Usize length(const char *s) {
+    Usize n = 0;
     while (s[n] != 0) n += 1;
     return n;
 }

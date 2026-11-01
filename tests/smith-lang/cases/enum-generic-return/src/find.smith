@@ -4,12 +4,12 @@ module find;
 // each instance (the compiler has read nothing of the instance's body when they are lowered).
 
 export typedef enum {
-    usize some;
+    Usize some;
     none;
 } Position;
 
 export Position position(auto xs, auto v) {
-    for (usize i = 0; i < countof(xs); i++)
+    for (Usize i = 0; i < countof(xs); i++)
         if (xs[i] == v) return {.some = i};
     return .none;
 }

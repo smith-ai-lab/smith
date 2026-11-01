@@ -4,26 +4,26 @@ import apply;
 import <stdio.h>;
 import <stdlib.h>;
 
-static i32 inc(i32 x) {
+static I32 inc(I32 x) {
     return x + 1;
 }
 
-static f64 half(f64 x) {
+static F64 half(F64 x) {
     return x / 2;
 }
 
-static i32 plus(i32 a, i32 b) {
+static I32 plus(I32 a, I32 b) {
     return a + b;
 }
 
 int main() {
-    i32 a = apply::twice(inc, 5);
-    i32 b = apply::twice(apply::triple, 2);
-    f64 c = apply::twice(half, 10.0);
-    i32 d = apply::twice(c::abs, -3);
-    i32 e = apply::again(inc, 0);
-    usize f = apply::address_matches(inc, 1);
-    f64 g = apply::call_with_pair(plus, 3, 4);
+    I32 a = apply::twice(inc, 5);
+    I32 b = apply::twice(apply::triple, 2);
+    F64 c = apply::twice(half, 10.0);
+    I32 d = apply::twice(c::abs, -3);
+    I32 e = apply::again(inc, 0);
+    Usize f = apply::address_matches(inc, 1);
+    F64 g = apply::call_with_pair(plus, 3, 4);
     c::printf("%d %d %.2f %d %d %zu %.1f\n", a, b, c, d, e, f, g);
     return 0;
 }

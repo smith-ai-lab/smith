@@ -1,14 +1,14 @@
 module main;
 
 // A lambda inside a lambda of a generic is not built.
-i32 twice(constexpr type T, T a) {
-    i32 (*f)(void) = []() -> i32 {
-        i32 (*g)(void) = []() -> i32 { return 1; };
-        return g() + (i32)sizeof(T);
+I32 twice(constexpr Type T, T a) {
+    I32 (*f)(void) = []() -> i32 {
+        I32 (*g)(void) = []() -> i32 { return 1; };
+        return g() + (I32)sizeof(T);
     };
-    return f() + (i32)a;
+    return f() + (I32)a;
 }
 
-i32 main() {
-    return twice(i32, 1);
+I32 main() {
+    return twice(I32, 1);
 }

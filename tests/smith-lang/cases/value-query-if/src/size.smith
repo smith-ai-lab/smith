@@ -2,18 +2,18 @@ module size;
 
 // An ordinary function: the compiler evaluates the condition, the small evaluator cannot. The instances are written in
 // this file, where the function is defined.
-static usize table_size(usize bytes) {
-    usize total = 0;
-    for (usize i = 0; i < bytes; i++)
+static Usize table_size(Usize bytes) {
+    Usize total = 0;
+    for (Usize i = 0; i < bytes; i++)
         total += i % 3 == 0 ? 2 : 1;
     return total;
 }
 
 typedef struct {
-    u8 bytes[80];
+    U8 bytes[80];
 } Big;
 
-i32 choose(constexpr type T) {
+I32 choose(constexpr Type T) {
     if constexpr (table_size(sizeof(T)) > 64) {
         return 1;
     } else {
@@ -21,18 +21,18 @@ i32 choose(constexpr type T) {
     }
 }
 
-i32 mixed(constexpr type T) {
+I32 mixed(constexpr Type T) {
     if constexpr (table_size(sizeof(T)) > 64 && sizeof(T) < 1000) return 10;
     if constexpr (sizeof(T) == 4) return 20;
     return 30;
 }
 
-export i32 small() {
-    return choose(u8);
+export I32 small() {
+    return choose(U8);
 }
-export i32 big() {
+export I32 big() {
     return choose(Big);
 }
-export i32 all() {
-    return mixed(Big) * 10000 + mixed(u32) * 100 + mixed(u8);
+export I32 all() {
+    return mixed(Big) * 10000 + mixed(U32) * 100 + mixed(U8);
 }

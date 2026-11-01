@@ -4,13 +4,13 @@ import stats;
 
 enum Colour { Red, Green };
 
-i32 main() {
+I32 main() {
     char *names[2] = {"a", "b"};
     char *ns[:] = names;
     const char *name = "x";
-    f32 real = 1.5f;
+    F32 real = 1.5f;
     enum Colour colour = Green;
-    arithmetic local = name;
+    Num local = name;
     stats::sum(ns);
     stats::twice(name);
     stats::twice(colour);

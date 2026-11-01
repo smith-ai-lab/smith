@@ -1,19 +1,19 @@
 module main;
 
-typedef result(i32, i32) Out;
+typedef Result(I32, I32) Out;
 
-static option(i32) pick(i32 n) {
+static Option(I32) pick(I32 n) {
     if (n < 0) return .none;
     return {.some = n};
 }
 
 // The kind is checked per instance: a function returning result(T, i32) cannot `try` an option.
-result(T, i32) wrong(constexpr type T, T x) {
-    i32 v = try pick(1);
+Result(T, I32) wrong(constexpr Type T, T x) {
+    I32 v = try pick(1);
     return {.ok = x};
 }
 
-i32 main() {
-    Out r = wrong(i32, 1);
-    return (i32)sizeof r - (i32)sizeof r;
+I32 main() {
+    Out r = wrong(I32, 1);
+    return (I32)sizeof r - (I32)sizeof r;
 }

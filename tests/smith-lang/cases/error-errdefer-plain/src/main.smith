@@ -2,11 +2,11 @@ module main;
 import <stdio.h>;
 
 // `errdefer` needs a function that returns a result or an option: nothing else marks failure (issue #211).
-static i32 plain(void) {
+static I32 plain(void) {
     errdefer c::puts("never");
     return 0;
 }
 
-i32 main() {
+I32 main() {
     return plain();
 }

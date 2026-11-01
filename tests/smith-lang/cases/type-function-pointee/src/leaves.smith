@@ -2,12 +2,12 @@ module leaves;
 
 // The type a pointer points to, and a scalar's own: a function over `type` that reads the pointee of a type value in
 // C's own way (issue #143).
-static type leaf_of(type t) {
+static Type leaf_of(Type t) {
     if (is_pointer(t)) return typeof(*(t)nullptr);
     return t;
 }
 
-export leaf_of(T) first(constexpr type T, T x) {
+export leaf_of(T) first(constexpr Type T, T x) {
     if constexpr (is_pointer(T)) {
         return *x;
     } else {

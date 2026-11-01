@@ -1,19 +1,19 @@
 // Tuples: a struct whose fields have no names. Its identity is its shape.
 import <stdio.h>;
 
-typedef struct { i32, f32 } Pair;
-typedef struct { i32, struct { f32, f32 } } Nested;
+typedef struct { I32, F32 } Pair;
+typedef struct { I32, struct { F32, F32 } } Nested;
 
 struct Holder {
-    struct { i32, f32 } pair;
-    struct { i32, f32 } list[2];
+    struct { I32, F32 } pair;
+    struct { I32, F32 } list[2];
 };
 
-struct { i32, f32 } make(i32 a, f32 b) {
-    return (struct { i32, f32 }){a, b};
+struct { I32, F32 } make(I32 a, F32 b) {
+    return (struct { I32, F32 }){a, b};
 }
 
-Pair braces(i32 a, f32 b) {
+Pair braces(I32 a, F32 b) {
     return {a, b};
 }
 
@@ -21,8 +21,8 @@ Nested nest() {
     return {1, {2.0f, 3.0f}};
 }
 
-i32 by_value(struct { i32, f32 } t) {
-    return t[0] + (i32)t[1];
+I32 by_value(struct { I32, F32 } t) {
+    return t[0] + (I32)t[1];
 }
 
 void by_pointer(Pair *p) {
@@ -30,15 +30,15 @@ void by_pointer(Pair *p) {
     p->_1 = 0.5f;
 }
 
-i32 main() {
-    struct { i32, f32 } t = {1, 2.0f};
+I32 main() {
+    struct { I32, F32 } t = {1, 2.0f};
     t[1] = 2.5f;
     Pair p = make(3, 4.5f);
     Pair q = braces(5, 6.0f);
     Nested n = nest();
     struct Holder h = {{7, 1.5f}, {{1, 1.0f}, {2, 2.0f}}};
     h.list[1][0] = 9;
-    struct { i32, f32 } list[2] = {{1, 1.5f}, {2, 2.5f}};
+    struct { I32, F32 } list[2] = {{1, 1.5f}, {2, 2.5f}};
     by_pointer(&p);
     c::printf("%d %f\n", t[0], (double)t[1]);
     c::printf("%d %f\n", p[0], (double)p[1]);
@@ -46,12 +46,12 @@ i32 main() {
     c::printf("%d %f %f\n", n[0], (double)n[1][0], (double)n[1][1]);
     c::printf("%d %d\n", h.pair[0], h.list[1][0]);
     c::printf("%d %f\n", list[1][0], (double)list[1][1]);
-    c::printf("%d %d %d\n", (i32)countof(t), (i32)countof(n), (i32)countof(n[1]));
-    c::printf("%d\n", (i32)(sizeof(struct { i32, f32 }) == sizeof t));
+    c::printf("%d %d %d\n", (I32)countof(t), (I32)countof(n), (I32)countof(n[1]));
+    c::printf("%d\n", (I32)(sizeof(struct { I32, F32 }) == sizeof t));
     // Arrays and pointers in a file with tuples are what they were: only a tuple is indexed as fields.
-    i32 xs[3] = {4, 5, 6};
-    i32 *pointer = xs;
-    struct { i32 a; i32 b; } plain = {1, 2}; // a struct with named fields is no tuple
-    c::printf("%d %d %d %d\n", xs[1], pointer[2], (i32)_Countof(xs), plain.b);
+    I32 xs[3] = {4, 5, 6};
+    I32 *pointer = xs;
+    struct { I32 a; I32 b; } plain = {1, 2}; // a struct with named fields is no tuple
+    c::printf("%d %d %d %d\n", xs[1], Pointer[2], (I32)_Countof(xs), plain.b);
     return 0;
 }

@@ -1,7 +1,7 @@
 #include <stdio.h>
 
 // C2y by default: `auto` infers the type, and _Countof counts an array's elements.
-i32 main() {
+I32 main() {
     int numbers[] = {4, 8, 15, 16, 23, 42};
     auto count = _Countof(numbers);
     printf("%zu\n", count);

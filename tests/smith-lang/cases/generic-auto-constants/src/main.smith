@@ -4,9 +4,9 @@ import "k.h";
 
 // A constant is judged by its value, and by its own type: all ones in a u32 fits a u32.
 int main() {
-    u32 count = 7;
-    u8 small = 1;
-    u64 wide = 1;
+    U32 count = 7;
+    U8 small = 1;
+    U64 wide = 1;
     printf("%u\n", pick::larger(count, c::failed));
     printf("%u\n", pick::larger(count, c::BIG));
     printf("%u\n", pick::larger(count, 4294967295u));

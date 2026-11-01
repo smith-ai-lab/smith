@@ -4,11 +4,11 @@
 // smith-imports:
 // smith-names: twice larger width sign_of shifted plain
 // smith-bodies: plain
-// smith-generic: stats twice stats_twice src/stats.smith -@4 1 2 5 6 | iP1w@0:8=typeof(x) iw@0:18=stats_twice p@0:23=( iP1@0:24=arithmetic iw@0:35=x p@0:36=) pw@0:38={ iw@1:5=return iw@1:12=x pw@1:14=+ iw@1:16=x p@1:17=; p@2:1=}
-// smith-generic: stats larger stats_larger src/stats.smith -@8 1 2 8 9 | iP1w@0:8=typeof(a) iw@0:18=stats_larger p@0:24=( iP1@0:25=integer iw@0:33=a p@0:34=, iP1w@0:36=typeof(a) iw@0:46=b p@0:47=) pw@0:49={ iw@1:5=return iw@1:12=a pw@1:14=> iw@1:16=b pw@1:18=? iw@1:20=a pw@1:22=: iw@1:24=b p@1:25=; p@2:1=}
+// smith-generic: stats twice stats_twice src/stats.smith -@4 1 2 5 6 | iP1w@0:8=typeof(x) iw@0:18=stats_twice p@0:23=( iP1@0:24=arithmetic iw@0:28=x p@0:29=) pw@0:31={ iw@1:5=return iw@1:12=x pw@1:14=+ iw@1:16=x p@1:17=; p@2:1=}
+// smith-generic: stats larger stats_larger src/stats.smith -@8 1 2 8 9 | iP1w@0:8=typeof(a) iw@0:18=stats_larger p@0:24=( iP1@0:25=integer iw@0:29=a p@0:30=, iP1w@0:32=typeof(a) iw@0:42=b p@0:43=) pw@0:45={ iw@1:5=return iw@1:12=a pw@1:14=> iw@1:16=b pw@1:18=? iw@1:20=a pw@1:22=: iw@1:24=b p@1:25=; p@2:1=}
 // smith-generic: stats width stats_width src/stats.smith -@12 1 2 5 6 | ixw@0:8=__SIZE_TYPE__ iw@0:14=stats_width p@0:19=( iP1@0:20=pointer iw@0:28=p p@0:29=) pw@0:31={ iw@1:5=return iw@1:12=sizeof p@1:18=( p@1:19=* i@1:20=p p@1:21=) p@1:22=; p@2:1=}
-// smith-generic: stats sign_of stats_sign_of src/stats.smith -@16 1 2 5 6 | ixw@0:8=__INT32_TYPE__ iw@0:12=stats_sign_of p@0:19=( iP1@0:20=signed_integer iw@0:35=n p@0:36=) pw@0:38={ iw@1:5=return iw@1:12=n pw@1:14=< nw@1:16=0 pw@1:18=? pw@1:20=- n@1:21=1 pw@1:23=: nw@1:25=1 p@1:26=; p@2:1=}
-// smith-generic: stats shifted stats_shifted src/stats.smith -@20 1 2 5 6 | iP1w@0:8=typeof(x) iw@0:18=stats_shifted p@0:25=( iP1@0:26=arithmetic iw@0:37=x p@0:38=) pw@0:40={ iw@1:5=auto iw@1:13=one pw@1:17== nw@1:19=1 p@1:20=; iw@2:5=auto iw@2:16=y pw@2:18== iw@2:20=x pw@2:22=+ iw@2:24=one p@2:27=; iw@3:5=return iw@3:12=y p@3:13=; p@4:1=}
+// smith-generic: stats sign_of stats_sign_of src/stats.smith -@16 1 2 5 6 | ixw@0:8=__INT32_TYPE__ iw@0:12=stats_sign_of p@0:19=( iP1@0:20=signed_integer iw@0:27=n p@0:28=) pw@0:30={ iw@1:5=return iw@1:12=n pw@1:14=< nw@1:16=0 pw@1:18=? pw@1:20=- n@1:21=1 pw@1:23=: nw@1:25=1 p@1:26=; p@2:1=}
+// smith-generic: stats shifted stats_shifted src/stats.smith -@20 1 2 5 6 | iP1w@0:8=typeof(x) iw@0:18=stats_shifted p@0:25=( iP1@0:26=arithmetic iw@0:30=x p@0:31=) pw@0:33={ iw@1:5=auto iw@1:9=one pw@1:13== nw@1:15=1 p@1:16=; iw@2:5=auto iw@2:9=y pw@2:11== iw@2:13=x pw@2:15=+ iw@2:17=one p@2:20=; iw@3:5=return iw@3:12=y p@3:13=; p@4:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>

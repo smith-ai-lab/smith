@@ -11,7 +11,7 @@ if constexpr (target::os == target::macos) {
     import <dispatch/dispatch.h>;
 }
 
-export kinds::slice_of(T, 2) make(constexpr type T, usize rows, usize columns) {
+export kinds::slice_of(T, 2) make(constexpr Type T, Usize rows, Usize columns) {
     struct smith_array_T_n result = {};
     result.count[0] = rows;
     result.count[1] = columns;
@@ -19,8 +19,8 @@ export kinds::slice_of(T, 2) make(constexpr type T, usize rows, usize columns) {
 }
 
 int main() {
-    f32 grid[:][:];
-    grid = make(f32, 4, 5);
+    F32 grid[:][:];
+    grid = make(F32, 4, 5);
     c::printf("%zu %zu\n", countof(grid), countof(grid[0]));
     return 0;
 }

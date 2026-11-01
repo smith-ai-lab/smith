@@ -3,12 +3,12 @@ import finder;
 import <stdio.h>;
 
 // A braceless for body holding a generic call, in a module whose import brings option's enum (#462).
-void show(constexpr type T, T value) {
-    c::printf("%d\n", (i32)value);
+void show(constexpr Type T, T value) {
+    c::printf("%d\n", (I32)value);
 }
 
-i32 main() {
-    for (i32 i = 0; i < 3; i++)
-        show(i32, i);
+I32 main() {
+    for (I32 i = 0; i < 3; i++)
+        show(I32, i);
     return 0;
 }

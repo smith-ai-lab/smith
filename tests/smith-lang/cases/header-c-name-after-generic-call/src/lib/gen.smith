@@ -1,5 +1,5 @@
 module lib::gen;
 
-export usize twice(auto n) {
+export Usize twice(auto n) {
     return n + n;
 }

@@ -2,8 +2,8 @@ module main;
 
 import <stdio.h>;
 
-i32 main() {
-    i32 (*seven)() = [] { return 7; };
+I32 main() {
+    I32 (*seven)() = [] { return 7; };
     void (*hello)() = [] { c::printf("hello\n"); };
     hello();
     c::printf("%d\n", seven());

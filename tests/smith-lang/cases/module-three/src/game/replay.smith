@@ -1,23 +1,23 @@
 module game::replay;
 import lib::text as tx;
 
-export typedef struct { u64 frames; tx::Text name; } Replay;
-export constexpr u32 version = 3;
-export u32 counter = 7;
+export typedef struct { U64 frames; tx::Text name; } Replay;
+export constexpr U32 version = 3;
+export U32 counter = 7;
 
-export typedef struct Handle { i32 fd; } Handle;
+export typedef struct Handle { I32 fd; } Handle;
 export enum Mode { Fast, Slow };
 
-u32 helper() {
+U32 helper() {
     return version + counter;
 }
 
 export Replay open(Handle *handle, const char *path) {
     Replay replay = {0};
-    replay.frames = helper() + (u64)handle->fd;
+    replay.frames = helper() + (U64)handle->fd;
     replay.name = tx::make(path);
     counter += 1;
     return replay;
 }
 
-export u64 checksum(const u8 *data, usize size);
+export U64 checksum(const U8 *data, Usize size);

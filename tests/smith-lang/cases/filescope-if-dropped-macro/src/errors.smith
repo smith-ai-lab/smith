@@ -10,6 +10,6 @@ if constexpr (true) {
     import <errno.h>;
 }
 
-export i32 current() {
+export I32 current() {
     return c::errno;
 }

@@ -15,18 +15,18 @@ static void put(const char text[:]) {
     c::printf("%.*s\n", (int)countof(text), text.data);
 }
 
-i32 main() {
-    bool flag = true;
-    for (usize i = 0; i < 2; i++) {
+I32 main() {
+    Bool flag = true;
+    for (Usize i = 0; i < 2; i++) {
         put(table[i].written);
         put(table[i].sized);
     }
-    for (usize i = 0; i < 3; i++) put(names[i]);
-    str words[2] = {"x", "yz"};
-    for (usize i = 0; i < 2; i++) put(words[i]);
+    for (Usize i = 0; i < 3; i++) put(names[i]);
+    Str words[2] = {"x", "yz"};
+    for (Usize i = 0; i < 2; i++) put(words[i]);
     put(flag ? "yes" : "no");
     put(!flag ? "yes" : "no");
-    i32 plain[4] = {1, 2, 3, 4};
+    I32 plain[4] = {1, 2, 3, 4};
     c::printf("%d\n", (int)countof(plain));
     return 0;
 }

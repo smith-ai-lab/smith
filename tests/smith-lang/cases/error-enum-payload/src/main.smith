@@ -6,7 +6,7 @@ import <stdio.h>;
 // not have, one that carries a payload used alone, and a dot with no type to look in.
 
 typedef struct {
-    f32 radius;
+    F32 radius;
 } Circle;
 
 typedef enum {
@@ -14,19 +14,19 @@ typedef enum {
     empty;
 } Shape;
 
-static i32 describe(Shape s) {
+static I32 describe(Shape s) {
     switch (s) {
     case .circle: return 1;
     default: return 0;
     }
 }
 
-i32 main() {
+I32 main() {
     Shape a = .circle;
     Shape b = .nothing;
     Shape c = .empty;
     c::printf("%d\n", 0);
-    return describe(a) + describe(b) + (i32)(c == .empty) + describe(.empty);
+    return describe(a) + describe(b) + (I32)(c == .empty) + describe(.empty);
 }
 
 static void nowhere() {

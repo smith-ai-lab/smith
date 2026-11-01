@@ -3,12 +3,12 @@ module main;
 import walk;
 import <stdio.h>;
 
-struct S { i32 xs[:]; f64 ys[:]; i32 fixed[3]; };
-struct R { i32 xs[:]; i32 fixed[3]; i32 rows[2][5]; };
+struct S { I32 xs[:]; F64 ys[:]; I32 fixed[3]; };
+struct R { I32 xs[:]; I32 fixed[3]; I32 rows[2][5]; };
 
 int main() {
-    i32 a[2] = {1, 2};
-    f64 b[3] = {1, 2, 3};
+    I32 a[2] = {1, 2};
+    F64 b[3] = {1, 2, 3};
     struct S s = {.xs = a[0:2], .ys = b[0:3], .fixed = {1, 2, 3}};
     struct R r = {.xs = a[0:1]};
     c::printf("%zu %zu %zu %zu\n", walk::total(s), walk::total_through(s, &s), walk::named(&r), walk::name_lengths(s));

@@ -3,7 +3,7 @@ module main;
 import fmt;
 
 typedef struct {
-    i32 x;
+    I32 x;
 } Point;
 
 int main() {

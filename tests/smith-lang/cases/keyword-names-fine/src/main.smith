@@ -1,15 +1,15 @@
 #include <stdio.h>
 
 // Keywords that legitimately follow a type, and a sized type name used as a type in every other place.
-u32 const first = 1;
-u32 static second = 2;
+U32 const first = 1;
+U32 static second = 2;
 unsigned long third = 3;
 long double fourth = 4;
-f64 *restrict pointer = nullptr;
-u8 alignas(4) aligned = 5;
+F64 *restrict pointer = nullptr;
+U8 alignas(4) aligned = 5;
 
-i32 main() {
-    i32 sum = (i32)first + (i32)second + (i32)third + (i32)fourth + sizeof(u8) + sizeof(u16);
+I32 main() {
+    I32 sum = (I32)first + (I32)second + (I32)third + (I32)fourth + sizeof(U8) + sizeof(U16);
     printf("%d %d\n", sum, aligned);
     return 0;
 }

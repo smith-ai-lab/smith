@@ -1,6 +1,6 @@
 module shape;
 
-constexpr i32 margin = 2;
+constexpr I32 margin = 2;
 
 // A private generic: no importer may call it, but the exported one below does, so its record is in the header.
 typeof(x) padded(auto x) {
@@ -16,6 +16,6 @@ export typeof(x) framed(auto x) {
     return padded(padded(x));
 }
 
-export i32 plain(i32 x) {
+export I32 plain(I32 x) {
     return unused(x);
 }

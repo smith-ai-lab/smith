@@ -1,7 +1,7 @@
 module args;
 
 // `auto... rest` is the arguments that remain, each with its own type: `countof(rest)` is how many there are.
-export usize count(auto x, auto... rest) {
+export Usize count(auto x, auto... rest) {
     (void)x;
     return countof(rest);
 }
@@ -13,17 +13,17 @@ export typeof(x) call_all(constexpr auto f, auto x, auto... rest) {
 }
 
 // `rest[i]` is the `i`th, with its own type, `i` a compile-time constant; the branch not taken may name what is not there.
-export f64 second_or(auto x, auto... rest) {
+export F64 second_or(auto x, auto... rest) {
     (void)x;
     if constexpr (countof(rest) > 1) {
-        return (f64)rest[1];
+        return (F64)rest[1];
     } else {
         return -1.0;
     }
 }
 
 // The size of each element's own type.
-export usize size_of_first(auto... rest) {
+export Usize size_of_first(auto... rest) {
     if constexpr (countof(rest) == 0) {
         return 0;
     } else {
@@ -37,13 +37,13 @@ export typeof(x) forward(constexpr auto f, auto x, auto... rest) {
 }
 
 // An expansion after other arguments, and a count passed on.
-export usize forward_count(auto x, auto... rest) {
+export Usize forward_count(auto x, auto... rest) {
     return count(x, rest...) + 100;
 }
 
 // The list's size is a constant: a static_assert and an array length use it.
-export usize at_least_two(auto... rest) {
+export Usize at_least_two(auto... rest) {
     static_assert(countof(rest) >= 2, "at_least_two needs two arguments");
-    u8 bytes[countof(rest)];
+    U8 bytes[countof(rest)];
     return sizeof bytes;
 }

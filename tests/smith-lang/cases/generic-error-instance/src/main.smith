@@ -3,12 +3,12 @@ module main;
 import num;
 
 typedef struct {
-    i32 x;
-    i32 y;
+    I32 x;
+    I32 y;
 } Point;
 
 int main() {
-    i32 three = num::add(i32, 1, 2);
+    I32 three = num::add(I32, 1, 2);
     Point a = {1, 2};
     Point b = num::add(Point, a, a);
     return three + b.x;

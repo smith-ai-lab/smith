@@ -3,54 +3,54 @@ import <stdio.h>;
 
 // `errdefer` runs like `defer`, but only when the function returns its failing variant: from a `try`, from a
 // written `return {.error = e};` and from `return r;` where `r` holds an error (issue #211).
-static result(i32, i32) step(i32 n) {
+static Result(I32, I32) step(I32 n) {
     if (n < 0) return {.error = n};
     return {.ok = n};
 }
 
-static option(i32) pick(i32 n) {
+static Option(I32) pick(I32 n) {
     if (n < 0) return .none;
     return {.some = n};
 }
 
-static result(i32, i32) chain(i32 a, i32 b) {
+static Result(I32, I32) chain(I32 a, I32 b) {
     defer c::puts("  defer");
     errdefer c::puts("  errdefer 1");
-    i32 x = try step(a);
+    I32 x = try step(a);
     errdefer c::printf("  errdefer 2 (x=%d)\n", x);
-    i32 y = try step(b);
+    I32 y = try step(b);
     return {.ok = x + y};
 }
 
-static result(i32, i32) by_hand(i32 n) {
+static Result(I32, I32) by_hand(I32 n) {
     errdefer c::puts("  hand errdefer");
     if (n == 0) return {.error = 100};
-    result(i32, i32) r = step(n);
+    Result(I32, I32) r = step(n);
     return r;
 }
 
-static option(i32) options(i32 a) {
+static Option(I32) options(I32 a) {
     errdefer c::puts("  option errdefer");
-    i32 v = try pick(a);
+    I32 v = try pick(a);
     return {.some = v * 2};
 }
 
-static result(i32, i32) payload(i32 a) {
+static Result(I32, I32) payload(I32 a) {
     errdefer c::puts("  payload errdefer");
     return {.ok = try step(a)};
 }
 
-static result(i32, i32) block_scope(i32 a) {
+static Result(I32, I32) block_scope(I32 a) {
     {
         errdefer c::puts("  inner block errdefer");
-        i32 v = try step(a);
+        I32 v = try step(a);
         c::printf("  inner ok %d\n", v);
     }
     errdefer c::puts("  after the block");
     return {.ok = 1};
 }
 
-static void show(const char *what, result(i32, i32) r) {
+static void show(const char *what, Result(I32, I32) r) {
     c::puts(what);
     switch (r) {
     case .ok: c::printf("ok %d\n", r.ok); break;
@@ -58,7 +58,7 @@ static void show(const char *what, result(i32, i32) r) {
     }
 }
 
-i32 main() {
+I32 main() {
     show("chain ok", chain(1, 2));
     show("chain, first fails", chain(-1, 2));
     show("chain, second fails", chain(1, -2));
@@ -66,10 +66,10 @@ i32 main() {
     show("by hand, ok", by_hand(5));
     show("by hand, return r", by_hand(-5));
     c::puts("option ok");
-    option(i32) good = options(3);
+    Option(I32) good = options(3);
     c::printf("%d\n", good == .some ? good.some : -1);
     c::puts("option fails");
-    option(i32) bad = options(-3);
+    Option(I32) bad = options(-3);
     c::printf("%d\n", bad == .none);
     show("payload ok", payload(6));
     show("payload fails", payload(-6));

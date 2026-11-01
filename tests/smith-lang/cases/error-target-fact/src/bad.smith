@@ -2,6 +2,6 @@ module bad;
 
 import target;
 
-export constexpr i32 wide = target::f32_mantissa_bits;
-i32 oops = target::nothing;
-i32 module_name = target;
+export constexpr I32 wide = target::f32_mantissa_bits;
+I32 oops = target::nothing;
+I32 module_name = target;

@@ -2,10 +2,10 @@ module main;
 
 import <stdio.h>;
 
-i32 main() {
-    i32 factor = 3;
-    i32 offset = 1;
-    i32 (*scale)(i32) = [factor, offset](i32 a) -> i32 { return a * 2; };
+I32 main() {
+    I32 factor = 3;
+    I32 offset = 1;
+    I32 (*scale)(I32) = [factor, offset](I32 a) -> i32 { return a * 2; };
     c::printf("%d\n", scale(2));
     return 0;
 }

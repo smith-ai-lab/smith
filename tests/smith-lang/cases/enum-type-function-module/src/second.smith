@@ -1,6 +1,6 @@
 module second;
 
-type maybe(type T) {
+Type maybe(Type T) {
     return enum {
         T some;
         none;
@@ -9,13 +9,13 @@ type maybe(type T) {
 
 // A generic whose outcome is `maybe(usize)`: the instance is written in the importer, against the struct the header
 // defines.
-export maybe(usize) position(auto xs, auto v) {
-    for (usize i = 0; i < countof(xs); i++)
+export maybe(Usize) position(auto xs, auto v) {
+    for (Usize i = 0; i < countof(xs); i++)
         if (xs[i] == v) return {.some = i};
     return .none;
 }
 
-export maybe(usize) last(usize v) {
+export maybe(Usize) last(Usize v) {
     if (v < 2) return .none;
     return {.some = v - 1};
 }
