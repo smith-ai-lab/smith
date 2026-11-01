@@ -90,6 +90,9 @@ typedef struct SmithConsoleHandler SmithConsoleHandler;
 struct SmithConsoleHandler {
     ssize_t (*write)(SmithConsoleHandler *self, int fd, const void *buffer, size_t size); // fd is 1 or 2
     ssize_t (*read)(SmithConsoleHandler *self, void *buffer, size_t size);
+    // Whether fd (0, 1 or 2) is a terminal (std::console is_terminal); may be null, which is libc's own isatty. 1 for
+    // a terminal, 0 for none.
+    int (*isatty)(SmithConsoleHandler *self, int fd);
 };
 
 // Sets the console of the calling thread (null: libc's), returning the one it had.
