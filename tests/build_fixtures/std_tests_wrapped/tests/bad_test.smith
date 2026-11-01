@@ -1,0 +1,16 @@
+module bad_test;
+
+import std::test;
+
+export void test_fine() {
+    test::check_equal(1, 1);
+}
+
+export void test_unreadable(I32 a,
+                            I32 b,
+                            I32 c,
+                            I32 d,
+                            I32 e,
+                            I32 f
+) {
+}

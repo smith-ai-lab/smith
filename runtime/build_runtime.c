@@ -3044,6 +3044,15 @@ typedef enum {
     SmithTestKind_Refused
 } SmithTestKind;
 
+// What may follow a test's `{` on its line: nothing, a comment, or a one-line body that ends with `}`.
+static bool smith_tests_after_brace(const char *rest) {
+    if (rest[0] == '\0') return true;
+    if (rest[0] != ' ') return false;
+    if (rest[1] == '/' && rest[2] == '/') return true;
+    size_t size = strlen(rest);
+    return rest[size - 1] == '}';
+}
+
 static const char *smith_tests_match_known(const char *line, bool module, const char *key_type,
                                            const char *failing_type, size_t *length, SmithTestKind *kind) {
     const char *prefix = "void test_";
@@ -3058,7 +3067,8 @@ static const char *smith_tests_match_known(const char *line, bool module, const 
     if (size == 0) return nullptr;
     *length = size;
     *kind = SmithTestKind_Plain;
-    if (strcmp(rest, "(void) {") == 0 || (module && strcmp(rest, "() {") == 0)) return name; // `()` is C23 in a module
+    if (strncmp(rest, "(void) {", 8) == 0 && smith_tests_after_brace(rest + 8)) return name;
+    if (module && strncmp(rest, "() {", 4) == 0 && smith_tests_after_brace(rest + 4)) return name; // `()` is C23
     *kind = SmithTestKind_Property;
     if (strncmp(rest, "(SmithKey ", strlen("(SmithKey ")) == 0) {
         rest += strlen("(SmithKey ");
@@ -3093,8 +3103,7 @@ static const char *smith_tests_match_known(const char *line, bool module, const 
     }
     if (strncmp(rest, ") {", 3) != 0) return nullptr;
     rest += 3;
-    if (rest[0] == ' ' && rest[1] == '/' && rest[2] == '/') return name; // a trailing comment: `) { // (void): pure`
-    return rest[0] == '\0' ? name : nullptr;
+    return smith_tests_after_brace(rest) ? name : nullptr; // a trailing comment or a one-line body
 }
 
 // The spelling of std::random's key type a `.smith` file's import line gives, "random::Key" or "<alias>::Key", or
@@ -3197,6 +3206,46 @@ static bool smith_tests_named_test(const char *path) {
     return false;
 }
 
+// Whether the line starts a test definition (`void test_x`, `export void test_x` in a module), however it goes on.
+static bool smith_tests_starts(const char *line, bool module) {
+    if (module && strncmp(line, "export ", strlen("export ")) == 0) line += strlen("export ");
+    size_t size = strlen(line);
+    return strncmp(line, "void test_", strlen("void test_")) == 0 && size > 0 &&
+           line[size - 1] != ';'; // not a prototype
+}
+
+// smith_tests_match, and for a signature wrapped over lines (`export void test_x(` with no `)` yet) the lines joined:
+// *j then moves to the last line used. A line that starts a test and still does not match is an error
+// (smith_tests_find).
+static const char *smith_tests_match_joined(const char *const *lines, size_t *j, bool module, const char *key_type,
+                                            const char *failing_type, size_t *length, SmithTestKind *kind) {
+    const char *name = smith_tests_match(lines[*j], module, key_type, failing_type, length, kind);
+    if (name != nullptr || !smith_tests_starts(lines[*j], module) || strchr(lines[*j], ')') != nullptr) return name;
+    const char *joined = lines[*j];
+    for (size_t k = 1; k <= 4 && lines[*j + k - 1] != nullptr && lines[*j + k] != nullptr; k++) { // at most 4 more
+        const char *next = lines[*j + k];
+        while (*next == ' ' || *next == '\t')
+            next++;
+        size_t size = strlen(joined);
+        joined = smith_text("%s%s%s", joined, size > 0 && joined[size - 1] == ',' ? " " : "", next);
+        name = smith_tests_match(joined, module, key_type, failing_type, length, kind);
+        if (name != nullptr) {
+            *j += k;
+            return name;
+        }
+        if (strchr(next, ')') != nullptr) break;
+    }
+    return nullptr;
+}
+
+static bool smith_tests_unreadable(const char *file, size_t line) {
+    fprintf(stderr,
+            "smith: smith_tests: %s:%zu: this defines a test the runner cannot read, so it would never run; write "
+            "`void test_<name>(void) {` (or `(random::Key key)`) with `export` in a module\n",
+            file, line);
+    return false;
+}
+
 // Every test in the files, in file order and line order. A name defined twice is an error that names both files.
 static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count) {
     *count = 0;
@@ -3213,7 +3262,12 @@ static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count
             if (in_smith && failing_type == nullptr) failing_type = smith_tests_failing_type(lines[j]);
             size_t length = 0;
             SmithTestKind kind = SmithTestKind_Plain;
-            const char *name = smith_tests_match(lines[j], module != nullptr, key_type, failing_type, &length, &kind);
+            size_t first = j;
+            const char *name =
+                smith_tests_match_joined(lines, &j, module != nullptr, key_type, failing_type, &length, &kind);
+            if (name == nullptr && smith_tests_starts(lines[first], module != nullptr)) {
+                return smith_tests_unreadable(run->inputs[i], first + 1);
+            }
             if (name == nullptr) continue;
             if (kind == SmithTestKind_Refused) {
                 fprintf(stderr,
