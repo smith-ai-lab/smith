@@ -7,6 +7,32 @@
 #include <stdlib.h>
 #include <string.h>
 
+// The build program's runtime (runtime/build_runtime.c, issue #1300) compiled with -DSMITH_BUILD_CORE has no main and
+// no build file to run: the tests reach its refusals in process (include/smith_core_verbs.h).
+static SmithObject build_core_object(SmithBuild *b, const char *root) {
+    SmithObject object = {
+        .compiler = "smith-cc",
+        .source = smith_fmt(b, "%s/runtime/build_runtime.c", root),
+        .output = "build/tests_objects/build_core.o",
+        .flags = smith_list(b, "-std=gnu23", "-g", "-O0", "-Wall", "-Wextra", "-Wpedantic", "-Wno-unused-function",
+                            "-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-DSMITH_BUILD_CORE", "-I",
+                            smith_fmt(b, "%s/include", root), "-I", ".smith/include", nullptr),
+    };
+    smith_object(b, &object);
+    return object;
+}
+
+// The integration tests of tests/ that this runner links: all but the front end's.
+static const char *const *tests_without_front(SmithBuild *b) {
+    const char *const *all_tests = smith_glob(b, smith_list(b, "tests/*_test.smith", nullptr));
+    static const char *kept[512];
+    size_t kept_count = 0;
+    for (size_t i = 0; all_tests[i] != nullptr && kept_count < 511; i++)
+        if (strncmp(all_tests[i], "tests/front_", 12) != 0) kept[kept_count++] = all_tests[i];
+    kept[kept_count] = nullptr;
+    return kept;
+}
+
 void build(SmithBuild *b) {
     // The repository that build.c of the repository sets in SMITH_REPO.
     const char *repo = getenv("SMITH_REPO");
@@ -49,6 +75,7 @@ void build(SmithBuild *b) {
                             "-I", smith_fmt(b, "%s/runtime/protocol", root), nullptr),
     };
     smith_object(b, &core);
+    SmithObject build_core = build_core_object(b, root);
     // smith's private io layer (issue #903): smith.c includes its header, which this object's step writes, and the core
     // calls it, so the object is linked.
     SmithObject runtime_io = {
@@ -60,14 +87,9 @@ void build(SmithBuild *b) {
     smith_object(b, &runtime_io);
     // The front end's tests (tests/front_*_test.smith) link LLVM, so they have a runner of their own
     // (tests/front_units/build.c): this one leaves them out.
-    const char *const *all_tests = smith_glob(b, smith_list(b, "tests/*_test.smith", nullptr));
-    const char *kept[512];
-    size_t kept_count = 0;
-    for (size_t i = 0; all_tests[i] != nullptr && kept_count < 511; i++)
-        if (strncmp(all_tests[i], "tests/front_", 12) != 0) kept[kept_count++] = all_tests[i];
-    kept[kept_count] = nullptr;
+    const char *const *kept = tests_without_front(b);
     SmithTests tests = {
-        .objects = (const SmithObject *[]){&http, &core, &runtime_io, nullptr},
+        .objects = (const SmithObject *[]){&http, &core, &build_core, &runtime_io, nullptr},
         .sources = smith_cat(b, smith_glob(b, smith_list(b, "lib/std/*_test.smith", "lib/*_test.smith", nullptr)), kept,
                              smith_list(b, "tests/scratch.smith", "tests/runner.smith", "tests/prove_cases.smith",
                                         "tests/corpus.smith", nullptr),

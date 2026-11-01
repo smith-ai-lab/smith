@@ -1,0 +1,20 @@
+task fmt: refused: task 'fmt' is named after a verb; `smith fmt` does the same thing in every project, so use it, or name task another way and run it with `smith build <name>`
+task lint: refused: task 'lint' is named after a verb; `smith lint` does the same thing in every project, so use it, or name task another way and run it with `smith build <name>`
+task docs: refused: task 'docs' is named after a verb; `smith docs` does the same thing in every project, so use it, or name task another way and run it with `smith build <name>`
+task prove: refused: task 'prove' is named after a verb; `smith prove` does the same thing in every project, so use it, or name task another way and run it with `smith build <name>`
+task check: refused: task 'check' is named after a verb; `smith check` does the same thing in every project, so use it, or name task another way and run it with `smith build <name>`
+task run: refused: task 'run' is named after a verb; `smith run` does the same thing in every project, so use it, or name task another way and run it with `smith build <name>`
+task test: refused: task 'test' is named after a verb; `smith test` does the same thing in every project, so use it, or name task another way and run it with `smith build <name>`
+task tests: allowed
+task other: allowed
+task Test: allowed
+alias fmt: refused: alias 'fmt' is named after a verb; `smith fmt` does the same thing in every project, so use it, or name alias another way and run it with `smith build <name>`
+alias lint: refused: alias 'lint' is named after a verb; `smith lint` does the same thing in every project, so use it, or name alias another way and run it with `smith build <name>`
+alias docs: refused: alias 'docs' is named after a verb; `smith docs` does the same thing in every project, so use it, or name alias another way and run it with `smith build <name>`
+alias prove: refused: alias 'prove' is named after a verb; `smith prove` does the same thing in every project, so use it, or name alias another way and run it with `smith build <name>`
+alias check: refused: alias 'check' is named after a verb; `smith check` does the same thing in every project, so use it, or name alias another way and run it with `smith build <name>`
+alias run: refused: alias 'run' is named after a verb; `smith run` does the same thing in every project, so use it, or name alias another way and run it with `smith build <name>`
+alias test: refused: alias 'test' is named after a verb; `smith test` does the same thing in every project, so use it, or name alias another way and run it with `smith build <name>`
+alias tests: allowed
+alias other: allowed
+alias Test: allowed
