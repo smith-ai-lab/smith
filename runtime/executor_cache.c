@@ -460,7 +460,10 @@ static bool smith_stepcache_spec(const char *path, char *out, size_t capacity, i
     }
     char hex[smith_stepcache_hex];
     bool time_macro = false;
-    if (!smith_stepcache_content(path, &info, hex, &time_macro, now) || time_macro) return false;
+    if (!smith_stepcache_content(path, &info, hex, &time_macro, now)) return false;
+    // A precompiled header holds the names of the three macros in its tables whatever it was made from; the headers it
+    // was made from were checked when it was made (it is cached under the same rule), so its bytes are no reason.
+    if (time_macro && !smith_ends_with(path, ".pch") && !smith_ends_with(path, ".gch")) return false;
     int written = snprintf(out, capacity, "c:%s", hex);
     return written > 0 && (size_t)written < capacity;
 }
@@ -527,10 +530,8 @@ static bool smith_stepcache_refused(const char *word) {
                                            "-fsanitize-ignorelist",
                                            "-fsanitize-blacklist",
                                            "-fsanitize-coverage-",
-                                           "-include-pch",
                                            "-fplugin",
                                            "-fpass-plugin",
-                                           "-Xclang",
                                            "-load",
                                            "-fmodule-file",
                                            "-fprebuilt-module-path",
@@ -558,11 +559,20 @@ static bool smith_stepcache_refused(const char *word) {
     return false;
 }
 
-// A compile that writes a precompiled header (`-x c-header`, `-xc++-header`, an output `.pch` or `.gch`): the header
-// records the time and the path of each file it read, so one served to a folder whose files have other times or another
-// root is rejected by every compile that includes it ("has been modified since the precompiled header was built").
-static bool smith_stepcache_writes_header(const char *word) {
-    return smith_ends_with(word, "-header") || smith_ends_with(word, ".pch") || smith_ends_with(word, ".gch");
+// A compile that writes a precompiled header (`-x c-header`, `-xc++-header`, an output `.pch` or `.gch`) or reads one
+// (`-include-pch`): the header records the time and the path of each file it read, so one served to a folder whose
+// files have other times is rejected by every compile that includes it ("has been modified since the precompiled
+// header was built", #728). Such a compile is cached only with `-Xclang -fvalidate-ast-input-files-content`, which
+// stores each input's hash and so accepts a file of the same text and another time; a header that names a file of the
+// folder (an absolute path) is stored for that root only, as any output that holds the root (#1415).
+static bool smith_stepcache_touches_header(const char *word) {
+    return smith_ends_with(word, "-header") || smith_ends_with(word, ".pch") || smith_ends_with(word, ".gch") ||
+           smith_stepcache_has_prefix(word, "-include-pch");
+}
+
+// The one `-Xclang` argument the cache accepts: any other is a flag whose effect on the output nobody checked.
+static bool smith_stepcache_validates(const char *word) {
+    return strcmp(word, "-fvalidate-ast-input-files-content") == 0;
 }
 
 // The value of the flag at word i: "-I" "dir" or "-Idir". nullptr when it is not that flag.
@@ -615,13 +625,21 @@ static bool smith_stepcache_eligible(SmithExec *exec, SmithEdge *edge) {
         bool parsed = shape && smith_stepcache_split(edge->command);
         bool md = false;
         bool depfile = false;
+        bool header = false;
+        bool validates = false;
         for (size_t i = 0; parsed && i < smith_stepcache_scope.count; i++) {
             const char *word = smith_stepcache_scope.words[i];
             md = md || strcmp(word, "-MD") == 0;
             depfile = depfile || (strcmp(word, "-MF") == 0 && i + 1 < smith_stepcache_scope.count &&
                                   strcmp(smith_stepcache_scope.words[i + 1], edge->depfile) == 0);
-            parsed = !smith_stepcache_refused(word) && !smith_stepcache_writes_header(word);
+            bool xclang = strcmp(word, "-Xclang") == 0;
+            bool allowed = xclang && i + 1 < smith_stepcache_scope.count &&
+                           smith_stepcache_validates(smith_stepcache_scope.words[i + 1]);
+            validates = validates || allowed;
+            header = header || smith_stepcache_touches_header(word);
+            parsed = !smith_stepcache_refused(word) && (!xclang || allowed);
         }
+        parsed = parsed && (!header || validates);
         edge->step_cache = parsed && md && depfile ? 1 : 2;
     }
     if (edge->step_cache != 1) return false;
