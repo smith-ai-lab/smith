@@ -3250,7 +3250,7 @@ static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count
 // ---- --shard i/n (#1200)
 //
 // `smith test --shard i/n` compiles only the test files that hold a test of part i. The runner assigns the tests at run
-// time (shard_plan in lib/smith/test.smith: a file's tests stay together, the heaviest file goes to the part with the
+// time (shard_plan in lib/std/test.smith: a file's tests stay together, the heaviest file goes to the part with the
 // least so far, by the --costs file); this is that assignment again, in C, because the build must know it before it
 // compiles. tests/test_runner_shard_test.smith checks that a part built alone and the same part of a full build list
 // the same tests, so the two cannot drift apart unseen.
@@ -3268,7 +3268,7 @@ typedef struct {
     int macos;                           // 1: --macos-only, 2: --skip-macos
 } SmithTestShard;
 
-// Whether `text` matches `pattern`, `*` standing for any run of characters (glob in lib/smith/test.smith).
+// Whether `text` matches `pattern`, `*` standing for any run of characters (glob in lib/std/test.smith).
 static bool smith_shard_glob(const char *pattern, const char *text) {
     const char *star = nullptr;
     const char *resume = nullptr;
@@ -3297,7 +3297,7 @@ static bool smith_shard_ends_with_part(const char *text, size_t length, const ch
     return size == length || (length - size >= 2 && text[length - size - 1] == ':' && text[length - size - 2] == ':');
 }
 
-// Whether the test `name` is selected by one `--test` item (selects_item in lib/smith/test.smith).
+// Whether the test `name` is selected by one `--test` item (selects_item in lib/std/test.smith).
 static bool smith_shard_item(const char *name, const char *item) {
     size_t size = strlen(item);
     if (strchr(item, '*') != nullptr) {
@@ -3333,7 +3333,7 @@ static bool smith_shard_any(const char *name, const char *list) {
     return false;
 }
 
-// macos_only in lib/smith/test.smith: the word `macos` in the name.
+// macos_only in lib/std/test.smith: the word `macos` in the name.
 static bool smith_shard_macos_only(const char *name) {
     for (const char *at = strstr(name, "macos"); at != nullptr; at = strstr(at + 1, "macos")) { // bounded by the name
         bool starts = at == name || at[-1] == '_' || at[-1] == ':';
@@ -3400,7 +3400,7 @@ static void smith_shard_parse(SmithTestShard *shard, const SmithTestFound *found
 }
 
 // The length of the file part of a test's name: `geometry::box_test::area` is in `geometry::box_test`; 0 for a name
-// with no `::` (file_length in lib/smith/test.smith).
+// with no `::` (file_length in lib/std/test.smith).
 static size_t smith_shard_file_length(const char *name) {
     size_t length = 0;
     for (size_t at = 0; name[at] != '\0'; at++) // bounded by the name
@@ -3409,7 +3409,7 @@ static size_t smith_shard_file_length(const char *name) {
 }
 
 // The CPU seconds the --costs file gives each test of `chosen` (lines `cpu<TAB>seconds<TAB>name`), -1 for one it does
-// not name (read_costs in lib/smith/test.smith).
+// not name (read_costs in lib/std/test.smith).
 static void smith_shard_costs(const SmithTestShard *shard, const SmithTestFound *found, const size_t *chosen,
                               size_t chosen_count, double *cost) {
     for (size_t i = 0; i < chosen_count; i++)
@@ -3430,7 +3430,7 @@ static void smith_shard_costs(const SmithTestShard *shard, const SmithTestFound 
 }
 
 // The part of each chosen test's file: the files, heaviest first, each to the part with the least so far
-// (assign_shards in lib/smith/test.smith). owner[i] is the part (0 based) of chosen test i.
+// (assign_shards in lib/std/test.smith). owner[i] is the part (0 based) of chosen test i.
 static void smith_shard_assign(const SmithTestShard *shard, const SmithTestFound *found, const size_t *chosen,
                                size_t chosen_count, size_t *owner) {
     size_t *leader = smith_alloc((chosen_count + 1) * sizeof *leader);
