@@ -1,0 +1,73 @@
+// Tests of plain enums in front::parse_decl (#1267, A7d of track A of #1112): capitalized enumerators (`enum { Red,
+// Green }`), enumerators with values (`Fib7 = f(7)`), and a payload variant still read as a payload.
+module front_parse_enum_test;
+
+import front::ast;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+typedef ast::Enumerator EnumList[:];
+
+// The enumerators of the only declaration of source, which must parse without errors and be an enum.
+static EnumList items_of(Str source) {
+    parser::Parsed parsed = parser::parse("x.smith", source);
+    test::check_equal(countof(parsed.errors), 0);
+    test::check_equal(countof(parsed.module.decls), 1);
+    ast::DeclKind kind = parsed.module.decls[0]->kind;
+    if (kind == .enumeration) {
+        return kind.enumeration.items;
+    }
+    test::check_condition(false);
+    return {};
+}
+
+export void test_parse_enum_capitalized() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    EnumList items = items_of("enum Colour { Red, Green };");
+    test::check_equal(countof(items), 2);
+    Str red = "Red";
+    Str green = "Green";
+    test::check_equal(items[0].name, red);
+    test::check_equal(items[1].name, green);
+    test::check_condition(items[0].payload == nullptr);
+}
+
+export void test_parse_enum_values() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    EnumList items = items_of("enum { Fib7 = 13, Wide = 2, low };");
+    test::check_equal(countof(items), 3);
+    test::check_condition(items[0].value != nullptr);
+    test::check_condition(items[1].value != nullptr);
+    test::check_condition(items[2].value == nullptr);
+    test::check_condition(items[0].payload == nullptr);
+}
+
+export void test_parse_enum_payload_still() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    EnumList items = items_of("typedef enum { Circle circle; empty; } Shape;");
+    test::check_equal(countof(items), 2);
+    test::check_condition(items[0].payload != nullptr);
+    test::check_condition(items[1].payload == nullptr);
+}
+
+export void test_parse_enum_missing_name_error() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed parsed = parser::parse("x.smith", "enum { Red = 1 Green };");
+    test::check_condition(countof(parsed.errors) > 0);
+    Str expected = "expected `,`, `;` or `}`, found `Green`";
+    test::check_equal(parsed.errors[0].message, expected);
+}
