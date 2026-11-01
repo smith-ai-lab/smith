@@ -28,6 +28,7 @@ L="$HOME/smith-runner-logs"; mkdir -p "$L"
 while :; do
   top=$(gh api repos/$R/issues/73 --jq '.body|split("\n")[0]' 2>/dev/null)
   if [[ $top == *"pool: running"* ]]; then
+    git fetch -q origin main && [ -z "$(git status --porcelain -uno)" ] && git switch -q --detach origin/main && git clean -fdq || { sleep 600; continue; }
     f="$L/$(date +%Y%m%dT%H%M%S)-$LOOP"; start=$(date +%s)
     SMITH_RUNNER_LOOP=1 claude -p "You are a smith runner on the owner's Mac. Load the skill smith-dev-runner and follow it. Take mac tickets first." \
       --model "$MODEL" --permission-mode auto --settings "$SETTINGS" --output-format json > "$f.json" 2> "$f.err"
@@ -38,7 +39,7 @@ while :; do
   fi
 done
 ```
-- **Model:** the runner knows its ticket only after it claims it, so the loop starts it on the medium model from [providers/anthropic.md](../smith-dev-factory/providers/anthropic.md). The runner then hands the work to subagents on the model its ticket's difficulty maps to. Each loop runs in its own worktree of main; #73's N counts the Mac's loops. `cost.tsv` holds a line per run (time, loop, seconds, `total_cost_usd`, turns, error): `column -t ~/smith-runner-logs/cost.tsv`.
+- **Model:** the runner knows its ticket only after it claims it, so the loop starts it on the medium model from [providers/anthropic.md](../smith-dev-factory/providers/anthropic.md). The runner then hands the work to subagents on the model its ticket's difficulty maps to. Each loop runs in its own worktree of main and starts every run from a clean tree at the latest `origin/main` (it waits instead if tracked changes are left, and the runner never reuses the last runner's branch); #73's N counts the Mac's loops. `cost.tsv` holds a line per run (time, loop, seconds, `total_cost_usd`, turns, error): `column -t ~/smith-runner-logs/cost.tsv`.
 - **Paused:** a run under 2 minutes (no ticket, no key, a crash) waits 10 minutes, so it never spins. When #73 says `pool: paused`, it sleeps 5 minutes and checks again. A running runner finishes its ticket first.
 
 ## The mailbox #1406
@@ -55,6 +56,5 @@ while :; do sleep 60; n=$(c length) || continue; [ -z "$n" ] && continue
 - **Never `pkill` or `killall`.** A reparented pid may be another test's process; kill only a pid you started.
 - **Never `smith build install` or `smith build llvm`.** CI's `install` job puts each release in `~/.local/bin`; a hand install breaks the owner's tools.
 - **Your own worktree only.** Build and test a smith under test there, never in the `~/Documents` test beds in place: they are the owner's projects, and two builds in one `.smith/` collide.
-- **Never push to main.** Every change is a pull request through the merge queue; `ci` must pass.
-- **Every PR ends with `## Friction`** (bullets ending `(~N min)`). No model names in commits or PRs. No secrets in a comment, a log or a commit.
+- **Never push to main.** Every change is a pull request through the merge queue; `ci` must pass. Every PR ends with `## Friction` (bullets ending `(~N min)`). No model names in commits or PRs. No secrets in a comment, a log or a commit.
 - **Worktree hygiene:** remove only worktrees that are clean and whose branches are merged. List any with uncommitted or unmerged work, and keep them.
