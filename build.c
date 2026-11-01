@@ -1075,8 +1075,7 @@ static const char *build_units(SmithBuild *b, const BuildConfig *config, const c
     for (size_t i = 0; given[i] != nullptr; i++)
         filtered = filtered || strcmp(given[i], "--test") == 0;
     bool ask_front = filtered && config->hook;
-    const char *others =
-        ask_front ? smith_fmt(b, " '--others' \"$repo/%s/front-project/build/tests\"", folder) : "";
+    const char *others = ask_front ? smith_fmt(b, " '--others' \"$repo/%s/front-project/build/tests\"", folder) : "";
     SmithStep run = {
         .command = (const char *[]){"sh", "-c",
                                     smith_fmt(b, "%s%s env %s \"%s\" test %s%s%s",
@@ -2340,7 +2339,7 @@ static const char *build_gate_feat_commits(SmithRun *run, const char *dir, const
 // .agents/skills and knowledge, or "" when there is none.
 static const char *build_gate_uncommitted(SmithRun *run, const char *dir) {
     const char *const *status = build_gate_git(
-        run, dir, (const char *[]){"status", "--porcelain", "--", ".agents/skills", "knowledge", nullptr});
+        run, dir, (const char *[]){"status", "--porcelain", "-uall", "--", ".agents/skills", "knowledge", nullptr});
     const char *found = "";
     for (size_t i = 0; status != nullptr && status[i] != nullptr; i++)
         found = smith_fmt(run->b, "%s  %s\n", found, status[i]);

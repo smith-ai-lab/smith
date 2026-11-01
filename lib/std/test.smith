@@ -1528,10 +1528,10 @@ typedef struct {
     bool update; // --update: test::golden writes its file
     bool list;
     const char
-        *costs;    // --costs <file>: lines `cpu<TAB>seconds<TAB>name`; the heaviest tests start first (unknown first)
-    U8 macos;      // --macos-only (1): only the macOS-only tests; --skip-macos (2): all the others; 0: every test
-    bool partial;  // --partial: this runner is one of several `smith test` runs, so a filter that selects none of its
-                   // tests is no error
+        *costs;   // --costs <file>: lines `cpu<TAB>seconds<TAB>name`; the heaviest tests start first (unknown first)
+    U8 macos;     // --macos-only (1): only the macOS-only tests; --skip-macos (2): all the others; 0: every test
+    bool partial; // --partial: this runner is one of several `smith test` runs, so a filter that selects none of its
+                  // tests is no error
     const char *others; // --others <runner>: the other runner of the run; a filter that selects none of ours but some
                         // of its tests (it is asked with --list) is no error either
     bool cheapest; // --cheapest: with --costs, the cheapest tests start first instead (a selection under --fail-fast)
@@ -3839,22 +3839,35 @@ bool filter_matches_any(const Options *options) {
 }
 
 // Whether the other runner (--others) has a test the filter selects: it lists them (`--list`) and any line says yes.
-// A path or a filter with a quote is not asked.
+// It is started with execv, so no quoting is needed.
 bool other_runner_matches(const Options *options) {
     if (options->others == nullptr || options->filter == nullptr) return false;
-    if (c::strchr(options->others, '\'') != nullptr || c::strchr(options->filter, '\'') != nullptr) return false;
-    char command[4096];
-    I32 length = __builtin_snprintf(command, sizeof command, "'%s' --list --test '%s'%s 2>/dev/null", options->others,
-                                    options->filter,
-                                    options->macos == 1   ? " --macos-only"
-                                    : options->macos == 2 ? " --skip-macos"
-                                                          : "");
-    if (length < 0 || (Usize)length >= sizeof command) return false;
-    c::FILE *listing = c::popen(command, "r");
-    if (listing == nullptr) return false;
-    char line[512];
-    bool found = c::fgets(line, sizeof line, listing) != nullptr;
-    c::pclose(listing);
+    I32 ends[2];
+    if (c::pipe(ends) != 0) return false;
+    c::fflush(nullptr);
+    c::pid_t child = c::fork();
+    if (child == 0) {
+        c::dup2(ends[1], stdout_fd);
+        c::close(ends[0]);
+        c::close(ends[1]);
+        I32 quiet = c::open("/dev/null", write_only);
+        if (quiet >= 0) c::dup2(quiet, stderr_fd);
+        char *arguments[6] = {(char *)(c::uintptr_t)options->others, (char *)"--list", (char *)"--test",
+                              (char *)(c::uintptr_t)options->filter, nullptr,          nullptr};
+        if (options->macos != 0) arguments[4] = (char *)(options->macos == 1 ? "--macos-only" : "--skip-macos");
+        c::execv(arguments[0], arguments);
+        c::_exit(127);
+    }
+    c::close(ends[1]);
+    if (child < 0) {
+        c::close(ends[0]);
+        return false;
+    }
+    char byte;
+    bool found = c::read(ends[0], &byte, 1) == 1;
+    c::close(ends[0]);
+    I32 status = 0;
+    c::waitpid(child, &status, 0);
     return found;
 }
 
@@ -4085,16 +4098,17 @@ static Options default_options(Runner *runner) {
 // The runner's usage: on stderr after a bad option, on stdout (and exit 0) for --help or -h.
 static void say_usage(const Runner *runner, bool help) {
     static char text[1280];
-    __builtin_snprintf(text, sizeof text,
-                       "usage: %s [--test <names>] [--seed <n>] [--seeds <1 to %ju>] [--jobs <1 to %zu>] "
-                       "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds "
-                       "<seconds>] [--shuffle <seed>] [--shard <i>/<n>] [--macos-only|--skip-macos] [--partial] "
-                       "[--others <runner>] [--isolate] [--in-process] [--full] [--update] [--list] [--fail-fast] [--costs <file>] "
-                       "[--cheapest] [--idle-timeout <seconds>] [--verbose] [--stats] [--trace] [--color] "
-                       "[--explain <smith>] [--explain-max <n>] [--no-explain] [--unchecked] [-h|--help]\n"
-                       "--test takes a test file's path, a name (x_test, x_test::name) or a * pattern (x*), not a "
-                       "prefix; --update writes the files of the selected tests (every test without --test)\n",
-                       runner->argv[0], (c::uintmax_t)seeds_max, jobs_max);
+    __builtin_snprintf(
+        text, sizeof text,
+        "usage: %s [--test <names>] [--seed <n>] [--seeds <1 to %ju>] [--jobs <1 to %zu>] "
+        "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds "
+        "<seconds>] [--shuffle <seed>] [--shard <i>/<n>] [--macos-only|--skip-macos] [--partial] "
+        "[--others <runner>] [--isolate] [--in-process] [--full] [--update] [--list] [--fail-fast] [--costs <file>] "
+        "[--cheapest] [--idle-timeout <seconds>] [--verbose] [--stats] [--trace] [--color] "
+        "[--explain <smith>] [--explain-max <n>] [--no-explain] [--unchecked] [-h|--help]\n"
+        "--test takes a test file's path, a name (x_test, x_test::name) or a * pattern (x*), not a "
+        "prefix; --update writes the files of the selected tests (every test without --test)\n",
+        runner->argv[0], (c::uintmax_t)seeds_max, jobs_max);
     if (help) {
         say("%s", text);
     } else {
