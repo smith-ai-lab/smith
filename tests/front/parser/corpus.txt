@@ -46,14 +46,14 @@ enum-builtin-option-result/main.smith: ok
 enum-builtin-option-result/parser.smith: ok
 enum-c-rule/main.smith: C, out of scope
 enum-convert/main.smith: ok
-enum-convert-gaps/main.smith: error: `struct Box` is C's spelling: a tag is a type name, write `Box` (35:16)
+enum-convert-gaps/main.smith: ok
 enum-generic-derived-result/keep.smith: ok
 enum-generic-derived-result/main.smith: ok
 enum-generic-import-in-function/lists.smith: ok
 enum-generic-import-in-function/main.smith: ok
 enum-generic-return/find.smith: ok
 enum-generic-return/main.smith: ok
-enum-option-slice/main.smith: error: declare the type by itself: write `struct Name {...};`, then `Name x;` for the variable (11:12)
+enum-option-slice/main.smith: error: `struct smith_array_T_n` names a C tag; write `struct c::smith_array_T_n` (11:12)
 enum-option-slice-assign/main.smith: ok
 enum-payload-lowering/shapes.smith: ok
 enum-payload-module/main.smith: ok
@@ -80,7 +80,7 @@ error-array-param-unsized/main.smith: error: an array needs a size: write `[N]`,
 error-c-name/std/names.smith: error: expected a variant name, found `,` (33:53)
 error-c-name-function/uses/math.smith: ok
 error-c-name-macro/uses/macro.smith: ok
-error-c-name-tag/uses/tag.smith: error: declare the type by itself: write `struct Name {...};`, then `Name x;` for the variable (5:12)
+error-c-name-tag/uses/tag.smith: error: `struct stat` names a C tag; write `struct c::stat` (5:12)
 error-concept-notes/main.smith: error: expected a variant name, found `,` (5:18)
 error-concept-notes/stats.smith: ok
 error-constexpr-c/main.smith: C, out of scope
@@ -164,21 +164,21 @@ error-plain-c-macro/main.smith: C, out of scope
 error-plain-c-name/main.smith: C, out of scope
 error-plain-c-tag/main.smith: C, out of scope
 error-private-prototype-exported/p.smith: ok
-error-range-for/main.smith: error: expected `;` after the declaration, found `:` (6:16)
+error-range-for/main.smith: error: a range `for` declares an index and an element at most: `for (Usize i, T x : xs)` (11:26)
 error-slice-const-discards/main.smith: ok
-error-slice-const-write/main.smith: error: expected a type, found `:` (13:20)
+error-slice-const-write/main.smith: ok
 error-slice-dims-across-rows/main.smith: ok
 error-slice-dims-fixed-slice/main.smith: ok
 error-slice-dims-group/main.smith: ok
 error-slice-dims-shape/main.smith: ok
-error-slice-initializer/main.smith: error: `struct Pair` is C's spelling: a tag is a type name, write `Pair` (16:17)
+error-slice-initializer/main.smith: ok
 error-slice-initializer-unread/main.smith: error: expected a tag name after `struct`, `union` or `enum` (12:11)
 error-slice-negative/main.smith: ok
 error-slice-not-sliceable/main.smith: ok
 error-slice-pointer-argument/main.smith: ok
 error-slice-pointer-bounds/main.smith: ok
 error-slice-pointer-discards/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (5:24)
-error-slice-qualifier-bracket/main.smith: error: expected an expression, found `static` (6:25)
+error-slice-qualifier-bracket/main.smith: error: `static` has no meaning for a slice: write `const` or `restrict` in the bracket, and `volatile` on the element (`volatile U8 xs[:]`) (6:25)
 error-slice-step/main.smith: error: expected `]` to end the index, found `:` (10:33)
 error-stale-header/main.smith: C, out of scope
 error-standard-type/main.smith: C, out of scope
@@ -216,7 +216,7 @@ filescope-if-dropped-macro/errors.smith: ok
 filescope-if-dropped-macro/main.smith: C, out of scope
 filescope-if-header/main.smith: C, out of scope
 filescope-if-header/report.smith: ok
-filescope-if-imports/clock.smith: error: declare the type by itself: write `struct Name {...};`, then `Name x;` for the variable (22:16)
+filescope-if-imports/clock.smith: ok
 filescope-if-imports/main.smith: C, out of scope
 filescope-if-reflect/count.smith: ok
 filescope-if-reflect/main.smith: ok
@@ -229,7 +229,7 @@ function-pointer-typedef-result/main.smith: error: expected `;` after the import
 function-pointer-typedef-result/hook/table.smith: C, out of scope
 generic-argument-names/args.smith: ok
 generic-argument-names/main.smith: ok
-generic-array-pointer/main.smith: error: `struct State` is C's spelling: a tag is a type name, write `State` (12:18)
+generic-array-pointer/main.smith: ok
 generic-array-pointer/reach.smith: ok
 generic-auto/main.smith: C, out of scope
 generic-auto/pick.smith: ok
@@ -245,7 +245,7 @@ generic-auto-constants/main.smith: C, out of scope
 generic-auto-constants/pick.smith: ok
 generic-auto-constants-error/main.smith: C, out of scope
 generic-auto-constants-error/pick.smith: ok
-generic-auto-element/main.smith: error: `struct Point` is C's spelling: a tag is a type name, write `Point` (26:18)
+generic-auto-element/main.smith: ok
 generic-auto-element/stats.smith: ok
 generic-auto-error/main.smith: C, out of scope
 generic-auto-error/pick.smith: ok
@@ -287,13 +287,13 @@ generic-concept-element/stats.smith: ok
 generic-concept-local/main.smith: C, out of scope
 generic-concept-param/main.smith: ok
 generic-concept-param/stats.smith: ok
-generic-countof-member/main.smith: error: `struct S` is C's spelling: a tag is a type name, write `S` (12:14)
+generic-countof-member/main.smith: ok
 generic-countof-member/walk.smith: error: expected a member name, found `[` (8:24)
 generic-element-convert/main.smith: ok
 generic-element-convert/stats.smith: ok
 generic-error-instance/main.smith: ok
 generic-error-instance/num.smith: ok
-generic-field-element/main.smith: error: `struct Floats` is C's spelling: a tag is a type name, write `Floats` (12:19)
+generic-field-element/main.smith: ok
 generic-field-element/walk.smith: error: expected a member name, found `[` (8:41)
 generic-fields/main.smith: ok
 generic-fields/reflect.smith: error: expected a member name, found `[` (10:42)
@@ -314,8 +314,8 @@ generic-fields-values/walk.smith: error: expected a field name, found `,` (13:8)
 generic-for-constexpr-error/bad.smith: error: expected `)`, found `,` (5:45)
 generic-for-constexpr-error/main.smith: ok
 generic-for-range/main.smith: ok
-generic-for-range/reflect.smith: error: expected `;` after the declaration, found `:` (9:27)
-generic-for-range-error/main.smith: error: one name per declaration: write `Usize i;` and `Usize Usize;` (5:27)
+generic-for-range/reflect.smith: error: expected a member name, found `[` (10:42)
+generic-for-range-error/main.smith: error: a range `for` declares an index and an element at most: `for (Usize i, T x : xs)` (5:36)
 generic-function/apply.smith: ok
 generic-function/main.smith: ok
 generic-function-error/apply.smith: ok
@@ -383,30 +383,30 @@ generic-sized-result-sizeof/main.smith: C, out of scope
 generic-sized-result-sizeof/size.smith: ok
 generic-slice/main.smith: error: expected `)`, found `T` (12:27)
 generic-slice/stats.smith: ok
-generic-slice-const/main.smith: error: expected a type, found `:` (11:36)
+generic-slice-const/main.smith: ok
 generic-slice-const/stats.smith: ok
-generic-slice-convert/conv.smith: error: expected a type, found `:` (22:40)
-generic-slice-convert/main.smith: error: expected a type, found `:` (6:46)
+generic-slice-convert/conv.smith: ok
+generic-slice-convert/main.smith: ok
 generic-slice-convert-error/conv.smith: ok
 generic-slice-convert-error/main.smith: ok
 generic-slice-derived/main.smith: ok
-generic-slice-derived/same.smith: error: expected a type, found `:` (12:36)
-generic-slice-init/conv.smith: error: expected a type, found `:` (20:19)
-generic-slice-init/main.smith: error: expected a type, found `:` (10:21)
+generic-slice-derived/same.smith: ok
+generic-slice-init/conv.smith: ok
+generic-slice-init/main.smith: ok
 generic-slice-init-error/conv.smith: ok
 generic-slice-init-error/main.smith: ok
-generic-slice-local/conv.smith: error: expected a type, found `:` (50:19)
-generic-slice-local/main.smith: error: expected a type, found `:` (10:21)
+generic-slice-local/conv.smith: ok
+generic-slice-local/main.smith: ok
 generic-slice-option-typedef/cursor.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (5:57)
 generic-slice-option-typedef/main.smith: ok
 generic-slice-pointer-auto/cursor.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (5:30)
 generic-slice-pointer-auto/main.smith: ok
 generic-slice-pointer-result/main.smith: ok
 generic-slice-pointer-result/repro.smith: ok
-generic-slice-qualifiers-auto/copy.smith: error: expected a type, found `:` (6:36)
+generic-slice-qualifiers-auto/copy.smith: ok
 generic-slice-qualifiers-auto/main.smith: ok
 generic-slice-restrict/main.smith: ok
-generic-slice-restrict/pair.smith: error: expected a type, found `:` (6:43)
+generic-slice-restrict/pair.smith: error: expected an expression, found `_Generic` (7:12)
 generic-slice-type-argument/main.smith: ok
 generic-slice-type-argument/probe.smith: ok
 generic-slice-typedef/counting.smith: ok
@@ -513,8 +513,8 @@ plain-include-keeps-c-names/main.smith: C, out of scope
 plain-names/main.smith: C, out of scope
 plain-sized-shadow/main.smith: C, out of scope
 postfix-after-compound-literal/main.smith: error: expected `;` after the type, found `__attribute__` (10:18)
-range-for/main.smith: error: expected `;` after the declaration, found `:` (14:16)
-range-for-generic/loops.smith: error: expected `;` after the declaration, found `:` (7:17)
+range-for/main.smith: ok
+range-for-generic/loops.smith: ok
 range-for-generic/main.smith: ok
 reflect-questions/main.smith: C, out of scope
 reflection-doc-if-constexpr/main.smith: ok
@@ -530,19 +530,19 @@ sized-no-leak-into-c/lib/shape.smith: ok
 sized-own-typedef/main.smith: C, out of scope
 sized-types/main.smith: C, out of scope
 slice-dims-lowering/dims.smith: ok
-slice-dims-run/main.smith: error: `struct Grid` is C's spelling: a tag is a type name, write `Grid` (46:17)
+slice-dims-run/main.smith: ok
 slice-export-sanitize/main.smith: ok
 slice-export-sanitize/r.smith: ok
-slice-initializer-run/main.smith: error: `struct Pair` is C's spelling: a tag is a type name, write `Pair` (31:17)
+slice-initializer-run/main.smith: ok
 slice-literal-initializers/main.smith: ok
 slice-lowering/slices.smith: ok
 slice-module-type-argument/key.smith: ok
 slice-module-type-argument/main.smith: ok
 slice-pointer-lowering/pointers.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (7:34)
 slice-pointer-run/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (10:34)
-slice-qualifiers-lowering/qualifiers.smith: error: expected a type, found `:` (9:23)
-slice-qualifiers-run/main.smith: error: expected a type, found `:` (20:34)
-slice-run/main.smith: error: `struct Bag` is C's spelling: a tag is a type name, write `Bag` (48:16)
+slice-qualifiers-lowering/qualifiers.smith: ok
+slice-qualifiers-run/main.smith: ok
+slice-run/main.smith: ok
 slice-text-in-comment/hold.smith: error: expected `;`, found `arguments` (27:23)
 slice-text-in-comment/main.smith: ok
 slice-text-in-library/main.smith: ok
@@ -550,7 +550,7 @@ slice-text-in-library/pool.smith: ok
 std-default-c2y/main.smith: C, out of scope
 str-c-rule/main.smith: C, out of scope
 str-lowering/words.smith: ok
-str-module/main.smith: error: declare the type by itself: write `struct Name {...};`, then `Name x;` for the variable (12:12)
+str-module/main.smith: ok
 str-module/words.smith: ok
 str-run/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (26:23)
 str-typedef-lowering/text.smith: ok
@@ -582,11 +582,11 @@ type-function-typeof/main.smith: error: expected `;`, found `x` (12:10)
 type-plain-name/main.smith: C, out of scope
 type-query/main.smith: C, out of scope
 type-value/main.smith: C, out of scope
-type-value-declarator/main.smith: error: expected a name, found `Handler` (15:16)
+type-value-declarator/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (15:35)
 type-value-generic/main.smith: C, out of scope
 type-value-generic/size.smith: ok
 type-value-header/main.smith: ok
-type-value-header/geo/units.smith: error: expected a name, found `Meters` (9:23)
+type-value-header/geo/units.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (10:37)
 type-value-import/main.smith: error: expected a name, found `(` (7:24)
 type-value-import/shapes.smith: ok
 type-value-main-only/main.smith: C, out of scope
@@ -597,14 +597,14 @@ type-value-slice/main.smith: error: expected `)`, found `T` (8:27)
 type-value-use/main.smith: C, out of scope
 type-value-use/pool.smith: ok
 type-value-windows/wide.smith: ok
-typetag-module/main.smith: error: declare the type by itself: write `struct Name {...};`, then `Name x;` for the variable (12:12)
+typetag-module/main.smith: ok
 typetag-module/geo/shapes.smith: ok
-typetag-run/main.smith: error: `struct Point` is C's spelling: a tag is a type name, write `Point` (72:18)
+typetag-run/main.smith: ok
 unused-name-library/barrier.smith: ok
 unused-name-library/main.smith: ok
 unused-run/main.smith: ok
 value-query/main.smith: C, out of scope
-value-query-for/loop.smith: error: `struct Config` is C's spelling: a tag is a type name, write `Config` (7:25)
+value-query-for/loop.smith: ok
 value-query-for/main.smith: C, out of scope
 value-query-if/main.smith: C, out of scope
 value-query-if/size.smith: ok
@@ -612,4 +612,4 @@ value-query-plain/main.smith: C, out of scope
 value-query-windows/size.smith: ok
 void-pointer-cast/main.smith: ok
 void-pointer-plain/main.smith: C, out of scope
-total 614, ok 323, error 167, C 124, skipped 0
+total 614, ok 351, error 139, C 124, skipped 0
