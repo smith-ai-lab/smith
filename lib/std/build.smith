@@ -96,7 +96,7 @@ module std::build;
 
 // -Dname. An option can be read again: the same name and kind returns the same value and the description may then be
 // nullptr, so a build::defer callback can read what build() read. The other kind is an error
-[[std::c_name("smith_option")]] export bool Option(Build *b, const char *name, const char *description);
+[[std::c_name("smith_option")]] export bool option(Build *b, const char *name, const char *description);
 // -Dname=value; fallback may be nullptr
 [[std::c_name("smith_option_value")]] export const char *option_value(Build *b, const char *name, const char *fallback,
                                                                       const char *description);

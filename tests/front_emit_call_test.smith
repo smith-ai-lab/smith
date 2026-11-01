@@ -188,11 +188,11 @@ static emit::Error failure_of(const ast::Module *m) {
 static void add_product(emit_jit::Jit *host, Str symbol, U32 count) {
     c::LLVMContextRef context = c::LLVMContextCreate();
     c::LLVMModuleRef ir = c::LLVMModuleCreateWithNameInContext("other", context);
-    c::LLVMTypeRef I32 = c::LLVMInt32TypeInContext(context);
+    c::LLVMTypeRef i32 = c::LLVMInt32TypeInContext(context);
     c::LLVMTypeRef types[2];
-    types[0] = I32;
-    types[1] = I32;
-    c::LLVMTypeRef type = c::LLVMFunctionType(I32, types, count, 0);
+    types[0] = i32;
+    types[1] = i32;
+    c::LLVMTypeRef type = c::LLVMFunctionType(i32, types, count, 0);
     c::LLVMValueRef function = c::LLVMAddFunction(ir, symbol.data, type); // a literal ends with a terminator
     c::LLVMBasicBlockRef entry = c::LLVMAppendBasicBlockInContext(context, function, "entry");
     c::LLVMBuilderRef builder = c::LLVMCreateBuilderInContext(context);
@@ -214,11 +214,11 @@ static void add_product(emit_jit::Jit *host, Str symbol, U32 count) {
 static void add_tick(emit_jit::Jit *host) {
     c::LLVMContextRef context = c::LLVMContextCreate();
     c::LLVMModuleRef ir = c::LLVMModuleCreateWithNameInContext("other", context);
-    c::LLVMTypeRef I32 = c::LLVMInt32TypeInContext(context);
-    c::LLVMValueRef seen = c::LLVMAddGlobal(ir, I32, "front::test::seen");
-    c::LLVMSetInitializer(seen, c::LLVMConstInt(I32, 0, 0));
+    c::LLVMTypeRef i32 = c::LLVMInt32TypeInContext(context);
+    c::LLVMValueRef seen = c::LLVMAddGlobal(ir, i32, "front::test::seen");
+    c::LLVMSetInitializer(seen, c::LLVMConstInt(i32, 0, 0));
     c::LLVMTypeRef types[1];
-    types[0] = I32;
+    types[0] = i32;
     c::LLVMTypeRef type = c::LLVMFunctionType(c::LLVMVoidTypeInContext(context), types, 1, 0);
     c::LLVMValueRef function = c::LLVMAddFunction(ir, "front::test::tick", type);
     c::LLVMBasicBlockRef entry = c::LLVMAppendBasicBlockInContext(context, function, "entry");
