@@ -82,6 +82,16 @@ A type is used by its tag as a type name: `struct Pair a = {...};` as a local, a
 
 `emit_object::write(module, ObjectOptions, path)` writes an LLVM module to an object file and gives `path` back, or an `emit::Error`. The target is the caller's (`options.target.triple`, plus `cpu` and `features`, empty for the triple's defaults; `optimization` 0..3 only sets the code generator's level, no passes run); nothing reads the host. It registers every target the linked LLVM has (`LLVMInitializeAll*`), makes a PIC machine, and refuses a module whose data layout is not the machine's ("emitted for another target") before writing. LLVM's messages are copied into the current allocator. `tests/front_emit_object_test.smith` writes `add.o`, links it with a `main.c` through `smith cc` (lld in smith's process) and runs it; the C side names the symbol with `__asm__("front::test::add")`, with a leading `_` on macOS.
 
+## front::types (`front/types.smith`, #1220 J1a)
+
+The types of the front end and the checker's entry point; the API is the comment at the top of the file. J1b (expressions), J1c (conversions) and J1d (declarations, statements, calls) build on it.
+
+- **`Ty` is interned** in a `Table` (named `Ty`, not `Type`, which is the type of types; the result is `Checked`, as a struct named `Result` reads as the type function `result`): two types are the same exactly when their `TypeRef`s are equal. A record and an enumeration are nominal (one per declaration); every other type is equal by structure. `const` on a pointee, array element or slice element is part of the type; `const` on a variable is the variable's `Symbol.is_const`.
+- **Sizes belong to the target**: `layout(&target, t)` takes a `Target` (pointer width, largest alignment), never the host, so a GPU target has its own. `Usize` and `Isize` are the pointer's width and are their own types.
+- **Names are resolved here**: `Scopes` is a stack of `Symbol`s (`declare`, `lookup`, `lookup_path`); a name from a C header is declared as `c::name`. Records and enumerations are declared first, then typedefs in order, then fields, signatures and variables, so use before declaration works for records only.
+- **`types::check(module, options)`** returns a `Checked`: the table, the module's scope, the errors and a side table of expression types keyed by node (`set_type`, `type_of`; no field in `front/ast.smith`, the interface to the emitter is #1220's open question). `options.bodies` is the hook J1d fills to check function bodies, since J1a cannot import it. A construct J1 does not type is reported as `not yet typed: <kind>`.
+- **No recursion**: `resolve` (a `TypeExpr` as a `TypeRef`), `layout` and `show` use explicit stacks. Tests: `tests/front_types_test.smith`, golden `tests/front/types/`.
+
 ## front::cimport (track C)
 
 Declarations read from C headers become these same nodes; its concept comes with #1117 (`c-header-import.md`), and links here once that file exists.
