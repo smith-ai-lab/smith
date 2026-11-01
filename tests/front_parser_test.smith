@@ -30,13 +30,10 @@ import std::test;
 // An error that is in no class, or a listed file that parses, fails the test; a change to the parsers shows here and in
 // the golden.
 static Str gap_a1() {
-    return "c-array-bound/grid.smith\n"
-           "enum-option-slice/main.smith\n"
+    return "enum-option-slice/main.smith\n"
            "error-lambda-param-untyped/main.smith\n"
            "error-range-for/main.smith\n"
-           "error-slice-initializer-unread/main.smith\n"
-           "error-type-value-import/main.smith\n"
-           "generic-fields-error/main.smith\n";
+           "error-type-value-import/main.smith\n";
 }
 static Str gap_a2() {
     return "generic-slice-restrict/pair.smith\n"
