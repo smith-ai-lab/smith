@@ -252,3 +252,106 @@ export void test_front_ast_a_tree_built_in_an_arena_makes_no_heap_allocation() {
     test::check_condition(allocator.base.owns(&allocator.base, text.data));
     test::check_condition(mem::allocator() == &allocator.base);
 }
+
+// Smith's own syntax (#1428, S0): mutability, visibility, attributes and the new types.
+//   @inline pub fn scale(mut p: *mut Point, const n: usize, f: fn(I32) -> I32, g: fn_once(I32) -> I32) -> ?I32
+//   grid: [5,3]I32;  rows: [,3]I32;  cells: [,]I32;  x: mut I32 = 0
+export void test_front_ast_dump_of_the_new_syntax_declarations() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::TypeRef one_param[1] = {ast::named("I32")};
+    ast::Param params[4] = {ast::param("p", ast::pointer_to(ast::named("Point"), true)),
+                            ast::param("n", ast::named("Usize")),
+                            ast::param("f", ast::function_type(one_param, ast::named("I32"), false)),
+                            ast::param("g", ast::function_type(one_param, ast::named("I32"), true))};
+    params[0].is_mut = true;
+    params[1].is_const = true;
+    ast::Decl *scale = ast::function("scale", params, ast::option_of(ast::named("I32")), nullptr);
+    scale->is_pub = true;
+    ast::Attribute attributes[2] = {ast::attribute("inline"), ast::attribute("cold")};
+    ast::ExprRef attribute_args[1] = {ast::integer(2)};
+    attributes[1].args = attribute_args;
+    scale->attributes = attributes;
+    ast::ExprRef both[2] = {ast::integer(5), ast::integer(3)};
+    ast::ExprRef empty_first[2] = {nullptr, ast::integer(3)};
+    ast::ExprRef empty_both[2] = {nullptr, nullptr};
+    ast::Decl *grid = ast::variable("grid", ast::block_of(ast::named("I32"), both), nullptr);
+    ast::Decl *rows = ast::variable("rows", ast::block_of(ast::named("I32"), empty_first), nullptr);
+    ast::Decl *cells = ast::variable("cells", ast::block_of(ast::named("I32"), empty_both), nullptr);
+    ast::Decl *counter = ast::variable("x", ast::named("I32"), ast::integer(0));
+    if (counter->kind == .variable) counter->kind.variable.is_mut = true;
+    ast::DeclRef decls[5] = {scale, grid, rows, cells, counter};
+    ast::Module m = ast::new_module("syntax", decls);
+    test::golden("tests/front/ast/syntax_declarations.txt", ast::dump(&m));
+}
+
+// Point(x = 1)  .circle(r)  .empty  (a, b)  [1, 2]  p.*  x as U8  fn[a](x) { ... }  if as a value
+export void test_front_ast_dump_of_the_new_syntax_expressions() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::ExprRef named_args[1] = {ast::named_arg("x", ast::integer(1))};
+    ast::ExprRef pair[2] = {ast::name("a"), ast::name("b")};
+    ast::ExprRef numbers[2] = {ast::integer(1), ast::integer(2)};
+    ast::StmtRef no_items_array[1] = {};
+    ast::StmtRef lambda_items[1] = {ast::return_value(ast::name("x"))};
+    ast::Identifier captures[1] = {ast::ident("a")};
+    ast::Param lambda_params[1] = {ast::param("x", nullptr)};
+    ast::Stmt *branch = ast::stmt({.if_stmt = {
+                                       .condition = ast::name("ok"),
+                                       .then_branch = ast::block(no_items_array[0:0]),
+                                       .else_branch = ast::block(no_items_array[0:0]),
+                                   }});
+    ast::Identifier capture_list[:] = captures;
+    ast::Param param_list[:] = lambda_params;
+    ast::Stmt *lambda_body = ast::block(lambda_items);
+    ast::ExprKind lambda_kind = {.lambda = {.captures = capture_list, .params = param_list, .body = lambda_body}};
+    ast::Expr *lambda = ast::expr(lambda_kind);
+    ast::ExprRef values[9] = {
+        ast::call(ast::name("Point"), named_args),
+        ast::variant_of("circle", ast::name("r")),
+        ast::variant_of("empty", nullptr),
+        ast::tuple_literal(pair),
+        ast::array_literal(numbers),
+        ast::deref(ast::name("p")),
+        ast::as_cast(ast::name("x"), ast::named("U8")),
+        lambda,
+        ast::stmt_expr(branch),
+    };
+    ast::Decl *table = ast::variable("values", nullptr, ast::tuple_literal(values));
+    ast::DeclRef decls[1] = {table};
+    ast::Module m = ast::new_module("syntax", decls);
+    test::golden("tests/front/ast/syntax_expressions.txt", ast::dump(&m));
+}
+
+// match shape { .circle(r) => r, .square, .rect => 0 }  for (i, x) in xs { }  for x in xs { }  (q, r) := f()
+// if let .some(v) = o { } else { }
+export void test_front_ast_dump_of_the_new_syntax_statements() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::Pattern circle[1] = {ast::pattern("circle", "r")};
+    ast::Pattern others[2] = {ast::pattern("square", ""), ast::pattern("rect", "")};
+    ast::MatchArm arms[2] = {ast::match_arm(circle, ast::name("r")), ast::match_arm(others, ast::integer(0))};
+    ast::StmtRef none[1] = {};
+    ast::Identifier pair[2] = {ast::ident("i"), ast::ident("x")};
+    ast::Identifier one[1] = {ast::ident("x")};
+    ast::Identifier results[2] = {ast::ident("q"), ast::ident("r")};
+    ast::ExprRef no_args[1] = {};
+    ast::StmtRef statements[5] = {
+        ast::match_stmt(ast::name("shape"), arms),
+        ast::for_in(pair, true, ast::name("xs"), ast::block(none[0:0])),
+        ast::for_in(one, false, ast::name("xs"), ast::block(none[0:0])),
+        ast::destructure(results, false, ast::call(ast::name("f"), no_args[0:0])),
+        ast::if_let(ast::pattern("some", "v"), ast::name("o"), ast::block(none[0:0]), ast::block(none[0:0])),
+    };
+    ast::Param no_param[1] = {};
+    ast::Decl *function = ast::function("run", no_param[0:0], ast::named("Void"), ast::block(statements));
+    ast::DeclRef decls[1] = {function};
+    ast::Module m = ast::new_module("syntax", decls);
+    test::golden("tests/front/ast/syntax_statements.txt", ast::dump(&m));
+}
