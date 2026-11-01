@@ -1,0 +1,1431 @@
+// front::cimport_cache (#1112 track C, #1130): a cache for front::cimport. A header is read once and its declarations
+// are kept as smith types, so the second `import <stdio.h>;` does not parse the header and everything it includes.
+//
+// `read` has the parameters and the result of cimport::read. It is a hit, or it calls cimport::read and stores the
+// result. Not wired into `smith cc`: the work shows through tests/front_cimport_cache_test.smith.
+//
+// Where: <cache>/smith/cimport/<clang identity>/<key>, <cache> being $XDG_CACHE_HOME or ~/.cache. It is a kind inside
+// smith's general cache (the 31-day rule), not a third cache. The identity is what `smith cc --smith-which` prints
+// (from lib/smith-clang.id), because the declarations depend on the clang that read them.
+//
+// The key hashes the header as written, the importer's folder (for "h"), the flags that change what clang reads
+// (not warnings, optimization, debug information, sanitizers or dependency output), the working folder when a path is
+// relative, and the format version of this file.
+//
+// Depend mode (ccache's): an entry lists every file clang read for the header, each with its size, modification time
+// and a content hash (shim/cimport_deps.cpp). A hit checks the size and time of each, and the hash only when those
+// differ, so a touched file whose content is the same still hits (and the entry then records the new time); a changed
+// file is a miss and the entry is replaced. One case is not seen: a new file that an earlier folder of the search now
+// shadows.
+//
+// The entry is a compact binary form: tables of expressions and types (a node refers to the ones before it), then the
+// declarations. The writer and the reader walk a tree with a stack of their own, as a module has no recursion. A
+// declaration made of something the form has no row for (an attribute, a function body, a lambda) is not stored, and
+// the read goes on without the cache. A corrupt or truncated entry is a miss, never a crash. Writes go to
+// `<key>.tmp-<pid>` and are renamed, so parallel compiles are safe.
+//
+// A hit touches `<key>.used` when it is more than a day old. Pruning, `SMITH_CACHE_MAX` and `smith cache` come with the
+// join (J2), when cimport is reachable from `smith cc`.
+module front::cimport_cache;
+
+import <string.h>;
+import <time.h>;
+import <unistd.h>;
+
+import front::ast;
+import front::cimport;
+import std::arena;
+import std::env;
+import std::files;
+import std::format;
+import std::mem;
+import std::process;
+
+typedef cimport::Header Header;
+
+// A formatted text as a Str: the same bytes.
+static Str str_of(format::Chars text) {
+    return format::bytes(text.data, countof(text));
+}
+
+// Keep in step with SmithCimportRequest in shim/cimport.cpp.
+struct Request {
+    const char *name;
+    I32 quoted;
+    const char *folder;
+    const char *flags;
+};
+
+extern Usize smith_cimport_deps(const Request *request, char *out, Usize capacity);
+extern I32 smith_cimport_file_state(const char *path, U64 *size, I64 *mtime);
+extern void smith_cimport_hash(const void *bytes, Usize count, U64 *out);
+extern I32 smith_cimport_file_hash(const char *path, U64 *out);
+
+// Changes whenever the stored form below changes.
+constexpr U32 format_version = 1;
+constexpr U32 magic = 0x43494353; // "SCIC"
+constexpr U32 none = 0xFFFFFFFFU;
+constexpr I64 day = 86'400;
+
+// The tags of the rows.
+constexpr U32 expr_integer = 1;
+constexpr U32 expr_floating = 2;
+constexpr U32 expr_character = 3;
+constexpr U32 expr_boolean = 4;
+constexpr U32 expr_null = 5;
+constexpr U32 expr_name = 6;
+constexpr U32 expr_unary = 7;
+constexpr U32 expr_binary = 8;
+constexpr U32 expr_string = 9;
+constexpr U32 type_named = 1;
+constexpr U32 type_auto = 2;
+constexpr U32 type_pointer = 3;
+constexpr U32 type_array = 4;
+constexpr U32 type_slice = 5;
+constexpr U32 type_function = 6;
+constexpr U32 type_applied = 7;
+constexpr U32 type_unsupported = 8;
+constexpr U32 decl_variable = 1;
+constexpr U32 decl_function = 2;
+constexpr U32 decl_record = 3;
+constexpr U32 decl_enumeration = 4;
+constexpr U32 decl_alias = 5;
+constexpr U32 unary_ops = 10;  // the number of ast::UnaryOp
+constexpr U32 binary_ops = 18; // the number of ast::BinaryOp
+
+// What the reads of this process did. The tests count the reads by these.
+static U32 hit_count;
+static U32 miss_count;
+static U32 content_check_count;
+
+export U32 hits() {
+    return hit_count;
+}
+
+export U32 misses() {
+    return miss_count;
+}
+
+// How many files a hit had to read to compare their content (their time or size had changed).
+export U32 content_checks() {
+    return content_check_count;
+}
+
+export void reset_counts() {
+    hit_count = 0;
+    miss_count = 0;
+    content_check_count = 0;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Bytes in, bytes out
+
+struct Bytes {
+    arena::Arena *memory;
+    U8 data[:];
+    Usize used;
+};
+
+static void bytes_reserve(Bytes *w, Usize more) {
+    if (w->used + more <= countof(w->data)) return;
+    Usize size = 2 * countof(w->data);
+    if (size < w->used + more) {
+        size = w->used + more + 4096;
+    }
+    U8 grown[:] = arena::push_slice(w->memory, U8, size);
+    if (w->used > 0) {
+        mem::copy(grown[0:w->used], w->data[0:w->used]);
+    }
+    w->data = grown;
+}
+
+static void put_u32(Bytes *w, U32 value) {
+    bytes_reserve(w, 4);
+    for (Usize i = 0; i < 4; i++)
+        w->data[w->used + i] = (U8)((value >> (8 * i)) & 0xFF);
+    w->used += 4;
+}
+
+static void put_u64(Bytes *w, U64 value) {
+    put_u32(w, (U32)(value & 0xFFFFFFFFU));
+    put_u32(w, (U32)(value >> 32));
+}
+
+static void put_bool(Bytes *w, Bool value) {
+    put_u32(w, value ? 1 : 0);
+}
+
+static void put_str(Bytes *w, Str text) {
+    put_u32(w, (U32)countof(text));
+    bytes_reserve(w, countof(text));
+    for (Usize i = 0; i < countof(text); i++) {
+        w->data[w->used + i] = (U8)text[i];
+    }
+    w->used += countof(text);
+}
+
+static void put_all(Bytes *w, const Bytes *other) {
+    bytes_reserve(w, other->used);
+    if (other->used > 0) {
+        mem::copy(w->data[w->used:w->used + other->used], other->data[0:other->used]);
+    }
+    w->used += other->used;
+}
+
+struct Cursor {
+    const U8 data[:];
+    Usize at;
+    Bool bad;
+};
+
+static U32 take_u32(Cursor *r) {
+    if (r->bad || countof(r->data) - r->at < 4) {
+        r->bad = true;
+        return 0;
+    }
+    U32 value = 0;
+    for (Usize i = 0; i < 4; i++)
+        value |= (U32)r->data[r->at + i] << (8 * i);
+    r->at += 4;
+    return value;
+}
+
+static U64 take_u64(Cursor *r) {
+    U64 low = take_u32(r);
+    U64 high = take_u32(r);
+    return low | (high << 32);
+}
+
+static Bool take_bool(Cursor *r) {
+    return take_u32(r) != 0;
+}
+
+// A count that cannot be more than the bytes left hold (a row is at least four bytes): a corrupt count is refused
+// before anything is allocated for it.
+static U32 take_count(Cursor *r) {
+    U32 count = take_u32(r);
+    if (!r->bad && count > (countof(r->data) - r->at) / 4) r->bad = true;
+    return r->bad ? 0 : count;
+}
+
+// The text, copied into the allocator in force with a terminator after it.
+static Str take_str(Cursor *r) {
+    U32 length = take_u32(r);
+    if (r->bad || length > countof(r->data) - r->at) {
+        r->bad = true;
+        return "";
+    }
+    char block[:] = mem::alloc_slice(char, (Usize)length + 1);
+    for (U32 i = 0; i < length; i++) {
+        block[i] = (char)r->data[r->at + i];
+    }
+    r->at += length;
+    return block[0:length];
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// A node's index, found by its address
+
+struct Slot {
+    const void *key;
+    U32 value;
+};
+
+struct NodeMap {
+    arena::Arena *memory;
+    Slot slots[:];
+    Usize used;
+};
+
+static Usize slot_of(const void *key, Usize size) {
+    Usize bits = (Usize)key >> 3;
+    return (bits * 0x9E3779B97F4A7C15ULL >> 20) & (size - 1);
+}
+
+static U32 index_find(const NodeMap *x, const void *key) {
+    Usize size = countof(x->slots);
+    if (size == 0) return none;
+    Usize at = slot_of(key, size);
+    while (x->slots[at].key != nullptr) {
+        if (x->slots[at].key == key) return x->slots[at].value;
+        at = (at + 1) & (size - 1);
+    }
+    return none;
+}
+
+static void index_insert(NodeMap *x, const void *key, U32 value) {
+    Usize size = countof(x->slots);
+    Usize at = slot_of(key, size);
+    while (x->slots[at].key != nullptr) {
+        at = (at + 1) & (size - 1);
+    }
+    x->slots[at] = (Slot){.key = key, .value = value};
+    x->used += 1;
+}
+
+static void index_put(NodeMap *x, const void *key, U32 value) {
+    if (2 * (x->used + 1) > countof(x->slots)) {
+        Usize size = countof(x->slots) == 0 ? 64 : 2 * countof(x->slots);
+        Slot old[:] = x->slots;
+        x->slots = arena::push_slice(x->memory, Slot, size);
+        x->used = 0;
+        for (Usize i = 0; i < countof(old); i++) {
+            if (old[i].key != nullptr) index_insert(x, old[i].key, old[i].value);
+        }
+    }
+    index_insert(x, key, value);
+}
+
+struct Slots {
+    const void *node;
+};
+
+struct Stack {
+    arena::Arena *memory;
+    Slots items[:];
+    Usize used;
+};
+
+static void stack_push(Stack *s, const void *item) {
+    if (s->used == countof(s->items)) {
+        Usize size = countof(s->items) == 0 ? 32 : 2 * countof(s->items);
+        Slots grown[:] = arena::push_slice(s->memory, Slots, size);
+        for (Usize i = 0; i < s->used; i++) {
+            grown[i] = s->items[i];
+        }
+        s->items = grown;
+    }
+    s->items[s->used++] = (Slots){.node = item};
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The writer
+
+struct Builder {
+    Bytes exprs;
+    Bytes types;
+    Bytes decls;
+    NodeMap expr_index;
+    NodeMap type_index;
+    Stack expr_stack;
+    Stack type_stack;
+    U32 expr_count;
+    U32 type_count;
+    U32 decl_count;
+    Bool failed; // something has no row in the form: the header is read without the cache
+};
+
+static void builder_start(Builder *b, arena::Arena *a) {
+    *b = (Builder){};
+    b->exprs.memory = a;
+    b->types.memory = a;
+    b->decls.memory = a;
+    b->expr_index.memory = a;
+    b->type_index.memory = a;
+    b->expr_stack.memory = a;
+    b->type_stack.memory = a;
+}
+
+static void put_path(Bytes *w, const ast::Path *path) {
+    put_u32(w, (U32)countof(path->segments));
+    for (Usize i = 0; i < countof(path->segments); i++)
+        put_str(w, path->segments[i].text);
+}
+
+static const ast::Expr *expr_pending(const Builder *b, const ast::Expr *e) {
+    const ast::Expr *children[2] = {nullptr, nullptr};
+    if (e->kind == .unary) {
+        children[0] = e->kind.unary.operand;
+    } else if (e->kind == .binary) {
+        children[0] = e->kind.binary.left;
+        children[1] = e->kind.binary.right;
+    }
+    for (Usize i = 0; i < 2; i++)
+        if (children[i] != nullptr && index_find(&b->expr_index, children[i]) == none) return children[i];
+    return nullptr;
+}
+
+// An operator's number in the file: its place in the enum of front/ast.smith, written out because an enum there is
+// a tagged value, not an integer.
+static U32 unary_code(ast::UnaryOp op) {
+    switch (op) {
+    case .negate:
+        return 0;
+    case .plus:
+        return 1;
+    case .logical_not:
+        return 2;
+    case .bit_not:
+        return 3;
+    case .address_of:
+        return 4;
+    case .dereference:
+        return 5;
+    case .pre_increment:
+        return 6;
+    case .pre_decrement:
+        return 7;
+    case .post_increment:
+        return 8;
+    case .post_decrement:
+        return 9;
+    }
+}
+
+static ast::UnaryOp unary_op(U32 code) {
+    switch (code) {
+    case 1:
+        return .plus;
+    case 2:
+        return .logical_not;
+    case 3:
+        return .bit_not;
+    case 4:
+        return .address_of;
+    case 5:
+        return .dereference;
+    case 6:
+        return .pre_increment;
+    case 7:
+        return .pre_decrement;
+    case 8:
+        return .post_increment;
+    case 9:
+        return .post_decrement;
+    default:
+        return .negate;
+    }
+}
+
+static U32 binary_code(ast::BinaryOp op) {
+    switch (op) {
+    case .add:
+        return 0;
+    case .subtract:
+        return 1;
+    case .multiply:
+        return 2;
+    case .divide:
+        return 3;
+    case .remainder:
+        return 4;
+    case .shift_left:
+        return 5;
+    case .shift_right:
+        return 6;
+    case .less:
+        return 7;
+    case .greater:
+        return 8;
+    case .less_equal:
+        return 9;
+    case .greater_equal:
+        return 10;
+    case .equal:
+        return 11;
+    case .not_equal:
+        return 12;
+    case .bit_and:
+        return 13;
+    case .bit_xor:
+        return 14;
+    case .bit_or:
+        return 15;
+    case .logical_and:
+        return 16;
+    case .logical_or:
+        return 17;
+    }
+}
+
+static ast::BinaryOp binary_op(U32 code) {
+    switch (code) {
+    case 1:
+        return .subtract;
+    case 2:
+        return .multiply;
+    case 3:
+        return .divide;
+    case 4:
+        return .remainder;
+    case 5:
+        return .shift_left;
+    case 6:
+        return .shift_right;
+    case 7:
+        return .less;
+    case 8:
+        return .greater;
+    case 9:
+        return .less_equal;
+    case 10:
+        return .greater_equal;
+    case 11:
+        return .equal;
+    case 12:
+        return .not_equal;
+    case 13:
+        return .bit_and;
+    case 14:
+        return .bit_xor;
+    case 15:
+        return .bit_or;
+    case 16:
+        return .logical_and;
+    case 17:
+        return .logical_or;
+    default:
+        return .add;
+    }
+}
+
+static void emit_expr_operator(Builder *b, const ast::Expr *e) {
+    Bytes *w = &b->exprs;
+    if (e->kind == .unary) {
+        put_u32(w, expr_unary);
+        put_u32(w, unary_code(e->kind.unary.op));
+        put_u32(w, index_find(&b->expr_index, e->kind.unary.operand));
+    } else if (e->kind == .binary) {
+        put_u32(w, expr_binary);
+        put_u32(w, binary_code(e->kind.binary.op));
+        put_u32(w, index_find(&b->expr_index, e->kind.binary.left));
+        put_u32(w, index_find(&b->expr_index, e->kind.binary.right));
+    }
+}
+
+static void emit_expr(Builder *b, const ast::Expr *e) {
+    Bytes *w = &b->exprs;
+    if (e->kind == .integer) {
+        put_u32(w, expr_integer);
+        put_u64(w, e->kind.integer.value);
+        put_str(w, e->kind.integer.suffix);
+    } else if (e->kind == .floating) {
+        U64 bits = __builtin_bit_cast(U64, e->kind.floating.value);
+        put_u32(w, expr_floating);
+        put_u64(w, bits);
+        put_str(w, e->kind.floating.suffix);
+    } else if (e->kind == .character) {
+        put_u32(w, expr_character);
+        put_u32(w, e->kind.character.value);
+    } else if (e->kind == .boolean) {
+        put_u32(w, expr_boolean);
+        put_bool(w, e->kind.boolean.value);
+    } else if (e->kind == .null_pointer) {
+        put_u32(w, expr_null);
+    } else if (e->kind == .name) {
+        put_u32(w, expr_name);
+        put_path(w, &e->kind.name.path);
+    } else if (e->kind == .string) {
+        put_u32(w, expr_string);
+        put_str(w, e->kind.string.bytes);
+    } else if (e->kind == .unary || e->kind == .binary) {
+        emit_expr_operator(b, e);
+    } else {
+        b->failed = true;
+        return;
+    }
+    index_put(&b->expr_index, e, b->expr_count++);
+}
+
+// The expression's index in the table, its operands first; none for a null expression.
+static U32 add_expr(Builder *b, const ast::Expr *root) {
+    if (root == nullptr) return none;
+    b->expr_stack.used = 0;
+    stack_push(&b->expr_stack, root);
+    while (b->expr_stack.used > 0 && !b->failed) {
+        const ast::Expr *e = (const ast::Expr *)b->expr_stack.items[b->expr_stack.used - 1].node;
+        if (index_find(&b->expr_index, e) != none) {
+            b->expr_stack.used -= 1;
+            continue;
+        }
+        const ast::Expr *pending = expr_pending(b, e);
+        if (pending != nullptr) {
+            stack_push(&b->expr_stack, pending);
+            continue;
+        }
+        emit_expr(b, e);
+        b->expr_stack.used -= 1;
+    }
+    return b->failed ? none : index_find(&b->expr_index, root);
+}
+
+// The i-th type a type is made of: a pointee, an element, the parameters and then the result, the type arguments.
+static const ast::TypeExpr *type_child(const ast::TypeExpr *t, Usize i) {
+    if (t->kind == .pointer) return i == 0 ? t->kind.pointer.pointee : nullptr;
+    if (t->kind == .array) return i == 0 ? t->kind.array.element : nullptr;
+    if (t->kind == .slice) return i == 0 ? t->kind.slice.element : nullptr;
+    if (t->kind == .function) {
+        if (i < countof(t->kind.function.params)) return t->kind.function.params[i];
+        return i == countof(t->kind.function.params) ? t->kind.function.result : nullptr;
+    }
+    if (t->kind == .applied && i < countof(t->kind.applied.args)) {
+        ast::TypeArg arg = t->kind.applied.args[i];
+        return arg == .type ? arg.type.type : nullptr;
+    }
+    return nullptr;
+}
+
+static Usize type_child_count(const ast::TypeExpr *t) {
+    if (t->kind == .pointer || t->kind == .array || t->kind == .slice) return 1;
+    if (t->kind == .function) return countof(t->kind.function.params) + 1;
+    if (t->kind == .applied) return countof(t->kind.applied.args);
+    return 0;
+}
+
+static const ast::TypeExpr *type_pending(const Builder *b, const ast::TypeExpr *t) {
+    for (Usize i = 0; i < type_child_count(t); i++) {
+        const ast::TypeExpr *child = type_child(t, i);
+        if (child != nullptr && index_find(&b->type_index, child) == none) return child;
+    }
+    return nullptr;
+}
+
+static U32 type_ref(const Builder *b, const ast::TypeExpr *t) {
+    return t == nullptr ? none : index_find(&b->type_index, t);
+}
+
+static void emit_type_function(Builder *b, const ast::TypeExpr *t) {
+    Bytes *w = &b->types;
+    if (t->kind != .function) return;
+    put_u32(w, type_function);
+    put_u32(w, (U32)countof(t->kind.function.params));
+    for (Usize i = 0; i < countof(t->kind.function.params); i++)
+        put_u32(w, type_ref(b, t->kind.function.params[i]));
+    put_u32(w, type_ref(b, t->kind.function.result));
+    put_bool(w, t->kind.function.variadic);
+}
+
+static void emit_type_applied(Builder *b, const ast::TypeExpr *t) {
+    Bytes *w = &b->types;
+    if (t->kind != .applied) return;
+    put_u32(w, type_applied);
+    put_path(w, &t->kind.applied.name);
+    put_u32(w, (U32)countof(t->kind.applied.args));
+    for (Usize i = 0; i < countof(t->kind.applied.args); i++) {
+        ast::TypeArg arg = t->kind.applied.args[i];
+        if (arg == .type) {
+            put_u32(w, 0);
+            put_u32(w, type_ref(b, arg.type.type));
+        } else {
+            put_u32(w, 1);
+            put_u32(w, add_expr(b, arg.value.value));
+        }
+    }
+}
+
+// The row's tag and payload; the qualifiers are written before it by emit_type.
+static void emit_type_body(Builder *b, const ast::TypeExpr *t) {
+    Bytes *w = &b->types;
+    if (t->kind == .named) {
+        put_u32(w, type_named);
+        put_path(w, &t->kind.named.path);
+    } else if (t->kind == .auto_type) {
+        put_u32(w, type_auto);
+    } else if (t->kind == .pointer) {
+        put_u32(w, type_pointer);
+        put_u32(w, type_ref(b, t->kind.pointer.pointee));
+    } else if (t->kind == .array) {
+        put_u32(w, type_array);
+        put_u32(w, type_ref(b, t->kind.array.element));
+        put_u32(w, add_expr(b, t->kind.array.count));
+    } else if (t->kind == .slice) {
+        put_u32(w, type_slice);
+        put_u32(w, type_ref(b, t->kind.slice.element));
+    } else if (t->kind == .function) {
+        emit_type_function(b, t);
+    } else if (t->kind == .applied) {
+        emit_type_applied(b, t);
+    } else if (t->kind == .unsupported_c) {
+        put_u32(w, type_unsupported);
+        put_str(w, t->kind.unsupported_c.spelling);
+    } else {
+        b->failed = true; // a record, a tuple, a typeof: nothing in a C header makes one
+    }
+}
+
+static void emit_type(Builder *b, const ast::TypeExpr *t) {
+    Bytes *w = &b->types;
+    put_bool(w, t->qualifiers.is_const);
+    put_bool(w, t->qualifiers.is_volatile);
+    put_bool(w, t->qualifiers.is_restrict);
+    emit_type_body(b, t);
+    if (!b->failed) index_put(&b->type_index, t, b->type_count++);
+}
+
+// The type's index in the table, what it is made of first; none for a null type.
+static U32 add_type(Builder *b, const ast::TypeExpr *root) {
+    if (root == nullptr) return none;
+    b->type_stack.used = 0;
+    stack_push(&b->type_stack, root);
+    while (b->type_stack.used > 0 && !b->failed) {
+        const ast::TypeExpr *t = (const ast::TypeExpr *)b->type_stack.items[b->type_stack.used - 1].node;
+        if (index_find(&b->type_index, t) != none) {
+            b->type_stack.used -= 1;
+            continue;
+        }
+        const ast::TypeExpr *pending = type_pending(b, t);
+        if (pending != nullptr) {
+            stack_push(&b->type_stack, pending);
+            continue;
+        }
+        emit_type(b, t);
+        b->type_stack.used -= 1;
+    }
+    return b->failed ? none : index_find(&b->type_index, root);
+}
+
+static void emit_function(Builder *b, const ast::Decl *d) {
+    Bytes *w = &b->decls;
+    if (d->kind != .function) {
+        return;
+    }
+    ast::Param params[:] = d->kind.function.params;
+    if (d->kind.function.body != nullptr) b->failed = true;
+    put_str(w, d->kind.function.name);
+    put_u32(w, (U32)countof(params));
+    for (Usize i = 0; i < countof(params); i++) {
+        ast::Attribute attributes[:] = params[i].attributes;
+        if (countof(attributes) != 0) b->failed = true;
+        put_str(w, params[i].name);
+        put_u32(w, add_type(b, params[i].type));
+        put_bool(w, params[i].is_constexpr);
+        put_bool(w, params[i].is_rest);
+    }
+    put_u32(w, add_type(b, d->kind.function.result));
+    put_bool(w, d->kind.function.variadic);
+}
+
+static void emit_record(Builder *b, const ast::Decl *d) {
+    Bytes *w = &b->decls;
+    if (d->kind != .record) {
+        return;
+    }
+    ast::FieldDecl fields[:] = d->kind.record.fields;
+    put_str(w, d->kind.record.name);
+    put_bool(w, d->kind.record.is_union);
+    put_bool(w, d->kind.record.opaque);
+    put_u32(w, (U32)countof(fields));
+    for (Usize i = 0; i < countof(fields); i++) {
+        put_str(w, fields[i].name);
+        put_u32(w, add_type(b, fields[i].type));
+        put_u32(w, add_expr(b, fields[i].bit_width));
+    }
+}
+
+static void emit_enumeration(Builder *b, const ast::Decl *d) {
+    Bytes *w = &b->decls;
+    if (d->kind != .enumeration) {
+        return;
+    }
+    ast::Enumerator items[:] = d->kind.enumeration.items;
+    put_str(w, d->kind.enumeration.name);
+    put_u32(w, add_type(b, d->kind.enumeration.underlying));
+    put_u32(w, (U32)countof(items));
+    for (Usize i = 0; i < countof(items); i++) {
+        put_str(w, items[i].name);
+        put_u32(w, add_expr(b, items[i].value));
+        put_u32(w, add_type(b, items[i].payload));
+    }
+}
+
+static void emit_decl_body(Builder *b, const ast::Decl *d) {
+    Bytes *w = &b->decls;
+    if (d->kind == .variable) {
+        put_u32(w, decl_variable);
+        put_str(w, d->kind.variable.name);
+        put_u32(w, add_type(b, d->kind.variable.type));
+        put_u32(w, add_expr(b, d->kind.variable.init));
+        put_bool(w, d->kind.variable.is_constexpr);
+        put_bool(w, d->kind.variable.is_thread_local);
+    } else if (d->kind == .function) {
+        put_u32(w, decl_function);
+        emit_function(b, d);
+    } else if (d->kind == .record) {
+        put_u32(w, decl_record);
+        emit_record(b, d);
+    } else if (d->kind == .enumeration) {
+        put_u32(w, decl_enumeration);
+        emit_enumeration(b, d);
+    } else if (d->kind == .type_alias) {
+        put_u32(w, decl_alias);
+        put_str(w, d->kind.type_alias.name);
+        put_u32(w, add_type(b, d->kind.type_alias.type));
+    } else {
+        b->failed = true;
+    }
+}
+
+static void add_decl(Builder *b, const ast::Decl *d) {
+    Bytes *w = &b->decls;
+    if (countof(d->attributes) != 0) b->failed = true;
+    put_bool(w, d->exported);
+    put_bool(w, d->is_static);
+    put_bool(w, d->is_extern);
+    put_bool(w, d->is_inline);
+    put_bool(w, d->from_c);
+    emit_decl_body(b, d);
+    b->decl_count += 1;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The reader
+
+struct Tables {
+    ast::ExprRef *exprs;
+    ast::TypeRef *types;
+    U32 expr_count;
+    U32 type_count;
+    U32 exprs_built;
+    U32 types_built;
+};
+
+static ast::Expr *expr_at(const Tables *t, Cursor *r, U32 index) {
+    if (index == none) return nullptr;
+    if (index >= t->exprs_built) r->bad = true;
+    return r->bad ? nullptr : t->exprs[index];
+}
+
+static ast::TypeExpr *type_at(const Tables *t, Cursor *r, U32 index) {
+    if (index == none) return nullptr;
+    if (index >= t->types_built) r->bad = true;
+    return r->bad ? nullptr : t->types[index];
+}
+
+static ast::Path take_path(Cursor *r) {
+    U32 count = take_count(r);
+    ast::Identifier segments[:] = mem::alloc_slice(ast::Identifier, count);
+    for (U32 i = 0; i < count; i++)
+        segments[i].text = take_str(r);
+    return (ast::Path){.segments = segments};
+}
+
+static ast::Expr *take_expr_operator(const Tables *t, Cursor *r, U32 tag) {
+    U32 op = take_u32(r);
+    if (tag == expr_unary) {
+        ast::Expr *operand = expr_at(t, r, take_u32(r));
+        if (op >= unary_ops || operand == nullptr) r->bad = true;
+        if (r->bad) return nullptr;
+        return ast::expr({.unary = {.op = unary_op(op), .operand = operand}});
+    }
+    ast::Expr *left = expr_at(t, r, take_u32(r));
+    ast::Expr *right = expr_at(t, r, take_u32(r));
+    if (op >= binary_ops || left == nullptr || right == nullptr) r->bad = true;
+    if (r->bad) return nullptr;
+    return ast::expr({.binary = {.op = binary_op(op), .left = left, .right = right}});
+}
+
+static ast::Expr *take_expr(const Tables *t, Cursor *r) {
+    U32 tag = take_u32(r);
+    if (tag == expr_integer) {
+        U64 value = take_u64(r);
+        return ast::expr({.integer = {.value = value, .suffix = take_str(r)}});
+    }
+    if (tag == expr_floating) {
+        U64 bits = take_u64(r);
+        F64 value = __builtin_bit_cast(F64, bits);
+        return ast::expr({.floating = {.value = value, .suffix = take_str(r)}});
+    }
+    if (tag == expr_character) return ast::expr({.character = {.value = take_u32(r)}});
+    if (tag == expr_boolean) return ast::expr({.boolean = {.value = take_bool(r)}});
+    if (tag == expr_null) {
+        ast::ExprKind nothing = .null_pointer;
+        return ast::expr(nothing);
+    }
+    if (tag == expr_name) return ast::expr({.name = {.path = take_path(r)}});
+    if (tag == expr_string) return ast::expr({.string = {.bytes = take_str(r)}});
+    if (tag == expr_unary || tag == expr_binary) return take_expr_operator(t, r, tag);
+    r->bad = true;
+    return nullptr;
+}
+
+static ast::TypeRef *pointer_block(Usize count) {
+    // Not mem::alloc_slice: its instance for a pointer element draws the lint of a multilevel conversion.
+    return (ast::TypeRef *)mem::alloc_array_raw(sizeof(ast::TypeRef), count, alignof(ast::TypeRef));
+}
+
+static ast::TypeExpr *take_type_function(const Tables *t, Cursor *r) {
+    U32 count = take_count(r);
+    ast::TypeRef *params = pointer_block(count);
+    for (U32 i = 0; i < count; i++) {
+        params[i] = type_at(t, r, take_u32(r));
+        if (params[i] == nullptr) r->bad = true;
+    }
+    ast::TypeExpr *result = type_at(t, r, take_u32(r));
+    Bool variadic = take_bool(r);
+    if (r->bad || result == nullptr) {
+        r->bad = true;
+        return nullptr;
+    }
+    return ast::make_type({.function = {.params = params[0:count], .result = result, .variadic = variadic}});
+}
+
+static ast::TypeExpr *take_type_applied(const Tables *t, Cursor *r) {
+    ast::Path name = take_path(r);
+    U32 count = take_count(r);
+    ast::TypeArg args[:] = mem::alloc_slice(ast::TypeArg, count);
+    for (U32 i = 0; i < count; i++) {
+        U32 which = take_u32(r);
+        U32 index = take_u32(r);
+        if (which == 0) {
+            args[i] = (ast::TypeArg){.type = {.type = type_at(t, r, index)}};
+        } else {
+            args[i] = (ast::TypeArg){.value = {.value = expr_at(t, r, index)}};
+        }
+    }
+    if (r->bad) return nullptr;
+    return ast::make_type({.applied = {.name = name, .args = args}});
+}
+
+static ast::TypeExpr *take_type_body(const Tables *t, Cursor *r, U32 tag) {
+    if (tag == type_named) return ast::make_type({.named = {.path = take_path(r)}});
+    if (tag == type_auto) {
+        ast::TypeKind inferred = .auto_type;
+        return ast::make_type(inferred);
+    }
+    if (tag == type_pointer) {
+        ast::TypeExpr *pointee = type_at(t, r, take_u32(r));
+        return r->bad || pointee == nullptr ? nullptr : ast::make_type({.pointer = {.pointee = pointee}});
+    }
+    if (tag == type_array) {
+        ast::TypeExpr *element = type_at(t, r, take_u32(r));
+        ast::Expr *count = expr_at(t, r, take_u32(r));
+        return r->bad || element == nullptr ? nullptr : ast::make_type({.array = {.element = element, .count = count}});
+    }
+    if (tag == type_slice) {
+        ast::TypeExpr *element = type_at(t, r, take_u32(r));
+        return r->bad || element == nullptr ? nullptr : ast::make_type({.slice = {.element = element}});
+    }
+    if (tag == type_function) return take_type_function(t, r);
+    if (tag == type_applied) return take_type_applied(t, r);
+    if (tag == type_unsupported) return ast::make_type({.unsupported_c = {.spelling = take_str(r)}});
+    return nullptr;
+}
+
+static ast::TypeExpr *take_type(const Tables *t, Cursor *r) {
+    Bool is_const = take_bool(r);
+    Bool is_volatile = take_bool(r);
+    Bool is_restrict = take_bool(r);
+    ast::TypeExpr *node = take_type_body(t, r, take_u32(r));
+    if (node == nullptr || r->bad) {
+        r->bad = true;
+        return nullptr;
+    }
+    node->qualifiers = (ast::Qualifiers){.is_const = is_const, .is_volatile = is_volatile, .is_restrict = is_restrict};
+    return node;
+}
+
+static void take_tables(Tables *t, Cursor *r) {
+    t->expr_count = take_count(r);
+    t->exprs = (ast::ExprRef *)mem::alloc_array_raw(sizeof(ast::ExprRef), t->expr_count, alignof(ast::ExprRef));
+    for (U32 i = 0; i < t->expr_count && !r->bad; i++) {
+        t->exprs[i] = take_expr(t, r);
+        if (t->exprs[i] == nullptr) r->bad = true;
+        t->exprs_built = i + 1;
+    }
+    t->type_count = take_count(r);
+    t->types = pointer_block(t->type_count);
+    for (U32 i = 0; i < t->type_count && !r->bad; i++) {
+        t->types[i] = take_type(t, r);
+        t->types_built = i + 1;
+    }
+}
+
+static ast::Decl *take_function(const Tables *t, Cursor *r) {
+    Str name = take_str(r);
+    U32 count = take_count(r);
+    ast::Param params[:] = mem::alloc_slice(ast::Param, count);
+    for (U32 i = 0; i < count; i++) {
+        Str param_name = take_str(r);
+        params[i] = ast::param(param_name, type_at(t, r, take_u32(r)));
+        params[i].is_constexpr = take_bool(r);
+        params[i].is_rest = take_bool(r);
+    }
+    ast::TypeExpr *result = type_at(t, r, take_u32(r));
+    Bool variadic = take_bool(r);
+    ast::DeclKind kind = {.function = {.name = name, .params = params, .result = result, .variadic = variadic}};
+    return ast::decl((ast::Decl){}, kind);
+}
+
+static ast::Decl *take_record(const Tables *t, Cursor *r) {
+    Str name = take_str(r);
+    Bool is_union = take_bool(r);
+    Bool opaque = take_bool(r);
+    U32 count = take_count(r);
+    ast::FieldDecl fields[:] = mem::alloc_slice(ast::FieldDecl, count);
+    for (U32 i = 0; i < count; i++) {
+        Str field_name = take_str(r);
+        fields[i] = ast::field(field_name, type_at(t, r, take_u32(r)));
+        fields[i].bit_width = expr_at(t, r, take_u32(r));
+    }
+    ast::DeclKind kind = {.record = {.name = name, .is_union = is_union, .opaque = opaque, .fields = fields}};
+    return ast::decl((ast::Decl){}, kind);
+}
+
+static ast::Decl *take_enumeration(const Tables *t, Cursor *r) {
+    Str name = take_str(r);
+    ast::TypeExpr *underlying = type_at(t, r, take_u32(r));
+    U32 count = take_count(r);
+    ast::Enumerator items[:] = mem::alloc_slice(ast::Enumerator, count);
+    for (U32 i = 0; i < count; i++) {
+        Str item_name = take_str(r);
+        ast::Expr *value = expr_at(t, r, take_u32(r));
+        items[i] = ast::enumerator(item_name, value, type_at(t, r, take_u32(r)));
+    }
+    return ast::enumeration(name, underlying, items);
+}
+
+static ast::Decl *take_variable(const Tables *t, Cursor *r) {
+    Str name = take_str(r);
+    ast::TypeExpr *type = type_at(t, r, take_u32(r));
+    ast::Expr *init = expr_at(t, r, take_u32(r));
+    ast::Decl *d = ast::variable(name, type, init);
+    Bool is_constexpr = take_bool(r);
+    Bool is_thread_local = take_bool(r);
+    if (d->kind == .variable) {
+        d->kind.variable.is_constexpr = is_constexpr;
+        d->kind.variable.is_thread_local = is_thread_local;
+    }
+    return d;
+}
+
+static ast::Decl *take_decl(const Tables *t, Cursor *r) {
+    Bool exported = take_bool(r);
+    Bool is_static = take_bool(r);
+    Bool is_extern = take_bool(r);
+    Bool is_inline = take_bool(r);
+    Bool from_c = take_bool(r);
+    U32 tag = take_u32(r);
+    ast::Decl *d = nullptr;
+    if (tag == decl_variable) d = take_variable(t, r);
+    if (tag == decl_function) d = take_function(t, r);
+    if (tag == decl_record) d = take_record(t, r);
+    if (tag == decl_enumeration) d = take_enumeration(t, r);
+    if (tag == decl_alias) {
+        Str name = take_str(r);
+        d = ast::type_alias(name, type_at(t, r, take_u32(r)));
+    }
+    if (d == nullptr || r->bad) {
+        r->bad = true;
+        return nullptr;
+    }
+    d->exported = exported;
+    d->is_static = is_static;
+    d->is_extern = is_extern;
+    d->is_inline = is_inline;
+    d->from_c = from_c;
+    return d;
+}
+
+static void take_not_imported(Cursor *r, Header *header) {
+    U32 count = take_count(r);
+    header->not_imported = mem::alloc_slice(cimport::NotImported, count);
+    for (U32 i = 0; i < count; i++) {
+        header->not_imported[i].kind = take_u32(r);
+        header->not_imported[i].name = take_str(r);
+        header->not_imported[i].reason = take_str(r);
+    }
+}
+
+// What follows the files in an entry: not imported, then the tables, then the declarations.
+static Bool take_header(Cursor *r, Header *header) {
+    take_not_imported(r, header);
+    Tables tables = {};
+    take_tables(&tables, r);
+    U32 count = take_count(r);
+    ast::DeclRef *block = (ast::DeclRef *)mem::alloc_array_raw(sizeof(ast::DeclRef), count, alignof(ast::DeclRef));
+    for (U32 i = 0; i < count && !r->bad; i++)
+        block[i] = take_decl(&tables, r);
+    if (r->bad || r->at != countof(r->data)) return false;
+    header->decls = block[0:count];
+    return true;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The files an entry depends on
+
+struct Dep {
+    Str path;
+    U64 size;
+    I64 mtime;
+    U64 hash[2];
+};
+
+typedef Dep DepList[:];
+
+static Bool file_dep(Dep *dep, Str path) {
+    dep->path = path;
+    if (smith_cimport_file_state(path.data, &dep->size, &dep->mtime) != 0) return false;
+    return smith_cimport_file_hash(path.data, dep->hash) == 0;
+}
+
+// Every file clang reads for the header, with its state now; `ok` is false when clang refused the source or a file
+// went away meanwhile (the read then goes on without the cache).
+static DepList collect_deps(arena::Arena *a, const Request *request, Bool *ok) {
+    DepList empty = {};
+    *ok = false;
+    Usize capacity = 1U << 14;
+    char blob[:] = arena::push_slice(a, char, capacity);
+    Usize needed = smith_cimport_deps(request, blob.data, capacity);
+    if (needed == ~(Usize)0) return empty;
+    if (needed > capacity) {
+        blob = arena::push_slice(a, char, needed);
+        needed = smith_cimport_deps(request, blob.data, needed);
+    }
+    Usize count = 0;
+    for (Usize i = 0; i < needed; i++) {
+        if (blob[i] == 0) count += 1;
+    }
+    DepList deps = arena::push_slice(a, Dep, count);
+    Usize start = 0;
+    Usize found = 0;
+    for (Usize i = 0; i < needed; i++) {
+        if (blob[i] != 0) continue;
+        Str path = blob[start:i];
+        start = i + 1;
+        if (!file_dep(&deps[found], path)) return empty;
+        found += 1;
+    }
+    *ok = true;
+    return deps;
+}
+
+static void patch_u64(U8 whole[:], Usize at, U64 value) {
+    for (Usize i = 0; i < 8; i++) {
+        whole[at + i] = (U8)((value >> (8 * i)) & 0xFF);
+    }
+}
+
+// Whether every file of the entry is as it was: the size and the time, and only when those differ the content. A file
+// whose content is the same gets its new time written into `whole`, and `patched` says the entry must be saved.
+static Bool deps_valid(Cursor *r, U8 whole[:], Bool *patched) {
+    U32 count = take_count(r);
+    for (U32 i = 0; i < count; i++) {
+        Str path = take_str(r);
+        U64 size = take_u64(r);
+        Usize time_at = r->at;
+        U64 mtime = take_u64(r);
+        U64 hash_low = take_u64(r);
+        U64 hash_high = take_u64(r);
+        U64 now_size = 0;
+        I64 now_mtime = 0;
+        if (r->bad || smith_cimport_file_state(path.data, &now_size, &now_mtime) != 0) return false;
+        if (now_size == size && (U64)now_mtime == mtime) continue;
+        content_check_count += 1;
+        U64 hash[2] = {};
+        if (smith_cimport_file_hash(path.data, hash) != 0 || hash[0] != hash_low || hash[1] != hash_high) return false;
+        patch_u64(whole, time_at, (U64)now_mtime);
+        *patched = true;
+    }
+    return !r->bad;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The key and the place of an entry
+
+static Bool line_is(const char *line, Usize n, const char *text) {
+    return c::strlen(text) == n && c::strncmp(line, text, n) == 0;
+}
+
+static Bool line_starts(const char *line, Usize n, const char *prefix) {
+    Usize m = c::strlen(prefix);
+    return n >= m && c::strncmp(line, prefix, m) == 0;
+}
+
+// Flags that do not change what clang reads from a header: warnings (but -Werror can turn one into an error),
+// optimization, debug information, sanitizers, dependency output and compile-only.
+static Bool is_dropped(const char *l, Usize n) {
+    if (line_starts(l, n, "-Werror")) return false;
+    if (line_starts(l, n, "-W") || line_starts(l, n, "-O") || line_starts(l, n, "-fsanitize") ||
+        line_starts(l, n, "-fno-sanitize") || line_starts(l, n, "-M")) {
+        return true;
+    }
+    if (n <= 3 && line_starts(l, n, "-g")) return true;
+    return line_is(l, n, "-c") || line_is(l, n, "-o");
+}
+
+static Bool drops_next(const char *l, Usize n) {
+    return line_is(l, n, "-o") || line_is(l, n, "-MF") || line_is(l, n, "-MT") || line_is(l, n, "-MQ");
+}
+
+// The flags whose next line is a path.
+static Bool path_next_flag(const char *l, Usize n) {
+    return line_is(l, n, "-I") || line_is(l, n, "-isystem") || line_is(l, n, "-iquote") ||
+           line_is(l, n, "-idirafter") || line_is(l, n, "-isysroot") || line_is(l, n, "-resource-dir") ||
+           line_is(l, n, "-include");
+}
+
+// Writes the flags that count into the key's material. Returns whether one names a path that is not absolute.
+static Bool flags_material(Bytes *w, const char *flags) {
+    Bool relative = false;
+    Bool skip_next = false;
+    Bool path_next = false;
+    Usize at = 0;
+    while (flags[at] != 0) {
+        Usize end = at;
+        while (flags[end] != 0 && flags[end] != '\n') {
+            end += 1;
+        }
+        const char *line = flags + at;
+        Usize n = end - at;
+        at = flags[end] == 0 ? end : end + 1;
+        if (n == 0) continue;
+        if (skip_next) {
+            skip_next = false;
+        } else if (is_dropped(line, n)) {
+            skip_next = drops_next(line, n);
+        } else {
+            put_str(w, line[0:n]);
+            if (path_next) relative = relative || line[0] != '/';
+            if (line_starts(line, n, "-I") && n > 2) relative = relative || line[2] != '/';
+            path_next = path_next_flag(line, n);
+        }
+    }
+    return relative;
+}
+
+static void hex_of(char *out, U64 value) {
+    const char digits[16] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+    for (Usize i = 0; i < 16; i++) {
+        out[15 - i] = digits[(value >> (4 * i)) & 15];
+    }
+}
+
+// The 32 hex digits of the key of this request; an empty text when the working folder cannot be read.
+static Str key_of(arena::Arena *a, const Request *request) {
+    Bytes material = {.memory = a};
+    put_u32(&material, format_version);
+    put_str(&material, request->name[0:c::strlen(request->name)]);
+    put_bool(&material, request->quoted != 0);
+    Bool relative = request->quoted != 0;
+    if (request->quoted != 0 && request->folder != nullptr) {
+        put_str(&material, request->folder[0:c::strlen(request->folder)]);
+    }
+    relative = flags_material(&material, request->flags != nullptr ? request->flags : "") || relative;
+    if (relative) {
+        char folder[4096];
+        if (c::getcwd(folder, sizeof folder) == nullptr) return "";
+        put_str(&material, folder[0:c::strlen(folder)]);
+    }
+    U64 hash[2] = {};
+    smith_cimport_hash(material.data.data, material.used, hash);
+    char digits[:] = arena::push_slice(a, char, 33);
+    hex_of(digits.data, hash[0]);
+    hex_of(digits.data + 16, hash[1]);
+    return digits[0:32];
+}
+
+constexpr Usize identity_max = 120;
+static char identity_buffer[identity_max + 1];
+static Usize identity_length;
+static Bool identity_asked;
+
+// The clang identity out of `smith cc --smith-which`: the text of its `identity` line, as one word of a path.
+static void parse_identity(const U8 text[:]) {
+    const char *prefix = "identity ";
+    Usize prefix_length = c::strlen(prefix);
+    Usize at = 0;
+    while (at < countof(text)) {
+        Usize end = at;
+        while (end < countof(text) && text[end] != '\n') {
+            end += 1;
+        }
+        if (end - at > prefix_length && c::strncmp((const char *)text.data + at, prefix, prefix_length) == 0) {
+            for (Usize i = at + prefix_length; i < end && identity_length < identity_max; i++) {
+                U8 ch = text[i];
+                Bool plain = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+                             ch == '.' || ch == '-' || ch == '_';
+                char out = (char)ch;
+                if (!plain) {
+                    out = ch == ' ' ? '-' : '_';
+                }
+                identity_buffer[identity_length++] = out;
+            }
+            return;
+        }
+        at = end + 1;
+    }
+}
+
+// Empty when smith cannot say which clang it is (the read then goes on without the cache). Asked once a process.
+static Str identity() {
+    if (!identity_asked) {
+        identity_asked = true;
+        const char *self = c::getenv("SMITH_SELF");
+        const char *smith = self != nullptr ? self : "smith";
+        const char *const argv[5] = {smith, "cc", "--smith-which", "-c", "/dev/null"};
+        process::OutputResult done = process::run(argv[0:5]);
+        if (done == .ok) parse_identity(done.ok.output);
+    }
+    return identity_buffer[0:identity_length];
+}
+
+static Str cache_root() {
+    env::Value xdg = env::get("XDG_CACHE_HOME");
+    if (xdg == .some && countof(xdg.some) > 0) return xdg.some;
+    env::Value home = env::get("HOME");
+    if (home == .some && countof(home.some) > 0) return str_of(format::push(home.some, "/.cache"));
+    return "";
+}
+
+// The file of the entry, or empty when there is no cache to use.
+static Str entry_path(arena::Arena *a, const Request *request) {
+    Str id = identity();
+    Str root = cache_root();
+    if (countof(id) == 0 || countof(root) == 0) return "";
+    Str key = key_of(a, request);
+    if (countof(key) == 0) return "";
+    return str_of(format::push(root, "/smith/cimport/", id, "/", key));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Writing and reading an entry
+
+static Usize parent_length(Str path) {
+    Usize n = countof(path);
+    while (n > 0 && path[n - 1] != '/') {
+        n -= 1;
+    }
+    return n > 0 ? n - 1 : 0;
+}
+
+// Creates or replaces the file: written beside it under a name of this process, then renamed, so nobody sees half of
+// it and two compiles do not clobber each other's temporary.
+static void write_entry(Str path, const U8 data[:]) {
+    Str folder = path[0:parent_length(path)];
+    files::DoneResult made = files::make_folder(folder);
+    if (made == .error) return;
+    Str temporary = str_of(format::push(path, ".tmp-", (I32)c::getpid()));
+    files::CountResult written = files::write_file(temporary, data, files::Replace);
+    if (written == .error) return;
+    files::DoneResult moved = files::move(temporary, path);
+    if (moved == .error) {
+        files::DoneResult dropped = files::remove(temporary);
+        (void)dropped;
+    }
+}
+
+// The marker of the 31-day rule: written with an entry, and again by a hit more than a day after it was last touched.
+static void touch_used(Str path) {
+    Str marker = str_of(format::push(path, ".used"));
+    U8 mark[1] = {};
+    files::CountResult written = files::write_file(marker, mark[0:1], files::Replace);
+    (void)written;
+}
+
+static void touch_used_when_old(Str path) {
+    Str marker = str_of(format::push(path, ".used"));
+    U64 size = 0;
+    I64 mtime = 0;
+    I64 now = (I64)c::time(nullptr);
+    if (smith_cimport_file_state(marker.data, &size, &mtime) != 0 || now - mtime / 1'000'000'000 > day) {
+        touch_used(path);
+    }
+}
+
+static Bool entry_has_head(Cursor *r) {
+    return take_u32(r) == magic && take_u32(r) == format_version && !r->bad;
+}
+
+// The entry's contents in `whole`, or false: not an entry, a corrupt one, or a file it depends on that changed.
+static Bool decode(U8 whole[:], Header *header, Bool *patched) {
+    Cursor r = {.data = whole};
+    return entry_has_head(&r) && deps_valid(&r, whole, patched) && take_header(&r, header);
+}
+
+// The entry's declarations, or false: no file, a file that is not an entry, a corrupt one, or a file it depends on that
+// changed.
+static Bool load(Str path, Header *header) {
+    files::BytesResult loaded = files::read_file(path);
+    if (loaded == .error) {
+        return false;
+    }
+    U8 whole[:] = loaded.ok;
+    Bool patched = false;
+    if (!decode(whole, header, &patched)) return false;
+    if (patched) write_entry(path, whole);
+    touch_used_when_old(path);
+    return true;
+}
+
+static void put_deps(Bytes *out, DepList deps) {
+    put_u32(out, (U32)countof(deps));
+    for (Usize i = 0; i < countof(deps); i++) {
+        put_str(out, deps[i].path);
+        put_u64(out, deps[i].size);
+        put_u64(out, (U64)deps[i].mtime);
+        put_u64(out, deps[i].hash[0]);
+        put_u64(out, deps[i].hash[1]);
+    }
+}
+
+// The entry for the header in `out`; false when something in it has no row in the form.
+static Bool encode(arena::Arena *a, DepList deps, const Header *header, Bytes *out) {
+    Builder b = {};
+    builder_start(&b, a);
+    for (Usize i = 0; i < countof(header->decls); i++) {
+        add_decl(&b, header->decls[i]);
+        if (b.failed) return false;
+    }
+    *out = (Bytes){.memory = a};
+    put_u32(out, magic);
+    put_u32(out, format_version);
+    put_deps(out, deps);
+    put_u32(out, (U32)countof(header->not_imported));
+    for (Usize i = 0; i < countof(header->not_imported); i++) {
+        put_u32(out, header->not_imported[i].kind);
+        put_str(out, header->not_imported[i].name);
+        put_str(out, header->not_imported[i].reason);
+    }
+    put_u32(out, b.expr_count);
+    put_all(out, &b.exprs);
+    put_u32(out, b.type_count);
+    put_all(out, &b.types);
+    put_u32(out, b.decl_count);
+    put_all(out, &b.decls);
+    return true;
+}
+
+static void store(arena::Arena *a, Str path, DepList deps, const Header *header) {
+    Bytes out = {};
+    if (!encode(a, deps, header, &out)) return;
+    write_entry(path, out.data[0:out.used]);
+    touch_used(path);
+}
+
+// The header written as an entry with no files and read back: what the cache keeps of it. False when it has a
+// declaration the form has no row for. For the tests.
+export Bool round_trip(arena::Arena *a, const cimport::Header *header, cimport::Header *back) {
+    DepList none_listed = {};
+    Bytes out = {};
+    if (!encode(a, none_listed, header, &out)) return false;
+    Bool patched = false;
+    return decode(out.data[0:out.used], back, &patched);
+}
+
+// The file of the entry for a read, empty when there is no cache to use. For the tests.
+export Str path_of(arena::Arena *a, const char *name, Bool quoted, const char *folder, const char *flags) {
+    Request request = {.name = name, .quoted = quoted ? 1 : 0, .folder = folder, .flags = flags};
+    return entry_path(a, &request);
+}
+
+// Reads `name` as cimport::read does (same parameters, same result): from the cache when the entry is there and every
+// file it depends on is as it was, else by cimport::read, and the result is stored. `a` holds the tables of a read and
+// the working data of the cache; the declarations are allocated in the allocator in force.
+export cimport::Header read(arena::Arena *a, const char *name, Bool quoted, const char *folder, const char *flags) {
+    Request request = {.name = name, .quoted = quoted ? 1 : 0, .folder = folder, .flags = flags};
+    Str path = entry_path(a, &request);
+    if (countof(path) != 0) {
+        Header hit = {};
+        if (load(path, &hit)) {
+            hit_count += 1;
+            return hit;
+        }
+    }
+    miss_count += 1;
+    Bool listed = false;
+    DepList deps = {};
+    if (countof(path) != 0) deps = collect_deps(a, &request, &listed);
+    Header header = cimport::read(a, name, quoted, folder, flags);
+    if (listed && countof(header.error) == 0) store(a, path, deps, &header);
+    return header;
+}
