@@ -1,0 +1,143 @@
+// Tests of `// smith-covers:` (issue #1392, runtime/changed.c, knowledge/changed-tests.md): a test that runs smith and
+// declares the part of smith it covers is selected by a change to that part, and not by any other part of smith. The
+// rules run in process through `smith_core_changed_select` (include/smith_core_changed.h): the repository is a few
+// files in a scratch folder, its list and its changes are texts, and the answer is what `--dry-run` prints.
+module changed_covers_test;
+
+import std::arena;
+import std::files;
+import std::format;
+import std::mem;
+import std::test;
+import scratch;
+import <smith_core.h>;
+import <smith_core_changed.h>;
+
+constexpr Usize memory_size = 1U << 24;
+static arena::Arena memory;
+static arena::ArenaAllocator allocator;
+static mem::Allocator *outside;
+
+static void enter() {
+    memory = test::memory(memory_size);
+    allocator = arena::allocator(&memory);
+    outside = mem::set_allocator(&allocator.base);
+}
+
+static void leave() {
+    mem::set_allocator(outside);
+}
+
+typedef struct {
+    const char *path;
+    const char *text;
+} Source;
+
+// Three tests that run smith: one with no marker, one that covers `lib/std/arena.smith`, `runtime/untar*.c` and the
+// folder `templates/`, and one that covers `lib/**/json*.smith` and also imports the module `a`.
+constexpr Source repo[_] = {
+    {"lib/a.smith", "module a;\nexport I32 one() { return 1; }\n"},
+    {"lib/std/arena.smith", "module std::arena;\n"},
+    {"lib/std/text.smith", "module std::text;\n"},
+    {"lib/deep/er/json_x.smith", "module json_x;\n"},
+    {"runtime/untar.c", "int untar;\n"},
+    {"runtime/untar_xz.c", "int xz;\n"},
+    {"runtime/other.c", "int other;\n"},
+    {"templates/new/main.smith", "module main;\n"},
+    {"tests/scratch.smith", "module scratch;\n"},
+    {"tests/plain_test.smith", "module plain_test;\nimport scratch;\nexport void test_p() { scratch::sh(); }\n"},
+    {"tests/marked_test.smith",
+     "// Comment.\n// smith-covers: lib/std/arena.smith runtime/untar*.c\n// smith-covers: templates/\nmodule "
+     "marked_test;\nimport scratch;\nexport void test_m() { scratch::sh(); }\n"},
+    {"tests/deep_test.smith",
+     "// smith-covers: lib/**/json*.smith\nmodule deep_test;\nimport a;\nimport scratch;\nexport void test_d() { "
+     "scratch::sh(); }\n"},
+};
+
+static void write(const char *folder, Source file) {
+    const char *path = format::push(folder, "/", file.path).data;
+    const char *slash = c::strrchr(path, '/');
+    files::DoneResult made = files::make_folder(path[0:(Usize)(slash - path)]);
+    test::check_condition(made == .ok);
+    const U8 *bytes = (const U8 *)file.text;
+    files::CountResult written =
+        files::write_file(path[0:c::strlen(path)], bytes[0:c::strlen(file.text)], files::Replace);
+    test::check_condition(written == .ok);
+}
+
+// What `smith test --changed --dry-run` prints for `changes` on the repository above.
+static const char *changed(const char *changes) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    const char *names = "";
+    for (Usize i = 0; i < countof(repo); i++) {
+        write(p.dir, repo[i]);
+        names = format::push(names, repo[i].path, "\n").data;
+    }
+    constexpr Usize capacity = 1U << 16;
+    char *out = mem::alloc_slice(char, capacity).data;
+    Bool done = c::smith_core_changed_select(p.dir, names, changes, out, capacity);
+    test::check_equal(done, true);
+    return out;
+}
+
+// Without a marker a test that runs smith is selected by any source of smith, as before.
+export void test_a_test_without_the_marker_is_selected_by_any_source_of_smith() {
+    enter();
+    defer leave();
+    const char *out = changed("M\truntime/other.c");
+    scratch::expect_contains("plain", out,
+                             "tests/plain_test.smith: it runs smith, and runtime/other.c is part of smith");
+    scratch::expect_lacks("marked", out, "marked_test.smith:");
+    scratch::expect_lacks("deep", out, "deep_test.smith:");
+}
+
+// A path the marker names is selected, with the reason.
+export void test_a_declared_path_that_changed_selects_the_test() {
+    enter();
+    defer leave();
+    const char *out = changed("M\tlib/std/arena.smith");
+    scratch::expect_contains(
+        "marked", out, "tests/marked_test.smith: it declares lib/std/arena.smith, and lib/std/arena.smith changed");
+    scratch::expect_lacks("deep", out, "deep_test.smith:");
+}
+
+// A path the marker does not name selects a marked test through no runs-smith edge.
+export void test_another_part_of_smith_does_not_select_a_marked_test() {
+    enter();
+    defer leave();
+    const char *out = changed("M\tlib/std/text.smith");
+    scratch::expect_contains("plain", out, "tests/plain_test.smith: it runs smith");
+    scratch::expect_lacks("marked", out, "marked_test.smith:");
+    scratch::expect_lacks("deep", out, "deep_test.smith:");
+}
+
+// `*` stays within a folder; `**` crosses folders; a trailing `/` is the folder.
+export void test_globs_and_folders() {
+    enter();
+    defer leave();
+    const char *star = changed("M\truntime/untar_xz.c");
+    scratch::expect_contains("star", star,
+                             "tests/marked_test.smith: it declares runtime/untar*.c, and runtime/untar_xz.c changed");
+    const char *miss = changed("M\truntime/other.c");
+    scratch::expect_lacks("no star", miss, "marked_test.smith:");
+    const char *folder = changed("M\ttemplates/new/main.smith");
+    scratch::expect_contains("folder", folder,
+                             "tests/marked_test.smith: it declares templates/, and templates/new/main.smith changed");
+    const char *deep = changed("M\tlib/deep/er/json_x.smith");
+    scratch::expect_contains(
+        "deep", deep, "tests/deep_test.smith: it declares lib/**/json*.smith, and lib/deep/er/json_x.smith changed");
+    const char *within = changed("M\tlib/std/text.smith");
+    scratch::expect_lacks("a star stays within a folder", within, "deep_test.smith:");
+}
+
+// The edges a marked test had before stay: an import, and the test file itself.
+export void test_a_marked_test_keeps_its_imports_and_its_own_change() {
+    enter();
+    defer leave();
+    const char *imported = changed("M\tlib/a.smith");
+    scratch::expect_contains("import", imported, "tests/deep_test.smith: it depends on lib/a.smith");
+    scratch::expect_lacks("marked", imported, "marked_test.smith:");
+    const char *own = changed("M\ttests/marked_test.smith");
+    scratch::expect_contains("itself", own, "tests/marked_test.smith: it changed");
+}

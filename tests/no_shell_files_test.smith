@@ -5,6 +5,7 @@
 // The guard is a test, so `smith check` runs it on every tree the train checks. One process lists the tracked files
 // and the test reads the first bytes of each in process: a loop of head, tr and grep for every file cost 22 CPU-s
 // (#1315).
+// smith-covers: **/*.sh scripts/ tests/build_fixtures/
 module no_shell_files_test;
 
 import std::arena;
