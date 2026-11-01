@@ -7,8 +7,8 @@ tags: [build, api]
 # The build API
 
 Version 1 is enough for checkers and learner. Version 1.5 (`smith_defer`, `smith_lines`) adds what game needs for its
-generated mesh list. Everything else is later. The text below is the API in C names, as in `<smith/build.h>`, generated from [lib/smith/build.smith](../lib/smith/build.smith)
-(generated from [lib/smith/build.smith](../lib/smith/build.smith), where the types come in the order they depend on
+generated mesh list. Everything else is later. The text below is the API in C names, as in `<smith/build.h>`, generated from [lib/std/build.smith](../lib/std/build.smith)
+(generated from [lib/std/build.smith](../lib/std/build.smith), where the types come in the order they depend on
 each other) without its `#pragma once`, includes and `extern "C"` guards; a struct is anonymous and has only the typedef
 name, as the module writes it. Setting `.content_hash` is the error `smith: build.c: .content_hash is not implemented yet`.
 
@@ -130,7 +130,7 @@ const char *smith_capture_or(SmithBuild *b, const char *const *argv, const char 
 void smith_write(SmithBuild *b, const char *path, const char *text);
 
 // The path of a smith library's source, such as ".smith/lib/json.c" (a library written in .smith, "text", "arena" or "io", is a module,
-// ".smith/lib/smith/text.smith", that a smith with clang inside compiles), which smith writes on every `smith build`
+// ".smith/lib/std/text.smith", that a smith with clang inside compiles), which smith writes on every `smith build`
 // together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
 // flags (smith_object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless
 // the build file asks. An unknown name is an error that lists the known names ("arena", "contract", "io", "random",
@@ -378,7 +378,7 @@ const char *const *smith_objects(SmithBuild *b, const char *profile, const char 
 // project's root, then in the folders of the -I and -iquote flags of build::defaults and .flags (`-I src` finds
 // "base/math.h" at src/base/math.h). The scan is lexical: a conditional include is followed anyway, a macro-built
 // include is missed, and a .c that no header of the program names is not compiled (a project with such a file writes a
-// build file). Smith's libraries the sources use (`import smith::text;`, `#include <smith/text.h>`, and the libraries those
+// build file). Smith's libraries the sources use (`import std::text;`, `#include <smith/text.h>`, and the libraries those
 // need) are compiled and linked in.
 // A project calls build::app once for each program. Each finds its own sources; a source two programs share, and a
 // library, is compiled once in each profile and linked into each, with the same flags (build::app stops and names the

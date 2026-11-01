@@ -4,10 +4,10 @@
 // only to a build in that folder.
 module build_step_cache_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 
 constexpr usize memory_size = (usize)4 << 20; // 4 MiB

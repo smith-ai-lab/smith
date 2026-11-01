@@ -155,12 +155,12 @@ typedef struct {
     SmithLangText name;
     SmithLangNameKind kind;
     bool exported;
-    uint32_t location;    // of the declaration's name in the source, in the host's own measure
-    SmithLangText c_name; // the C name `[[smith::c_name("...")]]` chose for an export (length 0: the prefixed name)
-    uint16_t generic;     // 1 + the index of the generic function this name is (0: it is not one)
-    bool needed;          // the body of an exported generic names it: it is in the header's instance section
-    char tag_word;        // a tag: 's', 'u' or 'e' for struct, union or enum, or 0
-    bool typedef_due;     // a tag whose typedef is not written yet: it goes before the next declaration
+    uint32_t location;          // of the declaration's name in the source, in the host's own measure
+    SmithLangText c_name;       // the C name `[[std::c_name("...")]]` chose for an export (length 0: the prefixed name)
+    uint16_t generic;           // 1 + the index of the generic function this name is (0: it is not one)
+    bool needed;                // the body of an exported generic names it: it is in the header's instance section
+    char tag_word;              // a tag: 's', 'u' or 'e' for struct, union or enum, or 0
+    bool typedef_due;           // a tag whose typedef is not written yet: it goes before the next declaration
     SmithLangText tag_spelling; // the tag as C spells it when that is not the name's own (a payload enum's struct)
 } SmithLangName;
 
@@ -308,7 +308,7 @@ typedef struct {
     SmithLangText module; // game::replay
     bool is_c;
     bool is_target; // `import target;`: the facts of the target, no module of any file (runtime/lang_target.c)
-    bool is_self;   // the module's own last name (`tools::dup` in smith::tools): an import of that name replaces it
+    bool is_self;   // the module's own last name (`tools::dup` in std::tools): an import of that name replaces it
     bool missing;   // the module could not be imported: its names are not checked, the import was the one error
     bool in_header; // an exported declaration (or a generic, or an inline body) of the module uses a name written x::
     bool listed;    // the module's header lists its exports (// smith-names:): a name it does not list is no export
@@ -369,7 +369,7 @@ typedef struct {
     bool prev_ident;      // the token before was a name (not a keyword)
     bool param_bracket;   // the token before was the `[` of an array parameter: its size follows
     bool attribute_first; // the declaration begins with [[ ]]: `static` goes after them, before the token that follows
-    SmithLangText c_name; // [[smith::c_name("...")]] before this export (length 0: none)
+    SmithLangText c_name; // [[std::c_name("...")]] before this export (length 0: none)
     SmithLangText enum_prefix; // an exported enum's C name when its tag is declared: its constants are `<it>_<Value>`
     uint32_t c_name_location;
     bool c_name_used;  // a name this declaration introduces took it
@@ -460,7 +460,7 @@ struct SmithLang {
     size_t header_full_used;
     size_t pending;               // the held identifier waiting for the token after it (SIZE_MAX: none)
     bool pending_export;          // `export` was read, and the declaration it applies to is next
-    SmithLangText pending_c_name; // [[smith::c_name("...")]] was read: the export after it has that C name
+    SmithLangText pending_c_name; // [[std::c_name("...")]] was read: the export after it has that C name
     uint32_t pending_c_name_location;
     bool pending_c_name_line; // the attribute was the first token of its line
     SmithLangCond conds[smith_lang_cond_depth_max];
@@ -480,7 +480,7 @@ struct SmithLang {
     bool export_tail;     // the header has the export's end, though export_active is off (a variable, a prototype)
     bool tail_open;       // an export just ended in the header: a comment after it on its line follows it there
     uint32_t nolint_open; // NOLINTBEGIN comments the header has no NOLINTEND for yet (a pair stays together)
-    bool unnamed_c_name;  // an export ended that took no name from its [[smith::c_name]]
+    bool unnamed_c_name;  // an export ended that took no name from its [[std::c_name]]
     uint32_t unnamed_c_name_location;
     size_t c_name_count; // how many of the module's own names have a C name chosen
     SmithLangCName cnames[smith_lang_cnames_max];

@@ -1,7 +1,7 @@
 module mix::modes;
 
 // An exported enum's constants are `<CType>_<Value>` in C, the type's C name and the constant: `MixMode_Fast`.
-[[smith::c_name("MixMode")]] export typedef enum {
+[[std::c_name("MixMode")]] export typedef enum {
     Fast,
     Slow,
 } Mode;

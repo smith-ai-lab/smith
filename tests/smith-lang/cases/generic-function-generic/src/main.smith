@@ -5,7 +5,7 @@ import <stdio.h>;
 import <stdlib.h>;
 
 // What a failed check of an index calls.
-[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+[[std::c_name("smith_failure")]] export void failure(u8 code) {
     c::exit(code);
 }
 

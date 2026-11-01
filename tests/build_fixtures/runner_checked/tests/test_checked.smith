@@ -1,6 +1,6 @@
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 
 // The checked allocator around each test (mem::checked, issue #239). Sites are found by their text: keep the comments
 // `// leak site`, `// first free` and `// second free` on their lines.

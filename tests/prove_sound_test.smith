@@ -12,12 +12,12 @@
 // minute; `smith build prove-sound-full`).
 module prove_sound_test;
 
-import smith::arena;
-import smith::format;
-import smith::test;
+import std::arena;
+import std::format;
+import std::test;
 import scratch;
 import <string.h>;
-import smith::mem;
+import std::mem;
 
 // The flags of the harnesses: the sanitizers, the includes of the library and of the raw lowering of two modules, and
 // the files every harness links.
@@ -31,13 +31,13 @@ constexpr char cc_flags[_] = "-std=gnu23 -g -O0 -fsanitize=address,undefined -fn
 constexpr char common_script[_] =
     "c=\"$SMITH_TEST_CACHE/prove-sound\"; r=\"$SMITH_REPO\"; s=$(command -v smith); "
     "id=$(stat -L -c %s.%Y \"$s\" 2>/dev/null || stat -L -f %z.%m \"$s\"); "
-    "k=$( (cat \"$r/lib/trace.c\" \"$r/lib/smith/contract.smith\" \"$r/.smith/include/smith/trace.h\" "
+    "k=$( (cat \"$r/lib/trace.c\" \"$r/lib/std/contract.smith\" \"$r/.smith/include/smith/trace.h\" "
     "\"$r/.smith/include/smith/handlers.h\"; echo \"$id $F\") | cksum | cut -d\" \" -f1); d=\"$c/$k\"; "
     "if [ ! -f \"$d/trace.o\" ] || [ ! -f \"$d/contract.o\" ]; then "
-    "mkdir -p \"$c\" && t=$(mktemp -d \"$c/tmp-XXXXXX\") && mkdir -p \"$t/lib/smith\" && "
-    "cp \"$r/lib/trace.c\" \"$t/lib/\" && cp \"$r/lib/smith/contract.smith\" \"$t/lib/smith/\" && cd \"$t\" && "
+    "mkdir -p \"$c\" && t=$(mktemp -d \"$c/tmp-XXXXXX\") && mkdir -p \"$t/lib/std\" && "
+    "cp \"$r/lib/trace.c\" \"$t/lib/\" && cp \"$r/lib/std/contract.smith\" \"$t/lib/std/\" && cd \"$t\" && "
     "eval \"smith cc $F -c lib/trace.c -o trace.o\" 2>&1 && "
-    "eval \"smith cc $F -c lib/smith/contract.smith -o contract.o\" 2>&1 "
+    "eval \"smith cc $F -c lib/std/contract.smith -o contract.o\" 2>&1 "
     "|| exit 1; cd \"$c\" && rm -rf \"$t/lib\"; if [ -d \"$d\" ]; then rm -rf \"$t\"; else mv \"$t\" \"$d\"; fi; fi; "
     "echo \"$d\"";
 
@@ -64,8 +64,8 @@ static void copy_common(const scratch::Project *p) {
 // Two harnesses reach the modules' static functions by including their raw lowering (`smith cc --smith-lower`), made
 // in process (issue #646).
 static void lower_modules(const scratch::Project *p) {
-    scratch::write_lowered(p, "lib/smith/arena.smith", "lowered/arena_lowered.c");
-    scratch::write_lowered(p, "lib/smith/random.smith", "lowered/random_lowered.c");
+    scratch::write_lowered(p, "lib/std/arena.smith", "lowered/arena_lowered.c");
+    scratch::write_lowered(p, "lib/std/random.smith", "lowered/random_lowered.c");
 }
 
 // The values after `prefix` on each line of `text` that starts with it, joined by spaces.

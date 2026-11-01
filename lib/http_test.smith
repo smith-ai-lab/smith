@@ -1,16 +1,16 @@
 // Tests of <smith/http.h> on a scripted network and files in memory, in smith's own test library: the network is
-// smith::net's fake and the files are smith::files' fake, both set with their handlers, so nothing here touches the
+// std::net's fake and the files are std::files' fake, both set with their handlers, so nothing here touches the
 // internet or the disk, and a server that stops sending times out at once. The module is C, not yet a smith library,
 // so tests/units/build.c links lib/http.c.
 module http_test;
 
 import <errno.h>; // first: the headers of the modules include it, and then `errno` in this line is the macro
-import smith::arena;
-import smith::files;
-import smith::format;
-import smith::mem;
-import smith::net;
-import smith::test;
+import std::arena;
+import std::files;
+import std::format;
+import std::mem;
+import std::net;
+import std::test;
 import <smith/http.h>;
 
 // The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.

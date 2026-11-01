@@ -1,12 +1,12 @@
 ---
 name: smith-random
-description: "Random numbers from keys with smith::random (random::Key, split): the same key gives the same numbers on every build and thread. Load when code includes <smith/random.h> or imports smith::random, or on seeds, reproducible randomness or property tests."
+description: "Random numbers from keys with std::random (random::Key, split): the same key gives the same numbers on every build and thread. Load when code includes <smith/random.h> or imports std::random, or on seeds, reproducible randomness or property tests."
 ---
 
 # Random numbers from keys: smith's random
 
 ```smith
-import smith::random;
+import std::random;
 
 f64 demo(u64 seed, f64 out[:]) {
     random::Key key = random::key_make(seed);           // a seed is any u64
@@ -20,7 +20,7 @@ f64 demo(u64 seed, f64 out[:]) {
 }
 ```
 
-A key is immutable and every draw is a pure function of a key, as in JAX: the same key gives the same numbers on every platform, in any thread. There is no generator that advances. **A key is used once**: `random::Key` is `[[smith::affine]]` (`smith-lang-affine`), so drawing twice from one is a compile error at the second use, naming the first:
+A key is immutable and every draw is a pure function of a key, as in JAX: the same key gives the same numbers on every platform, in any thread. There is no generator that advances. **A key is used once**: `random::Key` is `[[std::affine]]` (`smith-lang-affine`), so drawing twice from one is a compile error at the second use, naming the first:
 
 ```smith fragment
 f64 a = random::normal_double_sample(parts[0], n);
@@ -44,12 +44,12 @@ for (usize i = 0; i < count; i++) {
 
 ## A fresh key from the system
 
-`random` is pure: it never asks the system for anything. A new `random::Key` from the system's entropy, a different one on every call, is `entropy::seed()` of `smith::entropy` (C: `smith_entropy_seed()`; [smith-entropy](../smith-entropy/SKILL.md)), which has the `entropy` effect. Print `key.bits` to replay a run: `random::key_make(bits)` is the same key.
+`random` is pure: it never asks the system for anything. A new `random::Key` from the system's entropy, a different one on every call, is `entropy::seed()` of `std::entropy` (C: `smith_entropy_seed()`; [smith-entropy](../smith-entropy/SKILL.md)), which has the `entropy` effect. Print `key.bits` to replay a run: `random::key_make(bits)` is the same key.
 
 ## The guarantees, and their limits
 
 - **The numbers never change.** (`split` gives the keys `key_derive` gave and a draw is the old draw 0, so every distribution still gives what it gave for a key.) They are part of the API: the Philox4x32-10 generator, the key and counter mapping and every distribution's algorithm are pinned by tests, so a change to any of them is a breaking change.
-- **The same bits on every platform.** The library has its own logarithm (`random::log_float`, `random::log_double`; fdlibm's algorithm, within 1 ulp), uses only `math::sqrt` (exactly rounded by IEEE), builds with `-ffp-contract=off` (which `smith build` adds for the library; `.smith/lib/smith/random.flags`) and refuses `-ffast-math`. Tests give the same digest across optimization levels, sanitizers and `-ffp-contract=fast`; GPUs and other compilers are not tested.
+- **The same bits on every platform.** The library has its own logarithm (`random::log_float`, `random::log_double`; fdlibm's algorithm, within 1 ulp), uses only `math::sqrt` (exactly rounded by IEEE), builds with `-ffp-contract=off` (which `smith build` adds for the library; `.smith/lib/std/random.flags`) and refuses `-ffast-math`. Tests give the same digest across optimization levels, sanitizers and `-ffp-contract=fast`; GPUs and other compilers are not tested.
 - `float` and `double` are asserted to be IEEE binary32 and binary64 when the library is compiled.
 
 Moving from key_derive: [smith-random-split](../smith-random-split/SKILL.md). Also in this family: [smith-random-distributions](../smith-random-distributions/SKILL.md), [smith-random-own](../smith-random-own/SKILL.md), [smith-random-c](../smith-random-c/SKILL.md).

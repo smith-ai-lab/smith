@@ -1,6 +1,6 @@
 ---
 name: smith-http
-description: "smith's HTTPS client, <smith/http.h> and lib/http.c: smith_http_get downloads one URL to a file on smith::net and smith::files (redirects to https only, streamed, idle timeout, errors that name the URL), what it does not do, and testing it on the net and files fakes. Load when code calls smith_http_get or includes <smith/http.h>, on a fetch or package download error such as 'short body' or 'HTTP 404', or when asked how smith downloads."
+description: "smith's HTTPS client, <smith/http.h> and lib/http.c: smith_http_get downloads one URL to a file on std::net and std::files (redirects to https only, streamed, idle timeout, errors that name the URL), what it does not do, and testing it on the net and files fakes. Load when code calls smith_http_get or includes <smith/http.h>, on a fetch or package download error such as 'short body' or 'HTTP 404', or when asked how smith downloads."
 ---
 
 # `smith_http_get`: download one file
@@ -22,7 +22,7 @@ It is the client of `smith fetch` and `smith_package` (`smith-packages`): enough
 
 ## What it does
 
-- `smith_http_get(url, path)` replaces the file at `path`. The body goes to the file a block at a time through `smith::files`: a 150 MB download holds about 400 KiB of the current allocator's memory, never the body. A failed download leaves the file as far as it got: remove it, or write to a temporary name and rename (as the package cache does).
+- `smith_http_get(url, path)` replaces the file at `path`. The body goes to the file a block at a time through `std::files`: a 150 MB download holds about 400 KiB of the current allocator's memory, never the body. A failed download leaves the file as far as it got: remove it, or write to a temporary name and rename (as the package cache does).
 - `SmithHttpResult` is `error` (code 0 when the body was written), `status` (the last response; 0 when none came, and for `file://`), `size` and `redirects`.
 - Redirects (301, 302, 303, 307, 308) are followed up to ten times and only to `https`. The first URL must be `https://` (or `file://`, which copies a local file and exists for tests). Certificates are the system's and cannot be turned off.
 - No cookies, authentication, compression, HTTP/2 or keep-alive: every request is one connection.

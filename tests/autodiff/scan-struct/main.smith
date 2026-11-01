@@ -3,11 +3,11 @@
 // more than the tolerance relative to the largest gradient entry.
 module main;
 
-import smith::arena;
-import smith::mem;
-import smith::autodiff;
-import smith::console;
-import smith::format;
+import std::arena;
+import std::mem;
+import std::autodiff;
+import std::console;
+import std::format;
 import <math.h>;
 import "base/reference_scan.h";
 

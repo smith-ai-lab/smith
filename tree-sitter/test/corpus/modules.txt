@@ -302,8 +302,8 @@ export int only_here(void);
 an attribute before export chooses the C name
 ================================================================================
 
-[[smith::c_name("SmithArena")]] export typedef struct { u64 used; } Arena;
-[[smith::c_name("smith_arena_make")]] export Arena make(u64 capacity) {
+[[std::c_name("SmithArena")]] export typedef struct { u64 used; } Arena;
+[[std::c_name("smith_arena_make")]] export Arena make(u64 capacity) {
     return (Arena){0};
 }
 

@@ -3,22 +3,22 @@
 #include <smith/trace.h>
 #include <stdlib.h>
 
-[[smith::pure]] int quiet(int n) {
+[[std::pure]] int quiet(int n) {
     return n + 1;
 }
 
-[[smith::effects(fails)]] int may_fail(int n) {
+[[std::effects(fails)]] int may_fail(int n) {
     if (n < 0) abort();
     if (n > 100) __builtin_trap();
     if (n == 50) smith_failure(SmithFailure_Check);
     return n;
 }
 
-[[smith::pure]] int aborts(int n) {
+[[std::pure]] int aborts(int n) {
     if (n < 0) abort();
     return n;
 }
 
-[[smith::pure]] int via(int n) {
+[[std::pure]] int via(int n) {
     return may_fail(n);
 }

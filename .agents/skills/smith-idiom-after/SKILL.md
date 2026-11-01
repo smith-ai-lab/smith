@@ -8,10 +8,10 @@ description: "The rolls module as idiomatic Smith: the module, its main, and how
 // rolls.smith
 module rolls;
 
-import smith::arena;
-import smith::console;
-import smith::format;
-import smith::random;
+import std::arena;
+import std::console;
+import std::format;
+import std::random;
 
 constexpr i64 sides = 6;
 
@@ -47,8 +47,8 @@ export void print(const Rolls *rolls) {
 // main.smith
 module main;
 import rolls;
-import smith::arena;
-import smith::entropy;
+import std::arena;
+import std::entropy;
 i32 main() {
     arena::Arena a = arena::growing(1 << 20, nullptr);
     rolls::Rolls dice = rolls::make(&a, entropy::seed(), 10);

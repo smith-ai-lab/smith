@@ -1,6 +1,6 @@
 // xz (the .xz container) and LZMA2 in C: smith's own decoder, so `smith_package` extracts a .tar.xz with no other
 // process. Included by runtime/package.c after runtime/gzip.c, whose sink type it uses, and after its SHA-256; its
-// CRC-32 is smith::inflate's.
+// CRC-32 is std::inflate's.
 //
 // What it reads: streams (one or more, with the zero padding xz allows between them) of blocks whose one filter is
 // LZMA2, the filter every .tar.xz uses, with the check none, CRC-32, CRC-64 or SHA-256. Every field the format lets a

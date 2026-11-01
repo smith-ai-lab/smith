@@ -1,5 +1,5 @@
 import stats;
-import smith::contract;
+import std::contract;
 
 int main(void) {
     contract::assert(stats::clamp(7, 5, 0) >= 0);

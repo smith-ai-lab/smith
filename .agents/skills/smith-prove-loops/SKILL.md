@@ -8,7 +8,7 @@ description: "smith prove on loops: a loop without an invariant is unrolled and 
 ```smith
 module tally;
 
-import smith::contract;
+import std::contract;
 
 export i32 squares_sum(usize count) {
     contract::requires(count <= 5);              // the worst case: the loop is unrolled into at most 5 passes
@@ -27,7 +27,7 @@ A loop over what a caller's array holds proves the same way, whatever its body d
 ```smith
 module sums;
 
-import smith::contract;
+import std::contract;
 
 export usize positives(i32 xs[8], usize count) {
     contract::requires(count <= 8);

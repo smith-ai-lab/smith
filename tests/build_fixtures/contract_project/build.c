@@ -12,7 +12,7 @@ void build(SmithBuild *b) {
         smith_object(b, &objects[i]);
     }
     SmithTests tests = {
-        .sources = smith_list(b, "smith/contract_test.smith", nullptr),
+        .sources = smith_list(b, "std/contract_test.smith", nullptr),
         .objects = (const SmithObject *[]){&objects[0], &objects[1], &objects[2], nullptr},
         .flags = flags,
         .link_flags = smith_list(b, "-fsanitize=address,undefined", nullptr),

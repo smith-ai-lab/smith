@@ -1,6 +1,6 @@
 #include <math.h>
 #include "same.h"
-struct smith_enum_option_usize {enum smith_enum_option_usize_tag {smith_enum_option_usize_tag_some, smith_enum_option_usize_tag_none } tag; union { __SIZE_TYPE__ some; }; } __attribute__((annotate("smith::enum")));
+struct smith_enum_option_usize {enum smith_enum_option_usize_tag {smith_enum_option_usize_tag_some, smith_enum_option_usize_tag_none } tag; union { __SIZE_TYPE__ some; }; } __attribute__((annotate("std::enum")));
 static struct smith_enum_option_usize heads_first_odd(__SIZE_TYPE__ *xs, __SIZE_TYPE__ n) {
 for (__SIZE_TYPE__ i = 0; i < n; i++)
 if (xs[i] % 2 == 1) return {.some = xs[i]};

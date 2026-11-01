@@ -884,7 +884,7 @@ static void smith_prove_libraries(const char *libraries, size_t *used) {
 
 // The words a `.smith` compile starts with, which a C file's do not (smith_lang_flags in the build runtime): sources
 // whose flags differ by them alone are proved together, so a C file that calls into a module of the same program
-// (smith.c into smith::random) finds the module's body, as it would linked. The group keeps the first member's flags,
+// (smith.c into std::random) finds the module's body, as it would linked. The group keeps the first member's flags,
 // and a module that needs the folder gets it last, where it never shadows a header the first member's own -I paths
 // find.
 constexpr char smith_prove_lang_prefix[] = "-I\t.smith/include\t";

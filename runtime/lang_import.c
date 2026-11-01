@@ -22,12 +22,12 @@ typedef struct {
     char underscored[smith_lang_name_max];
     char last[smith_lang_name_max];
     uint32_t location;
-    bool std; // written `std::...`: the standard library, whose modules are `smith::...` inside (#366)
 } SmithLangModuleName;
 
 static bool smith_lang_read_module_name(SmithLang *lang, const SmithHost *host, SmithLangModuleName *name) {
     size_t used = 0;       // in colons
-    size_t short_used = 0; // in path and underscored
+    size_t short_used = 0; // in path
+    size_t c_used = 0;     // in underscored
     size_t last = 0;
     for (size_t i = 0; i < smith_lang_name_max / 2; i++) { // bounded by the name's size
         const SmithToken *part = smith_lang_peek(lang, host, 0, false);
@@ -43,24 +43,28 @@ static bool smith_lang_read_module_name(SmithLang *lang, const SmithHost *host, 
             memcpy(name->colons + used, "::", 2);
             used += 2;
             name->path[short_used] = '/';
-            name->underscored[short_used] = '_';
+            name->underscored[c_used] = '_';
             short_used += 1;
+            c_used += 1;
         }
         last = used;
+        // the standard library's modules are `std::arena` and their C names `smith_arena_`: C has no namespaces
         bool library = i == 0 && smith_lang_equals(taken.text, taken.length, "std") &&
                        smith_lang_punct(smith_lang_peek(lang, host, 0, false), "::");
-        const char *text = library ? "smith" : taken.text; // `std::arena` is the module `smith::arena`
-        size_t text_length = library ? 5 : taken.length;
-        if (i == 0) name->std = library;
+        const char *text = taken.text;
+        size_t text_length = taken.length;
+        const char *c_text = library ? "smith" : taken.text;
+        size_t c_length = library ? 5 : taken.length;
         memcpy(name->colons + used, text, text_length);
         memcpy(name->path + short_used, text, text_length);
-        memcpy(name->underscored + short_used, text, text_length);
+        memcpy(name->underscored + c_used, c_text, c_length);
         used += text_length;
         short_used += text_length;
+        c_used += c_length;
         if (!smith_lang_punct(smith_lang_peek(lang, host, 0, false), "::")) break;
         smith_lang_take(lang, host);
     }
-    name->colons[used] = name->path[short_used] = name->underscored[short_used] = 0;
+    name->colons[used] = name->path[short_used] = name->underscored[c_used] = 0;
     memcpy(name->last, name->colons + last, used - last + 1);
     return true;
 }
@@ -102,10 +106,7 @@ static void smith_lang_module_line(SmithLang *lang, const SmithHost *host, const
         return;
     }
     lang->seen_module_line = true;
-    char std_path[smith_lang_name_max] = "std"; // a std module is also in a file whose path ends in std/x.smith
-    if (name.std) snprintf(std_path + 3, sizeof std_path - 3, "%s", name.path + 5);
-    if (host->main_file != nullptr && !smith_lang_path_matches(host->main_file, name.path) &&
-        !(name.std && smith_lang_path_matches(host->main_file, std_path))) {
+    if (host->main_file != nullptr && !smith_lang_path_matches(host->main_file, name.path)) {
         smith_lang_error(lang, host, name.location,
                          "module `%s` must be in a file whose path ends in `%s.smith`; this one is `%s`", name.colons,
                          name.path, host->main_file);
@@ -149,9 +150,14 @@ static size_t smith_lang_header_imports(const char *text, size_t length, char na
     return count;
 }
 
-// a::b::c into a/b/c.h
+// a::b::c into a/b/c.h; the standard library's headers are in smith/ (C has no namespaces): std::arena is smith/arena.h
 static void smith_lang_module_to_path(const char *module, char *path, size_t capacity) {
     size_t used = 0;
+    if (strncmp(module, "std::", 5) == 0) {
+        memcpy(path, "smith/", 6);
+        used = 6;
+        module += 5;
+    }
     for (size_t i = 0; module[i] != 0 && used + 4 < capacity; i++) { // bounded by the name
         if (module[i] == ':' && module[i + 1] == ':') {
             path[used++] = '/';

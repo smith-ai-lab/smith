@@ -30,7 +30,7 @@ export leaf_of(T) first(constexpr type T, T x) {    // a computed result type
 
 ## Rules
 
-- **Exported functions over `type` travel in headers.** The header records the tokens (`// smith-types:`, `// smith-generic: ... f`), and a private function over `type` that an exported one calls too; an importer defines each, as a private function, after its last `import` line. So `arena::slice_of(f32, 2)` runs in the compiler of any module that imports `smith::arena`: in a `static_assert`, a `constexpr` initializer, a generic's result type or its `if constexpr`.
+- **Exported functions over `type` travel in headers.** The header records the tokens (`// smith-types:`, `// smith-generic: ... f`), and a private function over `type` that an exported one calls too; an importer defines each, as a private function, after its last `import` line. So `arena::slice_of(f32, 2)` runs in the compiler of any module that imports `std::arena`: in a `static_assert`, a `constexpr` initializer, a generic's result type or its `if constexpr`.
 - A private (`static`) function over `type` that an exported generic names in its computed result type (`same(T) keep(...)`) or calls in its body travels the same way, so every instance in an importing module finds it. An ordinary exported function (over numbers) is carried from the module's `.body` file, with no such limit (`smith-lang-constexpr`).
 - **`t[:]`** is "slice of `t`" and `f32[2]` an array type value; `typeof(xs)` is the type of an expression. Each `[:]` puts a run-time dimension in front (`f32[:][:]` is depth 2; at most 8), and the result is a real handle (`==`, `sizeof`, `is_record`, `t x;`). `t[1:2]` is an error.
 - `sizeof(t)` is exact for the target: `long` is 4 with `--target=x86_64-pc-windows-msvc`, 8 on the host.

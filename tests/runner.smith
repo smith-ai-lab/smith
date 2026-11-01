@@ -7,10 +7,10 @@
 // back.
 module runner;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import <string.h>;
 import scratch;
 
@@ -76,7 +76,7 @@ export scratch::Project project(const char *base, const char *files) {
 constexpr char shared_script[_] =
     "here=$SMITH_REPO; root=$SMITH_TEST_CACHE/runner; mkdir -p \"$root\"; "
     "if [ \"$(uname -s)\" = Darwin ]; then sf='-f %N_%m_%z'; else sf='-c %n_%Y_%s'; fi; "
-    "key=$( { echo \"$ARGS\"; stat $sf \"$SMITH_SELF\" \"$here\"/lib/smith/*.smith \"$here\"/lib/*.c \"$here\"/lib/*.h "
+    "key=$( { echo \"$ARGS\"; stat $sf \"$SMITH_SELF\" \"$here\"/lib/std/*.smith \"$here\"/lib/*.c \"$here\"/lib/*.h "
     "2>/dev/null; find . -name build -prune -o -name .smith -prune -o -type f -print | sort | while read -r f; do "
     "echo \"$f\"; cat \"$f\"; done; } | shasum -a 256 | cut -c1-20 ); c=$root/$key; "
     "if [ ! -e \"$c/done\" ]; then "

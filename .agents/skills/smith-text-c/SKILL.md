@@ -1,6 +1,6 @@
 ---
 name: smith-text-c
-description: "smith::text from C (#include <smith/text.h>) and compiling it in build.c with smith_library(b, "text"). Load when C code includes <smith/text.h> or a build.c compiles text."
+description: "std::text from C (#include <smith/text.h>) and compiling it in build.c with smith_library(b, "text"). Load when C code includes <smith/text.h> or a build.c compiles text."
 ---
 
 # text from C
@@ -27,7 +27,7 @@ size_t length = smith_text_write_u64((struct smith_array_char_n){.data = out, .c
 
 ## Get the library in build.c
 
-text needs nothing else. smith writes the header and the source (`.smith/lib/smith/text.smith`) into `.smith/` on every `smith build`; `smith_library(b, "text")` returns the source's path and `smith_object` compiles a `.smith` source as it does a `.c` (the header step and `-I .smith/include` are added for it):
+text needs nothing else. smith writes the header and the source (`.smith/lib/std/text.smith`) into `.smith/` on every `smith build`; `smith_library(b, "text")` returns the source's path and `smith_object` compiles a `.smith` source as it does a `.c` (the header step and `-I .smith/include` are added for it):
 
 ```c
 SmithObject text = {.compiler = "smith-cc", .source = smith_library(b, "text"), .output = "build/smith/text.o", .flags = flags};

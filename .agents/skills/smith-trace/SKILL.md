@@ -14,7 +14,7 @@ A failure comes from a plain function call in a `.smith` file as it does in C. `
 ```smith
 module util;
 
-import smith::contract;
+import std::contract;
 
 export i32 clamp(i32 x, i32 lo, i32 hi) {
     contract::requires(lo <= hi);

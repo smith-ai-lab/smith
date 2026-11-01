@@ -4,14 +4,14 @@ module proof_only;
 // proved check is written as the lowering writes it, `contract::kept_assert(...)`.
 
 import <stdio.h>;
-import smith::contract;
+import std::contract;
 
 // Only a proved check calls it: it recurses and says it is pure, which holds because it runs nowhere.
 static u64 odd_sum(u64 n) {
     return n == 0 ? 0 : odd_sum(n - 1) + 2 * n - 1;
 }
 
-export [[smith::pure]] u64 square(u64 n) {
+export [[std::pure]] u64 square(u64 n) {
     contract::kept_assert(odd_sum(n) == n * n);
     return n * n;
 }
@@ -38,7 +38,7 @@ static u64 noisy(u64 n) {
     return n;
 }
 
-export [[smith::pure]] u64 quiet(u64 n) {
+export [[std::pure]] u64 quiet(u64 n) {
     contract::kept_assert(noisy(n) == n);
     return n;
 }

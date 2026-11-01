@@ -1,18 +1,18 @@
 ---
 name: smith-failing
-description: "Using smith::failing (import smith::failing; failing::make, failing::Failing): an allocator for tests that refuses some allocations by a draw from a random::Key, so a test reaches every allocation-failure path and a failure replays from its seed. Load when code imports smith::failing or includes <smith/failing.h>, or on testing what a function does when memory is refused."
+description: "Using std::failing (import std::failing; failing::make, failing::Failing): an allocator for tests that refuses some allocations by a draw from a random::Key, so a test reaches every allocation-failure path and a failure replays from its seed. Load when code imports std::failing or includes <smith/failing.h>, or on testing what a function does when memory is refused."
 ---
 
-# Refusing on purpose: smith::failing
+# Refusing on purpose: std::failing
 
 `failing::make(parent, key)` (C: `smith_failing_make`, in `<smith/failing.h>`; `parent` null is the system's) is a `failing::Failing` (`SmithFailing`), an allocator of [smith-mem](../smith-mem/SKILL.md)'s interface that wraps `parent` and refuses one allocation in `f.one_in` (8 at first; 1 every one, 0 none) by a draw from `key`. The same key and the same calls refuse the same allocations, so a failure replays from its seed. It is a test tool built on `random`, not part of the allocator interface: `mem` depends on nothing above it.
 
 ```smith
 module scratch_test;
-import smith::failing;
-import smith::mem;
-import smith::random;
-import smith::test;
+import std::failing;
+import std::mem;
+import std::random;
+import std::test;
 
 export void test_every_allocation_refused() {
     failing::Failing f = failing::make(nullptr, random::key_make(1));

@@ -7,10 +7,10 @@
 // wiring, its options, the environment, the regeneration when build.c changes) is a scratch project of the fixture.
 module build_steps_basic_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 import <smith_core_plan.h>;
 

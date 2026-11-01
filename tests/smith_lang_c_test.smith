@@ -9,10 +9,10 @@
 // must leave alone) is built and run as x.c and as x.smith, and both must print what x.out holds.
 module smith_lang_c_test;
 
-import smith::format;
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::format;
+import std::arena;
+import std::mem;
+import std::test;
 import <string.h>;
 import scratch;
 

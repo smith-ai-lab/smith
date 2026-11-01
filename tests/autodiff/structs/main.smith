@@ -6,11 +6,11 @@
 module main;
 
 import <math.h>;
-import smith::arena;
-import smith::autodiff;
-import smith::console;
-import smith::format;
-import smith::mem;
+import std::arena;
+import std::autodiff;
+import std::console;
+import std::format;
+import std::mem;
 
 typedef struct {
     f32 m;

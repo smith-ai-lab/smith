@@ -1,7 +1,7 @@
 import <stdio.h>;
 import <unistd.h>;
-import smith::random;
-import smith::test;
+import std::random;
+import std::test;
 
 // The next key of a stream: `stream` moves on and the key returned is for one use.
 static random::Key take(random::Key *stream) {

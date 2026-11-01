@@ -1,7 +1,7 @@
 import <assert.h>;
 import <stdint.h>;
-import smith::random;
-import smith::test;
+import std::random;
+import std::test;
 
 [[gnu::always_inline]] static inline void check_positive(i32 value) {
     test::check(value > 0);

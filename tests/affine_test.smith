@@ -1,4 +1,4 @@
-// `[[smith::affine]]` (shim/affine.cpp; skill smith-lang-affine): a value of an affine type is used at most once, a
+// `[[std::affine]]` (shim/affine.cpp; skill smith-lang-affine): a value of an affine type is used at most once, a
 // compile error at the second use naming the first. Each tests/affine/*.c and *.smith is compiled with `smith cc -c`
 // and what it prints (the status, then each error and note, the path left off) is the golden file beside it,
 // `<file>.expected`: the rules (a second use, an unused value, `&key`, a join, an assignment, an element of an array, a
@@ -11,10 +11,10 @@
 // is given back with that memory, and scratch::clean frees what make holds.
 module affine_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import <string.h>;
 import scratch;
 

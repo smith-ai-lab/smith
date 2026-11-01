@@ -3,9 +3,9 @@
 // itself.
 module build_high_level_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
 import target;
 

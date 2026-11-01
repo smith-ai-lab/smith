@@ -1,5 +1,5 @@
-import smith::math;
-import smith::test;
+import std::math;
+import std::test;
 
 void test_size(void) {
     usize count = test::full() ? 1000 : 10;

@@ -1,7 +1,0 @@
-module smith::test::helpers;
-import smith::test;
-
-// A check of a library written as a module under smith::test: its frames are machinery, never the failing line.
-export void require(bool condition) {
-    test::check(condition);
-}

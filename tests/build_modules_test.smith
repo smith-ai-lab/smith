@@ -2,10 +2,10 @@
 // .smith/modules and the cache shared in $XDG_CACHE_HOME/smith/modules.
 module build_modules_test;
 
-import smith::arena;
-import smith::mem;
-import smith::format;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::format;
+import std::test;
 import scratch;
 
 // The folder of the project with its links resolved, which is how the maps name a header.

@@ -1,24 +1,23 @@
 // Package downloads on a scripted network, from tests/package.sh (issue #292): redirects, a cross-scheme redirect
 // refused, 404, a truncated body, a broken connection, a wrong hash, a TLS failure and a killed fetch's leftovers.
-// tests/package.c holds the checks; the cache and tar are real, the network is smith::net's scripted one. It is
+// tests/package.c holds the checks; the cache and tar are real, the network is std::net's scripted one. It is
 // compiled with smith's cc against the repository ($SMITH_REPO) and run on a tar.gz made here, once at -O0 under ASan
 // and UBSan, once at -O2.
 module package_checks_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 
 // runtime/package.c sees the libraries through their headers; the modules are linked.
 constexpr char compile_prefix[_] =
     "smith cc -std=gnu23 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
     "-Wstrict-prototypes -Wvla -Werror -Wno-unused-function -I \"$SMITH_REPO/.smith/include\" ";
-constexpr char libraries[_] =
-    " lib/smith/arena.smith lib/smith/contract.smith lib/smith/env.smith lib/smith/files.smith "
-    "lib/smith/inflate.smith lib/smith/mem.smith lib/smith/net.smith "
-    "lib/smith/random.smith bin/handlers.o";
+constexpr char libraries[_] = " lib/std/arena.smith lib/std/contract.smith lib/std/env.smith lib/std/files.smith "
+                              "lib/std/inflate.smith lib/std/mem.smith lib/std/net.smith "
+                              "lib/std/random.smith bin/handlers.o";
 
 static void package_project(const scratch::Project *p) {
     scratch::copy_tree(p, "lib", "lib");

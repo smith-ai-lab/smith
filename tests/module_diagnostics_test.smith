@@ -2,9 +2,9 @@
 // and of nothing else, and build::defaults' .errors adds a diagnostic to it.
 module module_diagnostics_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
 
 static const char *cast_away_const = "module main;\n"
@@ -48,7 +48,7 @@ static const char *both(const scratch::Run *run) {
 static const char *build_with(const char *field) {
     static char text[512];
     __builtin_snprintf(text, sizeof text,
-                       "module build;\n\nimport smith::build;\n\nexport void build(build::Build *b) {\n"
+                       "module build;\n\nimport std::build;\n\nexport void build(build::Build *b) {\n"
                        "    build::defaults(b, &(build::Defaults){%s});\n    build::app(b, &(build::App){});\n}\n",
                        field);
     return text;

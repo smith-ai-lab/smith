@@ -3,13 +3,13 @@ module effects_entropy;
 import <sys/random.h>;
 
 // Drawing from the system's entropy is the `entropy` effect, a ceiling that lists it holds, and a pure function may not.
-export [[smith::effects(entropy)]] u64 fresh() {
+export [[std::effects(entropy)]] u64 fresh() {
     u64 bits = 0;
     (void)c::getentropy(&bits, sizeof bits);
     return bits;
 }
 
-export [[smith::pure]] u64 not_pure() {
+export [[std::pure]] u64 not_pure() {
     u64 bits = 0;
     (void)c::getentropy(&bits, sizeof bits);
     return bits;

@@ -7,7 +7,7 @@ import bytes;
 static_assert(bytes::fill(3) == 3);
 
 // What a failed check of an index calls (the library's, in a real program).
-[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+[[std::c_name("smith_failure")]] export void failure(u8 code) {
     c::exit(code);
 }
 

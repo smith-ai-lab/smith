@@ -10,7 +10,7 @@ A function of a module with `constexpr type T` or `auto x` parameters is written
 ```smith
 module pick;
 
-import smith::arena;
+import std::arena;
 
 export typeof(a) larger(auto a, typeof(a) b) {          // one instance per type: C needs a macro or a copy for each
     return a > b ? a : b;

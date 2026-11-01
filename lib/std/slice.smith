@@ -1,0 +1,246 @@
+// smith-build: header
+// std::slice, <smith/slice.h>: what a program does with a slice that is not an element access: compare, search, copy,
+// fill, reverse and cut one. Every export is a generic function, so it has no C spelling (the header holds only its
+// record). Nothing allocates: a result is a cut of an input, an index, or is written into a slice the caller passes.
+//
+//   str s = "key=value";
+//   option(usize) at = slice::find(s, '=');
+//   if (at == .some) key = s[0:at.some];
+module std::slice;
+
+import std::contract;
+
+// Whether a and b have the same count and the same elements.
+export bool equal(const auto a[:], typeof(a) b) {
+    if (countof(a) != countof(b)) return false;
+    for (usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+// Negative when a sorts before b, zero when they are equal, positive after: the first differing element decides, and
+// the shorter slice sorts first when it is a prefix of the other.
+export i32 compare(const auto a[:], typeof(a) b) {
+    usize shorter = countof(a) < countof(b) ? countof(a) : countof(b);
+    for (usize i = 0; i < shorter; i++) {
+        if (a[i] < b[i]) return -1;
+        if (a[i] > b[i]) return 1;
+    }
+    if (countof(a) < countof(b)) return -1;
+    return countof(a) > countof(b) ? 1 : 0;
+}
+
+// Whether xs begins with prefix.
+export bool starts_with(const auto xs[:], typeof(xs) prefix) {
+    if (countof(prefix) > countof(xs)) return false;
+    return equal(xs[0:countof(prefix)], prefix);
+}
+
+// Whether xs ends with suffix.
+export bool ends_with(const auto xs[:], typeof(xs) suffix) {
+    if (countof(suffix) > countof(xs)) return false;
+    return equal(xs[countof(xs) - countof(suffix):countof(xs)], suffix);
+}
+
+// The index of the first element equal to v, or `.none`.
+export option(usize) find(const auto xs[:], typeof(xs[0]) v) {
+    for (usize i = 0; i < countof(xs); i++) {
+        if (xs[i] == v) return {.some = i};
+    }
+    return .none;
+}
+
+// The index of the last element equal to v, or `.none`.
+export option(usize) find_last(const auto xs[:], typeof(xs[0]) v) {
+    for (usize i = countof(xs); i > 0; i--) {
+        if (xs[i - 1] == v) return {.some = i - 1};
+    }
+    return .none;
+}
+
+// How many elements equal v.
+export usize count(const auto xs[:], typeof(xs[0]) v) {
+    usize n = 0;
+    for (usize i = 0; i < countof(xs); i++) {
+        if (xs[i] == v) n += 1;
+    }
+    return n;
+}
+
+// Sets every element to v.
+export void fill(auto xs[:], typeof(xs[0]) v) {
+    for (usize i = 0; i < countof(xs); i++) {
+        xs[i] = v;
+    }
+}
+
+// Puts the elements in the opposite order, in place.
+export void reverse(auto xs[:]) {
+    for (usize i = 0; i < countof(xs) / 2; i++) {
+        usize j = countof(xs) - 1 - i;
+        typeof(xs[0]) held = xs[i];
+        xs[i] = xs[j];
+        xs[j] = held;
+    }
+}
+
+// The index of the first element for which pred is true, or `.none`.
+export option(usize) find_if(const auto xs[:], constexpr auto pred) {
+    for (usize i = 0; i < countof(xs); i++) {
+        if (pred(xs[i])) return {.some = i};
+    }
+    return .none;
+}
+
+// The index where needle first occurs in xs as a run of elements, or `.none`. An empty needle is at 0.
+export option(usize) find_slice(const auto xs[:], typeof(xs) needle) {
+    if (countof(needle) > countof(xs)) return .none;
+    for (usize i = 0; i + countof(needle) <= countof(xs); i++) {
+        if (equal(xs[i:i + countof(needle)], needle)) return {.some = i};
+    }
+    return .none;
+}
+
+// xs without the elements at both ends for which pred is true: a cut of xs, nothing is copied.
+export typeof(xs) trim(const auto xs[:], constexpr auto pred) {
+    usize start = 0;
+    while (start < countof(xs) && pred(xs[start])) {
+        start += 1;
+    }
+    usize end = countof(xs);
+    while (end > start && pred(xs[end - 1])) {
+        end -= 1;
+    }
+    return xs[start:end];
+}
+
+// The first index whose element is not less than v in a slice sorted ascending: where v is, or would be inserted. It
+// is countof(sorted) when every element is less. Halves the range each step, so it takes log2(count) comparisons.
+export usize search(const arithmetic sorted[:], typeof(sorted[0]) v) {
+    usize low = 0;
+    usize high = countof(sorted);
+    while (low < high) {
+        contract::invariant(low <= high && high <= countof(sorted));
+        usize middle = low + (high - low) / 2;
+        if (sorted[middle] < v) {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    contract::ensures(low <= countof(sorted));
+    return low;
+}
+
+// Moves the element at root down the heap xs[0:end] until both its children sort after it.
+void sift_down(auto xs[:], usize root, usize end, constexpr auto less) {
+    contract::requires(end <= countof(xs) && root < end);
+    usize parent = root;
+    while (2 * parent + 1 < end) {
+        contract::invariant(parent < end);
+        usize child = 2 * parent + 1;
+        if (child + 1 < end && less(xs[child], xs[child + 1])) child += 1;
+        if (!less(xs[parent], xs[child])) return;
+        typeof_unqual(xs[0]) held = xs[parent];
+        xs[parent] = xs[child];
+        xs[child] = held;
+        parent = child;
+    }
+}
+
+// Whether no element of xs sorts before the one in front of it, by less.
+bool ordered_by(const auto xs[:], constexpr auto less) {
+    for (usize i = 1; i < countof(xs); i++) {
+        if (less(xs[i], xs[i - 1])) return false;
+    }
+    return true;
+}
+
+// Puts the elements in the order less gives, in place: less(a, b) is true when a sorts strictly before b. A heapsort,
+// so the worst case is count * log2(count) comparisons, nothing allocates and nothing recurses. Not stable.
+export void sort_by(auto xs[:], constexpr auto less) {
+    usize length = countof(xs);
+    for (usize i = length / 2; i > 0; i--) {
+        sift_down(xs, i - 1, length, less);
+    }
+    for (usize end = length; end > 1; end--) {
+        typeof_unqual(xs[0]) held = xs[0];
+        xs[0] = xs[end - 1];
+        xs[end - 1] = held;
+        sift_down(xs, 0, end - 1, less);
+    }
+    contract::ensures(ordered_by(xs, less));
+}
+
+// Whether a sorts strictly before b in ascending order: the `less` that sort gives sort_by.
+bool ascending(arithmetic a, typeof(a) b) {
+    return a < b;
+}
+
+// Puts the elements in ascending order, in place: sort_by with `<`, a heapsort. NaN of a floating slice has no place
+// in the order, so a slice holding one ends in no particular order.
+export void sort(arithmetic xs[:]) {
+    sort_by(xs, ascending);
+}
+
+// The sum of the elements, 0 for an empty slice. An integer sum that overflows is a failed check.
+export typeof(xs[0]) sum(const arithmetic xs[:]) {
+    typeof_unqual(xs[0]) total = 0;
+    for (usize i = 0; i < countof(xs); i++) {
+        total += xs[i];
+    }
+    return total;
+}
+
+// The index of the smallest element, the first of equal ones. NaN of a floating slice is never smaller than any.
+export usize argmin(const arithmetic xs[:]) {
+    contract::requires(countof(xs) > 0);
+    usize best = 0;
+    for (usize i = 1; i < countof(xs); i++) {
+        contract::invariant(best < i);
+        if (xs[i] < xs[best]) best = i;
+    }
+    contract::ensures(best < countof(xs));
+    return best;
+}
+
+// The index of the largest element, the first of equal ones.
+export usize argmax(const arithmetic xs[:]) {
+    contract::requires(countof(xs) > 0);
+    usize best = 0;
+    for (usize i = 1; i < countof(xs); i++) {
+        contract::invariant(best < i);
+        if (xs[i] > xs[best]) best = i;
+    }
+    contract::ensures(best < countof(xs));
+    return best;
+}
+
+// The smallest element.
+export typeof(xs[0]) min(const arithmetic xs[:]) {
+    contract::requires(countof(xs) > 0);
+    return xs[argmin(xs)];
+}
+
+// The largest element.
+export typeof(xs[0]) max(const arithmetic xs[:]) {
+    contract::requires(countof(xs) > 0);
+    return xs[argmax(xs)];
+}
+
+// Whether pred is true for every element, true for an empty slice.
+export bool all(const auto xs[:], constexpr auto pred) {
+    for (usize i = 0; i < countof(xs); i++) {
+        if (!pred(xs[i])) return false;
+    }
+    return true;
+}
+
+// Whether pred is true for some element, false for an empty slice.
+export bool any(const auto xs[:], constexpr auto pred) {
+    for (usize i = 0; i < countof(xs); i++) {
+        if (pred(xs[i])) return true;
+    }
+    return false;
+}

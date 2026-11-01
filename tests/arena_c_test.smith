@@ -2,23 +2,23 @@
 // AddressSanitizer and with NDEBUG and run in the modes it takes (the capacity stop, ASan's catches, the lazy poison, a
 // carved arena), the module compiled under a new project's warnings, and a project that gets the library with
 // smith_library (from C, from a .smith file, and the error of an unknown name). The behavior of the library is
-// lib/smith/arena_test.smith. The projects are tests/build_fixtures/arena_project, arena_typed and arena_unknown. A
+// lib/std/arena_test.smith. The projects are tests/build_fixtures/arena_project, arena_typed and arena_unknown. A
 // test makes its project, then sets its own memory as the current allocator: what scratch returns to it (a Run's texts)
 // is given back with that memory, and scratch::clean frees what make holds.
 module arena_c_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 import <string.h>;
 
 constexpr usize memory_size = (usize)16 << 20; // 16 MiB
 
 constexpr char flags[_] = "-std=gnu23 -Wall -Wextra -Wpedantic -Werror -I \"$SMITH_REPO/.smith/include\"";
-constexpr char sources[_] = "tests/arena.c lib/smith/arena.smith "
-                            "lib/smith/contract.smith lib/trace.c";
+constexpr char sources[_] = "tests/arena.c lib/std/arena.smith "
+                            "lib/std/contract.smith lib/trace.c";
 
 // Compiles tests/arena.c into `name` in the project: "plain", "asan" (sanitized) or "fast" (NDEBUG, -O2).
 static void compile(const scratch::Project *p, const char *name) {
@@ -146,7 +146,7 @@ static void compiles_as(const char *standard) {
     scratch::Run built = scratch::sh(
         &p, format::push("smith cc -std=", standard,
                          " -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -I \"$SMITH_REPO/.smith/include\" "
-                         "-iquote \"$SMITH_REPO/.smith/include/smith\" -c lib/smith/arena.smith -o a.o")
+                         "-iquote \"$SMITH_REPO/.smith/include/smith\" -c lib/std/arena.smith -o a.o")
                 .data);
     scratch::expect_status(
         format::push("library: compiles as -std=", standard, " with the new project's warnings").data, 0, &built);
@@ -177,7 +177,7 @@ export void test_arena_c_project_gets_the_library_with_smith_library() {
     scratch::expect_text("project: the header is written", "yes",
                          scratch::capture(&p, "[ -f .smith/include/smith/arena.h ] && echo yes"));
     scratch::expect_text("project: the source is written", "yes",
-                         scratch::capture(&p, "[ -f .smith/lib/smith/arena.smith ] && echo yes"));
+                         scratch::capture(&p, "[ -f .smith/lib/std/arena.smith ] && echo yes"));
     scratch::Run run = scratch::sh(&p, "./build/app");
     scratch::expect_contains("project: the program runs", run.out, "item 7");
     scratch::expect_status("project: the program exits 0", 0, &run);
@@ -191,8 +191,7 @@ export void test_arena_c_project_unchanged_library_is_not_rewritten() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     builds(&p, "the build succeeds");
-    const char *stamp =
-        "stat -c %Y .smith/lib/smith/arena.smith 2>/dev/null || stat -f %m .smith/lib/smith/arena.smith";
+    const char *stamp = "stat -c %Y .smith/lib/std/arena.smith 2>/dev/null || stat -f %m .smith/lib/std/arena.smith";
     const char *before = scratch::capture(&p, stamp);
     scratch::sleep(&p, 1100);
     scratch::Run again = scratch::build(&p, "");

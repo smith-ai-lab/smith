@@ -1,13 +1,13 @@
 // scripts/header_tool.c is the writer of the libraries' headers as a program of its own, which the Linux seed
 // (scripts/seed_linux.c) builds with the host's C compiler where no smith exists yet. There is no Linux CI to keep it
 // working, so this builds it with the host compiler here (with -lm, as the seed does: glibc keeps floor in libm) and
-// checks that, for every module of lib/smith, its output is byte for byte what `smith cc --smith-header` of the smith
+// checks that, for every module of lib/std, its output is byte for byte what `smith cc --smith-header` of the smith
 // under test writes.
 module header_tool_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
 
 export void test_the_standalone_writer_builds_with_the_host_compiler() {
@@ -33,11 +33,11 @@ export void test_the_standalone_writer_writes_the_bytes_smith_writes() {
     defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "scripts/header_tool.c", "scripts/header_tool.c");
     scratch::copy_tree(&p, "runtime", "runtime");
-    scratch::copy_tree(&p, "lib/smith", "lib/smith");
+    scratch::copy_tree(&p, "lib/std", "lib/std");
     scratch::Run built = scratch::sh(&p, "cc -std=gnu23 -x c scripts/header_tool.c -o header_tool -lm");
     scratch::expect_status("the writer is built", 0, &built);
     scratch::Run run = scratch::sh(
-        &p, "mkdir tool smith && status=0 && for f in lib/smith/*.smith; do "
+        &p, "mkdir tool smith && status=0 && for f in lib/std/*.smith; do "
             "n=$(basename \"$f\" .smith); "
             "./header_tool \"$f\" -o \"tool/$n.h\" || { echo \"header_tool failed on $n\"; status=1; }; "
             "\"$SMITH_SELF\" cc --smith-header \"$f\" -o \"smith/$n.h\" || { echo \"smith failed on $n\"; status=1; }; "

@@ -5,10 +5,10 @@
 // _contracts and _sanitized.
 module test_runner_reports_test;
 
-import smith::arena;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
 import target;
 import runner;
 import scratch;
@@ -125,8 +125,8 @@ export void test_runner_reports_a_failed_check_and_a_failed_equal_name_their_lin
                                  at_line("tests/test_reports.smith:", check_line));
         scratch::expect_contains(runner::label(iso, "report: ... and whose last is the runner"), check,
                                  "smith_test_execute");
-        scratch::expect_lacks(runner::label(iso, "report: ... without the check machinery of smith::test"), check,
-                              "smith::test::");
+        scratch::expect_lacks(runner::label(iso, "report: ... without the check machinery of std::test"), check,
+                              "std::test::");
         scratch::expect_lacks(runner::label(iso, "report: ... or the raw trace"), check, "smith-trace");
 
         const char *equal = sym(&p, iso, "equal_fails");

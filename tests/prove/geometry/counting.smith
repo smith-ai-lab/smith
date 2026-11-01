@@ -1,7 +1,7 @@
 // A loop that counts what a caller's memory holds, under a requires on its bound (#187): the unrolled copies' phi takes
 // values from loads of passes that did not run, and those are values too (C has no poison in the memory it is given).
 module geometry::counting;
-import smith::contract;
+import std::contract;
 
 export usize positives(i32 xs[8], usize count) {
     contract::requires(count <= 8);

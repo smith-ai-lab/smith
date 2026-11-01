@@ -1,6 +1,6 @@
 module stats;
 
-import smith::contract;
+import std::contract;
 
 export typeof(x) clamp(auto x, typeof(x) low, typeof(x) high) {
     contract::requires(low <= high);

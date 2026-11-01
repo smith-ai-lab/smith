@@ -4,9 +4,9 @@
 // asserted nothing and is not ported. Each fixture is tests/build_fixtures/steps_<name>/build.c.
 module build_steps_run_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
 import <string.h>;
 

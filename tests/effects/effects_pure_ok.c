@@ -7,19 +7,19 @@ static int twice(int n) {
     return n * 2;
 }
 
-[[smith::pure]] int length(const char *text) {
+[[std::pure]] int length(const char *text) {
     return (int)strlen(text) + twice(1);
 }
 
-[[smith::pure]] double root(double x) {
+[[std::pure]] double root(double x) {
     return sqrt(x) + fabs(x);
 }
 
-[[smith::pure]] int fib(int n) { // recursion is no effect
+[[std::pure]] int fib(int n) { // recursion is no effect
     return n < 2 ? n : fib(n - 1) + fib(n - 2);
 }
 
-[[smith::effects(fails)]] int crash(int n) { // abort and a trap stop the program: `fails`
+[[std::effects(fails)]] int crash(int n) { // abort and a trap stop the program: `fails`
     if (n < 0) abort();
     if (n > 100) __builtin_trap();
     return n;

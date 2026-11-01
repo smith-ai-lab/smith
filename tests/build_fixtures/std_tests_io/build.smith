@@ -1,6 +1,6 @@
 module build;
 
-import smith::build;
+import std::build;
 
 export void build(build::Build *b) {
     build::app(b, &(build::App){.entry = "main.smith"});

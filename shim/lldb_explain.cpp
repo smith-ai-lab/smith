@@ -33,7 +33,7 @@ void put(char *out, size_t capacity, const std::string &text) {
 }
 
 bool names_stop(const char *name) {
-    return name != nullptr && std::strstr(name, "smith::test::stop") != nullptr;
+    return name != nullptr && std::strstr(name, "std::test::stop") != nullptr;
 }
 
 // The thread that holds the failure: the one with smith's stop in its stack, else the first.

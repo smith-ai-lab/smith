@@ -1,8 +1,8 @@
 // The first primes, in their own module so that main and the tests both call them.
 module primes;
 
-import smith::contract;
-import smith::console;
+import std::contract;
+import std::console;
 
 // The sum of the first `count` primes, which is at most five. A precondition is `requires` and a promise is `ensures`:
 // `smith prove` proves the promise from the precondition, and every caller must meet the precondition.

@@ -1,16 +1,16 @@
 ---
 name: smith-math
-description: "Using smith::math, smith's numbers as generic functions of a type: math::is_finite, math::sqrt, math::abs, and the constants math::max(usize), math::infinity(f64), math::nan(f32). Load when a .smith file imports smith::math, when a build.c calls smith_library(b, \"math\"), when smith lint says `c::SIZE_MAX`, `c::isfinite`, `c::INFINITY` or `c::NAN` is a C macro, or on a question about square roots, infinity, NaN or the largest integer in .smith without <math.h> macros."
+description: "Using std::math, smith's numbers as generic functions of a type: math::is_finite, math::sqrt, math::abs, and the constants math::max(usize), math::infinity(f64), math::nan(f32). Load when a .smith file imports std::math, when a build.c calls smith_library(b, \"math\"), when smith lint says `c::SIZE_MAX`, `c::isfinite`, `c::INFINITY` or `c::NAN` is a C macro, or on a question about square roots, infinity, NaN or the largest integer in .smith without <math.h> macros."
 ---
 
 # Numbers as functions of a type: smith's math
 
 This skill ships in the smith plugin, from `.agents/skills/smith-math/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there.
 
-`smith::math` (`lib/smith/math.smith`) holds what a `.smith` file used to reach through C's macros of `<math.h>` and `<stdint.h>`: a `c::` name that is a macro is the preprocessor, and `smith lint` (`smith-preprocessor`) refuses it. Every export is a **generic function** built on clang's builtins (a builtin is a function, not a macro), so it has no C spelling: the header holds only its record, and C keeps `<math.h>`. It holds only what smith's own libraries ask today; the first caller that needs another number function adds it.
+`std::math` (`lib/std/math.smith`) holds what a `.smith` file used to reach through C's macros of `<math.h>` and `<stdint.h>`: a `c::` name that is a macro is the preprocessor, and `smith lint` (`smith-preprocessor`) refuses it. Every export is a **generic function** built on clang's builtins (a builtin is a function, not a macro), so it has no C spelling: the header holds only its record, and C keeps `<math.h>`. It holds only what smith's own libraries ask today; the first caller that needs another number function adds it.
 
 ```smith
-import smith::math;
+import std::math;
 
 f64 length(f64 x, f64 y) {
     return math::sqrt(x * x + y * y);          // the square root, correctly rounded: libm's sqrt, as an instruction

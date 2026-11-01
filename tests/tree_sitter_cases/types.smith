@@ -1,4 +1,4 @@
-module smith::arena;
+module std::arena;
 
 export T *push(Arena *a, type T) {
     return (T *)push_bytes(a, sizeof(T), alignof(T));

@@ -1,4 +1,4 @@
-import smith::build;
+import std::build;
 
 void build(build::Build *b) {
     build::app(b, &(build::App){});

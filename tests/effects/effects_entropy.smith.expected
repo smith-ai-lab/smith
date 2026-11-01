@@ -1,2 +1,2 @@
 status 1
-effects_entropy.smith:14:14: error: smith-effect: `not_pure` is [[smith::pure]], but it has the effects entropy: not_pure -> getentropy (effects_entropy.smith:14)
+effects_entropy.smith:14:14: error: smith-effect: `not_pure` is [[std::pure]], but it has the effects entropy: not_pure -> getentropy (effects_entropy.smith:14)

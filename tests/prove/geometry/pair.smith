@@ -1,6 +1,6 @@
 // contract::modifies (#54): `&x` names one object, with no argument the function writes nothing outside its locals.
 module geometry::pair;
-import smith::contract;
+import std::contract;
 
 export typedef struct {
     i32 items[4];

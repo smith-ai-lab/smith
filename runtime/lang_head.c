@@ -246,7 +246,7 @@ static bool smith_lang_head_punct(SmithLang *lang, const SmithToken *token) {
 // ---- Writing the head out
 // ------------------------------------------------------------------------------------------------
 
-// A module's symbol is `_` and its path (`_smith::test::order`) on every platform: Mach-O's own spelling of a C name,
+// A module's symbol is `_` and its path (`_std::test::order`) on every platform: Mach-O's own spelling of a C name,
 // and on Linux the same, so that a header written on one platform (include/smith/*.h, generated on macOS) names the
 // symbols a compile on the other defines (issue #305).
 constexpr char smith_lang_symbol_underscore[] = "_";

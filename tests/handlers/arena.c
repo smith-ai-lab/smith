@@ -1,4 +1,4 @@
-// arena::allocator (lib/smith/arena.smith): an arena set as the thread's allocator serves malloc, calloc, realloc and
+// arena::allocator (lib/std/arena.smith): an arena set as the thread's allocator serves malloc, calloc, realloc and
 // free, answers owns and malloc_size, gives a request that does not fit as null, and takes its last block back on free.
 // Prints `ok name` or `FAIL name`.
 #include "smith/arena.h"

@@ -2,17 +2,17 @@
 // folder with a Makefile in, the build.c text and the report of what was not translated out, through
 // `smith_core_make_translate` (include/smith_core.h, smith.c compiled as a library by tests/units/build.c). No process
 // starts but scratch::make's: the fixtures of tests/build_fixtures/make_NN are copied into a scratch folder, the files
-// a case adds are written through smith::files, and the text is checked for what it says. What needs a real make, a
+// a case adds are written through std::files, and the text is checked for what it says. What needs a real make, a
 // compiler or the verb (the translation built and compared with make's, lint and format of the result, which Makefile
 // `smith build --dump-config` picks) is in tests/make_test.smith. The text here is the translation before `smith fmt`
 // has laid it out.
 module make_translate_test;
 
-import smith::arena;
-import smith::files;
-import smith::format;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::files;
+import std::format;
+import std::mem;
+import std::test;
 import scratch;
 import <smith_core.h>;
 import <string.h>;

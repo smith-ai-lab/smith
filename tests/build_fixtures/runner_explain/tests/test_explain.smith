@@ -1,5 +1,5 @@
-import smith::contract;
-import smith::test;
+import std::contract;
+import std::test;
 
 typedef struct {
     u64 count;

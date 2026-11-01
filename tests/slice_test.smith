@@ -4,7 +4,7 @@
 module slice_test;
 
 import <string.h>;
-import smith::test;
+import std::test;
 
 struct Bag {
     i32 items[:];

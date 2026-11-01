@@ -18,7 +18,7 @@ bool at_end(i32 ch) {
 }
 ```
 
-In C you `#include` and the names are bare; here `import <h>;` (or `import "h";`, looked for beside the file first) includes the header and binds `c`: `c::sqrtf(x)`, `c::EOF`, `c::WIFEXITED(s)`, `struct c::stat`. `import <h>;` with `c::` names, never `#include`, is a rule of `smith-idiom`; a smith library (`import smith::arena;`) is used as a module, not through its C header. `c::` names C only in a file that imports a header; otherwise `c` is any identifier.
+In C you `#include` and the names are bare; here `import <h>;` (or `import "h";`, looked for beside the file first) includes the header and binds `c`: `c::sqrtf(x)`, `c::EOF`, `c::WIFEXITED(s)`, `struct c::stat`. `import <h>;` with `c::` names, never `#include`, is a rule of `smith-idiom`; a smith library (`import std::arena;`) is used as a module, not through its C header. `c::` names C only in a file that imports a header; otherwise `c` is any identifier.
 
 ## Rules
 

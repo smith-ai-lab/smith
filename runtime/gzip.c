@@ -1,5 +1,5 @@
 // gzip files for `smith_package`: the members of a .gz one after the other, pushed to a sink. The DEFLATE, the gzip
-// header and trailer and the CRC-32 are smith::inflate's (lib/smith/inflate.smith, which smith_package includes in its
+// header and trailer and the CRC-32 are std::inflate's (lib/std/inflate.smith, which smith_package includes in its
 // lowering before this file); this is the loop over members. Included by runtime/package.c after its SmithPackageFault
 // and smith_package_fail; see runtime/untar.c for what uses it.
 //

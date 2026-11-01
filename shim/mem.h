@@ -2,13 +2,13 @@
 // shim/tidy.cpp beside the idiom checks (so `smith check`, `smith lint` and smith lsp's built-in checks run it). In a
 // .smith file with a `module` line it reports every call of `memcpy`, `memmove`, `memset` or `memcmp` (`c::memcpy`,
 // `__builtin_memcpy` and the fortified `__builtin___memcpy_chk` the SDK's macro makes of it) and names the typed
-// function in smith::mem that replaces it: the type and the length of a buffer travel apart from its data in C, and
+// function in std::mem that replaces it: the type and the length of a buffer travel apart from its data in C, and
 // `mem::copy(dst, src)` checks that they agree.
 //
 // The list is a table (`replacements` below), one row for each wrapped C function, so a wrapper joins by adding a row;
 // a function joins only when its typed replacement exists. A `.c` file and a `.smith` file with no `module` line are
 // left alone (the C rule). A function that calls `contract::trusted()` (`smith_trusted()` in C) is the edge: smith's
-// own wrappers (lib/smith/mem.smith) mark themselves with it, and so does any function that implements one, so the
+// own wrappers (lib/std/mem.smith) mark themselves with it, and so does any function that implements one, so the
 // check skips it. `// NOLINT(smith-mem)` opts a line out as for any check.
 //
 // `memset(p, 0, sizeof *p)` and `memset(&x, 0, sizeof x)` carry a fix-it, `mem::zero(p)` and `mem::zero(&x)`, which
@@ -130,7 +130,7 @@ class MemCheck final : public ClangTidyCheck {
             }
         }
         std::string written = row->name;
-        auto report = diag(at, "`%0` is unchecked, since %1: use %2 (import smith::mem;), or mark the function "
+        auto report = diag(at, "`%0` is unchecked, since %1: use %2 (import std::mem;), or mark the function "
                                "`contract::trusted()` if it implements a wrapper")
                       << written << llvm::StringRef(row->why) << llvm::StringRef(row->use);
         fix_zero(report, call, written, Result);

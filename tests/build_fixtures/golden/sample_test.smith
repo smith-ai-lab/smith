@@ -1,6 +1,6 @@
 module sample_test;
 
-import smith::test;
+import std::test;
 
 export void test_matches() {
     test::golden("expected/matches.txt", "alpha\nbeta\n");
