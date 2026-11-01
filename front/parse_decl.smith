@@ -38,6 +38,7 @@ import front::parse_type;
 import std::arena;
 import std::format;
 import std::mem;
+import std::slice;
 
 typedef ast::DeclRef DeclRefList[:];
 typedef ast::ExprRef ExprRefList[:];
@@ -973,7 +974,23 @@ static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start
 // ---------------------------------------------------------------------------------------------------------------
 // Imports, static_assert and `if constexpr`
 
-// `import std::arena;`, `import <stdio.h>;`, `import "x.h";`
+// Whether the next token is the name `as`, a keyword only right after an import path.
+static Bool at_as(parse::Parser *p) {
+    Str keyword = "as";
+    return parse::at(p, lex::name) && slice::equal(parse::text(p, parse::peek(p)), keyword);
+}
+
+// The `;` after a C header: an alias there is an error naming the form.
+static void end_header_import(parse::Parser *p) {
+    if (at_as(p)) {
+        parse::error(p, parse::peek(p).span, "a C header has no alias: write `import path as name;` for a module");
+        parse::advance(p);
+        if (parse::at(p, lex::name)) parse::advance(p);
+    }
+    parse::expect(p, lex::semicolon, "`;` after the import");
+}
+
+// `import std::arena;`, `import std::arena as a;`, `import <stdio.h>;`, `import "x.h";`
 static ast::Decl *parse_import(parse::Parser *p, const Prefixes *pre, U32 start) {
     parse::advance(p);
     if (parse::at(p, lex::less)) {
@@ -982,19 +999,25 @@ static ast::Decl *parse_import(parse::Parser *p, const Prefixes *pre, U32 start)
             parse::advance(p);
         Str header = source_between(p, begin, parse::peek(p).span.start);
         parse::expect(p, lex::greater, "`>`");
-        parse::expect(p, lex::semicolon, "`;` after the import");
+        end_header_import(p);
         ast::DeclKind kind = {.import_c = {.header = header, .angled = true}};
         return make(p, start, pre, kind);
     }
     if (parse::at(p, lex::string)) {
         Str header = string_value(p, parse::advance(p));
-        parse::expect(p, lex::semicolon, "`;` after the import");
+        end_header_import(p);
         ast::DeclKind kind = {.import_c = {.header = header, .angled = false}};
         return make(p, start, pre, kind);
     }
     ast::Path path = parse_path(p, "a module name, `<header.h>` or \"header.h\" after `import`");
+    ast::Text alias = {};
+    if (at_as(p)) {
+        parse::advance(p);
+        lex::Token name = parse::expect(p, lex::name, "a name after `as`: write `import path as name;`");
+        if (name.kind == lex::name) alias = parse::text(p, name);
+    }
     parse::expect(p, lex::semicolon, "`;` after the import");
-    ast::DeclKind kind = {.import_module = {.path = path}};
+    ast::DeclKind kind = {.import_module = {.path = path, .alias = alias}};
     return make(p, start, pre, kind);
 }
 
