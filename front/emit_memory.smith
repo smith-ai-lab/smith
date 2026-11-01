@@ -180,9 +180,8 @@ static state::Status global_place_of(state::Emitter *e, Str name, ast::Span span
         return {.error = made.error};
     }
     Str symbol = qualified(e->tree, name);
-    char *label = state::cstr(symbol);
+    const char *label = symbol.data; // the text of `qualified` ends with a terminator
     c::LLVMValueRef global = c::LLVMGetNamedGlobal(e->module, label);
-    mem::free(label);
     state::free_text(symbol);
     if (global == nullptr) return state::failf(span, "the global ", name, " is not declared yet");
     *place = (state::Value){.llvm = global, .ty = made.ok};
@@ -761,9 +760,8 @@ export state::Status record_decl(state::Emitter *e, const ast::Decl *d) {
     Usize at = 0;
     if (find_record_named(e, name, &at)) return state::failf(d->span, name, " is declared twice");
     Str label = qualified(e->tree, name);
-    char *text = state::cstr(label);
+    const char *text = label.data;
     c::LLVMTypeRef named = c::LLVMStructCreateNamed(e->context, text);
-    mem::free(text);
     state::free_text(label);
     state::Ty ty = {.kind = .record, .llvm = named, .name = name};
     at = e->record_count;
@@ -868,7 +866,7 @@ export state::Status global_variable(state::Emitter *e, const ast::Decl *d) {
     c::LLVMValueRef initial = c::LLVMConstNull(ty.llvm);
     if (init != nullptr) try compound_constant(e, ty, init, &initial);
     Str symbol = qualified(e->tree, name);
-    char *label = state::cstr(symbol);
+    const char *label = symbol.data; // the text of `qualified` ends with a terminator
     state::Status result = state::success();
     if (c::LLVMGetNamedGlobal(e->module, label) != nullptr) {
         result = state::failf(d->span, name, " is declared twice");
@@ -880,7 +878,6 @@ export state::Status global_variable(state::Emitter *e, const ast::Decl *d) {
         else
             c::LLVMSetLinkage(global, c::LLVMInternalLinkage);
     }
-    mem::free(label);
     state::free_text(symbol);
     return result;
 }
