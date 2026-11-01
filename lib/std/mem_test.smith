@@ -88,7 +88,7 @@ I32 count_of(MaybeRecord record) {
     return -1;
 }
 
-bool is_some(MaybeHuge huge) {
+Bool is_some(MaybeHuge huge) {
     return huge == .some;
 }
 

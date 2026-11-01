@@ -19,7 +19,7 @@ constexpr char program[_] = "#include <stdio.h>\n"
                             "    return 0;\n"
                             "}\n";
 
-static bool made(scratch::Project *p) {
+static Bool made(scratch::Project *p) {
     if (scratch::sh(p, "smith dbg --version").status != 0) return false;
     scratch::write(p, "args.c", program);
     scratch::write(p, "one.txt", "");

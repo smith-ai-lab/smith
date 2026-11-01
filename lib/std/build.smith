@@ -56,12 +56,12 @@ module std::build;
     const char *stamp;       // the step's only output, which smith touches on success; .depfile may name it
     const char *description; // printed instead of the command
     const char *pool;        // a name from build::pool, or "console" for the terminal
-    bool restat;             // an output the command left unchanged does not rerun what depends on it
-    bool always;             // run on every build
+    Bool restat;             // an output the command left unchanged does not rerun what depends on it
+    Bool always;             // run on every build
     I32 (*run)(Run *run);    // a C function in the build file instead of .command; 0 succeeds
     const char *const *args; // given to .run as run->args
-    bool content_hash;       // later: rerun only when the inputs' bytes changed
-    bool test;               // `smith test` runs this task or builds this step (build::tests sets it on its task)
+    Bool content_hash;       // later: rerun only when the inputs' bytes changed
+    Bool test;               // `smith test` runs this task or builds this step (build::tests sets it on its task)
 } Step;
 
 // what the project writes: the function `build` of the build file (build.c, or a plain `void build(build::Build *b)` in
@@ -96,7 +96,7 @@ module std::build;
 
 // -Dname. An option can be read again: the same name and kind returns the same value and the description may then be
 // nullptr, so a build::defer callback can read what build() read. The other kind is an error
-[[std::c_name("smith_option")]] export bool option(Build *b, const char *name, const char *description);
+[[std::c_name("smith_option")]] export Bool option(Build *b, const char *name, const char *description);
 // -Dname=value; fallback may be nullptr
 [[std::c_name("smith_option_value")]] export const char *option_value(Build *b, const char *name, const char *fallback,
                                                                       const char *description);
@@ -181,7 +181,7 @@ export typedef Result(const char *, PackageError) PackageResult; // NOLINT(reada
 // format applied to each item ("out/%s")
 [[std::c_name("smith_map")]] export const char *const *map(Build *b, const char *const *items, const char *format);
 // items, or an empty list
-[[std::c_name("smith_when")]] export const char *const *when(Build *b, bool condition, const char *const *items);
+[[std::c_name("smith_when")]] export const char *const *when(Build *b, Bool condition, const char *const *items);
 // the items with the separator between them, in the arena; the empty list gives "". For text such as a unity file:
 // build::join(b, build::map(b, files, "#include \"%s\"\n"), "")
 [[std::c_name("smith_join")]] export const char *join(Build *b, const char *const *items, const char *separator);
@@ -441,7 +441,7 @@ export typedef Result(const char *const *, LinesError) Lines; // NOLINT(readabil
     const char *const *flags;      // added to every profile's compiles, after the profile's own and the defaults'
     const char *const *link_flags; // added to every profile's link
     const char *const *libraries;  // after the objects: -lm, -framework Metal
-    bool tool;                     // not built by default: `smith build tools`, release and fast build it
+    Bool tool;                     // not built by default: `smith build tools`, release and fast build it
     const Object *const *objects;  // set: the debug objects of everything but the entry
     Step step;                     // set: the debug program
 } App;

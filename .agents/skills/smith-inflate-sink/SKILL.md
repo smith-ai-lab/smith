@@ -14,14 +14,14 @@ typedef struct {
     U64 total;
 } Count;
 
-static bool count(void *context, const U8 *data, Usize size) {
+static Bool count(void *context, const U8 *data, Usize size) {
     Count *count = context;
     count->total += size;
     (void)data;
     return true; // false stops the decoder: inflate::Stopped
 }
 
-bool gunzip_size(const U8 *data, Usize data_size, U64 *size) {
+Bool gunzip_size(const U8 *data, Usize data_size, U64 *size) {
     static U8 window[inflate::window];
     Count counted = {};
     Usize used = 0;

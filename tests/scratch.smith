@@ -27,7 +27,7 @@ export typedef struct {
     const char *dir;    // where commands run
     const char *tested; // a folder with smith, smith-cc and smith-c++ for PATH
     const char *cache;  // XDG_CACHE_HOME of the commands
-    bool uncached;      // scratch::uncached: the commands run with SMITH_STEP_CACHE=0
+    Bool uncached;      // scratch::uncached: the commands run with SMITH_STEP_CACHE=0
 } Project;
 
 export typedef struct {
@@ -174,7 +174,7 @@ export void copy_tree(const Project *p, const char *source, const char *name) {
     release(to);
 }
 
-static bool ends_with(const char *text, const char *suffix) {
+static Bool ends_with(const char *text, const char *suffix) {
     Usize length = c::strlen(text);
     Usize tail = c::strlen(suffix);
     return length >= tail && c::strcmp(text + length - tail, suffix) == 0;
@@ -214,14 +214,14 @@ export const char *untested_names(const char *folder, const char *test_source, c
     const char *missing = join_free("", "", "");
     for (Usize i = 0; i < countof(entries); i++) {
         const char *name = entries[i].name.data;
-        bool wanted = (suffix_a == nullptr && suffix_b == nullptr) ||
+        Bool wanted = (suffix_a == nullptr && suffix_b == nullptr) ||
                       (suffix_a != nullptr && ends_with(name, suffix_a)) ||
                       (suffix_b != nullptr && ends_with(name, suffix_b));
         if (wanted) {
             const char *needle = join_free(call, "\"", name);
             const char *full = join_free(needle, "\")", "");
             release(needle);
-            bool found = c::strstr(text, full) != nullptr;
+            Bool found = c::strstr(text, full) != nullptr;
             release(full);
             if (!found) {
                 const char *grown = join_free(missing, name, "\n");
@@ -349,7 +349,7 @@ static const char *repo_of() {
 export void write_lowered(const Project *p, const char *source, const char *name) {
     const char *repo = repo_of();
     open_source(repo, source);
-    bool done = c::smith_core_lower(repo, source, nullptr, lowered_text, lowered_capacity, lowered_errors,
+    Bool done = c::smith_core_lower(repo, source, nullptr, lowered_text, lowered_capacity, lowered_errors,
                                     lowered_errors_capacity);
     if (!done) {
         test::note("%s could not be lowered:\n%s", source, lowered_errors);
@@ -362,7 +362,7 @@ static char header_buffer[1U << 21];
 
 static void header_to(const Project *p, const char *folder, const char *source, const char *name) {
     open_source(folder, source);
-    bool done = c::smith_core_header(folder, source, nullptr, header_buffer, sizeof header_buffer, lowered_errors,
+    Bool done = c::smith_core_header(folder, source, nullptr, header_buffer, sizeof header_buffer, lowered_errors,
                                      lowered_errors_capacity);
     if (!done) {
         test::note("%s has no header:\n%s", source, lowered_errors);
@@ -398,7 +398,7 @@ export const char *read(const Project *p, const char *name) {
     return run.out;
 }
 
-export bool exists(const Project *p, const char *name) {
+export Bool exists(const Project *p, const char *name) {
     const char *path = path_in(p, name);
     const char *const argv[_] = {"sh", "-c", "test -e \"$0\"", path, nullptr};
     Run run = run_free(argv[0:4]);
@@ -424,7 +424,7 @@ export void sleep(const Project *p, U64 milliseconds) {
     clock::sleep(milliseconds * clock::millisecond);
 }
 
-export bool contains(const char *text, const char *needle) {
+export Bool contains(const char *text, const char *needle) {
     return c::strstr(text, needle) != nullptr;
 }
 
@@ -436,7 +436,7 @@ static Usize trimmed(const char *text) {
     return length;
 }
 
-export bool same(const char *a, const char *b) {
+export Bool same(const char *a, const char *b) {
     Usize length = trimmed(a);
     return length == trimmed(b) && c::strncmp(a, b, length) == 0;
 }

@@ -37,16 +37,16 @@ constexpr char make_broken[_] = "(cd new && mk --language c broken && printf 'th
 constexpr char make_fresh[_] = "(cd new && mk fresh)";
 
 // Whether the test `name` is `other`.
-static bool is(const char *name, const char *other) {
+static Bool is(const char *name, const char *other) {
     return c::strcmp(name, other) == 0;
 }
 
 // The scratch home's setup for the test `name`: the base and the projects of smith new it reads.
 static const char *setup_for(const char *name) {
-    bool a = is(name, "dap_build_program") || is(name, "dap_test_under_cursor") || is(name, "dap_main_under_cursor") ||
+    Bool a = is(name, "dap_build_program") || is(name, "dap_test_under_cursor") || is(name, "dap_main_under_cursor") ||
              is(name, "neotest_is_test_file") || is(name, "neotest_discover_c") || is(name, "neotest_build_spec");
-    bool b = is(name, "dap_build_fails");
-    bool f = is(name, "dap_default_project");
+    Bool b = is(name, "dap_build_fails");
+    Bool f = is(name, "dap_default_project");
     return format::push(setup, a || b || f ? "; " : "", a || b || f ? make_new : "", a ? make_hello : "",
                         a && (b || f) ? " && " : "", b ? make_broken : "", b && f ? " && " : "", f ? make_fresh : "")
         .data;
@@ -65,8 +65,8 @@ constexpr char fakedap[_] = "--cmd \"set runtimepath+=$d/fakedap\"";
 typedef struct {
     const char *version_line;
     const char *front;
-    bool bare;
-    bool needs_git;
+    Bool bare;
+    Bool needs_git;
     const char *data;
     const char *extra;
 } Start;

@@ -10,7 +10,7 @@ A slice is C's array declarator with a run-time size, so a pointer to one is C's
 ```smith
 module lines;
 
-export bool take_line(const char (*text)[:], const char (*line)[:]) {
+export Bool take_line(const char (*text)[:], const char (*line)[:]) {
     if (countof(*text) == 0) return false;
     Usize n = 0;
     while (n < countof(*text) && (*text)[n] != '\n') n++;   // *text is the slice

@@ -65,29 +65,29 @@ import <smith/trace.h>;
 // the failure path of `assert` is for it, and nothing else changes: a compile, `smith prove` and the checks are as
 // above.
 [[std::c_name("smith_contract_requires")]] export [[clang::annotate("smith_compile_check")]] void
-check_requires(bool condition) {
+check_requires(Bool condition) {
     if (!condition) c::smith_failure(c::SmithFailure_Requires);
 }
 
 [[std::c_name("smith_contract_ensures")]] export [[clang::annotate("smith_compile_check")]] void
-check_ensures(bool condition) {
+check_ensures(Bool condition) {
     if (!condition) c::smith_failure(c::SmithFailure_Ensures);
 }
 
 [[std::c_name("smith_contract_invariant")]] export [[clang::annotate("smith_compile_check")]] void
-check_invariant(bool condition) {
+check_invariant(Bool condition) {
     if (!condition) c::smith_failure(c::SmithFailure_Invariant);
 }
 
 [[std::c_name("smith_contract_assert")]] export [[clang::annotate("smith_compile_check")]] void
-check_assert(bool condition) {
+check_assert(Bool condition) {
     if (!condition) c::smith_failure(c::SmithFailure_Assert);
 }
 
 // What an optimized build writes in place of `ensures`, `invariant` and `assert` when `smith prove` proved the check
 // holds (issue #325, `.smith/proved/<source>.pts`): the lowering names it where the call stood, never you. It checks
 // nothing and has no effect, so a function whose only failure point was that check does not `fail`.
-[[std::c_name("smith_proved")]] export [[gnu::always_inline, maybe_unused]] inline void proved(bool condition) {
+[[std::c_name("smith_proved")]] export [[gnu::always_inline, maybe_unused]] inline void proved(Bool condition) {
     (void)condition;
 }
 
@@ -99,15 +99,15 @@ check_assert(bool condition) {
 // are not inline, so the generated header, which that trace.h serves, needs no declaration)
 [[noreturn]] extern void smith_failure_proved(c::SmithFailureKind kind);
 
-[[std::c_name("smith_contract_proved_ensures")]] export void kept_ensures(bool condition) {
+[[std::c_name("smith_contract_proved_ensures")]] export void kept_ensures(Bool condition) {
     if (!condition) smith_failure_proved(c::SmithFailure_Ensures);
 }
 
-[[std::c_name("smith_contract_proved_invariant")]] export void kept_invariant(bool condition) {
+[[std::c_name("smith_contract_proved_invariant")]] export void kept_invariant(Bool condition) {
     if (!condition) smith_failure_proved(c::SmithFailure_Invariant);
 }
 
-[[std::c_name("smith_contract_proved_assert")]] export void kept_assert(bool condition) {
+[[std::c_name("smith_contract_proved_assert")]] export void kept_assert(Bool condition) {
     if (!condition) smith_failure_proved(c::SmithFailure_Assert);
 }
 
@@ -115,7 +115,7 @@ check_assert(bool condition) {
 // nothing, at run time or anywhere else.
 [[std::c_name("smith_contract_trusted")]] export void check_trusted() {}
 
-[[std::c_name("smith_requires")]] export [[gnu::always_inline, maybe_unused]] inline void requires(bool condition) {
+[[std::c_name("smith_requires")]] export [[gnu::always_inline, maybe_unused]] inline void requires(Bool condition) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(condition);
     } else {
@@ -123,7 +123,7 @@ check_assert(bool condition) {
     }
 }
 
-[[std::c_name("smith_ensures")]] export [[gnu::always_inline, maybe_unused]] inline void ensures(bool condition) {
+[[std::c_name("smith_ensures")]] export [[gnu::always_inline, maybe_unused]] inline void ensures(Bool condition) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(condition);
     } else {
@@ -131,7 +131,7 @@ check_assert(bool condition) {
     }
 }
 
-[[std::c_name("smith_invariant")]] export [[gnu::always_inline, maybe_unused]] inline void invariant(bool condition) {
+[[std::c_name("smith_invariant")]] export [[gnu::always_inline, maybe_unused]] inline void invariant(Bool condition) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(condition);
     } else {
@@ -139,7 +139,7 @@ check_assert(bool condition) {
     }
 }
 
-[[std::c_name("smith_assert")]] export [[gnu::always_inline, maybe_unused]] inline void assert(bool condition) {
+[[std::c_name("smith_assert")]] export [[gnu::always_inline, maybe_unused]] inline void assert(Bool condition) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(condition);
     } else {

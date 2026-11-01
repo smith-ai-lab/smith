@@ -20,7 +20,7 @@ export Index separator(const char line[:]) {
     return slice::find(line, '=');           // an index, or .none: no sentinel
 }
 
-export bool is_port(const char line[:]) {
+export Bool is_port(const char line[:]) {
     const char prefix[:] = "port=";
     return slice::starts_with(line, prefix);
 }

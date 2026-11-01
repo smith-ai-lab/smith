@@ -55,7 +55,7 @@ export typedef Result(Usize, Error) Count;
 // before any character; a last line with no newline is returned first, with `end` false.
 [[std::c_name("SmithConsoleLine")]] export typedef struct {
     char text[:];
-    bool end;
+    Bool end;
 } Line;
 export typedef Result(Line, Error) LineResult;
 
@@ -133,8 +133,8 @@ constexpr Usize line_first = 128; // the first room of a line; it doubles
     contract::trusted(); // grows its memory and reads the system
     char line[:] = mem::alloc_slice(char, line_first);
     Usize count = 0;
-    bool any = false;
-    bool newline = false;
+    Bool any = false;
+    Bool newline = false;
     for (Usize passes = 0; !newline; passes++) {
         U8 byte[1] = {};
         Count got = read(byte[0:1]);
@@ -163,12 +163,12 @@ constexpr Usize line_first = 128; // the first room of a line; it doubles
 }
 
 // Writes the characters to stdout or stderr: the whole text or an error.
-Written emit(bool errors, const char *data, Usize count) {
+Written emit(Bool errors, const char *data, Usize count) {
     return write_all(errors ? stderr_fd : stdout_fd, (const U8 *)data, count);
 }
 
 // The pieces printed with the room of `characters`, which is the length of their text.
-Written emit_long(bool errors, char *memory, Usize characters) {
+Written emit_long(Bool errors, char *memory, Usize characters) {
     Written written = emit(errors, memory, characters);
     mem::free(memory);
     return written;

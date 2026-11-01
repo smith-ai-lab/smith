@@ -16,11 +16,11 @@ import std::test;
 import <string.h>;
 import scratch;
 
-static bool starts_with(const char *text, const char *prefix) {
+static Bool starts_with(const char *text, const char *prefix) {
     return c::strncmp(text, prefix, c::strlen(prefix)) == 0;
 }
 
-static bool blank(char ch) {
+static Bool blank(char ch) {
     return ch == ' ' || ch == '\t' || ch == '\v' || ch == '\f' || ch == '\r';
 }
 
@@ -32,7 +32,7 @@ static Usize skip_blanks(const char *line, Usize at) {
 
 // After the optional `/usr/bin/env` and blanks: the optional folder (lower case letters and slashes, up to the last
 // slash), then sh, bash, zsh, dash or ksh followed by a blank or the end of the line.
-static bool names_shell(const char *line, Usize at) {
+static Bool names_shell(const char *line, Usize at) {
     if (line[at] == '/') {
         Usize last = at;
         for (Usize i = at; (line[i] >= 'a' && line[i] <= 'z') || line[i] == '/'; i++) {
@@ -50,7 +50,7 @@ static bool names_shell(const char *line, Usize at) {
 }
 
 // Whether the first line (NULs dropped) is `#!` and a shell.
-static bool shell_line(const char *line) {
+static Bool shell_line(const char *line) {
     if (!starts_with(line, "#!")) return false;
     Usize at = skip_blanks(line, 2);
     const char *env = "/usr/bin/env";
@@ -79,12 +79,12 @@ static const char *first_line(const char *path) {
 }
 
 // The shell files that exist today, waiting for their port, and the fake programs of the build tests.
-static bool exempt(const char *name) {
+static Bool exempt(const char *name) {
     return c::strcmp(name, "scripts/llvm.sh") == 0 || c::strcmp(name, "scripts/release.sh") == 0 ||
            starts_with(name, "tests/build_fixtures/");
 }
 
-static bool ends_with_sh(const char *name) {
+static Bool ends_with_sh(const char *name) {
     Usize length = c::strlen(name);
     return length >= 3 && c::strcmp(name + length - 3, ".sh") == 0;
 }

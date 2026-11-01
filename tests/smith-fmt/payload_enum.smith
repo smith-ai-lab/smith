@@ -21,10 +21,10 @@ export F64 area(Shape s) {
     }
 }
 
-export bool is_empty(Shape s) {
+export Bool is_empty(Shape s) {
     return s == .empty;
 }
-export bool not_empty(Shape s) {
+export Bool not_empty(Shape s) {
     return s != .empty;
 }
 export Shape none(void) {

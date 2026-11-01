@@ -46,7 +46,7 @@ The allocator that refuses by chance is its own module, [smith-failing](../smith
 module copies;
 import std::mem;
 
-export bool demo(U8 dst[:], const U8 src[:]) {
+export Bool demo(U8 dst[:], const U8 src[:]) {
     mem::copy(dst, src);                    // two slices of one element type and one length: unequal lengths fail a check
     U32 word = 0;
     mem::zero(mem::bytes(&word));           // mem::bytes(&x) is the value's own u8[:]; mem::fill(xs, v) sets each element

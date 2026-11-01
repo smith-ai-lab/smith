@@ -38,7 +38,7 @@ constexpr char probe_script[_] =
 // The fixture (scratch::make("lsp", "lsp")), the client built, and (checks off, as the original's) smith's default
 // clang-tidy replaced by one that reports nothing, since these tests are about the lowering's and the compiler's
 // diagnostics. False when the smith under test has no editor support.
-static bool prepare(const scratch::Project *root, bool tidy_off) {
+static Bool prepare(const scratch::Project *root, Bool tidy_off) {
     if (scratch::sh(root, probe_script).status != 0) {
         return false;
     }
@@ -67,7 +67,7 @@ constexpr char built_script[_] =
     "else i=0; while [ ! -d \"$c\" ] && [ -d \"$lock\" ] && [ $i -lt 3000 ]; do sleep 0.2; i=$((i + 1)); done; fi; "
     "[ ! -d \"$c\" ] || cp -Rp \"$c/.\" \"$name\"";
 
-static bool make_built(const scratch::Project *root, scratch::Project *p, const char *name) {
+static Bool make_built(const scratch::Project *root, scratch::Project *p, const char *name) {
     if (!prepare(root, true)) {
         return false;
     }
@@ -87,7 +87,7 @@ static const char *session(const scratch::Project *p, const char *commands) {
 }
 
 // The log has the whole line.
-static bool has_line(const char *log, const char *line) {
+static Bool has_line(const char *log, const char *line) {
     return scratch::contains(join("\n", log, "\n"), join("\n", line, "\n"));
 }
 

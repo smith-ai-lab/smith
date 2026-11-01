@@ -10,7 +10,7 @@ description: "`Lambda(F)`, the parameter type for code to run (`export void sort
 ```smith
 module sorting;
 
-export void bubble(auto xs[:], Lambda(bool (typeof(xs[0]) *, typeof(xs[0]) *)) less) {
+export void bubble(auto xs[:], Lambda(Bool (typeof(xs[0]) *, typeof(xs[0]) *)) less) {
     for (Usize i = 0; i + 1 < countof(xs); i++) {
         if (!less(&xs[i + 1], &xs[i])) continue;
         typeof(xs[0]) held = xs[i];

@@ -88,6 +88,6 @@ void alias_build(F64 *probability, Usize *alias, Usize *small, Usize *large, Usi
     random::split(key, parts);
     Usize index =
         (Usize)random::uniform_int64_sample(parts[0], (random::UniformInt64){.low = 0, .high = (I64)table.count - 1});
-    bool keep = random::key_unit_double(parts[1]) < table.probability[index];
+    Bool keep = random::key_unit_double(parts[1]) < table.probability[index];
     return keep ? index : table.alias[index];
 }

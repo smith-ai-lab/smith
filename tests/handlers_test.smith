@@ -23,7 +23,7 @@ const char *joined(auto... pieces) {
     return text;
 }
 
-static bool darwin(const scratch::Project *p) {
+static Bool darwin(const scratch::Project *p) {
     return scratch::same(scratch::capture(p, "uname -s"), "Darwin");
 }
 
@@ -34,7 +34,7 @@ static void must(const scratch::Project *p, const char *name, const char *comman
 }
 
 // The runtime built as a dylib under the warnings in the project, or false on another system.
-static bool runtime(const scratch::Project *p) {
+static Bool runtime(const scratch::Project *p) {
     if (!darwin(p)) {
         return false;
     }
@@ -256,7 +256,7 @@ export void test_linux_handlers_a_fortified_printf_reaches_the_console_handler_w
 // ASan, with the handlers linked and its puts check off, still reports an overflow, a use after free and a puts that
 // reads past a string (our puts reaches ASan's interceptor, not libc's).
 // The ASan project built, or false on another system.
-static bool asan_project(const scratch::Project *p) {
+static Bool asan_project(const scratch::Project *p) {
     if (!darwin(p)) {
         return false;
     }

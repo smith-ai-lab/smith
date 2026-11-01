@@ -13,7 +13,7 @@ F32 length(F32 x, F32 y) {
     return c::sqrtf(x * x + y * y);        // a C name is always written c::name
 }
 
-bool at_end(I32 ch) {
+Bool at_end(I32 ch) {
     return ch < 0; // EOF is a C macro: c::EOF compiles, and smith lint (smith-preprocessor) reports it
 }
 ```

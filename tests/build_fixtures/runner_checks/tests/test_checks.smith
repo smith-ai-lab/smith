@@ -45,7 +45,7 @@ void test_char(void) {
 }
 
 void test_bool(void) {
-    bool flag = true;
+    Bool flag = true;
     test::check_equal(flag, false);
 }
 
