@@ -243,6 +243,10 @@ jobs:
           "$SMITH" test $shard ${{ matrix.flags }} --costs "$PWD/.github/shard-costs.tsv" 2>&1 |
             tee "$RUNNER_TEMP/test.log" || rc=${PIPESTATUS[0]}
           took=$(( $(date +%s) - start ))
+          # the artifact below holds .smith/log; `smith test` writes no log there, so keep its output (with the
+          # SMITH_TEST_STATS lines) as test.log, which `smith build ci-times` reads (#1139)
+          mkdir -p .smith/log
+          cp "$RUNNER_TEMP/test.log" .smith/log/test.log
           {
             echo "### tests ${{ matrix.os }} ${{ matrix.shard }}/${{ matrix.count }}: $took s"
             grep -E '^[0-9]+ passed' "$RUNNER_TEMP/test.log" || true
@@ -318,6 +322,10 @@ jobs:
           "$SMITH" test $shard ${{ matrix.flags }} --costs "$PWD/.github/shard-costs.tsv" 2>&1 |
             tee "$RUNNER_TEMP/test.log" || rc=${PIPESTATUS[0]}
           took=$(( $(date +%s) - start ))
+          # the artifact below holds .smith/log; `smith test` writes no log there, so keep its output (with the
+          # SMITH_TEST_STATS lines) as test.log, which `smith build ci-times` reads (#1139)
+          mkdir -p .smith/log
+          cp "$RUNNER_TEMP/test.log" .smith/log/test.log
           {
             echo "### tests linux ${{ matrix.shard }}/${{ matrix.count }}: $took s"
             grep -E '^[0-9]+ passed' "$RUNNER_TEMP/test.log" || true
