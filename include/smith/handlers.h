@@ -121,6 +121,8 @@ typedef struct SmithClockHandler SmithClockHandler;
 struct SmithClockHandler {
     int64_t (*now)(SmithClockHandler *self, int which);
     void (*sleep)(SmithClockHandler *self, uint64_t nanoseconds);
+    // This process's CPU time in nanoseconds (user plus system); null means the system's (#922).
+    uint64_t (*cpu)(SmithClockHandler *self);
 };
 
 // Sets the clock of the calling thread (null: libc's), returning the one it had.
@@ -160,6 +162,9 @@ struct SmithProcessHandler {
     int (*close)(SmithProcessHandler *self, int child);
     // How many processes can run at once; null means the machine's logical cores.
     size_t (*cores)(SmithProcessHandler *self);
+    // What a child that has exited used: its user and system CPU time in nanoseconds and its peak memory in bytes.
+    // 0, or -1 with errno set; null means the child has no figures (#922).
+    int (*usage)(SmithProcessHandler *self, int child, uint64_t *user_ns, uint64_t *system_ns, uint64_t *peak_bytes);
 };
 
 // Sets the processes of the calling thread (null: the real ones), returning the ones it had.

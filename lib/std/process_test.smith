@@ -312,3 +312,46 @@ export void test_process_a_real_spawned_child_is_waited_for_and_a_kill_after_it_
     test::check_condition(late == .error && late.error == process::Gone);
     process::close(&child);
 }
+
+process::Usage value_usage(process::UsageResult r) {
+    switch (r) {
+    case .ok:
+        return r.ok;
+    case .error:
+        return (process::Usage){.user_ns = ~(U64)0};
+    }
+}
+
+export void test_process_usage_of_a_scripted_child_is_what_its_script_says() {
+    process::Fake fake = process::fake();
+    process::fake_add(
+        &fake, (process::Script){
+                   .program = "build", .user_ns = 1'500'000'000, .system_ns = 250'000'000, .peak_bytes = 64 << 20});
+    process::Handler *before = process::set_handler(&fake.base);
+    defer process::set_handler(before);
+    const char *const argv[_] = {"build"};
+    process::Child child = value_child(process::spawn(argv[0:1]));
+    test::check_equal(value_exit(process::wait(&child)).status, 0);
+    process::Usage used = value_usage(process::usage(&child));
+    test::check_equal(used.user_ns, 1'500'000'000);
+    test::check_equal(used.system_ns, 250'000'000);
+    test::check_equal(used.peak_bytes, 64 << 20);
+    process::close(&child);
+}
+
+export void test_process_usage_of_a_real_child_comes_from_wait() {
+    const char *const argv[_] = {"/bin/sh", "-c", "exit 0"};
+    process::Child child = value_child(process::spawn(argv[0:3]));
+    test::check_equal(value_exit(process::wait(&child)).status, 0);
+    process::UsageResult measured = process::usage(&child);
+    test::check_condition(measured == .ok);
+    test::check_greater(value_usage(measured).peak_bytes, 0);
+    process::close(&child);
+}
+
+export void test_process_usage_self_has_memory_and_time() {
+    process::UsageResult measured = process::usage_self();
+    test::check_condition(measured == .ok);
+    test::check_greater(value_usage(measured).peak_bytes, 0);
+    test::check_greater(value_usage(measured).user_ns + value_usage(measured).system_ns, 0);
+}
