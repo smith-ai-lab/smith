@@ -1,0 +1,905 @@
+// front::cimport_cache (#1112 track C, #1130): a header is read once. `read` has the parameters and the result of
+// `cimport::read`; it is a hit on an entry of the cache, or it reads the header through clang and stores what it
+// found. The cache is a kind of smith's general cache: `<cache>/smith/cimport/<clang>/<key>`, where `<cache>` is
+// `$XDG_CACHE_HOME` or `~/.cache`, `<clang>` names the clang that read the header and `<key>` is a hash of the header
+// as written, the importer's folder (for "h"), the compile flags and the format version below.
+//
+// An entry is never stale (ccache's "depend mode"): it records every file clang opened for the header, each with its
+// size, mtime and content hash. A hit stats them all; a file whose size or mtime differs is hashed, and only a changed
+// hash is a miss. A header that clang searched for and did not find (an earlier -I folder that now has it) is not
+// recorded: the -I flags are in the key, as in ccache.
+//
+// The entry is a flat array of 32-bit words (little-endian, this machine's own cache): a header, the files, the
+// not-imported list, a table of nodes and a pool of strings. A node is a record of a type, an expression or a
+// declaration of front::ast that refers to its children by the number of their records; the writer numbers them in
+// pre-order with a work list, the reader builds them in the reverse order, so neither walk is recursive. Spans are not
+// kept. A tree the format cannot hold (a body, an attribute, a record in a type...) is not stored, and a truncated or
+// corrupt entry is a miss, never a crash: every number is checked before it is used.
+//
+// Not wired into `smith cc`. Pruning by the 31-day rule, the byte cap and `smith cache` come with J2, when cimport is
+// reachable from `smith cc` (they need runtime/). A hit touches `<key>.used` when it is more than a day old.
+module front::cimport_cache;
+
+import <string.h>;
+import <time.h>;
+
+import front::ast;
+import front::cimport;
+import std::arena;
+import std::env;
+import std::files;
+import std::format;
+import std::mem;
+
+// Bumped whenever the serialized form changes: it is in every key.
+constexpr U32 format_version = 1;
+constexpr U32 magic = 0x43494353; // "SCIC"
+constexpr U32 header_words = 9;
+constexpr U32 dep_words = 10;
+constexpr U32 not_imported_words = 5;
+constexpr U32 no_ref = 0xFFFFFFFF;
+constexpr U64 day_ns = 86'400'000'000'000;
+
+// The classes of record, and the tags.
+constexpr U32 class_type = 0;
+constexpr U32 class_expr = 1;
+constexpr U32 class_decl = 2;
+constexpr U32 class_roots = 3;
+constexpr U32 t_named = 1;
+constexpr U32 t_pointer = 2;
+constexpr U32 t_array = 3;
+constexpr U32 t_slice = 4;
+constexpr U32 t_function = 5;
+constexpr U32 t_applied = 6;
+constexpr U32 t_unsupported = 7;
+constexpr U32 e_integer = 20;
+constexpr U32 e_boolean = 21;
+constexpr U32 e_name = 22;
+constexpr U32 e_unary = 23;
+constexpr U32 d_function = 40;
+constexpr U32 d_record = 41;
+constexpr U32 d_enum = 42;
+constexpr U32 d_alias = 43;
+constexpr U32 d_variable = 44;
+constexpr U32 r_roots = 60;
+
+// A file clang read for a header, as it was.
+export struct Dep {
+    Str path;
+    U64 size;
+    U64 mtime; // nanoseconds
+    U64 hash[4];
+};
+
+// What an entry holds. `ok` is false for bytes that are not a whole entry of this version.
+export struct Decoded {
+    cimport::Header header;
+    Dep deps[:];
+    Bool ok;
+};
+
+// Keep in step with SmithCimportRequest in shim/cimport.cpp.
+struct Request {
+    const char *name;
+    I32 quoted;
+    const char *folder;
+    const char *flags;
+};
+
+extern Usize smith_cimport_identity(char *out, Usize capacity);
+extern Usize smith_cimport_deps(const Request *request, char *out, Usize capacity);
+extern I32 smith_cimport_stat(const char *path, U64 *size, U64 *mtime_ns);
+
+static Usize miss_count;
+static Usize check_count;
+
+// How many reads went through clang (`read` found no good entry), since the process began.
+export Usize misses() {
+    return miss_count;
+}
+
+// How many files a hit had to hash because their size or mtime differed.
+export Usize hash_checks() {
+    return check_count;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Hashes
+
+struct Hash {
+    U64 a;
+    U64 b;
+};
+
+static Hash hash_bytes(Hash seed, const U8 data[:]) {
+    Hash h = seed;
+    for (Usize i = 0; i < countof(data); i++) {
+        h.a = (h.a ^ data[i]) * 1099511628211;
+        h.b = (h.b + data[i] + 1) * 0x9E3779B97F4A7C15ULL;
+        h.b ^= h.b >> 29;
+    }
+    return h;
+}
+
+static Hash hash_start() {
+    return (Hash){.a = 14695981039346656037ULL, .b = 0x243F6A8885A308D3};
+}
+
+static Str hex(Hash h) {
+    format::Chars text = format::push(format::hex(h.a, 16), format::hex(h.b, 16));
+    return format::bytes(text.data, countof(text));
+}
+
+static Hash hash_text(Hash seed, Str text) {
+    return hash_bytes(seed, ((const U8 *)text.data)[0:countof(text)]);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Growing buffers: no recursion and no malloc, so the writer keeps its words, its strings and its work list in these.
+
+struct Words {
+    U32 *data;
+    Usize count;
+    Usize capacity;
+};
+
+static void put(Words *w, U32 value) {
+    if (w->count == w->capacity) {
+        Usize capacity = w->capacity == 0 ? 256 : w->capacity * 2;
+        U32 *data = (U32 *)mem::alloc_array_raw(sizeof(U32), capacity, alignof(U32));
+        if (w->count != 0) c::memcpy(data, w->data, w->count * sizeof(U32));
+        w->data = data;
+        w->capacity = capacity;
+    }
+    w->data[w->count++] = value;
+}
+
+struct Pool {
+    char *data;
+    Usize count;
+    Usize capacity;
+};
+
+// Appends `text` and a NUL, and puts its offset and length in `w`.
+static void put_text(Words *w, Pool *p, Str text) {
+    Usize need = p->count + countof(text) + 1;
+    if (need > p->capacity) {
+        Usize capacity = p->capacity == 0 ? 1024 : p->capacity;
+        while (capacity < need)
+            capacity *= 2;
+        char *data = (char *)mem::alloc_array_raw(1, capacity, 1);
+        if (p->count != 0) c::memcpy(data, p->data, p->count);
+        p->data = data;
+        p->capacity = capacity;
+    }
+    put(w, (U32)p->count);
+    put(w, (U32)countof(text));
+    if (countof(text) != 0) c::memcpy(p->data + p->count, text.data, countof(text));
+    p->data[p->count + countof(text)] = 0;
+    p->count = need;
+}
+
+struct Work {
+    U32 class;
+    const void *node;
+    Usize patch; // the word that is to hold this node's number, or no patch for the roots
+};
+
+struct Stack {
+    Work *items;
+    Usize count;
+    Usize capacity;
+};
+
+static void push(Stack *s, U32 class, const void *node, Usize patch) {
+    if (node == nullptr) return;
+    if (s->count == s->capacity) {
+        Usize capacity = s->capacity == 0 ? 64 : s->capacity * 2;
+        Work *items = (Work *)mem::alloc_array_raw(sizeof(Work), capacity, alignof(Work));
+        if (s->count != 0) c::memcpy(items, s->items, s->count * sizeof(Work));
+        s->items = items;
+        s->capacity = capacity;
+    }
+    s->items[s->count++] = (Work){.class = class, .node = node, .patch = patch};
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The writer
+
+struct Writer {
+    Words nodes;
+    Pool pool;
+    Stack todo;
+    U32 next; // the number of the next record
+    Bool failed;
+};
+
+// A slot for a child, and the child queued to fill it.
+static void child(Writer *w, U32 class, const void *node) {
+    push(&w->todo, class, node, w->nodes.count);
+    put(&w->nodes, no_ref);
+}
+
+static void put_path(Writer *w, const ast::Path *path) {
+    put(&w->nodes, (U32)countof(path->segments));
+    for (Usize i = 0; i < countof(path->segments); i++)
+        put_text(&w->nodes, &w->pool, path->segments[i].text);
+}
+
+static U32 qualifier_bits(const ast::Qualifiers *q) {
+    return (q->is_const ? 1U : 0U) | (q->is_volatile ? 2U : 0U) | (q->is_restrict ? 4U : 0U);
+}
+
+static void write_type(Writer *w, const ast::TypeExpr *t) {
+    Words *n = &w->nodes;
+    U32 q = qualifier_bits(&t->qualifiers);
+    if (t->kind == .named) {
+        put(n, t_named), put(n, q);
+        put_path(w, &t->kind.named.path);
+    } else if (t->kind == .pointer) {
+        put(n, t_pointer), put(n, q);
+        child(w, class_type, t->kind.pointer.pointee);
+    } else if (t->kind == .array) {
+        put(n, t_array), put(n, q);
+        child(w, class_type, t->kind.array.element);
+        child(w, class_expr, t->kind.array.count);
+    } else if (t->kind == .slice) {
+        put(n, t_slice), put(n, q);
+        child(w, class_type, t->kind.slice.element);
+    } else if (t->kind == .function) {
+        put(n, t_function), put(n, q);
+        child(w, class_type, t->kind.function.result);
+        put(n, t->kind.function.variadic ? 1U : 0U);
+        put(n, (U32)countof(t->kind.function.params));
+        for (Usize i = 0; i < countof(t->kind.function.params); i++)
+            child(w, class_type, t->kind.function.params[i]);
+    } else if (t->kind == .applied) {
+        put(n, t_applied), put(n, q);
+        put_path(w, &t->kind.applied.name);
+        put(n, (U32)countof(t->kind.applied.args));
+        for (Usize i = 0; i < countof(t->kind.applied.args); i++) {
+            ast::TypeArg arg = t->kind.applied.args[i];
+            if (arg != .type) {
+                w->failed = true;
+                put(n, no_ref);
+            } else {
+                child(w, class_type, arg.type.type);
+            }
+        }
+    } else if (t->kind == .unsupported_c) {
+        put(n, t_unsupported), put(n, q);
+        put_text(n, &w->pool, t->kind.unsupported_c.spelling);
+    } else {
+        w->failed = true;
+        put(n, 0);
+    }
+}
+
+// The operators an expression of a header can hold: a constant's sign and complement.
+static U32 unary_code(ast::UnaryOp op) {
+    if (op == .negate) return 1;
+    if (op == .plus) return 2;
+    if (op == .logical_not) return 3;
+    if (op == .bit_not) return 4;
+    return 0;
+}
+
+static void write_expr(Writer *w, const ast::Expr *e) {
+    Words *n = &w->nodes;
+    if (e->kind == .integer) {
+        put(n, e_integer), put(n, (U32)e->kind.integer.value), put(n, (U32)(e->kind.integer.value >> 32));
+        put_text(n, &w->pool, e->kind.integer.suffix);
+    } else if (e->kind == .boolean) {
+        put(n, e_boolean), put(n, e->kind.boolean.value ? 1U : 0U);
+    } else if (e->kind == .name) {
+        put(n, e_name);
+        put_path(w, &e->kind.name.path);
+    } else if (e->kind == .unary && unary_code(e->kind.unary.op) != 0) {
+        put(n, e_unary), put(n, unary_code(e->kind.unary.op));
+        child(w, class_expr, e->kind.unary.operand);
+    } else {
+        w->failed = true;
+        put(n, 0);
+    }
+}
+
+static U32 decl_flags(const ast::Decl *d) {
+    return (d->exported ? 1U : 0U) | (d->is_static ? 2U : 0U) | (d->is_extern ? 4U : 0U) | (d->is_inline ? 8U : 0U) |
+           (d->from_c ? 16U : 0U);
+}
+
+static void write_function(Writer *w, const ast::Decl *d) {
+    U32 flags = decl_flags(d);
+    if (d->kind == .function) {
+        Words *n = &w->nodes;
+        if (d->kind.function.body != nullptr) w->failed = true;
+        put(n, d_function), put(n, flags);
+        put_text(n, &w->pool, d->kind.function.name);
+        child(w, class_type, d->kind.function.result);
+        put(n, d->kind.function.variadic ? 1U : 0U);
+        put(n, (U32)countof(d->kind.function.params));
+        for (Usize i = 0; i < countof(d->kind.function.params); i++) {
+            ast::Param param = d->kind.function.params[i];
+            if (param.is_constexpr || param.is_rest || countof(param.attributes) != 0) w->failed = true;
+            put_text(n, &w->pool, d->kind.function.params[i].name);
+            child(w, class_type, d->kind.function.params[i].type);
+        }
+    } else {
+        w->failed = true;
+    }
+}
+
+static void write_record(Writer *w, const ast::Decl *d) {
+    U32 flags = decl_flags(d);
+    if (d->kind == .record) {
+        Words *n = &w->nodes;
+        put(n, d_record), put(n, flags);
+        put_text(n, &w->pool, d->kind.record.name);
+        put(n, d->kind.record.is_union ? 1U : 0U), put(n, d->kind.record.opaque ? 1U : 0U);
+        put(n, (U32)countof(d->kind.record.fields));
+        for (Usize i = 0; i < countof(d->kind.record.fields); i++) {
+            if (d->kind.record.fields[i].bit_width != nullptr) w->failed = true;
+            put_text(n, &w->pool, d->kind.record.fields[i].name);
+            child(w, class_type, d->kind.record.fields[i].type);
+        }
+    } else {
+        w->failed = true;
+    }
+}
+
+static void write_enumeration(Writer *w, const ast::Decl *d) {
+    U32 flags = decl_flags(d);
+    if (d->kind == .enumeration) {
+        Words *n = &w->nodes;
+        put(n, d_enum), put(n, flags);
+        put_text(n, &w->pool, d->kind.enumeration.name);
+        child(w, class_type, d->kind.enumeration.underlying);
+        put(n, (U32)countof(d->kind.enumeration.items));
+        for (Usize i = 0; i < countof(d->kind.enumeration.items); i++) {
+            if (d->kind.enumeration.items[i].payload != nullptr) w->failed = true;
+            put_text(n, &w->pool, d->kind.enumeration.items[i].name);
+            child(w, class_expr, d->kind.enumeration.items[i].value);
+        }
+    } else {
+        w->failed = true;
+    }
+}
+
+static void write_alias(Writer *w, const ast::Decl *d) {
+    U32 flags = decl_flags(d);
+    if (d->kind == .type_alias) {
+        put(&w->nodes, d_alias), put(&w->nodes, flags);
+        put_text(&w->nodes, &w->pool, d->kind.type_alias.name);
+        child(w, class_type, d->kind.type_alias.type);
+    } else {
+        w->failed = true;
+    }
+}
+
+static void write_variable(Writer *w, const ast::Decl *d) {
+    U32 flags = decl_flags(d);
+    if (d->kind == .variable) {
+        put(&w->nodes, d_variable), put(&w->nodes, flags);
+        put_text(&w->nodes, &w->pool, d->kind.variable.name);
+        child(w, class_type, d->kind.variable.type);
+        child(w, class_expr, d->kind.variable.init);
+        put(&w->nodes, (d->kind.variable.is_constexpr ? 1U : 0U) | (d->kind.variable.is_thread_local ? 2U : 0U));
+    } else {
+        w->failed = true;
+    }
+}
+
+static void write_decl(Writer *w, const ast::Decl *d) {
+    if (countof(d->attributes) != 0) w->failed = true;
+    if (d->kind == .function) {
+        write_function(w, d);
+    } else if (d->kind == .record) {
+        write_record(w, d);
+    } else if (d->kind == .enumeration) {
+        write_enumeration(w, d);
+    } else if (d->kind == .type_alias) {
+        write_alias(w, d);
+    } else if (d->kind == .variable) {
+        write_variable(w, d);
+    } else {
+        w->failed = true;
+        put(&w->nodes, 0);
+    }
+}
+
+// Every node of the declarations, the roots first.
+static Bool write_nodes(Writer *w, const cimport::Header *h) {
+    put(&w->nodes, r_roots);
+    put(&w->nodes, (U32)countof(h->decls));
+    for (Usize i = countof(h->decls); i > 0; i--)
+        push(&w->todo, class_decl, h->decls[i - 1], w->nodes.count + i - 1);
+    for (Usize i = 0; i < countof(h->decls); i++)
+        put(&w->nodes, no_ref);
+    w->next = 1;
+    while (w->todo.count != 0 && !w->failed) {
+        Work item = w->todo.items[--w->todo.count];
+        w->nodes.data[item.patch] = w->next++;
+        if (item.class == class_type) write_type(w, (const ast::TypeExpr *)item.node);
+        else if (item.class == class_expr) write_expr(w, (const ast::Expr *)item.node);
+        else write_decl(w, (const ast::Decl *)item.node);
+    }
+    return !w->failed;
+}
+
+// The entry for `h` and the files it came from, or an empty slice when the tree has something the format cannot hold.
+// The bytes are in the current allocator.
+export files::Bytes encode(const cimport::Header *h, const Dep deps[:]) {
+    Writer w = {};
+    Bool whole = write_nodes(&w, h);
+    if (!whole) return {};
+    Words out = {};
+    for (U32 i = 0; i < header_words; i++)
+        put(&out, 0);
+    for (Usize i = 0; i < countof(deps); i++) {
+        put_text(&out, &w.pool, deps[i].path);
+        put(&out, (U32)deps[i].size), put(&out, (U32)(deps[i].size >> 32));
+        put(&out, (U32)deps[i].mtime), put(&out, (U32)(deps[i].mtime >> 32));
+        for (Usize k = 0; k < 4; k++)
+            put(&out, (U32)deps[i].hash[k]);
+    }
+    for (Usize i = 0; i < countof(h->not_imported); i++) {
+        put(&out, h->not_imported[i].kind);
+        put_text(&out, &w.pool, h->not_imported[i].name);
+        put_text(&out, &w.pool, h->not_imported[i].reason);
+    }
+    for (Usize i = 0; i < w.nodes.count; i++)
+        put(&out, w.nodes.data[i]);
+    Usize pool_words = (w.pool.count + 3) / 4;
+    Usize pool_at = out.count;
+    for (Usize i = 0; i < pool_words; i++)
+        put(&out, 0);
+    if (w.pool.count != 0) c::memcpy(out.data + pool_at, w.pool.data, w.pool.count);
+    out.data[0] = magic, out.data[1] = format_version, out.data[2] = (U32)countof(deps);
+    out.data[3] = (U32)countof(h->not_imported), out.data[4] = w.next, out.data[5] = (U32)w.nodes.count;
+    out.data[6] = (U32)w.pool.count, out.data[7] = (U32)out.count;
+    U8 *raw = (U8 *)out.data;
+    Usize size = out.count * 4;
+    return raw[0:size];
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The reader
+
+struct Reader {
+    const U32 *words;  // the whole entry
+    const U32 *nodes;  // its table of nodes
+    const char *pool;  // its strings
+    Usize pool_size;
+    Usize node_words;
+    Usize count;       // records
+    Usize *starts;     // the word of each record in `nodes`
+    U32 *classes;      // class of each record
+    void **built;
+    Bool bad;
+};
+
+static Str get_text(Reader *r, U32 off, U32 len) {
+    if ((U64)off + len + 1 > r->pool_size) {
+        r->bad = true;
+        return "";
+    }
+    return r->pool[off:off + len];
+}
+
+// The words of the record at `at`, or 0 when it runs past the table.
+static Usize record_size(const U32 *n, Usize at, Usize limit, U32 *class) {
+    if (at >= limit) return 0;
+    U32 tag = n[at];
+    U64 size = 0;
+    *class = class_type;
+    if (tag == t_named && at + 3 <= limit) size = 3 + 2 * (U64)n[at + 2];
+    else if (tag == t_pointer || tag == t_slice) size = 3;
+    else if (tag == t_array || tag == t_unsupported) size = 4;
+    else if (tag == t_function && at + 5 <= limit) size = 5 + (U64)n[at + 4];
+    else if (tag == t_applied && at + 3 <= limit && at + 4 + 2 * (U64)n[at + 2] <= limit)
+        size = 4 + 2 * (U64)n[at + 2] + n[at + 3 + 2 * (Usize)n[at + 2]];
+    if (tag >= e_integer && tag < d_function) *class = class_expr;
+    if (tag == e_integer) size = 5;
+    else if (tag == e_boolean) size = 2;
+    else if (tag == e_name && at + 2 <= limit) size = 2 + 2 * (U64)n[at + 1];
+    else if (tag == e_unary) size = 3;
+    if (tag >= d_function && tag < r_roots) *class = class_decl;
+    if ((tag == d_function || tag == d_record) && at + 7 <= limit) size = 7 + 3 * (U64)n[at + 6];
+    else if (tag == d_enum && at + 6 <= limit) size = 6 + 3 * (U64)n[at + 5];
+    else if (tag == d_alias) size = 5;
+    else if (tag == d_variable) size = 7;
+    if (tag == r_roots && at + 2 <= limit) {
+        size = 2 + (U64)n[at + 1];
+        *class = class_roots;
+    }
+    if (size == 0 || at + size > limit) return 0;
+    return (Usize)size;
+}
+
+// A child by number: null for none, and `bad` for a number that is not a later record of the class wanted.
+static void *ref(Reader *r, Usize self, U32 number, U32 class) {
+    if (number == no_ref) return nullptr;
+    if (number <= self || number >= r->count || r->classes[number] != class) {
+        r->bad = true;
+        return nullptr;
+    }
+    return r->built[number];
+}
+
+static ast::Path make_path(Reader *r, const U32 *at, U32 count) {
+    ast::Identifier segments[:] = mem::alloc_slice(ast::Identifier, count);
+    for (U32 i = 0; i < count; i++)
+        segments[i].text = get_text(r, at[2 * i], at[2 * i + 1]);
+    return (ast::Path){.segments = segments};
+}
+
+static ast::TypeRef *type_block(Usize count) {
+    return (ast::TypeRef *)mem::alloc_array_raw(sizeof(ast::TypeRef), count, alignof(ast::TypeRef));
+}
+
+static void *finish_type(ast::TypeKind kind, U32 q) {
+    ast::TypeExpr *t = ast::make_type(kind);
+    t->qualifiers.is_const = (q & 1) != 0;
+    t->qualifiers.is_volatile = (q & 2) != 0;
+    t->qualifiers.is_restrict = (q & 4) != 0;
+    return t;
+}
+
+static void *build_function_type(Reader *r, Usize self, const U32 *n) {
+    Usize count = n[4];
+    ast::TypeRef *params = type_block(count);
+    for (Usize i = 0; i < count; i++)
+        params[i] = (ast::TypeRef)ref(r, self, n[5 + i], class_type);
+    ast::TypeRef result = (ast::TypeRef)ref(r, self, n[2], class_type);
+    if (result == nullptr) r->bad = true;
+    ast::TypeKind kind = {.function = {.params = params[0:count], .result = result, .variadic = n[3] != 0}};
+    return finish_type(kind, n[1]);
+}
+
+static void *build_applied(Reader *r, Usize self, const U32 *n) {
+    U32 segments = n[2];
+    Usize count = n[3 + 2 * (Usize)segments];
+    ast::TypeArg args[:] = mem::alloc_slice(ast::TypeArg, count);
+    for (Usize i = 0; i < count; i++) {
+        ast::TypeRef type = (ast::TypeRef)ref(r, self, n[4 + 2 * (Usize)segments + i], class_type);
+        if (type == nullptr) r->bad = true;
+        ast::TypeArg arg = {.type = {.type = type}};
+        args[i] = arg;
+    }
+    ast::TypeKind kind = {.applied = {.name = make_path(r, n + 3, segments), .args = args}};
+    return finish_type(kind, n[1]);
+}
+
+static void *build_type(Reader *r, Usize self, const U32 *n) {
+    U32 tag = n[0];
+    if (tag == t_named) {
+        ast::TypeKind kind = {.named = {.path = make_path(r, n + 3, n[2])}};
+        return finish_type(kind, n[1]);
+    }
+    if (tag == t_pointer) {
+        ast::TypeKind kind = {.pointer = {.pointee = (ast::TypeRef)ref(r, self, n[2], class_type)}};
+        return finish_type(kind, n[1]);
+    }
+    if (tag == t_array) {
+        ast::TypeKind kind = {.array = {.element = (ast::TypeRef)ref(r, self, n[2], class_type),
+                                        .count = (ast::Expr *)ref(r, self, n[3], class_expr)}};
+        return finish_type(kind, n[1]);
+    }
+    if (tag == t_slice) {
+        ast::TypeKind kind = {.slice = {.element = (ast::TypeRef)ref(r, self, n[2], class_type)}};
+        return finish_type(kind, n[1]);
+    }
+    if (tag == t_function) return build_function_type(r, self, n);
+    if (tag == t_applied) return build_applied(r, self, n);
+    ast::TypeKind kind = {.unsupported_c = {.spelling = get_text(r, n[2], n[3])}};
+    return finish_type(kind, n[1]);
+}
+
+static void *build_expr(Reader *r, Usize self, const U32 *n) {
+    U32 tag = n[0];
+    if (tag == e_integer) {
+        ast::ExprKind kind = {.integer = {.value = (U64)n[1] | ((U64)n[2] << 32), .suffix = get_text(r, n[3], n[4])}};
+        return ast::expr(kind);
+    }
+    if (tag == e_boolean) {
+        ast::ExprKind kind = {.boolean = {.value = n[1] != 0}};
+        return ast::expr(kind);
+    }
+    if (tag == e_name) {
+        ast::ExprKind kind = {.name = {.path = make_path(r, n + 2, n[1])}};
+        return ast::expr(kind);
+    }
+    ast::UnaryOp op = .negate;
+    if (n[1] == 2) op = .plus;
+    else if (n[1] == 3) op = .logical_not;
+    else if (n[1] == 4) op = .bit_not;
+    else if (n[1] != 1) r->bad = true;
+    ast::ExprKind kind = {.unary = {.op = op, .operand = (ast::Expr *)ref(r, self, n[2], class_expr)}};
+    return ast::expr(kind);
+}
+
+static ast::Decl *flagged(ast::Decl *d, U32 flags) {
+    d->exported = (flags & 1) != 0;
+    d->is_static = (flags & 2) != 0;
+    d->is_extern = (flags & 4) != 0;
+    d->is_inline = (flags & 8) != 0;
+    d->from_c = (flags & 16) != 0;
+    return d;
+}
+
+static void *build_function_decl(Reader *r, Usize self, const U32 *n) {
+    Usize count = n[6];
+    ast::Param params[:] = mem::alloc_slice(ast::Param, count);
+    for (Usize i = 0; i < count; i++) {
+        const U32 *p = n + 7 + 3 * i;
+        params[i] = ast::param(get_text(r, p[0], p[1]), (ast::TypeRef)ref(r, self, p[2], class_type));
+    }
+    ast::DeclKind kind = {.function = {.name = get_text(r, n[2], n[3]),
+                                       .params = params,
+                                       .result = (ast::TypeRef)ref(r, self, n[4], class_type),
+                                       .variadic = n[5] != 0}};
+    return flagged(ast::decl((ast::Decl){}, kind), n[1]);
+}
+
+static void *build_record_decl(Reader *r, Usize self, const U32 *n) {
+    Usize count = n[6];
+    ast::FieldDecl fields[:] = mem::alloc_slice(ast::FieldDecl, count);
+    for (Usize i = 0; i < count; i++) {
+        const U32 *f = n + 7 + 3 * i;
+        fields[i] = ast::field(get_text(r, f[0], f[1]), (ast::TypeRef)ref(r, self, f[2], class_type));
+    }
+    ast::DeclKind kind = {
+        .record = {.name = get_text(r, n[2], n[3]), .is_union = n[4] != 0, .opaque = n[5] != 0, .fields = fields}};
+    return flagged(ast::decl((ast::Decl){}, kind), n[1]);
+}
+
+static void *build_enum_decl(Reader *r, Usize self, const U32 *n) {
+    Usize count = n[5];
+    ast::Enumerator items[:] = mem::alloc_slice(ast::Enumerator, count);
+    for (Usize i = 0; i < count; i++) {
+        const U32 *item = n + 6 + 3 * i;
+        items[i] = ast::enumerator(get_text(r, item[0], item[1]), (ast::Expr *)ref(r, self, item[2], class_expr), nullptr);
+    }
+    ast::DeclKind kind = {.enumeration = {.name = get_text(r, n[2], n[3]),
+                                          .underlying = (ast::TypeRef)ref(r, self, n[4], class_type),
+                                          .items = items}};
+    return flagged(ast::decl((ast::Decl){}, kind), n[1]);
+}
+
+static void *build_decl(Reader *r, Usize self, const U32 *n) {
+    U32 tag = n[0];
+    if (tag == d_function) return build_function_decl(r, self, n);
+    if (tag == d_record) return build_record_decl(r, self, n);
+    if (tag == d_enum) return build_enum_decl(r, self, n);
+    if (tag == d_alias) {
+        ast::Decl *d = ast::type_alias(get_text(r, n[2], n[3]), (ast::TypeRef)ref(r, self, n[4], class_type));
+        return flagged(d, n[1]);
+    }
+    Str name = get_text(r, n[2], n[3]);
+    ast::DeclKind kind = {.variable = {.name = name,
+                                       .type = (ast::TypeRef)ref(r, self, n[4], class_type),
+                                       .init = (ast::Expr *)ref(r, self, n[5], class_expr),
+                                       .is_constexpr = (n[6] & 1) != 0,
+                                       .is_thread_local = (n[6] & 2) != 0}};
+    return flagged(ast::decl((ast::Decl){}, kind), n[1]);
+}
+
+// The records from the last to the first: a child has a later number than its parent, so it is built before it.
+static void *build_all(Reader *r) {
+    for (Usize k = r->count; k > 0; k--) {
+        Usize self = k - 1;
+        const U32 *n = r->nodes + r->starts[self];
+        U32 class = r->classes[self];
+        if (class == class_type) r->built[self] = build_type(r, self, n);
+        else if (class == class_expr) r->built[self] = build_expr(r, self, n);
+        else if (class == class_decl) r->built[self] = build_decl(r, self, n);
+        else r->built[self] = r; // the roots: only a non-null mark
+        if (r->bad) return nullptr;
+    }
+    return r->built[0];
+}
+
+static Bool index_records(Reader *r) {
+    Usize at = 0;
+    for (Usize k = 0; k < r->count; k++) {
+        U32 class = 0;
+        Usize size = record_size(r->nodes, at, r->node_words, &class);
+        if (size == 0 || (k == 0) != (class == class_roots)) return false;
+        r->starts[k] = at;
+        r->classes[k] = class;
+        at += size;
+    }
+    return at == r->node_words;
+}
+
+static Decoded decode_header(Reader *r, const U32 w[:], Decoded out) {
+    U64 deps = w[2], skipped = w[3], count = w[4], node_words = w[5], pool_size = w[6];
+    U64 nodes_at = header_words + deps * dep_words + skipped * not_imported_words;
+    U64 pool_at = nodes_at + node_words;
+    if (pool_at + (pool_size + 3) / 4 != countof(w) || count == 0 || count > node_words) return out;
+    r->words = w.data;
+    r->nodes = w.data + nodes_at;
+    r->pool = (const char *)(w.data + pool_at);
+    r->pool_size = pool_size;
+    r->node_words = node_words;
+    r->count = count;
+    out.deps = mem::alloc_slice(Dep, deps);
+    for (U64 i = 0; i < deps; i++) {
+        const U32 *d = w.data + header_words + i * dep_words;
+        out.deps[i].path = get_text(r, d[0], d[1]);
+        out.deps[i].size = (U64)d[2] | ((U64)d[3] << 32);
+        out.deps[i].mtime = (U64)d[4] | ((U64)d[5] << 32);
+        for (Usize k = 0; k < 4; k++)
+            out.deps[i].hash[k] = d[6 + k];
+    }
+    out.header.not_imported = mem::alloc_slice(cimport::NotImported, skipped);
+    for (U64 i = 0; i < skipped; i++) {
+        const U32 *s = w.data + header_words + deps * dep_words + i * not_imported_words;
+        out.header.not_imported[i] =
+            (cimport::NotImported){.kind = s[0], .name = get_text(r, s[1], s[2]), .reason = get_text(r, s[3], s[4])};
+    }
+    out.ok = !r->bad;
+    return out;
+}
+
+// The declarations and the files of an entry. Not ok for bytes that are not a whole entry of this version.
+export Decoded decode(const U8 data[:]) {
+    Decoded out = {};
+    Usize size = countof(data);
+    if (size < header_words * 4 || size % 4 != 0) {
+        return out;
+    }
+    const U32 *raw = (const U32 *)data.data;
+    Usize total = size / 4;
+    const U32 w[:] = raw[0:total];
+    if (w[0] != magic || w[1] != format_version || w[7] != total) {
+        return out;
+    }
+    Reader r = {};
+    out = decode_header(&r, w, out);
+    if (!out.ok) return (Decoded){};
+    r.starts = (Usize *)mem::alloc_array_raw(sizeof(Usize), r.count, alignof(Usize));
+    r.classes = (U32 *)mem::alloc_array_raw(sizeof(U32), r.count, alignof(U32));
+    r.built = (void **)mem::alloc_array_raw(sizeof(void *), r.count, alignof(void *));
+    if (!index_records(&r)) return (Decoded){};
+    void *roots = build_all(&r);
+    if (r.bad || roots == nullptr) return (Decoded){};
+    Usize decls = r.nodes[1];
+    ast::DeclRef *block = (ast::DeclRef *)mem::alloc_array_raw(sizeof(ast::DeclRef), decls, alignof(ast::DeclRef));
+    for (Usize i = 0; i < decls; i++)
+        block[i] = (ast::DeclRef)ref(&r, 0, r.nodes[2 + i], class_decl);
+    if (r.bad) return (Decoded){};
+    out.header.decls = block[0:decls];
+    return out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The cache
+
+static Str str_of(format::Chars text) {
+    return format::bytes(text.data, countof(text));
+}
+
+static Str c_text(const char *text) {
+    return text[0:c::strlen(text)];
+}
+
+// The folder of the entries for this clang, made when missing; empty when the cache cannot be used.
+static Str cache_folder() {
+    Str root = "";
+    env::Value xdg = env::get("XDG_CACHE_HOME");
+    env::Value home = env::get("HOME");
+    if (xdg == .some && countof(xdg.some) != 0) root = xdg.some;
+    else if (home == .some && countof(home.some) != 0) root = str_of(format::push(home.some, "/.cache"));
+    if (countof(root) == 0) return "";
+    char identity[512];
+    Usize needed = smith_cimport_identity(identity, sizeof(identity));
+    if (needed > sizeof(identity)) return "";
+    Hash id = hash_text(hash_start(), c_text(identity));
+    Str folder = str_of(format::push(root, "/smith/cimport/", hex(id)));
+    // Every folder from the cache root down; one that exists is fine.
+    for (Usize i = countof(root) + 1; i <= countof(folder); i++) {
+        if (i != countof(folder) && folder[i] != '/') continue;
+        Str prefix = str_of(format::push(folder[0:i]));
+        files::DoneResult made = files::make_folder(prefix);
+        if (made == .error && made.error != files::Exists) return "";
+    }
+    return folder;
+}
+
+static Str entry_key(const char *name, Bool quoted, const char *folder, const char *flags) {
+    Str importer = "";
+    if (quoted && folder != nullptr) importer = c_text(folder);
+    Str text = str_of(format::push("v", (U64)format_version, "\n", quoted ? "\"" : "<", c_text(name), "\n", importer,
+                                   "\n", c_text(flags)));
+    return hex(hash_text(hash_start(), text));
+}
+
+static Dep dep_of(Str path) {
+    Dep dep = {.path = path};
+    if (smith_cimport_stat(path.data, &dep.size, &dep.mtime) != 0) return dep;
+    files::BytesResult content = files::read_file(path);
+    if (content != .ok) return dep;
+    Hash h = hash_bytes(hash_start(), content.ok);
+    dep.hash[0] = h.a & 0xFFFFFFFF, dep.hash[1] = h.a >> 32, dep.hash[2] = h.b & 0xFFFFFFFF, dep.hash[3] = h.b >> 32;
+    return dep;
+}
+
+// The files clang opens for the header, as they are now.
+static Dep *current_deps(const Request *request, Usize *count) {
+    *count = 0;
+    Usize needed = smith_cimport_deps(request, nullptr, 0);
+    char *text = (char *)mem::alloc_array_raw(1, needed, 1);
+    if (smith_cimport_deps(request, text, needed) != needed) return nullptr;
+    Dep *deps = (Dep *)mem::alloc_array_raw(sizeof(Dep), needed, alignof(Dep));
+    Usize start = 0;
+    for (Usize i = 0; i + 1 < needed; i++) {
+        if (text[i] != '\n') continue;
+        text[i] = 0; // each line is a path: a NUL ends it
+        deps[(*count)++] = dep_of(text[start:i]);
+        start = i + 1;
+    }
+    return deps;
+}
+
+// Whether every file of the entry is what it was: same size and mtime, or else the same content.
+static Bool deps_hold(const Dep deps[:]) {
+    for (Usize i = 0; i < countof(deps); i++) {
+        U64 size = 0;
+        U64 mtime = 0;
+        if (smith_cimport_stat(deps[i].path.data, &size, &mtime) != 0) return false;
+        if (size == deps[i].size && mtime == deps[i].mtime) continue;
+        check_count += 1;
+        Dep now = dep_of(deps[i].path);
+        for (Usize k = 0; k < 4; k++)
+            if (now.hash[k] != deps[i].hash[k]) return false;
+    }
+    return true;
+}
+
+// Marks the entry as used, once a day (the 31-day rule of the general cache prunes by this file's mtime).
+static void touch_used(Str entry) {
+    Str used = str_of(format::push(entry, ".used"));
+    U64 size = 0;
+    U64 mtime = 0;
+    U8 nothing[1] = {0};
+    U64 now = (U64)c::time(nullptr) * 1'000'000'000;
+    if (smith_cimport_stat(used.data, &size, &mtime) == 0 && mtime + day_ns > now) return;
+    files::CountResult written = files::write_file(used, nothing[0:0], files::Replace);
+    (void)written;
+}
+
+static void store(Str entry, const cimport::Header *h, const Request *request) {
+    Usize count = 0;
+    Dep *deps = current_deps(request, &count);
+    if (deps == nullptr || count == 0) return;
+    files::Bytes bytes = encode(h, deps[0:count]);
+    if (countof(bytes) == 0) return;
+    Str temporary = str_of(format::push(entry, ".tmp-", (U64)c::getpid()));
+    files::CountResult written = files::write_file(temporary, bytes, files::Replace);
+    if (written != .ok) return;
+    files::DoneResult moved = files::move(temporary, entry);
+    (void)moved;
+}
+
+// `cimport::read`, remembered. A hit costs a stat of each file the header needed and a read of the entry.
+export cimport::Header read(arena::Arena *a, const char *name, Bool quoted, const char *folder, const char *flags) {
+    Request request = {.name = name, .quoted = quoted ? 1 : 0, .folder = folder, .flags = flags};
+    Str directory = cache_folder();
+    Str entry = "";
+    if (countof(directory) != 0) {
+        entry = str_of(format::push(directory, "/", entry_key(name, quoted, folder, flags)));
+        files::BytesResult bytes = files::read_file(entry);
+        if (bytes == .ok) {
+            Decoded found = decode(bytes.ok);
+            if (found.ok && deps_hold(found.deps)) {
+                touch_used(entry);
+                return found.header;
+            }
+        }
+    }
+    miss_count += 1;
+    cimport::Header header = cimport::read(a, name, quoted, folder, flags);
+    if (countof(entry) != 0 && countof(header.error) == 0) store(entry, &header, &request);
+    return header;
+}

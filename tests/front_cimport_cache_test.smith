@@ -1,0 +1,11 @@
+module front_cimport_cache_test;
+
+import front::ast;
+import front::cimport;
+import front::cimport_cache;
+import std::arena;
+import std::test;
+
+export void test_cimport_cache_compiles() {
+    test::check_equal(cimport_cache::misses(), 0);
+}
