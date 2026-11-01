@@ -344,3 +344,24 @@ export void test_an_indexed_for_each_makes_a_record() {
     scratch::expect_lacks("no malformed data", run.err, "malformed");
     scratch::expect_contains("the profile is merged and deleted", run.out, "raw: 0");
 }
+
+// A second merge of a test finds its raw profiles deleted by the first: it says so, naming the folder it looked in,
+// and keeps the record (issue #1161).
+export void test_a_repeated_merge_says_no_raw_profile_was_found() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = scratch::sh(
+        &p, format::push(make_table(run_one), "; smith test --coverage merge t::one 2>&1; ls cov/rec").data);
+    if (run.status == 77) {
+        test::note("coverage: skipped, this smith has no LLVM inside");
+        return;
+    }
+    scratch::expect_status("the run", 0, &run);
+    scratch::expect_contains("it names the folder", run.out, "no raw profile for t::one in ");
+    scratch::expect_contains("it names the folder", run.out, "cov/raw/t__one");
+    scratch::expect_contains("the record stays", run.out, "t__one.rec");
+}

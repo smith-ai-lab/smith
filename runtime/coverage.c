@@ -471,7 +471,13 @@ static int smith_cov_merge(const char *name, bool pass) {
     snprintf(lcov, sizeof lcov, "%s.lcov", raw);
     snprintf(binaries_text, sizeof binaries_text, "%s", binary);
     size_t binary_count = smith_cov_binaries(binaries_text, binaries);
-    if (smith_cov_raw_list(raw, list, false) == 0) return 0; // the test ran no instrumented program
+    if (smith_cov_raw_list(raw, list, false) == 0) { // the test ran no instrumented program, or this is a repeat
+        char record[PATH_MAX];
+        snprintf(record, sizeof record, "%s/rec/%s.rec", dir, clean);
+        if (access(record, R_OK) == 0) // a merge deletes the profiles, so a second one has nothing to read (#1161)
+            fprintf(stderr, "smith test --coverage merge: no raw profile for %s in %s (already merged)\n", name, raw);
+        return 0;
+    }
     int status = smith_coverage_lcov(list, binaries, binary_count, smith_cov_root, data, lcov, problem, sizeof problem);
     (void)smith_cov_raw_list(raw, list, true);
     (void)rmdir(raw);
