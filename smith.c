@@ -3469,7 +3469,6 @@ static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const c
         by_project = by_project || strcmp(argv[i], "-p") == 0;
     if (strcmp(tool->command, "lint") == 0) smith_lint_needs_build(argc, argv);
     if (strcmp(tool->command, "lint") == 0 && !by_project) {
-        smith_lint_host_note(argc, argv);
         (void)smith_lint_front_include(&argc, &argv);
     }
     if (strcmp(tool->command, "fmt") == 0 || strcmp(tool->command, "lint") == 0) {
@@ -3482,6 +3481,8 @@ static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const c
         argv = smith_defaults_argv;
     }
     int status = smith_tool_launch(tool, argc, argv, self);
+    // after a lint that passed, so a failing or unrunnable clang-tidy prints only its own words
+    if (status == 0 && !by_project && strcmp(tool->command, "lint") == 0) smith_lint_host_note(argc, argv);
     return status != 0 ? status : (before > 0 ? before : 0);
 }
 
