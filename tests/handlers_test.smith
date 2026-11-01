@@ -131,7 +131,7 @@ static void env_clock_handlers(const char *optimize) {
     scratch::Run run = scratch::sh(&p, "./t_envclock 2>&1");
     scratch::expect_status("handlers: the env and clock test passes", 0, &run);
     scratch::expect_lacks("handlers: the env and clock test has no failing check", run.out, "FAIL");
-    scratch::expect_text("handlers: the env and clock test ran its 17 checks", "17",
+    scratch::expect_text("handlers: the env and clock test ran its 18 checks", "18",
                          scratch::capture(&p, "./t_envclock 2>&1 | grep -c '^ok  '"));
 }
 
