@@ -156,102 +156,6 @@ export void test_lex_the_longest_punctuator_wins_and_slices_are_three_tokens() {
     expect_dump("<:%>", "1:1 less <\n1:2 colon :\n1:3 percent %\n1:4 greater >\n1:5 end_of_file\n");
 }
 
-// The tokens of source in smith's own syntax (#1428); an error fails the test.
-static lex::Tokens new_tokens_of(Str source) {
-    lex::Lexed lexed = lex::tokenize_new(source);
-    if (lexed == .error) {
-        Str expected = "no error";
-        test::check_equal(lexed.error.message, expected);
-        lex::Tokens none = {};
-        return none;
-    }
-    return lexed.ok;
-}
-
-export void test_lex_the_new_punctuators_are_tokens_in_both_syntaxes() {
-    arena::Arena memory = test::memory(1U << 20);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    expect_one(":=", lex::colon_equal);
-    expect_one("=>", lex::fat_arrow);
-    expect_one("@", lex::at);
-    expect_one(".*", lex::dot_star);
-    test::check_equal(lex::is_punctuator(lex::dot_star), true);
-    test::check_equal(lex::is_keyword(lex::dot_star), false);
-    expect_dump("x:=y=>@p.*", "1:1 name x\n1:2 colon_equal :=\n1:4 name y\n1:5 fat_arrow =>\n1:7 at @\n1:8 name "
-                              "p\n1:9 dot_star .*\n1:11 end_of_file\n");
-    // Neighbours stay as they were: a slice, a conditional, a float, a member, a multiplication through a pointer.
-    expect_dump("xs[:] a?b:c .5 s.m a*b", "1:1 name xs\n1:3 left_bracket [\n1:4 colon :\n1:5 right_bracket ]\n1:7 name "
-                                          "a\n1:8 question ?\n1:9 name b\n1:10 colon :\n1:11 name c\n1:13 floating "
-                                          ".5\n1:16 name s\n1:17 dot .\n1:18 name m\n1:20 name a\n1:21 star "
-                                          "*\n1:22 name b\n1:23 end_of_file\n");
-}
-
-export void test_lex_the_new_keywords_are_keywords_only_in_the_new_syntax() {
-    arena::Arena memory = test::memory(1U << 20);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    Usize seen = 0;
-    for (Usize k = (Usize)lex::kw_fn; k <= (Usize)lex::kw_type; k++) {
-        lex::TokenKind kind = (lex::TokenKind)k;
-        test::check_equal(lex::is_keyword(kind), true);
-        Str word = lex::kind_text(kind);
-        lex::Tokens kept = tokens_of(word);
-        test::check_equal(kept[0].kind == lex::name, true);
-        lex::Tokens fresh = new_tokens_of(word);
-        test::check_equal(fresh[0].kind == kind, true);
-        seen += 1;
-    }
-    test::check_equal(seen, 8);
-    lex::Tokens words = new_tokens_of("fn pub mut match in as fn_once type Type fns types int");
-    test::check_equal(countof(words), 13);
-    test::check_equal(words[8].kind == lex::type_name, true);
-    test::check_equal(words[9].kind == lex::name, true);
-    test::check_equal(words[10].kind == lex::name, true);
-    test::check_equal(words[11].kind == lex::kw_int, true);
-    expect_dump("import a::b as c;", "1:1 kw_import import\n1:8 name a\n1:9 colon_colon ::\n1:11 name b\n1:13 name "
-                                     "as\n1:16 name c\n1:17 semicolon ;\n1:18 end_of_file\n");
-}
-
-export void test_lex_a_token_records_whether_a_line_break_follows() {
-    arena::Arena memory = test::memory(1U << 20);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    Str source = "a b\nc // note\n/* x\ny */ d\n)\n;\ne";
-    lex::Tokens tokens = tokens_of(source);
-    Str dumped = lex::dump_lines(tokens, source);
-    Str expected = "1:1 name a\n1:3 name b [eol]\n2:1 name c [eol]\n4:6 name d [eol]\n5:1 right_paren ) "
-                   "[eol]\n6:1 semicolon ; [eol]\n7:1 name e\n7:2 end_of_file\n";
-    test::check_equal(dumped, expected);
-    test::check_equal(lex::ends_statement(tokens[1]), true);
-    test::check_equal(lex::ends_statement(tokens[0]), false);
-    test::check_equal(lex::ends_statement(tokens[4]), true);
-    test::check_equal(lex::ends_statement(tokens[5]), false);
-    test::check_equal(lex::ends_statement(tokens[6]), false);
-    lex::Tokens operators = tokens_of("a +\nb return\nbreak\ncontinue\n} ]\n1\n\"s\"\ntrue\n,\n");
-    Usize ending = 0;
-    for (lex::Token token : operators) {
-        if (lex::ends_statement(token)) ending += 1;
-    }
-    test::check_equal(ending, 7);
-    test::check_equal(lex::ends_statement(operators[1]), false);
-}
-
-export void test_lex_golden_the_new_syntax() {
-    arena::Arena memory = test::memory(1U << 20);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    Str source =
-        "pub fn main() -> I32 {\n    mut x := 1\n    y := p.* as I32\n    match x {\n        1 => return 0\n    }\n"
-        "    for (i in xs) f(@i)\n    return y\n}\ntype Point = struct { I32 x }\nfn_once g\n";
-    lex::Tokens tokens = new_tokens_of(source);
-    test::golden("tests/front/lex/new-syntax.tokens", lex::dump_lines(tokens, source));
-}
-
 export void test_lex_integers_and_floating_constants() {
     arena::Arena memory = test::memory(1U << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -396,7 +300,7 @@ export void test_lex_error_a_byte_that_starts_no_token() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_error("a ~ $ b", "this byte starts no token", 4, 5);
+    expect_error("a @ b", "this byte starts no token", 2, 3);
     expect_error("$x", "this byte starts no token", 0, 1);
     expect_error("a \\\nb", "this byte starts no token", 2, 3);
     expect_error("`", "this byte starts no token", 0, 1);
@@ -422,7 +326,7 @@ export void test_lex_a_failed_tokenize_returns_nothing_to_free() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    lex::Lexed lexed = lex::tokenize("fine tokens before $");
+    lex::Lexed lexed = lex::tokenize("fine tokens before @");
     test::check_equal(lexed == .error, true);
 }
 

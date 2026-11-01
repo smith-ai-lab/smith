@@ -102,14 +102,6 @@ export enum TokenKind {
     kw_defer,
     kw_try,
     kw_countof,
-    kw_fn,
-    kw_pub,
-    kw_mut,
-    kw_match,
-    kw_in,
-    kw_as,
-    kw_fn_once,
-    kw_type,
     left_paren,
     right_paren,
     left_bracket,
@@ -157,10 +149,6 @@ export enum TokenKind {
     caret_equal,
     pipe_equal,
     comma,
-    colon_equal,
-    fat_arrow,
-    at,
-    dot_star,
 };
 // NOLINTEND(readability-identifier-naming)
 
@@ -168,7 +156,6 @@ export enum TokenKind {
 export struct Token {
     TokenKind kind;
     ast::Span span;
-    Bool line_break;
 };
 
 // The tokens of a file, and what tokenizing gives: the tokens or the first error.
@@ -183,7 +170,7 @@ export typedef struct {
 export typedef Result(Tokens, LexError) Lexed;
 
 // The names and the texts of the kinds, in the order of the enumeration (a test checks the tables are as long as it).
-static const char *const kind_names[126] = {
+static const char *const kind_names[114] = {
     "end_of_file",
     "type_name",
     "name",
@@ -251,14 +238,6 @@ static const char *const kind_names[126] = {
     "kw_defer",
     "kw_try",
     "kw_countof",
-    "kw_fn",
-    "kw_pub",
-    "kw_mut",
-    "kw_match",
-    "kw_in",
-    "kw_as",
-    "kw_fn_once",
-    "kw_type",
     "left_paren",
     "right_paren",
     "left_bracket",
@@ -306,13 +285,9 @@ static const char *const kind_names[126] = {
     "caret_equal",
     "pipe_equal",
     "comma",
-    "colon_equal",
-    "fat_arrow",
-    "at",
-    "dot_star",
 };
 
-static const char *const kind_texts[126] = {
+static const char *const kind_texts[114] = {
     "",
     "",
     "",
@@ -380,14 +355,6 @@ static const char *const kind_texts[126] = {
     "defer",
     "try",
     "countof",
-    "fn",
-    "pub",
-    "mut",
-    "match",
-    "in",
-    "as",
-    "fn_once",
-    "type",
     "(",
     ")",
     "[",
@@ -435,10 +402,6 @@ static const char *const kind_texts[126] = {
     "^=",
     "|=",
     ",",
-    ":=",
-    "=>",
-    "@",
-    ".*",
 };
 
 // The name of a kind as a dump prints it (`kw_if`, `left_paren`).
@@ -453,38 +416,12 @@ export Str kind_text(TokenKind kind) {
 
 // Whether a kind is one of the keywords.
 export Bool is_keyword(TokenKind kind) {
-    return kind >= kw_alignas && kind <= kw_type;
+    return kind >= kw_alignas && kind <= kw_countof;
 }
 
 // Whether a kind is a punctuator.
 export Bool is_punctuator(TokenKind kind) {
-    return kind >= left_paren && kind <= dot_star;
-}
-
-// Whether a line break after this token ends a statement in the new syntax (Go's rule): it follows a name, a literal,
-// `)`, `]`, `}`, `return`, `break` or `continue`. The lexer only records the break; the parser decides what to do.
-export Bool ends_statement(Token token) {
-    if (!token.line_break) return false;
-    switch (token.kind) {
-    case type_name:
-    case name:
-    case integer:
-    case floating:
-    case character:
-    case string:
-    case kw_true:
-    case kw_false:
-    case kw_nullptr:
-    case right_paren:
-    case right_bracket:
-    case right_brace:
-    case kw_return:
-    case kw_break:
-    case kw_continue:
-        return true;
-    default:
-        return false;
-    }
+    return kind >= left_paren && kind <= comma;
 }
 
 // The text of a token.
@@ -666,10 +603,9 @@ static Result(Usize, LexError) scan_quoted(Str s, Usize start, Usize quote_at) {
 }
 
 // The kind of the identifier or keyword in s[start:end].
-static TokenKind identifier_kind(Str s, Usize start, Usize end, Bool new_syntax) {
+static TokenKind identifier_kind(Str s, Usize start, Usize end) {
     Str word = s[start:end];
-    Usize last_keyword = new_syntax ? (Usize)kw_type : (Usize)kw_countof;
-    for (Usize k = (Usize)kw_alignas; k <= last_keyword; k++) {
+    for (Usize k = (Usize)kw_alignas; k <= (Usize)kw_countof; k++) {
         if (same(kind_text((TokenKind)k), word)) return (TokenKind)k;
     }
     return word[0] >= 'A' && word[0] <= 'Z' ? type_name : name;
@@ -681,7 +617,7 @@ static Bool is_literal_prefix(Str word) {
 }
 
 // An identifier, a keyword, or a literal with a prefix, starting at i.
-static Result(Scanned, LexError) scan_word(Str s, Usize i, Bool new_syntax) {
+static Result(Scanned, LexError) scan_word(Str s, Usize i) {
     Usize n = countof(s);
     Usize p = i;
     while (p < n && is_identifier_part(s[p]))
@@ -692,7 +628,7 @@ static Result(Scanned, LexError) scan_word(Str s, Usize i, Bool new_syntax) {
         Scanned literal = {.end = closed.ok, .kind = s[p] == '"' ? string : character};
         return literal;
     }
-    Scanned word = {.end = p, .kind = identifier_kind(s, i, p, new_syntax)};
+    Scanned word = {.end = p, .kind = identifier_kind(s, i, p)};
     return word;
 }
 
@@ -702,7 +638,7 @@ static Result(Scanned, LexError) scan_punctuator(Str s, Usize i) {
     for (Usize length = 3; length >= 1; length--) {
         if (i + length > n) continue;
         Str candidate = s[i:i + length];
-        for (Usize k = (Usize)left_paren; k <= (Usize)dot_star; k++) {
+        for (Usize k = (Usize)left_paren; k <= (Usize)comma; k++) {
             if (same(kind_text((TokenKind)k), candidate)) {
                 Scanned found = {.end = i + length, .kind = (TokenKind)k};
                 return found;
@@ -718,9 +654,9 @@ static Result(Scanned, LexError) scan_punctuator(Str s, Usize i) {
 }
 
 // The one token that starts at i.
-static Result(Scanned, LexError) scan_token(Str s, Usize i, Bool new_syntax) {
+static Result(Scanned, LexError) scan_token(Str s, Usize i) {
     char c = s[i];
-    if (is_identifier_start(c)) return scan_word(s, i, new_syntax);
+    if (is_identifier_start(c)) return scan_word(s, i);
     if (ascii::digit(c) || (c == '.' && i + 1 < countof(s) && ascii::digit(s[i + 1]))) return scan_number(s, i);
     if (c == '"' || c == '\'') {
         Result(Usize, LexError) closed = scan_quoted(s, i, i);
@@ -731,58 +667,37 @@ static Result(Scanned, LexError) scan_token(Str s, Usize i, Bool new_syntax) {
     return scan_punctuator(s, i);
 }
 
-// Whether a line break lies in the text between two tokens (a block comment's line break counts).
-static Bool has_newline(Str gap) {
-    for (char c : gap) {
-        if (c == '\n') return true;
-    }
-    return false;
-}
-
 // Writes the tokens of source into tokens (room for one more than the bytes of the source) and gives their count.
-static Result(Usize, LexError) fill(Str source, Tokens tokens, Bool new_syntax) {
+static Result(Usize, LexError) fill(Str source, Tokens tokens) {
     Usize n = countof(source);
     Usize count = 0;
     Usize i = 0;
     i = try skip_trivia(source, i);
     while (i < n) {
-        Result(Scanned, LexError) next = scan_token(source, i, new_syntax);
+        Result(Scanned, LexError) next = scan_token(source, i);
         if (next == .error) return {.error = next.error};
         Scanned scanned = next.ok;
-        Usize after = try skip_trivia(source, scanned.end);
-        Token token = {.kind = scanned.kind,
-                       .span = {.start = (U32)i, .end = (U32)scanned.end},
-                       .line_break = has_newline(source[scanned.end:after])};
+        Token token = {.kind = scanned.kind, .span = {.start = (U32)i, .end = (U32)scanned.end}};
         tokens[count] = token;
         count += 1;
-        i = after;
+        i = try skip_trivia(source, scanned.end);
     }
     Token last = {.kind = end_of_file, .span = {.start = (U32)n, .end = (U32)n}};
     tokens[count] = last;
     return count + 1;
 }
 
-static Lexed tokenize_in(Str source, Bool new_syntax) {
+// All the tokens of source, ending with an `end_of_file` token, or the first error. The tokens are the current
+// allocator's.
+export Lexed tokenize(Str source) {
     Tokens tokens = mem::alloc_slice(Token, countof(source) + 1);
-    Result(Usize, LexError) filled = fill(source, tokens, new_syntax);
+    Result(Usize, LexError) filled = fill(source, tokens);
     if (filled == .error) {
         mem::free(tokens.data);
         return {.error = filled.error};
     }
     Tokens shrunk = mem::realloc(tokens, filled.ok);
     return {.ok = shrunk};
-}
-
-// All the tokens of source, ending with an `end_of_file` token, or the first error. The tokens are the current
-// allocator's.
-export Lexed tokenize(Str source) {
-    return tokenize_in(source, false);
-}
-
-// The same for smith's own syntax (#1428): `fn pub mut match in as fn_once type` are keywords too. The old parser keeps
-// `tokenize`, where they are names (`import a as b`, a field called `type`); the new parser will call this.
-export Lexed tokenize_new(Str source) {
-    return tokenize_in(source, true);
 }
 
 // A text being written: `data` holds `used` characters and has room for more.
@@ -829,7 +744,9 @@ static void append_number(Builder *b, Usize value) {
     }
 }
 
-static Str dump_with(Tokens tokens, Str source, Bool lines) {
+// One line for each token, `line:column kind text`: the line and the column count from 1, the column in bytes; the
+// text is left out for a token with none (the end of the file). A newline ends every line.
+export Str dump(Tokens tokens, Str source) {
     Builder out = {};
     Usize line = 1;
     Usize line_start = 0;
@@ -851,20 +768,8 @@ static Str dump_with(Tokens tokens, Str source, Bool lines) {
             append_char(&out, ' ');
             append(&out, text(source, token));
         }
-        if (lines && token.line_break) append(&out, " [eol]");
         append_char(&out, '\n');
     }
     Str result = out.data[0:out.used];
     return result;
-}
-
-// One line for each token, `line:column kind text`: the line and the column count from 1, the column in bytes; the
-// text is left out for a token with none (the end of the file). A newline ends every line.
-export Str dump(Tokens tokens, Str source) {
-    return dump_with(tokens, source, false);
-}
-
-// The same dump with ` [eol]` after each token that a line break follows (the flag `Token.line_break`).
-export Str dump_lines(Tokens tokens, Str source) {
-    return dump_with(tokens, source, true);
 }

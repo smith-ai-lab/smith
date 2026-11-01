@@ -111,7 +111,6 @@ export typedef enum {
     auto_type;
     struct {
         TypeExpr *pointee;
-        Bool is_mut; // `*mut T`
     } pointer;
     struct {
         TypeExpr *element;
@@ -124,7 +123,6 @@ export typedef enum {
         TypeRef params[:];
         TypeExpr *result;
         Bool variadic;
-        Bool is_once; // `fn_once(A) -> R`; `fn(A) -> R` is the same node without it
     } function;
     struct {
         Path name;
@@ -143,13 +141,6 @@ export typedef enum {
     struct {
         TypeRef elements[:];
     } tuple; // `struct { I32, F32 }`: types with no field names, in order
-    struct {
-        TypeExpr *inner;
-    } option; // `?T`
-    struct {
-        TypeExpr *element;
-        ExprRef dims[:];
-    } block_type; // `[5,3]T`, `[,3]T`, `[,]T`: one size per dimension, a null size when left empty
 } TypeKind;
 
 export struct TypeExpr {
@@ -233,24 +224,8 @@ export struct Param {
     Str name;
     TypeExpr *type;
     Bool is_constexpr;
-    Bool is_rest;  // `auto... rest`
-    Bool is_mut;   // `mut x: T`
-    Bool is_const; // `const n: usize`: known at compile time
+    Bool is_rest; // `auto... rest`
     Attribute attributes[:];
-    Span span;
-};
-
-// A pattern of `match`, `if let` and `for`: `.name`, or `.name(binding)` with a binding (empty when absent).
-export struct Pattern {
-    Text name;
-    Text binding;
-    Span span;
-};
-
-// One arm of `match`: `.a, .b => value`, several patterns for one value.
-export struct MatchArm {
-    Pattern patterns[:];
-    Expr *value;
     Span span;
 };
 
@@ -285,8 +260,7 @@ export typedef enum {
     } name;
     struct {
         Text name;
-        Expr *payload; // `.circle(r)`: null for `.empty`
-    } variant;
+    } variant; // `.empty`
     struct {
         TypeExpr *type;
     } type_value; // a type as a value: `f(I32)`
@@ -358,19 +332,6 @@ export typedef enum {
         Expr *pattern;
     } expand; // `pattern...` as an argument or a list item; `rest...` expands the name `rest`
     struct {
-        Text name;
-        Expr *value;
-    } named_arg; // a call argument with a name: `Point(x = 1)`
-    struct {
-        ExprRef items[:];
-    } tuple_lit; // `(a, b)`
-    struct {
-        ExprRef items[:];
-    } array_lit; // `[1, 2]`
-    struct {
-        Stmt *stmt;
-    } stmt_expr; // an `if`, `match`, block or `for` used as a value: the statement it holds
-    struct {
         Expr *control;
         GenericAssoc assocs[:];
     } generic_select; // C's `_Generic(control, T: a, default: b)`
@@ -428,27 +389,6 @@ export typedef enum {
         Expr *value;
         SwitchCase cases[:];
     } switch_stmt;
-    struct {
-        Expr *value;
-        MatchArm arms[:];
-    } match_stmt;
-    struct {
-        Identifier names[:]; // one name, or the names of a tuple
-        Bool is_tuple;
-        Expr *iterable;
-        Stmt *body;
-    } for_in; // `for x in xs`, `for (i, x) in xs`
-    struct {
-        Identifier names[:];
-        Bool is_mut;
-        Expr *init;
-    } destructure; // `(q, r) := f()`
-    struct {
-        Pattern pattern;
-        Expr *value;
-        Stmt *then_branch;
-        Stmt *else_branch;
-    } if_let;
     break_stmt;
     continue_stmt;
     struct {
@@ -493,8 +433,7 @@ export typedef enum {
         Expr *init;
         Bool is_constexpr;
         Bool is_thread_local;
-        Bool is_mut; // `x: T = v` mutable local in the new syntax
-    } variable;      // `auto x = ...` has the type auto_type
+    } variable; // `auto x = ...` has the type auto_type
     struct {
         Text name;
         Param params[:];
@@ -540,7 +479,6 @@ export struct Decl {
     Span span;
     Attribute attributes[:];
     Bool exported;
-    Bool is_pub; // `pub`; kept beside `exported` until the old spelling goes
     Bool is_static;
     Bool is_extern;
     Bool is_inline;
@@ -786,146 +724,6 @@ export Expr *string(Str bytes) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Constructors for smith's own syntax (#1428). A construct that already had a node keeps it: `p.*` is `unary
-// dereference`, `x as T` is `cast`, `fn[a](x) { ... }` is `lambda` (a parameter's type may be null), and `@name(args)`
-// is an `Attribute` in `Decl.attributes`.
-
-typedef Pattern PatternList[:];
-typedef MatchArm MatchArmList[:];
-typedef Identifier IdentifierList[:];
-
-static PatternList copy_patterns(Pattern list[:]) {
-    PatternList copy = mem::alloc_slice(Pattern, countof(list));
-    for (Usize i = 0; i < countof(list); i++)
-        copy[i] = list[i];
-    return copy;
-}
-
-static MatchArmList copy_arms(MatchArm list[:]) {
-    MatchArmList copy = mem::alloc_slice(MatchArm, countof(list));
-    for (Usize i = 0; i < countof(list); i++)
-        copy[i] = list[i];
-    return copy;
-}
-
-static IdentifierList copy_names(Identifier names[:]) {
-    IdentifierList copy = mem::alloc_slice(Identifier, countof(names));
-    for (Usize i = 0; i < countof(names); i++)
-        copy[i] = names[i];
-    return copy;
-}
-
-// One name of a `for` or a destructuring declaration.
-export Identifier ident(Str text) {
-    return (Identifier){.text = text};
-}
-
-// `*mut T` when `is_mut`, else `*T`.
-export TypeExpr *pointer_to(TypeExpr *pointee, Bool is_mut) {
-    TypeKind kind = {.pointer = {.pointee = pointee, .is_mut = is_mut}};
-    return make_type(kind);
-}
-
-// `?T`.
-export TypeExpr *option_of(TypeExpr *inner) {
-    TypeKind kind = {.option = {.inner = inner}};
-    return make_type(kind);
-}
-
-// `[5,3]T`: one size per dimension, null for an empty one (`[,3]T`).
-export TypeExpr *block_of(TypeExpr *element, ExprRef dims[:]) {
-    TypeKind kind = {.block_type = {.element = element, .dims = copy_exprs(dims)}};
-    return make_type(kind);
-}
-
-// `fn(A) -> R`, or `fn_once(A) -> R` when `is_once`.
-export TypeExpr *function_type(TypeRef params[:], TypeExpr *result, Bool is_once) {
-    TypeRef *block = (TypeRef *)mem::alloc_array_raw(sizeof(TypeRef), countof(params), alignof(TypeRef));
-    for (Usize i = 0; i < countof(params); i++)
-        block[i] = params[i];
-    TypeKind kind = {.function = {.params = block[0:countof(params)], .result = result, .is_once = is_once}};
-    return make_type(kind);
-}
-
-// A call argument with a name: `Point(x = 1)`.
-export Expr *named_arg(Str text, Expr *value) {
-    ExprKind kind = {.named_arg = {.name = text, .value = value}};
-    return expr(kind);
-}
-
-// `.circle(payload)`; a null payload is `.circle`.
-export Expr *variant_of(Str text, Expr *payload) {
-    ExprKind kind = {.variant = {.name = text, .payload = payload}};
-    return expr(kind);
-}
-
-// `(a, b)`.
-export Expr *tuple_literal(ExprRef items[:]) {
-    ExprKind kind = {.tuple_lit = {.items = copy_exprs(items)}};
-    return expr(kind);
-}
-
-// `[1, 2]`.
-export Expr *array_literal(ExprRef items[:]) {
-    ExprKind kind = {.array_lit = {.items = copy_exprs(items)}};
-    return expr(kind);
-}
-
-// `p.*`.
-export Expr *deref(Expr *operand) {
-    UnaryOp op = .dereference;
-    ExprKind kind = {.unary = {.op = op, .operand = operand}};
-    return expr(kind);
-}
-
-// `x as T`.
-export Expr *as_cast(Expr *operand, TypeExpr *type) {
-    ExprKind kind = {.cast = {.type = type, .operand = operand}};
-    return expr(kind);
-}
-
-// A statement used as a value: `if`, `match`, a block or `for`.
-export Expr *stmt_expr(Stmt *stmt) {
-    ExprKind kind = {.stmt_expr = {.stmt = stmt}};
-    return expr(kind);
-}
-
-// `.name` or `.name(binding)`; an empty binding is none.
-export Pattern pattern(Str text, Str binding) {
-    return (Pattern){.name = text, .binding = binding};
-}
-
-// `.a, .b => value`.
-export MatchArm match_arm(Pattern patterns[:], Expr *value) {
-    return (MatchArm){.patterns = copy_patterns(patterns), .value = value};
-}
-
-// `match value { arms }`.
-export Stmt *match_stmt(Expr *value, MatchArm arms[:]) {
-    StmtKind kind = {.match_stmt = {.value = value, .arms = copy_arms(arms)}};
-    return stmt(kind);
-}
-
-// `for x in xs` (one name) or `for (i, x) in xs` (`is_tuple`).
-export Stmt *for_in(Identifier names[:], Bool is_tuple, Expr *iterable, Stmt *body) {
-    StmtKind kind = {.for_in = {.names = copy_names(names), .is_tuple = is_tuple, .iterable = iterable, .body = body}};
-    return stmt(kind);
-}
-
-// `(q, r) := f()`.
-export Stmt *destructure(Identifier names[:], Bool is_mut, Expr *init) {
-    StmtKind kind = {.destructure = {.names = copy_names(names), .is_mut = is_mut, .init = init}};
-    return stmt(kind);
-}
-
-// `if let pattern = value { then } else { else }`; the else may be null.
-export Stmt *if_let(Pattern head, Expr *value, Stmt *then_branch, Stmt *else_branch) {
-    StmtKind kind = {
-        .if_let = {.pattern = head, .value = value, .then_branch = then_branch, .else_branch = else_branch}};
-    return stmt(kind);
-}
-
-// ---------------------------------------------------------------------------------------------------------------
 // The dump
 
 // A growing text in the current allocator.
@@ -1016,11 +814,6 @@ static void put_flag(Output *text, Bool set, Str word) {
     if (set) put_word(text, word);
 }
 
-static void put_names(Output *text, Identifier names[:]) {
-    for (Usize i = 0; i < countof(names); i++)
-        put_word(text, names[i].text);
-}
-
 static void put_qualifiers(Output *text, Qualifiers q) {
     put_flag(text, q.is_const, "const");
     put_flag(text, q.is_volatile, "volatile");
@@ -1043,8 +836,6 @@ typedef enum {
     Initializer *initializer;
     GenericAssoc *generic_assoc;
     Designator *designator;
-    Pattern *pattern;
-    MatchArm *arm;
     struct {
         Text label;
         DeclRef decls[:];
@@ -1176,18 +967,6 @@ static void expr_children_more(Items *items, Expr *e) {
     if (e->kind == .expand) {
         add_expr(items, e->kind.expand.pattern, false);
     }
-    if (e->kind == .named_arg) {
-        add_expr(items, e->kind.named_arg.value, false);
-    }
-    if (e->kind == .tuple_lit) {
-        add_exprs(items, e->kind.tuple_lit.items);
-    }
-    if (e->kind == .array_lit) {
-        add_exprs(items, e->kind.array_lit.items);
-    }
-    if (e->kind == .stmt_expr) {
-        add_stmt(items, e->kind.stmt_expr.stmt, false);
-    }
     if (e->kind == .generic_select) {
         add_expr(items, e->kind.generic_select.control, false);
         for (Usize i = 0; i < countof(e->kind.generic_select.assocs); i++)
@@ -1205,9 +984,7 @@ static void expr_children(Items *items, Expr *e) {
     case .boolean:
     case .null_pointer:
     case .name:
-        break;
     case .variant:
-        add_expr(items, e->kind.variant.payload, false);
         break;
     case .type_value:
         add_type(items, e->kind.type_value.type, false);
@@ -1252,34 +1029,8 @@ static void expr_children(Items *items, Expr *e) {
     case .reflect_member:
     case .expand:
     case .generic_select:
-    case .named_arg:
-    case .tuple_lit:
-    case .array_lit:
-    case .stmt_expr:
         expr_children_more(items, e);
         break;
-    }
-}
-
-// The children of the statements of smith's own syntax.
-static void stmt_children_more(Items *items, Stmt *s) {
-    if (s->kind == .match_stmt) {
-        add_expr(items, s->kind.match_stmt.value, false);
-        for (Usize i = 0; i < countof(s->kind.match_stmt.arms); i++)
-            add(items, {.arm = &s->kind.match_stmt.arms[i]});
-    }
-    if (s->kind == .for_in) {
-        add_expr(items, s->kind.for_in.iterable, false);
-        add_stmt(items, s->kind.for_in.body, false);
-    }
-    if (s->kind == .destructure) {
-        add_expr(items, s->kind.destructure.init, false);
-    }
-    if (s->kind == .if_let) {
-        add(items, {.pattern = &s->kind.if_let.pattern});
-        add_expr(items, s->kind.if_let.value, false);
-        add_stmt(items, s->kind.if_let.then_branch, false);
-        add_stmt(items, s->kind.if_let.else_branch, false);
     }
 }
 
@@ -1320,12 +1071,6 @@ static void stmt_children(Items *items, Stmt *s) {
         add_expr(items, s->kind.switch_stmt.value, false);
         for (Usize i = 0; i < countof(s->kind.switch_stmt.cases); i++)
             add(items, {.switch_case = &s->kind.switch_stmt.cases[i]});
-        break;
-    case .match_stmt:
-    case .for_in:
-    case .destructure:
-    case .if_let:
-        stmt_children_more(items, s);
         break;
     case .break_stmt:
     case .continue_stmt:
@@ -1424,26 +1169,7 @@ static void type_children(Items *items, TypeExpr *t) {
         for (Usize i = 0; i < countof(t->kind.tuple.elements); i++)
             add_type(items, t->kind.tuple.elements[i], false);
         break;
-    case .option:
-        add_type(items, t->kind.option.inner, false);
-        break;
-    case .block_type:
-        add_type(items, t->kind.block_type.element, false);
-        for (Usize i = 0; i < countof(t->kind.block_type.dims); i++)
-            add_expr(items, t->kind.block_type.dims[i], true);
-        break;
     }
-}
-
-// The children of the last of those nodes.
-static void other_children_more(Items *items, Node node) {
-    if (node == .arm) {
-        for (Usize i = 0; i < countof(node.arm->patterns); i++)
-            add(items, {.pattern = &node.arm->patterns[i]});
-        add_expr(items, node.arm->value, false);
-    }
-    if (node == .decl_group) add_decls(items, node.decl_group.decls);
-    if (node == .typed) add_type(items, node.typed.type, false);
 }
 
 // The children of the nodes that are not a kind of their own.
@@ -1505,12 +1231,13 @@ static void other_children(Items *items, Node node) {
     case .designator:
         if (*node.designator == .index) add_expr(items, node.designator->index.index, false);
         break;
-    case .pattern:
-    case .arm:
     case .decl_group:
+        add_decls(items, node.decl_group.decls);
+        break;
     case .typed:
+        add_type(items, node.typed.type, false);
+        break;
     case .absent:
-        other_children_more(items, node);
         break;
     }
 }
@@ -1681,19 +1408,6 @@ static void expr_head_more(Output *text, Expr *e) {
     if (e->kind == .generic_select) {
         put(text, "generic_select");
     }
-    if (e->kind == .named_arg) {
-        put(text, "named_arg ");
-        put(text, e->kind.named_arg.name);
-    }
-    if (e->kind == .tuple_lit) {
-        put(text, "tuple_literal");
-    }
-    if (e->kind == .array_lit) {
-        put(text, "array_literal");
-    }
-    if (e->kind == .stmt_expr) {
-        put(text, "statement_expr");
-    }
 }
 
 // The head of an expression: its kind and scalars, without the parentheses.
@@ -1751,32 +1465,8 @@ static void expr_head(Output *text, Expr *e) {
     case .reflect_member:
     case .expand:
     case .generic_select:
-    case .named_arg:
-    case .tuple_lit:
-    case .array_lit:
-    case .stmt_expr:
         expr_head_more(text, e);
         break;
-    }
-}
-
-// The head of the statements of smith's own syntax.
-static void stmt_head_more(Output *text, Stmt *s) {
-    if (s->kind == .match_stmt) {
-        put(text, "match");
-    }
-    if (s->kind == .for_in) {
-        put(text, "for_in");
-        put_flag(text, s->kind.for_in.is_tuple, "tuple");
-        put_names(text, s->kind.for_in.names);
-    }
-    if (s->kind == .destructure) {
-        put(text, "destructure");
-        put_flag(text, s->kind.destructure.is_mut, "mut");
-        put_names(text, s->kind.destructure.names);
-    }
-    if (s->kind == .if_let) {
-        put(text, "if_let");
     }
 }
 
@@ -1832,12 +1522,6 @@ static void stmt_head(Output *text, Stmt *s) {
         put(text, "static_assert ");
         put_quoted(text, s->kind.static_assert_stmt.message);
         break;
-    case .match_stmt:
-    case .for_in:
-    case .destructure:
-    case .if_let:
-        stmt_head_more(text, s);
-        break;
     case .empty:
         put(text, "empty");
         break;
@@ -1855,7 +1539,6 @@ static void type_head(Output *text, TypeExpr *t) {
         break;
     case .pointer:
         put(text, "pointer");
-        put_flag(text, t->kind.pointer.is_mut, "mut");
         break;
     case .array:
         put(text, "array");
@@ -1866,7 +1549,6 @@ static void type_head(Output *text, TypeExpr *t) {
     case .function:
         put(text, "function_type");
         put_flag(text, t->kind.function.variadic, "variadic");
-        put_flag(text, t->kind.function.is_once, "once");
         break;
     case .applied:
         put(text, "applied ");
@@ -1885,12 +1567,6 @@ static void type_head(Output *text, TypeExpr *t) {
     case .tuple:
         put(text, "tuple");
         break;
-    case .option:
-        put(text, "option");
-        break;
-    case .block_type:
-        put(text, "block_type");
-        break;
     }
     put_qualifiers(text, t->qualifiers);
 }
@@ -1902,7 +1578,6 @@ static void decl_head(Output *text, Decl *d) {
         put(text, d->kind.variable.name);
         put_flag(text, d->kind.variable.is_constexpr, "constexpr");
         put_flag(text, d->kind.variable.is_thread_local, "thread_local");
-        put_flag(text, d->kind.variable.is_mut, "mut");
         break;
     case .function:
         put(text, "function ");
@@ -1943,34 +1618,10 @@ static void decl_head(Output *text, Decl *d) {
         break;
     }
     put_flag(text, d->exported, "exported");
-    put_flag(text, d->is_pub, "pub");
     put_flag(text, d->is_static, "static");
     put_flag(text, d->is_extern, "extern");
     put_flag(text, d->is_inline, "inline");
     put_flag(text, d->from_c, "from_c");
-}
-
-// The head of the nodes of an initializer or a `_Generic`.
-static void initializer_head(Output *text, Node node) {
-    if (node == .generic_assoc) put(text, pick(node.generic_assoc->type == nullptr, "default", "association"));
-    if (node == .initializer) put(text, "initializer");
-    if (node == .designator) {
-        if (*node.designator == .field) {
-            put(text, "field_designator ");
-            put(text, node.designator->field.name);
-        } else
-            put(text, "index_designator");
-    }
-}
-
-// The head of a pattern and of an arm of `match`.
-static void pattern_head(Output *text, Node node) {
-    if (node == .pattern) {
-        put(text, "pattern ");
-        put(text, node.pattern->name);
-        if (countof(node.pattern->binding) > 0) put_word(text, node.pattern->binding);
-    }
-    if (node == .arm) put(text, "arm");
 }
 
 // The head of every other node.
@@ -2000,8 +1651,6 @@ static void other_head(Output *text, Node node) {
         put(text, node.param->name);
         put_flag(text, node.param->is_constexpr, "constexpr");
         put_flag(text, node.param->is_rest, "rest");
-        put_flag(text, node.param->is_mut, "mut");
-        put_flag(text, node.param->is_const, "const");
         break;
     case .field:
         put(text, "field ");
@@ -2019,13 +1668,17 @@ static void other_head(Output *text, Node node) {
         put_path(text, node.attribute->name);
         break;
     case .generic_assoc:
-    case .initializer:
-    case .designator:
-        initializer_head(text, node);
+        put(text, pick(node.generic_assoc->type == nullptr, "default", "association"));
         break;
-    case .pattern:
-    case .arm:
-        pattern_head(text, node);
+    case .initializer:
+        put(text, "initializer");
+        break;
+    case .designator:
+        if (*node.designator == .field) {
+            put(text, "field_designator ");
+            put(text, node.designator->field.name);
+        } else
+            put(text, "index_designator");
         break;
     case .decl_group:
         put(text, node.decl_group.label);
@@ -2080,8 +1733,6 @@ static Bool breaks_line(Node node) {
     case .generic_assoc:
     case .initializer:
     case .designator:
-    case .pattern:
-    case .arm:
     case .typed:
     case .absent:
         return false;
