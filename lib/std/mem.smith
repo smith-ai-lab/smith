@@ -222,7 +222,7 @@ void *resize_raw(void *block, Usize old, Usize n, Usize size) {
 // For an arena as the parent the poisoning of what is unused and of everything after a reset is the arena's own
 // (lib/std/arena.smith): checked adds the record of who allocated what.
 
-constexpr bool sanitized = target::address_sanitizer;
+constexpr Bool sanitized = target::address_sanitizer;
 
 export constexpr Usize checked_frames_max = 16; // the frames kept for a site
 constexpr Usize free_frames_max = 8;            // the frames kept for the first free
@@ -410,7 +410,7 @@ void *checked_realloc(Allocator *self, void *block, Usize size, Usize align) {
     return fresh;
 }
 
-bool checked_owns(Allocator *self, const void *block) {
+Bool checked_owns(Allocator *self, const void *block) {
     contract::trusted();
     return find((Checked *)self, block) != nullptr;
 }
@@ -450,11 +450,11 @@ const char *const machinery_names[10] = {"smith_mem_", "std::mem::",     "smith_
 const char *const owning[14] = {"strdup",  "strndup",   "asprintf", "vasprintf", "fopen",   "fdopen",   "freopen",
                                 "opendir", "fdopendir", "getline",  "getdelim",  "scandir", "realpath", "getcwd"};
 
-bool starts(const char *text, const char *prefix) {
+Bool starts(const char *text, const char *prefix) {
     return __builtin_strncmp(text, prefix, __builtin_strlen(prefix)) == 0;
 }
 
-bool system_path(const char *path) {
+Bool system_path(const char *path) {
     return path != nullptr &&
            (starts(path, "/usr/lib/") || starts(path, "/System/") || starts(path, "/lib/") || starts(path, "/lib64/"));
 }
@@ -488,7 +488,7 @@ if constexpr (target::os == target::macos) {
 
 // A frame of the allocation itself: this module, the handlers runtime and the system's allocator, which sit between
 // the caller and the checked allocator's alloc.
-bool machinery(const Image *info) {
+Bool machinery(const Image *info) {
     if (info->dli_fname != nullptr && (__builtin_strstr(info->dli_fname, "smith_handlers") != nullptr ||
                                        __builtin_strstr(info->dli_fname, "libsystem_malloc") != nullptr))
         return true;
@@ -501,7 +501,7 @@ bool machinery(const Image *info) {
 // Whether the block was allocated by the C library for its own use: walking out from the allocator, the first frame
 // that is not the allocation machinery is in a system library and in a function that does not hand its block to the
 // caller. A frame of the program's own (the caller of mem::alloc, of strdup) ends the walk: the block is its.
-bool library_held(const CheckedRecord *record) {
+Bool library_held(const CheckedRecord *record) {
     contract::trusted(); // dladdr is the edge
     for (U32 i = 0; i < record->alloc_count; i++) {
         Image info = {};
@@ -627,7 +627,7 @@ const char *allocator_name(const Allocator *allocator) {
 export void copy(auto dst, auto src) {
     contract::trusted();
     static_assert(__builtin_types_compatible_p(typeof(*dst.data), typeof(*src.data)), "mem::copy: one element type");
-    bool same_length = dst.count[0] == src.count[0];
+    Bool same_length = dst.count[0] == src.count[0];
     contract::assert(same_length);
     if (dst.count[0] > 0) __builtin_memcpy(dst.data, src.data, dst.count[0] * sizeof(*dst.data));
 }
@@ -636,7 +636,7 @@ export void copy(auto dst, auto src) {
 export void move(auto dst, auto src) {
     contract::trusted();
     static_assert(__builtin_types_compatible_p(typeof(*dst.data), typeof(*src.data)), "mem::move: one element type");
-    bool same_length = dst.count[0] == src.count[0];
+    Bool same_length = dst.count[0] == src.count[0];
     contract::assert(same_length);
     if (dst.count[0] > 0) __builtin_memmove(dst.data, src.data, dst.count[0] * sizeof(*dst.data));
 }
@@ -663,7 +663,7 @@ export void fill(auto xs, auto v) {
 
 // Whether two slices of one element type have the same length and the same bytes in their elements (so a NaN equals
 // the same NaN and 0.0 differs from -0.0). The lengths are compared first.
-export [[nodiscard]] bool equal(auto a, auto b) {
+export [[nodiscard]] Bool equal(auto a, auto b) {
     contract::trusted();
     static_assert(__builtin_types_compatible_p(typeof(*a.data), typeof(*b.data)), "mem::equal: one element type");
     if (a.count[0] != b.count[0]) return false;
@@ -682,7 +682,7 @@ typeof(const U8[:]) read_bytes_at(const U8 *p, Usize count) {
 }
 
 // Whether data is a whole number of items of size bytes aligned to align.
-bool whole_items(U8 data[:], Usize size, Usize align) {
+Bool whole_items(U8 data[:], Usize size, Usize align) {
     if (countof(data) % size != 0) return false;
     if (countof(data) == 0) return true;
     return (Usize)&data[0] % align == 0;
@@ -703,7 +703,7 @@ export [[nodiscard]] typeof(const U8[:]) read_bytes(auto p) {
 
 // Whether the bytes are a whole number of T and aligned for T, so that view(data, T) holds. A bytes-to-slice cast is
 // the one unchecked thing C lets you write for this; here the question has an answer first.
-export [[nodiscard]] bool can_view(U8 data[:], constexpr Type T) {
+export [[nodiscard]] Bool can_view(U8 data[:], constexpr Type T) {
     return whole_items(data, sizeof(T), alignof(T));
 }
 
@@ -712,7 +712,7 @@ export [[nodiscard]] bool can_view(U8 data[:], constexpr Type T) {
 // f32); }`. An option of a slice cannot be written in a generic yet, so the question and the cast are two calls.
 export [[nodiscard]] typeof(T[:]) view(U8 data[:], constexpr Type T) {
     contract::trusted();
-    bool whole = whole_items(data, sizeof(T), alignof(T));
+    Bool whole = whole_items(data, sizeof(T), alignof(T));
     contract::assert(whole);
     struct smith_array_T_n result = {};
     result.data = (T *)data.data;

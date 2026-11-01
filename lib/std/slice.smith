@@ -11,7 +11,7 @@ module std::slice;
 import std::contract;
 
 // Whether a and b have the same count and the same elements.
-export bool equal(const auto a[:], typeof(a) b) {
+export Bool equal(const auto a[:], typeof(a) b) {
     if (countof(a) != countof(b)) return false;
     for (Usize i = 0; i < countof(a); i++) {
         if (a[i] != b[i]) return false;
@@ -32,13 +32,13 @@ export I32 compare(const auto a[:], typeof(a) b) {
 }
 
 // Whether xs begins with prefix.
-export bool starts_with(const auto xs[:], typeof(xs) prefix) {
+export Bool starts_with(const auto xs[:], typeof(xs) prefix) {
     if (countof(prefix) > countof(xs)) return false;
     return equal(xs[0:countof(prefix)], prefix);
 }
 
 // Whether xs ends with suffix.
-export bool ends_with(const auto xs[:], typeof(xs) suffix) {
+export Bool ends_with(const auto xs[:], typeof(xs) suffix) {
     if (countof(suffix) > countof(xs)) return false;
     return equal(xs[countof(xs) - countof(suffix):countof(xs)], suffix);
 }
@@ -150,7 +150,7 @@ void sift_down(auto xs[:], Usize root, Usize end, constexpr auto less) {
 }
 
 // Whether no element of xs sorts before the one in front of it, by less.
-bool ordered_by(const auto xs[:], constexpr auto less) {
+Bool ordered_by(const auto xs[:], constexpr auto less) {
     for (Usize i = 1; i < countof(xs); i++) {
         if (less(xs[i], xs[i - 1])) return false;
     }
@@ -174,7 +174,7 @@ export void sort_by(auto xs[:], constexpr auto less) {
 }
 
 // Whether a sorts strictly before b in ascending order: the `less` that sort gives sort_by.
-bool ascending(Num a, typeof(a) b) {
+Bool ascending(Num a, typeof(a) b) {
     return a < b;
 }
 
@@ -230,7 +230,7 @@ export typeof(xs[0]) max(const Num xs[:]) {
 }
 
 // Whether pred is true for every element, true for an empty slice.
-export bool all(const auto xs[:], constexpr auto pred) {
+export Bool all(const auto xs[:], constexpr auto pred) {
     for (Usize i = 0; i < countof(xs); i++) {
         if (!pred(xs[i])) return false;
     }
@@ -238,7 +238,7 @@ export bool all(const auto xs[:], constexpr auto pred) {
 }
 
 // Whether pred is true for some element, false for an empty slice.
-export bool any(const auto xs[:], constexpr auto pred) {
+export Bool any(const auto xs[:], constexpr auto pred) {
     for (Usize i = 0; i < countof(xs); i++) {
         if (pred(xs[i])) return true;
     }

@@ -108,7 +108,7 @@ constexpr char lock_script[_] =
     "echo \"binary_exists_still=$(yn \"$folder_e\")\"\n";
 
 // False when this smith has no clang inside (the stage0), whose tests do nothing.
-static bool begin(const scratch::Project *p) {
+static Bool begin(const scratch::Project *p) {
     const char *which = scratch::capture(
         p, format::push(prelude, "smith cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2").data);
     return scratch::same(which, "clang in-process");

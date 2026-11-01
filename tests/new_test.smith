@@ -65,7 +65,7 @@ static scratch::Run run_in(const scratch::Project *p, const char *in, const char
     return run(p, text);
 }
 
-static const char *yes_if(bool condition) {
+static const char *yes_if(Bool condition) {
     return condition ? "yes" : "no";
 }
 
@@ -118,7 +118,7 @@ const char *joined(auto... pieces) {
 }
 
 // Git as the project's own: HOME a folder of the test, and the identity from the environment, or none at all.
-static void git_isolate(const scratch::Project *p, bool identity, Saved *saved) {
+static void git_isolate(const scratch::Project *p, Bool identity, Saved *saved) {
     const char *folder = joined(p->root, "/.home");
     ensure_folder(folder, c::strlen(folder));
     (void)format::to(saved->home, sizeof saved->home, "HOME=", folder);
@@ -169,7 +169,7 @@ static void put(const scratch::Project *p, const char *name, const char *text) {
     test::check_condition(written == .ok);
 }
 
-static bool present(const scratch::Project *p, const char *name) {
+static Bool present(const scratch::Project *p, const char *name) {
     struct c::stat info = {};
     return c::lstat(joined(p->dir, "/", name), &info) == 0;
 }
@@ -188,7 +188,7 @@ static const char *slurp(const scratch::Project *p, const char *name) {
     return text;
 }
 
-static void expect_present(const scratch::Project *p, const char *label, const char *name, bool expected) {
+static void expect_present(const scratch::Project *p, const char *label, const char *name, Bool expected) {
     scratch::expect_text(label, yes_if(expected), yes_if(present(p, name)));
 }
 
@@ -389,7 +389,7 @@ static void prove_the_template(const scratch::Project *p, const char *dir, const
 }
 
 // The verbs on a new project, in `dir`. Everything here ends with the files as they began, in git.
-static void verbs_on_a_new_project(const scratch::Project *p, const char *dir, const char *label, bool smith_language) {
+static void verbs_on_a_new_project(const scratch::Project *p, const char *dir, const char *label, Bool smith_language) {
     const char *main_file = smith_language ? "main.smith" : "main.c";
     const char *test_file = smith_language ? "primes_test.smith" : "primes_test.c";
     const char *primes_file = smith_language ? "primes.smith" : "primes.c";
@@ -456,7 +456,7 @@ static void verbs_on_a_new_project(const scratch::Project *p, const char *dir, c
 
 // The three profiles of a new project and what each compiles with.
 static void profiles_of_a_new_project(const scratch::Project *p, const char *dir, const char *label,
-                                      bool smith_language) {
+                                      Bool smith_language) {
     char command[1024];
     char expected[256];
     char text[256];

@@ -64,7 +64,7 @@ static void parse_info(arena::Arena *arena, const char *info, Block *block) {
     char *flags = arena::push_slice(arena, char, c::strlen(info) + 3).data;
     Usize used = 0;
     flags[used++] = ',';
-    bool first = true;
+    Bool first = true;
     for (const char *at = info; *at != '\0';) {
         if (*at == ' ') {
             at++;
@@ -111,7 +111,7 @@ static void read_blocks(arena::Arena *arena, const scratch::Project *p, Blocks *
     char *body = arena::push_slice(arena, char, c::strlen(at) + 1).data;
     Usize indent = 0;
     Usize used = 0;
-    bool open = false;
+    Bool open = false;
     for (Usize line = 1; *at != '\0'; line++) {
         const char *next = line_end(at);
         Usize spaces = 0;
@@ -144,7 +144,7 @@ static void read_blocks(arena::Arena *arena, const scratch::Project *p, Blocks *
     }
 }
 
-static bool has(const char *flags, const char *flag) {
+static Bool has(const char *flags, const char *flag) {
     return c::strstr(flags, flag) != nullptr;
 }
 
@@ -168,7 +168,7 @@ static const char *path_of(const scratch::Project *p, const Block *block) {
         .data;
 }
 
-static bool is_file_block(const Block *block) {
+static Bool is_file_block(const Block *block) {
     return c::strcmp(block->kind, "smith") == 0 || c::strcmp(block->kind, "c") == 0 ||
            c::strcmp(block->kind, "make") == 0;
 }
@@ -176,7 +176,7 @@ static bool is_file_block(const Block *block) {
 // Places the blocks of a project in the folder of the project (the scratch project's own). The blocks of a project that
 // the project starts from (`base=NAME`) are placed first by a call of their own, with `files_only`: their files and
 // nothing else, so that the project's own blocks replace them.
-static void place_blocks(const scratch::Project *p, const Blocks *blocks, const char *name, bool files_only,
+static void place_blocks(const scratch::Project *p, const Blocks *blocks, const char *name, Bool files_only,
                          Placed *placed) {
     for (Usize i = 0; i < blocks->count; i++) {
         const Block *block = &blocks->items[i];
@@ -263,7 +263,7 @@ static void check_run(const scratch::Project *p, const char *label) {
 
 static void check_project(const scratch::Project *p, const char *name, const char *flags, Usize line) {
     const char *label = format::push("README.md:", line, " (", name, ")").data;
-    bool checked = false;
+    Bool checked = false;
     if (has(flags, ",port,")) {
         check_port(p, label);
         return;
@@ -383,7 +383,7 @@ export void test_readme_blocks_that_are_a_folder_of_their_own_compile() {
     Usize checked = 0;
     for (Usize i = 0; i < blocks.count; i++) {
         const Block *block = &blocks.items[i];
-        bool own_folder = c::strcmp(block->project, format::push("block-", block->number).data) == 0;
+        Bool own_folder = c::strcmp(block->project, format::push("block-", block->number).data) == 0;
         if (!own_folder || !is_file_block(block)) continue;
         if (c::strcmp(block->kind, "c") == 0) check_compiled_c(&p, block, block->project);
         if (c::strcmp(block->kind, "smith") == 0) check_compiled_smith(&p, block, block->project);
@@ -435,7 +435,7 @@ export void test_readme_smith_blocks_are_not_c_renamed() {
 
 // Whether `path` (relative to $SMITH_REPO) is there: the folder that holds it is listed through std::files, so that
 // the record of the test names the listing, and a file added or removed there selects the test.
-static bool repo_has(arena::Arena *arena, const char *path) {
+static Bool repo_has(arena::Arena *arena, const char *path) {
     env::Value repo = env::get("SMITH_REPO");
     const char *base = repo == .some ? repo.some.data : ".";
     Usize length = c::strlen(path);

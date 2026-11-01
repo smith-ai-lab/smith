@@ -75,11 +75,11 @@ Fake make_fake(const char *input) {
     return fake;
 }
 
-bool succeeded(console::Written written) {
+Bool succeeded(console::Written written) {
     return written == .ok;
 }
 
-bool is_error(console::Written written, console::Error error) {
+Bool is_error(console::Written written, console::Error error) {
     return written == .error && written.error == error;
 }
 
@@ -152,10 +152,10 @@ export void test_console_read_answers_what_is_available_then_zero_at_the_end() {
 }
 
 // The line read, copied: the text is the caller's to free, so a test frees it.
-bool line_is(console::LineResult result, const char *expected, bool end) {
+Bool line_is(console::LineResult result, const char *expected, Bool end) {
     if (result != .ok) return false;
     console::Line line = result.ok;
-    bool same = countof(line.text) == c::strlen(expected) && c::strcmp(line.text.data, expected) == 0;
+    Bool same = countof(line.text) == c::strlen(expected) && c::strcmp(line.text.data, expected) == 0;
     mem::free(line.text.data);
     return same && line.end == end;
 }

@@ -82,14 +82,14 @@ static const char *changed(const Source *extra, Usize count, const char *changes
     }
     for (Usize i = 0; i < count; i++) {
         write(p.dir, extra[i]);
-        bool known = false;
+        Bool known = false;
         for (Usize j = 0; j < countof(base); j++)
             known = known || c::strcmp(base[j].path, extra[i].path) == 0;
         if (!known) names = format::push(names, extra[i].path, "\n").data;
     }
     constexpr Usize capacity = 1U << 16;
     char *out = mem::alloc_slice(char, capacity).data;
-    bool done = c::smith_core_changed_select(p.dir, names, changes, out, capacity);
+    Bool done = c::smith_core_changed_select(p.dir, names, changes, out, capacity);
     test::check_equal(done, true);
     return out;
 }

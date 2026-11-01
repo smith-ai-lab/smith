@@ -44,7 +44,7 @@ constexpr char shared_script[_] =
     "if [ $ONE = c ]; then cp -Rp \"$c/c/.\" \"$here\"; else mkdir -p \"$here/w/app\"; fi";
 
 // prog.c built plain and under AddressSanitizer in the project. False when this smith cannot debug here.
-static bool ready(const scratch::Project *p) {
+static Bool ready(const scratch::Project *p) {
     scratch::Run usable = scratch::sh(
         p, "[ \"$(smith cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2)\" = 'clang in-process' ] && "
            "smith dbg --version >/dev/null 2>&1");
@@ -195,7 +195,7 @@ export void test_macos_dbg_at_the_locals_at_a_line() {
 }
 
 // 6. A .smith program, in the project smith new writes: a slice out of range and a failed contract in debug.
-static bool ready_app(const scratch::Project *p) {
+static Bool ready_app(const scratch::Project *p) {
     if (!ready(p)) {
         return false;
     }

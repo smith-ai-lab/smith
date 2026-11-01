@@ -8,11 +8,11 @@ description: "How `auto` reads its type in a generic and what converts to it: th
 ```smith
 module check;
 
-export bool same(auto a, typeof(a) b) {     // b converts to the type of a, unless that changes its value
+export Bool same(auto a, typeof(a) b) {     // b converts to the type of a, unless that changes its value
     return a == b;
 }
 
-export bool demo() {
+export Bool demo() {
     U8 small = 7;
     return same(small, 7)            // 7 fits u8: fine
         && same(1.5f, 1.5f)          // 0.5 and 1.5f are f32; 0.1 is not

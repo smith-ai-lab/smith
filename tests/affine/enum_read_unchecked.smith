@@ -31,7 +31,7 @@ F32 else_branch(Shape s) {
     if (s == .circle) return 0;
     return s.circle.radius;
 }
-F32 one_path(Shape s, bool b) {
+F32 one_path(Shape s, Bool b) {
     if (b) {
         if (s != .circle) return 0;
     }

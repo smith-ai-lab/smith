@@ -130,7 +130,7 @@ static Usize word_end(const char *text, Usize from) {
     return end;
 }
 
-static bool one_of(const char *word, const char *names[4]) {
+static Bool one_of(const char *word, const char *names[4]) {
     for (Usize i = 0; i < 4; i++)
         if (c::strcmp(word, names[i]) == 0) return true;
     return false;
@@ -183,7 +183,7 @@ static void drop_dependency_flags(char *line) {
 // Copies the text up to the closing quote (the opening one is passed) into the words, as the shell does: nothing is
 // special inside single quotes, and inside double quotes a backslash before $, `, " or a backslash is one. False when
 // the quote is not closed.
-static bool copy_quoted(const char *line, Usize *at, char quote, char *words, Usize *used, Usize capacity) {
+static Bool copy_quoted(const char *line, Usize *at, char quote, char *words, Usize *used, Usize capacity) {
     while (line[*at] != quote) {
         if (line[*at] == '\0' || *used + 2 >= capacity) return false;
         if (quote == '"' && line[*at] == '\\' && line[*at + 1] != '\0' &&
@@ -198,7 +198,7 @@ static bool copy_quoted(const char *line, Usize *at, char quote, char *words, Us
 
 // The words of the line as `eval "set -- $line"` gives them (single and double quotes and backslashes), joined by one
 // space. False when a quote is not closed, which the shell refuses.
-static bool unquote(const char *line, char *words, Usize capacity) {
+static Bool unquote(const char *line, char *words, Usize capacity) {
     Usize used = 0;
     Usize i = 0;
     while (line[i] != '\0') {
@@ -209,7 +209,7 @@ static bool unquote(const char *line, char *words, Usize capacity) {
         if (used > 0) words[used++] = ' ';
         while (line[i] != '\0' && line[i] != ' ') {
             char ch = line[i++];
-            bool quoted = ch == '\'' || ch == '"';
+            Bool quoted = ch == '\'' || ch == '"';
             if (quoted && !copy_quoted(line, &i, ch, words, &used, capacity)) return false;
             if (ch == '\\' && line[i] == '\0') return false;
             if (!quoted) words[used++] = ch == '\\' ? line[i++] : ch;
@@ -220,7 +220,7 @@ static bool unquote(const char *line, char *words, Usize capacity) {
     return true;
 }
 
-static bool ordered_before(const char *a, const char *b) {
+static Bool ordered_before(const char *a, const char *b) {
     return c::strcmp(a, b) < 0;
 }
 

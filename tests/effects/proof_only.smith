@@ -17,13 +17,13 @@ export [[std::pure]] U64 square(U64 n) {
 }
 
 // A function the proof code calls is proof code too, and a cycle of them is no error.
-static bool even_proof(U64 n);
+static Bool even_proof(U64 n);
 
-static bool odd_proof(U64 n) {
+static Bool odd_proof(U64 n) {
     return n != 0 && even_proof(n - 1);
 }
 
-static bool even_proof(U64 n) {
+static Bool even_proof(U64 n) {
     return n == 0 || odd_proof(n - 1);
 }
 

@@ -177,7 +177,7 @@ module header;
 import std::ascii;
 import std::slice;
 
-export bool is_setting(const char line[:]) {
+export Bool is_setting(const char line[:]) {
     const char prefix[:] = "#";
     return countof(line) > 0 && ascii::alpha(line[0]) && !slice::starts_with(line, prefix);
 }
@@ -219,7 +219,7 @@ I32 main() {
     F32 from[:] = raw;
     F32 to[:] = copy;
     mem::copy(to, from); // two slices of one type and one length, checked
-    bool same = mem::equal(to, from);
+    Bool same = mem::equal(to, from);
     mem::zero(to[0:2]);
     F32 grown[:] = mem::alloc_slice(F32, 2);
     grown = mem::realloc(grown, 4); // keeps the elements, zeroes the tail, never null

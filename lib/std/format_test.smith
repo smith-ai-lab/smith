@@ -18,7 +18,7 @@ constexpr I64 i64_max = 9223372036854775807;
 constexpr I64 i64_min = -9223372036854775807 - 1;
 constexpr U64 u64_max = 18446744073709551615ULL;
 
-static bool is(const char *text, const char *expected) {
+static Bool is(const char *text, const char *expected) {
     return __builtin_strcmp(text, expected) == 0;
 }
 
@@ -47,7 +47,7 @@ typedef struct {
     U8 mode : 5;
     I32 values[3];
     const char *name;
-    bool on;
+    Bool on;
 } Nested;
 
 // A struct is written field by field from fields(T): {m = 1, b = 2}, a nested struct and a fixed array the same way.
@@ -78,8 +78,8 @@ export void test_format_pieces_in_order() {
 
 export void test_format_bool_and_char() {
     char out[capacity];
-    bool yes = true;
-    bool no = false;
+    Bool yes = true;
+    Bool no = false;
     char letter = 'q';
     char nul = '\0';
     (void)format::to(out, sizeof out, yes, " ", no, " ", letter, "|", letter, letter);

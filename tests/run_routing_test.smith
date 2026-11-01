@@ -47,7 +47,7 @@ constexpr char stubs_script[_] =
     "ln -s \"$SMITH_SELF\" 'smith++' && ln -s \"$SMITH_SELF\" bin/selfclang && ln -s \"$SMITH_SELF\" driver/clang && "
     "ln -s \"$SMITH_SELF\" driver/clang++";
 
-static Rig make_rig(arena::Arena *arena, const scratch::Project *p, bool link, const char *stubs) {
+static Rig make_rig(arena::Arena *arena, const scratch::Project *p, Bool link, const char *stubs) {
     scratch::copy_tree(p, "tests/stub.c", "tests/stub.c");
     scratch::Run made = scratch::sh(p, format::push("STUBS='", stubs, "'; ", stubs_script).data);
     scratch::expect_status("the stub compilers are built", 0, &made);
@@ -72,11 +72,11 @@ static scratch::Run go_clang(const Rig *r, const char *settings, const char *arg
     return go(r, format::push("SMITH_CLANG=", r->cl, " ", settings).data, r->cc, arguments);
 }
 
-static bool starts_with(const char *text, const char *prefix) {
+static Bool starts_with(const char *text, const char *prefix) {
     return c::strncmp(text, prefix, c::strlen(prefix)) == 0;
 }
 
-static bool ends_with(const char *text, const char *suffix) {
+static Bool ends_with(const char *text, const char *suffix) {
     Usize n = c::strlen(text);
     Usize m = c::strlen(suffix);
     return n >= m && c::strcmp(text + n - m, suffix) == 0;
@@ -91,7 +91,7 @@ static const char *first_line(arena::Arena *arena, const char *text) {
     return prefix(arena, text, length);
 }
 
-static bool is_darwin(const Rig *r) {
+static Bool is_darwin(const Rig *r) {
     return scratch::same(scratch::capture(r->p, "uname -s"), "Darwin");
 }
 
@@ -109,7 +109,7 @@ typedef struct {
     const char *dir;
     const char *cl;   // the stub clang
     const char *self; // the smith under test ($SMITH_SELF)
-    bool link;        // the links smith-cc and smith-c++, or the verbs cc and c++
+    Bool link;        // the links smith-cc and smith-c++, or the verbs cc and c++
     const char *form; // verb or link
 } Unit;
 
@@ -120,7 +120,7 @@ static const char *self_path() {
 }
 
 // Stub files in bin/ (`stubs` are their names) and bin/selfclang, a link to the smith under test.
-static Unit make_unit(arena::Arena *arena, const scratch::Project *p, bool link, const char *stubs) {
+static Unit make_unit(arena::Arena *arena, const scratch::Project *p, Bool link, const char *stubs) {
     const char *script = format::push("mkdir -p bin && for n in ", stubs,
                                       "; do printf '#!/bin/sh\\n[ -n \"$STUB_XCRUN_FAIL\" ] && exit 1\\necho "
                                       "\"$STUB_SDK\"\\n' > bin/$n && chmod +x bin/$n || exit 1; done; ln -s "
@@ -188,7 +188,7 @@ static c::SmithCoreRouted *route_command(const Unit *u, const char *name, const 
 }
 
 // `smith cc` or `smith-cc` (`plus`: c++) with SMITH_CLANG the stub clang, in both forms.
-static c::SmithCoreRouted *route_compiler(const Unit *u, bool plus, const char *environment, const char *arguments) {
+static c::SmithCoreRouted *route_compiler(const Unit *u, Bool plus, const char *environment, const char *arguments) {
     const char *name = u->link ? format::push(u->dir, plus ? "/smith-c++" : "/smith-cc").data : "smith";
     const char *second = u->link ? nullptr : (plus ? "c++" : "cc");
     return route_command(u, name, second, environment, arguments, nullptr);
@@ -208,7 +208,7 @@ static void expect_nothing_ran(const char *name, Usize status, const c::SmithCor
     scratch::expect_text(name, "", &routed->exec[0]);
 }
 
-static void clang_route(bool link) {
+static void clang_route(Bool link) {
     scratch::Project p = scratch::make("r", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
@@ -248,7 +248,7 @@ static const char *path_with(const Unit *u) {
     return format::push("PATH=", u->dir, "/bin:", path == .some ? path.some.data : "").data;
 }
 
-static void metal_route(bool link) {
+static void metal_route(Bool link) {
     scratch::Project p = scratch::make("r", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
@@ -283,7 +283,7 @@ export void test_run_link_metal_route() {
 }
 
 // A .smith input needs a smith whose clang has the token hook; any other refuses it, and does not compile it as C.
-static void smith_inputs(bool link) {
+static void smith_inputs(Bool link) {
     scratch::Project p = scratch::make("r", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
@@ -340,7 +340,7 @@ export void test_run_link_smith_inputs() {
     smith_inputs(true);
 }
 
-static void plus_plus(bool link) {
+static void plus_plus(Bool link) {
     scratch::Project p = scratch::make("r", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
@@ -363,7 +363,7 @@ export void test_run_link_smith_plus_plus() {
 }
 
 // On a smith with clang inside, the default compiler is that one, run in smith's own process; SMITH_CLANG runs another.
-static void in_process_default(bool link) {
+static void in_process_default(Bool link) {
     scratch::Project p = scratch::make("r", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
@@ -392,7 +392,7 @@ export void test_run_link_in_process_default() {
 }
 
 // The SDK is chosen through the environment, never a flag, and only for what the caller left unset.
-static void sdk_environment(bool link) {
+static void sdk_environment(Bool link) {
     scratch::Project p = scratch::make("r", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
@@ -506,7 +506,7 @@ export void test_run_dap_is_lldb_dap_with_the_arguments_untouched() {
 
 // ---- the refusals and --smith-which of both forms ----
 
-static void compile_tail(bool link) {
+static void compile_tail(Bool link) {
     scratch::Project p = scratch::make("r", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
@@ -582,7 +582,7 @@ export void test_run_version_and_no_arguments() {
     c::SmithCoreRouted *version = route_command(&u, "smith", "version", "", "", nullptr);
     expect_status_is("version: status 0", 0, version);
     // `smith 0.0`, then ` commit <hash>` when the commit is known.
-    bool line = starts_with(&version->out[0], "smith 0.0") &&
+    Bool line = starts_with(&version->out[0], "smith 0.0") &&
                 (version->out[9] == '\n' || starts_with(&version->out[9], " commit "));
     scratch::expect_text("version: the version line", "yes", line ? "yes" : &version->out[0]);
     c::SmithCoreRouted *bare = route_command(&u, "smith", nullptr, "", "", nullptr);
@@ -629,7 +629,7 @@ export void test_run_the_names_clang_and_clang_plus_plus_act_as_the_compiler() {
 // The routes above stop where smith would exec. What happens at the exec (the program is replaced, its status and its
 // death by a signal become smith's, its standard error passes through) and the links by their names are the wiring.
 
-static void wiring_of_the_compiler(bool link) {
+static void wiring_of_the_compiler(Bool link) {
     scratch::Project p = scratch::make("r", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
@@ -683,7 +683,7 @@ export void test_run_tool_wiring_of_fmt() {
 
 // --smith-which names the clang inside, which only the real smith has (the units runner links none): the program's
 // folder and identity, and Homebrew's clang for a smith without one.
-static void in_process_which(bool link) {
+static void in_process_which(Bool link) {
     scratch::Project p = scratch::make("r", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
@@ -701,12 +701,12 @@ static void in_process_which(bool link) {
     if (starts_with(head, "clang in-process ")) {
         const char *llvm_clang = head + c::strlen("clang in-process ");
         // The program is in the folder smith makes for itself on first use, which --smith-which does not make.
-        bool found = scratch::contains(llvm_clang, "/smith/programs/") && ends_with(llvm_clang, "/bin/clang");
+        Bool found = scratch::contains(llvm_clang, "/smith/programs/") && ends_with(llvm_clang, "/bin/clang");
         scratch::expect_text(
             nm(&r, "in-process: the default is clang inside smith, run as the bin/clang of a folder of its own"), "yes",
             found ? "yes" : llvm_clang);
         const char *identity = c::strchr(which.out, '\n');
-        bool named = identity != nullptr && starts_with(identity + 1, "identity llvm-") &&
+        Bool named = identity != nullptr && starts_with(identity + 1, "identity llvm-") &&
                      c::strchr(identity + 1 + c::strlen("identity llvm-"), ' ') != nullptr;
         scratch::expect_text(nm(&r, "in-process: --smith-which names the identity of the clang inside"), "yes",
                              named ? "yes" : "identity llvm-<version> <hash>");
@@ -752,7 +752,7 @@ export void test_run_link_in_process_which() {
 // The tools are inside smith: the same LLVM as the compiler, run on the arguments, in smith's process. Only a smith
 // with clang inside has them (the default compiler says which), as on macOS. These run the real tool, so a unit test
 // cannot show them.
-static bool tools_inside(const Rig *r) {
+static Bool tools_inside(const Rig *r) {
     if (!is_darwin(r)) {
         return false;
     }

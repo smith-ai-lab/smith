@@ -4,7 +4,7 @@ import <unistd.h>;
 
 // getcwd takes a buffer (borrowed) or a null pointer (it allocates): an array, a null pointer constant and a string
 // buffer both name the form the call means.
-export bool here() {
+export Bool here() {
     char buffer[256];
     return c::getcwd(buffer, countof(buffer)) != nullptr;
 }

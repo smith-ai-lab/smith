@@ -39,7 +39,7 @@ static typeof(const char[:]) test_json_text(const char *string) {
 
 // json takes its tree from the allocator in force (mem::alloc): the test puts its arena in force around the call, so
 // the arena's reset is the free and the runner's leak check sees nothing.
-static bool test_json_parse(arena::Arena *arena, typeof(const char[:]) input, c::SmithJsonLimits limits,
+static Bool test_json_parse(arena::Arena *arena, typeof(const char[:]) input, c::SmithJsonLimits limits,
                             const c::SmithJsonValue **root, c::SmithJsonError *error) {
     arena::ArenaAllocator allocator = arena::allocator(arena);
     mem::Allocator *before = mem::set_allocator(&allocator.base);
@@ -419,7 +419,7 @@ export void test_json_numbers_are_exact() {
 // ---------------------------------------------------------------------------------------------------------------
 // Limits
 
-static bool test_json_parses(const char *document, c::SmithJsonLimits limits, c::SmithJsonError *error) {
+static Bool test_json_parses(const char *document, c::SmithJsonLimits limits, c::SmithJsonError *error) {
     arena::Arena arena = test::memory(1 << 16);
     const c::SmithJsonValue *root = nullptr;
     return test_json_parse(&arena, test_json_text(document), limits, &root, error);
@@ -587,7 +587,7 @@ export void test_json_a_large_array_keeps_its_order() {
 // ---------------------------------------------------------------------------------------------------------------
 // The writer
 
-static bool test_json_writer_is(c::SmithJsonWriter *writer, const char *expected) {
+static Bool test_json_writer_is(c::SmithJsonWriter *writer, const char *expected) {
     const char output[:] = {};
     if (!c::smith_json_writer_finish(writer, &output)) return false;
     return countof(output) == c::strlen(expected) &&
@@ -641,7 +641,7 @@ export void test_json_writer_indents() {
     test::check(test_json_writer_is(&scalar, "7"));
 }
 
-static bool test_json_string_writes(const char *bytes, Usize length, const char *expected) {
+static Bool test_json_string_writes(const char *bytes, Usize length, const char *expected) {
     char buffer[128];
     c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, sizeof buffer, 0);
     c::smith_json_write_string(&writer, bytes[0:length]);
@@ -968,7 +968,7 @@ static void test_json_emit(c::SmithJsonWriter *writer, TestJsonDocument *documen
 }
 
 typedef struct {
-    bool object;
+    Bool object;
     Usize remaining;
 } TestJsonFrame;
 
@@ -977,7 +977,7 @@ static void test_json_random_value(c::SmithJsonWriter *writer, TestJsonDocument 
                                    Usize depth_max) {
     TestJsonFrame stack[16];
     Usize depth = 0;
-    bool started = false;
+    Bool started = false;
     random::Key *key_stream = &key;
     for (Usize step = 0; document->count + 16 < test_json_events_max; step++) {
         random::Key here = take(key_stream);
@@ -1001,9 +1001,9 @@ static void test_json_random_value(c::SmithJsonWriter *writer, TestJsonDocument 
         }
         started = true;
         I64 kind = test_json_uniform(take(here_stream), 0, 9);
-        bool room = depth < depth_max && document->count + 24 < test_json_events_max;
+        Bool room = depth < depth_max && document->count + 24 < test_json_events_max;
         if (kind <= 1 && room) {
-            bool object = kind == 1;
+            Bool object = kind == 1;
             event.token = object ? c::SmithJsonToken_ObjectBegin : c::SmithJsonToken_ArrayBegin;
             stack[depth++] = (TestJsonFrame){object, (Usize)test_json_uniform(take(here_stream), 0, 4)};
         } else if (kind == 2) {
@@ -1028,7 +1028,7 @@ static void test_json_random_value(c::SmithJsonWriter *writer, TestJsonDocument 
     }
 }
 
-static bool test_json_number_matches(const char word[:], const TestJsonEvent *event) {
+static Bool test_json_number_matches(const char word[:], const TestJsonEvent *event) {
     if (event->number == TestJsonNumber_U64) {
         U64 value = 0;
         return text::parse_u64(word, &value) && value == event->bits;
@@ -1069,7 +1069,7 @@ static void test_json_check_tree(const c::SmithJsonValue *root, const TestJsonDo
     Usize next_child[32];
     Usize depth = 0;
     const c::SmithJsonValue *value = root;
-    bool pending_key = false;
+    Bool pending_key = false;
     for (Usize i = 0; i < document->count; i++) {
         const TestJsonEvent *event = &document->events[i];
         if (event->token == c::SmithJsonToken_ObjectEnd || event->token == c::SmithJsonToken_ArrayEnd) {
@@ -1306,7 +1306,7 @@ static void test_json_judge(arena::Arena *arena, const char *bytes, Usize length
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
     arena::Scope scope = arena::scope_begin(arena);
-    bool parsed = test_json_parse(arena, input, limits, &root, &error);
+    Bool parsed = test_json_parse(arena, input, limits, &root, &error);
     test::check(parsed == (token == c::SmithJsonToken_End));
     if (parsed) {
         test::check_equal(root->span, reader.values);
@@ -1361,7 +1361,7 @@ export void test_json_random_bytes_never_misbehave(random::Key key) {
 // reasons are in the comments; the document is the suite's file of that name. A change here is a change of behaviour.
 typedef struct {
     const char *name;
-    bool accepted;
+    Bool accepted;
 } TestJsonImplementationDefined;
 
 static const TestJsonImplementationDefined test_json_implementation_defined[_] = {
@@ -1416,12 +1416,12 @@ typedef struct {
     Usize i_as_listed;
 } TestJsonConformance;
 
-static bool test_json_suite_accepts(arena::Arena *arena, const char bytes[:]) {
+static Bool test_json_suite_accepts(arena::Arena *arena, const char bytes[:]) {
     c::SmithJsonLimits limits = {.depth = c::smith_json_depth_max, .string_length = 1 << 20, .count = 1 << 20};
     arena::Scope scope = arena::scope_begin(arena);
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
-    bool accepted = test_json_parse(arena, bytes, limits, &root, &error);
+    Bool accepted = test_json_parse(arena, bytes, limits, &root, &error);
     c::SmithJsonReader reader = c::smith_json_reader_make(bytes, limits);
     c::SmithJsonToken token = c::SmithJsonToken_Null;
     while (token != c::SmithJsonToken_Error && token != c::SmithJsonToken_End) {
@@ -1461,7 +1461,7 @@ static files::Entries test_json_list_suite(const char folder[:]) {
 }
 
 // Whether the reader and the tree accept the file, read whole into the arena for the time of the call.
-static bool test_json_file_accepted(arena::Arena *memory, const char path[:]) {
+static Bool test_json_file_accepted(arena::Arena *memory, const char path[:]) {
     arena::Scope scope = arena::scope_begin(memory);
     defer arena::scope_end(scope);
     files::BytesResult file = files::read_file(path);
@@ -1475,8 +1475,8 @@ static bool test_json_file_accepted(arena::Arena *memory, const char path[:]) {
 }
 
 // What was done with one case: the counts of its kind, and a line of the listing for an implementation-defined one.
-static void test_json_count_case(TestJsonConformance *totals, const char *name, bool accepted, char *report,
-                                 Usize *reported, bool listing) {
+static void test_json_count_case(TestJsonConformance *totals, const char *name, Bool accepted, char *report,
+                                 Usize *reported, Bool listing) {
     if (name[0] == 'y') {
         totals->y_total += 1;
         totals->y_accepted += accepted ? 1 : 0;
@@ -1518,7 +1518,7 @@ export void test_json_conformance_with_jsontestsuite() {
     const char *folder = test_json_variable("SMITH_JSON_SUITE");
     if (folder[0] == '\0') return; // not fetched: tests/library_modes_test.smith skips it
     const char *listing_path = test_json_variable("SMITH_JSON_LISTING");
-    bool listing = listing_path[0] != '\0';
+    Bool listing = listing_path[0] != '\0';
     arena::Arena memory = test::memory(1U << 25);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
@@ -1534,7 +1534,7 @@ export void test_json_conformance_with_jsontestsuite() {
         char path[1024];
         (void)format::to(path, sizeof path, folder, "/", name);
         test::note("file %s", name);
-        bool accepted = test_json_file_accepted(&memory, path[0:c::strlen(path)]);
+        Bool accepted = test_json_file_accepted(&memory, path[0:c::strlen(path)]);
         test_json_count_case(&totals, name, accepted, report, &reported, listing);
     }
     if (listing) test_json_write_listing(listing_path[0:c::strlen(listing_path)], &totals, report, reported);

@@ -135,15 +135,15 @@ I32 errno_now() {
 
 // What a path is.
 [[std::c_name("SmithFilesInfo")]] export typedef struct {
-    bool folder;
-    bool writable; // the program may write here: to a file, or make files in a folder
+    Bool folder;
+    Bool writable; // the program may write here: to a file, or make files in a folder
     Usize size;    // bytes of a file; 0 for a folder
 } Info;
 
 // One thing in a folder.
 [[std::c_name("SmithFilesEntry")]] export typedef struct {
     char name[:]; // the name alone (with a NUL after it, not counted), not the path
-    bool folder;
+    Bool folder;
     Usize size; // bytes of a file; 0 for a folder
 } Entry;
 
@@ -214,7 +214,7 @@ void put(void *to, const void *from, Usize count) {
 // A path as C wants it, with its NUL.
 typedef struct {
     char text[path_max];
-    bool fits;
+    Bool fits;
 } Path;
 
 Path path_make(const char path[:]) {
@@ -301,7 +301,7 @@ I32 lister_next(Lister *lister, c::SmithFileItem *item, I32 *code) {
         put(item->name, entry->d_name, length);
         item->name[length] = 0;
         struct c::stat status = {};
-        bool known = c::fstatat(c::dirfd(lister->directory), entry->d_name, &status, 0) == 0;
+        Bool known = c::fstatat(c::dirfd(lister->directory), entry->d_name, &status, 0) == 0;
         item->folder = known && (status.st_mode & mode_kind_mask) == mode_folder;
         item->size = known && !item->folder ? (Usize)status.st_size : 0;
         return 1;
@@ -345,7 +345,7 @@ void reads_log_append(const char *log, const char *path) {
     Usize length = c::strlen(resolved);
     if (length + 3 >= path_max) return;
     struct c::stat status = {};
-    bool folder = c::stat(resolved, &status) == 0 && (status.st_mode & mode_kind_mask) == mode_folder;
+    Bool folder = c::stat(resolved, &status) == 0 && (status.st_mode & mode_kind_mask) == mode_folder;
     if (folder) resolved[length++] = '/';
     resolved[length++] = '\n';
     I32 descriptor = c::open(log, open_append, file_mode);
@@ -423,7 +423,7 @@ BytesResult read_open(File file, Usize hint) {
     contract::trusted(); // reads to the end of the file: its passes are the file's size
     U8 buffer[:] = mem::alloc_slice(U8, hint);
     Usize filled = 0;
-    bool ended = false;
+    Bool ended = false;
     for (Usize rounds = 0; rounds < ~(Usize)0 && !ended; rounds++) { // each round reads a byte or ends
         if (filled == countof(buffer)) {
             U8 bigger[:] = mem::alloc_slice(U8, countof(buffer) * 2);
@@ -642,7 +642,7 @@ I32 entry_compare(const void *a, const void *b) {
     reads_log(where.text);
     struct c::stat info_of = {};
     I32 code = c::fstat(descriptor, &info_of) == 0 ? 0 : errno_now();
-    bool is_folder = code == 0 && (info_of.st_mode & mode_kind_mask) == mode_folder;
+    Bool is_folder = code == 0 && (info_of.st_mode & mode_kind_mask) == mode_folder;
     Usize size = code == 0 ? (Usize)info_of.st_size : 0;
     void *bytes = nullptr;
     if (code == 0 && !is_folder && size > 0) {
@@ -679,20 +679,20 @@ I32 entry_compare(const void *a, const void *b) {
 
 [[std::c_name("SmithFilesFakeFile")]] export typedef struct {
     char path[fake_path_max];
-    bool used;
-    bool folder; // a folder made by make_folder; the folders of a file's path need no entry
+    Bool used;
+    Bool folder; // a folder made by make_folder; the folders of a file's path need no entry
     U8 *data;
     Usize size;
     Usize capacity;
 } FakeFile;
 
 [[std::c_name("SmithFilesFakeOpen")]] export typedef struct {
-    bool open;
+    Bool open;
     Usize file;
     Usize offset;
-    bool can_read;
-    bool can_write;
-    bool append;
+    Bool can_read;
+    Bool can_write;
+    Bool append;
 } FakeOpen;
 
 // A files handler over files in memory: `files::fake()` makes one, `files::fake_add` puts a file in it and
@@ -718,7 +718,7 @@ Usize fake_find(const Fake *fake, const char *path) {
 }
 
 // Whether a folder is at the path: made on purpose, or the start of the path of a file or folder of the fake.
-bool fake_folder_exists(const Fake *fake, const char *path) {
+Bool fake_folder_exists(const Fake *fake, const char *path) {
     Usize length = c::strlen(path);
     for (Usize i = 0; i < fake_files_max; i++) {
         const FakeFile *file = &fake->files[i];
@@ -775,7 +775,7 @@ I32 fake_open(c::SmithFileHandler *self, const char *path, I32 flags, I32 mode) 
     }
     if (slot == fake_files_max) misuse("files fake: more than 16 files open at once");
     I32 access = flags & access_mask;
-    bool writing = access == flag_write_only || access == flag_read_write;
+    Bool writing = access == flag_write_only || access == flag_read_write;
     Usize found = fake_find(fake, path);
     if (found != fake_files_max && fake->files[found].folder) {
         fake_fail(eisdir);
@@ -924,7 +924,7 @@ I32 fake_rename(c::SmithFileHandler *self, const char *from, const char *to) {
 
 // What the file shows in the listed folder: the first name of its path below the folder, a folder if the path goes on
 // (or is a folder). False when the file is not inside the folder.
-bool fake_child(const FakeFile *file, const char *folder, c::SmithFileItem *item) {
+Bool fake_child(const FakeFile *file, const char *folder, c::SmithFileItem *item) {
     Usize length = c::strlen(folder);
     const char *rest = file->path;
     if (length > 0) {
@@ -938,7 +938,7 @@ bool fake_child(const FakeFile *file, const char *folder, c::SmithFileItem *item
     if (name >= sizeof item->name) misuse("files fake: a name longer than 255 bytes");
     put(item->name, rest, name);
     item->name[name] = 0;
-    bool deeper = rest[name] == '/';
+    Bool deeper = rest[name] == '/';
     item->folder = deeper || file->folder;
     item->size = item->folder ? 0 : file->size;
     return true;
@@ -955,7 +955,7 @@ I32 fake_list(c::SmithFileHandler *self, const char *folder, Usize index, c::Smi
     for (Usize i = 0; i < fake_files_max; i++) {
         c::SmithFileItem child = {};
         if (!fake->files[i].used || !fake_child(&fake->files[i], folder, &child)) continue;
-        bool again = false; // a folder shown by an earlier file is one entry
+        Bool again = false; // a folder shown by an earlier file is one entry
         for (Usize j = 0; j < i && !again; j++) {
             c::SmithFileItem earlier = {};
             again = fake->files[j].used && fake_child(&fake->files[j], folder, &earlier) &&

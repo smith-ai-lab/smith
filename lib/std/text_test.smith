@@ -307,10 +307,10 @@ export void test_text_overflow_fails(random::Key key) {
     Usize count = text::write_u64(out, value);
     out[count++] = (char)('0' + test_text_uniform(take(key_stream), 0, 9));
     U64 result = 0;
-    bool fits = text::parse_u64(out[0:count], &result);
+    Bool fits = text::parse_u64(out[0:count], &result);
     // The text of value followed by a digit is value * 10 + digit, which fits exactly when it does not wrap.
     U64 digit = (U64)(out[count - 1] - '0');
-    bool should_fit = value <= (math::max(U64) - digit) / 10;
+    Bool should_fit = value <= (math::max(U64) - digit) / 10;
     test::check(fits == should_fit);
     if (fits) test::check_equal(result, value * 10 + digit);
 }
@@ -318,7 +318,7 @@ export void test_text_overflow_fails(random::Key key) {
 // ---------------------------------------------------------------------------------------------------------------
 // Floats
 
-static bool test_text_reference(const char *string, F32 *value) {
+static Bool test_text_reference(const char *string, F32 *value) {
     F32 reference = c::strtof(string, nullptr);
     if (reference > f32_max || reference < -f32_max) return false; // rounded to infinity
     *value = reference;
@@ -329,9 +329,9 @@ static bool test_text_reference(const char *string, F32 *value) {
 static void test_text_check_f32(const char *string) {
     test::note("text \"%.200s\"", string);
     F32 expected = 0;
-    bool finite = test_text_reference(string, &expected);
+    Bool finite = test_text_reference(string, &expected);
     F32 actual = 12345.0F;
-    bool parsed = text::parse_f32(test_text(string), &actual);
+    Bool parsed = text::parse_f32(test_text(string), &actual);
     test::check(parsed == finite);
     if (finite)
         test::check_same_bits(actual, expected);
@@ -549,7 +549,7 @@ export void test_text_f32_sweep_of_every_pattern() {
 // ---------------------------------------------------------------------------------------------------------------
 // Doubles
 
-static bool test_text_reference_f64(const char *string, F64 *value) {
+static Bool test_text_reference_f64(const char *string, F64 *value) {
     F64 reference = c::strtod(string, nullptr);
     if (reference > f64_max || reference < -f64_max) return false; // rounded to infinity
     *value = reference;
@@ -560,9 +560,9 @@ static bool test_text_reference_f64(const char *string, F64 *value) {
 static void test_text_check_f64(const char *string) {
     test::note("text \"%.200s\"", string);
     F64 expected = 0;
-    bool finite = test_text_reference_f64(string, &expected);
+    Bool finite = test_text_reference_f64(string, &expected);
     F64 actual = 12345.0;
-    bool parsed = text::parse_f64(test_text(string), &actual);
+    Bool parsed = text::parse_f64(test_text(string), &actual);
     test::check(parsed == finite);
     if (finite)
         test::check_same_bits(actual, expected);
@@ -913,7 +913,7 @@ export void test_text_f64_write_is_shortest_and_round_trips(random::Key key) {
     test::check_same_bits(back, d);
     test::check_same_bits(c::strtod(out, nullptr), d);
     I32 digits = 0;
-    bool started = false;
+    Bool started = false;
     I32 trailing_zeros = 0;
     for (Usize i = 0; i < length && out[i] != 'e'; i++) {
         if (out[i] < '0' || out[i] > '9') continue;
@@ -934,7 +934,7 @@ export void test_text_f64_write_edges_round_trip() {
     for (U64 field = 0; field < 2047; field++) {
         // Under the sanitizers every exponent takes seconds, so the quick run takes every 13th and the edges (zero and
         // subnormals, around 1.0, the largest); --full takes them all.
-        bool edge = field <= 1 || (field >= 1022 && field <= 1024) || field >= 2045;
+        Bool edge = field <= 1 || (field >= 1022 && field <= 1024) || field >= 2045;
         if (!test::full() && !edge && field % 13 != 0) continue;
         for (U64 kind = 0; kind < 4; kind++) {
             U64 fraction = kind == 3 ? 0xfffffffffffff : kind;
@@ -989,7 +989,7 @@ export void test_text_f32_write_is_shortest_and_round_trips(random::Key key) {
     test::check_equal(__builtin_bit_cast(U32, back), bits);
     test::check_equal(__builtin_bit_cast(U32, c::strtof(out, nullptr)), bits);
     I32 digits = 0;
-    bool started = false;
+    Bool started = false;
     I32 trailing_zeros = 0;
     for (Usize i = 0; i < length && out[i] != 'e'; i++) {
         if (out[i] < '0' || out[i] > '9') continue;

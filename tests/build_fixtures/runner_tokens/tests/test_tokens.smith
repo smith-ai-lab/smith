@@ -8,7 +8,7 @@ static void mark_and_wait(const char *mine, const char *theirs) {
     c::FILE *file = c::fopen(mine, "w");
     test::check_condition(file != nullptr);
     c::fclose(file);
-    bool seen = false;
+    Bool seen = false;
     for (U32 round = 0; round < 6000 && !seen; round++) { // the bound is a hang backstop, 60 s
         seen = c::access(theirs, 0) == 0;
         if (!seen) c::usleep(10000);

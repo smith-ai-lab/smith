@@ -161,10 +161,10 @@ export typedef typeof(U8[:]) Bytes;
     I32 descriptor; // the socket; -1 under a handler and once closed
     void *session;  // the TLS object (OpenSSL's SSL on Linux, Network.framework's connection on macOS), or null
     void *state;    // macOS TLS: what the callbacks share with the calls (a block of the region of the connect)
-    bool tls;       // the connection is encrypted
-    bool end;       // the peer has finished sending
-    bool handled;   // made under a handler
-    bool closed;    // close has been called
+    Bool tls;       // the connection is encrypted
+    Bool end;       // the peer has finished sending
+    Bool handled;   // made under a handler
+    Bool closed;    // close has been called
 } Connection;
 
 // A listening socket, which the caller owns until `stop`.
@@ -172,8 +172,8 @@ export typedef typeof(U8[:]) Bytes;
     I32 id;         // the handler's id under a handler
     I32 descriptor; // the socket; -1 under a handler and once stopped
     U16 port;       // the port it is bound to (the system's choice when 0 was asked)
-    bool handled;   // made under a handler
-    bool stopped;   // stop has been called
+    Bool handled;   // made under a handler
+    Bool stopped;   // stop has been called
 } Listener;
 
 // What a call that has nothing to return returns on success.
@@ -246,7 +246,7 @@ void put(void *to, const void *from, Usize count) {
 // A text with a NUL after it, for the system's calls.
 typedef struct {
     char text[name_max];
-    bool fits;
+    Bool fits;
 } Name;
 
 Name name_make(const char text[:]) {
@@ -509,7 +509,7 @@ _Atomic I32 api_state;
 // Looks a symbol up and stores its address in the pointer at destination. Symbols are data or functions; either way
 // dlsym returns an address. ISO C has no conversion from object pointers to function pointers, and dlsym's contract is
 // exactly that conversion, so the address is copied byte for byte.
-bool symbol(void *library, const char *name, void *destination) {
+Bool symbol(void *library, const char *name, void *destination) {
     void *address = c::dlsym(library, name);
     if (address == nullptr) return false;
     put(destination, (const void *)&address, sizeof address);
@@ -517,10 +517,10 @@ bool symbol(void *library, const char *name, void *destination) {
 }
 
 if constexpr (target::os == target::macos) {
-    bool api_load(Api *api) {
+    Bool api_load(Api *api) {
         void *library = c::dlopen("/System/Library/Frameworks/Network.framework/Network", dlopen_flags);
         if (library == nullptr) return false;
-        bool found = symbol(library, "nw_endpoint_create_host", (void *)&api->endpoint_create_host) &&
+        Bool found = symbol(library, "nw_endpoint_create_host", (void *)&api->endpoint_create_host) &&
                      symbol(library, "nw_parameters_create_secure_tcp", (void *)&api->parameters_create_secure_tcp) &&
                      symbol(library, "nw_connection_create", (void *)&api->connection_create) &&
                      symbol(library, "nw_connection_set_queue", (void *)&api->set_queue) &&
@@ -539,17 +539,17 @@ if constexpr (target::os == target::macos) {
         return api->queue != nullptr;
     }
 } else {
-    bool api_load_crypto(void *library, Api *api) {
+    Bool api_load_crypto(void *library, Api *api) {
         return symbol(library, "ERR_get_error", (void *)&api->error_next) &&
                symbol(library, "ERR_clear_error", (void *)&api->error_clear) &&
                symbol(library, "X509_VERIFY_PARAM_set1_ip_asc", (void *)&api->parameters_set_address);
     }
 
-    bool api_load(Api *api) {
+    Bool api_load(Api *api) {
         void *library = c::dlopen("libssl.so.3", dlopen_flags);
         void *crypto = c::dlopen("libcrypto.so.3", dlopen_flags);
         if (library == nullptr || crypto == nullptr) return false;
-        bool found = api_load_crypto(crypto, api) &&
+        Bool found = api_load_crypto(crypto, api) &&
                      symbol(library, "TLS_client_method", (void *)&api->client_method) &&
                      symbol(library, "SSL_CTX_new", (void *)&api->context_new) &&
                      symbol(library, "SSL_CTX_set_default_verify_paths", (void *)&api->context_default_paths) &&
@@ -591,7 +591,7 @@ const Api *api_get() {
     I32 expected = 0;
     if (__c11_atomic_load(&api_state, __ATOMIC_SEQ_CST) == 0 &&
         __c11_atomic_compare_exchange_strong(&api_state, &expected, 1, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
-        bool loaded = api_load(&api_table);
+        Bool loaded = api_load(&api_table);
         __c11_atomic_store(&api_state, loaded ? 2 : 3, __ATOMIC_SEQ_CST);
     }
     for (Usize spin = 0; spin < api_spins && __c11_atomic_load(&api_state, __ATOMIC_SEQ_CST) == 1; spin++) {
@@ -717,7 +717,7 @@ if constexpr (target::os == target::macos) {
     Usize received_copy(c::dispatch_data_t content, U8 *buffer, Usize capacity) {
         __block Usize copied = 0;
         if (content == nullptr) return 0;
-        c::dispatch_data_apply(content, ^bool(c::dispatch_data_t region, Usize offset, const void *bytes, Usize size) {
+        c::dispatch_data_apply(content, ^Bool(c::dispatch_data_t region, Usize offset, const void *bytes, Usize size) {
             (void)region;
             (void)offset;
             Usize take = size < capacity - copied ? size : capacity - copied;
@@ -729,7 +729,7 @@ if constexpr (target::os == target::macos) {
     }
 
     // The receive callback: what arrived, the error or the end.
-    void on_received(State *state, Connection *connection, c::dispatch_data_t content, bool complete,
+    void on_received(State *state, Connection *connection, c::dispatch_data_t content, Bool complete,
                      c::nw_error_t error, U8 *buffer, Usize capacity) {
         state->taken = received_copy(content, buffer, capacity);
         if (error != nullptr) {
@@ -774,7 +774,7 @@ if constexpr (target::os == target::macos) {
         state->failure = 0;
         api_table.receive(
             state->handle, 1, (U32)size,
-            ^(c::dispatch_data_t content, c::nw_content_context_t context, bool complete, c::nw_error_t error) {
+            ^(c::dispatch_data_t content, c::nw_content_context_t context, Bool complete, c::nw_error_t error) {
                 (void)context;
                 on_received(state, connection, content, complete, error, (U8 *)buffer, size);
             });
@@ -805,7 +805,7 @@ if constexpr (target::os == target::macos) {
     // Whether the TLS session is up. The last function of a branch is measured with the branch not taken after it (the
     // size check reads the dropped tokens as part of it), hence the NOLINT.
     // NOLINTNEXTLINE(readability-function-size)
-    bool tls_live(const Connection *connection) {
+    Bool tls_live(const Connection *connection) {
         return connection->session != nullptr;
     }
 } else {
@@ -849,7 +849,7 @@ if constexpr (target::os == target::macos) {
             return nullptr;
         }
         U8 address[16];
-        bool literal = c::inet_pton(af_inet, host, address) == 1 || c::inet_pton(af_inet6, host, address) == 1;
+        Bool literal = c::inet_pton(af_inet, host, address) == 1 || c::inet_pton(af_inet6, host, address) == 1;
         if (literal) {
             api->parameters_set_address(api->session_parameters(session), host);
         } else {
@@ -953,7 +953,7 @@ if constexpr (target::os == target::macos) {
     // Whether the TLS session is up. The last function of a branch is measured with the branch not taken after it (the
     // size check reads the dropped tokens as part of it), hence the NOLINT.
     // NOLINTNEXTLINE(readability-function-size)
-    bool tls_live(const Connection *connection) {
+    Bool tls_live(const Connection *connection) {
         return connection->session != nullptr;
     }
 }
@@ -961,7 +961,7 @@ if constexpr (target::os == target::macos) {
 // ---------------------------------------------------------------- the calls, real or the handler's
 
 // The handler of a connection made under one: a handled connection used after its handler was taken off is a bug.
-c::SmithNetHandler *handler_of(bool handled) {
+c::SmithNetHandler *handler_of(Bool handled) {
     contract::trusted(); // the edge: it asks the handler of the thread
     c::SmithNetHandler *handler = c::smith_handlers_net();
     if (handled && handler == nullptr) misuse("net: a connection made under a handler is used with none set");
@@ -969,7 +969,7 @@ c::SmithNetHandler *handler_of(bool handled) {
 }
 
 // Opens the connection, plain or with TLS.
-ConnectionResult open_connection(const char host[:], U16 port, bool tls) {
+ConnectionResult open_connection(const char host[:], U16 port, Bool tls) {
     Name name = name_make(host);
     if (!name.fits) {
         return {.error = NotFound};
@@ -1187,11 +1187,11 @@ read_within(Connection *connection, U8 buffer[:], I64 timeout_ns) {
     U16 port;
     const char *response;
     Usize chunk;
-    bool fails;
+    Bool fails;
     Error error;
     Usize response_size; // the length of `response` when it is binary (it holds a NUL); 0: the length of its text
-    bool resets;         // after the response a read fails with `Reset` instead of ending
-    bool stalls; // after the response the connection stays open and silent instead of ending (`read_within` times out)
+    Bool resets;         // after the response a read fails with `Reset` instead of ending
+    Bool stalls; // after the response the connection stays open and silent instead of ending (`read_within` times out)
 } Server;
 
 // A growing block of the current allocator; the old blocks stay in the region.
@@ -1204,11 +1204,11 @@ read_within(Connection *connection, U8 buffer[:], I64 timeout_ns) {
 // paired one (a client that connected to a fake listener and the server's end that `accept` returns) has the other end
 // in `peer`, writes to one end go to the inbox of the other, and the end comes when the other has closed.
 [[std::c_name("SmithNetworkFakeConnection")]] export typedef struct {
-    bool used;
-    bool closed;
-    bool peer_closed;
-    bool scripted;
-    bool resets;
+    Bool used;
+    Bool closed;
+    Bool peer_closed;
+    Bool scripted;
+    Bool resets;
     I32 peer; // the index + 1 of the other end of a pair, 0 for a scripted server
     Usize chunk;
     Usize read_position;
@@ -1217,8 +1217,8 @@ read_within(Connection *connection, U8 buffer[:], I64 timeout_ns) {
 } FakeConnection;
 
 [[std::c_name("SmithNetworkFakeListener")]] export typedef struct {
-    bool used;
-    bool stopped;
+    Bool used;
+    Bool stopped;
     U16 port;
     I32 pending[fake_connections_max]; // the server ends waiting for accept: index + 1
     Usize pending_head;
@@ -1229,7 +1229,7 @@ read_within(Connection *connection, U8 buffer[:], I64 timeout_ns) {
 [[std::c_name("SmithNetworkFake")]] export typedef struct {
     Handler base;
     Server servers[fake_servers_max];
-    bool server_used[fake_servers_max];
+    Bool server_used[fake_servers_max];
     Usize server_count;
     FakeConnection connections[fake_connections_max];
     FakeListener listeners[fake_listeners_max];
@@ -1363,7 +1363,7 @@ I32 fake_script(Fake *fake, Usize index, I32 *reason) {
     return slot + 1;
 }
 
-I32 fake_connect(c::SmithNetHandler *self, const char *host, U16 port, bool tls, I32 *reason) {
+I32 fake_connect(c::SmithNetHandler *self, const char *host, U16 port, Bool tls, I32 *reason) {
     (void)tls;
     Fake *fake = (Fake *)self;
     for (Usize i = 0; i < fake_listeners_max; i++) {

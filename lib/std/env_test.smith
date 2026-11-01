@@ -31,16 +31,16 @@ env::Value value_of(const char name[:]) {
     return env::get(name);
 }
 
-bool has(env::Value value, const char *expected) {
+Bool has(env::Value value, const char *expected) {
     return value == .some && countof(value.some) == c::strlen(expected) &&
            c::strncmp(value.some.data, expected, countof(value.some)) == 0;
 }
 
-bool is_none(env::Value value) {
+Bool is_none(env::Value value) {
     return value == .none;
 }
 
-bool is_some(env::Value value) {
+Bool is_some(env::Value value) {
     return value == .some;
 }
 

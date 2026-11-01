@@ -38,11 +38,11 @@ typedef struct {
     char source[256];
 } Client;
 
-static bool contains(const char *text, const char *needle) {
+static Bool contains(const char *text, const char *needle) {
     return __builtin_strstr(text, needle) != nullptr;
 }
 
-static bool is(const char *text, const char *expected) {
+static Bool is(const char *text, const char *expected) {
     return __builtin_strcmp(text, expected) == 0;
 }
 
@@ -100,7 +100,7 @@ static const char *request_of(Client *client, I32 id) {
     return text.data;
 }
 
-static bool request_starts(Client *client, I32 id, const char *prefix) {
+static Bool request_starts(Client *client, I32 id, const char *prefix) {
     return __builtin_strncmp(request_of(client, id), prefix, __builtin_strlen(prefix)) == 0;
 }
 

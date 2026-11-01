@@ -51,7 +51,7 @@ static Lint run(const char *folder, const char *cache, const char *setting, I32 
     };
     Lint lint = {};
     char *text = mem::alloc_slice(char, output_capacity).data;
-    bool done =
+    Bool done =
         c::smith_core_lint_plan(folder, cache, setting, files, countof(files), lint.file, text, output_capacity);
     test::check_equal(done, true);
     lint.output = text;
@@ -60,11 +60,11 @@ static Lint run(const char *folder, const char *cache, const char *setting, I32 
 
 // One lint run of m.smith alone: the fake clang-tidy reads only m.smith, as it does of a module's imports, which come
 // through the generated headers under .smith/include and not the preprocessor.
-static bool run_module(const char *folder, const char *cache) {
+static Bool run_module(const char *folder, const char *cache) {
     const c::SmithCoreLintFile files[_] = {{"m.smith", "clang\t-c\tm.smith", "m.smith", 0, ""}};
     c::SmithCoreLintResult result[1] = {};
     char *text = mem::alloc_slice(char, output_capacity).data;
-    bool done = c::smith_core_lint_plan(folder, cache, nullptr, files, countof(files), result, text, output_capacity);
+    Bool done = c::smith_core_lint_plan(folder, cache, nullptr, files, countof(files), result, text, output_capacity);
     test::check_equal(done, true);
     return result[0].ran;
 }
@@ -115,7 +115,7 @@ static const char *counts(const scratch::Project *p) {
 }
 
 // The cache folder of the lint results, which a run with the cache off must not make.
-static bool has_results(const scratch::Project *p) {
+static Bool has_results(const scratch::Project *p) {
     char path[512];
     (void)format::to(path, sizeof path, p->cache, "/smith/lint/r");
     files::InfoResult found = files::info(path[0:c::strlen(path)]);

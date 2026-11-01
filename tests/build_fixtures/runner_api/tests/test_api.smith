@@ -20,7 +20,7 @@ void test_ordering_passes(void) {
     test::check_less(-1.5, pi);
     char a = 'a';
     test::check_less(a, 'b');
-    bool no = false;
+    Bool no = false;
     test::check_not_equal(no, true);
 }
 

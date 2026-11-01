@@ -16,7 +16,7 @@ F64 length(F64 x, F64 y) {
     return math::sqrt(x * x + y * y);          // the square root, correctly rounded: libm's sqrt, as an instruction
 }
 
-bool usable(F32 value) {
+Bool usable(F32 value) {
     return math::is_finite(value) && math::abs(value) < 1000.0f;  // the type is the type of the argument
 }
 
@@ -24,7 +24,7 @@ Usize count_limit() {
     return math::max(Usize);                         // SIZE_MAX
 }
 
-F64 missing(bool negative) {
+F64 missing(Bool negative) {
     return negative ? -math::infinity(F64) : math::nan(F64);  // INFINITY and NAN, in the type asked
 }
 ```

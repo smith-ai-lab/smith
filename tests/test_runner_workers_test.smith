@@ -376,7 +376,7 @@ export void test_runner_workers_in_process_smith_dbg_stops_at_a_breakpoint_insid
 // (--explain <smith>: `smith test` passes it): `check(a == b)` prints a and b, a member chain, an array element, an
 // enum and a pointer print too, a crash reports as before, and a machine that refuses to debug (or a smith with no
 // debugger) gets the report and one note saying why.
-static bool explain_available(const scratch::Project *p) {
+static Bool explain_available(const scratch::Project *p) {
     return scratch::sh(p, "smith --smith-explain --available").status == 0;
 }
 
@@ -397,7 +397,7 @@ static const char *explained(const scratch::Project *p, const char *iso, const c
 }
 
 // Whether the machine let the values be read (it may refuse to debug).
-static bool values_shown(const char *text) {
+static Bool values_shown(const char *text) {
     return !scratch::contains(text, "values not shown");
 }
 

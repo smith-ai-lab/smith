@@ -11,7 +11,7 @@ A `.smith` file needs no `#if`. A fact of the target is a constant of the module
 import target;
 
 constexpr Usize size = 4;                                   // not `#define SIZE 4`
-constexpr bool sanitized = target::address_sanitizer;       // a constant expression: static_assert, array sizes, initializers
+constexpr Bool sanitized = target::address_sanitizer;       // a constant expression: static_assert, array sizes, initializers
 static_assert(target::f32_mantissa_bits == 24 && target::float_radix == 2);
 
 I32 opaque(I32 value) {
@@ -27,7 +27,7 @@ Usize capacity() {
     return size;
 }
 
-bool poisons_memory() {
+Bool poisons_memory() {
     return sanitized;
 }
 ```

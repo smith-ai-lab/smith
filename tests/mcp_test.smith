@@ -60,7 +60,7 @@ constexpr char proto_script[_] =
     "i=$((i + 1)); done; fi; "
     "[ -e \"$base/done\" ] && cp \"$base/dap.o\" \"$base/mcp.o\" .";
 
-static void check_fake(const char *mode, const char *flags, bool linked) {
+static void check_fake(const char *mode, const char *flags, Bool linked) {
     scratch::Project p = scratch::make("fake", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
@@ -163,7 +163,7 @@ export void test_macos_mcp_the_connection_discover_initialize_and_tools() {
 // ------------------------------------------------------------------------------------------
 
 // The C program of the fixture built. False when this smith has no clang or lldb inside, or the account may not debug.
-static bool can_debug(const scratch::Project *root) {
+static Bool can_debug(const scratch::Project *root) {
     if (scratch::sh(root, clang_inside).status != 0 ||
         scratch::sh(root, "smith dbg --version >/dev/null 2>&1").status != 0) {
         return false;
