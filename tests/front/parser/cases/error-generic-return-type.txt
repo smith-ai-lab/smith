@@ -1,1 +1,1 @@
-error-generic-return-type/main.smith: error: a declaration needs a type (there is no implicit `int`): write the type before `three`, as in `I32 three` (13:8) [undecided_c]
+error-generic-return-type/main.smith: ok

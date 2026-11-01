@@ -1,2 +1,2 @@
 type-function-private/main.smith: ok
-type-function-private/shapes.smith: error: a declaration needs a type (there is no implicit `int`): write the type before `same`, as in `I32 same` (9:8) [undecided_c]
+type-function-private/shapes.smith: ok

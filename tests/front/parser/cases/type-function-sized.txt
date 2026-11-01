@@ -1,2 +1,2 @@
 type-function-sized/main.smith: ok
-type-function-sized/sizes.smith: error: a declaration needs a type (there is no implicit `int`): write the type before `small_of`, as in `I32 small_of` (9:8) [undecided_c]
+type-function-sized/sizes.smith: ok
