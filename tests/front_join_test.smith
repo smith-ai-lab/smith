@@ -312,3 +312,17 @@ export void test_front_join_compile_time_comparison_is_printed() {
     c::printf("%s", lines.data);
     remove_all(folder);
 }
+
+// `smith prove` proves a program's own sources together, and the front end's bodies did not finish in 15 minutes (CI's
+// prove on macOS, #1342): build.c compiles them as links under .smith/, which are not the project's own sources. The
+// build file is the only place that says so.
+export void test_front_join_the_front_end_is_linked_from_links_under_dot_smith_so_prove_leaves_it_out() {
+    const char *repo = c::getenv("SMITH_REPO");
+    Str path = as_str(format::push(repo != nullptr ? repo : ".", "/build.c"));
+    files::BytesResult loaded = files::read_file(path);
+    test::check_equal(loaded == .ok, true);
+    if (loaded == .error) return;
+    format::Chars chars = mem::view(loaded.ok, char);
+    Str build_file = chars;
+    test::check_condition(has(build_file, "\".smith/front/%s.smith\""));
+}
