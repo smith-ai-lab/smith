@@ -411,6 +411,42 @@ static bool build_shim_uses_pch(const char *name) {
     return false;
 }
 
+// shim/pch.h as a file at a path every worktree spells the same: `<cache>/smith/shim-pch/<hash of its text>/pch.h`. A
+// precompiled header records the absolute path of the file it was made from, so one made from `shim/pch.h` holds its
+// worktree's folder: the step cache stores it for that folder only, and a copy served to another worktree reads the
+// first one's file (an error once that worktree is deleted). Made from this copy it holds no folder, and a second
+// worktree is served it (#1415). The copy is written when missing, at each graph (before any compile), through a
+// rename. Without a cache folder it is `shim/pch.h` itself.
+static const char *build_shim_pch_source(SmithBuild *b) {
+    static char text[65536];
+    FILE *file = fopen("shim/pch.h", "rb");
+    if (file == nullptr) return "shim/pch.h";
+    size_t used = fread(text, 1, sizeof text, file);
+    bool whole = feof(file) != 0;
+    fclose(file);
+    if (!whole) return "shim/pch.h";
+    uint64_t hash = 14695981039346656037ULL; // FNV-1a: a folder name, the cache key holds the text's own hash
+    for (size_t i = 0; i < used; i++)
+        hash = (hash ^ (unsigned char)text[i]) * 1099511628211ULL;
+    const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
+    const char *folders[] = {smith_fmt(b, "%s/smith", cache), smith_fmt(b, "%s/smith/shim-pch", cache),
+                             smith_fmt(b, "%s/smith/shim-pch/%016llx", cache, (unsigned long long)hash)};
+    for (size_t i = 0; i < sizeof folders / sizeof folders[0]; i++) {
+        if (mkdir(folders[i], 0755) != 0 && errno != EEXIST) return "shim/pch.h";
+    }
+    const char *path = smith_fmt(b, "%s/pch.h", folders[2]);
+    struct stat info = {};
+    if (stat(path, &info) == 0 && (size_t)info.st_size == used) return path;
+    const char *part = smith_fmt(b, "%s.part%d", path, (int)getpid());
+    FILE *out = fopen(part, "wb");
+    if (out == nullptr) return "shim/pch.h";
+    bool written = fwrite(text, 1, used, out) == used;
+    bool closed = fclose(out) == 0;
+    if (written && closed && rename(part, path) == 0) return path;
+    unlink(part);
+    return "shim/pch.h";
+}
+
 // shim/pch.h compiled to `<folder>/shim.pch` as one more object of the graph: its command holds the compiler and the
 // flags (the identity of LLVM is in the path of both, and an LLVM is never edited in place, so a new one makes it
 // again), its inputs are the compiler's file and, from its depfile, shim/pch.h (the system headers are not in a
@@ -424,7 +460,7 @@ static const char *build_shim_pch(SmithBuild *b, const BuildConfig *config, cons
     static SmithObject pch; // the build keeps the pointer
     pch = (SmithObject){
         .compiler = config->cxx,
-        .source = "shim/pch.h",
+        .source = build_shim_pch_source(b),
         .output = smith_fmt(b, "%s/shim.pch", folder),
         .flags = smith_cat(b, build_shim_flags(b, config),
                            (const char *[]){"-fpch-instantiate-templates", "-Xclang",

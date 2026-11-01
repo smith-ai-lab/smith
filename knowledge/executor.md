@@ -72,8 +72,14 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
   folder a token and restored with this one. A compile that printed anything (a warning), read a file written after it
   began, or names `__TIME__`, `__DATE__` or `__TIMESTAMP__` is not stored; nor are compiles with a flag that reads or
   writes more than the depfile names (`@file`, `-fprofile-*`, `--coverage`, `-save-temps`, plugins, ...), nor a
-  precompiled header, read or written (`-include-pch`, `-x *-header`, a `.pch` or `.gch`): it records each input's time,
-  so one restored after a checkout gave its header a new time is rejected by every compile that includes it (#728).
+  precompiled header, read or written (`-include-pch`, `-x *-header`, a `.pch` or `.gch`) without
+  `-Xclang -fvalidate-ast-input-files-content` (the only `-Xclang` argument accepted): a header records each input's
+  time, so one restored after a checkout gave its header a new time is rejected by every compile that includes it
+  (#728); with the flag it stores each input's hash and accepts a file of the same text (#1415). A header holds the
+  absolute path of the file it was made from, so it is cached across worktrees only when that path is the same in all
+  of them (build.c makes it from a copy of `shim/pch.h` in the package cache); one that holds the root is stored for
+  that root alone, as any output that does. The cache hashes a `.pch` read by a compile as any input, and does not
+  refuse it for naming `__TIME__` (a header's tables do, whatever it was made from).
 - **Restoring** clones the files (FICLONE on Linux, `clonefile` on macOS, else a copy), writes the depfile as a compile
   would, and the job ends as one does: the depfile log and command log are written, `-v` shows `(cached)` after the
   step, `-d explain` says it was restored. A hit takes no core of the host's pool. Stores and restores are a temporary

@@ -205,12 +205,17 @@ export void test_build_step_cache_results_over_the_cap_are_removed() {
     expect_counts("cap: over the cap nothing is left to serve", 3, 0, &capped);
 }
 
-// 6. A precompiled header is never served: it records the time of each file it read, so one served after a checkout
-// rewrote its header with the same text (a new time) is rejected by every compile that includes it (#728).
+// 6. A precompiled header is served only when it is made and read with -fvalidate-ast-input-files-content: it records
+// the time of each file it read, so one served after a checkout rewrote its header with the same text (a new time)
+// is rejected by every compile that includes it (#728) unless the hash of each input is stored (#1415).
 constexpr const char *pch_manifest =
     "ninja_required_version = 1.10\nbuilddir = .smith\nrule cc\n  command = $cmd\n"
     "build other.pch: cc other.h\n  cmd = sh -x c-header -MD -MF other.pch.d -c other.h -o other.pch\n"
     "  depfile = other.pch.d\n  deps = gcc\ndefault other.pch\n";
+constexpr const char *pch_validated_manifest =
+    "ninja_required_version = 1.10\nbuilddir = .smith\nrule cc\n  command = $cmd\n"
+    "build other.pch: cc other.h\n  cmd = sh -x c-header -Xclang -fvalidate-ast-input-files-content -MD -MF other.pch.d"
+    " -c other.h -o other.pch\n  depfile = other.pch.d\n  deps = gcc\ndefault other.pch\n";
 
 export void test_build_step_cache_a_precompiled_header_is_compiled_again() {
     arena::Arena memory = test::memory(memory_size);
@@ -243,6 +248,39 @@ export void test_build_step_cache_a_precompiled_header_is_compiled_again() {
     test::check_equal(c::smith_core_step_cache(&step, text, output_capacity, &ran, &served), true);
     scratch::expect_count("pch: it compiles again after its header was rewritten", 1, ran);
     scratch::expect_count("pch: and is not served", 0, served);
+}
+
+export void test_build_step_cache_a_validated_precompiled_header_is_served() {
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project a = project("a");
+    defer scratch::clean(&a);
+    scratch::Project b = project("b");
+    defer scratch::clean(&b);
+    scratch::own_cache(&a);
+    test::check_condition(c::smith_core_plan_write(a.dir, ".smith/build.ninja", pch_validated_manifest, 100));
+    test::check_condition(c::smith_core_plan_write(b.dir, ".smith/build.ninja", pch_validated_manifest, 100));
+    const char *const depends[_] = {"other.pch: other.h", nullptr};
+    c::SmithCoreStepCache step = {.plan = {.folder = a.dir, .manifest = ".smith/build.ninja", .depends = depends},
+                                  .cache = a.cache};
+    char *text = mem::alloc_slice(char, output_capacity).data;
+    Usize ran = 0;
+    Usize served = 0;
+    step.plan.time = 1000;
+    test::check_equal(c::smith_core_step_cache(&step, text, output_capacity, &ran, &served), true);
+    scratch::expect_count("pch: the header compiles", 1, ran);
+    step.plan.folder = b.dir; // the same header in another folder: a program that is served would be a hit
+    test::check_equal(c::smith_core_step_cache(&step, text, output_capacity, &ran, &served), true);
+    scratch::expect_count("pch: and is served in another folder", 0, ran);
+    scratch::expect_count("pch: for its inputs are hashed", 1, served);
+    put(a, "other.h", "int other(void);\n", 3000); // the same text, a new time
+    step.plan.folder = a.dir;
+    step.plan.time = 4000;
+    test::check_equal(c::smith_core_step_cache(&step, text, output_capacity, &ran, &served), true);
+    scratch::expect_count("pch: it is served after its header was rewritten with the same text", 0, ran);
+    scratch::expect_count("pch: from the cache", 1, served);
 }
 
 // 7. Objects restored from the cache are not older than their inputs: the next build has nothing to do (#816). The
