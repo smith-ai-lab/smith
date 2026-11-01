@@ -1,0 +1,151 @@
+// Tests of the slice qualifiers and the `Lambda(F)` type of front::parse_type (#1265, part of #1112): `U8[restrict :]`
+// and `U8[const restrict :]` carry the slice's own qualifiers on the slice node, a qualifier in a later bracket or
+// `[static :]` is an error that says what to write, and `Lambda(Bool (I32))` is an applied type.
+module front_parse_slice_test;
+
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_type;
+import std::arena;
+import std::mem;
+import std::test;
+import std::text;
+
+// The stub of the expression hook: a name or a number, one token.
+static ast::Expr *stub_expression(parse::Parser *p) {
+    lex::Token token = parse::advance(p);
+    if (token.kind == lex::integer) {
+        U64 value = 0;
+        _ = text::parse_u64(parse::text(p, token), &value);
+        return ast::integer(value);
+    }
+    return ast::name(parse::text(p, token));
+}
+
+// A parser over the tokens of source with the type hook and the stub; a lexing error fails the test.
+static parse::Parser parser_of(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    lex::Tokens tokens = {};
+    switch (lexed) {
+    case .ok:
+        tokens = lexed.ok;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    parse::Parser p = parse::make(tokens, source);
+    p.hooks.type = parse_type::type;
+    p.hooks.expression = stub_expression;
+    return p;
+}
+
+// Whether text begins with prefix.
+static Bool begins(Str text, Str prefix) {
+    if (countof(text) < countof(prefix)) return false;
+    for (Usize i = 0; i < countof(prefix); i += 1) {
+        if (text[i] != prefix[i]) return false;
+    }
+    return true;
+}
+
+// The message of the first error of reading source as a type, or an empty text.
+static Str first_error(Str source) {
+    parse::Parser p = parser_of(source);
+    _ = parse::type(&p);
+    if (countof(p.errors) == 0) return "";
+    return p.errors[0].message;
+}
+
+// Whether an argument of an applied type is a type that is a function type.
+static Bool is_function_arg(ast::TypeArg arg) {
+    if (arg != .type) return false;
+    ast::TypeExpr *inner = arg.type.type;
+    return inner->kind == .function;
+}
+
+export void test_parse_slice_restrict() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("U8[restrict :]");
+    ast::TypeExpr *type = parse::type(&p);
+    test::check_equal(countof(p.errors), 0);
+    test::check_condition(type->kind == .slice);
+    test::check_condition(type->qualifiers.is_restrict);
+    test::check_condition(!type->qualifiers.is_const);
+}
+
+export void test_parse_slice_const_restrict_and_const_element() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("const U8[const restrict :]");
+    ast::TypeExpr *type = parse::type(&p);
+    test::check_equal(countof(p.errors), 0);
+    test::check_condition(type->kind == .slice);
+    test::check_condition(type->qualifiers.is_const && type->qualifiers.is_restrict);
+    if (type->kind == .slice) test::check_condition(type->kind.slice.element->qualifiers.is_const);
+}
+
+export void test_parse_slice_plain_and_rows() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("F32[const :][2]");
+    ast::TypeExpr *type = parse::type(&p);
+    test::check_equal(countof(p.errors), 0);
+    test::check_condition(type->kind == .slice && type->qualifiers.is_const);
+    if (type->kind == .slice) test::check_condition(type->kind.slice.element->kind == .array);
+}
+
+export void test_parse_slice_qualifier_in_later_bracket() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str message = first_error("F32[:][const :]");
+    test::check_condition(begins(message, "a qualifier of a slice goes in the first bracket"));
+}
+
+export void test_parse_slice_static_and_volatile() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str message = first_error("U8[static :]");
+    test::check_condition(begins(message, "`static` has no meaning for a slice"));
+    test::check_condition(begins(first_error("U8[volatile :]"), "`volatile` has no meaning"));
+}
+
+export void test_parse_lambda_type() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("Lambda(I32 (I32, I32))");
+    test::check_condition(parse_type::starts_type(&p, 0));
+    ast::TypeExpr *type = parse::type(&p);
+    test::check_equal(countof(p.errors), 0);
+    test::check_condition(type->kind == .applied);
+    if (type->kind == .applied) {
+        test::check_equal(countof(type->kind.applied.args), 1);
+        test::check_condition(is_function_arg(type->kind.applied.args[0]));
+    }
+    parse::Parser q = parser_of("Lambda(Bool (I32))");
+    _ = parse::type(&q);
+    test::check_equal(countof(q.errors), 0);
+}
+
+export void test_parse_lambda_alone_is_not_a_type() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("lambda + 1");
+    test::check_condition(!parse_type::starts_type(&p, 0));
+}

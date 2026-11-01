@@ -10,6 +10,8 @@
 //   while (c) s                `do s while (c);`
 //   for (init; cond; step) s   `init` is a declaration (one name; the declaration takes its own `;`), an expression
 //                              or nothing, `step` one expression (no comma operator); `for constexpr (...)`
+//   for (T x : xs) s          a range for: `init` is the variable with no initializer, `range` is `xs`
+//                              and `for (Usize i, T x : xs) s` also declares the index `i` (`index`)
 //   switch (v) { case 1: case 2: ...; case .circle: ...; default: ... }
 //                              consecutive labels join one `SwitchCase`; the statements up to the next label are its
 //                              body
@@ -57,6 +59,8 @@ struct Frame {
     ast::Expr *condition;
     ast::Stmt *init;
     ast::Expr *step;
+    ast::Expr *range; // a range `for (T x : range)`
+    ast::Stmt *index; // and its index, `for (Usize i, T x : range)`
     ast::Stmt *first; // the then branch while the else is read
     Bool is_constexpr;
     Str label;
@@ -437,11 +441,26 @@ static Frame open_for(parse::Parser *p) {
             frame.init = spanned(p, start, new_stmt({.expression = {.value = value}}));
         }
     }
-    if (countof(p->errors) == before) {
+    if (countof(p->errors) == before && frame.init != nullptr && parse::accept(p, lex::comma)) {
+        frame.index = frame.init;
+        frame.init = starts_declaration(p) ? declaration_statement(p) : nullptr;
+        if (frame.init == nullptr)
+            parse::error(p, parse::peek(p).span,
+                         "a range `for (Usize i, T x : xs)` declares the element after the index");
+    }
+    if (countof(p->errors) == before && frame.index != nullptr && parse::at(p, lex::comma)) {
+        Str message = "a range `for` declares an index and an element at most: `for (Usize i, T x : xs)`";
+        parse::error(p, parse::peek(p).span, message);
+    }
+    Bool ranged = countof(p->errors) == before && frame.init != nullptr && parse::accept(p, lex::colon);
+    if (ranged) {
+        frame.range = expression(p);
+        parse::expect(p, lex::right_paren, "`)` after the range");
+    } else if (countof(p->errors) == before) {
         if (!parse::at(p, lex::semicolon)) frame.condition = expression(p);
         parse::expect(p, lex::semicolon, "`;`");
     }
-    if (countof(p->errors) == before) {
+    if (!ranged && countof(p->errors) == before) {
         if (!parse::at(p, lex::right_paren)) frame.step = expression(p);
         parse::expect(p, lex::right_paren, "`)`");
     }
@@ -586,7 +605,9 @@ static ast::Stmt *close_one(parse::Parser *p, Frame frame, ast::Stmt *done) {
                                        .condition = frame.condition,
                                        .step = frame.step,
                                        .body = done,
-                                       .is_constexpr = frame.is_constexpr}});
+                                       .is_constexpr = frame.is_constexpr,
+                                       .range = frame.range,
+                                       .index = frame.index}});
         break;
     case label_body:
         built = new_stmt({.labeled = {.label = frame.label, .body = done}});

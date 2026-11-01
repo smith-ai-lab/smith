@@ -12683,7 +12683,8 @@ int main() {
 module geo::shapes;
 
 export struct Point {
-    F32 x, y;
+    F32 x;
+    F32 y;
 };
 
 export struct Node {
@@ -12747,7 +12748,8 @@ import <stdio.h>;
 // In a module a struct's, union's or enum's tag is also a type name: no typedef beside it.
 
 struct Point {
-    F32 x, y;
+    F32 x;
+    F32 y;
 };
 
 struct Node {

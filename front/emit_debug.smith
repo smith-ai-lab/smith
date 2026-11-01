@@ -1,38 +1,231 @@
-// front::emit_debug: debug info for the emitter (B5, #1112). Stubs with their final signatures: B1's code calls them at
-// these points whether or not `options.debug_info` is set, so they do nothing and succeed until B5 fills them (and
-// then do nothing when `e->debug_builder` is null). Debug info that is absent is never an error.
+// front::emit_debug: debug info for the emitter (B5, #1112), through LLVM's DIBuilder (llvm-c/DebugInfo.h). B1's code
+// calls these at fixed points whether or not `options.debug_info` is set; with it off `e->debug_builder` stays null and
+// every function here does nothing and succeeds. Debug info that is absent is never an error.
+//
+// What it makes: a compile unit (C11 until smith has a DWARF language code of its own, producer "smith", not
+// optimized) and a file from `Module.file`, the module flags `Debug Info Version` and `Dwarf Version` 5, a
+// `DISubprogram` per function (name as written, linkage name the symbol, a subroutine type of basic types, pointers to
+// them, and an unspecified type for what is neither), a `DILocalVariable` with a declare record per parameter and
+// local, and a `DILocation` on every instruction: the line and 1-based byte column of a node's `Span.start` in
+// `options.source`.
+//
+// A name or a literal does not move the location: it keeps that of the statement or operator that holds it, because
+// a continuation (B1's protocol has no hook for it) builds the instruction of `a + b` after `b` was visited, and the
+// operator's location is the better one for it.
 module front::emit_debug;
 
 import front::ast;
 import front::emit_state as state;
+import std::arena;
+import std::mem;
 import <llvm-c/Core.h>;
+import <llvm-c/DebugInfo.h>;
+
+// One metadata reference; a slice of these is the array LLVM takes (a slice of the pointers themselves would be a
+// pointer to pointers).
+struct Meta {
+    c::LLVMMetadataRef ref;
+};
+
+constexpr U32 ate_boolean = 2;
+constexpr U32 ate_signed = 5;
+constexpr U32 ate_unsigned = 7;
+constexpr Usize pointer_depth_max = 8;
+
+// Where the walk is in the source, so that a line is found by scanning on from the last one instead of from the start
+// (the nodes come in source order, nearly): the line table of the module, built by one scan as the walk goes. The
+// walk of one module is on one thread.
+struct Cursor {
+    const char *text;
+    Usize offset;
+    U32 line;
+    Usize line_start;
+};
+
+static Cursor cursor = {};
+static U32 parameters_left = 0;
+static U32 next_parameter = 1;
+
+struct Position {
+    U32 line;
+    U32 column;
+};
+
+static Position position_of(Str source, U32 start) {
+    Usize target = start;
+    if (target > countof(source)) target = countof(source);
+    if (cursor.text != source.data || target < cursor.offset) {
+        cursor = (Cursor){.text = source.data, .line = 1};
+    }
+    for (Usize i = cursor.offset; i < target; i++) {
+        if (source[i] == '\n') {
+            cursor.line += 1;
+            cursor.line_start = i + 1;
+        }
+    }
+    cursor.offset = target;
+    return (Position){.line = cursor.line, .column = (U32)(target - cursor.line_start) + 1};
+}
+
+static c::LLVMMetadataRef location_at(state::Emitter *e, ast::Span span) {
+    Position at = position_of(e->options.source, span.start);
+    return c::LLVMDIBuilderCreateDebugLocation(e->context, at.line, at.column, e->scope, nullptr);
+}
+
+static void add_flag(state::Emitter *e, Str key, U64 value) {
+    c::LLVMValueRef number = c::LLVMConstInt(c::LLVMInt32TypeInContext(e->context), value, 0);
+    c::LLVMAddModuleFlag(e->module, c::LLVMModuleFlagBehaviorWarning, key.data, countof(key),
+                         c::LLVMValueAsMetadata(number));
+}
 
 // After the module is created and its target set, before any function is declared.
-export state::Status begin_module(state::Emitter *_) {
+export state::Status begin_module(state::Emitter *e) {
+    cursor = (Cursor){};
+    if (!e->options.debug_info) return state::success();
+    e->debug_builder = c::LLVMCreateDIBuilder(e->module);
+    Str path = e->tree->file;
+    Usize split = 0;
+    for (Usize i = 0; i < countof(path); i++) {
+        if (path[i] == '/') split = i + 1;
+    }
+    Str folder = path[0:split];
+    Str file_name = path[split:countof(path)];
+    e->file =
+        c::LLVMDIBuilderCreateFile(e->debug_builder, file_name.data, countof(file_name), folder.data, countof(folder));
+    e->compile_unit =
+        c::LLVMDIBuilderCreateCompileUnit(e->debug_builder, c::LLVMDWARFSourceLanguageC11, e->file, "smith", 5, 0, "",
+                                          0, 0, "", 0, c::LLVMDWARFEmissionFull, 0, 0, 0, "", 0, "", 0);
+    add_flag(e, "Debug Info Version", c::LLVMDebugMetadataVersion());
+    add_flag(e, "Dwarf Version", 5);
+    e->scope = e->compile_unit;
     return state::success();
 }
 
+// The pointer size in bits, from the data layout.
+static U64 pointer_bits(state::Emitter *e) {
+    if (e->target_data == nullptr) return 64;
+    return (U64)c::LLVMPointerSize(e->target_data) * 8;
+}
+
+static c::LLVMMetadataRef basic_type(state::Emitter *e, state::Ty ty) {
+    if (ty.kind == .integer) {
+        U32 encoding = ate_unsigned;
+        if (ty.is_signed) encoding = ate_signed;
+        return c::LLVMDIBuilderCreateBasicType(e->debug_builder, ty.name.data, countof(ty.name), ty.bits, encoding, 0);
+    }
+    if (ty.kind == .boolean) {
+        return c::LLVMDIBuilderCreateBasicType(e->debug_builder, ty.name.data, countof(ty.name), 8, ate_boolean, 0);
+    }
+    return c::LLVMDIBuilderCreateUnspecifiedType(e->debug_builder, ty.name.data, countof(ty.name));
+}
+
+// The DI type of `ty`: basic types, and pointers to them (a chain of pointers is walked, not recursed into).
+static c::LLVMMetadataRef type_of(state::Emitter *e, state::Ty ty) {
+    state::Ty chain[8] = {};
+    Usize depth = 0;
+    state::Ty base = ty;
+    while (base.kind == .pointer && base.element != nullptr && depth < pointer_depth_max) {
+        chain[depth] = base;
+        depth += 1;
+        base = *base.element;
+    }
+    c::LLVMMetadataRef result = nullptr;
+    if (base.kind != .pointer) {
+        result = basic_type(e, base);
+    }
+    for (Usize i = depth; i > 0; i--) {
+        result = c::LLVMDIBuilderCreatePointerType(e->debug_builder, result, pointer_bits(e), 0,
+                                                   chain[i - 1].address_space, "", 0);
+    }
+    if (depth == 0 && base.kind == .pointer) {
+        result =
+            c::LLVMDIBuilderCreatePointerType(e->debug_builder, nullptr, pointer_bits(e), 0, base.address_space, "", 0);
+    }
+    return result;
+}
+
+static Bool found_function(state::Emitter *e, state::FunctionInfo *info) {
+    for (Usize i = 0; i < e->function_count; i++) {
+        if (e->functions[i].llvm == e->function) {
+            *info = e->functions[i];
+            return true;
+        }
+    }
+    return false;
+}
+
 // At the start of a function's body: `e->function` is the LLVM function, `d` its declaration.
-export state::Status begin_function(state::Emitter *_, const ast::Decl *_) {
+export state::Status begin_function(state::Emitter *e, const ast::Decl *d) {
+    if (e->debug_builder == nullptr) return state::success();
+    state::FunctionInfo info = {};
+    if (d->kind != .function || !found_function(e, &info)) return state::fail("not a function", d->span);
+    Usize count = countof(info.params);
+    Meta types[:] = mem::alloc_slice(Meta, count + 1);
+    types[0].ref = nullptr; // a function that returns nothing has no result type
+    if (!state::same_text(info.result.name, "Void")) types[0].ref = type_of(e, info.result);
+    for (Usize i = 0; i < count; i++)
+        types[i + 1].ref = type_of(e, info.params[i]);
+    c::LLVMMetadataRef subroutine = c::LLVMDIBuilderCreateSubroutineType(
+        e->debug_builder, e->file, (c::LLVMMetadataRef *)(Usize)types.data, (U32)count + 1, 0);
+    mem::free((void *)(Usize)types.data);
+    Position at = position_of(e->options.source, d->span.start);
+    c::LLVMMetadataRef subprogram = c::LLVMDIBuilderCreateFunction(
+        e->debug_builder, e->file, info.name.data, countof(info.name), info.symbol.data, countof(info.symbol), e->file,
+        at.line, subroutine, !d->exported, 1, at.line, 0, 0);
+    c::LLVMSetSubprogram(e->function, subprogram);
+    e->scope = subprogram;
+    parameters_left = (U32)count;
+    next_parameter = 1;
+    c::LLVMMetadataRef start = location_at(e, d->span);
+    c::LLVMSetCurrentDebugLocation2(e->builder, start);
+    c::LLVMSetCurrentDebugLocation2(e->alloca_builder, start);
     return state::success();
 }
 
 // Before a statement is emitted: set the builder's current location.
-export state::Status stmt_location(state::Emitter *_, const ast::Stmt *_) {
+export state::Status stmt_location(state::Emitter *e, const ast::Stmt *s) {
+    if (e->debug_builder == nullptr) return state::success();
+    c::LLVMSetCurrentDebugLocation2(e->builder, location_at(e, s->span));
     return state::success();
 }
 
 // Before an expression is evaluated.
-export state::Status expr_location(state::Emitter *_, const ast::Expr *_) {
+export state::Status expr_location(state::Emitter *e, const ast::Expr *x) {
+    if (e->debug_builder == nullptr) return state::success();
+    if (x->kind == .name || x->kind == .integer || x->kind == .boolean || x->kind == .null_pointer)
+        return state::success();
+    c::LLVMSetCurrentDebugLocation2(e->builder, location_at(e, x->span));
     return state::success();
 }
 
 // A parameter or local was given its slot: `address` is the alloca.
-export state::Status declare_local(state::Emitter *_, Str _, state::Ty _, c::LLVMValueRef _, ast::Span _) {
+export state::Status declare_local(state::Emitter *e, Str name, state::Ty ty, c::LLVMValueRef address, ast::Span span) {
+    if (e->debug_builder == nullptr) return state::success();
+    Position at = position_of(e->options.source, span.start);
+    c::LLVMMetadataRef type = type_of(e, ty);
+    c::LLVMMetadataRef variable = nullptr;
+    if (parameters_left > 0) {
+        variable = c::LLVMDIBuilderCreateParameterVariable(e->debug_builder, e->scope, name.data, countof(name),
+                                                           next_parameter, e->file, at.line, type, 1, 0);
+        parameters_left -= 1;
+        next_parameter += 1;
+    } else {
+        variable = c::LLVMDIBuilderCreateAutoVariable(e->debug_builder, e->scope, name.data, countof(name), e->file,
+                                                      at.line, type, 1, 0, 0);
+    }
+    c::LLVMMetadataRef expression = c::LLVMDIBuilderCreateExpression(e->debug_builder, nullptr, 0);
+    c::LLVMMetadataRef place = location_at(e, span);
+    // The slot is in the entry block, whose last instruction is the branch to the body: the record goes before it.
+    c::LLVMValueRef end = c::LLVMGetBasicBlockTerminator(e->entry_block);
+    c::LLVMDIBuilderInsertDeclareRecordBefore(e->debug_builder, address, variable, expression, place, end);
     return state::success();
 }
 
 // After the last function, before verification.
-export state::Status finish(state::Emitter *_) {
+export state::Status finish(state::Emitter *e) {
+    if (e->debug_builder == nullptr) return state::success();
+    c::LLVMDIBuilderFinalize(e->debug_builder);
+    c::LLVMDisposeDIBuilder(e->debug_builder);
+    e->debug_builder = nullptr;
     return state::success();
 }

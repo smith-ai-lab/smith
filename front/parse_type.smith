@@ -9,7 +9,7 @@
 //             C's keyword types, as one named type spelled as written (`unsigned long`); `struct X`, `union X`,
 //             `enum X`; `typeof(e)` or `typeof(T)`
 //   suffixes  `*` (a pointer; qualifiers after it belong to the pointer), `[:]` (a slice), `[N]` (an array)
-//   applied   `Option(T)`, `Result(T, E)`, `Fn(F)`, a user's type function with type or value arguments
+//   applied   `Option(T)`, `Result(T, E)`, `Fn(F)`, `Lambda(F)`, a user's type function with type or value arguments
 //   function  `R (P1, P2)`, `R (P1, ...)` and `R ()`: only as the argument of `Fn(...)`, where a name followed by a
 //             parenthesis group is the result of a function type (`Fn(Bool (I32, I32))`), unless a second group
 //             follows it, which makes the name an applied type (`Fn(Option(I32) (I32))`)
@@ -93,10 +93,19 @@ export Bool path_is_type(const parse::Parser *p, Usize offset) {
     return !text::is(first, "c") || c_path_is_type();
 }
 
+// Whether the `Lambda(` of a lambda parameter's type is `offset` tokens ahead. `lambda` is a name, not a
+// keyword, so the case rule does not make it a type; only the parenthesis after it does (`Lambda(I32 (I32)) f`).
+static Bool is_lambda_type(const parse::Parser *p, Usize offset) {
+    lex::Token token = parse::peek_at(p, offset);
+    if (token.kind != lex::name || parse::peek_at(p, offset + 1).kind != lex::left_paren) return false;
+    return text::is(parse::text(p, token), "Lambda");
+}
+
 // Whether a type starts `offset` tokens ahead: a qualifier, a keyword type, `auto`, `struct`, `union`, `enum`,
 // `typeof`, a `type_name` or a path that ends in one.
 export Bool starts_type(const parse::Parser *p, Usize offset) {
     lex::TokenKind kind = parse::peek_at(p, offset).kind;
+    if (is_lambda_type(p, offset)) return true;
     if (is_qualifier(kind) || is_keyword_type(kind)) return true;
     switch (kind) {
     case lex::kw_auto:
@@ -256,29 +265,81 @@ static void function_pointer(parse::Parser *p) {
     }
 }
 
-// One bracket suffix: `[:]` or `[N]`.
+// One bracket suffix: `[:]`, `[const restrict :]` or `[N]`.
 struct Bracket {
     Bool is_slice;
+    ast::Qualifiers qualifiers;
     ast::Expr *count;
 };
 
-// Whether `[:]` is at the position.
-static Bool at_slice(const parse::Parser *p) {
-    return parse::at(p, lex::left_bracket) && parse::peek_at(p, 1).kind == lex::colon &&
-           parse::peek_at(p, 2).kind == lex::right_bracket;
+// Where the qualifiers of a slice bracket end: `[` is at the position, and `[:]`, `[const :]` and `[const restrict :]`
+// answer the offset of the `:`; any other bracket answers `no_path`.
+static Usize slice_colon(const parse::Parser *p) {
+    if (!parse::at(p, lex::left_bracket)) return no_path;
+    Usize at = 1;
+    while (is_qualifier(parse::peek_at(p, at).kind)) {
+        at += 1;
+    }
+    if (parse::peek_at(p, at).kind != lex::colon || parse::peek_at(p, at + 1).kind != lex::right_bracket)
+        return no_path;
+    return at;
+}
+
+// Whether a slice bracket is at the position: `[:]`, or with the slice's own qualifiers `[const :]`, `[restrict :]`,
+// `[const restrict :]` (after C99's `int a[const 10]`). A declaration reads the brackets after a name with this and
+// `take_slice`.
+export Bool at_slice(const parse::Parser *p) {
+    return slice_colon(p) != no_path;
+}
+
+// Whether `[static :]` or `[volatile :]` is at the position: a slice has no meaning for them.
+export Bool at_bad_slice_qualifier(const parse::Parser *p) {
+    if (!parse::at(p, lex::left_bracket)) return false;
+    lex::TokenKind first = parse::peek_at(p, 1).kind;
+    if (first != lex::kw_static && first != lex::kw_volatile) return false;
+    return parse::peek_at(p, 2).kind == lex::colon && parse::peek_at(p, 3).kind == lex::right_bracket;
+}
+
+// Reads the slice bracket at the position (`at_slice` is true) and gives the slice's own qualifiers in `q`.
+export void take_slice(parse::Parser *p, ast::Qualifiers *q) {
+    parse::advance(p);
+    take_qualifiers(p, q);
+    parse::advance(p);
+    parse::advance(p);
+}
+
+// The error of `[static :]` and `[volatile :]`, and the recovery past the bracket.
+export void bad_slice_qualifier(parse::Parser *p) {
+    lex::Token token = parse::peek_at(p, 1);
+    char message[:] = format::push("`", parse::text(p, token),
+                                   "` has no meaning for a slice: write `const` or `restrict` in the bracket, and "
+                                   "`volatile` on the element (`volatile U8 xs[:]`)");
+    parse::error(p, token.span, message);
+    for (Usize i = 0; i < 4; i += 1) {
+        parse::advance(p);
+    }
 }
 
 // A run of bracket suffixes, `T[:][3]`, and the type they make. As in C and in the AST (`T[:][2]` is a slice of
-// arrays), the first bracket is the outermost: `[:][3]` is a slice of arrays of 3.
+// arrays), the first bracket is the outermost: `[:][3]` is a slice of arrays of 3. Only the first carries the slice's
+// qualifiers (`T[restrict :]`); they are the `qualifiers` of the slice node, as a pointer's are.
 static ast::TypeExpr *brackets(parse::Parser *p, U32 start, ast::TypeExpr *element) {
     Bracket run[:] = {};
-    while (at_slice(p) || parse::at(p, lex::left_bracket)) {
+    while (at_slice(p) || at_bad_slice_qualifier(p) || parse::at(p, lex::left_bracket)) {
         Bracket bracket = {};
-        if (at_slice(p)) {
-            parse::advance(p);
-            parse::advance(p);
-            parse::advance(p);
+        U32 open = parse::peek(p).span.start;
+        if (at_bad_slice_qualifier(p)) {
+            bad_slice_qualifier(p);
             bracket.is_slice = true;
+        } else if (at_slice(p)) {
+            take_slice(p, &bracket.qualifiers);
+            bracket.is_slice = true;
+            Bool carries = bracket.qualifiers.is_const || bracket.qualifiers.is_restrict;
+            if (carries && countof(run) > 0) {
+                Str message = "a qualifier of a slice goes in the first bracket: the rows of `F32 m[:][:]` are views "
+                              "with no pointer of their own, so write `F32 m[const :][:]`";
+                parse::error(p, parse::span_from(p, open), message);
+            }
         } else {
             parse::advance(p);
             bracket.count = parse::expression(p);
@@ -288,12 +349,12 @@ static ast::TypeExpr *brackets(parse::Parser *p, U32 start, ast::TypeExpr *eleme
         run[countof(run) - 1] = bracket;
     }
     ast::TypeExpr *result = element;
-    ast::Qualifiers none = {};
     for (Usize i = countof(run); i > 0; i -= 1) {
         ast::Span span = parse::span_from(p, start);
         ast::TypeKind slice_kind = {.slice = {.element = result}};
         ast::TypeKind array_kind = {.array = {.element = result, .count = run[i - 1].count}};
-        ast::TypeExpr value = {.span = span, .qualifiers = none, .kind = run[i - 1].is_slice ? slice_kind : array_kind};
+        ast::TypeKind kind = run[i - 1].is_slice ? slice_kind : array_kind;
+        ast::TypeExpr value = {.span = span, .qualifiers = run[i - 1].qualifiers, .kind = kind};
         result = ast::new_type(value);
     }
     return result;
@@ -393,7 +454,8 @@ static ast::TypeArg argument(parse::Parser *p, Bool is_function) {
 // `Name(A, B)`: the path was read, and `(` is at the position.
 static ast::TypeExpr *applied(parse::Parser *p, U32 start, ast::Qualifiers q, ast::Path name) {
     parse::advance(p);
-    Bool is_function = countof(name.segments) == 1 && text::is(name.segments[0].text, "Fn");
+    Bool is_function = countof(name.segments) == 1 &&
+                       (text::is(name.segments[0].text, "Fn") || text::is(name.segments[0].text, "Lambda"));
     ast::TypeArg args[:] = {};
     while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
         args = mem::realloc(args, countof(args) + 1);
@@ -415,7 +477,8 @@ static ast::TypeExpr *read(parse::Parser *p) {
     if (call_shape && base->kind == .named) {
         ast::Path name = base->kind.named.path;
         Str last = name.segments[countof(name.segments) - 1].text;
-        if (countof(last) > 0 && last[0] >= 'A' && last[0] <= 'Z') base = applied(p, start, q, name);
+        Bool is_lambda = countof(name.segments) == 1 && text::is(last, "Lambda");
+        if (countof(last) > 0 && ((last[0] >= 'A' && last[0] <= 'Z') || is_lambda)) base = applied(p, start, q, name);
     }
     return suffixes(p, start, base);
 }

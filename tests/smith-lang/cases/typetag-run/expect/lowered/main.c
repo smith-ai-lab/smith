@@ -1,7 +1,8 @@
 #include <stdio.h>
 
 struct main_Point {
-float x, y;
+float x;
+float y;
 };
 typedef struct main_Point main_Point;
 struct main_Node {
