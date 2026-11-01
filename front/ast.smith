@@ -526,7 +526,7 @@ typedef Enumerator EnumeratorList[:];
 // (`ast::Param params[2] = {a, b};`) and the node keeps its own copy.
 static ParamList copy_params(Param list[:]) {
     ParamList copy = mem::alloc_slice(Param, countof(list));
-    for (usize i = 0; i < countof(list); i++)
+    for (Usize i = 0; i < countof(list); i++)
         copy[i] = list[i];
     return copy;
 }
@@ -534,7 +534,7 @@ static ParamList copy_params(Param list[:]) {
 static ExprRefList copy_exprs(ExprRef list[:]) {
     // Not mem::alloc_slice: its instance for a pointer element draws the lint of a multilevel conversion.
     ExprRef *block = (ExprRef *)mem::alloc_array_raw(sizeof(ExprRef), countof(list), alignof(ExprRef));
-    for (usize i = 0; i < countof(list); i++)
+    for (Usize i = 0; i < countof(list); i++)
         block[i] = list[i];
     ExprRefList copy = block[0:countof(list)];
     return copy;
@@ -543,7 +543,7 @@ static ExprRefList copy_exprs(ExprRef list[:]) {
 static StmtRefList copy_stmts(StmtRef list[:]) {
     // Not mem::alloc_slice: its instance for a pointer element draws the lint of a multilevel conversion.
     StmtRef *block = (StmtRef *)mem::alloc_array_raw(sizeof(StmtRef), countof(list), alignof(StmtRef));
-    for (usize i = 0; i < countof(list); i++)
+    for (Usize i = 0; i < countof(list); i++)
         block[i] = list[i];
     StmtRefList copy = block[0:countof(list)];
     return copy;
@@ -552,7 +552,7 @@ static StmtRefList copy_stmts(StmtRef list[:]) {
 static DeclRefList copy_decls(DeclRef list[:]) {
     // Not mem::alloc_slice: its instance for a pointer element draws the lint of a multilevel conversion.
     DeclRef *block = (DeclRef *)mem::alloc_array_raw(sizeof(DeclRef), countof(list), alignof(DeclRef));
-    for (usize i = 0; i < countof(list); i++)
+    for (Usize i = 0; i < countof(list); i++)
         block[i] = list[i];
     DeclRefList copy = block[0:countof(list)];
     return copy;
@@ -560,27 +560,27 @@ static DeclRefList copy_decls(DeclRef list[:]) {
 
 static FieldDeclList copy_fields(FieldDecl list[:]) {
     FieldDeclList copy = mem::alloc_slice(FieldDecl, countof(list));
-    for (usize i = 0; i < countof(list); i++)
+    for (Usize i = 0; i < countof(list); i++)
         copy[i] = list[i];
     return copy;
 }
 
 static EnumeratorList copy_enumerators(Enumerator list[:]) {
     EnumeratorList copy = mem::alloc_slice(Enumerator, countof(list));
-    for (usize i = 0; i < countof(list); i++)
+    for (Usize i = 0; i < countof(list); i++)
         copy[i] = list[i];
     return copy;
 }
 
 // `a::b::c` as a path of three segments (the text is not copied).
 export Path path(Str text) {
-    usize count = 1;
-    for (usize i = 0; i + 1 < countof(text); i++)
+    Usize count = 1;
+    for (Usize i = 0; i + 1 < countof(text); i++)
         if (text[i] == ':' && text[i + 1] == ':') count += 1;
     Path result = {.segments = mem::alloc_slice(Identifier, count)};
-    usize segment = 0;
-    usize begin = 0;
-    for (usize i = 0; i + 1 < countof(text); i++) {
+    Usize segment = 0;
+    Usize begin = 0;
+    for (Usize i = 0; i + 1 < countof(text); i++) {
         if (text[i] == ':' && text[i + 1] == ':') {
             result.segments[segment] = (Identifier){.text = text[begin:i]};
             segment += 1;
@@ -704,26 +704,26 @@ export Expr *string(Str bytes) {
 // A growing text in the current allocator.
 struct Output {
     char data[:];
-    usize length;
+    Usize length;
 };
 
-static void reserve(Output *text, usize more) {
-    usize needed = text->length + more;
+static void reserve(Output *text, Usize more) {
+    Usize needed = text->length + more;
     if (needed <= countof(text->data)) return;
-    usize capacity = countof(text->data) * 2;
+    Usize capacity = countof(text->data) * 2;
     if (capacity < needed) capacity = needed;
     if (capacity < 256) {
         capacity = 256;
     }
     char grown[:] = mem::alloc_slice(char, capacity);
-    for (usize i = 0; i < text->length; i++)
+    for (Usize i = 0; i < text->length; i++)
         grown[i] = text->data[i];
     text->data = grown;
 }
 
 static void put(Output *text, Str piece) {
     reserve(text, countof(piece));
-    for (usize i = 0; i < countof(piece); i++)
+    for (Usize i = 0; i < countof(piece); i++)
         text->data[text->length + i] = piece[i];
     text->length += countof(piece);
 }
@@ -741,13 +741,13 @@ static void put_char(Output *text, char c) {
 
 static void put_u64(Output *text, U64 number) {
     char digits[40];
-    usize written = format::to(digits, sizeof digits, number).length;
+    Usize written = format::to(digits, sizeof digits, number).length;
     put(text, digits[0:written]);
 }
 
 static void put_f64(Output *text, F64 number) {
     char digits[40];
-    usize written = format::to(digits, sizeof digits, number).length;
+    Usize written = format::to(digits, sizeof digits, number).length;
     put(text, digits[0:written]);
 }
 
@@ -757,7 +757,7 @@ static void put_word(Output *text, Str word) {
 }
 
 static void put_path(Output *text, Path path) {
-    for (usize i = 0; i < countof(path.segments); i++) {
+    for (Usize i = 0; i < countof(path.segments); i++) {
         if (i > 0) put(text, "::");
         put(text, path.segments[i].text);
     }
@@ -767,7 +767,7 @@ static void put_path(Output *text, Path path) {
 static void put_quoted(Output *text, Str bytes) {
     constexpr Str hex = "0123456789abcdef";
     put_char(text, '"');
-    for (usize i = 0; i < countof(bytes); i++) {
+    for (Usize i = 0; i < countof(bytes); i++) {
         char c = bytes[i];
         if (c == '\n')
             put(text, "\\n");
@@ -825,25 +825,25 @@ typedef enum {
 // each other).
 struct Item {
     Node node;
-    usize first;
-    usize count;
-    usize size;  // the nodes under it, itself included
+    Usize first;
+    Usize count;
+    Usize size;  // the nodes under it, itself included
     Bool nested; // a statement, declaration or case is under it
 };
 
 struct Items {
     Item data[:];
-    usize length;
+    Usize length;
 };
 
 static void add(Items *items, Node node) {
     if (items->length == countof(items->data)) {
-        usize capacity = countof(items->data) * 2;
+        Usize capacity = countof(items->data) * 2;
         if (capacity < 64) {
             capacity = 64;
         }
         Item grown[:] = mem::alloc_slice(Item, capacity);
-        for (usize i = 0; i < items->length; i++)
+        for (Usize i = 0; i < items->length; i++)
             grown[i] = items->data[i];
         items->data = grown;
     }
@@ -874,17 +874,17 @@ static void add_type(Items *items, TypeExpr *type, Bool placed) {
 }
 
 static void add_attributes(Items *items, Attribute attributes[:]) {
-    for (usize i = 0; i < countof(attributes); i++)
+    for (Usize i = 0; i < countof(attributes); i++)
         add(items, {.attribute = &attributes[i]});
 }
 
 static void add_exprs(Items *items, ExprRef list[:]) {
-    for (usize i = 0; i < countof(list); i++)
+    for (Usize i = 0; i < countof(list); i++)
         add(items, {.expr = list[i]});
 }
 
 static void add_stmts(Items *items, StmtRef list[:]) {
-    for (usize i = 0; i < countof(list); i++)
+    for (Usize i = 0; i < countof(list); i++)
         add(items, {.stmt = list[i]});
 }
 
@@ -902,12 +902,12 @@ static void add_group(Items *items, Text label, DeclRef decls[:]) {
 }
 
 static void add_decls(Items *items, DeclRef list[:]) {
-    for (usize i = 0; i < countof(list); i++)
+    for (Usize i = 0; i < countof(list); i++)
         add(items, {.decl = list[i]});
 }
 
 static void add_params(Items *items, Param params[:]) {
-    for (usize i = 0; i < countof(params); i++)
+    for (Usize i = 0; i < countof(params); i++)
         add(items, {.param = &params[i]});
 }
 
@@ -968,7 +968,7 @@ static void expr_children(Items *items, Expr *e) {
         break;
     case .compound:
         add_type(items, e->kind.compound.type, true);
-        for (usize i = 0; i < countof(e->kind.compound.items); i++)
+        for (Usize i = 0; i < countof(e->kind.compound.items); i++)
             add(items, {.initializer = &e->kind.compound.items[i]});
         break;
     case .lambda:
@@ -1015,7 +1015,7 @@ static void stmt_children(Items *items, Stmt *s) {
         break;
     case .switch_stmt:
         add_expr(items, s->kind.switch_stmt.value, false);
-        for (usize i = 0; i < countof(s->kind.switch_stmt.cases); i++)
+        for (Usize i = 0; i < countof(s->kind.switch_stmt.cases); i++)
             add(items, {.switch_case = &s->kind.switch_stmt.cases[i]});
         break;
     case .break_stmt:
@@ -1052,12 +1052,12 @@ static void decl_children(Items *items, Decl *d) {
         add_stmt(items, d->kind.function.body, false);
         break;
     case .record:
-        for (usize i = 0; i < countof(d->kind.record.fields); i++)
+        for (Usize i = 0; i < countof(d->kind.record.fields); i++)
             add(items, {.field = &d->kind.record.fields[i]});
         break;
     case .enumeration:
         add_type(items, d->kind.enumeration.underlying, false);
-        for (usize i = 0; i < countof(d->kind.enumeration.items); i++)
+        for (Usize i = 0; i < countof(d->kind.enumeration.items); i++)
             add(items, {.enumerator = &d->kind.enumeration.items[i]});
         break;
     case .type_alias:
@@ -1094,12 +1094,12 @@ static void type_children(Items *items, TypeExpr *t) {
         add_type(items, t->kind.slice.element, false);
         break;
     case .function:
-        for (usize i = 0; i < countof(t->kind.function.params); i++)
+        for (Usize i = 0; i < countof(t->kind.function.params); i++)
             add_type(items, t->kind.function.params[i], false);
         add_result(items, t->kind.function.result);
         break;
     case .applied:
-        for (usize i = 0; i < countof(t->kind.applied.args); i++)
+        for (Usize i = 0; i < countof(t->kind.applied.args); i++)
             add(items, {.type_arg = &t->kind.applied.args[i]});
         break;
     case .type_of:
@@ -1108,7 +1108,7 @@ static void type_children(Items *items, TypeExpr *t) {
     case .unsupported_c:
         break;
     case .record:
-        for (usize i = 0; i < countof(t->kind.record.fields); i++)
+        for (Usize i = 0; i < countof(t->kind.record.fields); i++)
             add(items, {.field = &t->kind.record.fields[i]});
         break;
     }
@@ -1162,7 +1162,7 @@ static void other_children(Items *items, Node node) {
         add_exprs(items, node.attribute->args);
         break;
     case .initializer:
-        for (usize i = 0; i < countof(node.initializer->designators); i++)
+        for (Usize i = 0; i < countof(node.initializer->designators); i++)
             add(items, {.designator = &node.initializer->designators[i]});
         add_expr(items, node.initializer->value, false);
         break;
@@ -1374,7 +1374,7 @@ static void expr_head(Output *text, Expr *e) {
         break;
     case .lambda:
         put(text, "lambda");
-        for (usize i = 0; i < countof(e->kind.lambda.captures); i++) {
+        for (Usize i = 0; i < countof(e->kind.lambda.captures); i++) {
             put_word(text, e->kind.lambda.captures[i].text);
         }
         break;
@@ -1598,20 +1598,20 @@ static void other_head(Output *text, Node node) {
 
 // One entry of the walk's stack: a node still to write, or the closing parenthesis of one already begun.
 struct Step {
-    usize item;
+    Usize item;
     U32 depth;
     Bool close;
     Bool beside; // written on the line of its parent
 };
 
-static void push_step(Step stack[:], usize *top, Step step) {
+static void push_step(Step stack[:], Usize *top, Step step) {
     stack[*top] = step;
     *top += 1;
 }
 
 // Whether a node and everything under it is written on one line: no statement, declaration or case under it, and not
 // many nodes.
-constexpr usize flat_size_max = 16;
+constexpr Usize flat_size_max = 16;
 
 static Bool is_flat(Item item) {
     if (item.node == .decl && (item.node.decl->kind == .record || item.node.decl->kind == .enumeration)) return false;
@@ -1646,11 +1646,11 @@ static Bool breaks_line(Node node) {
 // Fills the size and nesting of each node: the children of a node come after it, so a walk from the end sees them
 // first.
 static void measure(Items *items) {
-    for (usize at = items->length; at > 0; at--) {
+    for (Usize at = items->length; at > 0; at--) {
         Item item = items->data[at - 1];
-        usize size = 1;
+        Usize size = 1;
         Bool nested = false;
-        for (usize i = 0; i < item.count; i++) {
+        for (Usize i = 0; i < item.count; i++) {
             Item child = items->data[item.first + i];
             size += child.size;
             if (child.nested || breaks_line(child.node)) nested = true;
@@ -1661,9 +1661,9 @@ static void measure(Items *items) {
 }
 
 // Writes the nodes of `items`, the root first, with an explicit stack.
-static void render(Output *text, Item list[:], usize length) {
+static void render(Output *text, Item list[:], Usize length) {
     Step stack[:] = mem::alloc_slice(Step, 2 * length + 2);
-    usize top = 0;
+    Usize top = 0;
     push_step(stack, &top, (Step){.item = 0});
     while (top > 0) {
         top -= 1;
@@ -1684,7 +1684,7 @@ static void render(Output *text, Item list[:], usize length) {
         Item item = list[step.item];
         Bool flat = is_flat(item);
         push_step(stack, &top, (Step){.close = true});
-        for (usize i = item.count; i > 0; i--)
+        for (Usize i = item.count; i > 0; i--)
             push_step(stack, &top, (Step){.item = item.first + i - 1, .depth = step.depth + 1, .beside = flat});
     }
 }
@@ -1693,8 +1693,8 @@ static void render(Output *text, Item list[:], usize length) {
 export Str dump(const Module *m) {
     Items items = {};
     add(&items, {.module = m});
-    for (usize at = 0; at < items.length; at++) {
-        usize before = items.length;
+    for (Usize at = 0; at < items.length; at++) {
+        Usize before = items.length;
         other_children(&items, items.data[at].node);
         items.data[at].first = before;
         items.data[at].count = items.length - before;

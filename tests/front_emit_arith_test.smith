@@ -135,11 +135,11 @@ static emit_jit::Jit start_jit() {
 }
 
 // The module as a JIT symbol: emit, hand over to the JIT, look up `symbol`.
-static usize jit_function(emit_jit::Jit *host, const ast::Module *m, Str symbol) {
+static Usize jit_function(emit_jit::Jit *host, const ast::Module *m, Str symbol) {
     c::LLVMContextRef context = c::LLVMContextCreate();
     emit::ModuleResult emitted = emit::module(context, m, options_for(host->target));
     test::check_equal(emitted == .ok, true);
-    usize address = 0;
+    Usize address = 0;
     if (emitted == .ok) {
         emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
         test::check_equal(added == .ok, true);
@@ -182,19 +182,19 @@ static emit::Error failure_of(const ast::Module *m) {
 
 // `text` without the lines that name the target (the triple and the data layout differ between hosts).
 static Str without_target_lines(const char *text) {
-    usize length = c::strlen(text);
+    Usize length = c::strlen(text);
     char kept[:] = mem::alloc_slice(char, length + 1);
-    usize used = 0;
-    usize line = 0;
+    Usize used = 0;
+    Usize line = 0;
     while (line < length) {
-        usize end = line;
+        Usize end = line;
         while (end < length && text[end] != '\n')
             end += 1;
         if (end < length) end += 1;
         Bool is_target =
             c::strncmp(text + line, "target triple", 13) == 0 || c::strncmp(text + line, "target datalayout", 17) == 0;
         if (!is_target) {
-            for (usize i = line; i < end; i++) {
+            for (Usize i = line; i < end; i++) {
                 kept[used] = text[i];
                 used += 1;
             }

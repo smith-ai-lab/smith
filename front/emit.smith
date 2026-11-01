@@ -220,7 +220,7 @@ static state::Status block_statement(state::Emitter *e, const ast::Stmt *s) {
     }
     state::begin_scope(e);
     state::push_then(e, (state::Work){.then = block_finish, .span = s->span});
-    for (usize i = countof(s->kind.block.items); i > 0; i--)
+    for (Usize i = countof(s->kind.block.items); i > 0; i--)
         state::push_statement(e, s->kind.block.items[i - 1]);
     return state::success();
 }
@@ -251,7 +251,7 @@ static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::
     if (d->kind.variable.init == nullptr) return state::fail("a variable needs an initializer", span);
     if (d->kind.variable.is_constexpr || d->kind.variable.is_thread_local || d->is_static || d->is_extern)
         return state::not_emitted("this kind of variable", span);
-    for (usize i = e->scope_marks[e->scope_count - 1]; i < e->local_count; i++) {
+    for (Usize i = e->scope_marks[e->scope_count - 1]; i < e->local_count; i++) {
         if (state::same_text(e->locals[i].name, d->kind.variable.name))
             return state::failf(span, d->kind.variable.name, " is declared twice in one scope");
     }
@@ -359,7 +359,7 @@ static state::Status run(state::Emitter *e) {
 // `front::test` and `add` as `front::test::add`.
 static Str symbol_of(const ast::Module *m, Str name) {
     Str symbol = state::msg(format::push(name));
-    for (usize i = countof(m->name.segments); i > 0; i--) {
+    for (Usize i = countof(m->name.segments); i > 0; i--) {
         Str longer = state::msg(format::push(m->name.segments[i - 1].text, "::", symbol));
         state::free_text(symbol);
         symbol = longer;
@@ -374,14 +374,14 @@ static state::Status check_function(const ast::Decl *d) {
     Bool variadic = d->kind.function.variadic;
     Bool has_result = d->kind.function.result != nullptr;
     ast::Param params[:] = d->kind.function.params;
-    for (usize i = 0; i < countof(d->attributes); i++) {
+    for (Usize i = 0; i < countof(d->attributes); i++) {
         ast::Path name = d->attributes[i].name;
         if (state::same_text(name.segments[countof(name.segments) - 1].text, "c_name"))
             return state::not_emitted("c_name", d->attributes[i].span);
     }
     if (variadic) return state::not_emitted("variadic function", d->span);
     if (!has_result) return state::not_emitted("function without a result", d->span);
-    for (usize i = 0; i < countof(params); i++) {
+    for (Usize i = 0; i < countof(params); i++) {
         if (params[i].is_constexpr || params[i].is_rest)
             return state::not_emitted("constexpr or rest parameter", params[i].span);
     }
@@ -390,7 +390,7 @@ static state::Status check_function(const ast::Decl *d) {
 
 static void add_function(state::Emitter *e, state::FunctionInfo info) {
     if (e->function_count == countof(e->functions)) {
-        usize capacity = countof(e->functions) * 2;
+        Usize capacity = countof(e->functions) * 2;
         if (capacity < 16) capacity = 16;
         e->functions = mem::realloc(e->functions, capacity);
     }
@@ -407,14 +407,14 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
     ast::Param source_params[:] = d->kind.function.params;
     const ast::TypeExpr *result_type = d->kind.function.result;
     try check_function(d);
-    for (usize i = 0; i < e->function_count; i++) {
+    for (Usize i = 0; i < e->function_count; i++) {
         if (state::same_text(e->functions[i].name, name)) return state::failf(d->span, name, " is declared twice");
     }
-    usize count = countof(source_params);
+    Usize count = countof(source_params);
     state::Ty params[:] = mem::alloc_slice(state::Ty, count + 1);
     if (count > 64) return state::not_emitted("more than 64 parameters", d->span);
     c::LLVMTypeRef types[64];
-    for (usize i = 0; i < count; i++) {
+    for (Usize i = 0; i < count; i++) {
         state::TyResult made = type_of(e, source_params[i].type);
         if (made == .error) {
             return {.error = made.error};
@@ -469,7 +469,7 @@ static state::Status declare_params(state::Emitter *e, const ast::Decl *d, state
         return state::fail("not a function", d->span);
     }
     ast::Param params[:] = d->kind.function.params;
-    for (usize i = 0; i < countof(params); i++) {
+    for (Usize i = 0; i < countof(params); i++) {
         ast::Param p = params[i];
         c::LLVMValueRef value = c::LLVMGetParam(info.llvm, (U32)i);
         c::LLVMSetValueName2(value, p.name.data, countof(p.name));
@@ -505,11 +505,11 @@ static state::Status emit_function(state::Emitter *e, const ast::Decl *d, state:
 
 // Pass 1: types, then every function and global.
 static state::Status declare_all(state::Emitter *e) {
-    for (usize i = 0; i < countof(e->tree->decls); i++) {
+    for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
         if (d->kind == .record) try memory::record_decl(e, d);
     }
-    for (usize i = 0; i < countof(e->tree->decls); i++) {
+    for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
         if (d->kind == .function) {
             if (d->kind.function.body == nullptr)
@@ -528,8 +528,8 @@ static state::Status declare_all(state::Emitter *e) {
 static state::Status emit_all(state::Emitter *e) {
     try debug::begin_module(e);
     try declare_all(e);
-    usize next = 0;
-    for (usize i = 0; i < countof(e->tree->decls); i++) {
+    Usize next = 0;
+    for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
         if (d->kind == .function && d->kind.function.body != nullptr) {
             try emit_function(e, d, e->functions[next]);
@@ -570,7 +570,7 @@ export ModuleResult module(c::LLVMContextRef context, const ast::Module *m, stat
     c::LLVMDisposeBuilder(e.builder);
     c::LLVMDisposeBuilder(e.alloca_builder);
     if (e.target_data != nullptr) c::LLVMDisposeTargetData(e.target_data);
-    for (usize i = 0; i < e.function_count; i++) {
+    for (Usize i = 0; i < e.function_count; i++) {
         state::free_text(e.functions[i].symbol);
         mem::free(e.functions[i].params.data);
     }

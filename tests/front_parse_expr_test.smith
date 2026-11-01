@@ -17,8 +17,8 @@ import front::parse_type;
 
 // The stub of the statement hook: skips a braced body and gives an empty block.
 static ast::Stmt *stub_statement(parse::Parser *p) {
-    usize depth = 0;
-    for (usize i = 0; i < countof(p->tokens); i += 1) {
+    Usize depth = 0;
+    for (Usize i = 0; i < countof(p->tokens); i += 1) {
         lex::TokenKind kind = parse::peek(p).kind;
         if (kind == lex::end_of_file) break;
         if (kind == lex::left_brace) depth += 1;
@@ -65,7 +65,7 @@ static Str dump_one(Str source) {
     ast::Module m = ast::new_module("m", decls);
     Str dumped = ast::dump(&m);
     char text[:] = format::push(source, "\n", dumped);
-    for (usize i = 0; i < countof(p.errors); i += 1) {
+    for (Usize i = 0; i < countof(p.errors); i += 1) {
         text = format::push(text, "error ", p.errors[i].span.start, "-", p.errors[i].span.end, ": ",
                             p.errors[i].message, "\n");
     }
@@ -78,8 +78,8 @@ static Str dump_one(Str source) {
 // Every line of `lines` is a source, dumped one after the other with a blank line between.
 static Str dump_all(Str lines) {
     char all[:] = {};
-    usize start = 0;
-    for (usize i = 0; i <= countof(lines); i += 1) {
+    Usize start = 0;
+    for (Usize i = 0; i <= countof(lines); i += 1) {
         if (i < countof(lines) && lines[i] != '\n') continue;
         all = format::push(all, dump_one(lines[start:i]), "\n");
         start = i + 1;
@@ -108,9 +108,9 @@ static Str first_error(Str source) {
     return p.errors[0].message;
 }
 
-static bool contains(Str text, Str piece) {
+static Bool contains(Str text, Str piece) {
     if (countof(piece) > countof(text)) return false;
-    for (usize i = 0; i + countof(piece) <= countof(text); i += 1) {
+    for (Usize i = 0; i + countof(piece) <= countof(text); i += 1) {
         if (mem::equal(text[i:i + countof(piece)], piece)) return true;
     }
     return false;

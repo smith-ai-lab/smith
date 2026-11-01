@@ -17,7 +17,7 @@ import std::text;
 static ast::Expr *stub_expression(parse::Parser *p) {
     lex::Token token = parse::advance(p);
     if (token.kind == lex::integer) {
-        u64 value = 0;
+        U64 value = 0;
         _ = text::parse_u64(parse::text(p, token), &value);
         return ast::integer(value);
     }
@@ -49,7 +49,7 @@ static Str dump_one(Str source) {
     ast::DeclRef decls[1] = {ast::variable("t", type, nullptr)};
     ast::Module m = ast::new_module("m", decls);
     char body[:] = format::push(source, "\n", ast::dump(&m));
-    for (usize i = 0; i < countof(p.errors); i += 1) {
+    for (Usize i = 0; i < countof(p.errors); i += 1) {
         body = format::push(body, "error ", p.errors[i].span.start, "-", p.errors[i].span.end, ": ",
                             p.errors[i].message, "\n");
     }
@@ -62,8 +62,8 @@ static Str dump_one(Str source) {
 // Every source, dumped one after the other with a blank line between.
 static Str dump_all(Str lines) {
     char all[:] = {};
-    usize start = 0;
-    for (usize i = 0; i <= countof(lines); i += 1) {
+    Usize start = 0;
+    for (Usize i = 0; i <= countof(lines); i += 1) {
         if (i < countof(lines) && lines[i] != '\n') continue;
         all = format::push(all, dump_one(lines[start:i]), "\n");
         start = i + 1;
@@ -92,9 +92,9 @@ static void same(Str actual, Str expected) {
     test::check_equal(actual, expected);
 }
 
-static bool contains(Str text, Str piece) {
+static Bool contains(Str text, Str piece) {
     if (countof(piece) > countof(text)) return false;
-    for (usize i = 0; i + countof(piece) <= countof(text); i += 1) {
+    for (Usize i = 0; i + countof(piece) <= countof(text); i += 1) {
         if (mem::equal(text[i:i + countof(piece)], piece)) return true;
     }
     return false;
@@ -180,9 +180,9 @@ export void test_parse_type_missing_tag_name() {
 }
 
 // Whether starts_type says `expected` for each line.
-static void check_starts(Str lines, bool expected) {
-    usize start = 0;
-    for (usize i = 0; i <= countof(lines); i += 1) {
+static void check_starts(Str lines, Bool expected) {
+    Usize start = 0;
+    for (Usize i = 0; i <= countof(lines); i += 1) {
         if (i < countof(lines) && lines[i] != '\n') continue;
         parse::Parser p = parser_of(lines[start:i]);
         test::check_equal(parse_type::starts_type(&p, 0), expected);

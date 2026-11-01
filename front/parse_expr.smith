@@ -162,7 +162,7 @@ static Real decode_decimal_float(Str t) {
 }
 
 static Real decode_float(Str t) {
-    bool hex = countof(t) > 1 && t[0] == '0' && (t[1] == 'x' || t[1] == 'X');
+    Bool hex = countof(t) > 1 && t[0] == '0' && (t[1] == 'x' || t[1] == 'X');
     return hex ? decode_hex_float(t) : decode_decimal_float(t);
 }
 

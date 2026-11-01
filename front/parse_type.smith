@@ -121,7 +121,7 @@ export ast::Path path(parse::Parser *p) {
         result.segments = mem::realloc(result.segments, countof(result.segments) + 1);
         ast::Identifier segment = {.text = parse::text(p, token), .span = token.span};
         result.segments[countof(result.segments) - 1] = segment;
-        bool more = parse::at(p, lex::colon_colon) && is_segment(parse::peek_at(p, 1).kind);
+        Bool more = parse::at(p, lex::colon_colon) && is_segment(parse::peek_at(p, 1).kind);
         if (!more) break;
         parse::advance(p);
     }
@@ -135,10 +135,10 @@ export typedef typeof(ast::ExprRef[:]) ExprList;
 export typedef typeof(ast::TypeRef[:]) TypeList;
 
 export ExprList with_expr(ast::ExprRef list[:], ast::Expr *e) {
-    usize count = countof(list) + 1;
+    Usize count = countof(list) + 1;
     ast::ExprRef *data = (ast::ExprRef *)mem::alloc_array_raw(sizeof(ast::ExprRef), count, alignof(ast::ExprRef));
     ExprList grown = data[0:count];
-    for (usize i = 0; i < countof(list); i += 1) {
+    for (Usize i = 0; i < countof(list); i += 1) {
         grown[i] = list[i];
     }
     grown[countof(list)] = e;
@@ -146,10 +146,10 @@ export ExprList with_expr(ast::ExprRef list[:], ast::Expr *e) {
 }
 
 export TypeList with_type(ast::TypeRef list[:], ast::TypeExpr *t) {
-    usize count = countof(list) + 1;
+    Usize count = countof(list) + 1;
     ast::TypeRef *data = (ast::TypeRef *)mem::alloc_array_raw(sizeof(ast::TypeRef), count, alignof(ast::TypeRef));
     TypeList grown = data[0:count];
-    for (usize i = 0; i < countof(list); i += 1) {
+    for (Usize i = 0; i < countof(list); i += 1) {
         grown[i] = list[i];
     }
     grown[countof(list)] = t;
@@ -289,7 +289,7 @@ static ast::TypeExpr *brackets(parse::Parser *p, U32 start, ast::TypeExpr *eleme
     }
     ast::TypeExpr *result = element;
     ast::Qualifiers none = {};
-    for (usize i = countof(run); i > 0; i -= 1) {
+    for (Usize i = countof(run); i > 0; i -= 1) {
         ast::Span span = parse::span_from(p, start);
         ast::TypeKind slice_kind = {.slice = {.element = result}};
         ast::TypeKind array_kind = {.array = {.element = result, .count = run[i - 1].count}};
@@ -393,7 +393,7 @@ static ast::TypeArg argument(parse::Parser *p, Bool is_function) {
 // `Name(A, B)`: the path was read, and `(` is at the position.
 static ast::TypeExpr *applied(parse::Parser *p, U32 start, ast::Qualifiers q, ast::Path name) {
     parse::advance(p);
-    bool is_function = countof(name.segments) == 1 && text::is(name.segments[0].text, "Fn");
+    Bool is_function = countof(name.segments) == 1 && text::is(name.segments[0].text, "Fn");
     ast::TypeArg args[:] = {};
     while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
         args = mem::realloc(args, countof(args) + 1);
@@ -411,7 +411,7 @@ static ast::TypeExpr *read(parse::Parser *p) {
     take_qualifiers(p, &q);
     ast::TypeExpr *base = plain(p, start, q);
     if (base == nullptr) return nullptr;
-    bool call_shape = parse::at(p, lex::left_paren) && parse::peek_at(p, 1).kind != lex::star;
+    Bool call_shape = parse::at(p, lex::left_paren) && parse::peek_at(p, 1).kind != lex::star;
     if (call_shape && base->kind == .named) {
         ast::Path name = base->kind.named.path;
         Str last = name.segments[countof(name.segments) - 1].text;

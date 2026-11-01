@@ -1,5 +1,5 @@
 // The smoke test of the front end's runner (issue #1115, track B of #1112): LLVM's C API called from a .smith file. A
-// module with `i32 answer() { return 42; }` is built with an IR builder, verified, run by Orc's LLJIT and called.
+// module with `I32 answer() { return 42; }` is built with an IR builder, verified, run by Orc's LLJIT and called.
 // No AST: this only proves the runner compiles against LLVM's headers and links its libraries.
 module front_emit_test;
 
@@ -39,7 +39,7 @@ export void test_front_emit_jits_a_function_built_through_the_c_api() {
     c::LLVMDisposeBuilder(builder);
 
     char *problem = nullptr;
-    i32 broken = c::LLVMVerifyModule(ir_module, c::LLVMReturnStatusAction, &problem);
+    I32 broken = c::LLVMVerifyModule(ir_module, c::LLVMReturnStatusAction, &problem);
     c::LLVMDisposeMessage(problem);
     test::check_equal(broken, 0);
 
@@ -53,7 +53,7 @@ export void test_front_emit_jits_a_function_built_through_the_c_api() {
 
     c::LLVMOrcExecutorAddress address = 0;
     expect_success(c::LLVMOrcLLJITLookup(jit, &address, "answer"));
-    i32 (*answer)() = (i32 (*)())(usize)address;
+    I32 (*answer)() = (I32 (*)())(Usize)address;
     test::check_equal(answer(), 42);
 
     expect_success(c::LLVMOrcDisposeLLJIT(jit));
