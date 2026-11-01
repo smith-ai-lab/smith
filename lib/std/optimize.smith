@@ -1,0 +1,30 @@
+// smith-build: header
+// std::optimize, <smith/optimize.h>: the optimization barrier. `optimize::opaque(x)` returns x unchanged, but the
+// optimizer must treat the result as an unknown value and the computation behind it as used: it cannot fold the value
+// into a constant and cannot delete the work that made it (issue #1419).
+//
+//   F64 sum = optimize::opaque(measured_work(n)); // a benchmark keeps the work it measures
+module std::optimize;
+
+import std::contract;
+import target;
+
+// x, unchanged, as a value the optimizer cannot see through. Works for integers, floats and pointers.
+//
+// The body is the one place in smith that writes an empty extended asm: it is how clang spells the barrier, and the
+// front end refuses the spelling everywhere else. The constraint is chosen by type: a general register for an integer
+// or a pointer, a floating-point register on aarch64 for a float, and "X" (any operand, correct everywhere, if
+// slower) for a float elsewhere.
+export typeof(x) opaque(auto x) {
+    contract::trusted(); // an empty asm is the edge a proof cannot read; its result is taken as any value
+    if constexpr (is_float(typeof(x))) {
+        if constexpr (target::arch == target::aarch64) {
+            __asm__("" : "+w"(x));
+        } else {
+            __asm__("" : "+X"(x));
+        }
+    } else {
+        __asm__("" : "+r"(x));
+    }
+    return x;
+}

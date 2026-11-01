@@ -141,6 +141,7 @@
     "./.agents/skills/smith-text-c/",
     "./.agents/skills/smith-text-numbers/",
     "./.agents/skills/smith-trace/",
+    "./.agents/skills/smith-optimize/",
     "./.agents/skills/smith-wrapping/"
   ],
   "lspServers": {

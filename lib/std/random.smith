@@ -8,6 +8,7 @@ module std::random;
 import target;
 import std::contract;
 import std::math;
+import std::optimize;
 
 // <smith/random.h>: random numbers from keys, as in JAX. A key is an immutable value, and every draw is a pure function
 // of a key: the same key gives the same numbers on every platform, in any thread and in any order. There is no global
@@ -141,48 +142,29 @@ static_assert(target::float_radix == 2 && target::f32_mantissa_bits == 24 && tar
               "f32 and f64 must be IEEE");
 static_assert(target::float_eval_method == 0, "f32 arithmetic must happen in f32");
 
-// A value the compiler cannot see through, so a product is not fused into a following addition. The register class
-// keeps it out of memory on the architecture that is tested; "X" is correct everywhere, if slower.
-inline F64 opaque_double(F64 value) {
-    contract::trusted(); // an empty asm is the edge a proof cannot read; its result is taken as any value
-    if constexpr (target::arch == target::aarch64) {
-        __asm__("" : "+w"(value));
-    } else {
-        __asm__("" : "+X"(value));
-    }
-    return value;
-}
-
-inline F32 opaque_float(F32 value) {
-    contract::trusted(); // an empty asm is the edge a proof cannot read; its result is taken as any value
-    if constexpr (target::arch == target::aarch64) {
-        __asm__("" : "+w"(value));
-    } else {
-        __asm__("" : "+X"(value));
-    }
-    return value;
-}
-
-// A value passed through an empty asm is opaque to the optimizer, which then cannot fold it into immediates: the Philox
+// A value the compiler cannot see through (optimize::opaque), so a product is not fused into a following addition.
+// A value passed through it is opaque to the optimizer, which then cannot fold it into immediates: the Philox
 // constants stay in registers (left alone the key schedule becomes ten immediates, three instructions each, where an
 // add of a register is one), and the polynomial coefficients are loaded (rebuilt from immediates they cost four
 // instructions each). This only changes how the same bits are computed.
+inline F64 opaque_double(F64 value) {
+    return optimize::opaque(value);
+}
+
+inline F32 opaque_float(F32 value) {
+    return optimize::opaque(value);
+}
+
 inline U32 register_u32(U32 value) {
-    contract::trusted(); // an empty asm is the edge a proof cannot read; its result is taken as any value
-    __asm__("" : "+r"(value));
-    return value;
+    return optimize::opaque(value);
 }
 
 inline const F64 *register_doubles(const F64 *value) {
-    contract::trusted(); // an empty asm is the edge a proof cannot read; its result is taken as any value
-    __asm__("" : "+r"(value));
-    return value;
+    return optimize::opaque(value);
 }
 
 inline const F32 *register_floats(const F32 *value) {
-    contract::trusted(); // an empty asm is the edge a proof cannot read; its result is taken as any value
-    __asm__("" : "+r"(value));
-    return value;
+    return optimize::opaque(value);
 }
 
 inline F64 mul_double(F64 a, F64 b) {

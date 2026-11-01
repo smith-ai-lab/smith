@@ -9152,6 +9152,7 @@ I32 main() {
 ==> if-constexpr/src/kind.smith <==
 module kind;
 
+import std::optimize;
 import target;
 
 constexpr I32 wide = 8;
@@ -9168,14 +9169,14 @@ export I32 arch_name() {
     }
 }
 
-// The constraint for another architecture would not compile here.
+// The branch for another architecture would not compile here.
 export I32 opaque(I32 value) {
     if constexpr (target::arch == target::aarch64) {
-        __asm__("" : "+w"(value));
+        value = optimize::opaque(value);
     } else if constexpr (target::arch == target::x86_64) {
-        __asm__("" : "+r"(value));
+        value = optimize::opaque(value);
     } else {
-        __asm__("" : "+nonsense"(value));
+        undeclared_function();
     }
     return value;
 }

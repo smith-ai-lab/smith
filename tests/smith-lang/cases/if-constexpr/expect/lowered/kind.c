@@ -19,6 +19,8 @@
 #ifndef SMITH_TARGET_FLOAT_RADIX
 #define SMITH_TARGET_FLOAT_RADIX __FLT_RADIX__
 #endif
+#include "smith/optimize.h"
+
 static constexpr __INT32_TYPE__ kind_wide = 8;
 static constexpr bool kind_both = kind_wide == 8 && SMITH_TARGET_FLOAT_RADIX == 2;
 __INT32_TYPE__ kind_arch_name() __asm__("_kind::arch_name");
@@ -42,15 +44,15 @@ __INT32_TYPE__ kind_opaque(__INT32_TYPE__ value) __asm__("_kind::opaque");
 __INT32_TYPE__ kind_opaque(__INT32_TYPE__ value) {
 #if SMITH_TARGET_ARCH == 1
  {
-__asm__("" : "+w"(value));
+value = smith_optimize_opaque(value);
 }
 #elif SMITH_TARGET_ARCH == 2
  {
-__asm__("" : "+r"(value));
+value = smith_optimize_opaque(value);
 }
 #else
  {
-__asm__("" : "+nonsense"(value));
+undeclared_function();
 }
 #endif
 
