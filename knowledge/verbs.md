@@ -14,7 +14,7 @@ which clangd reads as a compiler), `smith build install` also installs `smith-cc
 act as `smith cc` and `smith c++` by their name, as `smith++` did. `smith++` is gone. The program a `build.c` names as
 a compiler is `smith-cc` or `smith-c++`; `"smith"` is refused with that hint.
 
-The one exception at the top level (owner, 2026-10-31, #1138): `smith --version` prints what `smith version` prints, and `smith --help`, `-h` and `help` list the verbs, `smith help <verb>` prints that verb's usage; any other flag stays the error above, and `smith cc --version` is clang's.
+The one exception at the top level (owner, 2026-10-31, #1138): `smith --version` prints what `smith version` prints, and `smith --help`, `-h` and `help` list the verbs, `smith help <verb>` prints that verb's page, and bare `smith` prints the list too (exit 0); all help is printed from the verb table in `smith.c`, and `smith <verb> --help` is smith's page except for the tool verbs (`cc`, `c++`, `lsp`, `dbg`, `dap`, `fmt`, `lint`), where it is the tool's own; any other flag stays the error above, and `smith cc --version` is clang's.
 
 **`smith docs` checks a project's `knowledge/` (OKF) and `.agents/skills/`, and `smith new` starts every
 project with them** (`runtime/docs.c`; skill smith-docs); the concept types and required fields are `types:` and

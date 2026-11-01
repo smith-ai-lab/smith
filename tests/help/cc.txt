@@ -1,0 +1,9 @@
+smith cc: compile and link as clang does
+
+usage: smith cc [<clang arguments>]
+
+examples:
+  smith cc -c main.c
+  smith cc main.c -o main
+
+clang's own options: smith cc --help

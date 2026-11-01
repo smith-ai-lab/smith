@@ -1,0 +1,12 @@
+smith symbolize: turn stack traces into lines
+
+usage: smith symbolize [--binary <program>] [--available] [<trace file>]
+
+flags:
+  --binary <program>   the program the trace comes from, when the trace does not name it
+  --available          exit 0 when this smith can symbolize, and print nothing
+  <trace file>         the trace to read; with none, or -, standard input
+
+examples:
+  smith symbolize trace.txt
+  smith symbolize --binary build/app trace.txt

@@ -2768,12 +2768,6 @@ static const char *smith_new_parse(int count, char **args, SmithNewLanguage *lan
     *language = SmithNewLanguage_Smith;
     for (int i = 0; i < count; i++) {
         const char *value = nullptr;
-        if (strcmp(args[i], "--help") == 0 || strcmp(args[i], "-h") == 0) {
-            printf("%s\n\n  --language smith|c   the language of the program: smith (the default) or c\n"
-                   "  <name>               the folder and the program's name; with none, the current folder\n",
-                   smith_new_usage);
-            exit(0);
-        }
         if (strcmp(args[i], "--language") == 0) {
             if (i + 1 >= count) smith_die(smith_exit_usage, "--language needs a value: smith or c", smith_new_usage);
             value = args[++i];
@@ -3694,6 +3688,7 @@ typedef enum {
     SmithVerb_Cache,
     SmithVerb_Docs,          // smith docs: checks knowledge/ and skills
     SmithVerb_Symbolize,     // smith symbolize: stack traces turned into lines
+    SmithVerb_Help,          // smith help: the list of commands, or the page of one
     SmithVerb_Version,       // smith version: the version line and the commit smith was built from
     SmithVerb_Mcp,           // smith mcp: the debugger as an MCP server (the full smith)
     SmithVerb_Tool,          // an LLVM tool, whose arguments are its own (smith_tools)
@@ -3702,34 +3697,152 @@ typedef enum {
     SmithVerb_ProjectBare, // the same, with no arguments but -D options
 } SmithVerbKind;
 
+// One flag of a command and what it does, for `smith help <command>`.
+typedef struct {
+    const char *name;
+    const char *text;
+} SmithFlag;
+
 typedef struct {
     const char *name;
     SmithVerbKind kind;
     int (*project)(int count, char **args, const char *self); // what the verb does for the project itself
-    const char *summary;                                      // a few words, for `smith help <verb>`
+    const char *summary;         // a few words: the list of commands and the top of the page
+    const char *usage;           // the usage line, without "usage: "
+    const SmithFlag *flags;      // ended by a row of nullptr; nullptr for none
+    const char *const *examples; // commands that work as written, ended by nullptr
+    const char *tool_help;       // the tool verbs: where the tool's own help is, or nullptr
 } SmithVerb;
 
+#define SMITH_FLAGS (const SmithFlag[])
+#define SMITH_EXAMPLES (const char *const[])
+
+// The help of every command is printed from this table (smith_help_list, smith_help_page): no text lives elsewhere.
 static const SmithVerb smith_verbs[] = {
-    {"cc", SmithVerb_Cc, nullptr, "compile and link as clang does"},
-    {"c++", SmithVerb_Cxx, nullptr, "compile and link C++ as clang does"},
-    {"build", SmithVerb_Build, nullptr, "build the project from its build.c"},
-    {"new", SmithVerb_New, nullptr, "start a project"},
-    {"fetch", SmithVerb_Fetch, nullptr, "fetch a package"},
-    {"cache", SmithVerb_Cache, nullptr, "show and clean the caches"},
-    {"symbolize", SmithVerb_Symbolize, nullptr, "turn stack traces into lines"},
-    {"docs", SmithVerb_Docs, nullptr, "check knowledge/ and the skills of the project"},
-    {"version", SmithVerb_Version, nullptr, "the version and the commit smith was built from"},
-    {"fmt", SmithVerb_ToolOrProject, smith_fmt_verb, "format the project (clang-format with arguments)"},
-    {"lint", SmithVerb_ToolOrProject, smith_lint_project, "lint the project (clang-tidy with arguments)"},
-    {"lsp", SmithVerb_Tool, nullptr, "clangd"},
-    {"run", SmithVerb_Project, smith_run_project, "run the project's program"},
-    {"test", SmithVerb_Project, smith_test_project, "build and run the project's tests"},
-    {"check", SmithVerb_ProjectBare, smith_check_project, "run all the project's checks"},
-    {"prove", SmithVerb_ToolOrProject, smith_prove_project, "prove the project's contracts"},
-    {"dbg", SmithVerb_Tool, nullptr, "lldb"},
-    {"dap", SmithVerb_Tool, nullptr, "lldb-dap, the Debug Adapter Protocol server"},
-    {"mcp", SmithVerb_Mcp, nullptr, "the debugger as an MCP server over stdio"},
+    {"cc", SmithVerb_Cc, nullptr, "compile and link as clang does", "smith cc [<clang arguments>]", nullptr,
+     SMITH_EXAMPLES{"smith cc -c main.c", "smith cc main.c -o main", nullptr}, "clang's own options: smith cc --help"},
+    {"c++", SmithVerb_Cxx, nullptr, "compile and link C++ as clang does", "smith c++ [<clang arguments>]", nullptr,
+     SMITH_EXAMPLES{"smith c++ -c main.cpp", "smith c++ main.cpp -o main", nullptr},
+     "clang's own options: smith c++ --help"},
+    {"build", SmithVerb_Build, nullptr, "build the project from its build.c",
+     "smith build [<target>...] [-n] [-v] [--quiet] [-j<n>] [-k<n>] [-d explain] [-D<name>=<value>...]\n"
+     "       smith build --dump-config",
+     SMITH_FLAGS{{"-n", "print the steps and run none"},
+                 {"-v, --verbose", "show every command as it runs"},
+                 {"--quiet", "no progress, only what a failed step printed"},
+                 {"-j<n>", "run <n> steps at once (0: as many as the machine has)"},
+                 {"-k<n>", "keep going until <n> steps have failed (0: all)"},
+                 {"-d explain", "say why each step runs"},
+                 {"-t <tool> ...", "run an executor tool; the rest of the arguments are the tool's"},
+                 {"-D<name>=<value>", "an option the project's build.c reads"},
+                 {"--dump-config", "print the build file that does what the conventions do"},
+                 {nullptr, nullptr}},
+     SMITH_EXAMPLES{"smith build", "smith build -j4 -k0", "smith build --dump-config > build.smith", nullptr}, nullptr},
+    {"new", SmithVerb_New, nullptr, "start a project", "smith new [--language smith|c] [<name>]",
+     SMITH_FLAGS{{"--language smith|c", "the language of the program: smith (the default) or c"},
+                 {"<name>", "the folder and the program's name; with none, the current folder"},
+                 {nullptr, nullptr}},
+     SMITH_EXAMPLES{"smith new hello", "smith new --language c hello", nullptr}, nullptr},
+    {"fetch", SmithVerb_Fetch, nullptr, "fetch a package", "smith fetch <url>", nullptr,
+     SMITH_EXAMPLES{"smith fetch https://example.com/package.tar.gz", nullptr}, nullptr},
+    {"cache", SmithVerb_Cache, nullptr, "show and clean the caches",
+     "smith cache [-v]\n       smith cache clean [modules|packages|lint|steps]",
+     SMITH_FLAGS{{"-v", "show more of each cache"},
+                 {"clean", "delete every cache"},
+                 {"clean <cache>", "delete one cache: modules, packages, lint or steps"},
+                 {nullptr, nullptr}},
+     SMITH_EXAMPLES{"smith cache", "smith cache clean modules", nullptr}, nullptr},
+    {"symbolize", SmithVerb_Symbolize, nullptr, "turn stack traces into lines",
+     "smith symbolize [--binary <program>] [--available] [<trace file>]",
+     SMITH_FLAGS{{"--binary <program>", "the program the trace comes from, when the trace does not name it"},
+                 {"--available", "exit 0 when this smith can symbolize, and print nothing"},
+                 {"<trace file>", "the trace to read; with none, or -, standard input"},
+                 {nullptr, nullptr}},
+     SMITH_EXAMPLES{"smith symbolize trace.txt", "smith symbolize --binary build/app trace.txt", nullptr}, nullptr},
+    {"docs", SmithVerb_Docs, nullptr, "check knowledge/ and the skills of the project",
+     "smith docs [--type <name>]... [--require <type>:<field>[=<value>,...]]... [--depfile <path> --target <path>] "
+     "[<root>]",
+     SMITH_FLAGS{
+         {"--type <name>", "a concept type that is allowed (replaces the ones knowledge/index.md declares)"},
+         {"--require <type>:<field>", "a field that every concept of the type must have, with =<value>,... its values"},
+         {"--depfile <path>", "write a depfile of the files read (with --target)"},
+         {"--target <path>", "the target the depfile names (with --depfile)"},
+         {"<root>", "the folder to check; with none, the nearest one with knowledge/ or .agents/skills/"},
+         {nullptr, nullptr}},
+     SMITH_EXAMPLES{"smith docs", "smith docs --type concept", nullptr}, nullptr},
+    {"version", SmithVerb_Version, nullptr, "the version and the commit smith was built from", "smith version", nullptr,
+     SMITH_EXAMPLES{"smith version", "smith --version", nullptr}, nullptr},
+    {"fmt", SmithVerb_ToolOrProject, smith_fmt_verb, "format the project (clang-format with arguments)",
+     "smith fmt [-n | --dry-run] [--Werror]\n       smith fmt <clang-format arguments>",
+     SMITH_FLAGS{{"-n, --dry-run", "change nothing; fail when a file would change"},
+                 {"<files>", "with file names it is clang-format, and rewrites them in place"},
+                 {nullptr, nullptr}},
+     SMITH_EXAMPLES{"smith fmt", "smith fmt --dry-run", "smith fmt main.c", nullptr},
+     "clang-format's own options: smith fmt --help"},
+    {"lint", SmithVerb_ToolOrProject, smith_lint_project, "lint the project (clang-tidy with arguments)",
+     "smith lint [--changed[=<ref>]] [--quiet]\n       smith lint [--fix] <files or folders>...\n"
+     "       smith lint <clang-tidy arguments>",
+     SMITH_FLAGS{{"--changed[=<ref>]",
+                  "lint only what the change since <ref> (default: where the branch left origin/main) can affect"},
+                 {"--quiet", "print only the findings"},
+                 {"--fix <files>", "apply the fixes of the front end to .smith files"},
+                 {"<files or folders>", "lint these (a folder: the sources under it)"},
+                 {nullptr, nullptr}},
+     SMITH_EXAMPLES{"smith lint", "smith lint --changed", "smith lint main.c", nullptr},
+     "clang-tidy's own options: smith lint --help"},
+    {"lsp", SmithVerb_Tool, nullptr, "clangd, the language server", "smith lsp [<clangd arguments>]", nullptr,
+     SMITH_EXAMPLES{"smith lsp", nullptr}, "clangd's own options: smith lsp --help"},
+    {"run", SmithVerb_Project, smith_run_project, "run the project's program",
+     "smith run [-D<name>=<value>...] [--] [<program arguments>]",
+     SMITH_FLAGS{{"-D<name>=<value>", "an option the project's build.c reads"},
+                 {"--", "end the -D options; the rest goes to the program"},
+                 {nullptr, nullptr}},
+     SMITH_EXAMPLES{"smith run", "smith run -- --verbose", nullptr}, nullptr},
+    {"test", SmithVerb_Project, smith_test_project, "build and run the project's tests",
+     "smith test [--test <names>] [--changed] [--update] [-v] [-k[<n>]] [<runner flags>]",
+     SMITH_FLAGS{{"--test <names>", "run the tests whose name contains one of the comma-separated names"},
+                 {"--changed", "run only the tests the change since main can affect (--base <ref>, --dry-run, --list)"},
+                 {"--list", "print the selected tests and run none"},
+                 {"--update", "rewrite the expected output of the tests that compare with a file"},
+                 {"-v, --verbose", "show everything as it happens"},
+                 {"-k[<n>]", "keep going after <n> build errors (0: all)"},
+                 {"--fail-fast", "stop at the first failing test"},
+                 {"--seed <n>", "the seed of a random test; --seeds <n> how many"},
+                 {"--jobs <n>", "how many tests run at once"},
+                 {"--timeout <s>", "the limit of one test; --wall-timeout and --idle-timeout the run's"},
+                 {"--coverage", "the line coverage of the last run"},
+                 {nullptr, nullptr}},
+     SMITH_EXAMPLES{"smith test", "smith test --test parse --changed", nullptr}, nullptr},
+    {"check", SmithVerb_ProjectBare, smith_check_project, "run all the project's checks",
+     "smith check [-v] [-D<name>=<value>...]",
+     SMITH_FLAGS{{"-v", "show every part's output and every task's time"},
+                 {"-D<name>=<value>", "an option the project's build.c reads"},
+                 {nullptr, nullptr}},
+     SMITH_EXAMPLES{"smith check", "smith check -v", nullptr}, nullptr},
+    {"prove", SmithVerb_ToolOrProject, smith_prove_project, "prove the project's contracts",
+     "smith prove [-v] [--budget=<s>] [--emit-ir=<file>] [--function=<name>] [--no-cache] [--induction] [--unroll]\n"
+     "       smith prove <prover arguments>",
+     SMITH_FLAGS{{"-v", "show the cost of each proof"},
+                 {"--budget=<s>", "the time one proof may take"},
+                 {"--emit-ir=<file>", "write the IR that is proved"},
+                 {"--function=<name>", "prove this function only"},
+                 {"--no-cache", "do not use proofs from earlier runs"},
+                 {"--induction, --unroll", "how a loop with an invariant is proved"},
+                 {"--induction-from=<n>", "the passes unrolled before induction starts"},
+                 {nullptr, nullptr}},
+     SMITH_EXAMPLES{"smith prove", "smith prove --function=add", nullptr},
+     "with file names it is the prover itself: smith prove [<options>] <file.c>... [-- <compile flags>]"},
+    {"dbg", SmithVerb_Tool, nullptr, "lldb, the debugger", "smith dbg [<lldb arguments>]", nullptr,
+     SMITH_EXAMPLES{"smith dbg build/app", nullptr}, "lldb's own options: smith dbg --help"},
+    {"dap", SmithVerb_Tool, nullptr, "lldb-dap, the Debug Adapter Protocol server", "smith dap [<lldb-dap arguments>]",
+     nullptr, SMITH_EXAMPLES{"smith dap", nullptr}, "lldb-dap's own options: smith dap --help"},
+    {"mcp", SmithVerb_Mcp, nullptr, "the debugger as an MCP server over stdio", "smith mcp", nullptr,
+     SMITH_EXAMPLES{"smith mcp", nullptr}, nullptr},
+    {"help", SmithVerb_Help, nullptr, "this list, or the page of one command", "smith help [<command>]", nullptr,
+     SMITH_EXAMPLES{"smith help", "smith help test", nullptr}, nullptr},
 };
+
+static int smith_help_main(int count, char **args);
 
 static const SmithVerb *smith_find_verb(const char *name) {
     for (size_t i = 0; i < sizeof smith_verbs / sizeof smith_verbs[0]; i++) {
@@ -3782,6 +3895,8 @@ static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const ch
         return smith_docs_main(argc - 2, argv + 2);
     case SmithVerb_Symbolize:
         return smith_symbolize_main(argc - 2, argv + 2);
+    case SmithVerb_Help:
+        return smith_help_main(argc - 2, argv + 2);
     case SmithVerb_Version:
         return smith_version_main();
     case SmithVerb_ToolOrProject: // with arguments it is the tool, with none (or only -D options) the project's
@@ -3799,23 +3914,6 @@ static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const ch
     return smith_exit_missing;
 }
 
-static void smith_usage(FILE *out) {
-    fputs("usage: smith <command> [<arguments>]\n"
-          "  cc, c++                 compile and link as clang does (the links smith-cc and smith-c++ do the same)\n"
-          "  build [<target>]        build the project from its build.c\n"
-          "  run, test, check        run the project's program, its tests, or all its checks\n"
-          "  fmt, lint               with no arguments, format or lint the project; with arguments, clang-format and\n"
-          "                          clang-tidy (`fmt <files>` rewrites them in place)\n"
-          "  lsp                     clangd\n"
-          "  dbg, dap                lldb, and lldb-dap (the Debug Adapter Protocol server)\n"
-          "  mcp                     the debugger as an MCP server over stdio (agents: launch, breakpoint, stack...)\n"
-          "  docs                    check knowledge/ and the skills of the project\n"
-          "  new, fetch, cache       start a project, fetch a package, show and clean the caches\n"
-          "  version                 the version and the commit smith was built from (also --version)\n"
-          "  help [<verb>]           this list, or the usage of one verb (also --help, -h)\n",
-          out);
-}
-
 // Whether the name is in the list (ended by nullptr).
 static bool smith_name_in(const char *name, const char *const *names) {
     for (size_t i = 0; names[i] != nullptr; i++) { // bounded by the list
@@ -3824,43 +3922,57 @@ static bool smith_name_in(const char *name, const char *const *names) {
     return false;
 }
 
-// The verbs whose `--help` is a tool's or the verb's own usage; the others have none yet and print a line (#1138).
-static bool smith_verb_forwards_help(const char *name) {
-    static const char *const names[] = {"cc", "c++", "new", "fmt", "lint", "lsp", "dbg", "dap", nullptr};
-    return smith_name_in(name, names);
+// The list of commands, on a stream: `smith help`, `smith --help`, `-h` and bare `smith` print it on stdout.
+static void smith_help_list(FILE *out) {
+    fputs("usage: smith <command> [<arguments>]\n\ncommands:\n", out);
+    for (size_t i = 0; i < sizeof smith_verbs / sizeof smith_verbs[0]; i++)
+        fprintf(out, "  %-10s %s\n", smith_verbs[i].name, smith_verbs[i].summary);
+    fputs("\n`smith help <command>` shows a command's flags and examples.\n", out);
 }
 
-// The verbs that would run, build or fail on `--help`: it prints the line instead and runs nothing.
-static bool smith_verb_lacks_usage(const char *name) {
-    static const char *const names[] = {"run",   "build", "check",     "prove", "fetch",
-                                        "cache", "docs",  "symbolize", nullptr};
-    return smith_name_in(name, names);
+// The page of one command: its summary, usage, flags and examples, and for a tool where the tool's own help is.
+static void smith_help_page(const SmithVerb *verb, FILE *out) {
+    fprintf(out, "smith %s: %s\n\nusage: %s\n", verb->name, verb->summary, verb->usage);
+    if (verb->flags != nullptr) {
+        size_t width = 0;
+        for (const SmithFlag *flag = verb->flags; flag->name != nullptr; flag++) { // ended by a row of nullptr
+            if (strlen(flag->name) > width) width = strlen(flag->name);
+        }
+        fputs("\nflags:\n", out);
+        for (const SmithFlag *flag = verb->flags; flag->name != nullptr; flag++)
+            fprintf(out, "  %-*s   %s\n", (int)width, flag->name, flag->text);
+    }
+    fputs("\nexamples:\n", out);
+    for (size_t i = 0; verb->examples[i] != nullptr; i++) // ended by nullptr
+        fprintf(out, "  %s\n", verb->examples[i]);
+    if (verb->tool_help != nullptr) fprintf(out, "\n%s\n", verb->tool_help);
 }
 
-static int smith_print_summary(const SmithVerb *verb) {
-    printf("smith %s: %s\nno detailed help yet\n", verb->name, verb->summary);
-    return 0;
+// Whether `smith <verb> <args>` asks for smith's own page: `--help` or `-h` first for a command smith owns (the tools
+// answer with their own help; the prover has none), and anywhere for `test`, whose arguments are the runner's. `run`
+// hands every other argument to the program, so only a first `--help` is the page.
+static bool smith_help_requested(const SmithVerb *verb, int count, char **args) {
+    static const char *const tools[] = {"cc", "c++", "lsp", "dbg", "dap", "fmt", "lint", nullptr};
+    if (smith_name_in(verb->name, tools) || strcmp(verb->name, "help") == 0) return false;
+    for (int i = 0; i < (strcmp(verb->name, "test") == 0 ? count : (count > 0 ? 1 : 0)); i++) { // bounded by count
+        if (strcmp(args[i], "--help") == 0 || strcmp(args[i], "-h") == 0) return true;
+    }
+    return false;
 }
 
-// `smith help [<verb>]`: the list of verbs, or the usage of one, as `smith <verb> --help` prints it (the tool's own
-// for the tool verbs). A verb with no usage text of its own prints its one line and says so.
-static int smith_help_main(int count, char **args, const char *self) {
+// `smith help [<command>]`: the list of commands, or the page of one, from the table.
+static int smith_help_main(int count, char **args) {
     if (count == 0) {
-        smith_usage(stdout);
+        smith_help_list(stdout);
         return 0;
     }
     const SmithVerb *verb = smith_find_verb(args[0]);
     if (verb == nullptr) {
-        fprintf(stderr, "smith: %s is not a smith verb; `smith help` lists them\n", args[0]);
+        fprintf(stderr, "smith: %s is not a smith command; `smith help` lists them\n", args[0]);
         return smith_exit_usage;
     }
-    if (strcmp(verb->name, "test") == 0) {
-        fputs(smith_test_usage, stdout);
-        return 0;
-    }
-    if (!smith_verb_forwards_help(verb->name)) return smith_print_summary(verb);
-    char *forward[] = {(char *)"smith", (char *)verb->name, (char *)"--help", nullptr};
-    return smith_dispatch(verb, 3, forward, self);
+    smith_help_page(verb, stdout);
+    return 0;
 }
 
 // `smith foo.c -o foo` has no meaning: the top level is only verbs. The compiler is `smith cc`.
@@ -3895,15 +4007,10 @@ static int smith_main_route(int argc, char **argv, const char *self) {
         return smith_compile_main(argc, argv, 0, false, self);
     if (strcmp(name, "smith-c++") == 0 || strcmp(name, "clang++") == 0)
         return smith_compile_main(argc, argv, 0, true, self);
-    if (argc < 2) {
-        smith_usage(stderr);
-        return smith_exit_usage;
-    }
-    if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
-        smith_usage(stdout);
+    if (argc < 2 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
+        smith_help_list(stdout);
         return 0;
     }
-    if (strcmp(argv[1], "help") == 0) return smith_help_main(argc - 2, argv + 2, self);
     if (strcmp(argv[1], "--version") == 0 && argc == 2) return smith_version_main(); // tools probe a program with it
     if (strcmp(argv[1], "--smith-sha256") == 0) return smith_sha256_main(argc - 2, argv + 2);
     if (strcmp(argv[1], "--smith-explain") == 0) {
@@ -3922,9 +4029,10 @@ static int smith_main_route(int argc, char **argv, const char *self) {
     if (strcmp(argv[1], "--smith-slots") == 0) return smith_slots_main(argc - 2, argv + 2);
     const SmithVerb *verb = smith_find_verb(argv[1]);
     if (verb == nullptr) smith_bare_arguments(argc, argv);
-    if (argc > 2 && (strcmp(argv[2], "--help") == 0 || strcmp(argv[2], "-h") == 0) &&
-        smith_verb_lacks_usage(verb->name))
-        return smith_print_summary(verb); // before anything builds or runs
+    if (smith_help_requested(verb, argc - 2, argv + 2)) {
+        smith_help_page(verb, stdout); // before anything builds or runs
+        return 0;
+    }
     // `smith build preflight` takes its base token at once and holds it for the whole check: its build, fmt, lint and
     // test are children that ride on it (SMITH_SLOT_HELD) and take tokens only for their further workers, so a
     // preflight waits for the machine once, at its start, not between its steps.

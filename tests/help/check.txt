@@ -1,0 +1,11 @@
+smith check: run all the project's checks
+
+usage: smith check [-v] [-D<name>=<value>...]
+
+flags:
+  -v                 show every part's output and every task's time
+  -D<name>=<value>   an option the project's build.c reads
+
+examples:
+  smith check
+  smith check -v

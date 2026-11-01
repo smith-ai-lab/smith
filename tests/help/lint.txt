@@ -1,0 +1,18 @@
+smith lint: lint the project (clang-tidy with arguments)
+
+usage: smith lint [--changed[=<ref>]] [--quiet]
+       smith lint [--fix] <files or folders>...
+       smith lint <clang-tidy arguments>
+
+flags:
+  --changed[=<ref>]    lint only what the change since <ref> (default: where the branch left origin/main) can affect
+  --quiet              print only the findings
+  --fix <files>        apply the fixes of the front end to .smith files
+  <files or folders>   lint these (a folder: the sources under it)
+
+examples:
+  smith lint
+  smith lint --changed
+  smith lint main.c
+
+clang-tidy's own options: smith lint --help

@@ -1,0 +1,9 @@
+smith c++: compile and link C++ as clang does
+
+usage: smith c++ [<clang arguments>]
+
+examples:
+  smith c++ -c main.cpp
+  smith c++ main.cpp -o main
+
+clang's own options: smith c++ --help

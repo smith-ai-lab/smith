@@ -1,0 +1,11 @@
+smith run: run the project's program
+
+usage: smith run [-D<name>=<value>...] [--] [<program arguments>]
+
+flags:
+  -D<name>=<value>   an option the project's build.c reads
+  --                 end the -D options; the rest goes to the program
+
+examples:
+  smith run
+  smith run -- --verbose

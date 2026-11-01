@@ -1,0 +1,8 @@
+smith dap: lldb-dap, the Debug Adapter Protocol server
+
+usage: smith dap [<lldb-dap arguments>]
+
+examples:
+  smith dap
+
+lldb-dap's own options: smith dap --help
