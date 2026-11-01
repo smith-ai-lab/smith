@@ -102,7 +102,9 @@ export void test_caps_make_stops_at_32_sub_makes() {
 }
 
 // More than 65536 prerequisites in one list were cut at 65536 with no word. runtime/make_class.c now reports it, but
-// the reader's expansion buffer (runtime/make.c) is crossed first, and stops the translation.
+// the reader's expansion buffer (runtime/make.c) is crossed first, and stops the translation. A process test, not a
+// unit test: the refusal is smith_die, which ends the process. It took 85 s of CPU, 66 of them system time, in one stat
+// for each made-up name of the pattern search; the folder is listed once now (runtime/make_graph.c).
 export void test_caps_make_stops_at_65536_prerequisites() {
     scratch::Project p = start(nullptr);
     defer finish(&p);
