@@ -439,9 +439,16 @@ static ast::TypeExpr *brackets(parse::Parser *p, U32 start, ast::TypeExpr *eleme
     return result;
 }
 
-// Whether the position, at the `(` after a type, starts C's pointer-to-slice declarator `(*p)[:]` (or `(**pp)[:]`,
-// `(*)[:]`, `(*p)[const :]`): stars, an optional name, `)`, then a slice bracket. A function pointer's `)` is followed
-// by `(`.
+// Whether the token at `i` is a `[` that opens a slice bracket (`[:]`, `[const :]`, `[restrict :]`).
+export Bool slice_bracket_at(const parse::Parser *p, Usize i) {
+    if (parse::peek_at(p, i).kind != lex::left_bracket) return false;
+    lex::TokenKind inside = parse::peek_at(p, i + 1).kind;
+    return inside == lex::colon || inside == lex::kw_const || inside == lex::kw_restrict;
+}
+
+// Whether the position, at the `(` after a type, starts C's pointer-to-slice or pointer-to-array declarator `(*p)[:]`
+// or `(*p)[4]` (or `(**pp)[:]`, `(*)[4]`): stars, an optional name, `)`, then a bracket. A function pointer's `)` is
+// followed by `(`.
 export Bool at_slice_pointer_declarator(const parse::Parser *p) {
     if (!parse::at(p, lex::left_paren)) return false;
     Usize i = 1;
@@ -450,10 +457,8 @@ export Bool at_slice_pointer_declarator(const parse::Parser *p) {
     if (i == 1) return false;
     lex::TokenKind named = parse::peek_at(p, i).kind;
     if (named == lex::name || named == lex::type_name) i += 1;
-    if (parse::peek_at(p, i).kind != lex::right_paren || parse::peek_at(p, i + 1).kind != lex::left_bracket)
-        return false;
-    lex::TokenKind inside = parse::peek_at(p, i + 2).kind;
-    return inside == lex::colon || inside == lex::kw_const || inside == lex::kw_restrict;
+    if (parse::peek_at(p, i).kind != lex::right_paren) return false;
+    return parse::peek_at(p, i + 1).kind == lex::left_bracket;
 }
 
 // The suffixes of a type: pointers (with the qualifiers after each) and runs of brackets.
@@ -468,7 +473,7 @@ static ast::TypeExpr *suffixes(parse::Parser *p, U32 start, ast::TypeExpr *base)
         } else if (parse::at(p, lex::left_bracket)) {
             type_so_far = brackets(p, start, type_so_far);
         } else if (parse::at(p, lex::left_paren) && parse::peek_at(p, 1).kind == lex::star) {
-            // C's `(*p)[:]` is left for the declaration to report, with the name it knows.
+            // C's `(*p)[:]` and `(*p)[4]` are left for the declaration to report, with the name it knows.
             if (!at_slice_pointer_declarator(p)) function_pointer(p);
             break;
         } else {
