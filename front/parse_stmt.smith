@@ -296,7 +296,7 @@ static Bool c_path_declaration(const parse::Parser *p, Usize last) {
 }
 
 // Whether a statement that starts with a name (a value's, as the case says) is a declaration: a path ending in a type
-// name, or a `c::` path in the shape of one.
+// name, a `c::` path in the shape of one, or a path and then a name (`once x`).
 static Bool path_declaration(const parse::Parser *p) {
     Usize last = 0;
     while (parse::peek_at(p, last + 1).kind == lex::colon_colon) {
@@ -304,10 +304,11 @@ static Bool path_declaration(const parse::Parser *p) {
         if (next != lex::name && next != lex::type_name) break;
         last += 2;
     }
-    if (last == 0) return false;
     Str c_name = "c";
-    if (mem::equal(parse::text(p, parse::peek(p)), c_name)) return c_path_declaration(p, last);
-    return parse::peek_at(p, last).kind == lex::type_name;
+    if (last > 0 && mem::equal(parse::text(p, parse::peek(p)), c_name)) return c_path_declaration(p, last);
+    if (parse::peek_at(p, last).kind == lex::type_name && last > 0) return true;
+    // `once x = 1.5;`: a name and a name is no expression, so the first names a type value (the checker decides).
+    return parse::peek_at(p, last + 1).kind == lex::name;
 }
 
 // Declaration or expression at the start of a statement, with no symbol table.
