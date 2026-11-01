@@ -150,6 +150,45 @@ I32 errno_now() {
     Unsupported,     // TLS: the system's TLS stack is not there (OpenSSL 3 on Linux, Network.framework on macOS)
     Other,           // the system said something else
 } Error;
+
+// What an error says, as a constant text for a message.
+[[std::c_name("smith_network_describe")]] export [[nodiscard]] typeof(const char[:]) describe(Error error) {
+    switch (error) {
+    case NotFound:
+        return "the host name does not resolve";
+    case Refused:
+        return "connection refused";
+    case Unreachable:
+        return "the host or network is unreachable";
+    case TimedOut:
+        return "the peer did not answer in time";
+    case Reset:
+        return "the connection was reset";
+    case InUse:
+        return "the port is already in use";
+    case Denied:
+        return "permission denied";
+    case TooMany:
+        return "the system has no more descriptors or memory";
+    case Expired:
+        return "the TLS certificate has expired";
+    case NotYetValid:
+        return "the TLS certificate is not valid yet";
+    case WrongHost:
+        return "the TLS certificate is for another host";
+    case Untrusted:
+        return "the TLS certificate is not trusted";
+    case BadCertificate:
+        return "the TLS certificate was rejected";
+    case HandshakeFailed:
+        return "the TLS handshake failed";
+    case Unsupported:
+        return "TLS is not available on this system";
+    case Other:
+        return "the system refused";
+    }
+    return "unknown error";
+}
 // NOLINTEND(readability-identifier-naming)
 
 export typedef typeof(U8[:]) Bytes;

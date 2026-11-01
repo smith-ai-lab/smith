@@ -119,6 +119,37 @@ I32 errno_now() {
     Other,       // the system said something else
 } Error;
 
+// What an error says, as a constant text for a message.
+[[std::c_name("smith_fs_describe")]] export [[nodiscard]] typeof(const char[:]) describe(Error error) {
+    switch (error) {
+    case NotFound:
+        return "nothing is at the path";
+    case Exists:
+        return "something is there already";
+    case Denied:
+        return "permission denied";
+    case IsFolder:
+        return "the path is a folder";
+    case NotFolder:
+        return "a part of the path is not a folder";
+    case NotEmpty:
+        return "the folder is not empty";
+    case NameTooLong:
+        return "the path is too long";
+    case NoSpace:
+        return "no space left on the device";
+    case ReadOnly:
+        return "the file system is read-only";
+    case TooManyOpen:
+        return "too many open files";
+    case LineTooLong:
+        return "the line does not fit the buffer";
+    case Other:
+        return "the system refused";
+    }
+    return "unknown error";
+}
+
 // How a file is opened, and how write_file puts bytes in a file.
 [[std::c_name("SmithFilesMode")]] export typedef enum {
     Read,    // open: an existing file, to read

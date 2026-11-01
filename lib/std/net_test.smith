@@ -12,6 +12,7 @@ import std::clock;
 import std::mem;
 import std::net;
 import std::test;
+import std::text;
 
 // Unwrapping for the checks: the value of a result (a zero when it is an error: the test checked `== .ok` before) and
 // the error (a zero when it is a value).
@@ -323,4 +324,11 @@ export void test_net_read_within_on_a_real_socket_times_out_when_the_peer_sends_
     test::check_equal(value_count(net::read_within(&client, buffer[0:16], 5'000'000'000)), 0); // the end
     net::close(&client);
     net::stop(&listener);
+}
+
+export void test_net_describe_names_every_error() {
+    for (I32 i = 0; i <= (I32)net::Other; i++) {
+        test::check(countof(net::describe((net::Error)i)) > 0);
+    }
+    test::check(text::is(net::describe(net::Refused), "connection refused"));
 }
