@@ -56,6 +56,7 @@ Turns a `front::ast` module into an LLVM module through LLVM's C API: `emit::mod
 `parse_expr::expression(p)` and `parse_type::type(p)` are the hooks `Parser.hooks.expression` and `.type`; a nested construct is read through `parse::expression`, `type` and `statement`, never directly. Goldens: `tests/front/parse_expr/`, `tests/front/parse_type/`.
 
 - **Expressions**: C's precedence and associativity with no comma operator (`(a, b)` and `xs[a, b]` are errors). No recursion: operators wait on two stacks. `try e` is prefix at unary precedence. A `c::` path is a value, never a cast. A lambda parameter needs a type (`[](a, b)` says to write `auto a`). `u8"..."` is a plain string; `u`, `U` and `L` strings and characters are errors.
+- **Reflection and packs** (#1264): `x.[f]` and `x->[f]` are `reflect_member { base, field, arrow }` (`field` is any expression, such as `fields(T)[i]`); `pattern...` after a call argument or a braced-list item is `expand { pattern }` (`rest...` expands the name `rest`). A second `...` is an error (`an expansion does not nest`), and `x.[]` says to write `x.[fields(T)[i]]`.
 - **Types**: qualifiers, paths, `auto`, keyword types, `struct X`, `typeof`, `*`, `[:]`, `[N]`, applied types `Option(I32)`. `T[:][3]` is a slice of arrays. `R (P...)` inside `Fn(...)` is a function type; `I32 (*f)(I32)` is an error naming `Fn(I32 (I32))`.
 
 ## front::parse_decl (`front/parse_decl.smith`, #1147)
@@ -67,6 +68,8 @@ Declarations and whole files. `parse_decl::declaration(p)` is the hook `parse::H
 - **Errors that name the fix**: several names in one declaration, C's function-pointer declarator (`Fn(I32 (I32)) f`), K&R parameters, implicit `int`, an array with no size, and a tag spelled as C does. After one, the declaration is skipped to its `;` or closing `}` and the parse goes on.
 
 **Statements** (`front/parse_stmt.smith`, A4): `parse_stmt::statement(p)` is the `statement` hook. It reads every statement form (blocks, `if` / `if constexpr`, loops, `switch`, jumps, labels, `defer`, `static_assert`) and a declaration-or-expression with no symbol table. Nesting is an explicit stack of frames, never recursion; after an error the rest of the statement is skipped and an `empty` placeholder stands in, so one mistake gives one error. Tests: `tests/front_parse_stmt_test.smith` with stub hooks and goldens in `tests/front/parse_stmt/`.
+
+- **Slice qualifiers and `lambda(F)`** (#1265): `T[const :]`, `T[restrict :]` and `T[const restrict :]` put the slice's own qualifiers on the slice node (the element's stay on the element); a qualifier in a later bracket, `[static :]` and `[volatile :]` are errors that say what to write. `parse_type::at_slice`, `take_slice`, `at_bad_slice_qualifier` and `bad_slice_qualifier` are exported for a declaration's brackets after a name. `lambda(F)` (a lowercase name before `(`) is an applied type like `Lambda(F)`, and its argument is a function type like `Fn(F)`'s.
 
 ## front::parser (`front/parser.smith`, #1219)
 

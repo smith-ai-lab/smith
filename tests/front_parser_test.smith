@@ -41,10 +41,7 @@ static Str gap_a1() {
            "error-fields-enum-member/main.smith\n"
            "error-generic-number-parameter/number.smith\n"
            "error-generic-private-name/scale.smith\n"
-           "error-lambda-capture-generic/main.smith\n"
-           "error-lambda-param-count/main.smith\n"
            "error-lambda-param-untyped/main.smith\n"
-           "error-lambda-wrong-signature/main.smith\n"
            "error-range-for/main.smith\n"
            "error-slice-const-write/main.smith\n"
            "error-slice-initializer-unread/main.smith\n"
@@ -88,9 +85,6 @@ static Str gap_a2() {
            "generic-slice-local/main.smith\n"
            "generic-slice-qualifiers-auto/copy.smith\n"
            "generic-slice-restrict/pair.smith\n"
-           "lambda-param-element/order.smith\n"
-           "lambda-param-two/main.smith\n"
-           "lambda-param/main.smith\n"
            "module-basic/shapes/area.smith\n"
            "module-enum-c-names/mix/modes.smith\n"
            "range-for-generic/loops.smith\n"
@@ -130,11 +124,9 @@ static Str removed_b() {
            "lambda-static/main.smith\n"
            "lambda-two/main.smith\n"
            "param-names/shape/box.smith\n"
-           "str-typedef-lowering/text.smith\n"
            "str-typedef-module/main.smith\n"
            "str-typedef-module/text.smith\n"
            "str-typedef-run/main.smith\n"
-           "typetag-module/geo/shapes.smith\n"
            "typetag-run/main.smith\n";
 }
 static Str undecided_c() {
