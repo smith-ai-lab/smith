@@ -146,7 +146,7 @@ static I32 leaky_runs;
 void test_shrink_leaky(random::Key key) {
     I64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
     leaky_runs += 1;
-    bool fails = leaky_runs == 1 ? x >= 500 : true;
+    Bool fails = leaky_runs == 1 ? x >= 500 : true;
     test::check_equal(fails, false);
 }
 

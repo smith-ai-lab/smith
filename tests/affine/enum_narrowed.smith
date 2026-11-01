@@ -38,10 +38,10 @@ F32 negated(Shape s) {
     if (!(s == .circle)) return 0;
     return s.circle.radius;
 }
-bool and_test(Shape s) {
+Bool and_test(Shape s) {
     return s == .circle && s.circle.radius > 1;
 }
-bool or_test(Shape s) {
+Bool or_test(Shape s) {
     return s != .circle || s.circle.radius > 1;
 }
 F32 conditional(Shape s) {

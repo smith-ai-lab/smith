@@ -69,7 +69,7 @@ static void place_smith_block(const scratch::Project *p, const char *name, Usize
                            ".smith")
                   .data
             : format::push("example-", line, ".smith").data;
-    bool twice = scratch::exists(p, path);
+    Bool twice = scratch::exists(p, path);
     if (twice) test::note("%s: module %s is defined by two blocks", label, module);
     test::check_condition(!twice);
     if (twice || placed->count == modules_max) return;
@@ -92,7 +92,7 @@ static const char *line_end(const char *at) {
 static void walk_blocks(arena::Arena *arena, const scratch::Project *p, const char *name, Placed *placed) {
     const char *at = scratch::read(p, "SKILL.md");
     char *body = arena::push_slice(arena, char, c::strlen(at) + 1).data;
-    bool open = false;
+    Bool open = false;
     Usize indent = 0;
     Usize used = 0;
     Usize fence = 0;
@@ -193,7 +193,7 @@ static void skill_case(const char *name) {
 
 // Whether the text has a fence line "```c" or "```smith" (spaces before it, anything after a space), but not one that
 // ends in "smith fragment".
-static bool has_code_block(const char *text) {
+static Bool has_code_block(const char *text) {
     const char *line = text;
     for (Usize guard = 0; guard < 100000 && *line != '\0'; guard++) { // each round is a line
         const char *end = c::strchr(line, '\n');
@@ -207,8 +207,8 @@ static bool has_code_block(const char *text) {
             Usize word = 0;
             while (word < info_length && info[word] != ' ')
                 word++;
-            bool code = (word == 1 && info[0] == 'c') || (word == 5 && c::strncmp(info, "smith", 5) == 0);
-            bool fragment = info_length >= 14 && c::strncmp(info + info_length - 14, "smith fragment", 14) == 0;
+            Bool code = (word == 1 && info[0] == 'c') || (word == 5 && c::strncmp(info, "smith", 5) == 0);
+            Bool fragment = info_length >= 14 && c::strncmp(info + info_length - 14, "smith fragment", 14) == 0;
             if (code && !fragment) return true;
         }
         if (end == nullptr) break;

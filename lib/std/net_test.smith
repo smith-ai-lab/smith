@@ -70,7 +70,7 @@ net::Error failure_count(net::CountResult r) {
 }
 
 // Whether the bytes are the text.
-bool is_text(net::Bytes got, const char *text) {
+Bool is_text(net::Bytes got, const char *text) {
     Usize length = __builtin_strlen(text);
     if (countof(got) != length) return false;
     for (Usize i = 0; i < length; i++) {
@@ -264,7 +264,7 @@ export void test_net_a_real_write_to_a_closed_peer_is_reset_and_never_a_signal()
     net::Connection client = value_connection(net::connect("127.0.0.1", listener.port));
     net::Connection server = value_connection(net::accept(&listener));
     net::close(&server);
-    bool reset = false;
+    Bool reset = false;
     for (Usize attempt = 0; attempt < 64 && !reset;
          attempt++) { // the first writes may be taken before the reset arrives
         clock::sleep(1'000'000);

@@ -23,7 +23,7 @@ constexpr Column length = {"length", Usize};
 static_assert(count == U32 && sizeof(count) == 4 && is_integer(count));   // == and != compare types
 static_assert(alignof(length.of) == 8 && sizeof(Block) == 16);
 
-bool small(Type t) {                               // an ordinary function: it runs in the compiler
+Bool small(Type t) {                               // an ordinary function: it runs in the compiler
     return sizeof(t) <= 8;
 }
 
@@ -31,7 +31,7 @@ Type wider(Type a, Type b) {
     return sizeof(a) >= sizeof(b) ? a : b;
 }
 
-constexpr bool fits = small(I32);                  // true: a call with a type name as its argument
+constexpr Bool fits = small(I32);                  // true: a call with a type name as its argument
 
 export Usize demo() {
     constexpr Type local = wider(U8, I64);         // a function over types, at compile time

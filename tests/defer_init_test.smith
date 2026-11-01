@@ -9,12 +9,12 @@ import std::mem;
 import std::test;
 import scratch;
 
-static bool darwin(const scratch::Project *p) {
+static Bool darwin(const scratch::Project *p) {
     return scratch::same(scratch::capture(p, "uname -s"), "Darwin");
 }
 
 // The tool built and the three objects compiled in the project; false off macOS, where nothing is made.
-static bool objects(const scratch::Project *p) {
+static Bool objects(const scratch::Project *p) {
     if (!darwin(p)) {
         return false;
     }

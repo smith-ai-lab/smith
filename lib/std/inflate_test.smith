@@ -63,7 +63,7 @@ static const U8 *load(arena::Arena *arena, const char *name, const char *extensi
     }
 }
 
-static bool same(const U8 *a, const U8 *b, Usize size) {
+static Bool same(const U8 *a, const U8 *b, Usize size) {
     for (Usize i = 0; i < size; i++) {
         if (a[i] != b[i]) return false;
     }
@@ -71,7 +71,7 @@ static bool same(const U8 *a, const U8 *b, Usize size) {
 }
 
 // The output of a repeat vector is its first period over and over.
-static bool is_repeat(const U8 *bytes, Usize size) {
+static Bool is_repeat(const U8 *bytes, Usize size) {
     if (size != repeat_size) return false;
     for (Usize i = repeat_period; i < size; i++) {
         if (bytes[i] != bytes[i - repeat_period]) return false;
@@ -107,10 +107,10 @@ typedef struct {
     Usize calls;
     Usize largest;
     Usize stop_after; // refuse the call after this many (0: never)
-    bool overflowed;
+    Bool overflowed;
 } Collect;
 
-static bool collect(void *context, const U8 *data, Usize size) {
+static Bool collect(void *context, const U8 *data, Usize size) {
     Collect *sink = (Collect *)context;
     sink->calls += 1;
     if (size > sink->largest) sink->largest = size;
@@ -161,7 +161,7 @@ static Usize store_bound(Usize size, U32 block) {
 static Usize store_raw(const U8 *input, Usize size, U32 block, U8 *output) {
     Usize in = 0;
     Usize out = 0;
-    bool last = false;
+    Bool last = false;
     while (!last) {
         Usize length = size - in < block ? size - in : block;
         last = in + length == size;
@@ -325,7 +325,7 @@ export void test_inflate_a_null_input_with_a_size_stops() {
     (void)inflate::decode(inflate::Raw, nullptr, 1, output, sizeof output, &used, &produced);
 }
 
-static bool inflate_test_sink(void *context, const U8 *data, Usize size) {
+static Bool inflate_test_sink(void *context, const U8 *data, Usize size) {
     (void)context;
     (void)data;
     (void)size;
@@ -634,11 +634,11 @@ typedef enum {
 export void test_prop_inflate_round_trips_stored_blocks(random::Key key) {
     random::Key *key_stream = &key;
     arena::Arena arena = test::memory(arena_size);
-    bool empty = between(take(key_stream), 0, 5) == 0;
+    Bool empty = between(take(key_stream), 0, 5) == 0;
     // 200,000 bytes with --full, else 70,000: still past the 65,535 a stored block holds, and a third of the time under
     // ASan
     Usize size = empty ? 0 : (Usize)between(take(key_stream), 0, test::full() ? 199'999 : 69'999);
-    bool short_blocks = random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.5});
+    Bool short_blocks = random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.5});
     U32 block = (U32)between(take(key_stream), 1, short_blocks ? 70 : block_max);
     U8 *data = arena::push_slice(&arena, U8, size == 0 ? 1 : size).data;
     random::Key byte_keys = take(key_stream);
@@ -646,7 +646,7 @@ export void test_prop_inflate_round_trips_stored_blocks(random::Key key) {
     for (Usize i = 0; i < size; i++) {
         random::Key byte = take(byte_keys_stream);
         random::Key *byte_stream = &byte;
-        bool narrow = random::bernoulli_sample(take(byte_stream), (random::Bernoulli){.probability = 0.5});
+        Bool narrow = random::bernoulli_sample(take(byte_stream), (random::Bernoulli){.probability = 0.5});
         data[i] = (U8)between(take(byte_stream), 0, narrow ? 3 : 255);
     }
     Usize capacity = store_bound(size, block);
@@ -749,7 +749,7 @@ export void test_inflate_survives_corrupt_input(random::Key key) {
         (void)load(arena, vector->name, "bin", &expected_size);
         const U8 *gzip = load(arena, vector->name, "gz", &gzip_size);
         U8 *file = exact_copy(arena, gzip, gzip_size);
-        bool whole = random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.5});
+        Bool whole = random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.5});
         Usize capacity = whole ? expected_size : (Usize)between(take(key_stream), 0, (I64)expected_size);
         U8 *output = arena::push_slice(arena, U8, capacity == 0 ? 1 : capacity).data;
         U32 flips = (U32)between(take(key_stream), 1, 4);

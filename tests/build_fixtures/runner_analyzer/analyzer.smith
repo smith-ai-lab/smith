@@ -7,14 +7,14 @@ typedef struct {
 Box *find(I32 key);
 void missing(void);
 
-static I32 checked(bool flag) {
+static I32 checked(Bool flag) {
     Box *p = nullptr;
     if (flag) p = find(1);
     test::check(p != nullptr);
     return p->x;
 }
 
-static I32 unchecked(bool flag) {
+static I32 unchecked(Bool flag) {
     Box *p = nullptr;
     if (flag) p = find(1);
     if (p == nullptr) missing();

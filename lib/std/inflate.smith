@@ -58,7 +58,7 @@ import <smith/trace.h>; // smith_failure_detail: the stop of a wrong call
 // NOLINTEND(readability-identifier-naming)
 
 // Where stream sends the output: `size` bytes at `data`, valid until it returns. False stops the decoder.
-[[std::c_name("SmithInflateSink")]] export typedef bool (*Sink)(void *context, const U8 *data, Usize size);
+[[std::c_name("SmithInflateSink")]] export typedef Bool (*Sink)(void *context, const U8 *data, Usize size);
 
 // The window stream needs: the farthest a match reaches back, and the size of its buffer.
 [[std::c_name("smith_inflate_window")]] export constexpr Usize window = 32768;
@@ -430,7 +430,7 @@ typedef struct {
     return value;
 }
 
-[[gnu::always_inline]] inline bool overrun(const Bits *reader) {
+[[gnu::always_inline]] inline Bool overrun(const Bits *reader) {
     return reader->count < reader->fake;
 }
 
@@ -449,7 +449,7 @@ typedef struct {
 
 // Builds the decoder of a canonical code from its lengths. False when the code is over-subscribed, or incomplete
 // (zlib's rule: except the one code of length 1 that a lone distance may be).
-bool huffman_build(Huffman *huffman, const U8 *lengths, Usize n) {
+Bool huffman_build(Huffman *huffman, const U8 *lengths, Usize n) {
     __builtin_memset(huffman->count, 0, sizeof huffman->count);
     __builtin_memset(huffman->fast, 0, sizeof huffman->fast);
     for (Usize i = 0; i < n; i++) {
@@ -540,14 +540,14 @@ void sum(State *s) {
 // Hands the window to the sink and starts it again (the old bytes stay where they are, for matches to reach).
 Status flush(State *s) {
     sum(s);
-    bool ok = s->position == 0 || s->sink(s->context, s->out, s->position);
+    Bool ok = s->position == 0 || s->sink(s->context, s->out, s->position);
     s->position = 0;
     s->summed = 0;
     return ok ? Ok : Stopped;
 }
 
 [[gnu::always_inline]] inline Status put(State *s, U8 byte) {
-    bool windowed = s->sink != nullptr;
+    Bool windowed = s->sink != nullptr;
     if (!windowed && s->position == s->capacity) return Overflow;
     s->out[s->position] = byte;
     s->position += 1;
@@ -671,7 +671,7 @@ Status fixed(State *s) {
     __builtin_memset(lengths + 144, 9, 112);
     __builtin_memset(lengths + 256, 7, 24);
     __builtin_memset(lengths + 280, 8, 8);
-    bool ok = huffman_build(&s->literals, lengths, 288);
+    Bool ok = huffman_build(&s->literals, lengths, 288);
     __builtin_memset(lengths, 5, 32); // 30 and 31 are codes too, and a match that uses them is refused
     ok = huffman_build(&s->distances, lengths, 32) && ok;
     return ok ? symbols(s) : Corrupt;
@@ -740,7 +740,7 @@ Status blocks(State *s) {
     Bits *reader = &s->bits;
     for (U64 block = 0; block < s->guard; block++) {
         refill(reader);
-        bool last = take(reader, 1) != 0;
+        Bool last = take(reader, 1) != 0;
         U32 type = take(reader, 2);
         if (overrun(reader)) return Truncated;
         Status status = Corrupt; // the reserved type 3
@@ -796,7 +796,7 @@ Status open_wrapper(Format format, const U8 *in, Usize size, Usize *start) {
     if (format == Zlib) {
         if (size < 2) return Truncated;
         U32 header = ((U32)in[0] << 8) | in[1];
-        bool method = (in[0] & 15U) == 8 && (in[0] >> 4) <= 7;
+        Bool method = (in[0] & 15U) == 8 && (in[0] >> 4) <= 7;
         if (!method || header % 31 != 0 || (in[1] & 0x20U) != 0) return BadHeader; // a preset dictionary is refused
         *start = 2;
     }

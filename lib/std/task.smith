@@ -75,20 +75,20 @@ struct Task {
     Usize size;         // the bytes of the stack
     void *region;       // the mapping, null for a thread's first task
     Usize region_size;
-    bool finished;
+    Bool finished;
     c::SmithHandlers handlers; // the handlers this task sees; a copy of its spawner's at spawn
     c::SmithHandlers *table;   // what smith_handlers_set_table gets when it is entered: &handlers, null for the first
     I32 saved_errno;           // its errno while it is not running
     // The default scheduler's.
-    bool keep_fake_stack; // AddressSanitizer: its fake stack outlives it, for the next task on the same stack
-    bool managed;         // run by a worker: its record is not in its mapping, and its stack comes and goes with it
+    Bool keep_fake_stack; // AddressSanitizer: its fake stack outlives it, for the next task on the same stack
+    Bool managed;         // run by a worker: its record is not in its mapping, and its stack comes and goes with it
     Worker *worker;       // the worker it stays on for its whole life
     Group *waiting_on;    // the group a `wait` of this task is waiting for
     Task *wait_next;      // the list of waiting tasks
-    bool in_wait;         // it has registered as a waiter
-    bool parked;          // and has switched out of its worker
-    bool woken;           // the group ended before it had switched out
-    bool io_waiting;      // registered with its worker's kqueue, not ready yet
+    Bool in_wait;         // it has registered as a waiter
+    Bool parked;          // and has switched out of its worker
+    Bool woken;           // the group ended before it had switched out
+    Bool io_waiting;      // registered with its worker's kqueue, not ready yet
 };
 
 // The context switch: saves the callee-saved registers on the stack, stores the stack pointer in *save, takes the one
@@ -272,7 +272,7 @@ void transfer(Task *from, Task *to) {
 }
 
 void finish_managed(Task *task); // the default scheduler's, below
-bool stack_will_be_kept(Task *task);
+Bool stack_will_be_kept(Task *task);
 
 // The entry of a new task, on its own stack: runs it, then goes back to whoever resumed it, for good.
 void task_main(Task *task) {
@@ -368,7 +368,7 @@ Task *make_task(Group *group, void (*entry)(void *context), void *context) {
 }
 
 // Enters a task from the current one and returns true when it has ended, false when it paused.
-bool resume(Task *task) {
+Bool resume(Task *task) {
     contract::requires(task != nullptr && !task->finished);
     Task *self = current();
     task->resumer = self;
@@ -470,7 +470,7 @@ void inline_pause([[maybe_unused]] Scheduler *scheduler) {
         return;
     }
     for (Task *last = parked_last; parked_first != nullptr;) {
-        bool stop = parked_first == last;
+        Bool stop = parked_first == last;
         step_parked();
         if (stop) break;
     }
@@ -514,8 +514,8 @@ struct Worker {
 
 Worker workers[workers_max];
 Usize worker_count;
-bool active;        // the workers exist
-bool stopping;      // they are to exit
+Bool active;        // the workers exist
+Bool stopping;      // they are to exit
 Usize live;         // tasks spawned and not ended
 Usize busy;         // workers running a task right now
 Usize ready_total;  // tasks in all the queues
@@ -679,7 +679,7 @@ if constexpr (target::os == target::macos) {
 
     // Reads the worker's kqueue, waiting for it when `block` (the lock is let go while it waits), and queues the tasks
     // whose descriptors are ready. Holds the lock; returns with it held.
-    void poll_io(Worker *worker, bool block) {
+    void poll_io(Worker *worker, Bool block) {
         contract::trusted(); // the system's queue is the edge
         struct c::kevent events[events_max] = {};
         struct c::timespec none = {};
@@ -705,7 +705,7 @@ if constexpr (target::os == target::macos) {
     }
 
     // Elsewhere nothing waits in a queue: a blocking poll is a sleep until woken.
-    void poll_io(Worker *worker, bool block) {
+    void poll_io(Worker *worker, Bool block) {
         if (block) c::pthread_cond_wait(&worker->wake, &sched_lock); // NOLINT(smith-effects)
     }
 }
@@ -719,7 +719,7 @@ void poll_now() {
 }
 
 // Whether the worker's cache has room for the stack of this ended task.
-bool stack_will_be_kept(Task *task) {
+Bool stack_will_be_kept(Task *task) {
     return task->worker->cached < stack_cache_max;
 }
 
@@ -766,7 +766,7 @@ void run_ready(Worker *worker) {
     busy += 1;
     unlock_scheduler();
     if (task->region == nullptr) start_managed(task, worker);
-    bool ended = resume(task);
+    Bool ended = resume(task);
     if (ended) release_managed(task, worker);
     lock_scheduler();
     busy -= 1;
@@ -840,7 +840,7 @@ if constexpr (target::os == target::macos) {
     }
 
     // Whether the task may park on this descriptor. A socket or a pipe is made non-blocking (once: the flag stays).
-    bool parkable(I32 fd) {
+    Bool parkable(I32 fd) {
         contract::trusted(); // the system's descriptors are the edge
         // NOLINTBEGIN(smith-effects, bugprone-signed-bitwise): fcntl's flags and st_mode are ints OR-ed and masked
         I32 flags = c::fcntl(fd, get_flags);
@@ -857,7 +857,7 @@ if constexpr (target::os == target::macos) {
     // Registers the descriptor with the worker's kqueue and parks the calling task until it is ready. False when the
     // system refused the registration (errno says why). `main` has no stack to leave: it runs its worker's tasks, or
     // sleeps in the kqueue, until it is ready.
-    bool park_on(I32 fd, I32 filter) {
+    Bool park_on(I32 fd, I32 filter) {
         contract::trusted(); // the system's queue is the edge
         Task *self = current();
         Worker *worker = home;
@@ -896,14 +896,14 @@ if constexpr (target::os == target::macos) {
         request->error = error;
     }
 
-    bool waits_for_write(I32 operation) {
+    Bool waits_for_write(I32 operation) {
         return operation == c::SmithIoOperation_Write || operation == c::SmithIoOperation_Writev ||
                operation == c::SmithIoOperation_Send || operation == c::SmithIoOperation_Connect;
     }
 
     // The scheduler's `io`: a plain blocking call to the code that made it.
     void default_io([[maybe_unused]] Scheduler *self, c::SmithIoRequest *request) {
-        bool offset =
+        Bool offset =
             request->operation == c::SmithIoOperation_Pread || request->operation == c::SmithIoOperation_Pwrite;
         if (!active || home == nullptr || offset || !parkable(request->fd)) {
             attempt(request);
@@ -911,7 +911,7 @@ if constexpr (target::os == target::macos) {
         }
         while (true) { // NOLINT(smith-bounded-loop): ends when the call completes
             attempt(request);
-            bool connecting = request->operation == c::SmithIoOperation_Connect && request->error == in_progress;
+            Bool connecting = request->operation == c::SmithIoOperation_Connect && request->error == in_progress;
             if (request->result >= 0 || (request->error != would_block && !connecting)) return;
             if (!park_on(request->fd, waits_for_write(request->operation) ? filter_write : filter_read)) {
                 request->error = *errno_location();

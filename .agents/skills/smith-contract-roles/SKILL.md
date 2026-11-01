@@ -18,7 +18,7 @@ export I32 first(const I32 *xs, Usize count) {
     return head;
 }
 
-export void check_input(bool holds) {
+export void check_input(Bool holds) {
     contract::trusted();                          // the prover never reads this body: a run-time check with a report
     contract::assert(holds);
     if (!holds) __builtin_trap();                 // a bare trap writes no report

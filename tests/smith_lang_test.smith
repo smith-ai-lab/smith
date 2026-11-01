@@ -64,7 +64,7 @@ constexpr Usize report_capacity = 1U << 16;
 static char header_text[header_capacity];
 static char report_text[report_capacity];
 
-static bool header_by_command(const char *name) {
+static Bool header_by_command(const char *name) {
     static const char *const cases[_] = {"filescope-if-header", "filescope-if-reflect"};
     for (Usize i = 0; i < countof(cases); i++) {
         if (c::strcmp(name, cases[i]) == 0) return true;
@@ -141,7 +141,7 @@ static const char *text_of(const Case *kase, const char *name) {
 constexpr Usize found_max = 512;
 constexpr Usize found_folders_max = 128;
 
-static bool ends_with(const char *text, const char *suffix) {
+static Bool ends_with(const char *text, const char *suffix) {
     Usize length = c::strlen(text);
     Usize tail = suffix != nullptr ? c::strlen(suffix) : 0;
     return suffix != nullptr && length >= tail && c::strcmp(text + length - tail, suffix) == 0;
@@ -151,7 +151,7 @@ static bool ends_with(const char *text, const char *suffix) {
 // (every file when both are nullptr), as paths relative to it, in the order of LC_ALL=C sort, one a line. It does what
 // `cd src && find . -name '*.smith' | LC_ALL=C sort` did, through std::files, in place of a process for each.
 static const char *found(const Case *kase, const char *from, const char *suffix_a, const char *suffix_b,
-                         bool files_only_here) {
+                         Bool files_only_here) {
     arena::Arena *arena = kase->arena;
     const char *names[found_max];
     Usize count = 0;
@@ -173,7 +173,7 @@ static const char *found(const Case *kase, const char *from, const char *suffix_
                 folders[tail++] = relative;
                 continue;
             }
-            bool wanted = (suffix_a == nullptr && suffix_b == nullptr) || ends_with(entry, suffix_a) ||
+            Bool wanted = (suffix_a == nullptr && suffix_b == nullptr) || ends_with(entry, suffix_a) ||
                           ends_with(entry, suffix_b);
             if (!wanted || entries[i].folder) {
                 continue;
@@ -204,7 +204,7 @@ static void write_header(const Case *kase, const char *file, const char *stem) {
     arena::Arena *arena = kase->arena;
     const scratch::Project *p = kase->project;
     const char *source = format::push("src/", file).data;
-    bool made =
+    Bool made =
         c::smith_core_header(p->dir, source, nullptr, header_text, header_capacity, report_text, report_capacity);
     if (report_text[0] != '\0') {
         const U8 *bytes = (const U8 *)report_text;
@@ -277,7 +277,7 @@ static void build_others(const Case *kase, Built *built) {
     const char *linker = "cc"; // the verb that links: C++ needs smith c++
     for (const char *at = others, *file = next_line(arena, &at); file != nullptr; file = next_line(arena, &at)) {
         const char *object = format::push("out/obj/", object_of(arena, file), ".o").data;
-        bool cpp = c::strcmp(file + c::strlen(file) - 4, ".cpp") == 0;
+        Bool cpp = c::strcmp(file + c::strlen(file) - 4, ".cpp") == 0;
         const char *compile =
             cpp ? format::push("smith c++ -std=c++20 -g0 -fno-color-diagnostics -I out/include -c src/", file, " -o ",
                                object, " 2>>out/stderr")
@@ -288,7 +288,7 @@ static void build_others(const Case *kase, Built *built) {
         built->objects = format::push(built->objects, " ", object).data;
     }
     scratch::write(p, "out/stdout", "");
-    bool has_main =
+    Bool has_main =
         scratch::exists(p, "src/main.smith") || scratch::exists(p, "src/main.c") || scratch::exists(p, "src/main.cpp");
     if (built->status != 0 || !has_main) return;
     // -lm: glibc keeps libm apart; macOS's is in libSystem, which links anyway
@@ -386,14 +386,14 @@ static const char *errors_of(const Case *kase, const char *file) {
 }
 
 // A case with no expect folder is new: an update writes what it made.
-static bool fresh(const scratch::Project *p) {
+static Bool fresh(const scratch::Project *p) {
     return !scratch::exists(p, "expect");
 }
 
-static void check_errors(const Case *kase, const Built *built, bool update) {
+static void check_errors(const Case *kase, const Built *built, Bool update) {
     const scratch::Project *p = kase->project;
     const char *errors = errors_of(kase, "out/stderr");
-    bool wants_error = scratch::exists(p, "expect/error") || (update && errors[0] != '\0');
+    Bool wants_error = scratch::exists(p, "expect/error") || (update && errors[0] != '\0');
     if (wants_error) {
         golden_at(kase, "expect/error", errors);
         if (built->status == 0) {
@@ -406,7 +406,7 @@ static void check_errors(const Case *kase, const Built *built, bool update) {
     }
 }
 
-static void check_outputs(const Case *kase, bool update) {
+static void check_outputs(const Case *kase, Bool update) {
     const scratch::Project *p = kase->project;
     const char *stderr_text = scratch::read(p, "out/stderr");
     const char *stdout_text = scratch::read(p, "out/stdout");
@@ -430,7 +430,7 @@ static const char *held(const Case *kase, const char *folder) {
 
 // The generated headers of the cases in `header_by_command` and what the compile wrote for generics, as the case holds
 // them. A run to update takes the files a successful build made as the expectation.
-static void check_files(const Case *kase, const Built *built, bool update) {
+static void check_files(const Case *kase, const Built *built, Bool update) {
     arena::Arena *arena = kase->arena;
     const char *files;
     if (update && built->status != 0) return;
@@ -498,7 +498,7 @@ static void corpus_case(const char *name) {
         scratch::copy_tree(&p, "lib/trace.c", "mirror/lib/trace.c");
         scratch::copy_tree(&p, "include", "mirror/include");
     }
-    bool update = test::updating();
+    Bool update = test::updating();
     Built built;
     if (scratch::exists(&p, "cmd")) {
         built = build_command(&kase);

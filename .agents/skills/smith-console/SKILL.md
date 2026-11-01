@@ -15,7 +15,7 @@ module greet;
 import std::console;
 import std::mem;
 
-bool failed(console::Written shown) { // a function of its own reads a result (smith issue #353)
+Bool failed(console::Written shown) { // a function of its own reads a result (smith issue #353)
     return shown == .error;
 }
 

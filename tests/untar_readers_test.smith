@@ -252,7 +252,7 @@ static Bytes gzip_stored(Case *t, Bytes data) {
     Usize at = 0;
     for (Usize block = 0; block < 1000; block++) {
         Usize take = size - at < 65535 ? size - at : 65535;
-        bool last = at + take == size;
+        Bool last = at + take == size;
         U8 head[5] = {last ? 1 : 0, (U8)take, (U8)(take >> 8), (U8)~take, (U8)(~take >> 8)};
         put(&gz, head, 5);
         put(&gz, data.data + at, take);
@@ -327,7 +327,7 @@ static Bytes xz_stored(Case *t, Bytes data, U8 check) {
 // ---- Extraction
 
 typedef struct {
-    bool ok;
+    Bool ok;
     const char *contents; // the package's folder
     const char *error;
     const char *tree; // the listing of the package
@@ -350,10 +350,10 @@ static Extracted extract_from(Case *t, const char *name, Bytes archive, const ch
     char *contents = arena::push_slice(&t->memory, char, path_capacity).data;
     char *error = arena::push_slice(&t->memory, char, text_capacity).data;
     char *tree = arena::push_slice(&t->memory, char, text_capacity).data;
-    bool ok = c::smith_core_extract(archive.data, countof(archive), url, folder, contents, path_capacity, error,
+    Bool ok = c::smith_core_extract(archive.data, countof(archive), url, folder, contents, path_capacity, error,
                                     text_capacity);
     if (ok) {
-        bool listed = c::smith_core_tree(contents, tree, text_capacity);
+        Bool listed = c::smith_core_tree(contents, tree, text_capacity);
         test::check_equal(listed, true);
     }
     return (Extracted){.ok = ok, .contents = contents, .error = error, .tree = tree};
@@ -716,7 +716,7 @@ export void test_untar_refuses_a_device() {
     hostile(&t, "a device", link_of("pkg-1.0/null", '3', nullptr), "special file");
 }
 
-static bool exists(const char *path) {
+static Bool exists(const char *path) {
     files::InfoResult info = files::info(path[0:c::strlen(path)]);
     return info == .ok;
 }

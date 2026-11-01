@@ -302,7 +302,7 @@ constexpr char sandbox_profile[_] =
     "(literal \"/usr/bin/xz\"))'; export XDG_CACHE_HOME=$PWD/cache-sandbox; ";
 
 // True when sandbox-exec exists and works here (it does not inside another sandbox).
-static bool sandbox_ready(const scratch::Project *p) {
+static Bool sandbox_ready(const scratch::Project *p) {
     setup(p, "make_a_tar; gzip -c \"$arc/a.tar\" >\"$arc/a.tar.gz\"; xz -c \"$arc/a.tar\" >\"$arc/a.tar.xz\"");
     scratch::Run found = scratch::sh(p, join(sandbox_profile, "command -v sandbox-exec >/dev/null 2>&1 && "
                                                               "sandbox-exec -p \"$profile\" /usr/bin/true"));

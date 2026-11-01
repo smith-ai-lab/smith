@@ -19,6 +19,6 @@ export const char *after_space(const char *text) {
     return c::strchr(text, ' ');
 }
 
-export bool letter(char c) {
+export Bool letter(char c) {
     return c::isalpha(c) != 0;
 }

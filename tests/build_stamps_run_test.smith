@@ -9,7 +9,7 @@ import scratch;
 
 constexpr Usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
 
-static const char *yes_no(bool value) {
+static const char *yes_no(Bool value) {
     return value ? "yes" : "no";
 }
 

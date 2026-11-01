@@ -72,7 +72,7 @@ static void main_c(const char *folder) {
 static Translation translate(const char *folder) {
     char *build = mem::alloc_slice(char, build_capacity).data;
     char *report = mem::alloc_slice(char, report_capacity).data;
-    bool done = c::smith_core_make_translate(folder, nullptr, build, build_capacity, report, report_capacity);
+    Bool done = c::smith_core_make_translate(folder, nullptr, build, build_capacity, report, report_capacity);
     test::check_equal(done, true);
     return (Translation){.build = build, .report = report};
 }
