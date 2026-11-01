@@ -1,2 +1,2 @@
-generic-slice-option-typedef/cursor.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (5:57) [undecided_c]
+generic-slice-option-typedef/cursor.smith: error: a pointer to a slice is written `const auto[:] *xs`, not `const auto (*xs)[:]` (5:57) [removed_b]
 generic-slice-option-typedef/main.smith: ok

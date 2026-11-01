@@ -1,0 +1,118 @@
+// Tests of a pointer to a slice (#1344, A7i of track A of #1112): `Str *line`, `I32[:] *xs`, `const I32[:] *xs` and
+// `I32[:] **pp` as a parameter, a result, a field and a local, `I32[:][2] *m` following the array-dimension rule, and
+// the removed C form `T (*p)[:]`, an error that names `T[:] *p`. Each case compares the dump of the module.
+module front_parse_slice_pointer_test;
+
+import front::ast;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+// The dump of a file that must parse without errors.
+static Str dump_of(Str source) {
+    parser::Parsed parsed = parser::parse("x.smith", source);
+    if (countof(parsed.errors) > 0) {
+        Str expected = "no error";
+        test::check_equal(parsed.errors[0].message, expected);
+    }
+    return ast::dump(&parsed.module);
+}
+
+// The first error of a file, or `no error`.
+static Str first_error(Str source) {
+    parser::Parsed parsed = parser::parse("x.smith", source);
+    if (countof(parsed.errors) == 0) return "no error";
+    return parsed.errors[0].message;
+}
+
+export void test_slice_pointer_parameter() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = dump_of("U8 f(const I32[:] *xs, Str *line);");
+    Str want = "(module \n"
+               "  (function f (param xs (pointer (slice (named I32 const)))) (param line (pointer (named Str))) "
+               "(result (named U8))))\n";
+    test::check_equal(got, want);
+}
+
+export void test_slice_pointer_result() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = dump_of("I32[:] *f(I32 n);");
+    Str want = "(module \n"
+               "  (function f (param n (named I32)) (result (pointer (slice (named I32))))))\n";
+    test::check_equal(got, want);
+}
+
+export void test_slice_pointer_field() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = dump_of("struct S { I32[:] *xs; I32[:] **pp; };");
+    Str want = "(module \n"
+               "  (struct S\n"
+               "    (field xs (pointer (slice (named I32))))\n"
+               "    (field pp (pointer (pointer (slice (named I32)))))))\n";
+    test::check_equal(got, want);
+}
+
+export void test_slice_pointer_local() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = dump_of("void f(void) { I32[:][2] *m = nullptr; }");
+    Str want = "(module \n"
+               "  (function f\n"
+               "    (result (named void))\n"
+               "    (block\n"
+               "      (declaration\n"
+               "        (variable m (pointer (slice (array (named I32) (integer 2)))) (null_pointer))))))\n";
+    test::check_equal(got, want);
+}
+
+export void test_slice_pointer_c_form_removed() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("U8 f(const I32 (*xs)[:]);");
+    Str want = "a pointer to a slice is written `const I32[:] *xs`, not `const I32 (*xs)[:]`";
+    test::check_equal(got, want);
+}
+
+export void test_slice_pointer_c_form_removed_variable() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("I32 (**pp)[:] = nullptr;");
+    Str want = "a pointer to a slice is written `I32[:] **pp`, not `I32 (**pp)[:]`";
+    test::check_equal(got, want);
+}
+
+export void test_slice_pointer_c_form_removed_field() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("struct S { Str (*p)[:]; };");
+    Str want = "a pointer to a slice is written `Str[:] *p`, not `Str (*p)[:]`";
+    test::check_equal(got, want);
+}
+
+export void test_slice_pointer_c_form_removed_local() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("void f(void) { const I32 (*xs)[:] = nullptr; }");
+    Str want = "a pointer to a slice is written `const I32[:] *xs`, not `const I32 (*xs)[:]`";
+    test::check_equal(got, want);
+}

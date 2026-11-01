@@ -1,1 +1,1 @@
-str-run/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (26:23) [undecided_c]
+str-run/main.smith: error: a pointer to a slice is written `char[:] *b`, not `char (*b)[:]` (26:23) [removed_b]
