@@ -6,13 +6,13 @@
 3:10 name add
 3:13 left_paren (
 3:14 kw_constexpr constexpr
-3:24 name Type
+3:24 type_name Type
 3:29 type_name T
 3:30 comma ,
-3:32 name I32
+3:32 type_name I32
 3:36 kw_short short
 3:41 comma ,
-3:43 name I32
+3:43 type_name I32
 3:47 kw_long long
 3:51 comma ,
 3:53 type_name T
