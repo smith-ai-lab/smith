@@ -30,7 +30,7 @@ test::expect_abort()                        // from this call on the test must a
   import std::contract;
   import std::test;
 
-  static i32 halve(i32 x) {
+  static I32 halve(I32 x) {
       contract::requires(x % 2 == 0);
       return x / 2;
   }

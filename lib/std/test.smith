@@ -249,7 +249,7 @@ export constexpr Kind kind_pointer = 6;
 // A value of any type a check takes, with the name of its type.
 [[std::c_name("SmithTestValue")]] export typedef struct {
     Kind kind;
-    const char *type; // "i32", "u64", "f64", "bool", "char", "ptr"
+    const char *type; // "I32", "U64", "F64", "bool", "char", "ptr"
     union {
         U64 unsigned_value;
         I64 signed_value;
@@ -272,21 +272,21 @@ export constexpr Op op_greater_equal = 5;
 
 // The Value of an integer of `size` bytes, named as the sized types are (i8 to i64, u8 to u64).
 [[std::c_name("smith_test_value_signed")]] export [[nodiscard]] Value value_signed(I64 value, Usize size) {
-    const char *name = size == 1 ? "i8" : size == 2 ? "i16" : size == 4 ? "i32" : "i64";
+    const char *name = size == 1 ? "I8" : size == 2 ? "I16" : size == 4 ? "I32" : "I64";
     return (Value){.kind = kind_signed, .type = name, .signed_value = value};
 }
 
 [[std::c_name("smith_test_value_unsigned")]] export [[nodiscard]] Value value_unsigned(U64 value, Usize size) {
-    const char *name = size == 1 ? "u8" : size == 2 ? "u16" : size == 4 ? "u32" : "u64";
+    const char *name = size == 1 ? "U8" : size == 2 ? "U16" : size == 4 ? "U32" : "U64";
     return (Value){.kind = kind_unsigned, .type = name, .unsigned_value = value};
 }
 
 [[std::c_name("smith_test_value_f32")]] export [[nodiscard]] Value value_f32(F32 value) {
-    return (Value){.kind = kind_f32, .type = "f32", .f32_value = value};
+    return (Value){.kind = kind_f32, .type = "F32", .f32_value = value};
 }
 
 [[std::c_name("smith_test_value_f64")]] export [[nodiscard]] Value value_f64(F64 value) {
-    return (Value){.kind = kind_f64, .type = "f64", .f64_value = value};
+    return (Value){.kind = kind_f64, .type = "F64", .f64_value = value};
 }
 
 [[std::c_name("smith_test_value_bool")]] export [[nodiscard]] Value value_bool(bool value) {

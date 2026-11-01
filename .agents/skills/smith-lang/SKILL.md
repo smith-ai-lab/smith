@@ -34,7 +34,7 @@ export U32 total(const U32 xs[:]) {            // a slice: a pointer and its cou
 | slices, the range `for` | `I32 xs[:]`, `xs[a:b]`, `countof(xs)`, `for (I32 x : xs)` | `smith-lang-arrays`, `smith-lang-for` |
 | generics | `constexpr Type T`, `auto x`, `typeof(x)`, `if constexpr` | `smith-lang-generics` |
 | argument lists, reflection | `auto... rest`, `fields(T)` | `smith-lang-rest`, `smith-lang-reflection` |
-| concepts | `arithmetic x`, `integer n = 3;` | `smith-lang-concepts` |
+| concepts | `Num x`, `Int n = 3;` | `smith-lang-concepts` |
 | compile time, type values | `constexpr I32 x = fib(10);`, `constexpr Type t = I32;` | `smith-lang-constexpr`, `smith-lang-type-values` |
 | tuples, used once, lambdas | `struct { I32, F32 }`, `[[std::affine]]`, `[](I32 a) -> I32 { return a * 2; }` | `smith-lang-tuples`, `smith-lang-affine`, `smith-lang-lambdas`, `smith-lang-lambda-param` |
 | enums with payloads | `typedef enum { Circle circle; empty; } Shape;`, `s == .circle` | `smith-lang-enums` |
