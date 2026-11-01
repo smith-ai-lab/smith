@@ -3785,6 +3785,8 @@ static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const ch
     case SmithVerb_Version:
         return smith_version_main();
     case SmithVerb_ToolOrProject: // with arguments it is the tool, with none (or only -D options) the project's
+        if (strcmp(verb->name, "lint") == 0 && smith_lint_fix_requested(argc - 2, argv + 2))
+            return smith_lint_fix(argc - 3, argv + 3); // .smith files, on smith's own front end (runtime/front_flag.c)
         if (!smith_project_arguments(verb->name, argc - 2, argv + 2)) {
             if (strcmp(verb->name, "prove") == 0) return smith_prove(argc - 2, argv + 2, self);
             return smith_tool_main(smith_find_tool(verb->name), argc, argv, self);

@@ -774,7 +774,7 @@ static const char *const build_front_modules[] = {
     "ast",        "lex",         "parse",      "parse_expr",   "parse_type",    "parse_stmt",
     "parse_decl", "parser",      "types",      "types_expr",   "types_convert", "types_decl",
     "emit_state", "emit",        "emit_arith", "emit_control", "emit_call",     "emit_memory",
-    "emit_debug", "emit_object", "roots",      "compile",
+    "emit_debug", "emit_object", "roots",      "fix",          "compile",
 };
 constexpr size_t build_front_module_count = sizeof build_front_modules / sizeof build_front_modules[0];
 

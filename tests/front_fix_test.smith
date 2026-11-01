@@ -1,0 +1,175 @@
+// Tests of fix-its in parse errors and the `smith lint --fix` engine (#1442, S6 of #1428): an error records its edits,
+// the edits are applied together or not at all, overlapping fixes apply the first, a file reaches a fixed point, and
+// `smith lint --fix` on the real parser applies nothing yet.
+module front_fix_test;
+
+import front::fix;
+import front::parse as syntax;
+import front::parser;
+import std::arena;
+import std::files;
+import std::mem;
+import std::test;
+
+// The name of the file in a test that needs none, and the first place the type `Str` is written, which defines it at
+// file scope, so a function pointer to `reader` has the same parameter types as the one in front::fix.
+static Str file_name;
+
+static void check_text(Str got, Str want) {
+    test::check_equal(got, want);
+}
+
+static void check_count(Usize got, Usize want) {
+    test::check_equal(got, want);
+}
+
+static void check_signed(I64 got, I64 want) {
+    test::check_equal(got, want);
+}
+
+static void check_flag(Bool got, Bool want) {
+    test::check_equal(got, want);
+}
+
+static syntax::Errors errors_of(Usize n) {
+    syntax::Errors errors = {};
+    errors = mem::realloc(errors, n);
+    for (Usize i = 0; i < n; i++)
+        errors[i] = (syntax::ParseError){};
+    return errors;
+}
+
+static syntax::Edits fix_of(Usize n) {
+    syntax::Edits edits = {};
+    return mem::realloc(edits, n);
+}
+
+static syntax::Edit edit(U32 start, U32 end, Str text) {
+    return (syntax::Edit){.span = {.start = start, .end = end}, .text = text};
+}
+
+// A parser that finds the first `OLD` of the text and records `new` as the fix of the error it reports there.
+static parser::Parsed reader(Str file, Str source) {
+    parser::Parsed result = {};
+    result.module.file = file;
+    syntax::Parser p = {};
+    for (Usize i = 0; i + 3 <= countof(source); i++) {
+        if (source[i] == 'O' && source[i + 1] == 'L' && source[i + 2] == 'D') {
+            U32 start = (U32)i;
+            U32 end = (U32)(i + 3);
+            syntax::Edits edits = fix_of(1);
+            edits[0] = edit(start, end, "new");
+            syntax::error_fix(&p, edits[0].span, "OLD is the old form", edits);
+            break;
+        }
+    }
+    result.errors = p.errors;
+    return result;
+}
+
+export void test_error_fix_records_its_edits() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed parsed = reader("x.smith", "OLD");
+    check_count(countof(parsed.errors), 1);
+    syntax::Edits made = parsed.errors[0].fix;
+    check_count(countof(made), 1);
+    check_text(made[0].text, "new");
+    check_flag(parsed.errors[0].warning, false);
+}
+
+export void test_error_without_a_fix_has_none() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed parsed = parser::parse(file_name, "module a; int");
+    check_flag(countof(parsed.errors) > 0, true);
+    syntax::Edits none = parsed.errors[0].fix;
+    check_count(countof(none), 0);
+}
+
+export void test_fixes_apply_in_order_of_position() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    syntax::Errors errors = errors_of(2);
+    errors[0].fix = fix_of(1);
+    errors[0].fix[0] = edit(6, 7, "B");
+    errors[1].fix = fix_of(1);
+    errors[1].fix[0] = edit(0, 1, "A");
+    fix::Fixed fixed = fix::apply_fixes("a bcd b", errors);
+    check_text(fixed.text, "A bcd B");
+    check_count(fixed.applied, 2);
+    check_count(fixed.skipped, 0);
+}
+
+export void test_overlapping_fix_is_skipped() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    syntax::Errors errors = errors_of(2);
+    errors[0].fix = fix_of(1);
+    errors[0].fix[0] = edit(0, 3, "xyz");
+    errors[1].fix = fix_of(2);
+    errors[1].fix[0] = edit(5, 6, "Q");
+    errors[1].fix[1] = edit(2, 4, "zz");
+    fix::Fixed fixed = fix::apply_fixes("abcdefg", errors);
+    check_text(fixed.text, "xyzdefg");
+    check_count(fixed.applied, 1);
+    check_count(fixed.skipped, 1);
+}
+
+export void test_insertion_and_deletion() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    syntax::Errors errors = errors_of(1);
+    errors[0].fix = fix_of(2);
+    errors[0].fix[0] = edit(1, 1, "-");
+    errors[0].fix[1] = edit(2, 3, "");
+    fix::Fixed fixed = fix::apply_fixes("abc", errors);
+    check_text(fixed.text, "a-b");
+}
+
+export void test_text_reaches_a_fixed_point() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "x OLD y OLD z\n";
+    Usize total = 0;
+    for (Usize pass = 0; pass < 8; pass++) {
+        parser::Parsed parsed = reader("x.smith", source);
+        fix::Fixed fixed = fix::apply_fixes(source, parsed.errors);
+        if (fixed.applied == 0) break;
+        total += fixed.applied;
+        source = fixed.text;
+    }
+    check_text(source, "x new y new z\n");
+    check_count(total, 2);
+}
+
+export void test_a_file_is_stored_and_a_second_run_applies_nothing() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str path = "/tmp/front_fix_test_scratch.smith";
+    check_flag(fix::store(path, "module a;\n"), true);
+    check_signed(fix::fix_file(path), 0);
+    files::BytesResult back = files::read_file(path);
+    if (back == .error) {
+        check_text("cannot read back", "the file");
+        return;
+    }
+    char chars[:] = mem::view(back.ok, char);
+    Str got = chars;
+    check_text(got, "module a;\n");
+    check_signed(fix::fix_file("/tmp/front_fix_test_missing.smith"), -1);
+}

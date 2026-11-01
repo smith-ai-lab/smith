@@ -41,10 +41,21 @@ export typedef struct {
     ast::Decl *(*declaration)(Parser *);
 } Hooks;
 
-// What went wrong and where.
+// One change a fix makes: the text of `span` becomes `text` (an empty span inserts, an empty text deletes).
+export typedef struct {
+    ast::Span span;
+    Str text;
+} Edit;
+
+export typedef typeof(Edit[:]) Edits;
+
+// What went wrong and where. `fix` is the edits that mend it (empty: none), applied together or not at all by
+// `smith lint --fix` (parser::apply_fixes). `warning` is an old form that still compiles during the transition.
 export typedef struct {
     ast::Span span;
     Str message;
+    Edits fix;
+    Bool warning;
 } ParseError;
 
 export typedef typeof(ParseError[:]) Errors;
@@ -106,6 +117,20 @@ export Str text(const Parser *p, lex::Token token) {
 export void error(Parser *p, ast::Span span, Str message) {
     p->errors = mem::realloc(p->errors, countof(p->errors) + 1);
     ParseError failure = {.span = span, .message = message};
+    p->errors[countof(p->errors) - 1] = failure;
+}
+
+// Records an error that carries a fix. Parsing goes on.
+export void error_fix(Parser *p, ast::Span span, Str message, Edits edits) {
+    p->errors = mem::realloc(p->errors, countof(p->errors) + 1);
+    ParseError failure = {.span = span, .message = message, .fix = edits};
+    p->errors[countof(p->errors) - 1] = failure;
+}
+
+// Records an old form with its fix as a warning: the file still compiles, and `smith lint --fix` mends it.
+export void warning_fix(Parser *p, ast::Span span, Str message, Edits edits) {
+    p->errors = mem::realloc(p->errors, countof(p->errors) + 1);
+    ParseError failure = {.span = span, .message = message, .fix = edits, .warning = true};
     p->errors[countof(p->errors) - 1] = failure;
 }
 

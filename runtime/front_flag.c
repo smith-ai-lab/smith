@@ -10,6 +10,9 @@
 // does not do for the sources under .smith/front/.
 int32_t front_compile_run(const char *const *sources, const char *const *outputs, size_t count, const char *triple);
 
+// front::parser's fix entry (front/parser.smith, `front_parser_fix_run`), declared by hand for the same reason.
+int32_t front_parser_fix_run(const char *const *paths, size_t count);
+
 constexpr size_t smith_front_args_max = 1024;
 constexpr size_t smith_front_sources_max = 64;
 constexpr size_t smith_front_name_max = 4096;
@@ -98,4 +101,32 @@ static int smith_front_rewrite(char **argv, int first, int count, char **args) {
     }
     return compile_only && only_options ? 0 : used;
 }
+#endif // SMITH_CORE
+
+// Whether `smith lint --fix FILE...` is the front end's: `--fix` first and no `--`. With a `--` it is clang-tidy's
+// `--fix` on a `.smith` file with the flags of its compile (smith-check), as before.
+static bool smith_lint_fix_requested(int count, char **args) {
+    if (count < 1 || strcmp(args[0], "--fix") != 0) return false;
+    for (int i = 1; i < count; i++) { // bounded by count
+        if (strcmp(args[i], "--") == 0) return false;
+    }
+    return true;
+}
+
+// `smith lint --fix FILE...` (#1442): each `.smith` file is parsed by smith's own front end, the fixes its parse errors
+// carry are applied, and `path: N fixes applied` is printed; a file with nothing to fix reports 0. The units runner has
+// no front end, so it refuses.
+static int smith_lint_fix(int count, char **args) {
+#ifdef SMITH_CORE
+    (void)count;
+    (void)args;
+    smith_die(smith_exit_usage, "lint --fix needs the full smith (smith's own front end is not in this one)", nullptr);
+#else
+    if (count < 1) smith_die(smith_exit_usage, "usage: smith lint --fix FILE.smith...", nullptr);
+    for (int i = 0; i < count; i++) {
+        if (!smith_ends_with(args[i], ".smith"))
+            smith_die(smith_exit_usage, "lint --fix reads .smith files only", args[i]);
+    }
+    return front_parser_fix_run((const char *const *)args, (size_t)count) == 0 ? 0 : 1;
 #endif
+}
