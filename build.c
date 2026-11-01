@@ -126,10 +126,24 @@ static const void *build_unwrap(SmithBuild *b, const void *value, size_t size, c
     return *(const void *const *)(bytes + sizeof(void *));
 }
 
+// A fetch that fails (not a wrong hash) leaves its url in .smith/unreachable: `smith lint` reads it to skip, by name,
+// the files that wait for a package the network does not give (a cloud sandbox), and CI, which has the network, fails.
+// The result is read by its layout, as build_unwrap does: the tag, then the error's kind and message.
+static void build_note_unreachable(const void *value, size_t size, const char *url) {
+    const char *bytes = value;
+    if (size <= sizeof(void *) || *(const int *)bytes == 0) return;
+    if (*(const int *)(bytes + sizeof(void *)) != SmithPackageKind_Fetch) return;
+    FILE *file = fopen(".smith/unreachable", "w");
+    if (file == nullptr) return;
+    fprintf(file, "%s\n", url);
+    fclose(file);
+}
+
 // The path of a package, or the build fails with the error's message: smith's own packages are fixed in this file, so
 // a fetch that fails is a failure of the build, not something to recover from.
 static const char *build_package_path(SmithBuild *b, const SmithPackage *package) {
     __auto_type found = smith_package(b, package);
+    build_note_unreachable(&found, sizeof found, package->url);
     return build_unwrap(b, &found, sizeof found, "package", package->url);
 }
 

@@ -183,3 +183,51 @@ export void test_lint_changed_builds_only_what_the_chosen_files_wait_for() {
     scratch::expect_status("a.c lints", 0, &both);
     scratch::expect_contains("... and then the header is made", both.out, "make gen.h");
 }
+
+// A project whose one file waits for a package the network does not give (tests/build_fixtures/lint_unreachable). Not
+// in CI's environment, which has the network and so must fail (#1197).
+static scratch::Run lint_unreachable(bool in_ci) {
+    scratch::Project p = scratch::make("p", "lint_unreachable");
+    defer scratch::clean(&p);
+    scratch::own_cache(&p);
+    return scratch::sh(&p, in_ci ? "env CI=true SMITH_OUTPUT=full smith lint 2>&1"
+                                 : "env -u CI -u SMITH_PRIORITY SMITH_OUTPUT=full smith lint 2>&1");
+}
+
+// The wiring of the verb with a build that fails: no function shows it.
+export void test_lint_skips_a_file_that_waits_for_a_package_the_network_does_not_give() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = lint_unreachable(false);
+    scratch::expect_status("the lint passes", 0, &run);
+    scratch::expect_contains("it names the skipped file and why", run.out,
+                             "smith lint: skipped a.c: the tree-sitter parser it embeds cannot be fetched");
+    // c.c and the build file; the skipped a.c is not counted as linted.
+    scratch::expect_contains("... and lints the others, not counting the skipped one", run.out, "linted 2 files");
+}
+
+export void test_lint_fails_in_ci_when_a_package_cannot_be_fetched() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = lint_unreachable(true);
+    scratch::expect_status("the lint fails", 1, &run);
+    scratch::expect_lacks("... and skips nothing", run.out, "skipped");
+}
+
+// A file named on its own, in a project that is not built: the command to run, not a wall of errors about headers.
+export void test_lint_of_one_file_in_an_unbuilt_project_says_what_to_build() {
+    scratch::Project p = scratch::make("p", "lint_changed");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = scratch::sh(&p, "smith lint c.c 2>&1");
+    scratch::expect_status("the lint stops", 2, &run);
+    scratch::expect_contains("it names the command", run.out, "run `smith build smith_needs` once");
+    scratch::expect_lacks("... and prints no clang-tidy error", run.out, "error:");
+}

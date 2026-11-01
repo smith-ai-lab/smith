@@ -652,45 +652,129 @@ static size_t smith_lint_changed(const char **files, const char **flags, size_t 
     return kept;
 }
 
+// The needs `smith lint` collects into one list of targets: each file named once, in a pool.
+typedef struct {
+    const char *targets[smith_verbs_targets_max + 1];
+    char pool[smith_verbs_info_max / 8];
+    size_t used;
+    size_t wanted;
+    bool everything; // more than the lists hold: all of smith_needs
+} SmithLintNeeds;
+
+static SmithLintNeeds smith_lint_needs;
+
+// The tree-sitter parser (a fetched CLI and grammar) is the one need that can be out of reach of a sandbox.
+static bool smith_lint_is_parser(const char *name, size_t size) {
+    constexpr size_t word = sizeof "tree-sitter" - 1;
+    for (size_t at = 0; at + word <= size; at++) { // bounded by the name
+        if (memcmp(name + at, "tree-sitter", word) == 0) return true;
+    }
+    return false;
+}
+
+// Adds the files after each tab of a need line, each once; `skip_parser` leaves the parser's out.
+static void smith_lint_take_needs(const char *line, size_t length, bool skip_parser) {
+    SmithLintNeeds *needs = &smith_lint_needs;
+    for (const char *at = line + length; *at == '\t' && !needs->everything;) { // a file after each tab
+        size_t size = strcspn(at + 1, "\t");
+        bool known = skip_parser && smith_lint_is_parser(at + 1, size);
+        for (size_t t = 0; t < needs->wanted && !known; t++)
+            known = strlen(needs->targets[t]) == size && strncmp(needs->targets[t], at + 1, size) == 0;
+        needs->everything =
+            !known && (needs->wanted >= smith_verbs_targets_max || needs->used + size + 1 > sizeof needs->pool);
+        if (!known && !needs->everything) {
+            memcpy(needs->pool + needs->used, at + 1, size);
+            needs->pool[needs->used + size] = '\0';
+            needs->targets[needs->wanted++] = needs->pool + needs->used;
+            needs->used += size + 1;
+        }
+        at += 1 + size;
+    }
+}
+
+// Whether a file's compile waits for the tree-sitter parser (runtime/tree_sitter_data.c embeds it).
+static bool smith_lint_waits_for_parser(const SmithInfo *info, const char *file) {
+    for (size_t n = 0; n < info->need_count; n++) { // bounded by the lines
+        size_t length = strcspn(info->needs[n], "\t");
+        if (strlen(file) != length || strncmp(info->needs[n], file, length) != 0) continue;
+        const char *end = info->needs[n] + strlen(info->needs[n]);
+        if (smith_lint_is_parser(info->needs[n] + length, (size_t)(end - info->needs[n]) - length)) return true;
+    }
+    return false;
+}
+
 // Builds what the compiles of the chosen files wait for (their `need` lines of .smith/build.info, each file once), the
 // generated headers; the whole of `smith_needs` when one of them has no line, as a module the build only declares has
-// none (the headers of tests are made by the smith the build links).
+// none (the headers of tests are made by the smith the build links). `without_parser` builds every line's files but
+// the parser's and never falls back to smith_needs, which would wait for it.
 static int smith_lint_build_needs(const char *self, const SmithVerbArgs *split, const SmithInfo *info,
-                                  const char **files, size_t count) {
-    static const char *targets[smith_verbs_targets_max + 1];
-    static char pool[smith_verbs_info_max / 8];
-    size_t used = 0;
-    size_t wanted = 0;
-    bool everything = false;
-    for (size_t i = 0; i < count && !everything; i++) { // bounded by the files
+                                  const char **files, size_t count, bool without_parser) {
+    SmithLintNeeds *needs = &smith_lint_needs;
+    needs->used = 0; // not a compound literal: the pool is megabytes
+    needs->wanted = 0;
+    needs->everything = false;
+    for (size_t n = 0; n < info->need_count && without_parser; n++) // bounded by the lines
+        smith_lint_take_needs(info->needs[n], strcspn(info->needs[n], "\t"), true);
+    for (size_t i = 0; i < count && !needs->everything && !without_parser; i++) { // bounded by the files
         bool found = false;
         for (size_t n = 0; n < info->need_count; n++) { // bounded by the lines
             size_t length = strcspn(info->needs[n], "\t");
             if (strlen(files[i]) != length || strncmp(info->needs[n], files[i], length) != 0) continue;
             found = true;
-            for (const char *at = info->needs[n] + length; *at == '\t' && !everything;) { // a file after each tab
-                size_t size = strcspn(at + 1, "\t");
-                bool known = false;
-                for (size_t t = 0; t < wanted && !known; t++)
-                    known = strlen(targets[t]) == size && strncmp(targets[t], at + 1, size) == 0;
-                everything = !known && (wanted >= smith_verbs_targets_max || used + size + 1 > sizeof pool);
-                if (!known && !everything) {
-                    memcpy(pool + used, at + 1, size);
-                    pool[used + size] = '\0';
-                    targets[wanted++] = pool + used;
-                    used += size + 1;
-                }
-                at += 1 + size;
-            }
+            smith_lint_take_needs(info->needs[n], length, false);
         }
-        everything = everything || !found;
+        needs->everything = needs->everything || !found;
     }
-    if (everything) {
-        targets[0] = "smith_needs";
-        wanted = 1;
+    if (needs->everything && !without_parser) {
+        needs->targets[0] = "smith_needs";
+        needs->wanted = 1;
     }
-    targets[wanted] = nullptr;
-    return wanted == 0 ? 0 : smith_verb_build(self, split, targets, false);
+    needs->targets[needs->wanted] = nullptr;
+    return needs->wanted == 0 ? 0 : smith_verb_build(self, split, needs->targets, false);
+}
+
+// Whether this run is CI's, which has the network: there a parser that cannot be made is a failure.
+static bool smith_lint_in_ci(void) {
+    const char *ci = getenv("CI");
+    const char *priority = getenv("SMITH_PRIORITY");
+    return (ci != nullptr && ci[0] != '\0') || (priority != nullptr && strcmp(priority, "ci") == 0);
+}
+
+// The file the build leaves (`.smith/unreachable`, the url) when a package could not be fetched: the network is out of
+// reach, which is not a fault of the code. Copies it into `url`; false when there is none.
+static bool smith_lint_unreachable(char *url, size_t capacity) {
+    FILE *file = fopen(".smith/unreachable", "r");
+    if (file == nullptr) return false;
+    bool read = fgets(url, (int)capacity, file) != nullptr;
+    fclose(file);
+    url[read ? strcspn(url, "\n") : 0] = '\0';
+    return read;
+}
+
+// Builds what the files wait for. When that fails because the tree-sitter parser could not be fetched (not in CI),
+// says so and builds the rest, leaving out the files that embed the parser: a named skipped step, not a failure.
+static int smith_lint_prepare(const char *self, const SmithVerbArgs *split, const SmithInfo *info, const char **files,
+                              const char **flags, size_t *count) {
+    unlink(".smith/unreachable");
+    int status = smith_lint_build_needs(self, split, info, files, *count, false);
+    char url[512];
+    if (status == 0 || smith_lint_in_ci() || !smith_lint_unreachable(url, sizeof url) ||
+        !smith_lint_is_parser(url, strlen(url)))
+        return status;
+    status = smith_lint_build_needs(self, split, info, files, *count, true);
+    if (status != 0) return status;
+    size_t kept = 0;
+    for (size_t i = 0; i < *count; i++) { // bounded by the files
+        if (smith_lint_waits_for_parser(info, files[i])) {
+            fprintf(stderr, "smith lint: skipped %s: the tree-sitter parser it embeds cannot be fetched (%s)\n",
+                    files[i], url);
+            continue;
+        }
+        files[kept] = files[i];
+        flags[kept++] = flags[i];
+    }
+    *count = kept;
+    return 0;
 }
 
 // `smith lint` with no arguments: builds what the project's compiles read (the generated headers), then runs clang-tidy
@@ -706,9 +790,9 @@ static int smith_lint_project(int count, char **args, const char *self) {
     SmithVerbArgs *split = smith_verb_split(count, args);
     const char *changed_base = nullptr;
     bool changed = smith_lint_take_changed(split, &changed_base);
-    // `--changed` first has the build write .smith/build.info and nothing else: it builds only what the files it
-    // chooses wait for, once it knows which they are.
-    const char *const targets[] = {changed ? "smith_info" : "smith_needs", nullptr};
+    // First the build writes .smith/build.info and nothing else: lint then builds only what the files it chooses wait
+    // for, once it knows which they are.
+    const char *const targets[] = {"smith_info", nullptr};
     int status = smith_verb_build(self, split, targets, false);
     if (status != 0) return status;
     const SmithInfo *info = smith_info_read("smith lint");
@@ -747,8 +831,12 @@ static int smith_lint_project(int count, char **args, const char *self) {
             fprintf(stderr, "smith lint: linted 0 files\n");
             return 0;
         }
-        status = smith_lint_build_needs(self, split, info, files, files_count);
-        if (status != 0) return status;
+    }
+    status = smith_lint_prepare(self, split, info, files, flags, &files_count);
+    if (status != 0) return status;
+    if (files_count == 0) {
+        fprintf(stderr, "smith lint: linted 0 files\n");
+        return 0;
     }
     SmithLintRun run = {.files = files, .flags = flags, .order = order};
     return smith_lint_run(&run, files_count, self);
