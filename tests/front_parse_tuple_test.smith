@@ -1,0 +1,85 @@
+// Tests of tuple types in front::parse_type and front::parse_decl (#1331, A7h of track A of #1112): `struct { I32, F32
+// }`, braces holding types only, in a field, a parameter, a local, a return type and nested, and the error of a mix
+// with a record's named fields. Each case compares the dump of the module.
+module front_parse_tuple_test;
+
+import front::ast;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+// The dump of a file that must parse without errors.
+static Str dump_of(Str source) {
+    parser::Parsed parsed = parser::parse("x.smith", source);
+    if (countof(parsed.errors) > 0) {
+        Str expected = "no error";
+        test::check_equal(parsed.errors[0].message, expected);
+    }
+    return ast::dump(&parsed.module);
+}
+
+// The first error of a file, or `no error`.
+static Str first_error(Str source) {
+    parser::Parsed parsed = parser::parse("x.smith", source);
+    if (countof(parsed.errors) == 0) return "no error";
+    return parsed.errors[0].message;
+}
+
+export void test_parse_tuple_field() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = dump_of("struct S { struct { I32, F32 } pair; U8 tag; };");
+    Str want = "(module \n"
+               "  (struct S\n"
+               "    (field pair (tuple (named I32) (named F32)))\n"
+               "    (field tag (named U8))))\n";
+    test::check_equal(got, want);
+}
+
+export void test_parse_tuple_parameter_return_local() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = dump_of("export struct { I32, F32 } f(struct { I32, F32 } t) {\n"
+                      "    struct { I32, F32 } copy = t;\n"
+                      "    return copy;\n"
+                      "}\n");
+    Str want = "(module \n"
+               "  (function f exported\n"
+               "    (param t (tuple (named I32) (named F32)))\n"
+               "    (result (tuple (named I32) (named F32)))\n"
+               "    (block\n"
+               "      (declaration\n"
+               "        (variable copy (tuple (named I32) (named F32)) (name t)))\n"
+               "      (return (name copy)))))\n";
+    test::check_equal(got, want);
+}
+
+export void test_parse_tuple_nested_and_variable() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = dump_of("struct { struct { I32, F32 }, a::Meters *, I32[2], I32[:] } t;");
+    Str want = "(module \n"
+               "  (variable t (tuple (tuple (named I32) (named F32)) (pointer (named a::Meters)) "
+               "(array (named I32) (integer 2)) (slice (named I32)))))\n";
+    test::check_equal(got, want);
+}
+
+export void test_parse_tuple_mix_error() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str tuple_with_name =
+        "a tuple has types only: `struct { I32, F32 }`; a name makes a record field, `struct { I32 a; }`";
+    test::check_equal(first_error("struct { I32, F32 b } t;"), tuple_with_name);
+    Str record_with_type =
+        "a field has a name: a record is `struct { I32 a; }`, a tuple `struct { I32, F32 }`, not a mix";
+    test::check_equal(first_error("struct { I32 a; F32 } t;"), record_with_type);
+}

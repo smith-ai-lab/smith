@@ -789,6 +789,6 @@ and `smith lsp`. Neovim 0.12: this repository is the plugin ([knowledge/neovim.m
 
 ## Where to read more
 
-[AGENTS.md](AGENTS.md) holds the decisions, one line each; [knowledge/](knowledge/index.md) what smith is, one concept per
-file; [.agents/skills/](.agents/skills/) how to do each thing; the [GitHub issues](https://github.com/smith-ai-lab/smith/issues)
+[knowledge/decisions.md](knowledge/decisions.md) holds the decisions, one line each; [knowledge/](knowledge/index.md) what
+smith is, one concept per file; [.agents/skills/](.agents/skills/) how to do each thing; the [GitHub issues](https://github.com/smith-ai-lab/smith/issues)
 everything planned, and the only place plans live.

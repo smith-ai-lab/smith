@@ -177,7 +177,7 @@ static void bench_fmt_lint(void) {
     char *const lint[] = {(char *)smith_path, "lint", "--quiet", nullptr};
     step("lint of the whole project", -1, false, lint, nullptr);
     char *const docs[] = {(char *)smith_path, "docs", nullptr};
-    step("docs (AGENTS.md, knowledge, skills)", -1, false, docs, nullptr);
+    step("docs (knowledge, skills)", -1, false, docs, nullptr);
 }
 
 // A module of about 1,000 lines: module_functions functions of ten lines, generated, compiled to an object.

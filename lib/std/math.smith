@@ -4,7 +4,7 @@
 // which are macros it can use. The functions are built on clang's builtins (a builtin is a function, not a macro), so a
 // .smith file needs no `c::` name that is a C macro for any of them.
 //
-// A library joins when a caller needs it, never on speculation (AGENTS.md): this one holds what smith's own libraries
+// A library joins when a caller needs it, never on speculation: this one holds what smith's own libraries
 // ask today, and the first thing a second project needs beside it is the place to add it.
 module std::math;
 
