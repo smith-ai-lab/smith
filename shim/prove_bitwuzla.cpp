@@ -1,5 +1,5 @@
 // `smith prove`'s first solver. Z3 is what Alive2 builds its queries with, but on the queries of a function with many
-// stores and loads through one array it takes minutes where Bitwuzla takes a fraction of a second (docs: AGENTS.md).
+// stores and loads through one array it takes minutes where Bitwuzla takes a fraction of a second.
 // Alive2 prints a query as SMT-LIB 2 and this asks Bitwuzla, in this process, whether it is satisfiable.
 #include "prove.hpp"
 

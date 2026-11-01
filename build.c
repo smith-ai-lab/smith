@@ -2136,7 +2136,7 @@ static int build_llvm_source(SmithRun *run) {
     return status;
 }
 
-// `smith build friction -Dsince=2026-10-24` (AGENTS.md, How to work): the friction sections of merged pull requests,
+// `smith build friction -Dsince=2026-10-24` (smith-dev-rules): the friction sections of merged pull requests,
 // for the lead's review across PRs. Each pull request's body ends with `## Friction`; this prints that section of every
 // PR merged since a date, newest first, each under its PR's number and title.
 static int build_friction(SmithRun *run) {
@@ -2299,12 +2299,12 @@ static void build_nvim_task(SmithBuild *b) {
     smith_task(b, "nvim", &task);
 }
 
-// ---- The docs gate (#313): AGENTS.md says a change that adds something updates its skill and its concept in the same
+// ---- The docs gate (#313): a change that adds something updates its skill and its concept in the same
 // commit; this makes `smith check` say so. The commits on the branch since the base, taken together, must change
 // something under .agents/skills/ or knowledge/ when any of them has a subject starting with `feat`. On main itself,
 // with no `feat` commit, or when the base cannot be resolved (a shallow clone), it passes, and says so in the last
 // case.
-static const char *const build_gate_message = "feat commits need their skill and concept updated (AGENTS.md); none of "
+static const char *const build_gate_message = "feat commits need their skill and concept updated; none of "
                                               ".agents/skills/ or knowledge/ changed since";
 
 // The lines `git -C dir args...` prints, or nullptr when git fails.

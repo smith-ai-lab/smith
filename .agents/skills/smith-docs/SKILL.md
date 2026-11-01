@@ -5,7 +5,7 @@ description: "smith docs and the format it checks: knowledge/ (an OKF bundle of 
 
 # smith docs
 
-Every project wants knowledge (what it is) and skills (how to work on it). `smith docs` checks that they follow one format, and `smith new` starts every project with both. A project needs no `AGENTS.md`: `smith new` writes none and `smith docs` does not read one (a project's own is its own file, never an error); the agent harness loads the skills.
+Every project wants knowledge (what it is) and skills (how to work on it). `smith docs` checks that they follow one format, and `smith new` starts every project with both. The agent harness loads the skills, so a project needs no separate guidance file.
 
 ## The format
 

@@ -1,2 +1,2 @@
 tuple-import-index/main.smith: C, out of scope
-tuple-import-index/geo/a.smith: error: expected a field name, found `,` (3:20) [undecided_c]
+tuple-import-index/geo/a.smith: ok

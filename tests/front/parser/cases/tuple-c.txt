@@ -1,1 +1,1 @@
-tuple-c/geo/a.smith: error: expected a field name, found `,` (3:28) [undecided_c]
+tuple-c/geo/a.smith: ok

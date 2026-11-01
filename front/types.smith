@@ -21,8 +21,8 @@
 //                      `is_const` of the variable's `Symbol`. A reader of a `TypeExpr` takes the second from
 //                      `t->qualifiers.is_const` and the first is taken by `resolve`.
 //   Table, start       `types::start(Target)` gives the table with every builtin made. `builtin(table, name)` finds
-//                      `I8 I16 I32 I64 Isize U8 U16 U32 U64 Usize F32 F64 Bool Void Str Auto` by its name (null for
-//                      any other); the fields `invalid`, `void_type`, `bool_type`, `text`, `null_type`, `automatic`
+//                      `I8 I16 I32 I64 Isize U8 U16 U32 U64 Usize F32 F64 Char Bool Void Str Auto` by its name (null
+//                      for any other); the fields `invalid`, `void_type`, `bool_type`, `text`, `null_type`, `automatic`
 //                      hold the ones that are not a number. `integer(table, bits, is_signed)` and `floating(table,
 //                      bits)` give the fixed-size ones. `Isize` and `Usize` are their own types (as C's `long`
 //                      is not `long long`), the width of the target's pointer.
@@ -295,8 +295,7 @@ export Table start(Target target) {
     add_number(&t, "Usize", .integer, word, false);
     add_number(&t, "F32", .floating, 32, true);
     add_number(&t, "F64", .floating, 64, true);
-    add_number(&t, "char", .integer, 8,
-               false); // C's character type, a type of its own (capitalized `Char` is undecided)
+    add_number(&t, "Char", .integer, 8, false); // the 8-bit character type, a type of its own (not an alias of `U8`)
     return t;
 }
 
@@ -916,6 +915,15 @@ static TypeRef resolve_name(Checked *r, ast::Span span, ast::Path path) {
     if (countof(path.segments) == 1) {
         TypeRef known = builtin(&r->table, path.segments[0].text);
         if (known != nullptr) return known;
+        Str written = path.segments[0].text;
+        if (same_text(written, "char") || same_text(written, "bool")) {
+            if (same_text(written, "char")) {
+                failf(r, span, "`char` is a C type: write `Char`");
+            } else {
+                failf(r, span, "`bool` is a C type: write `Bool`");
+            }
+            return r->table.invalid;
+        }
         if (is_concept_name(path.segments[0].text)) {
             failf(r, span, "not yet typed: the concept `", path.segments[0].text, "`; only `Auto` is typed so far");
             return r->table.invalid;

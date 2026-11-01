@@ -36,9 +36,9 @@
 //   arrays        A fixed array converts to a slice of the same element (const may be added) and to an array of its own
 //                 type, which is an array parameter of the same size. A slice converts to a slice of the same element,
 //                 const added. There is no slice to pointer.
-//   Str           A `Str` converts to a `Str`; only a `char` slice or array (the checker's own 8-bit `char`) converts
+//   Str           A `Str` converts to a `Str`; only a `Char` slice or array (the checker's own 8-bit `Char`) converts
 //                 to a `Str`; a `U8[:]` or `I8[:]` needs the cast `(Str)xs`. A `Str` converts to a slice only when
-//                 the slice's element is const `char`.
+//                 the slice's element is const `Char`.
 //   Option, Result  A value converts to `Option(T)`'s `.some` and `Result(T, E)`'s `.ok` wherever one is expected, if
 //                 it converts to `T` (owner, 2026-10-25). Absence and errors stay explicit: an `Option(T)` is not a
 //                 `T`, a `Result(T, E)` is not a `T`, and `null` is not an `Option(T)` (write `.none`).
@@ -296,9 +296,9 @@ static Verdict to_slice(const Ctx *c) {
     types::TypeRef element = c->to->element;
     if (kind == .text) {
         if (element != c->char_type)
-            return refuse(c, "only char slices and Str are text", "write the characters as a const char[:]");
+            return refuse(c, "only Char slices and Str are text", "write the characters as a const Char[:]");
         if (c->to->pointee_const) return accept(text_from_chars);
-        return refuse(c, "a Str's characters are const", "expected a const element: write const char xs[:]");
+        return refuse(c, "a Str's characters are const", "expected a const element: write const Char xs[:]");
     }
     if (kind != .slice && kind != .array) return no_rule(c);
     if (c->from->element != element) return needs_cast(c, "the elements are different types");
@@ -313,8 +313,8 @@ static Verdict to_text(const Ctx *c) {
     types::TypeRef element = c->from->element;
     if (element == c->char_type) return accept(text_from_chars);
     if (element->kind == .integer && element->bits == 8)
-        return refuse(c, "only a char slice makes a Str, not a U8 or I8 slice", "write the cast (Str)xs");
-    return refuse(c, "only characters make a Str", "write a slice or an array of char");
+        return refuse(c, "only a Char slice makes a Str, not a U8 or I8 slice", "write the cast (Str)xs");
+    return refuse(c, "only characters make a Str", "write a slice or an array of Char");
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -362,7 +362,7 @@ export Verdict convert(types::Table *t, types::TypeRef from, types::TypeRef to, 
              .shown = to,
              .lit = lit,
              .pointer_bits = t->target.pointer_bytes * 8,
-             .char_type = types::builtin(t, "char")};
+             .char_type = types::builtin(t, "Char")};
     if (is_wrapper(from)) return from_wrapper(&c);
     if (is_wrapper(to)) {
         c.to = to->element;
@@ -431,7 +431,7 @@ static Verdict cast_by_kind(const Ctx *c) {
     if (to == .void_type) return refuse(c, "a cast to Void discards a value", "write _ = x;");
     if (to == .text && (from == .slice || from == .array) && c->from->element->kind == .integer &&
         c->from->element->bits == 8)
-        return accept(cast); // bytes to text: free, every byte is a char, no UTF-8 check (owner, 2026-11-01)
+        return accept(cast); // bytes to text: free, every byte is a Char, no UTF-8 check (owner, 2026-11-01)
     if (from == .integer && to == .integer) {
         if (c->lit.is_constant && !c->lit.is_float) return never_fits(c, literal_text(c->lit));
         return checked_cast();

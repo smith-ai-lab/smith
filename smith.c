@@ -10,8 +10,7 @@
 //     instead (else the first clang on PATH that is not smith itself). `smith c++`, and the link `smith-c++`, use
 //     clang++ ($SMITH_CLANGXX). On macOS it also picks the SDK through the environment, never a flag: see
 //     smith_sdk_environment.
-// It adds no flags and reads no configuration, so replacing a compiler with smith cannot change a build. See AGENTS.md.
-//
+// It adds no flags and reads no configuration, so replacing a compiler with smith cannot change a build.//
 // `smith build` compiles the project's build.c with an embedded runtime, runs it to write a ninja manifest, and then
 // runs ninja. See knowledge/build-conventions.md. `smith fetch <url>` puts a package in the cache and `smith cache`
 // shows and cleans the caches. `smith new` writes a ready project: main.smith (or main.c), a test, and what agents
