@@ -97,6 +97,7 @@ static Str removed_b() {
            "lambda-static/main.smith\n"
            "lambda-two/main.smith\n"
            "param-names/shape/box.smith\n"
+           "str-typedef-lowering/text.smith\n"
            "str-typedef-module/main.smith\n"
            "str-typedef-module/text.smith\n"
            "str-typedef-run/main.smith\n";
