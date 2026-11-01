@@ -40,12 +40,8 @@ static Str gap_a1() {
            "error-fields-enum-member/main.smith\n"
            "error-generic-number-parameter/number.smith\n"
            "error-generic-private-name/scale.smith\n"
-           "error-lambda-capture-generic/main.smith\n"
-           "error-lambda-param-count/main.smith\n"
            "error-lambda-param-untyped/main.smith\n"
-           "error-lambda-wrong-signature/main.smith\n"
            "error-range-for/main.smith\n"
-           "error-slice-const-write/main.smith\n"
            "error-slice-initializer-unread/main.smith\n"
            "error-type-value-import/main.smith\n"
            "generic-built-list-error/bad.smith\n"
@@ -71,23 +67,9 @@ static Str gap_a2() {
            "generic-pack/args.smith\n"
            "generic-private-names/scale.smith\n"
            "generic-rest/arguments.smith\n"
-           "generic-slice-const/main.smith\n"
-           "generic-slice-convert/conv.smith\n"
-           "generic-slice-convert/main.smith\n"
-           "generic-slice-derived/same.smith\n"
-           "generic-slice-init/conv.smith\n"
-           "generic-slice-init/main.smith\n"
-           "generic-slice-local/conv.smith\n"
-           "generic-slice-local/main.smith\n"
-           "generic-slice-qualifiers-auto/copy.smith\n"
            "generic-slice-restrict/pair.smith\n"
-           "lambda-param-element/order.smith\n"
-           "lambda-param-two/main.smith\n"
-           "lambda-param/main.smith\n"
            "module-basic/shapes/area.smith\n"
            "module-enum-c-names/mix/modes.smith\n"
-           "slice-qualifiers-lowering/qualifiers.smith\n"
-           "slice-qualifiers-run/main.smith\n"
            "tuple-modules/geo/b.smith\n"
            "type-value-import/main.smith\n";
 }
@@ -115,13 +97,11 @@ static Str removed_b() {
            "lambda-static/main.smith\n"
            "lambda-two/main.smith\n"
            "param-names/shape/box.smith\n"
-           "str-typedef-lowering/text.smith\n"
            "str-typedef-module/main.smith\n"
            "str-typedef-module/text.smith\n"
-           "str-typedef-run/main.smith\n"
-           "typetag-module/geo/shapes.smith\n"
-           "typetag-run/main.smith\n";
+           "str-typedef-run/main.smith\n";
 }
+
 static Str undecided_c() {
     return "attribute-c-names/log/fmt.smith\n"
            "constexpr-import-header/shapes.smith\n"

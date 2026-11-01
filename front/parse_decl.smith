@@ -34,6 +34,7 @@ module front::parse_decl;
 import front::ast;
 import front::lex;
 import front::parse;
+import front::parse_type;
 import std::arena;
 import std::format;
 import std::mem;
@@ -71,6 +72,7 @@ typedef Frame FrameList[:];
 struct Suffix {
     Bool is_slice;
     ast::Expr *count;
+    ast::Qualifiers qualifiers; // the slice's own, `U8 dst[restrict :]`
     ast::Span span;
 };
 
@@ -301,8 +303,36 @@ static ast::TypeExpr *array_suffixes(parse::Parser *p, ast::TypeExpr *type) {
     Suffix suffixes[8];
     Usize count = 0;
     while (parse::at(p, lex::left_bracket) && !at_attribute(p)) {
-        U32 start = parse::advance(p).span.start;
+        U32 start = parse::peek(p).span.start;
         Suffix suffix = {};
+        if (parse_type::at_bad_slice_qualifier(p)) {
+            parse_type::bad_slice_qualifier(p);
+            suffix.is_slice = true;
+            suffix.span = parse::span_from(p, start);
+            if (count < 8) {
+                suffixes[count] = suffix;
+                count += 1;
+            }
+            continue;
+        }
+        if (parse_type::at_slice(p)) {
+            parse_type::take_slice(p, &suffix.qualifiers);
+            suffix.is_slice = true;
+            Bool carries = suffix.qualifiers.is_const || suffix.qualifiers.is_restrict;
+            if (carries && count > 0) {
+                Str message = "a qualifier of a slice goes in the first bracket: write `F32 m[const :][:]`";
+                parse::error(p, parse::span_from(p, start), message);
+            }
+            suffix.span = parse::span_from(p, start);
+            if (count < 8) {
+                suffixes[count] = suffix;
+                count += 1;
+            } else {
+                parse::error(p, suffix.span, "at most 8 array dimensions");
+            }
+            continue;
+        }
+        parse::advance(p);
         if (parse::accept(p, lex::colon)) {
             suffix.is_slice = true;
         } else if (parse::at(p, lex::right_bracket)) {
@@ -326,7 +356,7 @@ static ast::TypeExpr *array_suffixes(parse::Parser *p, ast::TypeExpr *type) {
         ast::Span span = {.start = type->span.start, .end = suffix.span.end};
         ast::TypeKind kind = {.array = {.element = wrapped, .count = suffix.count}};
         if (suffix.is_slice) kind = {.slice = {.element = wrapped}};
-        wrapped = ast::new_type((ast::TypeExpr){.span = span, .kind = kind});
+        wrapped = ast::new_type((ast::TypeExpr){.span = span, .kind = kind, .qualifiers = suffix.qualifiers});
     }
     return wrapped;
 }

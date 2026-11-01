@@ -142,7 +142,7 @@ error-keyword-after-type/shapes.smith: error: expected `)`, found `double` (8:21
 error-keyword-function/foo.smith: error: expected a name, found `double` (3:12)
 error-keyword-module/shapes.smith: error: expected a field name, found `char` (5:9)
 error-keyword-plain/main.smith: C, out of scope
-error-lambda-capture-generic/main.smith: error: expected `)`, found `(` (3:17)
+error-lambda-capture-generic/main.smith: ok
 error-lambda-capture-no-module/main.smith: C, out of scope
 error-lambda-capture-not-local/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (8:9)
 error-lambda-capture-to-pointer/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (8:9)
@@ -150,10 +150,10 @@ error-lambda-captures-local/main.smith: error: C's function-pointer declarator i
 error-lambda-generic-nested/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (5:9)
 error-lambda-generic-return-type/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (5:9)
 error-lambda-generic-runtime-capture/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (3:13)
-error-lambda-param-count/main.smith: error: expected `)`, found `(` (3:17)
-error-lambda-param-untyped/main.smith: error: expected `)`, found `(` (3:17)
+error-lambda-param-count/main.smith: ok
+error-lambda-param-untyped/main.smith: error: a lambda parameter needs a type: write `auto a` (8:21)
 error-lambda-returns-disagree/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (4:9)
-error-lambda-wrong-signature/main.smith: error: expected `)`, found `(` (3:17)
+error-lambda-wrong-signature/main.smith: ok
 error-main-io-make/main.smith: ok
 error-main-io-make/std/io.smith: ok
 error-module-first/late.smith: error: expected a type, found `module` (2:1)
@@ -166,7 +166,7 @@ error-plain-c-tag/main.smith: C, out of scope
 error-private-prototype-exported/p.smith: ok
 error-range-for/main.smith: error: a range `for` declares an index and an element at most: `for (Usize i, T x : xs)` (11:26)
 error-slice-const-discards/main.smith: ok
-error-slice-const-write/main.smith: error: expected a type, found `:` (13:20)
+error-slice-const-write/main.smith: ok
 error-slice-dims-across-rows/main.smith: ok
 error-slice-dims-fixed-slice/main.smith: ok
 error-slice-dims-group/main.smith: ok
@@ -178,7 +178,7 @@ error-slice-not-sliceable/main.smith: ok
 error-slice-pointer-argument/main.smith: ok
 error-slice-pointer-bounds/main.smith: ok
 error-slice-pointer-discards/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (5:24)
-error-slice-qualifier-bracket/main.smith: error: expected an expression, found `static` (6:25)
+error-slice-qualifier-bracket/main.smith: error: `static` has no meaning for a slice: write `const` or `restrict` in the bracket, and `volatile` on the element (`volatile U8 xs[:]`) (6:25)
 error-slice-step/main.smith: error: expected `]` to end the index, found `:` (10:33)
 error-stale-header/main.smith: C, out of scope
 error-standard-type/main.smith: C, out of scope
@@ -383,30 +383,30 @@ generic-sized-result-sizeof/main.smith: C, out of scope
 generic-sized-result-sizeof/size.smith: ok
 generic-slice/main.smith: error: expected `)`, found `T` (12:27)
 generic-slice/stats.smith: ok
-generic-slice-const/main.smith: error: expected a type, found `:` (11:36)
+generic-slice-const/main.smith: ok
 generic-slice-const/stats.smith: ok
-generic-slice-convert/conv.smith: error: expected a type, found `:` (22:40)
-generic-slice-convert/main.smith: error: expected a type, found `:` (6:46)
+generic-slice-convert/conv.smith: ok
+generic-slice-convert/main.smith: ok
 generic-slice-convert-error/conv.smith: ok
 generic-slice-convert-error/main.smith: ok
 generic-slice-derived/main.smith: ok
-generic-slice-derived/same.smith: error: expected a type, found `:` (12:36)
-generic-slice-init/conv.smith: error: expected a type, found `:` (20:19)
-generic-slice-init/main.smith: error: expected a type, found `:` (10:21)
+generic-slice-derived/same.smith: ok
+generic-slice-init/conv.smith: ok
+generic-slice-init/main.smith: ok
 generic-slice-init-error/conv.smith: ok
 generic-slice-init-error/main.smith: ok
-generic-slice-local/conv.smith: error: expected a type, found `:` (50:19)
-generic-slice-local/main.smith: error: expected a type, found `:` (10:21)
+generic-slice-local/conv.smith: ok
+generic-slice-local/main.smith: ok
 generic-slice-option-typedef/cursor.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (5:57)
 generic-slice-option-typedef/main.smith: ok
 generic-slice-pointer-auto/cursor.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (5:30)
 generic-slice-pointer-auto/main.smith: ok
 generic-slice-pointer-result/main.smith: ok
 generic-slice-pointer-result/repro.smith: ok
-generic-slice-qualifiers-auto/copy.smith: error: expected a type, found `:` (6:36)
+generic-slice-qualifiers-auto/copy.smith: ok
 generic-slice-qualifiers-auto/main.smith: ok
 generic-slice-restrict/main.smith: ok
-generic-slice-restrict/pair.smith: error: expected a type, found `:` (6:43)
+generic-slice-restrict/pair.smith: error: expected an expression, found `_Generic` (7:12)
 generic-slice-type-argument/main.smith: ok
 generic-slice-type-argument/probe.smith: ok
 generic-slice-typedef/counting.smith: ok
@@ -460,10 +460,10 @@ lambda-generic-table/main.smith: error: C's function-pointer declarator is not S
 lambda-generic-type/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (5:13)
 lambda-nested/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (6:9)
 lambda-no-parameters/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (6:9)
-lambda-param/main.smith: error: expected `)`, found `(` (10:17)
+lambda-param/main.smith: ok
 lambda-param-element/main.smith: ok
-lambda-param-element/order.smith: error: expected `)`, found `(` (6:40)
-lambda-param-two/main.smith: error: expected `)`, found `(` (5:22)
+lambda-param-element/order.smith: ok
+lambda-param-two/main.smith: ok
 lambda-plain/main.smith: C, out of scope
 lambda-qsort/main.smith: ok
 lambda-static/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (5:12)
@@ -540,8 +540,8 @@ slice-module-type-argument/key.smith: ok
 slice-module-type-argument/main.smith: ok
 slice-pointer-lowering/pointers.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (7:34)
 slice-pointer-run/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (10:34)
-slice-qualifiers-lowering/qualifiers.smith: error: expected a type, found `:` (9:23)
-slice-qualifiers-run/main.smith: error: expected a type, found `:` (20:34)
+slice-qualifiers-lowering/qualifiers.smith: ok
+slice-qualifiers-run/main.smith: ok
 slice-run/main.smith: ok
 slice-text-in-comment/hold.smith: error: expected `;`, found `arguments` (27:23)
 slice-text-in-comment/main.smith: ok
@@ -553,10 +553,10 @@ str-lowering/words.smith: ok
 str-module/main.smith: ok
 str-module/words.smith: ok
 str-run/main.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (26:23)
-str-typedef-lowering/text.smith: error: expected the type's name, found `str` (3:27)
+str-typedef-lowering/text.smith: ok
 str-typedef-module/main.smith: error: expected `;`, found `s` (7:15)
 str-typedef-module/text.smith: error: expected the type's name, found `str` (3:27)
-str-typedef-run/main.smith: error: expected the type's name, found `str` (7:20)
+str-typedef-run/main.smith: error: expected the type's name, found `bytes` (8:14)
 target-facts/main.smith: C, out of scope
 try-generic/main.smith: error: expected `;`, found `c` (22:14)
 try-return-value/main.smith: error: expected `;`, found `c` (25:14)
@@ -598,8 +598,8 @@ type-value-use/main.smith: C, out of scope
 type-value-use/pool.smith: ok
 type-value-windows/wide.smith: ok
 typetag-module/main.smith: ok
-typetag-module/geo/shapes.smith: error: one name per declaration: write `F32 x;` and `F32 y;` (4:10)
-typetag-run/main.smith: error: one name per declaration: write `F32 x;` and `F32 y;` (8:10)
+typetag-module/geo/shapes.smith: ok
+typetag-run/main.smith: ok
 unused-name-library/barrier.smith: ok
 unused-name-library/main.smith: ok
 unused-run/main.smith: ok
@@ -612,4 +612,4 @@ value-query-plain/main.smith: C, out of scope
 value-query-windows/size.smith: ok
 void-pointer-cast/main.smith: ok
 void-pointer-plain/main.smith: C, out of scope
-total 614, ok 330, error 160, C 124, skipped 0
+total 614, ok 351, error 139, C 124, skipped 0
