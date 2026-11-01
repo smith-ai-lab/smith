@@ -1,2 +1,2 @@
-if-constexpr/kind.smith: error: extended asm is not part of Smith; use `hint::keep(x)` (22:9) [removed_b]
+if-constexpr/kind.smith: error: extended asm is not part of Smith; use `optimize::opaque(x)` (22:9) [removed_b]
 if-constexpr/main.smith: C, out of scope
