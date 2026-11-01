@@ -34,7 +34,7 @@ export void test_runner_project_a_name_defined_twice_fails_the_build_naming_both
                              "smith: smith_tests: test_same is defined in tests/test_a.smith and in tests/test_b.c");
 }
 
-export void test_runner_project_a_test_the_scan_missed_fails_to_compile() {
+export void test_runner_project_a_test_the_scan_cannot_read_is_an_error_naming_file_and_line() {
     scratch::Project p = runner::project("runner_base", "runner_find_odd");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
@@ -42,9 +42,9 @@ export void test_runner_project_a_test_the_scan_missed_fails_to_compile() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::Run built = runner::build(&p, "");
-    scratch::expect_status("formatting: a test the scan missed fails to compile", 1, &built);
-    scratch::expect_contains("formatting: ... with the missing prototype", built.out,
-                             "no previous prototype for function 'test_odd'");
+    scratch::expect_status("formatting: a test the scan cannot read fails the build", 1, &built);
+    scratch::expect_contains("formatting: ... naming the file and line", built.out,
+                             "tests/test_b.smith:1: this defines a test the runner cannot read");
 }
 
 export void test_runner_project_a_file_without_tests_adds_nothing_and_a_project_with_none_builds() {
