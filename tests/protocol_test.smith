@@ -6,6 +6,11 @@
 // two builds: -O0 under AddressSanitizer and UBSan, and -O2 -DNDEBUG (which also stands for -O2: the optimizer's own
 // warnings and the code without its assertions), with the strictest warnings smith uses, and run on 100 keys each. The
 // 500-key run under the sanitizers is by hand: `./build/tests --seeds 500` in the asan build.
+// smith.c runs `smith build` of the scratch project.
+// smith-covers: smith.c runtime/verbs.c runtime/quiet.c runtime/base.h runtime/platform_*.c runtime/slots.c
+// smith-covers: runtime/build_runtime.c runtime/executor*.c runtime/cache.c runtime/sdk_cache.c runtime/lang*.c
+// smith-covers: shim/hook.cpp scripts/protocol.c schemas/ tests/protocol/ tests/build_fixtures/protocol/
+// smith-covers: lib/std/test.smith lib/std/random.smith lib/std/arena.smith lib/std/mem.smith include/smith/
 module protocol_test;
 
 import std::arena;

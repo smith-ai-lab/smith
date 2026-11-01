@@ -5,6 +5,11 @@
 // so are hover, go-to-definition across modules, symbols and completion; so is a C file of the same project, which
 // must behave as it always has. A smith without clang inside (the stage0), without clangd or without the token hook
 // has nothing to test, and the tests do nothing.
+// smith.c dispatches `smith lsp`.
+// smith-covers: smith.c runtime/verbs.c runtime/quiet.c runtime/base.h runtime/platform_*.c runtime/slots.c
+// smith-covers: runtime/lang*.c shim/hook.cpp runtime/build_runtime.c runtime/executor*.c runtime/cache.c
+// smith-covers: runtime/sdk_cache.c shim/lsp.cpp shim/clangd.cpp shim/clang.cpp shim/cimport*.cpp tests/lsp_client.c
+// smith-covers: tests/cpu_wait.h tests/build_fixtures/lsp/ lib/std/ include/smith/
 module lsp_test;
 
 import std::arena;
