@@ -107,7 +107,7 @@ static Str msg(char chars[:]) {
 // ---------------------------------------------------------------------------------------------------------------
 // The conversion hook (J1c into J1b)
 
-// The constant that `e` is, when it is an integer literal (possibly negated).
+// The constant that `e` is, when it is an integer or floating literal (possibly negated).
 static types_convert::Literal literal_of(const ast::Expr *e) {
     if (e->kind == .integer) {
         return types_convert::constant_unsigned(e->kind.integer.value);
@@ -118,6 +118,12 @@ static types_convert::Literal literal_of(const ast::Expr *e) {
             return (types_convert::Literal){
                 .is_constant = true, .negative = true, .magnitude = operand->kind.integer.value};
         }
+        if (e->kind.unary.op == .negate && operand->kind == .floating) {
+            return types_convert::constant_float(-operand->kind.floating.value);
+        }
+    }
+    if (e->kind == .floating) {
+        return types_convert::constant_float(e->kind.floating.value);
     }
     return types_convert::no_literal();
 }

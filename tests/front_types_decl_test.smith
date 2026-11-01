@@ -129,6 +129,10 @@ export void test_front_types_decl_a_refused_cast_and_the_decided_implicit_rules_
     fails("I32 f(I32 *p) { return (I32)p; }", "expected I32", "cast through Usize");
     fails("F64 x = 1;\nF32 y = 16777217;", "16777217 is not exactly an F32", "write a cast");
     clean("F64 x = 0;");
+    fails("U8 a() { return (U8)300; }", "300 does not fit U8", "wrapping::to(U8, x)");
+    fails("U32 a() { return (U32)-1; }", "-1 does not fit U32", "wrapping::to(U32, x)");
+    fails("I32 a() { return (I32)1e30; }", "does not fit I32", "wrapping::to(I32, x)");
+    clean("U8 a() { return (U8)200.5; }");
     fails("I32 xs[3];\nI32 *p = xs;", "expected I32 *", "&xs[0]");
 }
 

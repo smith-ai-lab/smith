@@ -307,14 +307,56 @@ export void test_front_types_convert_lossy_casts_are_checked() {
     types::TypeRef plain = types::pointer_to(&t, int32, false);
     test::check_condition(!cast(&t, plain, named(&t, "Usize")).checked);
     test::check_condition(!cast(&t, named(&t, "U64"), plain).checked);
-    // A constant that fits has no check; one that does not is an assertion that fails.
+    // A constant that fits has no check.
     test::check_condition(!types_convert::cast_ok(&t, int32, named(&t, "U8"), types_convert::constant(200)).checked);
     test::check_condition(!types_convert::cast_ok(&t, int32, named(&t, "U64"), types_convert::constant(5)).checked);
-    test::check_condition(types_convert::cast_ok(&t, int32, named(&t, "U8"), types_convert::constant(300)).checked);
-    test::check_condition(types_convert::cast_ok(&t, int32, named(&t, "U32"), types_convert::constant(-1)).checked);
+    test::check_condition(types_convert::cast_ok(&t, int32, named(&t, "U8"), types_convert::constant(200)).ok);
+    test::check_condition(
+        !types_convert::cast_ok(&t, named(&t, "F64"), int32, types_convert::constant_float(-2147483648.5)).checked);
+    test::check_condition(
+        types_convert::cast_ok(&t, named(&t, "F64"), named(&t, "U8"), types_convert::constant_float(255.9)).ok);
     // A cast that is refused is not checked, it is an error.
     test::check_condition(!cast(&t, plain, int32).ok);
     test::check_condition(!cast(&t, plain, int32).checked);
+}
+
+export void test_front_types_convert_a_constant_cast_that_never_fits_is_an_error() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types::TypeRef int32 = named(&t, "I32");
+    types_convert::Verdict big = types_convert::cast_ok(&t, int32, named(&t, "U8"), types_convert::constant(300));
+    refused(big, "expected U8", "found I32", "300 does not fit U8");
+    refused(big, "expected U8", "found I32", "wrapping::to(U8, x)");
+    test::check_condition(!big.checked);
+    refused(types_convert::cast_ok(&t, int32, named(&t, "U32"), types_convert::constant(-1)), "expected U32",
+            "found I32", "-1 does not fit U32");
+    refused(types_convert::cast_ok(&t, int32, named(&t, "I8"), types_convert::constant(-129)), "expected I8",
+            "found I32", "wrapping::to(I8, x)");
+}
+
+export void test_front_types_convert_a_float_constant_cast_that_never_fits_is_an_error() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types::TypeRef real = named(&t, "F64");
+    types_convert::Verdict big =
+        types_convert::cast_ok(&t, real, named(&t, "U8"), types_convert::constant_float(300.5));
+    refused(big, "expected U8", "found F64", "300.5 does not fit U8");
+    refused(big, "expected U8", "found F64", "wrapping::to(U8, x)");
+    test::check_condition(!big.checked);
+    refused(types_convert::cast_ok(&t, real, named(&t, "U8"), types_convert::constant_float(-1.0)), "expected U8",
+            "found F64", "-1 does not fit U8");
+    refused(types_convert::cast_ok(&t, real, named(&t, "I32"), types_convert::constant_float(1e30)), "expected I32",
+            "found F64", "does not fit I32");
+    refused(types_convert::cast_ok(&t, real, named(&t, "I64"), types_convert::constant_float(0.0 / 0.0)),
+            "expected I64", "found F64", "does not fit I64");
+    // Truncation toward zero: -0.5 and 255.9 fit.
+    test::check_condition(types_convert::cast_ok(&t, real, named(&t, "U8"), types_convert::constant_float(-0.5)).ok);
 }
 
 export void test_front_types_convert_usize_follows_the_target() {

@@ -47,10 +47,12 @@
 //   checked casts A written cast that can lose a value asserts that the value fits, checked in every build; the task
 //                 fails with a report naming the value and the target type, and `smith prove` removes the check when
 //                 it proves the value fits. That is integer narrowing, a change of sign out of range, and float to
-//                 integer. The `Verdict.checked` of such a cast is true; a cast that cannot lose anything (widening,
-//                 the same width and sign, a constant that fits) has no check. Deliberate truncation is
-//                 `wrapping::to(T, x)` (#1102), a value that may not fit is `checked::to(T, x)` (#1085); neither is
-//                 here.
+//                 integer. A constant that can never fit (`(U8)300`, `(U8)300.5`) is a compile error naming the
+//                 constant and the type, suggesting `wrapping::to(T, x)` (owner, 2026-11-01); the float constants
+//                 are float literals, so there is no NaN constant. The `Verdict.checked` of such a cast is true; a cast
+//                 that cannot lose anything (widening, the same width and sign, a constant that fits) has no check.
+//                 Deliberate truncation is `wrapping::to(T, x)` (#1102), a value that may not fit is `checked::to(T,
+//                 x)` (#1085); neither is here.
 module front::types_convert;
 
 import front::types;
@@ -80,6 +82,8 @@ export struct Literal {
     Bool is_constant;
     Bool negative;
     U64 magnitude;
+    Bool is_float; // a floating literal: `real` is its value and `magnitude` is not used
+    F64 real;
 };
 
 export struct Verdict {
@@ -96,6 +100,10 @@ export Literal no_literal() {
 export Literal constant(I64 value) {
     if (value < 0) return (Literal){.is_constant = true, .negative = true, .magnitude = (U64)(-(value + 1)) + 1};
     return (Literal){.is_constant = true, .magnitude = (U64)value};
+}
+
+export Literal constant_float(F64 value) {
+    return (Literal){.is_constant = true, .is_float = true, .real = value};
 }
 
 export Literal constant_unsigned(U64 value) {
@@ -376,6 +384,26 @@ static Bool is_number(types::TypeRef t) {
 }
 
 // A cast that can lose a value (the implicit rules already took the lossless ones): checked at run time.
+// Whether the integer `to` holds the truncation of the float constant (not NaN, in range).
+static Bool float_fits(types::TypeRef to, F64 value) {
+    if (value != value) return false;
+    F64 top = 1.0;
+    for (U32 i = 0; i < (to->is_signed ? to->bits - 1 : to->bits); i++) {
+        top *= 2.0;
+    }
+    F64 bottom = -1.0;
+    if (to->is_signed) bottom = -top - 1.0;
+    return value > bottom && value < top;
+}
+
+// A constant cast that can never fit is an error, not a check that always fails (owner, 2026-11-01).
+static Verdict never_fits(const Ctx *c, Str number) {
+    Str reason = msg(format::push(number, " does not fit ", types::show(c->to)));
+    return refuse(
+        c, reason,
+        msg(format::push("write a value that fits, or wrapping::to(", types::show(c->to), ", x) to truncate")));
+}
+
 static Verdict checked_cast() {
     Verdict v = accept(cast);
     v.checked = true;
@@ -387,8 +415,15 @@ static Verdict cast_by_kind(const Ctx *c) {
     types::Kind from = c->from->kind;
     types::Kind to = c->to->kind;
     if (to == .void_type) return refuse(c, "a cast to Void discards a value", "write _ = x;");
-    if (from == .integer && to == .integer) return checked_cast();
-    if (from == .floating && to == .integer) return checked_cast();
+    if (from == .integer && to == .integer) {
+        if (c->lit.is_constant && !c->lit.is_float) return never_fits(c, literal_text(c->lit));
+        return checked_cast();
+    }
+    if (from == .floating && to == .integer) {
+        if (!c->lit.is_constant || !c->lit.is_float) return checked_cast();
+        if (float_fits(c->to, c->lit.real)) return accept(cast);
+        return never_fits(c, msg(format::push(format::general(c->lit.real, 17))));
+    }
     if (is_number(c->from) && is_number(c->to)) return accept(cast);
     if (from == .enumeration && to == .integer) return accept(cast);
     if (from == .integer && to == .enumeration) return accept(cast);
