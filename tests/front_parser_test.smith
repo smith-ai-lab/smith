@@ -41,10 +41,7 @@ static Str gap_a1() {
            "error-fields-enum-member/main.smith\n"
            "error-generic-number-parameter/number.smith\n"
            "error-generic-private-name/scale.smith\n"
-           "error-lambda-capture-generic/main.smith\n"
-           "error-lambda-param-count/main.smith\n"
            "error-lambda-param-untyped/main.smith\n"
-           "error-lambda-wrong-signature/main.smith\n"
            "error-range-for/main.smith\n"
            "error-slice-const-write/main.smith\n"
            "error-slice-initializer-unread/main.smith\n"
@@ -88,9 +85,6 @@ static Str gap_a2() {
            "generic-slice-local/main.smith\n"
            "generic-slice-qualifiers-auto/copy.smith\n"
            "generic-slice-restrict/pair.smith\n"
-           "lambda-param-element/order.smith\n"
-           "lambda-param-two/main.smith\n"
-           "lambda-param/main.smith\n"
            "module-basic/shapes/area.smith\n"
            "module-enum-c-names/mix/modes.smith\n"
            "range-for-generic/loops.smith\n"
@@ -209,6 +203,7 @@ static Str must_fail_d() {
            "error-module-syntax/syntax.smith\n"
            "error-slice-qualifier-bracket/main.smith\n"
            "error-slice-step/main.smith\n"
+           "error-str-name/main.smith\n"
            "error-typetag-collision-reverse/main.smith\n"
            "error-typetag-collision/main.smith\n"
            "generic-for-constexpr-error/bad.smith\n"
@@ -402,9 +397,9 @@ export void test_parser_every_corpus_file_has_an_outcome_and_matches_the_golden(
     char written[:] = report.text[0:report.used];
     env::Value update = env::get("FRONT_UPDATE");
     if (update == .some) {
-        u8 bytes[:] = mem::alloc_slice(u8, countof(written));
+        U8 bytes[:] = mem::alloc_slice(U8, countof(written));
         for (Usize i = 0; i < countof(written); i++) {
-            bytes[i] = (u8)written[i];
+            bytes[i] = (U8)written[i];
         }
         files::CountResult done = files::write_file("tests/front/parser/corpus.txt", bytes, files::Replace);
         Bool wrote = done == .ok;
