@@ -111,6 +111,25 @@ export void test_build_steps_a_copy_step_reruns_when_its_input_changes() {
     scratch::expect_contains("copy: ... and says so", command.text, "command line changed for output");
 }
 
+export void test_build_steps_explain_names_the_first_cause_down_a_chain() {
+    scratch::Project p = scratch::make("p", "steps_copy");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    manifest(p.dir, "build mid: step input\n  cmd = cp input mid\nbuild output: step mid\n  cmd = cp mid output\n");
+    put(p.dir, "input", "one\n", 100);
+    Build first = build_defaults(p.dir, 200);
+    scratch::expect_contains("explain: the first reason is the missing output", first.text, "output mid doesn't exist");
+    scratch::expect_contains("explain: the step after it names that output as the first cause", first.text,
+                             "mid is dirty (first cause: mid)");
+    put(p.dir, "input", "two\n", 400);
+    Build changed = build_defaults(p.dir, 500);
+    scratch::expect_contains("explain: a changed input is the cause down the chain", changed.text,
+                             "mid is dirty (first cause: mid)");
+}
+
 export void test_build_steps_a_task_runs_every_time_and_a_stamp_step_once_per_input() {
     scratch::Project p = scratch::make("p", "steps_tasks");
     defer scratch::clean(&p);

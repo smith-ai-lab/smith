@@ -89,7 +89,11 @@ static void smith_plan_reason(SmithExec *exec, const char *format, ...) {
 static bool smith_plan_output_dirty(SmithExec *exec, const SmithEdge *edge, uint32_t recent, uint32_t output) {
     const SmithNode *node = &exec->graph.nodes[output];
     const SmithNode *newest = recent != smith_plan_none ? &exec->graph.nodes[recent] : nullptr;
-    if (edge->phony) return smith_plan_input_count(edge) == 0 && node->mtime == 0;
+    if (edge->phony) {
+        bool missing = smith_plan_input_count(edge) == 0 && node->mtime == 0;
+        if (missing) smith_plan_explain(exec, "phony %s has no inputs and doesn't exist", node->path);
+        return missing;
+    }
     if (node->mtime == 0) {
         smith_plan_reason(exec, "output %s doesn't exist", node->path);
         return true;
@@ -179,6 +183,8 @@ static void smith_plan_finish_scan(SmithExec *exec, SmithEdge *edge) {
     uint32_t total = smith_plan_input_count(edge);
     uint32_t recent = smith_plan_none;
     bool dirty = edge->deps_missing;
+    uint32_t first_output = smith_plan_output(exec, edge, 0);
+    uint32_t cause = dirty ? first_output + 1 : 0; // the first cause: the earliest reason printed for this edge
     edge->outputs_ready = true;
     for (uint32_t k = 0; k < total; k++) {
         uint32_t number = smith_plan_input(exec, edge, k);
@@ -186,15 +192,23 @@ static void smith_plan_finish_scan(SmithExec *exec, SmithEdge *edge) {
         if (input->edge != 0 && !graph->edges[input->edge].outputs_ready) edge->outputs_ready = false;
         if (smith_plan_is_order_only(edge, k)) continue;
         if (input->dirty) {
-            smith_plan_explain(exec, "%s is dirty", input->path);
+            uint32_t origin = input->cause != 0 ? input->cause : number + 1;
+            smith_plan_explain(exec, "%s is dirty (first cause: %s)", input->path, graph->nodes[origin - 1].path);
+            if (cause == 0) cause = origin;
             dirty = true;
         } else if (recent == smith_plan_none || input->mtime > graph->nodes[recent].mtime)
             recent = number;
     }
-    if (!dirty) dirty = smith_plan_outputs_dirty(exec, edge, recent);
+    if (!dirty) {
+        dirty = smith_plan_outputs_dirty(exec, edge, recent);
+        cause = first_output + 1;
+    }
     for (uint32_t k = 0; k < edge->output_count; k++) {
         SmithNode *output = &graph->nodes[smith_plan_output(exec, edge, k)];
-        if (dirty) output->dirty = true;
+        if (dirty) {
+            output->dirty = true;
+            output->cause = cause;
+        }
         output->scan = SmithScan_Done;
     }
     edge->dirty = dirty;
@@ -237,6 +251,10 @@ static void smith_plan_scan(SmithExec *exec, uint32_t root, uint32_t *stack) {
             node->scan = SmithScan_Visiting;
             if (node->edge == 0) { // a file nothing makes: dirty when it is missing
                 node->dirty = smith_plan_mtime(exec, stack[depth - 1]) == 0;
+                if (node->dirty) {
+                    node->cause = stack[depth - 1] + 1;
+                    smith_plan_explain(exec, "input %s doesn't exist and nothing makes it", node->path);
+                }
                 node->scan = SmithScan_Done;
                 depth -= 1;
                 continue;

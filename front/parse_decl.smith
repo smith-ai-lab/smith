@@ -483,7 +483,11 @@ static ast::Param parse_param(parse::Parser *p) {
         return param;
     }
     lex::TokenKind named = parse::peek(p).kind;
-    if (named == lex::name || (param.is_constexpr && named == lex::type_name) || (param.is_rest && is_name(named)))
+    Str type_word = "Type";
+    // `Type T` without `constexpr` reads like the one with it (is_constexpr false); the checker reports it (N1, #1339).
+    Bool type_param = named == lex::type_name && mem::equal(type_text(p, param.type), type_word);
+    if (named == lex::name || type_param || (param.is_constexpr && named == lex::type_name) ||
+        (param.is_rest && is_name(named)))
         param.name = parse::text(p, parse::advance(p));
     if (param.is_rest && countof(param.name) == 0) parse::expect(p, lex::name, "a name after `auto...`");
     param.type = array_suffixes(p, param.type);

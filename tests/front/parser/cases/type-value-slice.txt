@@ -1,1 +1,1 @@
-type-value-slice/main.smith: error: expected `)`, found `T` (8:27) [undecided_c]
+type-value-slice/main.smith: error: expected `;`, found `a` (36:13) [undecided_c]

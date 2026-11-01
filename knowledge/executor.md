@@ -123,7 +123,7 @@ the pools, the progress line and the log do not change. Threads against worker p
 | `-t clean [-g] [-r rule] [targets]`, `-t compdb [rules]`, `-t targets [all\|rule R]`, `-t commands <targets>`, `-t deps [targets]`, `-t cleandead` | kept, with ninja's output; `cleandead` leaves a file that the manifest still names |
 | `.ninja_log` / `.ninja_deps` (binary deps log) | replaced by `.smith_log` / `.smith_deps` (text), above |
 | the default job count | the same: cores + 2 |
-| `-d explain` | kept: says on stderr why each edge is dirty |
+| `-d explain` | kept: says on stderr why each edge is dirty, and an output made dirty by an input says `X is dirty (first cause: Y)`, Y being the first output or missing source whose own reason was printed |
 | `-l`, `-w`, other `-d` modes | read and ignored |
 | `-t graph`, `browse`, `query`, `inputs`, `rules`, `recompact`, `restat`, `msvc`, `multi-inputs`, `-f`, `-C` | dropped: no project here uses them (`-f` and `-C` were already refused) |
 | `include`, `subninja`, `rspfile`, `deps = msvc`, `dyndep`, `$in_newline`, one rule's variable naming another's | dropped: smith writes none of them. `SMITH_NINJA` runs a manifest that has them |
