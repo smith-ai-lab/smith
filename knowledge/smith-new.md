@@ -9,7 +9,7 @@ tags: [new, agents]
 **`smith new [--language smith|c] [<name>]` writes the program and what agents need, and no configuration**
 (issue #43; `smith` is the default). The program is `main.smith`, `primes.smith` (a module; no header) and
 `tests/test_primes.smith`, or with `--language c` `main.c`, `primes.c`, `primes.h` and `tests/test_primes.c`; with
-`.gitignore`. For agents (no `AGENTS.md`: the plugin's skills carry what they need): `.claude/settings.json` (enables the smith plugin, so smith's skills are not
+`.gitignore`. For agents (the plugin's skills carry what they need): `.claude/settings.json` (enables the smith plugin, so smith's skills are not
 copied), `knowledge/` (an index and a first concept) and the docs skill `.agents/skills/<name>-docs` with the
 `.claude/skills` link. The owner: "we have to assume the primary author is going to be Claude or some other agent."
 
