@@ -225,7 +225,13 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
     if (!(written->kind == .auto_type)) {
         type = types::resolve(r, written);
     }
-    if (is_auto(type)) {
+    if (types_expr::is_undefined(init) && types::lookup(&r->scopes, "undefined") == nullptr) {
+        if (is_auto(type)) {
+            types::failf(r, init->span, "`Auto ", name,
+                         " = undefined;` has no type to take; write the type, e.g. `I32 ", name, " = undefined;`");
+            type = r->table.invalid;
+        }
+    } else if (is_auto(type)) {
         type = auto_type(r, d, name, init);
     } else if (init != nullptr) {
         types_expr::check(r, init, type);

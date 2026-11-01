@@ -273,7 +273,7 @@ static state::Status declare_finish(state::Emitter *e, const state::Work *w) {
 }
 
 // `T t;` is the zero value of `T`, stored where the declaration stands (a loop zeroes it again each iteration).
-static state::Status declare_zero(state::Emitter *e, const ast::Decl *d, ast::Span span) {
+static state::Status declare_zero(state::Emitter *e, const ast::Decl *d, ast::Span span, Bool zero) {
     if (d->kind != .variable) {
         return state::fail("not a variable", span);
     }
@@ -286,10 +286,18 @@ static state::Status declare_zero(state::Emitter *e, const ast::Decl *d, ast::Sp
     state::Ty ty = made.ok;
     Str name = d->kind.variable.name;
     c::LLVMValueRef slot = state::new_alloca(e, ty, name);
-    c::LLVMBuildStore(e->builder, c::LLVMConstNull(ty.llvm), slot);
+    if (zero) c::LLVMBuildStore(e->builder, c::LLVMConstNull(ty.llvm), slot);
     state::add_local(e, (state::Local){.name = name, .ty = ty, .address = slot});
     try debug::declare_local(e, name, ty, slot, span);
     return state::success();
+}
+
+// `T x = undefined;` (K3b, #1334): the slot and no store. The emitter has no debug/release switch (`debug_info` is
+// only the DWARF flag), so there is no fill pattern.
+static Bool is_undefined(const ast::Expr *init) {
+    if (init == nullptr || !(init->kind == .name)) return false;
+    ast::Path path = init->kind.name.path;
+    return countof(path.segments) == 1 && state::same_text(path.segments[0].text, "undefined");
 }
 
 static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::Span span) {
@@ -304,7 +312,10 @@ static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::
     }
     const ast::TypeExpr *type = d->kind.variable.type;
     Bool is_auto = type->kind == .auto_type;
-    if (d->kind.variable.init == nullptr) return declare_zero(e, d, span);
+    if (d->kind.variable.init == nullptr) return declare_zero(e, d, span, true);
+    state::Local shadow = {};
+    if (is_undefined(d->kind.variable.init) && !state::find_local(e, "undefined", &shadow))
+        return declare_zero(e, d, span, false);
     state::Ty ty = {};
     state::Hint hint = state::no_hint();
     if (!is_auto) {

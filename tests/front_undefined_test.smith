@@ -1,0 +1,105 @@
+// Tests of `T x = undefined;` (K3b, #1334 of #1112): the checker takes `undefined` only as a local's whole
+// initializer, with the declared type, and the emitter gives the local its slot and no zero store. The emitter has no
+// debug/release switch (`debug_info` only turns DWARF on), so there is no fill pattern. Memory rules as in
+// tests/front_emit_zero_test.smith.
+module front_undefined_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <string.h>;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+// `source` gives `count` errors, the first of which says `needle`.
+static void errors(Str source, Usize count, Str needle) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed p = parser::parse("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module(&p.module, types::lp64());
+    test::check_equal(r.error_count, count);
+    if (count > 0 && r.error_count > 0) test::check_condition(has(r.errors[0].message, needle));
+}
+
+export void test_front_undefined_a_local_takes_the_declared_type() {
+    errors("I32 f() { I32 x = undefined; x = 1; return x; }", 0, "");
+    errors("U8 f() { U8 x[4] = undefined; x[0] = 1; return x[0]; }", 0, "");
+}
+
+export void test_front_undefined_auto_has_no_type_to_take() {
+    errors("I32 f() { Auto x = undefined; return 0; }", 1, "has no type to take");
+}
+
+export void test_front_undefined_is_only_a_whole_initializer() {
+    errors("I32 f() { return undefined; }", 1, "only valid as a whole initializer");
+    errors("I32 f() { I32 x = undefined + 1; return x; }", 1, "only valid as a whole initializer");
+    errors("I32 f() { I32 x = 0; x = undefined; return x; }", 1, "only valid as a whole initializer");
+}
+
+static ast::Decl *function_of(ast::StmtRef items[:]) {
+    ast::Param none[1] = {};
+    ast::Decl *f = ast::function("f", none[0:0], ast::named("I32"), ast::block(items));
+    f->exported = true;
+    return f;
+}
+
+static Bool has_store(Bool undefined) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    ast::Expr *init = nullptr;
+    if (undefined) init = ast::name("undefined");
+    ast::StmtKind decl = {.declaration = {.decl = ast::variable("t", ast::named("I32"), init)}};
+    ast::StmtRef items[2] = {ast::stmt(decl), ast::return_value(ast::integer(0))};
+    ast::DeclRef only[1] = {function_of(items)};
+    ast::Module m = ast::new_module("front::test", only);
+    mem::set_allocator(outside);
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    Bool found = false;
+    if (started == .ok) {
+        emit_jit::Jit host = started.ok;
+        c::LLVMContextRef context = c::LLVMContextCreate();
+        emit::Options options = {};
+        options.target = host.target;
+        emit::ModuleResult emitted = emit::module(context, &m, options);
+        test::check_equal(emitted == .ok, true);
+        if (emitted == .ok) {
+            char *text = c::LLVMPrintModuleToString(emitted.ok);
+            test::check_equal(c::strstr(text, "alloca i32") != nullptr, true);
+            found = c::strstr(text, "store i32 0, ptr %t") != nullptr;
+            c::LLVMDisposeMessage(text);
+            c::LLVMDisposeModule(emitted.ok);
+        }
+        c::LLVMContextDispose(context);
+        emit_jit::stop(&host);
+    }
+    return found;
+}
+
+export void test_front_undefined_the_slot_has_no_zero_store() {
+    test::check_equal(has_store(false), true);
+    test::check_equal(has_store(true), false);
+}
