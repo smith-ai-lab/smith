@@ -421,7 +421,7 @@ static void write_identity(const char *stamp) {
 // with the same hashes, built by the host's compiler (the one that built LLVM), which makes position independent
 // objects: smith is a PIE.
 
-static char llvm_name[256]; // the configuration, 23.1.3-r12
+static char llvm_name[256]; // the configuration, 23.1.3-r14
 static char prove_folder[path_max];
 static char work_folder[path_max]; // cache/prove-work: the builds of step 5
 
@@ -771,7 +771,7 @@ static void find_cache(void) {
     const char *xdg = getenv("XDG_CACHE_HOME");
     const char *home = getenv("HOME");
     const char *name = getenv("SMITH_LLVM_NAME");
-    if (name == nullptr || *name == '\0') name = "23.1.3-r12";
+    if (name == nullptr || *name == '\0') name = "23.1.3-r14";
     snprintf(llvm_name, sizeof llvm_name, "%s", name);
     if (xdg != nullptr && *xdg == '/') {
         snprintf(cache, sizeof cache, "%s/smith/llvm/%s", xdg, name);

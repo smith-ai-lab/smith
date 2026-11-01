@@ -91,3 +91,31 @@ export void test_runner_shard_a_bad_value_is_a_usage_error() {
         scratch::expect_contains(values[i], run.out, "usage:");
     }
 }
+
+// `smith test --shard` compiles only the files of its part (#1200): the parts built alone list what the same parts of a
+// full build list, and part 3, with two of the four test files, has two test objects (and the test library's). The
+// listing is the runner's, so the processes are smith's build and the runner's own.
+export void test_runner_shard_a_part_built_alone_is_the_same_part_of_a_full_build() {
+    scratch::Project p = runner::project("runner_base", "runner_shard");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "costs.tsv", "cpu\t20\tshard::gamma_test::gamma_1\n");
+    const char *full = scratch::capture(
+        &p, "SMITH_OUTPUT=full smith build build/tests >/dev/null 2>&1; for i in 1 2 3; do build/tests --list --shard "
+            "$i/3 --costs costs.tsv | sed \"s/^/$i /\"; done");
+    const char *objects = scratch::capture(&p, "ls build/tests_objects | grep -c '_test.o$'");
+    const char *alone = scratch::capture(
+        &p,
+        "rm -rf build; for i in 1 2 3; do SMITH_OUTPUT=full smith test --list --shard $i/3 --costs costs.tsv 2>&1 | "
+        "grep '^shard::' | sed \"s/^/$i /\"; done");
+    const char *part_objects = scratch::capture(
+        &p, "rm -rf build; SMITH_OUTPUT=full smith test --list --shard 3/3 --costs costs.tsv >/dev/null 2>&1; ls "
+            "build/tests_objects | grep -c '_test.o$'");
+    scratch::expect_text("shard: the parts built alone list the tests of the parts of a full build", full, alone);
+    scratch::expect_text("shard: a full build has the four test objects and the library's", "5", objects);
+    scratch::expect_text("shard: ... and the part built alone has the two of its files and the library's", "3",
+                         part_objects);
+}

@@ -1,0 +1,24 @@
+Option(I32)
+(module m
+  (variable t (applied Option (type_arg (named I32)))))
+
+Result(I32, Str)
+(module m
+  (variable t (applied Result (type_arg (named I32)) (type_arg (named Str)))))
+
+Option(Point *)
+(module m
+  (variable t (applied Option (type_arg (pointer (named Point))))))
+
+Array(I32, 4)
+(module m
+  (variable t (applied Array (type_arg (named I32)) (value_arg (integer 4)))))
+
+List(Option(I32))
+(module m
+  (variable t (applied List (type_arg (applied Option (type_arg (named I32)))))))
+
+Option(I32)[:]
+(module m
+  (variable t (slice (applied Option (type_arg (named I32))))))
+

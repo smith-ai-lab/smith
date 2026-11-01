@@ -984,6 +984,16 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
                           smith_cat(b, flags, smith_list(b, "-I", "runtime/protocol", nullptr), nullptr));
 }
 
+// One argument of `smith test` as SMITH_ARGS carries it: "%", ";" and newline as %25, %3B and %0A.
+static const char *build_encode_argument(SmithBuild *b, const char *argument) {
+    const char *encoded = "";
+    for (const char *at = argument; *at != '\0'; at++) {
+        const char *piece = *at == '%' ? "%25" : *at == ';' ? "%3B" : *at == '\n' ? "%0A" : smith_fmt(b, "%c", *at);
+        encoded = smith_fmt(b, "%s%s", encoded, piece);
+    }
+    return encoded;
+}
+
 // smith's own tests of behavior, in `.smith` on its test runner (issue #31): every `*_test.smith` (beside the library
 // it tests in `lib/`, or in `tests/`) linked into one runner, built once under AddressSanitizer and UBSan, whose
 // workers run the tests in process, one per core, where a script starts smith for each case. It is a project of its own
@@ -1010,15 +1020,29 @@ static const char *build_units(SmithBuild *b, const BuildConfig *config, const c
                                  "\"$(git rev-parse HEAD)\" .smith/coverage/coverage.tsv; exit $rc",
                                  self);
     const char *inputs[] = {binary, smith_fmt(b, "%s/smith-cc", folder), nullptr};
+    // The arguments of `smith test` (--test a,b from --changed, #441) go to the runner of the units project.
+    const char *const *given = smith_args(b);
+    // With a --shard, units-build compiles only that part's test files (#1200): the build there reads the arguments as
+    // `smith test` does, as the option SMITH_ARGS (each argument after a ";", with "%", ";" and newline as %25, %3B
+    // and %0A).
+    const char *shard_option = "";
+    for (size_t i = 0; given[i] != nullptr; i++) {
+        if (strcmp(given[i], "--shard") != 0) continue;
+        const char *encoded = "";
+        for (size_t k = 0; given[k] != nullptr; k++) {
+            const char *argument = build_encode_argument(b, given[k]);
+            encoded = smith_fmt(b, "%s;%s", encoded, argument);
+        }
+        shard_option = smith_fmt(b, " '-DSMITH_ARGS=%s'", encoded);
+    }
     SmithStep build_step = {
-        .command =
-            (const char *[]){"sh", "-c", smith_fmt(b, "%s env %s \"%s\" build build/tests", setup, environment, self),
-                             "sh", folder, nullptr},
+        .command = (const char *[]){"sh", "-c",
+                                    smith_fmt(b, "%s env %s \"%s\" build%s build/tests", setup, environment, self,
+                                              shard_option),
+                                    "sh", folder, nullptr},
         .inputs = inputs,
     };
     smith_task(b, "units-build", &build_step);
-    // The arguments of `smith test` (--test a,b from --changed, #441) go to the runner of the units project.
-    const char *const *given = smith_args(b);
     const char *quoted[256];
     size_t quoted_count = 0;
     // SMITH_TEST_STATS=1 (CI) adds the runner's --stats: a line for each test's CPU time, in the log (#360).
@@ -1174,19 +1198,19 @@ static void build_release(SmithBuild *b, const char *binary) {
 }
 
 // The folder of the LLVM configuration under the package cache: one build of 23.1.3 with RTTI and exceptions on (Alive2
-// needs them), the token hook (#11), and the prover's libraries beside it. r12 is the twelfth configuration
-// (patches/*.patch; r12 has no new patch: it is the pack of Linux that gains the prover and Enzyme, #820);
-// scripts/llvm.sh has the same name (SMITH_LLVM_NAME overrides both).
+// needs them), the token hook (#11), and the prover's libraries beside it. r14 is the fourteenth configuration
+// (patches/*.patch; r14 changes `SmithCEval` only (#1018); r12 has no new patch: it is the pack of Linux that gains the
+// prover and Enzyme, #820); scripts/llvm.sh has the same name (SMITH_LLVM_NAME overrides both).
 static const char *build_llvm_folder(SmithBuild *b) {
     const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
-    return smith_fmt(b, "%s/smith/llvm/%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r12"));
+    return smith_fmt(b, "%s/smith/llvm/%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r14"));
 }
 
 // Enzyme beside the LLVM configurations, keyed by its version and the configuration it was built against, so that
 // building it leaves the LLVM install alone (build_enzyme_make).
 static const char *build_enzyme_folder(SmithBuild *b) {
     const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
-    return smith_fmt(b, "%s/smith/enzyme/0.0.303-%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r12"));
+    return smith_fmt(b, "%s/smith/enzyme/0.0.303-%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r14"));
 }
 
 static const char *build_cmake_package(SmithBuild *b) {

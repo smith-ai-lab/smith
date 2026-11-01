@@ -956,7 +956,10 @@ class Session {
 
     int status = 0;
 
-    bool start() {
+    // `index` is false for a query that needs no index (`diag`: the file's own parse is its answer).
+    bool announce = true; // says "bringing the index up to date" only for a query that waits for it
+    bool start(bool index = true) {
+        announce = index;
         std::string root = projectRoot();
         Object workspace{{"symbol", Object{}}};
         Object text{{"hover", Object{{"contentFormat", Array{"plaintext"}}}},
@@ -973,7 +976,7 @@ class Session {
         // opened: any one of the project's sources.
         std::vector<std::string> files = projectSources();
         if (!files.empty()) open(files[0]);
-        waitForIndex();
+        if (index) waitForIndex();
         return true;
     }
 
@@ -1062,7 +1065,7 @@ class Session {
             auto kind = value != nullptr ? value->getString("kind") : std::nullopt;
             if (kind && *kind == "begin") {
                 indexBegun = true;
-                std::cerr << "smith lsp: bringing the index up to date\n";
+                if (announce) std::cerr << "smith lsp: bringing the index up to date\n";
             }
             if (kind && *kind == "report" && value != nullptr)
                 indexProgress = value->getString("message").value_or("").str();
@@ -1473,6 +1476,10 @@ class Session {
                 Object message;
                 if (read(message, 100) == Read::Closed) break;
             }
+            if (diagnostics.find(uri) == diagnostics.end()) {
+                std::cerr << "smith lsp diag: " << relativePath(path) << ": the server did not read it in 120 s\n";
+                status = 1;
+            }
             Published &published = diagnostics[uri];
             for (Value &entry : published.items) {
                 Object *item = entry.getAsObject();
@@ -1544,7 +1551,7 @@ int runQueries(int argc, char **argv, int (*server)(int, char **)) {
     std::atomic<int> status{0};
     std::thread client([&] {
         Session session(*layer, toServer[1], fromServer[0], toUser);
-        if (!session.start()) {
+        if (!session.start(word != "diag")) {
             std::cerr << "smith lsp: the language server did not start\n";
             status = 2;
         } else {

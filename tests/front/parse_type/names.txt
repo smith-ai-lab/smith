@@ -1,0 +1,24 @@
+I32
+(module m
+  (variable t (named I32)))
+
+Point
+(module m
+  (variable t (named Point)))
+
+geometry::Box
+(module m
+  (variable t (named geometry::Box)))
+
+c::FILE
+(module m
+  (variable t (named c::FILE)))
+
+c::size_t
+(module m
+  (variable t (named c::size_t)))
+
+std::mem::Allocator
+(module m
+  (variable t (named std::mem::Allocator)))
+

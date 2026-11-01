@@ -1,0 +1,147 @@
+a - b - c
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary subtract (binary subtract (name a) (name b)) (name c))))))
+
+a = b = c
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (assign plain (name a) (assign plain (name b) (name c)))))))
+
+a + b * c
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary add (name a) (binary multiply (name b) (name c)))))))
+
+a * b + c * d
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary add (binary multiply (name a) (name b)) (binary multiply (name c) (name d)))))))
+
+!a && b || c
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary logical_or (binary logical_and (unary logical_not (name a)) (name b)) (name c))))))
+
+a || b && c
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary logical_or (name a) (binary logical_and (name b) (name c)))))))
+
+a ? b : c ? d : e
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (conditional (name a) (name b) (conditional (name c) (name d) (name e)))))))
+
+a ? b : c + 1
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (conditional (name a) (name b) (binary add (name c) (integer 1)))))))
+
+a = b ? c : d
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (assign plain (name a) (conditional (name b) (name c) (name d)))))))
+
+a < b == c < d
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary equal (binary less (name a) (name b)) (binary less (name c) (name d)))))))
+
+a & b | c ^ d
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary bit_or (binary bit_and (name a) (name b)) (binary bit_xor (name c) (name d)))))))
+
+a << 1 + 2
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary shift_left (name a) (binary add (integer 1) (integer 2)))))))
+
+-a * b
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary multiply (unary negate (name a)) (name b))))))
+
+a - -b
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary subtract (name a) (unary negate (name b)))))))
+
+!!a
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary logical_not (unary logical_not (name a)))))))
+
+x += y *= 2
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (assign add (name x) (assign multiply (name y) (integer 2)))))))
+
+a && b == c
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary logical_and (name a) (binary equal (name b) (name c)))))))
+
+a | b && c
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary logical_and (binary bit_or (name a) (name b)) (name c))))))
+
+a % b / c
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary divide (binary remainder (name a) (name b)) (name c))))))
+
+a >> b << c
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary shift_left (binary shift_right (name a) (name b)) (name c))))))
+
+a <= b >= c != d
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary not_equal (binary greater_equal (binary less_equal (name a) (name b)) (name c)) (name d))))))
+
