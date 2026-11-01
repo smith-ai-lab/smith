@@ -1,12 +1,12 @@
 ---
 type: design
 title: smith test --changed runs the tests a change can reach
-description: The tests to run for a diff are the ones the reverse dependency graph reaches from the changed files, no test declares anything, and a path the graph does not know runs everything.
+description: The tests to run for a diff are the ones the reverse dependency graph reaches from the changed files, a test may declare what it covers, and a path the graph does not know runs everything.
 tags: [test, ci, machine-load]
 ---
 # smith test --changed runs the tests a change can reach
 
-Every red pull request was a fault in a test the author did not know to run. `smith test --changed [--base <ref>] [--dry-run]` (`runtime/changed.c`, issue #441) names the tests a diff can reach by walking the **reverse dependency graph** from the changed files. No test declares anything: what a test depends on is found from the sources.
+Every red pull request was a fault in a test the author did not know to run. `smith test --changed [--base <ref>] [--dry-run]` (`runtime/changed.c`, issue #441) names the tests a diff can reach by walking the **reverse dependency graph** from the changed files. What a test depends on is found from the sources, and a test that runs smith may declare the part of smith it covers.
 
 **The diff.** The files that differ from `<ref>` (default: where the branch left `origin/main`, else `main`), the working tree and untracked files included. `--dry-run` prints each selected test file with the reason and the `--test` list it would run, and runs nothing. `--list [<base> [<head>]]` (issue #506) prints the selection alone on stdout, one entry per line (a test name, `module::`, or `*` for every test), for a script that asks what a pull request would select; with a `<head>` the changed paths are those of `git diff base head`, untracked files left out, while the sources and records are still read from the working tree. A run passes `--partial --test a::,b::` to every runner (the selection names tests of all of them, units and front, so a runner that owns none has nothing to run and passes, #1154; a hand-typed `--test` gets no `--partial`, so a name no runner knows still fails), which takes comma-separated substrings (`lib/std/test.smith`); smith's own `test-units` forwards the arguments of `smith test` to its runner (`build.c`, `smith_args`). It prints the tests it selected, so a miss (a test CI rejected that `--changed` left out) can be counted.
 
@@ -23,6 +23,13 @@ Every red pull request was a fault in a test the author did not know to run. `sm
 **Cheapest first (#506).** `--cheapest-first` writes `.smith/costs.tsv` from the `cpu` line of each record and passes it as the runner's `--costs` with `--cheapest` (the runner's own order for `--costs` is the heaviest first): the selected tests start unknown first, then by cpu seconds, so a wide selection under `--fail-fast` and a time limit still meets the cheap breakage first.
 
 **Markdown is placed.** A changed `.md` file (a skill, a concept, the README) is not unknown: it selects the test files whose source names `.md` (skills, readme and docs tests, goldens of Markdown), "it reads Markdown", and no more (#506).
+
+**A test declares what it covers (#1392).** A test that runs smith is reached by every source of smith, which on CI (no records) is most of the suite. A test file may instead carry comment lines `// smith-covers: <path> [<path> ...]` (paths from the repository root; `*` matches within a folder, `**` across folders, a trailing `/` is the folder and everything under it). A file with the marker has no "runs smith" edge: it is selected when a changed path matches a declared path ("it declares lib/, and lib/x.smith changed") or by its other edges (an import, a file it names, a data file it reads, itself changed). A file without the marker behaves as before. The declaration is the author's claim that nothing else of smith can break the test; nothing verifies it yet (a follow-up compares it with the files of the records' functions).
+
+```text
+// smith-covers: runtime/package.c runtime/untar*.c tests/build_fixtures/cache_package/
+module cache_clean_test;
+```
 
 **Records first.** When per-test records exist (`.smith/records`), a test that runs smith is selected when its record is stale instead of by the graph's "all of smith" edge, and the graph decides whatever no record names: [coverage-selection](coverage-selection.md).
 

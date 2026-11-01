@@ -4,6 +4,9 @@
 // (#1295, #639), so a test only runs build/tests with its own arguments. All six stay end to end: each is the report
 // of a real runner on files in the project (a pass, the diff text, `--update` writing files), and test::golden's
 // functions are not callable in the test's own process without the runner's file layout.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: include/smith/ lib/std/test.smith tests/build_fixtures/golden/
 module golden_test;
 
 import std::arena;

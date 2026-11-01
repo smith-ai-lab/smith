@@ -4,6 +4,9 @@
 // tests call it in process through `smith_core_package_fetch` (include/smith_core_package.h; issue #1298, part of
 // #646): no smith starts. Two tests keep a process each, for what only a process shows: a build.c with a package
 // builds (the wiring from `smith_package(...)` to the fetch), and `smith fetch` prints the line to paste.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: include/smith/ runtime/package.c runtime/untar.c runtime/gzip.c runtime/xz.c tests/build_fixtures/
 module build_packages_test;
 
 import std::arena;

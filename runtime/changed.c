@@ -853,6 +853,77 @@ static bool smith_changed_opens_recorded(void) {
     return tests > 0;
 }
 
+// ---- `// smith-covers:` (issue #1392)
+
+// Whether `path` matches the pattern `pattern[0..length)`: `*` stays inside a folder, `**` crosses folders, and a
+// trailing `/` is the folder and everything under it. Greedy with a backtrack point for the last `**` and the last `*`
+// after it (a `**` is a sync point, so the earlier stars never need another try).
+static bool smith_changed_glob(const char *pattern, size_t length, const char *path) {
+    const char *deep = nullptr;
+    const char *deep_path = nullptr;
+    const char *star = nullptr;
+    const char *star_path = nullptr;
+    size_t at = 0;
+    bool folder = length > 0 && pattern[length - 1] == '/';
+    while (*path != '\0' || at < length) {
+        if (at < length && pattern[at] == '*') {
+            bool crossing = at + 1 < length && pattern[at + 1] == '*';
+            at += crossing ? 2 : 1;
+            if (crossing) {
+                deep = pattern + at;
+                deep_path = path;
+                star = nullptr;
+            } else {
+                star = pattern + at;
+                star_path = path;
+            }
+        } else if (*path != '\0' && at < length && pattern[at] == *path) {
+            at++;
+            path++;
+        } else if (at >= length && *path != '\0' && folder) {
+            return true; // a trailing `/` matches everything under the folder
+        } else if (star != nullptr && *star_path != '/' && *star_path != '\0') {
+            star_path++;
+            path = star_path;
+            at = (size_t)(star - pattern);
+        } else if (deep != nullptr && *deep_path != '\0') {
+            deep_path++;
+            path = deep_path;
+            at = (size_t)(deep - pattern);
+            star = nullptr;
+        } else {
+            return folder && at >= length;
+        }
+    }
+    return true;
+}
+
+// Whether the text of a test carries `// smith-covers:` lines (`*marked`), and whether one of the patterns on them
+// matches `path` (the pattern is copied to `pattern`). The patterns are paths from the repository root, separated by
+// spaces. A trailing `/` is the folder: `lib/` covers every file under it.
+static bool smith_changed_declared(const char *text, const char *path, char *pattern, size_t size, bool *marked) {
+    static const char key[] = "// smith-covers:";
+    *marked = false;
+    for (const char *line = text; *line != '\0';
+         line = strchr(line, '\n') != nullptr ? strchr(line, '\n') + 1 : line + strlen(line)) {
+        const char *at = line + strspn(line, " \t");
+        if (strncmp(at, key, sizeof key - 1) != 0) continue;
+        *marked = true;
+        at += sizeof key - 1;
+        for (size_t guard = 0; guard < smith_changed_text_max; guard++) {
+            at += strspn(at, " \t");
+            size_t length = strcspn(at, " \t\r\n");
+            if (length == 0) break;
+            if (smith_changed_glob(at, length, path)) {
+                snprintf(pattern, size, "%.*s", (int)length, at);
+                return true;
+            }
+            at += length;
+        }
+    }
+    return false;
+}
+
 // One test file: selected when the graph reaches it from a changed file, or when it runs smith and a source of smith
 // changed (an edge from the test to everything compiled into smith).
 static void smith_changed_judge(size_t test) {
@@ -882,7 +953,18 @@ static void smith_changed_judge(size_t test) {
         smith_changed_choose(test, "it names %s, and it changed", smith_changed_paths[p]);
         return;
     }
-    if (smith_changed_coverage_judge(test) || !smith_changed_runs_smith(smith_changed_text)) return;
+    if (smith_changed_coverage_judge(test)) return;
+    bool marked = false;
+    char pattern[PATH_MAX];
+    for (size_t p = 0; p < smith_changed_path_count; p++) { // a test that declares what it covers (#1392)
+        if (!smith_changed_declared(smith_changed_text, smith_changed_paths[p], pattern, sizeof pattern, &marked))
+            continue;
+        char reason[PATH_MAX];
+        snprintf(reason, sizeof reason, "it declares %s, and %s changed", pattern, smith_changed_paths[p]);
+        smith_changed_choose(test, "%s", reason);
+        return;
+    }
+    if (marked || !smith_changed_runs_smith(smith_changed_text)) return;
     for (size_t p = 0; p < smith_changed_path_count; p++) {
         if (smith_changed_in_smith(smith_changed_paths[p])) {
             smith_changed_choose(test, "it runs smith, and %s is part of smith", smith_changed_paths[p]);

@@ -10,6 +10,10 @@
 // fetch with its hash and -DOFFLINE, which is all `smith_package` does, and no compile starts. Only the byte cap and
 // `smith fetch` itself stay processes: the cap's input is an environment variable (SMITH_CACHE_MAX), which a test does
 // not set in its own process.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: include/smith/ runtime/package.c runtime/untar.c runtime/gzip.c runtime/xz.c
+// smith-covers: tests/build_fixtures/cache_package/
 module cache_packages_test;
 
 import std::arena;

@@ -6,6 +6,10 @@
 // (`smith_core_package_fetch`) and a module folder made by hand, with no build. Two cases keep their processes: the
 // modules rebuilt after a clean (it needs a real compile), and a clean refused while a build holds the lock (it needs a
 // build that is running).
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: include/smith/ runtime/package.c runtime/untar.c runtime/gzip.c runtime/xz.c
+// smith-covers: tests/build_fixtures/cache_package/
 module cache_clean_test;
 
 import std::arena;
