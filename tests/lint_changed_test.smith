@@ -204,7 +204,8 @@ export void test_lint_skips_a_file_that_waits_for_a_package_the_network_does_not
     scratch::expect_status("the lint passes", 0, &run);
     scratch::expect_contains("it names the skipped file and why", run.out,
                              "smith lint: skipped a.c: the tree-sitter parser it embeds cannot be fetched");
-    scratch::expect_contains("... and lints the other", run.out, "linted 1 files");
+    // c.c and the build file; the skipped a.c is not counted as linted.
+    scratch::expect_contains("... and lints the others, not counting the skipped one", run.out, "linted 2 files");
 }
 
 export void test_lint_fails_in_ci_when_a_package_cannot_be_fetched() {
