@@ -27,6 +27,7 @@ export typedef struct {
     const char *dir;    // where commands run
     const char *tested; // a folder with smith, smith-cc and smith-c++ for PATH
     const char *cache;  // XDG_CACHE_HOME of the commands
+    bool uncached;      // scratch::uncached: the commands run with SMITH_STEP_CACHE=0
 } Project;
 
 export typedef struct {
@@ -108,11 +109,14 @@ static const char *script_free(const char *script, const char *arg0, const char 
 // A command with no shell feature in it is run in place of the shell that starts it. The smith a test starts takes no
 // cores of the host's pool (SMITH_SLOTS=0): the test's own worker already holds one, and a test of the executor's
 // concurrency must not wait for a core a busy host does not have; tests/slots_test.smith sets its own pool. The step
-// cache is off (SMITH_STEP_CACHE=0): a test of what the executor rebuilds must run the compile it counts; tests/
-// build_step_cache_test.smith turns it on, with a cache of its own.
+// cache is on (SMITH_STEP_CACHE defaults to 1, #1307): the build program's parts (runtime.c, the library objects) are
+// compiled once for the run, in the shared cache above, not again in every project. A test that counts or compares the
+// compiles of its own fixture calls scratch::uncached(&p), which gives its commands SMITH_STEP_CACHE=0 ($4);
+// tests/build_step_cache_test.smith sets its own and has a cache of its own.
 constexpr char run_script[_] =
-    "unset SMITH_ACCOUNT_FILE; export SMITH_SLOTS=0 SMITH_STEP_CACHE=0; here=$PWD; repo=${SMITH_REPO:-$PWD}; cd \"$0\" "
+    "unset SMITH_ACCOUNT_FILE; export SMITH_SLOTS=0; here=$PWD; repo=${SMITH_REPO:-$PWD}; cd \"$0\" "
     "|| exit 97; "
+    "export SMITH_STEP_CACHE=\"${4:-${SMITH_STEP_CACHE:-1}}\"; "
     "cache=$3; [ -n \"$cache\" ] || cache=${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg; "
     "data=${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/data; "
     "[ -d \"$cache\" ] && [ -d \"$data\" ] || mkdir -p \"$cache\" \"$data\"; "
@@ -130,8 +134,9 @@ constexpr char setup_script[_] =
 // (never the real one) and the repository as $SMITH_REPO (where the runner was started). Nothing is set in this
 // process: the environment is made by the shell that runs the command.
 static Run run_in(const Project *p, const char *command) {
-    const char *const argv[_] = {"sh", "-c", run_script, p->dir, command, p->tested, p->cache, nullptr};
-    return run_free(argv[0:7]);
+    const char *const argv[_] = {"sh",   "-c", run_script, p->dir, command, p->tested, p->cache, p->uncached ? "0" : "",
+                                 nullptr};
+    return run_free(argv[0:8]);
 }
 
 // The pieces as text on `arena`, which is the allocator while it is pushed: what a test builds in its arena goes back
@@ -275,6 +280,12 @@ export void clean(Project *p) {
 // The project gets a cache of its own, empty, for a test of the cache or of what a cold one does.
 export void own_cache(Project *p) {
     p->cache = join_free(p->root, "/", "xdg-cache"); // clean frees it
+}
+
+// The project's commands run with the compile step cache off, for a test that counts or compares the compiles of its
+// own fixture (a job order or a "cached" line would differ).
+export void uncached(Project *p) {
+    p->uncached = true;
 }
 
 // Runs a shell command in the project: `smith build -v`, `./build/app`, `cp a b`. `smith` is the smith under test.
