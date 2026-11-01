@@ -8,7 +8,7 @@ attribute-c-names/main.smith: ok
 attribute-c-names/log/fmt.smith: error: a declaration needs a type (there is no implicit `int`): write the type before `__attribute__`, as in `I32 __attribute__` (18:8)
 braceless-for-generic-with-enums/finder.smith: ok
 braceless-for-generic-with-enums/main.smith: ok
-c-array-bound/grid.smith: error: expected a tag name after `struct`, `union` or `enum` (6:24)
+c-array-bound/grid.smith: ok
 c-array-bound/main.smith: C, out of scope
 c-macro-argument/main.smith: C, out of scope
 c-name/std/arena.smith: ok
@@ -172,7 +172,7 @@ error-slice-dims-fixed-slice/main.smith: ok
 error-slice-dims-group/main.smith: ok
 error-slice-dims-shape/main.smith: ok
 error-slice-initializer/main.smith: ok
-error-slice-initializer-unread/main.smith: error: expected a tag name after `struct`, `union` or `enum` (12:11)
+error-slice-initializer-unread/main.smith: ok
 error-slice-negative/main.smith: ok
 error-slice-not-sliceable/main.smith: ok
 error-slice-pointer-argument/main.smith: ok
@@ -299,7 +299,7 @@ generic-fields/main.smith: ok
 generic-fields/reflect.smith: ok
 generic-fields-doc/docs.smith: ok
 generic-fields-doc/main.smith: ok
-generic-fields-error/main.smith: error: expected a tag name after `struct`, `union` or `enum` (12:12)
+generic-fields-error/main.smith: ok
 generic-fields-error/reflect.smith: ok
 generic-fields-helper/lib.smith: ok
 generic-fields-helper/main.smith: ok
@@ -612,4 +612,4 @@ value-query-plain/main.smith: C, out of scope
 value-query-windows/size.smith: ok
 void-pointer-cast/main.smith: ok
 void-pointer-plain/main.smith: C, out of scope
-total 614, ok 380, error 110, C 124, skipped 0
+total 614, ok 383, error 107, C 124, skipped 0

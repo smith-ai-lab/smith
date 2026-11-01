@@ -1,0 +1,102 @@
+// Tests of anonymous struct and union members in front::parse_decl (#1286, A7g of track A of #1112): a field whose type
+// is `struct { ... }` or `union { ... }`, named or C11's unnamed member, beside a named struct member, and one error.
+module front_parse_anon_test;
+
+import front::ast;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+typedef ast::FieldDecl FieldList[:];
+
+// The fields of the only declaration of source, which must parse without errors and be a record.
+static FieldList fields_of(Str source) {
+    parser::Parsed parsed = parser::parse("x.smith", source);
+    test::check_equal(countof(parsed.errors), 0);
+    test::check_equal(countof(parsed.module.decls), 1);
+    ast::DeclKind kind = parsed.module.decls[0]->kind;
+    if (kind == .record) {
+        return kind.record.fields;
+    }
+    test::check_condition(false);
+    return {};
+}
+
+export void test_parse_anon_named_member() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    FieldList fields = fields_of("struct Pair { Point p; Other o; };");
+    test::check_equal(countof(fields), 2);
+    Str name = "p";
+    test::check_equal(fields[0].name, name);
+    test::check_condition(fields[0].type != nullptr);
+}
+
+export void test_parse_anon_struct_member() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    FieldList fields = fields_of("struct Nested { struct { U8 x[4]; } in; U8 y; };");
+    test::check_equal(countof(fields), 2);
+    Str name = "in";
+    test::check_equal(fields[0].name, name);
+    ast::TypeExpr *type = fields[0].type;
+    test::check_condition(type->kind == .record);
+    if (type->kind == .record) {
+        Bool is_union = type->kind.record.is_union;
+        test::check_condition(!is_union);
+        test::check_equal(countof(type->kind.record.fields), 1);
+    }
+}
+
+export void test_parse_anon_union_member() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    FieldList fields = fields_of("struct Anon { union { I32 a; F32 b; } u; };");
+    test::check_equal(countof(fields), 1);
+    ast::TypeExpr *type = fields[0].type;
+    test::check_condition(type->kind == .record);
+    if (type->kind == .record) {
+        Bool is_union = type->kind.record.is_union;
+        test::check_condition(is_union);
+        test::check_equal(countof(type->kind.record.fields), 2);
+    }
+}
+
+export void test_parse_anon_unnamed_member() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    FieldList fields = fields_of("struct Outer { I32 tag; union { I32 a; F32 b; }; };");
+    test::check_equal(countof(fields), 2);
+    Str unnamed = fields[1].name;
+    test::check_equal(countof(unnamed), 0);
+    test::check_condition(fields[1].type != nullptr);
+}
+
+export void test_parse_anon_nested_in_typedef() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    FieldList fields = fields_of("typedef struct { I32 a; struct { I32 b; I32 c; } in; } Both;");
+    test::check_equal(countof(fields), 2);
+}
+
+export void test_parse_anon_member_missing_name_error() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed parsed = parser::parse("x.smith", "struct S { struct { I32 a; } 3; };");
+    test::check_condition(countof(parsed.errors) > 0);
+    Str expected = "expected a field name, found `3`";
+    test::check_equal(parsed.errors[0].message, expected);
+}

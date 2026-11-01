@@ -644,13 +644,12 @@ static Str tag_name(parse::Parser *p) {
     return "";
 }
 
-// One field: a type, one name (none for an unnamed bit-field), array suffixes, `: width`, `;`.
-static ast::FieldDecl parse_field(parse::Parser *p) {
-    ast::FieldDecl field = {};
-    U32 start = parse::peek(p).span.start;
-    if (take_tag_keyword(p)) field.type = parse::type(p);
-    if (field.type == nullptr) {
-        recover(p);
+// The rest of a field once its type is read: one name (none for an unnamed bit-field, and none for C11's unnamed member
+// `struct { I32 a; };` when `anonymous`), array suffixes, `: width`, `;`.
+static ast::FieldDecl finish_field(parse::Parser *p, ast::FieldDecl field, Bool anonymous, U32 start) {
+    if (anonymous && parse::at(p, lex::semicolon)) {
+        parse::advance(p);
+        field.span = parse::span_from(p, start);
         return field;
     }
     if (parse::at(p, lex::name)) {
@@ -669,18 +668,68 @@ static ast::FieldDecl parse_field(parse::Parser *p) {
     return field;
 }
 
+// One field whose type is not an anonymous record: a type, then the rest.
+static ast::FieldDecl parse_field(parse::Parser *p) {
+    ast::FieldDecl field = {};
+    U32 start = parse::peek(p).span.start;
+    if (take_tag_keyword(p)) field.type = parse::type(p);
+    if (field.type == nullptr) {
+        recover(p);
+        return field;
+    }
+    return finish_field(p, field, false, start);
+}
+
+// A record being read: its fields so far, and where the field it is the type of began.
+struct OpenRecord {
+    FieldList fields;
+    Bool is_union;
+    U32 field_start;
+};
+
+constexpr Usize max_nesting = 16;
+
+static void add_field(FieldList *fields, ast::FieldDecl field) {
+    *fields = mem::realloc(*fields, countof(*fields) + 1);
+    (*fields)[countof(*fields) - 1] = field;
+}
+
+// The fields up to the closing `}` (not taken). A field of type `struct { ... }` or `union { ... }` opens a record on
+// an explicit stack, so a nest of them is a loop, not a recursion.
 static FieldList parse_fields(parse::Parser *p) {
-    FieldList fields = {};
-    while (!parse::at(p, lex::right_brace) && !parse::at(p, lex::end_of_file)) {
-        Usize before = p->position;
-        ast::FieldDecl field = parse_field(p);
-        if (field.type != nullptr) {
-            fields = mem::realloc(fields, countof(fields) + 1);
-            fields[countof(fields) - 1] = field;
+    OpenRecord stack[max_nesting] = {};
+    Usize depth = 0;
+    Usize limit = 2 * countof(p->tokens) + max_nesting;
+    for (Usize step = 0; step < limit; step++) {
+        if (parse::at(p, lex::right_brace) || parse::at(p, lex::end_of_file)) {
+            if (depth == 0) return stack[0].fields;
+            U32 field_start = stack[depth].field_start;
+            ast::TypeKind kind = {.record = {.fields = stack[depth].fields, .is_union = stack[depth].is_union}};
+            parse::expect(p, lex::right_brace, "`}`");
+            ast::TypeExpr node = {.span = parse::span_from(p, field_start)};
+            node.kind = kind;
+            depth -= 1;
+            ast::FieldDecl field = {.type = ast::new_type(node)};
+            field = finish_field(p, field, true, field_start);
+            add_field(&stack[depth].fields, field);
+            continue;
         }
+        Usize before = p->position;
+        if (at_anonymous_record(p) && depth + 1 < max_nesting) {
+            OpenRecord child = {.is_union = parse::peek(p).kind == lex::kw_union,
+                                .field_start = parse::peek(p).span.start};
+            parse::advance(p);
+            parse::expect(p, lex::left_brace, "`{`");
+            depth += 1;
+            stack[depth] = child;
+            continue;
+        }
+        if (at_anonymous_record(p)) parse::error(p, parse::peek(p).span, "anonymous records are nested too deeply");
+        ast::FieldDecl field = parse_field(p);
+        if (field.type != nullptr) add_field(&stack[depth].fields, field);
         if (p->position == before) parse::advance(p);
     }
-    return fields;
+    return stack[0].fields;
 }
 
 // `struct {` or `union {`: an anonymous record used as a type.
