@@ -1,0 +1,1 @@
+postfix-after-compound-literal/main.smith: error: expected `;` after the type, found `__attribute__` (10:18) [undecided_c]

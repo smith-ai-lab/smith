@@ -1,0 +1,2 @@
+module-enum-c-names/mix/modes.smith: ok
+module-enum-c-names/mix/use.smith: ok

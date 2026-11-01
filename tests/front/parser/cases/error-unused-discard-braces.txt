@@ -1,0 +1,1 @@
+error-unused-discard-braces/main.smith: ok

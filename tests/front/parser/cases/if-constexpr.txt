@@ -1,0 +1,2 @@
+if-constexpr/kind.smith: error: expected `)` to end the arguments, found `:` (22:20) [undecided_c]
+if-constexpr/main.smith: C, out of scope

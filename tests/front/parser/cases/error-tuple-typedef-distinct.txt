@@ -1,0 +1,1 @@
+error-tuple-typedef-distinct/main.smith: C, out of scope

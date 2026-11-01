@@ -1,0 +1,1 @@
+main-old-form-error/main.smith: ok

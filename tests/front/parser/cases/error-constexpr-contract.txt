@@ -1,0 +1,1 @@
+error-constexpr-contract/main.smith: C, out of scope

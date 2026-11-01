@@ -1,0 +1,2 @@
+generic-if-constexpr-error/main.smith: C, out of scope
+generic-if-constexpr-error/num.smith: ok

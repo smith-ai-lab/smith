@@ -1,0 +1,3 @@
+generic-braceless/main.smith: C, out of scope
+generic-braceless/pick.smith: ok
+generic-braceless/twice.smith: ok

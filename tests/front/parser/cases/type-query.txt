@@ -1,0 +1,1 @@
+type-query/main.smith: C, out of scope

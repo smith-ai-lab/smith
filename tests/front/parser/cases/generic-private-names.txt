@@ -1,0 +1,2 @@
+generic-private-names/main.smith: ok
+generic-private-names/scale.smith: ok

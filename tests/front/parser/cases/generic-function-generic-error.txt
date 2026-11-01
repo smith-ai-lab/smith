@@ -1,0 +1,2 @@
+generic-function-generic-error/main.smith: ok
+generic-function-generic-error/order.smith: ok

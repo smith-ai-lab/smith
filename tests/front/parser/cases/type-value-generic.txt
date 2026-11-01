@@ -1,0 +1,2 @@
+type-value-generic/main.smith: C, out of scope
+type-value-generic/size.smith: ok

@@ -1,0 +1,2 @@
+generic-some-operand/finder.smith: ok
+generic-some-operand/main.smith: ok

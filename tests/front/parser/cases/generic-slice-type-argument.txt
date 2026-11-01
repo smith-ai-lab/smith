@@ -1,0 +1,2 @@
+generic-slice-type-argument/main.smith: ok
+generic-slice-type-argument/probe.smith: ok

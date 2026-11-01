@@ -1,0 +1,2 @@
+generic-concept-element/main.smith: ok
+generic-concept-element/stats.smith: ok

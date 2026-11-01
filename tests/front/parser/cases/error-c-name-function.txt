@@ -1,0 +1,1 @@
+error-c-name-function/uses/math.smith: ok

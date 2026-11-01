@@ -1,0 +1,2 @@
+generic-auto-cast/main.smith: C, out of scope
+generic-auto-cast/pick.smith: ok

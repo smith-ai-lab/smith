@@ -1,0 +1,1 @@
+void-pointer-plain/main.smith: C, out of scope

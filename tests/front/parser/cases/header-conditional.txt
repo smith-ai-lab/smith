@@ -1,0 +1,1 @@
+header-conditional/cfg/mode.smith: C, out of scope

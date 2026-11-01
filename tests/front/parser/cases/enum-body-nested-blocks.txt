@@ -1,0 +1,1 @@
+enum-body-nested-blocks/main.smith: ok

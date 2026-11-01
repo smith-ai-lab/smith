@@ -1,0 +1,2 @@
+enum-generic-return/find.smith: ok
+enum-generic-return/main.smith: ok

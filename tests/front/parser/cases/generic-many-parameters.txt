@@ -1,0 +1,2 @@
+generic-many-parameters/main.smith: ok
+generic-many-parameters/many.smith: ok

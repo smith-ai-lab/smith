@@ -1,0 +1,2 @@
+type-value-nouns/main.smith: C, out of scope
+type-value-nouns/nouns.smith: ok

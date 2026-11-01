@@ -1,0 +1,2 @@
+generic-slice-qualifiers-auto/copy.smith: ok
+generic-slice-qualifiers-auto/main.smith: ok

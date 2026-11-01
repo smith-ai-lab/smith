@@ -1,0 +1,3 @@
+tuple-modules/main.smith: C, out of scope
+tuple-modules/geo/a.smith: ok
+tuple-modules/geo/b.smith: ok

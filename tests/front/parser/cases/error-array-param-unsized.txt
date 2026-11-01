@@ -1,0 +1,1 @@
+error-array-param-unsized/main.smith: error: an array needs a size: write `[N]`, or `[:]` for a slice (3:18) [must_fail_d]

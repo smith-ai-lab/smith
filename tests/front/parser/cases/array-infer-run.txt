@@ -1,0 +1,1 @@
+array-infer-run/main.smith: ok

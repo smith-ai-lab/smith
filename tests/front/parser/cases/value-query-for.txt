@@ -1,0 +1,2 @@
+value-query-for/loop.smith: ok
+value-query-for/main.smith: C, out of scope

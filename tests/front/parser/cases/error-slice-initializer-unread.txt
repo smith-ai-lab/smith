@@ -1,0 +1,1 @@
+error-slice-initializer-unread/main.smith: ok

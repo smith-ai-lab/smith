@@ -1,0 +1,2 @@
+generic-slice-restrict/main.smith: ok
+generic-slice-restrict/pair.smith: ok

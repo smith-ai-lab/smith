@@ -1,0 +1,2 @@
+generic-slice-init-error/conv.smith: ok
+generic-slice-init-error/main.smith: ok

@@ -1,0 +1,2 @@
+filescope-if-reflect/count.smith: ok
+filescope-if-reflect/main.smith: ok

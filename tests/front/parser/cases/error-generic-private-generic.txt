@@ -1,0 +1,2 @@
+error-generic-private-generic/main.smith: ok
+error-generic-private-generic/shape.smith: ok

@@ -1,0 +1,2 @@
+generic-auto-element/main.smith: ok
+generic-auto-element/stats.smith: ok

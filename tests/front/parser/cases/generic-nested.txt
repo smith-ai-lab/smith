@@ -1,0 +1,3 @@
+generic-nested/arena.smith: ok
+generic-nested/list.smith: ok
+generic-nested/main.smith: ok

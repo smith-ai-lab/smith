@@ -1,0 +1,1 @@
+lambda-bool/main.smith: ok

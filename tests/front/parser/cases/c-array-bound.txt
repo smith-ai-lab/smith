@@ -1,0 +1,2 @@
+c-array-bound/grid.smith: ok
+c-array-bound/main.smith: C, out of scope

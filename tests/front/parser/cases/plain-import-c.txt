@@ -1,0 +1,1 @@
+plain-import-c/main.smith: C, out of scope

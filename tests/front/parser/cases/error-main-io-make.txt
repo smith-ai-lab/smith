@@ -1,0 +1,2 @@
+error-main-io-make/main.smith: ok
+error-main-io-make/std/io.smith: ok

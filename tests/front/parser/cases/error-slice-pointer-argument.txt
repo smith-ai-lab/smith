@@ -1,0 +1,1 @@
+error-slice-pointer-argument/main.smith: ok

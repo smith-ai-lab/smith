@@ -1,0 +1,2 @@
+error-import-broken-module/broken.smith: error: expected a field name, found `char` (4:34) [must_fail_d]
+error-import-broken-module/main.smith: ok

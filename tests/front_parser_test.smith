@@ -1,22 +1,31 @@
 // Tests of front::parser (#1219, A6 of track A of #1112): the whole parser on the language corpus. Every `.smith` file
 // of every case folder of tests/smith-lang/cases (the corpus is the specification) is read with `parser::parse`, and
-// each has one outcome, written to the golden tests/front/parser/corpus.txt as one line `case/path: outcome`:
+// each has one outcome. The golden is one file a case, tests/front/parser/cases/<case>.txt, holding that case's lines
+// (`path: outcome`, the path relative to the case's `src`) and nothing else, so two changes to different cases never
+// touch the same file (#1352):
 //
 //   ok                  parsed with no error; its dump is not empty and a second parse gives the same dump
-//   error: <message> (line:column)   the parser's first error; the file must be in `allowed` (a case that is meant to
-//   fail to
-//                       parse, or a construct the plan removed), else the test fails
+//   error: <message> (line:column) [class]
+//                       the parser's first error; the class tag names why the file is rejected (below)
 //   C, out of scope     no `module` line, or a `#` line: C under the C rule, reported and not parsed
 //   skipped: <reason>   only for a decision not yet made; the reason names the issue
 //
-// The golden ends with `total N, ok N, error N, C N, skipped N`. The golden is written by running the test with the
-// environment variable FRONT_UPDATE=1 (`smith test --update` is not available for test-front yet). Cases that mix a
-// `.smith` file with other files: only the `.smith` files are read.
+// The classes of a rejected file, written on its line: gap_a1 and gap_a2 (a gap in the parsers of A3 to A5, reported
+// to the track A orchestrator), removed_b (a construct the plan removed that the corpus still spells: the corpus
+// stays, today's lowering reads it), undecided_c (a construct the plan has not decided, reported to the lead) and
+// must_fail_d (a case that is meant to fail to parse). A rejected file with no class, a class on a file that parses
+// or is C, and a class that is not one of the five fail the test; a change to the parsers shows in the goldens.
+//
+// FRONT_UPDATE=1 rewrites only the case files whose text changed and removes the file of a case that is gone. It keeps
+// each class from the file on disk; a newly rejected file gets none, so the test fails until a human adds one. There is
+// no total in any file: the test prints the totals. (`smith test --update` is not available for test-front yet.) Cases
+// that mix a `.smith` file with other files: only the `.smith` files are read.
 module front_parser_test;
 
 import front::ast;
 import front::parser;
 import std::arena;
+import std::console;
 import std::env;
 import std::files;
 import std::format;
@@ -24,153 +33,38 @@ import std::mem;
 import std::slice;
 import std::test;
 
-// The files the parser rejects, in four classes, one path a line (#1219). A: a gap in the parsers of A3 to A5, reported
-// to the track A orchestrator; B: a construct the plan removed that the corpus still spells (the corpus stays: today's
-// lowering reads it); C: a construct the plan has not decided, reported to the lead; D: a case that is meant to fail.
-// An error that is in no class, or a listed file that parses, fails the test; a change to the parsers shows here and in
-// the golden.
-static Str gap_a1() {
-    return "enum-option-slice/main.smith\n"
-           "error-lambda-param-untyped/main.smith\n"
-           "error-range-for/main.smith\n"
-           "error-type-value-import/main.smith\n";
-}
-static Str gap_a2() {
-    return "type-value-import/main.smith\n";
-}
-static Str removed_b() {
-    return "type-value-declarator/main.smith\n" // C's function-pointer type as a type value: `Fn(F)` is the spelling
-           "type-value-header/geo/units.smith\n"
-           "error-lambda-capture-not-local/main.smith\n"
-           "error-lambda-capture-to-pointer/main.smith\n"
-           "error-lambda-captures-local/main.smith\n"
-           "error-lambda-generic-nested/main.smith\n"
-           "error-lambda-generic-return-type/main.smith\n"
-           "error-lambda-generic-runtime-capture/main.smith\n"
-           "error-lambda-returns-disagree/main.smith\n"
-           "generic-for-range-error/main.smith\n"
-           "generic-function-error/main.smith\n"
-           "lambda-basic/main.smith\n"
-           "lambda-capture-list-not-a-lambda/main.smith\n"
-           "lambda-generic-handler/main.smith\n"
-           "lambda-generic-infer/main.smith\n"
-           "lambda-generic-spawn/later.smith\n"
-           "lambda-generic-table/main.smith\n"
-           "lambda-generic-type/main.smith\n"
-           "lambda-nested/main.smith\n"
-           "lambda-no-parameters/main.smith\n"
-           "lambda-static/main.smith\n"
-           "lambda-two/main.smith\n"
-           "param-names/shape/box.smith\n"
-           "str-typedef-lowering/text.smith\n"
-           "str-typedef-module/main.smith\n"
-           "str-typedef-module/text.smith\n"
-           "str-typedef-run/main.smith\n";
+// Whether the text is one of the five classes of a rejected file.
+static Bool known_class(Str tag) {
+    Str a1 = "gap_a1";
+    Str a2 = "gap_a2";
+    Str removed = "removed_b";
+    Str undecided = "undecided_c";
+    Str must_fail = "must_fail_d";
+    return slice::equal(tag, a1) || slice::equal(tag, a2) || slice::equal(tag, removed) ||
+           slice::equal(tag, undecided) || slice::equal(tag, must_fail);
 }
 
-static Str undecided_c() {
-    return "attribute-c-names/log/fmt.smith\n"
-           "constexpr-import-result-type/main.smith\n"
-           "enum-body-result-generic/main.smith\n"
-           "enum-type-function-export/main.smith\n"
-           "enum-type-function-export/opt.smith\n"
-           "enum-type-function-export/other.smith\n"
-           "enum-type-function-generic/main.smith\n"
-           "enum-type-function-module/first.smith\n"
-           "enum-type-function-module/main.smith\n"
-           "enum-type-function-module/second.smith\n"
-           "enum-type-function/main.smith\n"
-           "errdefer-run/main.smith\n"
-           "error-enum-type-function-export/opt.smith\n"
-           "error-enum-type-function-generic/main.smith\n"
-           "error-enum-type-function/main.smith\n"
-           "error-errdefer-plain/main.smith\n"
-           "error-generic-return-type/main.smith\n"
-           "error-slice-pointer-discards/main.smith\n"
-           "error-type-function-pointee/main.smith\n"
-           "error-type-value-slice-bounds/main.smith\n"
-           "exported-constexpr-unread/main.smith\n"
-           "exported-variable-declared/main.smith\n"
-           "filescope-if-type-function/main.smith\n"
-           "function-pointer-typedef-result/main.smith\n"
-           "generic-bare-type-then-code/num.smith\n"
-           "generic-bare-type/num.smith\n"
-           "generic-pack-expand/expand.smith\n"
-           "generic-return-type/main.smith\n"
-           "generic-slice-option-typedef/cursor.smith\n"
-           "generic-slice-pointer-auto/cursor.smith\n"
-           "generic-slice/main.smith\n"
-           "generic-two-keyword-params/num.smith\n"
-           "if-constexpr/kind.smith\n"
-           "lambda-generic-spawn/main.smith\n"
-           "module-three/game/replay.smith\n"
-           "postfix-after-compound-literal/main.smith\n"
-           "slice-pointer-lowering/pointers.smith\n"
-           "slice-pointer-run/main.smith\n"
-           "slice-text-in-comment/hold.smith\n"
-           "str-run/main.smith\n"
-           "try-generic/main.smith\n"
-           "try-return-value/main.smith\n"
-           "type-function-after-c-name/marks.smith\n"
-           "type-function-pointee/leaves.smith\n"
-           "type-function-private/shapes.smith\n"
-           "type-function-sized/sizes.smith\n"
-           "type-function-typeof/main.smith\n"
-           "type-value-module-variable/main.smith\n"
-           "type-value-slice/main.smith\n";
-}
-static Str must_fail_d() {
-    return "error-array-empty/main.smith\n"
-           "error-array-param-unsized/main.smith\n"
-           "error-c-name-tag/uses/tag.smith\n"
-           "error-defer-name/main.smith\n"
-           "error-enum-builtin-redeclare/main.smith\n"
-           "error-export-two-names/two.smith\n"
-           "error-import-broken-module/broken.smith\n"
-           "error-keyword-after-type/shapes.smith\n"
-           "error-keyword-function/foo.smith\n"
-           "error-keyword-module/shapes.smith\n"
-           "error-module-first/late.smith\n"
-           "error-module-syntax/syntax.smith\n"
-           "error-slice-qualifier-bracket/main.smith\n"
-           "error-slice-step/main.smith\n"
-           "error-str-name/main.smith\n"
-           "error-typetag-collision-reverse/main.smith\n"
-           "error-typetag-collision/main.smith\n"
-           "generic-for-constexpr-error/bad.smith\n"
-           "session-keyword-name/foo.smith\n";
-}
-
-// Whether the list has a line that is the path.
-static Bool listed_in(Str list, Str path) {
+// The class written at the end of the path's line in the text of a case file (`... (3:5) [gap_a1]`), or nothing.
+static Str class_tag(Str old, Str name) {
     Usize line = 0;
-    while (line < countof(list)) {
+    while (line < countof(old)) {
         Usize end = line;
-        while (end < countof(list) && list[end] != '\n')
+        while (end < countof(old) && old[end] != '\n')
             end += 1;
-        if (slice::equal(list[line:end], path)) return true;
+        Str text = old[line:end];
+        Bool mine =
+            countof(text) > countof(name) && slice::equal(text[0:countof(name)], name) && text[countof(name)] == ':';
+        if (mine && text[countof(text) - 1] == ']') {
+            Usize open = countof(text) - 1;
+            while (open > 0 && text[open] != '[')
+                open -= 1;
+            return text[open + 1:countof(text) - 1];
+        }
+        if (mine) break;
         line = end + 1;
     }
-    return false;
-}
-
-static Bool is_allowed(Str path) {
-    return listed_in(gap_a1(), path) || listed_in(gap_a2(), path) || listed_in(removed_b(), path) ||
-           listed_in(undecided_c(), path) || listed_in(must_fail_d(), path);
-}
-
-static Usize lines_in(Str list) {
-    Usize count = 0;
-    for (Usize i = 0; i < countof(list); i++) {
-        if (list[i] == '\n') count += 1;
-    }
-    return count;
-}
-
-// The number of paths in the four lists.
-static Usize allowed_count() {
-    return lines_in(gap_a1()) + lines_in(gap_a2()) + lines_in(removed_b()) + lines_in(undecided_c()) +
-           lines_in(must_fail_d());
+    Str none = "";
+    return none;
 }
 
 // A file's text, or nothing when it cannot be read.
@@ -208,17 +102,21 @@ struct Tally {
     Usize error;
     Usize c;
     Usize skipped;
-    Usize listed;   // errors that are in `allowed`
-    Usize unlisted; // errors that are not in `allowed`
+    Usize tagged;   // errors with a class
+    Usize untagged; // errors with no class, or one that is not a class
+    Usize stale;    // a class on a line whose file now parses or is C
     Usize unstable; // `ok` files that dump nothing or dump differently the second time
+    Usize changed;  // case files rewritten (FRONT_UPDATE) or removed
+    Usize orphans;  // case files of a case with no `.smith` file or no case folder
 };
 
-// The text of the golden being built.
+// The text of the case file being built.
 struct Report {
     arena::Arena *work; // the memory of one file's parse, reset after each file
     mem::Allocator *work_base;
     char text[:];
     Usize used;
+    Str previous; // the case file on disk, from which the classes are kept
 };
 
 static void append(Report *report, Str piece) {
@@ -231,33 +129,52 @@ static void append(Report *report, Str piece) {
     report->used += countof(piece);
 }
 
+// The row and column of a byte of the source, counted from 1.
+static Usize row_of(Str source, U32 where) {
+    Usize row = 1;
+    for (Usize i = 0; i < where && i < countof(source); i++)
+        row += source[i] == '\n' ? 1 : 0;
+    return row;
+}
+
+static Usize column_of(Str source, U32 where) {
+    Usize column = 1;
+    for (Usize i = 0; i < where && i < countof(source); i++)
+        column = source[i] == '\n' ? 1 : column + 1;
+    return column;
+}
+
+// Writes the line of a rejected file: the message, the place, and the class kept from the file on disk.
+static void error_line(Report *report, Tally *tally, Str name, Str source, Str message, U32 where) {
+    tally->error += 1;
+    Str tag = class_tag(report->previous, name);
+    char line[:] = format::push(": error: ", message, " (", row_of(source, where), ":", column_of(source, where), ")");
+    append(report, line);
+    if (known_class(tag)) {
+        tally->tagged += 1;
+        char marked[:] = format::push(" [", tag, "]");
+        append(report, marked);
+    } else {
+        tally->untagged += 1;
+    }
+    append(report, "\n");
+}
+
 // Reads one corpus file and writes its line.
 static void read_file_in(Report *report, Tally *tally, Str name, Str path) {
     tally->total += 1;
     Str source = read_text(path);
     append(report, name);
+    Bool classed = countof(class_tag(report->previous, name)) > 0;
     if (!has_line_starting(source, "module ") || has_line_starting(source, "#")) {
         tally->c += 1;
+        tally->stale += classed ? 1 : 0;
         append(report, ": C, out of scope\n");
         return;
     }
     parser::Parsed first = parser::parse(name, source);
     if (countof(first.errors) > 0) {
-        tally->error += 1;
-        if (is_allowed(name))
-            tally->listed += 1;
-        else
-            tally->unlisted += 1;
-        Str message = first.errors[0].message;
-        U32 where = first.errors[0].span.start;
-        Usize row = 1;
-        Usize column = 1;
-        for (Usize i = 0; i < where && i < countof(source); i++) {
-            column = source[i] == '\n' ? 1 : column + 1;
-            row += source[i] == '\n' ? 1 : 0;
-        }
-        char line[:] = format::push(": error: ", message, " (", row, ":", column, ")\n");
-        append(report, line);
+        error_line(report, tally, name, source, first.errors[0].message, first.errors[0].span.start);
         return;
     }
     Str one = ast::dump(&first.module);
@@ -265,6 +182,7 @@ static void read_file_in(Report *report, Tally *tally, Str name, Str path) {
     Str two = ast::dump(&second.module);
     if (countof(one) == 0 || !slice::equal(one, two) || countof(second.errors) > 0) tally->unstable += 1;
     tally->ok += 1;
+    tally->stale += classed ? 1 : 0;
     append(report, ": ok\n");
 }
 
@@ -305,6 +223,73 @@ static void read_case(Report *report, Tally *tally, Str corpus_case) {
     }
 }
 
+// Whether the list has a line that is the text.
+static Bool has_line(Str list, Str wanted) {
+    Usize line = 0;
+    while (line < countof(list)) {
+        Usize end = line;
+        while (end < countof(list) && list[end] != '\n')
+            end += 1;
+        if (slice::equal(list[line:end], wanted)) return true;
+        line = end + 1;
+    }
+    return false;
+}
+
+// Replaces a file with the text.
+static void write_text(Str path, Str text) {
+    U8 bytes[:] = mem::alloc_slice(U8, countof(text));
+    for (Usize i = 0; i < countof(text); i++) {
+        bytes[i] = (U8)text[i];
+    }
+    files::CountResult done = files::write_file(path, bytes, files::Replace);
+    Bool wrote = done == .ok;
+    test::check_condition(wrote);
+}
+
+// Reads a case and compares its lines with the case's file, or rewrites the file when `update`; a case with no
+// `.smith` file has no file. The case's name is added to `kept`.
+static void check_case(Report *report, Report *kept, Tally *tally, Str corpus_case, Bool update) {
+    char path[:] = format::push("tests/front/parser/cases/", corpus_case, ".txt");
+    report->used = 0;
+    char previous[:] = read_text(path);
+    Str before = previous;
+    report->previous = before;
+    read_case(report, tally, corpus_case);
+    if (report->used == 0) return;
+    append(kept, corpus_case);
+    append(kept, "\n");
+    char text[:] = report->text[0:report->used];
+    Str written = text;
+    if (!update) {
+        test::golden(path, written);
+    } else if (!slice::equal(written, before)) {
+        write_text(path, written);
+        tally->changed += 1;
+    }
+}
+
+// The case files of a case that is gone or has no `.smith` file: removed when `update`, else counted.
+static void sweep_orphans(Report *kept, Tally *tally, Bool update) {
+    files::EntriesResult listing = files::list("tests/front/parser/cases");
+    if (listing == .error) return;
+    Str suffix = ".txt";
+    for (files::Entry entry : listing.ok) {
+        if (!slice::ends_with(entry.name, suffix)) continue;
+        Str stem = entry.name[0:countof(entry.name) - countof(suffix)];
+        if (has_line(kept->text[0:kept->used], stem)) continue;
+        if (!update) {
+            tally->orphans += 1;
+            continue;
+        }
+        char path[:] = format::push("tests/front/parser/cases/", entry.name);
+        files::DoneResult gone = files::remove(path);
+        Bool removed = gone == .ok;
+        test::check_condition(removed);
+        tally->changed += 1;
+    }
+}
+
 export void test_parser_every_corpus_file_has_an_outcome_and_matches_the_golden() {
     arena::Arena memory = test::memory(1U << 26);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -318,28 +303,23 @@ export void test_parser_every_corpus_file_has_an_outcome_and_matches_the_golden(
     arena::Arena work = test::memory(1U << 27);
     arena::ArenaAllocator work_allocator = arena::allocator(&work);
     Report report = {.work = &work, .work_base = &work_allocator.base, .text = mem::alloc_slice(char, 1U << 20)};
+    Report kept = {.work = &work, .work_base = &work_allocator.base, .text = mem::alloc_slice(char, 1U << 16)};
     Tally tally = {};
+    Bool update = env::get("FRONT_UPDATE") == .some;
+    if (update) {
+        files::DoneResult made = files::make_folder("tests/front/parser/cases");
+        Bool exists = made == .ok || files::info("tests/front/parser/cases") == .ok;
+        test::check_condition(exists);
+    }
     for (files::Entry corpus_case : cases.ok) {
-        read_case(&report, &tally, corpus_case.name);
+        check_case(&report, &kept, &tally, corpus_case.name, update);
     }
-    char summary[:] = format::push("total ", tally.total, ", ok ", tally.ok, ", error ", tally.error, ", C ", tally.c,
-                                   ", skipped ", tally.skipped, "\n");
-    append(&report, summary);
-    char written[:] = report.text[0:report.used];
-    env::Value update = env::get("FRONT_UPDATE");
-    if (update == .some) {
-        U8 bytes[:] = mem::alloc_slice(U8, countof(written));
-        for (Usize i = 0; i < countof(written); i++) {
-            bytes[i] = (U8)written[i];
-        }
-        files::CountResult done = files::write_file("tests/front/parser/corpus.txt", bytes, files::Replace);
-        Bool wrote = done == .ok;
-        test::check_condition(wrote);
-    } else {
-        test::golden("tests/front/parser/corpus.txt", written);
-    }
-    test::check_equal(tally.unlisted, 0);
-    test::check_equal(tally.listed, allowed_count());
+    sweep_orphans(&kept, &tally, update);
+    console::print("total ", tally.total, ", ok ", tally.ok, ", error ", tally.error, ", C ", tally.c, ", skipped ",
+                   tally.skipped, ", classed ", tally.tagged, "\n");
+    test::check_equal(tally.untagged, 0);
+    test::check_equal(tally.stale, 0);
+    test::check_equal(tally.orphans, 0);
     test::check_equal(tally.unstable, 0);
     test::check_condition(tally.total > 500);
 }

@@ -1,0 +1,1 @@
+error-module-missing/main.smith: C, out of scope

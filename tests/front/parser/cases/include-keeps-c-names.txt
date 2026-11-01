@@ -1,0 +1,2 @@
+include-keeps-c-names/main.smith: C, out of scope
+include-keeps-c-names/app/say.smith: C, out of scope

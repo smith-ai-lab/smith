@@ -1,0 +1,2 @@
+enum-payload-module/main.smith: ok
+enum-payload-module/shapes.smith: ok

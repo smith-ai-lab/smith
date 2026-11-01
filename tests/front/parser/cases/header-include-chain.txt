@@ -1,0 +1,2 @@
+header-include-chain/main.smith: ok
+header-include-chain/inc/chain.smith: C, out of scope

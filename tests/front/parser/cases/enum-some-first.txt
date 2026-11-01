@@ -1,0 +1,2 @@
+enum-some-first/lib.smith: ok
+enum-some-first/main.smith: ok

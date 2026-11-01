@@ -1,0 +1,1 @@
+error-unused-read-underscore/main.smith: ok

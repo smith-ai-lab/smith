@@ -1,0 +1,2 @@
+generic-function-forward/main.smith: ok
+generic-function-forward/order.smith: ok

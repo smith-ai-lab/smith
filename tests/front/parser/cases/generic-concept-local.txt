@@ -1,0 +1,1 @@
+generic-concept-local/main.smith: C, out of scope

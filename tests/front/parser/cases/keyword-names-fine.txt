@@ -1,0 +1,1 @@
+keyword-names-fine/main.smith: C, out of scope

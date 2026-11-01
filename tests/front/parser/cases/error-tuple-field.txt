@@ -1,0 +1,1 @@
+error-tuple-field/main.smith: C, out of scope

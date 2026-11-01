@@ -1,0 +1,2 @@
+error-generic-concept-param/main.smith: ok
+error-generic-concept-param/stats.smith: ok

@@ -1,0 +1,2 @@
+generic-field-element/main.smith: ok
+generic-field-element/walk.smith: ok

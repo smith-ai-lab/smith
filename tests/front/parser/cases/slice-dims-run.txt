@@ -1,0 +1,1 @@
+slice-dims-run/main.smith: ok

@@ -1,0 +1,2 @@
+constexpr-import-slice-u8/bytes.smith: ok
+constexpr-import-slice-u8/main.smith: ok

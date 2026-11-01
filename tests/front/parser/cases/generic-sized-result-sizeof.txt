@@ -1,0 +1,2 @@
+generic-sized-result-sizeof/main.smith: C, out of scope
+generic-sized-result-sizeof/size.smith: ok

@@ -1,0 +1,3 @@
+generic-pack-error/args.smith: ok
+generic-pack-error/last.smith: ok
+generic-pack-error/main.smith: ok

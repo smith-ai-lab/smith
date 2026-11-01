@@ -1,0 +1,2 @@
+str-module/main.smith: ok
+str-module/words.smith: ok

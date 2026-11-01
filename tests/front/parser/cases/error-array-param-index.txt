@@ -1,0 +1,1 @@
+error-array-param-index/main.smith: ok

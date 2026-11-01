@@ -1,0 +1,2 @@
+generic-static-assert/main.smith: C, out of scope
+generic-static-assert/sa.smith: ok

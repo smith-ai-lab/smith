@@ -1,0 +1,1 @@
+str-typedef-run/main.smith: error: expected the type's name, found `str` (7:20) [removed_b]

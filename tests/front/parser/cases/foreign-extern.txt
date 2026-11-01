@@ -1,0 +1,1 @@
+foreign-extern/sys/world.smith: ok

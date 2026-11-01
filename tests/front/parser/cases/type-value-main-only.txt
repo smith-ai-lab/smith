@@ -1,0 +1,1 @@
+type-value-main-only/main.smith: C, out of scope

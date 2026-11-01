@@ -1,0 +1,2 @@
+generic-auto-vector/main.smith: C, out of scope
+generic-auto-vector/pick.smith: ok

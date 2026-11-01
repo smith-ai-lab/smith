@@ -1,0 +1,2 @@
+generic-error-instance/main.smith: ok
+generic-error-instance/num.smith: ok

@@ -1,0 +1,1 @@
+value-query-plain/main.smith: C, out of scope

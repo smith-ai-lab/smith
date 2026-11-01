@@ -1,0 +1,1 @@
+error-keyword-plain/main.smith: C, out of scope

@@ -1,0 +1,1 @@
+error-filescope-if/main.smith: ok

@@ -1,0 +1,2 @@
+unused-name-library/barrier.smith: ok
+unused-name-library/main.smith: ok

@@ -1,0 +1,2 @@
+module-c-features/main.smith: C, out of scope
+module-c-features/kit/things.smith: C, out of scope

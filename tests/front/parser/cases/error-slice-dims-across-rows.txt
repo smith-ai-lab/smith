@@ -1,0 +1,1 @@
+error-slice-dims-across-rows/main.smith: ok

@@ -1,0 +1,2 @@
+slice-export-sanitize/main.smith: ok
+slice-export-sanitize/r.smith: ok

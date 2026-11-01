@@ -1,0 +1,2 @@
+module-export-extern/main.smith: C, out of scope
+module-export-extern/cfg/limits.smith: ok

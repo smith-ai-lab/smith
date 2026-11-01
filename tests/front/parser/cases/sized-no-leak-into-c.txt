@@ -1,0 +1,1 @@
+sized-no-leak-into-c/lib/shape.smith: ok

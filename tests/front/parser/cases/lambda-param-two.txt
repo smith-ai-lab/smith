@@ -1,0 +1,1 @@
+lambda-param-two/main.smith: ok

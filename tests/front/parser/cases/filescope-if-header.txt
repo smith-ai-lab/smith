@@ -1,0 +1,2 @@
+filescope-if-header/main.smith: C, out of scope
+filescope-if-header/report.smith: ok

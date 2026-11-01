@@ -1,0 +1,1 @@
+error-typetag-collision/main.smith: error: a type's name starts with a capital letter: `stat` is the spelling of a value (3:8) [must_fail_d]

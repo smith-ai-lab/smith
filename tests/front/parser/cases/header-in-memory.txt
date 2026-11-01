@@ -1,0 +1,2 @@
+header-in-memory/lib.smith: C, out of scope
+header-in-memory/main.smith: ok

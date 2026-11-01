@@ -1,0 +1,1 @@
+slice-qualifiers-lowering/qualifiers.smith: ok
