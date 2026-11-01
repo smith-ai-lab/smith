@@ -2,8 +2,14 @@
 // tests and the program they run with the counters on, leaves a record for each test it runs in .smith/records, and
 // the next run picks the tests whose record is stale. The project is the fixture tests/build_fixtures/record_project: a
 // command line program, calc, and two end-to-end tests that each run it (the build graph sees no import between a test
-// and ops.c). Nothing here is specific to smith. Each test makes its project with scratch::make and has a test::memory
-// arena as the current allocator, so what scratch returns goes back with the arena.
+// and ops.c). Nothing here is specific to smith.
+// The pyramid (#646): each project is built and run once for each smith under test, in $SMITH_TEST_CACHE, and a test
+// copies it with the output of that first run. What a record holds is read from that run; which tests a change selects
+// is `smith_core_changed_select` in process on the copy and its real records (no smith, no build, no git of the verb).
+// Three tests keep a real verb because the process is what they show, each with its comment: the rerun of the selected
+// test (the counters, the new record, the runner's `--partial`), a plain `smith test` that records nothing, and the
+// first run, whose output is the cached one. Each test has a test::memory arena as the current allocator, so what
+// scratch returns goes back with the arena.
 module record_test;
 
 import std::arena;
@@ -11,14 +17,59 @@ import std::format;
 import std::mem;
 import std::test;
 import scratch;
+import <smith_core_changed.h>;
+import <string.h>;
+
+constexpr Usize report_capacity = 1U << 16;
 
 // A repository of the fixture, committed on main. SMITH_OUTPUT=full for the messages of the nested smith.
 constexpr char repository[_] = "export SMITH_OUTPUT=full; git init -q -b main . && printf "
                                "'build\\n.smith\\n*.profraw\\n' > .gitignore && git add -A && "
                                "git -c user.name=t -c user.email=t@t commit -q -m base; ";
 
+// A .c file that another includes (smith.c includes runtime/lang.c and the rest) is judged by function, not as a whole
+// input (#638): ops.c includes more.c, which has a table and a function, committed before the first run.
+constexpr char more_unit[_] =
+    "printf 'static const int table[] = {\\n    1,\\n    2,\\n};\\n\\nstatic int more_add(int a, int b) {\\n"
+    "    return a + b + table[0] - 1;\\n}\\n' > more.c; "
+    "{ printf '#include \"more.c\"\\n'; sed 's/return a + b;/return more_add(a, b);/' ops.c; } > next.c && "
+    "mv next.c ops.c; git add -A; git -c user.name=t -c user.email=t@t commit -q -m more; ";
+
+// The folder in the current directory (the fixture) built and run once for each smith under test, and copied: the
+// first run is `smith test --changed` in a repository, and the cache keeps its output and, after `---`, the list of
+// records and the record named by `show`, in $SMITH_TEST_CACHE/record-<smith's size and time>/<name>.out (the way
+// lsp_test.smith's `built_script` does it). The copy is the folder as that run left it.
+constexpr char built_script[_] =
+    "key=$(stat -c %Y-%s \"$SMITH_SELF\" 2>/dev/null || stat -f %m-%z \"$SMITH_SELF\"); "
+    "base=$SMITH_TEST_CACHE/record-$key; c=$base/$name; lock=$base.lock-$name; "
+    "if [ ! -f \"$c.done\" ] && mkdir \"$lock\" 2>/dev/null; then "
+    "find \"$SMITH_TEST_CACHE\" -maxdepth 1 -name 'record-*' -mtime +1 -exec rm -rf {} + 2>/dev/null; "
+    "mkdir -p \"$base\" && rm -rf \"$c\" && cp -Rp . \"$c\" && (cd \"$c\" && ";
+constexpr char built_end[_] =
+    "{ smith test --changed --base HEAD 2>&1; echo ---; ls .smith/records; echo ---; cat \".smith/records/$show\"; } "
+    "> \"$c.out\" 2>&1); touch \"$c.done\"; rmdir \"$lock\"; "
+    "else i=0; while [ ! -f \"$c.done\" ] && [ $i -lt 3000 ]; do sleep 0.2; i=$((i + 1)); done; fi; "
+    "cp -Rp \"$c/.\" . && cat \"$c.out\"";
+
+// The first run of the fixture `name` and what it printed (its `.out`), the folder copied into the current project.
+static scratch::Run built(const scratch::Project *p, const char *name, const char *show, const char *extra) {
+    return scratch::sh(
+        p, format::push("name=", name, "; show=", show, "; ", built_script, repository, extra, built_end).data);
+}
+
+// What `smith test --changed --base HEAD --dry-run` prints in the project after `edit` (shell, prints nothing) and the
+// changes (`A`, `M` or `D`, a tab and a path a line), in process on the records the first run left.
+static const char *selected(const scratch::Project *p, const char *edit, const char *changes) {
+    scratch::Run listed = scratch::sh(p, format::push(edit, "git ls-files -c -o --exclude-standard").data);
+    scratch::expect_status("the files", 0, &listed);
+    char *out = mem::alloc_slice(char, report_capacity).data;
+    test::check_equal(c::smith_core_changed_select(p->dir, listed.out, changes, out, report_capacity), true);
+    return out;
+}
+
 // No records yet: every test runs once, instrumented, and each leaves its record, which names the functions it ran
-// (the program's too) and not the other test's.
+// (the program's too) and not the other test's. The run is the cached one, the e2e test of the first run: the real
+// verb, the counters and the compiler.
 export void test_the_first_run_makes_a_record_for_each_test() {
     scratch::Project p = scratch::make("p", "record_project");
     defer scratch::clean(&p);
@@ -26,10 +77,7 @@ export void test_the_first_run_makes_a_record_for_each_test() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run run = scratch::sh(
-        &p, format::push(repository, "smith test --changed --base HEAD 2>&1; "
-                                     "echo ---; ls .smith/records; echo ---; cat .smith/records/add_runs.rec")
-                .data);
+    scratch::Run run = built(&p, "record_project", "add_runs.rec", more_unit);
     scratch::expect_status("the run", 0, &run);
     scratch::expect_contains("the reason", run.out, "no records yet, so every test runs once to make them");
     scratch::expect_contains("both ran", run.out, "2 passed");
@@ -43,55 +91,53 @@ export void test_the_first_run_makes_a_record_for_each_test() {
     scratch::expect_lacks("not the other test's function", run.out, "ops_mul");
 }
 
-// A change inside a function reruns the test that ran it, and the record is rewritten; the other test is unchanged.
-export void test_a_change_reruns_the_test_that_ran_it() {
+// A change inside a function selects the test that ran it, in process on the real records; the other test is not.
+export void test_a_change_selects_the_test_that_ran_it() {
     scratch::Project p = scratch::make("p", "record_project");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
+    scratch::Run run = built(&p, "record_project", "add_runs.rec", more_unit);
+    scratch::expect_status("the first run", 0, &run);
+    const char *edit = "sed 's/a \\* b/a * b + 0/' ops.c > next.c && mv next.c ops.c; ";
+    const char *out = selected(&p, edit, "M\tops.c");
+    scratch::expect_contains("the stale record", out, "its record is stale: mul_runs");
+    scratch::expect_contains("only that test", out, "--test mul_runs");
+    scratch::expect_lacks("not the other", out, "add_runs");
+    scratch::expect_lacks("not every test", out, "every test runs");
+}
+
+// The e2e test of the rerun: one real `smith test --changed` after a change reruns the test that ran it (counters
+// built, the record rewritten), and the selection of `--changed` names tests of every runner (units, front), so the
+// verb gives the runner `--partial` (#1154): a runner that owns none of the names has nothing to run and passes. A
+// hand-typed `--test` does not get it (the plain test below), so a name no runner knows still fails (the runner's side
+// is tests/test_runner_platform_test.smith).
+export void test_a_changed_selection_reruns_as_partial_and_rewrites_the_record() {
+    scratch::Project p = scratch::make("p", "record_project");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run first = built(&p, "record_project", "add_runs.rec", more_unit);
+    scratch::expect_status("the first run", 0, &first);
     const char *edit = "sed 's/a \\* b/a * b + 0/' ops.c > next.c && mv next.c ops.c; ";
     scratch::Run run =
-        scratch::sh(&p, format::push(repository, "smith test --changed --base HEAD >/dev/null 2>&1; ", edit,
-                                     "smith test --changed --base HEAD --dry-run 2>&1; "
-                                     "smith test --changed --base HEAD 2>&1; "
-                                     "echo ---; cat .smith/records/mul_runs.rec")
+        scratch::sh(&p, format::push("export SMITH_OUTPUT=full; ", edit,
+                                     "smith test --changed --base HEAD 2>&1; echo ---; cat .smith/records/mul_runs.rec")
                             .data);
     scratch::expect_status("the run", 0, &run);
     scratch::expect_contains("the stale record", run.out, "its record is stale: mul_runs");
-    scratch::expect_contains("only that test", run.out, "--test mul_runs");
-    scratch::expect_lacks("not the other", run.out, "add_runs");
-    scratch::expect_lacks("not every test", run.out, "every test runs");
+    scratch::expect_contains("the selection is partial", run.out, "--arg --partial --arg --test --arg mul_runs");
     scratch::expect_contains("it ran", run.out, "1 passed");
     scratch::expect_contains("the record names the new run", run.out, "fn\tops.c\tops_mul");
 }
 
-// The selection of `--changed` names tests of every runner (units, front), so the verb gives the runner `--partial`
-// (#1154): a runner that owns none of the names has nothing to run and passes. A hand-typed `--test` does not get it,
-// so a name no runner knows still fails (the runner's side is tests/test_runner_platform_test.smith).
-export void test_a_changed_selection_is_given_to_the_runner_as_partial() {
-    scratch::Project p = scratch::make("p", "record_project");
-    defer scratch::clean(&p);
-    arena::Arena memory = test::memory(1U << 22);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    const char *edit = "sed 's/a \\* b/a * b + 0/' ops.c > next.c && mv next.c ops.c; ";
-    scratch::Run run = scratch::sh(
-        &p,
-        format::push(repository, "smith test --changed --base HEAD >/dev/null 2>&1; ", edit,
-                     "echo changed; smith test --changed --base HEAD 2>&1 | grep -c -e '--arg --partial --arg --test "
-                     "--arg mul_runs'; "
-                     "echo typed; smith test --test mul_runs 2>&1 | grep -c -e '--partial'")
-            .data);
-    scratch::expect_contains("the selection is partial", run.out, "changed\n1\n");
-    scratch::expect_contains("a typed --test is not", run.out, "typed\n0");
-}
-
-// A .c file that another includes (smith.c includes runtime/lang.c and the rest) is judged by function, not as a whole
-// input (#638): a change inside the function one test ran selects that test, and a change to a line of a table selects
-// every test that ran the program.
+// A .c file that another includes is judged by function, not as a whole input (#638): the record names the function of
+// the included file (read from the first run), a change inside the function one test ran selects that test, and a
+// change to a line of a table selects every test that ran the program.
 export void test_a_function_of_an_included_file_selects_the_tests_that_ran_it() {
     scratch::Project p = scratch::make("p", "record_project");
     defer scratch::clean(&p);
@@ -99,29 +145,22 @@ export void test_a_function_of_an_included_file_selects_the_tests_that_ran_it() 
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *unit =
-        "printf 'static const int table[] = {\\n    1,\\n    2,\\n};\\n\\nstatic int more_add(int a, int b) {\\n"
-        "    return a + b + table[0] - 1;\\n}\\n' > more.c; "
-        "{ printf '#include \"more.c\"\\n'; sed 's/return a + b;/return more_add(a, b);/' ops.c; } > next.c && "
-        "mv next.c ops.c; git add -A; git -c user.name=t -c user.email=t@t commit -q -m more; "
-        "smith test --changed --base HEAD >/dev/null 2>&1; cat .smith/records/add_runs.rec; echo ---; ";
-    const char *body = "sed 's/table\\[0\\] - 1/table[0] - 1 + 0/' more.c > next.c && mv next.c more.c; ";
-    const char *entry = "git checkout -q more.c; sed 's/    2,/    3,/' more.c > next.c && mv next.c more.c; ";
-    scratch::Run run = scratch::sh(&p, format::push(repository, unit, body,
-                                                    "smith test --changed --base HEAD --dry-run 2>&1; echo ---; ",
-                                                    entry, "smith test --changed --base HEAD --dry-run 2>&1")
-                                           .data);
+    scratch::Run run = built(&p, "record_project", "add_runs.rec", more_unit);
     scratch::expect_status("the run", 0, &run);
     scratch::expect_contains("the included file is judged by function", run.out, "fn\tmore.c\tops.c:more_add");
     scratch::expect_contains("and by what is outside its functions", run.out, "outside\tmore.c");
     scratch::expect_lacks("not as a whole", run.out, "input\tmore.c");
-    scratch::expect_contains("the test that ran the function", run.out,
-                             "its record is stale: add_runs, ops.c:more_add");
-    scratch::expect_contains("a line of the table", run.out, "code outside functions changed");
-    scratch::expect_contains("both ran the program", run.out, "--test add_runs,mul_runs");
+    const char *body = "sed 's/table\\[0\\] - 1/table[0] - 1 + 0/' more.c > next.c && mv next.c more.c; ";
+    const char *inside = selected(&p, body, "M\tmore.c");
+    scratch::expect_contains("the test that ran the function", inside, "its record is stale: add_runs, ops.c:more_add");
+    const char *entry = "git checkout -q more.c; sed 's/    2,/    3,/' more.c > next.c && mv next.c more.c; ";
+    const char *table = selected(&p, entry, "M\tmore.c");
+    scratch::expect_contains("a line of the table", table, "code outside functions changed");
+    scratch::expect_contains("both ran the program", table, "--test add_runs,mul_runs");
 }
 
-// A test whose function is untouched by a change to the other is not selected, and a failed test is.
+// A failed test is selected whatever changed, and the other, whose function is untouched, is not: the record of
+// mul_runs says it failed, and a comment outside the functions changes nothing else.
 export void test_a_failed_test_reruns_and_the_rest_do_not() {
     scratch::Project p = scratch::make("p", "record_project");
     defer scratch::clean(&p);
@@ -129,21 +168,18 @@ export void test_a_failed_test_reruns_and_the_rest_do_not() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *edit =
-        "sed 's/return a \\* b;/return a * b + 1;/' ops.c > next.c && mv next.c ops.c; "
-        "sed 's/mul 3 4 >/mul 3 4 \\&\\& false >/' tests/cli_test.c > next.c && mv next.c tests/cli_test.c; ";
-    scratch::Run run =
-        scratch::sh(&p, format::push(repository, "smith test --changed --base HEAD >/dev/null 2>&1; ", edit,
-                                     "smith test --changed --base HEAD >/dev/null 2>&1; "
-                                     "git checkout -q tests/cli_test.c; "
-                                     "smith test --changed --base HEAD --dry-run 2>&1")
-                            .data);
-    scratch::expect_status("the run", 0, &run);
-    scratch::expect_contains("the failed test is selected", run.out, "mul_runs");
-    scratch::expect_lacks("the other is not", run.out, "add_runs");
+    scratch::Run run = built(&p, "record_project", "add_runs.rec", more_unit);
+    scratch::expect_status("the first run", 0, &run);
+    const char *edit = "sed 's/result\\tpass/result\\tfail/' .smith/records/mul_runs.rec > next.rec && "
+                       "mv next.rec .smith/records/mul_runs.rec; echo '// x' >> ops.c; ";
+    const char *out = selected(&p, edit, "M\tops.c");
+    scratch::expect_contains("it failed", out, "it failed last time");
+    scratch::expect_contains("the failed test is selected", out, "--test mul_runs");
+    scratch::expect_lacks("the other is not", out, "add_runs");
 }
 
-// A plain `smith test` builds and records nothing.
+// The e2e test of a plain `smith test`: it builds and records nothing (the counters are the verb's `--changed`), and
+// a hand-typed `--test` is not given `--partial`.
 export void test_a_plain_test_leaves_no_record() {
     scratch::Project p = scratch::make("p", "record_project");
     defer scratch::clean(&p);
@@ -151,15 +187,19 @@ export void test_a_plain_test_leaves_no_record() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run run = scratch::sh(&p, format::push(repository, "smith test 2>&1; ls .smith/records 2>&1").data);
+    scratch::Run run =
+        scratch::sh(&p, format::push(repository, "smith test 2>&1; ls .smith/records 2>&1; echo typed; "
+                                                 "smith test --test mul_runs 2>&1 | grep -c -e '--partial'")
+                            .data);
     scratch::expect_contains("both ran", run.out, "2 passed");
     scratch::expect_lacks("no record", run.out, ".rec");
+    scratch::expect_contains("a typed --test is not partial", run.out, "typed\n0");
 }
 
 // A test that opens a file is stale when the file changes, and one that does not is not (#739): what a test opened is
 // in its record (`read`, `readdir`), by what the process opened through io and not by a list or a scan of the commands
 // it runs. A folder a test copies (scratch::copy_tree lists it and reads each file) names every file in it, and a file
-// added to it changes its listing.
+// added to it changes its listing. The records are the first run's; the selections are in process.
 export void test_a_changed_file_selects_the_tests_that_opened_it() {
     scratch::Project p = scratch::make("p", "reads_project");
     defer scratch::clean(&p);
@@ -167,21 +207,17 @@ export void test_a_changed_file_selects_the_tests_that_opened_it() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *list = "smith test --changed --list HEAD 2>/dev/null | paste -sd, -";
-    const char *each = "; git checkout -q .; git clean -fdq data; ";
-    scratch::Run run =
-        scratch::sh(&p, format::push(repository, "smith test --changed --base HEAD >/dev/null 2>&1; ",
-                                     "echo ---; cat .smith/records/reads_test__copies_a_folder.rec; echo ---; ",
-                                     "echo more >> data/a.txt; echo \"file: $(", list, ")\"", each,
-                                     "echo more >> data/b/y.txt; echo \"inside: $(", list, ")\"", each,
-                                     "echo new > data/b/w.txt; echo \"added: $(", list, ")\"", each,
-                                     "echo more >> data/c/z.txt; echo \"unread: $(", list, ")\"")
-                            .data);
+    scratch::Run run = built(&p, "reads_project", "reads_test__copies_a_folder.rec", "");
     scratch::expect_status("the run", 0, &run);
     scratch::expect_contains("the files of the folder", run.out, "read\tdata/b/y.txt\t");
     scratch::expect_contains("and its listing", run.out, "readdir\tdata/b/\t");
-    scratch::expect_contains("a file io read", run.out, "file: reads_test::reads_a_file\n");
-    scratch::expect_contains("a file in a folder the test copied", run.out, "inside: reads_test::copies_a_folder\n");
-    scratch::expect_contains("a file added to that folder", run.out, "added: reads_test::copies_a_folder\n");
-    scratch::expect_contains("a file no test opened", run.out, "unread: \n");
+    const char *reset = "git checkout -q .; git clean -fdq data; ";
+    const char *file = selected(&p, "echo more >> data/a.txt; ", "M\tdata/a.txt");
+    scratch::expect_contains("a file io read", file, "--test reads_test::reads_a_file\n");
+    const char *inside = selected(&p, format::push(reset, "echo more >> data/b/y.txt; ").data, "M\tdata/b/y.txt");
+    scratch::expect_contains("a file in a folder the test copied", inside, "--test reads_test::copies_a_folder\n");
+    const char *added = selected(&p, format::push(reset, "echo new > data/b/w.txt; ").data, "A\tdata/b/w.txt");
+    scratch::expect_contains("a file added to that folder", added, "--test reads_test::copies_a_folder\n");
+    const char *unread = selected(&p, format::push(reset, "echo more >> data/c/z.txt; ").data, "M\tdata/c/z.txt");
+    scratch::expect_contains("a file no test opened", unread, "no test is affected");
 }

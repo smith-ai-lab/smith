@@ -5,7 +5,7 @@ description: "The checks of smith docs with their messages (path: message), conc
 
 # The check
 
-`smith docs [<root>]` checks the project of `<root>`, or, when none is named, of the nearest folder at or above the current one that has `knowledge/` or `.agents/skills/`, looking no higher than the repository's root (a build.c in `repo/app/` checks the `knowledge/` of `repo/`; `AGENTS.md` is never read; with none found it is the current folder). `smith check` uses the same rule. It prints each problem on stderr as `path: message`, in the order below, then `smith docs: N concepts, M problems` on stdout, and exits 1 if there was a problem. A folder with no `knowledge/` or no skills has nothing to check there.
+`smith docs [<root>]` checks the project of `<root>`, or, when none is named, of the nearest folder at or above the current one that has `knowledge/` or `.agents/skills/`, looking no higher than the repository's root (a build.c in `repo/app/` checks the `knowledge/` of `repo/`; with none found it is the current folder). `smith check` uses the same rule. It prints each problem on stderr as `path: message`, in the order below, then `smith docs: N concepts, M problems` on stdout, and exits 1 if there was a problem. A folder with no `knowledge/` or no skills has nothing to check there.
 
 | Rule | Message |
 | --- | --- |

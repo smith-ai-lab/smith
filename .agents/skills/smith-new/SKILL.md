@@ -11,7 +11,7 @@ description: "smith new [--language smith|c] [<name>]: starting a project with a
 | --- | --- |
 | `main.smith` (`module main;`), `primes.smith` (a module; no header), `primes_test.smith` | `main.c`, `primes.c`, `primes.h`, `primes_test.c` |
 
-Both also get (no `AGENTS.md`: the plugin's skills carry what agents need):
+Both also get (the plugin's skills carry what agents need):
 
 - `.gitignore`.
 - `knowledge/` with an `index.md` and a first concept, `program.md`, that says what the program promises.

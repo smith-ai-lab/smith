@@ -16,13 +16,17 @@
 //                          its branches. What is left (an expression whose own type is not the expected one) goes
 //                          through the conversion hook below. The type recorded for `e` is the type `e` has; the
 //                          context converts it. `expected` null or `Auto` is `infer`.
-//   set_hooks(Hooks)       The two functions J1c and J1d wire in. Until they are set:
+//   set_hooks(Hooks)       The functions J1c and J1d wire in. Until they are set:
 //                          - `convert(c, e, from, to)` (J1c, `types_convert::convert`) says whether a value of type
 //                            `from` may stand where `to` is expected and reports the error itself when it may not.
 //                            DEFAULT while unset (types_decl::install sets J1c's): exact type equality, plus `null`
 //                            where a pointer is expected and a function where `Fn(F)` of its own type is. Nothing
 //                            else converts: not integer widening, not a value to `Option(T)`'s `.some`, not an array
 //                            to a slice.
+//                          - `cast(c, e, from, to)` (J1c, `types_convert::cast_ok`) says whether the cast `e` may be
+//                            written, reports the error itself when it may not and marks a cast that can lose a value
+//                            (`types::mark_cast_checked`, read back with `types::cast_checked`). Unset: every cast is
+//                            allowed and none is checked.
 //                          - `lambda_body(c, lambda, type)` (J1d) checks the body of a lambda whose type `Fn(F)` was
 //                            decided here (the parameters' types are the slots of `type->element`, the result its
 //                            element). Unset, a lambda is reported as `not yet typed: a lambda body`.
@@ -31,7 +35,7 @@
 // `c->scopes`); `+ - ! ~ & *` and `++ --`; every binary operator (arithmetic, shifts, comparisons to Bool, bitwise,
 // logical) and assignment, plain and compound; `.` and `->`; `a[i]` on arrays, slices, pointers and `Str`, and
 // `a[i:j]`; calls (the result of the callee's function type, each argument checked against its parameter by the
-// convert hook, the count checked); casts (the written type only: whether the cast is allowed is J1c's);
+// convert hook, the count checked); casts (the written type; whether the cast is allowed is the cast hook's, J1c);
 // `sizeof`, `alignof`, `countof`; `c ? a : b`; `(T){...}` and `{...}`; lambdas with the types of an expected `Fn(F)`.
 // NOT YET TYPED (each reported as `not yet typed: <kind>` with its span): `try`, a type used as a value, a name from
 // another module (`arena::push`), nested designators (`.a.b = 1`), a designator index that is not an integer literal.
@@ -56,10 +60,14 @@ import std::mem;
 // The hooks
 
 export typedef Bool (*Convert)(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to);
+// Whether `(to)operand` may be written (J1c's `cast_ok`); reports its own error, and marks a cast that needs a run-time
+// check with `types::mark_cast_checked`. `e` is the cast.
+export typedef Bool (*CastRule)(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to);
 export typedef void (*LambdaBody)(types::Checked *c, const ast::Expr *lambda, types::TypeRef type);
 
 export struct Hooks {
     Convert convert;
+    CastRule cast;
     LambdaBody lambda_body;
 };
 
@@ -426,7 +434,7 @@ static void literal_character(types::Checked *c, Frame f) {
         }
         return;
     }
-    types::TypeRef t = types::builtin(&c->table, "char");
+    types::TypeRef t = types::builtin(&c->table, "Char");
     if (value > 255) {
         t = types::builtin(&c->table, "U32");
     }
@@ -1337,7 +1345,26 @@ static void cast_before(types::Checked *c, Work *w, Frame f) {
         return;
     }
     types::TypeRef to = types::resolve(c, e->kind.cast.type);
-    push(w, e->kind.cast.operand, nullptr, 0);
+    const ast::Expr *operand = e->kind.cast.operand;
+    types::set_type(c, e, to);
+    push(w, e, f.expected, 1);
+    push(w, operand, nullptr, 0);
+}
+
+// The operand is typed: asks the cast rule whether the cast may be written, then checks the result where expected.
+static void cast_after(types::Checked *c, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .cast)) {
+        return;
+    }
+    const ast::Expr *operand = e->kind.cast.operand;
+    types::TypeRef to = types::type_of(c, e);
+    types::TypeRef from = types::type_of(c, operand);
+    types::TypeRef bad = invalid(c);
+    if (hooks.cast != nullptr && from != nullptr && from != bad && to != bad && !hooks.cast(c, e, from, to)) {
+        poison(c, e);
+        return;
+    }
     finish(c, e, to, f.expected);
 }
 
@@ -1769,6 +1796,8 @@ static void after(types::Checked *c, Work *w, Frame f) {
         slice_after(c, f);
     } else if (e->kind == .member) {
         member_after(c, f);
+    } else if (e->kind == .cast) {
+        cast_after(c, f);
     } else {
         query_after(c, f);
     }

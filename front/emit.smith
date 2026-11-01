@@ -257,11 +257,30 @@ static state::Status declare_finish(state::Emitter *e, const state::Work *w) {
     return state::success();
 }
 
+// `T t;` is the zero value of `T`, stored where the declaration stands (a loop zeroes it again each iteration).
+static state::Status declare_zero(state::Emitter *e, const ast::Decl *d, ast::Span span) {
+    if (d->kind != .variable) {
+        return state::fail("not a variable", span);
+    }
+    const ast::TypeExpr *type = d->kind.variable.type;
+    if (type->kind == .auto_type) return state::fail("`auto` needs an initializer", span);
+    state::TyResult made = type_of(e, type);
+    if (made == .error) {
+        return {.error = made.error};
+    }
+    state::Ty ty = made.ok;
+    Str name = d->kind.variable.name;
+    c::LLVMValueRef slot = state::new_alloca(e, ty, name);
+    c::LLVMBuildStore(e->builder, c::LLVMConstNull(ty.llvm), slot);
+    state::add_local(e, (state::Local){.name = name, .ty = ty, .address = slot});
+    try debug::declare_local(e, name, ty, slot, span);
+    return state::success();
+}
+
 static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::Span span) {
     if (d->kind != .variable) {
         return state::fail("not a variable", span);
     }
-    if (d->kind.variable.init == nullptr) return state::fail("a variable needs an initializer", span);
     if (d->kind.variable.is_constexpr || d->kind.variable.is_thread_local || d->is_static || d->is_extern)
         return state::not_emitted("this kind of variable", span);
     for (Usize i = e->scope_marks[e->scope_count - 1]; i < e->local_count; i++) {
@@ -270,6 +289,7 @@ static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::
     }
     const ast::TypeExpr *type = d->kind.variable.type;
     Bool is_auto = type->kind == .auto_type;
+    if (d->kind.variable.init == nullptr) return declare_zero(e, d, span);
     state::Ty ty = {};
     state::Hint hint = state::no_hint();
     if (!is_auto) {

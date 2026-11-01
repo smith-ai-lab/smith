@@ -1,0 +1,292 @@
+// Tests of `T t;` (K3, #1330 of #1112): a local declared with no initializer is the zero value of its type, stored
+// where the declaration stands, so a loop zeroes it again at each iteration. Golden IR for each kind the emitter has,
+// and a run test in which stack slots that held garbage first read zero. Floats, slices, unions, enums and Option are
+// not emitted yet; they get their zero when they do. Memory rules as in tests/front_emit_memory_test.smith: the tree is
+// built in an arena, the emitter and LLVM use the system's allocator.
+module front_emit_zero_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <string.h>;
+
+typedef I32 (*I32Fn)(I32);
+typedef I32 (*NoArgFn)();
+
+static ast::TypeExpr *i32_type() {
+    return ast::named("I32");
+}
+
+static ast::TypeExpr *pointer_type(ast::TypeExpr *pointee) {
+    ast::TypeKind kind = {.pointer = {.pointee = pointee}};
+    return ast::make_type(kind);
+}
+
+static ast::TypeExpr *array_type(ast::TypeExpr *element, U64 count) {
+    ast::TypeKind kind = {.array = {.element = element, .count = ast::integer(count)}};
+    return ast::make_type(kind);
+}
+
+static ast::Expr *number(U64 value) {
+    return ast::integer(value);
+}
+
+static ast::Expr *name(Str text) {
+    return ast::name(text);
+}
+
+static ast::Expr *binary(ast::BinaryOp op, ast::Expr *left, ast::Expr *right) {
+    return ast::binary(op, left, right);
+}
+
+static ast::Expr *at(ast::Expr *base, ast::Expr *position) {
+    ast::ExprKind kind = {.index = {.base = base, .index = position}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *dot(ast::Expr *base, Str field) {
+    ast::ExprKind kind = {.member = {.base = base, .name = field, .arrow = false}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *assign(ast::AssignOp op, ast::Expr *target, ast::Expr *value) {
+    ast::ExprKind kind = {.assign = {.op = op, .target = target, .value = value}};
+    return ast::expr(kind);
+}
+
+static ast::Stmt *expression(ast::Expr *value) {
+    ast::StmtKind kind = {.expression = {.value = value}};
+    return ast::stmt(kind);
+}
+
+static ast::Stmt *declare(ast::Decl *variable) {
+    ast::StmtKind kind = {.declaration = {.decl = variable}};
+    return ast::stmt(kind);
+}
+
+// `T name;`
+static ast::Stmt *declare_zero(Str text, ast::TypeExpr *type) {
+    return declare(ast::variable(text, type, nullptr));
+}
+
+static ast::Stmt *give(ast::Expr *value) {
+    return ast::return_value(value);
+}
+
+static ast::Stmt *while_loop(ast::Expr *condition, ast::Stmt *body) {
+    ast::StmtKind kind = {.while_stmt = {.condition = condition, .body = body}};
+    return ast::stmt(kind);
+}
+
+static ast::Decl *function_of(Str text, ast::Param params[:], ast::TypeExpr *result, ast::StmtRef items[:]) {
+    ast::Decl *function = ast::function(text, params, result, ast::block(items));
+    function->exported = true;
+    return function;
+}
+
+static ast::Decl *function_of0(Str text, ast::TypeExpr *result, ast::StmtRef items[:]) {
+    ast::Param none[1] = {};
+    return function_of(text, none[0:0], result, items);
+}
+
+static ast::Decl *point_record() {
+    ast::FieldDecl fields[2] = {ast::field("x", i32_type()), ast::field("y", i32_type())};
+    return ast::record_decl("Point", fields);
+}
+
+static ast::Module module2(ast::Decl *a, ast::Decl *b) {
+    ast::DeclRef decls[2] = {a, b};
+    return ast::new_module("front::test", decls);
+}
+
+struct TreeMemory {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    mem::Allocator *outside;
+};
+
+static void tree_begin(TreeMemory *trees) {
+    trees->memory = test::memory(1U << 22);
+    trees->allocator = arena::allocator(&trees->memory);
+    trees->outside = mem::set_allocator(&trees->allocator.base);
+}
+
+static void tree_end(TreeMemory *trees) {
+    mem::set_allocator(trees->outside);
+}
+
+static emit::Options options_for(emit::Target target) {
+    emit::Options options = {};
+    options.target = target;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static void jit_module(emit_jit::Jit *host, const ast::Module *m) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, m, options_for(host->target));
+    test::check_equal(emitted == .ok, true);
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    }
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+static char *ir_of(emit_jit::Jit *host, const ast::Module *m) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, m, options_for(host->target));
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        c::LLVMDisposeModule(emitted.ok);
+    }
+    c::LLVMContextDispose(context);
+    return text;
+}
+
+static Bool contains(const char *text, Str needle) {
+    return c::strstr(text, needle.data) != nullptr; // a literal's text ends with a terminator
+}
+
+// A function `f` that declares `T t;` and returns 0: the IR must store the zero of T.
+static char *zero_ir(ast::TypeExpr *type, ast::Decl *record) {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[2] = {declare_zero("t", type), give(number(0))};
+    ast::Decl *f = function_of0("f", i32_type(), items);
+    ast::DeclRef only[1] = {f};
+    ast::Module m = ast::new_module("front::test", only);
+    if (record != nullptr) m = module2(record, f);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    char *text = ir_of(&host, &m);
+    emit_jit::stop(&host);
+    return text;
+}
+
+export void test_front_emit_zero_golden_ir_for_each_kind() {
+    char *integer = zero_ir(i32_type(), nullptr);
+    test::check_equal(contains(integer, "store i32 0, ptr %t"), true);
+    char *wide = zero_ir(ast::named("U64"), nullptr);
+    test::check_equal(contains(wide, "store i64 0, ptr %t"), true);
+    char *boolean = zero_ir(ast::named("Bool"), nullptr);
+    test::check_equal(contains(boolean, "store i1 false, ptr %t"), true);
+    char *pointer = zero_ir(pointer_type(i32_type()), nullptr);
+    test::check_equal(contains(pointer, "store ptr null, ptr %t"), true);
+    char *array = zero_ir(array_type(i32_type(), 4), nullptr);
+    test::check_equal(contains(array, "store [4 x i32] zeroinitializer, ptr %t"), true);
+    char *grid = zero_ir(array_type(array_type(i32_type(), 3), 2), nullptr);
+    test::check_equal(contains(grid, "store [2 x [3 x i32]] zeroinitializer, ptr %t"), true);
+    char *record = zero_ir(ast::named("Point"), point_record());
+    test::check_equal(contains(record, "zeroinitializer, ptr %t"), true);
+    c::LLVMDisposeMessage(integer);
+    c::LLVMDisposeMessage(wide);
+    c::LLVMDisposeMessage(boolean);
+    c::LLVMDisposeMessage(pointer);
+    c::LLVMDisposeMessage(array);
+    c::LLVMDisposeMessage(grid);
+    c::LLVMDisposeMessage(record);
+}
+
+// The store is where the declaration stands, in the loop body, not in the entry block.
+export void test_front_emit_zero_the_store_is_in_the_loop() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef body[2] = {declare_zero("t", i32_type()), expression(assign(.add, name("n"), number(1)))};
+    ast::StmtRef items[3] = {
+        declare(ast::variable("n", i32_type(), number(0))),
+        while_loop(binary(.less, name("n"), number(2)), ast::block(body)),
+        give(name("n")),
+    };
+    ast::DeclRef only[1] = {function_of0("f", i32_type(), items)};
+    ast::Module m = ast::new_module("front::test", only);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    char *text = ir_of(&host, &m);
+    const char *store = c::strstr(text, "store i32 0, ptr %t");
+    const char *branch = c::strstr(text, "br ");
+    Bool found = store != nullptr;
+    Bool after_branch = found && branch != nullptr && store > branch;
+    test::check_equal(found, true);
+    test::check_equal(after_branch, true);
+    c::LLVMDisposeMessage(text);
+    emit_jit::stop(&host);
+}
+
+// I32 dirty(I32 v) { I32 big[64]; I32 i = 0; while (i < 64) { big[i] = v; i += 1; } return big[0]; }
+// fills the stack below its caller with v.
+static ast::Decl *dirty_function() {
+    ast::StmtRef body[2] = {expression(assign(.plain, at(name("big"), name("i")), name("v"))),
+                            expression(assign(.add, name("i"), number(1)))};
+    ast::StmtRef items[4] = {
+        declare_zero("big", array_type(i32_type(), 64)),
+        declare(ast::variable("i", i32_type(), number(0))),
+        while_loop(binary(.less, name("i"), number(64)), ast::block(body)),
+        give(at(name("big"), number(0))),
+    };
+    ast::Param params[1] = {ast::param("v", i32_type())};
+    return function_of("dirty", params, i32_type(), items);
+}
+
+// I32 read() { I32 s = 0; I32 n = 0;
+//              while (n < 2) { I32 t; Point p; I32 xs[4]; s += t + p.x + p.y + xs[2]; t = 5; p.x = 7; xs[2] = 9; n +=
+//              1; } return s; }
+// Each iteration must see zeros: the slots are written at the end of the one before.
+static ast::Decl *read_function() {
+    ast::Expr *sum = binary(.add, binary(.add, binary(.add, name("t"), dot(name("p"), "x")), dot(name("p"), "y")),
+                            at(name("xs"), number(2)));
+    ast::StmtRef body[8] = {
+        declare_zero("t", i32_type()),
+        declare_zero("p", ast::named("Point")),
+        declare_zero("xs", array_type(i32_type(), 4)),
+        expression(assign(.add, name("s"), sum)),
+        expression(assign(.plain, name("t"), number(5))),
+        expression(assign(.plain, dot(name("p"), "x"), number(7))),
+        expression(assign(.plain, at(name("xs"), number(2)), number(9))),
+        expression(assign(.add, name("n"), number(1))),
+    };
+    ast::StmtRef items[4] = {
+        declare(ast::variable("s", i32_type(), number(0))),
+        declare(ast::variable("n", i32_type(), number(0))),
+        while_loop(binary(.less, name("n"), number(2)), ast::block(body)),
+        give(name("s")),
+    };
+    return function_of0("read", i32_type(), items);
+}
+
+export void test_front_emit_zero_a_dirty_stack_reads_zero() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::DeclRef decls[3] = {point_record(), dirty_function(), read_function()};
+    ast::Module m = ast::new_module("front::test", decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    I32Fn dirty = (I32Fn)symbol_of(&host, "front::test::dirty");
+    NoArgFn read = (NoArgFn)symbol_of(&host, "front::test::read");
+    test::check_equal(dirty(0x5a5a5a5a) != 0, true);
+    test::check_equal(read(), 0);
+    test::check_equal(dirty(-1) != 0, true);
+    test::check_equal(read(), 0);
+    emit_jit::stop(&host);
+}

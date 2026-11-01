@@ -138,6 +138,9 @@ export typedef enum {
         FieldDecl fields[:];
         Bool is_union;
     } record; // an anonymous struct or union used as a type: a payload variant `struct { I32 a; } one;`
+    struct {
+        TypeRef elements[:];
+    } tuple; // `struct { I32, F32 }`: types with no field names, in order
 } TypeKind;
 
 export struct TypeExpr {
@@ -1161,6 +1164,10 @@ static void type_children(Items *items, TypeExpr *t) {
         for (Usize i = 0; i < countof(t->kind.record.fields); i++)
             add(items, {.field = &t->kind.record.fields[i]});
         break;
+    case .tuple:
+        for (Usize i = 0; i < countof(t->kind.tuple.elements); i++)
+            add_type(items, t->kind.tuple.elements[i], false);
+        break;
     }
 }
 
@@ -1555,6 +1562,9 @@ static void type_head(Output *text, TypeExpr *t) {
         break;
     case .record:
         put(text, pick(t->kind.record.is_union, "union", "struct"));
+        break;
+    case .tuple:
+        put(text, "tuple");
         break;
     }
     put_qualifiers(text, t->qualifiers);

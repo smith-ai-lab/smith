@@ -216,6 +216,49 @@ static ast::TypeExpr *type_of(parse::Parser *p, U32 start, ast::Qualifiers q) {
     return node(start, p, q, {.type_of = {.operand = operand}});
 }
 
+// Whether `struct { ... }` at the position is a tuple: the first thing at the braces' own depth that ends an element is
+// a `,` or the `}` (a record's field ends with `;`). An empty `struct {}` is a record. A scan of the tokens, no
+// speculative parse.
+export Bool tuple_ahead(const parse::Parser *p) {
+    if (parse::peek(p).kind != lex::kw_struct || parse::peek_at(p, 1).kind != lex::left_brace) return false;
+    if (parse::peek_at(p, 2).kind == lex::right_brace) return false;
+    Usize depth = 0;
+    for (Usize offset = 2; offset < countof(p->tokens) + 2; offset++) {
+        lex::TokenKind kind = parse::peek_at(p, offset).kind;
+        if (kind == lex::end_of_file || (kind == lex::semicolon && depth == 0)) return false;
+        if (kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace) depth += 1;
+        if ((kind == lex::right_paren || kind == lex::right_bracket) && depth > 0) depth -= 1;
+        if (kind == lex::right_brace) {
+            if (depth == 0) return true;
+            depth -= 1;
+        }
+        if (kind == lex::comma && depth == 0) return true;
+    }
+    return false;
+}
+
+// `struct { I32, F32 }`: types with no names. A name after a type is an error that names both forms.
+static ast::TypeExpr *tuple(parse::Parser *p, U32 start, ast::Qualifiers q) {
+    parse::advance(p);
+    parse::advance(p);
+    ast::TypeRef elements[:] = {};
+    while (!parse::at(p, lex::right_brace) && !parse::at(p, lex::end_of_file)) {
+        ast::TypeExpr *element = parse::type(p);
+        if (element == nullptr) break;
+        elements = mem::realloc(elements, countof(elements) + 1);
+        elements[countof(elements) - 1] = element;
+        if (parse::at(p, lex::name)) {
+            Str message =
+                "a tuple has types only: `struct { I32, F32 }`; a name makes a record field, `struct { I32 a; }`";
+            parse::error(p, parse::peek(p).span, message);
+            break;
+        }
+        if (!parse::accept(p, lex::comma)) break;
+    }
+    parse::expect(p, lex::right_brace, "`}` to end the tuple");
+    return node(start, p, q, {.tuple = {.elements = elements}});
+}
+
 // The base of a type without an applied form: `auto`, `struct X`, a keyword type, `typeof`, a path. Null after an
 // error.
 static ast::TypeExpr *plain(parse::Parser *p, U32 start, ast::Qualifiers q) {
@@ -227,6 +270,7 @@ static ast::TypeExpr *plain(parse::Parser *p, U32 start, ast::Qualifiers q) {
     case lex::kw_struct:
     case lex::kw_union:
     case lex::kw_enum:
+        if (tuple_ahead(p)) return tuple(p, start, q);
         parse::advance(p);
         if (!parse::accept(p, lex::name) && !parse::accept(p, lex::type_name)) {
             parse::error(p, parse::peek(p).span, "expected a tag name after `struct`, `union` or `enum`");

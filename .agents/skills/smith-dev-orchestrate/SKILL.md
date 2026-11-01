@@ -9,7 +9,7 @@ You run one lane: an ordered list of tickets whose files no other lane touches. 
 
 ## Goals
 - **Work the lane in order.** Each ticket goes to a fresh worker. The ticket is the whole brief; add the other lanes' files to keep out of, [smith-dev-rules](../smith-dev-rules/SKILL.md), and the report you want back.
-- **Pick the cheapest model the ticket needs** (owner, 2026-10-31: "If it's like a documentation change, why are we using Sonnet, right?"): Haiku 5.5 for docs, a README or a change spelled out line by line; Sonnet 5.5 for code. A Haiku worker that fails the same check twice is replaced by a Sonnet one.
+- **Pick the cheapest model the ticket needs** (owner, 2026-10-31: "If it's like a documentation change, why are we using Sonnet, right?"): Haiku 5.5 for docs, a README or a change spelled out line by line; Sonnet 5.5 for code; both at medium reasoning effort. A Haiku worker that fails the same check twice is replaced by a Sonnet one.
 - **Never guess.** A question the ticket doesn't settle goes up to the lead, with the options and your recommendation. Meanwhile the worker goes on with what isn't blocked.
 - **Merge only what passes.** Green CI merges; nobody reviews (owner, 2026-10-29: "If that's green, we merge."). Never merge a broken build, never weaken a check to get green, and never force-push.
 - **Keep the lane moving.** Red CI, a stuck worker or a missing log is yours to fix or to raise with the lead, never to wait on.

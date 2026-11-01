@@ -1,4 +1,4 @@
-// The guard of AGENTS.md's rule: generated files are build outputs, never committed (issue #466). A tracked file fails
+// The guard of the decision that generated files are build outputs, never committed (issue #466). A tracked file fails
 // when its first lines carry a generator's marker (smith's header writer, scripts/protocol.c, tree-sitter), when it
 // is under .smith/, or when git would ignore its path (`git ls-files -ci`: .gitignore lists each output's path, so a
 // generated file put back where a build writes it is caught even with its marker removed). The test expectations of

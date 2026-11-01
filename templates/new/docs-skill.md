@@ -13,7 +13,7 @@ Each fact has one home:
 | `.agents/skills/` | how to do a task, step by step | how to add a module |
 | the project's issues | plans and the roadmap: what to build next, its scope and acceptance | add a command line |
 
-When a fact seems to belong in two homes, it lives in one and the other links to it. Skills link knowledge; knowledge never links skills. A line stays only if an agent needs it and the code can't say it quickly: no history or rationale, and plans go in an issue. smith gives the project no AGENTS.md; its skills (the smith plugin's and this one) carry what an agent needs.
+When a fact seems to belong in two homes, it lives in one and the other links to it. Skills link knowledge; knowledge never links skills. A line stays only if an agent needs it and the code can't say it quickly: no history or rationale, and plans go in an issue. The project's skills (the smith plugin's and this one) carry what an agent needs.
 
 ## Knowledge is an Open Knowledge Format bundle
 

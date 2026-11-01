@@ -9,6 +9,7 @@ import front::parser;
 import front::types;
 import front::types_decl;
 import std::arena;
+import std::ascii;
 import std::files;
 import std::format;
 import std::mem;
@@ -89,15 +90,91 @@ static void golden(Str path, Str source) {
     test::golden(path, join(types_decl::locals_dump(), types::dump(&r)));
 }
 
+// How many casts of the module the checker marked for a run-time check, through `types::cast_checked`.
+static Usize checked_casts(const types::Checked *r) {
+    Usize n = 0;
+    for (Usize i = 0; i < countof(r->nodes); i++) {
+        if (r->nodes[i].node == nullptr) continue;
+        types::CastCheck cc = types::cast_checked(r, r->nodes[i].node);
+        if (cc.needed) {
+            test::check_condition(cc.from != nullptr);
+            test::check_condition(cc.to == r->nodes[i].type);
+            n += 1;
+        }
+    }
+    return n;
+}
+
+static void casts(Str source, Usize want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    test::check_equal(r.error_count, (Usize)0);
+    test::check_equal(checked_casts(&r), want);
+}
+
+export void test_front_types_decl_casts_that_can_lose_a_value_are_marked_checked() {
+    casts("U8 a(I32 x) { return (U8)x; }", 1);
+    casts("U32 a(I32 x) { return (U32)x; }", 1);
+    casts("I32 a(F64 x) { return (I32)x; }", 1);
+    casts("I32 a(I64 x, I64 y) { return (I32)x + (I32)y; }", 2);
+    casts("I64 a(I32 x) { return (I64)x; }", 0);
+    casts("U8 a() { return (U8)200; }", 0);
+    casts("F64 a(I32 x) { return (F64)x; }", 0);
+    casts("U32 a(U8 x) { return (U32)x; }", 0);
+    casts("F32 a(I64 x) { return (F32)x; }", 0);
+    casts("F64 a(I32 x) { return x; }", 0);
+    casts("Str a(U8 xs[:]) { return (Str)xs; }", 0);
+}
+
+export void test_front_types_decl_a_refused_cast_and_the_decided_implicit_rules_report() {
+    fails("I32 f(I32 *p) { return (I32)p; }", "expected I32", "cast through Usize");
+    fails("F64 x = 1;\nF32 y = 16777217;", "16777217 is not exactly an F32", "write a cast");
+    clean("F64 x = 0;");
+    fails("F32 a(I32 x) { return x; }", "found I32", "write a cast: (F32)x");
+    fails("Str a(U8 xs[:]) { return xs; }", "found U8[:]", "(Str)xs");
+    fails("U8 a() { return (U8)300; }", "300 does not fit U8", "wrapping::to(U8, x)");
+    fails("U32 a() { return (U32)-1; }", "-1 does not fit U32", "wrapping::to(U32, x)");
+    fails("I32 a() { return (I32)1e30; }", "does not fit I32", "wrapping::to(I32, x)");
+    clean("U8 a() { return (U8)200.5; }");
+    fails("I32 xs[3];\nI32 *p = xs;", "expected I32 *", "&xs[0]");
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // The five use cases
 
+// lib/std/ascii.smith spelled as the new checker reads it: a copy in memory with the word `char` written `Char`
+// (the N1 rewrite does this to the file itself; until then the checker accepts only `Char`).
 static Str use_ascii() {
     files::BytesResult read = files::read_file("lib/std/ascii.smith");
     if (read == .error) return "";
     format::Chars text = mem::view(read.ok, char);
-    Str shown = text;
-    return shown;
+    Str source = text;
+    Str copy = "";
+    Usize start = 0;
+    for (Usize i = 0; i + 4 <= countof(source); i++) {
+        Bool word = source[i] == 'c' && source[i + 1] == 'h' && source[i + 2] == 'a' && source[i + 3] == 'r';
+        Bool alone =
+            (i == 0 || !ascii::alpha(source[i - 1])) && (i + 4 == countof(source) || !ascii::alpha(source[i + 4]));
+        if (word && alone) {
+            copy = join(join(copy, source[start:i]), "Char");
+            start = i + 4;
+        }
+    }
+    return join(copy, source[start:countof(source)]);
+}
+
+export void test_front_types_decl_char_and_bool_are_errors_naming_the_smith_type() {
+    fails("char c = 'a';", "`char` is a C type", "write `Char`");
+    fails("bool b = true;", "`bool` is a C type", "write `Bool`");
+    clean("Char c = 'a';");
+    fails("Str s = \"a\";\nconst Char xs[:] = s;\nChar *p = xs;", "expected Char *", "found const Char[:]");
+}
+
+export void test_front_types_decl_a_character_literal_has_type_char() {
+    clean("Char c = 'a';\nU32 wide = 'a';\nChar d = c;");
 }
 
 export void test_front_types_decl_the_ascii_module_checks_clean() {
