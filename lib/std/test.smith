@@ -3792,6 +3792,36 @@ void suggest_files(const char *filter) {
     say("\n");
 }
 
+// After "no test matches" for `file::name`: up to 5 tests of that file whose name is near `name` (a `test_` prefix is
+// not part of a shown name, #1254), so a wrong prefix or a typo shows the right one.
+void suggest_names(const char *filter) {
+    const char *colons = c::strstr(filter, "::");
+    if (colons == nullptr) return;
+    usize head = (usize)(colons - filter);
+    const char *tail = colons + 2;
+    if (c::strncmp(tail, "test_", 5) == 0) tail += 5;
+    usize wanted = c::strcspn(tail, ",");
+    char item[64];
+    if (wanted == 0 || wanted >= sizeof item) return;
+    __builtin_memcpy(item, tail, wanted);
+    item[wanted] = '\0';
+    usize shown = 0;
+    for (usize i = 0; i < table_size && shown < 5; i++) {
+        const char *name = table[i].name;
+        const char *last = nullptr;
+        for (const char *at = c::strstr(name, "::"); at != nullptr; at = c::strstr(at + 2, "::"))
+            last = at;
+        if (last == nullptr || (usize)(last - name) < head) continue;
+        // the module part must end with the filter's file part (a path or a bare name)
+        if (c::strncmp(last - head, filter, head) != 0) continue;
+        const char *function = last + 2;
+        if (c::strstr(function, item) == nullptr && distance(item, function) > 3) continue;
+        say(shown == 0 ? "closest tests of that file: %s" : ", %s", function);
+        shown++;
+    }
+    if (shown > 0) say("\n");
+}
+
 // Whether the filter matches a test of either platform: a CI part of `--macos-only` or `--skip-macos` whose filter (a
 // pull request's `--changed` selection) names only the other part's tests has nothing to run, which is no error.
 bool filter_matches_any(const Options *options) {
@@ -4129,6 +4159,7 @@ static usize report_run(const Plan *plan, const Options *options, f64 start) {
         }
         say("no test matches \"%s\"\n", options.filter);
         suggest_files(options.filter);
+        suggest_names(options.filter);
         say("--test takes a test file's path (tests/x_test.smith) or a name (x_test, or x_test::name); a substring "
             "needs a * (x*)\n");
         return 1;
