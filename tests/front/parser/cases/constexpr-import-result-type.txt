@@ -1,3 +1,3 @@
 constexpr-import-result-type/counts.smith: ok
 constexpr-import-result-type/kinds.smith: ok
-constexpr-import-result-type/main.smith: error: `struct smith_array_T_n` names a C tag; write `struct c::smith_array_T_n` (9:12) [undecided_c]
+constexpr-import-result-type/main.smith: ok

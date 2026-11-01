@@ -1,2 +1,2 @@
-type-value-import/main.smith: error: `struct smith_array_T_n` names a C tag; write `struct c::smith_array_T_n` (9:12) [gap_a2]
+type-value-import/main.smith: error: a tuple has types only: `struct { I32, F32 }`; a name makes a record field, `struct { I32 a; }` (23:9) [gap_a2]
 type-value-import/shapes.smith: ok

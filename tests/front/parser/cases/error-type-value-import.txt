@@ -1,2 +1,2 @@
-error-type-value-import/main.smith: error: `struct smith_array_T_n` names a C tag; write `struct c::smith_array_T_n` (8:12) [gap_a1]
+error-type-value-import/main.smith: ok
 error-type-value-import/shapes.smith: ok

@@ -10,5 +10,5 @@ export Type slice_of(Type element, Usize count) {
 // The result is an option over a slice type that a function computes: the argument of `option` is a call.
 export Option(slice_of(T, 1)) view(constexpr Type T, T *xs, Usize n) {
     if (n == 0) return .none;
-    return {.some = (struct smith_array_T_n){.data = xs, .count = {n}}};
+    return {.some = xs[0:n]};
 }
