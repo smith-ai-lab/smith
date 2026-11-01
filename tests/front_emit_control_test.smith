@@ -522,7 +522,7 @@ export void test_front_emit_control_a_comparison_is_an_i1() {
     tree_end(&trees);
     char *text = ir_of(&m, target_of("x86_64-unknown-linux-gnu"));
     test::check_equal(contains(text, "br i1"), true);
-    test::check_equal(contains(text, "phi I32"), true);
+    test::check_equal(contains(text, "phi i32"), true);
     c::LLVMDisposeMessage(text);
 }
 
