@@ -294,9 +294,15 @@ static bool smith_stepcache_contains_root(const char *path) {
 
 // ---------------------------------------------------------------- hashing the inputs
 
-// Whether the bytes name a macro whose value no key can know.
+// Whether the bytes name a macro whose value no key can know. The names are written in pieces: smith.c includes this
+// file, and a file that holds one of the names whole is never stored, so smith.o itself was never served (#1414).
 static bool smith_stepcache_time_macro(const char *bytes, size_t size) {
-    static const char *const names[] = {"__TIME__", "__DATE__", "__TIMESTAMP__"};
+    static const char *const names[] = {"__"
+                                        "TIME__",
+                                        "__"
+                                        "DATE__",
+                                        "__"
+                                        "TIMESTAMP__"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         if (memmem(bytes, size, names[i], strlen(names[i])) != nullptr) return true;
     }
@@ -331,7 +337,7 @@ static bool smith_stepcache_hash_small(const char *path, size_t size, char hex[s
 }
 
 // SHA-256 of a file, which must still be what `expected` says when it has been read. *time_macro says whether it names
-// __TIME__, __DATE__ or __TIMESTAMP__. False when it cannot be read whole.
+// one of those macros. False when it cannot be read whole.
 static bool smith_stepcache_hash_file(const char *path, const struct stat *expected, char hex[smith_stepcache_hex],
                                       bool *time_macro) {
     if ((size_t)expected->st_size < sizeof smith_stepcache_whole - 1) {

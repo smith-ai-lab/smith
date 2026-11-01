@@ -389,3 +389,18 @@ export void test_build_step_cache_a_debug_build_is_shared_by_a_second_folder() {
     scratch::expect_contains("debug: stops at main.c:5 in a served object", stopped.out, "main.c:5");
     scratch::expect_contains("debug: and shows its source from another folder", stopped.out, "return util() + other()");
 }
+
+// The cache never stores a compile that read a file naming __TIME__, __DATE__ or __TIMESTAMP__, and smith.c includes
+// runtime/*.c, so a runtime file that spelled one whole (the cache's own list of them did) made smith.o itself a
+// compile no folder was ever served (#1414). The names are written in pieces there; this holds them to it.
+export void test_build_step_cache_no_file_smith_c_reads_names_a_time_macro() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::expect_text("files of smith.c's compile that name a time macro", "",
+                         scratch::capture(&p, "cd \"$SMITH_REPO\" && grep -l -e '__TIME__' -e '__DATE__' -e "
+                                              "'__TIMESTAMP__' smith.c runtime/*.c runtime/*.h scripts/pack.h"));
+}
