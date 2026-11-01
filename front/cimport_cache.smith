@@ -62,7 +62,7 @@ extern void smith_cimport_hash(const void *bytes, Usize count, U64 *out);
 extern I32 smith_cimport_file_hash(const char *path, U64 *out);
 
 // Changes whenever the stored form below changes.
-constexpr U32 format_version = 1;
+constexpr U32 format_version = 2;
 constexpr U32 magic = 0x43494353; // "SCIC"
 constexpr U32 none = 0xFFFFFFFFU;
 constexpr I64 day = 86'400;

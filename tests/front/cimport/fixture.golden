@@ -14,11 +14,27 @@
     (field ready (unsupported_c "bit-field int")))
   (typedef Compare from_c (applied Fn (type_arg (function_type (pointer (named Void const)) (pointer (named Void const)) (result (named I32))))))
   (typedef Id from_c (named U64))
+  (enum Color from_c
+    (named I32)
+    (enumerator Red (integer 0))
+    (enumerator Green (integer 5))
+    (enumerator Below (unary negate (integer 3))))
   (function add from_c (param a (named I32)) (param b (named I32)) (result (named I32)))
   (function log_line variadic from_c (param format (pointer (named I8 const))) (result (named I32)))
   (function origin from_c (result (named Point)))
   (function sort from_c (param holder (pointer (named Holder))) (param compare (named Compare)) (result (named Void)))
-  (function precise from_c (result (unsupported_c "long double"))))
+  (function precise from_c (result (unsupported_c "long double")))
+  (variable Anon_a constexpr from_c (named U32) (integer 0))
+  (variable Anon_b constexpr from_c (named U32) (integer 7))
+  (variable Limit constexpr from_c (named I32) (integer 99))
+  (variable A constexpr from_c (named I32) (integer 8192))
+  (variable B constexpr from_c (named U32) (integer 16384))
+  (variable PI constexpr from_c (named F64) (floating 3.14159))
+  (variable NAME constexpr from_c (named Str) (string "smith"))
+  (variable NEG constexpr from_c (named I32) (unary negate (integer 1)))
+  (variable BIG constexpr from_c (named U64) (integer 8192)))
 not imported union Either: a union is not imported
 not imported struct Flags: the field `ready` is a bit-field
 not imported precise: the type `long double` is not imported
+not imported MAX: a function-like macro
+not imported NOT_CONST: not a constant: use of undeclared identifier 'some_function'
