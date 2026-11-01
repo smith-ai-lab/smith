@@ -823,8 +823,8 @@ static void build_io_object(SmithBuild *b, const BuildConfig *config, const char
 static const char *const *build_front_objects(SmithBuild *b, const BuildConfig *config, const char *folder,
                                               const char *const *flags) {
     const char *const *extra = smith_list(b, "-std=gnu2y", "-I", smith_fmt(b, "%s/include", config->llvm), nullptr);
-    const char *const *before = smith_cat(b, smith_list(b, build_compiler_file(b, config), nullptr), config->headers,
-                                          nullptr);
+    const char *const *before =
+        smith_cat(b, smith_list(b, build_compiler_file(b, config), nullptr), config->headers, nullptr);
     const char *const *objects = smith_list(b, nullptr);
     for (size_t i = 0; i < build_front_module_count; i++) {
         const char *name = build_front_modules[i];
@@ -879,10 +879,9 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
         .flags = flags,
-        .implicit_inputs = smith_cat(
-            b, (const char *[]){"scripts/pack.h", "runtime/front_flag.c", nullptr},
-            build_smith_inputs, build_library_sources(b), config->headers, config->protocol,
-            build_llvm_required(b, config), nullptr),
+        .implicit_inputs = smith_cat(b, (const char *[]){"scripts/pack.h", "runtime/front_flag.c", nullptr},
+                                     build_smith_inputs, build_library_sources(b), config->headers, config->protocol,
+                                     build_llvm_required(b, config), nullptr),
     };
     smith_object(b, &object);
     SmithObject commit = build_commit_object(b, config, folder);
@@ -915,9 +914,9 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .objects = objects,
         .libraries =
             smith_cat(b, build_header_library_objects(b, config, folder), build_front_objects(b, config, folder, flags),
-                      build_prove_group(b, config, &shims.prove),
-                      build_enzyme_libraries(b, config), build_clang_libraries(b, config),
-                      build_lldb_libraries(b, config), config->platform->system_libraries, nullptr),
+                      build_prove_group(b, config, &shims.prove), build_enzyme_libraries(b, config),
+                      build_clang_libraries(b, config), build_lldb_libraries(b, config),
+                      config->platform->system_libraries, nullptr),
     };
     smith_program(b, &program);
     smith_default(b, build_links(b, &program.step, folder));
