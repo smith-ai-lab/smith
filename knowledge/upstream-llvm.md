@@ -1,5 +1,5 @@
 ---
-type: reference
+type: design
 title: Upstream's LLVM 23.1.3 release against smith's own build
 description: What llvm/llvm-project's release archives for macOS arm64 and Linux x86_64 ship and how they differ from what scripts/llvm.sh builds, so smith knows which parts it could take from upstream.
 tags: [llvm, build, static-linking]
