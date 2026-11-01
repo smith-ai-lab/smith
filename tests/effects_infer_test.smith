@@ -614,6 +614,11 @@ export void test_effects_printf_float_c() {
     effects_case("effects_printf_float.c");
 }
 
+// mkdtemp and mkstemp have the files effect (the table), so a ceiling below files is an error.
+export void test_effects_temp_files_smith() {
+    effects_case("effects_temp_files.smith");
+}
+
 export void test_effects_libc_idioms_smith() {
     effects_case("effects_libc_idioms.smith");
 }

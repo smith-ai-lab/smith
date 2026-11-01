@@ -1,0 +1,12 @@
+module effects_temp_files;
+
+import <stdlib.h>;
+
+// mkdtemp and mkstemp make a folder and a file, so each has the files effect: a ceiling of alloc is exceeded.
+export [[std::effects(alloc)]] char *folder(char *pattern) {
+    return c::mkdtemp(pattern);
+}
+
+export [[std::effects(alloc)]] I32 file(char *pattern) {
+    return c::mkstemp(pattern);
+}

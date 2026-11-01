@@ -284,6 +284,8 @@ inline constexpr Entry effect_functions[] = {
     {"truncate", Files},
     {"unlink", Files},
     {"mkdir", Files},
+    {"mkdtemp", Files}, // a new folder from a template ending in XXXXXX
+    {"mkstemp", Files}, // a new file from the same kind of template
     {"rmdir", Files},
     {"stat", Files},
     {"lstat", Files},
@@ -511,6 +513,7 @@ inline constexpr Ownership ownership_functions[] = {
     {"readdir", "borrowed:1"},
     {"bsearch", "borrowed:2"},
     {"realpath", "borrowed:2", 2, "owned:free"},
+    {"mkdtemp", "borrowed:1"}, // the template, rewritten with the name
     {"tmpnam", "borrowed:1", 1, "internal"},
     {"ctermid", "borrowed:1", 1, "internal"},
     {"cuserid", "borrowed:1", 1, "internal"},
