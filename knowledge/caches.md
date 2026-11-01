@@ -95,7 +95,9 @@ runs it only on a file whose lint could differ. It is in two levels, like a comp
 key* is the SHA-256 of smith (build-id on Linux, LC_UUID on macOS: clang-tidy and smith's own checks are in the
 binary), the environment that moves a compile (`SDKROOT`, `CPATH`, ...), the file's name, its compile command (the
 root of the project replaced by a fixed word, so a clone elsewhere shares entries; a `.smith` file the build does not
-compile has the whole `compile_commands.json` there) and the content of every `.clang-tidy` from its folder up to `/`.
+compile has the whole `compile_commands.json` there) and the content of every `.clang-tidy` from its folder up to `/`; a `.smith` file's key also holds every generated header
+under `.smith/include`, since its imports read those without the preprocessor and clang-tidy's dependency file never names
+them (#1180).
 Under it, `m/<xx>/<key>` is the *manifest* of the last run: the files clang-tidy read, which a miss collects through
 `-Wp,-MMD` (so no build or object is needed, and a `.smith` file's imports are in it). The *second key* adds the
 content of those files, and `r/<xx>/<key>` is the *result*: the exit status and the output with the root replaced. A hit
