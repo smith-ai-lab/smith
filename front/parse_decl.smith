@@ -20,9 +20,9 @@
 //     `if constexpr (c) { decls } else { decls }`, which holds any declarations, imports included.
 //
 // The errors name the fix: a declaration with several names (`I32 a, b;`), C's function-pointer declarator
-// (`I32 (*f)(I32)` is `Fn(I32 (I32)) f`), a K&R parameter list, a declaration with no type (implicit `int`), an array
-// with no size, and a tag spelled as C does (`struct Point p;`). After an error the declaration is skipped to its `;`
-// or its closing `}` and the parse goes on: it never aborts.
+// (`I32 (*f)(I32)` is `Fn(I32 (I32)) f`), C's pointer to a slice (`T (*p)[:]` is `T[:] *p`), a K&R parameter list, a
+// declaration with no type (implicit `int`), an array with no size, and a tag spelled as C does (`struct Point p;`).
+// After an error the declaration is skipped to its `;` or its closing `}` and the parse goes on: it never aborts.
 //
 // Nothing here recurses: a nested `if constexpr` is read with an explicit stack of open blocks; nested types and
 // bodies are the hooks'.
@@ -365,8 +365,43 @@ static Str type_text(const parse::Parser *p, const ast::TypeExpr *type) {
     return source_between(p, type->span.start, type->span.end);
 }
 
+// `T (*p)[:]`: the position is at the `(`. A pointer to a slice is written `T[:] *p` (A7i, #1344); says so with the
+// type, the stars, the name and the brackets as written, and skips the declarator.
+static void slice_pointer_error(parse::Parser *p, const ast::TypeExpr *type) {
+    U32 start = parse::peek(p).span.start;
+    parse::advance(p);
+    U32 stars_start = parse::peek(p).span.start;
+    while (parse::accept(p, lex::star)) {
+    }
+    U32 stars_end = parse::peek(p).span.start;
+    Str stars = source_between(p, stars_start, stars_end);
+    Str name = "";
+    if (is_name(parse::peek(p).kind)) name = parse::text(p, parse::advance(p));
+    parse::accept(p, lex::right_paren);
+    U32 brackets_start = parse::peek(p).span.start;
+    U32 brackets_end = brackets_start;
+    while (parse::at(p, lex::left_bracket)) {
+        while (!parse::at(p, lex::right_bracket) && !parse::at(p, lex::end_of_file))
+            parse::advance(p);
+        brackets_end = parse::advance(p).span.end;
+    }
+    Str brackets = source_between(p, brackets_start, brackets_end);
+    // The span of a C keyword type (`char`) leaves out its `const`; the replacement keeps it.
+    Str const_word = "const";
+    Str text = type_text(p, type);
+    Bool spelled = countof(text) >= countof(const_word) && mem::equal(text[0:countof(const_word)], const_word);
+    Str lead = type->qualifiers.is_const && !spelled ? "const " : "";
+    char message[:] = format::push("a pointer to a slice is written `", lead, text, brackets, " ", stars, name,
+                                   "`, not `", lead, text, " (", stars, name, ")", brackets, "`");
+    parse::error(p, parse::span_from(p, start), message);
+}
+
 // `I32 (*f)(I32)`: the position is at the `(` after the type. Says what to write and skips the rest.
 static void fn_pointer_error(parse::Parser *p, const ast::TypeExpr *type) {
+    if (parse_type::at_slice_pointer_declarator(p)) {
+        slice_pointer_error(p, type);
+        return;
+    }
     U32 start = parse::peek(p).span.start;
     parse::advance(p);
     while (parse::accept(p, lex::star)) {
@@ -443,6 +478,10 @@ static ast::Param parse_param(parse::Parser *p) {
         param.type = parse::type(p);
     }
     if (param.type == nullptr) return param;
+    if (parse_type::at_slice_pointer_declarator(p)) {
+        slice_pointer_error(p, param.type);
+        return param;
+    }
     lex::TokenKind named = parse::peek(p).kind;
     if (named == lex::name || (param.is_constexpr && named == lex::type_name) || (param.is_rest && is_name(named)))
         param.name = parse::text(p, parse::advance(p));
@@ -650,6 +689,11 @@ static ast::FieldDecl finish_field(parse::Parser *p, ast::FieldDecl field, Bool 
     if (anonymous && parse::at(p, lex::semicolon)) {
         parse::advance(p);
         field.span = parse::span_from(p, start);
+        return field;
+    }
+    if (parse_type::at_slice_pointer_declarator(p)) {
+        slice_pointer_error(p, field.type);
+        recover(p);
         return field;
     }
     if (parse::at(p, lex::name)) {

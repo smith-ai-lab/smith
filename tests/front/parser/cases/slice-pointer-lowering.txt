@@ -1,1 +1,1 @@
-slice-pointer-lowering/pointers.smith: error: C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result type and the parameter types in parentheses, inside `Fn(...)` (7:34) [undecided_c]
+slice-pointer-lowering/pointers.smith: error: a pointer to a slice is written `const char[:] *text`, not `const char (*text)[:]` (7:34) [removed_b]
