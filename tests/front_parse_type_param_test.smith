@@ -1,0 +1,89 @@
+// Tests of a parameter of type `Type` with no `constexpr` in front::parse_decl (#1357, A7m of track A of #1112): `Type
+// T` and `Type t` read as an ordinary parameter of type `Type` with is_constexpr false, in a generic, a type function
+// and a `static Type f(Type t)`; `constexpr Type E` is unchanged (true). The error for the bare one is the checker's
+// (N1).
+module front_parse_type_param_test;
+
+import front::ast;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+typedef ast::Param ParamList[:];
+
+// The parameters of the first function of source, which must parse without errors.
+static ParamList params_of(Str source) {
+    parser::Parsed parsed = parser::parse("x.smith", source);
+    test::check_equal(countof(parsed.errors), 0);
+    test::check_condition(countof(parsed.module.decls) >= 1);
+    ast::DeclKind kind = parsed.module.decls[0]->kind;
+    if (kind == .function) {
+        return kind.function.params;
+    }
+    test::check_condition(false);
+    return {};
+}
+
+static void check_param(ast::Param param, Str name, Bool compile_time) {
+    test::check_equal(param.name, name);
+    test::check_condition(param.type != nullptr);
+    test::check_condition(param.is_constexpr == compile_time);
+}
+
+export void test_parse_type_param_generic() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ParamList params = params_of("T first(Type T, T xs[:]) { return xs[0]; }");
+    test::check_equal(countof(params), 2);
+    Str t = "T";
+    check_param(params[0], t, false);
+}
+
+export void test_parse_type_param_type_function() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ParamList params = params_of("Type maybe(Type T) { return T; }");
+    test::check_equal(countof(params), 1);
+    Str t = "T";
+    check_param(params[0], t, false);
+}
+
+export void test_parse_type_param_lowercase_name() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ParamList params = params_of("static Type f(Type t) { return t; }");
+    test::check_equal(countof(params), 1);
+    Str t = "t";
+    check_param(params[0], t, false);
+}
+
+export void test_parse_type_param_mixed_with_constexpr() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ParamList params = params_of("Type outcome(Type T, constexpr Type E) { return T; }");
+    test::check_equal(countof(params), 2);
+    Str t = "T";
+    Str e = "E";
+    check_param(params[0], t, false);
+    check_param(params[1], e, true);
+}
+
+export void test_parse_type_param_prototype() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ParamList params = params_of("Type maybe(Type T);");
+    test::check_equal(countof(params), 1);
+    Str t = "T";
+    check_param(params[0], t, false);
+}

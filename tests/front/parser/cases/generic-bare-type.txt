@@ -1,1 +1,1 @@
-generic-bare-type/num.smith: error: expected `)`, found `T` (3:19) [undecided_c]
+generic-bare-type/num.smith: ok
