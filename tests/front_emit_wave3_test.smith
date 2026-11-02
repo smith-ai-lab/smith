@@ -132,59 +132,11 @@ static void stops_at(Str source, Bool with_checker, Str what, Str at) {
 
 export void test_front_emit_wave3_for_in_over_something_unbuilt_reaches_its_stub() {
     stops_at("fn f(xs: i32) -> i32 {\n    for x in xs {\n        _ := x\n    }\n    0\n}\n", false,
-             "a loop over a slice", "xs");
+             "a loop over a block or a stream", "xs");
 }
 
-export void test_front_emit_wave3_a_tuple_reaches_its_stubs() {
-    stops_at("fn f(t: (i32, i32)) -> i32 {\n    0\n}\n", false, "a tuple type", "(i32, i32)");
-    stops_at("fn f() -> i32 {\n    _ := (1, 2)\n    0\n}\n", false, "a tuple", "(1, 2)");
-    stops_at("fn f() -> i32 {\n    (q, r) := g()\n    0\n}\n", false, "a destructuring declaration", "(q, r)");
-}
-
-static void rename_member(const ast::Module *m) {
-    const ast::Decl *function = m->decls[0];
-    if (function->kind != .function) {
-        return;
-    }
-    const ast::Stmt *body = function->kind.function.body;
-    if (body->kind != .block) {
-        return;
-    }
-    const ast::Stmt *first = body->kind.block.items[0];
-    if (first->kind != .declaration) {
-        return;
-    }
-    const ast::Decl *variable = first->kind.declaration.decl;
-    if (variable->kind != .variable) {
-        return;
-    }
-    ast::Expr *member = (ast::Expr *)(Usize)variable->kind.variable.init;
-    if (member->kind != .member) {
-        return;
-    }
-    member->kind.member.name = "0";
-}
-
-// `t.0` does not parse yet (the lexer reads `.0` as a number), so the member is renamed in the tree: `t.x` becomes
-// `t.0`.
-export void test_front_emit_wave3_a_member_named_by_a_digit_reaches_the_tuple_stub() {
-    Scenario s = {};
-    Str source = "fn f(t: i32) -> i32 {\n    _ := t.x\n    0\n}\n";
-    begin(&s, source, false);
-    rename_member(&s.parsed.module);
-    emit_jit::Jit host = start_jit();
-    c::LLVMContextRef context = c::LLVMContextCreate();
-    emit::ModuleResult emitted = emit::module(context, &s.parsed.module, options_for(host.target, &s));
-    test::check_equal(emitted == .error, true);
-    if (emitted == .error) {
-        test::check_equal(has(emitted.error.message, "not emitted yet: a tuple member"), true);
-        emit::free_error(emitted.error);
-    }
-    c::LLVMContextDispose(context);
-    emit_jit::stop(&host);
-}
-
-// (A lambda and a `fn` type are emitted since #1620: tests/front_emit_lambda_test.smith.)
+// (A lambda and a `fn` type are emitted since #1620: tests/front_emit_lambda_test.smith.
+// A tuple is emitted since #1619.)
 
 // ---------------------------------------------------------------------------------------------------------------
 // state::convert

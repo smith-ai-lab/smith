@@ -299,11 +299,9 @@ export void test_front_emit_for_range_is_a_plain_loop_with_no_bounds_check_and_n
 // ---------------------------------------------------------------------------------------------------------------
 // Not emitted yet
 
-export void test_front_emit_for_enumerate_a_slice_and_a_run_time_step_are_not_emitted_yet() {
+export void test_front_emit_for_enumerate_and_a_run_time_step_are_not_emitted_yet() {
     stops_at("fn f(xs: [3]i32) -> i32 {\n    for x in enumerate(xs) {\n        _ := x\n    }\n    0\n}\n", "enumerate",
              "enumerate(xs)");
-    stops_at("fn f(xs: []i32) -> i32 {\n    for x in xs {\n        _ := x\n    }\n    0\n}\n", "this kind of type",
-             "[]i32"); // a slice cannot be named yet: it stops at its type, before the loop
     stops_at("fn f(a: u32, n: u32, k: u32) -> i32 {\n    for i in range(a, n, k) {\n        _ := i\n    }\n    0\n}\n",
              "range with a step that is not a positive constant", "range(a, n, k)");
     stops_at("fn f(a: u32, n: u32) -> i32 {\n    for i in range(a, n, 0) {\n        _ := i\n    }\n    0\n}\n",
