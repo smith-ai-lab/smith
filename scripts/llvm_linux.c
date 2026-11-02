@@ -1,12 +1,12 @@
-// Builds smith's pinned LLVM on Linux, static, from source: what scripts/llvm.sh does on macOS, for ELF (issue #305).
-// This file is plain C23: the seed (scripts/stage0.c on a machine with no smith) builds
-// it with the system's C compiler, and `smith build llvm` with smith. It runs from the repository's root:
+// Builds smith's pinned LLVM on Linux, static, from source: what build_llvm_run_macos does on macOS, for ELF (issue
+// #305). This file is plain C23: the seed (scripts/stage0.c on a machine with no smith) builds it with the system's C
+// compiler, and `smith build llvm` with smith. It runs from the repository's root:
 //   llvm_linux <llvm source> <cmake> <python> <stamp> <ninja>
-// the same arguments as scripts/llvm.sh, with <cmake> and <python> the programs themselves and <ninja> the ninja to
-// run (an empty argument is the one on PATH). The work lives in the package cache, $CACHE/smith/llvm/<name>/{src,
+// the same arguments as build_llvm_run_macos, with <cmake> and <python> the programs themselves and <ninja> the ninja
+// to run (an empty argument is the one on PATH). The work lives in the package cache, $CACHE/smith/llvm/<name>/{src,
 // build,install}, which `smith build clean` never touches; run again with nothing changed, cmake and ninja find nothing
 // to do. The steps:
-//   1. the patches (patches/*.patch) go into a copy of the sources, as in scripts/llvm.sh: a patch that changed is
+//   1. the patches (patches/*.patch) go into a copy of the sources, as in build_llvm_run_macos: a patch that changed is
 //      taken out with those after it, and only the files they touch change, so the rebuild is incremental;
 //   2. CMake and ninja build and install LLVM, clang, clang-tools-extra, lld, lldb and compiler-rt, with the host's
 //      target (X86 or AArch64), RTTI and exceptions on (Alive2 needs them), static libraries only;
@@ -42,7 +42,7 @@ constexpr size_t path_max = 4096;     // PATH_MAX of Linux, which strict C23 doe
 constexpr size_t arguments_max = 256; // a command: cmake's options, or the objects of one archive
 constexpr size_t file_max = 1 << 20;  // a patch, read whole to compare it
 
-// The folder in the package cache; SMITH_LLVM_NAME builds into another (as in scripts/llvm.sh and build.c).
+// The folder in the package cache; SMITH_LLVM_NAME builds into another (as in build_llvm_run_macos and build.c).
 static char cache[path_max];
 static char tools[path_max]; // cache/install/bin, where llvm-ar and llvm-objcopy are once LLVM is installed
 
@@ -157,7 +157,7 @@ static const char *host_target(void) {
     die("no LLVM target for this machine:", system.machine);
 }
 
-// Step 2: scripts/llvm.sh's configuration, with the host's target and nothing of macOS's (no SDK, no system
+// Step 2: build_llvm_run_macos's configuration, with the host's target and nothing of macOS's (no SDK, no system
 // debugserver, no libedit). Release, no assertions, static libraries only; off what would link a library from outside
 // the C library (zlib, zstd, libxml2, z3, libedit, terminfo, ffi, curl), and for build time only tests, benchmarks,
 // examples, docs, bindings and the compiler-rt parts smith does not use. lld links LLVM itself.
@@ -254,9 +254,9 @@ static void extract(const char *archive_path, const char *folder, const char *me
 static const char get_resources[] = "_ZN5clang16GetResourcesPathB5cxx11EPKcPv";
 static const char smith_resources[] = "_Z19smith_resource_pathB5cxx11PKcPv";
 
-// Step 3, the tools (scripts/llvm.sh says why each is done): clang-format's main renamed, clang-tidy's and clangd's
-// mains and clangd's tweaks with their initializers deferred, and the two calls that find the resource directory by
-// the executable's path redirected to smith_resource_path.
+// Step 3, the tools (build_llvm_run_macos says why each is done): clang-format's main renamed, clang-tidy's and
+// clangd's mains and clangd's tweaks with their initializers deferred, and the two calls that find the resource
+// directory by the executable's path redirected to smith_resource_path.
 static void make_tools(void) {
     char build[path_max];
     join(build, "%s/build", cache, "");
@@ -294,8 +294,8 @@ static void make_tools(void) {
     archive(path("%s/libsmithtools.a", lib, ""), path("%s/out/*.o", work, ""));
 }
 
-// Step 3, lldb (scripts/llvm.sh says why): libsmithlldb.a holds the SB API's objects and the three mains renamed, and
-// lldb's static archives are copied into the install, all with their initializers deferred to __smith_lldb.
+// Step 3, lldb (build_llvm_run_macos says why): libsmithlldb.a holds the SB API's objects and the three mains renamed,
+// and lldb's static archives are copied into the install, all with their initializers deferred to __smith_lldb.
 static void make_lldb(void) {
     char lldb[path_max];
     join(lldb, "%s/build/tools/lldb", cache, "");
@@ -341,7 +341,7 @@ static void make_lldb(void) {
     globfree(&archives);
 }
 
-// clang's main as a library: driver.cpp's objects without clang-driver.cpp's main (scripts/llvm.sh).
+// clang's main as a library: driver.cpp's objects without clang-driver.cpp's main (build_llvm_run_macos).
 static void make_clang_main(void) {
     char objects[path_max];
     join(objects, "%s/build/tools/clang/tools/driver/CMakeFiles/clang.dir", cache, "");
@@ -390,7 +390,7 @@ static void hash_glob(Sha256 *sha, const char *pattern, bool archives) {
     globfree(&found);
 }
 
-// Step 4, the identity, written last (scripts/llvm.sh says what it is for): the version and a hash of the archives
+// Step 4, the identity, written last (build_llvm_run_macos says what it is for): the version and a hash of the archives
 // smith links (clang's, LLVM's, lld's and clangd's, by their members) and of the objects made here.
 static void write_identity(const char *stamp) {
     Sha256 sha;

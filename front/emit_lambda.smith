@@ -1,25 +1,544 @@
-// front::emit_lambda: `fn` types and lambdas. Filled by the next batch of #1428; today every handler is `not emitted
-// yet`, with its final signature, so that ticket edits this file and never front/emit.smith (the wave-3 scaffold, #1582
-// of #1428).
+// front::emit_lambda: `fn` types, lambdas and the call of a `fn` value (#1620 of #1428).
+//
+// The type. `fn(A, B) -> R` and `fn_once(A, B) -> R` are the LLVM struct `{ ptr code, ptr context }`. The `Ty` is kind
+// `fn_value`, `parts` the parameters, `element` the result (`Void` when none), `name` as written. `parts` is one block
+// of `OwnedTy` (the first is chained through `Emitter.owned`, so `memory::release` frees the whole block): read part
+// `i` with `part`, never as `parts[i]`. The code's LLVM type is `R (ptr context, A, B)`: the context is always the
+// first argument. A call through a `fn` value is indirect; a parameter's `fn` is not instantiated per lambda yet.
+//
+// A lambda is an internal LLVM function `<enclosing symbol>::lambda.<n>` (`n` is the first number the module has no
+// function of, so it counts from 0 per enclosing function), kept out of `e->functions` (pass 3 walks that table in
+// step with the declarations). Its body is emitted at once, in the middle of the enclosing function, on the same work
+// stack: `make` saves the enclosing function's state in a `SavedFunction` frame (`e->lambda_frames`), starts the new
+// function, pushes `lambda_end` and then the body; `lambda_end` finishes the function and `lambda_finish` restores the
+// frame and pushes the lambda's Value `{ code, context }`. `return` inside the lambda leaves the lambda: it reads
+// `e->result` and `e->defers`, which are the lambda's. With `options.debug_info`, a lambda is not emitted yet.
+//
+// Captures. Every local of the enclosing function that is visible where the lambda is made is a candidate: at the start
+// of the lambda's body, its address is loaded from slot `i` of the context (an array of pointers) and bound to the same
+// name as a local of the lambda, before the parameters, so a parameter hides a capture and `x`, `x = ..` and `&x` work
+// unchanged. When the body is done, a candidate whose load has no use was not captured: its load is erased. A lambda
+// written as an argument of a call (`argument`) may capture, by reference: the context is an alloca of the enclosing
+// function holding the addresses of the captured locals only, so the enclosing function sees the writes, and the lambda
+// cannot outlive the call. Any other lambda that captures is `not emitted yet: a stored lambda with captures` (copying
+// the captures is the next ticket); one that captures nothing has a null context.
+//
+// The call of a `fn` value, `f(a, b)` with `f` a local: the callee, then the arguments (each with its part as the hint,
+// converted with `state::convert`), the code and context taken out of the value and an indirect call, the context
+// first. Named arguments are an Error.
+//
+// Not here: a function named as a `fn` value, a lambda at the C boundary, a lambda that calls itself.
 module front::emit_lambda;
 
 import front::ast;
+import front::emit_arith as arith;
+import front::emit_control as control;
+import front::emit_match as matching;
+import front::emit_option as optional;
 import front::emit_state as state;
+import front::emit_value as blockval;
 import front::types;
+import std::arena;
+import std::format;
+import std::mem;
+import <llvm-c/Core.h>;
+
+constexpr Usize max_parts = 64;
+
+static state::Ty void_ty(state::Emitter *e) {
+    state::Ty none = {.kind = .integer, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
+    return none;
+}
+
+static Bool is_void(state::Ty ty) {
+    return c::LLVMGetTypeKind(ty.llvm) == c::LLVMVoidTypeKind;
+}
+
+// Part `i` of a `fn` type: its parameters are `OwnedTy` blocks, not `Ty`s.
+static state::Ty part(state::Ty fn, Usize i) {
+    state::OwnedTy *blocks = (state::OwnedTy *)fn.parts;
+    return blocks[i].ty;
+}
+
+// `fn(A, B) -> R` as written by the types.
+static Str fn_name(state::Ty parts[:], state::Ty result) {
+    Str text = state::msg(format::push("fn("));
+    for (Usize i = 0; i < countof(parts); i++) {
+        Str longer = state::msg(format::push(text, i == 0 ? "" : ", ", parts[i].name));
+        state::free_text(text);
+        text = longer;
+    }
+    Str closed = state::msg(format::push(text, ")"));
+    state::free_text(text);
+    if (is_void(result)) return closed;
+    Str full = state::msg(format::push(closed, " -> ", result.name));
+    state::free_text(closed);
+    return full;
+}
+
+// The `fn` type of these parameters and this result.
+static state::Ty make_type(state::Emitter *e, state::Ty parts[:], state::Ty result) {
+    c::LLVMTypeRef pointer = state::pointer_type(e, 0);
+    c::LLVMTypeRef fields[2] = {pointer, pointer};
+    state::Ty ty = {.kind = .fn_value,
+                    .llvm = c::LLVMStructTypeInContext(e->context, fields, 2, false),
+                    .name = fn_name(parts, result)};
+    Usize n = countof(parts);
+    if (n > 0) {
+        state::OwnedTy blocks[:] = mem::alloc_slice(state::OwnedTy, n);
+        for (Usize i = 0; i < n; i++) {
+            blocks[i].ty = parts[i];
+        }
+        blocks[0].next = e->owned;
+        e->owned = &blocks[0];
+        ty.parts = (state::Ty *)&blocks[0];
+    }
+    ty.part_count = n;
+    state::OwnedTy *holder = mem::alloc(state::OwnedTy);
+    holder->ty = result;
+    holder->next = e->owned;
+    e->owned = holder;
+    ty.element = &holder->ty;
+    return ty;
+}
+
+// `R (ptr, A, B)`: the code of a `fn` type.
+static c::LLVMTypeRef code_type(state::Emitter *e, state::Ty fn) {
+    c::LLVMTypeRef types[max_parts + 1];
+    types[0] = state::pointer_type(e, 0);
+    for (Usize i = 0; i < fn.part_count; i++)
+        types[i + 1] = part(fn, i).llvm;
+    return c::LLVMFunctionType(fn.element->llvm, types, (U32)fn.part_count + 1, 0);
+}
 
 export state::TyResult type_function(state::Emitter *e, const ast::TypeExpr *t) {
-    _ = e;
-    return state::ty_fail("not emitted yet: a function type", t->span);
+    if (t->kind != .function) return state::ty_fail("not a function type", t->span);
+    if (t->kind.function.variadic) return state::ty_fail("not emitted yet: a variadic fn type", t->span);
+    Usize n = countof(t->kind.function.params);
+    if (n > max_parts) return state::ty_fail("not emitted yet: a fn of more than 64 parameters", t->span);
+    state::Ty parts[max_parts];
+    for (Usize i = 0; i < n; i++) {
+        state::TyResult made = state::type_of(e, t->kind.function.params[i]);
+        if (made == .error) return {.error = made.error};
+        parts[i] = made.ok;
+    }
+    state::Ty result = void_ty(e);
+    if (t->kind.function.result != nullptr) {
+        state::TyResult made = state::type_of(e, t->kind.function.result);
+        if (made == .error) return {.error = made.error};
+        result = made.ok;
+    }
+    state::Ty made_fn = make_type(e, parts[0:n], result);
+    return made_fn;
+}
+
+// One type of the checker's function type, as a `Ty`: the scalars, a record of the module or an option.
+static state::TyResult of_checked(state::Emitter *e, types::TypeRef t) {
+    state::Ty ty = {};
+    if (t == nullptr || t->kind == .void_type) return void_ty(e);
+    if (t->kind == .bool_type && state::scalar_type(e, "bool", &ty)) return ty;
+    if (t->kind == .floating && arith::type_float(e, t->bits == 32 ? "f32" : "f64", &ty)) return ty;
+    if (t->kind == .integer) {
+        if (state::scalar_type(e, t->name, &ty)) return ty;
+        Str spelled = "u64";
+        if (t->bits == 8) spelled = t->is_signed ? "i8" : "u8";
+        if (t->bits == 16) spelled = t->is_signed ? "i16" : "u16";
+        if (t->bits == 32) spelled = t->is_signed ? "i32" : "u32";
+        if (t->bits == 64) spelled = t->is_signed ? "i64" : "u64";
+        if (state::scalar_type(e, spelled, &ty)) return ty;
+    }
+    if (t->kind == .record) {
+        for (Usize i = 0; i < e->record_count; i++) {
+            if (state::same_text(e->records[i].name, t->name)) {
+                ty = e->records[i].ty;
+                return ty;
+            }
+        }
+    }
+    if (t->kind == .option) return optional::from_checked(e, t);
+    Str shown = types::show(t);
+    Str message = state::msg(format::push("not emitted yet: a fn of ", shown));
+    state::free_text(shown);
+    state::TyResult failed = state::ty_fail(message, (ast::Span){});
+    state::free_text(message);
+    return failed;
 }
 
 export state::TyResult from_checked(state::Emitter *e, types::TypeRef t) {
-    _ = e;
-    _ = t;
-    return state::ty_fail("not emitted yet: a function type", (ast::Span){});
+    types::TypeRef function = t->kind == .fn_value ? t->element : t;
+    if (function == nullptr || function->kind != .function)
+        return state::ty_fail("not emitted yet: a fn that is not a function", (ast::Span){});
+    Usize n = countof(function->slots);
+    if (n > max_parts) return state::ty_fail("not emitted yet: a fn of more than 64 parameters", (ast::Span){});
+    state::Ty parts[max_parts];
+    for (Usize i = 0; i < n; i++) {
+        state::TyResult made = of_checked(e, function->slots[i].type);
+        if (made == .error) return {.error = made.error};
+        parts[i] = made.ok;
+    }
+    state::TyResult result = of_checked(e, function->element);
+    if (result == .error) return {.error = result.error};
+    state::Ty made_fn = make_type(e, parts[0:n], result.ok);
+    return made_fn;
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// A lambda
+
+static state::Status ret_value(state::Emitter *e, const state::Work *w) {
+    c::LLVMBuildRet(e->builder, w->value);
+    return state::success();
+}
+
+static state::Status ret_void(state::Emitter *e, const state::Work *_) {
+    c::LLVMBuildRetVoid(e->builder);
+    return state::success();
+}
+
+// The value of the body's last line is on the value stack: return it.
+static state::Status body_return(state::Emitter *e, const state::Work *w) {
+    state::Value value = state::pop_value(e);
+    if (!state::same_type(value.ty, e->result)) {
+        try state::convert(e, value, e->result, w->span, .return_value);
+        value = state::pop_value(e);
+    }
+    state::push_then(e, (state::Work){.then = ret_value, .value = value.llvm, .span = w->span});
+    try control::before_return(e, w->span);
+    return state::success();
+}
+
+// A last line that is a `match`, a block or an `if` with an `else` gives the body's value through `value_of`.
+static state::Status value_start(state::Emitter *e, const state::Work *w) {
+    const ast::Stmt *s = w->stmt;
+    if (s->kind == .match_stmt) return matching::value_of(e, s, w->hint);
+    return blockval::value_of(e, s, w->hint);
+}
+
+static Bool last_gives_value(const ast::Stmt *last) {
+    if (last->kind == .expression || last->kind == .match_stmt || last->kind == .block) return true;
+    return last->kind == .if_stmt && last->kind.if_stmt.else_branch != nullptr;
+}
+
+// The body: a function's last-line rule. The lambda's scope is never closed: its state is dropped at the end.
+static void push_body(state::Emitter *e, const ast::Stmt *body) {
+    state::begin_scope(e);
+    if (body->kind != .block || is_void(e->result) || countof(body->kind.block.items) == 0) {
+        state::push_statement(e, body);
+        return;
+    }
+    ast::StmtRef items[:] = body->kind.block.items;
+    const ast::Stmt *last = items[countof(items) - 1];
+    if (!last_gives_value(last)) {
+        state::push_statement(e, body);
+        return;
+    }
+    state::push_then(e, (state::Work){.then = body_return, .span = last->span});
+    state::Hint hint = state::hint_of(e->result);
+    if (last->kind == .expression)
+        state::push_eval(e, last->kind.expression.value, hint);
+    else
+        state::push_then(e, (state::Work){.then = value_start, .stmt = last, .hint = hint, .span = last->span});
+    for (Usize i = countof(items) - 1; i > 0; i--)
+        state::push_statement(e, items[i - 1]);
+}
+
+static void push_frame(state::Emitter *e, state::SavedFunction frame) {
+    if (e->lambda_frame_count == countof(e->lambda_frames)) {
+        Usize capacity = countof(e->lambda_frames) * 2;
+        if (capacity < 4) capacity = 4;
+        e->lambda_frames = mem::realloc(e->lambda_frames, capacity);
+    }
+    e->lambda_frames[e->lambda_frame_count] = frame;
+    e->lambda_frame_count += 1;
+}
+
+// The name `<symbol>::lambda.<n>` of the first number no function has.
+static char *lambda_label(state::Emitter *e) {
+    Usize length = 0;
+    const char *enclosing = c::LLVMGetValueName2(e->function, &length);
+    Str symbol = state::msg(format::push(enclosing[0:length]));
+    for (U64 n = 0; n < 1000000; n++) {
+        char *label = format::push(symbol, "::lambda.", n).data;
+        if (c::LLVMGetNamedFunction(e->module, label) == nullptr) {
+            state::free_text(symbol);
+            return label;
+        }
+        mem::free(label);
+    }
+    state::free_text(symbol);
+    return nullptr;
+}
+
+// The lambda's function starts: an `entry` block with the allocas and a branch to `body`, empty locals, loops, defers.
+static void begin_function(state::Emitter *e, c::LLVMValueRef function, state::Ty fn) {
+    e->function = function;
+    e->result = *fn.element;
+    e->trap_block = nullptr;
+    state::Local no_locals[:] = {};
+    Usize no_marks[:] = {};
+    state::LoopTarget no_loops[:] = {};
+    state::DeferEntry no_defers[:] = {};
+    e->locals = no_locals;
+    e->local_count = 0;
+    e->scope_marks = no_marks;
+    e->scope_count = 0;
+    e->loops = no_loops;
+    e->loop_count = 0;
+    e->defers = no_defers;
+    e->defer_count = 0;
+    c::LLVMBasicBlockRef entry = c::LLVMAppendBasicBlockInContext(e->context, function, "entry");
+    c::LLVMBasicBlockRef body = c::LLVMAppendBasicBlockInContext(e->context, function, "body");
+    c::LLVMPositionBuilderAtEnd(e->builder, entry);
+    c::LLVMValueRef jump = c::LLVMBuildBr(e->builder, body);
+    c::LLVMPositionBuilderBefore(e->alloca_builder, jump);
+    c::LLVMPositionBuilderAtEnd(e->builder, body);
+    e->entry_block = entry;
+}
+
+// The enclosing function's locals as the lambda's: each address is loaded from its slot of the context. The loads are
+// returned, one per enclosing local, for `lambda_finish` to keep or erase.
+static c::LLVMValueRef declare_captures(state::Emitter *e, const state::SavedFunction *saved, c::LLVMValueRef function,
+                                        c::LLVMValueRef *loads) {
+    c::LLVMTypeRef pointer = state::pointer_type(e, 0);
+    c::LLVMValueRef context = c::LLVMGetParam(function, 0);
+    c::LLVMTypeRef index_type = c::LLVMInt64TypeInContext(e->context);
+    for (Usize i = 0; i < saved->local_count; i++) {
+        c::LLVMValueRef index[1] = {c::LLVMConstInt(index_type, i, false)};
+        Str name = saved->locals[i].name;
+        c::LLVMValueRef slot = c::LLVMBuildInBoundsGEP2(e->builder, pointer, context, index, 1, "capture");
+        char *label = state::cstr(name);
+        loads[i] = c::LLVMBuildLoad2(e->builder, pointer, slot, label);
+        mem::free(label);
+        state::add_local(e, (state::Local){.name = name, .ty = saved->locals[i].ty, .address = loads[i]});
+    }
+    return context;
+}
+
+static void declare_parameters(state::Emitter *e, c::LLVMValueRef function, state::Ty fn, ast::Param params[:]) {
+    for (Usize i = 0; i < countof(params); i++) {
+        c::LLVMValueRef value = c::LLVMGetParam(function, (U32)i + 1);
+        Str name = params[i].name;
+        c::LLVMSetValueName2(value, name.data, countof(name));
+        state::Ty ty = part(fn, i);
+        c::LLVMValueRef slot = state::new_alloca(e, ty, params[i].name);
+        c::LLVMBuildStore(e->builder, value, slot);
+        state::add_local(e, (state::Local){.name = params[i].name, .ty = ty, .address = slot});
+    }
+}
+
+static state::Status lambda_end(state::Emitter *e, const state::Work *w);
+
+// A lambda: its function is emitted now, and the Value `{ code, context }` is pushed when it is done.
+static state::Status make(state::Emitter *e, const ast::Expr *x, state::Hint hint, Bool argument) {
+    if (x->kind != .lambda) {
+        return state::fail("not a lambda", x->span);
+    }
+    ast::Param params[:] = x->kind.lambda.params;
+    const ast::Stmt *body = x->kind.lambda.body;
+    if (e->options.debug_info != false) return state::not_emitted("a lambda with debug info", x->span);
+    state::Ty fn = {};
+    if (hint.present && hint.ty.kind == .fn_value) {
+        fn = hint.ty;
+    } else {
+        state::TyResult made = state::type_of_node(e, x);
+        if (made == .error) return {.error = made.error};
+        fn = made.ok;
+        if (fn.kind != .fn_value) return state::not_emitted("a lambda that is not a fn value", x->span);
+    }
+    if (countof(params) != fn.part_count)
+        return state::failf(x->span, "the lambda has ", (U64)countof(params), " parameters, its type ", fn.name,
+                            " takes ", (U64)fn.part_count);
+    c::LLVMTypeRef type = code_type(e, fn);
+    char *label = lambda_label(e);
+    c::LLVMValueRef function = c::LLVMAddFunction(e->module, label, type);
+    mem::free(label);
+    c::LLVMSetLinkage(function, c::LLVMInternalLinkage);
+    state::SavedFunction saved = {.function = e->function,
+                                  .entry_block = e->entry_block,
+                                  .trap_block = e->trap_block,
+                                  .result = e->result,
+                                  .locals = e->locals,
+                                  .local_count = e->local_count,
+                                  .scope_marks = e->scope_marks,
+                                  .scope_count = e->scope_count,
+                                  .loops = e->loops,
+                                  .loop_count = e->loop_count,
+                                  .defers = e->defers,
+                                  .defer_count = e->defer_count,
+                                  .insert_block = c::LLVMGetInsertBlock(e->builder),
+                                  .lambda_function = function,
+                                  .fn_ty = fn,
+                                  .argument = argument};
+    Usize made_loads[:] = mem::alloc_slice(Usize, saved.local_count + 1);
+    saved.loads = (c::LLVMValueRef *)made_loads.data;
+    begin_function(e, function, fn);
+    c::LLVMSetValueName2(c::LLVMGetParam(function, 0), "context", 7);
+    declare_captures(e, &saved, function, saved.loads);
+    declare_parameters(e, function, fn, params);
+    push_frame(e, saved);
+    state::push_then(e, (state::Work){.then = lambda_end, .span = x->span});
+    push_body(e, body);
+    return state::success();
+}
+
+// The body is emitted: end the function (a `Void` one returns after its defers, any other traps), then restore.
+static state::Status lambda_finish(state::Emitter *e, const state::Work *w);
+
+static state::Status lambda_end(state::Emitter *e, const state::Work *w) {
+    state::push_then(e, (state::Work){.then = lambda_finish, .span = w->span});
+    c::LLVMBasicBlockRef last = c::LLVMGetInsertBlock(e->builder);
+    if (c::LLVMGetBasicBlockTerminator(last) != nullptr) return state::success();
+    if (is_void(e->result)) {
+        state::push_then(e, (state::Work){.then = ret_void, .span = w->span});
+        try control::before_return(e, w->span);
+    } else {
+        arith::trap_here(e);
+    }
+    return state::success();
+}
+
+// Whether a load of a capture has a use; an unused one and its address computation are erased.
+static Bool captured(c::LLVMValueRef load) {
+    if (c::LLVMGetFirstUse(load) != nullptr) return true;
+    c::LLVMValueRef address = c::LLVMGetOperand(load, 0);
+    c::LLVMInstructionEraseFromParent(load);
+    c::LLVMInstructionEraseFromParent(address);
+    return false;
+}
+
+static void restore(state::Emitter *e, const state::SavedFunction *saved) {
+    mem::free(e->locals.data);
+    mem::free(e->scope_marks.data);
+    mem::free(e->loops.data);
+    mem::free(e->defers.data);
+    e->function = saved->function;
+    e->entry_block = saved->entry_block;
+    e->trap_block = saved->trap_block;
+    e->result = saved->result;
+    e->locals = saved->locals;
+    e->local_count = saved->local_count;
+    e->scope_marks = saved->scope_marks;
+    e->scope_count = saved->scope_count;
+    e->loops = saved->loops;
+    e->loop_count = saved->loop_count;
+    e->defers = saved->defers;
+    e->defer_count = saved->defer_count;
+    c::LLVMPositionBuilderAtEnd(e->builder, saved->insert_block);
+    c::LLVMPositionBuilderBefore(e->alloca_builder, c::LLVMGetBasicBlockTerminator(saved->entry_block));
+}
+
+// The context of a lambda that is an argument: an array of the addresses of the captured locals, filled here.
+static c::LLVMValueRef make_context(state::Emitter *e, const state::SavedFunction *saved, Bool used[:]) {
+    c::LLVMTypeRef pointer = state::pointer_type(e, 0);
+    c::LLVMTypeRef array = c::LLVMArrayType2(pointer, saved->local_count);
+    c::LLVMValueRef context = c::LLVMBuildAlloca(e->alloca_builder, array, "captures");
+    c::LLVMTypeRef index_type = c::LLVMInt64TypeInContext(e->context);
+    for (Usize i = 0; i < saved->local_count; i++) {
+        if (!used[i]) continue;
+        c::LLVMValueRef index[1] = {c::LLVMConstInt(index_type, i, false)};
+        c::LLVMValueRef slot = c::LLVMBuildInBoundsGEP2(e->builder, pointer, context, index, 1, "slot");
+        c::LLVMBuildStore(e->builder, saved->locals[i].address, slot);
+    }
+    return context;
+}
+
+static state::Status lambda_finish(state::Emitter *e, const state::Work *w) {
+    e->lambda_frame_count -= 1;
+    state::SavedFunction saved = e->lambda_frames[e->lambda_frame_count];
+    if (e->lambda_frame_count == 0) {
+        mem::free(e->lambda_frames.data);
+        state::SavedFunction none[:] = {};
+        e->lambda_frames = none;
+    }
+    Bool used[:] = mem::alloc_slice(Bool, saved.local_count + 1);
+    Bool any = false;
+    for (Usize i = 0; i < saved.local_count; i++) {
+        used[i] = captured(saved.loads[i]);
+        any = any || used[i];
+    }
+    mem::free((void *)saved.loads);
+    restore(e, &saved);
+    if (any && !saved.argument) {
+        mem::free(used.data);
+        return state::not_emitted("a stored lambda with captures", w->span);
+    }
+    c::LLVMValueRef context = c::LLVMConstNull(state::pointer_type(e, 0));
+    if (any) context = make_context(e, &saved, used);
+    mem::free(used.data);
+    c::LLVMValueRef zero = c::LLVMConstNull(saved.fn_ty.llvm);
+    c::LLVMValueRef with_code = c::LLVMBuildInsertValue(e->builder, zero, saved.lambda_function, 0, "code");
+    c::LLVMValueRef made = c::LLVMBuildInsertValue(e->builder, with_code, context, 1, "lambda");
+    state::push_value(e, (state::Value){.llvm = made, .ty = saved.fn_ty});
+    return state::success();
+}
+
+// A lambda that is not an argument of a call.
 export state::Status lambda(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
-    _ = e;
-    _ = hint;
-    return state::not_emitted("a lambda", x->span);
+    return make(e, x, hint, false);
+}
+
+// A lambda written as an argument of a call: it may capture by reference, for the call.
+export state::Status argument(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    return make(e, x, hint, true);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Calling a `fn` value
+
+// The callee and the arguments are on the value stack, the callee deepest.
+static state::Status call_finish(state::Emitter *e, const state::Work *w) {
+    state::Ty fn = w->ty;
+    Usize count = (Usize)w->number;
+    const ast::Expr *x = w->expr;
+    if (x->kind != .call) {
+        return state::fail("not a call", w->span);
+    }
+    ast::ExprRef args[:] = x->kind.call.args;
+    state::Value values[max_parts];
+    for (Usize i = count; i > 0; i--)
+        values[i - 1] = state::pop_value(e);
+    state::Value callee = state::pop_value(e);
+    c::LLVMValueRef argv[max_parts + 1];
+    argv[0] = c::LLVMBuildExtractValue(e->builder, callee.llvm, 1, "context");
+    c::LLVMValueRef code = c::LLVMBuildExtractValue(e->builder, callee.llvm, 0, "code");
+    for (Usize i = 0; i < count; i++) {
+        state::Ty want = part(fn, i);
+        if (!state::same_type(values[i].ty, want)) {
+            try state::convert(e, values[i], want, args[i]->span, .initialize);
+            values[i] = state::pop_value(e);
+        }
+        argv[i + 1] = values[i].llvm;
+    }
+    state::Ty result = *fn.element;
+    c::LLVMTypeRef type = code_type(e, fn);
+    c::LLVMValueRef made = nullptr;
+    if (is_void(result))
+        made = c::LLVMBuildCall2(e->builder, type, code, argv, (U32)count + 1, "");
+    else
+        made = c::LLVMBuildCall2(e->builder, type, code, argv, (U32)count + 1, "call");
+    state::push_value(e, (state::Value){.llvm = made, .ty = result});
+    return state::success();
+}
+
+// `f(a, b)` where `f` is a local of type `fn`.
+export state::Status call_value(state::Emitter *e, const ast::Expr *x, state::Ty fn) {
+    if (x->kind != .call) {
+        return state::fail("not a call", x->span);
+    }
+    ast::ExprRef args[:] = x->kind.call.args;
+    Usize count = countof(args);
+    if (count != fn.part_count)
+        return state::failf(x->span, "a fn value takes ", (U64)fn.part_count, " arguments, the call has ", (U64)count);
+    for (Usize i = 0; i < count; i++) {
+        const ast::Expr *arg = args[i];
+        if (arg->kind == .named_arg) {
+            return state::fail("a `fn` value takes its arguments by position", arg->span);
+        }
+    }
+    state::push_then(e, (state::Work){.then = call_finish, .expr = x, .number = count, .ty = fn, .span = x->span});
+    for (Usize i = count; i > 0; i--) {
+        state::push_eval(e, args[i - 1], state::hint_of(part(fn, i - 1)));
+    }
+    state::push_eval(e, x->kind.call.callee, state::no_hint());
+    return state::success();
 }
