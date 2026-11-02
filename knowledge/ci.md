@@ -43,7 +43,7 @@ only the full output of the nested build is in `.smith/log/.smith_task_units-bui
 
 **Why each Linux shard builds smith itself** (measured on 2026-10-31 over 60 runs of each event, #1139). A shard spends
 about 2.5 min before its first test: restore of the pack and step cache 0.5, `fetch` 0.2, `build` 1.2, `tests built` 1.1;
-its tests then take 1.4 (a pull request's 4 `--changed` shards) to 2.4 min (the queue's 8). One `build-linux` job that
+its tests then take 1.4 (a pull request's `--changed` shards, 4 then, 2 since 2026-11-02 when the 20 hosted slots of the free plan were full most hours) to 2.4 min (the queue's 8). One `build-linux` job that
 saved `build/` and `.smith/` for the shards to restore would put that 2.5 min, plus a save (about 0.5) and a restore
 (0.3 to 0.5) of a build of about 1 GB, in series ahead of every shard: the verdict gets about 1 min later, and only the
 runner minutes drop (about 17 of 41 per queue run). So the shards stay independent; the cut that does shorten the wall

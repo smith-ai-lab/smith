@@ -121,7 +121,9 @@ jobs:
         id: linux
         # Linux carries the tests: `--skip-macos` in parts, each building smith itself (no artifact egress). The Mac
         # runs the few tests only macOS can run (`--macos-only`, one part). A pull request tests what its change
-        # reaches, split into 4 parts (one part took 10 to 17 min); the queue runs everything in 8. A push to main
+        # reaches, split into 2 parts; the queue runs everything in 8. The free plan runs 20 hosted jobs at once and
+        # was full most hours of 2026-11-02 (queue shards waited 15 min for a runner), so a pull request takes 2 slots
+        # instead of 4: a part's median was 5.6 min, mostly building smith, which each part does again. A push to main
         # runs no tests (the queue tested that exact commit; #1139): its work is the release and the cache.
         run: |
           flags="--skip-macos"
@@ -130,7 +132,7 @@ jobs:
           if [ "${{ steps.scope.outputs.mode }}" = changed ]; then
             flags="$flags --changed --base ${{ steps.scope.outputs.base }}"
             macflags="$macflags --changed --base ${{ steps.scope.outputs.base }}"
-            count=4
+            count=2
           fi
           linux=
           for i in $(seq 1 "$count"); do
