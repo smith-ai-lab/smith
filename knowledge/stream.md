@@ -21,3 +21,28 @@ tags: [stream, generator, fiber]
 - **Not here:** the spawned form and the bounded buffer (#1037), `stream::merge` (#1039), the rules about what may be yielded or moved (#436 part B), a generator that borrows its arguments (regions, #439), and the linear check that a stream is finished or closed (#438). A stack per generator is two mappings, so about 32,000 are alive at once under Linux's default `vm.max_map_count`.
 
 Tests: `lib/std/stream_test.smith`.
+
+## Generators in smith's own syntax
+
+The new front end (#1428) emits a generator with `front/emit_stream.smith` (#1546); the checker's rules for `yield` are `front/types_stream.smith` (#1545).
+
+```smith
+import std::stream;
+
+fn countdown(from: i32) -> stream::Stream(i32) {
+    mut n := from
+    while n > 0 {
+        yield n
+        n -= 1
+    }
+}
+```
+
+- **`stream::Stream(T)` is one `ptr`**, null once the stream has ended. A function that returns it and has a `yield` in its body is a generator; one without a `yield` is an ordinary function.
+- **A generator is two functions.** The ramp keeps the function's own symbol and signature: it stores the arguments in a stack record, calls `smith_stream_start(body, &record, size)` and returns the handle, so nothing of the body runs (lazy). The body is the internal `<symbol>::body`, `void (ptr s, ptr args)`: it loads the parameters out of `args` into ordinary locals and runs the written body on the stream's own stack.
+- **`yield x`** converts `x` to `T`, stores it where `smith_stream_slot(s)` points and calls `smith_stream_yield(s)`: true goes on, false (the stream was closed) runs the pending `defer`s and ends the body. **`return`** and the end of the body do the same: the `defer`s, then `smith_stream_finish(s)`. `return v` is an error: `yield v` first.
+- **`stream::next(&s)`** is `?T`: `.some(v)` while the body yields, `.none` once it has ended (and after that, always). **`stream::close(&s)`** ends the stream early: an unread one never runs its body, a suspended one runs its `defer`s. `close` is the name the tickets propose; the lead has not confirmed it.
+- **Parameters are copied by the ramp and nothing more.** A parameter that points into the caller's stack (a `*mut i32`, a slice) and is read after a `yield` is valid only while the caller's frame is: how it meets regions is #439, still open.
+- **The checker does not type `stream::next` and `stream::close` yet**, so a module that calls them has no `Options.checked`: the emitter types a stream from the local that holds it. `for x in s` over a stream is not emitted (wave 3 of #1428, on top of `next`).
+
+Tests: `tests/front_emit_stream_test.smith` and the golden IR `tests/front/emit/stream.ll`.

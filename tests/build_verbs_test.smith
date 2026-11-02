@@ -279,3 +279,20 @@ export void test_build_verbs_any_other_top_level_flag_is_still_an_error() {
                              "smith: frobnicate is not a command.\n\nusage: smith <command>");
     scratch::expect_lacks("verbs: ... and no cc hint", run.err, "smith cc");
 }
+
+// A verb adds its own -k0 after the options typed, and a list already full stops with a message (#1665): the verb never
+// runs without an option it meant to add.
+export void test_build_verbs_a_full_option_list_stops_the_test_verb_with_a_message() {
+    scratch::Project p = scratch::make("p", "verbs_step");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run full = scratch::sh(&p, "SMITH_OUTPUT=full smith test $(yes ' -DA=1' | head -4096 | tr '\\n' ' ')");
+    defer scratch::release(full.out);
+    defer scratch::release(full.err);
+    scratch::expect_status("verbs: 4096 options and the default -k0: exits 2", 2, &full);
+    scratch::expect_contains("verbs: ... names the limit", full.err,
+                             "too many arguments: the default -k0 needs 1 more of the 4096");
+}
