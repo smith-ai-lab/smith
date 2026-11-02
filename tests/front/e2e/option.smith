@@ -1,0 +1,35 @@
+fn half(n: i32) -> ?i32 {
+    if n % 2 != 0 {
+        return .none
+    }
+    n / 2
+}
+
+fn or_zero(o: ?i64) -> i64 {
+    if let .some(v) = o {
+        return v
+    }
+    0
+}
+
+pub fn check() -> i32 {
+    mut found: ?i32
+    if let .some(_) = found {
+        return 1
+    }
+    found = half(10)
+    if let .some(h) = found {
+        if h != 5 {
+            return 2
+        }
+    } else {
+        return 3
+    }
+    if let .some(_) = half(7) {
+        return 4
+    }
+    if or_zero(12) != 12 || or_zero(.none) != 0 {
+        return 5
+    }
+    0
+}
