@@ -15,7 +15,7 @@
 //   switch (v) { case 1: case 2: ...; case .circle: ...; default: ... }
 //                              consecutive labels join one `SwitchCase`; the statements up to the next label are its
 //                              body
-//   break; continue; return; return e; goto l; l: s; defer s; static_assert(c, "m"); ;
+//   break; continue; return; return e; goto l; l: s; defer s; errdefer s; static_assert(c, "m"); ;
 //   an expression statement, or a declaration (below)
 //
 // The new syntax (#1428, S4) is read beside these, into the same nodes. A statement ends at a `;` or at the end of its
@@ -57,16 +57,17 @@ import std::mem;
 // What an open construct waits for.
 // NOLINTBEGIN(readability-identifier-naming)
 enum FrameKind {
-    block_frame,  // statements up to `}`
-    if_then,      // the then branch
-    if_else,      // the else branch
-    while_body,   // the body of a while
-    do_body,      // the body of a do, then `while (c);`
-    for_body,     // the body of a for
-    switch_frame, // labels and statements up to `}`
-    label_body,   // the statement after `l:`
-    defer_body,   // the statement after `defer`
-    for_in_body,  // the body of a `for x in xs`
+    block_frame,   // statements up to `}`
+    if_then,       // the then branch
+    if_else,       // the else branch
+    while_body,    // the body of a while
+    do_body,       // the body of a do, then `while (c);`
+    for_body,      // the body of a for
+    switch_frame,  // labels and statements up to `}`
+    label_body,    // the statement after `l:`
+    defer_body,    // the statement after `defer`
+    errdefer_body, // the statement after `errdefer`
+    for_in_body,   // the body of a `for x in xs`
 };
 // NOLINTEND(readability-identifier-naming)
 
@@ -1002,6 +1003,9 @@ static ast::Stmt *start(parse::Parser *p, Stack *stack) {
     case lex::kw_defer:
         push(stack, open_simple(p, defer_body));
         return nullptr;
+    case lex::kw_errdefer:
+        push(stack, open_simple(p, errdefer_body));
+        return nullptr;
     case lex::kw_for:
         push(stack, open_for(p));
         return nullptr;
@@ -1137,6 +1141,9 @@ static ast::Stmt *close_one(parse::Parser *p, Frame frame, ast::Stmt *done) {
         break;
     case defer_body:
         built = new_stmt({.defer_stmt = {.body = done}});
+        break;
+    case errdefer_body:
+        built = new_stmt({.errdefer_stmt = {.body = done}});
         break;
     default:
         return close_do(p, frame, done);
