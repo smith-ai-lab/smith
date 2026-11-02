@@ -62,7 +62,7 @@ static types::TypeRef refuse(types::Checked *r, const ast::Expr *e, types::TypeR
 // The element of a built-in iterable of type `t`, or null with the error reported.
 static types::TypeRef built_in(types::Checked *r, const ast::Expr *e, types::TypeRef t) {
     if (t == r->table.invalid) return nullptr;
-    if (t->kind == .array || t->kind == .slice || t->kind == .block) return t->element;
+    if (t->kind == .array || t->kind == .slice || t->kind == .block || t->kind == .stream) return t->element;
     if (t->kind == .text) return types::builtin(&r->table, "U8");
     return refuse(r, e, t);
 }
