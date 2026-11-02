@@ -1,7 +1,7 @@
 // A C interface to clang-format's own main, linked into smith as `smith fmt`.
 //
-// clang-format's main is ClangFormat.cpp's, with its options; scripts/llvm.sh renames its symbol. So every flag, style
-// file, exit status and byte of output is clang-format's own. See tool.h for how its initializers are handled.
+// clang-format's main is ClangFormat.cpp's, with its options; build_llvm_run_macos renames its symbol. So every flag,
+// style file, exit status and byte of output is clang-format's own. See tool.h for how its initializers are handled.
 #include "tool.h"
 
 extern "C" int smith_clang_format_main(int argc, const char **argv);
