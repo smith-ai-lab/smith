@@ -245,7 +245,7 @@ static void smith_lang_add_include(SmithLang *lang, const char *text, size_t len
         snprintf(line, sizeof line, "#include %c%.*s%c", angled ? '<' : '"', (int)length, text, angled ? '>' : '"');
     if (written > 0 && (size_t)written < sizeof line) smith_lang_include_append(lang, line, (size_t)written);
     if (lang->cimports_count >= smith_lang_cimports_max) {
-        lang->broken = true;
+        smith_lang_limit(lang, "`import <h>;` lines of one module", smith_lang_cimports_max);
         return;
     }
     lang->cimport_text[lang->cimports_count] = smith_lang_store(lang, text, length);
@@ -267,7 +267,7 @@ static void smith_lang_note_use(SmithLang *lang, uint16_t via, const char *name,
             return;
     }
     if (lang->c_uses_count >= smith_lang_cuses_max) {
-        lang->broken = true;
+        smith_lang_limit(lang, "C names that exported declarations use", smith_lang_cuses_max);
         return;
     }
     lang->c_uses[lang->c_uses_count].name = smith_lang_store(lang, name, length);
