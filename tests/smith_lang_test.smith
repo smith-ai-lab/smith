@@ -1532,6 +1532,10 @@ export void test_generic_slice() {
     corpus_case("generic-slice");
 }
 
+export void test_generic_own_call_slice_mode() {
+    corpus_case("generic-own-call-slice-mode");
+}
+
 export void test_generic_slice_const() {
     corpus_case("generic-slice-const");
 }
