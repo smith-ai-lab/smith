@@ -2538,7 +2538,7 @@ static int build_llvm_run_macos(SmithRun *run, const char *source, const char *n
 
 // After a build of LLVM (issue #618): every other LLVM folder of the cache goes, and its Enzyme, but the previous
 // release's, the one the smith that runs this build links (its identity is what `smith-cc --smith-which` prints), so a
-// build of the previous commit still works. scripts/llvm_prune.c does it; when the identity cannot be read nothing is
+// build of the previous commit still works. llvm/prune.smith does it; when the identity cannot be read nothing is
 // removed.
 static int build_llvm_prune(SmithRun *run) {
     SmithBuild *b = run->b;
@@ -2551,7 +2551,27 @@ static int build_llvm_prune(SmithRun *run) {
     const char *current = build_llvm_folder(b);
     const char *name = strrchr(current, '/') + 1;
     const char *tool = smith_fmt(b, "%s/../llvm_prune", current);
-    const char *const compile[] = {cc, "-std=c23", "-O1", "scripts/llvm_prune.c", "-o", tool, nullptr};
+    const char *const compile[] = {cc,
+                                   "-O1",
+                                   "-w",
+                                   "-I",
+                                   "include",
+                                   "-I",
+                                   ".smith/include",
+                                   "llvm/prune.smith",
+                                   "lib/std/files.smith",
+                                   "lib/std/console.smith",
+                                   "lib/std/format.smith",
+                                   "lib/std/mem.smith",
+                                   "lib/std/arena.smith",
+                                   "lib/std/contract.smith",
+                                   "lib/std/env.smith",
+                                   "lib/std/text.smith",
+                                   "lib/handlers.c",
+                                   "lib/trace.c",
+                                   "-o",
+                                   tool,
+                                   nullptr};
     int status = build_exec(compile);
     if (status != 0) return status;
     const char *const prune[] = {tool, smith_fmt(b, "%s/..", current), name, identity, nullptr};
