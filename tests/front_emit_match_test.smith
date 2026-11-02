@@ -1,0 +1,249 @@
+// Tests of enumerations, `.red` and `match` in the emitter (#1585 of #1428). Each scenario is source text in smith's
+// own syntax, read by front::parser's hooks, checked by front::types_decl and emitted, then run through the JIT.
+module front_emit_match_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::emit_match;
+import front::emit_state;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+
+struct Scenario {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    parser::Parsed parsed;
+    types::Checked checked;
+    Bool has_checked;
+};
+
+// The module of `source`, read in smith's own syntax.
+static parser::Parsed parse_new(Str source) {
+    parser::Parsed result = {};
+    result.module.file = "t.smith";
+    lex::Lexed lexed = lex::tokenize_new(source);
+    switch (lexed) {
+    case .ok:
+        parse::Parser p = parse::make(lexed.ok, source);
+        p.new_syntax = true;
+        p.hooks.expression = parse_expr::expression;
+        p.hooks.type = parse_type::type;
+        p.hooks.statement = parse_stmt::statement;
+        p.hooks.declaration = parse_decl::declaration;
+        result.module = parse_decl::file(&p, "t.smith");
+        result.errors = p.errors;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    return result;
+}
+
+static void begin(Scenario *s, Str source, Bool with_checker) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parse_new(source);
+    test::check_equal(countof(s->parsed.errors), (Usize)0);
+    if (with_checker) {
+        s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+        s->has_checked = true;
+        test::check_equal(s->checked.error_count, (Usize)0);
+    }
+    mem::set_allocator(outside);
+}
+
+static emit::Options options_for(emit::Target target, const Scenario *s) {
+    emit::Options options = {};
+    options.target = target;
+    if (s->has_checked) options.checked = &s->checked;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+// The text of `source` from `start`.
+static Bool starts_at(Str source, U32 start, Str needle) {
+    if (start > countof(source)) return false;
+    return has(
+        source[start:start + (countof(needle) < countof(source) - start ? countof(needle) : countof(source) - start)],
+        needle);
+}
+
+static Bool contains(const char *text, Str needle) {
+    return text != nullptr && c::strstr(text, needle.data) != nullptr;
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+// Emits `source` (with the checker's types), returns its IR text and adds it to `host`.
+static char *ir_of(Str source, emit_jit::Jit *host, Scenario *s) {
+    begin(s, source, true);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s->parsed.module, options_for(host->target, s));
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    } else {
+        Str expected = "no error";
+        test::check_equal(emitted.error.message, expected);
+    }
+    return text;
+}
+
+// Emits `source` and checks that it stops with `what` in its message at a span that starts with `at`.
+static void stops_with(Str source, Bool with_checker, Str what, Str at) {
+    Scenario s = {};
+    begin(&s, source, with_checker);
+    emit_jit::Jit host = start_jit();
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s.parsed.module, options_for(host.target, &s));
+    test::check_equal(emitted == .error, true);
+    if (emitted == .error) {
+        test::check_equal(has(emitted.error.message, what), true);
+        test::check_equal(starts_at(source, emitted.error.span.start, at), true);
+        emit::free_error(emitted.error);
+    } else {
+        c::LLVMDisposeModule(emitted.ok);
+    }
+    c::LLVMContextDispose(context);
+    emit_jit::stop(&host);
+}
+
+typedef I32 (*Pick)(I32);
+
+export void test_front_emit_match_enumerators_take_their_values_in_order_or_as_written() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of(
+        "enum Color {\n    red\n    green\n    blue\n}\n"
+        "enum Small: u8 {\n    low = 2\n    mid\n    high = 9\n    top\n}\n"
+        "pub fn green() -> i32 {\n    c: Color = .green\n    c as i32\n}\n"
+        "pub fn mid() -> i32 {\n    c: Small = .mid\n    c as i32\n}\n"
+        "pub fn top() -> i32 {\n    c: Small = .top\n    c as i32\n}\n"
+        "pub fn eq(n: i32) -> i32 {\n    a: Color = .blue\n    b: Color = .blue\n    if a == b {\n        return 1\n   "
+        " }\n    0\n}\n"
+        "pub fn back(n: i32) -> i32 {\n    c := n as Color\n    k: Color = .blue\n    if c == k {\n        return 1\n  "
+        "  }\n    0\n}\n"
+        "pub fn zero(n: i32) -> i32 {\n    mut c: Color\n    r: Color = .red\n    if c == r {\n        return 1\n    "
+        "}\n    0\n}\n"
+        "pub fn small(c: Small) -> i32 {\n    0\n}\n",
+        &host, &s);
+    test::check_equal(ir != nullptr, true);
+    test::check_equal(contains(ir, "i8"), true);
+    test::check_equal(((Pick)symbol_of(&host, "green"))(0), (I32)1);
+    test::check_equal(((Pick)symbol_of(&host, "mid"))(0), (I32)3);
+    test::check_equal(((Pick)symbol_of(&host, "top"))(0), (I32)10);
+    test::check_equal(((Pick)symbol_of(&host, "eq"))(0), (I32)1);
+    test::check_equal(((Pick)symbol_of(&host, "back"))(2), (I32)1);
+    test::check_equal(((Pick)symbol_of(&host, "back"))(1), (I32)0);
+    test::check_equal(((Pick)symbol_of(&host, "zero"))(0), (I32)1);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_match_over_an_enumeration_is_one_switch() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir =
+        ir_of("enum Color {\n    red\n    green\n    blue\n}\n"
+              "fn score(c: Color) -> i32 {\n    match c {\n        .red => 1\n        .green, .blue => 2\n    }\n}\n"
+              "pub fn pick(n: i32) -> i32 {\n    score(n as Color)\n}\n"
+              "pub fn stmt(n: i32) -> i32 {\n    mut seen := 0\n    c := n as Color\n    match c {\n"
+              "        .red => seen = 1\n        .green => seen = 2\n        .blue => seen = 3\n    }\n    seen\n}\n",
+              &host, &s);
+    test::check_equal(ir != nullptr, true);
+    test::check_equal(contains(ir, "switch i32"), true);
+    test::check_equal(contains(ir, "unreachable"), true);
+    Pick pick = (Pick)symbol_of(&host, "pick");
+    test::check_equal(pick(0), (I32)1);
+    test::check_equal(pick(1), (I32)2);
+    test::check_equal(pick(2), (I32)2);
+    Pick stmt = (Pick)symbol_of(&host, "stmt");
+    test::check_equal(stmt(0), (I32)1);
+    test::check_equal(stmt(1), (I32)2);
+    test::check_equal(stmt(2), (I32)3);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_match_over_an_option_binds_the_payload() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("fn count(o: ?i32) -> i32 {\n    match o {\n        .some(n) => n\n        .none => 0\n    }\n}\n"
+                     "pub fn some(n: i32) -> i32 {\n    count(.some(n))\n}\n"
+                     "pub fn none(n: i32) -> i32 {\n    count(.none)\n}\n"
+                     "pub fn stmt(n: i32) -> i32 {\n    mut seen := 0\n    o: ?i32 = .some(n)\n    match o {\n"
+                     "        .some(_) => seen = 1\n        .none => seen = 2\n    }\n    seen\n}\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    test::check_equal(((Pick)symbol_of(&host, "some"))(6), (I32)6);
+    test::check_equal(((Pick)symbol_of(&host, "none"))(6), (I32)0);
+    test::check_equal(((Pick)symbol_of(&host, "stmt"))(6), (I32)1);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_match_a_payload_enumeration_is_an_error_at_its_declaration() {
+    stops_with("enum Shape {\n    circle: i32\n    none\n}\n", false, "not emitted yet: a payload enumeration",
+               "enum Shape");
+}
+
+export void test_front_emit_match_an_enumerator_value_that_is_not_a_literal_is_an_error() {
+    stops_with("enum Color {\n    red = 1 + 1\n}\n", false,
+               "not emitted yet: an enumerator value that is not an integer literal", "1 + 1");
+}
+
+// `emit` sends a `.red` with no hint and no checker to the handler, so it is called directly.
+export void test_front_emit_match_an_untyped_enumerator_is_an_error() {
+    Scenario s = {};
+    begin(&s, "fn f() -> i32 {\n    0\n}\n", false);
+    emit_state::Emitter e = {};
+    e.node_type_hook = emit::type_of_node;
+    ast::Expr *x = ast::variant_of("red", nullptr);
+    emit_state::Status made = emit_match::variant(&e, x, emit_state::no_hint());
+    test::check_equal(made == .error, true);
+    if (made == .error) {
+        test::check_equal(has(made.error.message, ".red needs the enumeration it names; write the type"), true);
+        emit_state::free_text(made.error.message);
+    }
+}

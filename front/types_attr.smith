@@ -1,0 +1,183 @@
+// front::types_attr: the attributes of smith's own syntax in the checker (#1628, part of #1428, section Attributes).
+//
+//   check_module(r, module)   Checks every `@name` attribute written on a declaration of the module, on a field of a
+//                             struct and on an enumerator.
+//
+// THE RULES
+//   built-ins   `@inline @noinline @cold @pure @affine @c_name(...) @attribute @effects(...)` are written
+//               unqualified; their arguments are the old lowering's business. Any other unqualified name must be a
+//               struct of this module marked `@attribute`, and an unknown one is an error that lists the built-ins.
+//   user ones   A struct marked `@attribute` is an attribute type. `@rename("id")` or `@rename(to = "id")` constructs
+//               it, by position or by name as a call does, and every argument is known at compile time: a literal, a
+//               constant, or an operation on those.
+//   other module  `@serial::rename(...)` names a struct of another module, which the checker of one module cannot
+//               see: it is reported as `not yet typed`, as every name from another module is (types_expr). A
+//               qualified name whose first part is no import is an error.
+//   record      An attribute has no behaviour of its own: the parser already holds the written value in the
+//               `attributes` of the declaration, the field or the enumerator, for reflection (#332) and nothing else.
+//
+// No recursion: the walk over a constant's operands has an explicit stack.
+module front::types_attr;
+
+import front::ast;
+import front::types;
+import front::types_expr;
+import std::format;
+import std::mem;
+
+static Str msg(char chars[:]) {
+    return chars;
+}
+
+static Bool same_text(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+static Bool is_built_in(Str name) {
+    return same_text(name, "inline") || same_text(name, "noinline") || same_text(name, "cold") ||
+           same_text(name, "pure") || same_text(name, "affine") || same_text(name, "c_name") ||
+           same_text(name, "attribute") || same_text(name, "effects");
+}
+
+static Str path_text(ast::Path path) {
+    Str text = "";
+    for (Usize i = 0; i < countof(path.segments); i++) {
+        if (i > 0) text = msg(format::push(text, "::"));
+        text = msg(format::push(text, path.segments[i].text));
+    }
+    return text;
+}
+
+// Whether a declaration carries `@attribute`.
+static Bool marks_attribute(const ast::Decl *d) {
+    for (Usize i = 0; i < countof(d->attributes); i++) {
+        ast::Attribute a = d->attributes[i];
+        if (a.is_new && countof(a.name.segments) == 1 && same_text(a.name.segments[0].text, "attribute")) return true;
+    }
+    return false;
+}
+
+// Whether an expression is known at compile time: literals, constants, and operations on them.
+static Bool is_constant(const types::Checked *r, const ast::Expr *root) {
+    const ast::Expr *stack[32];
+    Usize top = 0;
+    stack[top++] = root;
+    while (top > 0) {
+        const ast::Expr *e = stack[--top];
+        if (e == nullptr) continue;
+        if (e->kind == .integer || e->kind == .floating || e->kind == .character || e->kind == .string ||
+            e->kind == .boolean || e->kind == .null_pointer) {
+            continue;
+        }
+        if (e->kind == .variant && e->kind.variant.payload == nullptr) continue;
+        if (e->kind == .name) {
+            const types::Symbol *s = types::lookup_path(&r->scopes, e->kind.name.path);
+            if (s == nullptr || s->kind != .variable) return false;
+            Bool fixed = s->is_const;
+            if (s->decl != nullptr && s->decl->kind == .variable && s->decl->kind.variable.is_new) {
+                fixed = !s->decl->kind.variable.is_mut;
+            }
+            if (!fixed) return false;
+            continue;
+        }
+        if (top + 2 > 32) return false;
+        if (e->kind == .unary) {
+            stack[top++] = e->kind.unary.operand;
+        } else if (e->kind == .binary) {
+            stack[top++] = e->kind.binary.left;
+            stack[top++] = e->kind.binary.right;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+static Bool has_field(const types::Ty *type, Str name) {
+    for (Usize i = 0; i < countof(type->slots); i++) {
+        if (same_text(type->slots[i].name, name)) return true;
+    }
+    return false;
+}
+
+// The arguments of `@rename(...)` against the fields of its struct.
+static void check_arguments(types::Checked *r, const ast::Attribute *a, Str name, const types::Ty *type) {
+    Usize count = countof(type->slots);
+    if (countof(a->args) > count) {
+        types::failf(r, a->span, "`", name, "` has ", count, " fields, but the attribute gives ", countof(a->args));
+    }
+    for (Usize i = 0; i < countof(a->args); i++) {
+        const ast::Expr *arg = a->args[i];
+        const ast::Expr *value = arg;
+        Usize at = i;
+        if (arg->kind == .named_arg) {
+            Str field = arg->kind.named_arg.name;
+            value = arg->kind.named_arg.value;
+            if (!has_field(type, field)) {
+                types::failf(r, arg->span, "`", name, "` has no field `", field, "`");
+                continue;
+            }
+            for (Usize k = 0; k < count; k++) {
+                if (same_text(type->slots[k].name, field)) at = k;
+            }
+        }
+        if (at >= count) continue;
+        if (!is_constant(r, value)) {
+            types::fail(r, value->span, "an attribute's arguments are computed at compile time");
+            continue;
+        }
+        types_expr::check(r, value, type->slots[at].type);
+    }
+}
+
+// One `@name` attribute.
+static void check_attribute(types::Checked *r, const ast::Attribute *a) {
+    if (!a->is_new || countof(a->name.segments) == 0) return;
+    Str name = path_text(a->name);
+    if (countof(a->name.segments) > 1) {
+        const types::Symbol *first = types::lookup(&r->scopes, a->name.segments[0].text);
+        if (first != nullptr && first->kind == .module_name) {
+            types::failf(r, a->span, "not yet typed: `", name, "`, an attribute from another module");
+        } else {
+            types::failf(r, a->span, "`", name, "` is not an attribute: mark its struct `@attribute`");
+        }
+        return;
+    }
+    const types::Symbol *symbol = types::lookup(&r->scopes, name);
+    if (symbol == nullptr || symbol->kind != .type_name) {
+        if (is_built_in(name)) return;
+        types::failf(r, a->span, "unknown attribute `", name,
+                     "`; the built-in ones are `@inline`, `@noinline`, `@cold`, `@pure`, `@affine`, `@c_name(...)`, ",
+                     "`@attribute` and `@effects(...)`, and your own are structs marked `@attribute`");
+        return;
+    }
+    if (symbol->decl == nullptr || !marks_attribute(symbol->decl)) {
+        types::failf(r, a->span, "`", name, "` is not an attribute: mark its struct `@attribute`");
+        return;
+    }
+    check_arguments(r, a, name, symbol->type);
+}
+
+static void check_all(types::Checked *r, ast::Attribute list[:]) {
+    for (Usize i = 0; i < countof(list); i++)
+        check_attribute(r, &list[i]);
+}
+
+export void check_module(types::Checked *r, const ast::Module *m) {
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->from_c) continue;
+        check_all(r, d->attributes);
+        if (d->kind == .record) {
+            for (Usize k = 0; k < countof(d->kind.record.fields); k++)
+                check_all(r, d->kind.record.fields[k].attributes);
+        } else if (d->kind == .enumeration) {
+            for (Usize k = 0; k < countof(d->kind.enumeration.items); k++)
+                check_all(r, d->kind.enumeration.items[k].attributes);
+        }
+    }
+}

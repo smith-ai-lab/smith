@@ -527,14 +527,21 @@ export state::Status assign_op(state::Emitter *e, const ast::Expr *x, state::Hin
 // `f32` / `F32` and `f64` / `F64`: kind `floating`, `bits` 32 or 64, signed.
 export Bool type_float(state::Emitter *e, Str name, state::Ty *ty) {
     U32 bits = 0;
-    if (state::same_text(name, "f32") || state::same_text(name, "F32"))
+    Bool brain = state::same_text(name, "bf16") || state::same_text(name, "BF16");
+    if (brain || state::same_text(name, "f16") || state::same_text(name, "F16"))
+        bits = 16;
+    else if (state::same_text(name, "f32") || state::same_text(name, "F32"))
         bits = 32;
     else if (state::same_text(name, "f64") || state::same_text(name, "F64"))
         bits = 64;
     else
         return false;
     state::Ty made = {.kind = .floating, .bits = bits, .is_signed = true, .name = name};
-    if (bits == 32)
+    if (brain)
+        made.llvm = c::LLVMBFloatTypeInContext(e->context);
+    else if (bits == 16)
+        made.llvm = c::LLVMHalfTypeInContext(e->context);
+    else if (bits == 32)
         made.llvm = c::LLVMFloatTypeInContext(e->context);
     else
         made.llvm = c::LLVMDoubleTypeInContext(e->context);
@@ -660,7 +667,11 @@ static state::Status float_cast_finish(state::Emitter *e, const state::Work *w) 
     state::Ty to = w->ty;
     c::LLVMValueRef out = nullptr;
     if (from.ty.kind == .floating && to.kind == .floating) {
-        if (to.bits > from.ty.bits)
+        if (to.bits == 16 && from.ty.bits == 16 && to.llvm != from.ty.llvm) {
+            // `f16` and `bf16` hold different values: through `f32`, which holds both
+            c::LLVMValueRef wide = c::LLVMBuildFPExt(e->builder, from.llvm, c::LLVMFloatTypeInContext(e->context), "");
+            out = c::LLVMBuildFPTrunc(e->builder, wide, to.llvm, "");
+        } else if (to.bits > from.ty.bits)
             out = c::LLVMBuildFPExt(e->builder, from.llvm, to.llvm, "");
         else if (to.bits < from.ty.bits)
             out = c::LLVMBuildFPTrunc(e->builder, from.llvm, to.llvm, "");

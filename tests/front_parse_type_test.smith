@@ -4,6 +4,7 @@
 module front_parse_type_test;
 
 import front::ast;
+import front::fix;
 import front::lex;
 import front::parse;
 import front::parse_type;
@@ -250,4 +251,88 @@ export void test_parse_type_new_starts_new_type() {
 export void test_parse_type_new_malformed_forms() {
     check_golden_in("tests/front/parse_type/new_errors.txt",
                     "*\n?\n[5\n[5]\n[,3\n(i32\n(i32)\nfn i32\nfn(i32\nfn(i32) ->", true);
+}
+
+// The warnings of an old type (the parser records them in `warnings`), one a line, then the type after the fixes are
+// applied pass after pass, then the warnings that remain: none for a type with a smith spelling.
+static Str dump_fixing_one(Str source) {
+    char body[:] = format::push(source, "\n");
+    Str current = source;
+    Usize passes = 0;
+    Usize left = 0;
+    for (Usize pass = 0; pass < 8; pass += 1) {
+        parse::Parser p = parser_of(current);
+        _ = parse::type(&p);
+        left = countof(p.errors) + countof(p.warnings);
+        Usize total = countof(p.errors) + countof(p.warnings);
+        for (Usize i = 0; i < total && pass == 0; i += 1) {
+            Bool is_error = i < countof(p.errors);
+            parse::ParseError found = is_error ? p.errors[i] : p.warnings[i - countof(p.errors)];
+            Str kind = "warning ";
+            if (is_error) kind = "error ";
+            Str fixed_by = "\n";
+            if (countof(found.fix) == 0) fixed_by = " (no fix)\n";
+            body = format::push(body, kind, found.span.start, "-", found.span.end, ": ", found.message, fixed_by);
+        }
+        fix::Fixed fixed = fix::apply_fixes(current, p.errors, p.warnings);
+        if (fixed.applied == 0) break;
+        current = fixed.text;
+        passes += 1;
+    }
+    char result[:] = format::push(body, "fixed: ", current, " (", passes, " passes, ", left, " left)\n");
+    return result;
+}
+
+static Str dump_fixing(Str lines) {
+    char all[:] = {};
+    Usize start = 0;
+    for (Usize i = 0; i <= countof(lines); i += 1) {
+        if (i < countof(lines) && lines[i] != '\n') continue;
+        all = format::push(all, dump_fixing_one(lines[start:i]), "\n");
+        start = i + 1;
+    }
+    return all;
+}
+
+static void check_fixing(Str path, Str lines) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::golden(path, dump_fixing(lines));
+}
+
+export void test_parse_type_old_built_in_names_become_lowercase() {
+    check_fixing("tests/front/parse_type/old_builtins.txt", "I32\nUsize\nStr\nType\nconst Bool\nVoid\nPoint\ni32");
+}
+
+export void test_parse_type_old_c_names_become_sized_types() {
+    check_fixing("tests/front/parse_type/old_c_names.txt",
+                 "int\nunsigned long\nunsigned char\ndouble\nsize_t\nuint32_t\nlong long\nchar *\nchar *name\nlong "
+                 "double\nvolatile "
+                 "I32");
+}
+
+export void test_parse_type_old_suffixes_move_in_front() {
+    check_fixing(
+        "tests/front/parse_type/old_suffixes.txt",
+        "U8[:]\nI32[4]\nI32[n]\nI32[:][3]\nI32[:][:]\nI32[2][3]\nPoint *[:]\nconst char *const *\nU8 *\nPoint **");
+}
+
+export void test_parse_type_old_tuples_and_function_types() {
+    check_fixing("tests/front/parse_type/old_functions.txt",
+                 "struct { I32, F32 }\nstruct { I32 }\nFn(Bool (I32, I32))\nFn(void (U8 *, Usize))\nFn(I32 ())\n"
+                 "Fn(I32 (I32, ...))\nFn(Bool (Fn(I32 (I32)), I32))\nOption(I32 *)");
+}
+
+// An old form is a warning, never an error: today's corpus still reads and compiles.
+export void test_parse_type_old_forms_are_warnings_not_errors() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("I32 *[:]");
+    _ = parse::type(&p);
+    test::check_equal(countof(p.errors), 0);
+    test::check_equal(countof(p.warnings), 1);
 }

@@ -24,6 +24,7 @@ module front::emit_memory;
 
 import front::ast;
 import front::emit_arith as arith;
+import front::emit_match as matching;
 import front::emit_state as state;
 import front::types;
 import std::arena;
@@ -135,7 +136,7 @@ static state::TyResult resolve(state::Emitter *e, const ast::TypeExpr *t) {
     Str name = path.segments[0].text;
     state::Ty ty = {};
     Usize index = 0;
-    if (state::scalar_type(e, name, &ty)) {
+    if (state::scalar_type(e, name, &ty) || matching::type_enum(e, name, &ty)) {
     } else if (find_record_named(e, name, &index)) {
         ty = e->records[index].ty;
     } else {
@@ -344,21 +345,36 @@ static Bool in_range_constant(state::Value at, U64 count) {
     return c::LLVMConstIntGetZExtValue(at.llvm) < count;
 }
 
-// An array's element: the index is checked against the count (a failed check calls `contract::fail_index`).
-static void array_element(state::Emitter *e, state::Value base, state::Value at, c::LLVMValueRef position) {
+// An index is checked against the count (a failed check calls `contract::fail_index`); a constant inside it is not.
+static void check_index(state::Emitter *e, state::Value base, state::Value at, c::LLVMValueRef position) {
     c::LLVMTypeRef word = index_word(e);
-    if (!in_range_constant(at, base.ty.count)) {
-        c::LLVMValueRef count = c::LLVMConstInt(word, base.ty.count, 0);
-        c::LLVMValueRef bad = c::LLVMBuildICmp(e->builder, c::LLVMIntUGE, position, count, "outside");
-        c::LLVMTypeRef wide = c::LLVMInt64TypeInContext(e->context);
-        c::LLVMValueRef args[3] = {c::LLVMBuildIntCast2(e->builder, at.llvm, wide, at.ty.is_signed, ""),
-                                   c::LLVMConstInt(c::LLVMInt32TypeInContext(e->context), at.ty.is_signed, 0),
-                                   c::LLVMConstInt(wide, base.ty.count, 0)};
-        arith::report_if(e, bad, "smith_contract_fail_index", args, 3);
-    }
+    if (in_range_constant(at, base.ty.count)) return;
+    c::LLVMValueRef count = c::LLVMConstInt(word, base.ty.count, 0);
+    c::LLVMValueRef bad = c::LLVMBuildICmp(e->builder, c::LLVMIntUGE, position, count, "outside");
+    c::LLVMTypeRef wide = c::LLVMInt64TypeInContext(e->context);
+    c::LLVMValueRef args[3] = {c::LLVMBuildIntCast2(e->builder, at.llvm, wide, at.ty.is_signed, ""),
+                               c::LLVMConstInt(c::LLVMInt32TypeInContext(e->context), at.ty.is_signed, 0),
+                               c::LLVMConstInt(wide, base.ty.count, 0)};
+    arith::report_if(e, bad, "smith_contract_fail_index", args, 3);
+}
+
+// An array's element, or a vector's lane.
+static void array_element(state::Emitter *e, state::Value base, state::Value at, c::LLVMValueRef position) {
+    check_index(e, base, at, position);
+    c::LLVMTypeRef word = index_word(e);
     c::LLVMValueRef indices[2] = {c::LLVMConstInt(word, 0, 0), position};
     c::LLVMValueRef address = c::LLVMBuildInBoundsGEP2(e->builder, base.ty.llvm, base.llvm, indices, 2, "element");
     state::push_value(e, (state::Value){.llvm = address, .ty = *base.ty.element});
+}
+
+// A lane of a vector of Bools (a comparison's result) is one bit, with no address: it is read into a temporary.
+static void flag_lane(state::Emitter *e, state::Value base, state::Value at, c::LLVMValueRef position) {
+    check_index(e, base, at, position);
+    c::LLVMValueRef whole = c::LLVMBuildLoad2(e->builder, base.ty.llvm, base.llvm, "");
+    c::LLVMValueRef lane = c::LLVMBuildExtractElement(e->builder, whole, position, "lane");
+    c::LLVMValueRef slot = state::new_alloca(e, *base.ty.element, "lane");
+    c::LLVMBuildStore(e->builder, lane, slot);
+    state::push_value(e, (state::Value){.llvm = slot, .ty = *base.ty.element});
 }
 
 static state::Status index_finish(state::Emitter *e, const state::Work *w) {
@@ -366,7 +382,11 @@ static state::Status index_finish(state::Emitter *e, const state::Work *w) {
     state::Value base = state::pop_value(e);
     if (at.ty.kind != .integer) return state::failf(w->span, "an index is an integer, not ", at.ty.name);
     c::LLVMValueRef position = c::LLVMBuildIntCast2(e->builder, at.llvm, index_word(e), at.ty.is_signed, "");
-    if (base.ty.kind == .array) {
+    if (base.ty.kind == .vector && base.ty.element->kind == .boolean) {
+        flag_lane(e, base, at, position);
+        return state::success();
+    }
+    if (base.ty.kind == .array || base.ty.kind == .vector) {
         array_element(e, base, at, position);
         return state::success();
     }

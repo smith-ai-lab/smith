@@ -261,3 +261,42 @@ export void test_front_emit_float_cast_to_an_integer_that_does_not_fit_calls_the
     test::check_equal(traps(byte_at, 255.9), false);
     emit_jit::stop(&host);
 }
+
+// `f16` and `bf16` (#1629): the IR names `half` and `bfloat`, and the two convert to `f32` but not to each other.
+export void test_front_emit_half_and_bfloat_are_llvm_half_and_bfloat() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("pub fn half(a: f16) -> f16 {\n    a * a\n}\n"
+                     "pub fn brain(a: bf16) -> f32 {\n    b: bf16 = a + 1.0\n    b as f32\n}\n"
+                     "pub fn across(a: f16) -> bf16 {\n    a as bf16\n}\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    test::check_equal(contains(ir, "fmul half"), true);
+    test::check_equal(contains(ir, "fadd bfloat"), true);
+    test::check_equal(contains(ir, "fpext half"), true);
+    test::check_equal(contains(ir, "fptrunc float"), true);
+    emit_jit::stop(&host);
+}
+
+static Str first_error_of(Str source, Scenario *s) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parse_new(source);
+    s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+    mem::set_allocator(outside);
+    if (s->checked.error_count == 0) return "";
+    return s->checked.errors[0].message;
+}
+
+export void test_front_emit_half_literal_out_of_range_and_half_to_bfloat_are_errors() {
+    Scenario s = {};
+    Str range = first_error_of("pub fn f() -> f16 {\n    x: f16 = 70000.0\n    x\n}\n", &s);
+    test::check_equal(contains(range.data, "does not fit F16 (up to 65504)"), true);
+    Scenario t = {};
+    Str convert = first_error_of("pub fn f(a: f16) -> bf16 {\n    b: bf16 = a\n    b\n}\n", &t);
+    test::check_equal(countof(convert) > 0, true);
+    Scenario u = {};
+    Str fine = first_error_of("pub fn f() -> bf16 {\n    x: bf16 = 3.0e38\n    x\n}\n", &u);
+    test::check_equal(countof(fine), (Usize)0);
+}

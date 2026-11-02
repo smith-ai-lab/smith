@@ -14,7 +14,7 @@ The pipeline, one module group per section below:
 
 - **lex, parse**: text to a `front::ast` tree (`lex`, `parse`, `parse_expr`, `parse_type`, `parse_stmt`, `parse_decl`, `parser`).
 - **fix**: the fixes parse and check errors carry, applied by `smith lint --fix`.
-- **check**: the tree to types (`types`, `types_expr`, `types_convert`, `types_decl`, `types_fn`, `types_iter`).
+- **check**: the tree to types (`types`, `types_expr`, `types_convert`, `types_decl`, `types_attr`, `types_fn`, `types_iter`).
 - **emit**: the checked tree to an LLVM module (`emit*.smith`), then an object (`emit_object`).
 - **drive**: `compile` and `roots` join the stages for `smith cc`; `cimport` reads C headers ([c-header-import](c-header-import.md)).
 
@@ -74,6 +74,8 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - A `ParseError` has `fix` (a list of `Edit`: a span and its replacement text). `parse::error_fix` records one in `Parser.errors`; `parse::warning_fix` one in `Parser.warnings`.
 - A warning is an old form that still compiles; `parser::Parsed.warnings` carries them, and tests that count `errors` ignore them.
 - The errors are the current allocator's, as the tree is.
+
+**Fix-its** (S6, #1442, `front/fix.smith`): a `ParseError` has `fix` (a list of `Edit`: a span and its replacement text). `parse::error_fix(p, span, message, edits)` and `parse::warning_fix` record one; `warning_fix` appends to `Parser.warnings` (`parser::Parsed.warnings`, ignored by `front/compile.smith`); the old forms get fixes ticket by ticket (#1428). `parse_type` (F1, #1506) records one warning per old type with one edit that writes the whole type in smith's own syntax: lowercase built-ins and sized types for C's names, `*T`, `[]T`, `[N]T` and `[a,b]T` for the suffixes, `(A, B)` for `struct { A, B }`, `fn(A) -> R` for `Fn(R (A))`, with `const` dropped; `volatile`, `restrict`, `long double` and a variadic function type are warnings with no edit. While fixing, `fn(` written by an earlier pass is read as a function type. `fix::apply_fixes(source, errors, warnings)` (errors first, then the warnings with the wider span first, so a cast or a declaration is mended whole before a type inside it and the next pass mends that type) takes each fix whose edits overlap none already taken (the first error wins; the rest count as skipped), `fix::fix_text` parses and applies until a pass applies nothing (at most 8), and `smith lint --fix FILE.smith...` (`runtime/front_flag.c`, no `--` among the arguments) runs that over files and prints `path: N fixes applied`. Tests: `tests/front_fix_test.smith`.
 
 ### parse_expr and parse_type (`front/parse_expr.smith`, `front/parse_type.smith`, #1145)
 
@@ -264,7 +266,7 @@ Iteration in the checker; the rules are the top comment of the file.
 - Tests run the result in LLJIT (`emit_jit.smith`) and compare golden IR (`tests/front/emit/`).
 
 **Files**: `emit.smith` (passes, the walk, routing), `emit_state.smith` (shared types, `Emitter`, hooks; its own file to break an import cycle), then one file per area, no two tickets sharing one.
-- `emit_arith` (integer expressions), `emit_control`, `emit_call`, `emit_memory`, `emit_debug`, `emit_option`, `emit_iter`, `emit_match`, `emit_value`, `emit_tuple`, `emit_lambda`, `emit_jit` (test helper).
+- `emit_vector` (`vec(T, N)`), `emit_arith` (integer expressions), `emit_control`, `emit_call`, `emit_memory`, `emit_debug`, `emit_option`, `emit_iter`, `emit_match`, `emit_value`, `emit_tuple`, `emit_lambda`, `emit_jit` (test helper).
 - Three hooks in `Emitter`, set by `emit::module`, let a handler reach `emit.smith` without importing it: `state::type_of` (a type expression), `state::type_of_node` (the checker's type of a node) and `state::convert`.
 - `state::convert(e, value, to, span, site)` pushes `value` as a `to`: as is, widened by the checker's rules, or wrapped for an option; else the site's error (`initializing X with Y`).
 - `type_of_node` with no `Options.checked` is an Error, "this needs the checker's types".
@@ -275,7 +277,7 @@ Iteration in the checker; the rules are the top comment of the file.
 | --- | --- | --- | --- |
 | `emit_option` | `?T` (`{ i8 tag, T payload }`, tag 0 is `.none`), `.some(x)`, `.none`, `if let`, `wrap`, `is_some`, `payload` | `?*T`, `match` over `?T`, `if let` as a value, `try`, `==` of options | #1584 (filled) |
 | `emit_iter` | `for x in xs` over a fixed array, `refs(xs)`, `range(n)`, `range(a, b)`, `range(a, b, step)` with a positive literal step | `enumerate`, `zip`, tuple pattern, slice, `str`, block, stream, array value, other steps: `not emitted yet` | #1586 (filled) |
-| `emit_match` | stub: every handler returns `not emitted yet` (enumerations, `.red`, `match` as statement and value) | everything | #1585 (open) |
+| `emit_match` | enumerations (an integer `Ty` of the underlying type, enumerators from 0 or as written; `emit_memory` and `emit_call` find one for `as` and parameters), `.red`, `match` over an enumeration (one `switch`, `unreachable` default) or `?T`, as statement and value | a payload enumeration, `match` over `Result`, `if let` over an enumeration | #1585 |
 | `emit_value` | an `if` with an `else` and a block used as a value: one alloca slot (the hint's type, else the join of the branches' checker types), branches convert and store, `endif` loads it; a branch that ended stores nothing; no branch reaching the end gives `unreachable` and `undef` | `for`, `while`, `if let` as a value, a `match` with no type written | #1618 (filled) |
 | `emit_tuple` | tuple types `(A, B)`, `(T,)`, `()` as an LLVM struct, `(a, b)`, `t.0` as a value and a place, `(q, r) := f()`; the lexer reads `t.0` and `t.0.1` as an index | `==` between tuples, tuples of slices or `fn` values, `for (i, x)` | #1619 (filled) |
 | `emit_lambda` | stub: `fn` types and lambdas are `not emitted yet` | everything | next batch |
@@ -310,7 +312,8 @@ Iteration in the checker; the rules are the top comment of the file.
 - Checked casts (K2, #1329): `Options.checked` is the checker's `types::Checked` (null: no cast is checked). `cast` asks `types::cast_checked(...).needed`, then converts, converts back and compares.
 - `p.x` through a pointer loads it and takes the pointee's field, as `->` does (#1580); `pp.x` on a pointer to a pointer is an Error. `p as usize` is `ptrtoint`, `n as *u8` is `inttoptr`, pointer-wide only.
 - Zero is initialization (K3, #1330): a local `T t;` stores the zero of `T` at the declaration; `T t = undefined;` makes the slot with no store. `auto t;` is an Error.
-- Still not emitted: floats, slices, unions, pointer arithmetic and comparison, function pointers.
+- `vec(T, N)` (#1630): `T` a number type, `N` an integer literal of 1 or more; `vec(f32, 4)(1, 2, 3, 4)` or a list `[1, 2, 3, 4]` where a vector is expected; element-wise `+ - * / %` and the comparisons (a `vec(bool, N)`) between two vectors of one type or a vector and a scalar of its element; `v[i]` and `v[i] = x` (a constant index out of range is an error, a run-time one is checked). Emitted as one `<N x T>`. Not yet: signed integer lanes' arithmetic (the overflow checks), integer division, bitwise operators and unary `-` on a vector, `v += w`, swizzles, writing a lane of a `vec(bool, N)`.
+- Still not emitted: slices, unions, pointer arithmetic and comparison, function pointers.
 
 **Calls** (`emit_call.smith`, #1132): `f(a, b)` names a function or a prototype (a `Decl.function` with no body) of the module; a path is joined by `::` and a prototype named with `::` is its own symbol.
 - Arguments run left to right with the parameter as hint; count and types must match (an Error at the argument), after `state::convert`.
@@ -364,3 +367,7 @@ The front end has its own runner (`tests/front_units/build.c`, `front-project`),
 - To add an e2e case: add `<name>.smith` with `pub fn check() -> i32` returning 0, which is compiled, linked with a `main.c` and run; or add `<name>.error` beside it with the exact diagnostics (scratch folder written `<dir>`).
 - The folder is in `.clang-format-ignore` (`smith fmt` would rewrite `:=`). No test file lists cases: the folder is read.
 - Run all: `smith build test-front`; one test: `smith test --test <name>` (a glob such as `'front_types_expr_test::*golden*'` works for a group).
+
+### front::types_attr (`front/types_attr.smith`, #1628)
+- An attribute may sit on its own line before a declaration, a struct field or an enumerator (`parse_decl`); one followed by a blank line, a comment or the end of the block is the error "an attribute marks the declaration on the next line". `@attribute` marks a struct as an attribute type.
+- `types_attr::check_module` checks every `@name` written so: built-ins (`inline noinline cold pure affine c_name attribute effects`) pass, any other unqualified name must be an `@attribute` struct of the module and its arguments (by position or `name = value`) are a construction of it, known at compile time. `@mod::name` is `not yet typed` (one module is checked at a time). Tests: `tests/front_attr_test.smith`.
