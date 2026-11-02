@@ -1,0 +1,310 @@
+// Tests of the wave-3 scaffold of the emitter (#1582 of #1428): the new constructs reach their stub (`not emitted yet:
+// <what>` at the construct's own span, never a crash), `state::convert` widens an integer where the types differ, and
+// `type_of_node` needs the checker. Each scenario is source text in smith's own syntax, read by front::parser's hooks
+// (as tests/front_types_fn_test.smith does), checked by front::types_decl when the case needs the checker's types, and
+// emitted. The tree and the checker's table are in an arena; the emitter and LLVM use the system allocator.
+module front_emit_wave3_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::emit_state;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+
+typedef I32 (*Narrow)(I32);
+typedef U32 (*Byte)(U8);
+typedef I64 (*Unsigned)(U32);
+typedef I64 (*Wide)(I32);
+
+struct Scenario {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    parser::Parsed parsed;
+    types::Checked checked;
+    Bool has_checked;
+};
+
+// The module of `source`, read in smith's own syntax.
+static parser::Parsed parse_new(Str source) {
+    parser::Parsed result = {};
+    result.module.file = "t.smith";
+    lex::Lexed lexed = lex::tokenize_new(source);
+    switch (lexed) {
+    case .ok:
+        parse::Parser p = parse::make(lexed.ok, source);
+        p.new_syntax = true;
+        p.hooks.expression = parse_expr::expression;
+        p.hooks.type = parse_type::type;
+        p.hooks.statement = parse_stmt::statement;
+        p.hooks.declaration = parse_decl::declaration;
+        result.module = parse_decl::file(&p, "t.smith");
+        result.errors = p.errors;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    return result;
+}
+
+static void begin(Scenario *s, Str source, Bool with_checker) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parse_new(source);
+    test::check_equal(countof(s->parsed.errors), (Usize)0);
+    if (with_checker) {
+        s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+        s->has_checked = true;
+        test::check_equal(s->checked.error_count, (Usize)0);
+    }
+    mem::set_allocator(outside);
+}
+
+static emit::Options options_for(emit::Target target, const Scenario *s) {
+    emit::Options options = {};
+    options.target = target;
+    if (s->has_checked) options.checked = &s->checked;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+// The text of `source` from `start`.
+static Bool starts_at(Str source, U32 start, Str needle) {
+    if (start > countof(source)) return false;
+    return has(
+        source[start:start + (countof(needle) < countof(source) - start ? countof(needle) : countof(source) - start)],
+        needle);
+}
+
+// Emits `source` and checks that it stops with "not emitted yet: <what>" at a span that starts with `at`.
+static void stops_at(Str source, Bool with_checker, Str what, Str at) {
+    Scenario s = {};
+    begin(&s, source, with_checker);
+    emit_jit::Jit host = start_jit();
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s.parsed.module, options_for(host.target, &s));
+    test::check_equal(emitted == .error, true);
+    if (emitted == .error) {
+        test::check_equal(has(emitted.error.message, "not emitted yet: "), true);
+        test::check_equal(has(emitted.error.message, what), true);
+        test::check_equal(starts_at(source, emitted.error.span.start, at), true);
+        emit::free_error(emitted.error);
+    } else {
+        c::LLVMDisposeModule(emitted.ok);
+    }
+    c::LLVMContextDispose(context);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_wave3_an_option_type_reaches_its_stub() {
+    stops_at("fn f(x: ?i32) -> i32 {\n    0\n}\n", false, "an option type", "?i32");
+}
+
+export void test_front_emit_wave3_a_variant_without_an_option_reaches_the_enumerator_stub() {
+    stops_at("fn f() -> i32 {\n    _ := .red\n    0\n}\n", false, "an enumerator", ".red");
+}
+
+export void test_front_emit_wave3_an_enumeration_reaches_its_stub() {
+    stops_at("enum Color {\n    red\n    green\n}\n", false, "an enumeration", "enum Color");
+}
+
+export void test_front_emit_wave3_match_reaches_its_stub() {
+    stops_at("fn f(n: i32) -> i32 {\n    match n {\n        .red => 1\n        .green => 2\n    }\n    0\n}\n", false,
+             "match", "match n");
+}
+
+export void test_front_emit_wave3_if_let_reaches_its_stub() {
+    stops_at("fn f(n: i32) -> i32 {\n    if let .some(v) = n {\n        _ := v\n    }\n    0\n}\n", false, "if let",
+             "if let");
+}
+
+export void test_front_emit_wave3_for_in_reaches_its_stub() {
+    stops_at("fn f(xs: i32) -> i32 {\n    for x in xs {\n        _ := x\n    }\n    0\n}\n", false, "for in", "for x");
+}
+
+export void test_front_emit_wave3_a_tuple_reaches_its_stubs() {
+    stops_at("fn f(t: (i32, i32)) -> i32 {\n    0\n}\n", false, "a tuple type", "(i32, i32)");
+    stops_at("fn f() -> i32 {\n    _ := (1, 2)\n    0\n}\n", false, "a tuple", "(1, 2)");
+    stops_at("fn f() -> i32 {\n    (q, r) := g()\n    0\n}\n", false, "a destructuring declaration", "(q, r)");
+}
+
+static void rename_member(const ast::Module *m) {
+    const ast::Decl *function = m->decls[0];
+    if (function->kind != .function) {
+        return;
+    }
+    const ast::Stmt *body = function->kind.function.body;
+    if (body->kind != .block) {
+        return;
+    }
+    const ast::Stmt *first = body->kind.block.items[0];
+    if (first->kind != .declaration) {
+        return;
+    }
+    const ast::Decl *variable = first->kind.declaration.decl;
+    if (variable->kind != .variable) {
+        return;
+    }
+    ast::Expr *member = (ast::Expr *)(Usize)variable->kind.variable.init;
+    if (member->kind != .member) {
+        return;
+    }
+    member->kind.member.name = "0";
+}
+
+// `t.0` does not parse yet (the lexer reads `.0` as a number), so the member is renamed in the tree: `t.x` becomes
+// `t.0`.
+export void test_front_emit_wave3_a_member_named_by_a_digit_reaches_the_tuple_stub() {
+    Scenario s = {};
+    Str source = "fn f(t: i32) -> i32 {\n    _ := t.x\n    0\n}\n";
+    begin(&s, source, false);
+    rename_member(&s.parsed.module);
+    emit_jit::Jit host = start_jit();
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s.parsed.module, options_for(host.target, &s));
+    test::check_equal(emitted == .error, true);
+    if (emitted == .error) {
+        test::check_equal(has(emitted.error.message, "not emitted yet: a tuple member"), true);
+        emit::free_error(emitted.error);
+    }
+    c::LLVMContextDispose(context);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_wave3_a_lambda_and_a_function_type_reach_their_stubs() {
+    stops_at("fn f(g: fn(i32) -> i32) -> i32 {\n    0\n}\n", false, "a function type", "fn(i32)");
+    stops_at("fn f() -> i32 {\n    _ := fn(x: i32) -> i32 { x }\n    0\n}\n", false, "a lambda", "fn(x");
+}
+
+export void test_front_emit_wave3_an_if_as_a_value_reaches_its_stub() {
+    stops_at("fn f(n: i32) -> i32 {\n    x := if n > 0 { 1 } else { 2 }\n    0\n}\n", false, "a block or if as a value",
+             "if n");
+    // The last line of a function is its value.
+    stops_at("fn f(n: i32) -> i32 {\n    if n > 0 { 1 } else { 2 }\n}\n", false, "a block or if as a value", "if n");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// state::convert
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+static char *ir_of(Str source, emit_jit::Jit *host, Scenario *s) {
+    begin(s, source, true);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s->parsed.module, options_for(host->target, s));
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    }
+    return text;
+}
+
+static Bool contains(const char *text, Str needle) {
+    return text != nullptr && c::strstr(text, needle.data) != nullptr;
+}
+
+export void test_front_emit_wave3_a_narrower_integer_is_widened_where_the_types_differ() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("pub fn widen(n: i32) -> i64 {\n    n\n}\n"
+                     "pub fn via_local(n: i32) -> i64 {\n    x: i64 = n\n    x\n}\n"
+                     "pub fn byte_up(b: u8) -> u32 {\n    return b\n}\n"
+                     "pub fn u32_up(u: u32) -> i64 {\n    return u\n}\n"
+                     "pub fn via_assign(n: i32) -> i64 {\n    mut wide: i64 = 0\n    wide = n\n    wide\n}\n",
+                     &host, &s);
+    test::check_equal(contains(ir, "sext i32 "), true);
+    test::check_equal(contains(ir, "zext i8 "), true);
+    test::check_equal(contains(ir, "zext i32 "), true);
+    Wide widen = (Wide)symbol_of(&host, "widen");
+    Wide local = (Wide)symbol_of(&host, "via_local");
+    Byte byte = (Byte)symbol_of(&host, "byte_up");
+    Unsigned unsigned_to_wide = (Unsigned)symbol_of(&host, "u32_up");
+    Wide assigned = (Wide)symbol_of(&host, "via_assign");
+    test::check_equal(widen(-5), (I64)-5);
+    test::check_equal(local(-7), (I64)-7);
+    test::check_equal(byte(200), (U32)200);
+    test::check_equal(unsigned_to_wide(0xFFFFFFFFU), (I64)4294967295LL);
+    test::check_equal(assigned(-9), (I64)-9);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_wave3_a_narrowing_or_sign_changing_conversion_is_still_an_error() {
+    Scenario s = {};
+    begin(&s, "fn f(n: i64) -> i32 {\n    return 1\n}\n", false);
+    emit_jit::Jit host = start_jit();
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s.parsed.module, options_for(host.target, &s));
+    test::check_equal(emitted == .ok, true);
+    if (emitted == .ok) c::LLVMDisposeModule(emitted.ok);
+    c::LLVMContextDispose(context);
+    Scenario t = {};
+    begin(&t, "fn g(n: i64) -> i32 {\n    return n\n}\n", false);
+    context = c::LLVMContextCreate();
+    emitted = emit::module(context, &t.parsed.module, options_for(host.target, &t));
+    test::check_equal(emitted == .error, true);
+    if (emitted == .error) {
+        test::check_equal(has(emitted.error.message, "returning "), true);
+        emit::free_error(emitted.error);
+    }
+    c::LLVMContextDispose(context);
+    emit_jit::stop(&host);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// type_of_node
+
+export void test_front_emit_wave3_type_of_node_needs_the_checker_on_a_tree_built_by_hand() {
+    Scenario s = {};
+    begin(&s, "fn f() -> i32 {\n    0\n}\n", false);
+    emit_state::Emitter e = {};
+    ast::Expr *x = ast::name("x");
+    emit_state::TyResult made = emit::type_of_node(&e, x);
+    test::check_equal(made == .error, true);
+    if (made == .error) {
+        test::check_equal(has(made.error.message, "needs the checker's types"), true);
+        emit::free_error(made.error);
+    }
+}

@@ -1,0 +1,43 @@
+// front::emit_tuple: tuples: types, literals, `t.0` and `(q, r) := f()`. Filled by the next batch of #1428; today every
+// handler is `not emitted yet`, with its final signature, so that ticket edits this file and never front/emit.smith
+// (the wave-3 scaffold, #1582 of #1428).
+module front::emit_tuple;
+
+import front::ast;
+import front::emit_state as state;
+import front::types;
+
+export state::TyResult type_tuple(state::Emitter *e, const ast::TypeExpr *t) {
+    _ = e;
+    return state::ty_fail("not emitted yet: a tuple type", t->span);
+}
+
+export state::TyResult from_checked(state::Emitter *e, types::TypeRef t) {
+    _ = e;
+    _ = t;
+    return state::ty_fail("not emitted yet: a tuple type", (ast::Span){});
+}
+
+export state::Status literal(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    _ = e;
+    _ = hint;
+    return state::not_emitted("a tuple", x->span);
+}
+
+// `t.0` as a value.
+export state::Status member(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    _ = e;
+    _ = hint;
+    return state::not_emitted("a tuple member", x->span);
+}
+
+// `t.0` as an address.
+export state::Status place_member(state::Emitter *e, const ast::Expr *x) {
+    _ = e;
+    return state::not_emitted("a tuple member", x->span);
+}
+
+export state::Status destructure(state::Emitter *e, const ast::Stmt *s) {
+    _ = e;
+    return state::not_emitted("a destructuring declaration", s->span);
+}

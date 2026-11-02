@@ -283,6 +283,8 @@ export state::Status integer_literal(state::Emitter *e, const ast::Expr *x, stat
         ty = hint.ty;
     else
         state::scalar_type(e, "I32", &ty);
+    // A literal where `?i64` is expected is an `i64`, which the site then wraps.
+    if (ty.kind == .option && ty.element != nullptr) ty = *ty.element;
     U64 value = x->kind.integer.value;
     if (ty.kind != .integer) return state::failf(x->span, "an integer literal where a ", ty.name, " is expected");
     if (!fits(ty, value)) return state::failf(x->span, "integer literal ", value, " does not fit ", ty.name);
@@ -450,8 +452,10 @@ static state::Status assign_finish(state::Emitter *e, const state::Work *w) {
     }
     state::Value value = state::pop_value(e);
     state::Value place = state::pop_value(e);
-    if (!state::same_type(place.ty, value.ty))
-        return state::failf(w->span, "assigning ", value.ty.name, " to ", place.ty.name);
+    if (!state::same_type(place.ty, value.ty)) {
+        try state::convert(e, value, place.ty, w->span, .assign);
+        value = state::pop_value(e);
+    }
     ast::AssignOp op = w->expr->kind.assign.op;
     if (op != .plain) {
         c::LLVMValueRef current = c::LLVMBuildLoad2(e->builder, place.ty.llvm, place.llvm, "");
