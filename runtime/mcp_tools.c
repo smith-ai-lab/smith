@@ -36,6 +36,11 @@ static void smith_mcp_tool_begin(SmithMcpServer *server, SmithMcpSession *sessio
             session->events_dropped, smith_mcp_events_max);
         session->events_dropped = 0;
     }
+    if (session->responses_dropped > 0) {
+        smith_mcp_text_add(out, "%zu responses of the adapter were dropped: the table holds %zu and all were unread\n",
+                           session->responses_dropped, smith_mcp_responses_max);
+        session->responses_dropped = 0;
+    }
     if (taken == SmithMcpTake_Stopped) smith_mcp_show_stop(server, session, &stop, out);
     if (taken == SmithMcpTake_Finished) smith_mcp_show_finished(session, out);
 }
@@ -631,9 +636,15 @@ static bool smith_mcp_tool_variables(SmithMcpServer *server, const SmithJsonValu
     const char *scope = smith_mcp_argument_string(&server->scratch, arguments, "scope");
     if (frame_index < 0) frame_index = 0;
     if (depth < 0) depth = 0;
-    if (depth > (int64_t)smith_mcp_depth_max) depth = (int64_t)smith_mcp_depth_max;
+    if (depth > (int64_t)smith_mcp_depth_max) {
+        smith_mcp_text_add(out, "depth %lld is past the limit of %zu levels\n", (long long)depth, smith_mcp_depth_max);
+        return false;
+    }
     if (max < 1) max = 1;
-    if (max > 500) max = 500;
+    if (max > 500) {
+        smith_mcp_text_add(out, "max %lld is past the limit of 500 variables per list\n", (long long)max);
+        return false;
+    }
     int64_t frame = 0;
     int64_t reference = 0;
     if (!smith_mcp_frame_id(server, session, frame_index, &frame, out) ||
@@ -701,7 +712,10 @@ static bool smith_mcp_tool_evaluate(SmithMcpServer *server, const SmithJsonValue
     if (!smith_mcp_tool_stopped(session, out)) return false;
     int64_t depth = smith_mcp_argument_integer(arguments, "depth", 0);
     if (depth < 0) depth = 0;
-    if (depth > (int64_t)smith_mcp_depth_max) depth = (int64_t)smith_mcp_depth_max;
+    if (depth > (int64_t)smith_mcp_depth_max) {
+        smith_mcp_text_add(out, "depth %lld is past the limit of %zu levels\n", (long long)depth, smith_mcp_depth_max);
+        return false;
+    }
     int64_t frame = 0;
     if (!smith_mcp_frame_id(server, session, smith_mcp_argument_integer(arguments, "frame", 0), &frame, out))
         return false;

@@ -1,0 +1,44 @@
+int
+warning 0-3: write the type `int` as `i32` in smith's own syntax
+fixed: i32 (1 passes, 0 left)
+
+unsigned long
+warning 0-13: write the type `unsigned long` as `u64` in smith's own syntax
+fixed: u64 (1 passes, 0 left)
+
+unsigned char
+warning 0-13: write the type `unsigned char` as `u8` in smith's own syntax
+fixed: u8 (1 passes, 0 left)
+
+double
+warning 0-6: write the type `double` as `f64` in smith's own syntax
+fixed: f64 (1 passes, 0 left)
+
+size_t
+warning 0-6: write the type `size_t` as `usize` in smith's own syntax
+fixed: usize (1 passes, 0 left)
+
+uint32_t
+warning 0-8: write the type `uint32_t` as `u32` in smith's own syntax
+fixed: u32 (1 passes, 0 left)
+
+long long
+warning 0-9: write the type `long long` as `i64` in smith's own syntax
+fixed: i64 (1 passes, 0 left)
+
+char *
+warning 0-6: write the type `char *` as `*char` in smith's own syntax
+fixed: *char (1 passes, 0 left)
+
+char *name
+warning 0-6: write the type `char *` as `*char` in smith's own syntax
+fixed: *char name (1 passes, 0 left)
+
+long double
+warning 0-11: `long double` has no sized type in smith: write the type by hand (no fix)
+fixed: long double (0 passes, 1 left)
+
+volatile I32
+warning 0-12: `volatile` and `restrict` have no spelling in smith's own syntax: remove them (no fix)
+fixed: volatile I32 (0 passes, 1 left)
+

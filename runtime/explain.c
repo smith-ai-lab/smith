@@ -263,17 +263,28 @@ static bool smith_explain_read_path(size_t frame, char *label, char *text, size_
 }
 
 // Reads every path of the line in the frame. A path that is not a variable (a function, a type, a module's name) is
-// dropped. Returns how many values are kept, in values[].
+// dropped. Returns how many values are kept, in values[] (room for one more: the line that says the limit cut some).
 static size_t smith_explain_read_all(size_t frame, const char *source, SmithExplainValue *values) {
     SmithExplainValue paths[smith_explain_values_max * 2];
     size_t found = smith_explain_paths(source, paths, sizeof paths / sizeof paths[0]);
     size_t kept = 0;
-    for (size_t i = 0; i < found && kept < smith_explain_values_max; i++) {
+    bool cut = found == sizeof paths / sizeof paths[0]; // the paths themselves ran out of room
+    for (size_t i = 0; i < found; i++) {
         char text[smith_explain_value_max];
         if (!smith_explain_read_path(frame, paths[i].label, text, sizeof text)) continue;
         if (smith_explain_listed(values, kept, paths[i].label)) continue;
+        if (kept == smith_explain_values_max) {
+            cut = true;
+            break;
+        }
         snprintf(values[kept].label, sizeof values[kept].label, "%s", paths[i].label);
         snprintf(values[kept].value, sizeof values[kept].value, "%s", text);
+        kept += 1;
+    }
+    if (cut) {
+        snprintf(values[kept].label, sizeof values[kept].label, "(more)");
+        snprintf(values[kept].value, sizeof values[kept].value, "more than %zu values; the rest are not shown",
+                 smith_explain_values_max);
         kept += 1;
     }
     return kept;
@@ -333,7 +344,7 @@ static int smith_explain_run(long pid, const char *self) {
         smith_explain_detach();
         return 0;
     }
-    SmithExplainValue values[smith_explain_values_max];
+    SmithExplainValue values[smith_explain_values_max + 1];
     size_t kept = smith_explain_read_all(index, source, values);
     smith_explain_detach();
     smith_explain_print(stdout, values, kept);
