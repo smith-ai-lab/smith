@@ -384,7 +384,7 @@ export void test_front_types_decl_an_unused_result_is_refused() {
 export void test_front_types_decl_a_call_on_the_last_line_is_the_result() {
     reading_new = true;
     clean("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) -> i32 { f(x)\n }");
-    fails("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) -> i32 {\n    f(x)\n    f(x)\n}\n", "is not used",
+    fails("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) -> i32 {\n    f(x)\n    return x\n}\n", "is not used",
           "write `_ := ...`");
     fails("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) { f(x)\n }", "is not used", "write `_ := ...`");
     reading_new = false;
