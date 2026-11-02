@@ -287,7 +287,7 @@ static ast::TypeExpr *type_of(parse::Parser *p, U32 start, ast::Qualifiers q) {
     parse::advance(p);
     parse::expect(p, lex::left_paren, "`(` after `typeof`");
     ast::Expr *operand = nullptr;
-    if (starts_type(p, 0) && !is_reflected(p)) {
+    if ((starts_type(p, 0) || starts_new_type(p, 0)) && !is_reflected(p)) {
         ast::TypeExpr *inner = parse::type(p);
         operand = ast::expr({.type_value = {.type = inner}});
     } else {
