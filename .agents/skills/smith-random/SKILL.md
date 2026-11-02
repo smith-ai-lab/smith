@@ -49,7 +49,7 @@ for (Usize i = 0; i < count; i++) {
 ## The guarantees, and their limits
 
 - **The numbers never change.** (`split` gives the keys `key_derive` gave and a draw is the old draw 0, so every distribution still gives what it gave for a key.) They are part of the API: the Philox4x32-10 generator, the key and counter mapping and every distribution's algorithm are pinned by tests, so a change to any of them is a breaking change.
-- **The same bits on every platform.** The library has its own logarithm (`random::log_float`, `random::log_double`; fdlibm's algorithm, within 1 ulp), uses only `math::sqrt` (exactly rounded by IEEE), builds with `-ffp-contract=off` (which `smith build` adds for the library; `.smith/lib/std/random.flags`) and refuses `-ffast-math`. Tests give the same digest across optimization levels, sanitizers and `-ffp-contract=fast`; GPUs and other compilers are not tested.
+- **The same bits on every platform.** The library has its own logarithm (`math::log`, `math::log_float`, `math::log_double` in `std::math`; fdlibm's algorithm, within 1 ulp), uses only `math::sqrt` (exactly rounded by IEEE), builds with `-ffp-contract=off` (which `smith build` adds for the library; `.smith/lib/std/random.flags`) and refuses `-ffast-math`. Tests give the same digest across optimization levels, sanitizers and `-ffp-contract=fast`; GPUs and other compilers are not tested.
 - `float` and `double` are asserted to be IEEE binary32 and binary64 when the library is compiled.
 
 Moving from key_derive: [smith-random-split](../smith-random-split/SKILL.md). Also in this family: [smith-random-distributions](../smith-random-distributions/SKILL.md), [smith-random-own](../smith-random-own/SKILL.md), [smith-random-c](../smith-random-c/SKILL.md).

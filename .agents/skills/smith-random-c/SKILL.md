@@ -31,7 +31,7 @@ double exponential_sample(SmithKey key, double rate) {
 
 ## Get the library in build.c
 
-random needs nothing else; a weighted index is `std::categorical` ([smith-categorical](../smith-categorical/SKILL.md)). smith writes the headers and the sources into `.smith/` on every `smith build`. random is written in `.smith` (the module `std::random`, source `.smith/lib/std/random.smith`), so compiling it needs a smith with clang inside; C code that only includes `<smith/random.h>` works anywhere, and the C API (names, types, symbols) is the one it always had:
+The logarithm is `std::math`'s now (`smith_log_double` and `smith_log_float` from `#include <smith/math.h>`; `smith_library(b, "random")` brings it, so a custom distribution includes that header too). random needs nothing else; a weighted index is `std::categorical` ([smith-categorical](../smith-categorical/SKILL.md)). smith writes the headers and the sources into `.smith/` on every `smith build`. random is written in `.smith` (the module `std::random`, source `.smith/lib/std/random.smith`), so compiling it needs a smith with clang inside; C code that only includes `<smith/random.h>` works anywhere, and the C API (names, types, symbols) is the one it always had:
 
 ```c
 SmithObject random = {.compiler = "smith-cc", .source = smith_library(b, "random"), .output = "build/smith/random.o", .flags = flags};
