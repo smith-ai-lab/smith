@@ -1,0 +1,24 @@
+{
+switch (v) {
+ case .a:
+  x = f(1);
+  break;
+ case .b:
+ case .c:
+  y = g(2);
+  break;
+}
+}
+===
+warning (fix): a `switch` is a `match` in smith: write it so
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+---
+{
+match v {
+ .a => x = f(1)
+ .b, .c => y = g(2)
+}
+}
