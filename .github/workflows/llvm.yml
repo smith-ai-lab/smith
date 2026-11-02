@@ -18,7 +18,7 @@ on:
     branches: [main]
     paths:
       - "patches/**"
-      - "scripts/llvm.sh"
+      - "build.c"
       - "scripts/llvm_linux.c"
       - "scripts/llvm_pack.c"
       - "scripts/sha256.h"

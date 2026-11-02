@@ -1,0 +1,37 @@
+fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
+    f(x)
+}
+
+fn twice(x: i32, f: fn(i32) -> i32) -> i32 {
+    f(f(x))
+}
+
+fn repeat(n: i32, body: fn()) {
+    mut i := 0
+    while i < n {
+        body()
+        i += 1
+    }
+}
+
+pub fn check() -> i32 {
+    if apply(fn(x: i32) -> i32 { x + 1 }, 4) != 5 {
+        return 1
+    }
+    step := 10
+    if twice(1, fn(x: i32) -> i32 { x + step }) != 21 {
+        return 2
+    }
+    mut count := 0
+    repeat(3) {
+        count += 2
+    }
+    if count != 6 {
+        return 3
+    }
+    dbl := fn(x: i32) -> i32 { x * 2 }
+    if dbl(21) != 42 {
+        return 4
+    }
+    0
+}

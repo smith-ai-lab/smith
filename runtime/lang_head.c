@@ -32,7 +32,7 @@ static SmithToken smith_lang_held_token(const SmithLang *lang, const SmithLangHe
 static void smith_lang_hold(SmithLang *lang, const SmithToken *token, SmithLangRole role,
                             const SmithLangContext *context) {
     if (lang->head_count >= smith_lang_head_max) {
-        lang->broken = true;
+        smith_lang_limit(lang, "tokens of a declaration's head", smith_lang_head_max);
         return;
     }
     SmithLangHeld *held = &lang->head[lang->head_count++];
@@ -787,8 +787,9 @@ static void smith_lang_generic_flush_head(SmithLang *lang, const SmithHost *host
 
 // An exported function with a body: an importer may run it (runtime/lang_body.c).
 static void smith_lang_body_listed_add(SmithLang *lang, bool is_main) {
-    if (!lang->emit_synthetic || !lang->decl.exported || is_main ||
-        lang->body_names_count >= smith_lang_body_names_max) {
+    if (!lang->emit_synthetic || !lang->decl.exported || is_main) return;
+    if (lang->body_names_count >= smith_lang_body_names_max) {
+        smith_lang_limit(lang, "exported functions with a body", smith_lang_body_names_max);
         return;
     }
     const SmithLangHeld *held = &lang->head[lang->decl.last_name];
