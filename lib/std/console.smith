@@ -82,6 +82,26 @@ if constexpr (target::os == target::macos) {
     }
 }
 
+// Which stream `is_terminal` asks about.
+// NOLINTBEGIN(readability-identifier-naming)
+[[std::c_name("SmithConsoleStream")]] export typedef enum {
+    Input,  // stdin
+    Output, // stdout
+    Fault,  // stderr
+} Stream;
+// NOLINTEND(readability-identifier-naming)
+
+// Whether the stream is a terminal, to choose colour or progress output. The console handler of the thread answers
+// through its `isatty` member (a fake's is false unless a test sets it); with no handler, or a handler whose member is
+// null, it is libc's isatty.
+[[std::c_name("smith_console_is_terminal")]] export Bool is_terminal(Stream stream) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read
+    I32 fd = stream == Input ? stdin_fd : (stream == Output ? stdout_fd : stderr_fd);
+    Handler *handler = c::smith_handlers_console();
+    if (handler != nullptr && handler->isatty != nullptr) return handler->isatty(handler, fd) != 0;
+    return c::isatty(fd) != 0; // NOLINT(smith-effects): the edge
+}
+
 Error error_of(I32 code) {
     if (code == epipe || code == ebadf) return Closed;
     if (code == enospc || code == edquot) return Full;

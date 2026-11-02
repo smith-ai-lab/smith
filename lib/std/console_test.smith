@@ -204,3 +204,24 @@ export void test_console_set_handler_returns_the_previous_one() {
     test::check_condition(c::strcmp(inner.out, "in") == 0);
     test::check_condition(c::strcmp(outer.out, "out") == 0);
 }
+
+Bool fake_isatty_answer = false;
+
+I32 fake_isatty(console::Handler *self, I32 fd) {
+    (void)self;
+    return fake_isatty_answer && fd == 1 ? 1 : 0;
+}
+
+export void test_console_is_terminal_asks_the_console_handler() {
+    Fake fake = make_fake("");
+    fake.base.isatty = fake_isatty;
+    console::Handler *before = console::set_handler(&fake.base);
+    defer console::set_handler(before);
+    fake_isatty_answer = false;
+    test::check_condition(!console::is_terminal(console::Output));
+    fake_isatty_answer = true;
+    test::check_condition(console::is_terminal(console::Output));
+    test::check_condition(!console::is_terminal(console::Fault));
+    test::check_condition(!console::is_terminal(console::Input));
+    fake_isatty_answer = false;
+}

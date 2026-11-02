@@ -114,7 +114,7 @@ tags: [libc, lint, idiom, libraries]
 | `readlink`, `symlink` | `files::read_link(path)`, `files::make_link(target, path)` |
 | `lstat`, `fstatat`, `AT_SYMLINK_NOFOLLOW` | gap: [#919](https://github.com/smith-ai-lab/smith/issues/919) |
 | `lseek`, `pwrite`, `ftruncate`, `fchmod`, `flock`, `SEEK_*`, `LOCK_*` | gap: [#920](https://github.com/smith-ai-lab/smith/issues/920) |
-| `isatty` | gap: [#925](https://github.com/smith-ai-lab/smith/issues/925) |
+| `isatty` | `console::is_terminal(console::Input / Output / Fault)` |
 | `STDIN_FILENO`, `STDOUT_FILENO`, `STDERR_FILENO` | `console::` (no descriptor number in a program) |
 | `fcntl`, `FD_CLOEXEC`, `O_CLOEXEC`, `O_NONBLOCK` | platform: the files, process and net libraries set them |
 | `sysconf(_SC_NPROCESSORS_ONLN)` | `process::cores()` |
