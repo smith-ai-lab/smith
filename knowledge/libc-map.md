@@ -40,7 +40,7 @@ tags: [libc, lint, idiom, libraries]
 | `system` | `process::run(argv)` ([process](process.md)): no shell, the argument vector |
 | `abs` | `math::abs(x)` |
 | `exit`, `_exit`, `abort` | gap (design): [#924](https://github.com/smith-ai-lab/smith/issues/924) |
-| `realpath` | gap: [#919](https://github.com/smith-ai-lab/smith/issues/919) |
+| `realpath` | `files::real_path(path)` |
 
 ## string.h
 
@@ -106,7 +106,10 @@ tags: [libc, lint, idiom, libraries]
 | `rename` | `files::move(from, to)` |
 | `opendir`, `readdir`, `closedir`, `dirfd`, `DIR`, `dirent` | `files::list(folder)`, a sorted slice of entries |
 | `mmap`, `munmap`, `PROT_*`, `MAP_*` | `files::map(path)` and `files::unmap(bytes)` for a file; an anonymous mapping is memory, from `mem::alloc_slice` or an arena |
-| `getcwd`, `access`, `readlink`, `symlink`, `lstat`, `fstatat`, `AT_SYMLINK_NOFOLLOW`, `F_OK`, `W_OK` | gap: [#919](https://github.com/smith-ai-lab/smith/issues/919) |
+| `getcwd` | `files::current_folder()` |
+| `access`, `F_OK`, `R_OK`, `W_OK`, `X_OK` | `files::exists(path)`, `files::can(path, files::CanRead / CanWrite / CanRun)` |
+| `readlink`, `symlink` | `files::read_link(path)`, `files::make_link(target, path)` |
+| `lstat`, `fstatat`, `AT_SYMLINK_NOFOLLOW` | gap: [#919](https://github.com/smith-ai-lab/smith/issues/919) |
 | `lseek`, `pwrite`, `ftruncate`, `fchmod`, `flock`, `SEEK_*`, `LOCK_*` | gap: [#920](https://github.com/smith-ai-lab/smith/issues/920) |
 | `isatty` | gap: [#925](https://github.com/smith-ai-lab/smith/issues/925) |
 | `STDIN_FILENO`, `STDOUT_FILENO`, `STDERR_FILENO` | `console::` (no descriptor number in a program) |
