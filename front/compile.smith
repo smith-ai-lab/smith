@@ -10,6 +10,13 @@
 //                                       with the default roots, diagnostics on stderr, 0 when every object was written
 //
 // A diagnostic is `file:line:column: error: message`, one per error, and a stage that fails stops the next ones. The
+// parser's warnings (of a file in smith's own syntax; a file in today's has one per old form, so its report stays as it
+// was) are `file:line:column: warning: message`, one per line before any error; they do not stop the
+// compile and, when only warnings were found, are the `Report.text` of a report that is ok (`run` writes them to
+// stderr). Which parser reads a file (#1578): one whose first token (comments are not tokens) is the keyword `module`
+// is in today's syntax and goes through `parser::parse`; any other file is smith's own (no `module` line: a module is
+// named by its path) and goes through `parser::parse_new`. A cast that can lose a value is checked on this path too
+// (`Options.checked`). The
 // module's name is its path from a root (front::roots); a `module` line that disagrees is an error naming both. The
 // target comes from the caller: the triple is the driver's, the data layout is the machine's for it, and the checker's
 // pointer width follows the triple. Nothing reads the host here but the default triple when none is given.
@@ -23,6 +30,8 @@ import front::parser;
 import front::roots;
 import front::types;
 import front::types_decl;
+import front::parse;
+import std::ascii;
 import std::clock;
 import std::files;
 import std::format;
@@ -46,7 +55,7 @@ export struct Times {
 
 export struct Report {
     Bool ok;
-    Str text; // the diagnostics, one line each; empty when it worked
+    Str text; // the diagnostics, one line each; only the warnings (maybe none) when it worked
     Times times;
 };
 
@@ -65,8 +74,55 @@ static Str position(Str source, U32 offset) {
     return as_str(format::push(line, ":", column));
 }
 
-static Str diagnostic(Str file, Str source, ast::Span span, Str message) {
-    return as_str(format::push(file, ":", position(source, span.start), ": error: ", message, "\n"));
+// One line of the report: `file:line:column: severity: message`, with `severity` `error` or `warning`.
+static Str diagnostic(Str file, Str source, ast::Span span, Str severity, Str message) {
+    return as_str(format::push(file, ":", position(source, span.start), ": ", severity, ": ", message, "\n"));
+}
+
+// The lines of `list`, in order, as `severity`.
+static Str lines_of(Str file, Str source, parse::Errors list, Str severity) {
+    Str all = "";
+    for (Usize i = 0; i < countof(list); i++) {
+        all = as_str(format::push(all, diagnostic(file, source, list[i].span, severity, list[i].message)));
+    }
+    return all;
+}
+
+// The line of a diagnostic of `severity` at byte `offset` of `source`, for the tests: the parse files record no
+// warning yet that a case could show (F1 to F4, #1506 to #1509).
+export Str diagnostic_for_test(Str file, Str source, U32 offset, Str severity, Str message) {
+    return diagnostic(file, source, (ast::Span){.start = offset, .end = offset}, severity, message);
+}
+
+static Bool word_at(Str source, Usize at, Str word) {
+    if (at + countof(word) > countof(source)) return false;
+    for (Usize i = 0; i < countof(word); i++) {
+        if (source[at + i] != word[i]) return false;
+    }
+    if (at + countof(word) == countof(source)) return true;
+    char next = source[at + countof(word)];
+    return !(ascii::alpha(next) || ascii::digit(next) || next == '_');
+}
+
+// Whether the first token of `source` is the keyword `module`: today's syntax (every file in it has the line).
+static Bool starts_with_module(Str source) {
+    Usize i = 0;
+    while (i < countof(source)) {
+        if (ascii::space(source[i])) {
+            i += 1;
+        } else if (i + 1 < countof(source) && source[i] == '/' && source[i + 1] == '/') {
+            while (i < countof(source) && source[i] != '\n')
+                i += 1;
+        } else if (i + 1 < countof(source) && source[i] == '/' && source[i + 1] == '*') {
+            i += 2;
+            while (i + 1 < countof(source) && !(source[i] == '*' && source[i + 1] == '/'))
+                i += 1;
+            i += 2;
+        } else {
+            break;
+        }
+    }
+    return word_at(source, i, "module");
 }
 
 // 64-bit unless the triple's architecture says otherwise (`x86_64`, `aarch64`, `arm64`, `wasm64`).
@@ -154,17 +210,17 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     Str source = chars;
 
     U64 mark = clock::monotonic();
-    parser::Parsed parsed = parser::parse(path, source);
+    Bool today = starts_with_module(source);
+    parser::Parsed parsed = today ? parser::parse(path, source) : parser::parse_new(path, source);
     times.parse = clock::monotonic() - mark;
+    // Today's syntax is all warnings (every old form), so its report is what it was: only smith's own files show them.
+    Str none = "";
+    Str warned = today ? none : lines_of(path, source, parsed.warnings, "warning");
     if (countof(parsed.errors) > 0) {
-        Str all = "";
-        for (Usize i = 0; i < countof(parsed.errors); i++) {
-            all = as_str(format::push(all, diagnostic(path, source, parsed.errors[i].span, parsed.errors[i].message)));
-        }
-        return failed(all, times);
+        return failed(as_str(format::push(warned, lines_of(path, source, parsed.errors, "error"))), times);
     }
     Str problem = name_module(&parsed.module, path, folders);
-    if (countof(problem) > 0) return failed(as_str(format::push(problem, "\n")), times);
+    if (countof(problem) > 0) return failed(as_str(format::push(warned, problem, "\n")), times);
 
     Str wanted = triple;
     char *default_triple = nullptr;
@@ -177,10 +233,10 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     types::Checked checked = types_decl::check_module(&parsed.module, target_of(wanted));
     times.check = clock::monotonic() - mark;
     if (checked.error_count > 0) {
-        Str all = "";
+        Str all = warned;
         for (Usize i = 0; i < checked.error_count; i++) {
-            all =
-                as_str(format::push(all, diagnostic(path, source, checked.errors[i].span, checked.errors[i].message)));
+            all = as_str(format::push(
+                all, diagnostic(path, source, checked.errors[i].span, "error", checked.errors[i].message)));
         }
         return failed(all, times);
     }
@@ -188,12 +244,16 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     emit::Options options = {};
     options.target = (emit::Target){.triple = wanted, .data_layout = layout_of(wanted)};
     options.source = source;
+    options.checked = &checked;
     c::LLVMContextRef context = c::LLVMContextCreate();
     defer c::LLVMContextDispose(context);
     mark = clock::monotonic();
     emit::ModuleResult emitted = emit::module(context, &parsed.module, options);
     times.emit = clock::monotonic() - mark;
-    if (emitted == .error) return failed(diagnostic(path, source, emitted.error.span, emitted.error.message), times);
+    if (emitted == .error)
+        return failed(
+            as_str(format::push(warned, diagnostic(path, source, emitted.error.span, "error", emitted.error.message))),
+            times);
     c::LLVMModuleRef ir = emitted.ok;
     defer c::LLVMDisposeModule(ir);
 
@@ -201,8 +261,9 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     mark = clock::monotonic();
     emit_object::WriteResult written = emit_object::write(ir, object_options, output);
     times.write = clock::monotonic() - mark;
-    if (written == .error) return failed(as_str(format::push(path, ": error: ", written.error.message, "\n")), times);
-    return (Report){.ok = true, .text = "", .times = times};
+    if (written == .error)
+        return failed(as_str(format::push(warned, path, ": error: ", written.error.message, "\n")), times);
+    return (Report){.ok = true, .text = warned, .times = times};
 }
 
 // The driver's entry: `count` sources and their objects, the default roots, the triple of the compile (null: the
@@ -228,10 +289,8 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     for (Usize i = 0; i < count; i++) {
         Str output = as_str(format::push((const char *)outputs[i]));
         Report done = file(paths[i].path, output, target, folders);
-        if (!done.ok) {
-            report(done.text);
-            status = 1;
-        }
+        if (countof(done.text) > 0) report(done.text);
+        if (!done.ok) status = 1;
     }
     return status;
 }

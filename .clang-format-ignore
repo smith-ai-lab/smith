@@ -6,6 +6,7 @@ tree-sitter/src/tree_sitter/*
 tests/smith-lang/cases/**
 tests/tree_sitter_cases/*
 tests/prove/**
+tests/front/e2e/*.smith
 # The owner's scan reference, copied as it is (the hash of each file is in tests/autodiff/scan/COPIED.sha256).
 tests/autodiff/scan/**
 tests/build_fixtures/**
