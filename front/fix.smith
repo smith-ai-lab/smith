@@ -1,8 +1,10 @@
 // front::fix, `smith lint --fix` (#1442, S6 of #1428): the fixes that parse errors carry (front::parse's `Edit`),
 // applied to a file's text.
 //
-//   fix::apply_fixes(source, errors)  the text with the fixes of the errors applied: a fix (all its edits or none) is
-//                                     taken when no edit of it overlaps one already taken, else it is skipped
+//   fix::apply_fixes(source, errors, warnings)
+//                                     the text with the fixes of the errors, then of the warnings (the wider first),
+//                                     applied: a fix (all its edits or none) is taken when no edit of it overlaps one
+//                                     already taken, else it is skipped
 //   fix::fix_file(path)               one file mended in place: parse, apply, and again until nothing applies (at most
 //                                     8 passes); the number of fixes applied, -1 when the file cannot be read or
 //                                     written
@@ -47,8 +49,7 @@ static Str as_str(char chars[:]) {
     return chars;
 }
 
-// Applies the fixes of `errors` to `source`.
-export Fixed apply_fixes(Str source, core::Errors errors) {
+static Fixed apply_all(Str source, core::Errors errors) {
     core::Edits taken = {};
     Fixed result = {.text = source};
     for (Usize i = 0; i < countof(errors); i++) {
@@ -80,6 +81,29 @@ export Fixed apply_fixes(Str source, core::Errors errors) {
     return result;
 }
 
+static U32 width(core::ParseError e) {
+    return e.span.end - e.span.start;
+}
+
+// Applies the fixes of `errors`, then of `warnings` (the wider first), to `source`.
+export Fixed apply_fixes(Str source, core::Errors errors, core::Errors warnings) {
+    core::Errors all = {};
+    all = mem::realloc(all, countof(errors) + countof(warnings));
+    for (Usize i = 0; i < countof(errors); i++)
+        all[i] = errors[i];
+    for (Usize i = 0; i < countof(warnings); i++) {
+        // The wider warning goes first (a stable insertion), so a cast or a declaration is mended whole before a type
+        // inside it: the next pass reads that type again in the new form and mends it then.
+        Usize at = countof(errors) + i;
+        while (at > countof(errors) && width(all[at - 1]) < width(warnings[i])) {
+            all[at] = all[at - 1];
+            at -= 1;
+        }
+        all[at] = warnings[i];
+    }
+    return apply_all(source, all);
+}
+
 constexpr Usize fix_passes = 8;
 
 // Writes `text` over the file `path`. False when it cannot.
@@ -97,8 +121,8 @@ export Bool store(Str path, Str text) {
 export Fixed fix_text(Str file, Str source) {
     Fixed total = {.text = source};
     for (Usize pass = 0; pass < fix_passes; pass++) {
-        parser::Parsed parsed = parser::parse_fixing(file, total.text);
-        Fixed fixed = apply_fixes(total.text, parsed.errors);
+        parser::Parsed parsed = parser::parse(file, total.text);
+        Fixed fixed = apply_fixes(total.text, parsed.errors, parsed.warnings);
         if (fixed.applied == 0) break;
         total.text = fixed.text;
         total.applied += fixed.applied;

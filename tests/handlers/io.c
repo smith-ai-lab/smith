@@ -103,7 +103,7 @@ static void check(const char *name, bool good) {
 }
 
 static void test_console_output(void) {
-    FakeConsole fake = {.console = {fake_console_write, fake_console_read}, .input = ""};
+    FakeConsole fake = {.console = {fake_console_write, fake_console_read, nullptr}, .input = ""};
     check("no console handler: none is reported", smith_handlers_console() == nullptr);
     SmithConsoleHandler *previous = smith_handlers_set_console(&fake.console);
     write(1, "w;", 2);
@@ -124,7 +124,7 @@ static void test_console_output(void) {
 }
 
 static void test_console_input(void) {
-    FakeConsole fake = {.console = {fake_console_write, fake_console_read},
+    FakeConsole fake = {.console = {fake_console_write, fake_console_read, nullptr},
                         .input = "first line\nsecond 42\nxyz\nrest"};
     SmithConsoleHandler *previous = smith_handlers_set_console(&fake.console);
     char line[64] = "";

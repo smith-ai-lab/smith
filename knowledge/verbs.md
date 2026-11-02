@@ -8,13 +8,13 @@ tags: [verbs, cli]
 
 **smith's top level is only verbs**, as zig's is: `smith cc` and `smith c++` compile (clang's arguments, unchanged);
 `build`, `new`, `fetch`, `cache`, `docs`, `version`, `fmt`, `lint`, `lsp`, `run`, `test` and `check` do the rest. The bare form `smith
-foo.c -o foo` is an error that says to run `smith cc foo.c -o foo`, so nothing is ambiguous. For what needs one
+foo.c -o foo` is an error that says to run `smith cc foo.c -o foo`, so nothing is ambiguous. A word that is no command (`smith tset`) is an error too: it says `Did you mean `test`?` when the word is one edit from a short command or two from a longer one, then lists the commands; an unknown flag gets the list alone. All exit 2. For what needs one
 program path (`CC=` in a Makefile, CMake's `CMAKE_C_COMPILER`, the first word of a `compile_commands.json` command,
 which clangd reads as a compiler), `smith build install` also installs `smith-cc` and `smith-c++`, links to smith that
 act as `smith cc` and `smith c++` by their name, as `smith++` did. `smith++` is gone. The program a `build.c` names as
 a compiler is `smith-cc` or `smith-c++`; `"smith"` is refused with that hint.
 
-The one exception at the top level (owner, 2026-10-31, #1138): `smith --version` prints what `smith version` prints, and `smith --help`, `-h` and `help` list the verbs, `smith help <verb>` prints that verb's usage; any other flag stays the error above, and `smith cc --version` is clang's.
+The one exception at the top level (owner, 2026-10-31, #1138): `smith --version` prints what `smith version` prints, and `smith --help`, `-h` and `help` list the verbs, `smith help <verb>` prints that verb's page, and bare `smith` prints the list too (exit 0); all help is printed from the verb table in `smith.c`, and `smith <verb> --help` is smith's page except for the tool verbs (`cc`, `c++`, `lsp`, `dbg`, `dap`, `fmt`, `lint`), where it is the tool's own; any other flag stays the error above, and `smith cc --version` is clang's.
 
 **`smith docs` checks a project's `knowledge/` (OKF) and `.agents/skills/`, and `smith new` starts every
 project with them** (`runtime/docs.c`; skill smith-docs); the concept types and required fields are `types:` and

@@ -111,7 +111,7 @@ export void test_lex_every_keyword_is_a_token_of_its_own() {
         expect_one(lex::kind_text(kind), kind);
         seen += 1;
     }
-    test::check_equal(seen, 60);
+    test::check_equal(seen, 61);
     expect_dump("int char long unsigned",
                 "1:1 kw_int int\n1:5 kw_char char\n1:10 kw_long long\n1:15 kw_unsigned unsigned\n1:23 end_of_file\n");
     expect_dump("module import export defer try countof",

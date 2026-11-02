@@ -1,0 +1,580 @@
+// front::types_fn: functions and lambdas in the checker (#1515, C4 of #1428, spec "Lambdas" and "Types"). Not wired
+// into `smith cc`; today's forms keep checking exactly as they do.
+//
+// THE RULES
+//
+//   fn_once   `fn_once(A) -> R` is linear (#1108, spec: "`fn_once` is called exactly once on every path and may consume
+//             what it captured"). A parameter of that type is used once on every path of the body: a second use is
+//             "used again", a path that leaves (a `return`, the end of the body, a `try`) before any use is "not used
+//             on every path", and a use inside a loop is "once per turn". A use is a call, or the name passed on or
+//             captured, which moves it. `check_once(c, params, body)` is the API; types_decl calls it for each function
+//             and types_expr for each lambda.
+//   stored    A lambda is non-escaping by default (#316): a lambda written as an argument of a call captures by
+//             reference and cannot outlive the call. Any other lambda is stored (a variable, a field, a result): it is
+//             a context and a function pointer, and storing it copies its captures by value into the allocator
+//             (spec: "Captures: no list"). The copy is a pointer or slice into the current function's stack when a
+//             capture is such a variable (`p := &x`, `s := xs[1:3]` where `x`, `xs` are locals), and that dangles once
+//             the function returns, so the checker refuses it and names the capture. `check_lambda(c, e)` is the API,
+//             called by types_expr when it types a lambda; `note_arguments(args)` tells it which lambdas are arguments.
+//
+// No recursion: the walk over a body is a work stack of frames, in the current allocator (std::mem).
+module front::types_fn;
+
+import front::ast;
+import front::types;
+import std::format;
+import std::mem;
+
+// ---------------------------------------------------------------------------------------------------------------
+// The shape of the tree: children in the order they run
+
+// A statement or an expression; both null is no node.
+struct Node {
+    const ast::Stmt *stmt;
+    const ast::Expr *expr;
+};
+
+static Node of_expr(const ast::Expr *e) {
+    return (Node){.expr = e};
+}
+
+static Node of_stmt(const ast::Stmt *s) {
+    return (Node){.stmt = s};
+}
+
+static Bool is_empty(Node n) {
+    return n.stmt == nullptr && n.expr == nullptr;
+}
+
+static Bool is_logical(const ast::Expr *e) {
+    return e->kind == .binary && (e->kind.binary.op == .logical_and || e->kind.binary.op == .logical_or);
+}
+
+static Usize expr_child_count(const ast::Expr *e) {
+    if (e->kind == .call) return 1 + countof(e->kind.call.args);
+    if (e->kind == .binary) return is_logical(e) ? 3 : 2;
+    if (e->kind == .assign || e->kind == .index || e->kind == .reflect_member) return 2;
+    if (e->kind == .conditional || e->kind == .slice_of) return 3;
+    if (e->kind == .tuple_lit) return countof(e->kind.tuple_lit.items);
+    if (e->kind == .array_lit) return countof(e->kind.array_lit.items);
+    if (e->kind == .compound) return countof(e->kind.compound.items);
+    if (e->kind == .unary || e->kind == .member || e->kind == .cast || e->kind == .try_expr || e->kind == .lambda ||
+        e->kind == .named_arg || e->kind == .stmt_expr || e->kind == .expand || e->kind == .variant) {
+        return 1;
+    }
+    return 0;
+}
+
+static Node expr_child(const ast::Expr *e, Usize i) {
+    if (e->kind == .call) {
+        return i == 0 ? of_expr(e->kind.call.callee) : of_expr(e->kind.call.args[i - 1]);
+    }
+    if (e->kind == .unary) {
+        return of_expr(e->kind.unary.operand);
+    }
+    if (e->kind == .binary) {
+        if (i == 0) return of_expr(e->kind.binary.left);
+        return i == 1 ? of_expr(e->kind.binary.right) : (Node){};
+    }
+    if (e->kind == .assign) {
+        return i == 0 ? of_expr(e->kind.assign.value) : of_expr(e->kind.assign.target);
+    }
+    if (e->kind == .conditional) {
+        if (i == 0) return of_expr(e->kind.conditional.condition);
+        return i == 1 ? of_expr(e->kind.conditional.then_value) : of_expr(e->kind.conditional.else_value);
+    }
+    if (e->kind == .index) {
+        return i == 0 ? of_expr(e->kind.index.base) : of_expr(e->kind.index.index);
+    }
+    if (e->kind == .slice_of) {
+        if (i == 0) return of_expr(e->kind.slice_of.base);
+        return i == 1 ? of_expr(e->kind.slice_of.start) : of_expr(e->kind.slice_of.end);
+    }
+    if (e->kind == .member) {
+        return of_expr(e->kind.member.base);
+    }
+    if (e->kind == .cast) {
+        return of_expr(e->kind.cast.operand);
+    }
+    if (e->kind == .try_expr) {
+        return of_expr(e->kind.try_expr.operand);
+    }
+    if (e->kind == .lambda) {
+        return of_stmt(e->kind.lambda.body);
+    }
+    if (e->kind == .named_arg) {
+        return of_expr(e->kind.named_arg.value);
+    }
+    if (e->kind == .stmt_expr) {
+        return of_stmt(e->kind.stmt_expr.stmt);
+    }
+    if (e->kind == .expand) {
+        return of_expr(e->kind.expand.pattern);
+    }
+    if (e->kind == .variant) {
+        return of_expr(e->kind.variant.payload);
+    }
+    if (e->kind == .reflect_member) {
+        return i == 0 ? of_expr(e->kind.reflect_member.base) : of_expr(e->kind.reflect_member.field);
+    }
+    if (e->kind == .tuple_lit) {
+        return of_expr(e->kind.tuple_lit.items[i]);
+    }
+    if (e->kind == .array_lit) {
+        return of_expr(e->kind.array_lit.items[i]);
+    }
+    if (e->kind == .compound) {
+        return of_expr(e->kind.compound.items[i].value);
+    }
+    return (Node){};
+}
+
+static Usize stmt_child_count(const ast::Stmt *s) {
+    if (s->kind == .block) return countof(s->kind.block.items);
+    if (s->kind == .match_stmt) return 1 + countof(s->kind.match_stmt.arms);
+    if (s->kind == .if_stmt || s->kind == .if_let) return 3;
+    if (s->kind == .for_stmt) return 4;
+    if (s->kind == .while_stmt || s->kind == .do_while || s->kind == .for_in) return 2;
+    if (s->kind == .expression || s->kind == .declaration || s->kind == .destructure || s->kind == .return_stmt ||
+        s->kind == .defer_stmt || s->kind == .labeled) {
+        return 1;
+    }
+    return 0;
+}
+
+static Node stmt_child(const ast::Stmt *s, Usize i) {
+    if (s->kind == .expression) {
+        return of_expr(s->kind.expression.value);
+    }
+    if (s->kind == .declaration) {
+        const ast::Decl *d = s->kind.declaration.decl;
+        if (d != nullptr && d->kind == .variable) return of_expr(d->kind.variable.init);
+        return (Node){};
+    }
+    if (s->kind == .block) {
+        return of_stmt(s->kind.block.items[i]);
+    }
+    if (s->kind == .if_stmt) {
+        if (i == 0) return of_expr(s->kind.if_stmt.condition);
+        return i == 1 ? of_stmt(s->kind.if_stmt.then_branch) : of_stmt(s->kind.if_stmt.else_branch);
+    }
+    if (s->kind == .if_let) {
+        if (i == 0) return of_expr(s->kind.if_let.value);
+        return i == 1 ? of_stmt(s->kind.if_let.then_branch) : of_stmt(s->kind.if_let.else_branch);
+    }
+    if (s->kind == .while_stmt) {
+        return i == 0 ? of_expr(s->kind.while_stmt.condition) : of_stmt(s->kind.while_stmt.body);
+    }
+    if (s->kind == .do_while) {
+        return i == 0 ? of_stmt(s->kind.do_while.body) : of_expr(s->kind.do_while.condition);
+    }
+    if (s->kind == .for_stmt) {
+        if (i == 0) return of_stmt(s->kind.for_stmt.init);
+        if (i == 1) return of_expr(s->kind.for_stmt.condition);
+        return i == 2 ? of_stmt(s->kind.for_stmt.body) : of_expr(s->kind.for_stmt.step);
+    }
+    if (s->kind == .for_in) {
+        return i == 0 ? of_expr(s->kind.for_in.iterable) : of_stmt(s->kind.for_in.body);
+    }
+    if (s->kind == .match_stmt) {
+        return i == 0 ? of_expr(s->kind.match_stmt.value) : of_expr(s->kind.match_stmt.arms[i - 1].value);
+    }
+    if (s->kind == .destructure) {
+        return of_expr(s->kind.destructure.init);
+    }
+    if (s->kind == .return_stmt) {
+        return of_expr(s->kind.return_stmt.value);
+    }
+    if (s->kind == .defer_stmt) {
+        return of_stmt(s->kind.defer_stmt.body);
+    }
+    if (s->kind == .labeled) {
+        return of_stmt(s->kind.labeled.body);
+    }
+    return (Node){};
+}
+
+static Usize child_count(Node n) {
+    return n.expr != nullptr ? expr_child_count(n.expr) : stmt_child_count(n.stmt);
+}
+
+static Node child(Node n, Usize i) {
+    return n.expr != nullptr ? expr_child(n.expr, i) : stmt_child(n.stmt, i);
+}
+
+// The index of the first alternative of a node that branches (child 0 is what decides, the rest are the paths, and a
+// path that is absent is the empty one); 0 for a node that does not branch.
+static Usize first_alternative(Node n) {
+    if (n.expr != nullptr) {
+        if (n.expr->kind == .conditional || is_logical(n.expr)) return 1;
+        return 0;
+    }
+    if (n.stmt->kind == .if_stmt || n.stmt->kind == .if_let || n.stmt->kind == .match_stmt) return 1;
+    return 0;
+}
+
+// One more than the index of the first child that a loop runs again and again; 0 for a node that is no loop.
+static Usize loop_from(Node n) {
+    if (n.stmt == nullptr) return 0;
+    if (n.stmt->kind == .while_stmt || n.stmt->kind == .do_while) return 1;
+    if (n.stmt->kind == .for_stmt || n.stmt->kind == .for_in) return 2;
+    return 0;
+}
+
+static ast::Span span_of(Node n) {
+    return n.expr != nullptr ? n.expr->span : n.stmt->span;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// fn_once: used exactly once on every path
+
+// What a path may have done with the name so far, as a set: bit 0 nothing, bit 1 one use, bit 2 two or more.
+constexpr U32 no_use = 1;
+constexpr U32 one_use = 2;
+constexpr U32 many_uses = 4;
+
+struct Frame {
+    Node node;
+    Usize next; // the next child to visit
+    U32 saved;  // alternatives: what the paths were at the fork
+    U32 joined; // alternatives: what the paths that ended have done
+    Usize mark; // loops: the uses seen when the loop body started
+};
+
+struct Walk {
+    Frame items[:];
+    Usize top;
+    Str name;
+    U32 now; // the uses of the path being walked
+    Usize uses;
+    Bool reported;
+};
+
+static void push_frame(Walk *w, Node n) {
+    if (w->top == countof(w->items)) {
+        Usize capacity = countof(w->items) * 2;
+        if (capacity < 16) capacity = 16;
+        w->items = mem::realloc(w->items, capacity);
+    }
+    w->items[w->top] = (Frame){.node = n};
+    w->top += 1;
+}
+
+// A message built with format::push, as the Str that a failure takes.
+static Str msg(char chars[:]) {
+    return chars;
+}
+
+static Bool same_text(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+static Bool names(const ast::Expr *e, Str name) {
+    return e != nullptr && e->kind == .name && countof(e->kind.name.path.segments) == 1 &&
+           same_text(e->kind.name.path.segments[0].text, name);
+}
+
+// One use more on every path.
+static U32 after_use(U32 now) {
+    return ((now & no_use) << 1) | ((now & one_use) << 1) | (now & many_uses);
+}
+
+static void fail_once(types::Checked *c, Walk *w, ast::Span span, Str message) {
+    if (w->reported) return;
+    w->reported = true;
+    types::fail(c, span, message);
+}
+
+static void use(types::Checked *c, Walk *w, ast::Span span) {
+    if ((w->now & (one_use | many_uses)) != 0) {
+        fail_once(c, w, span,
+                  msg(format::push("`", w->name,
+                                   "` is `fn_once` and is used again here; it runs once, so call it "
+                                   "once, or take an `fn(...)` parameter if it must run more than once")));
+    }
+    w->now = after_use(w->now);
+    w->uses += 1;
+}
+
+// A path leaves here (a `return`, the end of the body, a `try`) while some path has not used the name.
+static void leave(types::Checked *c, Walk *w, ast::Span span) {
+    if ((w->now & no_use) != 0) {
+        fail_once(c, w, span,
+                  msg(format::push("`", w->name,
+                                   "` is `fn_once` and must be called exactly once, but a path ends "
+                                   "here without using it; call it on every path")));
+    }
+}
+
+static void enter_child(Walk *w, Frame *f, Usize i) {
+    Usize alt = first_alternative(f->node);
+    if (alt > 0 && i == alt) {
+        f->saved = w->now;
+        f->joined = 0;
+    } else if (alt > 0 && i > alt) {
+        f->joined |= w->now;
+        w->now = f->saved;
+    }
+    Usize from = loop_from(f->node);
+    if (from > 0 && i == from - 1) f->mark = w->uses;
+}
+
+static void finish(types::Checked *c, Walk *w, Frame *f) {
+    Node n = f->node;
+    if (n.expr != nullptr && names(n.expr, w->name)) use(c, w, n.expr->span);
+    Usize alt = first_alternative(n);
+    if (alt > 0 && child_count(n) > alt) {
+        f->joined |= w->now;
+        w->now = f->joined;
+    }
+    if (loop_from(n) > 0 && w->uses != f->mark) {
+        fail_once(c, w, span_of(n),
+                  msg(format::push("`", w->name,
+                                   "` is `fn_once` and is used inside a loop, so it would be used once "
+                                   "per turn; call it after the loop, or take an `fn(...)` parameter")));
+    }
+    if (n.stmt != nullptr && n.stmt->kind == .return_stmt) {
+        leave(c, w, n.stmt->span);
+        w->now = 0;
+    }
+    if (n.expr != nullptr && n.expr->kind == .try_expr) leave(c, w, n.expr->span);
+}
+
+static void walk(types::Checked *c, Walk *w, Node root) {
+    push_frame(w, root);
+    while (w->top > 0) {
+        Frame *f = &w->items[w->top - 1];
+        if (f->next >= child_count(f->node)) {
+            finish(c, w, f);
+            w->top -= 1;
+            continue;
+        }
+        Usize i = f->next;
+        f->next += 1;
+        enter_child(w, f, i);
+        Node k = child(f->node, i);
+        if (!is_empty(k)) push_frame(w, k);
+    }
+}
+
+static Bool is_once_param(const ast::Param *p) {
+    return p->type != nullptr && p->type->kind == .function && p->type->kind.function.is_once;
+}
+
+// Checks every `fn_once` parameter of a function or lambda: used exactly once on every path of `body`.
+export void check_once(types::Checked *c, ast::Param params[:], const ast::Stmt *body) {
+    if (body == nullptr) return;
+    for (Usize i = 0; i < countof(params); i++) {
+        if (!is_once_param(&params[i])) continue;
+        Walk w = {.name = params[i].name, .now = no_use};
+        walk(c, &w, of_stmt(body));
+        if (w.now != 0) leave(c, &w, body->span);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Stored lambdas
+
+struct Arguments {
+    const ast::Expr *items[:];
+    Usize count;
+};
+
+static Arguments arguments;
+
+// Forgets the noted lambdas and their buffer; the arena that held it is freed after each check.
+export void reset() {
+    arguments = (Arguments){};
+}
+
+// The lambdas written as arguments of a call; they are non-escaping. Call before the arguments are typed.
+export void note_arguments(ast::ExprRef args[:]) {
+    for (Usize i = 0; i < countof(args); i++) {
+        const ast::Expr *a = args[i];
+        if (a != nullptr && a->kind == .named_arg) a = a->kind.named_arg.value;
+        if (a == nullptr || a->kind != .lambda) continue;
+        if (arguments.count == countof(arguments.items)) {
+            Usize capacity = countof(arguments.items) * 2;
+            if (capacity < 8) capacity = 8;
+            arguments.items = mem::realloc(arguments.items, capacity);
+        }
+        arguments.items[arguments.count] = a;
+        arguments.count += 1;
+    }
+}
+
+// Whether `e` was noted as an argument; the note is used up.
+static Bool take_argument(const ast::Expr *e) {
+    for (Usize i = 0; i < arguments.count; i++) {
+        if (arguments.items[i] != e) {
+            continue;
+        }
+        arguments.items[i] = arguments.items[arguments.count - 1];
+        arguments.count -= 1;
+        return true;
+    }
+    return false;
+}
+
+static const types::Symbol *stack_symbol(const types::Checked *c, ast::Path path);
+
+// A local of the current function (not a module name) that is not a pointer or slice: what a pointer into the stack
+// points at.
+static const types::Symbol *stack_local(const types::Checked *c, const ast::Expr *e) {
+    const ast::Expr *at = e;
+    while (at != nullptr) {
+        if (at->kind == .index) {
+            at = at->kind.index.base;
+        } else if (at->kind == .member) {
+            if (at->kind.member.arrow) return nullptr;
+            at = at->kind.member.base;
+        } else {
+            break;
+        }
+    }
+    if (at == nullptr) return nullptr;
+    if (at->kind == .name) return stack_symbol(c, at->kind.name.path);
+    return nullptr;
+}
+
+static const types::Symbol *stack_symbol(const types::Checked *c, ast::Path path) {
+    const types::Symbol *s = types::lookup_path(&c->scopes, path);
+    if (s == nullptr || s->kind != .variable || c->scopes.depth == 0) return nullptr;
+    Usize index = (Usize)(s - &c->scopes.symbols[0]);
+    if (index < c->scopes.marks[0]) return nullptr;
+    if (s->type->kind == .pointer || s->type->kind == .slice) return nullptr;
+    return s;
+}
+
+// Whether `init`, what a local was set to, is a pointer or slice into the stack: `&x`, `&xs[i]`, `xs[a:b]`, `xs` as a
+// slice, where `x` and `xs` are locals.
+static Bool points_into_stack(const types::Checked *c, const types::Symbol *s, const ast::Expr *init) {
+    if (init == nullptr) return false;
+    if (init->kind == .unary && init->kind.unary.op == .address_of) {
+        return stack_local(c, init->kind.unary.operand) != nullptr;
+    }
+    const ast::Expr *base = nullptr;
+    if (init->kind == .slice_of) base = init->kind.slice_of.base;
+    if (init->kind == .name && s->type->kind == .slice) base = init;
+    const types::Symbol *root = stack_local(c, base);
+    return root != nullptr && root->type->kind == .array;
+}
+
+// The names the body of a lambda uses, with the names it declares itself, in `uses` and `declared`.
+struct Names {
+    const ast::Expr *uses[:];
+    Usize use_count;
+    ast::Identifier declared[:];
+    Usize declared_count;
+};
+
+static void note_use(Names *n, const ast::Expr *e) {
+    if (n->use_count == countof(n->uses)) {
+        Usize capacity = countof(n->uses) * 2;
+        if (capacity < 16) capacity = 16;
+        n->uses = mem::realloc(n->uses, capacity);
+    }
+    n->uses[n->use_count] = e;
+    n->use_count += 1;
+}
+
+static void note_declared(Names *n, ast::Identifier name) {
+    if (n->declared_count == countof(n->declared)) {
+        Usize capacity = countof(n->declared) * 2;
+        if (capacity < 16) capacity = 16;
+        n->declared = mem::realloc(n->declared, capacity);
+    }
+    n->declared[n->declared_count] = name;
+    n->declared_count += 1;
+}
+
+static void note_node(Names *n, Node k) {
+    if (k.expr != nullptr && k.expr->kind == .name) note_use(n, k.expr);
+    if (k.stmt == nullptr) return;
+    if (k.stmt->kind == .declaration && k.stmt->kind.declaration.decl->kind == .variable) {
+        note_declared(n, (ast::Identifier){.text = k.stmt->kind.declaration.decl->kind.variable.name});
+    }
+    if (k.stmt->kind == .for_in) {
+        for (Usize i = 0; i < countof(k.stmt->kind.for_in.names); i++) {
+            note_declared(n, k.stmt->kind.for_in.names[i]);
+        }
+    }
+    if (k.stmt->kind == .destructure) {
+        for (Usize i = 0; i < countof(k.stmt->kind.destructure.names); i++) {
+            note_declared(n, k.stmt->kind.destructure.names[i]);
+        }
+    }
+}
+
+static Names collect(const ast::Stmt *body) {
+    Names found = {};
+    if (body == nullptr) return found;
+    Walk w = {};
+    push_frame(&w, of_stmt(body));
+    while (w.top > 0) {
+        Frame *f = &w.items[w.top - 1];
+        if (f->next >= child_count(f->node)) {
+            w.top -= 1;
+            continue;
+        }
+        Node k = child(f->node, f->next);
+        f->next += 1;
+        note_node(&found, k);
+        if (!is_empty(k)) push_frame(&w, k);
+    }
+    return found;
+}
+
+static Bool declares(const Names *n, const ast::Param params[:], Str name) {
+    for (Usize i = 0; i < n->declared_count; i++) {
+        if (same_text(n->declared[i].text, name)) return true;
+    }
+    for (Usize i = 0; i < countof(params); i++) {
+        if (same_text(params[i].name, name)) return true;
+    }
+    return false;
+}
+
+// A capture that a stored lambda may not have: a pointer or slice into this function's stack.
+static void capture(types::Checked *c, const ast::Expr *use_site, Str name);
+
+static void check_capture(types::Checked *c, const ast::Param params[:], const Names *found, Usize i) {
+    const ast::Expr *use_site = found->uses[i];
+    if (use_site->kind == .name) {
+        ast::Path path = use_site->kind.name.path;
+        if (countof(path.segments) == 1 && !declares(found, params, path.segments[0].text)) {
+            capture(c, use_site, path.segments[0].text);
+        }
+    }
+}
+
+static void capture(types::Checked *c, const ast::Expr *use_site, Str name) {
+    const types::Symbol *s = types::lookup(&c->scopes, name);
+    if (s == nullptr || s->kind != .variable || s->decl == nullptr || s->decl->kind != .variable) return;
+    if (s->type->kind != .pointer && s->type->kind != .slice) return;
+    if (!points_into_stack(c, s, s->decl->kind.variable.init)) return;
+    types::failf(c, use_site->span, "the stored lambda captures `", name, "`, a ",
+                 s->type->kind == .pointer ? "pointer" : "slice",
+                 " into this function's stack, which dangles once the function returns; pass the lambda as an "
+                 "argument of a call, or capture a copy of what `",
+                 name, "` points to");
+}
+
+// Types a lambda: a stored one may not capture a pointer or slice into the current function's stack, and each of its
+// `fn_once` parameters is used once. `e` is the lambda, typed in the scopes it is written in.
+export void check_lambda(types::Checked *c, const ast::Expr *e) {
+    if (e->kind == .lambda) {
+        ast::Param params[:] = e->kind.lambda.params;
+        const ast::Stmt *body = e->kind.lambda.body;
+        check_once(c, params, body);
+        if (take_argument(e)) return;
+        Names found = collect(body);
+        for (Usize i = 0; i < found.use_count; i++) {
+            check_capture(c, params, &found, i);
+        }
+    }
+}

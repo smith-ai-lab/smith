@@ -247,7 +247,7 @@ export void test_front_join_a_file_without_a_module_line_is_named_by_its_path() 
     c::mkdir(source_root.data, 0o700);
     c::mkdir(as_str(format::push(source_root, "/game")).data, 0o700);
     Str path = as_str(format::push(source_root, "/game/replay.smith"));
-    write_text(path, "export I32 five() {\n    return 5;\n}\n");
+    write_text(path, "module game::replay;\n\nexport I32 five() {\n    return 5;\n}\n");
     Str object = as_str(format::push(folder, "/out.o"));
     roots::Roots folders = {.source = source_root, .library = as_str(format::push(folder, "/lib"))};
     compile::Report report = compile::file(path, object, "", folders);

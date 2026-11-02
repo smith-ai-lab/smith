@@ -101,6 +101,7 @@ export struct FieldDecl {
     Str name;
     TypeExpr *type;
     Expr *bit_width;
+    Bool is_new; // written in smith's own syntax (`x: T`), not today's `T x;`
     Span span;
 };
 
@@ -235,6 +236,7 @@ export struct Param {
     Bool is_constexpr;
     Bool is_rest;  // `auto... rest`
     Bool is_mut;   // `mut x: T`
+    Bool is_new;   // written in smith's own syntax (`x: T`), not today's `T x`
     Bool is_const; // `const n: usize`: known at compile time
     Attribute attributes[:];
     Span span;
@@ -458,6 +460,9 @@ export typedef enum {
         Stmt *body;
     } defer_stmt;
     struct {
+        Stmt *body;
+    } errdefer_stmt;
+    struct {
         Text label;
     } goto_stmt;
     struct {
@@ -494,6 +499,7 @@ export typedef enum {
         Bool is_constexpr;
         Bool is_thread_local;
         Bool is_mut; // `x: T = v` mutable local in the new syntax
+        Bool is_new; // written in smith's own syntax (`x := v`, `x: T = v`, `mut x ...`)
     } variable;      // `auto x = ...` has the type auto_type
     struct {
         Text name;
@@ -1338,6 +1344,9 @@ static void stmt_children(Items *items, Stmt *s) {
     case .defer_stmt:
         add_stmt(items, s->kind.defer_stmt.body, false);
         break;
+    case .errdefer_stmt:
+        add_stmt(items, s->kind.errdefer_stmt.body, false);
+        break;
     case .labeled:
         add_stmt(items, s->kind.labeled.body, false);
         break;
@@ -1820,6 +1829,9 @@ static void stmt_head(Output *text, Stmt *s) {
     case .defer_stmt:
         put(text, "defer");
         break;
+    case .errdefer_stmt:
+        put(text, "errdefer");
+        break;
     case .goto_stmt:
         put(text, "goto ");
         put(text, s->kind.goto_stmt.label);
@@ -1903,6 +1915,7 @@ static void decl_head(Output *text, Decl *d) {
         put_flag(text, d->kind.variable.is_constexpr, "constexpr");
         put_flag(text, d->kind.variable.is_thread_local, "thread_local");
         put_flag(text, d->kind.variable.is_mut, "mut");
+        put_flag(text, d->kind.variable.is_new, "new");
         break;
     case .function:
         put(text, "function ");
@@ -2001,6 +2014,7 @@ static void other_head(Output *text, Node node) {
         put_flag(text, node.param->is_constexpr, "constexpr");
         put_flag(text, node.param->is_rest, "rest");
         put_flag(text, node.param->is_mut, "mut");
+        put_flag(text, node.param->is_new, "new");
         put_flag(text, node.param->is_const, "const");
         break;
     case .field:

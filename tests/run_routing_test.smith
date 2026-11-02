@@ -591,9 +591,9 @@ export void test_run_version_and_no_arguments() {
                 (version->out[9] == '\n' || starts_with(&version->out[9], " commit "));
     scratch::expect_text("version: the version line", "yes", line ? "yes" : &version->out[0]);
     c::SmithCoreRouted *bare = route_command(&u, "smith", nullptr, "", "", nullptr);
-    expect_status_is("no arguments: status 2", 2, bare);
+    expect_status_is("no arguments: status 0", 0, bare); // the list of commands, on stdout (#1149)
     scratch::expect_text("no arguments: usage", "usage: smith <command> [<arguments>]",
-                         first_line(&memory, &bare->err[0]));
+                         first_line(&memory, &bare->out[0]));
 }
 
 export void test_run_smith_cc_with_no_arguments_is_clang_with_none() {

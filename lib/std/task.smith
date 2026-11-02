@@ -300,6 +300,21 @@ void task_main(Task *task) {
     c::smith_failure_format(c::SmithFailure_Capacity, "%s", what);
 }
 
+// Linux 6.13 and later install a guard page as a marker inside the mapping (MADV_GUARD_INSTALL, 102): the page faults
+// like a PROT_NONE one, but the mapping stays one VMA, so `vm.max_map_count` (65530 by default) no longer caps the live
+// tasks at about 32,000. An older kernel refuses it (EINVAL) and the guard is an mprotect, two VMAs per task.
+// Makes the `page` bytes at `region` fault on any access. False when the system refuses.
+Bool install_guard(void *region, Usize page) {
+    contract::trusted(); // it changes the mapping's protection
+    // NOLINTBEGIN(smith-effects): the system's memory is the edge of this module
+    if constexpr (target::os == target::linux) {
+        constexpr I32 advise_guard_install = 102;
+        if (c::madvise(region, page, advise_guard_install) == 0) return true;
+    }
+    return c::mprotect(region, page, protect_none) == 0;
+    // NOLINTEND(smith-effects)
+}
+
 // One mapping: a guard page and `stack_size` bytes above it. Never null: the system refusing the memory is a checked
 // failure.
 void *map_stack(Usize extra) {
@@ -308,7 +323,7 @@ void *map_stack(Usize extra) {
     Usize page = (Usize)c::sysconf(page_size_name);
     void *region = c::mmap(nullptr, page + stack_size + extra, protect_both, map_private_anonymous, -1, 0);
     if ((Usize)region == ~(Usize)0) refuse("task: the system refused a stack");
-    if (c::mprotect(region, page, protect_none) != 0) refuse("task: the system refused a guard page");
+    if (!install_guard(region, page)) refuse("task: the system refused a guard page");
     // NOLINTEND(smith-effects)
     return region;
 }
@@ -1160,4 +1175,45 @@ export void spawn(Group *group, auto f, auto *arg) {
 [[std::c_name("smith_task_pause")]] export void pause() {
     Scheduler *scheduler = current_scheduler();
     scheduler->pause(scheduler);
+}
+
+// A fiber for std::stream: a task that no scheduler owns and only its reader resumes. It runs `entry(context)` on a
+// stack of its own (a guard page and 256 KB, the inline scheduler's mapping), with a copy of the handlers of its
+// creator, and does not run until the first `fiber_resume`. `group` must outlive it: the task's end counts down its
+// `pending`, which the caller sets to 1. Never null.
+export void *fiber_start(Group *group, void (*entry)(void *context), void *context) {
+    contract::requires(group != nullptr && entry != nullptr);
+    return make_task(group, entry, context);
+}
+
+// Enters the fiber from the calling task, which it returns to at its next `fiber_suspend` or at its end. True when the
+// fiber has ended (its stack can be released), false when it suspended.
+export Bool fiber_resume(void *fiber) {
+    contract::requires(fiber != nullptr);
+    return resume((Task *)fiber);
+}
+
+// The calling fiber gives the thread back to whoever resumed it, and returns when it is resumed again.
+export void fiber_suspend() {
+    suspend();
+}
+
+// The last switch of the calling fiber: it is marked finished first, so AddressSanitizer destroys its fake stack as it
+// leaves (a fiber released while suspended would leak it). The reader must not resume it again, only release it.
+export void fiber_finish() {
+    current()->finished = true;
+    suspend();
+}
+
+// Unmaps the stack and the record of a fiber that is not running: one that never ran, or one that is suspended for
+// good (its reader will not resume it). Frames it left behind are unpoisoned for AddressSanitizer, so the next mapping
+// at that address starts clean.
+export void fiber_release(void *fiber) {
+    contract::requires(fiber != nullptr);
+    Task *task = (Task *)fiber;
+    contract::trusted(); // the stack is the fiber's own, and no one holds the fiber any more
+    if constexpr (target::address_sanitizer) {
+        c::__asan_unpoison_memory_region((void *)(Usize)task->bottom, task->size);
+    }
+    release_inline(task);
 }

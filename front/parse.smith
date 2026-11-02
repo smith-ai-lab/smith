@@ -50,12 +50,11 @@ export typedef struct {
 export typedef typeof(Edit[:]) Edits;
 
 // What went wrong and where. `fix` is the edits that mend it (empty: none), applied together or not at all by
-// `smith lint --fix` (parser::apply_fixes). `warning` is an old form that still compiles during the transition.
+// `smith lint --fix` (parser::apply_fixes). An old form that still compiles goes in the parser's `warnings`, not here.
 export typedef struct {
     ast::Span span;
     Str message;
     Edits fix;
-    Bool warning;
 } ParseError;
 
 export typedef typeof(ParseError[:]) Errors;
@@ -67,9 +66,10 @@ export struct Parser {
     Str source;
     Usize position;
     Errors errors;
+    Errors warnings; // old forms that still compile, with their fixes: kept apart so `errors` stays the failures
     Hooks hooks;
-    Bool fixes; // an old form of today's syntax also records a warning with the edits that write the new form (#1428);
-                // `smith lint --fix` sets it, and no other reader does yet: the corpus still builds with no warning
+    Bool head; // the next expression is a condition head (`if`, `while`, `for ... in`, `match`): no trailing block
+               // at its top level, so a `{` opens the body (#961)
     Bool new_syntax; // the tokens come from lex::tokenize_new: `.`, `(`, `[` and `{` also start smith's own forms
                      // (#1446)
 };
@@ -131,11 +131,12 @@ export void error_fix(Parser *p, ast::Span span, Str message, Edits edits) {
     p->errors[countof(p->errors) - 1] = failure;
 }
 
-// Records an old form with its fix as a warning: the file still compiles, and `smith lint --fix` mends it.
+// Records an old form with its fix as a warning: the file still compiles, and `smith lint --fix` mends it. It goes in
+// `warnings`, never in `errors`.
 export void warning_fix(Parser *p, ast::Span span, Str message, Edits edits) {
-    p->errors = mem::realloc(p->errors, countof(p->errors) + 1);
-    ParseError failure = {.span = span, .message = message, .fix = edits, .warning = true};
-    p->errors[countof(p->errors) - 1] = failure;
+    p->warnings = mem::realloc(p->warnings, countof(p->warnings) + 1);
+    ParseError failure = {.span = span, .message = message, .fix = edits};
+    p->warnings[countof(p->warnings) - 1] = failure;
 }
 
 // Takes the token when it has this kind. Else it records `expected <what>, found <text>` at the token (`found the end

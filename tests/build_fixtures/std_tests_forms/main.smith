@@ -1,0 +1,7 @@
+module main;
+import <stdio.h>;
+
+I32 main() {
+    c::printf("ok\n");
+    return 0;
+}

@@ -104,6 +104,9 @@ static Bool group_then_name(const parse::Parser *p, Usize at) {
         at += 1;
         if (depth == 0) break;
     }
+    // In smith's own syntax a line break after the `)` ends the statement: `f(x)` and a `f(x)` on the next line are two
+    // calls, not a type and a name (#1554).
+    if (p->new_syntax && lex::ends_statement(parse::peek_at(p, at - 1))) return false;
     return is_segment(parse::peek_at(p, at).kind);
 }
 
@@ -160,7 +163,7 @@ export Bool starts_type(const parse::Parser *p, Usize offset) {
 static Bool fn_word(const parse::Parser *p, Usize offset) {
     lex::Token token = parse::peek_at(p, offset);
     if (token.kind == lex::kw_fn || token.kind == lex::kw_fn_once) return true;
-    if (!p->fixes || token.kind != lex::name || parse::peek_at(p, offset + 1).kind != lex::left_paren) return false;
+    if (token.kind != lex::name || parse::peek_at(p, offset + 1).kind != lex::left_paren) return false;
     return text::is(parse::text(p, token), "fn") || text::is(parse::text(p, token), "fn_once");
 }
 
@@ -982,13 +985,9 @@ static void scan_suffixes(const parse::Parser *p, const OldType *t, Rewrite *r) 
     flush_run(r);
 }
 
-// Whether an error that is no warning was recorded from `since` on: the type did not parse, so there is nothing to
-// mend.
+// Whether an error was recorded from `since` on: the type did not parse, so there is nothing to mend.
 static Bool failed_since(const parse::Parser *p, Usize since) {
-    for (Usize i = since; i < countof(p->errors); i += 1) {
-        if (!p->errors[i].warning) return true;
-    }
-    return false;
+    return countof(p->errors) > since;
 }
 
 // Whether a name starts right at `end`: `char *name` written `*char name` needs the space the star did not have.
@@ -1044,7 +1043,7 @@ static ast::TypeExpr *read(parse::Parser *p) {
     old.after = p->position;
     ast::TypeExpr *result = suffixes(p, start, base);
     old.end = p->position;
-    if (p->fixes && !failed_since(p, errors_before)) warn_old_type(p, &old, base);
+    if (!failed_since(p, errors_before)) warn_old_type(p, &old, base);
     return result;
 }
 

@@ -1,0 +1,14 @@
+smith docs: check knowledge/ and the skills of the project
+
+usage: smith docs [--type <name>]... [--require <type>:<field>[=<value>,...]]... [--depfile <path> --target <path>] [<root>]
+
+flags:
+  --type <name>              a concept type that is allowed (replaces the ones knowledge/index.md declares)
+  --require <type>:<field>   a field that every concept of the type must have, with =<value>,... its values
+  --depfile <path>           write a depfile of the files read (with --target)
+  --target <path>            the target the depfile names (with --depfile)
+  <root>                     the folder to check; with none, the nearest one with knowledge/ or .agents/skills/
+
+examples:
+  smith docs
+  smith docs --type concept

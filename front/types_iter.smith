@@ -1,0 +1,150 @@
+// front::types_iter: iteration in the checker (#1514, C3 of #1428, spec "Iteration"). Not wired into `smith cc`;
+// today's forms keep checking exactly as they do.
+//
+// THE RULES
+//
+//   built-ins   Only built-ins are iterable: an array, a slice, a block, a `str` and a stream. `for x in xs` binds `x`
+//               to an element (a `str` yields bytes, `u8`; `utf8::chars` yields characters). A number, a record, a
+//               pointer or an option is not iterable, and the error names the fix (`range(n)` for a count, a slice
+//               `p[0:n]` for a pointer).
+//   functions   `range`, `enumerate`, `zip` (variadic) and `refs` are functions that return streams, not syntax:
+//               `range(a, b)` yields the integers of its arguments, `refs(xs)` a pointer to each element, `zip(a, b,
+//               ...)` and `enumerate(xs)` yield tuples. A tuple is bound by `for (i, x) in ...`; the tuple type is
+//               #1557, so a tuple pattern is refused for now with "not yet typed" (the lead's decision of 2026-11-02:
+//               build `for x in xs` and the rest, refuse a tuple pattern). Until the library has them, the checker
+//               knows these four by name when nothing in scope has that name.
+//   zip         `zip` of arguments of different lengths is a checked failure at run time, not a compile error. This is
+//               the lead's recommendation, not yet the owner's word (#1514).
+//   not yet     A `for` that builds a value (`xs := for ...`), `continue` as a filter and `sum(for ...)` fusing need
+//   the
+//               stream type; they are typed with the value statements (types_expr), not here.
+//
+// No recursion: an iterable is one call deep (the arguments of `zip` and `enumerate` are iterables, not calls to them).
+module front::types_iter;
+
+import front::ast;
+import front::types;
+import front::types_expr;
+
+static Bool same(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+// The name of a call's function when it is one of the four stream functions and nothing in scope shadows it, else "".
+static Str stream_function(const types::Checked *r, const ast::Expr *e) {
+    if (e->kind != .call) return "";
+    const ast::Expr *callee = e->kind.call.callee;
+    if (callee->kind != .name || countof(callee->kind.name.path.segments) != 1) return "";
+    Str name = callee->kind.name.path.segments[0].text;
+    if (types::lookup(&r->scopes, name) != nullptr) return "";
+    if (same(name, "range") || same(name, "enumerate") || same(name, "zip") || same(name, "refs")) return name;
+    return "";
+}
+
+static types::TypeRef refuse(types::Checked *r, const ast::Expr *e, types::TypeRef t) {
+    Str shown = types::show(t);
+    if (t->kind == .pointer) {
+        types::failf(r, e->span, "`", shown, "` is not iterable: a pointer has no length; slice it, `p[0:n]`");
+    } else if (t->kind == .integer) {
+        types::failf(r, e->span, "`", shown, "` is not iterable: only arrays, slices, `str`, blocks and streams are; ",
+                     "write `range(n)` to count");
+    } else {
+        types::failf(r, e->span, "`", shown, "` is not iterable: only arrays, slices, `str`, blocks and streams are; ",
+                     "a user type provides a function that returns a stream");
+    }
+    return nullptr;
+}
+
+// The element of a built-in iterable of type `t`, or null with the error reported.
+static types::TypeRef built_in(types::Checked *r, const ast::Expr *e, types::TypeRef t) {
+    if (t == r->table.invalid) return nullptr;
+    if (t->kind == .array || t->kind == .slice || t->kind == .block) return t->element;
+    if (t->kind == .text) return types::builtin(&r->table, "U8");
+    return refuse(r, e, t);
+}
+
+static types::TypeRef range_element(types::Checked *r, const ast::Expr *call) {
+    if (!(call->kind == .call)) {
+        return nullptr;
+    }
+    ast::ExprRef args[:] = call->kind.call.args;
+    if (countof(args) < 1 || countof(args) > 3) {
+        types::failf(r, call->span, "`range` takes a count, `range(n)`, or `range(a, b)`, or `range(a, b, step)`");
+        return nullptr;
+    }
+    types::TypeRef first = types_expr::infer(r, args[0]);
+    for (Usize i = 1; i < countof(args); i++) {
+        types_expr::check(r, args[i], first);
+    }
+    if (first == r->table.invalid) return nullptr;
+    if (first->kind != .integer) {
+        Str shown = types::show(first);
+        types::failf(r, args[0]->span, "`range` counts integers, and this is a `", shown, "`");
+        return nullptr;
+    }
+    return first;
+}
+
+// The elements of each argument of `zip` or `enumerate`; true when every one is iterable.
+static Bool arguments_iterable(types::Checked *r, const ast::Expr *call, Str name) {
+    if (!(call->kind == .call)) {
+        return false;
+    }
+    ast::ExprRef args[:] = call->kind.call.args;
+    if (same(name, "zip") && countof(args) < 2) {
+        types::failf(r, call->span, "`zip` takes at least two iterables; for one, iterate it directly");
+        return false;
+    }
+    if (same(name, "enumerate") && countof(args) != 1) {
+        types::failf(r, call->span, "`enumerate` takes one iterable");
+        return false;
+    }
+    Bool ok = true;
+    for (Usize i = 0; i < countof(args); i++) {
+        types::TypeRef t = types_expr::infer(r, args[i]);
+        ok = built_in(r, args[i], t) != nullptr && ok;
+    }
+    return ok;
+}
+
+// The type that `for names in iterable` binds, or null when an error was reported. `is_tuple` is the pattern
+// `(i, x)`, which needs the tuple type (#1557).
+export types::TypeRef element_type(types::Checked *r, const ast::Expr *iterable, Bool is_tuple) {
+    Str fn_name = stream_function(r, iterable);
+    if (is_tuple) {
+        types::failf(r, iterable->span, "not yet typed: a tuple pattern, `for (i, x) in ...`; it needs the tuple type ",
+                     "(#1557). Bind one name, `for x in xs`");
+        if (countof(fn_name) > 0) {
+            arguments_iterable(r, iterable, fn_name);
+        } else {
+            types_expr::infer(r, iterable);
+        }
+        return nullptr;
+    }
+    if (same(fn_name, "range")) return range_element(r, iterable);
+    if (same(fn_name, "refs")) {
+        if (!(iterable->kind == .call)) {
+            return nullptr;
+        }
+        ast::ExprRef args[:] = iterable->kind.call.args;
+        if (countof(args) != 1) {
+            types::failf(r, iterable->span, "`refs` takes one iterable");
+            return nullptr;
+        }
+        types::TypeRef t = types_expr::infer(r, args[0]);
+        types::TypeRef element = built_in(r, args[0], t);
+        return element == nullptr ? nullptr : types::pointer_to(&r->table, element, false);
+    }
+    if (countof(fn_name) > 0) {
+        if (arguments_iterable(r, iterable, fn_name)) {
+            types::failf(r, iterable->span, "`", fn_name, "` yields tuples: bind them with `for (i, x) in ", fn_name,
+                         "(...)`");
+        }
+        return nullptr;
+    }
+    return built_in(r, iterable, types_expr::infer(r, iterable));
+}

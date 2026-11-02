@@ -97,6 +97,9 @@ typedef struct SmithConsoleHandler SmithConsoleHandler;
 struct SmithConsoleHandler {
     ssize_t (*write)(SmithConsoleHandler *self, int fd, const void *buffer, size_t size); // fd is 1 or 2
     ssize_t (*read)(SmithConsoleHandler *self, void *buffer, size_t size);
+    // Whether fd (0, 1 or 2) is a terminal (std::console is_terminal); may be null, which is libc's own isatty. 1 for
+    // a terminal, 0 for none.
+    int (*isatty)(SmithConsoleHandler *self, int fd);
 };
 
 // Sets the console of the calling thread (null: libc's), returning the one it had.
@@ -104,6 +107,9 @@ SmithConsoleHandler *smith_handlers_set_console(SmithConsoleHandler *console);
 
 // The console of the calling thread, null when none is set.
 SmithConsoleHandler *smith_handlers_console(void);
+
+// Flushes stdout and stderr and no other FILE (fflush(nullptr) waits for the lock of a stdin that a thread is reading).
+void smith_handlers_flush_console(void);
 
 // The environment of the calling thread: getenv reaches it while one is set. `get` returns the value of a variable, or
 // null when it is not set; the handler owns the string. `set` and `remove` (std::env's env::set and env::remove) return
@@ -131,6 +137,8 @@ typedef struct SmithClockHandler SmithClockHandler;
 struct SmithClockHandler {
     int64_t (*now)(SmithClockHandler *self, int which);
     void (*sleep)(SmithClockHandler *self, uint64_t nanoseconds);
+    // This process's CPU time in nanoseconds (user plus system); null means the system's (#922).
+    uint64_t (*cpu)(SmithClockHandler *self);
 };
 
 // Sets the clock of the calling thread (null: libc's), returning the one it had.
@@ -170,6 +178,9 @@ struct SmithProcessHandler {
     int (*close)(SmithProcessHandler *self, int child);
     // How many processes can run at once; null means the machine's logical cores.
     size_t (*cores)(SmithProcessHandler *self);
+    // What a child that has exited used: its user and system CPU time in nanoseconds and its peak memory in bytes.
+    // 0, or -1 with errno set; null means the child has no figures (#922).
+    int (*usage)(SmithProcessHandler *self, int child, uint64_t *user_ns, uint64_t *system_ns, uint64_t *peak_bytes);
     // The calling process: its id, its parent's id and its user id (std::process's process::id, parent_id and user_id).
     // A null member answers the real getpid, getppid or getuid.
     int (*id)(SmithProcessHandler *self);

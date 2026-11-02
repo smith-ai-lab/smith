@@ -1,0 +1,82 @@
+c ? a : b
+  warning 0-9: `c ? a : b` is written `if c { a } else { b }`
+  fixed: if c { a } else { b }
+  warnings left: 0
+
+x = c ? a : b
+  warning 4-13: `c ? a : b` is written `if c { a } else { b }`
+  fixed: x = if c { a } else { b }
+  warnings left: 0
+
+a ? b : c ? d : e
+  warning 0-17: `c ? a : b` is written `if c { a } else { b }`
+  fixed: if a { b } else { if c { d } else { e } }
+  warnings left: 0
+
+a + b ? c : d
+  warning 0-13: `c ? a : b` is written `if c { a } else { b }`
+  fixed: if a + b { c } else { d }
+  warnings left: 0
+
+(P){.x = 1, .y = 2}
+  warning 0-19: a compound literal `(P){.x = 1}` is written `P(x = 1)`
+  fixed: P(x = 1, y = 2)
+  warnings left: 0
+
+(P){1, 2}
+  warning 0-9: a compound literal is written `P(x = 1, y = 2)`: name each field (no fix)
+  fixed: (P){1, 2}
+  warnings left: 1
+
+(I32)c ? a : b
+  warning 1-4: write the type `I32` as `i32` in smith's own syntax
+  warning 0-6: a cast is `x as T`: write `x as I32`
+  warning 0-14: `c ? a : b` is written `if c { a } else { b }`
+  fixed: if c as I32 { a } else { b }
+  warnings left: 0
+
+c ? (I32)a : (U8)b
+  warning 5-8: write the type `I32` as `i32` in smith's own syntax
+  warning 4-10: a cast is `x as T`: write `x as I32`
+  warning 14-16: write the type `U8` as `u8` in smith's own syntax
+  warning 0-18: `c ? a : b` is written `if c { a } else { b }`
+  fixed: if c { a as I32 } else { b as U8 }
+  warnings left: 0
+
+(P){.a.b = 1}
+  warning 0-13: a compound literal is written `P(x = 1, y = 2)`: name each field (no fix)
+  fixed: (P){.a.b = 1}
+  warnings left: 1
+
+(P){}
+  warning 0-5: a compound literal is written `P(x = 1, y = 2)`: name each field (no fix)
+  fixed: (P){}
+  warnings left: 1
+
+{1, 2, 3}
+  warning 0-9: an array value `{1, 2}` is written `[1, 2]`
+  fixed: [1, 2, 3]
+  warnings left: 0
+
+{{1, 2}, {3, 4}}
+  warning 1-7: an array value `{1, 2}` is written `[1, 2]`
+  warning 9-15: an array value `{1, 2}` is written `[1, 2]`
+  warning 0-16: an array value `{1, 2}` is written `[1, 2]`
+  fixed: [[1, 2], [3, 4]]
+  warnings left: 0
+
+{.x = 1}
+  warning 0-8: a braced list with no type has no form in Smith: write the type, `P(x = 1)`, or `[1, 2]` for an array (no fix)
+  fixed: {.x = 1}
+  warnings left: 1
+
+{}
+  warning 0-2: a braced list with no type has no form in Smith: write the type, `P(x = 1)`, or `[1, 2]` for an array (no fix)
+  fixed: {}
+  warnings left: 1
+
+{[2] = 1}
+  warning 0-9: a braced list with no type has no form in Smith: write the type, `P(x = 1)`, or `[1, 2]` for an array (no fix)
+  fixed: {[2] = 1}
+  warnings left: 1
+

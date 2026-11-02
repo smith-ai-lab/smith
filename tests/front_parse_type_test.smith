@@ -253,7 +253,7 @@ export void test_parse_type_new_malformed_forms() {
                     "*\n?\n[5\n[5]\n[,3\n(i32\n(i32)\nfn i32\nfn(i32\nfn(i32) ->", true);
 }
 
-// The warnings of an old type (the parser records them with `fixes` set), one a line, then the type after the fixes are
+// The warnings of an old type (the parser records them in `warnings`), one a line, then the type after the fixes are
 // applied pass after pass, then the warnings that remain: none for a type with a smith spelling.
 static Str dump_fixing_one(Str source) {
     char body[:] = format::push(source, "\n");
@@ -262,19 +262,19 @@ static Str dump_fixing_one(Str source) {
     Usize left = 0;
     for (Usize pass = 0; pass < 8; pass += 1) {
         parse::Parser p = parser_of(current);
-        p.fixes = true;
         _ = parse::type(&p);
-        left = countof(p.errors);
-        for (Usize i = 0; i < countof(p.errors) && pass == 0; i += 1) {
-            Str kind = "error ";
-            if (p.errors[i].warning) kind = "warning ";
-            parse::Edits edits = p.errors[i].fix;
+        left = countof(p.errors) + countof(p.warnings);
+        Usize total = countof(p.errors) + countof(p.warnings);
+        for (Usize i = 0; i < total && pass == 0; i += 1) {
+            Bool is_error = i < countof(p.errors);
+            parse::ParseError found = is_error ? p.errors[i] : p.warnings[i - countof(p.errors)];
+            Str kind = "warning ";
+            if (is_error) kind = "error ";
             Str fixed_by = "\n";
-            if (countof(edits) == 0) fixed_by = " (no fix)\n";
-            body = format::push(body, kind, p.errors[i].span.start, "-", p.errors[i].span.end, ": ",
-                                p.errors[i].message, fixed_by);
+            if (countof(found.fix) == 0) fixed_by = " (no fix)\n";
+            body = format::push(body, kind, found.span.start, "-", found.span.end, ": ", found.message, fixed_by);
         }
-        fix::Fixed fixed = fix::apply_fixes(current, p.errors);
+        fix::Fixed fixed = fix::apply_fixes(current, p.errors, p.warnings);
         if (fixed.applied == 0) break;
         current = fixed.text;
         passes += 1;
@@ -325,8 +325,8 @@ export void test_parse_type_old_tuples_and_function_types() {
                  "Fn(I32 (I32, ...))\nFn(Bool (Fn(I32 (I32)), I32))\nOption(I32 *)");
 }
 
-// Without `fixes` no warning is recorded: today's corpus reads as before.
-export void test_parse_type_old_forms_record_no_warning_unless_asked() {
+// An old form is a warning, never an error: today's corpus still reads and compiles.
+export void test_parse_type_old_forms_are_warnings_not_errors() {
     arena::Arena memory = test::memory(1U << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
@@ -334,4 +334,5 @@ export void test_parse_type_old_forms_record_no_warning_unless_asked() {
     parse::Parser p = parser_of("I32 *[:]");
     _ = parse::type(&p);
     test::check_equal(countof(p.errors), 0);
+    test::check_equal(countof(p.warnings), 1);
 }

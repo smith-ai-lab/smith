@@ -1,4 +1,8 @@
 
+@text = private unnamed_addr constant [2 x i8] c"+\00", align 1
+@text.1 = private unnamed_addr constant [4 x i8] c"I32\00", align 1
+@at = private unnamed_addr constant [5 x i8] c" at \00", align 1
+
 define i32 @"front::test::add"(i32 %a, i32 %b) {
 entry:
   %a1 = alloca i32, align 4
@@ -12,22 +16,32 @@ body:                                             ; preds = %entry
   %1 = load i32, ptr %b2, align 4
   %2 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %0, i32 %1)
   %overflow = extractvalue { i32, i1 } %2, 1
-  br i1 %overflow, label %trap, label %ok
+  %3 = extractvalue { i32, i1 } %2, 0
+  br i1 %overflow, label %fail, label %ok, !prof !0
 
-trap:                                             ; preds = %body
-  call void @llvm.trap()
-  unreachable
+fail:                                             ; preds = %body
+  %4 = sext i32 %0 to i64
+  %5 = sext i32 %1 to i64
+  call void @smith_contract_fail_overflow(ptr @text, i64 %4, i64 %5, ptr @text.1, ptr @at)
+  br label %trap
 
 ok:                                               ; preds = %body
-  %3 = extractvalue { i32, i1 } %2, 0
   ret i32 %3
+
+trap:                                             ; preds = %fail
+  call void @llvm.trap()
+  unreachable
 }
 
 ; Function Attrs: nocallback nocreateundeforpoison nofree nosync nounwind speculatable willreturn memory(none)
 declare { i32, i1 } @llvm.sadd.with.overflow.i32(i32, i32) #0
+
+declare void @smith_contract_fail_overflow(ptr, i64, i64, ptr, ptr)
 
 ; Function Attrs: cold noreturn nounwind memory(inaccessiblemem: write)
 declare void @llvm.trap() #1
 
 attributes #0 = { nocallback nocreateundeforpoison nofree nosync nounwind speculatable willreturn memory(none) }
 attributes #1 = { cold noreturn nounwind memory(inaccessiblemem: write) }
+
+!0 = !{!"branch_weights", i32 1, i32 2000}

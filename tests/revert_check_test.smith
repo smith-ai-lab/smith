@@ -1,0 +1,89 @@
+// scripts/revert_check.c (issue #1473) in scratch git repositories: the stale working tree of #1455 (a commit whose
+// parent is the moved main but whose tree is older) fails and names its files, an ordinary shared edit passes, and a
+// body that says `Reverts #N` lets the revert through. Never touches a real repository. The tool is built with the
+// system's compiler, as CI builds it: clang on macOS, cc (GCC) as gnu2x on Linux.
+// smith-covers: scripts/revert_check.c
+module revert_check_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+// `repo` has main with three commits after the first: `base` (a file `a` of 30 lines), `work (#7)` (adds `b`, 30 lines)
+// and `more (#8)` (adds `c`, 30 lines). Branch `stale` is one commit whose parent is main's tip and whose tree is the
+// first one's (what `git reset --soft` to a moved main leaves); branch `shared` rewrites 4 lines of `b`.
+constexpr const char *setup =
+    "set -e; "
+    "if [ \"$(uname -s)\" = Darwin ]; then c='clang -std=c23'; else c='cc -std=gnu2x'; fi; "
+    "$c -x c revert_check.c -o revert_check; "
+    "git init -q -b main repo; cd repo; git config user.email t@t; git config user.name t; "
+    "lines() { i=1; while [ $i -le 30 ]; do echo \"$1 line number $i of the file\"; i=$((i+1)); done; }; "
+    "lines a > a; git add a; git commit -qm base; first=$(git rev-parse HEAD); "
+    "lines b > b; git add b; git commit -qm 'work (#7)'; "
+    "lines c > c; git add c; git commit -qm 'more (#8)'; "
+    "tip=$(git rev-parse HEAD); "
+    "git checkout -q -b stale; "
+    "git commit-tree -p $tip -m 'stale tree' $first^{tree} > ../stale; git reset -q --hard $(cat ../stale); "
+    "git checkout -q -b shared $tip; sed -i.bak -e '1,4s/line/LINE/' b; rm b.bak; git commit -qam 'edit b'; "
+    "git checkout -q main; echo $tip > ../tip";
+
+static void repository(const scratch::Project *p) {
+    scratch::copy_tree(p, "scripts/revert_check.c", "revert_check.c");
+    scratch::Run made = scratch::sh(p, setup);
+    scratch::expect_status("revert_check: the scratch repository is made", 0, &made);
+}
+
+static scratch::Run check(const scratch::Project *p, const char *branch, const char *body) {
+    char command[512];
+    __builtin_snprintf(command, sizeof command,
+                       "cd repo && printf '%%s\\n' '%s' > ../body && ../revert_check $(cat ../tip) %s ../body", body,
+                       branch);
+    return scratch::sh(p, command);
+}
+
+export void test_revert_check_fails_a_stale_tree_and_names_its_files() {
+    scratch::Project p = scratch::make("p", "stage0");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    repository(&p);
+    scratch::Run run = check(&p, "stale", "an ordinary body");
+    scratch::expect_status("revert_check: a stale tree fails", 1, &run);
+    scratch::expect_contains("revert_check: it names the file of #7", run.out, "b: this change deletes 30 lines that ");
+    scratch::expect_contains("revert_check: and the file of #8", run.out, "c: this change deletes 30 lines that ");
+    scratch::expect_contains("revert_check: and the commit's subject", run.out, "(more (#8)) added");
+    scratch::expect_lacks("revert_check: but not a file only the first commit made", run.out, "a: ");
+}
+
+export void test_revert_check_passes_an_ordinary_shared_edit() {
+    scratch::Project p = scratch::make("p", "stage0");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    repository(&p);
+    scratch::Run run = check(&p, "shared", "an ordinary body");
+    scratch::expect_status("revert_check: rewriting 4 lines of a recent file passes", 0, &run);
+    scratch::expect_text("revert_check: and prints nothing", "", run.out);
+}
+
+export void test_revert_check_lets_a_declared_revert_through() {
+    scratch::Project p = scratch::make("p", "stage0");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    repository(&p);
+    scratch::Run one = check(&p, "stale", "Reverts #7");
+    scratch::expect_status("revert_check: one revert declared, the other still fails", 1, &one);
+    scratch::expect_lacks("revert_check: #7 is let through", one.out, "(work (#7))");
+    scratch::Run both = check(&p, "stale", "Reverts #7 and Reverts #8.");
+    scratch::expect_status("revert_check: both declared passes", 0, &both);
+    scratch::Run prefix = check(&p, "stale", "Reverts #70 and Reverts #80");
+    scratch::expect_status("revert_check: #70 is not #7", 1, &prefix);
+}

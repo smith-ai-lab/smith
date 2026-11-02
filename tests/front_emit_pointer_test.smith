@@ -1,0 +1,344 @@
+// Tests of `p.x` through a pointer and of `as` between a pointer and an integer (#1580 of #1428), for
+// front::emit_memory: trees built by hand as front::ast (`member` with `arrow = false`, `cast`), JITted through
+// front::emit_jit and called with real pointers; and the errors, each with its span. The memory rules are those of
+// tests/front_emit_memory_test.smith.
+module front_emit_pointer_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <string.h>;
+
+struct Point {
+    I32 x;
+    I32 y;
+};
+
+struct Line {
+    Point *end;
+    I32 length;
+};
+
+typedef I32 (*BumpFn)(Point *, I32);
+typedef I32 *(*AddressFn)(Point *);
+typedef I32 (*ChainFn)(Line *);
+typedef I32 (*CopyFn)(Point *, Point *);
+typedef I32 (*RoundFn)(Point *);
+
+// ---------------------------------------------------------------------------------------------------------------
+// Building trees
+
+static ast::TypeExpr *i32_type() {
+    return ast::named("I32");
+}
+
+static ast::TypeExpr *pointer_type(ast::TypeExpr *pointee) {
+    ast::TypeKind kind = {.pointer = {.pointee = pointee}};
+    return ast::make_type(kind);
+}
+
+static ast::Expr *number(U64 value) {
+    return ast::integer(value);
+}
+
+static ast::Expr *name(Str text) {
+    return ast::name(text);
+}
+
+static ast::Expr *unary(ast::UnaryOp op, ast::Expr *operand) {
+    ast::ExprKind kind = {.unary = {.op = op, .operand = operand}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *deref(ast::Expr *operand) {
+    return unary(.dereference, operand);
+}
+
+static ast::Expr *address(ast::Expr *operand) {
+    return unary(.address_of, operand);
+}
+
+static ast::Expr *dot(ast::Expr *base, Str field) {
+    ast::ExprKind kind = {.member = {.base = base, .name = field, .arrow = false}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *binary(ast::BinaryOp op, ast::Expr *left, ast::Expr *right) {
+    return ast::binary(op, left, right);
+}
+
+static ast::Expr *cast(ast::TypeExpr *type, ast::Expr *operand) {
+    ast::ExprKind kind = {.cast = {.type = type, .operand = operand}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *assign(ast::AssignOp op, ast::Expr *target, ast::Expr *value) {
+    ast::ExprKind kind = {.assign = {.op = op, .target = target, .value = value}};
+    return ast::expr(kind);
+}
+
+static ast::Stmt *expression(ast::Expr *value) {
+    ast::StmtKind kind = {.expression = {.value = value}};
+    return ast::stmt(kind);
+}
+
+static ast::Stmt *declare(ast::Decl *variable) {
+    ast::StmtKind kind = {.declaration = {.decl = variable}};
+    return ast::stmt(kind);
+}
+
+static ast::Stmt *give(ast::Expr *value) {
+    return ast::return_value(value);
+}
+
+// An exported function `result name(params) { items }`.
+static ast::Decl *function_of(Str name, ast::Param params[:], ast::TypeExpr *result, ast::StmtRef items[:]) {
+    ast::Decl *function = ast::function(name, params, result, ast::block(items));
+    function->exported = true;
+    return function;
+}
+
+static ast::Decl *point_record() {
+    ast::FieldDecl fields[2] = {ast::field("x", i32_type()), ast::field("y", i32_type())};
+    return ast::record_decl("Point", fields);
+}
+
+static ast::Module module1(ast::Decl *a) {
+    ast::DeclRef decls[1] = {a};
+    return ast::new_module("front::test", decls);
+}
+
+static ast::Module module2(ast::Decl *a, ast::Decl *b) {
+    ast::DeclRef decls[2] = {a, b};
+    return ast::new_module("front::test", decls);
+}
+
+static ast::Module module3(ast::Decl *a, ast::Decl *b, ast::Decl *c) {
+    ast::DeclRef decls[3] = {a, b, c};
+    return ast::new_module("front::test", decls);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Memory: the arena holds the tree; the system's allocator serves the emitter and LLVM
+
+struct TreeMemory {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    mem::Allocator *outside;
+};
+
+static void tree_begin(TreeMemory *trees) {
+    trees->memory = test::memory(1U << 22);
+    trees->allocator = arena::allocator(&trees->memory);
+    trees->outside = mem::set_allocator(&trees->allocator.base);
+}
+
+static void tree_end(TreeMemory *trees) {
+    mem::set_allocator(trees->outside);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Running them
+
+static emit::Options options_for(emit::Target target) {
+    emit::Options options = {};
+    options.target = target;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+// The module as JIT symbols: emit, hand over to the JIT; the caller looks symbols up with `symbol_of`.
+static void jit_module(emit_jit::Jit *host, const ast::Module *m) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, m, options_for(host->target));
+    test::check_equal(emitted == .ok, true);
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    }
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+static Bool contains(const char *text, Str needle) {
+    return c::strstr(text, needle.data) != nullptr; // a literal's text ends with a terminator
+}
+
+// The error of emitting the module, with the context and the half-built module gone. Its message is the caller's to
+// free.
+static emit::Error failure_of(const ast::Module *m) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::Target target = {};
+    target.triple = "x86_64-unknown-linux-gnu";
+    emit::ModuleResult emitted = emit::module(context, m, options_for(target));
+    test::check_equal(emitted == .error, true);
+    emit::Error error = {};
+    if (emitted == .error) error = emitted.error;
+    c::LLVMContextDispose(context);
+    return error;
+}
+
+static void check_error(const ast::Module *m, Str message, U32 start, U32 end) {
+    emit::Error error = failure_of(m);
+    test::check_equal(contains(error.message.data, message), true);
+    test::check_equal(error.span.start, start);
+    test::check_equal(error.span.end, end);
+    emit::free_error(error);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// `p.x` through a pointer
+
+static ast::Decl *line_record() {
+    ast::FieldDecl fields[2] = {ast::field("end", pointer_type(ast::named("Point"))), ast::field("length", i32_type())};
+    return ast::record_decl("Line", fields);
+}
+
+// I32 bump(Point *p, I32 v) { p.x += 1; p.y = v; return p.x + p.y; }
+export void test_front_emit_pointer_member_reads_and_writes_through_a_pointer() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[3] = {
+        expression(assign(.add, dot(name("p"), "x"), number(1))),
+        expression(assign(.plain, dot(name("p"), "y"), name("v"))),
+        give(binary(.add, dot(name("p"), "x"), dot(name("p"), "y"))),
+    };
+    ast::Param params[2] = {ast::param("p", pointer_type(ast::named("Point"))), ast::param("v", i32_type())};
+    ast::Module m = module2(point_record(), function_of("bump", params, i32_type(), items));
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    BumpFn bump = (BumpFn)symbol_of(&host, "front::test::bump");
+    Point p = {.x = 4, .y = 0};
+    test::check_equal(bump(&p, 7), 12);
+    test::check_equal(p.x, 5);
+    test::check_equal(p.y, 7);
+    emit_jit::stop(&host);
+}
+
+// I32 *address(Point *p) { return &p.y; }
+export void test_front_emit_pointer_member_address_of_a_field_through_a_pointer() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[1] = {give(address(dot(name("p"), "y")))};
+    ast::Param params[1] = {ast::param("p", pointer_type(ast::named("Point")))};
+    ast::Module m = module2(point_record(), function_of("address", params, pointer_type(i32_type()), items));
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    AddressFn at_y = (AddressFn)symbol_of(&host, "front::test::address");
+    Point p = {.x = 1, .y = 2};
+    test::check_equal(at_y(&p) == &p.y, true);
+    emit_jit::stop(&host);
+}
+
+// I32 chain(Line *l) { return l.end.y; }: the pointer field `end` is itself followed by `.`.
+export void test_front_emit_pointer_member_chain_through_a_pointer_field() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[1] = {give(dot(dot(name("l"), "end"), "y"))};
+    ast::Param params[1] = {ast::param("l", pointer_type(ast::named("Line")))};
+    ast::Module m = module3(point_record(), line_record(), function_of("chain", params, i32_type(), items));
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    ChainFn chain = (ChainFn)symbol_of(&host, "front::test::chain");
+    Point end = {.x = 1, .y = 42};
+    Line line = {.end = &end, .length = 0};
+    test::check_equal(chain(&line), 42);
+    emit_jit::stop(&host);
+}
+
+// I32 f(Point **pp) { return pp.x; } follows two pointers: an error at the member.
+export void test_front_emit_pointer_member_follows_one_pointer_only() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Expr *bad = dot(name("pp"), "x");
+    bad->span = (ast::Span){.start = 20, .end = 25};
+    ast::StmtRef items[1] = {give(bad)};
+    ast::Param params[1] = {ast::param("pp", pointer_type(pointer_type(ast::named("Point"))))};
+    ast::Module m = module2(point_record(), function_of("f", params, i32_type(), items));
+    tree_end(&trees);
+    check_error(&m, "`.` follows one pointer; write `pp.*.x`", 20U, 25U);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// `p.*`
+
+// I32 copy(Point *p, Point *q) { p.* = q.*; Point c = p.*; return c.x + c.y; }
+export void test_front_emit_pointer_dereference_assigns_and_copies_a_record() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[3] = {
+        expression(assign(.plain, deref(name("p")), deref(name("q")))),
+        declare(ast::variable("c", ast::named("Point"), deref(name("p")))),
+        give(binary(.add, dot(name("c"), "x"), dot(name("c"), "y"))),
+    };
+    ast::Param params[2] = {ast::param("p", pointer_type(ast::named("Point"))),
+                            ast::param("q", pointer_type(ast::named("Point")))};
+    ast::Module m = module2(point_record(), function_of("copy", params, i32_type(), items));
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    CopyFn copy = (CopyFn)symbol_of(&host, "front::test::copy");
+    Point p = {.x = 0, .y = 0};
+    Point q = {.x = 30, .y = 12};
+    test::check_equal(copy(&p, &q), 42);
+    test::check_equal(p.x, 30);
+    test::check_equal(p.y, 12);
+    emit_jit::stop(&host);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// `as` between a pointer and an integer
+
+// I32 round(Point *p) { Usize a = p as Usize; Point *q = a as Point *; return q.y; }
+export void test_front_emit_pointer_round_trips_through_an_integer() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::TypeExpr *point_pointer = pointer_type(ast::named("Point"));
+    ast::StmtRef items[3] = {
+        declare(ast::variable("a", ast::named("Usize"), cast(ast::named("Usize"), name("p")))),
+        declare(ast::variable("q", point_pointer, cast(point_pointer, name("a")))),
+        give(dot(name("q"), "y")),
+    };
+    ast::Param params[1] = {ast::param("p", point_pointer)};
+    ast::Module m = module2(point_record(), function_of("round", params, i32_type(), items));
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    RoundFn round_trip = (RoundFn)symbol_of(&host, "front::test::round");
+    Point p = {.x = 1, .y = 77};
+    test::check_equal(round_trip(&p), 77);
+    emit_jit::stop(&host);
+}
+
+// A pointer casts only to an integer as wide as a pointer: `p as U32` is an error on a 64-bit target.
+export void test_front_emit_pointer_cast_to_a_narrow_integer_is_an_error() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Expr *bad = cast(ast::named("U32"), name("p"));
+    bad->span = (ast::Span){.start = 10, .end = 18};
+    ast::StmtRef items[1] = {give(bad)};
+    ast::Param params[1] = {ast::param("p", pointer_type(i32_type()))};
+    ast::Module m = module1(function_of("f", params, ast::named("U32"), items));
+    tree_end(&trees);
+    check_error(&m, "a pointer casts only to an integer as wide as a pointer (`usize`, `isize`)", 10U, 18U);
+}

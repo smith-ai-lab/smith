@@ -11,6 +11,11 @@
 // written with `::` (`geometry::area`) is the symbol itself, which is how a prototype stands for a function of another
 // module.
 //
+// Named arguments (`connect(host = x, retry = true)`) fill the parameter of that name, by position until the first
+// named one (the checker's `argument_slot`); they are evaluated in the order written and passed in parameter order. A
+// call of a name that is a record of the module builds a value of it, `Point(x = 1, y = 2)`: every field named, in any
+// order, a field left out zero; the value starts as `LLVMConstNull` and each field is inserted in the order written.
+//
 // `Void` is a type of its own here (an LLVM `void`, kind `integer`, zero bits, named `Void`): a call of a function
 // that returns it pushes one value of that type, so an expression statement drops it like any other.
 module front::emit_call;
@@ -178,6 +183,159 @@ static SignatureResult find(state::Emitter *e, Str key, ast::Span span) {
     return signature_failed(state::failf(span, "unknown function ", key));
 }
 
+static Bool is_named(const ast::Expr *a) {
+    return a->kind == .named_arg;
+}
+
+// The name a named argument gives (empty for any other).
+static Str given_name(const ast::Expr *a) {
+    if (a->kind == .named_arg) return a->kind.named_arg.name;
+    return "";
+}
+
+// The declaration of the function `key` names, with or without a body (its parameters' names), or null.
+static const ast::Decl *find_decl(state::Emitter *e, Str key) {
+    for (Usize i = 0; i < countof(e->tree->decls); i++) {
+        const ast::Decl *d = e->tree->decls[i];
+        if (d->kind == .function && state::same_text(d->kind.function.name, key)) return d;
+    }
+    return nullptr;
+}
+
+// The parameter each argument fills: `slot[i]` for `args[i]`. By position until the first named argument, then by
+// name among the declaration's parameters (the checker's `argument_slot`).
+static state::Status assign_slots(state::Emitter *e, Str key, ast::ExprRef args[:], Usize slot[64]) {
+    Bool named = false;
+    for (Usize i = 0; i < countof(args); i++) {
+        slot[i] = i;
+        if (is_named(args[i])) named = true;
+    }
+    if (!named) return state::success();
+    const ast::Decl *d = find_decl(e, key);
+    if (d == nullptr) {
+        return state::failf(args[0]->span, "the arguments of ", key, " cannot be named: it has no declaration here");
+    }
+    if (d->kind != .function) {
+        return state::fail("not a function", d->span);
+    }
+    ast::Param params[:] = d->kind.function.params;
+    Bool taken[64];
+    for (Usize i = 0; i < 64; i++)
+        taken[i] = false;
+    Bool by_name = false;
+    for (Usize i = 0; i < countof(args); i++) {
+        if (!is_named(args[i])) {
+            if (by_name) return state::fail("a positional argument cannot follow a named one", args[i]->span);
+            taken[i] = true;
+            continue;
+        }
+        by_name = true;
+        Str given = given_name(args[i]);
+        Bool found = false;
+        for (Usize p = 0; p < countof(params) && p < 64; p++) {
+            if (!state::same_text(params[p].name, given)) continue;
+            if (taken[p]) return state::failf(args[i]->span, "parameter ", given, " of ", key, " is given twice");
+            taken[p] = true;
+            slot[i] = p;
+            found = true;
+            break;
+        }
+        if (!found) return state::failf(args[i]->span, key, " has no parameter ", given);
+    }
+    return state::success();
+}
+
+// The argument's expression: the value of a named one.
+static const ast::Expr *value_of(const ast::Expr *arg) {
+    if (arg->kind == .named_arg) return arg->kind.named_arg.value;
+    return arg;
+}
+
+static Bool find_record(state::Emitter *e, Str name, Usize *found) {
+    for (Usize i = 0; i < e->record_count; i++) {
+        if (state::same_text(e->records[i].name, name)) {
+            *found = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+static Bool find_field(state::RecordType record, Str name, Usize *found) {
+    for (Usize i = 0; i < countof(record.fields); i++) {
+        if (state::same_text(record.fields[i].name, name)) {
+            *found = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+// The field values are on the value stack, the first deepest: start from zero and insert each.
+static state::Status construct_finish(state::Emitter *e, const state::Work *w) {
+    const ast::Expr *x = w->expr;
+    if (x->kind != .call) {
+        return state::fail("not a call", w->span);
+    }
+    ast::ExprRef args[:] = x->kind.call.args;
+    const ast::Expr *callee = x->kind.call.callee;
+    if (callee->kind != .name) {
+        return state::fail("not a name", w->span);
+    }
+    Str name = callee->kind.name.path.segments[0].text;
+    Usize count = (Usize)w->number;
+    state::Value values[64];
+    for (Usize i = count; i > 0; i--)
+        values[i - 1] = state::pop_value(e);
+    Usize at = 0;
+    if (!find_record(e, name, &at)) return state::failf(w->span, "unknown record ", name);
+    state::RecordType record = e->records[at];
+    c::LLVMValueRef built = c::LLVMConstNull(record.ty.llvm);
+    for (Usize i = 0; i < count; i++) {
+        Usize field = 0;
+        if (!find_field(record, given_name(args[i]), &field))
+            return state::failf(args[i]->span, "no field ", given_name(args[i]), " in ", name);
+        if (!state::same_type(values[i].ty, record.fields[field].ty))
+            return state::failf(args[i]->span, "field ", record.fields[field].name, " of ", name, " is ",
+                                record.fields[field].ty.name, ", the value is ", values[i].ty.name);
+        built = c::LLVMBuildInsertValue(e->builder, built, values[i].llvm, (U32)field, "");
+    }
+    state::push_value(e, (state::Value){.llvm = built, .ty = record.ty});
+    return state::success();
+}
+
+// `Point(x = 1, y = 2)`: a record of the module built by a call whose arguments are all named fields.
+static state::Status construct(state::Emitter *e, const ast::Expr *x, Usize at) {
+    if (x->kind != .call) {
+        return state::fail("not a call", x->span);
+    }
+    ast::ExprRef args[:] = x->kind.call.args;
+    state::RecordType record = e->records[at];
+    Usize count = countof(args);
+    if (count > 64) return state::not_emitted("more than 64 fields in one construction", x->span);
+    Bool seen[64];
+    for (Usize i = 0; i < 64; i++)
+        seen[i] = false;
+    for (Usize i = 0; i < count; i++) {
+        if (!is_named(args[i]))
+            return state::failf(args[i]->span, "a field of ", record.name, " is always named; write ", record.name,
+                                "(x = ...)");
+        Str given = given_name(args[i]);
+        Usize field = 0;
+        if (!find_field(record, given, &field))
+            return state::failf(args[i]->span, "no field ", given, " in ", record.name);
+        if (seen[field]) return state::failf(args[i]->span, "field ", given, " of ", record.name, " is given twice");
+        seen[field] = true;
+    }
+    state::push_then(e, (state::Work){.then = construct_finish, .expr = x, .number = count, .span = x->span});
+    for (Usize i = count; i > 0; i--) {
+        Usize field = 0;
+        find_field(record, given_name(args[i - 1]), &field);
+        state::push_eval(e, value_of(args[i - 1]), state::hint_of(record.fields[field].ty));
+    }
+    return state::success();
+}
+
 // The arguments' values are on the value stack, the first deepest: check them and call.
 static state::Status call_finish(state::Emitter *e, const state::Work *w) {
     const ast::Expr *x = w->expr;
@@ -201,16 +359,23 @@ static state::Status call_finish(state::Emitter *e, const state::Work *w) {
         return {.error = found.error};
     }
     Signature sig = found.ok;
+    Usize slot[64];
+    state::Status slotted = assign_slots(e, key, args, slot);
+    if (slotted == .error) {
+        state::free_text(key);
+        release(sig);
+        return slotted;
+    }
     c::LLVMValueRef argv[64];
     for (Usize i = 0; i < count; i++) {
-        if (!state::same_type(values[i].ty, sig.params[i])) {
+        if (!state::same_type(values[i].ty, sig.params[slot[i]])) {
             state::Status wrong = state::failf(args[i]->span, "argument ", (U64)i + 1, " of ", key, " is ",
-                                               values[i].ty.name, ", the parameter is ", sig.params[i].name);
+                                               values[i].ty.name, ", the parameter is ", sig.params[slot[i]].name);
             state::free_text(key);
             release(sig);
             return wrong;
         }
-        argv[i] = values[i].llvm;
+        argv[slot[i]] = values[i].llvm;
     }
     c::LLVMValueRef made = nullptr;
     if (is_void(sig.result))
@@ -234,6 +399,8 @@ export state::Status call(state::Emitter *e, const ast::Expr *x, state::Hint _) 
         return state::not_emitted("call of something that is not a name", x->span);
     }
     ast::Path path = callee->kind.name.path;
+    Usize record = 0;
+    if (countof(path.segments) == 1 && find_record(e, path.segments[0].text, &record)) return construct(e, x, record);
     Str key = join(path);
     SignatureResult found = find(e, key, callee->span);
     if (found == .error) {
@@ -249,10 +416,17 @@ export state::Status call(state::Emitter *e, const ast::Expr *x, state::Hint _) 
         release(sig);
         return wrong;
     }
+    Usize slot[64];
+    state::Status slotted = assign_slots(e, key, args, slot);
+    if (slotted == .error) {
+        state::free_text(key);
+        release(sig);
+        return slotted;
+    }
     state::push_then(e, (state::Work){.then = call_finish, .expr = x, .number = count, .span = x->span});
     // The first argument runs first: it is pushed last.
     for (Usize i = count; i > 0; i--)
-        state::push_eval(e, args[i - 1], state::hint_of(sig.params[i - 1]));
+        state::push_eval(e, value_of(args[i - 1]), state::hint_of(sig.params[slot[i - 1]]));
     state::free_text(key);
     release(sig);
     return state::success();

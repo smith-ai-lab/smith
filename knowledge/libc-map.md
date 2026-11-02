@@ -36,7 +36,7 @@ tags: [libc, lint, idiom, libraries]
 | `strtod`, `strtof` | `text::parse_f64`, `text::parse_f32` |
 | `qsort` | `slice::sort(xs)` for numbers, `slice::sort_by(xs, less)` for the rest |
 | `getenv` | `env::get(name)`, an `option` ([direct-call-modules](direct-call-modules.md)) |
-| `setenv`, `unsetenv` | gap: [#917](https://github.com/smith-ai-lab/smith/issues/917) |
+| `setenv`, `unsetenv` | `env::set(name, value)`, `env::remove(name)`, an `option` of `env::Error` |
 | `system` | `process::run(argv)` ([process](process.md)): no shell, the argument vector |
 | `abs` | `math::abs(x)` |
 | `exit`, `_exit`, `abort` | gap (design): [#924](https://github.com/smith-ai-lab/smith/issues/924) |
@@ -82,7 +82,10 @@ tags: [libc, lint, idiom, libraries]
 | `clock_gettime(CLOCK_MONOTONIC)`, `mach_absolute_time`, `clock_gettime_nsec_np` | `clock::monotonic()` (platform: the two OS calls behind it) |
 | `clock_gettime(CLOCK_REALTIME)` | `clock::now()` |
 | `nanosleep`, `usleep`, `sleep` | `clock::sleep(ns)` |
-| `clock`, `getrusage`, `proc_pid_rusage`, `clock_getcpuclockid` | gap: [#922](https://github.com/smith-ai-lab/smith/issues/922) |
+| `clock`, `clock_gettime(CLOCK_PROCESS_CPUTIME_ID)` | `clock::cpu()` (nanoseconds, user plus system; the clock handler's `cpu` in a test) |
+| `getrusage(RUSAGE_SELF)` | `process::usage_self()` (`Usage`: `user_ns`, `system_ns`, `peak_bytes`) |
+| `getrusage(RUSAGE_CHILDREN)`, `wait4`'s rusage, `proc_pid_rusage` | `process::usage(&child)` after `process::wait` (a running child's figures are not read: [#922](https://github.com/smith-ai-lab/smith/issues/922)) |
+| `clock_getcpuclockid` | none: no `.smith` caller |
 | `setitimer`, `alarm` | gap (design): [#924](https://github.com/smith-ai-lab/smith/issues/924) |
 
 ## assert.h, errno.h, stdarg.h, setjmp.h, signal.h
@@ -111,7 +114,7 @@ tags: [libc, lint, idiom, libraries]
 | `readlink`, `symlink` | `files::read_link(path)`, `files::make_link(target, path)` |
 | `lstat`, `fstatat`, `AT_SYMLINK_NOFOLLOW` | gap: [#919](https://github.com/smith-ai-lab/smith/issues/919) |
 | `lseek`, `pwrite`, `ftruncate`, `fchmod`, `flock`, `SEEK_*`, `LOCK_*` | gap: [#920](https://github.com/smith-ai-lab/smith/issues/920) |
-| `isatty` | gap: [#925](https://github.com/smith-ai-lab/smith/issues/925) |
+| `isatty` | `console::is_terminal(console::Input / Output / Fault)` |
 | `STDIN_FILENO`, `STDOUT_FILENO`, `STDERR_FILENO` | `console::` (no descriptor number in a program) |
 | `fcntl`, `FD_CLOEXEC`, `O_CLOEXEC`, `O_NONBLOCK` | platform: the files, process and net libraries set them |
 | `sysconf(_SC_NPROCESSORS_ONLN)` | `process::cores()` |
