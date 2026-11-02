@@ -6,7 +6,9 @@
 // them.
 module std::text;
 
+import <errno.h>;
 import std::contract;
+import std::mem;
 
 // <smith/text.h>: reading and writing small text formats by hand, such as replays, scripts, configs and logs. It calls
 // no C library function and no locale, so a number written here reads back as the same value on any machine. Text is a
@@ -841,4 +843,67 @@ Usize f32_write(char *out, F32 value) {
         out[i] = text[i];
     }
     return count;
+}
+
+// The word copied into the current allocator, with a NUL after the last character that is not counted, so the same
+// bytes are a C string at an edge. The caller frees it with mem::free (its data pointer).
+[[std::c_name("smith_text_copy")]] export [[nodiscard]] typeof(const char[:]) copy(const char word[:]) {
+    contract::trusted(); // the copy loop is bounded by the caller's text, which no contract states
+    Usize n = countof(word);
+    char *block = (char *)mem::alloc_raw(n + 1, 1);
+    for (Usize i = 0; i < n; i++) {
+        block[i] = word[i];
+    }
+    block[n] = '\0';
+    return block[0:n];
+}
+
+// The same copy as the pointer C calls take, for a boundary only. Free it with mem::free.
+[[std::c_name("smith_text_terminated")]] export [[nodiscard]] const char *terminated(const char word[:]) {
+    contract::trusted(); // it calls copy, whose loop the prover cannot bound
+    typeof(const char[:]) made = copy(word);
+    return &made[0];
+}
+
+// The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
+// NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
+constexpr I32 errno_eperm = c::EPERM;
+constexpr I32 errno_enoent = c::ENOENT;
+constexpr I32 errno_eintr = c::EINTR;
+constexpr I32 errno_eio = c::EIO;
+constexpr I32 errno_ebadf = c::EBADF;
+constexpr I32 errno_eagain = c::EAGAIN;
+constexpr I32 errno_enomem = c::ENOMEM;
+constexpr I32 errno_eacces = c::EACCES;
+constexpr I32 errno_eexist = c::EEXIST;
+constexpr I32 errno_enotdir = c::ENOTDIR;
+constexpr I32 errno_eisdir = c::EISDIR;
+constexpr I32 errno_einval = c::EINVAL;
+constexpr I32 errno_emfile = c::EMFILE;
+constexpr I32 errno_enospc = c::ENOSPC;
+constexpr I32 errno_epipe = c::EPIPE;
+constexpr I32 errno_econnrefused = c::ECONNREFUSED;
+constexpr I32 errno_etimedout = c::ETIMEDOUT;
+// NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
+
+// The name of a raw errno code, a constant text; "unknown error" for a code not listed. No libc function is called.
+[[std::c_name("smith_text_os_error")]] export [[nodiscard]] typeof(const char[:]) os_error(I32 code) {
+    if (code == errno_eperm) return "operation not permitted";
+    if (code == errno_enoent) return "no such file or directory";
+    if (code == errno_eintr) return "interrupted system call";
+    if (code == errno_eio) return "input/output error";
+    if (code == errno_ebadf) return "bad file descriptor";
+    if (code == errno_eagain) return "resource temporarily unavailable";
+    if (code == errno_enomem) return "cannot allocate memory";
+    if (code == errno_eacces) return "permission denied";
+    if (code == errno_eexist) return "file exists";
+    if (code == errno_enotdir) return "not a directory";
+    if (code == errno_eisdir) return "is a directory";
+    if (code == errno_einval) return "invalid argument";
+    if (code == errno_emfile) return "too many open files";
+    if (code == errno_enospc) return "no space left on device";
+    if (code == errno_epipe) return "broken pipe";
+    if (code == errno_econnrefused) return "connection refused";
+    if (code == errno_etimedout) return "operation timed out";
+    return "unknown error";
 }

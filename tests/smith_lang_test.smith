@@ -495,6 +495,9 @@ static void corpus_case(const char *name) {
     if (scratch::exists(&p, "cmd")) { // the files of smith's own that a command may name, as @REPO@
         scratch::copy_tree(&p, "lib/std/arena.smith", "mirror/lib/std/arena.smith");
         scratch::copy_tree(&p, "lib/std/contract.smith", "mirror/lib/std/contract.smith");
+        scratch::copy_tree(&p, "lib/std/mem.smith", "mirror/lib/std/mem.smith");
+        scratch::copy_tree(&p, "lib/std/math.smith", "mirror/lib/std/math.smith");
+        scratch::copy_tree(&p, "lib/handlers.c", "mirror/lib/handlers.c");
         scratch::copy_tree(&p, "lib/std/text.smith", "mirror/lib/std/text.smith");
         scratch::copy_tree(&p, "lib/trace.c", "mirror/lib/trace.c");
         scratch::copy_tree(&p, "include", "mirror/include");
