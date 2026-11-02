@@ -1349,13 +1349,26 @@ static void build_install(SmithBuild *b, const BuildConfig *config, const char *
 }
 
 // `smith build release` (issue #111, knowledge/release.md): publishes the built smith as the GitHub Release
-// `stage0-<commit>` and prunes the old ones. scripts/release.sh refuses unless HEAD is main's tip (or CI's push to
-// main). No test or install is an input: CI's check and install jobs come first, and a failure here breaks neither.
-static void build_release(SmithBuild *b, const char *binary) {
-    SmithStep release = {
-        .command = (const char *[]){"sh", "scripts/release.sh", "publish", binary, nullptr},
-        .description = "publishing the stage0 release",
+// `stage0-<commit>` and prunes the old ones. release/publish.smith (module release::publish, which replaced
+// scripts/release.sh, #1674) refuses unless HEAD is main's tip (or CI's push to main); the smith just built compiles it
+// first (`release-tool`, a program until the build can run a module itself, #1667). No test or install is an input:
+// CI's check and install jobs come first, and a failure here breaks neither.
+static void build_release(SmithBuild *b, const char *binary, const char *folder) {
+    const char *tool = smith_fmt(b, "%s/release", folder);
+    SmithStep compile = {
+        .command = smith_list(b, binary, "cc", "-w", "-I", "include", "-I", ".smith/include", "release/publish.smith",
+                              "lib/std/files.smith", "lib/std/console.smith", "lib/std/format.smith",
+                              "lib/std/mem.smith", "lib/std/arena.smith", "lib/std/contract.smith", "lib/std/env.smith",
+                              "lib/std/text.smith", "lib/std/process.smith", "lib/std/clock.smith", "lib/handlers.c",
+                              "lib/trace.c", "-o", tool, nullptr),
+        .description = "compiling the release tool",
         .inputs = (const char *[]){binary, nullptr},
+    };
+    smith_task(b, "release-tool", &compile);
+    SmithStep release = {
+        .command = (const char *[]){tool, "publish", binary, nullptr},
+        .description = "publishing the stage0 release",
+        .inputs = (const char *[]){binary, "release-tool", nullptr},
     };
     smith_task(b, "release", &release);
 }
@@ -2844,7 +2857,7 @@ void build(SmithBuild *b) {
     config.binary = smith.outputs[0];
     const char *const *tested = build_test(b, &config, config.binary, folder);
     build_install(b, &config, config.binary, tested);
-    build_release(b, config.binary);
+    build_release(b, config.binary, folder);
     build_nvim_task(b);
     build_llvm(b);
     build_developer_tasks(b, config.binary);

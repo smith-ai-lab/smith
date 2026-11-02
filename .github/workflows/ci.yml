@@ -550,7 +550,7 @@ jobs:
         run: '"$SMITH" build release'
 
   release-linux:
-    # the same draft release gets the Linux tarball (`release.sh publish` adds it to the draft the other job made). Until
+    # the same draft release gets the Linux tarball (`release publish`, release/publish.smith, adds it to the draft the other job made). Until
     # a Linux release exists, setup builds smith from source (scripts/seed_linux.c, about two hours): expected once,
     # for the first push to main after this job exists; the hosted limit is 6 hours. `publish` publishes without this
     # job's tarball when it fails, so `install` never waits for Linux.
@@ -590,7 +590,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Publish the release
-        run: sh scripts/release.sh finish "stage0-$GITHUB_SHA"
+        # no smith on this runner (a hosted Ubuntu, 3 minutes): the one command of `release finish`
+        # (release/publish.smith), which stays for use by hand
+        run: |
+          gh release edit "stage0-$GITHUB_SHA" --draft=false
+          echo "release: published stage0-$GITHUB_SHA"
 
   install:
     # the owner's Mac installs the release just published, so the installed smith is always main's: a download and a
@@ -610,7 +614,13 @@ jobs:
         run: |
           export PATH="/opt/homebrew/bin:$PATH"
           tmp=$(mktemp -d)
-          sh scripts/release.sh fetch "stage0-$GITHUB_SHA" "$tmp"
+          # release/publish.smith, compiled by the smith installed now (the previous release's)
+          L=lib/std
+          smith cc -w -I include -I .smith/include release/publish.smith $L/files.smith $L/console.smith \
+            $L/format.smith $L/mem.smith $L/arena.smith $L/contract.smith $L/env.smith $L/text.smith \
+            $L/process.smith $L/clock.smith lib/handlers.c lib/trace.c -o "$tmp.release"
+          "$tmp.release" fetch "stage0-$GITHUB_SHA" "$tmp"
+          rm -f "$tmp.release"
           mkdir -p "$HOME/.local/bin"
           for f in "$tmp"/bin/*; do
             # copy beside, then rename over: a smith running now keeps its old file

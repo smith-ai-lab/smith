@@ -81,8 +81,7 @@ static const char *first_line(const char *path) {
 
 // The shell files that exist today, waiting for their port, and the fake programs of the build tests.
 static Bool exempt(const char *name) {
-    return c::strcmp(name, "scripts/llvm.sh") == 0 || c::strcmp(name, "scripts/release.sh") == 0 ||
-           starts_with(name, "tests/build_fixtures/");
+    return c::strcmp(name, "scripts/llvm.sh") == 0 || starts_with(name, "tests/build_fixtures/");
 }
 
 static Bool ends_with_sh(const char *name) {

@@ -1,8 +1,8 @@
 // scripts/stage0.c (issue #112, #293) with no network: scratch git repositories and a stand-in `curl` that serves its
-// "releases" in a folder, each one made by scripts/release.sh package from a stand-in smith. Never touches a real
+// "releases" in a folder, each one made by release/publish.smith's package from a stand-in smith. Never touches a real
 // repository. The tool is built the way the README builds it, with the system's compiler: clang on macOS, cc (GCC) as
 // gnu2x on Linux, where a missing release would build the seed, which SMITH_STAGE0_SEED=0 turns off.
-// smith-covers: scripts/stage0.c scripts/release.sh scripts/sha256.h
+// smith-covers: scripts/stage0.c release/publish.smith scripts/sha256.h
 module stage0_test;
 
 import std::arena;
@@ -11,9 +11,9 @@ import std::test;
 import scratch;
 
 // The folder of the repository (the project's) holds: bin/curl and fake-smith (built from the fixture), the tool, an
-// origin, and `repo`: a copy of the two scripts, five commits, a release for the second and a release for a commit that
-// is no ancestor of HEAD (a branch); HEAD is two commits past the second. Releases are only in $GH_DIR; a tag is
-// pushed for those named by `tags`.
+// origin, and `repo`: a copy of the stage0 tool's files, five commits, a release for the second and a release for a
+// commit that is no ancestor of HEAD (a branch); HEAD is two commits past the second. Releases are only in $GH_DIR; a
+// tag is pushed for those named by `tags`.
 constexpr const char *setup =
     "set -e; mkdir bin gh; "
     "if [ \"$(uname -s)\" = Darwin ]; then c='clang -std=c23'; else c='cc -std=gnu2x'; fi; "
@@ -21,18 +21,25 @@ constexpr const char *setup =
     "$c -x c stage0.c -o stage0-tool; "
     "git init -q --bare origin.git; git init -q -b main repo; cd repo; "
     "git config user.email t@t; git config user.name t; git remote add origin ../origin.git; "
-    "mkdir scripts; mv ../release.sh scripts/; git add scripts; git commit -qm zero; "
+    "mkdir scripts; echo zero > scripts/zero; git add scripts; git commit -qm zero; "
     "echo 1 > f; git add f; git commit -qm one; echo 2 > f; git commit -qam two; second=$(git rev-parse HEAD); "
     "git checkout -q -b side; echo side > g; git add g; git commit -qm side; side=$(git rev-parse HEAD); "
     "git checkout -q main; echo 3 > f; git commit -qam three; echo 4 > f; git commit -qam four; "
-    "for c in $second $side; do sh scripts/release.sh package ../fake-smith ../gh/stage0-$c; git tag stage0-$c $c; "
+    "for c in $second $side; do ../release package ../fake-smith ../gh/stage0-$c; git tag stage0-$c $c; "
     "done; "
     "git push -q origin main side --tags; echo $second > ../second";
+
+// release/publish.smith, built by the smith under test, makes the stand-in releases (its `package`).
+constexpr const char *release_tool =
+    "R=$SMITH_REPO; L=$R/lib/std; smith cc -w -I $R/include -I $R/.smith/include $R/release/publish.smith "
+    "$L/files.smith $L/console.smith $L/format.smith $L/mem.smith $L/arena.smith $L/contract.smith $L/env.smith "
+    "$L/text.smith $L/process.smith $L/clock.smith $R/lib/handlers.c $R/lib/trace.c -o release";
 
 static void repository(const scratch::Project *p) {
     scratch::copy_tree(p, "scripts/stage0.c", "stage0.c");
     scratch::copy_tree(p, "scripts/sha256.h", "sha256.h");
-    scratch::copy_tree(p, "scripts/release.sh", "release.sh");
+    scratch::Run tool_built = scratch::sh(p, release_tool);
+    scratch::expect_status("stage0: the release tool is built", 0, &tool_built);
     scratch::Run made = scratch::sh(p, setup);
     scratch::expect_status("stage0: the scratch repository is made", 0, &made);
 }
@@ -110,7 +117,7 @@ export void test_stage0_a_newer_release_wins() {
     scratch::Run first = tool(&p, "", "");
     scratch::expect_status("stage0: the first run passes", 0, &first);
     scratch::Run made =
-        scratch::sh(&p, "cd repo && third=$(git rev-parse HEAD~1) && sh scripts/release.sh package ../fake-smith "
+        scratch::sh(&p, "cd repo && third=$(git rev-parse HEAD~1) && ../release package ../fake-smith "
                         "../gh/stage0-$third && "
                         "git tag stage0-$third $third && git push -q origin --tags && echo $third > ../third");
     scratch::expect_status("stage0: a newer release is made", 0, &made);
