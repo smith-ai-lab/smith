@@ -277,7 +277,7 @@ Iteration in the checker; the rules are the top comment of the file.
 | `emit_iter` | `for x in xs` over a fixed array, `refs(xs)`, `range(n)`, `range(a, b)`, `range(a, b, step)` with a positive literal step | `enumerate`, `zip`, tuple pattern, slice, `str`, block, stream, array value, other steps: `not emitted yet` | #1586 (filled) |
 | `emit_match` | stub: every handler returns `not emitted yet` (enumerations, `.red`, `match` as statement and value) | everything | #1585 (open) |
 | `emit_value` | an `if` with an `else` and a block used as a value: one alloca slot (the hint's type, else the join of the branches' checker types), branches convert and store, `endif` loads it; a branch that ended stores nothing; no branch reaching the end gives `unreachable` and `undef` | `for`, `while`, `if let` as a value, a `match` with no type written | #1618 (filled) |
-| `emit_tuple` | stub: tuple types, literals, `t.0`, `(q, r) := f()` are `not emitted yet` | everything | next batch |
+| `emit_tuple` | tuple types `(A, B)`, `(T,)`, `()` as an LLVM struct, `(a, b)`, `t.0` as a value and a place, `(q, r) := f()`; the lexer reads `t.0` and `t.0.1` as an index | `==` between tuples, tuples of slices or `fn` values, `for (i, x)` | #1619 (filled) |
 | `emit_lambda` | stub: `fn` types and lambdas are `not emitted yet` | everything | next batch |
 | floats, slices, `str`, array literals | no route yet: `emit.smith` answers `not emitted yet: this kind of expression` | everything | none yet |
 

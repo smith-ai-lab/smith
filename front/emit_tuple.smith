@@ -1,43 +1,343 @@
-// front::emit_tuple: tuples: types, literals, `t.0` and `(q, r) := f()`. Filled by the next batch of #1428; today every
-// handler is `not emitted yet`, with its final signature, so that ticket edits this file and never front/emit.smith
-// (the wave-3 scaffold, #1582 of #1428).
+// front::emit_tuple: tuples: types, literals, `t.0` and `(q, r) := f()` (#1619 of #1428).
+//
+// Layout. `(A, B)` is the LLVM literal (unnamed, not packed) struct `{ A, B }` of its elements' types in order, with
+// the data layout's padding. `(T,)` is a one-field struct and `()` the empty struct `{}`. The `Ty` is kind `tuple`,
+// `parts` and `part_count` its elements (one block, freed through the chain of `Emitter.owned` like every
+// `Ty.element`), `name` as written (`(i32, i64)`). Tuples go by value, as LLVM's struct value.
+//
+// What the handlers do.
+//   `type_tuple`   a written tuple type, each element through `state::type_of`.
+//   `from_checked` the checker's tuple: an integer, `bool`, a record of the module, an option, or a tuple (walked with
+//                  an explicit stack, up to 8 deep). Anything else is `not emitted yet: a tuple of <type>`.
+//   `literal`      `(a, b)`: the type is the hint's when it is a tuple of that many elements, else the checker's.
+//                  The items run left to right, each with its element's type as hint, then each is converted to its
+//                  element type and inserted into the zero struct.
+//   `member`       `t.0` as a value (`extractvalue`); `t.0.1` runs from the inside out through the work stack.
+//   `place_member` `t.0` as an address (a struct GEP), so `t.0 = v` works for a `mut t`.
+//   `destructure`  `(q, r) := f()`: the value is made once, then one local per name (`_` binds nothing).
+//
+// Left: `==` between tuples, tuples of slices or `fn` values, and `for (i, x) in ...` (emit_iter).
 module front::emit_tuple;
 
 import front::ast;
+import front::emit_option as optional;
 import front::emit_state as state;
 import front::types;
+import std::format;
+import std::mem;
+import <llvm-c/Core.h>;
 
-export state::TyResult type_tuple(state::Emitter *e, const ast::TypeExpr *t) {
-    _ = e;
-    return state::ty_fail("not emitted yet: a tuple type", t->span);
+typedef state::Ty TyList[:];
+
+// The most elements one tuple has: the arrays below are on the stack.
+constexpr Usize max_parts = 32;
+
+// The deepest nest of tuples `from_checked` walks.
+constexpr Usize max_depth = 8;
+
+static state::TyResult too_many(ast::Span span) {
+    return state::ty_fail("not emitted yet: a tuple of more than 32 elements", span);
 }
 
+// `(a, b)`, `(a,)` or `()` from the names of `parts`.
+static Str name_of(const state::Ty parts[:]) {
+    Str name = state::msg(format::push("("));
+    for (Usize i = 0; i < countof(parts); i++) {
+        Str next = state::msg(format::push(name, parts[i].name));
+        state::free_text(name);
+        name = next;
+        if (i + 1 < countof(parts) || countof(parts) == 1) {
+            if (i + 1 < countof(parts))
+                next = state::msg(format::push(name, ", "));
+            else
+                next = state::msg(format::push(name, ","));
+            state::free_text(name);
+            name = next;
+        }
+    }
+    Str closed = state::msg(format::push(name, ")"));
+    state::free_text(name);
+    return closed;
+}
+
+// The tuple of `items`. Its elements live in one block whose first two slots are the header of its link in the chain
+// (an `OwnedTy` is a `Ty` and a pointer: two `Ty`s hold it), so `memory::release` frees the whole block.
+static state::TyResult build(state::Emitter *e, const state::Ty items[:], ast::Span span) {
+    if (countof(items) > max_parts) return too_many(span);
+    TyList block = {};
+    block = mem::realloc(block, countof(items) + 3);
+    state::OwnedTy *head = (state::OwnedTy *)(Usize)block.data;
+    head->next = e->owned;
+    e->owned = head;
+    c::LLVMTypeRef fields[max_parts];
+    for (Usize i = 0; i < countof(items); i++) {
+        block[i + 2] = items[i];
+        fields[i] = items[i].llvm;
+    }
+    state::Ty ty = {.kind = .tuple,
+                    .llvm = c::LLVMStructTypeInContext(e->context, fields, (unsigned)countof(items), false),
+                    .name = name_of(items),
+                    .parts = &block[2],
+                    .part_count = countof(items)};
+    return ty;
+}
+
+// The type `(A, B)` says.
+export state::TyResult type_tuple(state::Emitter *e, const ast::TypeExpr *t) {
+    if (t->kind != .tuple) return state::ty_fail("not a tuple type", t->span);
+    Usize count = countof(t->kind.tuple.elements);
+    if (count > max_parts) return too_many(t->span);
+    state::Ty items[max_parts];
+    for (Usize i = 0; i < count; i++) {
+        state::TyResult made = state::type_of(e, t->kind.tuple.elements[i]);
+        if (made == .error) {
+            return {.error = made.error};
+        }
+        items[i] = made.ok;
+    }
+    return build(e, items[0:count], t->span);
+}
+
+// An element the checker names that is not a tuple: a `bool`, an integer, a record of the module or an option.
+static state::TyResult leaf_of_checked(state::Emitter *e, types::TypeRef t) {
+    state::Ty ty = {};
+    if (t->kind == .bool_type && state::scalar_type(e, "bool", &ty)) return ty;
+    if (t->kind == .integer) {
+        if (state::scalar_type(e, t->name, &ty)) return ty;
+        Str spelled = "u64";
+        if (t->bits == 8) spelled = t->is_signed ? "i8" : "u8";
+        if (t->bits == 16) spelled = t->is_signed ? "i16" : "u16";
+        if (t->bits == 32) spelled = t->is_signed ? "i32" : "u32";
+        if (t->bits == 64) spelled = t->is_signed ? "i64" : "u64";
+        if (state::scalar_type(e, spelled, &ty)) return ty;
+    }
+    if (t->kind == .record) {
+        for (Usize i = 0; i < e->record_count; i++) {
+            if (state::same_text(e->records[i].name, t->name)) {
+                ty = e->records[i].ty;
+                return ty;
+            }
+        }
+    }
+    if (t->kind == .option) return optional::from_checked(e, t);
+    Str shown = types::show(t);
+    Str message = state::msg(format::push("not emitted yet: a tuple of ", shown));
+    state::free_text(shown);
+    state::TyResult failed = state::ty_fail(message, (ast::Span){});
+    state::free_text(message);
+    return failed;
+}
+
+// One tuple being walked: the checker's, the next slot to read and the types made so far.
+struct Frame {
+    types::TypeRef node;
+    Usize next;
+    state::Ty items[max_parts];
+};
+
+typedef Frame FrameList[:];
+
+// The tuple type the checker gives a node, walked from the outside in with an explicit stack of frames.
 export state::TyResult from_checked(state::Emitter *e, types::TypeRef t) {
-    _ = e;
-    _ = t;
-    return state::ty_fail("not emitted yet: a tuple type", (ast::Span){});
+    if (t->kind != .tuple) return state::ty_fail("not a tuple", (ast::Span){});
+    FrameList frames = {};
+    frames = mem::realloc(frames, max_depth);
+    Usize depth = 1;
+    frames[0].node = t;
+    frames[0].next = 0;
+    state::TyResult result = state::ty_fail("not a tuple", (ast::Span){});
+    Bool done = false;
+    while (!done) {
+        Frame *f = &frames[depth - 1];
+        Usize count = countof(f->node->slots);
+        if (count > max_parts) {
+            result = too_many((ast::Span){});
+            break;
+        }
+        if (f->next < count) {
+            types::TypeRef slot = f->node->slots[f->next].type;
+            if (slot->kind == .tuple) {
+                if (depth == max_depth) {
+                    result = state::ty_fail("not emitted yet: a tuple nested more than 8 deep", (ast::Span){});
+                    break;
+                }
+                frames[depth].node = slot;
+                frames[depth].next = 0;
+                depth += 1;
+                continue;
+            }
+            state::TyResult leaf = leaf_of_checked(e, slot);
+            if (leaf == .error) {
+                result = {.error = leaf.error};
+                break;
+            }
+            f->items[f->next] = leaf.ok;
+            f->next += 1;
+            continue;
+        }
+        state::TyResult built = build(e, f->items[0:count], (ast::Span){});
+        if (built == .error) {
+            result = {.error = built.error};
+            break;
+        }
+        if (depth == 1) {
+            result = built;
+            done = true;
+        } else {
+            depth -= 1;
+            frames[depth - 1].items[frames[depth - 1].next] = built.ok;
+            frames[depth - 1].next += 1;
+        }
+    }
+    mem::free(frames.data);
+    return result;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// `(a, b)`
+
+// The items are on the value stack, the first deepest: convert each to its element and build the tuple.
+static state::Status literal_finish(state::Emitter *e, const state::Work *w) {
+    Usize count = w->ty.part_count;
+    state::Value items[max_parts];
+    for (Usize i = count; i > 0; i--) {
+        items[i - 1] = state::pop_value(e);
+    }
+    c::LLVMValueRef built = c::LLVMConstNull(w->ty.llvm);
+    for (Usize i = 0; i < count; i++) {
+        try state::convert(e, items[i], w->ty.parts[i], w->span, .initialize);
+        state::Value converted = state::pop_value(e);
+        built = c::LLVMBuildInsertValue(e->builder, built, converted.llvm, (unsigned)i, "item");
+    }
+    state::push_value(e, (state::Value){.llvm = built, .ty = w->ty});
+    return state::success();
 }
 
 export state::Status literal(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
-    _ = e;
-    _ = hint;
-    return state::not_emitted("a tuple", x->span);
+    if (x->kind != .tuple_lit) {
+        return state::fail("not a tuple", x->span);
+    }
+    ast::ExprRef items[:] = x->kind.tuple_lit.items;
+    Usize count = countof(items);
+    state::Ty ty = {};
+    if (hint.present && hint.ty.kind == .tuple && hint.ty.part_count == count) {
+        ty = hint.ty;
+    } else {
+        state::TyResult checked = state::type_of_node(e, x);
+        if (checked == .error) {
+            return {.error = checked.error};
+        }
+        if (checked.ok.kind != .tuple || checked.ok.part_count != count) {
+            return state::failf(x->span, "the tuple ", checked.ok.name, " does not have ", count, " elements");
+        }
+        ty = checked.ok;
+    }
+    state::push_then(e, (state::Work){.then = literal_finish, .ty = ty, .span = x->span});
+    for (Usize i = count; i > 0; i--) {
+        state::push_eval(e, items[i - 1], state::hint_of(ty.parts[i - 1]));
+    }
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// `t.0`
+
+// The position a member's name says, saturated: a name too long to be an index is far past any tuple.
+static Usize index_of(Str name) {
+    Usize index = 0;
+    for (Usize i = 0; i < countof(name); i++) {
+        if (index > 1000000) break;
+        index = index * 10 + (Usize)(name[i] - '0');
+    }
+    return index;
+}
+
+// The element `index` of `base`, or the Error: `base` is a tuple and the index is inside it.
+static state::Status check_member(state::Ty base, Usize index, ast::Span span) {
+    if (base.kind != .tuple) return state::failf(span, ".", index, " needs a tuple, found ", base.name);
+    if (index >= base.part_count) {
+        return state::failf(span, "the tuple ", base.name, " has ", base.part_count, " elements; there is no .", index);
+    }
+    return state::success();
+}
+
+static state::Status member_finish(state::Emitter *e, const state::Work *w) {
+    state::Value base = state::pop_value(e);
+    Usize index = (Usize)w->number;
+    try check_member(base.ty, index, w->span);
+    c::LLVMValueRef got = c::LLVMBuildExtractValue(e->builder, base.llvm, (unsigned)index, "item");
+    state::push_value(e, (state::Value){.llvm = got, .ty = base.ty.parts[index]});
+    return state::success();
 }
 
 // `t.0` as a value.
-export state::Status member(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
-    _ = e;
-    _ = hint;
-    return state::not_emitted("a tuple member", x->span);
+export state::Status member(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    if (x->kind != .member) {
+        return state::fail("not a member access", x->span);
+    }
+    Usize index = index_of(x->kind.member.name);
+    state::push_then(e, (state::Work){.then = member_finish, .number = index, .span = x->span});
+    state::push_eval(e, x->kind.member.base, state::no_hint());
+    return state::success();
+}
+
+static state::Status place_finish(state::Emitter *e, const state::Work *w) {
+    state::Value base = state::pop_value(e);
+    Usize index = (Usize)w->number;
+    try check_member(base.ty, index, w->span);
+    c::LLVMValueRef slot = c::LLVMBuildStructGEP2(e->builder, base.ty.llvm, base.llvm, (unsigned)index, "item");
+    state::push_value(e, (state::Value){.llvm = slot, .ty = base.ty.parts[index]});
+    return state::success();
 }
 
 // `t.0` as an address.
 export state::Status place_member(state::Emitter *e, const ast::Expr *x) {
-    _ = e;
-    return state::not_emitted("a tuple member", x->span);
+    if (x->kind != .member) {
+        return state::fail("not a member access", x->span);
+    }
+    Usize index = index_of(x->kind.member.name);
+    state::push_then(e, (state::Work){.then = place_finish, .number = index, .span = x->span});
+    state::push_place(e, x->kind.member.base);
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// `(q, r) := f()`
+
+static state::Status destructure_finish(state::Emitter *e, const state::Work *w) {
+    const ast::Stmt *s = w->stmt;
+    if (s->kind != .destructure) {
+        return state::fail("not a destructuring declaration", w->span);
+    }
+    state::Value value = state::pop_value(e);
+    if (value.ty.kind != .tuple) {
+        return state::failf(w->span, "destructuring needs a tuple, found ", value.ty.name);
+    }
+    ast::Identifier names[:] = s->kind.destructure.names;
+    if (countof(names) != value.ty.part_count) {
+        return state::failf(w->span, "destructuring ", countof(names), " names from ", value.ty.name);
+    }
+    for (Usize i = 0; i < countof(names); i++) {
+        Str name = names[i].text;
+        if (state::same_text(name, "_")) continue;
+        for (Usize k = e->scope_marks[e->scope_count - 1]; k < e->local_count; k++) {
+            if (state::same_text(e->locals[k].name, name))
+                return state::failf(names[i].span, name, " is declared twice in one scope");
+        }
+        state::Ty ty = value.ty.parts[i];
+        c::LLVMValueRef got = c::LLVMBuildExtractValue(e->builder, value.llvm, (unsigned)i, "item");
+        c::LLVMValueRef slot = state::new_alloca(e, ty, name);
+        c::LLVMBuildStore(e->builder, got, slot);
+        state::add_local(e, (state::Local){.name = name, .ty = ty, .address = slot});
+    }
+    return state::success();
 }
 
 export state::Status destructure(state::Emitter *e, const ast::Stmt *s) {
-    _ = e;
-    return state::not_emitted("a destructuring declaration", s->span);
+    if (s->kind != .destructure) {
+        return state::fail("not a destructuring declaration", s->span);
+    }
+    state::push_then(e, (state::Work){.then = destructure_finish, .stmt = s, .span = s->span});
+    state::push_eval(e, s->kind.destructure.init, state::no_hint());
+    return state::success();
 }
