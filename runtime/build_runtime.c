@@ -1852,6 +1852,8 @@ static const char *smith_lang_module_of(const char *path) {
     size_t length = fread(text, 1, sizeof text - 1, file);
     fclose(file);
     size_t at = smith_lang_skip(text, length, 0);
+    if (at + 6 >= length && length == sizeof text - 1)
+        smith_fail("%s: no `module` line in the first %zu bytes; move it above the comments", path, sizeof text - 1);
     if (at + 6 >= length || memcmp(text + at, "module", 6) != 0 || smith_lang_word_byte(text[at + 6])) return nullptr;
     at = smith_lang_skip(text, length, at + 6);
     char name[smith_lang_name_max];
@@ -3425,7 +3427,8 @@ static void smith_shard_add_filter(SmithTestShard *shard, const SmithTestFound *
     size_t used = strlen(shard->filter);
     size_t more = strlen(value);
     size_t comma = used > 0 ? 1 : 0;
-    if (used + comma + more >= sizeof shard->filter) return;
+    if (used + comma + more >= sizeof shard->filter)
+        smith_fail("the --test values are longer than %zu bytes; run fewer tests by name", smith_shard_filter_max);
     if (comma == 1) shard->filter[used] = ',';
     memcpy(shard->filter + used + comma, value, more + 1);
 }

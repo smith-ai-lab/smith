@@ -268,8 +268,7 @@ static const char *smith_make_find_top(const char *text, const char *chars) {
 static void smith_make_log_touch(SmithMakeVar *var) {
     SmithMakeReader *r = &smith_make_reader;
     if (r->dynamic_count == 0) return;
-    if (r->log_count >= smith_make_log_max)
-        smith_die(smith_exit_usage, "make: too many assignments in a test", nullptr);
+    if (r->log_count >= smith_make_log_max) smith_make_too_many("assignments in a test", smith_make_log_max);
     r->log[r->log_count++] = (SmithMakeLogEntry){var, *var};
 }
 
@@ -342,8 +341,7 @@ static void smith_make_collect(size_t from) {
             if (r->log[k].var == var) seen = true;
         }
         if (seen) continue;
-        if (r->result_count >= smith_make_log_max)
-            smith_die(smith_exit_usage, "make: too many assignments in a test", nullptr);
+        if (r->result_count >= smith_make_log_max) smith_make_too_many("assignments in a test", smith_make_log_max);
         r->results[r->result_count++] = (SmithMakeLogEntry){var, *var};
     }
 }
@@ -471,7 +469,7 @@ static bool smith_make_reading(void) {
 
 static void smith_make_push_cond(const char *text, bool chained) {
     SmithMakeReader *r = &smith_make_reader;
-    if (r->cond_count >= smith_make_conds_max) smith_die(smith_exit_usage, "make: conditionals nest too deep", nullptr);
+    if (r->cond_count >= smith_make_conds_max) smith_make_too_many("conditionals nested", smith_make_conds_max);
     SmithMakeCond *cond = &r->conds[r->cond_count++];
     *cond = (SmithMakeCond){.outer = r->cond_count == 1 ? true : false, .chained = chained};
     if (r->cond_count > 1) {
@@ -709,7 +707,7 @@ static SmithMakeTarget *smith_make_target_get(const char *name) {
     SmithMakeReader *r = &smith_make_reader;
     SmithMakeTarget *found = smith_make_target_find(name);
     if (found != nullptr) return found;
-    if (r->target_count >= smith_make_targets_max) smith_die(smith_exit_usage, "make: too many targets", nullptr);
+    if (r->target_count >= smith_make_targets_max) smith_make_too_many("targets", smith_make_targets_max);
     uint32_t at = smith_make_target_hash(name);
     while (r->target_slots[at] != 0)
         at = (at + 1) & (uint32_t)(smith_make_targets_max * 2 - 1);
@@ -721,7 +719,7 @@ static SmithMakeTarget *smith_make_target_get(const char *name) {
 static void smith_make_target_attach(const char *name, size_t rule) {
     SmithMakeReader *r = &smith_make_reader;
     SmithMakeTarget *target = smith_make_target_get(name);
-    if (r->ref_count >= smith_make_refs_max) smith_die(smith_exit_usage, "make: too many rules", nullptr);
+    if (r->ref_count >= smith_make_refs_max) smith_make_too_many("prerequisite references", smith_make_refs_max);
     uint32_t ref = (uint32_t)++r->ref_count;
     r->refs[ref - 1] = (SmithMakeRef){(uint32_t)rule, 0};
     if (target->last != 0) r->refs[target->last - 1].next = ref;
@@ -750,7 +748,7 @@ static void smith_make_split_prerequisites(const char *text, SmithMakeRule *rule
 
 static SmithMakeRule *smith_make_rule_new(void) {
     SmithMakeReader *r = &smith_make_reader;
-    if (r->rule_count >= smith_make_rules_max) smith_die(smith_exit_usage, "make: too many rules", nullptr);
+    if (r->rule_count >= smith_make_rules_max) smith_make_too_many("rules", smith_make_rules_max);
     SmithMakeRule *rule = &r->rules[r->rule_count++];
     *rule = (SmithMakeRule){
         .where = smith_make.here, .guard = smith_make_guard(), .recipe_from = -1, .from_eval = smith_make.in_eval};
@@ -761,7 +759,7 @@ static SmithMakeRule *smith_make_rule_new(void) {
 static void smith_make_add_recipe(size_t rule_index, const char *text, SmithMakeWhere where) {
     SmithMakeReader *r = &smith_make_reader;
     if (r->recipe_line_count >= smith_make_recipe_lines_max)
-        smith_die(smith_exit_usage, "make: too many recipe lines", nullptr);
+        smith_make_too_many("recipe lines", smith_make_recipe_lines_max);
     SmithMakeRule *rule = &r->rules[rule_index];
     SMITH_ASSERT(rule->recipe_first + rule->recipe_count == r->recipe_line_count);
     r->recipe_lines[r->recipe_line_count++] = (SmithMakeRecipeLine){smith_make_copy(text), where};
