@@ -18,7 +18,8 @@
 // errno, both swapped at every switch. Issue #241, #940; knowledge/task.md.
 //
 // Under macOS a call on a socket or a pipe parks the task, not the thread: each worker has a kqueue and sleeps in it
-// when it has nothing to run (#941). A regular file is not parked yet, and Linux has no epoll backend yet.
+// when it has nothing to run (#941); under Linux each worker has an epoll instance and an eventfd instead (#942). A
+// regular file is not parked yet.
 //
 // What is not here yet, in the issue: the typed `spawn(&group, f, args...)` (it waits for the language, #316).
 module std::task;
@@ -38,6 +39,9 @@ import <sys/mman.h>;                        // mmap, mprotect, munmap: the stack
 import <unistd.h>;                          // sysconf: the size of a page
 if constexpr (target::os == target::macos) {
     import <sys/event.h>; // kqueue: a task waiting on a socket or a pipe
+} else {
+    import <sys/epoll.h>;   // epoll: the same, on Linux
+    import <sys/eventfd.h>; // eventfd: another thread wakes a worker that sleeps in epoll_wait
 }
 
 // The tasks a `wait` waits for. Start it as `task::Group group = {};` and end it with `defer task::wait(&group)`.
@@ -523,8 +527,9 @@ struct Worker {
     void *thread_stack;  // the mapping under the thread: it is ours, so the C library keeps nothing of the thread
     void *cache;         // stacks of finished tasks, linked through their lowest word
     Usize cached;
-    I32 queue;       // macOS: the worker's kqueue; -1 elsewhere
-    Usize io_parked; // tasks of this worker waiting in the kqueue
+    I32 queue;       // the worker's kqueue (macOS) or epoll instance (Linux); -1 until started
+    I32 wake_fd;     // Linux: the eventfd that wakes the worker out of epoll_wait; -1 elsewhere
+    Usize io_parked; // tasks of this worker waiting in the kqueue or epoll instance
 };
 
 Worker workers[workers_max];
@@ -534,7 +539,7 @@ Bool stopping;      // they are to exit
 Usize live;         // tasks spawned and not ended
 Usize busy;         // workers running a task right now
 Usize ready_total;  // tasks in all the queues
-Usize io_total;     // tasks waiting in a kqueue, on any worker
+Usize io_total;     // tasks waiting in a kqueue or epoll instance, on any worker
 Usize worker_limit; // at most this many workers (0: one per core); see limit_workers
 Usize page_bytes;
 c::pthread_mutex_t sched_lock;
@@ -593,7 +598,7 @@ void record_give(Task *task) {
     pool_release();
 }
 
-void wake_worker(Worker *worker); // below: a kevent on macOS, a condition variable elsewhere
+void wake_worker(Worker *worker); // below: a kevent on macOS, an eventfd on Linux
 
 void push_ready(Worker *worker, Task *task) {
     task->next = nullptr;
@@ -649,7 +654,7 @@ void finish_managed(Task *task) {
     unlock_scheduler();
 }
 
-// ---- Waiting on the system: a kqueue per worker on macOS, a condition variable per worker elsewhere. ----
+// ---- Waiting on the system: a kqueue per worker on macOS, an epoll instance per worker on Linux. ----
 //
 // macOS: an idle worker blocks in `kevent` on its own kqueue, which holds the sockets and pipes its parked tasks wait
 // on and one EVFILT_USER event that another thread triggers to wake it. A task is registered by the worker that runs it
@@ -712,20 +717,74 @@ if constexpr (target::os == target::macos) {
         }
     }
 } else {
-    void queue_open([[maybe_unused]] Worker *worker) {}
-    void queue_close([[maybe_unused]] Worker *worker) {}
+    // Linux: an idle worker blocks in `epoll_wait` on its own epoll instance, which holds the sockets and pipes its
+    // parked tasks wait on (EPOLLONESHOT, the task in the event's data) and one eventfd that another thread writes to
+    // wake it. As on macOS, a task is registered by the worker that runs it and only that worker reads the instance.
+    // NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
+    constexpr U32 event_in = c::EPOLLIN;
+    constexpr U32 event_out = c::EPOLLOUT;
+    constexpr U32 event_oneshot = c::EPOLLONESHOT;
+    constexpr I32 control_add = c::EPOLL_CTL_ADD;
+    constexpr I32 control_modify = c::EPOLL_CTL_MOD;
+    constexpr I32 already_there = c::EEXIST;
+    constexpr I32 close_on_exec = c::EPOLL_CLOEXEC;
+    constexpr I32 event_fd_flags = c::EFD_CLOEXEC | c::EFD_NONBLOCK;
+    // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
+    constexpr Usize events_max = 16;
 
-    void wake_worker(Worker *worker) {
-        if (worker != home) c::pthread_cond_signal(&worker->wake); // NOLINT(smith-effects)
+    void queue_open(Worker *worker) {
+        contract::trusted(); // the system's queue is the edge
+        worker->queue = c::epoll_create1(close_on_exec);
+        if (worker->queue < 0) refuse("task: the system refused an epoll instance");
+        worker->wake_fd = c::eventfd(0, event_fd_flags);
+        if (worker->wake_fd < 0) refuse("task: the system refused an eventfd");
+        struct c::epoll_event change = {};
+        change.events = event_in;
+        change.data.ptr = nullptr; // no task: the wake-up
+        if (c::epoll_ctl(worker->queue, control_add, worker->wake_fd, &change) != 0)
+            refuse("task: the system refused an epoll registration");
     }
 
-    // Elsewhere nothing waits in a queue: a blocking poll is a sleep until woken.
+    void queue_close(Worker *worker) {
+        c::close(worker->wake_fd); // NOLINT(smith-effects)
+        c::close(worker->queue);   // NOLINT(smith-effects)
+        worker->wake_fd = -1;
+        worker->queue = -1;
+    }
+
+    // Wakes a worker that sleeps in `epoll_wait` (or will when it next looks: the eventfd stays readable until it is
+    // read).
+    void wake_worker(Worker *worker) {
+        contract::trusted(); // the system's queue is the edge
+        if (worker == home) return;
+        U64 one = 1;
+        c::write(worker->wake_fd, &one, sizeof(one)); // NOLINT(smith-effects)
+    }
+
+    // Reads the worker's epoll instance, waiting for it when `block` (the lock is let go while it waits), and queues
+    // the tasks whose descriptors are ready. Holds the lock; returns with it held.
     void poll_io(Worker *worker, Bool block) {
-        if (block) c::pthread_cond_wait(&worker->wake, &sched_lock); // NOLINT(smith-effects)
+        contract::trusted(); // the system's queue is the edge
+        struct c::epoll_event events[events_max] = {};
+        if (block) unlock_scheduler();
+        I32 count = c::epoll_wait(worker->queue, events, (I32)events_max, block ? -1 : 0); // NOLINT(smith-effects)
+        if (block) lock_scheduler();
+        for (I32 i = 0; i < count; i++) {
+            if (events[i].data.ptr == nullptr) { // the wake-up: read it so the eventfd is quiet again
+                U64 counter = 0;
+                c::read(worker->wake_fd, &counter, sizeof(counter)); // NOLINT(smith-effects)
+                continue;
+            }
+            Task *ready = (Task *)events[i].data.ptr;
+            ready->io_waiting = false;
+            worker->io_parked -= 1;
+            io_total -= 1;
+            if (ready->resumer != nullptr) push_ready(worker, ready); // `main` sees the flag and goes on by itself
+        }
     }
 }
 
-// Reads the calling worker's kqueue without waiting, when some of its tasks wait in it.
+// Reads the calling worker's kqueue or epoll instance without waiting, when some of its tasks wait in it.
 void poll_now() {
     if (!active || home == nullptr || home->io_parked == 0) return;
     lock_scheduler();
@@ -797,14 +856,14 @@ void run_ready(Worker *worker) {
     }
 }
 
-// ---- Parking a task on a socket or a pipe (macOS). ----
+// ---- Parking a task on a socket or a pipe (macOS and Linux). ----
 //
 // The default scheduler's `io` makes a socket or a pipe non-blocking, tries the call, and when it would block registers
 // the descriptor with the worker's kqueue and parks the task: the worker runs other tasks until the descriptor is
 // ready, then the task tries again. A regular file, a terminal and a descriptor that does not exist go to the real call
 // (a regular file moves off the worker with the pool ticket; a terminal's flags are shared with the shell, so they stay
 // blocking). The code that called is a plain blocking call.
-if constexpr (target::os == target::macos) {
+if constexpr (target::os == target::macos || target::os == target::linux) {
     c::SmithHandlers empty_handlers; // the table a real call runs under: no scheduler, so it is not routed again
 
     // NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
@@ -869,19 +928,41 @@ if constexpr (target::os == target::macos) {
         // NOLINTEND(smith-effects, bugprone-signed-bitwise)
     }
 
-    // Registers the descriptor with the worker's kqueue and parks the calling task until it is ready. False when the
-    // system refused the registration (errno says why). `main` has no stack to leave: it runs its worker's tasks, or
-    // sleeps in the kqueue, until it is ready.
-    Bool park_on(I32 fd, I32 filter) {
+    // Registers the descriptor for one event, read or write, for `task`. False when the system refused (errno says
+    // why).
+    if constexpr (target::os == target::macos) {
+        Bool register_wait(Worker *worker, I32 fd, Bool for_write, Task *task) {
+            contract::trusted(); // the system's queue is the edge
+            struct c::kevent change = {};
+            change.ident = (Usize)fd;
+            change.filter = (I16)(for_write ? filter_write : filter_read);
+            change.flags = (U16)add_oneshot;
+            change.udata = task;
+            return c::kevent(worker->queue, &change, 1, nullptr, 0, nullptr) == 0; // NOLINT(smith-effects)
+        }
+    } else {
+        // A descriptor an earlier wait registered is still in the instance (ONESHOT only disables it): modify it.
+        Bool register_wait(Worker *worker, I32 fd, Bool for_write, Task *task) {
+            contract::trusted(); // the system's queue is the edge
+            struct c::epoll_event change = {};
+            change.events = (for_write ? event_out : event_in) | event_oneshot;
+            change.data.ptr = task;
+            // NOLINTBEGIN(smith-effects)
+            if (c::epoll_ctl(worker->queue, control_add, fd, &change) == 0) return true;
+            if (*errno_location() != already_there) return false;
+            return c::epoll_ctl(worker->queue, control_modify, fd, &change) == 0;
+            // NOLINTEND(smith-effects)
+        }
+    }
+
+    // Registers the descriptor with the worker's kqueue or epoll instance and parks the calling task until it is ready.
+    // False when the system refused the registration (errno says why). `main` has no stack to leave: it runs its
+    // worker's tasks, or sleeps in the kqueue, until it is ready.
+    Bool park_on(I32 fd, Bool for_write) {
         contract::trusted(); // the system's queue is the edge
         Task *self = current();
         Worker *worker = home;
-        struct c::kevent change = {};
-        change.ident = (Usize)fd;
-        change.filter = (I16)filter;
-        change.flags = (U16)add_oneshot;
-        change.udata = self;
-        if (c::kevent(worker->queue, &change, 1, nullptr, 0, nullptr) != 0) return false; // NOLINT(smith-effects)
+        if (!register_wait(worker, fd, for_write, self)) return false;
         lock_scheduler();
         self->io_waiting = true;
         worker->io_parked += 1;
@@ -928,7 +1009,7 @@ if constexpr (target::os == target::macos) {
             attempt(request);
             Bool connecting = request->operation == c::SmithIoOperation_Connect && request->error == in_progress;
             if (request->result >= 0 || (request->error != would_block && !connecting)) return;
-            if (!park_on(request->fd, waits_for_write(request->operation) ? filter_write : filter_read)) {
+            if (!park_on(request->fd, waits_for_write(request->operation))) {
                 request->error = *errno_location();
                 return;
             }
@@ -971,6 +1052,7 @@ void start_workers() {
     for (Usize i = 0; i < count; i++) {
         workers[i] = (Worker){};
         workers[i].queue = -1;
+        workers[i].wake_fd = -1;
         c::pthread_cond_init(&workers[i].wake, nullptr);
         queue_open(&workers[i]);
     }
@@ -1120,9 +1202,10 @@ void default_pause([[maybe_unused]] Scheduler *self) {
 Scheduler default_value = {.spawn = default_spawn, .pause = default_pause, .wait = default_wait};
 
 // The default scheduler: one worker thread per core, started at the first spawn, each with its own run queue. What
-// runs when none is set. Under macOS its `io` parks a task on a socket or a pipe in its worker's kqueue.
+// runs when none is set. Its `io` parks a task on a socket or a pipe in its worker's kqueue (macOS) or epoll instance
+// (Linux).
 export Scheduler *default_scheduler() {
-    if constexpr (target::os == target::macos) {
+    if constexpr (target::os == target::macos || target::os == target::linux) {
         default_value.io = default_io;
     }
     return &default_value;
