@@ -56,6 +56,7 @@ import front::ast;
 import front::types;
 import front::types_convert;
 import front::types_expr;
+import front::types_fn;
 import std::arena;
 import std::format;
 import std::mem;
@@ -648,6 +649,7 @@ export void check_body(types::Checked *r, const ast::Decl *function) {
         state.new_body = state.new_body || params[i].is_new;
     }
     walk(r, function->kind.function.body, signature->element);
+    types_fn::check_once(r, params, function->kind.function.body);
     types::pop_scope(&r->scopes);
     drain(r);
 }

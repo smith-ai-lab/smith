@@ -807,10 +807,10 @@ static size_t build_library_objects(SmithBuild *b, const BuildConfig *config, co
 
 // The modules of front/ that smith links; emit_jit is a test helper and cimport needs the edge files of track C.
 static const char *const build_front_modules[] = {
-    "ast",        "lex",         "parse",      "parse_expr",   "parse_type",    "parse_stmt",
-    "parse_decl", "parser",      "types",      "types_expr",   "types_convert", "types_decl",
-    "emit_state", "emit",        "emit_arith", "emit_control", "emit_call",     "emit_memory",
-    "emit_debug", "emit_object", "roots",      "fix",          "compile",
+    "ast",         "lex",        "parse",       "parse_expr", "parse_type",    "parse_stmt",
+    "parse_decl",  "parser",     "types",       "types_expr", "types_convert", "types_decl",
+    "types_fn",    "emit_state", "emit",        "emit_arith", "emit_control",  "emit_call",
+    "emit_memory", "emit_debug", "emit_object", "roots",      "fix",           "compile",
 };
 constexpr size_t build_front_module_count = sizeof build_front_modules / sizeof build_front_modules[0];
 
