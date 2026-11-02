@@ -17,7 +17,7 @@ body:                                             ; preds = %entry
   %2 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %0, i32 %1)
   %overflow = extractvalue { i32, i1 } %2, 1
   %3 = extractvalue { i32, i1 } %2, 0
-  br i1 %overflow, label %fail, label %ok
+  br i1 %overflow, label %fail, label %ok, !prof !0
 
 fail:                                             ; preds = %body
   %4 = sext i32 %0 to i64
@@ -43,3 +43,5 @@ declare void @llvm.trap() #1
 
 attributes #0 = { nocallback nocreateundeforpoison nofree nosync nounwind speculatable willreturn memory(none) }
 attributes #1 = { cold noreturn nounwind memory(inaccessiblemem: write) }
+
+!0 = !{!"branch_weights", i32 1, i32 2000}
