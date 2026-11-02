@@ -609,3 +609,123 @@ export void test_format_no_rule_error_names_the_piece() {
     scratch::expect_contains("format: and the note lists the types", run.out,
                              "in instance std::format::to(char *, int, Point, int)");
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// format::parse
+
+static void check_ok_i64(const char *word, I64 expected) {
+    Result(I64, format::Error) r = format::parse(text::make(word), I64);
+    test::check(r == .ok);
+    if (r == .ok) test::check_equal(r.ok, expected);
+}
+
+static void check_error_i64(const char *word, format::Error expected) {
+    Result(I64, format::Error) r = format::parse(text::make(word), I64);
+    test::check(r == .error);
+    if (r == .error) test::check_equal((I32)r.error, (I32)expected);
+}
+
+export void test_format_parse_decimal() {
+    check_ok_i64("0", 0);
+    check_ok_i64("007", 7);
+    check_ok_i64("-42", -42);
+    check_ok_i64("9223372036854775807", i64_max);
+    check_ok_i64("-9223372036854775808", i64_min);
+}
+
+export void test_format_parse_errors() {
+    check_error_i64("", format::Empty);
+    check_error_i64("-", format::Empty);
+    check_error_i64("+1", format::Invalid);
+    check_error_i64(" 1", format::Invalid);
+    check_error_i64("1x", format::Invalid);
+    check_error_i64("--1", format::Invalid);
+    check_error_i64("9223372036854775808", format::Range);
+    check_error_i64("-9223372036854775809", format::Range);
+    check_error_i64("99999999999999999999999", format::Range);
+}
+
+export void test_format_parse_widths() {
+    Result(U8, format::Error) a = format::parse(text::make("255"), U8);
+    test::check(a == .ok);
+    if (a == .ok) test::check_equal(a.ok, (U8)255);
+    Result(U8, format::Error) b = format::parse(text::make("256"), U8);
+    test::check(b == .error);
+    if (b == .error) test::check_equal((I32)b.error, (I32)format::Range);
+    Result(U8, format::Error) c = format::parse(text::make("-1"), U8);
+    test::check(c == .error);
+    if (c == .error) test::check_equal((I32)c.error, (I32)format::Invalid);
+    Result(I8, format::Error) d = format::parse(text::make("-128"), I8);
+    test::check(d == .ok);
+    if (d == .ok) test::check_equal(d.ok, (I8)-128);
+    Result(I8, format::Error) e = format::parse(text::make("128"), I8);
+    test::check(e == .error);
+    if (e == .error) test::check_equal((I32)e.error, (I32)format::Range);
+    Result(U64, format::Error) f = format::parse(text::make("18446744073709551615"), U64);
+    test::check(f == .ok);
+    if (f == .ok) test::check_equal(f.ok, u64_max);
+    Result(U64, format::Error) g = format::parse(text::make("18446744073709551616"), U64);
+    test::check(g == .error);
+}
+
+export void test_format_parse_hex() {
+    Result(U64, format::Error) a = format::parse_base(text::make("ff"), U64, 16);
+    test::check(a == .ok);
+    if (a == .ok) test::check_equal(a.ok, (U64)255);
+    Result(U64, format::Error) b = format::parse_base(text::make("FF"), U64, 16);
+    test::check(b == .error);
+    if (b == .error) test::check_equal((I32)b.error, (I32)format::Invalid);
+    Result(U64, format::Error) c = format::parse_base(text::make("10000000000000000"), U64, 16);
+    test::check(c == .error);
+    if (c == .error) test::check_equal((I32)c.error, (I32)format::Range);
+    Result(I32, format::Error) d = format::parse_base(text::make("-7f"), I32, 16);
+    test::check(d == .ok);
+    if (d == .ok) test::check_equal(d.ok, -127);
+    Result(U8, format::Error) e = format::parse_base(text::make("101"), U8, 2);
+    test::check(e == .ok);
+    if (e == .ok) test::check_equal(e.ok, (U8)5);
+}
+
+export void test_format_parse_round_trips_what_to_writes() {
+    char out[capacity];
+    I64 values[5] = {0, 1, -1, i64_max, i64_min};
+    for (Usize i = 0; i < 5; i++) {
+        format::Written w = format::to(out, sizeof out, values[i]);
+        const char view[:] = out[0:w.length];
+        Result(I64, format::Error) r = format::parse(view, I64);
+        test::check(r == .ok);
+        if (r == .ok) test::check_equal(r.ok, values[i]);
+    }
+    format::Written w = format::to(out, sizeof out, format::hex(u64_max, 0));
+    const char hex_view[:] = out[0:w.length];
+    Result(U64, format::Error) r = format::parse_base(hex_view, U64, 16);
+    test::check(r == .ok);
+    if (r == .ok) test::check_equal(r.ok, u64_max);
+}
+
+export void test_format_parse_floats() {
+    format::F64Result a = format::parse(text::make("0.25"), F64);
+    test::check(a == .ok);
+    if (a == .ok) test::check_equal(a.ok, 0.25);
+    format::F64Result b = format::parse(text::make("-2.5E+3"), F64);
+    test::check(b == .ok);
+    if (b == .ok) test::check_equal(b.ok, -2500.0);
+    format::F32Result c = format::parse(text::make("0.1"), F32);
+    test::check(c == .ok);
+    if (c == .ok) test::check_equal(c.ok, 0.1f);
+    format::F64Result d = format::parse(text::make("1e999"), F64);
+    test::check(d == .error);
+    if (d == .error) test::check_equal((I32)d.error, (I32)format::Range);
+    format::F32Result e = format::parse(text::make("1e100"), F32);
+    test::check(e == .error);
+    if (e == .error) test::check_equal((I32)e.error, (I32)format::Range);
+    format::F64Result f = format::parse(text::make(""), F64);
+    test::check(f == .error);
+    if (f == .error) test::check_equal((I32)f.error, (I32)format::Empty);
+    format::F64Result g = format::parse(text::make("inf"), F64);
+    test::check(g == .error);
+    if (g == .error) test::check_equal((I32)g.error, (I32)format::Invalid);
+    format::F64Result h = format::parse(text::make("1e"), F64);
+    test::check(h == .error);
+    if (h == .error) test::check_equal((I32)h.error, (I32)format::Invalid);
+}
