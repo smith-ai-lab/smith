@@ -1366,7 +1366,8 @@ static ast::Decl *parse_binding(parse::Parser *p, const Prefixes *pre, U32 start
     end_line(p, "declaration");
     ast::DeclKind kind = {
         .variable = {
-            .name = parse::text(p, name), .type = type, .init = init, .is_constexpr = is_const, .is_mut = is_mut}};
+            .name = parse::text(p, name), .type = type, .init = init, .is_constexpr = is_const, .is_mut = is_mut,
+            .is_new = true}};
     return make(p, start, pre, kind);
 }
 
@@ -1433,6 +1434,7 @@ static Bool parse_new_param(parse::Parser *p, ast::Param *param) {
     while (parse::at(p, lex::at))
         parse_at_attribute(p, &pre);
     param->is_mut = parse::accept(p, lex::kw_mut);
+    param->is_new = true;
     param->is_const = parse::accept(p, lex::kw_const);
     lex::Token name = parse::peek(p);
     if (!is_name(name.kind) || parse::peek_at(p, 1).kind != lex::colon) {
