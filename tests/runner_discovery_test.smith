@@ -6,7 +6,8 @@
 // smith-covers: lib/std/arena.smith lib/std/random.smith lib/std/mem.smith lib/std/contract.smith lib/std/clock.smith
 // smith-covers: lib/std/console.smith lib/std/env.smith lib/std/files.smith lib/std/math.smith lib/std/failing.smith
 // smith-covers: tests/build_fixtures/std_tests/ tests/build_fixtures/std_tests_empty/
-// smith-covers: tests/build_fixtures/std_tests_io/
+// smith-covers: tests/build_fixtures/std_tests_io/ tests/build_fixtures/std_tests_forms/
+// smith-covers: tests/build_fixtures/std_tests_wrapped/
 module runner_discovery_test;
 
 import std::arena;
@@ -53,4 +54,29 @@ export void test_runner_discovery_a_test_that_takes_an_io_is_an_error_naming_the
     scratch::expect_contains("io test: ... naming the test and the io-free form",
                              format::push(tested.out, tested.err).data,
                              "test_world_takes_an_io has parameters the runner does not pass; a test takes none");
+}
+
+export void test_runner_discovery_finds_a_one_line_body_a_comment_after_the_brace_and_a_wrapped_signature() {
+    scratch::Project p = scratch::make("p", "std_tests_forms");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run tested = scratch::sh(&p, "env SMITH_OUTPUT=full smith test");
+    scratch::expect_status("forms: smith test passes", 0, &tested);
+    scratch::expect_contains("forms: all three ran", format::push(tested.out, tested.err).data, "3 passed, 0 failed");
+}
+
+export void test_runner_discovery_a_test_it_cannot_read_is_an_error_naming_file_and_line() {
+    scratch::Project p = scratch::make("p", "std_tests_wrapped");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run tested = scratch::sh(&p, "env SMITH_OUTPUT=full smith test");
+    scratch::expect_failure("unreadable: smith test fails", &tested);
+    scratch::expect_contains("unreadable: ... naming file and line", format::push(tested.out, tested.err).data,
+                             "bad_test.smith:9: this defines a test the runner cannot read");
 }
