@@ -1,0 +1,22 @@
+{
+switch (v) {
+case 1:
+ x = 1;
+ break;
+}
+goto done;
+}
+===
+warning (no fix): `switch` is `match` in smith: write `match v { .a => x }`, one arm per line
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (no fix): smith has no goto: use a loop, `break` or `defer`
+---
+{
+switch (v) {
+case 1:
+ x = 1
+ break
+}
+goto done;
+}
