@@ -130,10 +130,6 @@ static void stops_at(Str source, Bool with_checker, Str what, Str at) {
     emit_jit::stop(&host);
 }
 
-export void test_front_emit_wave3_an_option_type_reaches_its_stub() {
-    stops_at("fn f(x: ?i32) -> i32 {\n    0\n}\n", false, "an option type", "?i32");
-}
-
 export void test_front_emit_wave3_a_variant_without_an_option_reaches_the_enumerator_stub() {
     stops_at("fn f() -> i32 {\n    _ := .red\n    0\n}\n", false, "an enumerator", ".red");
 }
@@ -145,11 +141,6 @@ export void test_front_emit_wave3_an_enumeration_reaches_its_stub() {
 export void test_front_emit_wave3_match_reaches_its_stub() {
     stops_at("fn f(n: i32) -> i32 {\n    match n {\n        .red => 1\n        .green => 2\n    }\n    0\n}\n", false,
              "match", "match n");
-}
-
-export void test_front_emit_wave3_if_let_reaches_its_stub() {
-    stops_at("fn f(n: i32) -> i32 {\n    if let .some(v) = n {\n        _ := v\n    }\n    0\n}\n", false, "if let",
-             "if let");
 }
 
 export void test_front_emit_wave3_for_in_over_something_unbuilt_reaches_its_stub() {
