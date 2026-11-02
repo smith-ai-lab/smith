@@ -3807,9 +3807,9 @@ static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const ch
     return smith_exit_missing;
 }
 
-static void smith_usage(FILE *out) {
-    fputs("usage: smith <command> [<arguments>]\n"
-          "  cc, c++                 compile and link as clang does (the links smith-cc and smith-c++ do the same)\n"
+static void smith_usage_titled(FILE *out, const char *title) {
+    fputs(title, out);
+    fputs("  cc, c++                 compile and link as clang does (the links smith-cc and smith-c++ do the same)\n"
           "  build [<target>]        build the project from its build.c\n"
           "  run, test, check        run the project's program, its tests, or all its checks\n"
           "  fmt, lint               with no arguments, format or lint the project; with arguments, clang-format and\n"
@@ -3822,6 +3822,10 @@ static void smith_usage(FILE *out) {
           "  version                 the version and the commit smith was built from (also --version)\n"
           "  help [<verb>]           this list, or the usage of one verb (also --help, -h)\n",
           out);
+}
+
+static void smith_usage(FILE *out) {
+    smith_usage_titled(out, "usage: smith <command> [<arguments>]\n");
 }
 
 // Whether the name is in the list (ended by nullptr).
@@ -3850,6 +3854,8 @@ static int smith_print_summary(const SmithVerb *verb) {
     return 0;
 }
 
+static void smith_not_a_command(const char *word);
+
 // `smith help [<verb>]`: the list of verbs, or the usage of one, as `smith <verb> --help` prints it (the tool's own
 // for the tool verbs). A verb with no usage text of its own prints its one line and says so.
 static int smith_help_main(int count, char **args, const char *self) {
@@ -3859,7 +3865,7 @@ static int smith_help_main(int count, char **args, const char *self) {
     }
     const SmithVerb *verb = smith_find_verb(args[0]);
     if (verb == nullptr) {
-        fprintf(stderr, "smith: %s is not a smith verb; `smith help` lists them\n", args[0]);
+        smith_not_a_command(args[0]);
         return smith_exit_usage;
     }
     if (strcmp(verb->name, "test") == 0) {
@@ -3871,8 +3877,83 @@ static int smith_help_main(int count, char **args, const char *self) {
     return smith_dispatch(verb, 3, forward, self);
 }
 
-// `smith foo.c -o foo` has no meaning: the top level is only verbs. The compiler is `smith cc`.
+// The most letters of a name the distance reads; a longer word is never close to a command.
+constexpr size_t smith_distance_max = 24;
+
+// The Damerau-Levenshtein distance (the optimal string alignment form: a swap of two neighbouring letters is one edit)
+// of two names, or a large number when one is longer than smith_distance_max. No allocation.
+static int smith_edit_distance(const char *left, const char *right) {
+    SMITH_ASSERT(left != nullptr && right != nullptr);
+    size_t n = strlen(left);
+    size_t m = strlen(right);
+    if (n > smith_distance_max || m > smith_distance_max) return smith_distance_max;
+    int rows[3][smith_distance_max + 1]; // two rows back, the previous row, this row
+    for (size_t j = 0; j <= m; j++)
+        rows[1][j] = (int)j;
+    for (size_t i = 1; i <= n; i++) { // bounded by n
+        int *row = rows[2];
+        row[0] = (int)i;
+        for (size_t j = 1; j <= m; j++) { // bounded by m
+            int cost = left[i - 1] == right[j - 1] ? 0 : 1;
+            int best = rows[1][j] + 1 < row[j - 1] + 1 ? rows[1][j] + 1 : row[j - 1] + 1;
+            if (rows[1][j - 1] + cost < best) best = rows[1][j - 1] + cost;
+            bool swap = i > 1 && j > 1 && left[i - 1] == right[j - 2] && left[i - 2] == right[j - 1];
+            if (swap && rows[0][j - 2] + 1 < best) best = rows[0][j - 2] + 1;
+            row[j] = best;
+        }
+        memcpy(rows[0], rows[1], sizeof rows[0]);
+        memcpy(rows[1], rows[2], sizeof rows[1]);
+    }
+    return rows[1][m];
+}
+
+// The command a typo is close to (distance at most 1 for a name of 4 letters or fewer, at most 2 for a longer one):
+// the closest, the earlier row of the table on a tie, and `help` after the table. nullptr when none is close.
+static const char *smith_closest_command(const char *name) {
+    SMITH_ASSERT(name != nullptr);
+    const char *best = nullptr;
+    int best_distance = 3;
+    size_t count = sizeof smith_verbs / sizeof smith_verbs[0];
+    for (size_t i = 0; i <= count; i++) { // bounded by the table, and one more for help
+        const char *candidate = i < count ? smith_verbs[i].name : "help";
+        int distance = smith_edit_distance(name, candidate);
+        int allowed = strlen(candidate) <= 4 ? 1 : 2;
+        if (distance <= allowed && distance < best_distance) {
+            best = candidate;
+            best_distance = distance;
+        }
+    }
+    return best;
+}
+
+// A word that is not a command, on stderr, with the suggestion when one is close, then the list of commands.
+static void smith_not_a_command(const char *word) {
+    SMITH_ASSERT(word != nullptr);
+    word += strspn(word, "-"); // `--frobnicate` is named without its dashes
+    const char *close = smith_closest_command(word);
+    if (close != nullptr) {
+        fprintf(stderr, "smith: %s is not a command. Did you mean `%s`?\n\n", word, close);
+    } else {
+        fprintf(stderr, "smith: %s is not a command.\n\n", word);
+    }
+    smith_usage_titled(stderr, "commands:\n");
+}
+
+// `smith foo.c -o foo` has no meaning: the top level is only verbs. The compiler is `smith cc`. A source file gets the
+// hint; a typo of a command gets the command; anything else gets the list.
 [[noreturn]] static void smith_bare_arguments(int argc, char **argv) {
+    // A flag first (`smith -c a.c`) is a compile command whose file comes later; a word is judged alone.
+    int last = argv[1][0] == '-' ? argc - 1 : 1;
+    bool file = false;
+    for (int i = 1; i <= last && !file; i++) { // bounded by argc
+        struct stat info = {};
+        file = smith_has_other_input_extension(argv[i]) || smith_ends_with(argv[i], ".metal") ||
+               (argv[i][0] != '-' && stat(argv[i], &info) == 0);
+    }
+    if (!file) {
+        smith_not_a_command(argv[1]);
+        exit(smith_exit_usage);
+    }
     char line[4096];
     size_t used = 0;
     line[0] = '\0';
