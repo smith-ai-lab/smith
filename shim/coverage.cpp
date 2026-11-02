@@ -2,6 +2,7 @@
 // lines and functions the test executed. This is what llvm-profdata merge and llvm-cov export -format=lcov do, in
 // smith's own process, so a project's `smith test --changed` (#456) needs no LLVM tools installed beside smith
 // (runtime/coverage.c).
+#include <algorithm>
 #include <climits>
 #include <cstdint>
 #include <cstdio>
@@ -30,10 +31,16 @@ std::vector<std::string> read_list(const char *path) {
     std::vector<std::string> names;
     std::FILE *file = std::fopen(path, "r");
     if (file == nullptr) return names;
-    char line[4096];
-    while (std::fgets(line, sizeof line, file) != nullptr) {
-        size_t length = std::strcspn(line, "\r\n");
-        if (length > 0) names.emplace_back(line, length);
+    std::string line; // a path of any length: a fixed buffer would cut a long one in two
+    char chunk[4096];
+    for (bool more = true; more;) {
+        more = std::fgets(chunk, sizeof chunk, file) != nullptr;
+        if (more) line += chunk;
+        if (!more || line.back() == '\n') {
+            line.resize(std::min(line.size(), line.find_first_of("\r\n")));
+            if (!line.empty()) names.push_back(line);
+            line.clear();
+        }
     }
     std::fclose(file);
     return names;

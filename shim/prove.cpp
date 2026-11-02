@@ -423,6 +423,17 @@ void record_checks(const prove::Unit &unit) {
     std::fflush(checks_file);
 }
 
+// The next line of `file` in `row`, whatever its length (a fixed buffer would cut a long row in two); false at the end.
+bool read_row(std::FILE *file, std::string &row) {
+    row.clear();
+    char chunk[4096];
+    while (std::fgets(chunk, sizeof chunk, file) != nullptr) {
+        row += chunk;
+        if (row.back() == '\n') return true;
+    }
+    return !row.empty();
+}
+
 std::vector<std::string> split_tabs(const std::string &row) {
     std::vector<std::string> parts;
     size_t begin = 0;
@@ -443,8 +454,8 @@ unsigned write_proved(unsigned &arithmetic_proved, unsigned &arithmetic_kept) {
     std::map<std::string, std::set<std::string>> dependencies;
     std::set<std::string> unkeyed;
     std::fseek(checks_file, 0, SEEK_SET);
-    char row[8192];
-    while (std::fgets(row, sizeof row, checks_file) != nullptr) {
+    std::string row;
+    while (read_row(checks_file, row)) {
         std::vector<std::string> parts = split_tabs(row);
         if (parts.size() == 4 && parts[0] == "D") {
             if (!parts[3].empty() && parts[3][0] == '<') continue; // "<built-in>": a buffer of the compiler's, no file
