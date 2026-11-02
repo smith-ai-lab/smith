@@ -37,6 +37,12 @@ constexpr uint32_t smith_docs_listed_max = 4096;   // index items
 constexpr uint32_t smith_docs_depends_max = 16384; // distinct files one run may name in the depfile
 constexpr uint32_t smith_docs_types_max = 32;
 constexpr uint32_t smith_docs_requires_max = 16;
+
+// A fixed cap crossed: the run stops and names the limit and what crossed it; never a silent skip.
+[[noreturn]] static void smith_docs_too_many(const char *what, uint32_t limit, const char *where) {
+    fprintf(stderr, "docs: more than %u %s in %s; raise the limit in runtime/docs.c\n", limit, what, where);
+    exit(smith_exit_usage);
+}
 constexpr size_t smith_docs_path_capacity = 1024;
 constexpr uint64_t smith_docs_fence_length = 3;
 constexpr int smith_docs_status_problems = 1;
@@ -277,10 +283,11 @@ static uint32_t smith_docs_list(SmithDocs *docs, const char *relative, SmithDocs
     DIR *directory = opendir(path);
     if (directory == nullptr) return 0;
     uint32_t count = 0;
-    for (uint32_t i = 0; i < smith_docs_entries_max * 2 && count < smith_docs_entries_max; i++) {
+    for (uint32_t i = 0; i < smith_docs_entries_max * 2 + 2; i++) {
         struct dirent *found = readdir(directory);
         if (found == nullptr) break;
         if (strcmp(found->d_name, ".") == 0 || strcmp(found->d_name, "..") == 0) continue;
+        if (count == smith_docs_entries_max) smith_docs_too_many("names", smith_docs_entries_max, relative);
         SmithDocsEntry entry = {smith_docs_copy(docs, found->d_name, strlen(found->d_name)),
                                 smith_docs_is_folder(path, found)};
         uint32_t at = count; // an insertion sort: the folder is small
@@ -326,10 +333,12 @@ static void smith_docs_collect(SmithDocs *docs, const char *folder, const char *
             char path[smith_docs_path_capacity];
             snprintf(path, sizeof(path), "%s/%s", current, entries[i].name);
             char *kept = smith_docs_copy(docs, path, strlen(path));
-            if (entries[i].directory && pending_count < smith_docs_paths_max) {
+            if (entries[i].directory) {
+                if (pending_count == smith_docs_paths_max)
+                    smith_docs_too_many("folders to read", smith_docs_paths_max, current);
                 pending[pending_count++] = kept;
-            } else if (!entries[i].directory && smith_docs_ends(smith_docs_text(kept), ".md") &&
-                       *count < smith_docs_paths_max) {
+            } else if (!entries[i].directory && smith_docs_ends(smith_docs_text(kept), ".md")) {
+                if (*count == smith_docs_paths_max) smith_docs_too_many("documents", smith_docs_paths_max, current);
                 paths[(*count)++] = kept;
             }
         }
@@ -353,7 +362,9 @@ static void smith_docs_set(SmithDocsFields *fields, SmithDocsText key, SmithDocs
             return;
         }
     }
-    if (fields->count < smith_docs_fields_max) fields->fields[fields->count++] = (SmithDocsField){key, value};
+    if (fields->count == smith_docs_fields_max)
+        smith_docs_too_many("frontmatter fields", smith_docs_fields_max, "one document");
+    fields->fields[fields->count++] = (SmithDocsField){key, value};
 }
 
 static SmithDocsText smith_docs_get(const SmithDocsFields *fields, const char *key) {
@@ -765,7 +776,9 @@ static uint32_t smith_docs_items(SmithDocs *docs, SmithDocsText index, SmithDocs
         for (uint32_t i = 0; i < count; i++) {
             if (smith_docs_same(items[i].target, item.target)) at = i;
         }
-        if (at == count && count < smith_docs_listed_max) {
+        if (at == count) {
+            if (count == smith_docs_listed_max)
+                smith_docs_too_many("index entries", smith_docs_listed_max, "knowledge/index.md");
             count += 1;
         }
         items[at] = item;
@@ -821,7 +834,11 @@ static void smith_docs_index_order(SmithDocs *docs, SmithDocsText index) {
                               "file name (after %.*s)",
                               number, (int)item.target.length, item.target.begin, (int)previous.length, previous.begin);
         }
-        if (!twice && count < smith_docs_listed_max) seen[count++] = item;
+        if (!twice) {
+            if (count == smith_docs_listed_max)
+                smith_docs_too_many("index entries", smith_docs_listed_max, "knowledge/index.md");
+            seen[count++] = item;
+        }
         previous = item.target;
     }
 }
@@ -1014,9 +1031,11 @@ static void smith_docs_plugin(SmithDocs *docs) {
     from += 1;
     SmithDocsText *listed = SMITH_DOCS_PUSH(&docs->arena, SmithDocsText, smith_docs_plugin_skills_max);
     uint32_t count = 0;
-    for (; count < smith_docs_plugin_skills_max; count++) {
+    for (;; count++) {
         SmithDocsText entry = smith_docs_json_string(json, &from);
         if (entry.begin == nullptr) break;
+        if (count == smith_docs_plugin_skills_max)
+            smith_docs_too_many("skills", smith_docs_plugin_skills_max, relative);
         listed[count] = smith_docs_listed_skill(entry);
         while (from < json.length && (smith_docs_is_space(json.begin[from]) || json.begin[from] == ','))
             from++;
@@ -1136,7 +1155,8 @@ static SmithDocsOutput smith_docs_arguments(SmithDocs *docs, int count, char **a
             if (strcmp(flag, "--target") == 0) output.target = value;
             if (strcmp(flag, "--require") == 0) smith_docs_add_requirement(docs, value);
             if (strcmp(flag, "--type") == 0) {
-                if (docs->type_count == smith_docs_types_max) smith_docs_usage();
+                if (docs->type_count == smith_docs_types_max)
+                    smith_docs_too_many("--type options", smith_docs_types_max, "the command line");
                 docs->types[docs->type_count++] = value;
             }
         } else if (!valued && flag[0] != '-' && !root_given) {
@@ -1191,7 +1211,8 @@ static void smith_docs_declared(SmithDocs *docs) {
         SmithDocsText types = smith_docs_get(&fields, "types");
         for (const char *type = smith_docs_next_item(docs, &types, ','); type != nullptr;
              type = smith_docs_next_item(docs, &types, ',')) {
-            if (docs->type_count == smith_docs_types_max) smith_docs_usage();
+            if (docs->type_count == smith_docs_types_max)
+                smith_docs_too_many("types", smith_docs_types_max, "knowledge/index.md");
             docs->types[docs->type_count++] = type;
         }
     }
