@@ -500,7 +500,7 @@ static void slice_element(state::Emitter *e, state::Value base, state::Value at,
 static void block_counts(state::Emitter *e, c::LLVMValueRef whole, U64 dimensions, c::LLVMValueRef counts[8]) {
     c::LLVMValueRef all = c::LLVMBuildExtractValue(e->builder, whole, 1, "counts");
     for (U64 i = 0; i < dimensions; i++)
-        counts[i] = c::LLVMBuildExtractValue(e->builder, all, (unsigned)i, "count");
+        counts[i] = c::LLVMBuildExtractValue(e->builder, all, (U32)i, "count");
 }
 
 // The block `{ data, counts }` of type `ty`; `counts` has one word per dimension.
@@ -508,7 +508,7 @@ static state::Value make_block(state::Emitter *e, state::Ty ty, c::LLVMValueRef 
     c::LLVMTypeRef words = c::LLVMArrayType2(index_word(e), ty.count);
     c::LLVMValueRef all = c::LLVMGetUndef(words);
     for (U64 i = 0; i < ty.count; i++)
-        all = c::LLVMBuildInsertValue(e->builder, all, counts[i], (unsigned)i, "");
+        all = c::LLVMBuildInsertValue(e->builder, all, counts[i], (U32)i, "");
     c::LLVMValueRef with_data = c::LLVMBuildInsertValue(e->builder, c::LLVMGetUndef(ty.llvm), data, 0, "");
     c::LLVMValueRef whole = c::LLVMBuildInsertValue(e->builder, with_data, all, 1, "block");
     return (state::Value){.llvm = whole, .ty = ty};
