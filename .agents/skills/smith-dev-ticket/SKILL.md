@@ -14,7 +14,7 @@ Every ticket has exactly one difficulty label and one priority label, set when i
   - `difficulty:medium`: ordinary code with a clear spec. Most tickets.
   - `difficulty:hard`: a high bar, for design judgment or a change across many parts that cannot be split. Owner: "It should be a high bar to set something as hard."
 - **Priority:** `p0` (main is red), `p1` (an urgent non-friction blocker, set by the lead), `p2` (the current goal), `p3` (everything else).
-- `blocked` needs a line `**Waits for #N**` (each ticket it waits for) in the body or a comment. The lead's watcher unblocks a ticket when every ticket it names is closed. Without the line it never does: #1506–#1509 sat blocked for hours after #1518 merged.
+- `blocked` only when another ticket unlocks it, named by a line `**Waits for #N**` (each ticket it waits for) in the body or a comment. Owner, 2026-11-02: "we should never let you mark something as blocked unless you have a ticket saying what unlocks it." A question, a decision or a split is not a dependency: a question goes to the lead (`@lead:` on #1406) and is answered; a decision the owner must make becomes its own issue, and the ticket waits for that; an issue too big for one runner loses `task` until the lead splits it; a parked ticket is `later`, not `blocked`. The lead's watcher unblocks a ticket when every ticket it names is closed. Without the line it never does: #1506–#1509 sat blocked for hours after #1518 merged.
 - `task` marks a ticket in the backlog; `friction` marks a friction ticket; its priority is its comment count, not a `p` label. `mac` marks a ticket that needs the macOS SDK.
 
 ## Split rule
