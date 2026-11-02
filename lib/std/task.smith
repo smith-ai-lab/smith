@@ -92,7 +92,10 @@ struct Task {
     Bool in_wait;         // it has registered as a waiter
     Bool parked;          // and has switched out of its worker
     Bool woken;           // the group ended before it had switched out
-    Bool io_waiting;      // registered with its worker's kqueue, not ready yet
+    Bool io_waiting;      // registered with its worker's kqueue, or queued to the file pool, not ready yet
+    Task *pool_next;      // the link of the file pool's queue, then of its worker's list of finished calls
+    c::SmithIoRequest *pool_request; // the file call the pool is to do for it
+    Worker *pool_worker;             // the worker whose task asked: the pool hands the finished call back to it
 };
 
 // The context switch: saves the callee-saved registers on the stack, stores the stack pointer in *save, takes the one
@@ -529,8 +532,11 @@ struct Worker {
     Usize cached;
     I32 queue;       // the worker's kqueue (macOS) or epoll instance (Linux); -1 until started
     I32 wake_fd;     // Linux: the eventfd that wakes the worker out of epoll_wait; -1 elsewhere
-    Usize io_parked; // tasks of this worker waiting in the kqueue or epoll instance
+    Usize io_parked; // tasks of this worker waiting in the kqueue or epoll instance, or for the file pool
+    Task *done;      // tasks whose file call the pool has finished; only this worker queues them again
 };
+
+constexpr Usize pool_max = 4; // threads of the file pool
 
 Worker workers[workers_max];
 Usize worker_count;
@@ -548,6 +554,15 @@ U8 pool_lock;  // the spin lock of the two pools below
 Task *free_records;
 void *chunks;
 thread_local Worker *home; // the worker whose thread this is
+
+// The file pool: threads that do the file calls of tasks, started at the first one. The lock is the scheduler's.
+c::pthread_t pool_threads[pool_max];
+void *pool_stacks[pool_max];
+Usize pool_count;   // threads started (0: no pool)
+Bool pool_stopping; // they are to exit
+Task *pool_head;    // the calls waiting for a thread, in order
+Task *pool_tail;
+c::pthread_cond_t pool_wake;
 
 void lock_scheduler() {
     c::pthread_mutex_lock(&sched_lock); // NOLINT(smith-effects): the process effect is this module's
@@ -654,6 +669,20 @@ void finish_managed(Task *task) {
     unlock_scheduler();
 }
 
+// The file calls the pool has finished for this worker's tasks: each task is ready again. Holds the lock. Only the
+// worker queues its tasks, so a task is never queued while it is still switching out.
+void drain_done(Worker *worker) {
+    while (worker->done != nullptr) { // NOLINT(smith-bounded-loop): the list is finite
+        Task *ready = worker->done;
+        worker->done = ready->pool_next;
+        ready->pool_next = nullptr;
+        ready->io_waiting = false;
+        worker->io_parked -= 1;
+        io_total -= 1;
+        if (ready->resumer != nullptr) push_ready(worker, ready); // `main` sees the flag and goes on by itself
+    }
+}
+
 // ---- Waiting on the system: a kqueue per worker on macOS, an epoll instance per worker on Linux. ----
 //
 // macOS: an idle worker blocks in `kevent` on its own kqueue, which holds the sockets and pipes its parked tasks wait
@@ -715,6 +744,7 @@ if constexpr (target::os == target::macos) {
             io_total -= 1;
             if (ready->resumer != nullptr) push_ready(worker, ready); // `main` sees the flag and goes on by itself
         }
+        drain_done(worker);
     }
 } else {
     // Linux: an idle worker blocks in `epoll_wait` on its own epoll instance, which holds the sockets and pipes its
@@ -781,6 +811,7 @@ if constexpr (target::os == target::macos) {
             io_total -= 1;
             if (ready->resumer != nullptr) push_ready(worker, ready); // `main` sees the flag and goes on by itself
         }
+        drain_done(worker);
     }
 }
 
@@ -871,6 +902,7 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
     constexpr I32 set_flags = c::F_SETFL;
     constexpr I32 non_blocking = c::O_NONBLOCK;
     constexpr I32 kind_mask = c::S_IFMT;
+    constexpr I32 kind_regular = c::S_IFREG;
     constexpr I32 kind_socket = c::S_IFSOCK;
     constexpr I32 kind_pipe = c::S_IFIFO;
     constexpr I32 would_block = c::EAGAIN;
@@ -955,9 +987,27 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
         }
     }
 
+    // Parks the calling task, which is counted in `io_parked` and `io_total` and is registered with the kqueue or
+    // queued to the file pool, until its worker marks it ready. Holds the lock; returns with it let go. `main` has no
+    // stack to leave: it runs its worker's tasks, or sleeps in the kqueue, until it is ready.
+    void park_waiting(Task *self, Worker *worker) {
+        contract::trusted(); // the system's queue is the edge
+        if (self->resumer == nullptr) {
+            while (self->io_waiting) { // NOLINT(smith-bounded-loop): ends when its descriptor is ready
+                if (worker->head != nullptr)
+                    run_ready(worker);
+                else
+                    poll_io(worker, true);
+            }
+            unlock_scheduler();
+            return;
+        }
+        unlock_scheduler();
+        suspend(); // the worker's loop leaves it in the kqueue; the event queues it again
+    }
+
     // Registers the descriptor with the worker's kqueue or epoll instance and parks the calling task until it is ready.
-    // False when the system refused the registration (errno says why). `main` has no stack to leave: it runs its
-    // worker's tasks, or sleeps in the kqueue, until it is ready.
+    // False when the system refused the registration (errno says why).
     Bool park_on(I32 fd, Bool for_write) {
         contract::trusted(); // the system's queue is the edge
         Task *self = current();
@@ -967,19 +1017,105 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
         self->io_waiting = true;
         worker->io_parked += 1;
         io_total += 1;
-        if (self->resumer == nullptr) {
-            while (self->io_waiting) { // NOLINT(smith-bounded-loop): ends when its descriptor is ready
-                if (worker->head != nullptr)
-                    run_ready(worker);
-                else
-                    poll_io(worker, true);
+        park_waiting(self, worker);
+        return true;
+    }
+
+    // ---- The file pool. A regular file cannot be waited on (kqueue and epoll report it always ready), so its calls
+    // go to a few threads: the task parks, a pool thread does the real call, and puts the task on its worker's list of
+    // finished calls, which only that worker reads, as it reads its kqueue.
+
+    // The pool thread: takes a task's call, does it with no scheduler set, hands the task back to its worker.
+    void *pool_main([[maybe_unused]] void *argument) {
+        lock_scheduler();
+        while (true) { // NOLINT(smith-bounded-loop): ends at shutdown
+            if (pool_head == nullptr) {
+                if (pool_stopping) break;
+                c::pthread_cond_wait(&pool_wake, &sched_lock); // NOLINT(smith-effects)
+                continue;
             }
+            Task *task = pool_head;
+            pool_head = task->pool_next;
+            if (pool_head == nullptr) pool_tail = nullptr;
             unlock_scheduler();
-            return true;
+            attempt(task->pool_request);
+            lock_scheduler();
+            Worker *worker = task->pool_worker;
+            task->pool_next = worker->done;
+            worker->done = task;
+            wake_worker(worker);
         }
         unlock_scheduler();
-        suspend(); // the worker's loop leaves it in the kqueue; the event queues it again
-        return true;
+        return nullptr;
+    }
+
+    // Starts the pool: 4 threads, fewer on a machine with fewer cores. Holds the lock.
+    void pool_start() {
+        contract::trusted(); // threads and their primitives are the edge
+        // NOLINTBEGIN(smith-effects): threads are this module's process effect
+        Isize processors = c::sysconf(processors_name);
+        Usize count = processors < 1 ? 1 : (Usize)processors;
+        if (count > pool_max) count = pool_max;
+        c::pthread_cond_init(&pool_wake, nullptr);
+        pool_stopping = false;
+        for (Usize i = 0; i < count; i++) {
+            c::pthread_attr_t attributes = {};
+            c::pthread_attr_init(&attributes);
+            pool_stacks[i] = map_stack(thread_stack_size - stack_size);
+            c::pthread_attr_setstack(&attributes, (U8 *)pool_stacks[i] + page_bytes, thread_stack_size);
+            I32 failed = c::pthread_create(&pool_threads[i], &attributes, pool_main, nullptr);
+            c::pthread_attr_destroy(&attributes);
+            if (failed != 0) refuse("task: the system refused a file pool thread");
+            pool_count = i + 1;
+        }
+        // NOLINTEND(smith-effects)
+    }
+
+    // The pool ends with the workers: its threads are told, joined and their stacks given back. Called with the lock
+    // held; returns with it let go.
+    void pool_stop() {
+        contract::trusted(); // threads and mappings are the edge
+        // NOLINTBEGIN(smith-effects)
+        pool_stopping = true;
+        if (pool_count != 0) c::pthread_cond_broadcast(&pool_wake);
+        unlock_scheduler();
+        for (Usize i = 0; i < pool_count; i++) {
+            c::pthread_join(pool_threads[i], nullptr);
+            c::munmap(pool_stacks[i], page_bytes + thread_stack_size);
+        }
+        if (pool_count != 0) c::pthread_cond_destroy(&pool_wake);
+        pool_count = 0;
+        // NOLINTEND(smith-effects)
+    }
+
+    // Queues the request of the calling task to the pool and parks it until the call is done.
+    void pool_call(c::SmithIoRequest *request) {
+        contract::trusted(); // the request names raw buffers
+        Task *self = current();
+        Worker *worker = home;
+        lock_scheduler();
+        if (pool_count == 0) pool_start();
+        self->pool_request = request;
+        self->pool_worker = worker;
+        self->pool_next = nullptr;
+        if (pool_tail == nullptr)
+            pool_head = self;
+        else
+            pool_tail->pool_next = self;
+        pool_tail = self;
+        self->io_waiting = true;
+        worker->io_parked += 1;
+        io_total += 1;
+        c::pthread_cond_signal(&pool_wake); // NOLINT(smith-effects)
+        park_waiting(self, worker);
+    }
+
+    // Whether the descriptor is a regular file: the one kind that goes to the pool.
+    Bool regular_file(I32 fd) {
+        contract::trusted(); // the system's descriptors are the edge
+        struct c::stat info = {};
+        if (c::fstat(fd, &info) != 0) return false;             // NOLINT(smith-effects)
+        return ((I32)info.st_mode & kind_mask) == kind_regular; // NOLINT(bugprone-signed-bitwise)
     }
 
     // A connect that returned EINPROGRESS has finished when the descriptor is writable: SO_ERROR says how.
@@ -999,9 +1135,17 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
 
     // The scheduler's `io`: a plain blocking call to the code that made it.
     void default_io([[maybe_unused]] Scheduler *self, c::SmithIoRequest *request) {
+        if (!active || home == nullptr) {
+            attempt(request);
+            return;
+        }
+        if (regular_file(request->fd)) { // never waited for: a pool thread does it while the task parks
+            pool_call(request);
+            return;
+        }
         Bool offset =
             request->operation == c::SmithIoOperation_Pread || request->operation == c::SmithIoOperation_Pwrite;
-        if (!active || home == nullptr || offset || !parkable(request->fd)) {
+        if (offset || !parkable(request->fd)) {
             attempt(request);
             return;
         }
@@ -1078,7 +1222,7 @@ void stop_workers() {
     stopping = true;
     for (Usize i = 1; i < worker_count; i++)
         wake_worker(&workers[i]);
-    unlock_scheduler();
+    pool_stop();
     for (Usize i = 1; i < worker_count; i++)
         c::pthread_join(workers[i].thread, nullptr);
     for (Usize i = 0; i < worker_count; i++) {

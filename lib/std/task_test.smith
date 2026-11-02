@@ -809,3 +809,70 @@ export void test_task_an_accept_and_a_connect_in_two_tasks_on_one_worker_both_co
         c::unlink(meeting.address.sun_path); // NOLINT(smith-effects)
     }
 }
+
+// A regular file cannot be waited on, so its calls go to the file pool: a pool thread does the call while the task
+// parks, and the bytes are the file's.
+if constexpr (target::os == target::macos || target::os == target::linux) {
+    constexpr Usize page = 4096;
+    // NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
+    constexpr I32 open_write = c::O_WRONLY | c::O_CREAT | c::O_TRUNC;
+    constexpr I32 open_read = c::O_RDONLY;
+    // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
+
+    struct Slurp {
+        I32 fd;
+        U8 bytes[page];
+        U8 again[page];
+        Isize got;
+        Isize got_at;
+        Usize rounds;
+    };
+
+    void run_file_reader(Slurp *slurp) {
+        slurp->got = c::read(slurp->fd, slurp->bytes, page);                 // NOLINT(smith-effects)
+        slurp->got_at = c::pread(slurp->fd, slurp->again, page, (Isize)100); // NOLINT(smith-effects)
+    }
+
+    void run_file_bystander(Slurp *slurp) {
+        for (Usize i = 0; i < 50; i++) {
+            slurp->rounds += 1;
+            task::pause();
+        }
+    }
+}
+
+export void test_task_a_read_and_a_pread_on_a_regular_file_go_to_the_pool_and_return_the_files_bytes() {
+    if constexpr (target::os == target::macos || target::os == target::linux) {
+        const char *path = "/tmp/smith_task_test_pool"; // one test uses it, and it is removed at the end
+        U8 content[page + 200] = {};
+        for (Usize i = 0; i < page + 200; i++)
+            content[i] = (U8)(i * 7 + 3);
+        I32 out = c::open(path, open_write, 0o600); // NOLINT(smith-effects)
+        test::check(out >= 0);
+        test::check_equal((I32)c::write(out, content, page + 200), (I32)(page + 200)); // NOLINT(smith-effects)
+        c::close(out);                                                                 // NOLINT(smith-effects)
+        Slurp slurp = {};
+        slurp.fd = c::open(path, open_read); // NOLINT(smith-effects)
+        test::check(slurp.fd >= 0);
+        task::use(nullptr);
+        task::limit_workers(1);
+        {
+            task::Group group = {};
+            defer task::wait(&group);
+            task::spawn(&group, run_file_reader, &slurp);
+            task::spawn(&group, run_file_bystander, &slurp);
+        }
+        task::limit_workers(0);
+        test::check_equal((I32)slurp.got, (I32)page);
+        test::check_equal((I32)slurp.got_at, (I32)page);
+        test::check_equal(task::workers_running(), (Usize)0);
+        Bool same = true;
+        for (Usize i = 0; i < page; i++) {
+            if (slurp.bytes[i] != content[i] || slurp.again[i] != content[100 + i]) same = false;
+        }
+        test::check(same);
+        test::check_equal(slurp.rounds, (Usize)50);
+        c::close(slurp.fd); // NOLINT(smith-effects)
+        c::unlink(path);    // NOLINT(smith-effects)
+    }
+}
