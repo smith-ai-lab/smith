@@ -1,0 +1,208 @@
+// Tests of `vec(T, N)` (#1630 of #1428): source text in smith's own syntax, checked, emitted and run through the JIT,
+// and the checker's messages for a vector used wrongly.
+
+module front_emit_vector_test;
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <stdio.h>;
+import <smith/trace.h>;
+import <string.h>;
+import <unistd.h>;
+import <sys/wait.h>;
+
+struct Scenario {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    parser::Parsed parsed;
+    types::Checked checked;
+    Bool has_checked;
+};
+
+// The module of `source`, read in smith's own syntax.
+static parser::Parsed parse_new(Str source) {
+    parser::Parsed result = {};
+    result.module.file = "t.smith";
+    lex::Lexed lexed = lex::tokenize_new(source);
+    switch (lexed) {
+    case .ok:
+        parse::Parser p = parse::make(lexed.ok, source);
+        p.new_syntax = true;
+        p.hooks.expression = parse_expr::expression;
+        p.hooks.type = parse_type::type;
+        p.hooks.statement = parse_stmt::statement;
+        p.hooks.declaration = parse_decl::declaration;
+        result.module = parse_decl::file(&p, "t.smith");
+        result.errors = p.errors;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    return result;
+}
+
+static void begin(Scenario *s, Str source, Bool with_checker) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parse_new(source);
+    test::check_equal(countof(s->parsed.errors), (Usize)0);
+    if (with_checker) {
+        s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+        s->has_checked = true;
+        test::check_equal(s->checked.error_count, (Usize)0);
+    }
+    mem::set_allocator(outside);
+}
+
+static emit::Options options_for(emit::Target target, const Scenario *s) {
+    emit::Options options = {};
+    options.target = target;
+    if (s->has_checked) options.checked = &s->checked;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static Bool contains(const char *text, Str needle) {
+    return text != nullptr && c::strstr(text, needle.data) != nullptr;
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+// Emits `source` (with the checker's types), returns its IR text and adds it to `host`.
+static char *ir_of(Str source, emit_jit::Jit *host, Scenario *s) {
+    begin(s, source, true);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s->parsed.module, options_for(host->target, s));
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    } else {
+        Str expected = "no error";
+        test::check_equal(emitted.error.message, expected);
+    }
+    return text;
+}
+
+// The last message the checker gives for `source`, or "" when it has none.
+static Str last_error(Str source) {
+    Scenario s = {};
+    s.memory = test::memory(1U << 22);
+    s.allocator = arena::allocator(&s.memory);
+    mem::Allocator *outside = mem::set_allocator(&s.allocator.base);
+    s.parsed = parse_new(source);
+    test::check_equal(countof(s.parsed.errors), (Usize)0);
+    types::Checked checked = types_decl::check_module(&s.parsed.module, types::lp64());
+    Str message = "";
+    if (checked.error_count > 0) message = checked.errors[checked.error_count - 1].message;
+    mem::set_allocator(outside);
+    return message;
+}
+
+typedef F32 (*Dot)(F32, F32);
+typedef I32 (*Lanes)();
+
+export void test_front_emit_vector_arithmetic_is_one_vector_operation() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("pub fn sum_of(x: f32, y: f32) -> f32 {\n    a := vec(f32, 4)(x, y, 3, 4)\n    b := a * 2.0\n"
+                     "    c := a + b\n    d := c / a\n    e := c - a\n    c[0] + c[2] + d[1] + e[3]\n}\n"
+                     "pub fn dot(x: f32, y: f32) -> f32 {\n    a := vec(f32, 4)(x, y, 1, 2)\n"
+                     "    p := a * a\n    p[0] + p[1] + p[2] + p[3]\n}\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    test::check_equal(contains(ir, "fmul <4 x float>"), true);
+    test::check_equal(contains(ir, "fadd <4 x float>"), true);
+    test::check_equal(contains(ir, "fdiv <4 x float>"), true);
+    Dot sum_of = (Dot)symbol_of(&host, "sum_of");
+    Dot dot = (Dot)symbol_of(&host, "dot");
+    // a = (1, 2, 3, 4), c = 3a: c[0] + c[2] + (c/a)[1] + (c-a)[3] = 3 + 9 + 3 + 8
+    test::check_equal(sum_of(1.0F, 2.0F), 23.0F);
+    test::check_equal(dot(3.0F, 4.0F), 30.0F);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_vector_comparisons_give_a_vector_of_bool() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("pub fn lanes() -> i32 {\n    a := vec(f32, 4)(1, 2, 3, 4)\n    b := vec(f32, 4)(4, 2, 2, 1)\n"
+                     "    lt := a < b\n    eq := a == b\n    mut n := 0\n"
+                     "    if lt[0] {\n        n += 1\n    }\n    if lt[1] {\n        n += 10\n    }\n"
+                     "    if eq[1] {\n        n += 100\n    }\n    if lt[3] {\n        n += 1000\n    }\n    n\n}\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    test::check_equal(contains(ir, "fcmp olt <4 x float>"), true);
+    Lanes lanes = (Lanes)symbol_of(&host, "lanes");
+    test::check_equal(lanes(), (I32)101);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_vector_lane_write_and_integer_lanes() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("pub fn lanes() -> i32 {\n    mut m: vec(i32, 3)\n    m[0] = 5\n    m[2] = m[0] + 1\n"
+                     "    u := vec(u8, 2)(250, 1)\n    w := u + 10\n    m[0] + m[1] * 100 + m[2] * 1000 + (w[0] as "
+                     "i32) * 10000\n}\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    Lanes lanes = (Lanes)symbol_of(&host, "lanes");
+    test::check_equal(lanes(), (I32)(5 + 6000 + 40000));
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_vector_from_a_list_and_through_a_parameter() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("fn second(v: vec(f32, 2)) -> f32 {\n    v[1]\n}\n"
+                     "pub fn lanes() -> i32 {\n    l: vec(f32, 2) = [1.5, 2.5]\n    second(l + 1.0) as i32\n}\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    Lanes lanes = (Lanes)symbol_of(&host, "lanes");
+    test::check_equal(lanes(), (I32)3);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_vector_checker_messages() {
+    Str wrong_count = last_error("fn f() -> f32 {\n    a := vec(f32, 4)(1, 2, 3)\n    a[0]\n}\n");
+    test::check_equal(contains(wrong_count.data, "built from exactly 4 values, found 3"), true);
+    Str out_of_range = last_error("fn f() -> f32 {\n    a := vec(f32, 4)(1, 2, 3, 4)\n    a[4]\n}\n");
+    test::check_equal(contains(out_of_range.data, "out of range"), true);
+    Str mixed = last_error("fn f(a: vec(f32, 4), b: vec(f64, 4)) -> f32 {\n    c := a + b\n    c[0]\n}\n");
+    test::check_equal(contains(mixed.data, "write two `vec(F32, 4)`"), true);
+    Str zero = last_error("fn f(a: vec(f32, 0)) -> f32 {\n    0.0\n}\n");
+    test::check_equal(contains(zero.data, "at least one lane"), true);
+    Str not_number = last_error("fn f(a: vec(bool, 2)) -> f32 {\n    0.0\n}\n");
+    test::check_equal(contains(not_number.data, "number type"), true);
+    Str flag_write = last_error("fn f(a: vec(f32, 2)) -> f32 {\n    mut l := a < a\n    l[0] = true\n    0.0\n}\n");
+    test::check_equal(contains(flag_write.data, "cannot be assigned"), true);
+}

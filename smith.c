@@ -52,8 +52,8 @@ extern char **environ;
 #include <sys/time.h>
 #include <time.h>
 
-// SMITH_CLANG_ID is the version of the clang linked in and a hash of what is linked (scripts/llvm.sh), compiled in by
-// build.c; --smith-which prints it, so that what depends on the compiler is rebuilt for a new LLVM and for nothing
+// SMITH_CLANG_ID is the version of the clang linked in and a hash of what is linked (build_llvm_run_macos), compiled in
+// by build.c; --smith-which prints it, so that what depends on the compiler is rebuilt for a new LLVM and for nothing
 // else. shim/clang.cpp, the only C++ in smith: clang's own main, run as `program` (a clang or clang++ in the folder
 // that smith_resource_ensure fills with clang's resource directory) on argv[1 .. argc). argv[0] is ignored.
 int smith_clang_main(const char *program, int argc, char **argv, bool lld, const char *resource);
@@ -75,7 +75,7 @@ void smith_clangd_defaults(const char *style, const char *tidy);
 #ifdef SMITH_LLDB
 constexpr bool smith_has_lldb = true;
 // shim/lldb.cpp and shim/lldb_dap.cpp: the mains of lldb and lldb-dap (`smith dbg`, `smith dap`), run the same way. A
-// smith built against an LLVM install without lldb (scripts/llvm.sh, the lldb step) runs an external lldb instead.
+// smith built against an LLVM install without lldb (build_llvm_run_macos, the lldb step) runs an external lldb instead.
 int smith_lldb_main(int argc, char **argv);
 int smith_lldb_dap_main(int argc, char **argv);
 #ifdef __linux__

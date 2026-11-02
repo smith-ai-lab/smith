@@ -919,8 +919,11 @@ static void smith_lang_generic_note_binding(SmithLang *lang, uint16_t via) {
 
 // The call or the name of the generic being recorded is `known`'s (a private function, type or generic of the module).
 static void smith_lang_generic_use(SmithLang *lang, const SmithLangName *known) {
-    if (!lang->recording || lang->recording_skip || known->exported || lang->gen_uses_count >= smith_lang_gen_uses_max)
+    if (!lang->recording || lang->recording_skip || known->exported) return;
+    if (lang->gen_uses_count >= smith_lang_gen_uses_max) {
+        smith_lang_limit(lang, "private names that generics use", smith_lang_gen_uses_max);
         return;
+    }
     lang->gen_uses[lang->gen_uses_count++] =
         (SmithLangGenUse){.generic = lang->recording_generic, .name = (uint32_t)(known - lang->names)};
 }
