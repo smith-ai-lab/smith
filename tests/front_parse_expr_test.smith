@@ -13,6 +13,7 @@ import front::ast;
 import front::lex;
 import front::parse;
 import front::parse_expr;
+import front::fix;
 import front::parse_type;
 
 // The stub of the statement hook: skips a braced body and gives an empty block.
@@ -126,10 +127,11 @@ static Bool contains(Str text, Str piece) {
 }
 
 export void test_parse_expr_precedence_and_associativity() {
-    check_golden("tests/front/parse_expr/precedence.txt",
-                 "a - b - c\na = b = c\na + b * c\na * b + c * d\n!a && b || c\na || b && c\na ? b : c ? d : e\n"
-                 "a ? b : c + 1\na = b ? c : d\na < b == c < d\na & b | c ^ d\na << 1 + 2\n-a * b\na - -b\n!!a\n"
-                 "x += y *= 2\na && b == c\na | b && c\na % b / c\na >> b << c\na <= b >= c != d");
+    check_golden(
+        "tests/front/parse_expr/precedence.txt",
+        "a - b - c\na = b = c\na + b * c\na * b + c * d\n!a && b || c\na || b && c\na ? b : c ? d : e\n"
+        "a ? b : c + 1\na = b ? c : d\na < b == c < d\na & b | c ^ d\na << 1 + 2\n-a * b\na - -b\n!!a\n!!!a\n-!-a + b\n"
+        "x += y *= 2\na && b == c\na | b && c\na % b / c\na >> b << c\na <= b >= c != d");
 }
 
 export void test_parse_expr_postfix_forms() {
@@ -273,6 +275,11 @@ export void test_parse_expr_new_lambdas_and_types() {
                     true);
 }
 
+export void test_parse_expr_new_trailing_blocks() {
+    check_golden_in("tests/front/parse_expr/trailing_blocks.txt", "f(x) { a }\nf() { a }\n(f() { a })\nf(x) { a }.g",
+                    true);
+}
+
 export void test_parse_expr_new_blocks_in_expression_position() {
     check_golden_in("tests/front/parse_expr/new_blocks.txt", "{ }\nf({ })\n{ 1 } + 2", true);
 }
@@ -282,4 +289,86 @@ export void test_parse_expr_new_malformed_forms() {
                     "f(a =)\nf(a = 1\n.circle(\n.circle(r\n(1,\n(1, 2\n(\n[1, 2\n[1,\np.\nx as\nx as 5\n"
                     "fn(x\nfn[a, 1](x) { }\nfn(x) -> { }\n)",
                     true);
+}
+
+// One source of the fix goldens (#1509): the warnings of its first reading, the text once `smith lint --fix` has run to
+// the end, and the warnings that text still has (the forms with no mechanical fix).
+static Str fix_one(Str source) {
+    char text[:] = format::push(source, "\n");
+    Str current = source;
+    Usize left = 0;
+    for (Usize pass = 0; pass < 8; pass += 1) {
+        parse::Parser p = parser_of(current);
+        _ = parse::expression(&p);
+        for (Usize i = 0; i < countof(p.warnings) && pass == 0; i += 1) {
+            parse::ParseError warning = p.warnings[i];
+            Str note = "";
+            if (countof(warning.fix) == 0) note = " (no fix)";
+            text = format::push(text, "  warning ", warning.span.start, "-", warning.span.end, ": ", warning.message,
+                                note, "\n");
+        }
+        left = countof(p.warnings);
+        fix::Fixed fixed = fix::apply_fixes(current, p.errors, p.warnings);
+        if (fixed.applied == 0) break;
+        current = fixed.text;
+    }
+    char done[:] = format::push(text, "  fixed: ", current, "\n  warnings left: ", left, "\n");
+    return done;
+}
+
+static Str fix_all(Str lines) {
+    char all[:] = {};
+    Usize start = 0;
+    for (Usize i = 0; i <= countof(lines); i += 1) {
+        if (i < countof(lines) && lines[i] != '\n') continue;
+        all = format::push(all, fix_one(lines[start:i]), "\n");
+        start = i + 1;
+    }
+    return all;
+}
+
+static void check_fixes(Str path, Str lines) {
+    arena::Arena memory = test::memory(1U << 23);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::golden(path, fix_all(lines));
+}
+
+export void test_parse_expr_old_casts_and_members_have_fixes() {
+    check_fixes("tests/front/parse_expr/old_casts.txt",
+                "(I32)x\n(Point *)p\n(I32)(U8)x\n-(I32)x\n(I32)-x\n(I32)x + 1\n*(Point *)p\n(t)x\np->x\np->a->b\n"
+                "(*p).x\n*p\n*p = 3\n**pp\n*p->x\n*-x\n*p++\n(I32)*p\n*(I32 *)p\n(I32)(U8)(U16)x");
+}
+
+export void test_parse_expr_old_conditionals_and_lists_have_fixes() {
+    check_fixes("tests/front/parse_expr/old_lists.txt",
+                "c ? a : b\nx = c ? a : b\na ? b : c ? d : e\na + b ? c : d\n(P){.x = 1, .y = 2}\n(P){1, 2}\n(I32)c ? "
+                "a : b\nc ? (I32)a : (U8)b\n"
+                "(P){.a.b = 1}\n(P){}\n{1, 2, 3}\n{{1, 2}, {3, 4}}\n{.x = 1}\n{}\n{[2] = 1}");
+}
+
+export void test_parse_expr_old_increments_and_chains_have_fixes() {
+    check_fixes("tests/front/parse_expr/old_steps.txt",
+                "i++;\ni--;\n++i;\n--i;\nx = i++;\nf(i++)\na[i]++;\nxs.iter().map(f).collect()\nxs.iter()");
+}
+
+// A module that uses every old form with a fix: `smith lint --fix` rewrites it, and a second run applies nothing.
+export void test_parse_expr_lint_fix_twice_on_every_old_form() {
+    arena::Arena memory = test::memory(1U << 23);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "I32 f(Point *p, I32 n) {\n    I32 a = (I32)n;\n    I32 b = p->x + *p;\n    I32 c = n > 0 ? a : b;\n"
+                 "    Point q = (Point){.x = 1, .y = 2};\n    n++;\n    return a + b + c + q.x;\n}\n";
+    fix::Fixed first = fix::fix_text("m.smith", source);
+    test::check_condition(first.applied >= 6);
+    // The statement forms (a `;` at the end of a line) are parse_stmt's; these are the expressions'.
+    test::check_condition(contains(first.text, "I32 a = n as I32"));
+    test::check_condition(contains(first.text, "I32 b = p.x + p.*"));
+    test::check_condition(contains(first.text, "I32 c = if n > 0 { a } else { b }"));
+    test::check_condition(contains(first.text, "Point q = Point(x = 1, y = 2)"));
+    test::check_condition(contains(first.text, "n += 1"));
+    fix::Fixed second = fix::fix_text("m.smith", first.text);
+    test::check_equal(second.applied, (Usize)0);
 }

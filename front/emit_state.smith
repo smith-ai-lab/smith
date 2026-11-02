@@ -87,6 +87,11 @@ export typedef enum {
     pointer;
     array;
     record;
+    option;   // `?T`: `element` is the payload
+    tuple;    // `parts` are the elements
+    fn_value; // `parts` are the parameters, `element` the result
+    slice;    // next batch
+    floating; // next batch
 } TyKind;
 
 export struct Ty;
@@ -102,6 +107,8 @@ export struct Ty {
     Ty *element;
     U64 count;
     U32 address_space;
+    Ty *parts; // a tuple's elements, a `fn` value's parameters; owned like `element`, chained through `Emitter.owned`
+    Usize part_count;
 };
 
 // A type, or the reason there is none.
@@ -144,12 +151,26 @@ export struct Local {
 export struct LoopTarget {
     c::LLVMBasicBlockRef break_block;
     c::LLVMBasicBlockRef continue_block;
+    Usize scope_depth; // `e->scope_count` when the loop's body starts
 };
 
 // A `defer`red statement, run when the block it was in ends: the scope depth is `scope_count` when it was pushed.
 export struct DeferEntry {
     const ast::Stmt *body;
     Usize scope_depth;
+};
+
+// An enumeration of the module: its enumerators and their values (filled by emit_match).
+export struct Enumerator {
+    Str name;
+    U64 value;
+};
+
+// (A slice of `Str` is not a field type today, so the enumerators are one slice of pairs, not `names` and `values`.)
+export struct EnumType {
+    Str name;
+    Ty ty;
+    Enumerator items[:];
 };
 
 export struct FieldInfo {
@@ -168,6 +189,13 @@ export struct RecordType {
 
 export struct Emitter;
 export struct Work;
+
+// Where a conversion happens: it names the Error when there is none.
+export typedef enum {
+    initialize;   // "initializing X with Y"
+    return_value; // "returning Y from a function that returns X"
+    assign;       // "assigning Y to X"
+} ConvertSite;
 
 // What a `then` item runs: the state and the item itself, which carries the data its pusher stored in it.
 export typedef Status (*Continuation)(Emitter *e, const Work *w);
@@ -197,6 +225,11 @@ export struct Work {
 
 // ---------------------------------------------------------------------------------------------------------------
 // The emitter
+
+// The three hooks emit.smith sets: what a handler cannot call without importing front::emit (a cycle).
+export typedef TyResult (*TypeHook)(Emitter *e, const ast::TypeExpr *t);
+export typedef TyResult (*NodeTypeHook)(Emitter *e, const ast::Expr *x);
+export typedef Status (*ConvertHook)(Emitter *e, Value value, Ty to, ast::Span span, ConvertSite site);
 
 // Every field the tickets after B1 need. A ticket that finds one missing escalates; it does not edit this.
 // A `Ty.element` block and the next one; `ty` is first, so a block's address is the element's.
@@ -235,6 +268,15 @@ export struct Emitter {
 
     RecordType records[:]; // B3b
     Usize record_count;
+
+    EnumType enums[:]; // #1585: the module's enumerations
+    Usize enum_count;
+    ast::ExprRef pending_lambdas[:]; // lambda bodies to emit as functions after the current one
+    Usize pending_lambda_count;
+
+    TypeHook type_hook;
+    NodeTypeHook node_type_hook;
+    ConvertHook convert_hook;
 
     Work work[:]; // the work stack, the next to run last
     Usize work_count;
@@ -309,6 +351,37 @@ export Value peek_value(Emitter *e) {
     return e->values[e->value_count - 1];
 }
 
+// The loop targets: the last pop gives the slice back (`realloc(xs, 0)` frees it and gives the empty slice).
+export void push_loop(Emitter *e, LoopTarget target) {
+    if (e->loop_count == countof(e->loops)) {
+        Usize capacity = countof(e->loops) * 2;
+        if (capacity < 4) capacity = 4;
+        e->loops = mem::realloc(e->loops, capacity);
+    }
+    e->loops[e->loop_count] = target;
+    e->loop_count += 1;
+}
+
+export void pop_loop(Emitter *e) {
+    e->loop_count -= 1;
+    if (e->loop_count == 0) e->loops = mem::realloc(e->loops, 0);
+}
+
+// The type a type expression says.
+export TyResult type_of(Emitter *e, const ast::TypeExpr *t) {
+    return e->type_hook(e, t);
+}
+
+// The checker's type of an expression, as a `Ty`.
+export TyResult type_of_node(Emitter *e, const ast::Expr *x) {
+    return e->node_type_hook(e, x);
+}
+
+// Pushes `value` as a `to`, or the Error for `site`.
+export Status convert(Emitter *e, Value value, Ty to, ast::Span span, ConvertSite site) {
+    return e->convert_hook(e, value, to, span, site);
+}
+
 export Hint no_hint() {
     return (Hint){};
 }
@@ -381,32 +454,47 @@ export void end_scope(Emitter *e) {
     e->local_count = e->scope_marks[e->scope_count];
 }
 
-// The type a name says, for the names of the integer types, `Char` and Bool; `found` false for any other.
+// A pointer's width in bits on the target; 64 when it has no data layout (the rule of emit_debug's `pointer_bits`).
+static U32 pointer_bits(Emitter *e) {
+    if (e->target_data == nullptr) return 64;
+    return (U32)c::LLVMPointerSize(e->target_data) * 8;
+}
+
+// The type a name says, for the names of the integer types, `char` and `bool`; `found` false for any other. Both
+// spellings answer with the same type: smith's own `i8 i16 i32 i64 u8 u16 u32 u64 isize usize bool char` and today's
+// `I8 .. I64`, `U8 .. U64`, `Isize`, `Usize`, `Bool`, `Char`. `Ty.name` is the name as written. `isize` and `usize` are
+// as wide as a pointer on the target (`LLVMPointerSize` of its data layout, 64 bits when it has none), never the
+// host's. `char` is the checker's character type: unsigned, 8 bits, the layout of `u8`.
 export Bool scalar_type(Emitter *e, Str name, Ty *ty) {
     U32 bits = 0;
     Bool is_signed = false;
     Bool is_bool = false;
-    if (same_text(name, "I8")) {
+    if (same_text(name, "I8") || same_text(name, "i8")) {
         bits = 8;
         is_signed = true;
-    } else if (same_text(name, "I16")) {
+    } else if (same_text(name, "I16") || same_text(name, "i16")) {
         bits = 16;
         is_signed = true;
-    } else if (same_text(name, "I32")) {
+    } else if (same_text(name, "I32") || same_text(name, "i32")) {
         bits = 32;
         is_signed = true;
-    } else if (same_text(name, "I64")) {
+    } else if (same_text(name, "I64") || same_text(name, "i64")) {
         bits = 64;
         is_signed = true;
-    } else if (same_text(name, "U8") || same_text(name, "Char")) {
-        bits = 8; // `Char` is the checker's character type: unsigned, the layout of U8
-    } else if (same_text(name, "U16")) {
+    } else if (same_text(name, "Isize") || same_text(name, "isize")) {
+        bits = pointer_bits(e);
+        is_signed = true;
+    } else if (same_text(name, "U8") || same_text(name, "u8") || same_text(name, "Char") || same_text(name, "char")) {
+        bits = 8;
+    } else if (same_text(name, "U16") || same_text(name, "u16")) {
         bits = 16;
-    } else if (same_text(name, "U32")) {
+    } else if (same_text(name, "U32") || same_text(name, "u32")) {
         bits = 32;
-    } else if (same_text(name, "U64")) {
+    } else if (same_text(name, "U64") || same_text(name, "u64")) {
         bits = 64;
-    } else if (same_text(name, "Bool")) {
+    } else if (same_text(name, "Usize") || same_text(name, "usize")) {
+        bits = pointer_bits(e);
+    } else if (same_text(name, "Bool") || same_text(name, "bool")) {
         bits = 1;
         is_bool = true;
     } else {

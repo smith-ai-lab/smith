@@ -4,10 +4,11 @@
 // WHAT IT EMITS: the types `T *`, `T[N]` (N an integer literal) and a record of the module (`Decl.record`, an LLVM
 // named struct `<module path>::<name>`, declared before use; a union and a bit-field are errors); `&`, `*`, `a[i]`
 // (an array's index is checked against its count, a constant index in range is not; a pointer's is not checked),
-// `.` and `->`, `null`, compound literals with designators (unnamed fields are zero), casts between integer types and
-// between pointers, `sizeof`, `alignof` and `countof` (sizes from the target data, never from the host), assignment
-// through all of them (B1's `assign` pushes a place; the `place_*` handlers answer it) and globals with a constant
-// initializer. Pointer arithmetic, comparison of pointers, slices, unions and function pointers are later tickets.
+// `.` (through one pointer too, as `->`) and `->`, `null`, compound literals with designators (unnamed fields are
+// zero), casts between integer types, between pointers and between a pointer and an integer as wide as one, `sizeof`,
+// `alignof` and `countof` (sizes from the target data, never from the host), assignment through all of them (B1's
+// `assign` pushes a place; the `place_*` handlers answer it) and globals with a constant initializer. Pointer
+// arithmetic, comparison of pointers, slices, unions and function pointers are later tickets.
 //
 // HOW. Every lvalue is a PLACE: a Value whose `llvm` is the address and whose `ty` is the type stored there. A read
 // of `*p`, `a[i]` or `s.f` is the place plus a load. The base of `a[i]` and `s.f` is pushed as a place when it is a
@@ -430,6 +431,12 @@ static state::Status member_finish(state::Emitter *e, const state::Work *w) {
         if (base.ty.kind != .pointer || base.ty.element == nullptr)
             return state::failf(w->span, "`->` on ", base.ty.name);
         record = *base.ty.element;
+    } else if (base.ty.kind == .pointer) {
+        // `p.x` follows one pointer, as `p->x`: the base is the place of `p`, so load the pointer first.
+        if (base.ty.element == nullptr) return state::failf(w->span, "`.` on ", base.ty.name);
+        if (base.ty.element->kind == .pointer) return state::fail("`.` follows one pointer; write `pp.*.x`", w->span);
+        base.llvm = c::LLVMBuildLoad2(e->builder, base.ty.llvm, base.llvm, "pointer");
+        record = *base.ty.element;
     }
     return push_field(e, record, base.llvm, name, w->span);
 }
@@ -499,6 +506,23 @@ static void check_fits(state::Emitter *e, state::Value from, state::Ty to, c::LL
     arith::report_if(e, lost, "smith_contract_fail_cast", args, 3);
 }
 
+// A pointer and an integer as wide as a pointer: `ptrtoint` and `inttoptr`, with no run-time check.
+static state::Status pointer_integer_cast(state::Emitter *e, const state::Work *w, state::Value from, state::Ty to) {
+    state::Ty integer = from.ty.kind == .integer ? from.ty : to;
+    U64 width = e->target_data != nullptr ? (U64)c::LLVMPointerSize(e->target_data) * 8 : 64;
+    if (integer.bits != width) {
+        return state::failf(w->span, "cannot cast ", from.ty.name, " to ", to.name,
+                            ": a pointer casts only to an integer as wide as a pointer (`usize`, `isize`)");
+    }
+    c::LLVMValueRef out = nullptr;
+    if (to.kind == .integer)
+        out = c::LLVMBuildPtrToInt(e->builder, from.llvm, to.llvm, "");
+    else
+        out = c::LLVMBuildIntToPtr(e->builder, from.llvm, to.llvm, "");
+    state::push_value(e, (state::Value){.llvm = out, .ty = to});
+    return state::success();
+}
+
 static state::Status cast_finish(state::Emitter *e, const state::Work *w) {
     state::Value from = state::pop_value(e);
     state::Ty to = w->ty;
@@ -520,6 +544,8 @@ static state::Status cast_finish(state::Emitter *e, const state::Work *w) {
         state::push_value(e, (state::Value){.llvm = from.llvm, .ty = to});
         return state::success();
     }
+    if ((from.ty.kind == .pointer && to.kind == .integer) || (from.ty.kind == .integer && to.kind == .pointer))
+        return pointer_integer_cast(e, w, from, to);
     return state::failf(w->span, "cannot cast ", from.ty.name, " to ", to.name);
 }
 

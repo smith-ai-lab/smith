@@ -492,6 +492,12 @@ static void smith_run_finish(SmithExec *exec, SmithJob *job, uint32_t *stack) {
         if (exec->failures == 0)
             snprintf(exec->first_failed, sizeof exec->first_failed, "step %zu %s", exec->finished_edges,
                      edge->description != nullptr ? edge->description : edge->command);
+        if (exec->recap_count < smith_exec_recap_max) {
+            snprintf(exec->recap[exec->recap_count], smith_exec_recap_line, "step %zu %s [code=%d]",
+                     exec->finished_edges, edge->description != nullptr ? edge->description : edge->command,
+                     job->status);
+            exec->recap_console[exec->recap_count++] = edge->pool == smith_exec_pool_console;
+        }
         exec->failures += 1;
         if (exec->failures_left > 0) exec->failures_left -= 1;
     }
@@ -668,6 +674,17 @@ static void smith_run_stop_jobs(SmithExec *exec, uint32_t *stack, int signal_num
     }
 }
 
+// The failed steps again, at the very end, so the last thing printed is what failed: the steps that are not tests, then
+// the tests (their output is long, and a gate note or a runner's usage may follow it).
+static void smith_run_recap(const SmithExec *exec) {
+    fprintf(stderr, "smith: %d failed:\n", exec->failures);
+    for (int tests = 0; tests < 2; tests++)
+        for (size_t i = 0; i < exec->recap_count; i++)
+            if (exec->recap_console[i] == (tests == 1)) fprintf(stderr, "  %s\n", exec->recap[i]);
+    if ((size_t)exec->failures > exec->recap_count)
+        fprintf(stderr, "  and %zu more\n", (size_t)exec->failures - exec->recap_count);
+}
+
 // Runs the plan until it is done, a job fails past what -k allows, or a signal stops it. Returns 0, 1 or the status of
 // an interrupt.
 static int smith_run_plan(SmithExec *exec) {
@@ -677,6 +694,7 @@ static int smith_run_plan(SmithExec *exec) {
     exec->failures_left = exec->options.failures_allowed;
     exec->failures = 0;
     exec->first_failed[0] = '\0';
+    exec->recap_count = 0;
     exec->started_edges = 0;
     exec->finished_edges = 0;
     if (exec->jobs == nullptr)
@@ -698,6 +716,7 @@ static int smith_run_plan(SmithExec *exec) {
         return 128 + exec->stopped;
     }
     if (exec->failures == 0) return 0;
+    smith_run_recap(exec);
     fprintf(stderr, "smith: build stopped: %s (%s).\n",
             exec->failures_left == 0 ? "subcommand failed" : "cannot make progress due to previous errors",
             exec->first_failed);

@@ -108,6 +108,7 @@ export typedef enum {
     concept_type; // `num`, `int`: a family of types, one instance per type (a parameter or local, never a field)
     type_type;    // `type`: a value of it is a type
     block;        // `[,]T`, `[,,]T`: a contiguous block with `count` dimensions known at run time, `element` per cell
+    tuple;        // `(A, B)`: `slots` hold the element types, named "0", "1", ... (read as `t.0`, `t.1`)
 } Kind;
 
 export struct Ty;
@@ -125,6 +126,7 @@ export struct Slot {
 //   pointer, slice: element, pointee_const   array: element, count, pointee_const
 //   enumeration: name, element (the underlying integer), slots (the enumerators, with their values)
 //   function: slots (parameters), element (the result), variadic
+//   tuple: slots (one per element, named by its position)
 //   option: element    result: element (ok), error      fn_value: element (a function type)
 export struct Ty {
     Kind kind;
@@ -227,6 +229,8 @@ static Bool same_kind(Kind a, Kind b) {
         return b == .type_type;
     case .block:
         return b == .block;
+    case .tuple:
+        return b == .tuple;
     }
     return false;
 }
@@ -364,6 +368,16 @@ export TypeRef result_of(Table *t, TypeRef ok, TypeRef error) {
     return intern(t, (Ty){.kind = .result_type, .element = ok, .error = error});
 }
 
+// The type `(A, B)`: the elements in order (their types; names are ignored), each made a slot named by its position.
+export TypeRef tuple_of(Table *t, Slot elements[:]) {
+    Slot slots[:] = mem::alloc_slice(Slot, countof(elements));
+    for (Usize i = 0; i < countof(elements); i++) {
+        slots[i].name = msg(format::push(i));
+        slots[i].type = elements[i].type;
+    }
+    return intern(t, (Ty){.kind = .tuple, .slots = slots});
+}
+
 export TypeRef fn_value_of(Table *t, TypeRef function) {
     return intern(t, (Ty){.kind = .fn_value, .element = function});
 }
@@ -413,13 +427,13 @@ static U64 most(U64 a, U64 b) {
 // How many parts a type is measured from: the fields of a record, the element of an array, the underlying type of an
 // enumeration; none for a leaf.
 static Usize part_count(TypeRef t) {
-    if (t->kind == .record) return countof(t->slots);
+    if (t->kind == .record || t->kind == .tuple) return countof(t->slots);
     if (t->kind == .array || t->kind == .enumeration) return 1;
     return 0;
 }
 
 static TypeRef part(TypeRef t, Usize i) {
-    if (t->kind == .record) return t->slots[i].type;
+    if (t->kind == .record || t->kind == .tuple) return t->slots[i].type;
     return t->element;
 }
 
@@ -435,7 +449,7 @@ static Layout leaf_layout(const Target *target, TypeRef t) {
     if (t->kind == .pointer || t->kind == .fn_value || t->kind == .null_type)
         return (Layout){.size = word, .align = word, .known = true};
     if (t->kind == .slice || t->kind == .text) return (Layout){.size = 2 * word, .align = word, .known = true};
-    if (t->kind == .record && t->complete) return (Layout){.size = 0, .align = 1, .known = true};
+    if ((t->kind == .record && t->complete) || t->kind == .tuple) return (Layout){.size = 0, .align = 1, .known = true};
     return none;
 }
 
@@ -499,7 +513,7 @@ export Layout layout(const Target *target, TypeRef t) {
             continue;
         }
         U64 size = f->size;
-        if (f->type->kind == .record) size = round_up(f->size, f->align);
+        if (f->type->kind == .record || f->type->kind == .tuple) size = round_up(f->size, f->align);
         finished = (Layout){.size = size, .align = f->align, .known = f->known};
         have_finished = true;
         top -= 1;
@@ -589,6 +603,16 @@ static void expand(Piece stack[:], Usize *top, Output *text, TypeRef t) {
         push_piece(stack, top, word(", "));
         push_piece(stack, top, of(t->element));
         put(text, "Result(");
+    } else if (t->kind == .tuple) {
+        if (countof(t->slots) == 1)
+            push_piece(stack, top, word(",)"));
+        else
+            push_piece(stack, top, word(")"));
+        for (Usize i = countof(t->slots); i > 0; i--) {
+            push_piece(stack, top, of(t->slots[i - 1].type));
+            if (i > 1) push_piece(stack, top, word(", "));
+        }
+        put(text, "(");
     } else if (t->kind == .fn_value) {
         push_piece(stack, top, word(")"));
         push_piece(stack, top, of(t->element));
@@ -1036,7 +1060,7 @@ static TypeRef resolve_name(Checked *r, ast::Span span, ast::Path path) {
 
 static Bool is_composite(const ast::TypeExpr *node) {
     return node->kind == .pointer || node->kind == .array || node->kind == .slice || node->kind == .function ||
-           node->kind == .applied || node->kind == .option || node->kind == .block_type;
+           node->kind == .applied || node->kind == .option || node->kind == .block_type || node->kind == .tuple;
 }
 
 // The children of a composite type, in the order their types are wanted: a function's parameters and then its result,
@@ -1047,6 +1071,7 @@ static Usize child_count(const ast::TypeExpr *node) {
         if (node->kind.function.result != nullptr) n += 1;
         return n;
     }
+    if (node->kind == .tuple) return countof(node->kind.tuple.elements);
     if (node->kind == .applied) {
         Usize n = 0;
         for (Usize i = 0; i < countof(node->kind.applied.args); i++) {
@@ -1069,6 +1094,7 @@ static const ast::TypeExpr *child(const ast::TypeExpr *node, Usize i) {
         if (i < countof(node->kind.function.params)) return node->kind.function.params[i];
         return node->kind.function.result;
     }
+    if (node->kind == .tuple) return node->kind.tuple.elements[i];
     Usize seen = 0;
     if (node->kind == .applied) {
         for (Usize k = 0; k < countof(node->kind.applied.args); k++) {
@@ -1178,6 +1204,12 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
         TypeRef result = r->table.void_type;
         if (node->kind.function.result != nullptr) result = w->values[base + params].type;
         return function_of(&r->table, slots, result, node->kind.function.variadic);
+    }
+    if (node->kind == .tuple) {
+        Slot elements[:] = mem::alloc_slice(Slot, n);
+        for (Usize i = 0; i < n; i++)
+            elements[i].type = w->values[base + i].type;
+        return tuple_of(&r->table, elements);
     }
     if (node->kind == .applied) {
         ast::Path applied_name = node->kind.applied.name;

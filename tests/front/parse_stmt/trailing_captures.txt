@@ -1,0 +1,5 @@
+warning (fix): a lambda has no capture list in Smith: captures are inferred
+---
+{
+f(fn(x) { x })
+}

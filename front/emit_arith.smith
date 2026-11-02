@@ -2,12 +2,15 @@
 // Integer literals, names, unary `- + ~`, binary `+ - * / % << >> & ^ |` and assignment, plain and compound.
 //
 // The rule: signed `+ - *`, negate, `/ %` (by zero, `MIN / -1`) and shifts (by a negative amount or by the width or
-// more) are checks in every build; unsigned arithmetic wraps. A failed check branches to the function's one `trap`
-// block (`llvm.trap`, `unreachable`); the failure handler comes later. Types have no checker yet: a literal takes the
+// more) are checks in every build; unsigned arithmetic wraps. A failed check branches to a block of its own that calls
+// a check function of std::contract (`fail_overflow`, `fail_negate`, `fail_divide`, `fail_shift`: the operation, the
+// operands and the source position are the report) and then to the function's one `trap` block (`llvm.trap`,
+// `unreachable`). Types have no checker yet: a literal takes the
 // hint's type (the other operand's, the variable's, the function's result), both operands of a binary have one type.
 module front::emit_arith;
 
 import front::ast;
+import front::emit_debug as debug;
 import front::emit_state as state;
 import std::format;
 import std::mem;
@@ -32,18 +35,10 @@ static c::LLVMBasicBlockRef trap_block(state::Emitter *e) {
     return block;
 }
 
-// Branch to the trap block when `bad` is true; the code goes on in a new block.
-export void trap_if(state::Emitter *e, c::LLVMValueRef bad) {
-    c::LLVMBasicBlockRef trap = trap_block(e);
-    c::LLVMBasicBlockRef next = c::LLVMAppendBasicBlockInContext(e->context, e->function, "ok");
-    c::LLVMBuildCondBr(e->builder, bad, trap, next);
-    c::LLVMPositionBuilderAtEnd(e->builder, next);
-}
-
 // The external function `name` returning nothing, with the types of `args`: declared once in the module.
 static void report_callee(state::Emitter *e, Str name, c::LLVMValueRef *args, Usize count, c::LLVMValueRef *callee,
                           c::LLVMTypeRef *type) {
-    c::LLVMTypeRef params[4] = {};
+    c::LLVMTypeRef params[7] = {};
     for (Usize i = 0; i < count; i++)
         params[i] = c::LLVMTypeOf(args[i]);
     *type = c::LLVMFunctionType(c::LLVMVoidTypeInContext(e->context), params, (U32)count, 0);
@@ -52,14 +47,32 @@ static void report_callee(state::Emitter *e, Str name, c::LLVMValueRef *args, Us
     if (*callee == nullptr) *callee = c::LLVMAddFunction(e->module, label, *type);
 }
 
-// Branch, when `bad` is true, to a block of its own that calls the check function `name` with `args` (it reports and
-// does not return: a `.smith` function of std::contract, so the call stack is the report) and then traps; the code
-// goes on in a new block (K6, #1389).
-export void report_if(state::Emitter *e, c::LLVMValueRef bad, Str name, c::LLVMValueRef *args, Usize count) {
+// The edge to a fail block is unlikely: `!prof` branch_weights of 1 against 2000 (#1550), so a pass or the code
+// generator that reads branch probabilities knows the fail block is cold.
+static void mark_unlikely(state::Emitter *e, c::LLVMValueRef branch) {
+    c::LLVMTypeRef word = c::LLVMInt32TypeInContext(e->context);
+    c::LLVMMetadataRef parts[3] = {c::LLVMMDStringInContext2(e->context, "branch_weights", 14),
+                                   c::LLVMValueAsMetadata(c::LLVMConstInt(word, 1, 0)),
+                                   c::LLVMValueAsMetadata(c::LLVMConstInt(word, 2000, 0))};
+    c::LLVMMetadataRef node = c::LLVMMDNodeInContext2(e->context, parts, 3);
+    U32 kind = c::LLVMGetMDKindIDInContext(e->context, "prof", 4);
+    c::LLVMSetMetadata(branch, kind, c::LLVMMetadataAsValue(e->context, node));
+}
+
+// Branch, when `bad` is true, to a block of its own and leave the builder in it; `next` is the block the code goes on
+// in. The arguments of the report are built there, so the good path pays for none of them. `close_failure` ends it.
+static c::LLVMBasicBlockRef open_failure(state::Emitter *e, c::LLVMValueRef bad) {
     c::LLVMBasicBlockRef failing = c::LLVMAppendBasicBlockInContext(e->context, e->function, "fail");
     c::LLVMBasicBlockRef next = c::LLVMAppendBasicBlockInContext(e->context, e->function, "ok");
-    c::LLVMBuildCondBr(e->builder, bad, failing, next);
+    c::LLVMValueRef branch = c::LLVMBuildCondBr(e->builder, bad, failing, next);
+    mark_unlikely(e, branch);
     c::LLVMPositionBuilderAtEnd(e->builder, failing);
+    return next;
+}
+
+// The failing block calls the check function `name` with `args` (it reports and does not return: a `.smith` function
+// of std::contract, so the call stack is the report) and then traps; the code goes on in `next` (K6, #1389).
+static void close_failure(state::Emitter *e, c::LLVMBasicBlockRef next, Str name, c::LLVMValueRef *args, Usize count) {
     c::LLVMValueRef callee = nullptr;
     c::LLVMTypeRef type = nullptr;
     report_callee(e, name, args, count, &callee, &type);
@@ -68,22 +81,56 @@ export void report_if(state::Emitter *e, c::LLVMValueRef bad, Str name, c::LLVMV
     c::LLVMPositionBuilderAtEnd(e->builder, next);
 }
 
+// Branch, when `bad` is true, to a block of its own that calls the check function `name` with `args`, built before
+// the branch (a failed index or cast, K6, #1389).
+export void report_if(state::Emitter *e, c::LLVMValueRef bad, Str name, c::LLVMValueRef *args, Usize count) {
+    c::LLVMBasicBlockRef next = open_failure(e, bad);
+    close_failure(e, next, name, args, count);
+}
+
+// The arguments of a report, built in the failing block.
+static c::LLVMTypeRef word_type(state::Emitter *e) {
+    return c::LLVMInt64TypeInContext(e->context);
+}
+
+static c::LLVMValueRef widened(state::Emitter *e, c::LLVMValueRef v, state::Ty ty) {
+    return c::LLVMBuildIntCast2(e->builder, v, word_type(e), ty.is_signed, "");
+}
+
+static c::LLVMValueRef text_arg(state::Emitter *e, Str text) {
+    return c::LLVMBuildGlobalStringPtr(e->builder, format::push(text).data, "text");
+}
+
+static c::LLVMValueRef position_arg(state::Emitter *e, ast::Span span) {
+    return c::LLVMBuildGlobalStringPtr(e->builder, debug::location_text(e, span), "at");
+}
+
+static c::LLVMValueRef number_arg(state::Emitter *e, U64 value) {
+    return c::LLVMConstInt(c::LLVMInt32TypeInContext(e->context), value, 0);
+}
+
 // Leave the function by the trap block: the end of a function with a result, reached without a `return`.
 export void trap_here(state::Emitter *e) {
     c::LLVMBuildBr(e->builder, trap_block(e));
 }
 
-// `a op b` through one of the `with.overflow` intrinsics; traps on overflow.
-static c::LLVMValueRef overflow_op(state::Emitter *e, Str intrinsic, state::Ty ty, c::LLVMValueRef a,
-                                   c::LLVMValueRef b) {
+// `a op b` through one of the `with.overflow` intrinsics; a failed check reports `a op b overflows T at <position>`.
+static c::LLVMValueRef overflow_op(state::Emitter *e, Str intrinsic, Str op, state::Value a, state::Value b,
+                                   ast::Span span) {
+    state::Ty ty = a.ty;
     U32 id = c::LLVMLookupIntrinsicID(intrinsic.data, countof(intrinsic));
     c::LLVMTypeRef types[1] = {ty.llvm};
     c::LLVMValueRef declaration = c::LLVMGetIntrinsicDeclaration(e->module, id, types, 1);
     c::LLVMTypeRef type = c::LLVMIntrinsicGetType(e->context, id, types, 1);
-    c::LLVMValueRef args[2] = {a, b};
+    c::LLVMValueRef args[2] = {a.llvm, b.llvm};
     c::LLVMValueRef pair = c::LLVMBuildCall2(e->builder, type, declaration, args, 2, "");
-    trap_if(e, c::LLVMBuildExtractValue(e->builder, pair, 1, "overflow"));
-    return c::LLVMBuildExtractValue(e->builder, pair, 0, "");
+    c::LLVMValueRef bad = c::LLVMBuildExtractValue(e->builder, pair, 1, "overflow");
+    c::LLVMValueRef sum = c::LLVMBuildExtractValue(e->builder, pair, 0, "");
+    c::LLVMBasicBlockRef next = open_failure(e, bad);
+    c::LLVMValueRef report[5] = {text_arg(e, op), widened(e, a.llvm, ty), widened(e, b.llvm, ty), text_arg(e, ty.name),
+                                 position_arg(e, span)};
+    close_failure(e, next, "smith_contract_fail_overflow", report, 5);
+    return sum;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -119,10 +166,16 @@ static c::LLVMValueRef zero_of(state::Ty ty) {
     return c::LLVMConstInt(ty.llvm, 0, 0);
 }
 
-// `a / b` and `a % b`: a divisor of zero traps, and so does `MIN / -1` for a signed type.
-static c::LLVMValueRef divide(state::Emitter *e, Bool remainder, state::Value a, state::Value b) {
+// `a / b` and `a % b`: a divisor of zero reports, and so does `MIN / -1` for a signed type.
+static c::LLVMValueRef divide(state::Emitter *e, Bool remainder, state::Value a, state::Value b, ast::Span span) {
     state::Ty ty = a.ty;
-    c::LLVMValueRef bad = c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, b.llvm, zero_of(ty), "zero");
+    Str op = "/";
+    if (remainder) op = "%";
+    c::LLVMValueRef zero = c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, b.llvm, zero_of(ty), "zero");
+    c::LLVMBasicBlockRef next = open_failure(e, zero);
+    c::LLVMValueRef by_zero[4] = {text_arg(e, op), widened(e, a.llvm, ty), number_arg(e, ty.is_signed),
+                                  position_arg(e, span)};
+    close_failure(e, next, "smith_contract_fail_divide", by_zero, 4);
     if (ty.is_signed) {
         U64 least = 1ULL << (ty.bits - 1);
         c::LLVMValueRef is_least =
@@ -130,10 +183,10 @@ static c::LLVMValueRef divide(state::Emitter *e, Bool remainder, state::Value a,
         c::LLVMValueRef is_minus_one =
             c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, b.llvm, c::LLVMConstAllOnes(ty.llvm), "");
         c::LLVMValueRef both = c::LLVMBuildAnd(e->builder, is_least, is_minus_one, "");
-        bad = c::LLVMBuildOr(e->builder, bad, both, "");
-    }
-    trap_if(e, bad);
-    if (ty.is_signed) {
+        c::LLVMBasicBlockRef after = open_failure(e, both);
+        c::LLVMValueRef report[5] = {text_arg(e, op), widened(e, a.llvm, ty), widened(e, b.llvm, ty),
+                                     text_arg(e, ty.name), position_arg(e, span)};
+        close_failure(e, after, "smith_contract_fail_overflow", report, 5);
         if (remainder) return c::LLVMBuildSRem(e->builder, a.llvm, b.llvm, "");
         return c::LLVMBuildSDiv(e->builder, a.llvm, b.llvm, "");
     }
@@ -141,49 +194,56 @@ static c::LLVMValueRef divide(state::Emitter *e, Bool remainder, state::Value a,
     return c::LLVMBuildUDiv(e->builder, a.llvm, b.llvm, "");
 }
 
-// A shift traps when the amount, read as unsigned (a negative one is huge), is the width or more.
-static void check_shift(state::Emitter *e, state::Value a, state::Value amount) {
-    c::LLVMValueRef width = c::LLVMConstInt(a.ty.llvm, a.ty.bits, 0);
-    trap_if(e, c::LLVMBuildICmp(e->builder, c::LLVMIntUGE, amount.llvm, width, "wide"));
+// A shift reports when the amount, read as unsigned (a negative one is huge), is the width or more.
+static void check_shift(state::Emitter *e, Str op, state::Value a, state::Value amount, ast::Span span) {
+    state::Ty ty = a.ty;
+    c::LLVMValueRef width = c::LLVMConstInt(ty.llvm, ty.bits, 0);
+    c::LLVMValueRef bad = c::LLVMBuildICmp(e->builder, c::LLVMIntUGE, amount.llvm, width, "wide");
+    c::LLVMBasicBlockRef next = open_failure(e, bad);
+    c::LLVMValueRef report[7] = {
+        text_arg(e, op),        widened(e, a.llvm, ty), widened(e, amount.llvm, ty), number_arg(e, ty.is_signed),
+        number_arg(e, ty.bits), text_arg(e, ty.name),   position_arg(e, span)};
+    close_failure(e, next, "smith_contract_fail_shift", report, 7);
 }
 
 // `+`, `-` and `*`: wrapping for an unsigned type, an overflow check for a signed one.
-static c::LLVMValueRef add_values(state::Emitter *e, state::Value a, state::Value b) {
-    if (a.ty.is_signed) return overflow_op(e, "llvm.sadd.with.overflow", a.ty, a.llvm, b.llvm);
+static c::LLVMValueRef add_values(state::Emitter *e, state::Value a, state::Value b, ast::Span span) {
+    if (a.ty.is_signed) return overflow_op(e, "llvm.sadd.with.overflow", "+", a, b, span);
     return c::LLVMBuildAdd(e->builder, a.llvm, b.llvm, "");
 }
 
-static c::LLVMValueRef subtract_values(state::Emitter *e, state::Value a, state::Value b) {
-    if (a.ty.is_signed) return overflow_op(e, "llvm.ssub.with.overflow", a.ty, a.llvm, b.llvm);
+static c::LLVMValueRef subtract_values(state::Emitter *e, state::Value a, state::Value b, ast::Span span) {
+    if (a.ty.is_signed) return overflow_op(e, "llvm.ssub.with.overflow", "-", a, b, span);
     return c::LLVMBuildSub(e->builder, a.llvm, b.llvm, "");
 }
 
-static c::LLVMValueRef multiply_values(state::Emitter *e, state::Value a, state::Value b) {
-    if (a.ty.is_signed) return overflow_op(e, "llvm.smul.with.overflow", a.ty, a.llvm, b.llvm);
+static c::LLVMValueRef multiply_values(state::Emitter *e, state::Value a, state::Value b, ast::Span span) {
+    if (a.ty.is_signed) return overflow_op(e, "llvm.smul.with.overflow", "*", a, b, span);
     return c::LLVMBuildMul(e->builder, a.llvm, b.llvm, "");
 }
 
-static c::LLVMValueRef shift_left_values(state::Emitter *e, state::Value a, state::Value b) {
-    check_shift(e, a, b);
+static c::LLVMValueRef shift_left_values(state::Emitter *e, state::Value a, state::Value b, ast::Span span) {
+    check_shift(e, "<<", a, b, span);
     return c::LLVMBuildShl(e->builder, a.llvm, b.llvm, "");
 }
 
 // Arithmetic shift for a signed type, logical for an unsigned one.
-static c::LLVMValueRef shift_right_values(state::Emitter *e, state::Value a, state::Value b) {
-    check_shift(e, a, b);
+static c::LLVMValueRef shift_right_values(state::Emitter *e, state::Value a, state::Value b, ast::Span span) {
+    check_shift(e, ">>", a, b, span);
     if (a.ty.is_signed) return c::LLVMBuildAShr(e->builder, a.llvm, b.llvm, "");
     return c::LLVMBuildLShr(e->builder, a.llvm, b.llvm, "");
 }
 
 // The value of `left op right` for the ten arithmetic operators, null for any other.
-static c::LLVMValueRef arithmetic(state::Emitter *e, ast::BinaryOp op, state::Value left, state::Value right) {
-    if (op == .add) return add_values(e, left, right);
-    if (op == .subtract) return subtract_values(e, left, right);
-    if (op == .multiply) return multiply_values(e, left, right);
-    if (op == .divide) return divide(e, false, left, right);
-    if (op == .remainder) return divide(e, true, left, right);
-    if (op == .shift_left) return shift_left_values(e, left, right);
-    if (op == .shift_right) return shift_right_values(e, left, right);
+static c::LLVMValueRef arithmetic(state::Emitter *e, ast::BinaryOp op, state::Value left, state::Value right,
+                                  ast::Span span) {
+    if (op == .add) return add_values(e, left, right, span);
+    if (op == .subtract) return subtract_values(e, left, right, span);
+    if (op == .multiply) return multiply_values(e, left, right, span);
+    if (op == .divide) return divide(e, false, left, right, span);
+    if (op == .remainder) return divide(e, true, left, right, span);
+    if (op == .shift_left) return shift_left_values(e, left, right, span);
+    if (op == .shift_right) return shift_right_values(e, left, right, span);
     if (op == .bit_and) return c::LLVMBuildAnd(e->builder, left.llvm, right.llvm, "");
     if (op == .bit_xor) return c::LLVMBuildXor(e->builder, left.llvm, right.llvm, "");
     if (op == .bit_or) return c::LLVMBuildOr(e->builder, left.llvm, right.llvm, "");
@@ -196,7 +256,7 @@ export state::Status apply_binary(state::Emitter *e, ast::BinaryOp op, state::Va
     if (!state::same_type(left.ty, right.ty))
         return state::failf(span, "operands of different types: ", left.ty.name, " and ", right.ty.name);
     if (left.ty.kind != .integer) return state::failf(span, "arithmetic on ", left.ty.name);
-    c::LLVMValueRef out = arithmetic(e, op, left, right);
+    c::LLVMValueRef out = arithmetic(e, op, left, right, span);
     if (out == nullptr) return state::not_emitted("comparison or logical operator", span);
     state::push_value(e, (state::Value){.llvm = out, .ty = left.ty});
     return state::success();
@@ -223,6 +283,8 @@ export state::Status integer_literal(state::Emitter *e, const ast::Expr *x, stat
         ty = hint.ty;
     else
         state::scalar_type(e, "I32", &ty);
+    // A literal where `?i64` is expected is an `i64`, which the site then wraps.
+    if (ty.kind == .option && ty.element != nullptr) ty = *ty.element;
     U64 value = x->kind.integer.value;
     if (ty.kind != .integer) return state::failf(x->span, "an integer literal where a ", ty.name, " is expected");
     if (!fits(ty, value)) return state::failf(x->span, "integer literal ", value, " does not fit ", ty.name);
@@ -261,6 +323,24 @@ export state::Status place_name(state::Emitter *e, const ast::Expr *x) {
 // ---------------------------------------------------------------------------------------------------------------
 // Unary
 
+// `-x` for a signed type: `0 - x` through `ssub.with.overflow`; a failed check reports `-(x) overflows T at
+// <position>`.
+static c::LLVMValueRef negate_checked(state::Emitter *e, state::Value operand, ast::Span span) {
+    state::Ty ty = operand.ty;
+    U32 id = c::LLVMLookupIntrinsicID("llvm.ssub.with.overflow", 23);
+    c::LLVMTypeRef types[1] = {ty.llvm};
+    c::LLVMValueRef declaration = c::LLVMGetIntrinsicDeclaration(e->module, id, types, 1);
+    c::LLVMTypeRef type = c::LLVMIntrinsicGetType(e->context, id, types, 1);
+    c::LLVMValueRef args[2] = {zero_of(ty), operand.llvm};
+    c::LLVMValueRef pair = c::LLVMBuildCall2(e->builder, type, declaration, args, 2, "");
+    c::LLVMValueRef bad = c::LLVMBuildExtractValue(e->builder, pair, 1, "overflow");
+    c::LLVMValueRef negated = c::LLVMBuildExtractValue(e->builder, pair, 0, "");
+    c::LLVMBasicBlockRef next = open_failure(e, bad);
+    c::LLVMValueRef report[3] = {widened(e, operand.llvm, ty), text_arg(e, ty.name), position_arg(e, span)};
+    close_failure(e, next, "smith_contract_fail_negate", report, 3);
+    return negated;
+}
+
 static state::Status unary_finish(state::Emitter *e, const state::Work *w) {
     if (w->expr->kind != .unary) {
         return state::fail("not a unary expression", w->span);
@@ -275,7 +355,7 @@ static state::Status unary_finish(state::Emitter *e, const state::Work *w) {
     switch (op) {
     case .negate:
         if (ty.is_signed)
-            out = overflow_op(e, "llvm.ssub.with.overflow", ty, zero_of(ty), operand.llvm);
+            out = negate_checked(e, operand, w->span);
         else
             out = c::LLVMBuildNeg(e->builder, operand.llvm, "");
         break;
@@ -372,8 +452,10 @@ static state::Status assign_finish(state::Emitter *e, const state::Work *w) {
     }
     state::Value value = state::pop_value(e);
     state::Value place = state::pop_value(e);
-    if (!state::same_type(place.ty, value.ty))
-        return state::failf(w->span, "assigning ", value.ty.name, " to ", place.ty.name);
+    if (!state::same_type(place.ty, value.ty)) {
+        try state::convert(e, value, place.ty, w->span, .assign);
+        value = state::pop_value(e);
+    }
     ast::AssignOp op = w->expr->kind.assign.op;
     if (op != .plain) {
         c::LLVMValueRef current = c::LLVMBuildLoad2(e->builder, place.ty.llvm, place.llvm, "");

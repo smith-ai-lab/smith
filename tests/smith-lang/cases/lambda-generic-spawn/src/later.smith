@@ -8,8 +8,8 @@ export typedef struct {
 } Slot;
 
 // The `task::spawn` shape: the entry is a lambda of the instance, the arguments are `typeof(rest)`.
-export void defer(Slot *slot, constexpr auto f, auto... rest) {
-    static_assert(sizeof(typeof(rest)) <= sizeof slot->data, "defer: too many arguments");
+export void run_later(Slot *slot, constexpr auto f, auto... rest) {
+    static_assert(sizeof(typeof(rest)) <= sizeof slot->data, "run_later: too many arguments");
     typeof(rest) args = {rest...};
     *(typeof(rest) *)slot->data = args;
     slot->entry = [](void *raw) {

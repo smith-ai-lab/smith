@@ -1,0 +1,111 @@
+// Tests of the built-in type names smith's own syntax spells in lowercase (#1576, wave 3 of #1428): `i64`, `u8`,
+// `bool`, `usize` reach `state::scalar_type` and come out as the types of today's capitalized names. Golden IR for a
+// function
+// `(a: i64, b: u8) -> bool`, and a `usize` local on the JIT host and on `i386-unknown-linux-gnu`: `isize` and `usize`
+// are as wide as a pointer on the target, never the host's. Functions are internal until #1577, so the IR is read.
+module front_emit_names_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <string.h>;
+
+struct TreeMemory {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    mem::Allocator *outside;
+};
+
+static void tree_begin(TreeMemory *trees) {
+    trees->memory = test::memory(1U << 22);
+    trees->allocator = arena::allocator(&trees->memory);
+    trees->outside = mem::set_allocator(&trees->allocator.base);
+}
+
+static void tree_end(TreeMemory *trees) {
+    mem::set_allocator(trees->outside);
+}
+
+static ast::Module module_of(ast::Decl *function) {
+    ast::DeclRef decls[1] = {function};
+    return ast::new_module("front::test", decls);
+}
+
+// The IR of the module for a target, as text (LLVM's, disposed of by the caller).
+static char *ir_of(const ast::Module *m, emit::Target target) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::Options options = {};
+    options.target = target;
+    emit::ModuleResult emitted = emit::module(context, m, options);
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        c::LLVMDisposeModule(emitted.ok);
+    }
+    c::LLVMContextDispose(context);
+    return text;
+}
+
+static Bool contains(const char *text, Str needle) {
+    return c::strstr(text, needle.data) != nullptr; // a literal's text ends with a terminator
+}
+
+// `fn f(a: i64, b: u8) -> bool { return true; }`
+static ast::Module signature_module() {
+    ast::Param params[2] = {ast::param("a", ast::named("i64")), ast::param("b", ast::named("u8"))};
+    ast::ExprKind value = {.boolean = {.value = true}};
+    ast::StmtRef items[1] = {ast::return_value(ast::expr(value))};
+    return module_of(ast::function("f", params, ast::named("bool"), ast::block(items)));
+}
+
+// `fn f() -> usize { let n: usize = 0; return n; }`
+static ast::Module usize_module() {
+    ast::StmtKind kind = {.declaration = {.decl = ast::variable("n", ast::named("usize"), ast::integer(0))}};
+    ast::StmtRef items[2] = {ast::stmt(kind), ast::return_value(ast::name("n"))};
+    ast::Param none[1] = {};
+    return module_of(ast::function("f", none[0:0], ast::named("usize"), ast::block(items)));
+}
+
+export void test_front_emit_names_signature() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Module m = signature_module();
+    tree_end(&trees);
+    emit::Target target = {.triple = "x86_64-unknown-linux-gnu"};
+    char *ir = ir_of(&m, target);
+    test::check_equal(contains(ir, "define internal i1 @\"front::test::f\"(i64 %a, i8 %b)"), true);
+    c::LLVMDisposeMessage(ir);
+}
+
+export void test_front_emit_names_usize_on_host() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Module m = usize_module();
+    tree_end(&trees);
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    if (started != .ok) return;
+    emit_jit::Jit host = started.ok;
+    char *ir = ir_of(&m, host.target);
+    test::check_equal(contains(ir, "define internal i64 @\"front::test::f\"()"), true);
+    c::LLVMDisposeMessage(ir);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_names_usize_on_i386() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Module m = usize_module();
+    tree_end(&trees);
+    emit::Target target = {
+        .triple = "i386-unknown-linux-gnu",
+        .data_layout = "e-m:e-p:32:32-p270:32:32-p271:32:32-p272:64:64-i128:128-f64:32:64-f80:32-n8:16:32-S128"};
+    char *ir = ir_of(&m, target);
+    test::check_equal(contains(ir, "define internal i32 @\"front::test::f\"()"), true);
+    c::LLVMDisposeMessage(ir);
+}

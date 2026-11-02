@@ -17,6 +17,7 @@ module front::emit_debug;
 import front::ast;
 import front::emit_state as state;
 import std::arena;
+import std::format;
 import std::mem;
 import <llvm-c/Core.h>;
 import <llvm-c/DebugInfo.h>;
@@ -71,6 +72,15 @@ static Position position_of(state::Emitter *e, U32 start) {
     return (Position){.line = (U32)low + 1, .column = target - e->line_starts[low] + 1};
 }
 
+// ` at <file>:<line>:<column>` of a span's start, the text a failed check ends its report with (the file as written;
+// the position only when `Options.source` is not empty), in the allocator in force. It needs the line table, which
+// `begin_module` builds.
+export const char *location_text(state::Emitter *e, ast::Span span) {
+    if (countof(e->options.source) == 0) return format::push(" at ", e->tree->file).data;
+    Position at = position_of(e, span.start);
+    return format::push(" at ", e->tree->file, ":", at.line, ":", at.column).data;
+}
+
 static c::LLVMMetadataRef location_at(state::Emitter *e, ast::Span span) {
     Position at = position_of(e, span.start);
     return c::LLVMDIBuilderCreateDebugLocation(e->context, at.line, at.column, e->scope, nullptr);
@@ -84,8 +94,9 @@ static void add_flag(state::Emitter *e, Str key, U64 value) {
 
 // After the module is created and its target set, before any function is declared.
 export state::Status begin_module(state::Emitter *e) {
+    if (countof(e->options.source) > 0)
+        build_line_starts(e); // a check's report names the line, with or without debug info
     if (!e->options.debug_info) return state::success();
-    build_line_starts(e);
     e->debug_builder = c::LLVMCreateDIBuilder(e->module);
     Str path = e->tree->file;
     Usize split = 0;

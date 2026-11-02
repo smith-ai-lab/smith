@@ -1,8 +1,10 @@
 // front::fix, `smith lint --fix` (#1442, S6 of #1428): the fixes that parse errors carry (front::parse's `Edit`),
 // applied to a file's text.
 //
-//   fix::apply_fixes(source, errors)  the text with the fixes of the errors applied: a fix (all its edits or none) is
-//                                     taken when no edit of it overlaps one already taken, else it is skipped
+//   fix::apply_fixes(source, errors, warnings)
+//                                     the text with the fixes of the errors, then of the warnings, applied: a fix (all
+//                                     its edits or none) is taken when no edit of it overlaps one already taken, else
+//                                     it is skipped
 //   fix::fix_file(path)               one file mended in place: parse, apply, and again until nothing applies (at most
 //                                     8 passes); the number of fixes applied, -1 when the file cannot be read or
 //                                     written
@@ -55,8 +57,7 @@ static Str as_str(char chars[:]) {
     return chars;
 }
 
-// Applies the fixes of `errors` to `source`.
-export Fixed apply_fixes(Str source, core::Errors errors) {
+static Fixed apply_all(Str source, core::Errors errors) {
     core::Edits taken = {};
     Fixed result = {.text = source};
     for (Usize i = 0; i < countof(errors); i++) {
@@ -88,6 +89,17 @@ export Fixed apply_fixes(Str source, core::Errors errors) {
     return result;
 }
 
+// Applies the fixes of `errors`, then of `warnings`, to `source`.
+export Fixed apply_fixes(Str source, core::Errors errors, core::Errors warnings) {
+    core::Errors all = {};
+    all = mem::realloc(all, countof(errors) + countof(warnings));
+    for (Usize i = 0; i < countof(errors); i++)
+        all[i] = errors[i];
+    for (Usize i = 0; i < countof(warnings); i++)
+        all[countof(errors) + i] = warnings[i];
+    return apply_all(source, all);
+}
+
 constexpr Usize fix_passes = 8;
 
 // The errors of the checker that carry a fix, as parse errors, so `apply_fixes` takes both kinds (#1516).
@@ -117,6 +129,7 @@ export parser::Parsed parse_for_fix(Str file, Str source) {
     p.hooks.declaration = parse_decl::declaration;
     result.module = parse_decl::file(&p, file);
     result.errors = p.errors;
+    result.warnings = p.warnings;
     return result;
 }
 
@@ -152,7 +165,7 @@ export Fixed fix_text(Str file, Str source) {
                 errors[countof(errors) - 1] = more[i];
             }
         }
-        Fixed fixed = apply_fixes(total.text, errors);
+        Fixed fixed = apply_fixes(total.text, errors, parsed.warnings);
         if (fixed.applied == 0) break;
         total.text = fixed.text;
         total.applied += fixed.applied;

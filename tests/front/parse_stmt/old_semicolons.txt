@@ -1,0 +1,12 @@
+{
+x = 1;
+return;
+}
+===
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+---
+{
+x = 1
+return
+}

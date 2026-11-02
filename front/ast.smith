@@ -460,6 +460,9 @@ export typedef enum {
         Stmt *body;
     } defer_stmt;
     struct {
+        Stmt *body;
+    } errdefer_stmt;
+    struct {
         Text label;
     } goto_stmt;
     struct {
@@ -1341,6 +1344,9 @@ static void stmt_children(Items *items, Stmt *s) {
     case .defer_stmt:
         add_stmt(items, s->kind.defer_stmt.body, false);
         break;
+    case .errdefer_stmt:
+        add_stmt(items, s->kind.errdefer_stmt.body, false);
+        break;
     case .labeled:
         add_stmt(items, s->kind.labeled.body, false);
         break;
@@ -1822,6 +1828,9 @@ static void stmt_head(Output *text, Stmt *s) {
         break;
     case .defer_stmt:
         put(text, "defer");
+        break;
+    case .errdefer_stmt:
+        put(text, "errdefer");
         break;
     case .goto_stmt:
         put(text, "goto ");
