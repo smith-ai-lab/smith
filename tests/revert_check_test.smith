@@ -43,7 +43,7 @@ static scratch::Run check(const scratch::Project *p, const char *branch, const c
 }
 
 export void test_revert_check_fails_a_stale_tree_and_names_its_files() {
-    scratch::Project p = scratch::make("p", "stage0");
+    scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -59,7 +59,7 @@ export void test_revert_check_fails_a_stale_tree_and_names_its_files() {
 }
 
 export void test_revert_check_passes_an_ordinary_shared_edit() {
-    scratch::Project p = scratch::make("p", "stage0");
+    scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -72,7 +72,7 @@ export void test_revert_check_passes_an_ordinary_shared_edit() {
 }
 
 export void test_revert_check_lets_a_declared_revert_through() {
-    scratch::Project p = scratch::make("p", "stage0");
+    scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
