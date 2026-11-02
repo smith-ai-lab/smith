@@ -59,6 +59,7 @@
 module front::types;
 
 import front::ast;
+import front::parse as syntax;
 import std::arena;
 import std::format;
 import std::mem;
@@ -647,6 +648,12 @@ export struct Symbol {
     Bool is_const;
     Bool is_new; // declared in smith's own syntax (`x := v`, `x: T = v`, `mut x`, a parameter `x: T`)
     Bool exported;
+    // Where a fix-it mends it (#1516): the binding's span (empty: it has none, so no fix), whether a fix may put
+    // `mut` before its name, the type as written (null: none) and the initializer (null: none).
+    ast::Span at;
+    Bool may_mut;
+    const ast::TypeExpr *written;
+    const ast::Expr *init;
 };
 
 // The stack of scopes: `marks[d]` is where scope `d + 1` starts in `symbols`; scope 0 (the module's) always exists.
@@ -734,6 +741,7 @@ export const Symbol *lookup_path(const Scopes *s, ast::Path path) {
 export struct Error {
     Str message;
     ast::Span span;
+    syntax::Edits fix; // the edits `smith lint --fix` applies together (#1516); empty: none
 };
 
 // One entry of the side table.
@@ -774,6 +782,12 @@ export void fail(Checked *r, ast::Span span, Str message) {
     }
     r->errors[r->error_count] = (Error){.message = msg(format::push(message)), .span = span};
     r->error_count += 1;
+}
+
+// Records an error that carries a fix: the edits that mend it, applied together or not at all.
+export void fail_fix(Checked *r, ast::Span span, Str message, syntax::Edits fix) {
+    fail(r, span, message);
+    r->errors[r->error_count - 1].fix = fix;
 }
 
 // An error whose message is the pieces `args`, as `format::push` takes them.
@@ -1136,6 +1150,7 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
     if (any_invalid(r, w, base, n)) return r->table.invalid;
     if (node->kind == .pointer) {
         Bool is_const = node->kind.pointer.pointee->qualifiers.is_const;
+        if (r->new_syntax) is_const = !node->kind.pointer.is_mut; // smith's own `*T` is read-only, `*mut T` writable
         return pointer_to(&r->table, w->values[base].type, is_const);
     }
     if (node->kind == .slice) {

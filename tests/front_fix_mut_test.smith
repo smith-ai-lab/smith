@@ -1,0 +1,66 @@
+// Tests of the checker's fix-its (#1516, M1 of #1428): `smith lint --fix` adds `mut` to a name that is assigned and
+// `*mut` to a pointer that is written through, from the checker's own errors, in the same passes as the parse fixes.
+// A second run applies nothing and the checker reports nothing.
+module front_fix_mut_test;
+
+import front::fix;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+// Runs `body` with an arena as the current allocator.
+static Str fixed(Str source, Usize *count) {
+    Str file = "t.smith";
+    fix::Fixed result = fix::fix_text(file, source);
+    *count = result.applied;
+    return result.text;
+}
+
+static Usize errors_in(Str source) {
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    if (countof(parsed.errors) != 0) return 1000;
+    types::Checked checked = types_decl::check_module(&parsed.module, types::lp64());
+    return checked.error_count;
+}
+
+static void expect(Str before, Str after, Usize applied) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Usize count = 0;
+    Str got = fixed(before, &count);
+    test::check_equal(got, after);
+    test::check_equal(count, applied);
+    Usize again = 0;
+    Str twice = fixed(got, &again);
+    test::check_equal(twice, after);
+    test::check_equal(again, (Usize)0);
+    test::check_equal(errors_in(after), (Usize)0);
+}
+
+export void test_front_fix_mut_an_assigned_local_gets_mut() {
+    expect("module t;\n\nfn f() {\n    total := 0\n    total = total + 1\n}\n",
+           "module t;\n\nfn f() {\n    mut total := 0\n    total = total + 1\n}\n", 1);
+}
+
+export void test_front_fix_mut_an_assigned_parameter_gets_mut() {
+    expect("module t;\n\nfn f(n: i32) {\n    n = 2\n}\n", "module t;\n\nfn f(mut n: i32) {\n    n = 2\n}\n", 1);
+}
+
+export void test_front_fix_mut_a_pointer_written_through_becomes_mut() {
+    expect("module t;\n\nfn f(p: *i32) {\n    p.* = 1\n}\n", "module t;\n\nfn f(p: *mut i32) {\n    p.* = 1\n}\n", 1);
+}
+
+export void test_front_fix_mut_a_pointer_to_a_constant_makes_it_mut_too() {
+    expect("module t;\n\nfn f() {\n    x := 1\n    p := &x\n    p.* = 2\n}\n",
+           "module t;\n\nfn f() {\n    mut x := 1\n    p := &x\n    p.* = 2\n}\n", 1);
+}
+
+export void test_front_fix_mut_code_that_needs_nothing_is_left_alone() {
+    expect("module t;\n\nfn f(p: *mut i32) {\n    mut n := 0\n    n = 2\n    p.* = n\n}\n",
+           "module t;\n\nfn f(p: *mut i32) {\n    mut n := 0\n    n = 2\n    p.* = n\n}\n", 0);
+}

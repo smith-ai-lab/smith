@@ -240,6 +240,12 @@ static void declare_local(types::Checked *r, const ast::Decl *d, Str name, types
     }
     types::Symbol symbol = {
         .name = name, .kind = .variable, .type = type, .decl = d, .is_const = is_const, .is_new = is_new_variable(d)};
+    if (d->kind == .variable && d->kind.variable.is_new) {
+        symbol.at = d->span;
+        symbol.may_mut = countof(d->attributes) == 0 && !d->kind.variable.is_constexpr;
+        symbol.written = d->kind.variable.type;
+        symbol.init = d->kind.variable.init;
+    }
     if (!types::declare(&r->scopes, symbol)) {
         types::failf(r, d->span, "`", name, "` is already declared in this scope; choose another name");
         return;
@@ -678,11 +684,16 @@ export void check_body(types::Checked *r, const ast::Decl *function) {
         if (params[i].is_new) {
             is_const = !params[i].is_mut;
         }
+        ast::Attribute attributes[:] = params[i].attributes;
         types::Symbol parameter = {.name = params[i].name,
                                    .kind = .variable,
                                    .type = signature->slots[i].type,
                                    .is_const = is_const,
-                                   .is_new = params[i].is_new};
+                                   .is_new = params[i].is_new,
+                                   .at = params[i].span,
+                                   .may_mut = params[i].is_new && countof(attributes) == 0 && !params[i].is_const &&
+                                              !params[i].is_constexpr && !params[i].is_rest,
+                                   .written = params[i].type};
         if (!types::declare(&r->scopes, parameter)) {
             types::failf(r, params[i].span, "the parameter `", params[i].name, "` is already declared in `", name,
                          "`; choose another name");

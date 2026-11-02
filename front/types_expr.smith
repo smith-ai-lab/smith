@@ -66,6 +66,7 @@
 module front::types_expr;
 
 import front::ast;
+import front::parse as syntax;
 import front::types;
 import front::types_fn;
 import std::arena;
@@ -379,6 +380,80 @@ static types::TypeRef readonly_pointer(const types::Checked *c, const ast::Expr 
     return nullptr;
 }
 
+// The edit that writes `mut ` before the name of `s`, when a fix may (a binding written in smith's own syntax, with no
+// attribute before it and not `const`), else an empty list.
+static syntax::Edits mut_fix(const types::Symbol *s) {
+    syntax::Edits edits = {};
+    if (s == nullptr || !s->may_mut || !s->is_const) {
+        return edits;
+    }
+    edits = mem::realloc(edits, 1);
+    Str word = "mut ";
+    edits[0] = (syntax::Edit){.span = {.start = s->at.start, .end = s->at.start}, .text = word};
+    return edits;
+}
+
+// The edits that let a write go through the pointer `base` (`p` in `p.* = v`): when `p` is written `*T`, its type
+// becomes `*mut T`; when `p` is taken from `&x` of a constant `x`, `x` becomes `mut x` in the same fix. Empty when
+// neither is so (the pointer comes from somewhere a fix cannot see).
+static syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base) {
+    syntax::Edits edits = {};
+    if (base->kind != .name) {
+        return edits;
+    }
+    const types::Symbol *p = types::lookup_path(&c->scopes, base->kind.name.path);
+    if (p == nullptr || p->kind != .variable || !p->is_new) {
+        return edits;
+    }
+    const ast::TypeExpr *written = p->written;
+    if (written != nullptr && written->kind == .pointer && !written->kind.pointer.is_mut) {
+        edits = mem::realloc(edits, 1);
+        U32 after_star = written->span.start + 1;
+        Str word = "mut ";
+        edits[0] = (syntax::Edit){.span = {.start = after_star, .end = after_star}, .text = word};
+    } else if (written != nullptr && written->kind != .auto_type) {
+        return edits;
+    }
+    const ast::Expr *init = p->init;
+    if (init != nullptr && init->kind == .unary && init->kind.unary.op == .address_of &&
+        init->kind.unary.operand->kind == .name) {
+        const types::Symbol *x = types::lookup_path(&c->scopes, init->kind.unary.operand->kind.name.path);
+        syntax::Edits more = mut_fix(x != nullptr && x->kind == .variable ? x : nullptr);
+        if (countof(more) == 1) {
+            edits = mem::realloc(edits, countof(edits) + 1);
+            edits[countof(edits) - 1] = more[0];
+        }
+    }
+    return edits;
+}
+
+// The expression whose type is the read-only pointer that writing to `e` goes through (the `base` that
+// `readonly_pointer` stops at), else null.
+static const ast::Expr *readonly_base(const types::Checked *c, const ast::Expr *e) {
+    const ast::Expr *at = e;
+    while (at != nullptr) {
+        const ast::Expr *base = nullptr;
+        if (at->kind == .unary && at->kind.unary.op == .dereference) {
+            base = at->kind.unary.operand;
+        } else if (at->kind == .member) {
+            base = at->kind.member.base;
+        } else if (at->kind == .index) {
+            base = at->kind.index.base;
+        } else {
+            return nullptr;
+        }
+        types::TypeRef t = types::type_of(c, base);
+        if (t == nullptr) {
+            return nullptr;
+        }
+        if (t->kind == .pointer) {
+            return base;
+        }
+        at = base;
+    }
+    return nullptr;
+}
+
 // Whether `e` may be written to; reports and says what to write when it may not.
 static Bool writable(types::Checked *c, const ast::Expr *e, Str verb) {
     if (!is_lvalue(e)) {
@@ -394,15 +469,21 @@ static Bool writable(types::Checked *c, const ast::Expr *e, Str verb) {
     }
     const types::Symbol *constant = constant_place(c, e);
     if (constant != nullptr) {
-        types::failf(c, e->span, "cannot ", verb, " `", constant->name, "`, `", constant->name,
-                     "` is constant: declare it `mut ", constant->name, "`");
+        types::fail_fix(c, e->span,
+                        msg(format::push("cannot ", verb, " `", constant->name, "`, `", constant->name,
+                                         "` is constant: declare it `mut ", constant->name, "`")),
+                        mut_fix(constant));
         return false;
     }
     types::TypeRef through = readonly_pointer(c, e);
     if (through != nullptr) {
-        types::failf(c, e->span, "cannot ", verb, " this place, it is behind the read-only pointer `*",
-                     types::show(through->element), "`; take a `*mut ", types::show(through->element),
-                     "` to write through it");
+        const ast::Expr *base = readonly_base(c, e);
+        syntax::Edits fix = base != nullptr ? pointer_fix(c, base) : (syntax::Edits){};
+        types::fail_fix(c, e->span,
+                        msg(format::push("cannot ", verb, " this place, it is behind the read-only pointer `*",
+                                         types::show(through->element), "`; take a `*mut ",
+                                         types::show(through->element), "` to write through it")),
+                        fix);
         return false;
     }
     return true;
