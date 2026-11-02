@@ -1,25 +1,25 @@
 ---
 type: design
 title: Protocol code generated from the official schemas
-description: The DAP and MCP protocol code is a build output of scripts/protocol.c, written from the schemas vendored in schemas/, never committed.
+description: The DAP and MCP protocol code is a build output of protocol/generate.smith, written from the schemas vendored in schemas/, never committed.
 tags: [protocol, generated]
 ---
 # Protocol code generated from the official schemas
 
-**The protocol code of `smith mcp` is generated, never written by hand, and never committed** (issues #22 and #466): `scripts/protocol.c` reads DAP's and MCP's
+**The protocol code of `smith mcp` is generated, never written by hand, and never committed** (issues #22 and #466): `protocol/generate.smith` reads DAP's and MCP's
 JSON Schemas, vendored in `schemas/`, and writes `.smith/protocol/{dap,mcp}.[ch]` and their tests `test_protocol_{dap,mcp}.c` on `<smith/json.h>`. The
 files are build outputs, like the libraries' headers: a step of the build graph per protocol (`build_protocol_steps` in build.c) runs the generator, and
 every compile that includes the code (smith.c, `tests/mcp_fake.c`) waits for it. `tests/protocol_test.smith` builds and runs the tests under the sanitizers.
 
 The debugger server of issue #22 (`smith mcp`) speaks two JSON protocols: DAP to `smith dap` (lldb-dap) and MCP to the agent. Neither
-is written by hand. `scripts/protocol.c` reads a protocol's JSON Schema and writes C on `<smith/json.h>`. A fresh machine needs no network for it: the
+is written by hand. `protocol/generate.smith` reads a protocol's JSON Schema and writes C on `<smith/json.h>`. A fresh machine needs no network for it: the
 schemas are in git.
 
 ## What is where
 
 | Path | What |
 | --- | --- |
-| `scripts/protocol.c` | the generator, a program of the build like `scripts/pack.c` (built by build.c from `lib/std/arena.smith`, `contract.smith`, `text.smith` and `mem.smith`, and `json.c`) |
+| `protocol/generate.smith` | the generator, a `.smith` module (`protocol::generate`) and a program of the build (built by build.c from `lib/std/arena.smith`, `contract.smith`, `text.smith` and `mem.smith`, and `json.c`) |
 | `schemas/dap/`, `schemas/mcp/` | the vendored inputs: the schema (`debugAdapterProtocol.json`, `schema.json`) and the project's `LICENSE`, byte for byte as released |
 | `runtime/protocol/protocol.h`, `protocol.c` | hand-written: the error a parse reports, the types a schema starts from (string, integer, number, boolean, any JSON), the checks the generated code shares |
 | `.smith/protocol/dap.h`, `dap.c`, `mcp.h`, `mcp.c` | generated, not in git: a struct and four functions per type; smith.c includes `dap.c` and `mcp.c` with `-I .smith/protocol -I runtime/protocol` |
