@@ -1856,7 +1856,9 @@ static Usize collect_imports(Checked *r, const ast::Module *m, Pending list[:]) 
             if (r->options.load == nullptr) continue;
             Str prefix = prefix_of_import(d);
             if (has_prefix(list, count, prefix)) continue;
-            const ast::Module *loaded = r->options.load(joined(path, ".").data);
+            const ast::Module *loaded =
+                r->options.load(msg(format::push(joined(path, ".")))
+                                    .data); // a copy: one name is a slice of the source, with no terminator
             if (loaded == nullptr) {
                 failf(r, d->span, "cannot find the module `", joined(path, "."), "`; check its path under the roots");
             } else if (count == countof(list)) {
