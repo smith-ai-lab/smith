@@ -67,6 +67,7 @@ module front::types_expr;
 
 import front::ast;
 import front::types;
+import front::types_fn;
 import std::arena;
 import std::format;
 import std::mem;
@@ -1438,6 +1439,7 @@ static void call_callee_done(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *callee = e->kind.call.callee;
     types::TypeRef ct = typ(c, callee);
     types::TypeRef signature = callable(ct);
+    types_fn::note_arguments(args);
     push(w, e, f.expected, 2);
     if (ct == invalid(c)) {
         push_arguments(w, args, nullptr);
@@ -2135,6 +2137,8 @@ static void lambda_expr(types::Checked *c, Frame f) {
     types::TypeRef signature = nullptr;
     if (expected != nullptr && expected->kind == .fn_value) {
         signature = expected->element;
+    } else if (expected != nullptr && expected->kind == .function) {
+        signature = expected; // `fn(A) -> R` of smith's own syntax: the lambda has that type (#1515)
     } else if (expected != nullptr && expected != invalid(c)) {
         types::failf(c, e->span, "a lambda has type `Fn(...)`, but `", types::show(expected),
                      "` is expected; write a value of type `", types::show(expected), "`");
@@ -2147,7 +2151,8 @@ static void lambda_expr(types::Checked *c, Frame f) {
         return;
     }
     types::TypeRef type = types::fn_value_of(&c->table, function);
-    types::set_type(c, e, type);
+    types::set_type(c, e, signature != nullptr && expected->kind == .function ? expected : type);
+    types_fn::check_lambda(c, e);
     if (hooks.lambda_body == nullptr) {
         types::failf(c, e->span, "not yet typed: a lambda body");
         return;
