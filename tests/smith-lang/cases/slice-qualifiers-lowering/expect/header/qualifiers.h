@@ -27,7 +27,9 @@ const char * data; size_t count [1]; };
 struct smith_array_restrict_u8_n {
 uint8_t * __restrict data; size_t count [1]; };
 #endif
-typedef struct {struct smith_array_const_char_n name;struct smith_array_restrict_u8_n bytes;
+typedef struct {
+struct smith_array_const_char_n name;
+struct smith_array_restrict_u8_n bytes;
 } qualifiers_Entry;
 
 #ifndef SMITH_ARRAY_const_u8_n
@@ -42,7 +44,7 @@ size_t qualifiers_total(struct smith_array_const_u8_n xs) __asm__("_qualifiers::
 struct smith_array_restrict_const_u8_n { uint8_t const * __restrict data; size_t count [1]; };
 #endif
 
-void qualifiers_copy(struct smith_array_restrict_u8_n dst,const struct smith_array_restrict_const_u8_n src) __asm__("_qualifiers::copy");
+void qualifiers_copy(struct smith_array_restrict_u8_n dst, const struct smith_array_restrict_const_u8_n src) __asm__("_qualifiers::copy");
 
 size_t qualifiers_greet() __asm__("_qualifiers::greet");
 #ifdef __cplusplus
