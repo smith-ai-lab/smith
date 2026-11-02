@@ -1,0 +1,14 @@
+(module m
+  (function f
+    (result (named Void))
+    (block
+      (while
+        (name n)
+        (block
+          (yield (name n))
+          (if
+            (name n)
+            (block
+              (yield (name n + 1))))))
+      (yield (name 2))
+      (return))))
