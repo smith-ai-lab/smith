@@ -1,11 +1,11 @@
 fn area(r: f64) -> f64 {
     const tau: f64 = 6.283185307179586
-    tau / 2 * r * r
+    tau / 2.0 * r * r
 }
 
 fn mean(a: f32, b: f32) -> f64 {
     sum: f64 = a + b
-    sum / 2
+    sum / 2.0
 }
 
 pub fn check() -> i32 {

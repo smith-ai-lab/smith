@@ -190,7 +190,7 @@ static state::Status dispatch_binary(state::Emitter *e, const ast::Expr *x, ast:
     case .greater_equal:
     case .equal:
     case .not_equal:
-        if (checked_floating(e, x->kind.binary.left)) return arith::float_comparison(e, x, hint);
+        if (x->kind == .binary && checked_floating(e, x->kind.binary.left)) return arith::float_comparison(e, x, hint);
         return control::comparison(e, x, hint);
     case .logical_and:
     case .logical_or:
@@ -269,7 +269,8 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     if (x->kind == .stmt_expr) return dispatch_stmt_expr(e, x, hint);
     if (x->kind == .floating) return arith::float_literal(e, x, hint);
     if (x->kind == .cast) {
-        if (checked_floating(e, x) || checked_floating(e, x->kind.cast.operand)) return arith::float_cast(e, x, hint);
+        const ast::Expr *operand = x->kind.cast.operand;
+        if (checked_floating(e, x) || checked_floating(e, operand)) return arith::float_cast(e, x, hint);
         return memory::cast(e, x, hint);
     }
     if (x->kind == .query) return memory::query(e, x, hint);

@@ -252,7 +252,23 @@ static c::LLVMValueRef arithmetic(state::Emitter *e, ast::BinaryOp op, state::Va
 }
 
 static state::Status float_arithmetic(state::Emitter *e, ast::BinaryOp op, state::Value left, state::Value right,
-                                      ast::Span span);
+                                      ast::Span span) {
+    c::LLVMValueRef out = nullptr;
+    if (op == .add)
+        out = c::LLVMBuildFAdd(e->builder, left.llvm, right.llvm, "");
+    else if (op == .subtract)
+        out = c::LLVMBuildFSub(e->builder, left.llvm, right.llvm, "");
+    else if (op == .multiply)
+        out = c::LLVMBuildFMul(e->builder, left.llvm, right.llvm, "");
+    else if (op == .divide)
+        out = c::LLVMBuildFDiv(e->builder, left.llvm, right.llvm, "");
+    else if (op == .remainder)
+        out = c::LLVMBuildFRem(e->builder, left.llvm, right.llvm, "");
+    else
+        return state::failf(span, "this operator on ", left.ty.name);
+    state::push_value(e, (state::Value){.llvm = out, .ty = left.ty});
+    return state::success();
+}
 
 // `left op right` with the checks, pushed as a Value of their type. `span` is the node's, for the errors.
 export state::Status apply_binary(state::Emitter *e, ast::BinaryOp op, state::Value left, state::Value right,
@@ -524,30 +540,12 @@ export Bool type_float(state::Emitter *e, Str name, state::Ty *ty) {
     return true;
 }
 
-static state::Status float_arithmetic(state::Emitter *e, ast::BinaryOp op, state::Value left, state::Value right,
-                                      ast::Span span) {
-    c::LLVMValueRef out = nullptr;
-    if (op == .add)
-        out = c::LLVMBuildFAdd(e->builder, left.llvm, right.llvm, "");
-    else if (op == .subtract)
-        out = c::LLVMBuildFSub(e->builder, left.llvm, right.llvm, "");
-    else if (op == .multiply)
-        out = c::LLVMBuildFMul(e->builder, left.llvm, right.llvm, "");
-    else if (op == .divide)
-        out = c::LLVMBuildFDiv(e->builder, left.llvm, right.llvm, "");
-    else if (op == .remainder)
-        out = c::LLVMBuildFRem(e->builder, left.llvm, right.llvm, "");
-    else
-        return state::failf(span, "this operator on ", left.ty.name);
-    state::push_value(e, (state::Value){.llvm = out, .ty = left.ty});
-    return state::success();
-}
-
 // A floating literal: the hint's type when it is floating, else the checker's type of the node, else `f64`.
 export state::Status float_literal(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
     if (x->kind != .floating) {
         return state::fail("not a floating literal", x->span);
     }
+    F64 value = x->kind.floating.value;
     state::Ty ty = {};
     if (hint.present && hint.ty.kind == .option && hint.ty.element != nullptr) hint.ty = *hint.ty.element;
     if (hint.present && hint.ty.kind == .floating) {
@@ -565,7 +563,7 @@ export state::Status float_literal(state::Emitter *e, const ast::Expr *x, state:
         }
         if (!found) type_float(e, "F64", &ty);
     }
-    state::push_value(e, (state::Value){.llvm = c::LLVMConstReal(ty.llvm, x->kind.floating.value), .ty = ty});
+    state::push_value(e, (state::Value){.llvm = c::LLVMConstReal(ty.llvm, value), .ty = ty});
     return state::success();
 }
 
@@ -632,8 +630,10 @@ static c::LLVMValueRef float_lost(state::Emitter *e, state::Value from, state::T
         least = -span / 2.0;
         beyond = span / 2.0;
     }
-    c::LLVMValueRef low = c::LLVMBuildFCmp(e->builder, c::LLVMRealOGE, from.llvm, c::LLVMConstReal(from.ty.llvm, least), "");
-    c::LLVMValueRef high = c::LLVMBuildFCmp(e->builder, c::LLVMRealOLT, from.llvm, c::LLVMConstReal(from.ty.llvm, beyond), "");
+    c::LLVMValueRef low =
+        c::LLVMBuildFCmp(e->builder, c::LLVMRealOGE, from.llvm, c::LLVMConstReal(from.ty.llvm, least), "");
+    c::LLVMValueRef high =
+        c::LLVMBuildFCmp(e->builder, c::LLVMRealOLT, from.llvm, c::LLVMConstReal(from.ty.llvm, beyond), "");
     c::LLVMValueRef fits = c::LLVMBuildAnd(e->builder, low, high, "fits");
     return c::LLVMBuildNot(e->builder, fits, "lost");
 }
@@ -687,12 +687,13 @@ export state::Status float_cast(state::Emitter *e, const ast::Expr *x, state::Hi
     if (x->kind != .cast) {
         return state::fail("not a cast", x->span);
     }
+    const ast::Expr *operand = x->kind.cast.operand;
     state::TyResult made = state::type_of_node(e, x);
     if (made == .error) {
         return {.error = made.error};
     }
     Bool checked = e->options.checked != nullptr && types::cast_checked(e->options.checked, x).needed;
     state::push_then(e, (state::Work){.then = float_cast_finish, .ty = made.ok, .flag = checked, .span = x->span});
-    state::push_eval(e, x->kind.cast.operand, state::no_hint());
+    state::push_eval(e, operand, state::no_hint());
     return state::success();
 }
