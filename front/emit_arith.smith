@@ -12,6 +12,7 @@ module front::emit_arith;
 import front::ast;
 import front::emit_debug as debug;
 import front::emit_state as state;
+import front::types;
 import std::format;
 import std::mem;
 import <llvm-c/Core.h>;
@@ -250,11 +251,15 @@ static c::LLVMValueRef arithmetic(state::Emitter *e, ast::BinaryOp op, state::Va
     return nullptr; // comparisons and `&&`, `||` are B2's
 }
 
+static state::Status float_arithmetic(state::Emitter *e, ast::BinaryOp op, state::Value left, state::Value right,
+                                      ast::Span span);
+
 // `left op right` with the checks, pushed as a Value of their type. `span` is the node's, for the errors.
 export state::Status apply_binary(state::Emitter *e, ast::BinaryOp op, state::Value left, state::Value right,
                                   ast::Span span) {
     if (!state::same_type(left.ty, right.ty))
         return state::failf(span, "operands of different types: ", left.ty.name, " and ", right.ty.name);
+    if (left.ty.kind == .floating) return float_arithmetic(e, op, left, right, span);
     if (left.ty.kind != .integer) return state::failf(span, "arithmetic on ", left.ty.name);
     c::LLVMValueRef out = arithmetic(e, op, left, right, span);
     if (out == nullptr) return state::not_emitted("comparison or logical operator", span);
@@ -286,6 +291,10 @@ export state::Status integer_literal(state::Emitter *e, const ast::Expr *x, stat
     // A literal where `?i64` is expected is an `i64`, which the site then wraps.
     if (ty.kind == .option && ty.element != nullptr) ty = *ty.element;
     U64 value = x->kind.integer.value;
+    if (ty.kind == .floating) {
+        state::push_value(e, (state::Value){.llvm = c::LLVMConstReal(ty.llvm, (F64)value), .ty = ty});
+        return state::success();
+    }
     if (ty.kind != .integer) return state::failf(x->span, "an integer literal where a ", ty.name, " is expected");
     if (!fits(ty, value)) return state::failf(x->span, "integer literal ", value, " does not fit ", ty.name);
     state::push_value(e, (state::Value){.llvm = c::LLVMConstInt(ty.llvm, value, 0), .ty = ty});
@@ -348,6 +357,12 @@ static state::Status unary_finish(state::Emitter *e, const state::Work *w) {
     state::Value operand = state::pop_value(e);
     ast::UnaryOp op = w->expr->kind.unary.op;
     state::Ty ty = operand.ty;
+    if (ty.kind == .floating && (op == .negate || op == .plus)) {
+        c::LLVMValueRef out = operand.llvm;
+        if (op == .negate) out = c::LLVMBuildFNeg(e->builder, operand.llvm, "");
+        state::push_value(e, (state::Value){.llvm = out, .ty = ty});
+        return state::success();
+    }
     if (ty.kind != .integer) {
         return state::failf(w->span, "arithmetic on ", ty.name);
     }
@@ -436,7 +451,7 @@ export state::Status binary_op(state::Emitter *e, const ast::Expr *x, state::Hin
         return state::fail("not a binary expression", x->span);
     }
     state::Hint left_hint = hint;
-    if (!left_hint.present && x->kind.binary.left->kind == .integer)
+    if (!left_hint.present && (x->kind.binary.left->kind == .integer || x->kind.binary.left->kind == .floating))
         left_hint = hint_from_name(e, x->kind.binary.right);
     state::push_then(e, (state::Work){.then = binary_middle, .expr = x, .span = x->span});
     state::push_eval(e, x->kind.binary.left, left_hint);
@@ -485,5 +500,199 @@ export state::Status assign_op(state::Emitter *e, const ast::Expr *x, state::Hin
     }
     state::push_then(e, (state::Work){.then = assign_middle, .expr = x, .span = x->span});
     state::push_place(e, x->kind.assign.target);
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Floating point (#1617): IEEE semantics, no checks. `+ - * / %` are `fadd fsub fmul fdiv frem`.
+
+// `f32` / `F32` and `f64` / `F64`: kind `floating`, `bits` 32 or 64, signed.
+export Bool type_float(state::Emitter *e, Str name, state::Ty *ty) {
+    U32 bits = 0;
+    if (state::same_text(name, "f32") || state::same_text(name, "F32"))
+        bits = 32;
+    else if (state::same_text(name, "f64") || state::same_text(name, "F64"))
+        bits = 64;
+    else
+        return false;
+    state::Ty made = {.kind = .floating, .bits = bits, .is_signed = true, .name = name};
+    if (bits == 32)
+        made.llvm = c::LLVMFloatTypeInContext(e->context);
+    else
+        made.llvm = c::LLVMDoubleTypeInContext(e->context);
+    *ty = made;
+    return true;
+}
+
+static state::Status float_arithmetic(state::Emitter *e, ast::BinaryOp op, state::Value left, state::Value right,
+                                      ast::Span span) {
+    c::LLVMValueRef out = nullptr;
+    if (op == .add)
+        out = c::LLVMBuildFAdd(e->builder, left.llvm, right.llvm, "");
+    else if (op == .subtract)
+        out = c::LLVMBuildFSub(e->builder, left.llvm, right.llvm, "");
+    else if (op == .multiply)
+        out = c::LLVMBuildFMul(e->builder, left.llvm, right.llvm, "");
+    else if (op == .divide)
+        out = c::LLVMBuildFDiv(e->builder, left.llvm, right.llvm, "");
+    else if (op == .remainder)
+        out = c::LLVMBuildFRem(e->builder, left.llvm, right.llvm, "");
+    else
+        return state::failf(span, "this operator on ", left.ty.name);
+    state::push_value(e, (state::Value){.llvm = out, .ty = left.ty});
+    return state::success();
+}
+
+// A floating literal: the hint's type when it is floating, else the checker's type of the node, else `f64`.
+export state::Status float_literal(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    if (x->kind != .floating) {
+        return state::fail("not a floating literal", x->span);
+    }
+    state::Ty ty = {};
+    if (hint.present && hint.ty.kind == .option && hint.ty.element != nullptr) hint.ty = *hint.ty.element;
+    if (hint.present && hint.ty.kind == .floating) {
+        ty = hint.ty;
+    } else {
+        Bool found = false;
+        if (e->options.checked != nullptr) {
+            state::TyResult checked = state::type_of_node(e, x);
+            if (checked == .ok && checked.ok.kind == .floating) {
+                ty = checked.ok;
+                found = true;
+            } else if (checked == .error) {
+                state::free_text(checked.error.message);
+            }
+        }
+        if (!found) type_float(e, "F64", &ty);
+    }
+    state::push_value(e, (state::Value){.llvm = c::LLVMConstReal(ty.llvm, x->kind.floating.value), .ty = ty});
+    return state::success();
+}
+
+// ---- comparisons
+
+static c::LLVMRealPredicate real_predicate(ast::BinaryOp op) {
+    if (op == .equal) return c::LLVMRealOEQ;
+    if (op == .less) return c::LLVMRealOLT;
+    if (op == .greater) return c::LLVMRealOGT;
+    if (op == .less_equal) return c::LLVMRealOLE;
+    if (op == .greater_equal) return c::LLVMRealOGE;
+    return c::LLVMRealUNE; // `!=` is true when either side is NaN, as in C
+}
+
+static state::Status float_compare_finish(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .binary) {
+        return state::fail("not a comparison", w->span);
+    }
+    state::Value right = state::pop_value(e);
+    state::Value left = state::pop_value(e);
+    if (!state::same_type(left.ty, right.ty))
+        return state::failf(w->span, "operands of different types: ", left.ty.name, " and ", right.ty.name);
+    c::LLVMValueRef out =
+        c::LLVMBuildFCmp(e->builder, real_predicate(w->expr->kind.binary.op), left.llvm, right.llvm, "");
+    state::Ty flag = {};
+    state::scalar_type(e, "bool", &flag);
+    state::push_value(e, (state::Value){.llvm = out, .ty = flag});
+    return state::success();
+}
+
+static state::Status float_compare_middle(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .binary) {
+        return state::fail("not a comparison", w->span);
+    }
+    state::Value left = state::peek_value(e);
+    state::push_then(e, (state::Work){.then = float_compare_finish, .expr = w->expr, .span = w->span});
+    state::push_eval(e, w->expr->kind.binary.right, state::hint_of(left.ty));
+    return state::success();
+}
+
+// `< > <= >= ==` are ordered `fcmp`, `!=` unordered.
+export state::Status float_comparison(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    if (x->kind != .binary) {
+        return state::fail("not a comparison", x->span);
+    }
+    const ast::Expr *left = x->kind.binary.left;
+    state::Hint left_hint = state::no_hint();
+    if (left->kind == .integer || left->kind == .floating) left_hint = hint_from_name(e, x->kind.binary.right);
+    state::push_then(e, (state::Work){.then = float_compare_middle, .expr = x, .span = x->span});
+    state::push_eval(e, left, left_hint);
+    return state::success();
+}
+
+// ---- casts
+
+// A float in `from` that `to` can hold: not NaN, `>= MIN` and `< MAX + 1`, compared as floats.
+static c::LLVMValueRef float_lost(state::Emitter *e, state::Value from, state::Ty to) {
+    F64 span = 1.0;
+    for (U32 i = 0; i < to.bits; i++)
+        span *= 2.0;
+    F64 least = 0.0;
+    F64 beyond = span;
+    if (to.is_signed) {
+        least = -span / 2.0;
+        beyond = span / 2.0;
+    }
+    c::LLVMValueRef low = c::LLVMBuildFCmp(e->builder, c::LLVMRealOGE, from.llvm, c::LLVMConstReal(from.ty.llvm, least), "");
+    c::LLVMValueRef high = c::LLVMBuildFCmp(e->builder, c::LLVMRealOLT, from.llvm, c::LLVMConstReal(from.ty.llvm, beyond), "");
+    c::LLVMValueRef fits = c::LLVMBuildAnd(e->builder, low, high, "fits");
+    return c::LLVMBuildNot(e->builder, fits, "lost");
+}
+
+// The report of a failed float-to-integer cast: the value saturated to an `i64`, signed, and the target's name.
+static void float_report(state::Emitter *e, c::LLVMValueRef lost, state::Value from, state::Ty to) {
+    U32 id = c::LLVMLookupIntrinsicID("llvm.fptosi.sat", 15);
+    c::LLVMTypeRef wide = c::LLVMInt64TypeInContext(e->context);
+    c::LLVMTypeRef types[2] = {wide, from.ty.llvm};
+    c::LLVMValueRef declaration = c::LLVMGetIntrinsicDeclaration(e->module, id, types, 2);
+    c::LLVMTypeRef type = c::LLVMIntrinsicGetType(e->context, id, types, 2);
+    c::LLVMValueRef operand[1] = {from.llvm};
+    c::LLVMValueRef saturated = c::LLVMBuildCall2(e->builder, type, declaration, operand, 1, "");
+    char *target = format::push(to.name).data;
+    c::LLVMValueRef args[3] = {saturated, c::LLVMConstInt(c::LLVMInt32TypeInContext(e->context), 1, 0),
+                               c::LLVMBuildGlobalStringPtr(e->builder, target, "type")};
+    report_if(e, lost, "smith_contract_fail_cast", args, 3);
+}
+
+static state::Status float_cast_finish(state::Emitter *e, const state::Work *w) {
+    state::Value from = state::pop_value(e);
+    state::Ty to = w->ty;
+    c::LLVMValueRef out = nullptr;
+    if (from.ty.kind == .floating && to.kind == .floating) {
+        if (to.bits > from.ty.bits)
+            out = c::LLVMBuildFPExt(e->builder, from.llvm, to.llvm, "");
+        else if (to.bits < from.ty.bits)
+            out = c::LLVMBuildFPTrunc(e->builder, from.llvm, to.llvm, "");
+        else
+            out = from.llvm;
+    } else if (from.ty.kind == .integer && to.kind == .floating) {
+        if (from.ty.is_signed)
+            out = c::LLVMBuildSIToFP(e->builder, from.llvm, to.llvm, "");
+        else
+            out = c::LLVMBuildUIToFP(e->builder, from.llvm, to.llvm, "");
+    } else if (from.ty.kind == .floating && to.kind == .integer) {
+        if (w->flag) float_report(e, float_lost(e, from, to), from, to);
+        if (to.is_signed)
+            out = c::LLVMBuildFPToSI(e->builder, from.llvm, to.llvm, "");
+        else
+            out = c::LLVMBuildFPToUI(e->builder, from.llvm, to.llvm, "");
+    } else {
+        return state::failf(w->span, "cannot cast ", from.ty.name, " to ", to.name);
+    }
+    state::push_value(e, (state::Value){.llvm = out, .ty = to});
+    return state::success();
+}
+
+// A cast with a floating operand or result. The target is the checker's type of the cast.
+export state::Status float_cast(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    if (x->kind != .cast) {
+        return state::fail("not a cast", x->span);
+    }
+    state::TyResult made = state::type_of_node(e, x);
+    if (made == .error) {
+        return {.error = made.error};
+    }
+    Bool checked = e->options.checked != nullptr && types::cast_checked(e->options.checked, x).needed;
+    state::push_then(e, (state::Work){.then = float_cast_finish, .ty = made.ok, .flag = checked, .span = x->span});
+    state::push_eval(e, x->kind.cast.operand, state::no_hint());
     return state::success();
 }
