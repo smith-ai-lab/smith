@@ -169,3 +169,23 @@ export void test_front_types_fn_stored_lambda_capturing_a_value_is_accepted() {
 export void test_front_types_fn_stored_lambda_capturing_a_pointer_parameter_is_accepted() {
     clean("fn run(p: *i32) -> i32 {\n    g: fn() -> i32 = fn() { *p }\n    g()\n}\n");
 }
+
+// One check of `source` in its own arena, which is reset (poisoned under ASan) when the check is done.
+static Usize errors_in_own_arena(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    defer arena::reset(&memory);
+    types::Checked r = check_text(source);
+    return r.error_count;
+}
+
+// The lambdas noted as arguments live in a buffer that outlives one check; each check has its own arena, freed after
+// it, so the next check must not write into the first one's buffer (use-after-poison under ASan, #1406).
+export void test_front_types_fn_two_modules_in_two_arenas_with_a_lambda_argument_each() {
+    Str source = "fn each(f: fn() -> i32) -> i32 {\n    f()\n}\nfn run() -> i32 {\n    x := 3\n    p := &x\n    each(fn() { "
+                 "*p })\n}\n";
+    test::check_equal(errors_in_own_arena(source), (Usize)0);
+    test::check_equal(errors_in_own_arena(source), (Usize)0);
+}

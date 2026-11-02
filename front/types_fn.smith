@@ -386,6 +386,9 @@ struct Arguments {
 
 static Arguments arguments;
 
+// Forgets the noted lambdas and their buffer; the arena that held it is freed after each check.
+export void reset() { arguments = (Arguments){}; }
+
 // The lambdas written as arguments of a call; they are non-escaping. Call before the arguments are typed.
 export void note_arguments(ast::ExprRef args[:]) {
     for (Usize i = 0; i < countof(args); i++) {
