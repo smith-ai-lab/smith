@@ -978,6 +978,29 @@ export void test_new_an_existing_gitignore_and_settings_are_kept() {
     scratch::expect_lacks("settings with the entry: no report", second.out, "lacks \"smith@smith\"");
 }
 
+// 11c. A .gitignore or settings file with more lines than smith new reads is an error that names the limit, not a
+// report made from part of the file (#604).
+export void test_new_a_file_past_the_line_limit_is_an_error() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Saved saved = {};
+    git_isolate(&p, true, &saved);
+    put(&p, "big_ignore/.gitignore", "x\n");
+    (void)run_in(&p, "big_ignore", "yes x | head -n 100001 >.gitignore");
+    Said ignore = smith_new(&p, "", "big_ignore", nullptr, &saved);
+    scratch::expect_contains("limit: a long .gitignore is refused", ignore.out,
+                             "too many lines in .gitignore (limit 100000 lines)");
+    put(&p, "big_settings/.claude/settings.json", "{}\n");
+    (void)run_in(&p, "big_settings", "yes x | head -n 100001 >.claude/settings.json");
+    Said settings = smith_new(&p, "", "big_settings", nullptr, &saved);
+    scratch::expect_contains("limit: ... and a long settings file", settings.out,
+                             "too many lines in .claude/settings.json (limit 100000 lines)");
+}
+
 // 13. Docs. The new project has knowledge and a skill, and smith docs and smith check hold them.
 export void test_new_the_docs_of_a_new_project() {
     scratch::Project p = scratch::make("p", nullptr);

@@ -27,7 +27,9 @@ float * data; size_t count [1]; };
 struct smith_array_char_n {
 char * data; size_t count [1]; };
 #endif
-typedef struct {struct smith_array_f32_n weights;struct smith_array_char_n name;
+typedef struct {
+struct smith_array_f32_n weights;
+struct smith_array_char_n name;
 } slices_Layer;
 
 #ifndef SMITH_ARRAY_i32_n

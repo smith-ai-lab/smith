@@ -36,8 +36,14 @@ export struct Fixed {
     Usize skipped;
 };
 
+static Bool is_insert(core::Edit e) {
+    return e.span.start == e.span.end;
+}
+
+// Two edits at one offset overlap, except an insertion beside an edit that deletes from there: the text goes in first
+// (`n` then `;` removed: `n as i32` and no `;`). Two insertions at one offset have no order, so they clash.
 static Bool overlaps(core::Edit a, core::Edit b) {
-    if (a.span.start == b.span.start) return true;
+    if (a.span.start == b.span.start) return is_insert(a) == is_insert(b);
     return a.span.start < b.span.end && b.span.start < a.span.end;
 }
 
@@ -71,7 +77,9 @@ static Fixed apply_all(Str source, core::Errors errors) {
         for (Usize j = 0; j < countof(fix); j++) {
             Usize at = countof(taken);
             taken = mem::realloc(taken, at + 1);
-            while (at > 0 && taken[at - 1].span.start > fix[j].span.start) {
+            while (at > 0 &&
+                   (taken[at - 1].span.start > fix[j].span.start || (taken[at - 1].span.start == fix[j].span.start &&
+                                                                     !is_insert(taken[at - 1]) && is_insert(fix[j])))) {
                 taken[at] = taken[at - 1];
                 at -= 1;
             }
