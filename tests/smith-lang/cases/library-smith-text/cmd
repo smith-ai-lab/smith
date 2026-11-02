@@ -1,1 +1,1 @@
--I @REPO@/.smith/include main.smith @REPO@/lib/std/text.smith @REPO@/lib/std/contract.smith @REPO@/lib/trace.c -o @OUT@/program
+-I @REPO@/.smith/include main.smith @REPO@/lib/std/text.smith @REPO@/lib/std/contract.smith @REPO@/lib/std/mem.smith @REPO@/lib/std/math.smith @REPO@/lib/std/arena.smith @REPO@/lib/handlers.c @REPO@/lib/trace.c -o @OUT@/program

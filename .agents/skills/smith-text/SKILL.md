@@ -35,6 +35,7 @@ A file read into memory is `const char text[:] = ((const char *)data)[0:size];`,
 
 - A word is a run without spaces or tabs. `text::take_line` strips a `#` comment and the spaces before it, so `#` cannot appear in a word.
 - `text::is(word, "move")` compares a word to a terminated string, exactly.
+- `text::copy(word)` copies a word into the current allocator with a NUL after the count (free it with `mem::free` on its `.data`); `text::terminated(word)` is the same copy as a `const char *`, for a C edge only. `text::os_error(code)` names a raw errno as a constant text ("unknown error" for others); a module's own error has `files::describe`, `process::describe`, `net::describe`. A program that links `std::text` also links `std::mem` (and what mem needs).
 
 ## Replays must round-trip
 
