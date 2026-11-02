@@ -28,6 +28,8 @@
 // `xs[a:b]` and `s[i]` go to emit_memory; an array that is a place, where a slice is expected, becomes `{ address, N }`
 // (`is_array_place`, aliasing the array), and an array value is stored in a slot (`convert_value`).
 //
+// ARRAYS (#1624): `[1, 2]` goes to emit_memory::array_literal, or to emit_vector::list for a vector.
+//
 // WAVE 3 (#1582 of #1428) added one stub per new area, the same way: emit_option (`?T`, `.some`, `.none`, `if let`;
 // #1584), emit_match (enumerations, `.red`, `match`; #1585), emit_value (an `if` or a block as a value), emit_iter
 // (`for x in xs`; #1586), emit_tuple and emit_lambda (the next batch). This file routes to them and nothing else will
@@ -297,7 +299,10 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
         if (x->kind.call.callee->kind == .call && checked_vector(e, x)) return vectors::construct(e, x);
         return call::call(e, x, hint);
     }
-    if (x->kind == .array_lit) return vectors::list(e, x, hint);
+    if (x->kind == .array_lit) {
+        if (hint.present && hint.ty.kind == .vector) return vectors::list(e, x, hint);
+        return memory::array_literal(e, x, hint);
+    }
     if (x->kind == .null_pointer) return memory::null_pointer(e, x, hint);
     if (x->kind == .index) return memory::index(e, x, hint);
     if (x->kind == .member) {
