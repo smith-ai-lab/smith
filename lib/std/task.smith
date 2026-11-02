@@ -993,12 +993,17 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
     void default_io([[maybe_unused]] Scheduler *self, c::SmithIoRequest *request) {
         Bool offset =
             request->operation == c::SmithIoOperation_Pread || request->operation == c::SmithIoOperation_Pwrite;
+        c::dprintf(2, "DBG io op=%d fd=%d active=%d home=%d\n", (I32)request->operation, request->fd, (I32)active,
+                   (I32)(home != nullptr));
         if (!active || home == nullptr || offset || !parkable(request->fd)) {
+            c::dprintf(2, "DBG direct\n");
             attempt(request);
             return;
         }
         while (true) { // NOLINT(smith-bounded-loop): ends when the call completes
+            c::dprintf(2, "DBG try\n");
             attempt(request);
+            c::dprintf(2, "DBG tried result=%d error=%d\n", (I32)request->result, request->error);
             Bool connecting = request->operation == c::SmithIoOperation_Connect && request->error == in_progress;
             if (request->result >= 0 || (request->error != would_block && !connecting)) return;
             if (!park_on(request->fd, waits_for_write(request->operation))) {
