@@ -280,7 +280,7 @@ Iteration in the checker; the rules are the top comment of the file.
 | `emit_match` | enumerations (an integer `Ty` of the underlying type, enumerators from 0 or as written; `emit_memory` and `emit_call` find one for `as` and parameters), `.red`, `match` over an enumeration (one `switch`, `unreachable` default) or `?T`, as statement and value | a payload enumeration, `match` over `Result`, `if let` over an enumeration | #1585 |
 | `emit_value` | an `if` with an `else` and a block used as a value: one alloca slot (the hint's type, else the join of the branches' checker types), branches convert and store, `endif` loads it; a branch that ended stores nothing; no branch reaching the end gives `unreachable` and `undef` | `for`, `while`, `if let` as a value, a `match` with no type written | #1618 (filled) |
 | `emit_tuple` | stub: tuple types, literals, `t.0`, `(q, r) := f()` are `not emitted yet` | everything | next batch |
-| `emit_lambda` | stub: `fn` types and lambdas are `not emitted yet` | everything | next batch |
+| `emit_lambda` | `fn(A) -> R` and `fn_once` types (`{ ptr code, ptr context }`), lambdas as internal functions, calls of `fn` values (#1620) | a stored lambda with captures, a function named as a value | next batch |
 | floats, slices, `str`, array literals | no route yet: `emit.smith` answers `not emitted yet: this kind of expression` | everything | none yet |
 
 - Routing in `emit.smith`: `type_of` sends `?T`, a tuple and a `fn` type to their file and a one-segment name to `match::type_enum` before records.
@@ -313,7 +313,7 @@ Iteration in the checker; the rules are the top comment of the file.
 - `p.x` through a pointer loads it and takes the pointee's field, as `->` does (#1580); `pp.x` on a pointer to a pointer is an Error. `p as usize` is `ptrtoint`, `n as *u8` is `inttoptr`, pointer-wide only.
 - Zero is initialization (K3, #1330): a local `T t;` stores the zero of `T` at the declaration; `T t = undefined;` makes the slot with no store. `auto t;` is an Error.
 - `vec(T, N)` (#1630): `T` a number type, `N` an integer literal of 1 or more; `vec(f32, 4)(1, 2, 3, 4)` or a list `[1, 2, 3, 4]` where a vector is expected; element-wise `+ - * / %` and the comparisons (a `vec(bool, N)`) between two vectors of one type or a vector and a scalar of its element; `v[i]` and `v[i] = x` (a constant index out of range is an error, a run-time one is checked). Emitted as one `<N x T>`. Not yet: signed integer lanes' arithmetic (the overflow checks), integer division, bitwise operators and unary `-` on a vector, `v += w`, swizzles, writing a lane of a `vec(bool, N)`.
-- Still not emitted: slices, unions, pointer arithmetic and comparison, function pointers.
+- `fn` values (#1620): a lambda is an internal function `<symbol>::lambda.<n>` taking its context first; a lambda written as a call argument captures locals by reference, one that captures nothing has a null context, `f(a, b)` on a `fn` local is an indirect call. Still not emitted: slices, unions, pointer arithmetic and comparison, a stored lambda with captures, a function named as a value.
 
 **Calls** (`emit_call.smith`, #1132): `f(a, b)` names a function or a prototype (a `Decl.function` with no body) of the module; a path is joined by `::` and a prototype named with `::` is its own symbol.
 - Arguments run left to right with the parameter as hint; count and types must match (an Error at the argument), after `state::convert`.
