@@ -1063,6 +1063,51 @@ static Bool null_against(types::TypeRef a, types::TypeRef b) {
     return a->kind == .null_type && is_null_target(b);
 }
 
+// The first element of the tuple `t` (nested tuples included) that `==` cannot compare, or null. A walk with an
+// explicit stack, never recursion.
+static types::TypeRef uncomparable_element(types::TypeRef t) {
+    Usize capacity = 8;
+    types::TypeRef pending[:] = mem::alloc_slice(types::TypeRef, capacity);
+    Usize top = 1;
+    pending[0] = t;
+    while (top > 0) {
+        top -= 1;
+        types::TypeRef x = pending[top];
+        if (x->kind != .tuple) {
+            if (!is_scalar(x)) return x;
+            continue;
+        }
+        while (top + countof(x->slots) > capacity) {
+            capacity *= 2;
+            pending = mem::realloc(pending, capacity);
+        }
+        for (Usize i = countof(x->slots); i > 0; i--) {
+            pending[top] = x->slots[i - 1].type;
+            top += 1;
+        }
+    }
+    return nullptr;
+}
+
+static types::TypeRef tuple_compare(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
+                                    types::TypeRef r) {
+    if (!is_equality(op)) {
+        types::failf(c, span, "`", binary_text(op), "` cannot order `", types::show(l),
+                     "`; a tuple is compared with `==` and `!=`, or compare its elements one by one");
+        return invalid(c);
+    }
+    types::TypeRef bad = uncomparable_element(l);
+    if (bad != nullptr) {
+        types::failf(c, span, "`", binary_text(op), "` cannot compare `", types::show(l), "`: its element `",
+                     types::show(bad), "` has no `==`; compare the elements that have one");
+        return invalid(c);
+    }
+    if (!same_operands(c, span, op, l, r)) {
+        return invalid(c);
+    }
+    return c->table.bool_type;
+}
+
 static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
                                    types::TypeRef r) {
     if (is_equality(op) && (null_against(l, r) || null_against(r, l))) {
@@ -1072,6 +1117,9 @@ static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::Binar
         types::failf(c, span, "`", binary_text(op),
                      "` does not compare two `Str`; compare their bytes with `mem::equal(a, b)`");
         return invalid(c);
+    }
+    if (l->kind == .tuple && r->kind == .tuple) {
+        return tuple_compare(c, span, op, l, r);
     }
     if (!is_scalar(l)) {
         types::failf(c, span, "`", binary_text(op), "` cannot compare `", types::show(l),
@@ -1710,6 +1758,18 @@ static void member_after(types::Checked *c, Frame f) {
     types::TypeRef base = typ(c, e->kind.member.base);
     if (base == invalid(c)) {
         poison(c, e);
+        return;
+    }
+    if (base->kind == .tuple && !e->kind.member.arrow) {
+        const types::Slot *element = types::member(base, name);
+        if (element == nullptr) {
+            types::failf(c, e->span, "`", types::show(base), "` has ", countof(base->slots),
+                         " elements, so there is no `.", name, "`; write an element from `.0` to `.",
+                         countof(base->slots) - 1, "`");
+            poison(c, e);
+            return;
+        }
+        finish(c, e, element->type, f.expected);
         return;
     }
     types::TypeRef record = record_of(c, e, base, e->kind.member.arrow);
@@ -2707,6 +2767,44 @@ static Bool leaf(types::Checked *c, Frame f) {
     return true;
 }
 
+// `(a, b)`: where a tuple type is expected, each element is checked against its own element type.
+static void tuple_before(Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .tuple_lit)) {
+        return;
+    }
+    ast::ExprRef items[:] = e->kind.tuple_lit.items;
+    types::TypeRef shape = nullptr;
+    if (f.expected != nullptr && f.expected->kind == .tuple && countof(f.expected->slots) == countof(items)) {
+        shape = f.expected;
+    }
+    push(w, e, f.expected, 1);
+    for (Usize i = countof(items); i > 0; i--) {
+        types::TypeRef wanted = nullptr;
+        if (shape != nullptr) {
+            wanted = shape->slots[i - 1].type;
+        }
+        push(w, items[i - 1], wanted, 0);
+    }
+}
+
+static void tuple_after(types::Checked *c, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .tuple_lit)) {
+        return;
+    }
+    ast::ExprRef items[:] = e->kind.tuple_lit.items;
+    types::TypeRef elements[:] = mem::alloc_slice(types::TypeRef, countof(items));
+    for (Usize i = 0; i < countof(items); i++) {
+        elements[i] = typ(c, items[i]);
+        if (elements[i] == invalid(c)) {
+            poison(c, e);
+            return;
+        }
+    }
+    finish(c, e, types::tuple_of(&c->table, elements), f.expected);
+}
+
 // Stage 0 of a node with children: decides what is pushed.
 static void before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
@@ -2762,7 +2860,7 @@ static void before(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .array_lit) {
         array_literal_before(c, w, f);
     } else if (e->kind == .tuple_lit) {
-        not_yet(c, e, "a tuple `(a, b)`, it waits for the tuple type (#1512)");
+        tuple_before(w, f);
     } else if (e->kind == .named_arg) {
         named_argument_alone(c, e);
     } else {
@@ -2813,6 +2911,8 @@ static void after(types::Checked *c, Work *w, Frame f) {
         cast_after(c, f);
     } else if (e->kind == .array_lit) {
         array_literal_after(c, f);
+    } else if (e->kind == .tuple_lit) {
+        tuple_after(c, f);
     } else {
         query_after(c, f);
     }
