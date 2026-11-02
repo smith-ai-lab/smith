@@ -1,0 +1,50 @@
+{
+switch (v) {
+case .a:
+ x = 1;
+ break;
+default:
+ x = 2;
+ break;
+}
+switch (w) {
+case .a:
+ return 1;
+}
+switch (u) {
+case 1:
+ x = 1;
+ break;
+}
+}
+===
+warning (no fix): `switch` is `match` in smith: write `match v { .a => x }`, one arm per line
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (no fix): `switch` is `match` in smith: write `match v { .a => x }`, one arm per line
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (no fix): `switch` is `match` in smith: write `match v { .a => x }`, one arm per line
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+---
+{
+switch (v) {
+case .a:
+ x = 1
+ break
+default:
+ x = 2
+ break
+}
+switch (w) {
+case .a:
+ return 1
+}
+switch (u) {
+case 1:
+ x = 1
+ break
+}
+}
