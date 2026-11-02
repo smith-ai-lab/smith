@@ -1,0 +1,119 @@
+f(a =)
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 5-6: expected an expression, found `)`
+left over: `)`
+
+f(a = 1
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (call (name f) (named_arg a (integer 1)))))))
+error 7-7: expected `)` to end the arguments, found the end of the file
+
+.circle(
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 8-8: expected an expression, found the end of the file
+
+.circle(r
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 9-9: expected `)` to end the payload, found the end of the file
+
+(1,
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 3-3: expected an expression, found the end of the file
+
+(1, 2
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 5-5: expected `)` to close the `(`, found the end of the file
+
+(
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 1-1: expected an expression, found the end of the file
+
+[1, 2
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 5-5: expected `]` to end the array, found the end of the file
+
+[1,
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 3-3: expected `]` to end the array, found the end of the file
+
+p.
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 2-2: expected a member name, found the end of the file
+
+x as
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 4-4: expected a type, found the end of the file
+
+x as 5
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 5-6: expected a type, found `5`
+left over: `5`
+
+fn(x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (type_value (function_type (named x)))))))
+error 4-4: expected `)` to end the parameters of the function type, found the end of the file
+
+fn[a, 1](x) { }
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 6-7: expected `]` to end the captures, found `1`
+left over: `1`
+
+fn(x) -> { }
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 9-10: expected a type, found `{`
+left over: `{`
+
+)
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 0-1: expected an expression, found `)`
+left over: `)`
+
