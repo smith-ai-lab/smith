@@ -1223,7 +1223,7 @@ void gen_constant_check(Generator *g, Sink *s, const GenField *f) {
         gen_literal(s, gen_constant_value(g, f));
         gen_emit(s, ", error)");
     } else {
-        gen_emit(s, "smith_protocol_const_integer(member, %lld, error)", (I64)g->types[f->type].constant);
+        gen_emit(s, "smith_protocol_const_integer(member, %lld, error)", (long long)g->types[f->type].constant);
     }
 }
 
@@ -1283,7 +1283,7 @@ void gen_write_member(Generator *g, Sink *s, const GenField *f) {
         gen_literal(s, gen_constant_value(g, f));
         gen_emit(s, "));\n");
     } else if (constant == 2) {
-        gen_emit(s, "%ssmith_json_write_i64(writer, %lld);\n", indent, (I64)g->types[f->type].constant);
+        gen_emit(s, "%ssmith_json_write_i64(writer, %lld);\n", indent, (long long)g->types[f->type].constant);
     } else {
         gen_emit(s, "%s%s(writer, &value->%s);\n", indent, gen_fn(g, f->type, "write"), f->ident);
     }
