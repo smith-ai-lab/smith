@@ -386,6 +386,38 @@ static Str fixed_dump(Str source) {
     return whole;
 }
 
+// ---- trailing blocks (#961): `f(x) { ... }` passes the block as the last argument.
+
+export void test_parse_stmt_trailing_blocks() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "{\n"
+                 "f(x) { a }\n"
+                 "f() { a }\n"
+                 "if ready() {\n a\n }\n"
+                 "while ready() {\n a\n }\n"
+                 "for x in items() {\n a\n }\n"
+                 "match pick() {\n .a => b\n }\n"
+                 "if (any(xs) { a }) {\n b\n }\n"
+                 "g(y)\n{\n a\n }\n"
+                 "}";
+    parse::Parser p = real_parser(source);
+    Str dump = dump_of(&p);
+    test::check_equal(countof(p.errors), 0);
+    test::check_equal(parse::at(&p, lex::end_of_file), true);
+    test::golden("tests/front/parse_stmt/trailing_blocks.txt", dump);
+}
+
+export void test_parse_stmt_capture_list_is_a_warning_with_a_fix() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::golden("tests/front/parse_stmt/trailing_captures.txt", fixed_dump("{\nf(fn[a, b](x) { x })\n}"));
+}
+
 static Str old_name(Usize which) {
     switch (which) {
     case 0:

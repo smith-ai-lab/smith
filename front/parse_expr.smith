@@ -712,7 +712,8 @@ static ast::Expr *fn_lambda(parse::Parser *p) {
     if (!fn_has_body(p)) return type_value(p);
     U32 start = parse::advance(p).span.start;
     ast::Identifier captures[:] = {};
-    if (parse::accept(p, lex::left_bracket)) {
+    if (parse::at(p, lex::left_bracket)) {
+        U32 open = parse::advance(p).span.start;
         while (parse::at(p, lex::name)) {
             lex::Token name = parse::advance(p);
             ast::Identifier capture = {.text = parse::text(p, name), .span = name.span};
@@ -721,6 +722,9 @@ static ast::Expr *fn_lambda(parse::Parser *p) {
             if (!parse::accept(p, lex::comma)) break;
         }
         if (!expect_ok(p, lex::right_bracket, "`]` to end the captures")) return nullptr;
+        ast::Span list = from_to(open, p->tokens[p->position - 1].span.end);
+        parse::warning_fix(p, list, "a lambda has no capture list in Smith: captures are inferred",
+                           with_edit(no_edits(), list, ""));
     }
     ast::Param params[:] = {};
     if (!expect_ok(p, lex::left_paren, "`(` to start the parameters")) return nullptr;
@@ -905,6 +909,7 @@ struct Stack {
     Usize value_count;
     parse::Parser *parser;
     Bump bumps[:];
+    Bool head; // a condition head: a call here takes no trailing block (parentheses and arguments lift this)
 };
 
 typedef enum {
@@ -1355,8 +1360,27 @@ static ast::Expr *argument(parse::Parser *p) {
     return make(parse::span_from(p, name.span.start), {.named_arg = {.name = parse::text(p, name), .value = value}});
 }
 
-// `f(a, b)`: the position is at the parenthesis.
-static ast::Expr *call(parse::Parser *p, ast::Expr *callee) {
+// The trailing block of a call, `f(x) { ... }`: a `{` on the line of the `)` is a lambda with no parameters, the call's
+// last argument. The position is at the `{`.
+static ast::Expr *trailing_block(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    ast::Identifier captures[:] = {};
+    ast::Param params[:] = {};
+    ast::Stmt *body = parse::statement(p);
+    if (body == nullptr) return nullptr;
+    return make(parse::span_from(p, start),
+                {.lambda = {.captures = captures, .params = params, .result = nullptr, .body = body}});
+}
+
+// Whether a trailing block follows the `)` just taken: smith's own syntax, not in a condition head, and the `{` on the
+// same line (a line break after the `)` ends the statement).
+static Bool has_trailing_block(const parse::Parser *p, Bool head) {
+    if (!p->new_syntax || head || !parse::at(p, lex::left_brace) || p->position == 0) return false;
+    return !p->tokens[p->position - 1].line_break;
+}
+
+// `f(a, b)` and `f(a) { ... }`: the position is at the parenthesis.
+static ast::Expr *call(parse::Parser *p, ast::Expr *callee, Bool head) {
     parse::advance(p);
     ast::ExprRef args[:] = {};
     while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
@@ -1366,6 +1390,11 @@ static ast::Expr *call(parse::Parser *p, ast::Expr *callee) {
         if (!parse::accept(p, lex::comma)) break;
     }
     parse::expect(p, lex::right_paren, "`)` to end the arguments");
+    if (has_trailing_block(p, head)) {
+        ast::Expr *block = trailing_block(p);
+        if (block == nullptr) return nullptr;
+        args = parse_type::with_expr(args, block);
+    }
     chain_warning(p, callee);
     return make(parse::span_from(p, callee->span.start), {.call = {.callee = callee, .args = args}});
 }
@@ -1444,7 +1473,7 @@ static Outcome postfix_step(parse::Parser *p, Stack *st) {
     ast::Expr *result = nullptr;
     switch (token.kind) {
     case lex::left_paren:
-        result = call(p, base);
+        result = call(p, base, st->head);
         break;
     case lex::left_bracket:
         result = index_or_slice(p, base);
@@ -1624,7 +1653,8 @@ static Step operand_step(parse::Parser *p, Stack *st) {
 
 // Reads an expression at the position, or records an error and gives null. The hook `parse::Hooks.expression`.
 export ast::Expr *expression(parse::Parser *p) {
-    Stack st = {.parser = p};
+    Stack st = {.parser = p, .head = p->head};
+    p->head = false;
     Bool want_operand = true;
     for (Usize i = 0; i <= countof(p->tokens); i += 1) {
         if (want_operand) {

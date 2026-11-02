@@ -657,7 +657,9 @@ static Frame open_bare(parse::Parser *p, FrameKind kind) {
         frame.pattern = read_pattern(p);
         parse::expect(p, lex::equal, "`=` after the pattern");
     }
+    p->head = true;
     if (countof(p->errors) == before) frame.condition = expression(p);
+    p->head = false;
     frame.no_body = !require_brace(p, before);
     return frame;
 }
@@ -770,7 +772,9 @@ static Frame open_for_in(parse::Parser *p) {
     if (is_tuple) parse::expect(p, lex::right_paren, "`)`");
     parse::expect(p, lex::kw_in, "`in`");
     ast::Expr *iterable = nullptr;
+    p->head = true;
     if (countof(p->errors) == before) iterable = expression(p);
+    p->head = false;
     frame.no_body = !require_brace(p, before);
     frame.init = ast::for_in(names, is_tuple, iterable, nullptr);
     return frame;
@@ -792,7 +796,9 @@ static void skip_braces(parse::Parser *p, Usize open) {
 static ast::Stmt *match_statement(parse::Parser *p) {
     U32 start = parse::advance(p).span.start;
     Usize before = countof(p->errors);
+    p->head = true;
     ast::Expr *value = expression(p);
+    p->head = false;
     Usize open = p->position;
     if (countof(p->errors) == before) {
         parse::expect(p, lex::left_brace, "`{`");
