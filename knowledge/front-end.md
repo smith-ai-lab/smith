@@ -318,6 +318,7 @@ Iteration in the checker; the rules are the top comment of the file.
 **Memory** (`emit_memory.smith`, #1133): pointer, array (`T[N]`, N a literal) and record types (`Decl.record` becomes a named struct `<module path>::<name>`); a union, bit-field or unknown record is an Error.
 - Every lvalue is a place (address plus stored type): `&x`, `*p`, `a[i]`, `s.f`, `p->f`; a read is the place plus a load; a base that is no lvalue is spilled.
 - An array's index is checked against its count (a constant index in range needs no check); a pointer's is not.
+- Array literals (#1624): `[a, b, c]` is an array value, its items converted to the element type; where a slice is expected it is stored in a fresh entry-block slot of the function and the value is `{ slot, count }`, so a literal evaluated again in a loop overwrites the same slot. `[]` is `{ null, 0 }` or `[0]T`, and an error with no type.
 - `(Point){.x = 1}` and `{0, 0}` fill a zeroed temporary; `null` takes the expected pointer type; `sizeof`, `alignof` and `countof` read the target data, never the host.
 - A file-scope variable is a global with a constant initializer, read and assigned by its bare name (`memory::is_global_name`). `emit::module` calls `memory::release`.
 - Checked casts (K2, #1329): `Options.checked` is the checker's `types::Checked` (null: no cast is checked). `cast` asks `types::cast_checked(...).needed`, then converts, converts back and compares.
