@@ -81,6 +81,7 @@ export void test_front_types_show_writes_the_types_as_a_user_does() {
     test::check_condition(says(types::show(types::fn_value_of(&t, f)), "Fn(Bool (I32, I32))"));
     test::check_condition(says(types::show(types::option_of(&t, int32)), "Option(I32)"));
     test::check_condition(says(types::show(types::result_of(&t, int32, t.text)), "Result(I32, Str)"));
+    test::check_condition(says(types::show(types::stream_of(&t, int32)), "stream::Stream(I32)"));
     test::check_condition(says(types::show(t.invalid), "<error>"));
 }
 
@@ -224,6 +225,12 @@ export void test_front_types_resolve_builds_function_and_applied_types() {
     test::check_condition(says(types::show(types::resolve(&r, fn)), "Fn(Bool (I32, I32))"));
     ast::TypeExpr *option = applied("Option", ast::named("I32"));
     test::check_condition(types::resolve(&r, option) == types::option_of(&r.table, types::builtin(&r.table, "I32")));
+    ast::TypeExpr *stream = applied("stream::Stream", ast::named("I32"));
+    types::TypeRef i32 = types::builtin(&r.table, "I32");
+    test::check_condition(types::resolve(&r, stream) == types::stream_of(&r.table, i32));
+    test::check_condition(types::resolve(&r, stream) ==
+                          types::resolve(&r, applied("stream::Stream", ast::named("I32"))));
+    test::check_condition(types::resolve(&r, stream)->kind == .stream);
     ast::TypeExpr *bad = applied("Fn", ast::named("I32"));
     test::check_condition(types::resolve(&r, bad) == r.table.invalid);
     expect(r.error_count, 1);
