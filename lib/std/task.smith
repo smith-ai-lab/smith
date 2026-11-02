@@ -875,6 +875,7 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
     void attempt(c::SmithIoRequest *request) {
         contract::trusted(); // the request names raw buffers
         c::SmithHandlers *previous = c::smith_handlers_set_table(&empty_handlers);
+        c::alarm(20);
         *errno_location() = 0;
         Isize result = -1;
         // NOLINTBEGIN(smith-effects): the system's descriptors are this module's edge
@@ -900,6 +901,7 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
             result = c::connect(request->fd, request->peer, request->peer_length);
         }
         // NOLINTEND(smith-effects)
+        c::alarm(0);
         request->result = result;
         request->error = *errno_location();
         c::smith_handlers_set_table(previous);
