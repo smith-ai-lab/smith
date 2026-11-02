@@ -1169,6 +1169,28 @@ static const ast::TypeExpr *child(const ast::TypeExpr *node, Usize i) {
     return nullptr;
 }
 
+// `typeof(T)` is `T`; `typeof(x)` is the type of the variable or parameter `x` that is in scope. Another expression is
+// typed with the bodies, which this file cannot reach, so it is reported.
+static TypeRef type_of_operand(Checked *r, const ast::TypeExpr *node) {
+    if (!(node->kind == .type_of)) return r->table.invalid;
+    const ast::Expr *operand = node->kind.type_of.operand;
+    if (operand->kind == .type_value) {
+        // (no recursion: only a named type, as `typeof(i32)`, is read here)
+        const ast::TypeExpr *given = operand->kind.type_value.type;
+        if (given->kind == .named) return resolve_name(r, given->span, given->kind.named.path);
+        failf(r, node->span, "not yet typed: `typeof` of a type that is not a plain name; write the type itself");
+        return r->table.invalid;
+    }
+    if (operand->kind == .name && countof(operand->kind.name.path.segments) == 1) {
+        const Symbol *found = lookup(&r->scopes, operand->kind.name.path.segments[0].text);
+        if (found != nullptr && found->kind == .variable) return found->type;
+        return resolve_name(r, operand->span, operand->kind.name.path); // a type written as a name; else unknown
+    }
+    failf(r, node->span,
+          "not yet typed: `typeof` of an expression that is not a name; write `typeof(x)` of a variable");
+    return r->table.invalid;
+}
+
 static TypeRef leaf_type(Checked *r, const ast::TypeExpr *node) {
     if (node->kind == .named) {
         ast::Path named = node->kind.named.path;
@@ -1176,7 +1198,7 @@ static TypeRef leaf_type(Checked *r, const ast::TypeExpr *node) {
     }
     if (node->kind == .auto_type) return r->table.automatic;
     if (node->kind == .type_of) {
-        failf(r, node->span, "not yet typed: typeof");
+        return type_of_operand(r, node);
     } else if (node->kind == .unsupported_c) {
         failf(r, node->span, "the C type `", node->kind.unsupported_c.spelling,
               "` has no smith type; use a fixed-size type such as `F64` or `I64`");
@@ -1515,6 +1537,7 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
                              const ast::TypeExpr *result_type, Bool variadic) {
     Usize n = countof(list);
     Slot params[:] = mem::alloc_slice(Slot, n);
+    push_scope(&r->scopes); // the parameters, for a `typeof(a)` after them
     for (Usize i = 0; i < n; i++) {
         const ast::Param *p = &list[i];
         params[i].name = p->name;
@@ -1543,6 +1566,7 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
                       "type such as `i32`, or drop `pub`");
             }
         }
+        declare(&r->scopes, (Symbol){.name = p->name, .kind = .variable, .type = params[i].type});
     }
     TypeRef result = r->table.void_type;
     if (result_type != nullptr && !is_type_name(result_type)) {
@@ -1550,6 +1574,7 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
         result = resolve(r, result_type); // (`Type`: a type function)
         r->new_syntax = false;
     }
+    pop_scope(&r->scopes);
     TypeRef type = function_of(&r->table, params, result, variadic);
     Symbol symbol = {.name = name, .kind = .function_symbol, .type = type, .decl = d, .exported = d->exported};
     declare_in_module(r, symbol, d->span);

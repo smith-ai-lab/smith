@@ -173,6 +173,7 @@ The types of the front end and the checker's entry point; the API is the top com
 - Records and enumerations are declared first, then typedefs, then fields, signatures and variables, so use before declaration works for records only.
 - `types::check(module, options)` returns a `Checked`: the table, the scope, the errors and a side table of expression types (`set_type`, `type_of`), not a field of the ast.
 - `options.bodies` is the hook that checks function bodies (`types_decl` fills it). A construct not typed is reported as `not yet typed: <kind>`.
+- `typeof` (#1747): `typeof(x)` is the type of the parameter or variable `x` in scope, and a function's parameters are in scope for the ones after them and for its result (`fn larger(a: num, b: typeof(a)) -> typeof(a)`); `typeof(T)` is `T` for a plain type name. Any other operand is `not yet typed` (types.smith cannot reach the expression checker, and has no recursion).
 - Tuples (#1557): the kind `tuple` is interned by its elements (`tuple_of`), shown `(I32, Bool)`, its slots named `0`, `1`, so `t.0` is a `member`.
 - `stream::Stream(T)` (#1613) is the type kind `Kind.stream`, interned by `types::stream_of`, shown `stream::Stream(i32)`, one pointer in layout.
 - Smith's own syntax (#1512, C5): `Checked.new_syntax` is set around types written there (`Param.is_new`, `variable.is_new`, `FieldDecl.is_new`).

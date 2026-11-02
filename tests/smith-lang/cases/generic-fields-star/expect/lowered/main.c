@@ -1,7 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-typedef struct {struct smith_array_char_ptr_n {
+typedef struct {
+struct smith_array_char_ptr_n {
 char * * data; __SIZE_TYPE__ count [1]; }names;
 __INT32_TYPE__ n;
 } main_Table;
