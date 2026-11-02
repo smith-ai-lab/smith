@@ -10,6 +10,9 @@
 // does not do for the sources under .smith/front/.
 int32_t front_compile_run(const char *const *sources, const char *const *outputs, size_t count, const char *triple);
 
+// front::compile's header entry (`front_header_run`), declared by hand for the same reason.
+int32_t front_header_run(const char *source, const char *output, const char *triple);
+
 // front::parser's fix entry (front/parser.smith, `front_parser_fix_run`), declared by hand for the same reason.
 int32_t front_parser_fix_run(const char *const *paths, size_t count);
 
@@ -55,6 +58,25 @@ static bool smith_front_requested(int count, char **args) {
     return requested;
 }
 
+// Whether `--smith-header` is among the arguments: the new front end writes a header instead of an object (#1621).
+static bool smith_front_header_requested(int count, char **args) {
+    for (int i = 0; i < count; i++) { // bounded by count
+        if (strcmp(args[i], "--smith-header") == 0) return true;
+    }
+    return false;
+}
+
+// `--front-end=new --smith-header src.smith -o out.h [--target=T]`: exactly one source and one `-o`. Returns 0 (nothing
+// is left for clang) or -1 when the header was not written.
+static int smith_front_header(int count, char **args, size_t sources, const char *output, const char *triple) {
+    int outputs = 0;
+    for (int i = 0; i < count; i++) // bounded by count
+        outputs += strcmp(args[i], "-o") == 0 ? 1 : 0;
+    if (sources != 1 || outputs != 1 || output == nullptr)
+        smith_die(smith_exit_usage, "usage: smith cc --front-end=new --smith-header SOURCE.smith -o OUTPUT.h", nullptr);
+    return front_header_run(smith_front_sources[0], output, triple) == 0 ? 0 : -1;
+}
+
 // Compiles the `.smith` files among `args` (argv[first ..]) with the front end and rewrites the arguments for clang in
 // smith_front_arguments (argv[0 .. first) first): returns their number, or -1 when a file did not compile (its
 // diagnostics are printed) and 0 when nothing is left for clang to do.
@@ -75,6 +97,7 @@ static int smith_front_rewrite(char **argv, int first, int count, char **args) {
             smith_front_sources[sources++] = args[i];
         }
     }
+    if (smith_front_header_requested(count, args)) return smith_front_header(count, args, sources, output, triple);
     bool single = compile_only && sources == 1;
     for (size_t i = 0; i < sources; i++) { // bounded by the arguments
         smith_front_object_name(smith_front_sources[i], single ? output : nullptr, compile_only, i);
