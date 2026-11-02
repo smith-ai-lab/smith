@@ -1064,6 +1064,7 @@ void gen_mark_ambiguous(Generator *g) {
 // Writes v in decimal into out (at least 21 bytes) with no printf: I64 is long on Linux and long long on macOS, so no
 // one format fits both.
 void gen_decimal(char out[:], I64 v) {
+    contract::trusted(); // the digit loop has no bound the prover sees
     char digits[20];
     U64 u = v < 0 ? 0 - (U64)v : (U64)v;
     Usize n = 0;
