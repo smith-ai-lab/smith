@@ -36,6 +36,7 @@ check() {
   for p in $(gh api "repos/$R/pulls?state=open&per_page=50" --jq '.[]|select(.updated_at|fromdateiso8601<now-3600)|.number' 2>/dev/null); do
     sha=$(gh api repos/$R/pulls/$p --jq .head.sha 2>/dev/null)
     [ "$(gh api repos/$R/commits/$sha/check-runs --jq '[.check_runs[]|select(.name=="ci")|.conclusion]|first' 2>/dev/null)" = failure ] && seen "pr$p" && echo "PR #$p red and untouched for an hour"
+    [ "$(gh api repos/$R/pulls/$p --jq .mergeable 2>/dev/null)" = false ] && seen "cf$p" && echo "PR #$p has a merge conflict and is untouched for an hour"
   done
   for p in $(gh api "repos/$R/pulls?state=open&per_page=50" --jq '.[]|select(.auto_merge==null and (.updated_at|fromdateiso8601<now-1800))|.number' 2>/dev/null); do
     q=$(gh api "repos/$R/issues/$p/timeline?per_page=100" --jq '[.[]|select(.event=="added_to_merge_queue" or .event=="removed_from_merge_queue")|.event]|last // "none"' 2>/dev/null)
@@ -57,5 +58,6 @@ done
 - **Everything a blocked ticket waits for is closed:** remove `blocked` (the "Waits for #N" lines in its body and comments).
 - **Blocked with no Waits-for line:** nothing will ever unblock it. Add the line, or remove `blocked`. Skipped: tickets labelled `later`, and tickets blocked "until the lead splits" them (splitting is the lead's own queue).
 - **A green PR not in the merge queue** (never added, or `removed_from_merge_queue` last in its timeline): GitHub ignores auto-merge on a PR that is already green, and the queue drops a PR whose queue run fails. Merge main into it and turn auto-merge on while CI runs (#1522 sat green for 90 minutes).
+- **A PR with a merge conflict, untouched for an hour:** release its ticket the same way, saying to merge main in and resolve it (#1562 sat conflicted for four hours after the queue dropped it).
 - **A red PR untouched for an hour:** its runner has ended. Release its ticket with the failing test named, so the next runner fixes that PR (smith-dev-runner step 1).
 - **Claim age** is the latest `labeled` event for `claimed` in `issues/N/events`, not `updated_at`, which every comment moves. The merge queue has no REST listing: "not moved" means no new commit on main for an hour while pull requests are open.
