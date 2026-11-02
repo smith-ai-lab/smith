@@ -99,7 +99,7 @@ static const char *smith_make_command_list(const SmithMakeNode *node, const Smit
         return smith_make_list_all(&argv);
     }
     const char *script = smith_make_script(node, info);
-    return smith_make_format("(const char *[]){\"sh\", \"-c\", %s, nullptr}",
+    return smith_make_format("(const char *[_]){\"sh\", \"-c\", %s, nullptr}",
                              smith_make_render(script, strlen(script)));
 }
 
@@ -117,7 +117,7 @@ static void smith_make_emit_inputs(const SmithMakeNode *node, const SmithMakeInf
 static void smith_make_emit_step(const SmithMakeNode *node, const SmithMakeInfo *info) {
     SmithMakeBuffer *out = SMITH_MAKE_BODY;
     smith_make_comment(node, info->note);
-    smith_make_put_format(out, "    SmithStep %s = {\n", info->c_name);
+    smith_make_put_format(out, "    build::Step %s = {\n", info->c_name);
     smith_make_put_format(out, "        .command = %s,\n", smith_make_command_list(node, info));
     smith_make_emit_inputs(node, info);
     if (info->kind == SmithMakeKind_Step) {
@@ -129,9 +129,9 @@ static void smith_make_emit_step(const SmithMakeNode *node, const SmithMakeInfo 
     smith_make_put_text(out, "    };\n");
     const char *call =
         info->kind == SmithMakeKind_Task
-            ? smith_make_format("smith_task(b, %s, &%s);", smith_make_literal(info->emit_name, strlen(info->emit_name)),
-                                info->c_name)
-            : smith_make_format("smith_step(b, &%s);", info->c_name);
+            ? smith_make_format("build::task(b, %s, &%s);",
+                                smith_make_literal(info->emit_name, strlen(info->emit_name)), info->c_name)
+            : smith_make_format("build::step(b, &%s);", info->c_name);
     if (node->guard != nullptr)
         smith_make_put_format(out, "    if (%s) {\n        %s\n    }\n", node->guard, call);
     else
@@ -144,7 +144,7 @@ static void smith_make_emit_alias(const SmithMakeNode *node, const SmithMakeInfo
     const char **targets = smith_make_inputs(info->prerequisites, info->prerequisite_count, &count);
     smith_make_comment(node, info->note);
     if (count == 0) return; // a target that groups nothing
-    smith_make_put_format(out, "    smith_alias(b, %s, %s);\n",
+    smith_make_put_format(out, "    build::alias(b, %s, %s);\n",
                           smith_make_literal(info->emit_name, strlen(info->emit_name)),
                           smith_make_names(targets, count));
 }
@@ -170,10 +170,10 @@ static void smith_make_emit_object(const SmithMakeNode *node, const SmithMakeInf
     for (size_t i = 0; i < order_count; i++)
         implicit[implicit_count++] = order[i];
     const char *note = info->note;
-    if (cc.dropped_dependency_flags) note = "(-MMD and -MP are dropped: smith_object writes the depfile itself)";
-    if (order_count > 0) note = "(its order-only prerequisites are implicit inputs: smith_object has no other kind)";
+    if (cc.dropped_dependency_flags) note = "(-MMD and -MP are dropped: build::object writes the depfile itself)";
+    if (order_count > 0) note = "(its order-only prerequisites are implicit inputs: build::object has no other kind)";
     smith_make_comment(node, note);
-    smith_make_put_decl(out, "SmithObject", info->c_name, false);
+    smith_make_put_decl(out, "build::Object", info->c_name, false);
     smith_make_put_text(out, "{\n");
     smith_make_put_format(out, "        .compiler = \"%s\",\n", cc.compiler);
     smith_make_put_format(out, "        .source = %s,\n", smith_make_render(source, strlen(source)));
@@ -181,7 +181,7 @@ static void smith_make_emit_object(const SmithMakeNode *node, const SmithMakeInf
     if (cc.other_count > 0)
         smith_make_put_format(out, "        .flags = %s,\n", smith_make_list(&argv, flags, cc.other_count));
     smith_make_field_list("implicit_inputs", implicit, implicit_count);
-    smith_make_put_format(out, "    };\n    smith_object(b, &%s);\n", info->c_name);
+    smith_make_put_format(out, "    };\n    build::object(b, &%s);\n", info->c_name);
 }
 
 static void smith_make_emit_program(const SmithMakeNode *node, const SmithMakeInfo *info) {
@@ -201,12 +201,12 @@ static void smith_make_emit_program(const SmithMakeNode *node, const SmithMakeIn
             after[after_count++] = cc.others[i];
     }
     smith_make_comment(node, info->note);
-    smith_make_put_format(out, "    SmithProgram %s = {\n", info->c_name);
+    smith_make_put_format(out, "    build::Program %s = {\n", info->c_name);
     smith_make_put_format(out, "        .linker = \"%s\",\n", cc.compiler);
     smith_make_put_format(out, "        .output = %s,\n", smith_make_render(node->name, strlen(node->name)));
     if (before_count > 0)
         smith_make_put_format(out, "        .flags = %s,\n", smith_make_list(&argv, before, before_count));
-    smith_make_put_text(out, "        .objects = (const SmithObject *const[]){");
+    smith_make_put_text(out, "        .objects = (const build::Object *const[_]){");
     for (size_t i = 0; i < cc.object_count; i++) {
         const SmithMakeNode *object = smith_make_node_find(argv.args[cc.objects[i]].text);
         smith_make_put_format(out, "&%s, ", smith_make_info_of(object)->c_name);
@@ -214,7 +214,7 @@ static void smith_make_emit_program(const SmithMakeNode *node, const SmithMakeIn
     smith_make_put_text(out, "nullptr},\n");
     if (after_count > 0)
         smith_make_put_format(out, "        .libraries = %s,\n", smith_make_list(&argv, after, after_count));
-    smith_make_put_format(out, "    };\n    smith_program(b, &%s);\n", info->c_name);
+    smith_make_put_format(out, "    };\n    build::program(b, &%s);\n", info->c_name);
 }
 
 static void smith_make_emit_node(const SmithMakeNode *node, const SmithMakeInfo *info) {

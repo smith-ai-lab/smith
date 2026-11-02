@@ -86,7 +86,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [Failure reports are read from the call stack, and a test's signature says what it touches](failure-reports-and-tests.md): A failing check prints frame addresses that smith symbolize turns into the failing line, so checks and contracts are plain functions, and a test's parameters decide its io.
 - [Known gaps](known-gaps.md): A response file is opaque to .metal routing and Apple's metal output is not reproducible.
 - [What loads a Mac that builds with smith, and what a test may not depend on](machine-load.md): Spotlight indexes only a non-hidden build/ folder, Gatekeeper assesses each new executable once, and a test's limits must count CPU time, never wall time.
-- [Translating a Makefile](makefile-translation.md): smith build --dump-config reads GNU make's common subset and writes a build.c in the low-level API, reporting what it cannot read.
+- [Translating a Makefile](makefile-translation.md): smith build --dump-config reads GNU make's common subset and writes a build.smith in the low-level API, reporting what it cannot read.
 - [A module in one page](module-in-one-page.md): What a module rejects, what it offers instead, and the memory, error and concurrency models, with the status of each row (built or planned); the design of a module as a whole, kept current by the lead.
 - [Packages, smith_package and smith fetch](packages.md): A package is a URL and a hash fetched by smith's own HTTPS client into the cache, with no registry and no lock file.
 - [Protocol code generated from the official schemas](protocol-generation.md): The DAP and MCP protocol code is a build output of scripts/protocol.c, written from the schemas vendored in schemas/, never committed.

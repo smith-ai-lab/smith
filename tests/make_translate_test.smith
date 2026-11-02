@@ -1,5 +1,5 @@
-// The translation of a Makefile into a build.c (issue #44, runtime/make*.c) as a function, in process (issue #646): a
-// folder with a Makefile in, the build.c text and the report of what was not translated out, through
+// The translation of a Makefile into a build.smith (issue #44, runtime/make*.c) as a function, in process (issue #646):
+// a folder with a Makefile in, the build.smith text and the report of what was not translated out, through
 // `smith_core_make_translate` (include/smith_core.h, smith.c compiled as a library by tests/units/build.c). No process
 // starts but scratch::make's: the fixtures of tests/build_fixtures/make_NN are copied into a scratch folder, the files
 // a case adds are written through std::files, and the text is checked for what it says. What needs a real make, a
@@ -24,7 +24,7 @@ constexpr Usize build_capacity = 1U << 20;
 constexpr Usize report_capacity = 1U << 16;
 
 typedef struct {
-    const char *build;  // the build.c
+    const char *build;  // the build.smith
     const char *report; // standard error of `smith build --dump-config`
 } Translation;
 
@@ -114,7 +114,7 @@ export void test_variables() {
     main_c(folder);
     Translation t = translate(folder);
     has("variables: the flags of the compile are written out", &t, "\"-DR1=\\\"2\\\"\"");
-    has("variables: a command-line variable is an option", &t, "smith_option_value(b, \"UNDEFINED_VARIABLE\"");
+    has("variables: a command-line variable is an option", &t, "build::option_value(b, \"UNDEFINED_VARIABLE\"");
     has("variables: the option has the Makefile's line", &t, "Makefile:");
     const Define table[_] = {{"R1", "2"}, {"R2", "1"}, {"R7", "2y"}, {"R8", "2-1"}, {"R9", "j"}, {"R10", "changed"}};
     defines("variables: the value make computes", &t, table, countof(table));
@@ -155,9 +155,9 @@ export void test_rules() {
     write(folder, "a.in", "one\n");
     write(folder, "b.in", "two\n");
     Translation t = translate(folder);
-    has("rules: a pattern rule's compile is a smith_object", &t, "smith_object(b, &object_1);");
-    has("rules: a link is a smith_program", &t, "smith_program(b, &program_1);");
-    has("rules: another recipe is a smith_step", &t, "smith_step(b, &step_");
+    has("rules: a pattern rule's compile is a build::object", &t, "build::object(b, &object_1);");
+    has("rules: a link is a build::program", &t, "build::program(b, &program_1);");
+    has("rules: another recipe is a build::step", &t, "build::step(b, &step_");
     has("rules: each block says where it came from", &t, "// Makefile:");
 }
 
@@ -185,17 +185,19 @@ export void test_phony_targets_and_the_default_goal() {
     const char *folder = p.dir;
     main_c(folder);
     Translation t = translate(folder);
-    has("phony: the first target is the default", &t, "smith_default(b, (const char *[]){\"prog\", nullptr});");
+    has("phony: the first target is the default", &t,
+        "build::default_targets(b, (const char *[_]){\"prog\", nullptr});");
     has("phony: clean is dropped, with the reason", &t, "`clean` is dropped");
-    has("phony: a verb's name becomes make-test, which smith test runs", &t, "smith_task(b, \"make-test\", &");
+    has("phony: a verb's name becomes make-test, which smith test runs", &t, "build::task(b, \"make-test\", &");
     has("phony: and it is one of the tests", &t, ".test = true,");
     has("phony: run is smith run", &t, "`run` is `smith run`");
-    has("phony: check is an alias of another name", &t, "smith_alias(b, \"make-check\", ");
-    has("phony: another phony target is a task", &t, "smith_task(b, \"extra\", &");
-    lacks("phony: no task named after a verb", &t, "smith_task(b, \"test\"");
+    has("phony: check is an alias of another name", &t, "build::alias(b, \"make-check\", ");
+    has("phony: another phony target is a task", &t, "build::task(b, \"extra\", &");
+    lacks("phony: no task named after a verb", &t, "build::task(b, \"test\"");
     copy_file(join(folder, "Makefile.default"), join(folder, "Makefile"));
     Translation other = translate(folder);
-    has(".DEFAULT_GOAL names the default", &other, "smith_default(b, (const char *[]){\"second\", nullptr});");
+    has(".DEFAULT_GOAL names the default", &other,
+        "build::default_targets(b, (const char *[_]){\"second\", nullptr});");
 }
 
 // 6. include and -include.
@@ -246,9 +248,9 @@ export void test_platform() {
     const char *folder = p.dir;
     main_c(folder);
     Translation t = translate(folder);
-    has("platform: Darwin is a test of b->os", &t, "strcmp(b->os, \"Darwin\") == 0");
-    has("platform: and Linux", &t, "strcmp(b->os, \"Linux\") == 0");
-    has("platform: OS == Windows_NT is a test of b->os too", &t, "strcmp(b->os, \"Windows_NT\") == 0");
+    has("platform: Darwin is a test of b->os", &t, "c::strcmp(b->os, \"Darwin\") == 0");
+    has("platform: and Linux", &t, "c::strcmp(b->os, \"Linux\") == 0");
+    has("platform: OS == Windows_NT is a test of b->os too", &t, "c::strcmp(b->os, \"Windows_NT\") == 0");
     has("platform: the architecture is b->arch", &t, "b->arch");
     scratch::expect_text("platform: a test of the platform is not reported as unsupported", "", t.report);
 }
@@ -281,9 +283,9 @@ export void test_built_in_rules() {
     write(folder, "prog.c", "int helper(void);\nint main(void) { return helper(); }\n");
     write(folder, "helper.c", "int helper(void) { return 1; }\n");
     Translation t = translate(folder);
-    has("built-in rules: the compile is a smith_object", &t, "smith_object(b, &object_1);");
+    has("built-in rules: the compile is a build::object", &t, "build::object(b, &object_1);");
     has("built-in rules: with the CFLAGS", &t, "\"-O1\"");
-    has("built-in rules: the link is a smith_program", &t, "smith_program(b, &program_1);");
+    has("built-in rules: the link is a build::program", &t, "build::program(b, &program_1);");
     has("built-in rules: with the value make computes", &t, "-DR1=\\\"built-in\\\"");
 }
 
@@ -300,7 +302,7 @@ export void test_archive() {
     write(folder, "lib.c", "const char *name(void) { return \"lib\"; }\n");
     Translation t = translate(folder);
     has("archive: ar is a step", &t, "\"ar\", \"rcs\"");
-    has("archive: the library of the link", &t, ".libraries = (const char *[]){\"libx.a\", nullptr}");
+    has("archive: the library of the link", &t, ".libraries = (const char *[_]){\"libx.a\", nullptr}");
     has("archive: with the value make computes", &t, "-DR1=\\\"archive\\\"");
 }
 
@@ -346,7 +348,7 @@ export void test_what_is_outside_the_subset_is_reported() {
                              "Makefile:11: not translated: $(shell echo frozen) was run now and is frozen");
     scratch::expect_contains("reported: eval in a recipe", t.report,
                              "Makefile:10: not translated: $(eval) in a recipe is not supported");
-    has("reported: the build.c says so too", &t, "// NOT TRANSLATED");
+    has("reported: the build.smith says so too", &t, "// NOT TRANSLATED");
     has("reported: with the line", &t, "//   Makefile:1: VPATH is not supported");
 }
 
@@ -363,12 +365,12 @@ export void test_readable_names() {
     write(folder, "second.c", "int second_main(void) { return 0; }\n");
     Translation t = translate(folder);
     has("readable: a flags variable is an array with the Makefile's name", &t, "const char *const *build_warn =");
-    has("readable: and the other uses it", &t, "smith_cat(b, build_warn, ");
+    has("readable: and the other uses it", &t, "build::cat(b, build_warn, ");
     has("readable: the compiler is smith-cc", &t, ".compiler = \"smith-cc\"");
-    has("readable: the header names the Makefile", &t, "// build.c, translated from Makefile");
+    has("readable: the header names the Makefile", &t, "// build.smith, translated from Makefile");
 }
 
-// 15. A rule under a test of the platform is a step that build.c declares only there; two that differ are reported.
+// 15. A rule under a test of the platform is a step that build.smith declares only there; two that differ are reported.
 export void test_a_rule_under_a_test_of_the_platform() {
     scratch::Project p = project("p", "make_15");
     defer scratch::clean(&p);
@@ -378,7 +380,7 @@ export void test_a_rule_under_a_test_of_the_platform() {
     defer mem::set_allocator(outside);
     const char *folder = p.dir;
     Translation t = translate(folder);
-    has("guarded rule: the step is declared under the test", &t, "if ((strcmp(b->os, \"NotAnOs\") != 0)) {");
+    has("guarded rule: the step is declared under the test", &t, "if ((c::strcmp(b->os, \"NotAnOs\") != 0)) {");
     scratch::expect_contains("guarded rule: two recipes under different tests are reported", t.report,
                              "other.txt has recipes under different tests");
 }
@@ -419,8 +421,8 @@ export void test_which_makefile() {
     has("files: otherwise Makefile", &other, "\"a\"");
 }
 
-// 19. A Makefile too big for one function of 70 lines: build.c is a function for each run of targets, the variables are
-// statics.
+// 19. A Makefile too big for one function of 70 lines: build.smith is a function for each run of targets, the variables
+// are statics.
 export void test_a_makefile_too_big_for_one_function() {
     scratch::Project p = project("p", nullptr);
     defer scratch::clean(&p);
@@ -442,8 +444,8 @@ export void test_a_makefile_too_big_for_one_function() {
     write(folder, "Makefile", makefile);
     Translation t = translate(folder);
     has("split: the variables are statics", &t, "static const char *const *build_data;");
-    has("split: a long list is written in pieces", &t, "build_data = smith_cat(b, build_data,");
-    has("split: a function for each run of targets", &t, "static void part_2(SmithBuild *b) {");
+    has("split: a long list is written in pieces", &t, "build_data = build::cat(b, build_data,");
+    has("split: a function for each run of targets", &t, "static void part_2(build::Build *b) {");
     has("split: build() calls them", &t, "    part_1(b);");
 }
 
@@ -460,7 +462,7 @@ export void test_a_translation_does_not_remember_the_last() {
     main_c(folder);
     Translation first = translate(folder);
     Translation again = translate(folder);
-    scratch::expect_text("twice: the same build.c", first.build, again.build);
+    scratch::expect_text("twice: the same build.smith", first.build, again.build);
     scratch::expect_text("twice: and the same report", first.report, again.report);
     scratch::Project q = project("q", "make_02");
     defer scratch::clean(&q);

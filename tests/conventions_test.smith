@@ -310,7 +310,7 @@ export void test_conventions_error_a_makefile_and_no_main() {
     scratch::expect_contains("error: ... says the Makefile is the build", run.err,
                              "smith: this folder has a Makefile and no build.c or build.smith");
     scratch::expect_contains("error: ... and how to translate it", run.err,
-                             "Translate it with `smith build --dump-config > build.c`");
+                             "Translate it with `smith build --dump-config > build.smith`");
     scratch::expect_contains("error: ... or to build by convention", run.err, "delete it to build by convention");
     scratch::expect_text("error: ... and guesses nothing", "no", yes_no(scratch::exists(&p, ".smith/program")));
 }
