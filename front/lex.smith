@@ -723,10 +723,29 @@ static Result(Scanned, LexError) scan_punctuator(Str s, Usize i) {
     return {.error = error_at(i, i + 1, "this byte starts no token")};
 }
 
+// A `.` at `dot` that follows a value (a name, `)`, `]` or a tuple index): in smith's own syntax `t.0` and `t.0.1` read
+// a tuple's element, so the digits after it are an index and not a floating constant.
+static Bool after_value(Str s, Usize dot) {
+    if (dot == 0) return false;
+    char before = s[dot - 1];
+    return is_identifier_part(before) || before == ')' || before == ']';
+}
+
+// A tuple index: digits only, the integer after the `.` of `t.0`.
+static Result(Scanned, LexError) scan_index(Str s, Usize i) {
+    Scanned index = {.end = digit_run(s, i, 10), .kind = integer};
+    return index;
+}
+
 // The one token that starts at i.
 static Result(Scanned, LexError) scan_token(Str s, Usize i, Bool new_syntax) {
     char c = s[i];
     if (is_identifier_start(c)) return scan_word(s, i, new_syntax);
+    if (new_syntax && ascii::digit(c) && i > 1 && s[i - 1] == '.' && after_value(s, i - 1)) return scan_index(s, i);
+    if (new_syntax && c == '.' && i + 1 < countof(s) && ascii::digit(s[i + 1]) && after_value(s, i)) {
+        Scanned point = {.end = i + 1, .kind = dot};
+        return point;
+    }
     if (ascii::digit(c) || (c == '.' && i + 1 < countof(s) && ascii::digit(s[i + 1]))) return scan_number(s, i);
     if (c == '"' || c == '\'') {
         Result(Usize, LexError) closed = scan_quoted(s, i, i);
