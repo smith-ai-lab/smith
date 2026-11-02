@@ -8,7 +8,7 @@
 // zero), casts between integer types, between pointers and between a pointer and an integer as wide as one, `sizeof`,
 // `alignof` and `countof` (sizes from the target data, never from the host), assignment through all of them (B1's
 // `assign` pushes a place; the `place_*` handlers answer it) and globals with a constant initializer. Pointer
-// arithmetic, comparison of pointers, slices, unions and function pointers are later tickets.
+// arithmetic, comparison of pointers, unions and function pointers are later tickets.
 //
 // HOW. Every lvalue is a PLACE: a Value whose `llvm` is the address and whose `ty` is the type stored there. A read
 // of `*p`, `a[i]` or `s.f` is the place plus a load. The base of `a[i]` and `s.f` is pushed as a place when it is a
@@ -16,6 +16,10 @@
 // whether it is an array or a pointer shows only on the Value (`ty.kind`), so no type is computed before the code.
 // `sizeof(expr)` has no code to emit: `static_type` walks the chain of members, indexes and dereferences with a loop.
 // A pointer or array `Ty` keeps its element in `Ty.element`, a block of the allocator in force.
+//
+// SLICES AND `str` (#1623): `{ ptr data, usize count }`; a string literal is a private constant with a zero byte after
+// the count; `s[i]` and `xs[a:b]` are checked against the count in every build (the index report); `countof(s)` is the
+// count. A slice of a pointer is `not emitted yet`.
 //
 // A NAME THAT IS A GLOBAL is found by `&name`, by the bases of `name[i]`, `name.f` (through `push_place_of`) and, from
 // emit.smith's dispatch, by its bare name (`is_global_name`, `name_ref`, `place_name`): a name that is not a local is
@@ -113,7 +117,51 @@ static Bool find_record_of(state::Emitter *e, state::Ty ty, Usize *found) {
 // ---------------------------------------------------------------------------------------------------------------
 // Types
 
-// The type `t` says. A chain of pointers and arrays is walked with a loop (no recursion), then built from the inside.
+// The integer type an index is widened to: the target's pointer width, else 64 bits.
+static c::LLVMTypeRef index_word(state::Emitter *e) {
+    if (e->target_data != nullptr) return c::LLVMIntPtrTypeInContext(e->context, e->target_data);
+    return c::LLVMInt64TypeInContext(e->context);
+}
+
+// A slice of `element`: the literal struct `{ ptr data, usize count }` (today's `T[:]` and `Str` have this layout).
+export state::Ty slice_type(state::Emitter *e, state::Ty element, Str name) {
+    c::LLVMTypeRef parts[2] = {state::pointer_type(e, 0), index_word(e)};
+    state::Ty *inner = own(e, element);
+    state::Ty ty = {
+        .kind = .slice, .llvm = c::LLVMStructTypeInContext(e->context, parts, 2, 0), .name = name, .element = inner};
+    return ty;
+}
+
+// The type at the bottom of a chain of pointers and arrays: a scalar, an enumeration, a record, `str` or a slice.
+static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
+    if (base->kind == .slice) {
+        const ast::TypeExpr *element = base->kind.slice.element;
+        state::TyResult inner = state::type_of(e, element);
+        if (inner == .error) return inner;
+        state::Ty made = slice_type(e, inner.ok, "slice");
+        return made;
+    }
+    if (base->kind != .named) return ty_failf(base->span, "not emitted yet: this kind of type", "");
+    ast::Path path = base->kind.named.path;
+    if (countof(path.segments) != 1) return ty_failf(base->span, "not emitted yet: qualified type", "");
+    Str name = path.segments[0].text;
+    state::Ty ty = {};
+    Usize index = 0;
+    if (state::same_text(name, "str") || state::same_text(name, "Str")) {
+        state::Ty character = {};
+        state::scalar_type(e, "char", &character);
+        state::Ty made = slice_type(e, character, "str");
+        return made;
+    }
+    if (state::scalar_type(e, name, &ty) || matching::type_enum(e, name, &ty)) return ty;
+    if (find_record_named(e, name, &index)) {
+        ty = e->records[index].ty;
+        return ty;
+    }
+    return ty_failf(base->span, "unknown type ", name);
+}
+
+// The type `t` says. A chain of pointers and arrays is walked with a loop, then built from the inside.
 static state::TyResult resolve(state::Emitter *e, const ast::TypeExpr *t) {
     const ast::TypeExpr *chain[16];
     Usize depth = 0;
@@ -130,18 +178,9 @@ static state::TyResult resolve(state::Emitter *e, const ast::TypeExpr *t) {
             base = element;
         }
     }
-    if (base->kind != .named) return ty_failf(base->span, "not emitted yet: this kind of type", "");
-    ast::Path path = base->kind.named.path;
-    if (countof(path.segments) != 1) return ty_failf(base->span, "not emitted yet: qualified type", "");
-    Str name = path.segments[0].text;
-    state::Ty ty = {};
-    Usize index = 0;
-    if (state::scalar_type(e, name, &ty) || matching::type_enum(e, name, &ty)) {
-    } else if (find_record_named(e, name, &index)) {
-        ty = e->records[index].ty;
-    } else {
-        return ty_failf(base->span, "unknown type ", name);
-    }
+    state::TyResult found = leaf_type(e, base);
+    if (found == .error) return found;
+    state::Ty ty = found.ok;
     for (Usize i = depth; i > 0; i--) {
         const ast::TypeExpr *node = chain[i - 1];
         if (node->kind == .pointer) ty = pointer_to(e, ty, 0);
@@ -164,6 +203,11 @@ export state::TyResult type_array(state::Emitter *e, const ast::TypeExpr *t) {
 }
 
 // A `named` type that is not a scalar: a record declared in the module.
+// `[]T` and `str`.
+export state::TyResult type_slice(state::Emitter *e, const ast::TypeExpr *t) {
+    return resolve(e, t);
+}
+
 export state::TyResult type_record(state::Emitter *e, const ast::TypeExpr *t) {
     return resolve(e, t);
 }
@@ -329,12 +373,6 @@ export state::Status dereference(state::Emitter *e, const ast::Expr *x, state::H
     return place_dereference(e, x);
 }
 
-// The integer type an index is widened to: the target's pointer width, else 64 bits.
-static c::LLVMTypeRef index_word(state::Emitter *e) {
-    if (e->target_data != nullptr) return c::LLVMIntPtrTypeInContext(e->context, e->target_data);
-    return c::LLVMInt64TypeInContext(e->context);
-}
-
 // Is the index a constant inside `count`?
 static Bool in_range_constant(state::Value at, U64 count) {
     if (c::LLVMIsAConstantInt(at.llvm) == nullptr) return false;
@@ -362,6 +400,43 @@ static void array_element(state::Emitter *e, state::Value base, state::Value at,
     state::push_value(e, (state::Value){.llvm = address, .ty = *base.ty.element});
 }
 
+// The data and the count of the slice stored at `address`.
+static void slice_parts(state::Emitter *e, state::Value place, c::LLVMValueRef *data, c::LLVMValueRef *count) {
+    c::LLVMValueRef whole = c::LLVMBuildLoad2(e->builder, place.ty.llvm, place.llvm, "slice");
+    *data = c::LLVMBuildExtractValue(e->builder, whole, 0, "data");
+    *count = c::LLVMBuildExtractValue(e->builder, whole, 1, "count");
+}
+
+// The slice `{ data, count }` of type `ty`.
+static state::Value make_slice(state::Emitter *e, state::Ty ty, c::LLVMValueRef data, c::LLVMValueRef count) {
+    c::LLVMValueRef empty = c::LLVMGetUndef(ty.llvm);
+    c::LLVMValueRef with_data = c::LLVMBuildInsertValue(e->builder, empty, data, 0, "");
+    c::LLVMValueRef whole = c::LLVMBuildInsertValue(e->builder, with_data, count, 1, "slice");
+    return (state::Value){.llvm = whole, .ty = ty};
+}
+
+// The index report of a failed check: the index, whether it is signed, and the count.
+static void report_index(state::Emitter *e, c::LLVMValueRef bad, c::LLVMValueRef at, Bool is_signed,
+                         c::LLVMValueRef count) {
+    c::LLVMTypeRef wide = c::LLVMInt64TypeInContext(e->context);
+    c::LLVMValueRef args[3] = {c::LLVMBuildIntCast2(e->builder, at, wide, is_signed, ""),
+                               c::LLVMConstInt(c::LLVMInt32TypeInContext(e->context), is_signed, 0),
+                               c::LLVMBuildIntCast2(e->builder, count, wide, 0, "")};
+    arith::report_if(e, bad, "smith_contract_fail_index", args, 3);
+}
+
+// A slice's element: the index is checked against the count in every build.
+static void slice_element(state::Emitter *e, state::Value base, state::Value at, c::LLVMValueRef position) {
+    c::LLVMValueRef data = nullptr;
+    c::LLVMValueRef count = nullptr;
+    slice_parts(e, base, &data, &count);
+    c::LLVMValueRef bad = c::LLVMBuildICmp(e->builder, c::LLVMIntUGE, position, count, "outside");
+    report_index(e, bad, at.llvm, at.ty.is_signed, count);
+    c::LLVMValueRef address =
+        c::LLVMBuildInBoundsGEP2(e->builder, base.ty.element->llvm, data, &position, 1, "element");
+    state::push_value(e, (state::Value){.llvm = address, .ty = *base.ty.element});
+}
+
 static state::Status index_finish(state::Emitter *e, const state::Work *w) {
     state::Value at = state::pop_value(e);
     state::Value base = state::pop_value(e);
@@ -369,6 +444,10 @@ static state::Status index_finish(state::Emitter *e, const state::Work *w) {
     c::LLVMValueRef position = c::LLVMBuildIntCast2(e->builder, at.llvm, index_word(e), at.ty.is_signed, "");
     if (base.ty.kind == .array) {
         array_element(e, base, at, position);
+        return state::success();
+    }
+    if (base.ty.kind == .slice) {
+        slice_element(e, base, at, position);
         return state::success();
     }
     if (base.ty.kind != .pointer || base.ty.element == nullptr) return state::failf(w->span, "indexing ", base.ty.name);
@@ -648,6 +727,25 @@ static state::Status static_type(state::Emitter *e, const ast::Expr *x, state::T
     return state::success();
 }
 
+// Whether the checker typed `x` as a slice or `str`.
+static Bool checked_slice(state::Emitter *e, const ast::Expr *x) {
+    if (e->options.checked == nullptr) return false;
+    types::TypeRef t = types::type_of(e->options.checked, x);
+    return t != nullptr && (t->kind == .slice || t->kind == .text);
+}
+
+// `countof` of a slice: its count, a `usize`.
+static state::Status count_finish(state::Emitter *e, const state::Work *w) {
+    state::Value slice = state::pop_value(e);
+    if (slice.ty.kind != .slice) return state::failf(w->span, "countof of ", slice.ty.name, ", which is not a slice");
+    state::Ty word = {};
+    state::scalar_type(e, "usize", &word);
+    c::LLVMValueRef count = c::LLVMBuildExtractValue(e->builder, slice.llvm, 1, "count");
+    c::LLVMValueRef sized = c::LLVMBuildIntCast2(e->builder, count, word.llvm, 0, "");
+    state::push_value(e, (state::Value){.llvm = sized, .ty = word});
+    return state::success();
+}
+
 // `sizeof`, `alignof` and `countof`.
 export state::Status query(state::Emitter *e, const ast::Expr *x, state::Hint _) {
     if (x->kind != .query) {
@@ -656,6 +754,11 @@ export state::Status query(state::Emitter *e, const ast::Expr *x, state::Hint _)
     ast::QueryOp op = x->kind.query.op;
     const ast::TypeExpr *type = x->kind.query.type;
     const ast::Expr *operand = x->kind.query.operand;
+    if (op == .count_of && operand != nullptr && checked_slice(e, operand)) {
+        state::push_then(e, (state::Work){.then = count_finish, .span = x->span});
+        state::push_eval(e, operand, state::no_hint());
+        return state::success();
+    }
     state::Ty subject = {};
     if (type != nullptr) {
         state::TyResult made = resolve(e, type);
@@ -680,6 +783,112 @@ export state::Status query(state::Emitter *e, const ast::Expr *x, state::Hint _)
             number = c::LLVMABIAlignmentOfType(e->target_data, subject.llvm);
     }
     state::push_value(e, (state::Value){.llvm = c::LLVMConstInt(word.llvm, number, 0), .ty = word});
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Slices and `str`
+
+// A string literal: a private constant `[N+1 x i8]` (the zero byte is not in the count), and `{ ptr, N }` of type
+// `str`.
+export state::Status string_literal(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    if (x->kind != .string) {
+        return state::fail("not a string literal", x->span);
+    }
+    Str bytes = x->kind.string.bytes;
+    c::LLVMTypeRef byte = c::LLVMInt8TypeInContext(e->context);
+    c::LLVMValueRef text = c::LLVMConstStringInContext2(e->context, bytes.data, countof(bytes), 0);
+    c::LLVMValueRef global = c::LLVMAddGlobal(e->module, c::LLVMArrayType2(byte, countof(bytes) + 1), ".str");
+    c::LLVMSetInitializer(global, text);
+    c::LLVMSetGlobalConstant(global, 1);
+    c::LLVMSetLinkage(global, c::LLVMPrivateLinkage);
+    c::LLVMSetUnnamedAddr(global, 1);
+    state::Ty character = {};
+    state::scalar_type(e, "char", &character);
+    state::Ty ty = slice_type(e, character, "str");
+    c::LLVMValueRef count = c::LLVMConstInt(index_word(e), countof(bytes), 0);
+    state::push_value(e, make_slice(e, ty, global, count));
+    return state::success();
+}
+
+static state::Status array_slice_finish(state::Emitter *e, const state::Work *w) {
+    state::Value place = state::pop_value(e);
+    if (place.ty.kind != .array) return state::failf(w->span, "a slice of ", place.ty.name, ", which is not an array");
+    c::LLVMValueRef count = c::LLVMConstInt(index_word(e), place.ty.count, 0);
+    state::push_value(e, make_slice(e, w->ty, place.llvm, count));
+    return state::success();
+}
+
+// An array that is a place where a slice is expected: `{ address, N }`; the slice ALIASES the array.
+export state::Status array_as_slice(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    state::push_then(e, (state::Work){.then = array_slice_finish, .ty = hint.ty, .span = x->span});
+    push_place_of(e, x);
+    return state::success();
+}
+
+// An array value (a call's result) as a slice: stored in a fresh slot, which the slice points to.
+export state::Status array_value_as_slice(state::Emitter *e, state::Value value, state::Ty to) {
+    c::LLVMValueRef slot = state::new_alloca(e, value.ty, "temporary");
+    c::LLVMBuildStore(e->builder, value.llvm, slot);
+    c::LLVMValueRef count = c::LLVMConstInt(index_word(e), value.ty.count, 0);
+    state::push_value(e, make_slice(e, to, slot, count));
+    return state::success();
+}
+
+// The bound of `xs[a:b]` as a word: the written value, else `fallback`.
+static c::LLVMValueRef slice_bound(state::Emitter *e, const ast::Expr *written, c::LLVMValueRef fallback) {
+    if (written == nullptr) return fallback;
+    state::Value at = state::pop_value(e);
+    return c::LLVMBuildIntCast2(e->builder, at.llvm, index_word(e), at.ty.is_signed, "");
+}
+
+static state::Status slice_of_finish(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .slice_of) {
+        return state::fail("not a slice", w->span);
+    }
+    const ast::Expr *start_written = w->expr->kind.slice_of.start;
+    const ast::Expr *end_written = w->expr->kind.slice_of.end;
+    // The values were pushed base, start, end: the last on top.
+    c::LLVMValueRef zero = c::LLVMConstInt(index_word(e), 0, 0);
+    c::LLVMValueRef end = nullptr;
+    if (end_written != nullptr) end = slice_bound(e, end_written, nullptr);
+    c::LLVMValueRef start = slice_bound(e, start_written, zero);
+    state::Value base = state::pop_value(e);
+    c::LLVMValueRef data = nullptr;
+    c::LLVMValueRef count = nullptr;
+    state::Ty result = base.ty;
+    if (base.ty.kind == .slice) {
+        slice_parts(e, base, &data, &count);
+    } else if (base.ty.kind == .array) {
+        data = base.llvm;
+        count = c::LLVMConstInt(index_word(e), base.ty.count, 0);
+        result = slice_type(e, *base.ty.element, "slice");
+    } else {
+        return state::not_emitted("a slice of a pointer", w->span);
+    }
+    if (end == nullptr) end = count;
+    c::LLVMValueRef backwards = c::LLVMBuildICmp(e->builder, c::LLVMIntUGT, start, end, "backwards");
+    c::LLVMValueRef past = c::LLVMBuildICmp(e->builder, c::LLVMIntUGT, end, count, "past");
+    c::LLVMValueRef bad = c::LLVMBuildOr(e->builder, backwards, past, "outside");
+    report_index(e, bad, end, 0, count);
+    c::LLVMValueRef first = c::LLVMBuildGEP2(e->builder, base.ty.element->llvm, data, &start, 1, "first");
+    c::LLVMValueRef length = c::LLVMBuildSub(e->builder, end, start, "length");
+    state::push_value(e, make_slice(e, result, first, length));
+    return state::success();
+}
+
+// `xs[a:b]` of a slice, a `str` or an array that is a place; either end may be missing.
+export state::Status slice_of(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    if (x->kind != .slice_of) {
+        return state::fail("not a slice", x->span);
+    }
+    const ast::Expr *base = x->kind.slice_of.base;
+    const ast::Expr *start = x->kind.slice_of.start;
+    const ast::Expr *end = x->kind.slice_of.end;
+    state::push_then(e, (state::Work){.then = slice_of_finish, .expr = x, .span = x->span});
+    if (end != nullptr) state::push_eval(e, end, state::no_hint());
+    if (start != nullptr) state::push_eval(e, start, state::no_hint());
+    push_address(e, base);
     return state::success();
 }
 
