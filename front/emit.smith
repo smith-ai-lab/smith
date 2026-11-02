@@ -20,6 +20,12 @@
 // emit_debug (B5: called at fixed points whether or not debug info is on; doing nothing is success). emit_jit is the
 // test helper (LLJIT). The tests are tests/front_emit_*_test.smith.
 //
+// WAVE 3 (#1582 of #1428) added one stub per new area, the same way: emit_option (`?T`, `.some`, `.none`, `if let`;
+// #1584), emit_match (enumerations, `.red`, `match`; #1585), emit_value (an `if` or a block as a value), emit_iter
+// (`for x in xs`; #1586), emit_tuple and emit_lambda (the next batch). This file routes to them and nothing else will
+// change in it. The hooks `state::type_of`, `state::type_of_node` and `state::convert` let a handler reach what lives
+// here without importing this file (a cycle).
+//
 // THE PASSES. `emit::module` makes the module, sets its triple and data layout from `Options.target` (it never asks
 // the host), then (1) declares every record, then (2) every function with its symbol and type (and every global), so
 // that a call finds any function whatever the order, then (3) emits the bodies. A function's LLVM name is its module's
@@ -74,8 +80,15 @@ import front::emit_arith as arith;
 import front::emit_call as call;
 import front::emit_control as control;
 import front::emit_debug as debug;
+import front::emit_iter as looping;
+import front::emit_lambda as lambdas;
+import front::emit_match as matching;
 import front::emit_memory as memory;
+import front::emit_option as optional;
 import front::emit_state as state;
+import front::emit_tuple as tupled;
+import front::emit_value as blockval;
+import front::types;
 import std::format;
 import std::arena;
 import std::mem;
@@ -115,8 +128,12 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
         state::Ty ty = {};
         if (countof(path.segments) == 1 && state::scalar_type(e, path.segments[0].text, &ty)) return ty;
         if (countof(path.segments) == 1 && state::same_text(path.segments[0].text, "Void")) return void_type(e);
+        if (countof(path.segments) == 1 && matching::type_enum(e, path.segments[0].text, &ty)) return ty;
         return memory::type_record(e, t);
     }
+    if (t->kind == .option) return optional::type_option(e, t);
+    if (t->kind == .tuple) return tupled::type_tuple(e, t);
+    if (t->kind == .function) return lambdas::type_function(e, t);
     if (t->kind == .pointer) return memory::type_pointer(e, t);
     if (t->kind == .array) return memory::type_array(e, t);
     if (t->kind == .auto_type) return state::ty_fail("`auto` where a type is needed", t->span);
@@ -185,6 +202,36 @@ static state::Status character_literal(state::Emitter *e, const ast::Expr *x) {
     return state::success();
 }
 
+// `t.0`: a member whose name starts with a digit.
+static Bool is_tuple_member(const ast::Expr *x) {
+    if (x->kind != .member) return false;
+    Str name = x->kind.member.name;
+    return countof(name) > 0 && name[0] >= '0' && name[0] <= '9';
+}
+
+// Whether the checker typed `x` as an option (false with no checker result).
+static Bool checked_option(state::Emitter *e, const ast::Expr *x) {
+    if (e->options.checked == nullptr) return false;
+    types::TypeRef t = types::type_of(e->options.checked, x);
+    return t != nullptr && t->kind == .option;
+}
+
+// `.some(x)` and `.none` when an option is expected, `.red` otherwise.
+static state::Status dispatch_variant(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    if ((hint.present && hint.ty.kind == .option) || checked_option(e, x)) return optional::variant(e, x, hint);
+    return matching::variant(e, x, hint);
+}
+
+// An `if`, `match` or block used as a value.
+static state::Status dispatch_stmt_expr(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    if (x->kind != .stmt_expr) {
+        return state::fail("not a statement used as a value", x->span);
+    }
+    const ast::Stmt *inner = x->kind.stmt_expr.stmt;
+    if (inner->kind == .match_stmt) return matching::value_of(e, inner, hint);
+    return blockval::value_of(e, inner, hint);
+}
+
 // The handler of an expression's kind: it pushes work or one Value. Every kind of front::ast's Expr is named here; the
 // ones nobody emits yet are the last line. (A chain of `if`, see `type_of`.)
 static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
@@ -203,11 +250,18 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     if (x->kind == .call) return call::call(e, x, hint);
     if (x->kind == .null_pointer) return memory::null_pointer(e, x, hint);
     if (x->kind == .index) return memory::index(e, x, hint);
-    if (x->kind == .member) return memory::member(e, x, hint);
+    if (x->kind == .member) {
+        if (is_tuple_member(x)) return tupled::member(e, x, hint);
+        return memory::member(e, x, hint);
+    }
+    if (x->kind == .variant) return dispatch_variant(e, x, hint);
+    if (x->kind == .tuple_lit) return tupled::literal(e, x, hint);
+    if (x->kind == .lambda) return lambdas::lambda(e, x, hint);
+    if (x->kind == .stmt_expr) return dispatch_stmt_expr(e, x, hint);
     if (x->kind == .cast) return memory::cast(e, x, hint);
     if (x->kind == .query) return memory::query(e, x, hint);
     if (x->kind == .compound) return memory::compound(e, x, hint);
-    // floating, string, variant, type_value, slice_of, lambda, try_expr
+    // floating, string, type_value, slice_of, try_expr
     return state::not_emitted("this kind of expression", x->span);
 }
 
@@ -219,7 +273,10 @@ static state::Status dispatch_place(state::Emitter *e, const ast::Expr *x) {
     }
     if (x->kind == .unary && x->kind.unary.op == .dereference) return memory::place_dereference(e, x);
     if (x->kind == .index) return memory::place_index(e, x);
-    if (x->kind == .member) return memory::place_member(e, x);
+    if (x->kind == .member) {
+        if (is_tuple_member(x)) return tupled::place_member(e, x);
+        return memory::place_member(e, x);
+    }
     return state::fail("this expression is not assignable", x->span);
 }
 
@@ -273,8 +330,10 @@ static state::Status declare_finish(state::Emitter *e, const state::Work *w) {
     state::Value value = state::pop_value(e);
     state::Ty ty = value.ty;
     if (!w->flag) ty = w->ty;
-    if (!state::same_type(ty, value.ty))
-        return state::failf(w->span, "initializing ", ty.name, " with ", value.ty.name);
+    if (!state::same_type(ty, value.ty)) {
+        try state::convert(e, value, ty, w->span, .initialize);
+        value = state::pop_value(e);
+    }
     c::LLVMValueRef slot = state::new_alloca(e, ty, name);
     c::LLVMBuildStore(e->builder, value.llvm, slot);
     state::add_local(e, (state::Local){.name = name, .ty = ty, .address = slot});
@@ -380,8 +439,10 @@ static state::Status ret_void(state::Emitter *e, const state::Work *_) {
 
 static state::Status return_finish(state::Emitter *e, const state::Work *w) {
     state::Value value = state::pop_value(e);
-    if (!state::same_type(value.ty, e->result))
-        return state::failf(w->span, "returning ", value.ty.name, " from a function that returns ", e->result.name);
+    if (!state::same_type(value.ty, e->result)) {
+        try state::convert(e, value, e->result, w->span, .return_value);
+        value = state::pop_value(e);
+    }
     state::push_then(e, (state::Work){.then = ret_value, .value = value.llvm, .ty = value.ty, .span = w->span});
     try control::before_return(e, w->span);
     return state::success();
@@ -423,6 +484,10 @@ static state::Status dispatch_statement(state::Emitter *e, const ast::Stmt *s) {
     if (s->kind == .goto_stmt) return control::goto_stmt(e, s);
     if (s->kind == .labeled) return control::labeled(e, s);
     if (s->kind == .empty) return state::success();
+    if (s->kind == .match_stmt) return matching::match_stmt(e, s);
+    if (s->kind == .for_in) return looping::for_in(e, s);
+    if (s->kind == .if_let) return optional::if_let(e, s);
+    if (s->kind == .destructure) return tupled::destructure(e, s);
     return state::not_emitted("static_assert", s->span); // the one kind left
 }
 
@@ -666,6 +731,72 @@ static state::Status value_block(state::Emitter *e, const ast::Stmt *body) {
     return state::success();
 }
 
+// A block whose last line is an expression or a `match` has a value; one that ends in `return`, a loop or nothing
+// does not (an old-syntax `if (c) { return a; } else { return b; }` stays a statement).
+static Bool block_gives_value(const ast::Stmt *s) {
+    if (s->kind == .block) {
+        ast::StmtRef items[:] = s->kind.block.items;
+        if (countof(items) == 0) {
+            return false;
+        }
+        const ast::Stmt *last = items[countof(items) - 1];
+        return last->kind == .expression || last->kind == .match_stmt;
+    }
+    return false;
+}
+
+// A last line that is a `match`, a block with a value, or an `if` with an `else` whose branches have one (an `else
+// if` counts) is the function's value (`value_of`).
+static Bool ends_in_value_statement(const ast::Stmt *body) {
+    if (body->kind == .block) {
+        ast::StmtRef items[:] = body->kind.block.items;
+        if (countof(items) == 0) {
+            return false;
+        }
+        const ast::Stmt *last = items[countof(items) - 1];
+        if (last->kind == .match_stmt) {
+            return true;
+        }
+        if (last->kind == .block) {
+            return block_gives_value(last);
+        }
+        if (last->kind == .if_stmt) {
+            const ast::Stmt *otherwise = last->kind.if_stmt.else_branch;
+            const ast::Stmt *then_branch = last->kind.if_stmt.then_branch;
+            if (otherwise == nullptr || !block_gives_value(then_branch)) {
+                return false;
+            }
+            return otherwise->kind == .if_stmt || block_gives_value(otherwise);
+        }
+    }
+    return false;
+}
+
+// Runs after the statements before the last line: its handler pushes the one Value `return_finish` takes.
+static state::Status value_start(state::Emitter *e, const state::Work *w) {
+    const ast::Stmt *s = w->stmt;
+    if (s->kind == .match_stmt) return matching::value_of(e, s, w->hint);
+    return blockval::value_of(e, s, w->hint);
+}
+
+// The body with its last `if`, `match` or block returned: as `value_block`, through the same continuation.
+static state::Status value_statement_block(state::Emitter *e, const ast::Stmt *body) {
+    try debug::stmt_location(e, body);
+    if (body->kind != .block) {
+        return state::fail("not a block", body->span);
+    }
+    ast::StmtRef items[:] = body->kind.block.items;
+    const ast::Stmt *last = items[countof(items) - 1];
+    state::begin_scope(e);
+    state::push_then(e, (state::Work){.then = block_finish, .span = body->span});
+    state::push_then(e, (state::Work){.then = return_finish, .span = last->span});
+    state::push_then(
+        e, (state::Work){.then = value_start, .stmt = last, .hint = state::hint_of(e->result), .span = last->span});
+    for (Usize i = countof(items) - 1; i > 0; i--)
+        state::push_statement(e, items[i - 1]);
+    return state::success();
+}
+
 // Pass 3: one body.
 static state::Status emit_function(state::Emitter *e, const ast::Decl *d, state::FunctionInfo info) {
     if (d->kind != .function) {
@@ -677,10 +808,13 @@ static state::Status emit_function(state::Emitter *e, const ast::Decl *d, state:
     try debug::begin_function(e, d);
     try declare_params(e, d, info);
     Bool is_void_result = c::LLVMGetTypeKind(info.result.llvm) == c::LLVMVoidTypeKind;
-    if (is_void_result || !ends_in_expression(body))
+    if (!is_void_result && ends_in_value_statement(body)) {
+        try value_statement_block(e, body);
+    } else if (is_void_result || !ends_in_expression(body)) {
         state::push_statement(e, body);
-    else
+    } else {
         try value_block(e, body);
+    }
     try run(e);
     // The end of a function reached without `return`: a `Void` function returns, any other traps.
     c::LLVMBasicBlockRef last = c::LLVMGetInsertBlock(e->builder);
@@ -698,6 +832,122 @@ static state::Status emit_function(state::Emitter *e, const ast::Decl *d, state:
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// The hooks of emit_state
+
+static state::Ty *own_type(state::Emitter *e, state::Ty element) {
+    state::OwnedTy *block = mem::alloc(state::OwnedTy);
+    block->ty = element;
+    block->next = e->owned;
+    e->owned = block;
+    return &block->ty;
+}
+
+static Bool find_record_by_name(state::Emitter *e, Str name, state::Ty *ty) {
+    for (Usize i = 0; i < e->record_count; i++) {
+        if (state::same_text(e->records[i].name, name)) {
+            *ty = e->records[i].ty;
+            return true;
+        }
+    }
+    return false;
+}
+
+// An integer or `bool` the checker names, by its bits and signedness when the spelling is not one the emitter knows.
+static Bool scalar_of_checked(state::Emitter *e, types::TypeRef t, state::Ty *ty) {
+    if (t->kind == .bool_type) return state::scalar_type(e, "bool", ty);
+    if (t->kind != .integer) return false;
+    if (state::scalar_type(e, t->name, ty)) return true;
+    Bool is_signed = t->is_signed;
+    if (t->bits == 8) return state::scalar_type(e, is_signed ? "i8" : "u8", ty);
+    if (t->bits == 16) return state::scalar_type(e, is_signed ? "i16" : "u16", ty);
+    if (t->bits == 32) return state::scalar_type(e, is_signed ? "i32" : "u32", ty);
+    return state::scalar_type(e, is_signed ? "i64" : "u64", ty);
+}
+
+static state::Ty pointer_to(state::Emitter *e, state::Ty *inner) {
+    U32 space = 0;
+    c::LLVMTypeRef address = c::LLVMPointerTypeInContext(e->context, space);
+    state::Ty made = {.kind = .pointer, .llvm = address, .name = "pointer", .element = inner};
+    return made;
+}
+
+// The checker's type of `x` as a `Ty`. A chain of pointers and arrays is walked with a loop, then built from inside.
+// The checker's type of `x`, as a `Ty` (the hook `state::type_of_node`).
+export state::TyResult type_of_node(state::Emitter *e, const ast::Expr *x) {
+    if (e->options.checked == nullptr) return state::ty_fail("this needs the checker's types", x->span);
+    types::TypeRef chain[16];
+    Usize depth = 0;
+    types::TypeRef base = types::type_of(e->options.checked, x);
+    if (base == nullptr) return state::ty_fail("this needs the checker's types", x->span);
+    while (base->kind == .pointer || base->kind == .array) {
+        if (depth == countof(chain)) return state::ty_fail("a type nested more than 16 deep", x->span);
+        chain[depth] = base;
+        depth += 1;
+        types::TypeRef next = base->element;
+        base = next;
+    }
+    state::Ty ty = {};
+    Bool known = scalar_of_checked(e, base, &ty);
+    known = known || (base->kind == .record && find_record_by_name(e, base->name, &ty));
+    known = known || (base->kind == .enumeration && matching::type_enum(e, base->name, &ty));
+    if (!known) {
+        if (base->kind == .option) return optional::from_checked(e, base);
+        if (base->kind == .tuple) return tupled::from_checked(e, base);
+        if (base->kind == .fn_value) return lambdas::from_checked(e, base);
+        Str shown = types::show(base);
+        state::Error error = {.message = state::msg(format::push("not emitted yet: ", shown)), .span = x->span};
+        state::free_text(shown);
+        return {.error = error};
+    }
+    for (Usize i = depth; i > 0; i--) {
+        types::TypeRef node = chain[i - 1];
+        state::Ty *inner = own_type(e, ty);
+        if (node->kind == .pointer) {
+            ty = pointer_to(e, inner);
+        } else {
+            state::Ty made = {
+                .kind = .array, .llvm = c::LLVMArrayType2(inner->llvm, node->count), .name = "array", .element = inner};
+            made.count = node->count;
+            ty = made;
+        }
+    }
+    return ty;
+}
+
+static Bool is_plain_integer(state::Ty t) {
+    return t.kind == .integer;
+}
+
+static state::Status convert_failure(state::Value value, state::Ty to, ast::Span span, state::ConvertSite site) {
+    if (site == .initialize) return state::failf(span, "initializing ", to.name, " with ", value.ty.name);
+    if (site == .return_value)
+        return state::failf(span, "returning ", value.ty.name, " from a function that returns ", to.name);
+    return state::failf(span, "assigning ", value.ty.name, " to ", to.name);
+}
+
+// `value` as a `to`: as it is, a wider integer (the checker's widening rules: the same signedness, or unsigned to a
+// strictly wider signed; none can fail, so no check), or an option's payload (`optional::wrap`).
+static state::Status convert_value(state::Emitter *e, state::Value value, state::Ty to, ast::Span span,
+                                   state::ConvertSite site) {
+    if (state::same_type(value.ty, to)) {
+        state::push_value(e, value);
+        return state::success();
+    }
+    if (to.kind == .option) return optional::wrap(e, value, to, span);
+    state::Ty from = value.ty;
+    if (is_plain_integer(from) && is_plain_integer(to) && to.bits > from.bits) {
+        Bool same_sign = from.is_signed == to.is_signed;
+        if (same_sign || (!from.is_signed && to.is_signed)) {
+            c::LLVMValueRef wide = from.is_signed ? c::LLVMBuildSExt(e->builder, value.llvm, to.llvm, "widen")
+                                                  : c::LLVMBuildZExt(e->builder, value.llvm, to.llvm, "widen");
+            state::push_value(e, (state::Value){.llvm = wide, .ty = to});
+            return state::success();
+        }
+    }
+    return convert_failure(value, to, span, site);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // The module
 
 // Pass 1: types, then every function and global.
@@ -705,6 +955,7 @@ static state::Status declare_all(state::Emitter *e) {
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
         if (d->kind == .record) try memory::record_decl(e, d);
+        if (d->kind == .enumeration) try matching::enum_decl(e, d);
     }
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
@@ -715,7 +966,7 @@ static state::Status declare_all(state::Emitter *e) {
                 try declare_function(e, d);
         } else if (d->kind == .variable) {
             try memory::global_variable(e, d);
-        } else if (d->kind != .record && d->kind != .import_module && d->kind != .import_c) {
+        } else if (d->kind != .record && d->kind != .enumeration && d->kind != .import_module && d->kind != .import_c) {
             return state::not_emitted("this kind of declaration", d->span);
         }
     }
@@ -753,6 +1004,9 @@ export ModuleResult module(c::LLVMContextRef context, const ast::Module *m, stat
     c::LLVMModuleRef ir = c::LLVMModuleCreateWithNameInContext(name, context);
     c::LLVMSetTarget(ir, triple);
     state::Emitter e = {.context = context, .module = ir, .options = options, .tree = m};
+    e.type_hook = type_of;
+    e.node_type_hook = type_of_node;
+    e.convert_hook = convert_value;
     if (countof(options.target.data_layout) > 0) {
         char *layout = state::cstr(options.target.data_layout);
         c::LLVMSetDataLayout(ir, layout);
@@ -766,6 +1020,7 @@ export ModuleResult module(c::LLVMContextRef context, const ast::Module *m, stat
     state::Status status = emit_all(&e);
     debug::release(&e);
     memory::release(&e);
+    matching::release(&e);
     c::LLVMDisposeBuilder(e.builder);
     c::LLVMDisposeBuilder(e.alloca_builder);
     if (e.target_data != nullptr) c::LLVMDisposeTargetData(e.target_data);

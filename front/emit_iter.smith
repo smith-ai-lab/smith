@@ -1,0 +1,12 @@
+// front::emit_iter: `for x in xs`. Filled by #1586; today every handler is `not emitted yet`, with its final signature,
+// so that ticket edits this file and never front/emit.smith (the wave-3 scaffold, #1582 of #1428).
+module front::emit_iter;
+
+import front::ast;
+import front::emit_state as state;
+import front::types;
+
+export state::Status for_in(state::Emitter *e, const ast::Stmt *s) {
+    _ = e;
+    return state::not_emitted("for in", s->span);
+}
