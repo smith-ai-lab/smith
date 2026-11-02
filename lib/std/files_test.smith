@@ -598,3 +598,66 @@ export void test_files_describe_names_every_error() {
     }
     test::check(text::is(files::describe(files::NotFound), "nothing is at the path"));
 }
+
+Bool is_chars(const char got[:], const char *text) {
+    if (countof(got) != __builtin_strlen(text)) return false;
+    for (Usize i = 0; i < countof(got); i++)
+        if (got[i] != text[i]) return false;
+    return true;
+}
+
+files::Text value_text(files::TextResult r) {
+    switch (r) {
+    case .ok:
+        return r.ok;
+    case .error:
+        return (files::Text){};
+    }
+}
+
+export void test_files_paths_and_links_in_the_fake() {
+    arena::Arena a = test::memory(1 << 16);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::Fake fake = files::fake();
+    files::Handler *before = files::set_handler(&fake.base);
+    defer files::set_handler(before);
+    files::fake_add(&fake, "dir/a.txt", bytes_of("a")[0:1]);
+
+    files::TextResult here = files::current_folder();
+    test::check_condition(here == .ok && is_chars(value_text(here), "/fake"));
+    test::check_condition(files::exists("dir/a.txt"));
+    test::check_condition(files::exists("dir"));
+    test::check_condition(!files::exists("nothing"));
+    test::check_condition(files::can("dir/a.txt", files::CanWrite));
+    test::check_condition(!files::can("nothing", files::CanRead));
+    files::TextResult real = files::real_path("dir/a.txt");
+    test::check_condition(real == .ok && is_chars(value_text(real), "dir/a.txt"));
+    files::TextResult missing = files::real_path("nothing");
+    test::check_condition(missing == .error && missing.error == files::NotFound);
+
+    files::LinkResult made = files::make_link("a.txt", "dir/b.txt");
+    test::check_condition(made == .none);
+    files::LinkResult again = files::make_link("a.txt", "dir/b.txt");
+    test::check_condition(again == .some && again.some == files::Exists);
+    files::TextResult target = files::read_link("dir/b.txt");
+    test::check_condition(target == .ok && is_chars(value_text(target), "a.txt"));
+    files::TextResult plain = files::read_link("dir/a.txt");
+    test::check_condition(plain == .error && plain.error == files::Other);
+    files::TextResult absent = files::read_link("nothing");
+    test::check_condition(absent == .error && absent.error == files::NotFound);
+}
+
+export void test_files_current_folder_is_real() {
+    arena::Arena a = test::memory(1 << 16);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::TextResult here = files::current_folder();
+    test::check_condition(here == .ok && countof(value_text(here)) > 0 && value_text(here)[0] == '/');
+    files::TextResult real = files::real_path(".");
+    test::check_condition(real == .ok && is_chars(value_text(real), value_text(here).data));
+    test::check_condition(files::exists("."));
+    test::check_condition(files::can(".", files::CanRead));
+}

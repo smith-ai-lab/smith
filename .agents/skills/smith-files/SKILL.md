@@ -30,9 +30,9 @@ export Usize bytes_in(const char path[:], arena::Arena *a) {
 | `info(path)` / `list(folder)` | `Info{folder, writable, size}`; entries sorted by name (name, folder, size), without `.` and `..` |
 | `make_folder(path)` / `remove(path)` / `move(from, to)` | `mkdir -p`; delete a file (a folder is `Denied`); rename |
 | `map(path)` / `unmap(bytes)` | a private writable mapping (the fake gives a view); an empty file is an empty slice |
+| `current_folder()` `real_path(path)` `exists(path)` `can(path, CanRead / CanWrite / CanRun)` `read_link(path)` `make_link(target, path)` | the folder and the resolved path as `TextResult` (text in the current allocator); `Bool`; a link's target (`Other` when the path is no link); `LinkResult`, an option of the error. The fake has a current folder `/fake` and links. C: `smith_fs_current_folder` and so on |
 
-- **Misuse is a checked failure**: a mode a call does not take (`open` with `Atomic`), a descriptor not open (a second `close`), the fake's limits.
-- A result is read where it is tested (`switch (r)`, smith-result); a call's result goes in a variable first.
+- **Misuse is a checked failure**: a mode a call does not take (`open` with `Atomic`), a descriptor not open (a second `close`), the fake's limits. A result is read where it is tested (`switch (r)`, smith-result); a call's result goes in a variable first.
 
 **The fake, for tests:**
 ```smith
