@@ -97,7 +97,7 @@ int main(void) {
 
     struct timespec real = {};
     check("no clock handler: clock_gettime is libc's", clock_gettime(CLOCK_MONOTONIC, &real) == 0 && real.tv_sec >= 0);
-    FakeClock fake = {.clock = {fake_now, fake_sleep}, .now = 5'000'000'123};
+    FakeClock fake = {.clock = {fake_now, fake_sleep, nullptr}, .now = 5'000'000'123};
     SmithClockHandler *before_clock = smith_handlers_set_clock(&fake.clock);
     check("the clock setter returns the previous handler", before_clock == nullptr);
     struct timespec time = {};
