@@ -1,8 +1,17 @@
 # Sourced by the archive tests (tests/untar_*_test.smith): $PWD is the project, where the archives are made.
-# The xz archives are made by tests/xz.py, which writes the container and lets Python's lzma module compress the blocks
-# (macOS has no xz, and Homebrew's is not relied on).
+# The xz archives are made by tests/xz.smith, which writes the container and stores the blocks as LZMA2's uncompressed
+# chunks (macOS has no xz, and Homebrew's is not relied on). It is built the first time a case makes an archive.
 here=$PWD # the project holds copies of the repository files the archive tests use (scratch::copy_tree)
-xz() { "${PYTHON:-/usr/bin/python3}" -I "$here/tests/xz.py" "$@"; }
+xz() {
+    if [ ! -x "$here/xz-tool" ]; then
+        smith cc -std=gnu23 -O1 -I "$SMITH_REPO/.smith/include" "$here/tests/xz.smith" "$here/lib/std/arena.smith" \
+            "$here/lib/std/ascii.smith" "$here/lib/std/contract.smith" "$here/lib/std/env.smith" \
+            "$here/lib/std/files.smith" "$here/lib/std/inflate.smith" "$here/lib/std/mem.smith" \
+            "$here/lib/std/net.smith" "$here/lib/std/random.smith" "$here/lib/handlers.c" "$here/lib/trace.c" \
+            -o "$here/xz-tool.$$" && mv "$here/xz-tool.$$" "$here/xz-tool" || return 1
+    fi
+    "$here/xz-tool" "$@"
+}
 export COPYFILE_DISABLE=1 # macOS tar would add AppleDouble ._ entries for extended attributes
 work=$PWD
 src=$PWD/src
@@ -121,7 +130,7 @@ shared_untar() {
     # size and time of the smith that compiles it
     if [ "$(uname -s)" = Darwin ]; then statfmt='-f %N_%m_%z'; else statfmt='-c %n_%Y_%s'; fi
     key=$({ stat $statfmt "${SMITH_SELF:-$(command -v smith)}" 2>/dev/null
-        cat "$here/tests/untar.c" "$here"/runtime/*.c "$here"/runtime/*.h "$here/lib/std/arena.smith" \
+        cat "$here/tests/untar.c" "$here/tests/xz.smith" "$here"/runtime/*.c "$here"/runtime/*.h "$here/lib/std/arena.smith" \
             "$here/lib/std/contract.smith" "$here/lib/std/inflate.smith" \
             "$here/lib/std/math.smith" "$here/lib/std/optimize.smith" "$here/lib/std/random.smith" "$here/lib/std/env.smith" "$here/lib/std/files.smith" \
             "$here/lib/std/mem.smith" "$here/lib/std/net.smith" "$here/lib/handlers.c" "$here/prelude"; } | shasum -a 256 | cut -c1-16)
