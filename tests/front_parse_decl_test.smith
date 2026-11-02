@@ -595,6 +595,25 @@ export void test_parse_decl_new_types() {
     test::golden("tests/front/parse_decl/new_types.txt", new_dump_of(source));
 }
 
+// 1 when the first field of a record declaration is written in smith's own syntax, 0 when not, 2 for no record.
+static I32 first_field_is_new(const ast::Decl *d) {
+    if (d->kind != .record) return 2;
+    return d->kind.record.fields[0].is_new ? 1 : 0;
+}
+
+export void test_parse_decl_new_fields_carry_is_new() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = new_parser_of("struct New {\n    x: i32\n}\nstruct Old { I32 x; };\n");
+    ast::Module m = parse_decl::file(&p, "test.smith");
+    test::check_equal(countof(p.errors), 0);
+    test::check_equal(countof(m.decls), 2);
+    test::check_equal(first_field_is_new(m.decls[0]), 1);
+    test::check_equal(first_field_is_new(m.decls[1]), 0);
+}
+
 export void test_parse_decl_new_destructure() {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);

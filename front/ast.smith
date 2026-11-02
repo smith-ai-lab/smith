@@ -101,6 +101,7 @@ export struct FieldDecl {
     Str name;
     TypeExpr *type;
     Expr *bit_width;
+    Bool is_new; // written in smith's own syntax (`x: T`), not today's `T x;`
     Span span;
 };
 
