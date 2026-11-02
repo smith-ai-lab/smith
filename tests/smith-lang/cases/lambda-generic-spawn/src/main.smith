@@ -15,9 +15,9 @@ I32 main() {
     later::Slot a;
     later::Slot b;
     later::Slot c;
-    later::defer(&a, show, 3, (I64)4);
-    later::defer(&b, scale, 2.5);
-    later::defer(&c, show, 5, (I64)6); // the instance of the first call again
+    later::run_later(&a, show, 3, (I64)4);
+    later::run_later(&b, scale, 2.5);
+    later::run_later(&c, show, 5, (I64)6); // the instance of the first call again
     a.entry(a.data);
     b.entry(b.data);
     c.entry(c.data);
