@@ -106,7 +106,7 @@ static SmithMakeNode *smith_make_node_find(const char *name) {
 
 static SmithMakeNode *smith_make_node_new(const char *name) {
     SmithMakeGraph *g = &smith_make_graph;
-    if (g->node_count >= smith_make_nodes_max) smith_die(smith_exit_usage, "make: too many targets", nullptr);
+    if (g->node_count >= smith_make_nodes_max) smith_make_too_many("targets", smith_make_nodes_max);
     uint32_t mask = (uint32_t)(smith_make_nodes_max * 2 - 1);
     uint32_t at = smith_make_hash(name, strlen(name)) & mask;
     while (g->slots[at] != 0)
@@ -440,8 +440,11 @@ static void smith_make_node_expand(SmithMakeNode *node) {
     if (node->rule < 0) return;
     const SmithMakeReader *r = &smith_make_reader;
     const SmithMakeRule *rule = &r->rules[node->rule];
-    if (rule->recipe_count > smith_make_commands_max)
-        smith_die(smith_exit_usage, "make: a recipe has too many lines", node->name);
+    if (rule->recipe_count > smith_make_commands_max) {
+        char things[160];
+        snprintf(things, sizeof things, "lines in the recipe of %s", node->name);
+        smith_make_too_many(things, smith_make_commands_max);
+    }
     node->commands = smith_make_alloc((rule->recipe_count + 1) * sizeof(SmithMakeCommand));
     smith_make_set_automatic(node);
     for (size_t i = 0; i < rule->recipe_count; i++) {

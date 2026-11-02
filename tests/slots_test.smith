@@ -222,3 +222,12 @@ export void test_a_ci_run_reports_what_the_pool_gave_it() {
                                        "cores' ci.err log.err");
     scratch::expect_text("only a CI or logged run reports", "0\nci.err:1\nlog.err:1\n", out);
 }
+
+// A pool size above the 64 tokens is an error that names the limit, not a silent clamp to 64.
+export void test_a_pool_size_above_the_limit_is_an_error_naming_it() {
+    const char *out =
+        slots_case("env -u SMITH_CORES SMITH_SLOTS=65 smith --smith-slots true 2>e.err; echo \"status $?\"; cat e.err; "
+                   "SMITH_CORES=65 smith --smith-slots true 2>c.err; echo \"status $?\"; cat c.err");
+    scratch::expect_contains("SMITH_SLOTS above the limit", out, "SMITH_SLOTS is above the pool's limit of 64 tokens");
+    scratch::expect_contains("SMITH_CORES above the limit", out, "SMITH_CORES is above the pool's limit of 64 tokens");
+}

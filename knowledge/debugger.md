@@ -22,7 +22,7 @@ smith-debug is the short guide for users; this is how it is built.
   (`liblldb[A-Z]*.a`) and makes `libsmithlldb.a`: the objects that make `liblldb.dylib` (the SB API; no library holds
   them), the driver's and lldb-dap's objects with the symbol `main` renamed (`smith_lldb_driver_main`,
   `smith_lldb_dap_tool_main`), and Platform.cpp. All of them have their static initializers moved out of the section
-  dyld runs at load (`scripts/defer_init.c`, section `__smith_lldb`), run by `shim/lldb.cpp` and `shim/lldb_dap.cpp`
+  dyld runs at load (`macho/defer_init.smith`, section `__smith_lldb`), run by `shim/lldb.cpp` and `shim/lldb_dap.cpp`
   with `smith_tool_start` when a debugger command runs.
 - **build.c** links them when the install has `libsmithlldb.a` (`-DSMITH_LLDB`, the shims `lldb` and `lldb_dap`,
   `-ledit` and the frameworks Foundation, CoreFoundation, CoreServices and Security). An install without lldb gives a
