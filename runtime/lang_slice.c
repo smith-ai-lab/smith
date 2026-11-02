@@ -1941,8 +1941,14 @@ static void smith_lang_slice_call(SmithLang *lang, const SmithHost *host, const 
     char text[smith_lang_slice_text_max];
     SmithExprType found = {};
     size_t params = 0;
-    if (smith_lang_slice_text(lang, cur->tokens, cur->count, text, sizeof text) && host->expr_type != nullptr &&
-        host->expr_type(host->context, text, (uint32_t)strlen(text), &found)) {
+    // The module's own generic is no function the compiler can type: its placeholder is `unavailable`, so asking
+    // reports an error (#751). Its call is an instance, written where the call stands, and takes no slice parameter
+    // here.
+    bool own_generic = cur->count == 1 && cur->tokens[0].kind == SmithTokenKind_Identifier && lang->is_module &&
+                       smith_lang_generic_find(lang, lang->module, strlen(lang->module), cur->tokens[0].text,
+                                               cur->tokens[0].length) >= 0;
+    if (!own_generic && smith_lang_slice_text(lang, cur->tokens, cur->count, text, sizeof text) &&
+        host->expr_type != nullptr && host->expr_type(host->context, text, (uint32_t)strlen(text), &found)) {
         params = smith_lang_slice_params(found.canonical, tags, smith_lang_slice_args_max);
     }
     smith_lang_slice_add(cur, &chain->tokens[element->from], 1); // `(`
