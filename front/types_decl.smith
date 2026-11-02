@@ -60,6 +60,7 @@ import front::types_convert;
 import front::types_expr;
 import front::types_fn;
 import front::types_iter;
+import front::types_stream;
 import std::arena;
 import std::format;
 import std::mem;
@@ -107,6 +108,7 @@ struct State {
     Usize pending_count;
     Str function;
     types::TypeRef result;      // what `return` is checked against
+    types::TypeRef generator;   // the element `T` when the function is a generator (types_stream), else null
     Bool new_body;              // the function has a parameter or a local in smith's own syntax (so far)
     const ast::Stmt *tails[32]; // the statements whose value is the function's result (the last line, through
     Usize tail_count;           // blocks and both arms of an if), so a call there is not unused
@@ -435,6 +437,9 @@ static void return_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     const ast::Expr *value = s->kind.return_stmt.value;
+    if (types_stream::check_return(r, s, state.generator)) {
+        return;
+    }
     types::TypeRef want = state.result;
     if (want == nullptr || is_auto(want)) {
         if (value != nullptr) {
@@ -640,6 +645,8 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
         for_in_statement(r, s);
     } else if (s->kind == .return_stmt) {
         return_statement(r, s);
+    } else if (s->kind == .yield_stmt) {
+        types_stream::check_yield(r, s, state.generator);
     } else if (s->kind == .defer_stmt) {
         push(s->kind.defer_stmt.body, nullptr, enter);
     } else if (s->kind == .labeled) {
@@ -783,7 +790,10 @@ export void check_body(types::Checked *r, const ast::Decl *function) {
     for (Usize i = 0; i < countof(params); i++) {
         state.new_body = state.new_body || params[i].is_new;
     }
-    walk(r, function->kind.function.body, signature->element);
+    types::TypeRef outer_generator = state.generator;
+    state.generator = types_stream::generator_element(signature->element, function->kind.function.body);
+    walk(r, function->kind.function.body, state.generator != nullptr ? r->table.void_type : signature->element);
+    state.generator = outer_generator;
     types_fn::check_once(r, params, function->kind.function.body);
     types::pop_scope(&r->scopes);
     drain(r);
