@@ -1,6 +1,6 @@
 // A C interface to lldb's own driver main, linked into smith as `smith dbg`.
 //
-// lldb's main is tools/driver/Driver.cpp's, with its options; scripts/llvm.sh renames its symbol, so every flag
+// lldb's main is tools/driver/Driver.cpp's, with its options; build_llvm_run_macos renames its symbol, so every flag
 // (`-b`, `-o`, `-s`), command, prompt and exit status is lldb's own. The debugserver it launches is the system's
 // (smith.c sets LLDB_DEBUGSERVER_PATH when the caller has not). lldb's static initializers are deferred (tool.h).
 #include "tool.h"

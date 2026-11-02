@@ -327,7 +327,9 @@ static void smith_make_undefined(SmithMakeMachine *m, const char *name, size_t l
         bool seen = false;
         for (size_t i = 0; i < smith_make_reported_count && !seen; i++)
             seen = strlen(smith_make_reported[i]) == length && memcmp(smith_make_reported[i], name, length) == 0;
-        if (!seen && smith_make_reported_count < smith_make_reported_max) {
+        if (!seen && smith_make_reported_count >= smith_make_reported_max)
+            smith_make_too_many("different empty names reported", smith_make_reported_max);
+        if (!seen) {
             smith_make_reported[smith_make_reported_count++] = smith_make_dup(name, length);
             smith_make_report(
                 "%.*s is empty here: a Makefile that this one generates may define it, and it is not read", (int)length,

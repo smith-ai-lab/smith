@@ -222,7 +222,7 @@ static bool smith_lang_add_binding(SmithLang *lang, const SmithHost *host, const
         return false;
     }
     if (binding == nullptr && lang->bindings_count >= smith_lang_bindings_max) {
-        lang->broken = true;
+        smith_lang_limit(lang, "imports' bindings", smith_lang_bindings_max);
         return false;
     }
     if (host->watch != nullptr) host->watch(host->context, name, (uint32_t)length);
@@ -380,6 +380,8 @@ static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, cons
     }
     if (lang->imports_count < smith_lang_imports_max) {
         lang->smith_imports[lang->imports_count++] = smith_lang_store(lang, name.colons, strlen(name.colons));
+    } else {
+        smith_lang_limit(lang, "modules one file imports", smith_lang_imports_max);
     }
     smith_lang_written_read(lang, host, header, name.colons, bind, bind_length);
     smith_lang_generics_load(lang, host, name.colons);
