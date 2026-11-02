@@ -108,7 +108,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          cc -std=c2x -O1 scripts/revert_check.c -o "$RUNNER_TEMP/revert_check"
+          cc -std=gnu2x -O1 scripts/revert_check.c -o "$RUNNER_TEMP/revert_check"
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then printf '%s\n' "$PR_BODY" >"$RUNNER_TEMP/body"
           else git log -1 --format=%B HEAD >"$RUNNER_TEMP/body"; fi
           "$RUNNER_TEMP/revert_check" "$(git merge-base "$BASE" HEAD)" HEAD "$RUNNER_TEMP/body"
