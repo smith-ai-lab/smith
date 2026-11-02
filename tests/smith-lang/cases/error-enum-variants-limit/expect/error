@@ -1,0 +1,4 @@
+src/main.smith:6:11: expected '= constant-expression' or end of enumerator definition
+src/main.smith:6:8: missing ',' between enumerators
+src/main.smith:71:3: the enum `Big` has more than 64 variants, the limit of a payload enum
+src/main.smith:73:1: unknown type name 'I32'
