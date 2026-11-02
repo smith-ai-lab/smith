@@ -159,6 +159,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - Assigning to a name declared without `mut` inserts `mut ` before its name (a local or parameter, not `const`, not after an attribute).
 - Writing through a `*T` turns the declaration's `*T` into `*mut T`; when that pointer is `p := &x` of a constant `x`, the fix adds `mut` to `x`.
 - No fix removes a `mut`. In smith's own syntax `*T` is read-only (`pointee_const`) and `*mut T` writable.
+- Preprocessor lines (#1748, `front/fix_directive.smith`): the error of the first `#` carries one fix for every simple line in the file: `#define N 4` becomes `const N := 4` and `#include <h.h>` becomes `h := import c <h.h>`. `#if`, `#pragma`, `#error`, a function-like `#define` and `#include "h"` keep the error with no fix.
 - Tests: `tests/front_fix_test.smith`, `tests/front_fix_mut_test.smith`.
 
 ## The checker

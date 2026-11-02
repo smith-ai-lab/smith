@@ -5,6 +5,9 @@
 //
 //   file(path, output, triple, roots)   one file to the object `output` for `triple` (empty: the driver's default
 //                                       target); a `Report`: whether it worked, the diagnostics, the time of each stage
+//   header(path, output, triple, roots) the C header of one file in smith's own syntax (#1621): `pub struct`s and
+//                                       `pub fn`s with a C spelling, from the declarations alone (no checker), written
+//                                       only when its bytes change; `run_header` is its C entry (`--smith-header`)
 //   run(sources, outputs, count, triple)
 //                                       what the driver calls (C: `front_compile_run`): every file of the command line
 //                                       with the default roots, diagnostics on stderr, 0 when every object was written
@@ -39,6 +42,7 @@ import std::mem;
 import <llvm-c/Core.h>;
 import <llvm-c/Target.h>;
 import <llvm-c/TargetMachine.h>;
+import <stdio.h>;
 import <stdlib.h>;
 import <unistd.h>;
 
@@ -340,4 +344,310 @@ static Str stage_of(Times times) {
         }
     }
     return status;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The C header of a module (#1621)
+
+static Bool contains(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        if (roots::same(text[i:i + countof(needle)], needle)) return true;
+    }
+    return false;
+}
+
+// The target's prefix of a label: `_` for Darwin, macOS and iOS, else none (the token lowering's rule).
+static Str label_prefix(Str triple) {
+    Bool apple = contains(triple, "darwin") || contains(triple, "macos") || contains(triple, "ios");
+    return apple ? "_" : "";
+}
+
+// The module's path joined by `separator`.
+static Str joined(const ast::Module *m, Str separator) {
+    Str all = "";
+    for (Usize i = 0; i < countof(m->name.segments); i++) {
+        if (i > 0) all = as_str(format::push(all, separator));
+        all = as_str(format::push(all, m->name.segments[i].text));
+    }
+    return all;
+}
+
+static Bool is_c_name_attribute(ast::Attribute attribute) {
+    Usize n = countof(attribute.name.segments);
+    if (n == 1) return roots::same(attribute.name.segments[0].text, "c_name");
+    return n == 2 && roots::same(attribute.name.segments[0].text, "std") &&
+           roots::same(attribute.name.segments[1].text, "c_name");
+}
+
+// The function's `@c_name`, or "" when it has none.
+static Str header_c_name(const ast::Decl *d) {
+    for (Usize i = 0; i < countof(d->attributes); i++) {
+        ast::Attribute attribute = d->attributes[i];
+        if (!is_c_name_attribute(attribute) || countof(attribute.args) != 1) continue;
+        const ast::Expr *argument = attribute.args[0];
+        if (argument->kind == .string) return argument->kind.string.bytes;
+    }
+    return "";
+}
+
+// The C spelling of a scalar type's name (the new names and today's capitalized ones: `I32` is `i32`), or "" when the
+// name is not one.
+static Str scalar_spelling(Str name) {
+    if (countof(name) == 0) return "";
+    Bool capital = name[0] >= 'A' && name[0] <= 'Z';
+    char first = capital ? (char)(name[0] + 32) : name[0];
+    Str small = as_str(format::push(first, name[1:]));
+    if (roots::same(small, "i8")) return "int8_t";
+    if (roots::same(small, "i16")) return "int16_t";
+    if (roots::same(small, "i32")) return "int32_t";
+    if (roots::same(small, "i64")) return "int64_t";
+    if (roots::same(small, "u8")) return "uint8_t";
+    if (roots::same(small, "u16")) return "uint16_t";
+    if (roots::same(small, "u32")) return "uint32_t";
+    if (roots::same(small, "u64")) return "uint64_t";
+    if (roots::same(small, "isize")) return "ptrdiff_t";
+    if (roots::same(small, "usize")) return "size_t";
+    if (roots::same(small, "bool")) return "bool";
+    if (roots::same(small, "char")) return "char";
+    if (roots::same(small, "f32")) return "float";
+    if (roots::same(small, "f64")) return "double";
+    return "";
+}
+
+static Bool is_struct_name(Str name, ast::Identifier structs[:]) {
+    for (Usize i = 0; i < countof(structs); i++) {
+        if (roots::same(name, structs[i].text)) return true;
+    }
+    return false;
+}
+
+// What a header spells a type as. `text` is empty when the type has no C spelling; `by_value` is set when it is one of
+// the module's structs taken by value (its own message).
+struct Spelled {
+    Str text;
+    Bool by_value;
+};
+
+// The base of a chain of pointers: a scalar or one of the module's structs (by value only when no pointer is above it).
+static Spelled spell_base(const ast::TypeExpr *t, ast::Identifier structs[:], Str prefix, Bool under_pointer) {
+    Spelled none = {.text = "", .by_value = false};
+    if (t->kind != .named || countof(t->kind.named.path.segments) != 1) return none;
+    Str name = t->kind.named.path.segments[0].text;
+    Str scalar = scalar_spelling(name);
+    if (countof(scalar) > 0) return (Spelled){.text = scalar, .by_value = false};
+    if (!is_struct_name(name, structs)) return none;
+    if (!under_pointer) return (Spelled){.text = "", .by_value = true};
+    return (Spelled){.text = as_str(format::push(prefix, name)), .by_value = false};
+}
+
+constexpr Usize pointer_depth_max = 8;
+
+// The spelling of a type: `*T` is `const T *`, `*mut T` is `T *`, a pointer to a pointer `const T * const *` (a chain
+// of at most 8 pointers, written as a loop).
+static Spelled spell(const ast::TypeExpr *t, ast::Identifier structs[:], Str prefix) {
+    Bool mutable_level[8] = {};
+    Usize depth = 0;
+    const ast::TypeExpr *at = t;
+    while (at->kind == .pointer && depth < pointer_depth_max) {
+        mutable_level[depth] = at->kind.pointer.is_mut;
+        depth += 1;
+        at = at->kind.pointer.pointee;
+    }
+    Spelled base = spell_base(at, structs, prefix, depth > 0);
+    if (countof(base.text) == 0) return base;
+    Str text = base.text;
+    for (Usize level = depth; level > 0; level--) {
+        Bool is_mut = mutable_level[level - 1];
+        Bool inner_pointer = level < depth;
+        if (is_mut)
+            text = as_str(format::push(text, " *"));
+        else if (inner_pointer)
+            text = as_str(format::push(text, " const *"));
+        else
+            text = as_str(format::push("const ", text, " *"));
+    }
+    return (Spelled){.text = text, .by_value = false};
+}
+
+// One error of the header at `span`.
+static Str header_error(Str path, Str source, ast::Span span, Str message) {
+    return diagnostic(path, source, span, "error", message);
+}
+
+// The text of the type in a message: the source between its span's ends.
+static Str source_of(Str source, ast::Span span) {
+    if (span.end > countof(source) || span.start > span.end) return "";
+    return source[span.start:span.end];
+}
+
+// The line of a `pub fn` in the header, or "" with a message in `*problems`.
+static Str function_line(Str path, Str source, const ast::Decl *d, ast::Identifier structs[:], Str prefix, Str module_c,
+                         Str module_label, Str label_start, Str *problems) {
+    if (d->kind != .function) {
+        return "";
+    }
+    ast::Param params[:] = d->kind.function.params;
+    Str name = d->kind.function.name;
+    Str args = "";
+    for (Usize i = 0; i < countof(params); i++) {
+        Spelled spelled = spell(params[i].type, structs, prefix);
+        if (countof(spelled.text) == 0) {
+            Str message =
+                spelled.by_value
+                    ? as_str(format::push("`", name, "` takes `", source_of(source, params[i].type->span),
+                                          "` by value; C passes a struct by value by the target's ABI, which the "
+                                          "emitter does not follow yet: take `*",
+                                          source_of(source, params[i].type->span), "`"))
+                    : as_str(format::push("`", name, "` takes `", source_of(source, params[i].type->span),
+                                          "`, which has no C spelling in a header yet"));
+            *problems = as_str(format::push(*problems, header_error(path, source, params[i].span, message)));
+            return "";
+        }
+        Bool star = spelled.text[countof(spelled.text) - 1] == '*';
+        args = as_str(format::push(args, i == 0 ? "" : ", ", spelled.text, star ? "" : " ", params[i].name));
+    }
+    Str result = "void";
+    if (d->kind.function.result != nullptr) {
+        Spelled spelled = spell(d->kind.function.result, structs, prefix);
+        if (countof(spelled.text) == 0) {
+            Str shown = source_of(source, d->kind.function.result->span);
+            Str message = spelled.by_value
+                              ? as_str(format::push("`", name, "` returns `", shown,
+                                                    "` by value; C returns a struct by value by the target's ABI, "
+                                                    "which the emitter does not follow yet: return it through a `*mut ",
+                                                    shown, "` parameter"))
+                              : as_str(format::push("`", name, "` returns `", shown,
+                                                    "`, which has no C spelling in a header yet"));
+            *problems =
+                as_str(format::push(*problems, header_error(path, source, d->kind.function.result->span, message)));
+            return "";
+        }
+        result = spelled.text;
+    }
+    Str own = header_c_name(d);
+    Bool star = result[countof(result) - 1] == '*';
+    Str c_name = as_str(format::push(module_c, "_", name));
+    if (countof(own) > 0) c_name = own;
+    if (countof(params) == 0) args = "void";
+    Str separator = " ";
+    if (star) separator = "";
+    Str head = as_str(format::push(result, separator, c_name, "(", args, ")"));
+    if (countof(own) > 0) return as_str(format::push(head, ";\n"));
+    return as_str(format::push(head, " __asm__(\"", label_start, module_label, "::", name, "\");\n"));
+}
+
+// The header's text for the parsed module, or "" with the errors in `*problems`.
+static Str header_text(Str path, Str source, const ast::Module *m, Str triple, Str *problems) {
+    Str module_c = joined(m, "_");
+    Str module_label = joined(m, "::");
+    Str prefix = as_str(format::push(module_c, "_"));
+    ast::Identifier structs[:] = {};
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind != .record || !d->is_pub) continue;
+        structs = mem::realloc(structs, countof(structs) + 1);
+        structs[countof(structs) - 1] = (ast::Identifier){.text = d->kind.record.name};
+    }
+    Str types = "";
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind != .record || !d->is_pub) continue;
+        Str fields = "";
+        for (Usize k = 0; k < countof(d->kind.record.fields); k++) {
+            ast::FieldDecl field = d->kind.record.fields[k];
+            Spelled spelled = spell(field.type, structs, prefix);
+            if (countof(spelled.text) == 0) {
+                Str message = as_str(format::push("field `", field.name, "` of `", d->kind.record.name, "` is `",
+                                                  source_of(source, field.type->span),
+                                                  "`, which has no C spelling in a header yet"));
+                *problems = as_str(format::push(*problems, header_error(path, source, field.span, message)));
+                continue;
+            }
+            Bool star = spelled.text[countof(spelled.text) - 1] == '*';
+            fields = as_str(format::push(fields, spelled.text, star ? "" : " ", field.name, "; "));
+        }
+        types = as_str(format::push(types, "typedef struct { ", fields, "} ", prefix, d->kind.record.name, ";\n"));
+    }
+    Str body = "";
+    Str label_start = label_prefix(triple);
+    Usize count = 0;
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind != .function || !d->is_pub || d->kind.function.body == nullptr) continue;
+        if (roots::same(d->kind.function.name, "main")) continue;
+        Str line = function_line(path, source, d, structs, prefix, module_c, module_label, label_start, problems);
+        if (countof(line) == 0) continue;
+        body = as_str(format::push(body, count == 0 ? "" : "\n", line));
+        count += 1;
+    }
+    if (countof(*problems) > 0) return "";
+    Str gap = "";
+    if (countof(types) > 0 && countof(body) > 0) gap = "\n";
+    return as_str(format::push("// clang-format off\n// Generated by smith from ", path,
+                               ". Do not edit.\n// clang-format on\n",
+                               "#pragma once\n#include <stddef.h>\n#include <stdint.h>\n#ifdef __cplusplus\n",
+                               "extern \"C\" {\n#endif\n", types, gap, body, "#ifdef __cplusplus\n}\n#endif\n"));
+}
+
+// Writes `text` to `output` unless the file already holds those bytes. Returns an error text, empty when it worked.
+static Str write_if_changed(Str output, Str text) {
+    files::BytesResult old = files::read_file(output);
+    if (old != .error) {
+        format::Chars held = mem::view(old.ok, char);
+        Str current = held;
+        if (roots::same(current, text)) return "";
+    }
+    c::FILE *out = c::fopen(output.data, "w");
+    if (out == nullptr) return as_str(format::push(output, ": error: cannot write the file\n"));
+    Usize written = c::fwrite(text.data, 1, countof(text), out);
+    Bool closed = c::fclose(out) == 0;
+    if (written != countof(text) || !closed) return as_str(format::push(output, ": error: cannot write the file\n"));
+    return "";
+}
+
+// Writes the C header of the module in `path` (smith's own syntax) to `output` for `triple` (empty: the default). The
+// checker does not run: a header comes from the declarations alone. The file is written only when its bytes change.
+export Report header(Str path, Str output, Str triple, roots::Roots folders) {
+    Times times = {};
+    files::BytesResult loaded = load(path);
+    if (loaded == .error) return failed(as_str(format::push(path, ": error: cannot read the file\n")), times);
+    format::Chars chars = mem::view(loaded.ok, char);
+    Str source = chars;
+    if (starts_with_module(source))
+        return failed(as_str(format::push(path, ": error: this file is in today's syntax; write its header without "
+                                                "--front-end=new\n")),
+                      times);
+    U64 mark = clock::monotonic();
+    parser::Parsed parsed = parser::parse_new(path, source);
+    times.parse = clock::monotonic() - mark;
+    if (countof(parsed.errors) > 0)
+        return failed(as_str(format::push(lines_of(path, source, parsed.errors, "error"))), times);
+    Str problem = name_module(&parsed.module, path, folders);
+    if (countof(problem) > 0) return failed(as_str(format::push(problem, "\n")), times);
+    Str wanted = triple;
+    if (countof(wanted) == 0) {
+        char *default_triple = c::LLVMGetDefaultTargetTriple();
+        wanted = as_str(format::push((const char *)default_triple));
+        c::LLVMDisposeMessage(default_triple);
+    }
+    Str problems = "";
+    Str text = header_text(path, source, &parsed.module, wanted, &problems);
+    if (countof(problems) > 0) return failed(problems, times);
+    mark = clock::monotonic();
+    Str written = write_if_changed(output, text);
+    times.write = clock::monotonic() - mark;
+    if (countof(written) > 0) return failed(written, times);
+    return (Report){.ok = true, .text = "", .times = times};
+}
+
+// The driver's entry for `--smith-header`: one source, its header, the triple (null: the default). Diagnostics go to
+// stderr.
+[[std::c_name("front_header_run")]] export I32 run_header(const char *source, const char *output, const char *triple) {
+    roots::Roots folders = roots::default_roots();
+    Str target = "";
+    if (triple != nullptr) target = as_str(format::push((const char *)triple));
+    Report done =
+        header(as_str(format::push((const char *)source)), as_str(format::push((const char *)output)), target, folders);
+    if (countof(done.text) > 0) report(done.text);
+    return done.ok ? 0 : 1;
 }
