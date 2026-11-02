@@ -1,0 +1,139 @@
+// Tests of front::types_stream (#1545, 3/4 of the streams re-ticket of #1036): where `yield` is valid and what it
+// converts to, `return` in a generator, and a generator's body having no result value. Each scenario is source text in
+// smith's own syntax, read by front::parser's hooks and checked by front::types_decl, and builds in an arena it sets as
+// the current allocator. One test per rule: an accepted case and a refused one, the refusal with its message.
+module front_types_stream_test;
+
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str join(Str a, Str b) {
+    char out[:] = mem::alloc_slice(char, countof(a) + countof(b));
+    for (Usize i = 0; i < countof(a); i++) {
+        out[i] = a[i];
+    }
+    for (Usize i = 0; i < countof(b); i++) {
+        out[countof(a) + i] = b[i];
+    }
+    return out;
+}
+
+// The module of `source`, read in smith's own syntax (parser::parse reads today's), with the real parsers' hooks.
+static parser::Parsed parse_new(Str source) {
+    parser::Parsed result = {};
+    result.module.file = "t.smith";
+    lex::Lexed lexed = lex::tokenize_new(source);
+    switch (lexed) {
+    case .ok:
+        parse::Parser p = parse::make(lexed.ok, source);
+        p.new_syntax = true;
+        p.hooks.expression = parse_expr::expression;
+        p.hooks.type = parse_type::type;
+        p.hooks.statement = parse_stmt::statement;
+        p.hooks.declaration = parse_decl::declaration;
+        result.module = parse_decl::file(&p, "t.smith");
+        result.errors = p.errors;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    return result;
+}
+
+static types::Checked check_text(Str source) {
+    parser::Parsed p = parse_new(source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    return types_decl::check_module(&p.module, types::lp64());
+}
+
+// The errors, one per line.
+static Str errors_of(const types::Checked *r) {
+    Str text = "";
+    for (Usize i = 0; i < r->error_count; i++) {
+        text = join(text, join(r->errors[i].message, "\n"));
+    }
+    return text;
+}
+
+// `source` checks with no error.
+static void clean(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    Str errors = errors_of(&r);
+    test::check_equal(r.error_count, (Usize)0);
+    test::check_condition(has(errors, ""));
+}
+
+// `source` gives exactly one error, which says `first` and `second`.
+static void fails(Str source, Str first, Str second) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    Str errors = errors_of(&r);
+    test::check_equal(r.error_count, (Usize)1);
+    test::check_condition(has(errors, first));
+    test::check_condition(has(errors, second));
+}
+
+export void test_front_types_stream_yield_in_a_generator_is_accepted() {
+    clean("fn countdown(from: i32) -> stream::Stream(i32) {\n    mut n := from\n    while n > 0 {\n        yield n\n   "
+          "     n -= 1\n    }\n}\n");
+}
+
+export void test_front_types_stream_yield_converts_to_the_element() {
+    fails("fn names() -> stream::Stream(i32) {\n    yield \"a\"\n}\n", "Str", "I32");
+}
+
+export void test_front_types_stream_yield_outside_a_generator_is_refused() {
+    fails("fn f() -> i32 {\n    yield 1\n    0\n}\n", "yield is valid only in a function that returns",
+          "remove the yield");
+}
+
+export void test_front_types_stream_return_with_a_value_is_refused() {
+    fails("fn g() -> stream::Stream(i32) {\n    yield 1\n    return 3\n}\n", "a generator ends with a plain `return`",
+          "`yield v`");
+}
+
+export void test_front_types_stream_plain_return_ends_the_stream() {
+    clean("fn g(n: i32) -> stream::Stream(i32) {\n    if n < 0 {\n        return\n    }\n    yield n\n}\n");
+}
+
+export void test_front_types_stream_last_line_value_is_refused() {
+    fails("fn one() -> i32 {\n    1\n}\n\nfn g(n: i32) -> stream::Stream(i32) {\n    yield n\n    one()\n}\n",
+          "is not used", "_ := ...");
+}
+
+export void test_front_types_stream_returning_a_stream_without_yield_is_ordinary() {
+    clean("fn pass(s: stream::Stream(i32)) -> stream::Stream(i32) {\n    s\n}\n");
+}
