@@ -65,7 +65,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          # the bootstrap finds the stage0 release of the newest ancestor commit
+          # the bootstrap downloads the newest release
           fetch-depth: 0
 
       - name: Is there a pack for this configuration
@@ -88,17 +88,14 @@ jobs:
           df -h /
           xcrun --show-sdk-path
 
-      # smith is built by its previous release: the tool downloads the stage0 release of the newest ancestor commit and
-      # runs its `smith build` with the arguments given (smith-dev-build). `smith build llvm` needs no LLVM to run.
+      # smith is built by its previous release, downloaded (smith-dev-build). `smith build llvm` needs no LLVM to run.
       - name: Bootstrap smith
         if: steps.pack.outputs.build == 'true'
-        run: |
-          mkdir -p .smith
-          clang -std=c23 -x c scripts/stage0.c -o .smith/stage0-tool
+        uses: ./.github/actions/fetch-smith
 
       - name: Build LLVM
         if: steps.pack.outputs.build == 'true'
-        run: .smith/stage0-tool llvm -Dfetch=0
+        run: smith build llvm -Dfetch=0
 
       - name: Publish the pack
         if: steps.pack.outputs.build == 'true'
@@ -106,7 +103,7 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
         run: |
           df -h /
-          .smith/stage0-tool llvm-publish
+          smith build llvm-publish
 
       - name: Remove the build
         if: always()
@@ -157,8 +154,8 @@ jobs:
           ninja --version
           python3 --version
 
-      # Linux has no smith before this runs (its own release chain starts from the seed, scripts/seed_linux.c), so the
-      # build is scripts/llvm_linux.c, a plain C23 program, on the pinned sources, as the seed does it (stage 1), and the
+      # Linux has no smith before this runs (there was no Linux release to download), so the
+      # build is scripts/llvm_linux.c, a plain C23 program, on the pinned sources, and the
       # pack program is plain C too.
       - name: Build LLVM
         if: steps.pack.outputs.build == 'true'

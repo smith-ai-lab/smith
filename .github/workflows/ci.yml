@@ -550,9 +550,7 @@ jobs:
         run: '"$SMITH" build release'
 
   release-linux:
-    # the same draft release gets the Linux tarball (`release.sh publish` adds it to the draft the other job made). Until
-    # a Linux release exists, setup builds smith from source (scripts/seed_linux.c, about two hours): expected once,
-    # for the first push to main after this job exists; the hosted limit is 6 hours. `publish` publishes without this
+    # the same draft release gets the Linux tarball (`release.sh publish` adds it to the draft the other job made). `publish` publishes without this
     # job's tarball when it fails, so `install` never waits for Linux.
     needs: changes
     if: needs.changes.outputs.scope == 'release'
@@ -570,7 +568,6 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install lld
-        # the seed (scripts/seed_linux.c) links smith with `-fuse-ld=lld`, which the hosted image does not have
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
       - name: Release
