@@ -10,7 +10,7 @@ tags: [llvm, build]
 `/usr/lib` and `/System`) from the pinned source, with a pinned CMake and Python, into
 `~/.cache/smith/llvm/23.1.3-r14/{build,install}` (`build_llvm_run_macos`; it survives `smith build clean`). `check` and a plain
 build never run it. **A build that finishes removes the others (issue #618):** each folder is 11 GB, and six piled up, so
-`scripts/llvm_prune.c` removes every folder under `~/.cache/smith/llvm` (and its Enzyme, `enzyme/<version>-<name>`) but the
+`llvm/prune.smith` (module `llvm::prune`) removes every folder under `~/.cache/smith/llvm` (and its Enzyme, `enzyme/<version>-<name>`) but the
 one just built and the one the previous release uses (the one whose `install/lib/smith-clang.id` is the identity that
 `smith-cc --smith-which` of the smith running the build prints), so a build of the previous commit still finds its LLVM. A folder
 with no id file (a build in progress) is never touched, and when the identity cannot be read nothing is removed. What goes

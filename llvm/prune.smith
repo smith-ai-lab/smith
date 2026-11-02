@@ -1,0 +1,142 @@
+// `smith build llvm` runs this when it has built an LLVM (issue #618): the folders of the other LLVM builds under the
+// cache go (11 GB each, six of them piled up), and with each its Enzyme. Two stay: the one just built and the one the
+// smith that runs the build was linked against (the previous release's), which a build of the previous commit still
+// needs. Everything removed is built again from the pinned sources by `smith build llvm`. It replaces
+// scripts/llvm_prune.c (#1673 of #1669).
+//
+// Usage: prune LLVM_FOLDER KEEP_NAME KEEP_IDENTITY
+//   LLVM_FOLDER     <cache>/smith/llvm, with one folder per build (23.1.3-r14) holding install/lib/smith-clang.id
+//   KEEP_NAME       the folder just built (23.1.3-r14)
+//   KEEP_IDENTITY   the contents of the smith-clang.id of the previous release's LLVM ("llvm-23.1.3 <hash>")
+// A folder with no id file (a build in progress, or not an LLVM at all) is never touched. Enzyme's folders are the
+// siblings <cache>/smith/enzyme/<version>-<name>. Prints each folder it removes.
+module llvm::prune;
+
+import std::arena;
+import std::console;
+import std::files;
+import std::format;
+import std::mem;
+import <unistd.h>;
+
+// How deep a removal walks below its folder; a build of LLVM nests far less, and a deeper tree is left as it is.
+constexpr Usize depth_max = 64;
+
+// `base/name` in memory of the current allocator.
+[[nodiscard]] Str join(Str base, Str name) {
+    Usize size = countof(base) + countof(name) + 2;
+    char path[:] = mem::alloc_slice(char, size);
+    format::Written written = format::to(path.data, size, base, "/", name);
+    return path[0:written.length];
+}
+
+// Removes an empty folder. std::files has no such call yet (its remove is unlink, which refuses a folder), so this one
+// is libc's. The path was made by join, which leaves a NUL after it.
+void remove_folder(Str path) {
+    _ = c::rmdir(path.data);
+}
+
+// One folder of a removal: its path, what is in it and how many of those are done.
+struct Frame {
+    Str path;
+    files::Entries entries;
+    Usize next;
+};
+
+// Removes a file, or a folder with all that is in it, depth first with a stack of folders instead of recursion. What
+// cannot be removed stays, as `rm -r` leaves it.
+void remove_tree(Str root) {
+    Frame stack[depth_max] = {};
+    Usize top = 0;
+    files::InfoResult info = files::info(root);
+    if (info == .ok && info.ok.folder) {
+        files::EntriesResult listed = files::list(root);
+        if (listed == .ok) {
+            stack[top++] = (Frame){.path = root, .entries = listed.ok, .next = 0};
+        }
+    }
+    for (Usize steps = 0; top > 0 && steps < (Usize)1 << 24; steps++) { // each step takes one entry or closes a folder
+        Frame *frame = &stack[top - 1];
+        if (frame->next == countof(frame->entries)) {
+            remove_folder(frame->path);
+            top--;
+            continue;
+        }
+        files::Entry entry = frame->entries[frame->next++];
+        Str below = join(frame->path, entry.name);
+        if (entry.folder && top < depth_max) {
+            files::EntriesResult listed = files::list(below);
+            if (listed == .ok) {
+                stack[top++] = (Frame){.path = below, .entries = listed.ok, .next = 0};
+                continue;
+            }
+        }
+        if (entry.folder) {
+            remove_folder(below);
+        } else {
+            _ = files::remove(below);
+        }
+    }
+    if (top == 0 && info == .ok && info.ok.folder) {
+        remove_folder(root);
+    } else if (top == 0) {
+        _ = files::remove(root);
+    }
+}
+
+// The first line of the build's identity file, or the error of reading it (a build in progress has none).
+files::BytesResult read_identity(Str folder) {
+    Str path = join(folder, "install/lib/smith-clang.id");
+    files::BytesResult bytes = files::read_file(path);
+    if (bytes == .error) return bytes;
+    Usize length = 0;
+    while (length < countof(bytes.ok) && bytes.ok[length] != '\n') {
+        length += 1;
+    }
+    return bytes.ok[0:length];
+}
+
+// True when `name` is `<version>-<build>`: Enzyme is keyed by its version and the LLVM it was built against.
+Bool built_against(Str name, Str build) {
+    if (countof(name) <= countof(build) + 1) return false;
+    Usize start = countof(name) - countof(build);
+    return name[start - 1] == '-' && mem::equal(name[start:], build);
+}
+
+// Removes the Enzyme folders built against the LLVM build `build`.
+void remove_enzyme(Str enzyme, Str build) {
+    files::EntriesResult entries = files::list(enzyme);
+    if (entries == .error) return;
+    for (files::Entry entry : entries.ok) {
+        if (!built_against(entry.name, build)) continue;
+        Str path = join(enzyme, entry.name);
+        remove_tree(path);
+        console::print("removed ", path, "\n");
+    }
+}
+
+I32 main(Str args[:]) {
+    if (countof(args) != 4) {
+        console::print_error("usage: prune LLVM_FOLDER KEEP_NAME KEEP_IDENTITY\n");
+        return 2;
+    }
+    Str llvm = args[1];
+    Str keep_name = args[2];
+    Str keep_identity = args[3];
+    Str enzyme = join(llvm, "../enzyme");
+    files::EntriesResult builds = files::list(llvm);
+    if (builds == .error) return 0;
+    for (files::Entry build : builds.ok) {
+        if (build.name[0] == '.' || mem::equal(build.name, keep_name)) continue;
+        Str folder = join(llvm, build.name);
+        files::BytesResult id = read_identity(folder);
+        if (id == .error) continue;
+        const char *first = (const char *)id.ok.data;
+        Str identity = first[0:countof(id.ok)];
+        if (mem::equal(identity, keep_identity)) continue;
+        remove_tree(folder);
+        console::print("removed ", folder, "\n");
+        remove_enzyme(enzyme, build.name);
+    }
+    return 0;
+}
