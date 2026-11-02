@@ -742,7 +742,8 @@ static ast::TypeExpr *read(parse::Parser *p) {
         Str last = name.segments[countof(name.segments) - 1].text;
         Bool is_lambda = countof(name.segments) == 1 && text::is(last, "Lambda");
         Bool capital = countof(last) > 0 && last[0] >= 'A' && last[0] <= 'Z';
-        if (capital || is_lambda || group_then_name(p, 0)) base = applied(p, start, q, name);
+        Bool is_vec = countof(name.segments) == 1 && text::is(last, "vec");
+        if (capital || is_lambda || is_vec || group_then_name(p, 0)) base = applied(p, start, q, name);
     }
     return suffixes(p, start, base);
 }
