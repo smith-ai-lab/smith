@@ -96,10 +96,12 @@ import front::emit_match as matching;
 import front::emit_memory as memory;
 import front::emit_option as optional;
 import front::emit_state as state;
+import front::emit_stream as streams;
 import front::emit_tuple as tupled;
 import front::emit_value as blockval;
 import front::emit_vector as vectors;
 import front::types;
+import front::types_stream;
 import std::format;
 import std::arena;
 import std::mem;
@@ -152,6 +154,7 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
     if (t->kind == .function) return lambdas::type_function(e, t);
     if (t->kind == .pointer) return memory::type_pointer(e, t);
     if (t->kind == .array) return memory::type_array(e, t);
+    if (streams::is_stream_type(t)) return streams::type_stream(e, t);
     if (t->kind == .applied) return vectors::type_vector(e, t);
     if (t->kind == .auto_type) return state::ty_fail("`auto` where a type is needed", t->span);
     return state::ty_fail("not emitted yet: this kind of type", t->span);
@@ -511,6 +514,7 @@ static state::Status return_statement(state::Emitter *e, const ast::Stmt *s) {
     if (s->kind != .return_stmt) {
         return state::fail("not a return", s->span);
     }
+    if (streams::in_body(e)) return streams::return_statement(e, s);
     if (s->kind.return_stmt.value == nullptr) return call::return_void(e, s);
     state::push_then(e, (state::Work){.then = return_finish, .span = s->span});
     state::push_eval(e, s->kind.return_stmt.value, state::hint_of(e->result));
@@ -547,6 +551,7 @@ static state::Status dispatch_statement(state::Emitter *e, const ast::Stmt *s) {
     if (s->kind == .for_in) return looping::for_in(e, s);
     if (s->kind == .if_let) return optional::if_let(e, s);
     if (s->kind == .destructure) return tupled::destructure(e, s);
+    if (s->kind == .yield_stmt) return streams::yield_statement(e, s);
     return state::not_emitted("static_assert", s->span); // the one kind left
 }
 
@@ -856,12 +861,36 @@ static state::Status value_statement_block(state::Emitter *e, const ast::Stmt *b
     return state::success();
 }
 
+// A generator (#1546): the ramp under the function's own symbol, then the body as its own function.
+static state::Status emit_generator(state::Emitter *e, const ast::Decl *d, state::FunctionInfo info) {
+    if (d->kind != .function) {
+        return state::fail("not a function", d->span);
+    }
+    const ast::Stmt *written = d->kind.function.body;
+    start_function(e, info);
+    try streams::ramp(e, d, info);
+    state::FunctionInfo body = streams::body_info(e, info);
+    start_function(e, body);
+    state::begin_scope(e);
+    try streams::body_prologue(e, d, info);
+    state::push_statement(e, written);
+    try run(e);
+    c::LLVMBasicBlockRef last = c::LLVMGetInsertBlock(e->builder);
+    if (c::LLVMGetBasicBlockTerminator(last) == nullptr) {
+        try streams::end_body(e, d->span);
+        try run(e);
+    }
+    state::end_scope(e);
+    return state::success();
+}
+
 // Pass 3: one body.
 static state::Status emit_function(state::Emitter *e, const ast::Decl *d, state::FunctionInfo info) {
     if (d->kind != .function) {
         return state::fail("not a function", d->span);
     }
     const ast::Stmt *body = d->kind.function.body;
+    if (streams::is_generator_function(info.result, types_stream::has_yield(body))) return emit_generator(e, d, info);
     start_function(e, info);
     state::begin_scope(e);
     try debug::begin_function(e, d);

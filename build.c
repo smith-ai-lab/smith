@@ -2,8 +2,8 @@
 //
 // smith is built by its previous release (knowledge/smith-bootstrap.md): smith.c is C23 and its libraries are .smith
 // modules, compiled by the smith that runs this build (`smith-cc`, the default CC), so a smith with the token hook and
-// the LLVM of `smith build llvm` is needed. A fresh clone with no smith builds and runs scripts/stage0.c, which
-// downloads the newest release of an ancestor commit and runs its `smith build`.
+// the LLVM of `smith build llvm` is needed. A fresh clone with no smith downloads the newest release
+// (README.md, Install) and runs its `smith build`.
 //
 // The verbs (smith test, smith check, smith fmt, smith lint, smith docs, smith prove, smith run) mean the same here as
 // in every project and read what this file declares: the tests below are the tests, the compiles are what lint and
@@ -223,7 +223,10 @@ static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config
         smith_object(b, &objects[i]);
         linked[i] = &objects[i];
     }
-    SmithProgram program = {.linker = config->cc, .output = smith_fmt(b, "%s/protocol", folder), .objects = linked};
+    SmithProgram program = {.linker = config->cc,
+                            .output = smith_fmt(b, "%s/protocol", folder),
+                            .flags = config->platform->deployment,
+                            .objects = linked};
     smith_program(b, &program);
     return program.step;
 }
@@ -576,6 +579,7 @@ static const char *build_resource_pack(SmithBuild *b, const BuildConfig *config,
     SmithProgram program = {
         .linker = config->cc,
         .output = smith_fmt(b, "%s/pack", folder),
+        .flags = config->platform->deployment,
         .objects = (const SmithObject *[]){&tool, nullptr},
         .libraries = config->platform->pack_libraries,
     };
@@ -812,7 +816,7 @@ static const char *const build_front_modules[] = {
     "parser",      "types",      "types_expr",  "types_convert", "types_decl",  "types_attr",   "types_stream",
     "types_fn",    "types_iter", "emit_state",  "emit",          "emit_arith",  "emit_control", "emit_call",
     "emit_memory", "emit_debug", "emit_object", "roots",         "fix",         "compile",      "emit_option",
-    "emit_match",  "emit_value", "emit_iter",   "emit_tuple",    "emit_lambda", "emit_vector",
+    "emit_match",  "emit_value", "emit_iter",   "emit_tuple",    "emit_lambda", "emit_vector",  "emit_stream",
 };
 constexpr size_t build_front_module_count = sizeof build_front_modules / sizeof build_front_modules[0];
 
@@ -1111,7 +1115,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
                                          smith_list(b, "-I", "include", "-I", ".smith/include", "-I", ".smith/protocol",
                                                     "-I", "runtime/protocol", nullptr),
                                          nullptr);
-    const char *const *sources = smith_glob(b, smith_list(b, "lib/*.c", "tests/*.c", "scripts/header_tool.c", nullptr));
+    const char *const *sources = smith_glob(b, smith_list(b, "lib/*.c", "tests/*.c", nullptr));
     for (size_t i = 0; sources[i] != nullptr; i++) {
         // stub.c is built (build_other_objects) with its -D, tree_sitter.c is the grammar's, and random.c includes the
         // raw lowering of random.smith, which tests/random_c_test.smith writes when it runs
@@ -2534,7 +2538,7 @@ static int build_llvm_run_macos(SmithRun *run, const char *source, const char *n
 
 // After a build of LLVM (issue #618): every other LLVM folder of the cache goes, and its Enzyme, but the previous
 // release's, the one the smith that runs this build links (its identity is what `smith-cc --smith-which` prints), so a
-// build of the previous commit still works. scripts/llvm_prune.c does it; when the identity cannot be read nothing is
+// build of the previous commit still works. llvm/prune.smith does it; when the identity cannot be read nothing is
 // removed.
 static int build_llvm_prune(SmithRun *run) {
     SmithBuild *b = run->b;
@@ -2547,7 +2551,27 @@ static int build_llvm_prune(SmithRun *run) {
     const char *current = build_llvm_folder(b);
     const char *name = strrchr(current, '/') + 1;
     const char *tool = smith_fmt(b, "%s/../llvm_prune", current);
-    const char *const compile[] = {cc, "-std=c23", "-O1", "scripts/llvm_prune.c", "-o", tool, nullptr};
+    const char *const compile[] = {cc,
+                                   "-O1",
+                                   "-w",
+                                   "-I",
+                                   "include",
+                                   "-I",
+                                   ".smith/include",
+                                   "llvm/prune.smith",
+                                   "lib/std/files.smith",
+                                   "lib/std/console.smith",
+                                   "lib/std/format.smith",
+                                   "lib/std/mem.smith",
+                                   "lib/std/arena.smith",
+                                   "lib/std/contract.smith",
+                                   "lib/std/env.smith",
+                                   "lib/std/text.smith",
+                                   "lib/handlers.c",
+                                   "lib/trace.c",
+                                   "-o",
+                                   tool,
+                                   nullptr};
     int status = build_exec(compile);
     if (status != 0) return status;
     const char *const prune[] = {tool, smith_fmt(b, "%s/..", current), name, identity, nullptr};
