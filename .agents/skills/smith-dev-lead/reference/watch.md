@@ -25,17 +25,18 @@ check() {
   for i in $(issues blocked '.[].number'); do
     gh api "repos/$R/issues/$i/events" --paginate 2>/dev/null --jq \
       '[.[]|select(.event=="labeled" and .label.name=="blocked")]|last|select(.created_at|fromdateiso8601>now-3600)|"x"' | grep -q x &&
-      gh api "repos/$R/issues/$i/comments" --jq '.[-1].body' 2>/dev/null | grep -qi runner && seen "q$i" && echo "#$i blocked by a runner: a question for you"
+      gh api "repos/$R/issues/$i/comments" --jq '.[-1].body' 2>/dev/null | grep -qi runner && ! gh api "repos/$R/issues/$i/comments" --jq ".[-1].body" | grep -qE '^(Lead|Backlog sort \(lead|Closing \(lead)' && seen "q$i" && echo "#$i blocked by a runner: a question for you"
   done
   for i in $(issues blocked '.[]|select(.pull_request==null)|.number'); do
-    w=$( { gh api "repos/$R/issues/$i" --jq .body; gh api "repos/$R/issues/$i/comments" --jq '.[].body'; } 2>/dev/null | grep -oiE 'waits for[^.]*' | grep -oE '#[0-9]+' | tr -d '#' | sort -u)
-    [ -z "$w" ] && continue
+    w=$( { gh api "repos/$R/issues/$i" --jq .body; gh api "repos/$R/issues/$i/comments?per_page=100" --jq '.[].body'; } 2>/dev/null | grep -oiE 'waits for[^.]*' | grep -oE '#[0-9]+' | tr -d '#' | sort -u)
+    [ -z "$w" ] && { seen "w$i" && echo "#$i is blocked with no Waits-for line: name the ticket that unlocks it, or remove blocked"; continue; }
     open=0; for d in $w; do [ "$(gh api repos/$R/issues/$d --jq .state 2>/dev/null)" = closed ] || open=1; done
     [ $open = 0 ] && seen "u$i" && echo "#$i: everything it waits for is closed; unblock it"
   done
   for p in $(gh api "repos/$R/pulls?state=open&per_page=50" --jq '.[]|select(.updated_at|fromdateiso8601<now-3600)|.number' 2>/dev/null); do
     sha=$(gh api repos/$R/pulls/$p --jq .head.sha 2>/dev/null)
     [ "$(gh api repos/$R/commits/$sha/check-runs --jq '[.check_runs[]|select(.name=="ci")|.conclusion]|first' 2>/dev/null)" = failure ] && seen "pr$p" && echo "PR #$p red and untouched for an hour"
+    [ "$(gh api repos/$R/pulls/$p --jq .mergeable 2>/dev/null)" = false ] && seen "cf$p" && echo "PR #$p has a merge conflict and is untouched for an hour"
   done
   for p in $(gh api "repos/$R/pulls?state=open&per_page=50" --jq '.[]|select(.auto_merge==null and (.updated_at|fromdateiso8601<now-1800))|.number' 2>/dev/null); do
     q=$(gh api "repos/$R/issues/$p/timeline?per_page=100" --jq '[.[]|select(.event=="added_to_merge_queue" or .event=="removed_from_merge_queue")|.event]|last // "none"' 2>/dev/null)
@@ -55,6 +56,8 @@ done
 - **Ready tickets:** open `task` issues that are neither `claimed` nor `blocked`. Fewer than N means runners exit with nothing to take: unblock, close tickets already done, split a large one, or answer a question.
 - **A runner's question:** a ticket a runner marked `blocked` in the last hour. Runners should also post `@lead:` on #1406, which wakes the lead within a minute.
 - **Everything a blocked ticket waits for is closed:** remove `blocked` (the "Waits for #N" lines in its body and comments).
+- **Blocked with no Waits-for line:** nothing will ever unblock it. Name the ticket that unlocks it, or remove `blocked` (a ticket too big for one PR stays a `task`: the runner who claims it splits it; parked is `later`). No exceptions: owner, 2026-11-02, "we should never let you mark something as blocked unless you have a ticket saying what unlocks it".
 - **A green PR not in the merge queue** (never added, or `removed_from_merge_queue` last in its timeline): GitHub ignores auto-merge on a PR that is already green, and the queue drops a PR whose queue run fails. Merge main into it and turn auto-merge on while CI runs (#1522 sat green for 90 minutes).
+- **A PR with a merge conflict, untouched for an hour:** release its ticket the same way, saying to merge main in and resolve it (#1562 sat conflicted for four hours after the queue dropped it).
 - **A red PR untouched for an hour:** its runner has ended. Release its ticket with the failing test named, so the next runner fixes that PR (smith-dev-runner step 1).
 - **Claim age** is the latest `labeled` event for `claimed` in `issues/N/events`, not `updated_at`, which every comment moves. The merge queue has no REST listing: "not moved" means no new commit on main for an hour while pull requests are open.
