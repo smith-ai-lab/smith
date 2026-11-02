@@ -3159,6 +3159,43 @@ static int build_coverage_fetch(SmithRun *run) {
     return 0;
 }
 
+// `smith build frontend-coverage [-Dsmith=<path>]` (#1730): how much of the tree smith's own front end handles. Every
+// .smith file git tracks is copied to .smith/frontend-coverage/tree, fixed there with `smith lint --fix` and compiled
+// with `smith cc --front-end=new`; the real files are never touched. scripts/frontend_coverage/main.smith is the tool:
+// a project of its own under .smith/frontend-coverage/tool, built by the smith that runs this build (as
+// build_defer_make does). It writes the results to .smith/frontend-coverage/results.tsv and prints the summary: files
+// passed out of total, the failures per stage and the failures grouped by message. `-Dsmith` names the smith to
+// measure.
+static const char *build_absolute(SmithBuild *b, const char *path) {
+    char home[PATH_MAX];
+    if (path[0] == '/' || getcwd(home, sizeof home) == nullptr) return path;
+    return smith_fmt(b, "%s/%s", home, path);
+}
+
+static int build_frontend_coverage(SmithRun *run) {
+    SmithBuild *b = run->b;
+    const char *work = build_absolute(b, ".smith/frontend-coverage");
+    const char *folder = smith_fmt(b, "%s/tool", work);
+    const char *results = smith_fmt(b, "%s/results.tsv", work);
+    const char *smith = build_absolute(b, run->args[0]);
+    int status = build_make_folder(b, folder);
+    status = status != 0
+                 ? status
+                 : build_exec(smith_list(b, "/bin/cp", "scripts/frontend_coverage/main.smith", folder, nullptr));
+    status = status != 0 ? status
+                         : build_spawn(&(BuildSpawn){.argv = smith_list(b, smith, "build", "release", nullptr),
+                                                     .folder = folder,
+                                                     .log = smith_fmt(b, "%s.log", folder),
+                                                     .tail = 20});
+    if (status != 0) return status;
+    const char *tool = build_defer_tool(b, folder);
+    status = build_spawn(&(BuildSpawn){
+        .argv = smith_list(b, tool, "run", smith, build_absolute(b, "."), smith_fmt(b, "%s/tree", work), nullptr),
+        .log = results,
+        .stdout_only = true});
+    return status != 0 ? status : build_exec(smith_list(b, tool, "summarize", results, nullptr));
+}
+
 static void build_developer_tasks(SmithBuild *b, const char *binary) {
     SmithStep friction = {
         .run = build_friction,
@@ -3177,6 +3214,13 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
         .description = "reporting where CI's time goes",
     };
     smith_task(b, "ci-times", &ci_times);
+    SmithStep frontend_coverage = {
+        .run = build_frontend_coverage,
+        .args =
+            smith_list(b, smith_option_value(b, "smith", binary, "frontend-coverage: the smith to measure"), nullptr),
+        .description = "measuring how much of the tree the new front end handles",
+    };
+    smith_task(b, "frontend-coverage", &frontend_coverage);
     SmithStep bench = {
         .run = build_bench,
         .args = smith_list(b, smith_option_value(b, "smith", binary, "bench: the smith to measure"),
