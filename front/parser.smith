@@ -21,8 +21,8 @@ import front::parse_stmt;
 import front::parse_type;
 import std::mem;
 
-// What reading a file gave: the module (the declarations read before and after each error), the errors and the warnings (old forms
-// that still compile; the compile ignores them, `smith lint --fix` mends them).
+// What reading a file gave: the module (the declarations read before and after each error), the errors and the warnings
+// (old forms that still compile; the compile ignores them, `smith lint --fix` mends them).
 export struct Parsed {
     ast::Module module;
     parse::Errors errors;
