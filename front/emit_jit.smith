@@ -8,6 +8,7 @@ import front::emit_state as state;
 import std::contract;
 import std::format;
 import std::mem;
+import std::stream;
 import <llvm-c/Core.h>;
 import <llvm-c/Error.h>;
 import <llvm-c/LLJIT.h>;
@@ -44,17 +45,21 @@ static emit::Error message_of(c::LLVMErrorRef error) {
 constexpr U8 exported_callable = 5;
 
 static c::LLVMErrorRef define_checks(c::LLVMOrcLLJITRef handle) {
-    c::LLVMOrcCSymbolMapPair pairs[6] = {};
-    Usize addresses[6] = {(Usize)contract::fail_cast,   (Usize)contract::fail_index,  (Usize)contract::fail_overflow,
-                          (Usize)contract::fail_negate, (Usize)contract::fail_divide, (Usize)contract::fail_shift};
-    const char *names[6] = {"smith_contract_fail_cast",   "smith_contract_fail_index",  "smith_contract_fail_overflow",
-                            "smith_contract_fail_negate", "smith_contract_fail_divide", "smith_contract_fail_shift"};
-    for (Usize i = 0; i < 6; i++) {
+    c::LLVMOrcCSymbolMapPair pairs[12] = {};
+    Usize addresses[12] = {(Usize)contract::fail_cast,   (Usize)contract::fail_index,  (Usize)contract::fail_overflow,
+                           (Usize)contract::fail_negate, (Usize)contract::fail_divide, (Usize)contract::fail_shift,
+                           (Usize)stream::start,         (Usize)stream::next,          (Usize)stream::slot,
+                           (Usize)stream::yield,         (Usize)stream::finish,        (Usize)stream::close};
+    const char *names[12] = {"smith_contract_fail_cast",   "smith_contract_fail_index",  "smith_contract_fail_overflow",
+                             "smith_contract_fail_negate", "smith_contract_fail_divide", "smith_contract_fail_shift",
+                             "smith_stream_start",         "smith_stream_next",          "smith_stream_slot",
+                             "smith_stream_yield",         "smith_stream_finish",        "smith_stream_close"};
+    for (Usize i = 0; i < 12; i++) {
         pairs[i].Name = c::LLVMOrcLLJITMangleAndIntern(handle, names[i]);
         pairs[i].Sym.Address = addresses[i];
         pairs[i].Sym.Flags.GenericFlags = exported_callable;
     }
-    return c::LLVMOrcJITDylibDefine(c::LLVMOrcLLJITGetMainJITDylib(handle), c::LLVMOrcAbsoluteSymbols(pairs, 6));
+    return c::LLVMOrcJITDylibDefine(c::LLVMOrcLLJITGetMainJITDylib(handle), c::LLVMOrcAbsoluteSymbols(pairs, 12));
 }
 
 // A JIT for the host. Its triple and data layout are in `target`.

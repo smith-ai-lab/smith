@@ -1,0 +1,306 @@
+// front::emit_stream: generators and `stream::next` (#1546 of #1428, 4/4 of the streams re-ticket of #1036). The
+// runtime is std::stream's core (#1543, knowledge/stream.md); this file is the compiler's side of it.
+//
+// The type. `stream::Stream(T)` is the `Ty` of kind `stream`: an LLVM `ptr` (the runtime's record, null when the
+// stream has ended), `element` is `T`, the name is `stream::Stream(T)`.
+//
+// A generator (a function whose written result is `stream::Stream(T)` and whose body has a `yield`, the rule of
+// types_stream) is two functions.
+//   The ramp   has the function's own symbol and signature. It copies the arguments into a stack record, calls
+//              `smith_stream_start(body, &record, size)` and returns the handle. The body does not run (lazy).
+//   The body   `<symbol>::body`, `void (ptr s, ptr args)`, internal. It loads the parameters from `args` into
+//              ordinary locals and emits the written body, which runs on the stream's own stack.
+//   `yield x`  converts `x` to `T`, stores it at `smith_stream_slot(s)` and calls `smith_stream_yield(s)`: true goes
+//              on, false (the stream was closed) runs the pending `defer`s and goes to the end.
+//   `return`   and the reachable end of the body run the pending `defer`s and go to the end block, which calls
+//              `smith_stream_finish(s)` and is `unreachable`.
+//
+// `stream::next(&s)` is `?T`: a slot of type `T`, `smith_stream_next(&s, &slot)`, `.some(slot)` when it says true and
+// `.none` when not. `stream::close(&s)` is `smith_stream_close(&s)`. Both names are the compiler's own until
+// std::stream has its generic code in smith's own syntax. Left: debug info of a generator body (a body has no entry in
+// the function table that debug info looks its subprogram up in), a `yield` in a lambda (the checker refuses it).
+module front::emit_stream;
+
+import front::ast;
+import front::emit_option as optional;
+import front::emit_state as state;
+import front::types_stream;
+import std::format;
+import std::mem;
+import <llvm-c/Core.h>;
+
+static Bool is_name(ast::Path path, Str first, Str second) {
+    return countof(path.segments) == 2 && state::same_text(path.segments[0].text, first) &&
+           state::same_text(path.segments[1].text, second);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The type
+
+// `stream::Stream(payload)`.
+static state::Ty make(state::Emitter *e, state::Ty element) {
+    state::OwnedTy *block = mem::alloc(state::OwnedTy);
+    block->ty = element;
+    block->next = e->owned;
+    e->owned = block;
+    state::Ty ty = {.kind = .stream,
+                    .llvm = state::pointer_type(e, 0),
+                    .name = state::msg(format::push("stream::Stream(", element.name, ")")),
+                    .element = &block->ty};
+    return ty;
+}
+
+// The type expression is `stream::Stream(T)`.
+export Bool is_stream_type(const ast::TypeExpr *t) {
+    if (t == nullptr) return false;
+    if (t->kind != .applied) return false;
+    return is_name(t->kind.applied.name, "stream", "Stream") && countof(t->kind.applied.args) == 1;
+}
+
+// The type `stream::Stream(T)` says.
+export state::TyResult type_stream(state::Emitter *e, const ast::TypeExpr *t) {
+    if (t->kind != .applied) {
+        return state::ty_fail("not emitted yet: this applied type", t->span);
+    }
+    ast::TypeArg args[:] = t->kind.applied.args;
+    if (!is_stream_type(t)) {
+        return state::ty_fail("not emitted yet: this applied type", t->span);
+    }
+    const ast::TypeArg *first = &args[0];
+    if (*first != .type) {
+        return state::ty_fail("`stream::Stream` takes a type", t->span);
+    }
+    state::TyResult element = state::type_of(e, first->type.type);
+    if (element == .error) return {.error = element.error};
+    return make(e, element.ok);
+}
+
+// A function with this result and body is a generator.
+export Bool is_generator(const ast::Decl *d) {
+    if (d->kind != .function) return false;
+    return is_stream_type(d->kind.function.result) && types_stream::has_yield(d->kind.function.body);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The runtime's symbols
+
+static c::LLVMTypeRef pointer(state::Emitter *e) {
+    return c::LLVMPointerTypeInContext(e->context, 0);
+}
+
+// The runtime function `name` (`start`, `next`, ...) with this type, declared in the module once.
+static c::LLVMValueRef runtime(state::Emitter *e, const char *name, c::LLVMTypeRef result, c::LLVMTypeRef *params,
+                               U32 n) {
+    char *symbol = format::push("smith_stream_", name).data;
+    c::LLVMValueRef found = c::LLVMGetNamedFunction(e->module, symbol);
+    c::LLVMTypeRef type = c::LLVMFunctionType(result, params, n, 0);
+    if (found == nullptr) found = c::LLVMAddFunction(e->module, symbol, type);
+    mem::free(symbol);
+    return found;
+}
+
+static c::LLVMValueRef call_runtime(state::Emitter *e, const char *name, c::LLVMTypeRef result, c::LLVMTypeRef *params,
+                                    c::LLVMValueRef *args, U32 n) {
+    c::LLVMValueRef function = runtime(e, name, result, params, n);
+    c::LLVMTypeRef type = c::LLVMFunctionType(result, params, n, 0);
+    const char *label = "";
+    if (c::LLVMGetTypeKind(result) != c::LLVMVoidTypeKind) label = name;
+    return c::LLVMBuildCall2(e->builder, type, function, args, n, label);
+}
+
+static state::Ty void_ty(state::Emitter *e) {
+    state::Ty none = {.kind = .integer, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
+    return none;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The ramp and the body
+
+// The record of a generator's arguments: one field per parameter.
+static c::LLVMTypeRef record_of(state::Emitter *e, state::FunctionInfo info) {
+    c::LLVMTypeRef fields[64];
+    Usize count = countof(info.params);
+    for (Usize i = 0; i < count && i < 64; i++)
+        fields[i] = info.params[i].llvm;
+    return c::LLVMStructTypeInContext(e->context, fields, (U32)count, false);
+}
+
+// The body's function, `<symbol>::body`: `void (ptr s, ptr args)`, internal.
+export state::FunctionInfo declare_body(state::Emitter *e, state::FunctionInfo info) {
+    c::LLVMTypeRef both[2] = {pointer(e), pointer(e)};
+    c::LLVMTypeRef type = c::LLVMFunctionType(c::LLVMVoidTypeInContext(e->context), both, 2, 0);
+    Str name = state::msg(format::push(info.symbol, "::body"));
+    char *label = state::cstr(name);
+    c::LLVMValueRef function = c::LLVMAddFunction(e->module, label, type);
+    mem::free(label);
+    c::LLVMSetLinkage(function, c::LLVMInternalLinkage);
+    state::FunctionInfo body = {
+        .name = info.name, .symbol = name, .llvm = function, .llvm_type = type, .result = void_ty(e)};
+    return body;
+}
+
+// The ramp's code, in the function `info` the caller started: store the arguments, start the stream, return it.
+export void ramp(state::Emitter *e, state::FunctionInfo info, state::FunctionInfo body) {
+    c::LLVMTypeRef record = record_of(e, info);
+    c::LLVMValueRef args = c::LLVMBuildAlloca(e->alloca_builder, record, "args");
+    for (Usize i = 0; i < countof(info.params); i++) {
+        c::LLVMValueRef field = c::LLVMBuildStructGEP2(e->builder, record, args, (U32)i, "arg");
+        c::LLVMBuildStore(e->builder, c::LLVMGetParam(info.llvm, (U32)i), field);
+    }
+    c::LLVMTypeRef types[3] = {pointer(e), pointer(e), c::LLVMInt64TypeInContext(e->context)};
+    c::LLVMValueRef values[3] = {body.llvm, args, c::LLVMSizeOf(record)};
+    c::LLVMValueRef handle = call_runtime(e, "start", pointer(e), types, values, 3);
+    c::LLVMBuildRet(e->builder, handle);
+}
+
+// The body's start, after the caller's `start_function(body)`: the parameters become locals loaded from the record,
+// and the end block exists. `info` is the generator's own (its parameter types), `body` the body's.
+export void begin_body(state::Emitter *e, state::FunctionInfo info, state::FunctionInfo body, ast::Decl const *d) {
+    if (d->kind != .function) {
+        return;
+    }
+    c::LLVMTypeRef record = record_of(e, info);
+    c::LLVMValueRef handle = c::LLVMGetParam(body.llvm, 0);
+    c::LLVMValueRef args = c::LLVMGetParam(body.llvm, 1);
+    e->stream_handle = handle;
+    e->stream_function = body.llvm;
+    e->stream_end = c::LLVMAppendBasicBlockInContext(e->context, body.llvm, "stream_end");
+    e->stream_element = *info.result.element;
+    ast::Param params[:] = d->kind.function.params;
+    for (Usize i = 0; i < countof(params); i++) {
+        c::LLVMValueRef field = c::LLVMBuildStructGEP2(e->builder, record, args, (U32)i, "arg");
+        c::LLVMValueRef value = c::LLVMBuildLoad2(e->builder, info.params[i].llvm, field, "arg_value");
+        c::LLVMValueRef slot = state::new_alloca(e, info.params[i], params[i].name);
+        c::LLVMBuildStore(e->builder, value, slot);
+        state::add_local(e, (state::Local){.name = params[i].name, .ty = info.params[i], .address = slot});
+    }
+}
+
+// The body is emitted: the end block finishes the stream.
+export void end_body(state::Emitter *e) {
+    c::LLVMPositionBuilderAtEnd(e->builder, e->stream_end);
+    c::LLVMTypeRef one[1] = {pointer(e)};
+    c::LLVMValueRef handle[1] = {e->stream_handle};
+    call_runtime(e, "finish", c::LLVMVoidTypeInContext(e->context), one, handle, 1);
+    c::LLVMBuildUnreachable(e->builder);
+    e->stream_handle = nullptr;
+    e->stream_function = nullptr;
+    e->stream_end = nullptr;
+}
+
+// The last instruction of a path that leaves the function: `ret void`, or in a generator's body the jump to its end.
+export void leave(state::Emitter *e) {
+    if (e->stream_end != nullptr && e->function == e->stream_function)
+        c::LLVMBuildBr(e->builder, e->stream_end);
+    else
+        c::LLVMBuildRetVoid(e->builder);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// `yield x`
+
+static state::Status closed(state::Emitter *e, const state::Work *w) {
+    c::LLVMBuildBr(e->builder, e->stream_end);
+    c::LLVMPositionBuilderAtEnd(e->builder, w->blocks[0]);
+    return state::success();
+}
+
+// The value is on the stack: store it in the slot and give the reader its turn.
+static state::Status yield_finish(state::Emitter *e, const state::Work *w) {
+    state::Value value = state::pop_value(e);
+    try state::convert(e, value, e->stream_element, w->span, .initialize);
+    state::Value converted = state::pop_value(e);
+    c::LLVMTypeRef one[1] = {pointer(e)};
+    c::LLVMValueRef handle[1] = {e->stream_handle};
+    c::LLVMValueRef slot = call_runtime(e, "slot", pointer(e), one, handle, 1);
+    c::LLVMBuildStore(e->builder, converted.llvm, slot);
+    c::LLVMValueRef resumed = call_runtime(e, "yield", c::LLVMInt1TypeInContext(e->context), one, handle, 1);
+    c::LLVMBasicBlockRef go_on = c::LLVMAppendBasicBlockInContext(e->context, e->function, "yield_on");
+    c::LLVMBasicBlockRef stop = c::LLVMAppendBasicBlockInContext(e->context, e->function, "yield_closed");
+    c::LLVMBuildCondBr(e->builder, resumed, go_on, stop);
+    c::LLVMPositionBuilderAtEnd(e->builder, stop);
+    state::Work after = {.then = closed, .span = w->span};
+    after.blocks[0] = go_on;
+    state::push_then(e, after);
+    for (Usize i = 0; i < e->defer_count; i++)
+        state::push_statement(e, e->defers[i].body);
+    return state::success();
+}
+
+export state::Status yield_stmt(state::Emitter *e, const ast::Stmt *s) {
+    if (s->kind != .yield_stmt) return state::fail("not a yield", s->span);
+    if (e->stream_end == nullptr || e->function != e->stream_function)
+        return state::fail("yield is valid only in a function that returns `stream::Stream(T)`", s->span);
+    state::push_then(e, (state::Work){.then = yield_finish, .span = s->span});
+    state::push_eval(e, s->kind.yield_stmt.value, state::hint_of(e->stream_element));
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// `stream::next(&s)` and `stream::close(&s)`
+
+// The call is one of the two, by its callee's path.
+export Bool is_stream_call(const ast::Expr *x) {
+    if (x->kind != .call) return false;
+    const ast::Expr *callee = x->kind.call.callee;
+    if (callee->kind != .name) return false;
+    ast::Path path = callee->kind.name.path;
+    return is_name(path, "stream", "next") || is_name(path, "stream", "close");
+}
+
+static state::Status pointer_to_stream(state::Value p, Str what, ast::Span span) {
+    if (p.ty.kind != .pointer || p.ty.element == nullptr || p.ty.element->kind != .stream)
+        return state::failf(span, what, " takes the address of a stream: `", what, "(&s)`");
+    return state::success();
+}
+
+static state::Status next_finish(state::Emitter *e, const state::Work *w) {
+    state::Value p = state::pop_value(e);
+    try pointer_to_stream(p, "stream::next", w->span);
+    state::Ty element = *p.ty.element->element;
+    state::TyResult option = optional::option_of(e, element, w->span);
+    if (option == .error) return {.error = option.error};
+    c::LLVMValueRef slot = state::new_alloca(e, element, "slot");
+    c::LLVMBuildStore(e->builder, c::LLVMConstNull(element.llvm), slot);
+    c::LLVMTypeRef types[2] = {pointer(e), pointer(e)};
+    c::LLVMValueRef values[2] = {p.llvm, slot};
+    c::LLVMValueRef got = call_runtime(e, "next", c::LLVMInt1TypeInContext(e->context), types, values, 2);
+    c::LLVMValueRef loaded = c::LLVMBuildLoad2(e->builder, element.llvm, slot, "item");
+    try optional::wrap(e, (state::Value){.llvm = loaded, .ty = element}, option.ok, w->span);
+    state::Value some = state::pop_value(e);
+    c::LLVMValueRef none = c::LLVMConstNull(option.ok.llvm);
+    state::push_value(
+        e, (state::Value){.llvm = c::LLVMBuildSelect(e->builder, got, some.llvm, none, "next"), .ty = option.ok});
+    return state::success();
+}
+
+static state::Status close_finish(state::Emitter *e, const state::Work *w) {
+    state::Value p = state::pop_value(e);
+    try pointer_to_stream(p, "stream::close", w->span);
+    c::LLVMTypeRef one[1] = {pointer(e)};
+    c::LLVMValueRef value[1] = {p.llvm};
+    c::LLVMValueRef made = call_runtime(e, "close", c::LLVMVoidTypeInContext(e->context), one, value, 1);
+    state::push_value(e, (state::Value){.llvm = made, .ty = void_ty(e)});
+    return state::success();
+}
+
+export state::Status call(state::Emitter *e, const ast::Expr *x) {
+    if (!is_stream_call(x)) return state::fail("not a stream call", x->span);
+    if (x->kind != .call) {
+        return state::fail("not a call", x->span);
+    }
+    const ast::Expr *callee = x->kind.call.callee;
+    if (callee->kind != .name) {
+        return state::fail("not a stream call", x->span);
+    }
+    ast::Path path = callee->kind.name.path;
+    Str function = path.segments[1].text;
+    ast::ExprRef given[:] = x->kind.call.args;
+    if (countof(given) != 1) return state::failf(x->span, "stream::", function, " takes one argument, `&s`");
+    if (state::same_text(function, "next"))
+        state::push_then(e, (state::Work){.then = next_finish, .span = x->span});
+    else
+        state::push_then(e, (state::Work){.then = close_finish, .span = x->span});
+    state::push_eval(e, given[0], state::no_hint());
+    return state::success();
+}

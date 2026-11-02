@@ -51,6 +51,11 @@ static state::TyResult build(state::Emitter *e, state::Ty payload, ast::Span spa
     return ty;
 }
 
+// `?payload` for a payload the emitter already has (a stream's `next`, #1546).
+export state::TyResult option_of(state::Emitter *e, state::Ty payload, ast::Span span) {
+    return build(e, payload, span);
+}
+
 // The type `?T` says.
 export state::TyResult type_option(state::Emitter *e, const ast::TypeExpr *t) {
     if (t->kind != .option) return state::ty_fail("not an option type", t->span);

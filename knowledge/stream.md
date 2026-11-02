@@ -20,4 +20,14 @@ tags: [stream, generator, fiber]
 - **Cost.** One `next` and `yield` round trip, release profile (`-O2 -flto=thin`, checks on), arm64 Mac: 57 ns (10,000,000 iterations, median of 5). #436 expected 10 to 13 ns for the switch itself; the rest is the handler table and `errno` swaps and the contract checks at each switch.
 - **Not here:** the spawned form and the bounded buffer (#1037), `stream::merge` (#1039), the rules about what may be yielded or moved (#436 part B), a generator that borrows its arguments (regions, #439), and the linear check that a stream is finished or closed (#438). A stack per generator is two mappings, so about 32,000 are alive at once under Linux's default `vm.max_map_count`.
 
-Tests: `lib/std/stream_test.smith`.
+## Generators in smith's own syntax
+
+The new front end (#1428, `front/emit_stream.smith`, #1546) lowers a generator onto the six symbols above. A generator is a function whose result is `stream::Stream(T)` and whose body has a `yield`; it is emitted as two functions.
+
+- **The ramp** has the function's own symbol and signature. It copies the arguments into a stack record, calls `smith_stream_start(body, &record, size)` and returns the handle; the body does not run, so a generator is lazy.
+- **The body**, `<symbol>::body` (`void (ptr s, ptr args)`, internal), loads the parameters into ordinary locals and emits the written body. `yield x` converts `x` to `T`, stores it at `smith_stream_slot(s)` and calls `smith_stream_yield(s)`: true goes on, false (the stream was closed) runs the pending `defer`s and goes to the end. A `return` and the reachable end of the body run the `defer`s and go to the end block, which calls `smith_stream_finish(s)`.
+- **`stream::next(&s)`** is `?T`: a slot of type `T`, `smith_stream_next(&s, &slot)`, `.some(slot)` when it says true, else `.none`. **`stream::close(&s)`** is `smith_stream_close(&s)`. Both names are the compiler's own for the one type `Stream(T)` until `std::stream` has its generic code in smith's own syntax; the checker does not know them yet.
+- `Stream(T)` is a pointer in the IR (kind `stream` in `emit_state`), null once ended. A parameter that points into the caller's stack and is held across a `yield` is not checked (regions, #439): the ramp copies the values and nothing more.
+- Not emitted yet: debug info of a generator (the body has no entry in the function table that debug info looks its subprogram up in), a generator in a module whose `Stream` import is not `stream::`.
+
+Tests: `lib/std/stream_test.smith`, and the emitter's in `tests/front_emit_stream_test.smith` with the golden `tests/front/emit/countdown.ll`.

@@ -26,6 +26,7 @@ import front::emit_lambda as lambdas;
 import front::emit_match as matching;
 import front::emit_memory as memory;
 import front::emit_state as state;
+import front::emit_stream as streams;
 import std::arena;
 import std::format;
 import std::mem;
@@ -406,6 +407,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *x, state::Hint _) 
     if (callee->kind != .name) {
         return state::not_emitted("call of something that is not a name", x->span);
     }
+    if (streams::is_stream_call(x)) return streams::call(e, x);
     ast::Path path = callee->kind.name.path;
     Usize record = 0;
     if (countof(path.segments) == 1 && find_record(e, path.segments[0].text, &record)) return construct(e, x, record);
@@ -449,7 +451,7 @@ export state::Status return_void(state::Emitter *e, const ast::Stmt *s) {
     if (!is_void(e->result))
         return state::failf(s->span, "returning no value from a function that returns ", e->result.name);
     try control::before_return(e, s->span);
-    c::LLVMBuildRetVoid(e->builder);
+    streams::leave(e);
     return state::success();
 }
 

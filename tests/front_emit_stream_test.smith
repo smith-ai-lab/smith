@@ -1,0 +1,263 @@
+// Tests of generators and `stream::next` in the emitter (#1546 of #1428). Each scenario is source text in smith's
+// own syntax, read by front::parser's hooks, checked by front::types_decl and emitted, then run through the JIT.
+module front_emit_stream_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::emit_state;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <string.h>;
+
+struct Scenario {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    parser::Parsed parsed;
+    types::Checked checked;
+    Bool has_checked;
+};
+
+// The module of `source`, read in smith's own syntax.
+static parser::Parsed parse_new(Str source) {
+    parser::Parsed result = {};
+    result.module.file = "t.smith";
+    lex::Lexed lexed = lex::tokenize_new(source);
+    switch (lexed) {
+    case .ok:
+        parse::Parser p = parse::make(lexed.ok, source);
+        p.new_syntax = true;
+        p.hooks.expression = parse_expr::expression;
+        p.hooks.type = parse_type::type;
+        p.hooks.statement = parse_stmt::statement;
+        p.hooks.declaration = parse_decl::declaration;
+        result.module = parse_decl::file(&p, "t.smith");
+        result.errors = p.errors;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    return result;
+}
+
+static void begin(Scenario *s, Str source, Bool with_checker) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parse_new(source);
+    test::check_equal(countof(s->parsed.errors), (Usize)0);
+    if (with_checker) {
+        s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+        s->has_checked = true;
+        test::check_equal(s->checked.error_count, (Usize)0);
+    }
+    mem::set_allocator(outside);
+}
+
+static emit::Options options_for(emit::Target target, const Scenario *s) {
+    emit::Options options = {};
+    options.target = target;
+    if (s->has_checked) options.checked = &s->checked;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static Bool contains(const char *text, Str needle) {
+    return text != nullptr && c::strstr(text, needle.data) != nullptr;
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+// Emits `source`, returns its IR text and adds it to `host`. Without the checker: it does not know `stream::next` and
+// `stream::close` yet (types*.smith is not this ticket's), and the emitter takes their types from the stream itself.
+static char *ir_of(Str source, emit_jit::Jit *host, Scenario *s) {
+    begin(s, source, false);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s->parsed.module, options_for(host->target, s));
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    } else {
+        Str expected = "no error";
+        test::check_equal(emitted.error.message, expected);
+    }
+    return text;
+}
+
+// `text` without the lines that name the target (the triple and the data layout differ between hosts).
+static Str without_target_lines(const char *text) {
+    Usize length = c::strlen(text);
+    char kept[:] = mem::alloc_slice(char, length + 1);
+    Usize used = 0;
+    Usize line = 0;
+    while (line < length) {
+        Usize end = line;
+        while (end < length && text[end] != '\n')
+            end += 1;
+        if (end < length) end += 1;
+        Bool is_target =
+            c::strncmp(text + line, "target triple", 13) == 0 || c::strncmp(text + line, "target datalayout", 17) == 0;
+        if (!is_target) {
+            for (Usize i = line; i < end; i++) {
+                kept[used] = text[i];
+                used += 1;
+            }
+        }
+        line = end;
+    }
+    return kept[0:used];
+}
+
+typedef I32 (*Run)();
+
+export void test_front_emit_stream_countdown_gives_its_values_then_none() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    Str source =
+        "fn countdown(from: i32) -> stream::Stream(i32) {\n    mut n := from\n    while n > 0 {\n        yield n\n"
+        "        n -= 1\n    }\n}\n"
+        "pub fn run() -> i32 {\n    mut s := countdown(3)\n    mut code := 0\n"
+        "    mut i := 0\n    while i < 5 {\n        code = code * 10\n"
+        "        if let .some(x) = stream::next(&s) {\n            code += x\n        } else {\n"
+        "            code += 9\n        }\n        i += 1\n    }\n    code\n}\n";
+    char *ir = ir_of(source, &host, &s);
+    test::check_equal(ir != nullptr ? 1 : 0, 1);
+    Run run = (Run)symbol_of(&host, "run");
+    // 3, 2, 1, then none (9) twice
+    test::check_equal(run(), (I32)32199);
+    emit_jit::stop(&host);
+}
+
+typedef I32 (*Count)(I32 *);
+
+static Str counter_source =
+    "fn counted(counter: *mut i32) -> stream::Stream(i32) {\n    while true {\n        counter.* += 1\n        yield "
+    "counter.*\n"
+    "    }\n}\n"
+    "pub fn lazy(counter: *mut i32, steps: i32) -> i32 {\n    mut s := counted(counter)\n    mut i := 0\n"
+    "    mut last := 0\n    while i < steps {\n        if let .some(x) = stream::next(&s) {\n            last = x\n"
+    "        }\n        i += 1\n    }\n    stream::close(&s)\n    last\n}\n"
+    "pub fn unread(counter: *mut i32) -> i32 {\n    mut s := counted(counter)\n    stream::close(&s)\n"
+    "    if let .some(_) = stream::next(&s) {\n        return -1\n    }\n    counter.*\n}\n";
+
+typedef I32 (*Lazy)(I32 *, I32);
+
+export void test_front_emit_stream_the_body_runs_only_as_far_as_the_next_yield() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of(counter_source, &host, &s);
+    test::check_equal(ir != nullptr ? 1 : 0, 1);
+    Lazy lazy = (Lazy)symbol_of(&host, "lazy");
+    I32 counter = 0;
+    test::check_equal(lazy(&counter, 0), (I32)0);
+    test::check_equal(counter, (I32)0);
+    test::check_equal(lazy(&counter, 1), (I32)1);
+    test::check_equal(counter, (I32)1);
+    counter = 0;
+    test::check_equal(lazy(&counter, 3), (I32)3);
+    test::check_equal(counter, (I32)3);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_stream_close_never_runs_the_body_of_an_unread_stream() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of(counter_source, &host, &s);
+    test::check_equal(ir != nullptr ? 1 : 0, 1);
+    Count unread = (Count)symbol_of(&host, "unread");
+    I32 counter = 0;
+    test::check_equal(unread(&counter), (I32)0);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_stream_close_ends_a_half_read_stream() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    Str source = "fn counted(counter: *mut i32) -> stream::Stream(i32) {\n    while true {\n        counter.* += 1\n"
+                 "        yield counter.*\n    }\n}\n"
+                 "pub fn half(counter: *mut i32) -> i32 {\n    mut s := counted(counter)\n"
+                 "    if let .some(_) = stream::next(&s) {\n        stream::close(&s)\n    }\n"
+                 "    if let .some(_) = stream::next(&s) {\n        return -1\n    }\n    counter.*\n}\n";
+    char *ir = ir_of(source, &host, &s);
+    test::check_equal(ir != nullptr ? 1 : 0, 1);
+    Count half = (Count)symbol_of(&host, "half");
+    I32 counter = 0;
+    test::check_equal(half(&counter), (I32)1);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_stream_a_return_ends_the_stream() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    Str source = "fn one(n: i32) -> stream::Stream(i32) {\n    yield n\n    return\n    yield 99\n}\n"
+                 "pub fn run() -> i32 {\n    mut s := one(7)\n    mut total := 0\n    mut i := 0\n    while i < 3 {\n"
+                 "        if let .some(x) = stream::next(&s) {\n            total += x\n        }\n        i += 1\n"
+                 "    }\n    total\n}\n";
+    char *ir = ir_of(source, &host, &s);
+    test::check_equal(ir != nullptr ? 1 : 0, 1);
+    Run run = (Run)symbol_of(&host, "run");
+    test::check_equal(run(), (I32)7);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_stream_the_ir_has_a_ramp_and_a_body() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("pub fn countdown(from: i32) -> stream::Stream(i32) {\n    mut n := from\n    while n > 0 {\n"
+                     "        yield n\n        n -= 1\n    }\n}\n",
+                     &host, &s);
+    test::check_equal(contains(ir, "@smith_stream_start"), true);
+    test::check_equal(contains(ir, "countdown::body"), true);
+    test::check_equal(contains(ir, "@smith_stream_finish"), true);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_stream_golden_ir_of_a_generator() {
+    Scenario s = {};
+    begin(&s,
+          "pub fn countdown(from: i32) -> stream::Stream(i32) {\n    mut n := from\n    while n > 0 {\n"
+          "        yield n\n        n -= 1\n    }\n}\n",
+          false);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::Options options = {};
+    options.target.triple = "x86_64-unknown-linux-gnu";
+    emit::ModuleResult emitted = emit::module(context, &s.parsed.module, options);
+    test::check_equal(emitted == .ok, true);
+    if (emitted == .ok) {
+        char *text = c::LLVMPrintModuleToString(emitted.ok);
+        Str kept = without_target_lines(text);
+        test::golden("tests/front/emit/countdown.ll", kept);
+        emit::free_text(kept);
+        c::LLVMDisposeMessage(text);
+        c::LLVMDisposeModule(emitted.ok);
+    }
+    c::LLVMContextDispose(context);
+}

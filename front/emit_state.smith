@@ -93,6 +93,7 @@ export typedef enum {
     slice;    // next batch
     floating; // next batch
     vector;   // `vec(T, N)`: `element` is the lane type, `count` the lanes (#1630)
+    stream;   // `stream::Stream(T)`: one pointer to the runtime's record, null when ended; `element` is `T` (#1546)
 } TyKind;
 
 export struct Ty;
@@ -314,6 +315,14 @@ export struct Emitter {
     U32 line_starts[:];  // the byte offset of each line of `options.source`, built once by `debug::begin_module`
     U32 parameters_left; // parameters of the function not yet declared
     U32 next_parameter;  // the `arg:` number of the next one
+
+    // The generator body being emitted (#1546, front/emit_stream.smith): its stream handle, the element type and the
+    // block every `return` and the end of the body go to. `stream_function` is the body's function: a lambda inside it
+    // has its own and is not a generator, so its `return` does not look at `stream_end`.
+    c::LLVMValueRef stream_handle;
+    c::LLVMValueRef stream_function;
+    c::LLVMBasicBlockRef stream_end;
+    Ty stream_element;
 
     // The blocks `Ty.element` points to, chained so `memory::release` frees them (B3b).
     OwnedTy *owned;
