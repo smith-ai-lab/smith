@@ -1,0 +1,143 @@
+// Tests of std::stream, the runtime core of a generator: bodies written as functions that call the interface directly,
+// as the emitter will (#1546). A body gets its arguments by pointer, writes the value into `stream::slot`, and calls
+// `stream::yield`; it ends through `stream::finish`.
+module std::stream_test;
+
+import std::stream;
+import std::test;
+
+// What a body shares with the test: a counter it bumps before each `yield`, and a mark its cleanup writes.
+struct Probe {
+    I32 count;
+    I32 cleaned;
+    I32 ran;
+};
+
+struct Counting {
+    Probe *probe;
+    I32 limit;
+};
+
+// Yields 1, 2, ... limit; its cleanup runs when it ends or when `yield` says it was closed.
+void counting_body(stream::Stream *s, void *raw) {
+    Counting *args = (Counting *)raw;
+    args->probe->ran = 1;
+    for (I32 i = 1; i <= args->limit; i++) {
+        args->probe->count += 1;
+        *(I32 *)stream::slot(s) = i;
+        if (!stream::yield(s)) break;
+    }
+    args->probe->cleaned += 1;
+    stream::finish(s);
+}
+
+stream::Stream *counting(Probe *probe, I32 limit) {
+    Counting args = {.probe = probe, .limit = limit};
+    return stream::start(counting_body, &args, sizeof args);
+}
+
+export void test_stream_yields_in_order_then_ends() {
+    Probe probe = {};
+    stream::Stream *s = counting(&probe, 3);
+    I32 value = 0;
+    for (I32 expected = 1; expected <= 3; expected++) {
+        test::check(stream::next(&s, &value));
+        test::check_equal(value, expected);
+    }
+    test::check(s != nullptr);
+    test::check(!stream::next(&s, &value));
+    test::check(s == nullptr);
+    test::check_equal(probe.cleaned, 1);
+}
+
+export void test_stream_is_lazy() {
+    Probe probe = {};
+    stream::Stream *s = counting(&probe, 5);
+    test::check_equal(probe.count, 0);
+    test::check_equal(probe.ran, 0);
+    I32 value = 0;
+    test::check(stream::next(&s, &value));
+    test::check_equal(probe.count, 1);
+    test::check(stream::next(&s, &value));
+    test::check_equal(probe.count, 2);
+    stream::close(&s);
+    test::check(s == nullptr);
+}
+
+// A body that returns after one value (no loop) ends the stream.
+void one_body(stream::Stream *s, void *raw) {
+    *(I32 *)stream::slot(s) = *(I32 *)raw;
+    if (!stream::yield(s)) stream::finish(s);
+    stream::finish(s);
+}
+
+export void test_stream_body_that_returns_after_one_value() {
+    I32 seven = 7;
+    stream::Stream *s = stream::start(one_body, &seven, sizeof seven);
+    I32 value = 0;
+    test::check(stream::next(&s, &value));
+    test::check_equal(value, 7);
+    test::check(!stream::next(&s, &value));
+    test::check(s == nullptr);
+}
+
+// A body that just returns, with no `finish` and no arguments, ends at its first `next`.
+void empty_body(stream::Stream *s, void *raw) {
+    (void)s;
+    (void)raw;
+}
+
+export void test_stream_body_that_returns_ends_at_once() {
+    stream::Stream *s = stream::start(empty_body, nullptr, 0);
+    I32 value = 0;
+    test::check(!stream::next(&s, &value));
+    test::check(s == nullptr);
+}
+
+export void test_stream_close_runs_the_cleanup_of_a_suspended_body() {
+    Probe probe = {};
+    stream::Stream *s = counting(&probe, 10);
+    I32 value = 0;
+    test::check(stream::next(&s, &value));
+    test::check_equal(probe.cleaned, 0);
+    stream::close(&s);
+    test::check(s == nullptr);
+    test::check_equal(probe.cleaned, 1);
+    test::check_equal(probe.count, 1);
+}
+
+export void test_stream_close_of_a_stream_that_never_ran_does_not_run_its_body() {
+    Probe probe = {};
+    stream::Stream *s = counting(&probe, 10);
+    stream::close(&s);
+    test::check(s == nullptr);
+    test::check_equal(probe.ran, 0);
+    test::check_equal(probe.cleaned, 0);
+}
+
+export void test_stream_next_and_close_on_a_null_handle_do_nothing() {
+    stream::Stream *s = nullptr;
+    I32 value = 41;
+    test::check(!stream::next(&s, &value));
+    test::check_equal(value, 41);
+    stream::close(&s);
+    test::check(s == nullptr);
+}
+
+// Ten thousand streams, one after another, half read to their end and half closed: no stack or record is left over.
+export void test_stream_ten_thousand_streams_one_after_another() {
+    Probe probe = {};
+    I32 value = 0;
+    for (I32 i = 0; i < 10000; i++) {
+        stream::Stream *s = counting(&probe, 2);
+        test::check(stream::next(&s, &value));
+        if (i % 2 == 0) {
+            test::check(stream::next(&s, &value));
+            test::check(!stream::next(&s, &value));
+        } else {
+            stream::close(&s);
+        }
+        test::check(s == nullptr);
+    }
+    test::check_equal(probe.cleaned, 10000);
+}
