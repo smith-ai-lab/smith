@@ -2672,6 +2672,13 @@ static void smith_new_files_write(const char *name, SmithNewLanguage language, b
     }
 }
 
+// A file smith new reads has more lines than it looks at: say so, as an answer from a part of the file would be wrong.
+[[noreturn]] static void smith_new_lines_full(const char *path) {
+    char message[PATH_MAX + 60];
+    snprintf(message, sizeof message, "too many lines in %s (limit %zu lines)", path, smith_new_gitignore_lines_max);
+    smith_die(smith_exit_usage, message, nullptr);
+}
+
 // The lines of smith's .gitignore that an existing one lacks, said so that the user can add them. A line is present
 // only if it matches exactly, ignoring trailing spaces.
 static void smith_new_gitignore_missing(void) {
@@ -2680,7 +2687,8 @@ static void smith_new_gitignore_missing(void) {
     FILE *file = fopen(".gitignore", "r");
     if (file == nullptr) return;
     char line[PATH_MAX];
-    for (size_t read = 0; read < smith_new_gitignore_lines_max && fgets(line, sizeof line, file) != nullptr; read++) {
+    size_t read = 0;
+    for (; read < smith_new_gitignore_lines_max && fgets(line, sizeof line, file) != nullptr; read++) {
         size_t length = strlen(line);
         while (length > 0 && (line[length - 1] == '\n' || line[length - 1] == '\r' || line[length - 1] == ' ')) {
             line[--length] = '\0';
@@ -2689,6 +2697,8 @@ static void smith_new_gitignore_missing(void) {
             if (strcmp(line, wanted[i]) == 0) present[i] = true;
         }
     }
+    if (read == smith_new_gitignore_lines_max && fgets(line, sizeof line, file) != nullptr)
+        smith_new_lines_full(".gitignore");
     fclose(file);
     for (size_t i = 0; i < sizeof wanted / sizeof wanted[0]; i++) {
         if (!present[i]) printf("  .gitignore lacks %s; add it\n", wanted[i]);
@@ -2701,8 +2711,12 @@ static void smith_new_settings_missing(void) {
     if (file == nullptr) return;
     char line[PATH_MAX];
     bool present = false;
-    for (size_t read = 0; read < smith_new_gitignore_lines_max && fgets(line, sizeof line, file) != nullptr; read++) {
+    size_t read = 0;
+    for (; read < smith_new_gitignore_lines_max && fgets(line, sizeof line, file) != nullptr; read++) {
         if (strstr(line, "\"smith@smith\"") != nullptr) present = true;
+    }
+    if (read == smith_new_gitignore_lines_max && fgets(line, sizeof line, file) != nullptr) {
+        smith_new_lines_full(".claude/settings.json");
     }
     fclose(file);
     if (!present) {
