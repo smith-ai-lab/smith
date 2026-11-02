@@ -82,6 +82,7 @@ static size_t smith_rec_read(const char *relative) {
     FILE *file = fopen(path, "rb");
     if (file == nullptr) return 0;
     size_t size = fread(smith_rec_source, 1, smith_rec_source_max, file);
+    if (size == smith_rec_source_max && fgetc(file) != EOF) smith_cov_cross("a source file a record hashes (8 MiB)");
     fclose(file);
     smith_rec_source[size] = '\0';
     return size;
@@ -330,6 +331,7 @@ static void smith_rec_write_reads(FILE *out, const char *dir, const char *clean)
     FILE *file = fopen(path, "r");
     if (file == nullptr) return;
     size_t size = fread(list, 1, sizeof list - 1, file);
+    if (size == sizeof list - 1 && fgetc(file) != EOF) smith_cov_cross("a test's list of files read (4 MiB)");
     fclose(file);
     list[size] = '\0';
     char root_text[PATH_MAX];
@@ -551,13 +553,25 @@ static void smith_rec_record_line(char *line, SmithRecResult *result) {
 
 // Reads one record and says whether its test must run; every path it names is remembered as mentioned.
 static bool smith_rec_check_file(const char *path) {
-    if (smith_rec_result_count >= smith_rec_records_max) return false;
+    if (smith_rec_result_count >= smith_rec_records_max) {
+        static bool said;
+        if (!said)
+            fprintf(stderr, "smith test --changed: more than %zu records, the tests past them run\n",
+                    smith_rec_records_max);
+        said = true;
+        return false;
+    }
     FILE *file = fopen(path, "r");
     if (file == nullptr) return false;
     static char text[1U << 22];
     size_t size = fread(text, 1, sizeof text - 1, file);
+    bool cut = size == sizeof text - 1 && fgetc(file) != EOF;
     fclose(file);
     text[size] = '\0';
+    if (cut) { // the rest of the record would read as a test with nothing it depends on: stale is the safe answer
+        fprintf(stderr, "smith test --changed: the record %s is over 4 MiB, its test runs\n", path);
+        return false;
+    }
     if (strncmp(text, "smith-record 2\n", 15) != 0) return false;
     SmithRecResult *result = &smith_rec_results[smith_rec_result_count];
     *result = (SmithRecResult){.named_first = smith_rec_named_used};

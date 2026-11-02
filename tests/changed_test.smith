@@ -247,6 +247,40 @@ export void test_a_selection_twice_in_one_process_is_the_same() {
     scratch::expect_text("the same text", first, second);
 }
 
+// A limit of the selection is a line naming it and then the whole suite, never a silent cut (#604, audit E).
+// More changed paths than the table holds (4096).
+export void test_more_changed_paths_than_the_table_holds_say_so_and_run_everything() {
+    enter();
+    defer leave();
+    constexpr Usize line = 20; // "M\tlib/gen0000.smith\n"
+    char *changes = mem::alloc_slice(char, 4100 * line + 1).data;
+    for (Usize i = 0; i < 4100; i++) {
+        char *at = changes + i * line;
+        const char *row = "M\tlib/gen0000.smith\n";
+        mem::copy(at[0:line], row[0:line]);
+        at[9] = (char)('0' + i / 1000);
+        at[10] = (char)('0' + i / 100 % 10);
+        at[11] = (char)('0' + i / 10 % 10);
+        at[12] = (char)('0' + i % 10);
+    }
+    changes[4100 * line] = '\0';
+    const char *out = changed_files(changes);
+    scratch::expect_contains("the limit", out, "the changed paths (4096) crossed its limit, the whole suite runs");
+}
+
+// A source over the 2 MiB the reader keeps.
+export void test_a_source_over_two_mebibytes_says_so_and_runs_everything() {
+    enter();
+    defer leave();
+    constexpr Usize size = (1U << 21) + 100;
+    char *text = mem::alloc_slice(char, size + 1).data;
+    mem::fill(text[0:size], ' ');
+    text[size] = '\0';
+    const Source big[_] = {{"lib/a.smith", text}};
+    const char *out = changed(big, 1, "M\tlib/a.smith");
+    scratch::expect_contains("the limit", out, "a source file (2 MiB) crossed its limit, the whole suite runs");
+}
+
 // The same repository as a git repository (the base array above is its files), committed on main: a module a, tests of
 // it, a test of b that imports a, a test of c that imports nothing, a test that runs smith and a test that lists the
 // tree. Committed on main.
