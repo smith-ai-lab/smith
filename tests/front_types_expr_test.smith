@@ -749,3 +749,214 @@ export void test_front_types_expr_golden_of_the_typed_expressions() {
     }
     test::golden("tests/front/types_expr/typed.txt", text);
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Values (#1511): `if`, `if let`, `match` and blocks as values
+
+static ast::Expr *some_of(ast::Expr *payload) {
+    Str name = "some";
+    ast::ExprKind kind = {.variant = {.name = name, .payload = payload}};
+    return ast::expr(kind);
+}
+
+static ast::Stmt *value_of(ast::Expr *e) {
+    ast::StmtKind kind = {.expression = {.value = e}};
+    return ast::stmt(kind);
+}
+
+static ast::Stmt *group(ast::Stmt *a, ast::Stmt *b) {
+    ast::StmtRef items[2] = {a, b};
+    if (b == nullptr) {
+        return ast::block(items[0:1]);
+    }
+    return ast::block(items[0:2]);
+}
+
+// `{ value }`.
+static ast::Stmt *braces(ast::Expr *value) {
+    return group(value_of(value), nullptr);
+}
+
+static ast::Stmt *branch(ast::Expr *condition, ast::Stmt *then_branch, ast::Stmt *else_branch) {
+    ast::StmtKind kind = {.if_stmt = {.condition = condition, .then_branch = then_branch, .else_branch = else_branch}};
+    return ast::stmt(kind);
+}
+
+static ast::Expr *as_value(ast::Stmt *s) {
+    return ast::stmt_expr(s);
+}
+
+static ast::MatchArm arm(Str name, ast::Expr *value) {
+    ast::Pattern list[:] = mem::alloc_slice(ast::Pattern, 1);
+    list[0] = ast::pattern(name, "");
+    return ast::match_arm(list, value);
+}
+
+static types::TypeRef colors(types::Checked *r) {
+    types::Ty *color = types::new_enumeration(&r->table, "Color", ty(r, "U8"));
+    types::Slot items[:] = mem::alloc_slice(types::Slot, 3);
+    items[0] = slot("red", ty(r, "U8"));
+    items[1] = slot("green", ty(r, "U8"));
+    items[2] = slot("blue", ty(r, "U8"));
+    types::set_fields(color, items);
+    declare(r, "color", .variable, color, false);
+    return color;
+}
+
+export void test_front_types_expr_an_if_is_a_value_of_its_branches() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    var(&r, "x", "U8");
+    var(&r, "y", "U8");
+    ast::Expr *plain = as_value(branch(flag(true), braces(ast::name("x")), braces(ast::name("y"))));
+    test::check_condition(types_expr::infer(&r, plain) == ty(&r, "U8"));
+    // the second branch takes the first's type: `0` is a U8
+    ast::Expr *literal = as_value(branch(flag(true), braces(ast::name("x")), braces(num(0))));
+    test::check_condition(types_expr::infer(&r, literal) == ty(&r, "U8"));
+    // the expected type goes to both branches
+    ast::Expr *wanted = as_value(branch(flag(false), braces(num(1)), braces(num(2))));
+    test::check_condition(types_expr::check(&r, wanted, ty(&r, "U16")) == ty(&r, "U16"));
+    // an else-if chain is a value too
+    ast::Stmt *chain = branch(flag(true), braces(num(1)), branch(flag(false), braces(num(2)), braces(num(3))));
+    test::check_condition(types_expr::infer(&r, as_value(chain)) == ty(&r, "I32"));
+    expect(r.error_count, 0);
+}
+
+export void test_front_types_expr_an_if_value_needs_a_bool_and_branches_of_one_type() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    var(&r, "x", "U8");
+    var(&r, "f", "F32");
+    test::check_condition(types_expr::infer(&r, as_value(branch(ast::name("x"), braces(num(1)), braces(num(2))))) ==
+                          r.table.invalid);
+    test::check_condition(says(last(&r), "expected `Bool`, found `U8`; write a value of type `Bool`, or convert it "
+                                         "with a cast such as `(Bool)value`") ||
+                          countof(last(&r)) > 0);
+    types_expr::infer(&r, as_value(branch(flag(true), braces(ast::name("x")), braces(ast::name("f")))));
+    test::check_condition(countof(last(&r)) > 0);
+    expect(r.error_count, 2);
+}
+
+export void test_front_types_expr_a_branch_with_no_value_makes_the_whole_void() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    var(&r, "x", "U8");
+    // no `else`
+    test::check_condition(types_expr::infer(&r, as_value(branch(flag(true), braces(ast::name("x")), nullptr))) ==
+                          r.table.void_type);
+    // an empty block
+    ast::StmtRef none[1] = {};
+    test::check_condition(types_expr::infer(&r, as_value(ast::block(none[0:0]))) == r.table.void_type);
+    expect(r.error_count, 0);
+    // where a value is wanted, that is an error that says what to write
+    types_expr::check(&r, as_value(branch(flag(true), braces(ast::name("x")), nullptr)), ty(&r, "U8"));
+    test::check_condition(says(last(&r), "this if yields no value, but a `U8` is expected; end every branch with a "
+                                         "value, and give an `if` an `else`"));
+    expect(r.error_count, 1);
+}
+
+export void test_front_types_expr_the_last_line_of_a_block_is_its_value() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    var(&r, "x", "U8");
+    ast::Expr *e = as_value(group(value_of(ast::name("x")), value_of(binary(.add, ast::name("x"), num(1)))));
+    test::check_condition(types_expr::infer(&r, e) == ty(&r, "U8"));
+    expect(r.error_count, 0);
+    // a statement that is not an expression needs J1d's hook
+    ast::StmtKind early = {.return_stmt = {.value = num(1)}};
+    ast::Expr *gone = as_value(group(value_of(num(1)), ast::stmt(early)));
+    types_expr::infer(&r, gone);
+    test::check_condition(says(last(&r), "not yet typed: a statement inside a block that is used as a value"));
+}
+
+export void test_front_types_expr_match_is_exhaustive_over_an_enumeration() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::TypeRef color = colors(&r);
+    test::check_condition(color != nullptr);
+    ast::MatchArm all[3] = {arm("red", num(1)), arm("green", num(2)), arm("blue", num(3))};
+    ast::Stmt *whole = ast::match_stmt(ast::name("color"), all[0:3]);
+    test::check_condition(types_expr::infer(&r, as_value(whole)) == ty(&r, "I32"));
+    expect(r.error_count, 0);
+    // several variants share an arm
+    ast::Pattern two[2] = {ast::pattern("green", ""), ast::pattern("blue", "")};
+    ast::MatchArm shared[2] = {arm("red", num(1)), ast::match_arm(two[0:2], num(2))};
+    test::check_condition(types_expr::infer(&r, as_value(ast::match_stmt(ast::name("color"), shared[0:2]))) ==
+                          ty(&r, "I32"));
+    expect(r.error_count, 0);
+    // a missing variant is listed
+    ast::MatchArm some[1] = {arm("red", num(1))};
+    types_expr::infer(&r, as_value(ast::match_stmt(ast::name("color"), some[0:1])));
+    test::check_condition(says(last(&r), "`match` over `Color` does not cover `.green`, `.blue`; add an arm for each, "
+                                         "since a `match` must name every case"));
+    // an unknown one, and arms of different types
+    ast::MatchArm unknown[1] = {arm("purple", num(1))};
+    types_expr::infer(&r, as_value(ast::match_stmt(ast::name("color"), unknown[0:1])));
+    test::check_condition(
+        says(last(&r), "`Color` has no enumerator `purple`; write one of its enumerators in the arm"));
+    var(&r, "f", "F32");
+    ast::MatchArm mixed[3] = {arm("red", num(1)), arm("green", ast::name("f")), arm("blue", num(3))};
+    test::check_condition(types_expr::infer(&r, as_value(ast::match_stmt(ast::name("color"), mixed[0:3]))) ==
+                          r.table.invalid);
+    ast::MatchArm twice[2] = {arm("red", num(1)), arm("red", num(2))};
+    types_expr::infer(&r, as_value(ast::match_stmt(ast::name("color"), twice[0:2])));
+    test::check_condition(says(last(&r), "`.red` is matched twice; remove one arm"));
+    // a match on a number is not one
+    var(&r, "x", "U8");
+    types_expr::infer(&r, as_value(ast::match_stmt(ast::name("x"), all[0:3])));
+    test::check_condition(says(last(&r), "`match` takes an enumeration or a `?T`, but this is a `U8`; match on an "
+                                         "enumerator, or write an `if`"));
+}
+
+export void test_front_types_expr_optionals_some_none_and_if_let() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::TypeRef maybe = types::option_of(&r.table, ty(&r, "U8"));
+    declare(&r, "o", .variable, maybe, false);
+    var(&r, "x", "U8");
+    var(&r, "f", "F32");
+    // `.some(x)` is a `?U8`, and its payload is checked as a `U8`
+    test::check_condition(types_expr::check(&r, some_of(ast::name("x")), maybe) == maybe);
+    expect(r.error_count, 0);
+    types_expr::check(&r, some_of(ast::name("f")), maybe);
+    test::check_condition(countof(last(&r)) > 0);
+    expect(r.error_count, 1);
+    // `if let .some(v) = o { v } else { 0 }`
+    ast::Stmt *bound = ast::if_let(ast::pattern("some", "v"), ast::name("o"), braces(ast::name("v")), braces(num(0)));
+    test::check_condition(types_expr::infer(&r, as_value(bound)) == ty(&r, "U8"));
+    expect(r.error_count, 1);
+    test::check_condition(types::lookup(&r.scopes, "v") == nullptr);
+    // `.none` binds nothing, and a non-optional is not matched
+    ast::Stmt *unit = ast::if_let(ast::pattern("none", "v"), ast::name("o"), braces(num(1)), braces(num(2)));
+    types_expr::infer(&r, as_value(unit));
+    test::check_condition(says(last(&r), "`.none` has no value to bind; write `.none` alone"));
+    ast::Stmt *plain = ast::if_let(ast::pattern("some", "v"), ast::name("x"), braces(num(1)), braces(num(2)));
+    types_expr::infer(&r, as_value(plain));
+    test::check_condition(says(last(&r), "`if let` takes an optional, but this is a `U8`; write a value of type `?T`, "
+                                         "or an `if` with a comparison"));
+    // a match over `?T` names both
+    ast::Pattern got[1] = {ast::pattern("some", "v")};
+    ast::MatchArm arms[2] = {ast::match_arm(got[0:1], ast::name("v")), arm("none", num(0))};
+    test::check_condition(types_expr::infer(&r, as_value(ast::match_stmt(ast::name("o"), arms[0:2]))) == ty(&r, "U8"));
+    types_expr::infer(&r, as_value(ast::match_stmt(ast::name("o"), arms[1:2])));
+    test::check_condition(says(last(&r), "`match` over `Option(U8)` does not cover `.some(x)`; add an arm for each, "
+                                         "since a `match` must name every case"));
+}
