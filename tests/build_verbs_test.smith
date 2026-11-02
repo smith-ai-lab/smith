@@ -289,7 +289,7 @@ export void test_build_verbs_a_full_option_list_stops_the_test_verb_with_a_messa
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run full = scratch::sh(&p, "SMITH_OUTPUT=full smith test $(yes -DA=1 | head -4096 | tr '\\n' ' ')");
+    scratch::Run full = scratch::sh(&p, "SMITH_OUTPUT=full smith test $(yes ' -DA=1' | head -4096 | tr '\\n' ' ')");
     defer scratch::release(full.out);
     defer scratch::release(full.err);
     scratch::expect_status("verbs: 4096 options and the default -k0: exits 2", 2, &full);
