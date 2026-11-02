@@ -1,0 +1,17 @@
+// The defer_init tool: `defer_init in.o out.o name` (macho/defer_init.smith has the work). smith build compiles it with
+// that module as a project of its own, under the cache, so the build of LLVM and of the prover has a tool with no C.
+module main;
+
+import std::console;
+import defer_init;
+
+I32 main(Str args[:]) {
+    if (countof(args) != 4) {
+        console::print_error("usage: defer_init in.o out.o name\n");
+        return 2;
+    }
+    const char from[:] = args[1];
+    const char to[:] = args[2];
+    const char name[:] = args[3];
+    return defer_init::run(from, to, name);
+}
