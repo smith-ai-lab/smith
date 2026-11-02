@@ -1,0 +1,24 @@
+{
+if (a > 0) x = 1;
+if (a) { x = 2; }
+if (a)
+    x = 3;
+else
+    x = 4;
+}
+===
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): an `if` condition has no parentheses: write `if c { ... }`
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): an `if` condition has no parentheses: write `if c { ... }`
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): an `if` condition has no parentheses: write `if c { ... }`
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): the body of an `else` is braced: write `else { ... }`
+---
+{
+if a > 0 { x = 1 }
+if a { x = 2 }
+if a {
+    x = 3 } else { x = 4 }
+}

@@ -7,7 +7,9 @@ module front_parse_stmt_test;
 import front::ast;
 import front::lex;
 import front::parse;
+import front::fix;
 import front::parse_decl;
+import front::parse_expr;
 import front::parse_stmt;
 import front::parse_type;
 import std::arena;
@@ -334,4 +336,107 @@ export void test_parse_stmt_bindings_in_smith_syntax() {
     test::check_equal(countof(p.errors), 0);
     test::check_equal(parse::at(&p, lex::end_of_file), true);
     test::golden("tests/front/parse_stmt/new_bindings.txt", dump);
+}
+
+// ---- the old forms (#1508, F3 of #1428): each parses to the node of its new form, records a warning with a fix, and
+// `smith lint --fix` writes the new form. The real expression, type and declaration parsers read these.
+
+static parse::Parser real_parser(Str source) {
+    parse::Parser p = parser_in(source, true);
+    p.hooks.expression = parse_expr::expression;
+    p.hooks.type = parse_type::type;
+    p.hooks.declaration = parse_decl::declaration;
+    p.new_syntax = true;
+    return p;
+}
+
+// What the file has after fixes, the pass at a time until none applies (as fix::fix_text does), with the warnings of
+// the first pass and the warnings left at the end.
+static Str fixed_dump(Str source) {
+    parse::Parser first = real_parser(source);
+    parse::statement(&first);
+    test::check_equal(countof(first.errors), 0);
+    char out[:] = {};
+    for (Usize i = 0; i < countof(first.warnings); i++) {
+        parse::Edits edits = first.warnings[i].fix;
+        Str kind = "fix";
+        if (countof(edits) == 0) kind = "no fix";
+        Str message = first.warnings[i].message;
+        out = format::push(out, "warning (", kind, "): ", message, "\n");
+    }
+    Str text = source;
+    Usize applied = 1;
+    for (Usize pass = 0; pass < 8 && applied > 0; pass++) {
+        parse::Parser p = real_parser(text);
+        parse::statement(&p);
+        fix::Fixed fixed = fix::apply_fixes(text, p.errors, p.warnings);
+        applied = fixed.applied;
+        text = fixed.text;
+    }
+    parse::Parser last = real_parser(text);
+    parse::statement(&last);
+    test::check_equal(countof(last.errors), 0);
+    Usize left = 0;
+    for (Usize i = 0; i < countof(last.warnings); i++) {
+        parse::Edits edits = last.warnings[i].fix;
+        if (countof(edits) > 0) left += 1;
+    }
+    test::check_equal(left, 0);
+    char whole[:] = format::push(out, "---\n", text, "\n");
+    return whole;
+}
+
+static Str old_name(Usize which) {
+    switch (which) {
+    case 0:
+        return "semicolons";
+    case 1:
+        return "if";
+    case 2:
+        return "else";
+    case 3:
+        return "while";
+    case 4:
+        return "constexpr_and_nesting";
+    case 5:
+        return "for";
+    default:
+        return "switch_and_goto";
+    }
+}
+
+static Str old_source(Usize which) {
+    switch (which) {
+    case 0:
+        return "{\nx = 1;\nreturn;\n}";
+    case 1:
+        return "{\nif (a > 0) x = 1;\nif (a) { x = 2; }\nif (a)\n    x = 3;\nelse\n    x = 4;\n}";
+    case 2:
+        return "{\nif (a) {\n x = 1\n}\nelse if (b) {\n x = 2\n}\nelse {\n x = 3\n}\n}";
+    case 3:
+        return "{\nwhile (a > 0) a = a - 1;\nwhile (b) {\n b = 0\n}\n}";
+    case 4:
+        return "{\nif constexpr (a) x = 1;\nif (a) if (b) x = 2;\n}";
+    case 5:
+        return "{\nfor (I32 i = 0; i < n; i++) x = i;\nfor (I32 i = 1; i <= n; i += 1) {\n x = i\n}\n"
+               "for constexpr (I32 i = 0; i < 4; ++i) x = i;\nfor (U8 c : cs) x = c;\nfor (;;) break;\n}";
+    case 6:
+        return "{\nswitch (v) {\ncase 1:\n x = 1;\n break;\n}\ngoto done;\n}";
+    default:
+        return "";
+    }
+}
+
+export void test_parse_stmt_old_forms_have_warnings_with_fixes() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    for (Usize i = 0; i < 7; i++) {
+        Str name = old_name(i);
+        char path[:] = format::push("tests/front/parse_stmt/old_", name, ".txt");
+        Str source = old_source(i);
+        char golden[:] = format::push(source, "\n===\n", fixed_dump(source));
+        test::golden(path, golden);
+    }
 }
