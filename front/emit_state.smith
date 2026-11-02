@@ -381,32 +381,47 @@ export void end_scope(Emitter *e) {
     e->local_count = e->scope_marks[e->scope_count];
 }
 
-// The type a name says, for the names of the integer types, `Char` and Bool; `found` false for any other.
+// A pointer's width in bits on the target; 64 when it has no data layout (the rule of emit_debug's `pointer_bits`).
+static U32 pointer_bits(Emitter *e) {
+    if (e->target_data == nullptr) return 64;
+    return (U32)c::LLVMPointerSize(e->target_data) * 8;
+}
+
+// The type a name says, for the names of the integer types, `char` and `bool`; `found` false for any other. Both
+// spellings answer with the same type: smith's own `i8 i16 i32 i64 u8 u16 u32 u64 isize usize bool char` and today's
+// `I8 .. I64`, `U8 .. U64`, `Isize`, `Usize`, `Bool`, `Char`. `Ty.name` is the name as written. `isize` and `usize` are
+// as wide as a pointer on the target (`LLVMPointerSize` of its data layout, 64 bits when it has none), never the
+// host's. `char` is the checker's character type: unsigned, 8 bits, the layout of `u8`.
 export Bool scalar_type(Emitter *e, Str name, Ty *ty) {
     U32 bits = 0;
     Bool is_signed = false;
     Bool is_bool = false;
-    if (same_text(name, "I8")) {
+    if (same_text(name, "I8") || same_text(name, "i8")) {
         bits = 8;
         is_signed = true;
-    } else if (same_text(name, "I16")) {
+    } else if (same_text(name, "I16") || same_text(name, "i16")) {
         bits = 16;
         is_signed = true;
-    } else if (same_text(name, "I32")) {
+    } else if (same_text(name, "I32") || same_text(name, "i32")) {
         bits = 32;
         is_signed = true;
-    } else if (same_text(name, "I64")) {
+    } else if (same_text(name, "I64") || same_text(name, "i64")) {
         bits = 64;
         is_signed = true;
-    } else if (same_text(name, "U8") || same_text(name, "Char")) {
-        bits = 8; // `Char` is the checker's character type: unsigned, the layout of U8
-    } else if (same_text(name, "U16")) {
+    } else if (same_text(name, "Isize") || same_text(name, "isize")) {
+        bits = pointer_bits(e);
+        is_signed = true;
+    } else if (same_text(name, "U8") || same_text(name, "u8") || same_text(name, "Char") || same_text(name, "char")) {
+        bits = 8;
+    } else if (same_text(name, "U16") || same_text(name, "u16")) {
         bits = 16;
-    } else if (same_text(name, "U32")) {
+    } else if (same_text(name, "U32") || same_text(name, "u32")) {
         bits = 32;
-    } else if (same_text(name, "U64")) {
+    } else if (same_text(name, "U64") || same_text(name, "u64")) {
         bits = 64;
-    } else if (same_text(name, "Bool")) {
+    } else if (same_text(name, "Usize") || same_text(name, "usize")) {
+        bits = pointer_bits(e);
+    } else if (same_text(name, "Bool") || same_text(name, "bool")) {
         bits = 1;
         is_bool = true;
     } else {
