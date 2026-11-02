@@ -184,8 +184,9 @@ static Usize errors_in_own_arena(Str source) {
 // The lambdas noted as arguments live in a buffer that outlives one check; each check has its own arena, freed after
 // it, so the next check must not write into the first one's buffer (use-after-poison under ASan, #1406).
 export void test_front_types_fn_two_modules_in_two_arenas_with_a_lambda_argument_each() {
-    Str source = "fn each(f: fn() -> i32) -> i32 {\n    f()\n}\nfn run() -> i32 {\n    x := 3\n    p := &x\n    each(fn() { "
-                 "*p })\n}\n";
+    Str source =
+        "fn each(f: fn() -> i32) -> i32 {\n    f()\n}\nfn run() -> i32 {\n    x := 3\n    p := &x\n    each(fn() { "
+        "*p })\n}\n";
     test::check_equal(errors_in_own_arena(source), (Usize)0);
     test::check_equal(errors_in_own_arena(source), (Usize)0);
 }
