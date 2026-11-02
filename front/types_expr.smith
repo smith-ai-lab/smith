@@ -498,6 +498,9 @@ static Bool is_null_target(types::TypeRef to) {
 
 // The default of the convert hook: exact equality, `null` for a pointer, a function for its `Fn`.
 static Bool conform(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
+    if (from->kind == .fn_value && to->kind == .function && from->element == to) {
+        return true; // a stored lambda where `fn(A) -> R` is expected (#1649)
+    }
     if (hooks.convert != nullptr) {
         return hooks.convert(c, e, from, to);
     }
