@@ -149,3 +149,21 @@ export void test_caps_mcp_launch_names_its_limits() {
     scratch::expect_contains("caps: 18 breakpoints name the limit", run.out,
                              "launch: 18 breakpoints given, at most 16 (the limit)");
 }
+
+// The reader's own tables said "too many rules" or "a recipe has too many lines" and named no number.
+export void test_caps_make_names_the_limit_of_a_recipe() {
+    scratch::Project p = start(nullptr);
+    defer finish(&p);
+    (void)scratch::sh(&p, "{ echo 'all:'; for i in $(seq 1 520); do printf '\\ttrue %s\\n' $i; done; } > Makefile");
+    scratch::Run run = scratch::sh(&p, "smith build --dump-config 2>&1");
+    scratch::expect_contains("caps: 520 recipe lines name the limit", run.out,
+                             "more than 512 lines in the recipe of all (the limit)");
+}
+
+export void test_caps_make_names_the_limit_of_rules() {
+    scratch::Project p = start(nullptr);
+    defer finish(&p);
+    (void)scratch::sh(&p, "{ for i in $(seq 1 16400); do printf 't%s:\\n\\ttrue\\n' $i; done; } > Makefile");
+    scratch::Run run = scratch::sh(&p, "smith build --dump-config 2>&1");
+    scratch::expect_contains("caps: 16400 rules name the limit", run.out, "more than 16384 rules (the limit)");
+}
