@@ -24,7 +24,6 @@ module front::compile;
 
 import front::ast;
 import front::cimport;
-import front::cimport_cache;
 import front::emit;
 import front::emit_object;
 import front::emit_state as state;

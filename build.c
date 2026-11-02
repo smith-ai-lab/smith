@@ -648,10 +648,10 @@ typedef struct {
 static void build_shims(SmithBuild *b, const BuildConfig *config, const char *folder, const char *pack,
                         BuildShims *shims, const SmithObject **list) {
     build_pack_data(b, config, folder, pack, &shims->objects[0]);
-    const char *const sources[] = {"clang",  "lld",           "format",      "tidy",     "clangd",       "symbolize",
-                                   "hook",   "lsp",           "lldb",        "lldb_dap", "lldb_explain", "lldb_slices",
-                                   "affine", "effects_infer", "lldb_server", "coverage",
-                                   "cimport", "cimport_deps"};
+    const char *const sources[] = {"clang",        "lld",         "format",      "tidy",          "clangd",
+                                   "symbolize",    "hook",        "lsp",         "lldb",          "lldb_dap",
+                                   "lldb_explain", "lldb_slices", "affine",      "effects_infer", "lldb_server",
+                                   "coverage",     "cimport",     "cimport_deps"};
     const char *pch = build_shim_pch(b, config, folder);
     size_t count = 0;
     for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++) {
@@ -813,11 +813,12 @@ static size_t build_library_objects(SmithBuild *b, const BuildConfig *config, co
 
 // The modules of front/ that smith links; emit_jit is a test helper and cimport needs the edge files of track C.
 static const char *const build_front_modules[] = {
-    "ast",         "lex",        "parse",       "parse_expr",    "parse_type",  "parse_stmt",   "parse_decl",
-    "parser",      "types",      "types_expr",  "types_convert", "types_decl",  "types_attr",   "types_stream",
-    "types_fn",    "types_iter", "emit_state",  "emit",          "emit_arith",  "emit_control", "emit_call",
-    "emit_memory", "emit_debug", "emit_object", "roots",         "fix",         "cimport",      "cimport_cache", "compile", "emit_option",
-    "emit_match",  "emit_value", "emit_iter",   "emit_tuple",    "emit_lambda", "emit_vector",  "emit_stream",
+    "ast",        "lex",          "parse",      "parse_expr",  "parse_type",    "parse_stmt",
+    "parse_decl", "parser",       "types",      "types_expr",  "types_convert", "types_decl",
+    "types_attr", "types_stream", "types_fn",   "types_iter",  "emit_state",    "emit",
+    "emit_arith", "emit_control", "emit_call",  "emit_memory", "emit_debug",    "emit_object",
+    "roots",      "fix",          "cimport",    "compile",     "emit_option",   "emit_match",
+    "emit_value", "emit_iter",    "emit_tuple", "emit_lambda", "emit_vector",   "emit_stream",
 };
 constexpr size_t build_front_module_count = sizeof build_front_modules / sizeof build_front_modules[0];
 
