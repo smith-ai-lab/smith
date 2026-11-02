@@ -1,32 +1,32 @@
 (module 
   (function area pub
-    (param r (named f64))
+    (param r new (named f64))
     (result (named f64))
     (block
       (return (name r))))
   (function bump
-    (param x mut (named i32))
+    (param x mut new (named i32))
     (result (named i32))
     (block
       (return (name x))))
   (function log
     (attribute inline)
     (attribute c_name (string "smith_log"))
-    (param s (named str))
+    (param s new (named str))
     (block))
   (function table
-    (param n const (named usize))
-    (param T (named type))
-    (param rest rest (auto))
+    (param n new const (named usize))
+    (param T new (named type))
+    (param rest rest new (auto))
     (result (named T))
     (block))
   (function Pair
-    (param T (named type))
+    (param T new (named type))
     (result (named type))
     (block))
   (function tagged
-    (param p (attribute cold) (pointer mut (named point)))
-    (param q (named i32))
+    (param p new (attribute cold) (pointer mut (named point)))
+    (param q new (named i32))
     (block))
   (function none
     (block)))

@@ -1,0 +1,17 @@
+(module m
+  (function f
+    (result (named Void))
+    (block
+      (declaration
+        (variable a new (auto) (name 3)))
+      (declaration
+        (variable b new (named i32) (name 4)))
+      (declaration
+        (variable c mut new (auto) (name 0)))
+      (declaration
+        (variable d mut new (named i32) (name 1)))
+      (declaration
+        (variable _ new (auto) (name f())))
+      (destructure q r (name g()))
+      (destructure mut s t (name h()))
+      (expression (name x)))))
