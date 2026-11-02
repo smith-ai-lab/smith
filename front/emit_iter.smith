@@ -18,8 +18,12 @@
 //               `range(a, b, step)` needs a positive integer literal for `step` (a zero, negative or run-time step is
 //               `not emitted yet`, the lead's decision of 2026-11-02): the next value comes from the
 //               `llvm.*add.with.overflow` intrinsics, and an overflow ends the loop (the value is past `b`).
-//   not yet     each `not emitted yet: <what>` at the iterable: `enumerate` and `zip` (tuples), a slice, `str` or a
-//               block (no `[]T` in the emitter yet), a stream, a tuple pattern.
+//   slice, str  `for x in s`: the slice is read once (a place is loaded; a string literal or a call's slice is stored
+//   in
+//               a slot first), the counter runs from 0 to its count and each turn loads `data[i]` (a `str` yields its
+//               bytes as `char`). `refs(s)` binds `&data[i]`.
+//   not yet     each `not emitted yet: <what>` at the iterable: `enumerate` and `zip` (tuples), a block, a stream, a
+//               tuple pattern.
 //
 // The stream functions are known by name, as the checker knows them (front/types_iter.smith): a call of `range`,
 // `refs`, `enumerate` or `zip` with one segment and no local of that name. No recursion.
@@ -38,6 +42,9 @@ struct Plan {
     Bool is_array;
     Bool by_reference;
     state::Value array; // the address and type of the array
+    Bool is_slice;
+    c::LLVMValueRef data; // a slice's data pointer
+    state::Ty element;    // a slice's element
 };
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -171,6 +178,15 @@ static void bind_name(state::Emitter *e, const ast::Stmt *s, state::Ty ty, c::LL
 
 // The value of the loop's name on this turn, from the counter just loaded.
 static state::Ty turn_value(state::Emitter *e, Plan plan, c::LLVMValueRef counter, c::LLVMValueRef *out) {
+    if (plan.is_slice) {
+        c::LLVMValueRef at = c::LLVMBuildGEP2(e->builder, plan.element.llvm, plan.data, &counter, 1, "element");
+        if (plan.by_reference) {
+            *out = at;
+            return pointer_to(e, plan.element);
+        }
+        *out = c::LLVMBuildLoad2(e->builder, plan.element.llvm, at, "x");
+        return plan.element;
+    }
     if (!plan.is_array) {
         *out = counter;
         return plan.counter;
@@ -202,7 +218,8 @@ static state::Status build_loop(state::Emitter *e, const ast::Stmt *s, Plan plan
     jump(e, cond);
     position(e, cond);
     c::LLVMValueRef counter = c::LLVMBuildLoad2(e->builder, plan.counter.llvm, slot, "counter");
-    c::LLVMIntPredicate below = (plan.is_array || !plan.counter.is_signed) ? c::LLVMIntULT : c::LLVMIntSLT;
+    c::LLVMIntPredicate below =
+        (plan.is_array || plan.is_slice || !plan.counter.is_signed) ? c::LLVMIntULT : c::LLVMIntSLT;
     c::LLVMValueRef more = c::LLVMBuildICmp(e->builder, below, counter, plan.bound, "more");
     c::LLVMBuildCondBr(e->builder, more, body, end);
     position(e, body);
@@ -226,10 +243,35 @@ static state::Status build_loop(state::Emitter *e, const ast::Stmt *s, Plan plan
 // ---------------------------------------------------------------------------------------------------------------
 // The iterables
 
+// A loop over the slice stored at `place`: read once, its count is the bound, the elements come from its data.
+static state::Status slice_start(state::Emitter *e, const state::Work *w, state::Value place) {
+    c::LLVMValueRef whole = c::LLVMBuildLoad2(e->builder, place.ty.llvm, place.llvm, "slice");
+    state::Ty counter = {};
+    state::scalar_type(e, "usize", &counter);
+    Plan plan = {.counter = counter, .is_slice = true, .by_reference = w->flag, .element = *place.ty.element};
+    plan.data = c::LLVMBuildExtractValue(e->builder, whole, 0, "data");
+    c::LLVMValueRef count = c::LLVMBuildExtractValue(e->builder, whole, 1, "count");
+    plan.bound = c::LLVMBuildIntCast2(e->builder, count, counter.llvm, 0, "");
+    plan.start = c::LLVMConstInt(counter.llvm, 0, 0);
+    return build_loop(e, w->stmt, plan);
+}
+
+// The iterable was evaluated, not a place (a string literal, a call's slice): stored in a slot first.
+static state::Status value_start(state::Emitter *e, const state::Work *w) {
+    state::Value value = state::pop_value(e);
+    if (value.ty.kind != .slice)
+        return state::not_emitted("a loop over an array value; store it in a local first", w->span);
+    c::LLVMValueRef slot = state::new_alloca(e, value.ty, "iterable");
+    c::LLVMBuildStore(e->builder, value.llvm, slot);
+    return slice_start(e, w, (state::Value){.llvm = slot, .ty = value.ty});
+}
+
 static state::Status array_start(state::Emitter *e, const state::Work *w) {
     state::Value place = state::pop_value(e);
+    if (place.ty.kind == .slice) return slice_start(e, w, place);
     if (place.ty.kind != .array)
-        return state::not_emitted("a loop over a slice, str or block; only fixed arrays and range for now", w->span);
+        return state::not_emitted("a loop over a block or a stream; only arrays, slices, str and range for now",
+                                  w->span);
     state::Ty counter = {};
     state::scalar_type(e, "usize", &counter);
     Plan plan = {.counter = counter, .is_array = true, .by_reference = w->flag, .array = place};
@@ -246,7 +288,11 @@ static Bool is_place(const ast::Expr *x) {
 // `for x in xs` and `for p in refs(xs)`: `xs` is read as a place.
 static state::Status begin_array(state::Emitter *e, const ast::Stmt *s, const ast::Expr *array, Bool by_reference,
                                  ast::Span span) {
-    if (!is_place(array)) return state::not_emitted("a loop over an array value; store it in a local first", span);
+    if (!is_place(array)) {
+        state::push_then(e, (state::Work){.then = value_start, .stmt = s, .flag = by_reference, .span = span});
+        state::push_eval(e, array, state::no_hint());
+        return state::success();
+    }
     state::Work start = {.then = array_start, .stmt = s, .flag = by_reference, .span = span};
     state::push_then(e, start);
     state::push_place(e, array);
