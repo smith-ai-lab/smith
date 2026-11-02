@@ -918,21 +918,21 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
     // Registers the descriptor for one event, read or write, for `task`. False when the system refused (errno says
     // why).
     if constexpr (target::os == target::macos) {
-        Bool register_wait(Worker *worker, I32 fd, Bool write, Task *task) {
+        Bool register_wait(Worker *worker, I32 fd, Bool for_write, Task *task) {
             contract::trusted(); // the system's queue is the edge
             struct c::kevent change = {};
             change.ident = (Usize)fd;
-            change.filter = (I16)(write ? filter_write : filter_read);
+            change.filter = (I16)(for_write ? filter_write : filter_read);
             change.flags = (U16)add_oneshot;
             change.udata = task;
             return c::kevent(worker->queue, &change, 1, nullptr, 0, nullptr) == 0; // NOLINT(smith-effects)
         }
     } else {
         // A descriptor an earlier wait registered is still in the instance (ONESHOT only disables it): modify it.
-        Bool register_wait(Worker *worker, I32 fd, Bool write, Task *task) {
+        Bool register_wait(Worker *worker, I32 fd, Bool for_write, Task *task) {
             contract::trusted(); // the system's queue is the edge
             struct c::epoll_event change = {};
-            change.events = (write ? event_out : event_in) | event_oneshot;
+            change.events = (for_write ? event_out : event_in) | event_oneshot;
             change.data.ptr = task;
             // NOLINTBEGIN(smith-effects)
             c::write(2, "DBG reg\n", 8);
@@ -946,11 +946,11 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
     // Registers the descriptor with the worker's kqueue or epoll instance and parks the calling task until it is ready.
     // False when the system refused the registration (errno says why). `main` has no stack to leave: it runs its
     // worker's tasks, or sleeps in the kqueue, until it is ready.
-    Bool park_on(I32 fd, Bool write) {
+    Bool park_on(I32 fd, Bool for_write) {
         contract::trusted(); // the system's queue is the edge
         Task *self = current();
         Worker *worker = home;
-        if (!register_wait(worker, fd, write, self)) return false;
+        if (!register_wait(worker, fd, for_write, self)) return false;
         lock_scheduler();
         self->io_waiting = true;
         worker->io_parked += 1;
