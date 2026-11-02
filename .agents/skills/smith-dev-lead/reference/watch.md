@@ -47,7 +47,7 @@ fix() {
     [ "$(gh api repos/$R/pulls/$p --jq .mergeable 2>/dev/null)" = false ] && why="it has a merge conflict with main"
     [ -z "$why" ] && continue
     seen "rel$p-$sha" || continue
-    t=$(gh api repos/$R/pulls/$p --jq '.title + " " + (.body // "")' 2>/dev/null | grep -oiE '(closes|fixes|resolves|part of) #[0-9]+|\(#[0-9]+' | grep -oE '[0-9]+' | head -1)
+    t=$(gh api repos/$R/pulls/$p --jq '.title + " " + (.body // "")' 2>/dev/null | { b=$(cat); echo "$b" | grep -oiE '(closes|fixes|resolves) #[0-9]+'; echo "$b" | grep -oiE 'part of #[0-9]+|\(#[0-9]+'; } | grep -oE '[0-9]+' | head -1)
     [ -z "$t" ] && { echo "PR #$p: $why, untouched for 30 minutes, and no ticket found to release"; continue; }
     gh api -X DELETE "repos/$R/issues/$t/labels/claimed" >/dev/null 2>&1
     say "$t" "Claim released (lead's watcher): PR #$p has gone 30 minutes with no push and $why. The next runner takes that PR over: check out its branch, merge main in, make ci green, and push. Do not open a second PR." && did "released #$t (PR #$p: $why)"
