@@ -35,6 +35,7 @@ A file read into memory is `const char text[:] = ((const char *)data)[0:size];`,
 
 - A word is a run without spaces or tabs. `text::take_line` strips a `#` comment and the spaces before it, so `#` cannot appear in a word.
 - `text::is(word, "move")` compares a word to a terminated string, exactly.
+- `text::copy(word)` copies a word into the current allocator with a NUL after `count`; `mem::free` it. `text::terminated(word)` is the same copy as a `const char *`, for a C boundary only. `text::os_error(code)` names a raw errno as a constant text ("an unknown error" for the rest). They replace `strdup` and `strerror`.
 
 ## Replays must round-trip
 

@@ -9,6 +9,7 @@ import std::math;
 import std::random;
 import std::test;
 import std::text;
+import <errno.h>;
 import <stdint.h>;
 import <stdio.h>;
 import <stdlib.h>;
@@ -1004,5 +1005,33 @@ export void test_text_f32_write_is_shortest_and_round_trips(random::Key key) {
         __builtin_snprintf(shorter, sizeof shorter, "%.*e", digits - 2, (F64)value);
         test::check(c::strtof(shorter, nullptr) != value);
     }
+}
+export void test_text_copy_is_apart_and_terminated() {
+    const char word[:] = "abc";
+    const char made[:] = text::copy(word);
+    test::check(countof(made) == 3);
+    test::check(text::is(made, "abc"));
+    test::check(made[0:1][0] == 'a');
+    c::free((void *)(c::uintptr_t)&made[0]);
+    const char *none = text::terminated(text::make(""));
+    test::check(c::strlen(none) == 0);
+    c::free((void *)(c::uintptr_t)none);
+    const char *c_string = text::terminated(word);
+    test::check(c::strlen(c_string) == 3);
+    test::check(c::strcmp(c_string, "abc") == 0);
+    c::free((void *)(c::uintptr_t)c_string);
+}
+
+// NOLINTBEGIN(smith-preprocessor): errno values are macros, read once as constants
+constexpr I32 code_enoent = c::ENOENT;
+constexpr I32 code_eacces = c::EACCES;
+constexpr I32 code_eperm = c::EPERM;
+// NOLINTEND(smith-preprocessor)
+
+export void test_text_os_error_names_codes() {
+    test::check(text::is(text::os_error(code_enoent), "nothing is at the path"));
+    test::check(text::is(text::os_error(code_eacces), "permission denied"));
+    test::check(text::is(text::os_error(code_eperm), "permission denied"));
+    test::check(text::is(text::os_error(-12345), "an unknown error"));
 }
 // NOLINTEND(smith-mem)

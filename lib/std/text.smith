@@ -7,6 +7,8 @@
 module std::text;
 
 import std::contract;
+import <errno.h>;
+import std::mem;
 
 // <smith/text.h>: reading and writing small text formats by hand, such as replays, scripts, configs and logs. It calls
 // no C library function and no locale, so a number written here reads back as the same value on any machine. Text is a
@@ -841,4 +843,68 @@ Usize f32_write(char *out, F32 value) {
         out[i] = text[i];
     }
     return count;
+}
+
+char *copy_block(const char word[:]) {
+    Usize count = countof(word);
+    char *block = (char *)mem::alloc_raw(count + 1, 1);
+    for (Usize i = 0; i < count; i++) {
+        block[i] = word[i];
+    }
+    block[count] = 0;
+    return block;
+}
+
+// The word copied into the current allocator, with a NUL after the last character that count does not include, so the
+// copy is also a C string for the edges. The caller frees it with mem::free. Allocation never fails.
+[[std::c_name("smith_text_copy")]] export typeof(const char[:]) copy(const char word[:]) {
+    char *block = copy_block(word);
+    return block[0:countof(word)];
+}
+
+// The same copy as the pointer C calls need, for a boundary only: the pointer ends in a NUL, and the caller frees it
+// with mem::free.
+[[std::c_name("smith_text_terminated")]] export const char *terminated(const char word[:]) {
+    return copy_block(word);
+}
+
+// NOLINTBEGIN(smith-preprocessor): the errno values are macros of <errno.h>, read once as constants
+constexpr I32 os_enoent = c::ENOENT;
+constexpr I32 os_eexist = c::EEXIST;
+constexpr I32 os_eacces = c::EACCES;
+constexpr I32 os_eperm = c::EPERM;
+constexpr I32 os_eisdir = c::EISDIR;
+constexpr I32 os_enotdir = c::ENOTDIR;
+constexpr I32 os_enotempty = c::ENOTEMPTY;
+constexpr I32 os_einval = c::EINVAL;
+constexpr I32 os_enomem = c::ENOMEM;
+constexpr I32 os_emfile = c::EMFILE;
+constexpr I32 os_enfile = c::ENFILE;
+constexpr I32 os_eintr = c::EINTR;
+constexpr I32 os_eagain = c::EAGAIN;
+constexpr I32 os_epipe = c::EPIPE;
+constexpr I32 os_econnrefused = c::ECONNREFUSED;
+constexpr I32 os_econnreset = c::ECONNRESET;
+constexpr I32 os_etimedout = c::ETIMEDOUT;
+// NOLINTEND(smith-preprocessor)
+
+// What a raw errno says, as a constant text for a message: the common ones by name, every other code "an unknown
+// error". No libc function is called.
+[[std::c_name("smith_text_os_error")]] export typeof(const char[:]) os_error(I32 code) {
+    if (code == os_enoent) return "nothing is at the path";
+    if (code == os_eexist) return "something is there already";
+    if (code == os_eacces || code == os_eperm) return "permission denied";
+    if (code == os_eisdir) return "the path is a folder";
+    if (code == os_enotdir) return "a part of the path is not a folder";
+    if (code == os_enotempty) return "the folder is not empty";
+    if (code == os_einval) return "an argument is invalid";
+    if (code == os_enomem) return "out of memory";
+    if (code == os_emfile || code == os_enfile) return "too many files are open";
+    if (code == os_eintr) return "the call was interrupted";
+    if (code == os_eagain) return "try again";
+    if (code == os_epipe) return "the other end is closed";
+    if (code == os_econnrefused) return "the connection was refused";
+    if (code == os_econnreset) return "the connection was reset";
+    if (code == os_etimedout) return "the call timed out";
+    return "an unknown error";
 }

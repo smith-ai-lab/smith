@@ -54,8 +54,8 @@ tags: [libc, lint, idiom, libraries]
 | `strrchr` | `slice::find_last(xs, v)` |
 | `strcspn` | `slice::find_if(xs, pred)` |
 | `memcpy`, `memmove`, `memset`, `memcmp` | `mem::copy`, `mem::move`, `mem::zero` or `mem::fill`, `mem::equal` (reported by `smith-mem`) |
-| `strerror`, `strerror_r` | `files::describe(error)`, `process::describe(error)`, `net::describe(error)`: a constant text for each module's error |
-| `strdup` | gap: `text::copy` and `text::terminated`, [#921](https://github.com/smith-ai-lab/smith/issues/921) (blocked: a new export in `std::text` breaks `front/compile.smith`) |
+| `strerror`, `strerror_r` | `files::describe(error)`, `process::describe(error)`, `net::describe(error)`: a constant text for each module's error; `text::os_error(code)` for a raw errno |
+| `strdup` | `text::copy(word)` (a copy in the current allocator with a NUL after `count`, `mem::free`d by the caller), `text::terminated(word)` (the same as a `const char *`, for a C boundary only) |
 
 ## math.h
 
