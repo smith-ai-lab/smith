@@ -36,13 +36,13 @@ typedef struct {
     const char *prefix;
     const char *werror;
     const char *llvm;    // the LLVM install smith links clang from, so that it compiles in its own process; else ""
-    const char *llvm_id; // the identity of that clang (scripts/llvm.sh): its version and a hash of what is linked
+    const char *llvm_id; // the identity of that clang (build_llvm_run_macos): its version and a hash of what is linked
     const char *cxx;     // compiles the shims
     const char *const *headers;  // the headers no smith_object makes (build_header_steps), which smith.c includes
     const char *const *protocol; // the generated protocol code (build_protocol_steps), which smith.c includes
-    bool coverage;     // COVERAGE=1: smith.c and the linked libraries count the lines they run (the check that records,
-                       // #456)
-    bool lldb;         // the install has lldb (scripts/llvm.sh, the lldb step): smith has `smith dbg` and `smith dap`
+    bool coverage; // COVERAGE=1: smith.c and the linked libraries count the lines they run (the check that records,
+                   // #456)
+    bool lldb;     // the install has lldb (build_llvm_run_macos, the lldb step): smith has `smith dbg` and `smith dap`
     const char *prove; // the folder with Z3 and Alive2 beside the LLVM install (build_prove_libs_make), else ""
     bool linkable;     // the install has what smith links (else the default target stops and says `smith build llvm`)
     bool hook;         // the install has the token hook (patches/clang-token-hook.patch): smith compiles .smith files
@@ -349,8 +349,8 @@ static const char *const *build_header_steps(SmithBuild *b, const BuildConfig *c
 }
 
 // The libraries of the LLVM install that the in-process clang and the tools link: libsmithtools.a first, in whole,
-// which holds the mains of clang-format, clang-tidy and clangd and what they need patched (scripts/llvm.sh), and so is
-// found before libclangTidyMain.a's, then all of clang's and of LLVM's, clangd's other libraries (libclangd[A-Z]*
+// which holds the mains of clang-format, clang-tidy and clangd and what they need patched (build_llvm_run_macos), and
+// so is found before libclangTidyMain.a's, then all of clang's and of LLVM's, clangd's other libraries (libclangd[A-Z]*
 // matches none of them) and libclangmain.a, which holds clang's main. The linker's -dead_strip drops what the driver,
 // the compiler and the targets do not reach, so the list is not worked out by hand.
 static const char *const *build_clang_libraries(SmithBuild *b, const BuildConfig *config) {
@@ -371,8 +371,9 @@ static const char *const *build_clang_libraries(SmithBuild *b, const BuildConfig
     return smith_cat(b, first, group, found, more, nullptr);
 }
 
-// lldb's libraries, when the install has them (scripts/llvm.sh copies the static ones of its build into the install):
-// the plugins and the core, libsmithlldb.a with the SB API and the two mains, and what lldb's host layer uses.
+// lldb's libraries, when the install has them (build_llvm_run_macos copies the static ones of its build into the
+// install): the plugins and the core, libsmithlldb.a with the SB API and the two mains, and what lldb's host layer
+// uses.
 static const char *const *build_lldb_libraries(SmithBuild *b, const BuildConfig *config) {
     if (!config->lldb) return smith_list(b, nullptr);
     const char *const *found =
@@ -1363,7 +1364,7 @@ static void build_release(SmithBuild *b, const char *binary) {
 // The folder of the LLVM configuration under the package cache: one build of 23.1.3 with RTTI and exceptions on (Alive2
 // needs them), the token hook (#11), and the prover's libraries beside it. r14 is the fourteenth configuration
 // (patches/*.patch; r14 changes `SmithCEval` only (#1018); r12 has no new patch: it is the pack of Linux that gains the
-// prover and Enzyme, #820); scripts/llvm.sh has the same name (SMITH_LLVM_NAME overrides both).
+// prover and Enzyme, #820); build_llvm_run_macos has the same name (SMITH_LLVM_NAME overrides both).
 static const char *build_llvm_folder(SmithBuild *b) {
     const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
     return smith_fmt(b, "%s/smith/llvm/%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r14"));
@@ -1712,8 +1713,8 @@ static int build_z3_compile(SmithBuild *b, const BuildProve *prove, const char *
 
 // Z3's static initializers. libz3.a has about ten thousand, which dyld would run in every smith process at load (the
 // prover is in all of them). They are moved to __DATA,__smith_prove (scripts/defer_init.c, as for the tools in
-// scripts/llvm.sh), and shim/prove.cpp runs them when `smith prove` does. The archive is rebuilt from the objects of
-// Z3's build, in the order Z3's own archive step used.
+// build_llvm_run_macos), and shim/prove.cpp runs them when `smith prove` does. The archive is rebuilt from the objects
+// of Z3's build, in the order Z3's own archive step used.
 static int build_z3_objects(SmithRun *run, const BuildProve *prove, const char *deferred) {
     SmithBuild *b = run->b;
     // ninja's output is one line of more than a megabyte, so it goes to a file and not to a pipe.
@@ -2069,8 +2070,8 @@ static int build_enzyme_only(SmithRun *run) {
 }
 
 // On Linux (issue #305): the same LLVM, built by scripts/llvm_linux.c (a program, compiled here with the smith
-// that runs this build), which takes scripts/llvm.sh's arguments with the programs themselves. The prover's libraries
-// and Enzyme are not built on Linux yet.
+// that runs this build), which takes build_llvm_run_macos's arguments with the programs themselves. The prover's
+// libraries and Enzyme are not built on Linux yet.
 static int build_llvm_run_linux(SmithRun *run, const char *source, const char *ninja, const char *stamp) {
     SmithBuild *b = run->b;
     const char *tool = smith_fmt(b, "%s.tool", run->outputs[0]);
@@ -2089,6 +2090,430 @@ static int build_llvm_run_linux(SmithRun *run, const char *source, const char *n
     if (status != 0) return status;
     const char *const done[] = {"cp", stamp, run->outputs[0], nullptr};
     return smith_run_program(run, done, nullptr);
+}
+
+// ---- macOS: LLVM from source, what build_llvm_run_macos did (#1456, #291). The work lives in the package cache, not
+// in build/, because `smith build clean` would delete an hour's build: $CACHE/smith/llvm/<version>/{src,build,install}.
+// Run again with nothing changed, cmake and ninja find nothing to do. One configuration serves the compiler, the prover
+// and
+// `.smith` (#20): RTTI and exceptions on (Alive2 needs them), and the token hook (#11). A change to either, or to a
+// patch, is a new folder (the name is in build_llvm_folder, with what each revision changed).
+typedef struct {
+    const char *cache; // the LLVM folder: src, build, install
+    const char *cmake; // the CMake package
+    const char *python;
+    const char *ninja;
+    const char *defer;   // scripts/defer_init.c, built with the host compiler
+    const char *objcopy; // the llvm-objcopy of the install
+    const char *build;   // cache/build
+    const char *install; // cache/install
+} BuildLlvm;
+
+static const char *build_llvm_part(SmithBuild *b, const char *folder, const char *rest) {
+    return smith_fmt(b, "%s/%s", folder, rest);
+}
+
+// Step: the patches (patches/*.patch): the token hook (issue #11), clang-format for .smith (issue #25) and the rest.
+// The package is read-only to everyone else (other installs are built from it), so the patches go into a copy, once.
+// The copy keeps the patches it has in .patches/, one file each: a patch that changed (or is gone) is taken out with
+// the ones applied after it, last first, and the new revisions and new patches are put in, so only the files they
+// touch change and the rebuild is incremental. A patch must apply to the sources as the patches before it left them.
+static int build_llvm_fresh_copy(SmithBuild *b, const char *source, const char *copy, const char *applied) {
+    if (access(applied, F_OK) == 0) return 0;
+    int status = build_remove(b, copy);
+    status = status != 0 ? status : build_make_folder(b, copy);
+    status = status != 0 ? status : build_copy_tree(b, source, copy);
+    return status != 0 ? status : build_make_folder(b, applied);
+}
+
+static bool build_llvm_same_file(const char *left, const char *right) {
+    const char *const compare[] = {"/usr/bin/cmp", "-s", left, right, nullptr};
+    return build_spawn(&(BuildSpawn){.argv = compare}) == 0;
+}
+
+static int build_llvm_unapply(SmithBuild *b, const char *copy, const char *applied) {
+    const char *const *done = smith_glob(b, smith_list(b, smith_fmt(b, "%s/*.patch", applied), nullptr));
+    size_t count = 0;
+    size_t stale = SIZE_MAX;
+    for (; done[count] != nullptr; count++) {
+        const char *wanted = smith_fmt(b, "patches/%s", build_base(done[count]));
+        if (stale == SIZE_MAX && !build_llvm_same_file(wanted, done[count])) stale = count;
+    }
+    for (size_t i = stale == SIZE_MAX ? 0 : count; i > stale && stale != SIZE_MAX; i--) {
+        int status = build_exec(smith_list(b, "patch", "-R", "-p1", "-s", "-d", copy, "-i", done[i - 1], nullptr));
+        status = status != 0 ? status : build_remove(b, done[i - 1]);
+        if (status != 0) return status;
+    }
+    return 0;
+}
+
+static int build_llvm_patches(SmithBuild *b, const char *source, const char *cache) {
+    const char *copy = build_llvm_part(b, cache, "src");
+    const char *applied = build_llvm_part(b, cache, "src/.patches");
+    int status = build_llvm_fresh_copy(b, source, copy, applied);
+    status = status != 0 ? status : build_llvm_unapply(b, copy, applied);
+    if (status != 0) return status;
+    char
+        root[PATH_MAX]; // patch reads -i after -d changes its folder, so each patch is named from the repository's root
+    if (getcwd(root, sizeof root) == nullptr) return 1;
+    const char *const *patches = smith_glob(b, smith_list(b, "patches/*.patch", nullptr));
+    for (size_t i = 0; patches[i] != nullptr; i++) {
+        const char *record = smith_fmt(b, "%s/%s", applied, build_base(patches[i]));
+        if (access(record, F_OK) == 0) continue;
+        status = build_exec(
+            smith_list(b, "patch", "-p1", "-s", "-d", copy, "-i", smith_fmt(b, "%s/%s", root, patches[i]), nullptr));
+        status = status != 0 ? status : build_exec(smith_list(b, "/bin/cp", patches[i], record, nullptr));
+        if (status != 0) return status;
+    }
+    return 0;
+}
+
+// lldb options (#7), kept apart so that they merge with other configurations. Off, with what each costs: Python (the
+// `script` command, Python pretty printers and scripted commands: none run), curses (the `gui` command), lzma
+// (compressed symbol sections), libxml2 (Apple plist and platform XML reading), Lua, Tree-sitter (source colouring by
+// grammar). On: libedit, the system's /usr/lib/libedit.dylib (history and line editing in `smith dbg`), the system's
+// debugserver (smith.c finds it and sets LLDB_DEBUGSERVER_PATH), and protocol servers (lldb's MCP, in lldb).
+static const char *const build_llvm_lldb_options[] = {"-DLLDB_ENABLE_PYTHON=OFF",
+                                                      "-DLLDB_ENABLE_LUA=OFF",
+                                                      "-DLLDB_ENABLE_CURSES=OFF",
+                                                      "-DLLDB_ENABLE_LZMA=OFF",
+                                                      "-DLLDB_ENABLE_LIBXML2=OFF",
+                                                      "-DLLDB_ENABLE_TREESITTER=OFF",
+                                                      "-DLLDB_ENABLE_LIBEDIT=ON",
+                                                      "-DLLDB_USE_SYSTEM_DEBUGSERVER=ON",
+                                                      "-DLLDB_INCLUDE_TESTS=OFF",
+                                                      "-DLLDB_BUILD_FRAMEWORK=OFF",
+                                                      nullptr};
+
+// Release, no assertions, static libraries only. Off: everything that would link a dylib from outside /usr/lib and
+// /System (zlib, zstd, libxml2, z3, libedit, terminfo, ffi, curl). Off for build time only: tests, benchmarks,
+// examples, docs, bindings, and the compiler-rt parts smith does not use (libfuzzer, memprof, xray, orc, ctx_profile).
+// The host compiler that builds LLVM is Apple's; the clang it makes finds the SDK at run time.
+static const char *const *build_llvm_options(SmithRun *run, const BuildLlvm *llvm) {
+    SmithBuild *b = run->b;
+    const char *const head[] = {smith_fmt(b, "%s/CMake.app/Contents/bin/cmake", llvm->cmake),
+                                "-G",
+                                "Ninja",
+                                "-S",
+                                smith_fmt(b, "%s/src/llvm", llvm->cache),
+                                "-B",
+                                llvm->build,
+                                "-DCMAKE_BUILD_TYPE=Release",
+                                "-DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew;/usr/local",
+                                smith_fmt(b, "-DCMAKE_INSTALL_PREFIX=%s", llvm->install),
+                                smith_fmt(b, "-DCMAKE_MAKE_PROGRAM=%s", llvm->ninja),
+                                "-DCMAKE_C_COMPILER=/usr/bin/clang",
+                                "-DCMAKE_CXX_COMPILER=/usr/bin/clang++",
+                                smith_fmt(b, "-DCMAKE_OSX_SYSROOT=%s", build_sdk(run)),
+                                smith_fmt(b, "-DPython3_EXECUTABLE=%s/bin/python3", llvm->python),
+                                "-DLLVM_ENABLE_PROJECTS=clang;clang-tools-extra;lld;lldb",
+                                "-DLLVM_ENABLE_RUNTIMES=compiler-rt",
+                                "-DLLVM_TARGETS_TO_BUILD=AArch64",
+                                "-DLLVM_ENABLE_ASSERTIONS=OFF",
+                                "-DLLVM_ENABLE_RTTI=ON",
+                                "-DLLVM_ENABLE_EH=ON",
+                                "-DBUILD_SHARED_LIBS=OFF",
+                                "-DLLVM_BUILD_LLVM_DYLIB=OFF",
+                                "-DLLVM_LINK_LLVM_DYLIB=OFF",
+                                "-DCLANG_LINK_CLANG_DYLIB=OFF",
+                                "-DLLVM_ENABLE_ZLIB=OFF",
+                                "-DLLVM_ENABLE_ZSTD=OFF",
+                                "-DLLVM_ENABLE_LIBXML2=OFF",
+                                "-DLLVM_ENABLE_Z3_SOLVER=OFF",
+                                "-DLLVM_ENABLE_LIBEDIT=OFF",
+                                "-DLLVM_ENABLE_TERMINFO=OFF",
+                                "-DLLVM_ENABLE_FFI=OFF",
+                                "-DLLVM_ENABLE_CURL=OFF",
+                                "-DLLVM_INCLUDE_TESTS=OFF",
+                                "-DLLVM_INCLUDE_BENCHMARKS=OFF",
+                                "-DLLVM_INCLUDE_EXAMPLES=OFF",
+                                "-DLLVM_INCLUDE_DOCS=OFF",
+                                "-DLLVM_ENABLE_BINDINGS=OFF",
+                                "-DCLANG_INCLUDE_TESTS=OFF",
+                                "-DCOMPILER_RT_INCLUDE_TESTS=OFF",
+                                "-DCOMPILER_RT_BUILD_LIBFUZZER=OFF",
+                                "-DCOMPILER_RT_BUILD_MEMPROF=OFF",
+                                "-DCOMPILER_RT_BUILD_XRAY=OFF",
+                                "-DCOMPILER_RT_BUILD_ORC=OFF",
+                                "-DCOMPILER_RT_BUILD_CTX_PROFILE=OFF",
+                                nullptr};
+    return smith_cat(b, head, build_llvm_lldb_options, nullptr);
+}
+
+// The clang binary's own main is a library function, clang_main, in these four objects (the fifth, clang-driver.cpp.o,
+// is its main). smith links them to compile in its own process, so they go beside the libraries as libclangmain.a.
+static const char *const build_llvm_driver_objects[] = {"driver.cpp.o", "cc1_main.cpp.o", "cc1as_main.cpp.o",
+                                                        "cc1gen_reproducer_main.cpp.o"};
+
+static const char *build_llvm_driver_object(SmithBuild *b, const BuildLlvm *llvm, size_t i) {
+    return smith_fmt(b, "%s/tools/clang/tools/driver/CMakeFiles/clang.dir/%s", llvm->build,
+                     build_llvm_driver_objects[i]);
+}
+
+static int build_llvm_compile(SmithRun *run, const BuildLlvm *llvm) {
+    SmithBuild *b = run->b;
+    int status = build_exec(build_llvm_options(run, llvm));
+    status = status != 0
+                 ? status
+                 : build_exec(smith_list(b, "/usr/bin/nice", llvm->ninja, "-C", llvm->build, "install", nullptr));
+    const char *library = build_llvm_part(b, llvm->install, "lib/libclangmain.a");
+    status = status != 0 ? status : build_remove(b, library);
+    if (status != 0) return status;
+    return build_exec(smith_list(b, "/usr/bin/ar", "rcs", library, build_llvm_driver_object(b, llvm, 0),
+                                 build_llvm_driver_object(b, llvm, 1), build_llvm_driver_object(b, llvm, 2),
+                                 build_llvm_driver_object(b, llvm, 3), nullptr));
+}
+
+// The objects of an archive, taken out into a folder (`ar x`): the folder is made first.
+static int build_llvm_extract(SmithBuild *b, const char *archive, const char *folder, const char *member) {
+    int status = build_make_folder(b, folder);
+    const char *const all[] = {"/usr/bin/ar", "x", archive, nullptr};
+    const char *const one[] = {"/usr/bin/ar", "x", archive, member, nullptr};
+    return status != 0 ? status : build_spawn(&(BuildSpawn){.argv = member != nullptr ? one : all, .folder = folder});
+}
+
+// An object through scripts/defer_init.c: its static initializers move out of the section dyld runs at load, to run
+// when the tool `group` runs. Its output is not wanted.
+static int build_llvm_defer(SmithBuild *b, const BuildLlvm *llvm, const char *from, const char *to, const char *group) {
+    return build_spawn(&(BuildSpawn){
+        .argv = smith_list(b, llvm->defer, from, to, group, nullptr), .log = "/dev/null", .stdout_only = true});
+}
+
+static int build_llvm_rename(SmithBuild *b, const BuildLlvm *llvm, const char *symbol, const char *to,
+                             const char *from) {
+    return build_exec(smith_list(b, llvm->objcopy, "--redefine-sym", symbol, from, to, nullptr));
+}
+
+// Archives a list of objects into `library`, made again.
+static int build_llvm_archive(SmithBuild *b, const char *library, const char *const *objects) {
+    int status = build_remove(b, library);
+    return status != 0
+               ? status
+               : build_exec(smith_cat(b, smith_list(b, "/usr/bin/ar", "rcs", library, nullptr), objects, nullptr));
+}
+
+// Step: the tools (#3). Self-contained: it reads the build tree and the install, and writes only $tools and
+// libsmithtools.a. clang-format, clang-tidy and clangd are linked into smith as `smith fmt`, `smith lint` and `smith
+// lsp` (shim/tool.h says why each of the following is done). libsmithtools.a holds patched copies of the objects,
+// beside the pristine libraries, and is linked first, so its members are found before the originals':
+//   - clang-format's main is its one object, ClangFormat.cpp.o, with the symbol `main` renamed. clang-tidy's and
+//     clangd's are functions in libclangTidyMain.a and libclangdMain.a, whose members are copied as they are;
+//   - those objects' static initializers, which declare the flags and collide (clang-format and clang-tidy both have
+//     -fallback-style), are moved out of __mod_init_func (scripts/defer_init.c), to run when the tool runs;
+//   - clangd's code actions ("tweaks") are objects that register themselves by static initializers and that nothing
+//     names, so they are copied too, with their initializers deferred like clangd's own, and the whole of
+//     libsmithtools.a is linked (-force_load) so that none is left out;
+//   - the one call in clangd (CompileCommands.cpp.o) and the one in clang-tidy (Tooling.cpp.o) that find the resource
+//     directory by the path of the executable are redirected to smith_resource_path (shim/tool.h).
+static int build_llvm_tools_extract(SmithBuild *b, const BuildLlvm *llvm, const char *tools) {
+    int status = build_remove(b, tools);
+    const char *lib = build_llvm_part(b, llvm->install, "lib");
+    const char *const parts[][3] = {{"tidy", "libclangTidyMain.a", nullptr},
+                                    {"clangd", "libclangdMain.a", nullptr},
+                                    {"daemon", "libclangDaemon.a", "CompileCommands.cpp.o"},
+                                    {"tooling", "libclangTooling.a", "Tooling.cpp.o"},
+                                    {"tweaks", "libclangDaemonTweaks.a", nullptr}};
+    status = status != 0 ? status : build_make_folder(b, build_llvm_part(b, tools, "out"));
+    status = status != 0 ? status : build_make_folder(b, build_llvm_part(b, tools, "format"));
+    for (size_t i = 0; status == 0 && i < sizeof parts / sizeof parts[0]; i++) {
+        status = build_llvm_extract(b, smith_fmt(b, "%s/%s", lib, parts[i][1]), build_llvm_part(b, tools, parts[i][0]),
+                                    parts[i][2]);
+    }
+    const char *format = "tools/clang/tools/clang-format/CMakeFiles/clang-format.dir/ClangFormat.cpp.o";
+    return status != 0 ? status
+                       : build_llvm_rename(b, llvm, "_main=_smith_clang_format_main",
+                                           build_llvm_part(b, tools, "format/ClangFormat.o"),
+                                           build_llvm_part(b, llvm->build, format));
+}
+
+static int build_llvm_tools_defer(SmithBuild *b, const BuildLlvm *llvm, const char *tools) {
+    const char *const mains[][3] = {{"format/ClangFormat.o", "ClangFormat.o", "fmt"},
+                                    {"tidy/ClangTidyMain.cpp.o", "ClangTidyMain.o", "tidy"},
+                                    {"clangd/ClangdMain.cpp.o", "ClangdMain.o", "lsp"},
+                                    {"clangd/Check.cpp.o", "Check.o", "lsp"}};
+    int status = 0;
+    for (size_t i = 0; status == 0 && i < sizeof mains / sizeof mains[0]; i++) {
+        status = build_llvm_defer(b, llvm, build_llvm_part(b, tools, mains[i][0]),
+                                  smith_fmt(b, "%s/out/%s", tools, mains[i][1]), mains[i][2]);
+    }
+    const char *const *tweaks = smith_glob(b, smith_list(b, build_llvm_part(b, tools, "tweaks/*.o"), nullptr));
+    for (size_t i = 0; status == 0 && tweaks[i] != nullptr; i++) {
+        status =
+            build_llvm_defer(b, llvm, tweaks[i], smith_fmt(b, "%s/out/tweak_%s", tools, build_base(tweaks[i])), "lsp");
+    }
+    // clang::GetResourcesPath(char const *, void *) to smith_resource_path(char const *, void *)
+    const char *get_resources = "__ZN5clang16GetResourcesPathEPKcPv=__Z19smith_resource_pathPKcPv";
+    status = status != 0 ? status
+                         : build_llvm_rename(b, llvm, get_resources, build_llvm_part(b, tools, "out/CompileCommands.o"),
+                                             build_llvm_part(b, tools, "daemon/CompileCommands.cpp.o"));
+    return status != 0 ? status
+                       : build_llvm_rename(b, llvm, get_resources, build_llvm_part(b, tools, "out/Tooling.o"),
+                                           build_llvm_part(b, tools, "tooling/Tooling.cpp.o"));
+}
+
+static int build_llvm_tools(SmithBuild *b, const BuildLlvm *llvm) {
+    const char *tools = build_llvm_part(b, llvm->build, "smith-tools");
+    int status = build_llvm_tools_extract(b, llvm, tools);
+    status = status != 0 ? status : build_llvm_tools_defer(b, llvm, tools);
+    return status != 0
+               ? status
+               : build_llvm_archive(b, build_llvm_part(b, llvm->install, "lib/libsmithtools.a"),
+                                    smith_glob(b, smith_list(b, build_llvm_part(b, tools, "out/*.o"), nullptr)));
+}
+
+// Step: lldb and lldb-dap (#7). Self-contained: it reads the build tree and the install, and writes only
+// install/lib/liblldb[A-Z]*.a and libsmithlldb.a. `smith dbg` and `smith dap` run lldb's driver and lldb-dap's tool in
+// smith's process. LLVM installs lldb as a dylib and no static libraries, so the static libraries of the build tree
+// (lldb's core and plugins) are copied into the install, and libsmithlldb.a holds the objects that make liblldb.dylib
+// (the SB API: its sources are in no library), and the objects of the two mains, with the symbol `main` renamed
+// (shim/lldb.cpp and shim/lldb_dap.cpp name them). The static initializers of all of them are moved out of the section
+// dyld runs at load, to run when `smith dbg` or `smith dap` does (shim/tool.h): lldb's cost smith 9 ms at the start of
+// every process, compiles included, in initializers that only a debugger needs.
+static int build_llvm_lldb_objects(SmithBuild *b, const BuildLlvm *llvm, const char *out) {
+    const char *lldb = build_llvm_part(b, llvm->build, "tools/lldb");
+    const char *objects = build_llvm_part(b, out, "objects");
+    int status = build_make_folder(b, objects);
+    status = status != 0
+                 ? status
+                 : build_llvm_rename(b, llvm, "_main=_smith_lldb_driver_main", build_llvm_part(b, objects, "Driver.o"),
+                                     build_llvm_part(b, lldb, "tools/driver/CMakeFiles/lldb.dir/Driver.cpp.o"));
+    status = status != 0
+                 ? status
+                 : build_exec(smith_list(b, "/bin/cp",
+                                         build_llvm_part(b, lldb, "tools/driver/CMakeFiles/lldb.dir/Platform.cpp.o"),
+                                         build_llvm_part(b, objects, "Platform.o"), nullptr));
+    const char *dap = "tools/lldb-dap/tool/CMakeFiles/lldb-dap.dir/lldb-dap.cpp.o";
+    status = status != 0 ? status
+                         : build_llvm_rename(b, llvm, "_main=_smith_lldb_dap_tool_main",
+                                             build_llvm_part(b, objects, "lldb-dap.o"), build_llvm_part(b, lldb, dap));
+    const char *const *api =
+        smith_glob(b, smith_list(b, build_llvm_part(b, lldb, "source/API/CMakeFiles/liblldb.dir/*.o"), nullptr));
+    for (size_t i = 0; status == 0 && api[i] != nullptr; i++) {
+        status = build_exec(
+            smith_list(b, "/bin/cp", api[i], smith_fmt(b, "%s/api_%s", objects, build_base(api[i])), nullptr));
+    }
+    return status;
+}
+
+// Each static archive of lldb's build, copied into the install with its initializers deferred.
+static int build_llvm_lldb_libraries(SmithBuild *b, const BuildLlvm *llvm, const char *out) {
+    const char *const *archives =
+        smith_glob(b, smith_list(b, build_llvm_part(b, llvm->build, "lib/liblldb[A-Z]*.a"), nullptr));
+    for (size_t i = 0; archives[i] != nullptr; i++) {
+        const char *name = smith_fmt(b, "%.*s", (int)(strlen(build_base(archives[i])) - 2), build_base(archives[i]));
+        const char *members = smith_fmt(b, "%s/members/%s", out, name);
+        const char *deferred = smith_fmt(b, "%s/deferred_members/%s", out, name);
+        int status = build_llvm_extract(b, archives[i], members, nullptr);
+        status = status != 0 ? status : build_make_folder(b, deferred);
+        const char *const *objects = smith_glob(b, smith_list(b, smith_fmt(b, "%s/*.o", members), nullptr));
+        for (size_t j = 0; status == 0 && objects[j] != nullptr; j++) {
+            status =
+                build_llvm_defer(b, llvm, objects[j], smith_fmt(b, "%s/%s", deferred, build_base(objects[j])), "lldb");
+        }
+        status = status != 0
+                     ? status
+                     : build_llvm_archive(b, smith_fmt(b, "%s/lib/%s.a", llvm->install, name),
+                                          smith_glob(b, smith_list(b, smith_fmt(b, "%s/*.o", deferred), nullptr)));
+        if (status != 0) return status;
+    }
+    return 0;
+}
+
+static int build_llvm_lldb(SmithBuild *b, const BuildLlvm *llvm) {
+    const char *out = build_llvm_part(b, llvm->build, "smith-lldb");
+    const char *deferred = build_llvm_part(b, out, "deferred");
+    int status = build_remove(b, out);
+    status = status != 0 ? status : build_llvm_lldb_objects(b, llvm, out);
+    status = status != 0 ? status : build_make_folder(b, deferred);
+    const char *const *objects = smith_glob(b, smith_list(b, build_llvm_part(b, out, "objects/*.o"), nullptr));
+    for (size_t i = 0; status == 0 && objects[i] != nullptr; i++) {
+        status = build_llvm_defer(b, llvm, objects[i], smith_fmt(b, "%s/%s", deferred, build_base(objects[i])), "lldb");
+    }
+    status = status != 0
+                 ? status
+                 : build_llvm_archive(b, build_llvm_part(b, llvm->install, "lib/libsmithlldb.a"),
+                                      smith_glob(b, smith_list(b, build_llvm_part(b, deferred, "*.o"), nullptr)));
+    return status != 0 ? status : build_llvm_lldb_libraries(b, llvm, out);
+}
+
+// Step: the identity, written last. Every step above and any added later goes before it, and what it hashes is
+// everything smith links: the version, and a hash of the archives it links (clang's, LLVM's and lld's) and of the four
+// objects in libclangmain.a (not the archive, which holds the time it was made). `smith build` compiles it into smith,
+// which reports it as the identity of its clang, so a smith rebuilt against the same LLVM leaves every project's
+// objects alone and a rebuilt LLVM rebuilds them. lld is in it because the program the driver runs as `ld` is smith,
+// and a smith that links with lld must not share clang's folder, with its `bin/ld`, with one that does not. An archive
+// is hashed by the contents of its members (`llvm-ar p`), never by its bytes: `ninja install` runs ranlib on every
+// archive it installs, which rewrites the table of contents and the archive's times, so the bytes change on every run
+// of this step while the code does not, and the identity (which every project's objects depend on) would change with
+// them. The contents are appended to one file, in this order, and hashed.
+static int build_llvm_hash_input(SmithBuild *b, const BuildLlvm *llvm, const char *input) {
+    const char *lib = build_llvm_part(b, llvm->install, "lib");
+    const char *const patterns[] = {"libclang[A-Z]*.a", "libLLVM*.a", "liblldMachO.a", "liblldCommon.a",
+                                    "libclangd[A-Z]*.a"};
+    for (size_t i = 0; i < sizeof patterns / sizeof patterns[0]; i++) {
+        const char *const *archives = smith_glob(b, smith_list(b, smith_fmt(b, "%s/%s", lib, patterns[i]), nullptr));
+        for (size_t j = 0; archives[j] != nullptr; j++) {
+            int status = build_spawn(&(BuildSpawn){
+                .argv = smith_list(b, build_llvm_part(b, llvm->install, "bin/llvm-ar"), "p", archives[j], nullptr),
+                .log = input,
+                .stdout_only = true,
+                .append = true});
+            if (status != 0) return status;
+        }
+    }
+    const char *tools = build_llvm_part(b, llvm->build, "smith-tools/out/*.o");
+    const char *lldb = build_llvm_part(b, llvm->build, "smith-lldb/deferred/*.o");
+    const char *members = build_llvm_part(b, llvm->build, "smith-lldb/deferred_members/*/*.o");
+    const char *const *driver =
+        smith_list(b, build_llvm_driver_object(b, llvm, 0), build_llvm_driver_object(b, llvm, 1),
+                   build_llvm_driver_object(b, llvm, 2), build_llvm_driver_object(b, llvm, 3), nullptr);
+    const char *const *objects =
+        smith_cat(b, driver, smith_glob(b, smith_list(b, tools, nullptr)), smith_glob(b, smith_list(b, lldb, nullptr)),
+                  smith_glob(b, smith_list(b, members, nullptr)), nullptr);
+    return build_spawn(&(BuildSpawn){.argv = smith_cat(b, smith_list(b, "/bin/cat", nullptr), objects, nullptr),
+                                     .log = input,
+                                     .stdout_only = true,
+                                     .append = true});
+}
+
+static int build_llvm_identity(SmithRun *run, const BuildLlvm *llvm) {
+    SmithBuild *b = run->b;
+    const char *input = build_llvm_part(b, llvm->build, "identity.input");
+    int status = build_remove(b, input);
+    status = status != 0 ? status : build_llvm_hash_input(b, llvm, input);
+    const char *const *lines =
+        status != 0 ? nullptr : smith_run_lines(run, (const char *[]){"/usr/bin/shasum", "-a", "256", input, nullptr});
+    build_remove(b, input);
+    if (status != 0) return status;
+    if (lines == nullptr || lines[0] == nullptr || strlen(lines[0]) < 64) return 1;
+    const char *text = smith_fmt(b, "llvm-23.1.3 %.64s\n", lines[0]);
+    return build_write_text(build_llvm_part(b, llvm->install, "lib/smith-clang.id"), text, 0644);
+}
+
+// `smith build llvm` on macOS: the patches, cmake and ninja, the tools, lldb, the identity, in that order; `stamp` is
+// written last with the install's path.
+static int build_llvm_run_macos(SmithRun *run, const char *source, const char *ninja, const char *stamp) {
+    SmithBuild *b = run->b;
+    const char *cache = build_llvm_folder(b);
+    BuildLlvm llvm = {.cache = cache,
+                      .cmake = build_cmake_package(b),
+                      .python = build_python_package(b),
+                      .ninja = ninja,
+                      .defer = build_llvm_part(b, cache, "build/defer_init"),
+                      .objcopy = build_llvm_part(b, cache, "install/bin/llvm-objcopy"),
+                      .build = build_llvm_part(b, cache, "build"),
+                      .install = build_llvm_part(b, cache, "install")};
+    int status = build_make_folder(b, cache);
+    status = status != 0 ? status : build_make_folder(b, build_parent(b, stamp));
+    status = status != 0 ? status : build_llvm_patches(b, source, cache);
+    status = status != 0 ? status : build_llvm_compile(run, &llvm);
+    status = status != 0 ? status
+                         : build_exec(smith_list(b, "/usr/bin/clang", "-std=gnu23", "-O1", "-Wall", "-Wextra",
+                                                 "-Werror", "scripts/defer_init.c", "-o", llvm.defer, nullptr));
+    status = status != 0 ? status : build_llvm_tools(b, &llvm);
+    status = status != 0 ? status : build_llvm_lldb(b, &llvm);
+    status = status != 0 ? status : build_llvm_identity(run, &llvm);
+    return status != 0 ? status : build_write_text(stamp, smith_fmt(b, "%s\n", llvm.install), 0644);
 }
 
 // After a build of LLVM (issue #618): every other LLVM folder of the cache goes, and its Enzyme, but the previous
@@ -2157,7 +2582,7 @@ static int build_llvm_pack_task(SmithRun *run) {
 }
 
 // The pinned LLVM (`smith build llvm`): the pack of a release when there is one (build_llvm_fetch), else the sources,
-// CMake and Python by hash, built once into the package cache by scripts/llvm.sh, and then the prover's libraries
+// CMake and Python by hash, built once into the package cache by build_llvm_run_macos, and then the prover's libraries
 // beside it (Ninja, Z3, Alive2, Bitwuzla and its dependencies). A .run step, so the packages are fetched only when this
 // target runs, not on every smith build.
 static int build_llvm_run(SmithRun *run) {
@@ -2182,9 +2607,7 @@ static int build_llvm_run(SmithRun *run) {
         status = build_llvm_run_linux(run, source, ninja, stamp);
         return status != 0 ? status : build_llvm_prune(run);
     }
-    const char *const make_llvm[] = {
-        "sh", "scripts/llvm.sh", source, build_cmake_package(b), build_python_package(b), stamp, ninja, nullptr};
-    status = smith_run_program(run, make_llvm, nullptr);
+    status = build_llvm_run_macos(run, source, ninja, stamp);
     if (status != 0) return status;
     status = build_prove_libs_run(run, ninja);
     if (status != 0) return status;
@@ -2211,7 +2634,7 @@ static void build_llvm(SmithBuild *b) {
         .description = "fetching or building LLVM 23.1.3 and the prover's libraries (static, from source)",
         .inputs = smith_cat(
             b,
-            (const char *[]){"scripts/llvm.sh", "scripts/defer_init.c", "patches/enzyme/quiet-caching-call.patch",
+            (const char *[]){"scripts/defer_init.c", "patches/enzyme/quiet-caching-call.patch",
                              "patches/clang-token-hook.patch", "patches/clang-debug-name.patch",
                              "patches/clang-format-smith.patch", "patches/smith-editor-defaults.patch",
                              "patches/smith-format-source-extension.patch", "patches/smith-command-hook.patch",

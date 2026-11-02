@@ -13,7 +13,7 @@
 #include <mach-o/ldsyms.h>
 #include <spawn.h>
 
-// The table of initializers scripts/llvm.sh moved into __DATA,<name> (a name such as __smith_fmt), and its count.
+// The table of initializers build_llvm_run_macos moved into __DATA,<name> (a name such as __smith_fmt), and its count.
 inline void (**smith_platform_section(const char *name, size_t *count))() {
     unsigned long size = 0;
     auto *table = reinterpret_cast<void (**)()>(getsectiondata(&_mh_execute_header, "__DATA", name, &size));
