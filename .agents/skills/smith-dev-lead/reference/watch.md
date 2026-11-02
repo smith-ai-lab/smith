@@ -34,23 +34,23 @@ fix() {
       say "$i" "Unblocked (lead's watcher): every ticket this waits for is closed ($(echo $w | sed 's/[0-9]*/#&/g'))." && did "unblocked #$i"
   done
   # a green PR that is not queued: merge main in and turn auto-merge on
-  for p in $(gh api "repos/$R/pulls?state=open&per_page=50" --jq '.[]|select(.auto_merge==null and .draft==false and (.updated_at|fromdateiso8601<now-1800))|.number' 2>/dev/null); do
+  for p in $(gh api "repos/$R/pulls?state=open&per_page=50" --jq '.[]|select(.auto_merge==null and .draft==false and (.updated_at|fromdateiso8601<now-300))|.number' 2>/dev/null); do
     [ "$(gh api repos/$R/pulls/$p --jq .mergeable_state 2>/dev/null)" = clean ] || continue
     gh api -X PUT "repos/$R/pulls/$p/update-branch" >/dev/null 2>&1
     gh api -X PUT "repos/$R/pulls/$p/ccr/auto_merge" >/dev/null 2>&1 && did "re-armed PR #$p" || { seen "arm$p-$(date +%H)" && echo "PR #$p is green but auto-merge would not turn on"; }
   done
-  # a PR red or conflicted and untouched for an hour: release its ticket to the next runner
-  for p in $(gh api "repos/$R/pulls?state=open&per_page=50" --jq '.[]|select(.draft==false and .head.ref!="claude/vibrant-mendel-tvpj1l" and (.updated_at|fromdateiso8601<now-3600))|.number' 2>/dev/null); do
+  # a PR red or conflicted and untouched for 30 minutes: release its ticket to the next runner
+  for p in $(gh api "repos/$R/pulls?state=open&per_page=50" --jq '.[]|select(.draft==false and .head.ref!="claude/vibrant-mendel-tvpj1l" and (.updated_at|fromdateiso8601<now-1800))|.number' 2>/dev/null); do
     sha=$(gh api repos/$R/pulls/$p --jq .head.sha 2>/dev/null)
     why=
     [ "$(gh api repos/$R/commits/$sha/check-runs --jq '[.check_runs[]|select(.name=="ci")|.conclusion]|first' 2>/dev/null)" = failure ] && why="its ci is red"
     [ "$(gh api repos/$R/pulls/$p --jq .mergeable 2>/dev/null)" = false ] && why="it has a merge conflict with main"
     [ -z "$why" ] && continue
     seen "rel$p-$sha" || continue
-    t=$(gh api repos/$R/pulls/$p --jq '.title + " " + (.body // "")' 2>/dev/null | grep -oiE '(closes|fixes|resolves) #[0-9]+|\(#[0-9]+' | grep -oE '[0-9]+' | head -1)
-    [ -z "$t" ] && { echo "PR #$p: $why, untouched for an hour, and no ticket found to release"; continue; }
+    t=$(gh api repos/$R/pulls/$p --jq '.title + " " + (.body // "")' 2>/dev/null | grep -oiE '(closes|fixes|resolves|part of) #[0-9]+|\(#[0-9]+' | grep -oE '[0-9]+' | head -1)
+    [ -z "$t" ] && { echo "PR #$p: $why, untouched for 30 minutes, and no ticket found to release"; continue; }
     gh api -X DELETE "repos/$R/issues/$t/labels/claimed" >/dev/null 2>&1
-    say "$t" "Claim released (lead's watcher): PR #$p has gone an hour with no push and $why. The next runner takes that PR over: check out its branch, merge main in, make ci green, and push. Do not open a second PR." && did "released #$t (PR #$p: $why)"
+    say "$t" "Claim released (lead's watcher): PR #$p has gone 30 minutes with no push and $why. The next runner takes that PR over: check out its branch, merge main in, make ci green, and push. Do not open a second PR." && did "released #$t (PR #$p: $why)"
   done
 }
 
@@ -87,7 +87,7 @@ done
 - **Done without the lead (every ten minutes):**
   - Everything a blocked ticket waits for is closed: it removes `blocked` and says so on the ticket.
   - A green PR not in the merge queue (GitHub ignores auto-merge on a PR that is already green; the queue drops a PR whose queue run fails): it merges main in and turns auto-merge on through `PUT pulls/N/ccr/auto_merge` (#1522 sat green for 90 minutes).
-  - A PR red or conflicted and untouched for an hour: its runner has ended. It removes `claimed` from the ticket the PR names and comments `Claim released (lead's watcher)`, so the next runner takes that PR over (smith-dev-runner step 1; #1562 sat conflicted for four hours).
+  - A PR red or conflicted and untouched for 30 minutes: its runner has ended. It removes `claimed` from the ticket the PR names and comments `Claim released (lead's watcher)`, so the next runner takes that PR over before any new ticket (smith-dev-runner step 1; #1562 sat conflicted for four hours).
 - **Wakes the lead (every hour, once per problem):** fewer ready tickets than N (write or split tickets); main's ci red; a blocked ticket with no Waits-for line (likely a runner's question; owner, 2026-11-02, "we should never let you mark something as blocked unless you have a ticket saying what unlocks it"); no merge into main for an hour with PRs open; a PR it could not re-arm or release.
 - **The mailbox:** each minute it asks GitHub only for #1406's comments since the last `@lead:` it delivered (`lead-mark` beside `SEEN`), and on a wake prints every new one, not just the last. Two bugs this fixes: it counted only the first 100 comments of #1406, so it would have gone deaf past 100; and it counted from its own restart, so an `@lead:` posted while the lead was working was never delivered.
 - **The merge queue has no REST listing:** "stalled" means no new commit on main for an hour while pull requests are open.
