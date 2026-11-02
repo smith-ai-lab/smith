@@ -47,12 +47,25 @@ static void report_callee(state::Emitter *e, Str name, c::LLVMValueRef *args, Us
     if (*callee == nullptr) *callee = c::LLVMAddFunction(e->module, label, *type);
 }
 
+// The edge to a fail block is unlikely: `!prof` branch_weights of 1 against 2000 (#1550), so a pass or the code
+// generator that reads branch probabilities knows the fail block is cold.
+static void mark_unlikely(state::Emitter *e, c::LLVMValueRef branch) {
+    c::LLVMTypeRef word = c::LLVMInt32TypeInContext(e->context);
+    c::LLVMMetadataRef parts[3] = {c::LLVMMDStringInContext2(e->context, "branch_weights", 14),
+                                   c::LLVMValueAsMetadata(c::LLVMConstInt(word, 1, 0)),
+                                   c::LLVMValueAsMetadata(c::LLVMConstInt(word, 2000, 0))};
+    c::LLVMMetadataRef node = c::LLVMMDNodeInContext2(e->context, parts, 3);
+    U32 kind = c::LLVMGetMDKindIDInContext(e->context, "prof", 4);
+    c::LLVMSetMetadata(branch, kind, c::LLVMMetadataAsValue(e->context, node));
+}
+
 // Branch, when `bad` is true, to a block of its own and leave the builder in it; `next` is the block the code goes on
 // in. The arguments of the report are built there, so the good path pays for none of them. `close_failure` ends it.
 static c::LLVMBasicBlockRef open_failure(state::Emitter *e, c::LLVMValueRef bad) {
     c::LLVMBasicBlockRef failing = c::LLVMAppendBasicBlockInContext(e->context, e->function, "fail");
     c::LLVMBasicBlockRef next = c::LLVMAppendBasicBlockInContext(e->context, e->function, "ok");
-    c::LLVMBuildCondBr(e->builder, bad, failing, next);
+    c::LLVMValueRef branch = c::LLVMBuildCondBr(e->builder, bad, failing, next);
+    mark_unlikely(e, branch);
     c::LLVMPositionBuilderAtEnd(e->builder, failing);
     return next;
 }
