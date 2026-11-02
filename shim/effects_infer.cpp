@@ -615,6 +615,11 @@ class Collector {
         : node(node), context(context), sm(context.getSourceManager()), symbols(std::move(symbols)),
           names(std::move(names)), asserts(asserts) {}
 
+    // In a module, signed arithmetic and its kin are checks that fail the task (#351): points of `fails`.
+    void checkArithmetic(bool on) {
+        arithmetic = on;
+    }
+
     void walk(const Stmt *body) {
         std::vector<const Stmt *> work{body};
         while (!work.empty()) {
@@ -628,6 +633,7 @@ class Collector {
     }
 
   private:
+    bool arithmetic = false;
     Node &node;
     ASTContext &context;
     const SourceManager &sm;
@@ -704,9 +710,90 @@ class Collector {
             onAsm(assembly);
         } else if (const auto *op = dyn_cast<BinaryOperator>(statement)) {
             if (op->isAssignmentOp()) global(op->getLHS(), op->getOperatorLoc());
+            if (arithmetic) binaryPoint(op);
         } else if (const auto *unary = dyn_cast<UnaryOperator>(statement)) {
             if (unary->isIncrementDecrementOp()) global(unary->getSubExpr(), unary->getOperatorLoc());
+            if (arithmetic) unaryPoint(unary);
         }
+        if (arithmetic) {
+            if (const auto *cast = dyn_cast<CastExpr>(statement)) castPoint(cast);
+        }
+    }
+
+    // The run-time checks of a module's arithmetic (#351): a failure point at the operator, unless the compiler folds
+    // the expression (a fold that overflows is not a constant, so it stays a point).
+    void arithmeticPoint(const Expr *expr, SourceLocation loc, const std::string &what) {
+        if (loc.isInvalid() || sm.isInSystemHeader(sm.getExpansionLoc(loc))) return;
+        if (!expr->isValueDependent() && expr->isEvaluatable(context)) return;
+        leaf(loc, Fails, what);
+    }
+
+    static bool nonzeroConstant(const Expr *expr, ASTContext &context, bool notMinusOne) {
+        Expr::EvalResult result;
+        if (expr->isValueDependent() || !expr->EvaluateAsInt(result, context)) return false;
+        const llvm::APSInt &value = result.Val.getInt();
+        return !value.isZero() && !(notMinusOne && value.isSigned() && value.isAllOnes());
+    }
+
+    // A shift by a constant inside the type's width cannot fail, unless it is a signed left shift (it may overflow).
+    bool shiftIsSafe(const BinaryOperator *op) {
+        bool left = op->getOpcode() == BO_Shl || op->getOpcode() == BO_ShlAssign;
+        if (left && op->getLHS()->getType()->isSignedIntegerType()) return false;
+        Expr::EvalResult result;
+        const Expr *amount = op->getRHS();
+        if (amount->isValueDependent() || !amount->EvaluateAsInt(result, context)) return false;
+        const llvm::APSInt &value = result.Val.getInt();
+        return !value.isNegative() && value.getZExtValue() < context.getTypeSize(op->getLHS()->getType());
+    }
+
+    void binaryPoint(const BinaryOperator *op) {
+        QualType type = op->getType();
+        QualType lhsType = op->getLHS()->getType();
+        if (!lhsType->isIntegerType() || lhsType->isBooleanType() || !op->getRHS()->getType()->isIntegerType()) return;
+        std::string name = op->getOpcodeStr().str();
+        switch (op->getOpcode()) {
+        case BO_Add:
+        case BO_Sub:
+        case BO_Mul:
+        case BO_AddAssign:
+        case BO_SubAssign:
+        case BO_MulAssign:
+            if (!type->isSignedIntegerType()) return;
+            name = op->isCompoundAssignmentOp() ? name.substr(0, name.size() - 1) : name;
+            arithmeticPoint(op, op->getOperatorLoc(), "signed overflow of " + name);
+            return;
+        case BO_Div:
+        case BO_Rem:
+        case BO_DivAssign:
+        case BO_RemAssign:
+            if (nonzeroConstant(op->getRHS(), context, true)) return;
+            name = op->isCompoundAssignmentOp() ? name.substr(0, name.size() - 1) : name;
+            leaf(op->getOperatorLoc(), Fails, "division by zero or overflow of " + name);
+            return;
+        case BO_Shl:
+        case BO_Shr:
+        case BO_ShlAssign:
+        case BO_ShrAssign:
+            name = op->isCompoundAssignmentOp() ? name.substr(0, name.size() - 2) : name;
+            if (shiftIsSafe(op)) return;
+            arithmeticPoint(op, op->getOperatorLoc(), "bad shift of " + name);
+            return;
+        default:
+            return;
+        }
+    }
+
+    void unaryPoint(const UnaryOperator *unary) {
+        if (!unary->getType()->isSignedIntegerType()) return;
+        if (unary->getOpcode() == UO_Minus) arithmeticPoint(unary, unary->getOperatorLoc(), "signed overflow of -");
+        if (unary->isIncrementDecrementOp())
+            arithmeticPoint(unary, unary->getOperatorLoc(),
+                            unary->isIncrementOp() ? "signed overflow of ++" : "signed overflow of --");
+    }
+
+    void castPoint(const CastExpr *cast) {
+        if (cast->getCastKind() != CK_FloatingToIntegral || cast->getType()->isBooleanType()) return;
+        arithmeticPoint(cast, cast->getBeginLoc(), "float to integer conversion out of range");
     }
 
     void onCall(const CallExpr *call) {
@@ -954,6 +1041,7 @@ class Analysis {
     }
 
     void run() {
+        moduleFile = isModule();
         collect(context.getTranslationUnitDecl());
         pruneProofOnly();
         solve();
@@ -974,6 +1062,7 @@ class Analysis {
     }
 
   private:
+    bool moduleFile = false;
     ASTContext &context;
     DiagnosticsEngine &engine;
     unsigned bad, note, recursion, assertion, misuse, ownership, nullkeyed;
@@ -1127,10 +1216,11 @@ class Analysis {
                 node.function = function;
                 node.annotated = declaredSet(function, node.declared);
                 node.symbol = symbolOf(function);
-                Collector(
+                Collector collector(
                     node, context, [this](const FunctionDecl *f) { return symbolOf(f); },
-                    [this](const FunctionDecl *f) { return shownName(f); }, asserts)
-                    .walk(function->getBody());
+                    [this](const FunctionDecl *f) { return shownName(f); }, asserts);
+                collector.checkArithmetic(moduleFile);
+                collector.walk(function->getBody());
                 order.push_back(function);
                 notePromise(function);
             } else if (const auto *assertion = dyn_cast<StaticAssertDecl>(decl)) {
@@ -2095,7 +2185,9 @@ class Program {
             const Depth *deepest = nullptr;
             for (const Edit &edge : function.edges) {
                 if (edge.kind == 'L') {
-                    if (edge.effects != 0) depth.outside.insert(edge.name);
+                    // A checked operation of a module (`signed overflow of +`) is no call: it has no code to size.
+                    bool operation = edge.effects == Fails && edge.name.find(' ') != std::string::npos;
+                    if (edge.effects != 0 && !operation) depth.outside.insert(edge.name);
                 } else if (functions.count(edge.callee) == 0) {
                     depth.outside.insert(edge.name);
                 } else if (depths.count(edge.callee) != 0 && backs.count(&edge) == 0) {
