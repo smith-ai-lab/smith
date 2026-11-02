@@ -1,0 +1,17 @@
+{
+while (a > 0) a = a - 1;
+while (b) {
+ b = 0
+}
+}
+===
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a `while` condition has no parentheses: write `while c { ... }`
+warning (fix): a `while` condition has no parentheses: write `while c { ... }`
+---
+{
+while a > 0 { a = a - 1 }
+while b {
+ b = 0
+}
+}

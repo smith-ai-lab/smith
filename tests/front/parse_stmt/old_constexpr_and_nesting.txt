@@ -1,0 +1,15 @@
+{
+if constexpr (a) x = 1;
+if (a) if (b) x = 2;
+}
+===
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): an `if` condition has no parentheses: write `if c { ... }`
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): an `if` condition has no parentheses: write `if c { ... }`
+warning (fix): an `if` condition has no parentheses: write `if c { ... }`
+---
+{
+if a { x = 1 }
+if a { if b { x = 2 } }
+}

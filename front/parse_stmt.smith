@@ -51,6 +51,7 @@ import front::lex;
 import front::parse;
 import front::parse_decl;
 import front::parse_type;
+import std::format;
 import std::mem;
 
 // What an open construct waits for.
@@ -95,6 +96,15 @@ struct Frame {
     Bool braced;          // the new form of `if` and `while`: the body is a block
     Bool is_let;          // `if let pattern = value`: `condition` is the value
     ast::Pattern pattern; // and its pattern
+    // An old header and the fix that writes it as smith's own, recorded once the body is known (old_header_fix).
+    Bool old;
+    Bool has_close;  // the `)` of the header is an edit of its own (`if` and `while`)
+    Bool else_wrap;  // the `else` of an old `if` has a body with no braces
+    U32 else_end;    // and where that `else` ends
+    ast::Span cut;   // the text of the header the fix replaces
+    Str head;        // and what replaces it
+    ast::Span close; // the `)`, when `has_close`
+    Str message;
 };
 
 struct Stack {
@@ -138,6 +148,29 @@ static ExprList room_for_expression(ExprList list, Usize count) {
 
 static Frame *top(Stack *stack) {
     return &stack->frames[stack->depth - 1];
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Old forms: warnings with the fix that writes smith's own form (#1428, F3)
+
+static parse::Edit edit(ast::Span span, Str text) {
+    return (parse::Edit){.span = span, .text = text};
+}
+
+// A list of `count` edits to fill in.
+static parse::Edits edit_list(Usize count) {
+    parse::Edits list = {};
+    return mem::realloc(list, count);
+}
+
+static ast::Span point(U32 at) {
+    return (ast::Span){.start = at, .end = at};
+}
+
+// A warning that has no mechanical fix: the message says what to write.
+static void warn(parse::Parser *p, ast::Span span, Str message) {
+    parse::Edits none = {};
+    parse::warning_fix(p, span, message, none);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -243,11 +276,14 @@ static ast::Stmt *settle(parse::Parser *p, U32 start, Usize before, ast::Stmt *b
 struct Header {
     ast::Expr *condition;
     Bool ok;
+    ast::Span open; // the `(` and the `)`, when ok
+    ast::Span close;
 };
 
 static Header header(parse::Parser *p) {
     Header result = {};
     Usize open = p->position;
+    result.open = parse::peek(p).span;
     Usize before = countof(p->errors);
     parse::expect(p, lex::left_paren, "`(`");
     if (countof(p->errors) == before) {
@@ -255,6 +291,7 @@ static Header header(parse::Parser *p) {
         parse::expect(p, lex::right_paren, "`)`");
     }
     result.ok = countof(p->errors) == before;
+    if (result.ok) result.close = p->tokens[p->position - 1].span;
     if (!result.ok) skip_group(p, open);
     return result;
 }
@@ -352,7 +389,16 @@ static Bool last_token_ends_line(const parse::Parser *p) {
 // The end of a leaf statement: a `;`, the end of the line, or a `}` that closes the block. Anything else is the error
 // "expected `;`".
 static void end_statement(parse::Parser *p) {
-    if (parse::accept(p, lex::semicolon)) return;
+    lex::Token mark = parse::peek(p);
+    if (parse::accept(p, lex::semicolon)) {
+        // Where a line break or a `}` follows, the `;` goes; in the middle of a line it still separates two statements.
+        if (mark.line_break || parse::at(p, lex::right_brace) || parse::at(p, lex::end_of_file)) {
+            parse::Edits edits = edit_list(1);
+            edits[0] = edit(mark.span, "");
+            parse::warning_fix(p, mark.span, "a statement ends with the line, not `;`: remove it", edits);
+        }
+        return;
+    }
     if (last_token_ends_line(p) || parse::at(p, lex::right_brace)) return;
     parse::expect(p, lex::semicolon, "`;`");
 }
@@ -440,6 +486,7 @@ static ast::Stmt *return_statement(parse::Parser *p) {
 }
 
 static ast::Stmt *goto_statement(parse::Parser *p) {
+    warn(p, parse::peek(p).span, "smith has no goto: use a loop, `break` or `defer`");
     U32 start = parse::advance(p).span.start;
     Usize before = countof(p->errors);
     lex::Token label = parse::expect(p, lex::name, "a label");
@@ -608,18 +655,86 @@ static Frame open_bare(parse::Parser *p, FrameKind kind) {
     return frame;
 }
 
+// An old `if` or `while` header: the fix drops the parentheses (and a `constexpr` before them), and braces a body that
+// has none.
+static void paren_fix(Frame *frame, Header head, U32 cut_start, U32 keyword_end, Str message) {
+    frame->old = true;
+    frame->has_close = true;
+    frame->cut = (ast::Span){.start = cut_start, .end = head.open.end};
+    frame->head = cut_start == keyword_end ? " " : "";
+    frame->close = head.close;
+    frame->message = message;
+}
+
+// Records the fix of an old header, now that its body is known: all its edits or none.
+static void old_header_fix(parse::Parser *p, Frame *frame, ast::Stmt *body) {
+    if (!frame->old) return;
+    frame->old = false;
+    Bool wrap = body->kind != .block;
+    Str brace = " {";
+    Usize count = 1 + (frame->has_close ? 1 : 0) + (wrap ? 1 : 0);
+    parse::Edits edits = edit_list(count);
+    Usize at = 0;
+    Str first = frame->head;
+    char joined[:] = format::push(frame->head, brace);
+    if (wrap && !frame->has_close) {
+        first = joined;
+    }
+    edits[at] = edit(frame->cut, first);
+    at += 1;
+    if (frame->has_close) {
+        Str nothing = "";
+        edits[at] = edit(frame->close, wrap ? brace : nothing);
+        at += 1;
+    }
+    if (wrap) edits[at] = edit(point(body->span.end), " }");
+    parse::warning_fix(p, frame->cut, frame->message, edits);
+}
+
+// The body of an `else` with no braces gets them (`else if` is left to the `if` it holds).
+static void else_wrap_fix(parse::Parser *p, U32 else_end, ast::Stmt *body) {
+    parse::Edits edits = edit_list(2);
+    edits[0] = edit((ast::Span){.start = else_end, .end = body->span.start}, " { ");
+    edits[1] = edit(point(body->span.end), " }");
+    parse::warning_fix(p, body->span, "the body of an `else` is braced: write `else { ... }`", edits);
+}
+
+// `}` and then `else` on the next line: smith's `else` follows the `}` on its line.
+static void join_else_fix(parse::Parser *p) {
+    lex::Token before = p->tokens[p->position - 1];
+    if (before.kind != lex::right_brace || !before.line_break) return;
+    ast::Span gap = {.start = before.span.end, .end = parse::peek(p).span.start};
+    parse::Edits edits = edit_list(1);
+    edits[0] = edit(gap, " ");
+    parse::warning_fix(p, gap, "`else` follows the `}` on the same line: write `} else {`", edits);
+}
+
 static Frame open_if(parse::Parser *p) {
     if (new_header(p)) return open_bare(p, if_then);
-    Frame frame = {.kind = if_then, .start = parse::advance(p).span.start};
+    lex::Token keyword = parse::advance(p);
+    Frame frame = {.kind = if_then, .start = keyword.span.start};
+    U32 cut_start = parse::peek(p).span.start;
     frame.is_constexpr = parse::accept(p, lex::kw_constexpr);
-    frame.condition = header(p).condition;
+    Header head = header(p);
+    frame.condition = head.condition;
+    if (head.ok) {
+        paren_fix(&frame, head, cut_start, keyword.span.end,
+                  "an `if` condition has no parentheses: write `if c { ... }`");
+    }
     return frame;
 }
 
 static Frame open_while(parse::Parser *p) {
     if (new_header(p)) return open_bare(p, while_body);
-    Frame frame = {.kind = while_body, .start = parse::advance(p).span.start};
-    frame.condition = header(p).condition;
+    lex::Token keyword = parse::advance(p);
+    Frame frame = {.kind = while_body, .start = keyword.span.start};
+    U32 cut_start = parse::peek(p).span.start;
+    Header head = header(p);
+    frame.condition = head.condition;
+    if (head.ok) {
+        paren_fix(&frame, head, cut_start, keyword.span.end,
+                  "a `while` condition has no parentheses: write `while c { ... }`");
+    }
     return frame;
 }
 
@@ -710,17 +825,112 @@ static Frame open_simple(parse::Parser *p, FrameKind kind) {
 
 static Frame open_label(parse::Parser *p) {
     Frame frame = {.kind = label_body, .start = parse::peek(p).span.start};
+    warn(p, parse::peek(p).span, "smith has no labels, as it has no goto: use a loop, `break` or `defer`");
     frame.label = parse::text(p, parse::advance(p));
     parse::advance(p);
     return frame;
+}
+
+// The offset of the first token of the kind at depth 0 from offset `from`, or `stop` when there is none before it.
+static Usize find_at_depth_0(const parse::Parser *p, Usize from, Usize stop, lex::TokenKind kind) {
+    Usize depth = 0;
+    for (Usize i = from; i < stop; i += 1) {
+        lex::TokenKind found = parse::peek_at(p, i).kind;
+        if (depth == 0 && found == kind) return i;
+        if (opens(found)) depth += 1;
+        if (closes(found) && depth > 0) depth -= 1;
+    }
+    return stop;
+}
+
+// The source text of the tokens at the offsets `first` to `last`.
+static Str tokens_text(const parse::Parser *p, Usize first, Usize last) {
+    return p->source[parse::peek_at(p, first).span.start:parse::peek_at(p, last).span.end];
+}
+
+// The header of the `for` in smith's own form, or an empty text when it has none. The `(` is at offset 0.
+struct RangeText {
+    Bool ok;
+    Str text;
+};
+
+static Bool same_name(const parse::Parser *p, Usize at, Str name) {
+    return parse::peek_at(p, at).kind == lex::name && mem::equal(parse::text(p, parse::peek_at(p, at)), name);
+}
+
+// `(T x : xs)` is `x in xs`.
+static RangeText range_of_collection(const parse::Parser *p, Usize close) {
+    RangeText none = {};
+    Usize colon = find_at_depth_0(p, 1, close, lex::colon);
+    if (colon < 3 || colon + 1 >= close) return none;
+    if (find_at_depth_0(p, 1, colon, lex::comma) != colon) return none;
+    if (parse::peek_at(p, colon - 1).kind != lex::name) return none;
+    Str name = parse::text(p, parse::peek_at(p, colon - 1));
+    char text[:] = format::push(name, " in ", tokens_text(p, colon + 1, close - 1));
+    RangeText found = {.ok = true, .text = text};
+    return found;
+}
+
+// `(T i = a; i < b; i++)`, and `<=`, `++i`, `i += 1`, is `i in range(a, b)` (`b + 1` for `<=`).
+static RangeText range_of_count(const parse::Parser *p, Usize close, Usize first_semicolon) {
+    RangeText none = {};
+    Usize second = find_at_depth_0(p, first_semicolon + 1, close, lex::semicolon);
+    Usize equal = find_at_depth_0(p, 1, first_semicolon, lex::equal);
+    if (second == close || equal < 3 || equal + 1 >= first_semicolon) return none;
+    if (parse::peek_at(p, equal - 1).kind != lex::name) return none;
+    Str name = parse::text(p, parse::peek_at(p, equal - 1));
+    Usize cond = first_semicolon + 1;
+    lex::TokenKind op = parse::peek_at(p, cond + 1).kind;
+    if (!same_name(p, cond, name) || (op != lex::less && op != lex::less_equal) || second <= cond + 2) return none;
+    Usize step = second + 1;
+    Usize length = close - step;
+    Bool plain = length == 2 && same_name(p, step, name) && parse::peek_at(p, step + 1).kind == lex::plus_plus;
+    Bool prefix = length == 2 && parse::peek_at(p, step).kind == lex::plus_plus && same_name(p, step + 1, name);
+    Str one = "1";
+    Bool added = length == 3 && same_name(p, step, name) && parse::peek_at(p, step + 1).kind == lex::plus_equal &&
+                 mem::equal(parse::text(p, parse::peek_at(p, step + 2)), one);
+    if (!plain && !prefix && !added) return none;
+    Str low = tokens_text(p, equal + 1, first_semicolon - 1);
+    Str high = tokens_text(p, cond + 2, second - 1);
+    if (op == lex::less_equal) {
+        char raised[:] = second == cond + 3 ? format::push(high, " + 1") : format::push("(", high, ") + 1");
+        high = raised;
+    }
+    char text[:] = format::push(name, " in range(", low, ", ", high, ")");
+    RangeText found = {.ok = true, .text = text};
+    return found;
+}
+
+static RangeText range_text(const parse::Parser *p) {
+    Usize close = after_group(p, 0) - 1;
+    Usize first_semicolon = find_at_depth_0(p, 1, close, lex::semicolon);
+    if (first_semicolon == close) return range_of_collection(p, close);
+    return range_of_count(p, close, first_semicolon);
+}
+
+// The fix of an old `for`: the header is `x in xs` or `i in range(a, b)`, or a warning with no fix when it has none.
+static void for_fix(parse::Parser *p, Frame *frame, U32 cut_start, RangeText range) {
+    ast::Span close = p->tokens[p->position - 1].span;
+    ast::Span whole = {.start = cut_start, .end = close.end};
+    if (!range.ok) {
+        warn(p, whole, "this `for` has no range form: write `for x in ...`, or `while`");
+        return;
+    }
+    frame->old = true;
+    frame->cut = whole;
+    frame->head = range.text;
+    frame->message = "a `for` reads `for x in xs` or `for i in range(a, b)`: write it so";
 }
 
 // `for [constexpr] (init; cond; step)`. A broken header is skipped as a whole.
 static Frame open_for(parse::Parser *p) {
     if (new_for(p)) return open_for_in(p);
     Frame frame = {.kind = for_body, .start = parse::advance(p).span.start};
+    U32 cut_start = parse::peek(p).span.start;
     frame.is_constexpr = parse::accept(p, lex::kw_constexpr);
     Usize open = p->position;
+    RangeText range = {};
+    if (parse::at(p, lex::left_paren)) range = range_text(p);
     Usize before = countof(p->errors);
     parse::expect(p, lex::left_paren, "`(`");
     if (countof(p->errors) == before && !parse::accept(p, lex::semicolon)) {
@@ -757,11 +967,13 @@ static Frame open_for(parse::Parser *p) {
         parse::expect(p, lex::right_paren, "`)`");
     }
     if (countof(p->errors) > before) skip_group(p, open);
+    if (countof(p->errors) == before) for_fix(p, &frame, cut_start, range);
     return frame;
 }
 
 // `switch (v) {`; null, with the rest skipped, when the `{` is missing.
 static ast::Stmt *open_switch(parse::Parser *p, Stack *stack) {
+    warn(p, parse::peek(p).span, "`switch` is `match` in smith: write `match v { .a => x }`, one arm per line");
     U32 start = parse::advance(p).span.start;
     Frame frame = {.kind = switch_frame, .start = start};
     frame.condition = header(p).condition;
@@ -883,6 +1095,8 @@ static ast::Stmt *close_do(parse::Parser *p, Frame frame, ast::Stmt *done) {
 // A frame that holds one statement is complete with it; the statement it makes. (Not blocks and switches, `else`.)
 static ast::Stmt *close_one(parse::Parser *p, Frame frame, ast::Stmt *done) {
     ast::Stmt *built = nullptr;
+    old_header_fix(p, &frame, done);
+    if (frame.kind == if_else && frame.else_wrap) else_wrap_fix(p, frame.else_end, done);
     switch (frame.kind) {
     case if_then:
         if (frame.is_let) {
@@ -940,7 +1154,11 @@ static ast::Stmt *deliver(parse::Parser *p, Stack *stack, ast::Stmt *done) {
             append(frame, done);
             return nullptr;
         }
-        if (frame->kind == if_then && parse::accept(p, lex::kw_else)) {
+        if (frame->kind == if_then && parse::at(p, lex::kw_else)) {
+            old_header_fix(p, frame, done);
+            join_else_fix(p);
+            frame->else_end = parse::advance(p).span.end;
+            frame->else_wrap = !frame->braced && !parse::at(p, lex::left_brace) && !parse::at(p, lex::kw_if);
             if (frame->braced && !parse::at(p, lex::left_brace) && !parse::at(p, lex::kw_if)) {
                 parse::error(p, parse::peek(p).span, "expected `{` or `if` after `else`");
             }
