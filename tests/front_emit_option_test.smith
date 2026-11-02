@@ -1,0 +1,241 @@
+// Tests of `?T`, `.some`, `.none` and `if let` in the emitter (#1584 of #1428). Each scenario is source text in smith's
+// own syntax, read by front::parser's hooks, checked by front::types_decl and emitted, then run through the JIT.
+module front_emit_option_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::emit_option;
+import front::emit_state;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+
+struct Scenario {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    parser::Parsed parsed;
+    types::Checked checked;
+    Bool has_checked;
+};
+
+// The module of `source`, read in smith's own syntax.
+static parser::Parsed parse_new(Str source) {
+    parser::Parsed result = {};
+    result.module.file = "t.smith";
+    lex::Lexed lexed = lex::tokenize_new(source);
+    switch (lexed) {
+    case .ok:
+        parse::Parser p = parse::make(lexed.ok, source);
+        p.new_syntax = true;
+        p.hooks.expression = parse_expr::expression;
+        p.hooks.type = parse_type::type;
+        p.hooks.statement = parse_stmt::statement;
+        p.hooks.declaration = parse_decl::declaration;
+        result.module = parse_decl::file(&p, "t.smith");
+        result.errors = p.errors;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    return result;
+}
+
+static void begin(Scenario *s, Str source, Bool with_checker) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parse_new(source);
+    test::check_equal(countof(s->parsed.errors), (Usize)0);
+    if (with_checker) {
+        s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+        s->has_checked = true;
+        test::check_equal(s->checked.error_count, (Usize)0);
+    }
+    mem::set_allocator(outside);
+}
+
+static emit::Options options_for(emit::Target target, const Scenario *s) {
+    emit::Options options = {};
+    options.target = target;
+    if (s->has_checked) options.checked = &s->checked;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+// The text of `source` from `start`.
+static Bool starts_at(Str source, U32 start, Str needle) {
+    if (start > countof(source)) return false;
+    return has(
+        source[start:start + (countof(needle) < countof(source) - start ? countof(needle) : countof(source) - start)],
+        needle);
+}
+
+static Bool contains(const char *text, Str needle) {
+    return text != nullptr && c::strstr(text, needle.data) != nullptr;
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+// Emits `source` (with the checker's types), returns its IR text and adds it to `host`.
+static char *ir_of(Str source, emit_jit::Jit *host, Scenario *s) {
+    begin(s, source, true);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s->parsed.module, options_for(host->target, s));
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    } else {
+        Str expected = "no error";
+        test::check_equal(emitted.error.message, expected);
+    }
+    return text;
+}
+
+// Emits `source` and checks that it stops with `what` in its message at a span that starts with `at`.
+static void stops_with(Str source, Bool with_checker, Str what, Str at) {
+    Scenario s = {};
+    begin(&s, source, with_checker);
+    emit_jit::Jit host = start_jit();
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s.parsed.module, options_for(host.target, &s));
+    test::check_equal(emitted == .error, true);
+    if (emitted == .error) {
+        test::check_equal(has(emitted.error.message, what), true);
+        test::check_equal(starts_at(source, emitted.error.span.start, at), true);
+        emit::free_error(emitted.error);
+    } else {
+        c::LLVMDisposeModule(emitted.ok);
+    }
+    c::LLVMContextDispose(context);
+    emit_jit::stop(&host);
+}
+
+typedef I32 (*Pick)(I32);
+typedef I32 (*Take)(U32);
+typedef I32 (*Widen)(I32);
+
+export void test_front_emit_option_the_types_are_a_tag_and_a_payload() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("struct Point {\n    x: i32\n    y: i32\n}\n"
+                     "pub fn a(o: ?i32) -> i32 {\n    0\n}\n"
+                     "pub fn b(o: ?Point) -> i32 {\n    0\n}\n",
+                     &host, &s);
+    test::check_equal(contains(ir, "{ i8, i32 }"), true);
+    test::check_equal(contains(ir, "{ i8, %"), true);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_option_some_none_and_if_let_read_back() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of(
+        "fn half(n: i32) -> ?i32 {\n    if n % 2 != 0 {\n        return .none\n    }\n    n / 2\n}\n"
+        "pub fn zeroed() -> i32 {\n    mut o: ?i32\n    if let .some(_) = o {\n        return 1\n    }\n    0\n}\n"
+        "pub fn some_three() -> i32 {\n    o: ?i32 = .some(3)\n    if let .some(v) = o {\n        return v\n    }\n    "
+        "-1\n}\n"
+        "pub fn none_value() -> i32 {\n    o: ?i32 = .none\n    if let .none = o {\n        return 7\n    }\n    "
+        "-1\n}\n"
+        "pub fn wrapped(n: i32) -> i32 {\n    o: ?i32 = n\n    if let .some(v) = o {\n        return v\n    } else {\n "
+        "       return -1\n    }\n}\n"
+        "pub fn widened(n: i32) -> i32 {\n    o: ?i64 = n\n    if let .some(v) = o {\n        return 9\n    }\n    "
+        "0\n}\n"
+        "pub fn halved(n: i32) -> i32 {\n    if let .some(h) = half(n) {\n        return h\n    }\n    -1\n}\n",
+        &host, &s);
+    test::check_equal(ir != nullptr, true);
+    Pick zeroed_fn = (Pick)symbol_of(&host, "zeroed");
+    Pick some_three = (Pick)symbol_of(&host, "some_three");
+    Pick none_value = (Pick)symbol_of(&host, "none_value");
+    Pick wrapped = (Pick)symbol_of(&host, "wrapped");
+    Pick widened = (Pick)symbol_of(&host, "widened");
+    Pick halved = (Pick)symbol_of(&host, "halved");
+    test::check_equal(zeroed_fn(0), (I32)0);
+    test::check_equal(some_three(0), (I32)3);
+    test::check_equal(none_value(0), (I32)7);
+    test::check_equal(wrapped(-4), (I32)-4);
+    test::check_equal(widened(1), (I32)9);
+    test::check_equal(halved(10), (I32)5);
+    test::check_equal(halved(7), (I32)-1);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_option_a_value_passed_to_an_option_or_wider_parameter_is_converted() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("fn unwrap(o: ?u32) -> i32 {\n    if let .some(v) = o {\n        return 1\n    }\n    0\n}\n"
+                     "fn plus(a: i64, b: i64) -> i64 {\n    a + b\n}\n"
+                     "pub fn some_arg(n: u32) -> i32 {\n    unwrap(n)\n}\n"
+                     "pub fn none_arg(n: u32) -> i32 {\n    unwrap(.none)\n}\n"
+                     "pub fn wide_arg(n: i32) -> i32 {\n    if plus(n, 1) == 8 {\n        return 1\n    }\n    0\n}\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    Take some_arg = (Take)symbol_of(&host, "some_arg");
+    Take none_arg = (Take)symbol_of(&host, "none_arg");
+    Widen wide_arg = (Widen)symbol_of(&host, "wide_arg");
+    test::check_equal(some_arg(5), (I32)1);
+    test::check_equal(none_arg(5), (I32)0);
+    test::check_equal(wide_arg(7), (I32)1);
+    test::check_equal(wide_arg(2), (I32)0);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_option_an_option_of_a_pointer_is_an_error_at_its_type() {
+    stops_with("fn f(x: ?*i32) -> i32 {\n    0\n}\n", false, "not emitted yet: an option of a pointer", "?*i32");
+}
+
+// `emit` sends a `.none` with no hint and no checker to the enumerators, so the handler is called directly.
+export void test_front_emit_option_a_none_with_no_type_to_take_is_an_error() {
+    Scenario s = {};
+    begin(&s, "fn f() -> i32 {\n    0\n}\n", false);
+    emit_state::Emitter e = {};
+    e.node_type_hook = emit::type_of_node;
+    ast::Expr *x = ast::variant_of("none", nullptr);
+    emit_state::Status made = emit_option::variant(&e, x, emit_state::no_hint());
+    test::check_equal(made == .error, true);
+    if (made == .error) {
+        test::check_equal(has(made.error.message, ".none needs the ?T it builds; write the type"), true);
+        emit_state::free_text(made.error.message);
+    }
+}

@@ -1,0 +1,14 @@
+// front::emit_value: an `if` or a block used as a value. Filled by the next batch of #1428; today every handler is `not
+// emitted yet`, with its final signature, so that ticket edits this file and never front/emit.smith (the wave-3
+// scaffold, #1582 of #1428).
+module front::emit_value;
+
+import front::ast;
+import front::emit_state as state;
+import front::types;
+
+export state::Status value_of(state::Emitter *e, const ast::Stmt *s, state::Hint hint) {
+    _ = e;
+    _ = hint;
+    return state::not_emitted("a block or if as a value", s->span);
+}

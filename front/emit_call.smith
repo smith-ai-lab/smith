@@ -369,6 +369,14 @@ static state::Status call_finish(state::Emitter *e, const state::Work *w) {
     c::LLVMValueRef argv[64];
     for (Usize i = 0; i < count; i++) {
         if (!state::same_type(values[i].ty, sig.params[slot[i]])) {
+            // A value the parameter takes (an integer widened, a payload wrapped in its option) is converted.
+            state::Status converted = state::convert(e, values[i], sig.params[slot[i]], args[i]->span, .initialize);
+            if (converted == .ok) {
+                values[i] = state::pop_value(e);
+                argv[slot[i]] = values[i].llvm;
+                continue;
+            }
+            state::free_text(converted.error.message);
             state::Status wrong = state::failf(args[i]->span, "argument ", (U64)i + 1, " of ", key, " is ",
                                                values[i].ty.name, ", the parameter is ", sig.params[slot[i]].name);
             state::free_text(key);

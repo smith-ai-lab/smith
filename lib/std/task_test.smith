@@ -648,13 +648,12 @@ export void test_task_a_task_waits_for_its_children_and_is_woken_on_its_worker()
         test::check(waiters[i].done >= 20);
 }
 
-// ---- Waiting on sockets and pipes: macOS parks the task in the worker's kqueue. ----
+// ---- Waiting on sockets and pipes: the task parks in the worker's kqueue (macOS) or epoll instance (Linux). ----
 //
 // Each test runs the tasks on ONE worker (`task::limit_workers`), so a call that blocked the thread instead of parking
-// the task would hang the test. Under Linux the default scheduler has no `io` yet (epoll is the next ticket): they
-// return.
+// the task would hang the test. The same tests run on both backends.
 
-if constexpr (target::os == target::macos) {
+if constexpr (target::os == target::macos || target::os == target::linux) {
     // NOLINTBEGIN(smith-preprocessor)
     constexpr I32 unix_family = c::AF_UNIX;
     constexpr I32 stream_socket = c::SOCK_STREAM;
@@ -695,6 +694,7 @@ if constexpr (target::os == target::macos) {
     }
 
     void run_link(Link *pair, void (*second)(Link *pair)) {
+        task::use(nullptr); // a test before this one on the worker may leave the thread's lock count raised: reset it
         task::limit_workers(1);
         {
             task::Group group = {};
@@ -707,7 +707,7 @@ if constexpr (target::os == target::macos) {
 }
 
 export void test_task_a_read_on_a_socketpair_parks_the_task_and_the_worker_runs_another() {
-    if constexpr (target::os == target::macos) {
+    if constexpr (target::os == target::macos || target::os == target::linux) {
         I32 fds[2] = {};
         test::check_equal(c::socketpair(unix_family, stream_socket, 0, fds), 0); // NOLINT(smith-effects)
         Log log = {};
@@ -722,7 +722,7 @@ export void test_task_a_read_on_a_socketpair_parks_the_task_and_the_worker_runs_
 }
 
 export void test_task_a_read_on_a_pipe_parks_the_task_and_the_worker_runs_another() {
-    if constexpr (target::os == target::macos) {
+    if constexpr (target::os == target::macos || target::os == target::linux) {
         I32 fds[2] = {};
         test::check_equal(c::pipe(fds), 0); // NOLINT(smith-effects)
         Log log = {};
@@ -736,7 +736,7 @@ export void test_task_a_read_on_a_pipe_parks_the_task_and_the_worker_runs_anothe
 }
 
 export void test_task_a_task_that_pauses_in_a_loop_does_not_starve_a_task_waiting_on_a_socket() {
-    if constexpr (target::os == target::macos) {
+    if constexpr (target::os == target::macos || target::os == target::linux) {
         I32 fds[2] = {};
         test::check_equal(c::socketpair(unix_family, stream_socket, 0, fds), 0); // NOLINT(smith-effects)
         Log log = {};
@@ -750,7 +750,7 @@ export void test_task_a_task_that_pauses_in_a_loop_does_not_starve_a_task_waitin
     }
 }
 
-if constexpr (target::os == target::macos) {
+if constexpr (target::os == target::macos || target::os == target::linux) {
     struct Meeting {
         struct c::sockaddr_un address;
         I32 listener;
@@ -777,7 +777,7 @@ if constexpr (target::os == target::macos) {
 }
 
 export void test_task_an_accept_and_a_connect_in_two_tasks_on_one_worker_both_complete() {
-    if constexpr (target::os == target::macos) {
+    if constexpr (target::os == target::macos || target::os == target::linux) {
         Log log = {};
         Meeting meeting = {.log = &log};
         meeting.address.sun_family = unix_family;
@@ -789,6 +789,7 @@ export void test_task_an_accept_and_a_connect_in_two_tasks_on_one_worker_both_co
         test::check_equal(c::bind(meeting.listener, (struct c::sockaddr *)&meeting.address, sizeof(meeting.address)),
                           0);                                 // NOLINT(smith-effects)
         test::check_equal(c::listen(meeting.listener, 4), 0); // NOLINT(smith-effects)
+        task::use(nullptr);
         task::limit_workers(1);
         {
             task::Group group = {};
@@ -806,5 +807,72 @@ export void test_task_an_accept_and_a_connect_in_two_tasks_on_one_worker_both_co
         c::close(meeting.connected);         // NOLINT(smith-effects)
         c::close(meeting.listener);          // NOLINT(smith-effects)
         c::unlink(meeting.address.sun_path); // NOLINT(smith-effects)
+    }
+}
+
+// A regular file cannot be waited on, so its calls go to the file pool: a pool thread does the call while the task
+// parks, and the bytes are the file's.
+if constexpr (target::os == target::macos || target::os == target::linux) {
+    constexpr Usize page = 4096;
+    // NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
+    constexpr I32 open_write = c::O_WRONLY | c::O_CREAT | c::O_TRUNC;
+    constexpr I32 open_read = c::O_RDONLY;
+    // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
+
+    struct Slurp {
+        I32 fd;
+        U8 bytes[page];
+        U8 again[page];
+        Isize got;
+        Isize got_at;
+        Usize rounds;
+    };
+
+    void run_file_reader(Slurp *slurp) {
+        slurp->got = c::read(slurp->fd, slurp->bytes, page);                 // NOLINT(smith-effects)
+        slurp->got_at = c::pread(slurp->fd, slurp->again, page, (Isize)100); // NOLINT(smith-effects)
+    }
+
+    void run_file_bystander(Slurp *slurp) {
+        for (Usize i = 0; i < 50; i++) {
+            slurp->rounds += 1;
+            task::pause();
+        }
+    }
+}
+
+export void test_task_a_read_and_a_pread_on_a_regular_file_go_to_the_pool_and_return_the_files_bytes() {
+    if constexpr (target::os == target::macos || target::os == target::linux) {
+        const char *path = "/tmp/smith_task_test_pool"; // one test uses it, and it is removed at the end
+        U8 content[page + 200] = {};
+        for (Usize i = 0; i < page + 200; i++)
+            content[i] = (U8)(i * 7 + 3);
+        I32 out = c::open(path, open_write, 0o600); // NOLINT(smith-effects)
+        test::check(out >= 0);
+        test::check_equal((I32)c::write(out, content, page + 200), (I32)(page + 200)); // NOLINT(smith-effects)
+        c::close(out);                                                                 // NOLINT(smith-effects)
+        Slurp slurp = {};
+        slurp.fd = c::open(path, open_read); // NOLINT(smith-effects)
+        test::check(slurp.fd >= 0);
+        task::use(nullptr);
+        task::limit_workers(1);
+        {
+            task::Group group = {};
+            defer task::wait(&group);
+            task::spawn(&group, run_file_reader, &slurp);
+            task::spawn(&group, run_file_bystander, &slurp);
+        }
+        task::limit_workers(0);
+        test::check_equal((I32)slurp.got, (I32)page);
+        test::check_equal((I32)slurp.got_at, (I32)page);
+        test::check_equal(task::workers_running(), (Usize)0);
+        Bool same = true;
+        for (Usize i = 0; i < page; i++) {
+            if (slurp.bytes[i] != content[i] || slurp.again[i] != content[100 + i]) same = false;
+        }
+        test::check(same);
+        test::check_equal(slurp.rounds, (Usize)50);
+        c::close(slurp.fd); // NOLINT(smith-effects)
+        c::unlink(path);    // NOLINT(smith-effects)
     }
 }

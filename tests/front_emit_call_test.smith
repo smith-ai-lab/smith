@@ -339,11 +339,11 @@ export void test_front_emit_call_with_an_argument_of_the_wrong_type_is_an_error(
     wrong->span = (ast::Span){.start = 30, .end = 31};
     ast::StmtRef square_items[1] = {give(ast::binary(.multiply, name("a"), name("a")))};
     ast::StmtRef items[1] = {give(call1("square", wrong))};
-    ast::DeclRef decls[2] = {function1("square", "I32", "I32", square_items), function1("f", "U8", "I32", items)};
+    ast::DeclRef decls[2] = {function1("square", "I32", "I32", square_items), function1("f", "I64", "I32", items)};
     ast::Module m = module_of(decls);
     tree_end(&trees);
     emit::Error error = failure_of(&m);
-    test::check_equal(contains(error.message.data, "argument 1 of square is U8, the parameter is I32"), true);
+    test::check_equal(contains(error.message.data, "argument 1 of square is I64, the parameter is I32"), true);
     test::check_equal(error.span.start, 30U);
     emit::free_error(error);
 }

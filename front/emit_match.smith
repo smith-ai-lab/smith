@@ -1,0 +1,44 @@
+// front::emit_match: enumerations, `.red` and `match`. Filled by #1585; today every handler is `not emitted yet`, with
+// its final signature, so that ticket edits this file and never front/emit.smith (the wave-3 scaffold, #1582 of #1428).
+module front::emit_match;
+
+import front::ast;
+import front::emit_state as state;
+import front::types;
+
+// Names an enumeration of the module: false when `name` is none.
+export Bool type_enum(state::Emitter *e, Str name, state::Ty *ty) {
+    _ = e;
+    _ = name;
+    _ = ty;
+    return false;
+}
+
+// Frees `e->enums` (the stub frees nothing).
+export void release(state::Emitter *e) {
+    _ = e;
+}
+
+export state::Status enum_decl(state::Emitter *e, const ast::Decl *d) {
+    _ = e;
+    return state::not_emitted("an enumeration", d->span);
+}
+
+// `.red`.
+export state::Status variant(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    _ = e;
+    _ = hint;
+    return state::not_emitted("an enumerator", x->span);
+}
+
+export state::Status match_stmt(state::Emitter *e, const ast::Stmt *s) {
+    _ = e;
+    return state::not_emitted("match", s->span);
+}
+
+// A `match` used as a value.
+export state::Status value_of(state::Emitter *e, const ast::Stmt *s, state::Hint hint) {
+    _ = e;
+    _ = hint;
+    return state::not_emitted("match as a value", s->span);
+}

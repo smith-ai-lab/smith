@@ -457,6 +457,9 @@ export typedef enum {
         Expr *value;
     } return_stmt;
     struct {
+        Expr *value;
+    } yield_stmt;
+    struct {
         Stmt *body;
     } defer_stmt;
     struct {
@@ -713,6 +716,11 @@ export TypeExpr *named(Str text) {
 
 export Stmt *return_value(Expr *value) {
     StmtKind kind = {.return_stmt = {.value = value}};
+    return stmt(kind);
+}
+
+export Stmt *yield_stmt(Expr *value) {
+    StmtKind kind = {.yield_stmt = {.value = value}};
     return stmt(kind);
 }
 
@@ -1341,6 +1349,9 @@ static void stmt_children(Items *items, Stmt *s) {
     case .return_stmt:
         add_expr(items, s->kind.return_stmt.value, false);
         break;
+    case .yield_stmt:
+        add_expr(items, s->kind.yield_stmt.value, false);
+        break;
     case .defer_stmt:
         add_stmt(items, s->kind.defer_stmt.body, false);
         break;
@@ -1825,6 +1836,9 @@ static void stmt_head(Output *text, Stmt *s) {
         break;
     case .return_stmt:
         put(text, "return");
+        break;
+    case .yield_stmt:
+        put(text, "yield");
         break;
     case .defer_stmt:
         put(text, "defer");

@@ -492,6 +492,22 @@ static ast::Stmt *return_statement(parse::Parser *p) {
     return settle(p, start, before, new_stmt({.return_stmt = {.value = value}}));
 }
 
+// `yield x` (smith's own syntax): `x` is on the same line. A `yield` alone is one error. The checker (#1545) decides
+// where a `yield` may stand.
+static ast::Stmt *yield_statement(parse::Parser *p) {
+    lex::Token keyword = parse::advance(p);
+    U32 start = keyword.span.start;
+    Usize before = countof(p->errors);
+    Bool bare = parse::at(p, lex::semicolon) || parse::at(p, lex::right_brace) || last_token_ends_line(p);
+    if (bare) {
+        parse::error(p, keyword.span, "yield needs a value: `yield x` (a plain `return` ends the stream)");
+        return settle(p, start, before, empty_stmt());
+    }
+    ast::Expr *value = expression(p);
+    if (countof(p->errors) == before) end_statement(p);
+    return settle(p, start, before, ast::yield_stmt(value));
+}
+
 static ast::Stmt *goto_statement(parse::Parser *p) {
     warn(p, parse::peek(p).span, "smith has no goto: use a loop, `break` or `defer`");
     U32 start = parse::advance(p).span.start;
@@ -1061,6 +1077,8 @@ static ast::Stmt *start(parse::Parser *p, Stack *stack) {
         return jump(p, continue_kind());
     case lex::kw_return:
         return return_statement(p);
+    case lex::kw_yield:
+        return yield_statement(p);
     case lex::kw_goto:
         return goto_statement(p);
     case lex::kw_static_assert:

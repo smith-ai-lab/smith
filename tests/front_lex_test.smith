@@ -194,7 +194,7 @@ export void test_lex_the_new_keywords_are_keywords_only_in_the_new_syntax() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     Usize seen = 0;
-    for (Usize k = (Usize)lex::kw_fn; k <= (Usize)lex::kw_type; k++) {
+    for (Usize k = (Usize)lex::kw_fn; k <= (Usize)lex::kw_yield; k++) {
         lex::TokenKind kind = (lex::TokenKind)k;
         test::check_equal(lex::is_keyword(kind), true);
         Str word = lex::kind_text(kind);
@@ -204,13 +204,13 @@ export void test_lex_the_new_keywords_are_keywords_only_in_the_new_syntax() {
         test::check_equal(fresh[0].kind == kind, true);
         seen += 1;
     }
-    test::check_equal(seen, 8);
-    lex::Tokens words = new_tokens_of("fn pub mut match in as fn_once type Type fns types int");
-    test::check_equal(countof(words), 13);
-    test::check_equal(words[8].kind == lex::type_name, true);
-    test::check_equal(words[9].kind == lex::name, true);
+    test::check_equal(seen, 9);
+    lex::Tokens words = new_tokens_of("fn pub mut match in as fn_once type yield Type fns types int");
+    test::check_equal(countof(words), 14);
+    test::check_equal(words[9].kind == lex::type_name, true);
     test::check_equal(words[10].kind == lex::name, true);
-    test::check_equal(words[11].kind == lex::kw_int, true);
+    test::check_equal(words[11].kind == lex::name, true);
+    test::check_equal(words[12].kind == lex::kw_int, true);
     expect_dump("import a::b as c;", "1:1 kw_import import\n1:8 name a\n1:9 colon_colon ::\n1:11 name b\n1:13 name "
                                      "as\n1:16 name c\n1:17 semicolon ;\n1:18 end_of_file\n");
 }

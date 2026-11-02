@@ -1,0 +1,311 @@
+// front::emit_iter: `for x in xs` (#1586 of #1428, spec "Iteration"). The loop is lowered directly, with no stream
+// object: the plain indexed loop, so it is no slower than one.
+//
+// THE LOWERING
+//
+//   blocks      `cond`, `body`, `step`, `end`. A hidden counter lives in a slot of the entry block; `cond` loads it and
+//               compares it with the bound (signed or unsigned by the counter's type), `body` runs the loop's body in a
+//               new scope where the name is a constant local, `step` adds the step and goes back to `cond`. The loop is
+//               pushed on `Emitter.loops` (`break` goes to `end`, `continue` to `step`), so `break` and `continue` work
+//               as in front/emit_control.smith.
+//   array       `for x in xs` over a fixed array `[N]T`: `xs` is a place (a local, a parameter, a field, an element,
+//               a dereference; an array value such as a call's result is `not emitted yet`, store it in a local). The
+//               counter is a `usize` from 0 to N; each turn loads the element (GEP and load, with no bounds check: the
+//               counter is in range by construction).
+//   refs        `for p in refs(xs)`: the same, and the name is the element's address, `*mut T`, with no load.
+//   range       `range(n)`, `range(a, b)`: the counter has the arguments' integer type, runs from 0 (or `a`) while
+//               `counter < b`, `+ 1` after each turn; it cannot overflow, it is below `b`. An empty range runs no turn.
+//               `range(a, b, step)` needs a positive integer literal for `step` (a zero, negative or run-time step is
+//               `not emitted yet`, the lead's decision of 2026-11-02): the next value comes from the
+//               `llvm.*add.with.overflow` intrinsics, and an overflow ends the loop (the value is past `b`).
+//   not yet     each `not emitted yet: <what>` at the iterable: `enumerate` and `zip` (tuples), a slice, `str` or a
+//               block (no `[]T` in the emitter yet), a stream, a tuple pattern.
+//
+// The stream functions are known by name, as the checker knows them (front/types_iter.smith): a call of `range`,
+// `refs`, `enumerate` or `zip` with one segment and no local of that name. No recursion.
+module front::emit_iter;
+
+import front::ast;
+import front::emit_state as state;
+import std::mem;
+import <llvm-c/Core.h>;
+
+// What the loop needs once its iterable is evaluated.
+struct Plan {
+    state::Ty counter;
+    c::LLVMValueRef start;
+    c::LLVMValueRef bound;
+    Bool is_array;
+    Bool by_reference;
+    state::Value array; // the address and type of the array
+};
+
+// ---------------------------------------------------------------------------------------------------------------
+// Helpers
+
+static c::LLVMBasicBlockRef new_block(state::Emitter *e, const char *name) {
+    return c::LLVMAppendBasicBlockInContext(e->context, e->function, name);
+}
+
+// Branch to `block` unless the current block already ends (a `return`, a `break`).
+static void jump(state::Emitter *e, c::LLVMBasicBlockRef block) {
+    c::LLVMBasicBlockRef here = c::LLVMGetInsertBlock(e->builder);
+    if (c::LLVMGetBasicBlockTerminator(here) == nullptr) c::LLVMBuildBr(e->builder, block);
+}
+
+static void position(state::Emitter *e, c::LLVMBasicBlockRef block) {
+    c::LLVMPositionBuilderAtEnd(e->builder, block);
+}
+
+static state::Ty pointer_to(state::Emitter *e, state::Ty element) {
+    state::OwnedTy *block = mem::alloc(state::OwnedTy);
+    block->ty = element;
+    block->next = e->owned;
+    e->owned = block;
+    state::Ty ty = {.kind = .pointer,
+                    .llvm = state::pointer_type(e, 0),
+                    .name = "pointer",
+                    .element = &block->ty,
+                    .address_space = 0};
+    return ty;
+}
+
+// The name of a call's function when it is one of the four stream functions and no local shadows it, else "".
+static Str stream_function(state::Emitter *e, const ast::Expr *x) {
+    if (x->kind != .call) return "";
+    const ast::Expr *callee = x->kind.call.callee;
+    if (callee->kind != .name || countof(callee->kind.name.path.segments) != 1) return "";
+    Str name = callee->kind.name.path.segments[0].text;
+    state::Local shadow = {};
+    if (state::find_local(e, name, &shadow)) return "";
+    if (state::same_text(name, "range") || state::same_text(name, "refs") || state::same_text(name, "enumerate") ||
+        state::same_text(name, "zip"))
+        return name;
+    return "";
+}
+
+// The type the literals among `args` take: that of the first argument that is a local, else the checker's.
+static state::Hint hint_for(state::Emitter *e, ast::ExprRef args[:]) {
+    for (Usize i = 0; i < countof(args); i++) {
+        const ast::Expr *x = args[i];
+        state::Local local = {};
+        if (x->kind == .name && countof(x->kind.name.path.segments) == 1 &&
+            state::find_local(e, x->kind.name.path.segments[0].text, &local) && local.ty.kind == .integer)
+            return state::hint_of(local.ty);
+    }
+    if (e->node_type_hook == nullptr) return state::no_hint();
+    for (Usize i = 0; i < countof(args); i++) {
+        state::TyResult found = state::type_of_node(e, args[i]);
+        if (found == .ok && found.ok.kind == .integer) return state::hint_of(found.ok);
+    }
+    return state::no_hint();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The loop
+
+// The step of `range(a, b, step)` as a constant of the counter's type; 1 for any other loop.
+static c::LLVMValueRef step_constant(const ast::Stmt *s, state::Ty counter) {
+    U64 step = 1;
+    if (s->kind == .for_in) {
+        const ast::Expr *iterable = s->kind.for_in.iterable;
+        if (iterable->kind == .call && countof(iterable->kind.call.args) == 3) {
+            const ast::Expr *third = iterable->kind.call.args[2];
+            if (third->kind == .integer) step = third->kind.integer.value;
+        }
+    }
+    return c::LLVMConstInt(counter.llvm, step, 0);
+}
+
+// `a + b` through `llvm.sadd` or `llvm.uadd` with overflow: the pair (sum, overflowed).
+static c::LLVMValueRef add_with_overflow(state::Emitter *e, state::Ty ty, c::LLVMValueRef a, c::LLVMValueRef b) {
+    Str intrinsic = ty.is_signed ? "llvm.sadd.with.overflow" : "llvm.uadd.with.overflow";
+    U32 id = c::LLVMLookupIntrinsicID(intrinsic.data, countof(intrinsic));
+    c::LLVMTypeRef types[1] = {ty.llvm};
+    c::LLVMValueRef declaration = c::LLVMGetIntrinsicDeclaration(e->module, id, types, 1);
+    c::LLVMTypeRef type = c::LLVMIntrinsicGetType(e->context, id, types, 1);
+    c::LLVMValueRef args[2] = {a, b};
+    return c::LLVMBuildCall2(e->builder, type, declaration, args, 2, "");
+}
+
+// The body is done: the step runs in its own block (`continue` jumps there), then back to the condition, or to the end
+// when the counter overflowed (it is past the bound).
+static state::Status loop_step(state::Emitter *e, const state::Work *w) {
+    state::end_scope(e);
+    jump(e, w->blocks[0]);
+    position(e, w->blocks[0]);
+    c::LLVMValueRef current = c::LLVMBuildLoad2(e->builder, w->ty.llvm, w->value, "counter");
+    c::LLVMValueRef step = step_constant(w->stmt, w->ty);
+    if (c::LLVMConstIntGetZExtValue(step) == 1) {
+        // One more than a counter that is below its bound cannot overflow: a plain add.
+        c::LLVMValueRef plain = c::LLVMBuildNUWAdd(e->builder, current, step, "next");
+        c::LLVMBuildStore(e->builder, plain, w->value);
+        c::LLVMBuildBr(e->builder, w->blocks[1]);
+        return state::success();
+    }
+    c::LLVMValueRef pair = add_with_overflow(e, w->ty, current, step);
+    c::LLVMValueRef next = c::LLVMBuildExtractValue(e->builder, pair, 0, "next");
+    c::LLVMValueRef overflowed = c::LLVMBuildExtractValue(e->builder, pair, 1, "overflow");
+    c::LLVMBuildStore(e->builder, next, w->value);
+    c::LLVMBuildCondBr(e->builder, overflowed, w->blocks[2], w->blocks[1]);
+    return state::success();
+}
+
+static state::Status loop_end(state::Emitter *e, const state::Work *w) {
+    state::pop_loop(e);
+    position(e, w->blocks[0]);
+    return state::success();
+}
+
+// Binds the loop's name for this turn to `value`: a constant local in the body's scope (`_` binds nothing).
+static void bind_name(state::Emitter *e, const ast::Stmt *s, state::Ty ty, c::LLVMValueRef value) {
+    if (s->kind != .for_in) {
+        return;
+    }
+    ast::Identifier names[:] = s->kind.for_in.names;
+    if (countof(names) != 1 || state::same_text(names[0].text, "_")) return;
+    c::LLVMValueRef slot = state::new_alloca(e, ty, names[0].text);
+    c::LLVMBuildStore(e->builder, value, slot);
+    state::add_local(e, (state::Local){.name = names[0].text, .ty = ty, .address = slot});
+}
+
+// The value of the loop's name on this turn, from the counter just loaded.
+static state::Ty turn_value(state::Emitter *e, Plan plan, c::LLVMValueRef counter, c::LLVMValueRef *out) {
+    if (!plan.is_array) {
+        *out = counter;
+        return plan.counter;
+    }
+    c::LLVMValueRef zero = c::LLVMConstInt(plan.counter.llvm, 0, 0);
+    c::LLVMValueRef indexes[2] = {zero, counter};
+    c::LLVMValueRef address = c::LLVMBuildGEP2(e->builder, plan.array.ty.llvm, plan.array.llvm, indexes, 2, "element");
+    state::Ty element = *plan.array.ty.element;
+    if (plan.by_reference) {
+        *out = address;
+        return pointer_to(e, element);
+    }
+    *out = c::LLVMBuildLoad2(e->builder, element.llvm, address, "x");
+    return element;
+}
+
+// Builds the blocks and the head of the loop, then pushes the body, the step and the end as work.
+static state::Status build_loop(state::Emitter *e, const ast::Stmt *s, Plan plan) {
+    if (s->kind != .for_in) {
+        return state::fail("not a for in", s->span);
+    }
+    const ast::Stmt *body_stmt = s->kind.for_in.body;
+    c::LLVMValueRef slot = state::new_alloca(e, plan.counter, "iter");
+    c::LLVMBuildStore(e->builder, plan.start, slot);
+    c::LLVMBasicBlockRef cond = new_block(e, "forcond");
+    c::LLVMBasicBlockRef body = new_block(e, "forbody");
+    c::LLVMBasicBlockRef step = new_block(e, "forstep");
+    c::LLVMBasicBlockRef end = new_block(e, "endfor");
+    jump(e, cond);
+    position(e, cond);
+    c::LLVMValueRef counter = c::LLVMBuildLoad2(e->builder, plan.counter.llvm, slot, "counter");
+    c::LLVMIntPredicate below = (plan.is_array || !plan.counter.is_signed) ? c::LLVMIntULT : c::LLVMIntSLT;
+    c::LLVMValueRef more = c::LLVMBuildICmp(e->builder, below, counter, plan.bound, "more");
+    c::LLVMBuildCondBr(e->builder, more, body, end);
+    position(e, body);
+    state::begin_scope(e);
+    state::push_loop(e, (state::LoopTarget){.break_block = end, .continue_block = step, .scope_depth = e->scope_count});
+    c::LLVMValueRef turn = nullptr;
+    state::Ty turn_ty = turn_value(e, plan, counter, &turn);
+    bind_name(e, s, turn_ty, turn);
+    state::Work finish = {.then = loop_end, .span = s->span};
+    finish.blocks[0] = end;
+    state::push_then(e, finish);
+    state::Work next = {.then = loop_step, .stmt = s, .ty = plan.counter, .value = slot, .span = s->span};
+    next.blocks[0] = step;
+    next.blocks[1] = cond;
+    next.blocks[2] = end;
+    state::push_then(e, next);
+    state::push_statement(e, body_stmt);
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The iterables
+
+static state::Status array_start(state::Emitter *e, const state::Work *w) {
+    state::Value place = state::pop_value(e);
+    if (place.ty.kind != .array)
+        return state::not_emitted("a loop over a slice, str or block; only fixed arrays and range for now", w->span);
+    state::Ty counter = {};
+    state::scalar_type(e, "usize", &counter);
+    Plan plan = {.counter = counter, .is_array = true, .by_reference = w->flag, .array = place};
+    plan.start = c::LLVMConstInt(counter.llvm, 0, 0);
+    plan.bound = c::LLVMConstInt(counter.llvm, place.ty.count, 0);
+    return build_loop(e, w->stmt, plan);
+}
+
+static Bool is_place(const ast::Expr *x) {
+    if (x->kind == .name || x->kind == .member || x->kind == .index) return true;
+    return x->kind == .unary && x->kind.unary.op == .dereference;
+}
+
+// `for x in xs` and `for p in refs(xs)`: `xs` is read as a place.
+static state::Status begin_array(state::Emitter *e, const ast::Stmt *s, const ast::Expr *array, Bool by_reference,
+                                 ast::Span span) {
+    if (!is_place(array)) return state::not_emitted("a loop over an array value; store it in a local first", span);
+    state::Work start = {.then = array_start, .stmt = s, .flag = by_reference, .span = span};
+    state::push_then(e, start);
+    state::push_place(e, array);
+    return state::success();
+}
+
+static state::Status range_start(state::Emitter *e, const state::Work *w) {
+    if (w->stmt->kind != .for_in) {
+        return state::fail("not a for in", w->span);
+    }
+    const ast::Expr *call = w->stmt->kind.for_in.iterable;
+    if (call->kind != .call) {
+        return state::fail("not a range", w->span);
+    }
+    ast::ExprRef args[:] = call->kind.call.args;
+    state::Value bound = state::pop_value(e);
+    state::Value first = {};
+    Bool has_first = countof(args) >= 2;
+    if (has_first) first = state::pop_value(e);
+    if (bound.ty.kind != .integer) return state::fail("`range` counts integers", w->span);
+    if (has_first && !state::same_type(first.ty, bound.ty))
+        return state::failf(w->span, "range bounds of different types: ", first.ty.name, " and ", bound.ty.name);
+    Plan plan = {.counter = bound.ty, .bound = bound.llvm};
+    plan.start = has_first ? first.llvm : c::LLVMConstInt(bound.ty.llvm, 0, 0);
+    return build_loop(e, w->stmt, plan);
+}
+
+static state::Status begin_range(state::Emitter *e, const ast::Stmt *s, const ast::Expr *call) {
+    if (call->kind != .call) {
+        return state::fail("not a range", s->span);
+    }
+    ast::ExprRef args[:] = call->kind.call.args;
+    if (countof(args) < 1 || countof(args) > 3)
+        return state::fail("`range` takes a count, `range(n)`, `range(a, b)` or `range(a, b, step)`", call->span);
+    if (countof(args) == 3) {
+        const ast::Expr *third = args[2];
+        Bool positive = third->kind == .integer && third->kind.integer.value != 0;
+        if (!positive) return state::not_emitted("range with a step that is not a positive constant", call->span);
+    }
+    state::Hint hint = hint_for(e, args);
+    state::push_then(e, (state::Work){.then = range_start, .stmt = s, .span = s->span});
+    Usize evaluated = countof(args) == 1 ? 1 : 2;
+    for (Usize i = evaluated; i > 0; i--)
+        state::push_eval(e, args[i - 1], hint);
+    return state::success();
+}
+
+export state::Status for_in(state::Emitter *e, const ast::Stmt *s) {
+    if (s->kind != .for_in) return state::fail("not a for in", s->span);
+    const ast::Expr *iterable = s->kind.for_in.iterable;
+    if (s->kind.for_in.is_tuple) return state::not_emitted("a tuple pattern in a for", iterable->span);
+    Str function = stream_function(e, iterable);
+    if (state::same_text(function, "range")) return begin_range(e, s, iterable);
+    if (state::same_text(function, "enumerate") || state::same_text(function, "zip"))
+        return state::failf(iterable->span, "not emitted yet: `", function, "` in a for (it yields tuples)");
+    if (state::same_text(function, "refs")) {
+        if (iterable->kind != .call || countof(iterable->kind.call.args) != 1)
+            return state::fail("`refs` takes one iterable", iterable->span);
+        return begin_array(e, s, iterable->kind.call.args[0], true, iterable->span);
+    }
+    return begin_array(e, s, iterable, false, iterable->span);
+}
