@@ -27,6 +27,12 @@ check() {
       '[.[]|select(.event=="labeled" and .label.name=="blocked")]|last|select(.created_at|fromdateiso8601>now-3600)|"x"' | grep -q x &&
       gh api "repos/$R/issues/$i/comments" --jq '.[-1].body' 2>/dev/null | grep -qi runner && seen "q$i" && echo "#$i blocked by a runner: a question for you"
   done
+  for i in $(issues blocked '.[]|select(.pull_request==null)|.number'); do
+    w=$( { gh api "repos/$R/issues/$i" --jq .body; gh api "repos/$R/issues/$i/comments" --jq '.[].body'; } 2>/dev/null | grep -oiE 'waits for[^.]*' | grep -oE '#[0-9]+' | tr -d '#' | sort -u)
+    [ -z "$w" ] && continue
+    open=0; for d in $w; do [ "$(gh api repos/$R/issues/$d --jq .state 2>/dev/null)" = closed ] || open=1; done
+    [ $open = 0 ] && seen "u$i" && echo "#$i: everything it waits for is closed; unblock it"
+  done
   for p in $(gh api "repos/$R/pulls?state=open&per_page=50" --jq '.[]|select(.updated_at|fromdateiso8601<now-3600)|.number' 2>/dev/null); do
     sha=$(gh api repos/$R/pulls/$p --jq .head.sha 2>/dev/null)
     [ "$(gh api repos/$R/commits/$sha/check-runs --jq '[.check_runs[]|select(.name=="ci")|.conclusion]|first' 2>/dev/null)" = failure ] && seen "pr$p" && echo "PR #$p red and untouched for an hour"
@@ -43,5 +49,6 @@ done
 ```
 - **Ready tickets:** open `task` issues that are neither `claimed` nor `blocked`. Fewer than N means runners exit with nothing to take: unblock, close tickets already done, split a large one, or answer a question.
 - **A runner's question:** a ticket a runner marked `blocked` in the last hour. Runners should also post `@lead:` on #1406, which wakes the lead within a minute.
+- **Everything a blocked ticket waits for is closed:** remove `blocked` (the "Waits for #N" lines in its body and comments).
 - **A red PR untouched for an hour:** its runner has ended. Release its ticket with the failing test named, so the next runner fixes that PR (smith-dev-runner step 1).
 - **Claim age** is the latest `labeled` event for `claimed` in `issues/N/events`, not `updated_at`, which every comment moves. The merge queue has no REST listing: "not moved" means no new commit on main for an hour while pull requests are open.
