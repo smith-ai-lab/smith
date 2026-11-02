@@ -198,11 +198,15 @@ static bool smith_lang_find_cycle(SmithLang *lang, const SmithHost *host, const 
         if (!host->read_header(host->context, path, &text, &length)) continue;
         char names[smith_lang_cycle_max][128];
         size_t imported = smith_lang_header_imports(text, length, names, smith_lang_cycle_max);
-        for (size_t i = 0; i < imported && count < smith_lang_cycle_max; i++) {
+        for (size_t i = 0; i < imported; i++) {
             bool seen = false;
             for (size_t j = 0; j < count; j++)
                 seen = seen || strcmp(found[j], names[i]) == 0;
             if (seen) continue;
+            if (count >= smith_lang_cycle_max) {
+                smith_lang_limit(lang, "the modules the import cycle search reads", smith_lang_cycle_max);
+                break;
+            }
             snprintf(found[count], sizeof found[count], "%s", names[i]);
             parent[count++] = (int)at;
         }

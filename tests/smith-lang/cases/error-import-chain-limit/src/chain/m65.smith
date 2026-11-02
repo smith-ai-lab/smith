@@ -1,0 +1,3 @@
+module chain::m65;
+
+export int f65() { return 65; }

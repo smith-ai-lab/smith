@@ -1005,6 +1005,10 @@ export void test_error_import_cycle() {
     corpus_case("error-import-cycle");
 }
 
+export void test_error_import_chain_limit() {
+    corpus_case("error-import-chain-limit");
+}
+
 export void test_error_import_eof() {
     corpus_case("error-import-eof");
 }

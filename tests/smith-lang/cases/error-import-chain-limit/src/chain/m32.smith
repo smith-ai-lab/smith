@@ -1,0 +1,4 @@
+module chain::m32;
+import chain::m33;
+
+export int f32() { return 32; }
