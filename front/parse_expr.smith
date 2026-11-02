@@ -434,19 +434,61 @@ static void not_an_expression(parse::Parser *p) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Old forms and their fixes (#1509): each is read as before and records a warning whose edits write the new form
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+static ast::Span at_offset(U32 offset) {
+    ast::Span span = {.start = offset, .end = offset};
+    return span;
+}
+
+static ast::Span from_to(U32 start, U32 end) {
+    ast::Span span = {.start = start, .end = end};
+    return span;
+}
+
+static parse::Edits no_edits() {
+    parse::Edits none = {};
+    return none;
+}
+
+// `edits` and one more.
+static parse::Edits with_edit(parse::Edits edits, ast::Span span, Str text) {
+    parse::Edit added = {.span = span, .text = text};
+    edits = mem::realloc(edits, countof(edits) + 1);
+    edits[countof(edits) - 1] = added;
+    return edits;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Initializer lists and lambdas
 
+// What the items of a braced list say about its fix: the edits of the designators (`.x` loses its dot), how many items
+// have a field designator and how many none, and whether any item has a form with no mechanical fix (`[2] = e`, `.a.b =
+// e`, a lone `.name`).
+struct ListFix {
+    parse::Edits edits;
+    Usize designated;
+    Usize positional;
+    Bool complex;
+};
+
 // One designator: `.x` or `[2]`, or none when neither is at the position.
-static Bool designator(parse::Parser *p, ast::Designator ds[:], Usize *count) {
+static Bool designator(parse::Parser *p, ast::Designator ds[:], Usize *count, ListFix *fix) {
     if (parse::at(p, lex::dot) &&
         (parse::peek_at(p, 1).kind == lex::name || parse::peek_at(p, 1).kind == lex::type_name)) {
-        parse::advance(p);
+        lex::Token dot = parse::advance(p);
+        fix->edits = with_edit(fix->edits, dot.span, "");
         ast::Designator d = {.field = {.name = parse::text(p, parse::advance(p))}};
         ds[*count] = d;
         *count += 1;
         return true;
     }
     if (parse::at(p, lex::left_bracket)) {
+        fix->complex = true;
         parse::advance(p);
         ast::Designator d = {.index = {.index = parse::expression(p)}};
         parse::expect(p, lex::right_bracket, "`]` to end the designator");
@@ -470,41 +512,80 @@ static ast::Expr *expansion(parse::Parser *p, ast::Expr *value) {
 }
 
 // One item of an initializer list: designators then `=` then a value, or a value.
-static ast::Initializer item(parse::Parser *p) {
+static ast::Initializer item(parse::Parser *p, ListFix *fix) {
     U32 first = parse::peek(p).span.start;
     ast::Designator found[:] = {};
     found = mem::realloc(found, 16);
     Usize count = 0;
-    while (count < 16 && designator(p, found, &count)) {
+    while (count < 16 && designator(p, found, &count, fix)) {
     }
     ast::Initializer result = {};
     if (count == 0) {
+        fix->positional += 1;
         result.value = expansion(p, parse::expression(p));
         return result;
     }
     ast::Designator only = found[0];
+    if (count > 1 || only != .field) fix->complex = true;
     if (count == 1 && only == .field && !parse::at(p, lex::equal)) {
+        fix->complex = true;
         result.value = make(parse::span_from(p, first), {.variant = {.name = only.field.name}});
         return result;
     }
     parse::expect(p, lex::equal, "`=` after the designator");
+    fix->designated += 1;
     result.designators = found[0:count];
     result.value = parse::expression(p);
     return result;
 }
 
-// `{ items }`: the position is at the brace. `type` is null for a list alone.
-static ast::Expr *initializer_list(parse::Parser *p, ast::TypeExpr *type, U32 start) {
-    parse::expect(p, lex::left_brace, "`{`");
+// The warning of a braced list. A typed one `(P){.x = 1}` is `P(x = 1)` when every item has a field designator and the
+// type is a name; an untyped one `{1, 2}` is `[1, 2]` when no item has a designator; any other has no mechanical fix
+// (`P p = {.x = 1};` gets its type from the declaration's rewrite, F2).
+static void list_warning(parse::Parser *p, ast::TypeExpr *type, U32 start, U32 rparen, lex::Token open,
+                         lex::Token close, ListFix *fix) {
+    ast::Span whole = parse::span_from(p, start);
+    Bool plain = !fix->complex && countof(fix->edits) + fix->positional > 0;
+    if (type != nullptr) {
+        if (plain && fix->positional == 0 && type->kind == .named) {
+            parse::Edits edits = fix->edits;
+            edits = with_edit(edits, from_to(start, start + 1), "");
+            edits = with_edit(edits, from_to(rparen, open.span.end), "(");
+            edits = with_edit(edits, close.span, ")");
+            parse::warning_fix(p, whole, "a compound literal `(P){.x = 1}` is written `P(x = 1)`", edits);
+            return;
+        }
+        parse::warning_fix(p, whole, "a compound literal is written `P(x = 1, y = 2)`: name each field", no_edits());
+        return;
+    }
+    if (plain && fix->designated == 0) {
+        parse::Edits edits = {};
+        edits = with_edit(edits, open.span, "[");
+        edits = with_edit(edits, close.span, "]");
+        parse::warning_fix(p, whole, "an array value `{1, 2}` is written `[1, 2]`", edits);
+        return;
+    }
+    parse::warning_fix(
+        p, whole,
+        "a braced list with no type has no form in Smith: write the type, `P(x = 1)`, or `[1, 2]` for an array",
+        no_edits());
+}
+
+// `{ items }`: the position is at the brace. `type` is null for a list alone; `rparen` is where the `)` of a typed
+// list's type starts.
+static ast::Expr *initializer_list(parse::Parser *p, ast::TypeExpr *type, U32 start, U32 rparen) {
+    lex::Token open = parse::expect(p, lex::left_brace, "`{`");
+    ListFix fix = {};
     ast::Initializer items[:] = {};
     while (!parse::at(p, lex::right_brace) && !parse::at(p, lex::end_of_file)) {
-        ast::Initializer next = item(p);
+        ast::Initializer next = item(p, &fix);
         if (next.value == nullptr) break;
         items = mem::realloc(items, countof(items) + 1);
         items[countof(items) - 1] = next;
         if (!parse::accept(p, lex::comma)) break;
     }
-    parse::expect(p, lex::right_brace, "`}` to end the list");
+    lex::Token close = parse::expect(p, lex::right_brace, "`}` to end the list");
+    if (close.kind == lex::right_brace) list_warning(p, type, start, rparen, open, close, &fix);
     return make(parse::span_from(p, start), {.compound = {.type = type, .items = items}});
 }
 
@@ -760,7 +841,7 @@ static ast::Expr *primary(parse::Parser *p) {
         return variant_value(p);
     case lex::left_brace:
         if (p->new_syntax) return statement_value(p);
-        return initializer_list(p, nullptr, token.span.start);
+        return initializer_list(p, nullptr, token.span.start, 0);
     case lex::left_bracket:
         if (p->new_syntax) return array_literal(p);
         return lambda(p);
@@ -806,6 +887,14 @@ struct Pending {
     ast::QueryOp query;
     ast::TypeExpr *type;
     ast::Expr *middle;
+    ast::Span head;  // a cast's `(T)`, a prefix operator's token, the `?` of a conditional
+    ast::Span colon; // the `:` of a conditional
+};
+
+// A `++` or `--` seen in an expression: it is a statement in Smith, so the end of the expression decides its warning.
+struct Bump {
+    ast::Expr *expr;
+    ast::Span token;
 };
 
 // The two stacks of one expression: operators waiting for operands, and finished operands.
@@ -814,6 +903,8 @@ struct Stack {
     Usize op_count;
     ast::ExprRef values[:];
     Usize value_count;
+    parse::Parser *parser;
+    Bump bumps[:];
 };
 
 typedef enum {
@@ -854,6 +945,141 @@ static ast::Span between(U32 start, const ast::Expr *last) {
     return span;
 }
 
+// Whether the operator pending below the one just taken applies to the value that comes next (a prefix operator, a
+// `sizeof`, a `try`): `as` binds tighter than those, so a cast that is their operand is written in parentheses.
+static Bool prefix_above(const Stack *st) {
+    if (st->op_count == 0) return false;
+    Form form = st->ops[st->op_count - 1].form;
+    return form == .prefix || form == .query_form || form == .try_form;
+}
+
+// Records a fix whose last edit inserts `tail` at `end`. When the warning recorded last is a fix of something inside
+// (its last edit inserts at the same `end`), the two are one fix: two inserts at one offset clash, and `smith lint
+// --fix` reads the text between its passes with today's lexer, which does not know `as` or `if`, so a nested form
+// must be mended in the pass that mends the form around it.
+static void tail_warning(Stack *st, ast::Span span, Str message, parse::Edits edits, U32 end, Str tail) {
+    parse::Parser *p = st->parser;
+    Usize count = countof(p->warnings);
+    if (count > 0) {
+        parse::Edits inner = p->warnings[count - 1].fix;
+        Usize n = countof(inner);
+        if (n > 0 && inner[n - 1].span.start == end && inner[n - 1].span.end == end &&
+            p->warnings[count - 1].span.start >= span.start) {
+            Str joined = as_str(format::push(inner[n - 1].text, tail));
+            for (Usize i = 0; i + 1 < n; i += 1)
+                edits = with_edit(edits, inner[i].span, inner[i].text);
+            p->warnings = p->warnings[0:count - 1];
+            tail = joined;
+        }
+    }
+    edits = with_edit(edits, at_offset(end), tail);
+    parse::warning_fix(p, span, message, edits);
+}
+
+// `(T)x` is `x as T`, and `(x as T)` as the operand of a prefix operator.
+static void cast_warning(Stack *st, const Pending *op, const ast::Expr *operand) {
+    parse::Parser *p = st->parser;
+    Str type_text = p->source[op->head.start + 1:op->head.end - 1];
+    Bool wrap = prefix_above(st);
+    parse::Edits edits = {};
+    edits = with_edit(edits, from_to(op->head.start, operand->span.start), wrap ? "(" : "");
+    Str tail = as_str(format::push(" as ", type_text, wrap ? ")" : ""));
+    Str message = as_str(format::push("a cast is `x as T`: write `x as ", type_text, "`"));
+    tail_warning(st, from_to(op->head.start, operand->span.end), message, edits, operand->span.end, tail);
+}
+
+// Whether a value reads as a postfix chain (`p.x`, `f(x)`, a name, a group), so `.*` can follow it as it is.
+static Bool is_postfix_level(Str source, const ast::Expr *e) {
+    if (source[e->span.start] == '(') return true;
+    if (e->kind == .unary) return e->kind.unary.op == .dereference;
+    return e->kind != .query && e->kind != .try_expr && e->kind != .cast;
+}
+
+// `*p` is `p.*`, and `(-x).*` when the operand is not a postfix chain.
+static void deref_warning(Stack *st, const Pending *op, const ast::Expr *operand) {
+    parse::Edits edits = {};
+    Bool plain = is_postfix_level(st->parser->source, operand);
+    edits = with_edit(edits, from_to(op->head.start, operand->span.start), plain ? "" : "(");
+    tail_warning(st, from_to(op->head.start, operand->span.end), "`*p` reads through a pointer as `p.*`", edits,
+                 operand->span.end, plain ? ".*" : ").*");
+}
+
+// Puts `if ` in front of the condition: into the edit of an inner fix that already replaces the text from there (a cast
+// `(T)c ? a : b` loses its `(T)` there), else as an insert.
+static parse::Edits if_before(const parse::Parser *p, parse::Edits edits, U32 start) {
+    for (Usize i = countof(p->warnings); i > 0; i -= 1) {
+        parse::Edits fix = p->warnings[i - 1].fix;
+        for (Usize j = 0; j < countof(fix); j += 1) {
+            if (fix[j].span.start == start && fix[j].span.end > start) {
+                fix[j].text = as_str(format::push("if ", fix[j].text));
+                return edits;
+            }
+        }
+        if (p->warnings[i - 1].span.end < start) break;
+    }
+    return with_edit(edits, at_offset(start), "if ");
+}
+
+// `c ? a : b` is `if c { a } else { b }`.
+static void conditional_warning(Stack *st, const Pending *op, const ast::Expr *condition, const ast::Expr *last) {
+    parse::Edits edits = if_before(st->parser, no_edits(), condition->span.start);
+    edits = with_edit(edits, op->head, "{");
+    edits = with_edit(edits, op->colon, "} else {");
+    ast::Span span = from_to(condition->span.start, last->span.end);
+    tail_warning(st, span, "`c ? a : b` is written `if c { a } else { b }`", edits, last->span.end, " }");
+}
+
+static void note_bump(Stack *st, ast::Expr *expr, ast::Span token) {
+    Bump bump = {.expr = expr, .token = token};
+    st->bumps = mem::realloc(st->bumps, countof(st->bumps) + 1);
+    st->bumps[countof(st->bumps) - 1] = bump;
+}
+
+// The warnings of the `++` and `--` of an expression: as the whole of a statement (`i++;`) it is `i += 1`; anywhere
+// else it has no value form and no mechanical fix.
+static void bump_warnings(parse::Parser *p, const Stack *st, const ast::Expr *whole) {
+    for (Usize i = 0; i < countof(st->bumps); i += 1) {
+        Bump bump = st->bumps[i];
+        if (bump.expr->kind != .unary) continue;
+        ast::UnaryOp op = bump.expr->kind.unary.op;
+        Bool is_up = op == .pre_increment || op == .post_increment;
+        Bool is_post = op == .post_increment || op == .post_decrement;
+        Str step = is_up ? " += 1" : " -= 1";
+        Str message =
+            is_up ? "`++` is a statement in Smith: write `i += 1`" : "`--` is a statement in Smith: write `i -= 1`";
+        if (bump.expr != whole || !parse::at(p, lex::semicolon)) {
+            parse::warning_fix(p, bump.token, message, no_edits());
+            continue;
+        }
+        parse::Edits edits = {};
+        if (is_post) {
+            edits = with_edit(edits, bump.token, step);
+        } else {
+            edits = with_edit(edits, from_to(bump.token.start, bump.expr->kind.unary.operand->span.start), "");
+            edits = with_edit(edits, at_offset(bump.expr->span.end), step);
+        }
+        parse::warning_fix(p, bump.expr->span, message, edits);
+    }
+}
+
+static Bool is_adapter(Str name) {
+    return text::is(name, "map") || text::is(name, "filter") || text::is(name, "collect") ||
+           text::is(name, "for_each") || text::is(name, "fold") || text::is(name, "enumerate") ||
+           text::is(name, "zip") || text::is(name, "rev") || text::is(name, "take") || text::is(name, "skip");
+}
+
+// `xs.iter()` and `xs.iter().map(f)`: a method chain has no form in Smith.
+static void chain_warning(parse::Parser *p, const ast::Expr *callee) {
+    if (callee->kind != .member) return;
+    Str name = callee->kind.member.name;
+    Bool chained = callee->kind.member.base->kind == .call;
+    if (!text::is(name, "iter") && !text::is(name, "into_iter") && !(chained && is_adapter(name))) return;
+    parse::warning_fix(
+        p, callee->span,
+        "a method chain such as `.iter().map(f)` has no form in Smith: write a function that returns a stream",
+        no_edits());
+}
+
 // Takes the last pending operator and applies it to its operands.
 static void reduce(Stack *st) {
     st->op_count -= 1;
@@ -874,14 +1100,20 @@ static void reduce(Stack *st) {
     }
     case .conditional_form: {
         ast::Expr *condition = pop_value(st);
+        conditional_warning(st, &op, condition, right);
         push_value(st, make(between(condition->span.start, right),
                             {.conditional = {.condition = condition, .then_value = op.middle, .else_value = right}}));
         break;
     }
-    case .prefix:
-        push_value(st, make(between(op.start, right), {.unary = {.op = op.unary, .operand = right}}));
+    case .prefix: {
+        ast::Expr *unary = make(between(op.start, right), {.unary = {.op = op.unary, .operand = right}});
+        if (op.unary == .dereference) deref_warning(st, &op, right);
+        if (op.unary == .pre_increment || op.unary == .pre_decrement) note_bump(st, unary, op.head);
+        push_value(st, unary);
         break;
+    }
     case .cast_form:
+        cast_warning(st, &op, right);
         push_value(st, make(between(op.start, right), {.cast = {.type = op.type, .operand = right}}));
         break;
     case .query_form:
@@ -896,7 +1128,8 @@ static void reduce(Stack *st) {
 // Applies the pending operators that bind at least as tight as an incoming one (tighter only, when it is right
 // associative).
 static void reduce_above(Stack *st, U32 prec, Bool right) {
-    for (Usize i = 0; i < st->op_count + 1 && st->op_count > 0; i += 1) {
+    Usize pending = st->op_count;
+    for (Usize i = 0; i < pending && st->op_count > 0; i += 1) {
         U32 top = st->ops[st->op_count - 1].prec;
         if (top < prec || (top == prec && right)) break;
         reduce(st);
@@ -1085,14 +1318,15 @@ static Outcome infix_step(parse::Parser *p, Stack *st) {
     }
     if (kind != lex::question) return .absent;
     reduce_above(st, 2, true);
-    parse::advance(p);
+    ast::Span question = parse::advance(p).span;
     ast::Expr *middle = parse::expression(p);
     if (middle == nullptr) return .broken;
+    ast::Span colon = parse::peek(p).span;
     if (!parse::accept(p, lex::colon)) {
         parse::expect(p, lex::colon, "`:` of the conditional");
         return .broken;
     }
-    Pending op = {.form = .conditional_form, .prec = 2, .middle = middle};
+    Pending op = {.form = .conditional_form, .prec = 2, .middle = middle, .head = question, .colon = colon};
     push_op(st, op);
     return .done;
 }
@@ -1132,6 +1366,7 @@ static ast::Expr *call(parse::Parser *p, ast::Expr *callee) {
         if (!parse::accept(p, lex::comma)) break;
     }
     parse::expect(p, lex::right_paren, "`)` to end the arguments");
+    chain_warning(p, callee);
     return make(parse::span_from(p, callee->span.start), {.call = {.callee = callee, .args = args}});
 }
 
@@ -1174,7 +1409,12 @@ static ast::Expr *reflect_member(parse::Parser *p, ast::Expr *base, Bool arrow) 
 
 // `.name` and `->name`: the position is at the operator.
 static ast::Expr *member(parse::Parser *p, ast::Expr *base) {
-    Bool arrow = parse::advance(p).kind == lex::arrow;
+    lex::Token operator = parse::advance(p);
+    Bool arrow = operator.kind == lex::arrow;
+    if (arrow) {
+        parse::Edits edits = with_edit(no_edits(), operator.span, ".");
+        parse::warning_fix(p, operator.span, "`->` reads through a pointer as `.`: write `p.x`", edits);
+    }
     if (parse::at(p, lex::left_bracket)) return reflect_member(p, base, arrow);
     lex::Token name = parse::peek(p);
     if (name.kind != lex::name && name.kind != lex::type_name) {
@@ -1232,6 +1472,7 @@ static Outcome postfix_step(parse::Parser *p, Stack *st) {
         ast::UnaryOp op = .post_decrement;
         if (token.kind == lex::plus_plus) op = .post_increment;
         result = make(parse::span_from(p, base->span.start), {.unary = {.op = op, .operand = base}});
+        note_bump(st, result, token.span);
         break;
     default:
         return .absent;
@@ -1326,13 +1567,17 @@ static Step paren(parse::Parser *p, Stack *st) {
     if (p->new_syntax) return group_or_tuple(p, st, start);
     if (parse_type::starts_type(p, 0) || type_value_cast(p)) {
         ast::TypeExpr *type = parse::type(p);
-        parse::expect(p, lex::right_paren, "`)` to end the cast's type");
+        lex::Token close = parse::expect(p, lex::right_paren, "`)` to end the cast's type");
         if (type == nullptr) return .failed;
         if (parse::at(p, lex::left_brace)) {
-            push_value(st, initializer_list(p, type, start));
+            push_value(st, initializer_list(p, type, start, close.span.start));
             return .value;
         }
-        Pending cast = {.form = .cast_form, .prec = prefix_prec, .start = start, .type = type};
+        Pending cast = {.form = .cast_form,
+                        .prec = prefix_prec,
+                        .start = start,
+                        .type = type,
+                        .head = from_to(start, close.span.end)};
         push_op(st, cast);
         return .more;
     }
@@ -1349,7 +1594,7 @@ static Step operand_step(parse::Parser *p, Stack *st) {
     lex::Token token = parse::peek(p);
     if (is_prefix(token.kind) || token.kind == lex::kw_try) {
         parse::advance(p);
-        Pending op = {.form = .prefix, .prec = prefix_prec, .start = token.span.start};
+        Pending op = {.form = .prefix, .prec = prefix_prec, .start = token.span.start, .head = token.span};
         if (token.kind == lex::kw_try) {
             op.form = .try_form;
         } else {
@@ -1379,7 +1624,7 @@ static Step operand_step(parse::Parser *p, Stack *st) {
 
 // Reads an expression at the position, or records an error and gives null. The hook `parse::Hooks.expression`.
 export ast::Expr *expression(parse::Parser *p) {
-    Stack st = {};
+    Stack st = {.parser = p};
     Bool want_operand = true;
     for (Usize i = 0; i <= countof(p->tokens); i += 1) {
         if (want_operand) {
@@ -1397,7 +1642,10 @@ export ast::Expr *expression(parse::Parser *p) {
         want_operand = true;
     }
     if (want_operand) return nullptr;
-    for (Usize i = 0; i <= st.op_count && st.op_count > 0; i += 1)
+    Usize pending = st.op_count;
+    for (Usize i = 0; i < pending && st.op_count > 0; i += 1)
         reduce(&st);
-    return pop_value(&st);
+    ast::Expr *whole = pop_value(&st);
+    bump_warnings(p, &st, whole);
+    return whole;
 }

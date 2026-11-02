@@ -816,6 +816,7 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
 // Checks a whole module for `target`.
 export types::Checked check_module(const ast::Module *m, types::Target target) {
     state = (State){};
+    types_fn::reset();
     types::Checked r = types::check(m, options(target));
     for (Usize i = 0; i < countof(m->decls); i++) {
         check_initializer(&r, m->decls[i]);
