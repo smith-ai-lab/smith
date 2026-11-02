@@ -648,13 +648,12 @@ export void test_task_a_task_waits_for_its_children_and_is_woken_on_its_worker()
         test::check(waiters[i].done >= 20);
 }
 
-// ---- Waiting on sockets and pipes: macOS parks the task in the worker's kqueue. ----
+// ---- Waiting on sockets and pipes: the task parks in the worker's kqueue (macOS) or epoll instance (Linux). ----
 //
 // Each test runs the tasks on ONE worker (`task::limit_workers`), so a call that blocked the thread instead of parking
-// the task would hang the test. Under Linux the default scheduler has no `io` yet (epoll is the next ticket): they
-// return.
+// the task would hang the test. The same tests run on both backends.
 
-if constexpr (target::os == target::macos) {
+if constexpr (target::os == target::macos || target::os == target::linux) {
     // NOLINTBEGIN(smith-preprocessor)
     constexpr I32 unix_family = c::AF_UNIX;
     constexpr I32 stream_socket = c::SOCK_STREAM;
@@ -707,7 +706,7 @@ if constexpr (target::os == target::macos) {
 }
 
 export void test_task_a_read_on_a_socketpair_parks_the_task_and_the_worker_runs_another() {
-    if constexpr (target::os == target::macos) {
+    if constexpr (target::os == target::macos || target::os == target::linux) {
         I32 fds[2] = {};
         test::check_equal(c::socketpair(unix_family, stream_socket, 0, fds), 0); // NOLINT(smith-effects)
         Log log = {};
@@ -722,7 +721,7 @@ export void test_task_a_read_on_a_socketpair_parks_the_task_and_the_worker_runs_
 }
 
 export void test_task_a_read_on_a_pipe_parks_the_task_and_the_worker_runs_another() {
-    if constexpr (target::os == target::macos) {
+    if constexpr (target::os == target::macos || target::os == target::linux) {
         I32 fds[2] = {};
         test::check_equal(c::pipe(fds), 0); // NOLINT(smith-effects)
         Log log = {};
@@ -736,7 +735,7 @@ export void test_task_a_read_on_a_pipe_parks_the_task_and_the_worker_runs_anothe
 }
 
 export void test_task_a_task_that_pauses_in_a_loop_does_not_starve_a_task_waiting_on_a_socket() {
-    if constexpr (target::os == target::macos) {
+    if constexpr (target::os == target::macos || target::os == target::linux) {
         I32 fds[2] = {};
         test::check_equal(c::socketpair(unix_family, stream_socket, 0, fds), 0); // NOLINT(smith-effects)
         Log log = {};
@@ -750,7 +749,7 @@ export void test_task_a_task_that_pauses_in_a_loop_does_not_starve_a_task_waitin
     }
 }
 
-if constexpr (target::os == target::macos) {
+if constexpr (target::os == target::macos || target::os == target::linux) {
     struct Meeting {
         struct c::sockaddr_un address;
         I32 listener;
@@ -777,7 +776,7 @@ if constexpr (target::os == target::macos) {
 }
 
 export void test_task_an_accept_and_a_connect_in_two_tasks_on_one_worker_both_complete() {
-    if constexpr (target::os == target::macos) {
+    if constexpr (target::os == target::macos || target::os == target::linux) {
         Log log = {};
         Meeting meeting = {.log = &log};
         meeting.address.sun_family = unix_family;
