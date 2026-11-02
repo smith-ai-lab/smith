@@ -1014,6 +1014,18 @@ static state::Status convert_value(state::Emitter *e, state::Value value, state:
 // ---------------------------------------------------------------------------------------------------------------
 // The module
 
+// `sin := m.sin` or `Point := m.Point`: a name for a declaration of an imported module (#1714). The checker has typed
+// it; there is nothing to emit, a call through it reaches the function itself.
+static Bool is_module_alias(const state::Emitter *e, const ast::Decl *d) {
+    if (e->options.checked == nullptr || d->kind != .variable || !d->kind.variable.is_new) return false;
+    const ast::Expr *init = d->kind.variable.init;
+    if (init == nullptr || init->kind != .member) return false;
+    types::Names names = types::member_names(init);
+    if (names.count < 2) return false;
+    const types::Symbol *first = types::lookup(&e->options.checked->scopes, names.items[0]);
+    return first != nullptr && first->kind == .module_name;
+}
+
 // Pass 1: types, then every function and global.
 static state::Status declare_all(state::Emitter *e) {
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
@@ -1029,7 +1041,7 @@ static state::Status declare_all(state::Emitter *e) {
             else
                 try declare_function(e, d);
         } else if (d->kind == .variable) {
-            try memory::global_variable(e, d);
+            if (!is_module_alias(e, d)) try memory::global_variable(e, d);
         } else if (d->kind != .record && d->kind != .enumeration && d->kind != .import_module && d->kind != .import_c) {
             return state::not_emitted("this kind of declaration", d->span);
         }
