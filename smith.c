@@ -2674,9 +2674,9 @@ static void smith_new_files_write(const char *name, SmithNewLanguage language, b
 
 // A file smith new reads has more lines than it looks at: say so, as an answer from a part of the file would be wrong.
 [[noreturn]] static void smith_new_lines_full(const char *path) {
-    char detail[PATH_MAX + 40];
-    snprintf(detail, sizeof detail, "%s (limit %zu lines)", path, smith_new_gitignore_lines_max);
-    smith_die(smith_exit_usage, "too many lines in", detail);
+    char message[PATH_MAX + 60];
+    snprintf(message, sizeof message, "too many lines in %s (limit %zu lines)", path, smith_new_gitignore_lines_max);
+    smith_die(smith_exit_usage, message, nullptr);
 }
 
 // The lines of smith's .gitignore that an existing one lacks, said so that the user can add them. A line is present
