@@ -12,7 +12,7 @@ default; the defaults that exist apply only where a project has no file and runs
   1. **Use `smith cc` instead of clang** (`CC=smith-cc` in a Makefile, where one program path is needed). For C,
      C++ and Objective-C it is a pure passthrough: smith never adds, removes or reorders flags, so the build cannot
      change.
-  2. **Translate the Makefile into a build file** (#44): `smith build --dump-config > build.c` in the folder
+  2. **Translate the Makefile into a build file** (#44): `smith build --dump-config > build.smith` in the folder
      writes a `build.c` that describes the same build explicitly and across platforms, in smith's low-level API, so
      it changes nothing either. A folder with a Makefile and no build file never builds by convention, even beside a
      `main.c`: `smith build` and the verbs stop and say to translate it or delete it.

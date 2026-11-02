@@ -82,6 +82,7 @@ export struct Attribute {
     Path name;
     ExprRef args[:];
     Span span;
+    Bool is_new; // written `@name` (smith's own syntax), not `[[std::name]]`
 };
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -102,6 +103,7 @@ export struct FieldDecl {
     TypeExpr *type;
     Expr *bit_width;
     Bool is_new; // written in smith's own syntax (`x: T`), not today's `T x;`
+    Attribute attributes[:];
     Span span;
 };
 
@@ -491,6 +493,7 @@ export struct Enumerator {
     Str name;
     Expr *value;
     TypeExpr *payload; // a payload enum's variant
+    Attribute attributes[:];
     Span span;
 };
 

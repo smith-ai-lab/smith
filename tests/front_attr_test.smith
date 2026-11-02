@@ -1,0 +1,209 @@
+// Tests of attributes in smith's own syntax (#1628, part of #1428): an attribute on the line before a declaration, a
+// field or an enumerator (front::parse_decl), `@attribute` structs and what front::types_attr checks about them. Each
+// scenario is source text read by front::parser's hooks; a scenario builds in an arena it sets as the current
+// allocator.
+module front_attr_test;
+
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str join(Str a, Str b) {
+    char out[:] = mem::alloc_slice(char, countof(a) + countof(b));
+    for (Usize i = 0; i < countof(a); i++) {
+        out[i] = a[i];
+    }
+    for (Usize i = 0; i < countof(b); i++) {
+        out[countof(a) + i] = b[i];
+    }
+    return out;
+}
+
+// The module of `source`, read in smith's own syntax (parser::parse reads today's), with the real parsers' hooks.
+static parser::Parsed parse_new(Str source) {
+    parser::Parsed result = {};
+    result.module.file = "t.smith";
+    lex::Lexed lexed = lex::tokenize_new(source);
+    switch (lexed) {
+    case .ok:
+        parse::Parser p = parse::make(lexed.ok, source);
+        p.new_syntax = true;
+        p.hooks.expression = parse_expr::expression;
+        p.hooks.type = parse_type::type;
+        p.hooks.statement = parse_stmt::statement;
+        p.hooks.declaration = parse_decl::declaration;
+        result.module = parse_decl::file(&p, "t.smith");
+        result.errors = p.errors;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    return result;
+}
+
+// The first parse error of `source`, or "no error".
+static Str parse_error_of(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed p = parse_new(source);
+    if (countof(p.errors) == 0) return "no error";
+    return join(p.errors[0].message, "");
+}
+
+static types::Checked check_text(Str source) {
+    parser::Parsed p = parse_new(source);
+    if (countof(p.errors) > 0) {
+        Str shown = p.errors[0].message;
+        Str none = "no error";
+        test::check_equal(shown, none);
+    }
+    return types_decl::check_module(&p.module, types::lp64());
+}
+
+// The errors, one per line.
+static Str errors_of(const types::Checked *r) {
+    Str text = "";
+    for (Usize i = 0; i < r->error_count; i++) {
+        text = join(text, join(r->errors[i].message, "\n"));
+    }
+    return text;
+}
+
+// `source` checks with no error.
+static void clean(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    Str errors = errors_of(&r);
+    Str none = "";
+    test::check_equal(errors, none);
+}
+
+// `source` gives exactly one error, which says `first` and `second`.
+static void fails(Str source, Str first, Str second) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    Str errors = errors_of(&r);
+    test::check_equal(r.error_count, (Usize)1);
+    test::check_condition(has(errors, first));
+    test::check_condition(has(errors, second));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The parser
+
+static void attached(Str source, Usize expected) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed p = parse_new(source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    const ast::Decl *d = p.module.decls[countof(p.module.decls) - 1];
+    Usize found = countof(d->attributes);
+    if (d->kind == .record) {
+        ast::Attribute marks[:] = d->kind.record.fields[0].attributes;
+        found = countof(marks);
+    }
+    if (d->kind == .enumeration) {
+        ast::Attribute marks[:] = d->kind.enumeration.items[1].attributes;
+        found = countof(marks);
+    }
+    test::check_equal(found, expected);
+}
+
+export void test_front_attr_own_line_before_a_function() {
+    attached("@inline\nfn hot() -> i32 {\n    1\n}\n", 1);
+    attached("@inline fn hot() -> i32 {\n    1\n}\n", 1);
+    attached("@inline\n@cold\nfn hot() -> i32 {\n    1\n}\n", 2);
+}
+
+export void test_front_attr_own_line_before_a_field() {
+    attached("struct User {\n    @cold\n    id: u64\n}\n", 1);
+    attached("struct User {\n    @cold\n    @pure\n    id: u64\n    name: str\n}\n", 2);
+}
+
+export void test_front_attr_own_line_before_an_enumerator() {
+    attached("enum Color {\n    red\n    @cold\n    green\n}\n", 1);
+}
+
+export void test_front_attr_needs_a_declaration_on_the_next_line() {
+    Str message = "an attribute marks the declaration on the next line";
+    test::check_equal(parse_error_of("@inline\n\nfn f() {\n}\n"), message);
+    test::check_equal(parse_error_of("@inline\n// why\nfn f() {\n}\n"), message);
+    test::check_equal(parse_error_of("struct A {\n    x: i32\n    @cold\n}\n"), message);
+    test::check_equal(parse_error_of("@inline\n"), message);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The checker
+
+static Str attribute_struct() {
+    return "@attribute\npub struct Rename {\n    to: str\n}\n";
+}
+
+export void test_front_attr_user_attribute_by_position_and_by_name() {
+    clean(join(attribute_struct(), "struct User {\n    @Rename(\"user_id\")\n    id: u64\n}\n"));
+    clean(join(attribute_struct(), "struct User {\n    @Rename(to = \"user_id\")\n    id: u64\n}\n"));
+}
+
+export void test_front_attr_two_attributes_on_two_lines_before_a_field() {
+    clean(join(attribute_struct(), "struct User {\n    @Rename(\"a\")\n    @cold\n    id: u64\n}\n"));
+}
+
+export void test_front_attr_built_ins_stay_unqualified() {
+    clean("@inline\nfn hot() -> i32 {\n    1\n}\n");
+    fails("@loud\nfn hot() -> i32 {\n    1\n}\n", "unknown attribute `loud`", "`@inline`");
+}
+
+export void test_front_attr_a_plain_struct_is_not_an_attribute() {
+    fails("pub struct Rename {\n    to: str\n}\n@Rename(\"x\")\nfn f() {\n}\n", "`Rename` is not an attribute",
+          "mark its struct `@attribute`");
+    fails("import serial;\n@serial::rename(\"x\")\nfn f() {\n}\n", "serial::rename", "another module");
+    fails("@serial::rename(\"x\")\nfn f() {\n}\n", "`serial::rename` is not an attribute",
+          "mark its struct `@attribute`");
+}
+
+export void test_front_attr_arguments_are_a_construction_of_the_struct() {
+    fails(join(attribute_struct(), "@Rename(\"a\", \"b\")\nfn f() {\n}\n"), "has 1 fields", "gives 2");
+    fails(join(attribute_struct(), "@Rename(from = \"a\")\nfn f() {\n}\n"), "no field `from`", "Rename");
+    fails(join(attribute_struct(), "@Rename(3)\nfn f() {\n}\n"), "expected Str", "found");
+}
+
+export void test_front_attr_arguments_are_computed_at_compile_time() {
+    fails(join(attribute_struct(), "fn name() -> str {\n    \"x\"\n}\n@Rename(name())\nfn f() {\n}\n"),
+          "an attribute's arguments are computed at compile time", "compile time");
+    clean(join(attribute_struct(), "const label := \"x\"\n@Rename(label)\nfn f() {\n}\n"));
+}

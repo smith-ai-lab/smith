@@ -704,7 +704,7 @@ int main(void) {
 -->
 
 1. **Compile with smith**, nothing else changes: `CC=smith-cc make`. [smith-adopt](.agents/skills/smith-adopt/SKILL.md)
-2. **Translate the Makefile**: `smith build --dump-config > build.c`, then `smith build`. Read the top of `build.c` for what
+2. **Translate the Makefile**: `smith build --dump-config > build.smith`, then `smith build`. Read the top of `build.smith` for what
    it could not translate. [smith-adopt-build](.agents/skills/smith-adopt-build/SKILL.md)
 3. **Check**: `smith check` is formatting, lint, the docs check, the tests and the proofs, in one command.
    [smith-check](.agents/skills/smith-check/SKILL.md)

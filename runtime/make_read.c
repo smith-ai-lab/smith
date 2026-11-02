@@ -432,8 +432,8 @@ static SmithMakeTest smith_make_test_eq(const char *args, bool negate, const cha
     const char *b = smith_make_trim(smith_make_unmark(smith_make_expand_text(right, false)));
     if (!smith_make_has_hole(a, strlen(a)) && !smith_make_has_hole(b, strlen(b)))
         return (strcmp(a, b) == 0) != negate ? SmithMakeTest_True : SmithMakeTest_False;
-    *test = smith_make_format("strcmp(%s, %s) %s 0", smith_make_render(a, strlen(a)), smith_make_render(b, strlen(b)),
-                              negate ? "!=" : "==");
+    *test = smith_make_format("c::strcmp(%s, %s) %s 0", smith_make_render(a, strlen(a)),
+                              smith_make_render(b, strlen(b)), negate ? "!=" : "==");
     return SmithMakeTest_Dynamic;
 }
 

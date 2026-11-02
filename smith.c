@@ -1303,7 +1303,7 @@ static const SmithLibrary smith_libraries[] = {
 #include "runtime/lang_lex.c"
 // The rule for the command of a .smith file, shared with `smith lsp`.
 #include "runtime/lang_command.c"
-// A Makefile read as GNU make reads it and written as a build.c: `smith build --dump-config` (issue #44).
+// A Makefile read as GNU make reads it and written as a build.smith: `smith build --dump-config` (issue #44).
 // (memory and text, the expander, the reader, the targets, then build.c; blank lines keep clang-format from sorting)
 #include "runtime/make.c"
 
@@ -1456,7 +1456,7 @@ static bool smith_has_makefile(void) {
     return smith_make_find_makefile() != nullptr;
 }
 
-// A build file that has something in it: `smith build --dump-config > build.c` makes the file empty before it runs.
+// A build file that has something in it: `smith build --dump-config > build.smith` makes the file empty before it runs.
 static bool smith_has_build_file(const char *name) {
     struct stat info;
     return stat(name, &info) == 0 && info.st_size > 0;
@@ -1466,7 +1466,7 @@ static bool smith_has_build_file(const char *name) {
 [[noreturn]] static void smith_makefile_here(void) {
     fprintf(stderr,
             "smith: this folder has a %s and no build.c or build.smith, so smith does not build it by convention\n"
-            "Translate it with `smith build --dump-config > build.c` (knowledge/makefile-translation.md), or "
+            "Translate it with `smith build --dump-config > build.smith` (knowledge/makefile-translation.md), or "
             "delete it to build by convention.\n",
             smith_make_find_makefile());
     exit(smith_exit_usage);

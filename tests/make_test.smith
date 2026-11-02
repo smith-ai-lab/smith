@@ -53,18 +53,19 @@ static void printer(const scratch::Project *p, I32 count) {
     scratch::write(p, "main.c", text);
 }
 
-// The translation: build.c, and what was said on standard error. Returns the status. A translation that succeeded
+// The translation: build.smith, and what was said on standard error. Returns the status. A translation that succeeded
 // passes `smith lint` and `smith fmt --dry-run` with smith's defaults (a project with no .clang-tidy or .clang-format
 // of its own): names in lower case, functions of at most 70 lines, formatted.
 static I32 translate(const scratch::Project *p, const char *name) {
-    scratch::Run dumped = run(p, "smith build --dump-config >build.c 2>dump.err");
+    scratch::Run dumped = run(p, "smith build --dump-config >build.smith 2>dump.err");
     if (dumped.status == 0) {
         const char *findings = out_of(
-            p, "smith lint >lint.log 2>&1; findings=$(grep -E '^build\\.c:[0-9]+:[0-9]+: (warning|error)' lint.log); "
-               "formatting=$(smith fmt --dry-run build.c 2>&1 | grep -c 'clang-format-violations'); "
-               "echo \"${findings:-none} $formatting\"");
+            p,
+            "smith lint >lint.log 2>&1; findings=$(grep -E '^build\\.smith:[0-9]+:[0-9]+: (warning|error)' lint.log); "
+            "formatting=$(smith fmt --dry-run build.smith 2>&1 | grep -c 'clang-format-violations'); "
+            "echo \"${findings:-none} $formatting\"");
         char label[256];
-        __builtin_snprintf(label, sizeof label, "translation %s: build.c is lint-clean and format-clean", name);
+        __builtin_snprintf(label, sizeof label, "translation %s: build.smith is lint-clean and format-clean", name);
         scratch::expect_text(label, "none 0", findings);
     }
     return dumped.status;
@@ -586,12 +587,12 @@ export void test_make_a_makefile_and_a_main_and_no_build_file() {
     scratch::Run build = run(&p, "smith build");
     scratch::expect_status("makefile and main: smith build stops", 2, &build);
     scratch::expect_contains("makefile and main: and says to translate it", build.err,
-                             "smith build --dump-config > build.c");
+                             "smith build --dump-config > build.smith");
     scratch::expect_contains("makefile and main: or to delete it", build.err, "delete it to build by convention");
     scratch::Run verb = run(&p, "smith run");
     scratch::expect_status("makefile and main: a verb stops too", 2, &verb);
     scratch::expect_contains("makefile and main: with the same message", verb.err,
-                             "smith build --dump-config > build.c");
+                             "smith build --dump-config > build.smith");
     scratch::expect_text("makefile and main: nothing was built", "", run(&p, "ls prog build .smith 2>/dev/null").out);
     (void)run(&p, "rm Makefile");
     scratch::Run conventions = run(&p, "smith build --dump-config");
@@ -617,7 +618,7 @@ static void empty_build_file_is_none(const char *file) {
     scratch::expect_contains(label, dump.out, "translated from Makefile");
     scratch::Run build = run(&p, "smith build");
     __builtin_snprintf(label, sizeof label, "empty %s: smith build still sees the Makefile", file);
-    scratch::expect_contains(label, build.err, "smith build --dump-config > build.c");
+    scratch::expect_contains(label, build.err, "smith build --dump-config > build.smith");
     (void)run(&p, "rm Makefile");
     scratch::Run again = run(&p, "smith build --dump-config");
     __builtin_snprintf(label, sizeof label, "empty %s: and with no Makefile the conventions are dumped", file);
