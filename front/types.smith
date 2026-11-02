@@ -823,15 +823,21 @@ export typedef void (*BodyChecker)(Checked *r, const ast::Decl *function);
 // import declares its alias and nothing from the module.
 export typedef const ast::Module *(*ModuleLoader)(const char *path);
 
+// Gives the declarations of the C header `import <h>;` (angled) or `import "h";` names, each with `from_c` set
+// (front::cimport, #1762), or null when it cannot be read. Without one, a C import declares nothing.
+export typedef const ast::Module *(*HeaderLoader)(Str header, Bool angled);
+
 export struct Options {
     Target target;
-    BodyChecker bodies; // null: bodies are not checked
-    ModuleLoader load;  // null: imports are not read
+    BodyChecker bodies;   // null: bodies are not checked
+    ModuleLoader load;    // null: imports are not read
+    HeaderLoader headers; // null: C headers are not read
 };
 
 export struct Checked {
     Options options;
     Bool new_syntax; // the type being resolved is written in smith's own syntax (`x: int`): lowercase names, concepts
+    Bool in_header;  // the declarations of a C header are being declared: a repeated name is not an error
     Str prefix;      // `m::` while the declarations of the module imported as `m` are declared; else empty
     Table table;
     Scopes scopes;
@@ -1092,6 +1098,11 @@ static TypeRef resolve_name(Checked *r, ast::Span span, ast::Path path) {
         }
     }
     const Symbol *found = type_through_modules(r, path);
+    if (found == nullptr && is_c_path(path) && r->options.headers != nullptr) {
+        failf(r, span, "`", path_text(path), "` is not declared by any C header this file imports; ",
+              "write `import <h>;` for the header that has it, and check its spelling");
+        return r->table.invalid;
+    }
     if (found == nullptr && is_c_path(path)) {
         failf(r, span, "not yet typed: c:: name `", path_text(path), "`");
         return r->table.invalid;
@@ -1363,6 +1374,10 @@ static Str qualified(const Checked *r, Bool from_c, Str name) {
 }
 
 static void declare_in_module(Checked *r, Symbol symbol, ast::Span span) {
+    if (r->in_header) {
+        declare(&r->scopes, symbol); // two headers declare `size_t`: the first stays, and no error names a header
+        return;
+    }
     if (!declare(&r->scopes, symbol)) {
         failf(r, span, "`", symbol.name, "` is declared twice in this module; rename one or remove the second");
     }
@@ -1903,6 +1918,64 @@ static void declare_imported(Checked *r, Pending list[:], Usize count) {
     r->prefix = "";
 }
 
+// The enumerators of a C enumeration are names of their own, as in C: `c::red`, a constant of the enumeration's type
+// whose initializer is the value the header gave it.
+static void declare_enumerators(Checked *r, const ast::Decl *d) {
+    if (d->kind != .enumeration) return;
+    const Symbol *named = lookup(&r->scopes, qualified(r, true, d->kind.enumeration.name));
+    if (named == nullptr || named->decl != d) return;
+    for (Usize i = 0; i < countof(d->kind.enumeration.items); i++) {
+        ast::Enumerator item = d->kind.enumeration.items[i];
+        if (item.value == nullptr) continue;
+        ast::Decl *constant = ast::variable(item.name, ast::named("I32"), item.value);
+        constant->from_c = true;
+        Symbol symbol = {.name = qualified(r, true, item.name),
+                         .kind = .variable,
+                         .type = named->type,
+                         .decl = constant,
+                         .is_const = true};
+        declare_in_module(r, symbol, d->span);
+    }
+}
+
+// Declares what each `import <h>;` of `m` brings, as `c::name` (#1762): the header's declarations in the three passes
+// a module's own take.
+static void declare_headers(Checked *r, const ast::Module *m) {
+    if (r->options.headers == nullptr) return;
+    r->in_header = true;
+    for (Usize k = 0; k < countof(m->decls); k++) {
+        const ast::Decl *import = m->decls[k];
+        if (import->kind != .import_c) continue;
+        const ast::Module *header = r->options.headers(import->kind.import_c.header, import->kind.import_c.angled);
+        if (header == nullptr) {
+            failf(r, import->span, "cannot read the C header `", import->kind.import_c.header,
+                  "`; check that it exists and that its flags are right");
+            continue;
+        }
+        r->prefix = "c::"; // a type in a header names another by its bare name: it is looked up as `c::name`
+        for (Usize i = 0; i < countof(header->decls); i++)
+            declare_nominal(r, header->decls[i]);
+        for (Usize i = 0; i < countof(header->decls); i++) {
+            Usize failed = r->error_count;
+            if (!declare_module_type_alias(r, header->decls[i])) declare_alias(r, header->decls[i]);
+            r->error_count = failed; // an alias of a type with no smith type is left out: its use says unknown
+        }
+        for (Usize i = 0; i < countof(header->decls); i++) {
+            Usize before = r->error_count;
+            Usize symbols = r->scopes.count;
+            declare_member(r, header->decls[i]);
+            if (r->error_count > before) { // a declaration this checker cannot type is left out: its use says unknown
+                r->error_count = before;
+                r->scopes.count = symbols;
+            }
+        }
+        for (Usize i = 0; i < countof(header->decls); i++)
+            declare_enumerators(r, header->decls[i]);
+    }
+    r->prefix = "";
+    r->in_header = false;
+}
+
 // Declares the names of `m`, resolves the types of its declarations and, when `o.bodies` is set, checks each body.
 // Errors are in the result, never an abort.
 export Checked check(const ast::Module *m, Options o) {
@@ -1912,6 +1985,7 @@ export Checked check(const ast::Module *m, Options o) {
         return r;
     }
     Pending pending[:] = mem::alloc_slice(Pending, o.load == nullptr ? 0 : max_modules);
+    declare_headers(&r, m);
     declare_imported(&r, pending, collect_imports(&r, m, pending));
     for (Usize i = 0; i < countof(m->decls); i++)
         declare_nominal(&r, m->decls[i]);

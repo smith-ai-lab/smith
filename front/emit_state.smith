@@ -252,6 +252,7 @@ export struct Work {
 // The three hooks emit.smith sets: what a handler cannot call without importing front::emit (a cycle).
 export typedef TyResult (*TypeHook)(Emitter *e, const ast::TypeExpr *t);
 export typedef TyResult (*NodeTypeHook)(Emitter *e, const ast::Expr *x);
+export typedef TyResult (*CheckedTypeHook)(Emitter *e, types::TypeRef t, ast::Span span);
 export typedef Status (*ConvertHook)(Emitter *e, Value value, Ty to, ast::Span span, ConvertSite site);
 
 // Every field the tickets after B1 need. A ticket that finds one missing escalates; it does not edit this.
@@ -299,6 +300,7 @@ export struct Emitter {
 
     TypeHook type_hook;
     NodeTypeHook node_type_hook;
+    CheckedTypeHook checked_type_hook; // a checker type as a `Ty`: the parameters of a C function (#1762)
     ConvertHook convert_hook;
 
     Work work[:]; // the work stack, the next to run last
@@ -398,6 +400,11 @@ export TyResult type_of(Emitter *e, const ast::TypeExpr *t) {
 // The checker's type of an expression, as a `Ty`.
 export TyResult type_of_node(Emitter *e, const ast::Expr *x) {
     return e->node_type_hook(e, x);
+}
+
+// A type the checker names, as a `Ty`.
+export TyResult type_of_checked(Emitter *e, types::TypeRef t, ast::Span span) {
+    return e->checked_type_hook(e, t, span);
 }
 
 // Pushes `value` as a `to`, or the Error for `site`.

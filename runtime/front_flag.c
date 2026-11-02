@@ -55,10 +55,33 @@ static bool smith_front_requested(int count, char **args) {
     return requested;
 }
 
+// The flags front::cimport reads a C header with (#1762), one on each line, in $SMITH_FRONT_CIMPORT_FLAGS for
+// front::compile: the compiler's resource directory and, where there is one, the SDK. The caller's own value stays.
+static void smith_front_cimport_flags(const char *self) {
+    if (getenv("SMITH_FRONT_CIMPORT_FLAGS") != nullptr) return;
+    char folder[PATH_MAX];
+    char programs[PATH_MAX];
+    char resource[PATH_MAX];
+    smith_resource_folder(folder);
+    smith_programs_folder(folder, programs);
+    smith_resource_ensure(folder, programs, self);
+    smith_resource_directory(folder, resource);
+#ifdef __APPLE__
+    smith_sdk_environment(self);
+#endif
+    static char flags[2 * PATH_MAX + 64];
+    int written = snprintf(flags, sizeof flags, "-resource-dir\n%s\n", resource);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof flags);
+    const char *sdk = getenv("SDKROOT");
+    if (sdk != nullptr && *sdk != '\0' && strlen(sdk) < PATH_MAX)
+        snprintf(flags + written, sizeof flags - (size_t)written, "-isysroot\n%s\n", sdk);
+    setenv("SMITH_FRONT_CIMPORT_FLAGS", flags, 1);
+}
+
 // Compiles the `.smith` files among `args` (argv[first ..]) with the front end and rewrites the arguments for clang in
 // smith_front_arguments (argv[0 .. first) first): returns their number, or -1 when a file did not compile (its
 // diagnostics are printed) and 0 when nothing is left for clang to do.
-static int smith_front_rewrite(char **argv, int first, int count, char **args) {
+static int smith_front_rewrite(char **argv, int first, int count, char **args, const char *self) {
     SMITH_ASSERT((size_t)count < smith_front_args_max && first >= 1 && first <= 8);
     for (int i = 0; i < first; i++) // bounded by 8
         smith_front_arguments[i] = argv[i];
@@ -80,6 +103,7 @@ static int smith_front_rewrite(char **argv, int first, int count, char **args) {
         smith_front_object_name(smith_front_sources[i], single ? output : nullptr, compile_only, i);
         smith_front_objects[i] = smith_front_names[i];
     }
+    if (sources > 0) smith_front_cimport_flags(self);
     if (sources > 0 && front_compile_run(smith_front_sources, smith_front_objects, sources, triple) != 0) return -1;
     int used = first;
     size_t seen = 0;

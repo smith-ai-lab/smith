@@ -3593,7 +3593,7 @@ static int smith_compile_main(int argc, char **argv, int at, bool plus, const ch
     char **args = argv + first;
 #ifndef SMITH_CORE
     if (!which && smith_front_requested(count, args)) { // experimental, off by default (runtime/front_flag.c)
-        int forwarded = smith_front_rewrite(argv, first, count, args);
+        int forwarded = smith_front_rewrite(argv, first, count, args, self);
         if (forwarded <= 0) return forwarded < 0 ? 1 : 0;
         argv = smith_front_arguments;
         argc = forwarded;

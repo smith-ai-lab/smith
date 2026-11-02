@@ -23,6 +23,8 @@
 module front::compile;
 
 import front::ast;
+import front::cimport;
+import front::cimport_cache;
 import front::emit;
 import front::emit_object;
 import front::emit_state as state;
@@ -31,6 +33,7 @@ import front::roots;
 import front::types;
 import front::types_decl;
 import front::parse;
+import std::arena;
 import std::ascii;
 import std::clock;
 import std::files;
@@ -231,6 +234,41 @@ static const ast::Module *load_module(const char *dotted) {
     return nullptr;
 }
 
+// The folder of the file being compiled and the arena that holds what a header reads (`load_header` takes no context).
+static Str header_folder;
+static arena::Arena header_arena;
+static Bool header_arena_made = false;
+
+// The folder of `path`: everything before its last `/`, or `.`.
+static Str folder_of(Str path) {
+    for (Usize i = countof(path); i > 0; i--) {
+        if (path[i - 1] != '/') continue;
+        if (i == 1) return path[0:1];
+        return path[0:i - 1];
+    }
+    return ".";
+}
+
+// The declarations of the C header `import <h>;` or `import "h";` names (#1762), read through clang and cached; null
+// when clang cannot read it.
+static const ast::Module *load_header(Str header, Bool angled) {
+    Str name = as_str(format::push(header));
+    Str folder = as_str(format::push(header_folder));
+    if (!header_arena_made) {
+        header_arena = arena::growing(1U << 22, nullptr);
+        header_arena_made = true;
+    }
+    Str empty = "";
+    const char *flags = empty.data;
+    const char *given = c::getenv("SMITH_FRONT_CIMPORT_FLAGS");
+    if (given != nullptr) flags = given;
+    cimport::Header got = cimport::read(&header_arena, name.data, !angled, folder.data, flags);
+    if (countof(got.error) > 0) return nullptr;
+    ast::Module *module = mem::alloc(ast::Module);
+    module->decls = got.decls;
+    return module;
+}
+
 static Report failed(Str message, Times times) {
     return (Report){.ok = false, .text = message, .times = times};
 }
@@ -265,7 +303,9 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     }
     mark = clock::monotonic();
     import_roots = folders;
-    types::Checked checked = types_decl::check_module_with(&parsed.module, target_of(wanted), load_module);
+    header_folder = folder_of(path);
+    types::Checked checked =
+        types_decl::check_module_headers(&parsed.module, target_of(wanted), load_module, load_header);
     times.check = clock::monotonic() - mark;
     if (checked.error_count > 0) {
         Str all = warned;

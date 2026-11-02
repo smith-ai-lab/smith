@@ -42,6 +42,7 @@ export struct Signature {
     state::Ty result;
     state::Ty params[:];
     Bool owned;
+    Bool variadic; // a C function's `...`: arguments past `params` are passed after C's default promotions
 };
 
 export typedef Result(Signature, state::Error) SignatureResult;
@@ -140,9 +141,49 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
     return sig;
 }
 
+// A function of a C header (#1762), `c::printf`: its type is the checker's (the header's own names are typedefs the
+// emitter has no declaration for), and its symbol is its C name. Declared when the first call needs it.
+static SignatureResult c_function(state::Emitter *e, const ast::Decl *d) {
+    if (d->kind != .function) return signature_failed(state::fail("not a function", d->span));
+    Str name = d->kind.function.name;
+    const types::Symbol *symbol = types::lookup(&e->options.checked->scopes, state::msg(format::push("c::", name)));
+    if (symbol == nullptr || symbol->type->kind != .function) {
+        return signature_failed(state::fail("not a C function", d->span));
+    }
+    types::TypeRef type = symbol->type;
+    Usize count = countof(type->slots);
+    if (count > 64) {
+        return signature_failed(state::not_emitted("more than 64 parameters", d->span));
+    }
+    state::Ty all[:] = mem::alloc_slice(state::Ty, count + 1);
+    c::LLVMTypeRef llvm_types[64];
+    for (Usize i = 0; i < count; i++) {
+        state::TyResult made = state::type_of_checked(e, type->slots[i].type, d->span);
+        if (made == .error) {
+            mem::free(all.data);
+            return {.error = made.error};
+        }
+        all[i] = made.ok;
+        llvm_types[i] = made.ok.llvm;
+    }
+    state::TyResult made_result = state::type_of_checked(e, type->element, d->span);
+    if (made_result == .error) {
+        mem::free(all.data);
+        return {.error = made_result.error};
+    }
+    Signature sig = {.result = made_result.ok, .params = all[0:count], .owned = true, .variadic = type->variadic};
+    sig.type = c::LLVMFunctionType(made_result.ok.llvm, llvm_types, (U32)count, type->variadic ? 1 : 0);
+    char *label = state::cstr(name);
+    sig.function = c::LLVMGetNamedFunction(e->module, label);
+    if (sig.function == nullptr) sig.function = c::LLVMAddFunction(e->module, label, sig.type);
+    mem::free(label);
+    return sig;
+}
+
 // The prototype of a function of an imported module, declared when the first call needs it (#1714): an external
 // function named by `key`, the symbol the module's own object defines.
 static SignatureResult imported_function(state::Emitter *e, Str key, const ast::Decl *d) {
+    if (d->from_c) return c_function(e, d);
     SignatureResult made = signature(e, d);
     if (made == .error) return made;
     Signature sig = made.ok;
@@ -153,12 +194,33 @@ static SignatureResult imported_function(state::Emitter *e, Str key, const ast::
     return sig;
 }
 
+static Bool is_c_path(ast::Path path) {
+    return countof(path.segments) == 2 && state::same_text(path.segments[0].text, "c");
+}
+
+// `c::name` where `name` is a function a header declared.
+static Bool c_callee(state::Emitter *e, const ast::Expr *callee, const ast::Decl **found, Str *symbol) {
+    if (callee->kind != .name) return false;
+    Str full = join(callee->kind.name.path);
+    const types::Symbol *target = types::lookup(&e->options.checked->scopes, full);
+    if (target == nullptr || target->kind != .function_symbol || target->decl->kind != .function) {
+        state::free_text(full);
+        return false;
+    }
+    *found = target->decl;
+    *symbol = full;
+    return true;
+}
+
 // The function of an imported module a callee names: `m.sin`, `r.math.sin` (a module imported by another), or `sin`
 // after `sin := m.sin`. The checker has declared each under its module's path (`lib::math::sin`), which is also the
 // symbol the module's object defines. Returns false for any other callee.
 static Bool imported_callee(state::Emitter *e, const ast::Expr *callee, const ast::Decl **found, Str *symbol) {
     if (e->options.checked == nullptr) return false;
     types::Names names = {};
+    if (callee->kind == .name && is_c_path(callee->kind.name.path)) {
+        return c_callee(e, callee, found, symbol);
+    }
     if (callee->kind == .member) {
         names = types::member_names(callee);
     } else if (callee->kind == .name && countof(callee->kind.name.path.segments) == 1) {
@@ -297,6 +359,22 @@ static Bool find_record(state::Emitter *e, Str name, Usize *found) {
     return false;
 }
 
+// `c::point` where a header declared the struct `point`: the record, made when first named.
+static Bool c_record(state::Emitter *e, ast::Path path, Usize *at) {
+    if (e->options.checked == nullptr) return false;
+    Str full = join(path);
+    const types::Symbol *symbol = types::lookup(&e->options.checked->scopes, full);
+    Bool made = false;
+    if (symbol != nullptr && symbol->kind == .type_name && symbol->type->kind == .record) {
+        ast::Span nowhere = {};
+        state::TyResult ty = state::type_of_checked(e, symbol->type, nowhere);
+        if (ty == .error) state::free_text(ty.error.message);
+        made = ty != .error && find_record(e, full, at);
+    }
+    state::free_text(full);
+    return made;
+}
+
 static Bool find_field(state::RecordType record, Str name, Usize *found) {
     for (Usize i = 0; i < countof(record.fields); i++) {
         if (state::same_text(record.fields[i].name, name)) {
@@ -318,13 +396,15 @@ static state::Status construct_finish(state::Emitter *e, const state::Work *w) {
     if (callee->kind != .name) {
         return state::fail("not a name", w->span);
     }
-    Str name = callee->kind.name.path.segments[0].text;
+    Str name = join(callee->kind.name.path);
     Usize count = (Usize)w->number;
     state::Value values[64];
     for (Usize i = count; i > 0; i--)
         values[i - 1] = state::pop_value(e);
     Usize at = 0;
-    if (!find_record(e, name, &at)) return state::failf(w->span, "unknown record ", name);
+    Bool found = find_record(e, name, &at);
+    state::free_text(name);
+    if (!found) return state::failf(w->span, "unknown record ", callee->kind.name.path.segments[0].text);
     state::RecordType record = e->records[at];
     c::LLVMValueRef built = c::LLVMConstNull(record.ty.llvm);
     for (Usize i = 0; i < count; i++) {
@@ -372,6 +452,21 @@ static state::Status construct(state::Emitter *e, const ast::Expr *x, Usize at) 
     return state::success();
 }
 
+// The value of an argument that has no parameter: an integer narrower than `int` widened to `int`, a `float` to
+// `double` (C's default argument promotions).
+static c::LLVMValueRef promoted(state::Emitter *e, state::Value value) {
+    state::Ty ty = value.ty;
+    c::LLVMTypeRef word = c::LLVMInt32TypeInContext(e->context);
+    if (ty.kind == .boolean) return c::LLVMBuildZExt(e->builder, value.llvm, word, "promote");
+    if (ty.kind == .integer && ty.bits < 32) {
+        if (ty.is_signed) return c::LLVMBuildSExt(e->builder, value.llvm, word, "promote");
+        return c::LLVMBuildZExt(e->builder, value.llvm, word, "promote");
+    }
+    if (ty.kind == .floating && ty.bits < 64)
+        return c::LLVMBuildFPExt(e->builder, value.llvm, c::LLVMDoubleTypeInContext(e->context), "promote");
+    return value.llvm;
+}
+
 // The arguments' values are on the value stack, the first deepest: check them and call.
 static state::Status call_finish(state::Emitter *e, const state::Work *w) {
     const ast::Expr *x = w->expr;
@@ -406,6 +501,10 @@ static state::Status call_finish(state::Emitter *e, const state::Work *w) {
     }
     c::LLVMValueRef argv[64];
     for (Usize i = 0; i < count; i++) {
+        if (i >= countof(sig.params)) { // a variadic argument: C's default argument promotions
+            argv[i] = promoted(e, values[i]);
+            continue;
+        }
         if (!state::same_type(values[i].ty, sig.params[slot[i]])) {
             // A value the parameter takes (an integer widened, a payload wrapped in its option) is converted.
             state::Status converted = state::convert(e, values[i], sig.params[slot[i]], args[i]->span, .initialize);
@@ -463,6 +562,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *x, state::Hint _) 
         Usize record = 0;
         if (countof(path.segments) == 1 && find_record(e, path.segments[0].text, &record))
             return construct(e, x, record);
+        if (is_c_path(path) && c_record(e, path, &record)) return construct(e, x, record);
         state::Local local = {};
         if (countof(path.segments) == 1 && state::find_local(e, path.segments[0].text, &local) &&
             local.ty.kind == .fn_value)
@@ -481,7 +581,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *x, state::Hint _) 
     }
     Signature sig = found.ok;
     Usize count = countof(args);
-    if (count != countof(sig.params)) {
+    if (count != countof(sig.params) && !(sig.variadic && count > countof(sig.params))) {
         state::Status wrong =
             state::failf(x->span, key, " takes ", (U64)countof(sig.params), " arguments, the call has ", (U64)count);
         state::free_text(key);
@@ -497,8 +597,10 @@ export state::Status call(state::Emitter *e, const ast::Expr *x, state::Hint _) 
     }
     state::push_then(e, (state::Work){.then = call_finish, .expr = x, .number = count, .span = x->span});
     // The first argument runs first: it is pushed last.
-    for (Usize i = count; i > 0; i--)
-        push_argument(e, args[i - 1], state::hint_of(sig.params[slot[i - 1]]));
+    for (Usize i = count; i > 0; i--) {
+        Bool extra = i - 1 >= countof(sig.params); // a variadic argument has no parameter to give it a type
+        push_argument(e, args[i - 1], extra ? state::no_hint() : state::hint_of(sig.params[slot[i - 1]]));
+    }
     state::free_text(key);
     release(sig);
     return state::success();
