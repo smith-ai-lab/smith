@@ -514,7 +514,8 @@ struct SmithLang {
     int gen_dump_braces;
     int gen_dump_parens;
     char gen_prev;
-    bool namespace_done;       // smith_lang_namespace wrote a generic call itself: there is no name to write
+    bool namespace_done; // smith_lang_namespace wrote a generic call itself: there is no name to write
+    bool erase_proved;   // the name just made is `smith_proved` in an optimized build: `if (1) ; else` goes before it
     uint32_t instance_depth;   // of the instance being written (0: the file's own code)
     uint32_t instance_current; // 1 + the instance being written (0: none)
     char prev_name[64];        // the last token, if it was a plain name: it may be a type the parser knows

@@ -303,6 +303,42 @@ export void test_prove_checks_a_proved_contract_check_is_left_out_of_an_optimize
     scratch::expect_contains("debug keeps every check", debug.out, "0 removed (proved), 4 kept");
 }
 
+// A function only a proved check calls is not emitted in an optimized build (#1072): the lowering writes
+// `if (1) ; else smith_proved(...)`, so clang never emits the call. `optnone` stops clang from deleting the helper
+// itself, which is what would hide the difference.
+constexpr char erased_source[_] = "module main;\n"
+                                  "\n"
+                                  "import std::contract;\n"
+                                  "\n"
+                                  "[[gnu::noinline, clang::optnone]] static Bool small(I32 x) {\n"
+                                  "    return x < 20;\n"
+                                  "}\n"
+                                  "\n"
+                                  "I32 main() {\n"
+                                  "    I32 x = 3;\n"
+                                  "    contract::assert(small(x));\n"
+                                  "    return x;\n"
+                                  "}\n";
+
+export void test_prove_checks_a_function_only_a_proved_check_calls_is_erased_from_an_optimized_object() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "main.smith", erased_source);
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("the project builds", 0, &built);
+    scratch::Run proved = scratch::sh(&p, "smith prove 2>&1");
+    scratch::expect_status("the assert is proved", 0, &proved);
+    scratch::Run debug = scratch::sh(&p, "smith cc -c main.smith -O0 -I .smith/include -o debug.o 2>&1; nm debug.o");
+    scratch::expect_contains("debug keeps the helper", debug.out, "main_small");
+    scratch::Run release =
+        scratch::sh(&p, "smith cc -c main.smith -O2 -I .smith/include -o release.o 2>&1; nm release.o");
+    scratch::expect_lacks("an optimized build has no symbol for it", release.out, "main_small");
+}
+
 export void test_prove_checks_an_edited_source_keeps_its_contract_checks() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);

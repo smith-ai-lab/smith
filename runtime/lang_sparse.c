@@ -265,7 +265,7 @@ static void smith_lang_sparse(SmithLang *lang, const SmithHost *host, const Smit
                 lang->namespace_done = false;
                 return;
             }
-            smith_lang_emit(lang, host, resolved);
+            smith_lang_emit_resolved(lang, host, &resolved);
             return;
         }
     }
@@ -351,7 +351,7 @@ static void smith_lang_sparse_ident(SmithLang *lang, const SmithHost *host, cons
             lang->namespace_done = false;
             return;
         }
-        smith_lang_emit(lang, host, resolved);
+        smith_lang_emit_resolved(lang, host, &resolved);
     } else {
         smith_lang_sparse_sized(lang, host, token);
     }

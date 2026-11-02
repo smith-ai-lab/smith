@@ -481,6 +481,7 @@ static size_t smith_lang_chosen_name(SmithLang *lang, const SmithHost *host, con
         char kept[48];
         snprintf(kept, sizeof kept, "smith_contract_proved_%s", lang->tmp + sizeof "smith_" - 1);
         const char *name = host->omit_proved ? "smith_proved" : kept;
+        lang->erase_proved = host->omit_proved;
         total = strlen(name);
         memcpy(lang->tmp, name, total + 1);
     }
@@ -557,9 +558,30 @@ static bool smith_lang_namespace_read(SmithLang *lang, const SmithHost *host, co
     return true;
 }
 
+// The name a namespace access made, written. A `smith_proved` call of an optimized build comes after `if (1) ; else`
+// (#1072): clang never emits the dead branch, so a function only the proved check's argument calls is not emitted
+// either. A prefix only, so there is no dangling else.
+static void smith_lang_emit_resolved(SmithLang *lang, const SmithHost *host, const SmithToken *resolved) {
+    if (lang->erase_proved) {
+        lang->erase_proved = false;
+        static const char *const words[] = {"if", "(", "1", ")", ";", "else"};
+        for (size_t i = 0; i < 6; i++) { // 6 tokens
+            SmithTokenKind kind = i == 0 || i == 5 ? SmithTokenKind_Identifier
+                                  : i == 2         ? SmithTokenKind_Number
+                                                   : SmithTokenKind_Punctuator;
+            SmithToken made = smith_lang_synth(kind, words[i], strlen(words[i]), resolved);
+            made.line_start = i == 0 && resolved->line_start;
+            made.space_before = i == 0 ? resolved->space_before : i == 5;
+            smith_lang_emit(lang, host, made);
+        }
+    }
+    smith_lang_emit(lang, host, *resolved);
+}
+
 // smith_lang_namespace_read, remembering the name it made: a declaration `m::T x = ...` is typed from it at its `=`.
 static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const SmithToken *name,
                                  const SmithLangBinding *binding, SmithToken *result) {
+    lang->erase_proved = false;
     bool read = smith_lang_namespace_read(lang, host, name, binding, result);
     if (read && !lang->namespace_done && result->length < sizeof lang->slice.qualified) {
         snprintf(lang->slice.qualified, sizeof lang->slice.qualified, "%.*s", (int)result->length, result->text);

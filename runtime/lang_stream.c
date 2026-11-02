@@ -66,7 +66,7 @@ static void smith_lang_stream_identifier(SmithLang *lang, const SmithHost *host,
                     lang->namespace_done = false;
                     return;
                 }
-                smith_lang_emit(lang, host, resolved);
+                smith_lang_emit_resolved(lang, host, &resolved);
                 bool is_type = !binding->is_c &&
                                host->lookup(host->context, resolved.text, resolved.length, SmithLookup_Type).kind ==
                                    SmithLookup_Type;
