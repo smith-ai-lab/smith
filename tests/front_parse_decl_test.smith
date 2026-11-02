@@ -5,9 +5,11 @@
 module front_parse_decl_test;
 
 import front::ast;
+import front::fix;
 import front::lex;
 import front::parse;
 import front::parse_decl;
+import front::parser;
 import std::arena;
 import std::mem;
 import std::test;
@@ -781,4 +783,103 @@ export void test_parse_decl_new_error_an_enumerator() {
     expect_text(new_first_error("enum E {\n    a:\n}\n"), "the type stub reads a name");
     expect_text(new_first_error("enum E {\n    a: T b: U\n}\n"),
                 "a member is one line: expected a line break after it, found `b`");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Today's forms are warnings with fixes (#1507, F2 of #1428): the text `smith lint --fix` writes, and a second run that
+// has nothing left to do.
+
+static void expect_fixed(Str source, Str expected, Usize fixes) {
+    fix::Fixed first = fix::fix_text("t.smith", source);
+    expect_text(first.text, expected);
+    test::check_equal(first.applied, fixes);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+export void test_parse_decl_old_module_line_and_export() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_fixed("module a::b;\nexport I32 c = 3;\n", "pub c: I32 = 3\n", 3);
+}
+
+export void test_parse_decl_old_variables() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_fixed("I32 a = 3;\n", "a: I32 = 3\n", 1);
+    expect_fixed("auto a = 3;\n", "a := 3\n", 1);
+    expect_fixed("I32 a;\n", "mut a: I32\n", 1);
+    expect_fixed("static constexpr I32 n = 8;\n", "static const n: I32 = 8\n", 1);
+    expect_fixed("constexpr auto n = 8;\n", "const n := 8\n", 1);
+    expect_fixed("constexpr Type Meters = F64;\n", "Meters := F64\n", 1);
+}
+
+export void test_parse_decl_old_variables_without_a_fix_warn_and_stay() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_fixed("I32 xs[4];\n", "I32 xs[4];\n", 0);
+    expect_fixed("extern I32 e;\n", "extern I32 e;\n", 0);
+    parser::Parsed parsed = parser::parse("t.smith", "I32 xs[4];\n");
+    test::check_equal(countof(parsed.warnings), (Usize)1);
+    parse::Edits fix = parsed.warnings[0].fix;
+    test::check_equal(countof(fix), (Usize)0);
+}
+
+export void test_parse_decl_old_functions() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_fixed("I32 f(I32 a, I32 b) { return a; }\n", "fn f(a: I32, b: I32) -> I32 { return a; }\n", 1);
+    expect_fixed("void g(void) { }\n", "fn g() { }\n", 1);
+    expect_fixed("constexpr I32 h(I32 a) { return a; }\n", "fn h(a: I32) -> I32 { return a; }\n", 1);
+    expect_fixed("I32 t(constexpr Type T, auto... rest) { return 0; }\n",
+                 "fn t(T: type, rest: ...) -> I32 { return 0; }\n", 1);
+    expect_fixed("I32 p(I32 a);\n", "I32 p(I32 a);\n", 0);
+    expect_fixed("I32 s(I32 xs[:]) { return 0; }\n", "I32 s(I32 xs[:]) { return 0; }\n", 0);
+}
+
+export void test_parse_decl_old_types() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_fixed("struct P {\n    I32 x;\n    I32 y;\n};\n", "struct P {\n    x: I32\n    y: I32\n}\n", 3);
+    expect_fixed("struct Q {\n    I32 a;\n    I32 xs[4];\n};\n", "struct Q {\n    a: I32\n    I32 xs[4];\n}\n", 2);
+    expect_fixed("enum C {\n    red,\n    green = 2,\n};\n", "enum C {\n    red\n    green = 2\n}\n", 3);
+    expect_fixed("typedef U32 Index;\n", "Index := U32\n", 1);
+    expect_fixed("typedef struct {\n    I32 x;\n} Point;\n", "struct Point {\n    x: I32\n}\n", 2);
+    expect_fixed("typedef enum {\n    Circle circle;\n    empty;\n} Shape;\n",
+                 "enum Shape {\n    circle: Circle\n    empty\n}\n", 3);
+}
+
+export void test_parse_decl_old_attributes() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_fixed("[[nodiscard]] I32 a = 1;\n", "a: I32 = 1\n", 2);
+    expect_fixed("[[maybe_unused]] I32 a = 1;\n", "_a: I32 = 1\n", 1);
+    expect_fixed("[[std::affine]] struct K {\n};\n", "@affine struct K {\n}\n", 2);
+    expect_fixed("[[std::c_name(\"k\")]] I32 a = 1;\n", "@c_name(\"k\") a: I32 = 1\n", 2);
+    expect_fixed("[[gnu::cold]] void f(I32 a) { }\n", "@cold fn f(a: I32) { }\n", 2);
+    expect_fixed("void f([[maybe_unused]] I32 a) { }\n", "fn f(_a: I32) { }\n", 1);
+}
+
+export void test_parse_decl_locals_carry_no_fixes() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("I32 a = 3;\n");
+    p.hooks.declaration = parse_decl::declaration;
+    ast::Decl *one = parse_decl::declaration(&p);
+    test::check_equal(countof(p.warnings), (Usize)0);
+    test::check_equal(one != nullptr, true);
 }

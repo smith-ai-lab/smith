@@ -24,6 +24,19 @@
 // declaration with no type (implicit `int`), an array with no size, and a tag spelled as C does (`struct Point p;`).
 // After an error the declaration is skipped to its `;` or its closing `}` and the parse goes on: it never aborts.
 //
+// Today's forms are warnings with fixes (F2 of #1428, #1507; `smith lint --fix` applies them): in a declaration of the
+// file (never a local: `parse_stmt` owns those) `module a::b;` is removed, `export` is `pub`, `I32 a = 3;` is `a: I32 =
+// 3`
+// (`I32 a;` is `mut a: I32`, `auto a = 3;` is `a := 3`, `constexpr I32 n = 3;` is `const n: I32 = 3`, `constexpr Type
+// N = T;` and `typedef T N;` are `N := T`), `R f(A a) {...}` is `fn f(a: A) -> R {...}` (`constexpr` removed, no `->
+// void`), a field `I32 x;` is `x: I32`, an enum member loses its `,` or `;` (a payload is `circle: Circle`), `typedef
+// struct {...} N;` is `struct N {...}`, `};` is `}` and the attributes `[[nodiscard]]`, `[[maybe_unused]]` (a `_`
+// prefix),
+// `[[gnu::always_inline]]` (`@inline`), `[[gnu::noinline]]`, `[[gnu::cold]]`, `[[std::affine]]` and
+// `[[std::c_name("f")]]` are `@name`. A form with no mechanical fix (a prototype, a parameter with no name, an array
+// suffix or `auto`, a bit-field, `extern`) is a warning with no edits. Types are copied as written: the fixes of
+// `parse_type` mend them.
+//
 // Nothing here recurses: a nested `if constexpr` is read with an explicit stack of open blocks; nested types and
 // bodies are the hooks'.
 //
@@ -57,6 +70,22 @@ struct Prefixes {
     Bool is_inline;
     Bool is_constexpr;
     Bool is_thread_local;
+    Bool top;            // a declaration of the file, not a local: only these carry fixes (locals are `parse_stmt`'s)
+    U32 constexpr_start; // the `constexpr` token, and where the token after it starts (a fix deletes the span)
+    U32 constexpr_end;
+    U32 constexpr_after;
+    Bool unused; // a lone `[[maybe_unused]]` group: the fix of the declaration deletes it and prefixes `_`
+    U32 unused_start;
+    U32 unused_after;
+};
+
+// Which spelling the members of a record or an enum used: the old (`I32 x;`, `red,`) or smith's own (`x: I32` and a
+// member that ends with the line). A body with neither (`struct E {}`) takes the `;` of the old form or none.
+struct Style {
+    Bool saw_old;
+    Bool saw_new;
+    Bool top;     // the record or enum is a declaration of the file: its old members carry fixes
+    Bool unfixed; // an old member that has no mechanical fix: the `;` after the `}` stays
 };
 
 // An open `if constexpr (c) { ... }`: the declarations read so far in each branch.
@@ -265,6 +294,120 @@ static Bool same_text(Str a, Str b) {
     return countof(a) == countof(b) && (countof(a) == 0 || mem::equal(a, b));
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Fixes: each form of today's syntax that parses keeps its node and records a warning with the edits that write
+// smith's own form (`smith lint --fix`). Only the declarations of a file carry them (`Prefixes.top`).
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+// The text without the white space at its ends.
+static Str trimmed(Str text) {
+    Usize from = 0;
+    Usize to = countof(text);
+    while (from < to && (text[from] == ' ' || text[from] == '\n' || text[from] == '\t'))
+        from += 1;
+    while (to > from && (text[to - 1] == ' ' || text[to - 1] == '\n' || text[to - 1] == '\t'))
+        to -= 1;
+    return text[from:to];
+}
+
+static parse::Edit edit(U32 start, U32 end, Str text) {
+    ast::Span span = {.start = start, .end = end};
+    return (parse::Edit){.span = span, .text = text};
+}
+
+static parse::Edits with_edit(parse::Edits edits, parse::Edit item) {
+    edits = mem::realloc(edits, countof(edits) + 1);
+    edits[countof(edits) - 1] = item;
+    return edits;
+}
+
+static void warn(parse::Parser *p, U32 start, U32 end, Str message, parse::Edits edits) {
+    ast::Span span = {.start = start, .end = end};
+    parse::warning_fix(p, span, message, edits);
+}
+
+static Bool starts_with(Str text, Str prefix) {
+    if (countof(text) < countof(prefix)) return false;
+    return same_text(text[0:countof(prefix)], prefix);
+}
+
+// What one `[[...]]` attribute is in smith's own syntax: `@name`, nothing, or a `_` prefix on the name.
+struct Mapped {
+    Bool known;
+    Bool unused;
+    Str text;
+};
+
+static Mapped map_attribute(Str inner) {
+    Mapped result = {};
+    Str word = trimmed(inner);
+    result.known = true;
+    if (same_text(word, "nodiscard")) return result;
+    if (same_text(word, "maybe_unused")) {
+        result.unused = true;
+        return result;
+    }
+    if (same_text(word, "gnu::always_inline")) {
+        result.text = "@inline";
+    } else if (same_text(word, "gnu::noinline")) {
+        result.text = "@noinline";
+    } else if (same_text(word, "gnu::cold")) {
+        result.text = "@cold";
+    } else if (same_text(word, "std::affine")) {
+        result.text = "@affine";
+    } else if (starts_with(word, "std::c_name(")) {
+        result.text = as_str(format::push("@c_name(", word[12:countof(word)]));
+    } else {
+        result.known = false;
+    }
+    return result;
+}
+
+// The name of a declaration with its `[[maybe_unused]]` written as a prefix.
+static Str named(const Prefixes *pre, Str name) {
+    if (!pre->unused) return name;
+    return as_str(format::push("_", name));
+}
+
+static parse::Edits with_unused(const Prefixes *pre, parse::Edits edits) {
+    if (!pre->unused) return edits;
+    return with_edit(edits, edit(pre->unused_start, pre->unused_after, ""));
+}
+
+// The group `[[...]]` just read, from `start`: a warning that writes it as `@name` (or removes it), or for a lone
+// `[[maybe_unused]]` a note for the declaration. A `[[gnu::x]]` is an error already: the fix goes on that error.
+static void fix_attribute_group(parse::Parser *p, Prefixes *pre, U32 start, Usize errors_before) {
+    U32 end = p->tokens[p->position - 1].span.end;
+    if (end < start + 4) return;
+    Str inner = p->source[start + 2:end - 2];
+    Mapped mapped = map_attribute(inner);
+    if (!mapped.known) return;
+    U32 after = parse::peek(p).span.start;
+    if (mapped.unused) {
+        pre->unused = true;
+        pre->unused_start = start;
+        pre->unused_after = after;
+        return;
+    }
+    parse::Edits edits = {};
+    if (countof(mapped.text) == 0) {
+        edits = with_edit(edits, edit(start, after, ""));
+    } else {
+        edits = with_edit(edits, edit(start, end, mapped.text));
+    }
+    if (countof(p->errors) == errors_before + 1) {
+        p->errors[errors_before].fix = edits;
+        return;
+    }
+    Str word = trimmed(inner);
+    char message[:] = format::push("`[[", word, "]]` is written `", mapped.text, "`");
+    if (countof(mapped.text) == 0) message = format::push("`[[", word, "]]` is removed: delete it");
+    warn(p, start, end, message, edits);
+}
+
 // A path `a::b::c` (a name or a type name for each segment).
 static ast::Path parse_path(parse::Parser *p, Str what) {
     ast::Path path = {};
@@ -357,6 +500,8 @@ static Bool reject_gnu_spelling(parse::Parser *p) {
 
 // One `[[a, b::c(args)]]` group (the position is at its first `[`).
 static void parse_attribute_group(parse::Parser *p, Prefixes *out) {
+    U32 group_start = parse::peek(p).span.start;
+    Usize errors_before = countof(p->errors);
     parse::advance(p);
     parse::advance(p);
     while (!parse::at(p, lex::end_of_file)) {
@@ -380,6 +525,7 @@ static void parse_attribute_group(parse::Parser *p, Prefixes *out) {
     }
     parse::expect(p, lex::right_bracket, "`]`");
     parse::expect(p, lex::right_bracket, "`]`");
+    if (out->top) fix_attribute_group(p, out, group_start, errors_before);
 }
 
 // The attribute name after `@`: a name, or a keyword that is also an attribute (`@inline`).
@@ -448,8 +594,8 @@ static Bool take_prefix_keyword(Prefixes *pre, lex::TokenKind kind) {
 }
 
 // Attributes and keywords before the type, in any order.
-static Prefixes parse_prefixes(parse::Parser *p) {
-    Prefixes pre = {};
+static Prefixes parse_prefixes(parse::Parser *p, Bool top) {
+    Prefixes pre = {.top = top};
     while (!parse::at(p, lex::end_of_file)) {
         lex::TokenKind kind = parse::peek(p).kind;
         if (at_attribute(p)) {
@@ -461,6 +607,18 @@ static Prefixes parse_prefixes(parse::Parser *p) {
             continue;
         }
         if (reject_gnu_spelling(p)) continue;
+        if (top && kind == lex::kw_export) {
+            ast::Span word = parse::peek(p).span;
+            parse::Edits edits = {};
+            edits = with_edit(edits, edit(word.start, word.end, "pub"));
+            warn(p, word.start, word.end, "`export` is written `pub`", edits);
+        }
+        if (top && kind == lex::kw_constexpr) {
+            ast::Span word = parse::peek(p).span;
+            pre.constexpr_start = word.start;
+            pre.constexpr_end = word.end;
+            pre.constexpr_after = parse::peek_at(p, 1).span.start;
+        }
         if (!take_prefix_keyword(&pre, kind)) break;
         parse::advance(p);
     }
@@ -782,14 +940,150 @@ static void skip_function(parse::Parser *p) {
     }
 }
 
-static ast::Decl *parse_function(parse::Parser *p, const Prefixes *pre, U32 start, ast::TypeExpr *type, Str name) {
+// Where a variable's or function's type starts and its name.
+struct Head {
+    U32 type_start;
+    lex::Token name;
+};
+
+// One parameter, the tokens `from` to `to` (not taken), as smith writes it: `name: T`, `const n: T`, `T: type`,
+// `rest: ...`, an attribute first. Empty when it has no mechanical fix (no name, an array suffix, `auto x`).
+static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
+    Usize at = from;
+    Str prefix = "";
+    Bool unused = false;
+    while (at + 1 < to && p->tokens[at].kind == lex::left_bracket && p->tokens[at + 1].kind == lex::left_bracket) {
+        Usize close = at + 2;
+        while (close + 1 < to &&
+               !(p->tokens[close].kind == lex::right_bracket && p->tokens[close + 1].kind == lex::right_bracket))
+            close += 1;
+        if (close + 1 >= to) return "";
+        Mapped mapped = map_attribute(source_between(p, p->tokens[at + 1].span.end, p->tokens[close].span.start));
+        if (!mapped.known) return "";
+        if (mapped.unused) unused = true;
+        if (countof(mapped.text) > 0) prefix = as_str(format::push(prefix, mapped.text, " "));
+        at = close + 2;
+    }
+    Bool is_const = at < to && p->tokens[at].kind == lex::kw_constexpr;
+    if (is_const) at += 1;
+    if (to <= at + 1) return "";
+    lex::Token last = p->tokens[to - 1];
+    if (last.kind != lex::name && !(is_const && last.kind == lex::type_name)) return "";
+    Str name = parse::text(p, last);
+    if (unused) name = as_str(format::push("_", name));
+    if (to == at + 3 && p->tokens[at].kind == lex::kw_auto && p->tokens[at + 1].kind == lex::ellipsis)
+        return as_str(format::push(prefix, name, ": ..."));
+    Str type = trimmed(source_between(p, p->tokens[at].span.start, p->tokens[to - 2].span.end));
+    if (same_text(type, "auto")) return "";
+    if (is_const && same_text(type, "Type")) return as_str(format::push(prefix, name, ": type"));
+    if (is_const) return as_str(format::push(prefix, "const ", name, ": ", type));
+    return as_str(format::push(prefix, name, ": ", type));
+}
+
+// The parameters, the tokens after `open` up to `close`, as `a: T, b: U`. False when one has no mechanical fix.
+static Bool new_parameters(const parse::Parser *p, Usize open, Usize close, Str *out) {
+    Str none = "";
+    *out = none;
+    if (close == open + 1 || (close == open + 2 && p->tokens[open + 1].kind == lex::kw_void)) return true;
+    Usize depth = 0;
+    Usize from = open + 1;
+    for (Usize i = open + 1; i <= close; i++) {
+        lex::TokenKind kind = p->tokens[i].kind;
+        if (i < close && (kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace)) depth += 1;
+        if (i < close && (kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace))
+            depth -= 1;
+        if (i == close || (kind == lex::comma && depth == 0)) {
+            Str one = new_parameter(p, from, i);
+            if (countof(one) == 0) return false;
+            if (countof(*out) > 0)
+                *out = as_str(format::push(*out, ", ", one));
+            else
+                *out = one;
+            from = i + 1;
+        }
+    }
+    return true;
+}
+
+// `R f(A a) { ... }` is `fn f(a: A) -> R { ... }` (no `-> void`); the parameters are the tokens `open` to `close`. A
+// prototype, and a head with a parameter that has no mechanical fix, are a warning with no edits.
+static void fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize open, Usize close, Bool has_body) {
+    U32 end = p->tokens[close].span.end;
+    // `fn run() {` read with today's tokenizer (`smith lint --fix` does until the switch) is a function whose type is
+    // the name `fn`: it is smith's own form already.
+    if (same_text(trimmed(source_between(p, head.type_start, head.name.span.start)), "fn")) return;
+    Str name = named(pre, parse::text(p, head.name));
+    Str params = "";
+    Bool fixable = new_parameters(p, open, close, &params) && has_body;
+    if (pre->is_constexpr && pre->constexpr_end > head.type_start) fixable = false;
+    if (!fixable) {
+        char message[:] = format::push("a function is written `fn ", name,
+                                       "(a: i32) -> i32 { ... }`: this one has no mechanical fix (a prototype, or a "
+                                       "parameter with no name, an array suffix or `auto`): write it by hand");
+        parse::Edits none = {};
+        warn(p, head.type_start, end, message, none);
+        return;
+    }
+    Str result = trimmed(source_between(p, head.type_start, head.name.span.start));
+    Str written = as_str(format::push("fn ", name, "(", params, ")"));
+    if (!same_text(result, "void")) written = as_str(format::push(written, " -> ", result));
+    parse::Edits edits = {};
+    edits = with_edit(edits, edit(head.type_start, end, written));
+    if (pre->is_constexpr) edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
+    edits = with_unused(pre, edits);
+    char message[:] = format::push("a function is written `", written, " { ... }`: the types follow the names");
+    warn(p, head.type_start, end, message, edits);
+}
+
+// `T a = v;` is `a: T = v`, `T a;` is `mut a: T`, `auto a = v;` is `a := v`, `constexpr T N = v;` is `const N: T = v`
+// and `constexpr Type N = T;` is `N := T`; the `;` goes. The position is after the `;`. An array suffix, `extern` and
+// the like are a warning with no edits.
+static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::TypeExpr *type, U32 equal_end,
+                         Bool suffixed) {
+    lex::Token last = p->tokens[p->position - 1];
+    Bool has_init = equal_end > 0;
+    Bool automatic = type->kind == .auto_type;
+    Str name = named(pre, parse::text(p, head.name));
+    Str written = trimmed(source_between(p, head.type_start, head.name.span.start));
+    Bool type_value = pre->is_constexpr && head.name.kind == lex::type_name && same_text(written, "Type");
+    Bool fixable = last.kind == lex::semicolon && !suffixed && !pre->is_extern;
+    if (pre->is_constexpr && (pre->constexpr_end > head.type_start || !has_init)) fixable = false;
+    if (automatic && !has_init) fixable = false;
+    if (!fixable) {
+        char message[:] = format::push("a variable is written `", name, ": T = value`, the type after the name: `",
+                                       written, " ", name, "` has no mechanical fix (an array suffix, `extern`)");
+        parse::Edits none = {};
+        warn(p, head.type_start, head.name.span.end, message, none);
+        return;
+    }
+    Str lead = pre->is_constexpr && !type_value ? "const " : "";
+    Str text = as_str(format::push(lead, name, ": ", written, " ="));
+    U32 to = equal_end;
+    if (type_value || automatic) text = as_str(format::push(lead, name, " :="));
+    if (!has_init) {
+        text = as_str(format::push("mut ", name, ": ", written));
+        to = head.name.span.end;
+    }
+    parse::Edits edits = {};
+    edits = with_edit(edits, edit(head.type_start, to, text));
+    edits = with_edit(edits, edit(last.span.start, last.span.end, ""));
+    if (pre->is_constexpr) edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
+    edits = with_unused(pre, edits);
+    char message[:] = format::push("a variable is written `", text, " ...`: the name comes first and the `;` goes");
+    warn(p, head.type_start, last.span.end, message, edits);
+}
+
+static ast::Decl *parse_function(parse::Parser *p, const Prefixes *pre, Head head, U32 start, ast::TypeExpr *type) {
     Bool variadic = false;
     Usize errors_before = countof(p->errors);
+    Usize open = p->position;
     ParamList params = parse_params(p, &variadic);
     if (failed_since(p, errors_before)) {
         skip_function(p);
         return nullptr;
     }
+    Str name = parse::text(p, head.name);
+    if (pre->top) fix_function(p, pre, head, open, p->position - 1, parse::at(p, lex::left_brace));
     ast::Stmt *body = nullptr;
     if (parse::at(p, lex::left_brace)) {
         body = parse::statement(p);
@@ -801,9 +1095,13 @@ static ast::Decl *parse_function(parse::Parser *p, const Prefixes *pre, U32 star
     return make(p, start, pre, kind);
 }
 
-static ast::Decl *parse_variable(parse::Parser *p, const Prefixes *pre, U32 start, ast::TypeExpr *type, Str name) {
+static ast::Decl *parse_variable(parse::Parser *p, const Prefixes *pre, Head head, U32 start, ast::TypeExpr *type) {
+    Str name = parse::text(p, head.name);
+    Usize errors_before = countof(p->errors);
     ast::TypeExpr *full = array_suffixes(p, type);
     ast::Expr *init = nullptr;
+    U32 equal_end = 0;
+    if (!parse::at(p, lex::comma) && parse::at(p, lex::equal)) equal_end = parse::peek(p).span.end;
     if (!parse::at(p, lex::comma) && parse::accept(p, lex::equal)) {
         init = parse::expression(p);
         if (init == nullptr) {
@@ -823,6 +1121,8 @@ static ast::Decl *parse_variable(parse::Parser *p, const Prefixes *pre, U32 star
     // A range `for (T x : xs)`: the `:` is the statement's, which reads the range.
     Bool before_range = index_of_range || (init == nullptr && parse::at(p, lex::colon));
     if (!before_range) parse::expect(p, lex::semicolon, "`;` after the declaration");
+    if (pre->top && !before_range && !failed_since(p, errors_before))
+        fix_variable(p, pre, head, type, equal_end, full != type);
     ast::DeclKind kind = {.variable = {.name = name,
                                        .type = full,
                                        .init = init,
@@ -842,6 +1142,7 @@ static ast::Decl *parse_typed(parse::Parser *p, const Prefixes *pre, U32 start) 
         recover(p);
         return nullptr;
     }
+    U32 type_start = parse::peek(p).span.start;
     ast::TypeExpr *type = declared_type(p);
     if (type == nullptr) {
         recover(p);
@@ -860,9 +1161,9 @@ static ast::Decl *parse_typed(parse::Parser *p, const Prefixes *pre, U32 start) 
         recover(p);
         return nullptr;
     }
-    Str name = parse::text(p, name_token);
-    if (parse::at(p, lex::left_paren)) return parse_function(p, pre, start, type, name);
-    return parse_variable(p, pre, start, type, name);
+    Head head = {.type_start = type_start, .name = name_token};
+    if (parse::at(p, lex::left_paren)) return parse_function(p, pre, head, start, type);
+    return parse_variable(p, pre, head, start, type);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -881,9 +1182,29 @@ static Str tag_name(parse::Parser *p) {
     return "";
 }
 
+// `I32 x;` is `x: I32` in a record, and the `;` goes. False (and a warning with no edits) for a field with an array
+// suffix, a bit-width or no name.
+static Bool fix_field(parse::Parser *p, U32 start, lex::Token name, lex::Token semi, Bool blocked) {
+    parse::Edits edits = {};
+    if (blocked || name.kind != lex::name || semi.kind != lex::semicolon) {
+        warn(p, start, semi.span.end,
+             "a field is written `x: T`: this one (an array suffix, a bit-width) has no mechanical fix", edits);
+        return false;
+    }
+    Str word = parse::text(p, name);
+    Str written = trimmed(source_between(p, start, name.span.start));
+    char text[:] = format::push(word, ": ", written);
+    edits = with_edit(edits, edit(start, name.span.end, text));
+    edits = with_edit(edits, edit(semi.span.start, semi.span.end, ""));
+    char message[:] = format::push("a field is written `", text, "`, one to a line, with no `;`");
+    warn(p, start, semi.span.end, message, edits);
+    return true;
+}
+
 // The rest of a field once its type is read: one name (none for an unnamed bit-field, and none for C11's unnamed member
 // `struct { I32 a; };` when `anonymous`), array suffixes, `: width`, `;`.
-static ast::FieldDecl finish_field(parse::Parser *p, ast::FieldDecl field, Bool anonymous, U32 start) {
+static ast::FieldDecl finish_field(parse::Parser *p, ast::FieldDecl field, Bool anonymous, U32 start, Style *style,
+                                   Bool top) {
     if (anonymous && parse::at(p, lex::semicolon)) {
         parse::advance(p);
         field.span = parse::span_from(p, start);
@@ -894,8 +1215,10 @@ static ast::FieldDecl finish_field(parse::Parser *p, ast::FieldDecl field, Bool 
         recover(p);
         return field;
     }
+    lex::Token name_token = {};
     if (parse::at(p, lex::name)) {
-        field.name = parse::text(p, parse::advance(p));
+        name_token = parse::advance(p);
+        field.name = parse::text(p, name_token);
     } else if (!parse::at(p, lex::colon)) {
         if (parse::at(p, lex::right_brace)) {
             Str message =
@@ -909,15 +1232,23 @@ static ast::FieldDecl finish_field(parse::Parser *p, ast::FieldDecl field, Bool 
         several_names_error(p, field.type, field.name);
         return field;
     }
+    ast::TypeExpr *plain = field.type;
     field.type = array_suffixes(p, field.type);
-    if (parse::accept(p, lex::colon)) field.bit_width = parse::expression(p);
-    parse::expect(p, lex::semicolon, "`;` after the field");
+    Bool blocked = field.type != plain;
+    if (parse::accept(p, lex::colon)) {
+        field.bit_width = parse::expression(p);
+        blocked = true;
+    }
+    Usize errors_before = countof(p->errors);
+    lex::Token semi = parse::expect(p, lex::semicolon, "`;` after the field");
+    if (!(top && countof(p->errors) == errors_before && fix_field(p, start, name_token, semi, blocked)))
+        style->unfixed = true;
     field.span = parse::span_from(p, start);
     return field;
 }
 
 // One field whose type is not an anonymous record: a type, then the rest.
-static ast::FieldDecl parse_field(parse::Parser *p) {
+static ast::FieldDecl parse_field(parse::Parser *p, Style *style, Bool top) {
     ast::FieldDecl field = {};
     U32 start = parse::peek(p).span.start;
     if (take_tag_keyword(p)) field.type = parse::type(p);
@@ -925,15 +1256,8 @@ static ast::FieldDecl parse_field(parse::Parser *p) {
         recover(p);
         return field;
     }
-    return finish_field(p, field, false, start);
+    return finish_field(p, field, false, start, style, top);
 }
-
-// Which spelling the members of a record or an enum used: the old (`I32 x;`, `red,`) or smith's own (`x: I32` and a
-// member that ends with the line). A body with neither (`struct E {}`) takes the `;` of the old form or none.
-struct Style {
-    Bool saw_old;
-    Bool saw_new;
-};
 
 // A field in smith's own syntax starts with a lowercase name and `:` (the old form starts with a type).
 static Bool new_field_ahead(const parse::Parser *p) {
@@ -986,7 +1310,7 @@ static FieldList parse_fields(parse::Parser *p, Style *style) {
             node.kind = kind;
             depth -= 1;
             ast::FieldDecl field = {.type = ast::new_type(node)};
-            field = finish_field(p, field, true, field_start);
+            field = finish_field(p, field, true, field_start, style, false);
             add_field(&stack[depth].fields, field);
             continue;
         }
@@ -1009,7 +1333,7 @@ static FieldList parse_fields(parse::Parser *p, Style *style) {
             continue;
         }
         if (at_anonymous_record(p)) parse::error(p, parse::peek(p).span, "anonymous records are nested too deeply");
-        ast::FieldDecl field = parse_field(p);
+        ast::FieldDecl field = parse_field(p, style, style->top && depth == 0);
         if (field.type != nullptr) add_field(&stack[depth].fields, field);
         if (p->position == before) parse::advance(p);
     }
@@ -1062,6 +1386,25 @@ static Bool ends_variant(lex::TokenKind kind) {
     return kind == lex::equal || kind == lex::comma || kind == lex::semicolon || kind == lex::right_brace;
 }
 
+// An old member of an enum, `red,` or `Circle circle;`: the `,` or `;` goes (a line break stands for it when more
+// follows on the line), and a payload is `circle: Circle`.
+static void fix_enumerator(parse::Parser *p, U32 start, Bool plain, lex::Token name, lex::Token ender) {
+    parse::Edits edits = {};
+    Str stand_in = ender.line_break || parse::at(p, lex::right_brace) ? "" : "\n";
+    Str message = "an enum member ends with the line: remove the `,` or `;`";
+    if (!plain && name.kind == lex::name) {
+        Str word = parse::text(p, name);
+        Str written = trimmed(source_between(p, start, name.span.start));
+        char text[:] = format::push(word, ": ", written);
+        edits = with_edit(edits, edit(start, name.span.end, text));
+        message = as_str(format::push("a payload is written `", text, "`, one to a line"));
+    } else if (!plain) {
+        return;
+    }
+    edits = with_edit(edits, edit(ender.span.start, ender.span.end, stand_in));
+    warn(p, start, ender.span.end, message, edits);
+}
+
 // One enumerator: `red`, `Red`, `green = 2`, `Fib7 = f(7)`, `Circle circle;` or `empty;` (a name alone, with or without
 // a value, is a value; a payload has a type before its name), then `,` or `;`.
 static ast::Enumerator parse_enumerator(parse::Parser *p, Style *style) {
@@ -1084,14 +1427,18 @@ static ast::Enumerator parse_enumerator(parse::Parser *p, Style *style) {
         item.span = parse::span_from(p, start);
         return item;
     }
+    lex::Token payload_name = {};
+    Bool plain = false;
     if (at_anonymous_record(p)) {
         item.payload = parse_anonymous_record(p);
         lex::Token name = parse::expect(p, lex::name, "a variant name");
         if (name.kind == lex::name) item.name = parse::text(p, name);
+        style->unfixed = true;
     } else if ((parse::at(p, lex::name) || parse::at(p, lex::type_name)) &&
                (ends_variant(parse::peek_at(p, 1).kind) || line_variant)) {
         item.name = parse::text(p, parse::advance(p));
         if (parse::accept(p, lex::equal)) item.value = parse::expression(p);
+        plain = true;
     } else {
         item.payload = parse::type(p);
         if (item.payload == nullptr) {
@@ -1099,10 +1446,18 @@ static ast::Enumerator parse_enumerator(parse::Parser *p, Style *style) {
             return item;
         }
         lex::Token name = parse::expect(p, lex::name, "a variant name");
-        if (name.kind == lex::name) item.name = parse::text(p, name);
+        if (name.kind == lex::name) {
+            item.name = parse::text(p, name);
+            payload_name = name;
+        }
     }
+    lex::Token ender = parse::peek(p);
     if (parse::accept(p, lex::comma) || parse::accept(p, lex::semicolon)) {
         style->saw_old = true;
+        if (style->top)
+            fix_enumerator(p, start, plain, payload_name, ender);
+        else
+            style->unfixed = true;
     } else if (parse::at(p, lex::right_brace)) {
         // the last member of either spelling
     } else if (line_ended(p)) {
@@ -1144,7 +1499,7 @@ static ast::DeclKind tag_kind(parse::Parser *p, Style *style) {
 // `struct Name {...};`, `union`, `enum`: a declaration of the type by itself.
 static ast::Decl *parse_tag(parse::Parser *p, const Prefixes *pre, U32 start) {
     Usize errors_before = countof(p->errors);
-    Style style = {};
+    Style style = {.top = pre->top};
     ast::DeclKind kind = tag_kind(p, &style);
     if (failed_since(p, errors_before)) {
         // A body in smith's own syntax recovered line by line and is closed; the old form skips to its `;`.
@@ -1161,31 +1516,94 @@ static ast::Decl *parse_tag(parse::Parser *p, const Prefixes *pre, U32 start) {
         // smith's own syntax ends with the line: a `;` after the `}` is removed.
         if (parse::at(p, lex::semicolon)) end_line(p, "type");
     } else if (style.saw_old || parse::at(p, lex::semicolon)) {
+        lex::Token semi = parse::peek(p);
         parse::expect(p, lex::semicolon, "`;` after the type");
+        Bool opaque = kind == .record && kind.record.opaque;
+        if (pre->top && semi.kind == lex::semicolon && !opaque && !style.unfixed) {
+            parse::Edits edits = {};
+            edits = with_edit(edits, edit(semi.span.start, semi.span.end, ""));
+            warn(p, semi.span.start, semi.span.end, "a type ends with its `}`, not `};`: remove the `;`", edits);
+        }
     }
     return make(p, start, pre, kind);
+}
+
+// `typedef T Name;` is `Name := T` (the type follows the name); an array suffix is a warning with no edits.
+static void fix_typedef_alias(parse::Parser *p, U32 typedef_start, Head head, lex::Token semi, Bool suffixed) {
+    Str name = parse::text(p, head.name);
+    Str written = trimmed(source_between(p, head.type_start, head.name.span.start));
+    parse::Edits edits = {};
+    if (suffixed || semi.kind != lex::semicolon) {
+        warn(p, typedef_start, semi.span.end,
+             "an alias is written `Name := T`: one with an array suffix has no mechanical fix", edits);
+        return;
+    }
+    char text[:] = format::push(name, " := ", written);
+    edits = with_edit(edits, edit(typedef_start, semi.span.end, text));
+    char message[:] = format::push("an alias is written `", text, "`");
+    warn(p, typedef_start, semi.span.end, message, edits);
+}
+
+// `typedef struct {...} Name;` is `struct Name {...}` (`union`, `enum` alike): `typedef` goes, the name moves to the
+// tag, and the `Name;` after the `}` goes. A tag with another name than the alias, or a member with no fix, is a
+// warning with no edits.
+static void fix_typedef_tag(parse::Parser *p, Usize typedef_index, Usize close_index, lex::Token alias, lex::Token semi,
+                            Bool renamed, Bool unfixed) {
+    lex::Token typedef_token = p->tokens[typedef_index];
+    lex::Token keyword = p->tokens[typedef_index + 1];
+    lex::Token close = p->tokens[close_index];
+    parse::Edits edits = {};
+    if (renamed || unfixed || semi.kind != lex::semicolon || close.kind != lex::right_brace) {
+        warn(p, typedef_token.span.start, semi.span.end,
+             "a type is declared as `struct Name {...}`: this typedef (another tag name, or a member with no fix) has "
+             "no mechanical fix",
+             edits);
+        return;
+    }
+    Str name = parse::text(p, alias);
+    lex::Token after_keyword = p->tokens[typedef_index + 2];
+    Bool has_tag = after_keyword.kind == lex::type_name;
+    if (has_tag) {
+        edits = with_edit(edits, edit(typedef_token.span.start, keyword.span.start, ""));
+    } else {
+        char head[:] = format::push(parse::text(p, keyword), " ", name);
+        edits = with_edit(edits, edit(typedef_token.span.start, keyword.span.end, head));
+    }
+    edits = with_edit(edits, edit(close.span.end, semi.span.end, ""));
+    char message[:] =
+        format::push("a type is declared as `", parse::text(p, keyword), " ", name, " {...}`, not with `typedef`");
+    warn(p, typedef_token.span.start, semi.span.end, message, edits);
 }
 
 // `typedef struct {...} Name;`, `typedef enum {...} Name;` and `typedef T Name;` (a tuple is a type: `typedef struct {
 // I32, F32 } Pair;`).
 static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start) {
+    Usize typedef_index = p->position;
     parse::advance(p);
     Usize errors_before = countof(p->errors);
     if (!parse_type::tuple_ahead(p) &&
         (parse::at(p, lex::kw_struct) || parse::at(p, lex::kw_union) || parse::at(p, lex::kw_enum))) {
-        Style style = {};
+        Style style = {.top = pre->top};
         ast::DeclKind kind = tag_kind(p, &style);
+        Usize close_index = p->position - 1;
         lex::Token alias = parse::expect(p, lex::type_name, "the type's name after `}`");
         if (failed_since(p, errors_before)) {
             recover(p);
             return nullptr;
         }
         Str name = parse::text(p, alias);
+        Str tag = "";
+        if (kind == .record) tag = kind.record.name;
+        if (kind == .enumeration) tag = kind.enumeration.name;
+        Bool renamed = countof(tag) > 0 && !same_text(tag, name);
         if (kind == .record && countof(kind.record.name) == 0) kind.record.name = name;
         if (kind == .enumeration && countof(kind.enumeration.name) == 0) kind.enumeration.name = name;
-        parse::expect(p, lex::semicolon, "`;` after the type");
+        lex::Token semi = parse::expect(p, lex::semicolon, "`;` after the type");
+        if (pre->top && !failed_since(p, errors_before))
+            fix_typedef_tag(p, typedef_index, close_index, alias, semi, renamed, style.unfixed);
         return make(p, start, pre, kind);
     }
+    U32 type_start = parse::peek(p).span.start;
     ast::TypeExpr *type = parse::type(p);
     if (type == nullptr) {
         recover(p);
@@ -1208,7 +1626,11 @@ static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start
         return nullptr;
     }
     reject_gnu_spelling(p);
-    parse::expect(p, lex::semicolon, "`;` after the type");
+    lex::Token semi = parse::expect(p, lex::semicolon, "`;` after the type");
+    if (pre->top && !failed_since(p, errors_before)) {
+        Head head = {.type_start = type_start, .name = alias};
+        fix_typedef_alias(p, p->tokens[typedef_index].span.start, head, semi, full != type);
+    }
     ast::DeclKind kind = {.type_alias = {.name = name, .type = full}};
     return make(p, start, pre, kind);
 }
@@ -1498,9 +1920,9 @@ static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 
 }
 
 // One declaration that opens no block of its own.
-static ast::Decl *parse_simple(parse::Parser *p) {
+static ast::Decl *parse_simple(parse::Parser *p, Bool top) {
     U32 start = parse::peek(p).span.start;
-    Prefixes pre = parse_prefixes(p);
+    Prefixes pre = parse_prefixes(p, top);
     lex::TokenKind kind = parse::peek(p).kind;
     if (kind == lex::kw_fn) return parse_new_function(p, &pre, start);
     if (at_destructure(p)) {
@@ -1551,7 +1973,7 @@ static void add_to_frame(Frame *top, ast::Decl *item) {
 
 // One declaration, which for an `if constexpr` is the whole block with its declarations: the open blocks are an
 // explicit stack, so a nest of them is no recursion.
-static ast::Decl *parse_one(parse::Parser *p) {
+static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
     FrameList stack = {};
     Usize depth = 0;
     for (Usize step = 0; step <= countof(p->tokens); step++) {
@@ -1588,7 +2010,7 @@ static ast::Decl *parse_one(parse::Parser *p) {
             continue;
         } else {
             Usize before = p->position;
-            done = parse_simple(p);
+            done = parse_simple(p, at_top);
             if (done == nullptr && p->position == before) parse::advance(p);
         }
         for (Usize level = 0; level <= countof(stack); level++) {
@@ -1612,20 +2034,33 @@ static ast::Decl *parse_one(parse::Parser *p) {
 
 // One declaration, the hook `parse::Hooks.declaration`: null after an error, with the parser past the bad declaration.
 export ast::Decl *declaration(parse::Parser *p) {
-    return parse_one(p);
+    return parse_one(p, false);
+}
+
+// `module a::b;` is removed: the path of the file names the module. The line goes with it.
+static void fix_module_line(parse::Parser *p, lex::Token module_token, lex::Token semi) {
+    U32 end = semi.span.end;
+    if (end < countof(p->source) && p->source[end] == '\n') end += 1;
+    Str path = trimmed(source_between(p, module_token.span.end, semi.span.start));
+    char message[:] = format::push("the path of the file names the module: remove `module ", path, ";`");
+    parse::Edits edits = {};
+    edits = with_edit(edits, edit(module_token.span.start, end, ""));
+    warn(p, module_token.span.start, semi.span.end, message, edits);
 }
 
 // A whole file: an optional `module x::y;` (recorded in the module's name until the keyword is the switch), then
 // declarations to the end of the file. `file` is the file's name, kept in the module.
 export ast::Module file(parse::Parser *p, Str file) {
     ast::Module result = {.file = file};
+    lex::Token module_token = parse::peek(p);
     if (parse::accept(p, lex::kw_module)) {
         result.name = parse_path(p, "a module name");
-        parse::expect(p, lex::semicolon, "`;` after the module's name");
+        lex::Token semi = parse::expect(p, lex::semicolon, "`;` after the module's name");
+        if (semi.kind == lex::semicolon) fix_module_line(p, module_token, semi);
     }
     while (!parse::at(p, lex::end_of_file)) {
         Usize before = p->position;
-        ast::Decl *item = parse_one(p);
+        ast::Decl *item = parse_one(p, true);
         if (item != nullptr) result.decls = push_decl(result.decls, item);
         if (p->position == before) parse::advance(p);
     }
