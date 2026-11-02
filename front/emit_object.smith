@@ -1,8 +1,9 @@
 // front::emit_object: write an LLVM module to an object file for a target (#1134, B4 of #1112). A real build links
 // objects, and C files link with Smith ones, so the object is the same one `smith cc` hands to lld. Nothing here reads
 // the host: the triple comes from the caller's `emit::Target`, the CPU and features from the options (empty: the
-// triple's defaults). Optimization passes are not run (`LLVMRunPasses` is out of scope); `optimization` only sets the
-// code generator's level. Not part of `smith cc` yet.
+// triple's defaults). `optimization` 1 to 3 runs LLVM's new pass manager (`default<O1>` to `default<O3>`) on the module
+// before it is emitted, and sets the code generator's level; 0 runs nothing. Checks stay: the optimizer folds a check
+// it proves cannot fail and never drops the call on a path that can. Not part of `smith cc` yet.
 module front::emit_object;
 
 import front::emit;
@@ -10,8 +11,10 @@ import front::emit_state as state;
 import std::format;
 import std::mem;
 import <llvm-c/Core.h>;
+import <llvm-c/Error.h>;
 import <llvm-c/Target.h>;
 import <llvm-c/TargetMachine.h>;
+import <llvm-c/Transforms/PassBuilder.h>;
 import <string.h>;
 
 export struct ObjectOptions {
@@ -23,6 +26,7 @@ export struct ObjectOptions {
 
 export typedef typeof(Str) Path; // a typedef first: a slice named in Result(...) directly is a known gap
 export typedef Result(Path, emit::Error) WriteResult;
+typedef Result(Bool, emit::Error) PassResult;
 
 // An LLVM message (consumed: LLVM's string is disposed of) as an Error in the allocator in force.
 static emit::Error llvm_error(Str what, char *text) {
@@ -44,6 +48,27 @@ static c::LLVMCodeGenOptLevel level_of(I32 optimization) {
     if (optimization == 1) return c::LLVMCodeGenLevelLess;
     if (optimization == 2) return c::LLVMCodeGenLevelDefault;
     return c::LLVMCodeGenLevelAggressive;
+}
+
+// The pipeline of an optimization level above 0.
+static const char *pipeline_of(I32 optimization) {
+    if (optimization == 1) return "default<O1>";
+    if (optimization == 2) return "default<O2>";
+    return "default<O3>";
+}
+
+// Run the optimizer on `module` in place (the caller still owns it). An Error when LLVM's pass manager fails.
+static PassResult optimize(c::LLVMModuleRef module, c::LLVMTargetMachineRef machine, I32 optimization) {
+    c::LLVMPassBuilderOptionsRef passes = c::LLVMCreatePassBuilderOptions();
+    defer c::LLVMDisposePassBuilderOptions(passes);
+    c::LLVMErrorRef failed = c::LLVMRunPasses(module, pipeline_of(optimization), machine, passes);
+    if (failed != nullptr) {
+        char *text = c::LLVMGetErrorMessage(failed); // consumes `failed`
+        emit::Error error = {.message = state::msg(format::push("LLVM's optimizer failed: ", (const char *)text))};
+        c::LLVMDisposeErrorMessage(text);
+        return {.error = error};
+    }
+    return true;
 }
 
 // The data layout of the machine as text, to compare with the module's. Dispose of it with LLVMDisposeMessage.
@@ -81,6 +106,10 @@ export WriteResult write(c::LLVMModuleRef module, ObjectOptions options, Str pat
         Str message = state::msg(format::push("the module was emitted for another target: its data layout is \"", have,
                                               "\", the machine's is \"", (const char *)wanted, "\""));
         return {.error = (emit::Error){.message = message}};
+    }
+    if (options.optimization > 0) {
+        PassResult optimized = optimize(module, machine, options.optimization);
+        if (optimized == .error) return {.error = optimized.error};
     }
     if (c::LLVMTargetMachineEmitToFile(machine, module, file, c::LLVMObjectFile, &text) != 0) {
         return {.error = llvm_error("cannot write the object", text)};
