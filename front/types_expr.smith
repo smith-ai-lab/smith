@@ -749,6 +749,39 @@ export Bool is_undefined(const ast::Expr *e) {
     return countof(path.segments) == 1 && same_text(path.segments[0].text, "undefined");
 }
 
+// `m.sin`, `m.b.T`, `m::sin`: names read through modules (#1677). A function or constant takes its type; a module, a
+// type and a name that is missing are errors that say so. False when the first name is not a module.
+static Bool module_value(types::Checked *c, Frame f, types::Names names) {
+    const ast::Expr *e = f.node;
+    if (names.count < 2 || c->options.load == nullptr) return false;
+    const types::Symbol *first = types::scoped(c, names.items[0]);
+    if (first == nullptr || first->kind != .module_name) return false;
+    types::Through t = types::through_modules(c, &names);
+    if (t.symbol == nullptr) {
+        types::report_missing(c, e->span, t);
+        poison(c, e);
+        return true;
+    }
+    if (t.stopped) {
+        types::failf(c, e->span, "`", t.symbol->name, "` has no members; only a module has names after a `.`");
+        poison(c, e);
+        return true;
+    }
+    if (t.symbol->kind == .module_name) {
+        types::failf(c, e->span, "`", types::module_dotted(t.symbol),
+                     "` is a module: a module is known only at compile ", "time, so write a name of it, such as `",
+                     names.items[names.count - 1], ".name`");
+        poison(c, e);
+    } else if (t.symbol->kind == .type_name) {
+        types::failf(c, e->span, "`", names.items[names.count - 1], "` is a type, not a value; write a variable, a ",
+                     "function or a constant here");
+        poison(c, e);
+    } else {
+        finish(c, e, t.symbol->type, f.expected);
+    }
+    return true;
+}
+
 static void name_expr(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .name)) {
@@ -761,18 +794,25 @@ static void name_expr(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
+    if (s == nullptr && countof(path.segments) > 1 && countof(path.segments) <= 8) {
+        types::Names names = {.count = countof(path.segments)};
+        for (Usize i = 0; i < names.count; i++)
+            names.items[i] = path.segments[i].text;
+        if (module_value(c, f, names)) return;
+    }
     if (s == nullptr) {
         unknown_name(c, e, path);
         return;
     }
-    if (s->kind == .type_name || s->kind == .module_name) {
-        Str name = path_str(path);
-        Str what = "module";
-        if (s->kind == .type_name) {
-            what = "type";
-        }
-        types::failf(c, e->span, "`", name, "` is a ", what,
-                     ", not a value; write a variable, a function or a constant here");
+    if (s->kind == .module_name) {
+        types::failf(c, e->span, "`", path_str(path), "` is a module: a module is known only at compile time, so it ",
+                     "cannot be stored, passed or compared; write a name of it, such as `", path_str(path), ".name`");
+        poison(c, e);
+        return;
+    }
+    if (s->kind == .type_name) {
+        types::failf(c, e->span, "`", path_str(path), "` is a type, not a value; write a variable, a function or a ",
+                     "constant here");
         poison(c, e);
         return;
     }
@@ -3130,6 +3170,7 @@ static void before(types::Checked *c, Work *w, Frame f) {
         push(w, base, nullptr, 0);
     } else if (e->kind == .member) {
         const ast::Expr *base = e->kind.member.base;
+        if (module_value(c, f, types::member_names(e))) return;
         push(w, e, f.expected, 1);
         push(w, base, nullptr, 0);
     } else if (e->kind == .cast) {

@@ -1,0 +1,521 @@
+// Differential test: ninja against smith's executor (`smith --smith-exec`) on random graphs.
+//
+// usage: ninja_compare <smith binary> [first seed [last seed [steps]]]
+//
+// Not part of `smith test`, which needs no ninja: run it by hand when the executor changes, with ninja installed (it
+// exits 0 saying so when there is none). Build it with the smith under test:
+//   smith cc tests/ninja_compare.smith lib/std/{arena,contract,env,files,format,mem,net,process,random,text}.smith
+//   lib/handlers.c lib/trace.c -o ninja_compare
+//
+// For each seed, a random manifest (plain, restat, depfile and multi-output steps, implicit and order-only inputs,
+// aliases and a default) is built in two identical folders, one by ninja and one by the executor. Then the same random
+// edits (a source changed or only touched, an output deleted or touched, a header a depfile named, a depfile's list, a
+// command, one target asked for) are made in both, and after each edit the two builds must have run the same commands,
+// made the same files and exited with the same status. VERBOSE=1 prints the commands each side ran at each step.
+module ninja_compare;
+
+import std::arena;
+import std::env;
+import std::files;
+import std::format;
+import std::mem;
+import std::process;
+import std::random;
+import <stdio.h>;
+import <stdlib.h>;
+import <string.h>;
+import <sys/time.h>;
+import <unistd.h>;
+
+constexpr Usize sources_max = 5;
+constexpr Usize headers_max = 4;
+constexpr Usize edges_max = 14;
+constexpr Usize outputs_max = 28;
+constexpr Usize inputs_max = 3;
+constexpr Usize ran_max = 64;
+
+typedef U8 Kind;
+constexpr Kind plain = 0;
+constexpr Kind restat = 1;
+constexpr Kind deps = 2;
+constexpr Kind multi = 3;
+constexpr Kind restat_deps = 4;
+constexpr Kind restat_multi = 5;
+
+struct Edge {
+    I32 id;
+    Kind kind;
+    const char *ins[inputs_max];
+    Usize in_count;
+    const char *implicit; // nullptr: none
+    const char *order;    // nullptr: none
+    const char *outs[2];
+    Usize out_count;
+    I32 version;
+    const char *deplist; // nullptr: the step has no depfile
+    const char *headers[headers_max];
+    Usize header_count;
+};
+
+struct Graph {
+    const char *sources[sources_max];
+    Usize source_count;
+    const char *headers[headers_max];
+    Usize header_count;
+    Edge edges[edges_max];
+    Usize edge_count;
+    const char *outputs[outputs_max];
+    Usize output_count;
+    const char *alias_targets[4];
+    Usize alias_count; // 0: no alias `all`
+    const char *defaults[3];
+    Usize default_count;
+};
+
+// ---- random numbers: a key for each draw, from the seed and a counter
+
+struct Rng {
+    U64 seed;
+    U64 drawn;
+};
+
+// A number in [low, high].
+Usize between(Rng *rng, Usize low, Usize high) {
+    random::Key key = random::key_make(rng->seed ^ (rng->drawn * 0x9E3779B97F4A7C15ULL));
+    rng->drawn++;
+    return (Usize)random::uniform_int64_sample(key, (random::UniformInt64){.low = (I64)low, .high = (I64)high});
+}
+
+Bool chance(Rng *rng, Usize percent) {
+    return between(rng, 0, 99) < percent;
+}
+
+// k of the count names, each at most once, written to picked.
+Usize sample(Rng *rng, const char *const *pool, Usize count, Usize k, const char **picked) {
+    const char *left[outputs_max];
+    for (Usize i = 0; i < count; i++)
+        left[i] = pool[i];
+    Usize n = k < count ? k : count;
+    for (Usize i = 0; i < n; i++) {
+        Usize j = between(rng, i, count - 1);
+        const char *swap = left[i];
+        left[i] = left[j];
+        left[j] = swap;
+        picked[i] = left[i];
+    }
+    return n;
+}
+
+// ---- text
+
+typedef format::Chars Text;
+
+typeof(const char[:]) text_of(const U8 data[:]) {
+    const char *start = (const char *)data.data;
+    return start[0:countof(data)];
+}
+
+Text join(const char *const *items, Usize count, const char *separator) {
+    Text out = format::push("");
+    for (Usize i = 0; i < count; i++)
+        out = format::push(out, i > 0 ? separator : "", items[i]);
+    return out;
+}
+
+// ninja's `$` is its own escape: a shell's `$` is written `$$` in a manifest.
+Text escape_dollars(Text text) {
+    Text out = format::push("");
+    for (Usize i = 0; i < countof(text); i++)
+        out = text[i] == '$' ? format::push(out, "$$") : format::push(out, text[i:i + 1]);
+    return out;
+}
+
+Bool is_restat(Kind kind) {
+    return kind == restat || kind == restat_deps || kind == restat_multi;
+}
+
+Bool has_depfile(Kind kind) {
+    return kind == deps || kind == restat_deps;
+}
+
+// ---- the graph
+
+void add_edge(Rng *rng, Graph *graph, I32 id) {
+    Edge *edge = &graph->edges[graph->edge_count];
+    graph->edge_count++;
+    const char *pool[sources_max + outputs_max];
+    Usize pool_count = 0;
+    for (Usize i = 0; i < graph->source_count; i++)
+        pool[pool_count++] = graph->sources[i];
+    for (Usize i = 0; i < graph->output_count; i++)
+        pool[pool_count++] = graph->outputs[i];
+    edge->id = id;
+    edge->in_count = sample(rng, pool, pool_count, between(rng, 0, 3), edge->ins);
+    const char *one[1];
+    if (chance(rng, 30) && sample(rng, pool, pool_count, between(rng, 0, 1), one) == 1) edge->implicit = one[0];
+    if (graph->output_count > 0 && chance(rng, 30) &&
+        sample(rng, graph->outputs, graph->output_count, between(rng, 0, 1), one) == 1)
+        edge->order = one[0];
+    const Kind kinds[8] = {plain, plain, restat, restat, deps, multi, restat_deps, restat_multi};
+    edge->kind = kinds[between(rng, 0, 7)];
+    edge->outs[0] = format::push("o", id, ".txt").data;
+    edge->out_count = 1;
+    if (edge->kind == multi || edge->kind == restat_multi) {
+        edge->outs[1] = format::push("o", id, "b.txt").data;
+        edge->out_count = 2;
+    }
+    if (has_depfile(edge->kind)) {
+        edge->deplist = format::push("dl", id, ".txt").data;
+        edge->header_count =
+            sample(rng, graph->headers, graph->header_count, between(rng, 0, graph->header_count), edge->headers);
+    }
+    for (Usize i = 0; i < edge->out_count; i++)
+        graph->outputs[graph->output_count++] = edge->outs[i];
+}
+
+Graph make_graph(Rng *rng) {
+    Graph graph = {};
+    graph.source_count = between(rng, 2, 5);
+    for (Usize i = 0; i < graph.source_count; i++)
+        graph.sources[i] = format::push("s", i, ".txt").data;
+    graph.header_count = between(rng, 2, 4);
+    for (Usize i = 0; i < graph.header_count; i++)
+        graph.headers[i] = format::push("h", i, ".h").data;
+    Usize edges = between(rng, 4, 13);
+    for (Usize i = 0; i < edges; i++)
+        add_edge(rng, &graph, (I32)i);
+    if (chance(rng, 70))
+        graph.alias_count = sample(rng, graph.outputs, graph.output_count, between(rng, 1, 4), graph.alias_targets);
+    if (graph.alias_count > 0 && chance(rng, 60)) {
+        graph.defaults[0] = "all";
+        graph.default_count = 1;
+    } else {
+        graph.default_count = sample(rng, graph.outputs, graph.output_count, between(rng, 1, 3), graph.defaults);
+    }
+    return graph;
+}
+
+// The shell command of a step: what it makes, what it logs in runs.log, and a version comment that changes its hash.
+Text command(const Edge *edge) {
+    Text ins = join(edge->ins, edge->in_count, " ");
+    Text inputs = edge->in_count > 0 ? ins : format::push("/dev/null");
+    const char *out = edge->outs[0];
+    Text body = format::push("");
+    if (has_depfile(edge->kind)) {
+        body = format::push("cat ", ins, " ", edge->deplist, " > ", out, ".new; echo \"", out, ": $(cat ",
+                            edge->deplist, ")\" > ", out, ".d");
+    } else if (edge->kind == restat) {
+        body = format::push("head -n 1 ", inputs, " > ", out, ".new");
+    } else if (edge->kind == restat_multi) {
+        // The first output is the first line of the inputs, the second all of them: one can stay while the other
+        // changes.
+        const char *second = edge->outs[1];
+        body = format::push("cat ", inputs, " > ", second, ".all; head -n 1 ", second, ".all > ", out, ".new; (cmp -s ",
+                            second, ".all ", second, " && rm ", second, ".all) || mv ", second, ".all ", second);
+    } else {
+        body = format::push("cat ", inputs, " > ", out, ".new");
+    }
+    if (is_restat(edge->kind))
+        body = format::push(body, "; (cmp -s ", out, ".new ", out, " && rm ", out, ".new) || mv ", out, ".new ", out);
+    else
+        body = format::push(body, "; mv ", out, ".new ", out);
+    if (edge->kind != restat_multi && edge->out_count > 1) body = format::push(body, "; cp ", out, " ", edge->outs[1]);
+    return format::push(body, "; echo ", edge->id, " >> runs.log # v", edge->version);
+}
+
+const U8 *bytes_pointer(Text text) {
+    return (const U8 *)text.data;
+}
+
+// The characters of a text as bytes, to write them.
+typeof(const U8[:]) bytes_of(Text text) {
+    const U8 *start = bytes_pointer(text);
+    return start[0:countof(text)];
+}
+
+void write_text(const char *path, Text text) {
+    files::CountResult written = files::write_file(path[0:c::strlen(path)], bytes_of(text), files::Replace);
+    if (written == .error) {
+        Text message = format::push("ninja_compare: cannot write ", path, "\n");
+        (void)c::write(2, message.data, countof(message));
+        c::exit(2);
+    }
+}
+
+Text edge_lines(const Edge *edge) {
+    Text outs = join(edge->outs, edge->out_count, " ");
+    const char *inputs[inputs_max + 1];
+    for (Usize i = 0; i < edge->in_count; i++)
+        inputs[i] = edge->ins[i];
+    Usize in_count = edge->in_count;
+    if (edge->deplist != nullptr) inputs[in_count++] = edge->deplist;
+    Text text = format::push("build ", outs, ": step ", join(inputs, in_count, " "));
+    if (edge->implicit != nullptr) text = format::push(text, " | ", edge->implicit);
+    if (edge->order != nullptr) text = format::push(text, " || ", edge->order);
+    text = format::push(text, "\n  cmd = ", escape_dollars(command(edge)), "\n");
+    if (is_restat(edge->kind)) text = format::push(text, "  restat = 1\n");
+    if (has_depfile(edge->kind)) text = format::push(text, "  depfile = ", edge->outs[0], ".d\n  deps = gcc\n");
+    return text;
+}
+
+void write_manifest(const Graph *graph, Text path) {
+    Text text = format::push("builddir = .smith\nrule step\n  command = $cmd\n");
+    for (Usize i = 0; i < graph->edge_count; i++)
+        text = format::push(text, edge_lines(&graph->edges[i]));
+    if (graph->alias_count > 0)
+        text = format::push(text, "build all: phony ", join(graph->alias_targets, graph->alias_count, " "), "\n");
+    text = format::push(text, "default ", join(graph->defaults, graph->default_count, " "), "\n");
+    write_text(path.data, text);
+}
+
+// ---- the folders
+
+Text in_folder(Text folder, const char *name) {
+    return format::push(folder, "/", name);
+}
+
+void remove_tree(Text path) {
+    const char *const argv[4] = {"/bin/rm", "-rf", path.data, nullptr};
+    (void)process::run(argv[0:3]);
+}
+
+void setup(const Graph *graph, Text folder, U64 seed) {
+    remove_tree(folder);
+    (void)files::make_folder(folder);
+    Rng rng = {.seed = seed, .drawn = 1000};
+    for (Usize i = 0; i < graph->source_count; i++)
+        write_text(in_folder(folder, graph->sources[i]).data, format::push((I32)between(&rng, 0, 99), "\nline\n"));
+    for (Usize i = 0; i < graph->header_count; i++)
+        write_text(in_folder(folder, graph->headers[i]).data, format::push("header ", (I32)between(&rng, 0, 99), "\n"));
+    for (Usize i = 0; i < graph->edge_count; i++) {
+        const Edge *edge = &graph->edges[i];
+        if (edge->deplist != nullptr)
+            write_text(in_folder(folder, edge->deplist).data,
+                       format::push(join(edge->headers, edge->header_count, " "), "\n"));
+    }
+    write_manifest(graph, in_folder(folder, "build.ninja"));
+}
+
+struct Result {
+    I32 status;
+    I32 ran[ran_max];
+    Usize ran_count;
+    Text said;
+};
+
+// The numbers of runs.log, in order of value: the commands run do not have an order that has to match.
+void read_ran(Text folder, Result *result) {
+    files::BytesResult log = files::read_file(in_folder(folder, "runs.log"));
+    if (log == .error) return;
+    I32 value = 0;
+    Bool in_number = false;
+    for (Usize i = 0; i <= countof(log.ok); i++) {
+        Bool digit = i < countof(log.ok) && log.ok[i] >= '0' && log.ok[i] <= '9';
+        if (digit) {
+            value = value * 10 + (I32)(log.ok[i] - '0');
+            in_number = true;
+        } else if (in_number && result->ran_count < ran_max) {
+            Usize at = result->ran_count++;
+            while (at > 0 && result->ran[at - 1] > value) {
+                result->ran[at] = result->ran[at - 1];
+                at--;
+            }
+            result->ran[at] = value;
+            value = 0;
+            in_number = false;
+        }
+    }
+}
+
+Result run_tool(Bool ninja, const char *smith, Text folder, const char *target) {
+    (void)files::remove(in_folder(folder, "runs.log"));
+    Text tool = ninja ? format::push("ninja -j1 -f build.ninja ", target)
+                      : format::push("'", smith, "' --smith-exec build.ninja -j1 -d explain ", target);
+    const char *const argv[4] = {"/bin/sh", "-c", format::push("cd ", folder, " && exec ", tool, " 2>&1").data,
+                                 nullptr};
+    Result result = {};
+    process::OutputResult done = process::run(argv[0:3]);
+    result.status = done == .ok ? done.ok.exit.status + 128 * (done.ok.exit.signal != 0) : 127;
+    result.said = format::push("");
+    if (done == .ok) result.said = format::push(text_of(done.ok.output));
+    read_ran(folder, &result);
+    return result;
+}
+
+// The text of a file, or nullptr when it is not there.
+Text contents(Text folder, const char *name) {
+    files::BytesResult file = files::read_file(in_folder(folder, name));
+    if (file == .error) return format::push("(absent)");
+    return format::push(text_of(file.ok));
+}
+
+Bool same(Text a, Text b) {
+    return mem::equal(a, b);
+}
+
+// The names of the files that differ between the folders (the first, or nullptr).
+const char *first_difference(const Graph *graph, Text a, Text b) {
+    for (Usize i = 0; i < graph->output_count; i++)
+        if (!same(contents(a, graph->outputs[i]), contents(b, graph->outputs[i]))) return graph->outputs[i];
+    for (Usize i = 0; i < graph->source_count; i++)
+        if (!same(contents(a, graph->sources[i]), contents(b, graph->sources[i]))) return graph->sources[i];
+    for (Usize i = 0; i < graph->header_count; i++)
+        if (!same(contents(a, graph->headers[i]), contents(b, graph->headers[i]))) return graph->headers[i];
+    return nullptr;
+}
+
+Bool same_ran(const Result *a, const Result *b) {
+    if (a->ran_count != b->ran_count) return false;
+    for (Usize i = 0; i < a->ran_count; i++)
+        if (a->ran[i] != b->ran[i]) return false;
+    return true;
+}
+
+Text ran_text(const Result *r) {
+    Text out = format::push("[");
+    for (Usize i = 0; i < r->ran_count; i++)
+        out = format::push(out, i > 0 ? " " : "", r->ran[i]);
+    return format::push(out, "]");
+}
+
+// ---- the edits
+
+// One random edit, made the same way in both folders. Returns what it did, and the target to build ("" for the
+// default).
+Text mutate(Rng *rng, Graph *graph, Text a, Text b, const char **target) {
+    (void)c::usleep(20000);
+    const char *choices[9] = {"source",  "source",  "touch", "delete",   "header",
+                              "deplist", "command", "none",  "touch_out"};
+    const char *choice = choices[between(rng, 0, 8)];
+    *target = "";
+    if (chance(rng, 25)) *target = graph->outputs[between(rng, 0, graph->output_count - 1)];
+    Text folders[2] = {a, b};
+    Text what = format::push(choice);
+    if (c::strcmp(choice, "source") == 0) {
+        const char *name = graph->sources[between(rng, 0, graph->source_count - 1)];
+        Usize number = between(rng, 0, 3);
+        Text data = chance(rng, 50) ? format::push((I32)number, "\nline\n") : format::push((I32)number, "\nother\n");
+        for (Usize i = 0; i < 2; i++)
+            write_text(in_folder(folders[i], name).data, data);
+        what = format::push(what, " ", name);
+    } else if (c::strcmp(choice, "touch") == 0 || c::strcmp(choice, "touch_out") == 0) {
+        Bool out = choice[5] != '\0';
+        const char *pool[sources_max + headers_max + outputs_max];
+        Usize count = 0;
+        if (out) {
+            for (Usize i = 0; i < graph->output_count; i++)
+                pool[count++] = graph->outputs[i];
+        } else {
+            for (Usize i = 0; i < graph->source_count; i++)
+                pool[count++] = graph->sources[i];
+            for (Usize i = 0; i < graph->header_count; i++)
+                pool[count++] = graph->headers[i];
+        }
+        const char *name = pool[between(rng, 0, count - 1)];
+        for (Usize i = 0; i < 2; i++)
+            (void)c::utimes(in_folder(folders[i], name).data, nullptr);
+        what = format::push(what, " ", name);
+    } else if (c::strcmp(choice, "delete") == 0) {
+        const char *name = graph->outputs[between(rng, 0, graph->output_count - 1)];
+        for (Usize i = 0; i < 2; i++)
+            (void)files::remove(in_folder(folders[i], name));
+        what = format::push(what, " ", name);
+    } else if (c::strcmp(choice, "header") == 0) {
+        const char *name = graph->headers[between(rng, 0, graph->header_count - 1)];
+        Text data = format::push("header ", (I32)between(rng, 0, 5), "\n");
+        for (Usize i = 0; i < 2; i++)
+            write_text(in_folder(folders[i], name).data, data);
+        what = format::push(what, " ", name);
+    } else if (c::strcmp(choice, "deplist") == 0) {
+        Edge *with[edges_max];
+        Usize count = 0;
+        for (Usize i = 0; i < graph->edge_count; i++)
+            if (graph->edges[i].deplist != nullptr) with[count++] = &graph->edges[i];
+        if (count > 0) {
+            Edge *edge = with[between(rng, 0, count - 1)];
+            edge->header_count =
+                sample(rng, graph->headers, graph->header_count, between(rng, 0, graph->header_count), edge->headers);
+            Text data = format::push(join(edge->headers, edge->header_count, " "), "\n");
+            for (Usize i = 0; i < 2; i++)
+                write_text(in_folder(folders[i], edge->deplist).data, data);
+            what = format::push(what, " ", edge->deplist);
+        }
+    } else if (c::strcmp(choice, "command") == 0) {
+        Edge *edge = &graph->edges[between(rng, 0, graph->edge_count - 1)];
+        edge->version++;
+        for (Usize i = 0; i < 2; i++)
+            write_manifest(graph, in_folder(folders[i], "build.ninja"));
+        what = format::push(what, " edge ", edge->id);
+    }
+    return what;
+}
+
+// ---- the run
+
+Bool have_ninja() {
+    const char *const argv[3] = {"/bin/sh", "-c", "command -v ninja >/dev/null"};
+    process::OutputResult found = process::run(argv[0:3]);
+    return found == .ok && found.ok.exit.status == 0;
+}
+
+// Runs one seed; true when ninja and the executor agreed at every step.
+Bool compare_seed(const char *smith, U64 seed, Usize steps, Text root, Bool verbose) {
+    Rng rng = {.seed = seed, .drawn = 0};
+    Graph graph = make_graph(&rng);
+    Text a = in_folder(root, "ninja");
+    Text b = in_folder(root, "smith");
+    setup(&graph, a, seed);
+    setup(&graph, b, seed);
+    Text history = format::push("");
+    for (Usize step = 0; step <= steps; step++) {
+        const char *target = "";
+        Text what = step == 0 ? format::push("initial build") : mutate(&rng, &graph, a, b, &target);
+        what = format::push(what, target[0] != '\0' ? " -> " : "", target);
+        history = format::push(history, step > 0 ? "; " : "", what);
+        (void)c::usleep(20000);
+        Result ra = run_tool(true, smith, a, target);
+        Result rb = run_tool(false, smith, b, target);
+        const char *different = first_difference(&graph, a, b);
+        if (verbose)
+            c::printf("  step %zu: %s: ninja ran %s, smith ran %s\n", step, what.data, ran_text(&ra).data,
+                      ran_text(&rb).data);
+        if (ra.status == rb.status && same_ran(&ra, &rb) && different == nullptr) continue;
+        c::printf(
+            "MISMATCH seed %zu step %zu (%s)\n  history: %s\n  ninja: status %d ran %s\n  smith: status %d ran %s\n",
+            (Usize)seed, step, what.data, history.data, ra.status, ran_text(&ra).data, rb.status, ran_text(&rb).data);
+        if (different != nullptr) c::printf("  files differ: %s\n", different);
+        c::printf("  ninja said: %s\n  smith said: %s\n", ra.said.data, rb.said.data);
+        return false;
+    }
+    return true;
+}
+
+Usize number(const char *text, Usize otherwise) {
+    return text != nullptr ? (Usize)c::strtoul(text, nullptr, 10) : otherwise;
+}
+
+I32 main(Str args[:]) {
+    if (countof(args) < 2) {
+        const char *usage = "usage: ninja_compare <smith binary> [first seed [last seed [steps]]]\n";
+        (void)c::write(2, usage, c::strlen(usage));
+        return 2;
+    }
+    if (!have_ninja()) {
+        c::printf("ninja is not installed: nothing to compare with\n");
+        return 0;
+    }
+    Usize first = number(countof(args) > 2 ? args[2].data : nullptr, 1);
+    Usize last = number(countof(args) > 3 ? args[3].data : nullptr, first + 49);
+    Usize steps = number(countof(args) > 4 ? args[4].data : nullptr, 12);
+    char absolute[4096];
+    Text smith =
+        c::realpath(args[1].data, absolute) != nullptr ? format::push((const char *)absolute) : format::push(args[1]);
+    Text root = format::push("/tmp/smith-ninja-compare-", (I32)c::getpid());
+    (void)files::make_folder(root);
+    Usize bad = 0;
+    for (Usize seed = first; seed <= last; seed++)
+        if (!compare_seed(smith.data, seed, steps, root, c::getenv("VERBOSE") != nullptr)) bad++;
+    remove_tree(root);
+    c::printf("%zu seeds, %zu mismatches\n", last - first + 1, bad);
+    return bad > 0 ? 1 : 0;
+}
