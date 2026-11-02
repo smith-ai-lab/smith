@@ -38,6 +38,7 @@ it. `.content_hash` is declared but not implemented. The
   `smith_glob`, `smith_capture`, `smith_capture_or` and `smith_lines`. These are the calls a later cache would track, and the checks on
   `build.c` (a lint rule, the option listing) know about them. In v1 `getenv` and `fopen` would also work, because the
   program reruns on every `smith build`. Use the calls anyway, so the build keeps working when a cache arrives.
+- **One checkout runs one verb at a time.** Every verb that builds (`build`, `test`, `lint`, `prove`, `check`) writes `.smith/build.ninja` for the folder, so two at once in one tree fail with `cannot replace .smith/build.ninja`. Run them one after another, or in two worktrees.
 - **The build program runs on every `smith build`.** Globs, environment variables, captured commands and options are
   always current, and nothing is recorded or compared.
 - Zig 0.17.0 shows the failure of the alternative. It caches the result of running `build.zig`, and it silently missed a
