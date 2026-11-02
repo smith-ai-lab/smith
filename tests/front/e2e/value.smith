@@ -1,0 +1,38 @@
+fn sign(n: i32) -> i32 {
+    if n < 0 {
+        -1
+    } else if n == 0 {
+        0
+    } else {
+        1
+    }
+}
+
+fn clamp(n: i64, top: i64) -> i64 {
+    if n > top {
+        return top
+    }
+    {
+        doubled := n * 2
+        doubled - n
+    }
+}
+
+fn pick(c: bool, small: i32) -> i64 {
+    wide: i64 = 100
+    x: i64 = if c { small } else { wide }
+    x + 1
+}
+
+pub fn check() -> i32 {
+    if sign(-5) != -1 || sign(0) != 0 || sign(9) != 1 {
+        return 1
+    }
+    if clamp(7, 5) != 5 || clamp(3, 5) != 3 {
+        return 2
+    }
+    if pick(true, 4) != 5 || pick(false, 4) != 101 {
+        return 3
+    }
+    0
+}

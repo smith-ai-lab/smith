@@ -29,6 +29,7 @@ struct Meta {
 };
 
 constexpr U32 ate_boolean = 2;
+constexpr U32 ate_float = 4;
 constexpr U32 ate_signed = 5;
 constexpr U32 ate_unsigned = 7;
 constexpr Usize pointer_depth_max = 8;
@@ -127,6 +128,9 @@ static c::LLVMMetadataRef basic_type(state::Emitter *e, state::Ty ty) {
         U32 encoding = ate_unsigned;
         if (ty.is_signed) encoding = ate_signed;
         return c::LLVMDIBuilderCreateBasicType(e->debug_builder, ty.name.data, countof(ty.name), ty.bits, encoding, 0);
+    }
+    if (ty.kind == .floating) {
+        return c::LLVMDIBuilderCreateBasicType(e->debug_builder, ty.name.data, countof(ty.name), ty.bits, ate_float, 0);
     }
     if (ty.kind == .boolean) {
         return c::LLVMDIBuilderCreateBasicType(e->debug_builder, ty.name.data, countof(ty.name), 8, ate_boolean, 0);

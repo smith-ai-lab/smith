@@ -15,6 +15,7 @@ import <unistd.h>;
 import std::arena;
 import std::console;
 import std::mem;
+import std::random;
 import std::task;
 import std::test;
 import target;
@@ -876,3 +877,126 @@ export void test_task_a_read_and_a_pread_on_a_regular_file_go_to_the_pool_and_re
         c::unlink(path);    // NOLINT(smith-effects)
     }
 }
+
+// ---- The simulation scheduler: a random ready task goes next, drawn from a key. ----
+
+struct Counter {
+    Usize value;
+    Log *log; // the order of the reads and writes: the task's name at each
+};
+
+struct Racer {
+    Counter *counter;
+    char name;
+    Bool pauses; // a pause between the read and the write: the bug
+};
+
+// Reads the counter, writes its own name, (pauses), then writes the read value plus one.
+void run_racer(Racer *racer) {
+    Usize seen = racer->counter->value;
+    log_mark(racer->counter->log, racer->name);
+    if (racer->pauses) task::pause();
+    racer->counter->value = seen + 1;
+    log_mark(racer->counter->log, racer->name);
+}
+
+// Two racers under the simulation of one key: the count at the end, the order of their marks in `log`.
+Usize run_race(U64 seed, Bool pauses, Log *log) {
+    Counter counter = {.log = log};
+    Racer a = {.counter = &counter, .name = 'a', .pauses = pauses};
+    Racer b = {.counter = &counter, .name = 'b', .pauses = pauses};
+    task::Scheduler *previous = task::use(task::simulation(random::key_make(seed)));
+    defer task::use(previous);
+    task::Group group = {};
+    task::spawn(&group, run_racer, &a);
+    task::spawn(&group, run_racer, &b);
+    task::wait(&group); // the simulation's state is given back here
+    return counter.value;
+}
+
+export void test_task_simulation_finds_a_seeded_ordering_bug_and_replays_it() {
+    Bool found = false;
+    U64 found_seed = 0;
+    for (U64 seed = 0; seed < 100 && !found; seed++) {
+        Log log = {};
+        if (run_race(seed, true, &log) == 1) {
+            found = true;
+            found_seed = seed;
+        }
+    }
+    test::check(found); // some key lets both read before either writes
+    Log first = {};
+    Log second = {};
+    test::check_equal(run_race(found_seed, true, &first), (Usize)1);
+    test::check_equal(run_race(found_seed, true, &second), (Usize)1);
+    test::check_equal(first.length, (Usize)4);
+    test::check_equal(first.length, second.length); // the same order of switches
+    for (Usize i = 0; i < first.length; i++)
+        test::check_equal((I32)first.marks[i], (I32)second.marks[i]);
+}
+
+export void test_task_simulation_runs_more_than_one_order() {
+    Bool saw_ab = false;
+    Bool saw_ba = false;
+    for (U64 seed = 0; seed < 100; seed++) {
+        Log log = {};
+        test::check(run_race(seed, true, &log) >= 1);
+        if (log.marks[0] == 'a') saw_ab = true;
+        if (log.marks[0] == 'b') saw_ba = true;
+    }
+    test::check(saw_ab && saw_ba);
+}
+
+export void test_task_simulation_with_the_race_fixed_every_key_gives_two() {
+    for (U64 seed = 0; seed < 100; seed++) {
+        Log log = {};
+        test::check_equal(run_race(seed, false, &log), (Usize)2);
+    }
+}
+
+struct Crossed {
+    task::Group first;
+    task::Group second;
+};
+
+// Waits for the second group, whose task waits for the first: neither can end.
+void run_waits_for_second(Crossed *crossed) {
+    task::wait(&crossed->second);
+}
+
+void run_waits_for_first(Crossed *crossed) {
+    task::wait(&crossed->first);
+}
+
+// NOLINTBEGIN(smith-effects): a child process survives the failure and reports it on a pipe
+export void test_task_simulation_all_waiting_is_a_failure_that_names_both_tasks() {
+    I32 fds[2] = {};
+    test::check_equal(c::pipe(fds), 0);
+    I32 child = c::fork();
+    test::check(child >= 0);
+    if (child == 0) {
+        c::smith_failure_hook = nullptr; // the runner's hook would only mark the test; the child just dies
+        c::dup2(fds[1], 2);              // the failure's message goes to the pipe
+        c::close(fds[0]);
+        Crossed crossed = {};
+        task::use(task::simulation(random::key_make(7)));
+        task::spawn(&crossed.first, run_waits_for_second, &crossed);
+        task::spawn(&crossed.second, run_waits_for_first, &crossed);
+        task::wait(&crossed.first);
+        c::_exit(0); // reached only if the deadlock went unseen
+    }
+    c::close(fds[1]);
+    char text[1024] = {};
+    Isize got = c::read(fds[0], text, sizeof(text) - 1);
+    c::close(fds[0]);
+    I32 status = 0;
+    test::check_equal(c::waitpid(child, &status, 0), child);
+    test::check(status != 0);
+    test::check(got > 0);
+    test::check(__builtin_strstr(text, "waiting tasks: ") != nullptr);
+    if constexpr (target::os == target::macos) { // the symbol table has the names; Linux's has only what is exported
+        test::check(__builtin_strstr(text, "run_waits_for_second") != nullptr);
+        test::check(__builtin_strstr(text, "run_waits_for_first") != nullptr);
+    }
+}
+// NOLINTEND(smith-effects)

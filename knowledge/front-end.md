@@ -276,7 +276,7 @@ Iteration in the checker; the rules are the top comment of the file.
 | `emit_option` | `?T` (`{ i8 tag, T payload }`, tag 0 is `.none`), `.some(x)`, `.none`, `if let`, `wrap`, `is_some`, `payload` | `?*T`, `match` over `?T`, `if let` as a value, `try`, `==` of options | #1584 (filled) |
 | `emit_iter` | `for x in xs` over a fixed array, `refs(xs)`, `range(n)`, `range(a, b)`, `range(a, b, step)` with a positive literal step | `enumerate`, `zip`, tuple pattern, slice, `str`, block, stream, array value, other steps: `not emitted yet` | #1586 (filled) |
 | `emit_match` | enumerations (an integer `Ty` of the underlying type, enumerators from 0 or as written; `emit_memory` and `emit_call` find one for `as` and parameters), `.red`, `match` over an enumeration (one `switch`, `unreachable` default) or `?T`, as statement and value | a payload enumeration, `match` over `Result`, `if let` over an enumeration | #1585 |
-| `emit_value` | stub: an `if` or block as a value is `not emitted yet` | everything | next batch |
+| `emit_value` | an `if` with an `else` and a block used as a value: one alloca slot (the hint's type, else the join of the branches' checker types), branches convert and store, `endif` loads it; a branch that ended stores nothing; no branch reaching the end gives `unreachable` and `undef` | `for`, `while`, `if let` as a value, a `match` with no type written | #1618 (filled) |
 | `emit_tuple` | stub: tuple types, literals, `t.0`, `(q, r) := f()` are `not emitted yet` | everything | next batch |
 | `emit_lambda` | stub: `fn` types and lambdas are `not emitted yet` | everything | next batch |
 | floats, slices, `str`, array literals | no route yet: `emit.smith` answers `not emitted yet: this kind of expression` | everything | none yet |
@@ -297,7 +297,8 @@ Iteration in the checker; the rules are the top comment of the file.
 
 **Control flow** (`emit_control.smith`, #1131): `if`/`else`, `while`, `do while`, `for`, `break`, `continue` (through `Emitter.loops`), `&&` and `||` (short circuit with a phi), `!`, `?:`.
 - A condition is a `Bool`: an integer condition is an Error, "a condition is a Bool; write `x != 0`". A function whose end is reached without `return` branches to the `trap` block.
-- `switch`, `goto`, labels and `defer` are `not emitted yet`.
+- `defer body` (#1583) waits on `Emitter.defers` with its scope depth and runs on every way out: the end of its block (newest first, skipped when the end is unreachable), `return` (after its value is computed, before `ret`), and `break`/`continue` (the defers deeper than the loop's `scope_depth`, then the jump); a deferred body is emitted once per way out.
+- `switch`, `goto` and labels are `not emitted yet`.
 - `for x in xs` (`emit_iter`) lowers to the plain indexed loop with no stream object: blocks `forcond`, `forbody`, `forstep`, `endfor` and a hidden counter in the entry block.
 - `range(a, b, step)` adds through `llvm.*add.with.overflow` and ends the loop on overflow; a zero, negative or run-time step is `not emitted yet` (lead's decision, 2026-11-02).
 

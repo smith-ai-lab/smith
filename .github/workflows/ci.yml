@@ -84,6 +84,10 @@ jobs:
           mode=full
           # a push to main is a commit the merge queue already checked: it only publishes the release
           if [ "$GITHUB_EVENT_NAME" = push ]; then scope=release; BASE=; fi
+          # a queue entry is built on main plus the entries ahead of it, and merging it merges them too: its scope is
+          # everything not yet on main. Scoped by its own diff, a docs-only entry behind a code change ran no tests,
+          # passed, and carried the failing code onto main (#1539 behind #1541, 2026-11-02)
+          if [ "$GITHUB_EVENT_NAME" = merge_group ]; then git fetch -q origin main && BASE=$(git merge-base HEAD origin/main); fi
           if [ -n "$BASE" ] && changed=$(git diff --name-only "$BASE" HEAD); then
             own=$(printf '%s\n' "$changed" | grep -E '^([.]github/workflows/ci[.]yml|[.]github/actions/.*)$' || true)
             built=$(printf '%s\n' "$changed" | grep . | grep -vE "$documents" | grep -vE "$workflows" || true)
