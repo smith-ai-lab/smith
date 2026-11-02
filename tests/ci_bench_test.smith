@@ -1,6 +1,6 @@
-// ci/bench/main.smith (#1670), the tool of `smith build bench`: its table, its tab-separated file and the commands it runs,
-// with a stub in place of smith that only records its arguments. The tool is a project of its own in a scratch folder,
-// run by the smith under test; the scratch folder is a git repository of two commits, so no real tree is built.
+// ci/bench/main.smith (#1670), the tool of `smith build bench`: its table, its tab-separated file and the commands it
+// runs, with a stub in place of smith that only records its arguments. The tool is a project of its own in a scratch
+// folder, run by the smith under test; the scratch folder is a git repository of two commits, so no real tree is built.
 // smith-covers: ci/bench/main.smith
 module ci_bench_test;
 

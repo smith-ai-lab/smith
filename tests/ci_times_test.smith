@@ -1,6 +1,6 @@
-// ci/times/main.smith (#1670), the tool of `smith build ci-times`: its report on two fixed runs and one with no logs. The
-// tool is a project of its own in a scratch folder, run by the smith under test; no network and no real CI run is read.
-// smith-covers: ci/times/main.smith
+// ci/times/main.smith (#1670), the tool of `smith build ci-times`: its report on two fixed runs and one with no logs.
+// The tool is a project of its own in a scratch folder, run by the smith under test; no network and no real CI run is
+// read. smith-covers: ci/times/main.smith
 module ci_times_test;
 
 import std::arena;
