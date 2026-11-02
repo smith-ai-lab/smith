@@ -8,7 +8,7 @@ tags: [verbs, cli]
 
 **smith's top level is only verbs**, as zig's is: `smith cc` and `smith c++` compile (clang's arguments, unchanged);
 `build`, `new`, `fetch`, `cache`, `docs`, `version`, `fmt`, `lint`, `lsp`, `run`, `test` and `check` do the rest. The bare form `smith
-foo.c -o foo` is an error that says to run `smith cc foo.c -o foo`, so nothing is ambiguous. For what needs one
+foo.c -o foo` is an error that says to run `smith cc foo.c -o foo`, so nothing is ambiguous. A word that is no command (`smith tset`) is an error too: it says `Did you mean `test`?` when the word is one edit from a short command or two from a longer one, then lists the commands; an unknown flag gets the list alone. All exit 2. For what needs one
 program path (`CC=` in a Makefile, CMake's `CMAKE_C_COMPILER`, the first word of a `compile_commands.json` command,
 which clangd reads as a compiler), `smith build install` also installs `smith-cc` and `smith-c++`, links to smith that
 act as `smith cc` and `smith c++` by their name, as `smith++` did. `smith++` is gone. The program a `build.c` names as
