@@ -1067,12 +1067,12 @@ static Bool null_against(types::TypeRef a, types::TypeRef b) {
 // explicit stack, never recursion.
 static types::TypeRef uncomparable_element(types::TypeRef t) {
     Usize capacity = 8;
-    types::TypeRef pending[:] = mem::alloc_slice(types::TypeRef, capacity);
+    types::Slot pending[:] = mem::alloc_slice(types::Slot, capacity);
     Usize top = 1;
-    pending[0] = t;
+    pending[0].type = t;
     while (top > 0) {
         top -= 1;
-        types::TypeRef x = pending[top];
+        types::TypeRef x = pending[top].type;
         if (x->kind != .tuple) {
             if (!is_scalar(x)) return x;
             continue;
@@ -1082,7 +1082,7 @@ static types::TypeRef uncomparable_element(types::TypeRef t) {
             pending = mem::realloc(pending, capacity);
         }
         for (Usize i = countof(x->slots); i > 0; i--) {
-            pending[top] = x->slots[i - 1].type;
+            pending[top].type = x->slots[i - 1].type;
             top += 1;
         }
     }
@@ -2794,10 +2794,10 @@ static void tuple_after(types::Checked *c, Frame f) {
         return;
     }
     ast::ExprRef items[:] = e->kind.tuple_lit.items;
-    types::TypeRef elements[:] = mem::alloc_slice(types::TypeRef, countof(items));
+    types::Slot elements[:] = mem::alloc_slice(types::Slot, countof(items));
     for (Usize i = 0; i < countof(items); i++) {
-        elements[i] = typ(c, items[i]);
-        if (elements[i] == invalid(c)) {
+        elements[i].type = typ(c, items[i]);
+        if (elements[i].type == invalid(c)) {
             poison(c, e);
             return;
         }

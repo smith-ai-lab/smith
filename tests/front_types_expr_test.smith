@@ -1198,11 +1198,11 @@ export void test_front_types_expr_a_tuple_has_a_type_elements_and_equality() {
     types::Checked r = fresh();
     types::TypeRef int32 = ty(&r, "I32");
     types::TypeRef flag = ty(&r, "Bool");
-    types::TypeRef two[2] = {int32, flag};
+    types::Slot two[2] = {{.type = int32}, {.type = flag}};
     types::TypeRef shape = types::tuple_of(&r.table, two);
     test::check_condition(shape == types::tuple_of(&r.table, two));
     test::check_condition(says(types::show(shape), "(I32, Bool)"));
-    types::TypeRef one[1] = {int32};
+    types::Slot one[1] = {{.type = int32}};
     test::check_condition(says(types::show(types::tuple_of(&r.table, one)), "(I32,)"));
     declare(&r, "f", .variable, shape, false);
     ast::Expr *first = member(ast::name("f"), "0", false);

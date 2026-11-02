@@ -367,13 +367,12 @@ export TypeRef result_of(Table *t, TypeRef ok, TypeRef error) {
     return intern(t, (Ty){.kind = .result_type, .element = ok, .error = error});
 }
 
-// The type `(A, B)`: the elements in order, each a slot named by its position. No element is a one-element tuple's
-// own type: `(a)` is `a`, so the caller writes `(T,)` for one.
-export TypeRef tuple_of(Table *t, TypeRef elements[:]) {
+// The type `(A, B)`: the elements in order (their types; names are ignored), each made a slot named by its position.
+export TypeRef tuple_of(Table *t, Slot elements[:]) {
     Slot slots[:] = mem::alloc_slice(Slot, countof(elements));
     for (Usize i = 0; i < countof(elements); i++) {
         slots[i].name = msg(format::push(i));
-        slots[i].type = elements[i];
+        slots[i].type = elements[i].type;
     }
     return intern(t, (Ty){.kind = .tuple, .slots = slots});
 }
@@ -1192,9 +1191,9 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
         return function_of(&r->table, slots, result, node->kind.function.variadic);
     }
     if (node->kind == .tuple) {
-        TypeRef elements[:] = mem::alloc_slice(TypeRef, n);
+        Slot elements[:] = mem::alloc_slice(Slot, n);
         for (Usize i = 0; i < n; i++)
-            elements[i] = w->values[base + i].type;
+            elements[i].type = w->values[base + i].type;
         return tuple_of(&r->table, elements);
     }
     if (node->kind == .applied) {
