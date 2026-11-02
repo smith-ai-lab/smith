@@ -1,6 +1,6 @@
 ---
 name: smith-slice
-description: "Using std::slice (import std::slice; slice::equal, compare, starts_with, ends_with, find, find_last, find_if, find_slice, trim, count, fill, reverse, search, sort, sort_by, sum, min, max, argmin, argmax, all, any): functions over any slice, text included, with no allocation. Load when code imports std::slice, on comparing, searching or filling a `T xs[:]`, or on replacing strncmp, memchr and a hand-written index loop."
+description: "Using std::slice (import std::slice; slice::equal, compare, starts_with, ends_with, find, find_last, find_if, find_slice, trim, count, fill, reverse, copy, take, take_until, take_while, search, sort, sort_by, sum, min, max, argmin, argmax, all, any): functions over any slice, text included, with no allocation. Load when code imports std::slice, on comparing, searching or filling a `T xs[:]`, or on replacing strncmp, memchr and a hand-written index loop."
 ---
 
 # Functions over a slice: smith's slice
@@ -43,6 +43,7 @@ export Usize commas(const char line[:]) {
 
 - **The first argument is a slice value**: a variable or `xs[a:b]`, not a string literal or a typedef'd slice (`typedef const char Str[:]` fails as the `auto` argument); bind the literal first (`const char s[:] = "abc";`). The second argument of `equal`, `compare`, `starts_with` and `ends_with` has the first's type, so a literal needs a variable there too inside a generic call such as `test::check_equal`.
 - **A caller names `Option(Usize)` at file scope first** (`typedef Option(Usize) Index;`), then reads it with `at == .some` and `at.some` (`smith-option`); `.some` as the first mention in a function that only compiles the syntax can fail to find its type, so bind and test the result as `lib/std/slice_test.smith` does.
-- Not built yet: `copy`, `take` and `take_until` (they need `auto dst[restrict :]` and `const auto (*xs)[:]`), `reshape` and `format::parse` (#199).
+- `copy(dst, src)` needs equal counts and no overlap (`restrict`). `take(&s, n)`, `take_until(&s, v)` and `take_while(&s, pred)` return the head and advance the caller's slice `s` (a cursor: `take_until` skips the separator, like `strsep`; a missing `v` takes everything).
+- Not built yet: `reshape` and `format::parse` (#199).
 
 Also in this family: [smith-ascii](../smith-ascii/SKILL.md), [smith-text](../smith-text/SKILL.md) (which `slice` replaces).

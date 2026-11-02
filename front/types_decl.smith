@@ -8,6 +8,11 @@
 //                                  signatures (types::check), each function body, each module-level initializer, and
 //                                  every lambda body. Errors are in `Checked.errors`, each at a span and each naming
 //                                  what was expected and what to write.
+//   check_module_with(module, target, load)
+//                                  check_module that also reads the modules the file imports (`m := import a.b`),
+//                                  `load` giving the tree of a dotted path (#1677): `m.name` is then a public
+//                                  declaration of that module, and `sin := m.sin` a name for it. Without `load`,
+//                                  an import binds a name and reads nothing.
 //   options(target)                The `types::Options` that make `types::check` call `check_body` for every function
 //                                  with a body, after wiring the hooks below. For a caller that wants `types::check`
 //                                  itself.
@@ -60,6 +65,7 @@ import front::types_convert;
 import front::types_expr;
 import front::types_fn;
 import front::types_iter;
+import front::types_stream;
 import std::arena;
 import std::format;
 import std::mem;
@@ -107,6 +113,7 @@ struct State {
     Usize pending_count;
     Str function;
     types::TypeRef result;      // what `return` is checked against
+    types::TypeRef generator;   // the element `T` when the function is a generator (types_stream), else null
     Bool new_body;              // the function has a parameter or a local in smith's own syntax (so far)
     const ast::Stmt *tails[32]; // the statements whose value is the function's result (the last line, through
     Usize tail_count;           // blocks and both arms of an if), so a call there is not unused
@@ -218,6 +225,11 @@ static Bool shadows(types::Checked *r, const ast::Decl *d, Str name) {
         return false;
     }
     const types::Symbol *earlier = types::lookup(&r->scopes, name);
+    if (earlier != nullptr && earlier->kind == .module_name) {
+        types::failf(r, d->span, "`", name, "` hides the module `", name,
+                     "`; shadowing is an error, choose another name");
+        return true;
+    }
     if (earlier == nullptr || earlier->kind != .variable) {
         return false;
     }
@@ -435,6 +447,9 @@ static void return_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     const ast::Expr *value = s->kind.return_stmt.value;
+    if (types_stream::check_return(r, s, state.generator)) {
+        return;
+    }
     types::TypeRef want = state.result;
     if (want == nullptr || is_auto(want)) {
         if (value != nullptr) {
@@ -640,6 +655,8 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
         for_in_statement(r, s);
     } else if (s->kind == .return_stmt) {
         return_statement(r, s);
+    } else if (s->kind == .yield_stmt) {
+        types_stream::check_yield(r, s, state.generator);
     } else if (s->kind == .defer_stmt) {
         push(s->kind.defer_stmt.body, nullptr, enter);
     } else if (s->kind == .labeled) {
@@ -783,7 +800,10 @@ export void check_body(types::Checked *r, const ast::Decl *function) {
     for (Usize i = 0; i < countof(params); i++) {
         state.new_body = state.new_body || params[i].is_new;
     }
-    walk(r, function->kind.function.body, signature->element);
+    types::TypeRef outer_generator = state.generator;
+    state.generator = types_stream::generator_element(signature->element, function->kind.function.body);
+    walk(r, function->kind.function.body, state.generator != nullptr ? r->table.void_type : signature->element);
+    state.generator = outer_generator;
     types_fn::check_once(r, params, function->kind.function.body);
     types::pop_scope(&r->scopes);
     drain(r);
@@ -808,6 +828,9 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
     if (d->kind != .variable || d->from_c || d->kind.variable.init == nullptr) {
         return;
     }
+    if (d->kind.variable.init->kind == .type_value) {
+        return; // `Point := m.Point`: an alias of a type, resolved with the declarations
+    }
     Str name = d->kind.variable.name;
     const types::Symbol *symbol = types::lookup(&r->scopes, name);
     if (symbol == nullptr || symbol->decl != d) {
@@ -825,11 +848,14 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
     }
 }
 
-// Checks a whole module for `target`.
-export types::Checked check_module(const ast::Module *m, types::Target target) {
+// Checks a whole module, reading the modules it imports with `load` (#1677): `m := import a.b` makes `m.name` the
+// public declaration `name` of `a.b`.
+export types::Checked check_module_with(const ast::Module *m, types::Target target, types::ModuleLoader load) {
     state = (State){};
     types_fn::reset();
-    types::Checked r = types::check(m, options(target));
+    types::Options chosen = options(target);
+    chosen.load = load;
+    types::Checked r = types::check(m, chosen);
     for (Usize i = 0; i < countof(m->decls); i++) {
         check_initializer(&r, m->decls[i]);
     }
@@ -837,6 +863,11 @@ export types::Checked check_module(const ast::Module *m, types::Target target) {
     types_attr::check_module(&r, m);
     uninstall();
     return r;
+}
+
+// Checks a whole module for `target`.
+export types::Checked check_module(const ast::Module *m, types::Target target) {
+    return check_module_with(m, target, nullptr);
 }
 
 // The locals the bodies declared, one line each: `local <function>.<name>: <type>`.
