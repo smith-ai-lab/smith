@@ -36,6 +36,42 @@ export inline typeof(x) abs(auto x) {
     return __builtin_elementwise_abs(x);
 }
 
+// x raised to the power y, the type is x's (f32 or f64): libm's pow and powf.
+export inline typeof(x) pow(auto x, typeof(x) y) {
+    return __builtin_elementwise_pow(x, y);
+}
+
+// The natural logarithm of x: libm's log and logf. The type is x's.
+export inline typeof(x) log(auto x) {
+    return __builtin_elementwise_log(x);
+}
+
+// The sine of x in radians: libm's sin and sinf. The type is x's.
+export inline typeof(x) sin(auto x) {
+    return __builtin_elementwise_sin(x);
+}
+
+// The cosine of x in radians: libm's cos and cosf. The type is x's.
+export inline typeof(x) cos(auto x) {
+    return __builtin_elementwise_cos(x);
+}
+
+// x times two to the power exponent: libm's ldexp and ldexpf. The type is x's; an f32 goes through
+// f64 and back, which is exact.
+export inline typeof(x) ldexp(auto x, I32 exponent) {
+    return (typeof(x))__builtin_ldexp(x, exponent);
+}
+
+// The larger of a and b; when one is not-a-number the number wins, as fmax does. The type is a's.
+export inline typeof(a) maximum(auto a, typeof(a) b) {
+    return __builtin_elementwise_maxnum(a, b);
+}
+
+// The smaller of a and b; when one is not-a-number the number wins, as fmin does. The type is a's.
+export inline typeof(a) minimum(auto a, typeof(a) b) {
+    return __builtin_elementwise_minnum(a, b);
+}
+
 // The largest value of the unsigned integer type T: `math::max(Usize)` is what `SIZE_MAX` is.
 export inline T max(constexpr Type T) {
     static_assert((T)-1 > 0, "math::max: the type is unsigned");

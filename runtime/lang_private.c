@@ -16,7 +16,11 @@
 static void smith_lang_priv_begin(SmithLang *lang) {
     lang->private_active = false;
     lang->priv_range = 0;
-    if (!lang->tee || !lang->is_module || lang->priv_ranges_count >= smith_lang_priv_ranges_max) return;
+    if (!lang->tee || !lang->is_module) return;
+    if (lang->priv_ranges_count >= smith_lang_priv_ranges_max) {
+        smith_lang_limit(lang, "private declarations", smith_lang_priv_ranges_max);
+        return;
+    }
     SmithLangPrivRange *range = &lang->priv_ranges[lang->priv_ranges_count];
     *range = (SmithLangPrivRange){.from = (uint32_t)lang->priv_used,
                                   .to = (uint32_t)lang->priv_used,
@@ -54,6 +58,9 @@ static void smith_lang_priv_form(SmithLang *lang, uint8_t form, bool linked) {
 static void smith_lang_priv_write(SmithLang *lang, const SmithToken *token) {
     if (lang->priv_range == 0 || token->kind == SmithTokenKind_Eof) return;
     SmithLangPrivRange *range = &lang->priv_ranges[lang->priv_range - 1];
+    if (token->via != 0 && lang->priv_notes_count >= smith_lang_priv_notes_max) {
+        smith_lang_limit(lang, "names a private declaration writes through an import", smith_lang_priv_notes_max);
+    }
     if (token->via != 0 && lang->priv_notes_count < smith_lang_priv_notes_max) {
         SmithLangPrivNote *note = &lang->priv_notes[lang->priv_notes_count++];
         note->via = token->via;
@@ -71,7 +78,11 @@ static void smith_lang_priv_write(SmithLang *lang, const SmithToken *token) {
 // A name the kept declaration declares: what the generics that name it find it by.
 static void smith_lang_priv_name(SmithLang *lang, const char *name, size_t length, const char *cname,
                                  size_t cname_length) {
-    if (lang->priv_range == 0 || lang->priv_names_count >= smith_lang_priv_names_max) return;
+    if (lang->priv_range == 0) return;
+    if (lang->priv_names_count >= smith_lang_priv_names_max) {
+        smith_lang_limit(lang, "names private declarations declare", smith_lang_priv_names_max);
+        return;
+    }
     SmithLangPrivName *entry = &lang->priv_names[lang->priv_names_count++];
     entry->name = smith_lang_store(lang, name, length);
     entry->cname = smith_lang_store(lang, cname, cname_length);
@@ -289,7 +300,11 @@ static void smith_lang_hidden_read(SmithLang *lang, const char *text, size_t len
     size_t end = 0;
     while (smith_lang_header_word(text, length, "// smith-hidden:", &cursor, &start, &end)) {
         char lowered[smith_lang_name_max];
-        if (prefix_length + (end - start) + 1 > sizeof lowered || lang->hidden_count >= smith_lang_hidden_max) continue;
+        if (prefix_length + (end - start) + 1 > sizeof lowered) continue;
+        if (lang->hidden_count >= smith_lang_hidden_max) {
+            smith_lang_limit(lang, "private names of imports", smith_lang_hidden_max);
+            continue;
+        }
         memcpy(lowered, prefix, prefix_length);
         memcpy(lowered + prefix_length, text + start, end - start);
         lang->hidden[lang->hidden_count++] = smith_lang_store(lang, lowered, prefix_length + (end - start));
@@ -321,12 +336,16 @@ static void smith_lang_linked_read(SmithLang *lang, const SmithHost *host) {
     for (uint32_t i = 0; i + sizeof marker < length; i++) { // bounded by the header
         if ((i != 0 && text[i - 1] != '\n') || memcmp(text + i, marker, sizeof marker - 1) != 0) continue;
         uint32_t at = i + sizeof marker - 1;
-        while (at < length && text[at] != '\n' && lang->linked_count < smith_lang_linked_max) {
+        while (at < length && text[at] != '\n') {
             while (at < length && text[at] == ' ')
                 at += 1;
             uint32_t start = at;
             while (at < length && text[at] != ' ' && text[at] != '\n')
                 at += 1;
+            if (at > start && lang->linked_count >= smith_lang_linked_max) {
+                smith_lang_limit(lang, "private names of a module that have a symbol", smith_lang_linked_max);
+                return;
+            }
             if (at > start) lang->linked[lang->linked_count++] = smith_lang_store(lang, text + start, at - start);
         }
         return;

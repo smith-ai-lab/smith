@@ -1,4 +1,8 @@
 // Fixed-size caps that used to drop input silently (issue #604): a count beyond the old cap is read whole.
+// smith.c runs `smith run`, `smith fmt`, `smith cc` and `smith build --dump-config`.
+// smith-covers: smith.c runtime/verbs.c runtime/quiet.c runtime/base.h runtime/platform_*.c runtime/slots.c
+// smith-covers: runtime/build_runtime.c runtime/executor*.c runtime/cache.c runtime/sdk_cache.c runtime/lang*.c
+// smith-covers: shim/hook.cpp shim/clang.cpp shim/format.cpp templates/defaults/ runtime/make*.c
 module caps_test;
 
 import std::arena;

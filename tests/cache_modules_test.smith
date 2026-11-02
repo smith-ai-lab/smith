@@ -2,6 +2,11 @@
 // once, and two worktrees with different headers at the same relative path that do not collide. Every case has a cache
 // of its own (scratch::own_cache), so the real ~/.cache/smith is never touched. The functions of
 // tests/build_fixtures/cache_modules/prelude count the cache's modules.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: runtime/symbolize.c runtime/explain.c shim/symbolize.cpp shim/lldb_explain.* shim/clang.cpp
+// smith-covers: shim/hook.cpp shim/lld.cpp include/smith/ lib/trace.c lib/std/ build.c scripts/llvm_prune.c
+// smith-covers: tests/build_fixtures/cache_modules/ tests/build_fixtures/clang_modules/
 module cache_modules_test;
 
 import std::arena;

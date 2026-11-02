@@ -4,6 +4,11 @@
 // (tests/build_fixtures/lint_smith) with the template's .clang-tidy: a module and its importer with real findings in
 // both, a clean module, the fixes, a compile error of the lowering's, and plain C beside .smith in one run. The long
 // lists of findings are the golden files of tests/lint-smith.
+// smith.c runs clang-tidy on .smith files; the smith-* checks are in shim/.
+// smith-covers: smith.c runtime/verbs.c runtime/quiet.c runtime/base.h runtime/platform_*.c runtime/slots.c
+// smith-covers: runtime/lang*.c shim/hook.cpp shim/tidy.cpp shim/clang.cpp templates/defaults/
+// smith-covers: runtime/build_runtime.c runtime/executor*.c runtime/cache.c runtime/sdk_cache.c shim/
+// smith-covers: tests/build_fixtures/lint_smith/ tests/lint-smith/ lib/std/ include/smith/
 module lint_smith_test;
 
 import std::arena;

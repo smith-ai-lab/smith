@@ -6,6 +6,12 @@
 // through `smith_core_changed_lint` (include/smith_core_changed.h): the file list and the changes are texts, and no
 // git or smith starts. What needs git, the lint itself or a build (the base of a branch, a finding replayed, a header
 // a step makes, the verb's wiring) is a scratch test on a scratch git repository.
+// smith.c holds `smith lint --changed` and the git calls.
+// smith-covers: smith.c runtime/verbs.c runtime/quiet.c runtime/base.h runtime/platform_*.c runtime/slots.c
+// smith-covers: runtime/changed.c runtime/lint_cache.c shim/tidy.cpp shim/clang.cpp templates/defaults/
+// smith-covers: runtime/build_runtime.c runtime/executor*.c runtime/cache.c runtime/sdk_cache.c
+// smith-covers: include/smith_core_changed.h include/smith_core.h tests/build_fixtures/lint_cache/
+// smith-covers: tests/build_fixtures/lint_changed/ tests/build_fixtures/lint_unreachable/
 module lint_changed_test;
 
 import std::arena;

@@ -1,0 +1,48 @@
+[5]i32
+(module m
+  (variable t (array (named i32) (integer 5))))
+
+[_]u8
+(module m
+  (variable t (array (named u8) (name _))))
+
+[]i32
+(module m
+  (variable t (slice (named i32))))
+
+[][]i32
+(module m
+  (variable t (slice (slice (named i32)))))
+
+[5][]i32
+(module m
+  (variable t (array (slice (named i32)) (integer 5))))
+
+[5][3]f32
+(module m
+  (variable t (array (array (named f32) (integer 3)) (integer 5))))
+
+[5,3]f32
+(module m
+  (variable t (block_type (named f32) (integer 5) (integer 3))))
+
+[,3]f32
+(module m
+  (variable t (block_type (named f32) (absent) (integer 3))))
+
+[,]f32
+(module m
+  (variable t (block_type (named f32) (absent) (absent))))
+
+[,,]f32
+(module m
+  (variable t (block_type (named f32) (absent) (absent) (absent))))
+
+[n,]u8
+(module m
+  (variable t (block_type (named u8) (name n) (absent))))
+
+[]*mut Point
+(module m
+  (variable t (slice (pointer mut (named Point)))))
+

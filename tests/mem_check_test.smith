@@ -2,6 +2,10 @@
 // names the typed function of std::mem; a function that calls contract::trusted() is the edge and is skipped; a .c
 // file and a .smith file with no module line are untouched; `smith lint --fix` rewrites the calls that map
 // mechanically. A scratch project (tests/build_fixtures/mem_check) with one check on.
+// smith-covers: smith.c runtime/verbs.c runtime/lint_cache.c runtime/lang*.c runtime/front_flag.c
+// smith-covers: runtime/platform_*.c shim/mem.h shim/tidy.cpp shim/names.h shim/idiom.h shim/hook.cpp include/smith/
+// smith-covers: tests/build_fixtures/mem_check/ lib/std/mem.smith
+// smith.c is declared for the lint verb, `smith lint --fix`.
 module mem_check_test;
 
 import std::arena;

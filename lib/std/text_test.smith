@@ -6,9 +6,11 @@
 module std::text_test;
 
 import std::math;
+import std::mem;
 import std::random;
 import std::test;
 import std::text;
+import <errno.h>;
 import <stdint.h>;
 import <stdio.h>;
 import <stdlib.h>;
@@ -1006,3 +1008,44 @@ export void test_text_f32_write_is_shortest_and_round_trips(random::Key key) {
     }
 }
 // NOLINTEND(smith-mem)
+
+// ---------------------------------------------------------------------------------------------------------------
+// copy, terminated and os_error
+
+export void test_text_copy_is_apart_and_ends_in_a_nul() {
+    char original[4] = {'a', 'b', 'c', 'd'};
+    const char word[:] = original[0:4];
+    const char made[:] = text::copy(word);
+    test::check_equal(countof(made), 4);
+    test::check(made.data != original);
+    test::check(text::is(made, "abcd"));
+    test::check_equal(made.data[countof(made)], 0); // the terminator after the count
+    original[0] = 'z';
+    test::check(text::is(made, "abcd")); // a copy, not a view
+    mem::free((void *)(Usize)made.data);
+}
+
+export void test_text_copy_of_nothing_is_a_terminated_empty_text() {
+    const char made[:] = text::copy(test_text(""));
+    test::check_equal(countof(made), 0);
+    test::check_equal(made.data[0], 0);
+    mem::free((void *)(Usize)made.data);
+}
+
+export void test_text_terminated_is_a_c_string() {
+    const char *c_string = text::terminated(test_text("hello world")[0:5]);
+    test::check_equal(c::strlen(c_string), 5);
+    test::check_equal(c::strcmp(c_string, "hello"), 0);
+    mem::free((void *)(Usize)c_string);
+}
+
+// NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
+constexpr I32 test_enoent = c::ENOENT;
+constexpr I32 test_eacces = c::EACCES;
+// NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
+
+export void test_text_os_error_names_a_code() {
+    test::check(text::is(text::os_error(test_enoent), "no such file or directory"));
+    test::check(text::is(text::os_error(test_eacces), "permission denied"));
+    test::check(text::is(text::os_error(-12345), "unknown error"));
+}

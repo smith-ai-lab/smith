@@ -2,6 +2,7 @@
 // "releases" in a folder, each one made by scripts/release.sh package from a stand-in smith. Never touches a real
 // repository. The tool is built the way the README builds it, with the system's compiler: clang on macOS, cc (GCC) as
 // gnu2x on Linux, where a missing release would build the seed, which SMITH_STAGE0_SEED=0 turns off.
+// smith-covers: scripts/stage0.c scripts/release.sh scripts/sha256.h
 module stage0_test;
 
 import std::arena;

@@ -5,7 +5,7 @@ description: "Using std::process (import std::process; process::run, spawn, star
 
 # Child processes by direct calls: std::process
 
-Call `process::` anywhere. A call returns `Result(T, process::Error)`; the error is what the world said (`NotFound`, `Denied`, `TooMany`, `Broken` for a write to a child that has gone, `Gone` for a signal to one that has, `Other`). A program is a slice of C strings, `argv[0]` found on `PATH`. Memory a call returns comes from the current allocator (smith-mem) and is the caller's region.
+Call `process::` anywhere. A call returns `Result(T, process::Error)`; the error is what the world said (`NotFound`, `Denied`, `TooMany`, `Broken` for a write to a child that has gone, `Gone` for a signal to one that has, `Other`). A program is a slice of C strings, `argv[0]` found on `PATH`. Memory a call returns comes from the current allocator (smith-mem) and is the caller's region. `process::describe(error)` is an error as a constant text for a message.
 
 ```smith
 module scratch;

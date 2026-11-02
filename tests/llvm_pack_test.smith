@@ -2,6 +2,8 @@
 // LLVM folder (what it holds and what it leaves out), publish and fetch against the stub gh of
 // tests/build_fixtures/release (which keeps its "releases" in a folder), the parts and their checksums, and what a
 // fetch does when it must not take the pack. The real ~/.cache/smith is never read.
+// smith-covers: scripts/llvm_pack.c scripts/pack.c scripts/pack.h scripts/sha256.h tests/build_fixtures/release/
+// smith-covers: smith.c runtime/package.c runtime/untar.c runtime/xz.c
 module llvm_pack_test;
 
 import std::arena;

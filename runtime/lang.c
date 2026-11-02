@@ -61,13 +61,13 @@ constexpr size_t smith_lang_message_max = 512;
 constexpr size_t smith_lang_cycle_max = 64;
 constexpr size_t smith_lang_written_max = 8192;
 constexpr size_t smith_lang_written_slots = 16384; // a power of two, twice the names
-constexpr size_t smith_lang_transitive_max = 32;
+constexpr size_t smith_lang_transitive_max = 64;
 constexpr size_t smith_lang_cond_depth_max = 64;      // #if nested in a module the header pass reads
 constexpr size_t smith_lang_include_max = 16384;      // the header's include lines
 constexpr size_t smith_lang_cimports_max = 64;        // `import <h>;` lines of one module
 constexpr size_t smith_lang_cuses_max = 512;          // the C names (`c::X`) that exported declarations use
 constexpr size_t smith_lang_cond_lines_max = 32;      // lines of one chain: #if, #elif..., #else
-constexpr size_t smith_lang_cnames_max = 1024;        // exports of imported modules that have a C name of their own
+constexpr size_t smith_lang_cnames_max = 8192;        // exports of imported modules that have a C name of their own
 constexpr size_t smith_lang_gt_max = (size_t)1 << 17; // tokens of generics, and of the calls being read
 constexpr size_t smith_lang_gt_text_max = (size_t)1 << 21; // their text
 constexpr size_t smith_lang_it_max = (size_t)1 << 15;      // tokens of the types instances were asked for
@@ -454,6 +454,8 @@ struct SmithLang {
     bool slices_seen;   // a slice was written in this file, or an import's header has one (runtime/lang_slice.c)
     bool tuples_seen;   // a tuple type was written in this file, or an import's header has one (runtime/lang_tuple.c)
     bool broken_reported;
+    char limit[160]; // the first table that filled, as an error says it (empty: none); reported once
+    bool limit_reported;
     bool started;
     bool finished;
     const char *main_file;

@@ -10,4 +10,10 @@ export void test_wrapping() {
     test::check_equal(wrapping::mul((I8)100, (I8)2), (I8)-56);
     test::check_equal(wrapping::neg((I8)-128), (I8)-128);
     test::check_equal(wrapping::add((U8)255, (U8)1), (U8)0);
+    test::check_equal(wrapping::shl((I32)1, 31), (I32)-2147483647 - 1);
+    test::check_equal(wrapping::shl((I8)1, 8), (I8)0);
+    test::check_equal(wrapping::shl((U8)3, 7), (U8)128);
+    test::check_equal(wrapping::to(U8, 300), (U8)44);
+    test::check_equal(wrapping::to(I8, 200), (I8)-56);
+    test::check_equal(wrapping::to(U32, (I64)-1), (U32)0xFFFFFFFF);
 }

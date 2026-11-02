@@ -1,6 +1,7 @@
 // The floor of smith's own binary (#802, knowledge/deployment-target.md): built for macOS 26 and newer whatever macOS
 // built it, so the release runs on the Macs people have and on the hosted runners. Reads the load commands of the
 // smith under test, `$SMITH_SELF`.
+// smith-covers: build.c smith.c runtime/platform_*.c
 module deployment_test;
 
 import std::arena;

@@ -5,7 +5,7 @@ description: "Using std::net (import std::net; net::connect, connect_tls, listen
 
 # TCP and TLS by direct calls: std::net
 
-Call `net::` anywhere. A call returns `Result(T, net::Error)`; the error is what the world said (`NotFound` for a name that does not resolve, `Refused`, `Unreachable`, `TimedOut`, `Reset`, `InUse`, `Denied`, `TooMany`; for TLS `Expired`, `NotYetValid`, `WrongHost`, `Untrusted`, `BadCertificate`, `HandshakeFailed`, `Unsupported` when the system has no TLS stack; `Other`). A host is a name or an address (`const char host[:]`). The calls block, take your buffers and allocate nothing.
+Call `net::` anywhere. A call returns `Result(T, net::Error)`; the error is what the world said (`NotFound` for a name that does not resolve, `Refused`, `Unreachable`, `TimedOut`, `Reset`, `InUse`, `Denied`, `TooMany`; for TLS `Expired`, `NotYetValid`, `WrongHost`, `Untrusted`, `BadCertificate`, `HandshakeFailed`, `Unsupported` when the system has no TLS stack; `Other`). A host is a name or an address (`const char host[:]`). The calls block, take your buffers and allocate nothing. `net::describe(error)` is an error as a constant text for a message.
 
 ```smith
 module scratch;

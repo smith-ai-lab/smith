@@ -450,3 +450,316 @@ export void test_parse_decl_anonymous_records() {
                  "export union { U32 word; } shared[2];\n";
     test::golden("tests/front/parse_decl/anonymous.txt", dump_of(source));
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// smith's own syntax (#1444, part of #1428): the declarations, beside the old forms
+
+// The type stub for smith's own syntax: `*mut T`, `*T` and one name (lowercase or not).
+static ast::TypeExpr *stub_new_type(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    Bool mut_flags[4] = {};
+    Usize stars = 0;
+    while (stars < 4 && parse::accept(p, lex::star)) {
+        mut_flags[stars] = parse::accept(p, lex::kw_mut);
+        stars += 1;
+    }
+    ast::Path path = {};
+    if (parse::at(p, lex::kw_type)) {
+        path = ast::path(parse::text(p, parse::peek(p)));
+        parse::advance(p);
+    } else if (parse::peek(p).kind == lex::name || parse::peek(p).kind == lex::type_name) {
+        path = stub_path(p);
+    } else {
+        parse::error(p, parse::peek(p).span, "the type stub reads a name");
+        return nullptr;
+    }
+    ast::TypeKind named = {.named = {.path = path}};
+    ast::TypeExpr *type = ast::new_type((ast::TypeExpr){.span = parse::span_from(p, start), .kind = named});
+    for (Usize i = stars; i > 0; i--) {
+        ast::TypeKind pointer = {.pointer = {.pointee = type, .is_mut = mut_flags[i - 1]}};
+        type = ast::new_type((ast::TypeExpr){.span = parse::span_from(p, start), .kind = pointer});
+    }
+    return type;
+}
+
+// A parser over smith's own syntax: the lexer that reads `fn pub mut` as keywords, and the type stub above.
+static parse::Parser new_parser_of(Str source) {
+    lex::Lexed lexed = lex::tokenize_new(source);
+    lex::Tokens tokens = {};
+    switch (lexed) {
+    case .ok:
+        tokens = lexed.ok;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    parse::Parser p = parse::make(tokens, source);
+    p.hooks.expression = stub_expression;
+    p.hooks.type = stub_new_type;
+    p.hooks.statement = stub_statement;
+    p.hooks.declaration = parse_decl::declaration;
+    return p;
+}
+
+static Str new_dump_of(Str source) {
+    parse::Parser p = new_parser_of(source);
+    ast::Module m = parse_decl::file(&p, "test.smith");
+    if (countof(p.errors) > 0) {
+        Str expected = "no error";
+        test::check_equal(p.errors[0].message, expected);
+    }
+    return ast::dump(&m);
+}
+
+static Str new_first_error(Str source) {
+    parse::Parser p = new_parser_of(source);
+    ast::Module m = parse_decl::file(&p, "test.smith");
+    if (countof(p.errors) == 0) return "no error";
+    return p.errors[0].message;
+}
+
+export void test_parse_decl_new_variables() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "a := 3\n"
+                 "b: i32 = 4\n"
+                 "mut c := 0\n"
+                 "mut d: usize\n"
+                 "mut e: *mut point = 0\n"
+                 "const TAU := 6\n"
+                 "const LIMIT: i32 = 8\n"
+                 "pub f := 1\n"
+                 "@inline pub g: i32 = 2\n"
+                 "IntPair := Pair\n";
+    test::golden("tests/front/parse_decl/new_variables.txt", new_dump_of(source));
+}
+
+export void test_parse_decl_new_functions() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "pub fn area(r: f64) -> f64 {\n"
+                 "    return r\n"
+                 "}\n"
+                 "fn bump(mut x: i32) -> i32 {\n"
+                 "    return x\n"
+                 "}\n"
+                 "@inline\n"
+                 "@c_name(\"smith_log\")\n"
+                 "fn log(s: str) {\n"
+                 "}\n"
+                 "fn table(const n: usize, T: type, rest: ...) -> T {\n"
+                 "}\n"
+                 "fn Pair(T: type) -> type {\n"
+                 "}\n"
+                 "fn tagged(@cold p: *mut point, q: i32,) {\n"
+                 "}\n"
+                 "fn none() {\n"
+                 "}\n";
+    test::golden("tests/front/parse_decl/new_functions.txt", new_dump_of(source));
+}
+
+export void test_parse_decl_new_types() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "struct Point {\n"
+                 "    x: f64\n"
+                 "    y: f64\n"
+                 "}\n"
+                 "pub struct Empty {}\n"
+                 "enum Color {\n"
+                 "    red\n"
+                 "    green\n"
+                 "    blue\n"
+                 "}\n"
+                 "enum Small: u8 {\n"
+                 "    low = 2\n"
+                 "    high = 9\n"
+                 "}\n"
+                 "enum Shape {\n"
+                 "    circle: Circle\n"
+                 "    rect: Rect\n"
+                 "    empty\n"
+                 "}\n"
+                 "enum Single {\n"
+                 "    only\n"
+                 "}\n"
+                 "struct Old { I32 x; };\n"
+                 "enum OldColor { red, green };\n";
+    test::golden("tests/front/parse_decl/new_types.txt", new_dump_of(source));
+}
+
+export void test_parse_decl_new_destructure() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = new_parser_of("(q, r) := divmod\nmut (a, b) := pair\nx := 1");
+    test::check_condition(parse_decl::at_destructure(&p));
+    ast::Stmt *first = parse_decl::destructure(&p);
+    test::check_condition(parse_decl::at_destructure(&p));
+    ast::Stmt *second = parse_decl::destructure(&p);
+    test::check_equal(parse_decl::at_destructure(&p), false);
+    test::check_condition(first != nullptr && second != nullptr);
+    test::check_equal(countof(p.errors), 0);
+    ast::StmtRef statements[2] = {first, second};
+    ast::Param no_param[1] = {};
+    ast::Decl *function = ast::function("run", no_param[0:0], ast::named("Void"), ast::block(statements));
+    ast::DeclRef decls[1] = {function};
+    ast::Module m = ast::new_module("destructure", decls);
+    test::golden("tests/front/parse_decl/new_destructure.txt", ast::dump(&m));
+}
+
+export void test_parse_decl_new_goes_on_after_an_error() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = new_parser_of("a: i32\nb := 1\nfn f(x) {\n}\nmut c := 2\n");
+    ast::Module m = parse_decl::file(&p, "test.smith");
+    test::check_equal(countof(p.errors), 2);
+    test::check_equal(countof(m.decls), 2);
+    expect_text(variable_name(m.decls[0]), "b");
+    expect_text(variable_name(m.decls[1]), "c");
+}
+
+// One error for each malformed new form.
+export void test_parse_decl_new_error_a_constant_needs_a_value() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str expected = "`a` needs a value: write `a: i32 = value`, or `mut a: i32` to start at zero";
+    expect_text(new_first_error("a: i32\n"), expected);
+    expect_text(new_first_error("const a: i32\n"), expected);
+}
+
+export void test_parse_decl_new_error_const_and_mut() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str expected = "`const` and `mut` cannot be combined: a constant never changes";
+    expect_text(new_first_error("const mut a := 1\n"), expected);
+    expect_text(new_first_error("mut const a := 1\n"), expected);
+}
+
+export void test_parse_decl_new_error_a_name_after_mut() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_text(new_first_error("mut 3\n"), "expected a name after `mut`, found `3`");
+}
+
+export void test_parse_decl_new_error_a_semicolon() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str expected = "a declaration ends with the line, not `;`: remove it";
+    expect_text(new_first_error("a := 1;\n"), expected);
+    parse::Parser p = new_parser_of("a := 1;\n");
+    ast::Module m = parse_decl::file(&p, "test.smith");
+    parse::Edits fix = p.errors[0].fix;
+    test::check_equal(countof(fix), 1);
+    Str removed = fix[0].text;
+    test::check_equal(countof(removed), 0);
+}
+
+export void test_parse_decl_new_error_two_on_a_line() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str expected = "a declaration is one line: expected a line break after it, found `b`";
+    expect_text(new_first_error("a := 1 b := 2\n"), expected);
+}
+
+export void test_parse_decl_new_error_a_missing_value() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_text(new_first_error("a :=\n"), "the expression stub reads an integer, a string or a name");
+    expect_text(new_first_error("a: = 1\n"), "the type stub reads a name");
+}
+
+export void test_parse_decl_new_error_function_parameters() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str expected = "a parameter is written `name: type`, found `)`";
+    expect_text(new_first_error("fn f(a, ) {\n}\n"), "a parameter is written `name: type`: `a` has no type");
+    expect_text(new_first_error("fn f(i32) {\n}\n"), "a parameter is written `name: type`: `i32` has no type");
+    expect_text(new_first_error("fn f(a: ) {\n}\n"), "the type stub reads a name");
+    expect_text(new_first_error("fn f(mut) {\n}\n"), expected);
+}
+
+export void test_parse_decl_new_error_function_head() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_text(new_first_error("fn (a: i32) {\n}\n"), "a function has a name: write `fn name(a: i32) -> i32 { ... }`");
+    expect_text(new_first_error("fn f a: i32 {\n}\n"), "expected `(` after the function's name, found `a`");
+    expect_text(new_first_error("fn f() -> {\n}\n"), "the type stub reads a name");
+    expect_text(new_first_error("fn f()\nx := 1\n"), "a function has a body: expected `{` after the parameters");
+}
+
+export void test_parse_decl_new_error_a_destructuring() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str module_level = "a destructuring `(q, r) := f()` is a statement, not a declaration of a module";
+    expect_text(new_first_error("(q, r) := f\n"), module_level);
+    parse::Parser p = new_parser_of("(a, 1) := f\n");
+    test::check_condition(parse_decl::destructure(&p) == nullptr);
+    expect_text(p.errors[0].message, "a destructuring lists names: write `(q, r) := f()`, found `1`");
+    parse::Parser empty = new_parser_of("() := f\n");
+    test::check_condition(parse_decl::destructure(&empty) == nullptr);
+    expect_text(empty.errors[0].message, "a destructuring lists names: write `(q, r) := f()`");
+    parse::Parser open = new_parser_of("(q, r) f\n");
+    test::check_equal(parse_decl::at_destructure(&open), false);
+}
+
+export void test_parse_decl_new_error_an_attribute() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_text(new_first_error("@3 a := 1\n"), "an attribute has a name: write `@inline` or `@c_name(\"f\")`");
+    expect_text(new_first_error("@c_name(\"f\" a := 1\n"), "expected `)` after the attribute's arguments, found `a`");
+}
+
+export void test_parse_decl_new_error_a_field() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_text(new_first_error("struct P {\n    x: f64,\n}\n"), "a field ends with the line, not `,`: remove it");
+    expect_text(new_first_error("struct P {\n    x: f64;\n}\n"), "a field ends with the line, not `;`: remove it");
+    expect_text(new_first_error("struct P {\n    x: f64 y: f64\n}\n"),
+                "a field is one line: expected a line break after it, found `y`");
+    expect_text(new_first_error("struct P {\n    x:\n}\n"), "the type stub reads a name");
+    expect_text(new_first_error("struct P {\n    x: f64\n};\n"), "a type ends with the line, not `;`: remove it");
+}
+
+export void test_parse_decl_new_error_an_enumerator() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_text(new_first_error("enum E {\n    a: T,\n}\n"), "a member ends with the line, not `,`: remove it");
+    expect_text(new_first_error("enum E {\n    a:\n}\n"), "the type stub reads a name");
+    expect_text(new_first_error("enum E {\n    a: T b: U\n}\n"),
+                "a member is one line: expected a line break after it, found `b`");
+}

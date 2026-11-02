@@ -1,0 +1,91 @@
+p.*
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary dereference (name p))))))
+
+p.x.*
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary dereference (member x (name p)))))))
+
+p.*.x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (member x (unary dereference (name p)))))))
+
+&x
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary address_of (name x))))))
+
+x as f64
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (named f64) (name x))))))
+
+-x as f64
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (named f64) (unary negate (name x)))))))
+
+a + b as f64
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary add (name a) (cast (named f64) (name b)))))))
+
+x as u8 as i32
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (named i32) (cast (named u8) (name x)))))))
+
+a * b as f64
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary multiply (name a) (cast (named f64) (name b)))))))
+
+x as *mut u8
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (pointer mut (named u8)) (name x))))))
+
+x as ?i32
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (option (named i32)) (name x))))))
+
+&x as *i32
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (pointer (named i32)) (unary address_of (name x)))))))
+
+f(x) as u8
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (named u8) (call (name f) (name x)))))))
+

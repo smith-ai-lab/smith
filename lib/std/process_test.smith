@@ -9,6 +9,7 @@ import std::arena;
 import std::mem;
 import std::process;
 import std::test;
+import std::text;
 
 // Unwrapping for the checks: the value of a result (a zero when it is an error: the test checked `== .ok` before) and
 // the error (a zero when it is a value).
@@ -354,4 +355,11 @@ export void test_process_usage_self_has_memory_and_time() {
     test::check_condition(measured == .ok);
     test::check_greater(value_usage(measured).peak_bytes, 0);
     test::check_greater(value_usage(measured).user_ns + value_usage(measured).system_ns, 0);
+}
+
+export void test_process_describe_names_every_error() {
+    for (I32 i = 0; i <= (I32)process::Other; i++) {
+        test::check(countof(process::describe((process::Error)i)) > 0);
+    }
+    test::check(text::is(process::describe(process::NotFound), "the program was not found"));
 }

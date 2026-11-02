@@ -3,6 +3,10 @@
 // still expands. smith dbg is in the full smith only, so a smith without it skips these.
 // A test makes its project, then sets its own memory as the current allocator: what scratch returns to it (a Run's
 // texts, a file it reads) is given back with that memory, and scratch::clean frees what make holds.
+// smith.c dispatches `smith dbg`; its program is compiled by `smith cc`.
+// smith-covers: smith.c runtime/verbs.c runtime/quiet.c runtime/base.h runtime/platform_*.c runtime/slots.c
+// smith-covers: shim/lldb*.cpp shim/lldb/ runtime/explain.c runtime/symbolize.c shim/symbolize.cpp runtime/cache.c
+// smith-covers: runtime/sdk_cache.c
 module dbg_launch_test;
 
 import scratch;
