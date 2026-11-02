@@ -1,0 +1,141 @@
+// smith-build: link
+// std::math_trig (math re-exports it as math::sin, cos, tan, wrap, clamp and lerp): sin, cos and tan of one angle, and
+// wrap, clamp and lerp, with the same bits on every machine. Ported from game's src/base/math.c (#1703 of #33). The f32
+// functions compute in f64 with +, -, *, / and truncation only (each exactly rounded everywhere; optimize::opaque keeps
+// a product from being fused into the next addition, so a fast and an ndebug build agree) and round to f32 once at the
+// end.
+//
+//   math_trig::sin(x)   f32: within 1 ulp for |x| <= angle_max (2^20 radians); the sign of zero is kept.
+//   math_trig::cos(x)   f32: within 1 ulp for |x| <= angle_max.
+//   math_trig::tan(x)   f32: within 1 ulp for |x| <= angle_max.
+//   math_trig::wrap(a)  the angle in [-pi, pi]. clamp(x, low, high) and lerp(a, b, t) for f32 and f64.
+//
+// An f64 sin, cos and tan stay libm's builtin until a port with a 1 ulp bound for f64 lands (asked on #1406).
+module std::math_trig;
+
+import std::optimize;
+
+// The largest angle the f32 functions accept: with the reduction below, k times pi/2's first part is exact up to 2^20.
+export constexpr F32 angle_max = 1048576.0f;
+
+constexpr F64 half_pi_high = 0x1.921fb544p+0; // pi / 2 in two parts; the first has 33 bits, so k times it is exact
+constexpr F64 half_pi_low = 0x1.0b4611a626331p-34;
+constexpr F64 two_over_pi = 0x1.45f306dc9c883p-1;
+constexpr F32 pi_float = 0x1.921fb6p+1f;
+constexpr F32 tau_float = 0x1.921fb6p+2f;
+
+static const F64 sin_terms[5] = {-1.0 / 6.0, 1.0 / 120.0, -1.0 / 5040.0, 1.0 / 362880.0, -1.0 / 39916800.0};
+static const F64 cos_terms[6] = {-1.0 / 2.0,    1.0 / 24.0,       -1.0 / 720.0,
+                                 1.0 / 40320.0, -1.0 / 3628800.0, 1.0 / 479001600.0};
+
+// An angle as whole quarter turns plus what is left.
+struct QuarterTurns {
+    F64 remainder; // radians, within pi / 4
+    U32 quadrant;  // quarter turns, modulo 4
+};
+
+inline F64 mul(F64 a, F64 b) {
+    return optimize::opaque_f64(a * b);
+}
+
+// The sum of terms[i] * r2^(i + 1), by Horner's rule from the last term.
+F64 series(const F64 *terms, U32 count, F64 r2) {
+    F64 sum = 0.0;
+    for (U32 i = count; i > 0; i--)
+        sum = mul(sum + terms[i - 1], r2);
+    return sum;
+}
+
+F64 sin_kernel(F64 r) {
+    return r + mul(r, series(sin_terms, 5, mul(r, r)));
+}
+
+F64 cos_kernel(F64 r) {
+    return 1.0 + series(cos_terms, 6, mul(r, r));
+}
+
+// |x| as whole quarter turns, rounded to the nearest, plus the remainder.
+struct QuarterTurns quarter_turns(F32 x) {
+    F64 magnitude = (F64)__builtin_elementwise_abs(x);
+    I64 turns = (I64)(mul(magnitude, two_over_pi) + 0.5);
+    F64 k = (F64)turns;
+    struct QuarterTurns result = {
+        .remainder = (magnitude - mul(k, half_pi_high)) - mul(k, half_pi_low),
+        .quadrant = (U32)((U64)turns & 3),
+    };
+    return result;
+}
+
+// sin(k pi / 2 + r): each quarter turn swaps sine for cosine, and every second one negates them.
+F64 sin_quarter_turns(struct QuarterTurns turns) {
+    F64 value = (turns.quadrant & 1) == 0 ? sin_kernel(turns.remainder) : cos_kernel(turns.remainder);
+    return (turns.quadrant & 2) == 0 ? value : -value;
+}
+
+export F32 sin_float(F32 x) {
+    if (x == 0.0f) return x; // keeps the sign of zero
+    F64 magnitude_sin = sin_quarter_turns(quarter_turns(x));
+    return (F32)(x < 0.0f ? -magnitude_sin : magnitude_sin); // sin(-x) is -sin(x)
+}
+
+export F32 cos_float(F32 x) {
+    // cos(|x|) is sin(|x| + pi / 2): one quarter turn more.
+    struct QuarterTurns turns = quarter_turns(x);
+    turns.quadrant = (turns.quadrant + 1) & 3;
+    return (F32)sin_quarter_turns(turns);
+}
+
+export F32 tan_float(F32 x) {
+    if (x == 0.0f) return x; // keeps the sign of zero
+    // The sine over the cosine of |x|, from one reduction and both in f64, so the quotient rounds once to f32.
+    struct QuarterTurns turns = quarter_turns(x);
+    F64 magnitude_sin = sin_quarter_turns(turns);
+    turns.quadrant = (turns.quadrant + 1) & 3;
+    F64 magnitude_tan = magnitude_sin / sin_quarter_turns(turns);
+    return (F32)(x < 0.0f ? -magnitude_tan : magnitude_tan); // tan(-x) is -tan(x)
+}
+
+// The sine of x in radians. An f32 within 1 ulp for |x| <= angle_max and the same bits everywhere; an f64 is libm's.
+export inline typeof(x) sin(auto x) {
+    if constexpr (typeof(x) == F32) {
+        return sin_float(x);
+    } else {
+        return __builtin_elementwise_sin(x);
+    }
+}
+
+// The cosine of x in radians, as sin is.
+export inline typeof(x) cos(auto x) {
+    if constexpr (typeof(x) == F32) {
+        return cos_float(x);
+    } else {
+        return __builtin_elementwise_cos(x);
+    }
+}
+
+// The tangent of x in radians, as sin is. An f64 is the quotient of libm's sin and cos.
+export inline typeof(x) tan(auto x) {
+    if constexpr (typeof(x) == F32) {
+        return tan_float(x);
+    } else {
+        return __builtin_elementwise_sin(x) / __builtin_elementwise_cos(x);
+    }
+}
+
+// The angle equivalent to `angle` within [-pi, pi], for |angle| <= angle_max.
+export F32 wrap(F32 angle) {
+    F32 wrapped = angle - tau_float * __builtin_floorf((angle + pi_float) / tau_float);
+    if (wrapped < -pi_float) wrapped += tau_float; // rounding can land one step past either end
+    if (wrapped > pi_float) wrapped -= tau_float;
+    return wrapped;
+}
+
+// x limited to [low, high] (low <= high). A not-a-number x stays one.
+export inline typeof(x) clamp(auto x, typeof(x) low, typeof(x) high) {
+    return x < low ? low : (x > high ? high : x);
+}
+
+// a at t = 0 and b at t = 1: a * (1 - t) + b * t, exact at both ends.
+export inline typeof(a) lerp(auto a, typeof(a) b, typeof(a) t) {
+    return a * (1 - t) + b * t;
+}

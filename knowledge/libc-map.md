@@ -65,7 +65,7 @@ tags: [libc, lint, idiom, libraries]
 | `fabs` | `math::abs(x)` |
 | `isfinite` | `math::is_finite(x)` |
 | `SIZE_MAX`, `UINT64_MAX` | `math::max(Usize)`, `math::max(U64)` |
-| `pow`, `log`, `logf`, `sin`, `cos` | `math::pow(x, y)`, `math::log(x)`, `math::sin(x)`, `math::cos(x)` |
+| `pow`, `log`, `logf`, `sin`, `cos` | `math::pow(x, y)`, `math::log(x)`, `math::sin(x)`, `math::cos(x)`, `math::tan(x)` |
 | `ldexp`, `ldexpf` | `math::ldexp(x, exponent)` |
 | `fmax`, `fmin` | `math::maximum(a, b)`, `math::minimum(a, b)` |
 
