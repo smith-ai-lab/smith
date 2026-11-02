@@ -104,6 +104,9 @@ export typedef enum {
     option;
     result_type;
     fn_value;
+    concept_type; // `num`, `int`: a family of types, one instance per type (a parameter or local, never a field)
+    type_type;    // `type`: a value of it is a type
+    block;        // `[,]T`, `[,,]T`: a contiguous block with `count` dimensions known at run time, `element` per cell
 } Kind;
 
 export struct Ty;
@@ -217,6 +220,12 @@ static Bool same_kind(Kind a, Kind b) {
         return b == .result_type;
     case .fn_value:
         return b == .fn_value;
+    case .concept_type:
+        return b == .concept_type;
+    case .type_type:
+        return b == .type_type;
+    case .block:
+        return b == .block;
     }
     return false;
 }
@@ -279,7 +288,9 @@ export Table start(Target target) {
     t.bool_type = intern(&t, (Ty){.kind = .bool_type, .name = "Bool"});
     t.text = intern(&t, (Ty){.kind = .text, .name = "Str"});
     t.null_type = intern(&t, (Ty){.kind = .null_type, .name = "Null"});
+    TypeRef type_of_types = intern(&t, (Ty){.kind = .type_type, .name = "type"});
     add_builtin(&t, "Auto", t.automatic);
+    add_builtin(&t, "type", type_of_types);
     add_builtin(&t, "Void", t.void_type);
     add_builtin(&t, "Bool", t.bool_type);
     add_builtin(&t, "Str", t.text);
@@ -337,6 +348,11 @@ export TypeRef array_of(Table *t, TypeRef element, U64 count, Bool element_const
 
 export TypeRef slice_of(Table *t, TypeRef element, Bool element_const) {
     return intern(t, (Ty){.kind = .slice, .element = element, .pointee_const = element_const});
+}
+
+// `[,]T` (count 2), `[,,]T` (count 3): a block whose sizes are known at run time.
+export TypeRef block_of(Table *t, TypeRef element, U64 dimensions) {
+    return intern(t, (Ty){.kind = .block, .element = element, .count = dimensions});
 }
 
 export TypeRef option_of(Table *t, TypeRef some) {
@@ -559,6 +575,9 @@ static void expand(Piece stack[:], Usize *top, Output *text, TypeRef t) {
         push_piece(stack, top, word("[:]"));
         push_piece(stack, top, of(t->element));
         if (t->pointee_const) put(text, "const ");
+    } else if (t->kind == .block) {
+        push_piece(stack, top, word(t->count == 2 ? "[,]" : "[,,]"));
+        push_piece(stack, top, of(t->element));
     } else if (t->kind == .option) {
         push_piece(stack, top, word(")"));
         push_piece(stack, top, of(t->element));
@@ -735,6 +754,7 @@ export struct Options {
 
 export struct Checked {
     Options options;
+    Bool new_syntax; // the type being resolved is written in smith's own syntax (`x: int`): lowercase names, concepts
     Table table;
     Scopes scopes;
     NodeType nodes[:]; // open addressing on the node's address; a null node is an empty slot
@@ -899,6 +919,50 @@ static Str path_text(ast::Path path) {
     return text.data[0:text.length];
 }
 
+// A concept of smith's own syntax (`num`), in a type that is written in it: a family of types, never a field's type.
+export TypeRef concept_of(Table *t, Str name) {
+    return intern(t, (Ty){.kind = .concept_type, .name = name});
+}
+
+static Bool is_own_concept(Str name) {
+    return same_text(name, "int") || same_text(name, "float") || same_text(name, "num") || same_text(name, "signed") ||
+           same_text(name, "unsigned") || same_text(name, "pointer");
+}
+
+// The name a lowercase builtin of smith's own syntax has in the table (`u8` is `U8`), or empty.
+static Str own_builtin(Str name) {
+    if (same_text(name, "i8")) return "I8";
+    if (same_text(name, "i16")) return "I16";
+    if (same_text(name, "i32")) return "I32";
+    if (same_text(name, "i64")) return "I64";
+    if (same_text(name, "isize")) return "Isize";
+    if (same_text(name, "u8")) return "U8";
+    if (same_text(name, "u16")) return "U16";
+    if (same_text(name, "u32")) return "U32";
+    if (same_text(name, "u64")) return "U64";
+    if (same_text(name, "usize")) return "Usize";
+    if (same_text(name, "f32")) return "F32";
+    if (same_text(name, "f64")) return "F64";
+    if (same_text(name, "bool")) return "Bool";
+    if (same_text(name, "char")) return "Char";
+    if (same_text(name, "str")) return "Str";
+    if (same_text(name, "void")) return "Void";
+    if (same_text(name, "type")) return "type";
+    return "";
+}
+
+// The sized type that replaces a C type name, or empty when `name` is no C type name.
+static Str c_type_fix(Str name) {
+    if (same_text(name, "int")) return "i32";
+    if (same_text(name, "long")) return "i64";
+    if (same_text(name, "short")) return "i16";
+    if (same_text(name, "unsigned")) return "u32";
+    if (same_text(name, "float")) return "f32";
+    if (same_text(name, "double")) return "f64";
+    if (same_text(name, "signed")) return "i32";
+    return "";
+}
+
 static Bool is_concept_name(Str name) {
     return same_text(name, "Int") || same_text(name, "Num") || same_text(name, "Signed") ||
            same_text(name, "Unsigned") || same_text(name, "Float") || same_text(name, "Pointer") ||
@@ -913,9 +977,17 @@ static Bool is_c_path(ast::Path path) {
 // A named type: a builtin, or a type name in scope. An unknown name is an error that says what to write.
 static TypeRef resolve_name(Checked *r, ast::Span span, ast::Path path) {
     if (countof(path.segments) == 1) {
-        TypeRef known = builtin(&r->table, path.segments[0].text);
-        if (known != nullptr) return known;
         Str written = path.segments[0].text;
+        if (r->new_syntax && is_own_concept(written)) return concept_of(&r->table, written);
+        Str own = own_builtin(written);
+        if (!r->new_syntax && (same_text(written, "char") || same_text(written, "bool"))) own = "";
+        TypeRef known = builtin(&r->table, countof(own) > 0 ? own : written);
+        if (known != nullptr && (countof(own) > 0 || !same_text(written, "type"))) return known;
+        Str fix = c_type_fix(written);
+        if (countof(fix) > 0) {
+            failf(r, span, "`", written, "` is a C type: write `", fix, "`");
+            return r->table.invalid;
+        }
         if (same_text(written, "char") || same_text(written, "bool")) {
             if (same_text(written, "char")) {
                 failf(r, span, "`char` is a C type: write `Char`");
@@ -948,7 +1020,7 @@ static TypeRef resolve_name(Checked *r, ast::Span span, ast::Path path) {
 
 static Bool is_composite(const ast::TypeExpr *node) {
     return node->kind == .pointer || node->kind == .array || node->kind == .slice || node->kind == .function ||
-           node->kind == .applied;
+           node->kind == .applied || node->kind == .option || node->kind == .block_type;
 }
 
 // The children of a composite type, in the order their types are wanted: a function's parameters and then its result,
@@ -975,6 +1047,8 @@ static const ast::TypeExpr *child(const ast::TypeExpr *node, Usize i) {
     if (node->kind == .pointer) return node->kind.pointer.pointee;
     if (node->kind == .array) return node->kind.array.element;
     if (node->kind == .slice) return node->kind.slice.element;
+    if (node->kind == .option) return node->kind.option.inner;
+    if (node->kind == .block_type) return node->kind.block_type.element;
     if (node->kind == .function) {
         if (i < countof(node->kind.function.params)) return node->kind.function.params[i];
         return node->kind.function.result;
@@ -1034,6 +1108,27 @@ static TypeRef build_applied(Checked *r, ast::Span span, ast::Path applied_name,
     return r->table.invalid;
 }
 
+// `[5,3]T` is `[5][3]T`; `[,3]T` is a slice of `[3]T`; `[,]T` and `[,,]T` are blocks of 2 and 3 dimensions known at run
+// time. A known size after an empty one, or a size that is not an integer literal, is not typed yet.
+static TypeRef build_block(Checked *r, ast::Span span, ast::ExprRef dims[:], TypeRef element) {
+    Usize empty = 0;
+    while (empty < countof(dims) && dims[empty] == nullptr)
+        empty += 1;
+    TypeRef cell = element;
+    for (Usize i = countof(dims); i > empty; i--) {
+        const ast::Expr *size = dims[i - 1];
+        if (size == nullptr || size->kind != .integer) {
+            failf(r, span, "not yet typed: a block with a size that is not an integer literal, or an empty ",
+                  "size after a known one; write the empty sizes first, as `[,3]T`");
+            return r->table.invalid;
+        }
+        cell = array_of(&r->table, cell, size->kind.integer.value, false);
+    }
+    if (empty == 0) return cell;
+    if (empty == 1) return slice_of(&r->table, cell, false);
+    return block_of(&r->table, cell, empty);
+}
+
 // Makes the type of a composite node from its children's, which are `n` values from `base`.
 static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize base, Usize n) {
     if (any_invalid(r, w, base, n)) return r->table.invalid;
@@ -1056,6 +1151,8 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
         Bool is_const = node->kind.array.element->qualifiers.is_const;
         return array_of(&r->table, w->values[base].type, count->kind.integer.value, is_const);
     }
+    if (node->kind == .option) return option_of(&r->table, w->values[base].type);
+    if (node->kind == .block_type) return build_block(r, node->span, node->kind.block_type.dims, w->values[base].type);
     if (node->kind == .function) {
         Usize params = countof(node->kind.function.params);
         Slot slots[:] = mem::alloc_slice(Slot, params);
@@ -1162,8 +1259,29 @@ static void declare_nominal(Checked *r, const ast::Decl *d) {
     }
 }
 
+// `Line := []u8`: an alias of smith's own syntax, a constant whose value is a type. It is plain substitution.
+static Bool is_own_alias(const ast::Decl *d) {
+    if (d->kind != .variable || !d->kind.variable.is_new) return false;
+    const ast::Expr *init = d->kind.variable.init;
+    return init != nullptr && init->kind == .type_value;
+}
+
+static void declare_own_alias(Checked *r, const ast::Decl *d) {
+    if (d->kind != .variable) return;
+    const ast::Expr *init = d->kind.variable.init;
+    if (init == nullptr || init->kind != .type_value) return;
+    r->new_syntax = true;
+    TypeRef target = resolve(r, init->kind.type_value.type);
+    r->new_syntax = false;
+    declare_in_module(r, type_symbol(d->kind.variable.name, target, d, d->exported), d->span);
+}
+
 // Pass 2: aliases in the order written.
 static void declare_alias(Checked *r, const ast::Decl *d) {
+    if (is_own_alias(d)) {
+        declare_own_alias(r, d);
+        return;
+    }
     Bool from_c = d->from_c;
     Bool exported = d->exported;
     ast::Span span = d->span;
@@ -1183,7 +1301,15 @@ static void fill_record(Checked *r, Str name, Bool opaque, ast::FieldDecl member
     for (Usize i = 0; i < n; i++) {
         const ast::FieldDecl *f = &members[i];
         fields[i].name = f->name;
+        r->new_syntax = true;
         fields[i].type = resolve(r, f->type);
+        r->new_syntax = false;
+        TypeRef field_type = fields[i].type;
+        if (field_type->kind == .concept_type) {
+            failf(r, f->span, "the field `", f->name, "` has the concept `", field_type->name,
+                  "` as its type; a struct field needs a concrete type such as `i32`");
+            fields[i].type = r->table.invalid;
+        }
         if (f->bit_width != nullptr) {
             failf(r, f->span, "not yet typed: a bit-field");
         }
@@ -1225,7 +1351,8 @@ static void fill_enumeration(Checked *r, Str name, ast::Enumerator members[:]) {
 static Bool is_type_name(const ast::TypeExpr *written) {
     if (written == nullptr || written->kind != .named) return false;
     ast::Path path = written->kind.named.path;
-    return countof(path.segments) == 1 && same_text(path.segments[0].text, "Type");
+    return countof(path.segments) == 1 &&
+           (same_text(path.segments[0].text, "Type") || same_text(path.segments[0].text, "type"));
 }
 
 static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Param list[:],
@@ -1236,32 +1363,79 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
         const ast::Param *p = &list[i];
         params[i].name = p->name;
         if (is_type_name(p->type)) {
-            if (!p->is_constexpr) {
+            if (!p->is_constexpr && !p->is_new) {
                 failf(r, p->span, "parameter `", p->name,
                       "` has type `Type`, so it is compile-time: write `constexpr Type ", p->name, "`");
             }
-            params[i].type = r->table.invalid; // a type argument is not typed yet: the call site will say what it is
-        } else if (p->is_constexpr || p->is_rest) {
+            // a type argument is not typed yet: the call site will say what it is (`T: type` is compile-time on its
+            // own in smith's own syntax)
+            params[i].type = p->is_new ? builtin(&r->table, "type") : r->table.invalid;
+        } else if ((p->is_constexpr || p->is_rest) && !p->is_new) {
             failf(r, p->span, "not yet typed: a compile-time or rest parameter");
             params[i].type = r->table.invalid;
         } else if (p->type == nullptr) {
             failf(r, p->span, "the parameter `", p->name, "` has no type; write its type before the name");
             params[i].type = r->table.invalid;
         } else {
+            r->new_syntax = p->is_new;
             params[i].type = resolve(r, p->type);
+            r->new_syntax = false;
+            TypeRef param_type = params[i].type;
+            if (param_type->kind == .concept_type && d->exported) {
+                failf(r, p->span, "`", p->name, "` has the concept `", param_type->name,
+                      "` as its type, and a `pub` function is called from C and other modules: write a concrete ",
+                      "type such as `i32`, or drop `pub`");
+            }
         }
     }
     TypeRef result = r->table.void_type;
-    if (result_type != nullptr && !is_type_name(result_type))
+    if (result_type != nullptr && !is_type_name(result_type)) {
+        r->new_syntax = countof(list) > 0 && list[0].is_new;
         result = resolve(r, result_type); // (`Type`: a type function)
+        r->new_syntax = false;
+    }
     TypeRef type = function_of(&r->table, params, result, variadic);
     Symbol symbol = {.name = name, .kind = .function_symbol, .type = type, .decl = d, .exported = d->exported};
     declare_in_module(r, symbol, d->span);
 }
 
+// The type a literal initializer gives `a := 3` (smith's own syntax: `i32` for an integer, `f64` for a float, the
+// suffix and `-` considered), or null when the initializer is not a literal; a name or an expression is typed with the
+// bodies.
+static TypeRef literal_type(Checked *r, const ast::Expr *init) {
+    Bool negated = false;
+    while (init != nullptr && init->kind == .unary && init->kind.unary.op == .negate) {
+        init = init->kind.unary.operand;
+        negated = true;
+    }
+    if (init == nullptr) return nullptr;
+    if (init->kind == .integer) {
+        Str suffix = init->kind.integer.suffix;
+        if (countof(suffix) == 0) return builtin(&r->table, "I32");
+        if (same_text(suffix, "u")) return builtin(&r->table, "U32");
+        if (same_text(suffix, "l") || same_text(suffix, "ll")) return builtin(&r->table, "I64");
+        if (same_text(suffix, "ul") || same_text(suffix, "ull")) return builtin(&r->table, "U64");
+        return nullptr;
+    }
+    if (init->kind == .floating) {
+        if (same_text(init->kind.floating.suffix, "f")) return builtin(&r->table, "F32");
+        return builtin(&r->table, "F64");
+    }
+    if (negated) return nullptr;
+    if (init->kind == .boolean) return r->table.bool_type;
+    if (init->kind == .string) return r->table.text;
+    return nullptr;
+}
+
 static void declare_variable(Checked *r, const ast::Decl *d, Str name, const ast::TypeExpr *written,
-                             Bool constexpr_variable) {
+                             Bool constexpr_variable, Bool is_new, const ast::Expr *init) {
+    r->new_syntax = is_new;
     TypeRef type = resolve(r, written);
+    r->new_syntax = false;
+    if (is_new && written->kind == .auto_type) {
+        TypeRef taken = literal_type(r, init);
+        if (taken != nullptr) type = taken;
+    }
     Bool is_const = constexpr_variable || written->qualifiers.is_const;
     Symbol symbol = {
         .name = name, .kind = .variable, .type = type, .decl = d, .is_const = is_const, .exported = d->exported};
@@ -1283,7 +1457,11 @@ static void declare_member(Checked *r, const ast::Decl *d) {
         declare_function(r, d, name, d->kind.function.params, d->kind.function.result, d->kind.function.variadic);
     } else if (d->kind == .variable) {
         Str name = qualified(from_c, d->kind.variable.name);
-        declare_variable(r, d, name, d->kind.variable.type, d->kind.variable.is_constexpr);
+        const ast::TypeExpr *written = d->kind.variable.type;
+        Bool is_constexpr = d->kind.variable.is_constexpr;
+        Bool is_new = d->kind.variable.is_new;
+        const ast::Expr *init = d->kind.variable.init;
+        if (!is_own_alias(d)) declare_variable(r, d, name, written, is_constexpr, is_new, init);
     } else if (d->kind == .import_module) {
         ast::Path path = d->kind.import_module.path;
         Str last = path.segments[countof(path.segments) - 1].text;
