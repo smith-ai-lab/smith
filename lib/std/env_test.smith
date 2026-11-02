@@ -3,6 +3,7 @@
 module std::env_test;
 
 import std::env;
+import std::mem;
 import std::test;
 import <string.h>;
 
@@ -170,6 +171,10 @@ export void test_env_set_on_a_handler_with_no_set_is_other() {
 }
 
 export void test_env_set_and_remove_work_on_the_process_when_no_handler_is_set() {
+    // setenv keeps its "name=value" block for the life of the process (checked-allocator.md: "Costs and limits"), which
+    // the checked allocator would blame on this test, so the process's own calls run on the system's allocator.
+    mem::Allocator *checked = mem::set_allocator(nullptr);
+    defer mem::set_allocator(checked);
     test::check_condition(succeeded(env::set("SMITH_ENV_TEST_SET_917", "one")));
     test::check_condition(has(value_of("SMITH_ENV_TEST_SET_917"), "one"));
     test::check_condition(succeeded(env::set("SMITH_ENV_TEST_SET_917", "")));
