@@ -1,7 +1,8 @@
 // smith-build: header
 // std::slice, <smith/slice.h>: what a program does with a slice that is not an element access: compare, search, copy,
-// fill, reverse and cut one. Every export is a generic function, so it has no C spelling (the header holds only its
-// record). Nothing allocates: a result is a cut of an input, an index, or is written into a slice the caller passes.
+// fill, reverse, take and cut one. Every export is a generic function, so it has no C spelling (the header holds only
+// its record). Nothing allocates: a result is a cut of an input, an index, or is written into a slice the caller
+// passes.
 //
 //   str s = "key=value";
 //   Option(Usize) at = slice::find(s, '=');
@@ -83,6 +84,44 @@ export void reverse(auto xs[:]) {
         xs[i] = xs[j];
         xs[j] = held;
     }
+}
+
+// Copies src into dst, element by element. The two must have the same count and must not overlap.
+export void copy(auto dst[restrict :], const typeof(dst[0]) src[restrict :]) {
+    contract::requires(countof(dst) == countof(src));
+    for (Usize i = 0; i < countof(dst); i++) {
+        dst[i] = src[i];
+    }
+}
+
+// The first n elements of *xs (all of them if it has fewer), and advances *xs past them: a cursor.
+export typeof((*xs)[0:0]) take(const auto (*xs)[:], Usize n) {
+    Usize m = n < countof(*xs) ? n : countof(*xs);
+    typeof((*xs)[0:0]) head = (*xs)[0:m];
+    *xs = (*xs)[m:];
+    return head;
+}
+
+// The elements of *xs before the first v (all of them if v is absent), and advances *xs past v, like strsep.
+export typeof((*xs)[0:0]) take_until(const auto (*xs)[:], typeof((*xs)[0]) v) {
+    Usize n = 0;
+    while (n < countof(*xs) && (*xs)[n] != v) {
+        n += 1;
+    }
+    typeof((*xs)[0:0]) head = (*xs)[0:n];
+    *xs = (*xs)[n < countof(*xs) ? n + 1 : n:];
+    return head;
+}
+
+// The longest run at the start of *xs for which pred is true, and advances *xs past it.
+export typeof((*xs)[0:0]) take_while(const auto (*xs)[:], constexpr auto pred) {
+    Usize n = 0;
+    while (n < countof(*xs) && pred((*xs)[n])) {
+        n += 1;
+    }
+    typeof((*xs)[0:0]) head = (*xs)[0:n];
+    *xs = (*xs)[n:];
+    return head;
 }
 
 // The index of the first element for which pred is true, or `.none`.

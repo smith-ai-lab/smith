@@ -351,9 +351,12 @@ export void test_corpus_lowering_shard_3() {
 
 static const char *seen_lowered[cases_max * slots_per_case];
 
-// The corpus lowered, then lowered again from the last case to the first: each file's C is the same both times, so a
-// lowering depends on its file and nothing else in the process.
-export void test_lowering_twice_is_the_same() {
+constexpr Usize twice_shards = 8;
+
+// A shard of the corpus lowered, then lowered again from the last case to the first: each file's C is the same both
+// times, so a lowering depends on its file and nothing else in the process. Eight shards keep each test far from the
+// CPU limit, and together they lower every case twice.
+static void check_twice_shard(Usize shard) {
     arena::Arena memory = test::memory(1U << 27);
     arena::Arena *arena = &memory;
     arena::ArenaAllocator allocator = arena::allocator(arena);
@@ -362,14 +365,47 @@ export void test_lowering_twice_is_the_same() {
     const char *cases[cases_max];
     Usize count = names_of(arena, "tests/smith-lang/cases", true, cases, cases_max);
     Usize lowered = 0;
-    for (Usize i = 0; i < count; i++) {
+    for (Usize i = shard; i < count; i += twice_shards) {
         if (!lowers(cases[i])) continue;
         check_case(arena, cases[i], Pass_Record, seen_lowered + i * slots_per_case, nullptr);
         lowered += 1;
     }
     for (Usize i = count; i > 0; i--) {
+        if ((i - 1) % twice_shards != shard) continue;
         if (lowers(cases[i - 1]))
             check_case(arena, cases[i - 1], Pass_Compare, seen_lowered + (i - 1) * slots_per_case, nullptr);
     }
-    test::check(lowered > 200);
+    test::check(lowered > 10);
+}
+
+export void test_lowering_twice_is_the_same_shard_0() {
+    check_twice_shard(0);
+}
+
+export void test_lowering_twice_is_the_same_shard_1() {
+    check_twice_shard(1);
+}
+
+export void test_lowering_twice_is_the_same_shard_2() {
+    check_twice_shard(2);
+}
+
+export void test_lowering_twice_is_the_same_shard_3() {
+    check_twice_shard(3);
+}
+
+export void test_lowering_twice_is_the_same_shard_4() {
+    check_twice_shard(4);
+}
+
+export void test_lowering_twice_is_the_same_shard_5() {
+    check_twice_shard(5);
+}
+
+export void test_lowering_twice_is_the_same_shard_6() {
+    check_twice_shard(6);
+}
+
+export void test_lowering_twice_is_the_same_shard_7() {
+    check_twice_shard(7);
 }
