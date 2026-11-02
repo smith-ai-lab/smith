@@ -26,7 +26,7 @@ A ticket is one PR of about an hour, with its files listed. No two tickets share
 3. **Use cases**: when the design depends on them, collect them first (ask the owner) and list them here. No use cases yet means the ticket is not ready.
 4. **Files and areas**: where the change goes and what it must not touch, so tickets in a batch do not overlap.
 5. **Escalate before building**: what the builder must ask about rather than decide. If nothing, say "nothing".
-6. **Done when**: the commands that show it, and what they print. For a feature, also the docs it updates (the skill, the concept, the README if users reach for it), so future agents learn it without reading the code. A ticket that edits a corpus case lists every test that reads one in its checklist ([smith-dev-language](../smith-dev-language/SKILL.md) names them).
+6. **Done when**: the commands that show it, and what they print. For a feature, also the docs it updates (the skill, the concept, the README if users reach for it), so future agents learn it without reading the code. Never write "No docs here" on a `feat` ticket: `check-docs-gate` fails any `feat` commit that changes nothing in `knowledge/` or `.agents/skills/`, so name the concept row or skill line to edit (for the front end, `knowledge/front-end.md`); a ticket that needs no docs is a `refactor` or `fix`. A ticket that edits a corpus case lists every test that reads one in its checklist ([smith-dev-language](../smith-dev-language/SKILL.md) names them).
 
 ## Bad
 > Add caching as discussed. Make it fast. Follow the usual conventions.
