@@ -1,6 +1,7 @@
 __INT32_TYPE__ shapes_dot(__INT32_TYPE__ n) __asm__("_shapes::dot");
 __INT32_TYPE__ shapes_dot(__INT32_TYPE__ n) {
-__INT32_TYPE__ buf[4] = {n, n + 1, n + 2, n + 3};struct smith_array_i32_n {
+__INT32_TYPE__ buf[4] = {n, n + 1, n + 2, n + 3};
+struct smith_array_i32_n {
 __INT32_TYPE__ * data; __SIZE_TYPE__ count [1]; } xs = buf;
 __INT32_TYPE__ total = 0;
 for (__SIZE_TYPE__ i = 0; i < countof(xs); i++)
