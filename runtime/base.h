@@ -1,6 +1,5 @@
 // What smith's own C shares before anything else: the assertion every build keeps, the exit statuses, the way a
-// program stops with a message, and the byte copy. Included by smith.c and by scripts/header_tool.c (the standalone
-// writer of the .smith libraries' headers), which include runtime/lang*.c and so need the same.
+// program stops with a message, and the byte copy. Included by smith.c and the runtime/lang*.c it includes.
 #pragma once
 
 #include <stdio.h>

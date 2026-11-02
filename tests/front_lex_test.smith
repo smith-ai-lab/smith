@@ -616,3 +616,19 @@ export void test_lex_golden_tuple_spelling_main() {
 export void test_lex_golden_generic_rest_arguments() {
     expect_golden("generic-rest", "arguments");
 }
+
+// `t.0` and `t.0.1` in smith's own syntax (#1619): the digits after a member's `.` are an integer, not a float; a float
+// elsewhere stays one.
+export void test_lex_a_tuple_index_is_an_integer_after_a_dot_in_the_new_syntax() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "t.0 n.0.1 f(x).2 .5 1.5";
+    lex::Tokens tokens = new_tokens_of(source);
+    Str actual = lex::dump(tokens, source);
+    Str expected = "1:1 name t\n1:2 dot .\n1:3 integer 0\n1:5 name n\n1:6 dot .\n1:7 integer 0\n1:8 dot .\n1:9 integer "
+                   "1\n1:11 name f\n1:12 left_paren (\n1:13 name x\n1:14 right_paren )\n1:15 dot .\n1:16 integer "
+                   "2\n1:18 floating .5\n1:21 floating 1.5\n1:24 end_of_file\n";
+    test::check_equal(actual, expected);
+}
