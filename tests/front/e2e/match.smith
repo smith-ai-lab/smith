@@ -1,0 +1,45 @@
+enum Color {
+    red
+    green
+    blue
+}
+
+enum Level: u8 {
+    low = 2
+    high = 9
+}
+
+fn score(c: Color) -> i32 {
+    match c {
+        .red => 1
+        .green, .blue => 2
+    }
+}
+
+fn count(o: ?i32) -> i32 {
+    match o {
+        .some(n) => n
+        .none => 0
+    }
+}
+
+pub fn check() -> i32 {
+    if score(.red) != 1 || score(.blue) != 2 {
+        return 1
+    }
+    top: Level = .high
+    if top as u8 != 9 {
+        return 2
+    }
+    mut seen := 0
+    c: Color = .green
+    match c {
+        .red => seen = 1
+        .green => seen = 2
+        .blue => seen = 3
+    }
+    if seen != 2 || count(.some(4)) + count(.none) != 4 {
+        return 3
+    }
+    0
+}
