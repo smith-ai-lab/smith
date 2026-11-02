@@ -19,6 +19,7 @@ import std::mem;
 import std::test;
 import <llvm-c/Core.h>;
 import <stdio.h>;
+import <smith/trace.h>;
 import <string.h>;
 import <unistd.h>;
 import <sys/wait.h>;

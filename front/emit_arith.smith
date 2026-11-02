@@ -7,6 +7,8 @@
 // operands and the source position are the report) and then to the function's one `trap` block (`llvm.trap`,
 // `unreachable`). Types have no checker yet: a literal takes the
 // hint's type (the other operand's, the variable's, the function's result), both operands of a binary have one type.
+// Floats (#1617, end of the file): `fadd fsub fmul fdiv`, `fneg`, ordered `fcmp` (`!=` is `une`) and casts; a float to
+// an integer is checked (not NaN, in range) like an integer cast.
 module front::emit_arith;
 
 import front::ast;
