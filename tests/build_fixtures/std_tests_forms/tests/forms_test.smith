@@ -1,0 +1,14 @@
+module forms_test;
+
+import std::test;
+
+export void test_one_line() { test::check_equal(1, 1); }
+
+export void test_comment_after_brace() { // a trailing comment
+    test::check_equal(2, 2);
+}
+
+export void test_wrapped(
+) {
+    test::check_equal(3, 3);
+}

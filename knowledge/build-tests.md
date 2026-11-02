@@ -74,7 +74,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   in `[a-z_]`) and writes `tests_list.h` (prototypes) and `tests_list.c` (the table, `{name, plain, property, with_failing}`)
   beside the runner. Each test file compiles with
   `-include <tests_list.h> -Werror=missing-prototypes`, so a `test_` function the scan missed because it is formatted
-  another way (`void test_x (void) {`) is a compile error. A `static` helper is not a test. A name defined twice is an
+  another way (`void test_x (void) {`) is a compile error. A `static` helper is not a test. The scan reads a one-line body and a signature wrapped over lines too (#1158); a `test_` function it cannot read is an error with file and line, not a skipped test. A name defined twice is an
   error that names both files; a file with no tests is fine.
   - **Tests in `.smith` files** (name the files in `.sources`, `tests/**/*_test.smith`): in a file with no `module` line
     the same lines are tests, with the same names. In a module (`module geometry::box_test;`) a test is
