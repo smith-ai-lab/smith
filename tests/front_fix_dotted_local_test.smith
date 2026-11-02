@@ -1,0 +1,31 @@
+// Tests of a local declared with a module's type (#1746, part of #1428): `arena::Arena memory = ...` goes through
+// `smith lint --fix` to the new syntax, and the text it ends with parses with no error. Before, the pass that wrote `.`
+// for `::` left `arena.Arena memory`, which the statement parser read as an expression: "expected `;`, found `memory`".
+module front_fix_dotted_local_test;
+
+import front::fix;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Usize errors_in(Str source) {
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    return countof(parsed.errors);
+}
+
+static void expect_clean(Str before) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(errors_in(first.text), (Usize)0);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.text, first.text);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+export void test_front_fix_dotted_local_a_module_type_declares_a_local() {
+    expect_clean("module m;\nimport std::arena;\nvoid f() {\n    arena::Arena memory = make();\n}\n");
+}

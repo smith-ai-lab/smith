@@ -49,9 +49,9 @@ c ? (I32)a : (U8)b
   warnings left: 1
 
 (P){}
-  warning 0-5: a compound literal is written `P(x = 1, y = 2)`: name each field (no fix)
-  fixed: (P){}
-  warnings left: 1
+  warning 0-5: a compound literal `(P){.x = 1}` is written `P(x = 1)`
+  fixed: P()
+  warnings left: 0
 
 {1, 2, 3}
   warning 0-9: an array value `{1, 2}` is written `[1, 2]`
