@@ -1,0 +1,6 @@
+smith mcp: the debugger as an MCP server over stdio
+
+usage: smith mcp
+
+examples:
+  smith mcp

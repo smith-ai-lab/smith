@@ -1,0 +1,20 @@
+smith test: build and run the project's tests
+
+usage: smith test [--test <names>] [--changed] [--update] [-v] [-k[<n>]] [<runner flags>]
+
+flags:
+  --test <names>   run the tests whose name contains one of the comma-separated names
+  --changed        run only the tests the change since main can affect (--base <ref>, --dry-run, --list)
+  --list           print the selected tests and run none
+  --update         rewrite the expected output of the tests that compare with a file
+  -v, --verbose    show everything as it happens
+  -k[<n>]          keep going after <n> build errors (0: all)
+  --fail-fast      stop at the first failing test
+  --seed <n>       the seed of a random test; --seeds <n> how many
+  --jobs <n>       how many tests run at once
+  --timeout <s>    the limit of one test; --wall-timeout and --idle-timeout the run's
+  --coverage       the line coverage of the last run
+
+examples:
+  smith test
+  smith test --test parse --changed

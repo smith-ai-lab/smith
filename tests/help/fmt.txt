@@ -1,0 +1,15 @@
+smith fmt: format the project (clang-format with arguments)
+
+usage: smith fmt [-n | --dry-run] [--Werror]
+       smith fmt <clang-format arguments>
+
+flags:
+  -n, --dry-run   change nothing; fail when a file would change
+  <files>         with file names it is clang-format, and rewrites them in place
+
+examples:
+  smith fmt
+  smith fmt --dry-run
+  smith fmt main.c
+
+clang-format's own options: smith fmt --help

@@ -1,0 +1,8 @@
+smith dbg: lldb, the debugger
+
+usage: smith dbg [<lldb arguments>]
+
+examples:
+  smith dbg build/app
+
+lldb's own options: smith dbg --help

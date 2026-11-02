@@ -78,7 +78,9 @@ static I32 run_status(const char *const argv[:]) {
 // Tests
 
 // The object defines `front::test::add`; main.c declares it with an `__asm__` label (macOS prepends `_` to the symbol,
-// as the generated headers write) and checks `add(2, 3) == 5`. smith cc links the two; the program exits 0.
+// as the generated headers write) and checks `add(2, 3) == 5`. smith cc links the two; the program exits 0. The signed
+// add has a check that calls std::contract's fail_overflow (#1542); main.c stands it in, since this program links no
+// library.
 export void test_front_emit_object_links_with_a_c_file_and_runs() {
     emit_jit::Jit host = {};
     emit_jit::JitResult started = emit_jit::start();
@@ -101,7 +103,8 @@ export void test_front_emit_object_links_with_a_c_file_and_runs() {
     Bool apple = contains(host.target.triple.data, "apple");
     write_text(format::push(folder, "/main.c").data,
                format::push("int add(int, int) __asm__(\"", apple ? "_" : "", "front::test::add\");\n",
-                            "int main(void) { return add(2, 3) == 5 ? 0 : 1; }\n")
+                            "void smith_contract_fail_overflow(const char *, long, long, const char *, const char *) ",
+                            "{ __builtin_trap(); }\n", "int main(void) { return add(2, 3) == 5 ? 0 : 1; }\n")
                    .data);
     const char *self = c::getenv("SMITH_SELF");
     const char *smith = self != nullptr ? self : "smith";
@@ -159,5 +162,101 @@ export void test_front_emit_object_an_unknown_triple_is_an_error() {
     if (written == .error) emit::free_error(written.error);
     c::LLVMDisposeModule(ir);
     c::LLVMContextDispose(context);
+    emit_jit::stop(&host);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Optimization levels (#1581)
+
+// `f(a: u32) -> u32` returning `a + 1 + 1 + 1`, built with LLVM's builder: unsigned, so it wraps and has no checks.
+static c::LLVMModuleRef wrapping_module(c::LLVMContextRef context, emit::Target target) {
+    c::LLVMModuleRef ir = c::LLVMModuleCreateWithNameInContext("wrapping", context);
+    c::LLVMSetTarget(ir, target.triple.data);
+    c::LLVMSetDataLayout(ir, target.data_layout.data);
+    c::LLVMTypeRef u32 = c::LLVMInt32TypeInContext(context);
+    c::LLVMTypeRef params[1] = {u32};
+    c::LLVMValueRef f = c::LLVMAddFunction(ir, "f", c::LLVMFunctionType(u32, params, 1, 0));
+    c::LLVMBuilderRef b = c::LLVMCreateBuilderInContext(context);
+    c::LLVMPositionBuilderAtEnd(b, c::LLVMAppendBasicBlockInContext(context, f, "entry"));
+    c::LLVMValueRef one = c::LLVMConstInt(u32, 1, 0);
+    c::LLVMValueRef sum = c::LLVMGetParam(f, 0);
+    for (I32 i = 0; i < 3; i++)
+        sum = c::LLVMBuildAdd(b, sum, one, "t");
+    c::LLVMBuildRet(b, sum);
+    c::LLVMDisposeBuilder(b);
+    return ir;
+}
+
+static void write_at(c::LLVMModuleRef ir, emit::Target target, I32 optimization) {
+    emit_object::ObjectOptions options = {.target = target, .optimization = optimization};
+    emit_object::WriteResult written = emit_object::write(ir, options, "/tmp/front_emit_object_opt.o");
+    test::check_equal(written == .ok, true);
+    if (written == .error) emit::free_error(written.error);
+    c::remove("/tmp/front_emit_object_opt.o");
+}
+
+// At 0 no pass runs: the IR text is the same after write as before. At 2 the three adds fold to one add of 3.
+export void test_front_emit_object_optimization_runs_passes_only_above_zero() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    if (started != .ok) return;
+    emit_jit::Jit host = started.ok;
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    c::LLVMModuleRef plain = wrapping_module(context, host.target);
+    char *before = c::LLVMPrintModuleToString(plain);
+    write_at(plain, host.target, 0);
+    char *after = c::LLVMPrintModuleToString(plain);
+    test::check_equal(c::strcmp(before, after), 0);
+    c::LLVMDisposeMessage(before);
+    c::LLVMDisposeMessage(after);
+    write_at(plain, host.target, 2);
+    char *folded = c::LLVMPrintModuleToString(plain);
+    test::check_equal(contains(folded, "add i32 %0, 3"), true);
+    test::check_equal(contains(folded, "add i32 %0, 1"), false);
+    c::LLVMDisposeMessage(folded);
+    c::LLVMDisposeModule(plain);
+    c::LLVMContextDispose(context);
+    emit_jit::stop(&host);
+}
+
+// The signed add of `add` can overflow: after the optimizer it still calls smith_contract_fail_overflow, and the
+// stand-in main exits 3 from it when called with i32 max.
+export void test_front_emit_object_optimization_keeps_the_overflow_check() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    if (started != .ok) return;
+    emit_jit::Jit host = started.ok;
+    const char *folder = format::push("/tmp/front_emit_object_ck_", (I64)c::getpid()).data;
+    test::check_equal(c::mkdir(folder, 0o700), 0);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    c::LLVMModuleRef ir = emit_add(context, host.target);
+    emit_object::ObjectOptions options = {.target = host.target, .optimization = 2};
+    Str object = state::msg(format::push(folder, "/add.o"));
+    emit_object::WriteResult written = emit_object::write(ir, options, object);
+    test::check_equal(written == .ok, true);
+    if (written == .error) emit::free_error(written.error);
+    char *text = c::LLVMPrintModuleToString(ir);
+    test::check_equal(contains(text, "smith_contract_fail_overflow"), true);
+    c::LLVMDisposeMessage(text);
+    c::LLVMDisposeModule(ir);
+    c::LLVMContextDispose(context);
+    Bool apple = contains(host.target.triple.data, "apple");
+    const char *main_c = format::push(folder, "/main.c").data;
+    write_text(main_c, format::push("void _Exit(int);\nint add(int, int) __asm__(\"", apple ? "_" : "",
+                                    "front::test::add\");\n",
+                                    "void smith_contract_fail_overflow(const char *, long, long, const char *, ",
+                                    "const char *) { _Exit(3); }\n", "int main(void) { return add(2147483647, 1); }\n")
+                           .data);
+    const char *self = c::getenv("SMITH_SELF");
+    const char *smith = self != nullptr ? self : "smith";
+    const char *prog = format::push(folder, "/prog").data;
+    const char *const link[6] = {smith, "cc", main_c, object.data, "-o", prog};
+    test::check_equal(run_status(link[0:6]), 0);
+    const char *const program[1] = {prog};
+    test::check_equal(run_status(program[0:1]), 3);
+    c::remove(prog);
+    c::remove(main_c);
+    c::remove(object.data);
+    c::rmdir(folder);
     emit_jit::stop(&host);
 }

@@ -103,6 +103,9 @@ static Bool group_then_name(const parse::Parser *p, Usize at) {
         at += 1;
         if (depth == 0) break;
     }
+    // In smith's own syntax a line break after the `)` ends the statement: `f(x)` and a `f(x)` on the next line are two
+    // calls, not a type and a name (#1554).
+    if (p->new_syntax && lex::ends_statement(parse::peek_at(p, at - 1))) return false;
     return is_segment(parse::peek_at(p, at).kind);
 }
 

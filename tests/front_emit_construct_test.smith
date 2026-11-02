@@ -1,0 +1,391 @@
+// Tests of building a record with a call and of named arguments (#1579, wave 3 of #1428): `Point(x = 1, y = 2)`
+// and `f(c = 3, a = 1)` in front::emit_call, built by hand as front::ast trees, JITted through front::emit_jit; and
+// the errors, each with its span. The memory rules are those of tests/front_emit_memory_test.smith: the tree is built
+// in an arena, the emitter and LLVM use the system's allocator.
+module front_emit_construct_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <string.h>;
+
+typedef I32 (*NoArgFn)();
+typedef I32 (*I32Fn)(I32);
+
+static ast::TypeExpr *i32_type() {
+    return ast::named("I32");
+}
+
+static ast::Expr *number(U64 value) {
+    return ast::integer(value);
+}
+
+static ast::Expr *name(Str text) {
+    return ast::name(text);
+}
+
+static ast::Expr *binary(ast::BinaryOp op, ast::Expr *left, ast::Expr *right) {
+    return ast::binary(op, left, right);
+}
+
+static ast::Expr *dot(ast::Expr *base, Str field) {
+    ast::ExprKind kind = {.member = {.base = base, .name = field, .arrow = false}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *assign(ast::Expr *target, ast::Expr *value) {
+    ast::AssignOp op = .plain;
+    ast::ExprKind kind = {.assign = {.op = op, .target = target, .value = value}};
+    return ast::expr(kind);
+}
+
+static ast::Stmt *expression(ast::Expr *value) {
+    ast::StmtKind kind = {.expression = {.value = value}};
+    return ast::stmt(kind);
+}
+
+static ast::Stmt *declare(ast::Decl *variable) {
+    ast::StmtKind kind = {.declaration = {.decl = variable}};
+    return ast::stmt(kind);
+}
+
+static ast::Stmt *give(ast::Expr *value) {
+    return ast::return_value(value);
+}
+
+static ast::Expr *arg(Str field, ast::Expr *value) {
+    return ast::named_arg(field, value);
+}
+
+static ast::Expr *call0(Str callee) {
+    ast::ExprRef none[1] = {};
+    return ast::call(ast::name(callee), none[0:0]);
+}
+
+static ast::Expr *call1(Str callee, ast::Expr *a) {
+    ast::ExprRef args[1] = {a};
+    return ast::call(ast::name(callee), args);
+}
+
+static ast::Expr *call2(Str callee, ast::Expr *a, ast::Expr *b) {
+    ast::ExprRef args[2] = {a, b};
+    return ast::call(ast::name(callee), args);
+}
+
+static ast::Expr *call3(Str callee, ast::Expr *a, ast::Expr *b, ast::Expr *c) {
+    ast::ExprRef args[3] = {a, b, c};
+    return ast::call(ast::name(callee), args);
+}
+
+static ast::Decl *function_of(Str name, ast::Param params[:], ast::TypeExpr *result, ast::StmtRef items[:]) {
+    ast::Decl *function = ast::function(name, params, result, ast::block(items));
+    function->exported = true;
+    return function;
+}
+
+static ast::Decl *function_of0(Str name, ast::TypeExpr *result, ast::StmtRef items[:]) {
+    ast::Param none[1] = {};
+    return function_of(name, none[0:0], result, items);
+}
+
+static ast::Decl *point_record() {
+    ast::FieldDecl fields[2] = {ast::field("x", i32_type()), ast::field("y", i32_type())};
+    return ast::record_decl("Point", fields);
+}
+
+// `I32 abc(I32 a, I32 b, I32 c) { return a * 100 + b * 10 + c; }`
+static ast::Decl *abc_function() {
+    ast::Param params[3] = {ast::param("a", i32_type()), ast::param("b", i32_type()), ast::param("c", i32_type())};
+    ast::StmtRef items[1] = {
+        give(binary(.add,
+                    binary(.add, binary(.multiply, name("a"), number(100)), binary(.multiply, name("b"), number(10))),
+                    name("c"))),
+    };
+    return function_of("abc", params, i32_type(), items);
+}
+
+// `I32 sum(Point p) { return p.x * 10 + p.y; }`
+static ast::Decl *sum_function() {
+    ast::Param params[1] = {ast::param("p", ast::named("Point"))};
+    ast::StmtRef items[1] = {
+        give(binary(.add, binary(.multiply, dot(name("p"), "x"), number(10)), dot(name("p"), "y")))};
+    return function_of("sum", params, i32_type(), items);
+}
+
+static ast::Module module_of(ast::DeclRef decls[:]) {
+    return ast::new_module("front::test", decls);
+}
+
+// `I32 name() { Point p = built; return p.x * 10 + p.y; }`
+static ast::Decl *read_point(Str function, ast::Expr *built) {
+    ast::StmtRef items[2] = {
+        declare(ast::variable("p", ast::named("Point"), built)),
+        give(binary(.add, binary(.multiply, dot(name("p"), "x"), number(10)), dot(name("p"), "y"))),
+    };
+    return function_of0(function, i32_type(), items);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Memory: the arena holds the tree; the system's allocator serves the emitter and LLVM
+
+struct TreeMemory {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    mem::Allocator *outside;
+};
+
+static void tree_begin(TreeMemory *trees) {
+    trees->memory = test::memory(1U << 22);
+    trees->allocator = arena::allocator(&trees->memory);
+    trees->outside = mem::set_allocator(&trees->allocator.base);
+}
+
+static void tree_end(TreeMemory *trees) {
+    mem::set_allocator(trees->outside);
+}
+
+static emit::Options options_for(emit::Target target) {
+    emit::Options options = {};
+    options.target = target;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static void jit_module(emit_jit::Jit *host, const ast::Module *m) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, m, options_for(host->target));
+    test::check_equal(emitted == .ok, true);
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    }
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+static Bool contains(const char *text, Str needle) {
+    return c::strstr(text, needle.data) != nullptr; // a literal's text ends with a terminator
+}
+
+// The error of emitting the module, with the context and the half-built module gone.
+static emit::Error failure_of(const ast::Module *m) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::Target target = {};
+    target.triple = "x86_64-unknown-linux-gnu";
+    emit::ModuleResult emitted = emit::module(context, m, options_for(target));
+    test::check_equal(emitted == .error, true);
+    emit::Error error = {};
+    if (emitted == .error) error = emitted.error;
+    c::LLVMContextDispose(context);
+    return error;
+}
+
+static void check_error(const ast::Module *m, Str message, U32 start, U32 end) {
+    emit::Error error = failure_of(m);
+    test::check_equal(contains(error.message.data, message), true);
+    test::check_equal(error.span.start, start);
+    test::check_equal(error.span.end, end);
+    emit::free_error(error);
+}
+
+static ast::Expr *spanned(ast::Expr *x, U32 start, U32 end) {
+    x->span = (ast::Span){.start = start, .end = end};
+    return x;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Building a record
+
+export void test_front_emit_construct_fields_in_any_order_and_a_left_out_field_is_zero() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::DeclRef decls[4] = {
+        point_record(),
+        read_point("both", call2("Point", arg("x", number(1)), arg("y", number(2)))),
+        read_point("swapped", call2("Point", arg("y", number(2)), arg("x", number(1)))),
+        read_point("one", call1("Point", arg("x", number(1)))),
+    };
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    NoArgFn both = (NoArgFn)symbol_of(&host, "front::test::both");
+    NoArgFn swapped = (NoArgFn)symbol_of(&host, "front::test::swapped");
+    NoArgFn one = (NoArgFn)symbol_of(&host, "front::test::one");
+    test::check_equal(both(), 12);
+    test::check_equal(swapped(), 12);
+    test::check_equal(one(), 10);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_construct_nothing_given_is_all_zero() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::DeclRef decls[2] = {point_record(), read_point("zero", call0("Point"))};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    NoArgFn zero = (NoArgFn)symbol_of(&host, "front::test::zero");
+    test::check_equal(zero(), 0);
+    emit_jit::stop(&host);
+}
+
+// A construction as an argument and a call returning a record, passed on.
+export void test_front_emit_construct_as_an_argument_and_a_returned_value() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Param params[1] = {ast::param("a", i32_type())};
+    ast::StmtRef make_items[1] = {
+        give(call2("Point", arg("x", name("a")), arg("y", binary(.add, name("a"), number(1))))),
+    };
+    ast::StmtRef direct_items[1] = {give(call1("sum", call2("Point", arg("y", number(4)), arg("x", number(3)))))};
+    ast::StmtRef through_items[1] = {give(call1("sum", call1("make", number(5))))};
+    ast::DeclRef decls[5] = {
+        point_record(),
+        sum_function(),
+        function_of("make", params, ast::named("Point"), make_items),
+        function_of0("direct", i32_type(), direct_items),
+        function_of0("through", i32_type(), through_items),
+    };
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    NoArgFn direct = (NoArgFn)symbol_of(&host, "front::test::direct");
+    NoArgFn through = (NoArgFn)symbol_of(&host, "front::test::through");
+    test::check_equal(direct(), 34);
+    test::check_equal(through(), 56);
+    emit_jit::stop(&host);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Named arguments
+
+export void test_front_emit_construct_named_arguments_in_any_order_match_positional_ones() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef positional[1] = {give(call3("abc", number(1), number(2), number(3)))};
+    ast::StmtRef shuffled[1] = {give(call3("abc", arg("c", number(3)), arg("a", number(1)), arg("b", number(2))))};
+    ast::StmtRef mixed[1] = {give(call3("abc", number(1), arg("c", number(3)), arg("b", number(2))))};
+    ast::DeclRef decls[4] = {
+        abc_function(),
+        function_of0("positional", i32_type(), positional),
+        function_of0("shuffled", i32_type(), shuffled),
+        function_of0("mixed", i32_type(), mixed),
+    };
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    NoArgFn first = (NoArgFn)symbol_of(&host, "front::test::positional");
+    NoArgFn second = (NoArgFn)symbol_of(&host, "front::test::shuffled");
+    NoArgFn third = (NoArgFn)symbol_of(&host, "front::test::mixed");
+    test::check_equal(first(), 123);
+    test::check_equal(second(), 123);
+    test::check_equal(third(), 123);
+    emit_jit::stop(&host);
+}
+
+// `I32 counter = 0; I32 bump(I32 d) { counter = counter * 10 + d; return d; }`; the call
+// `pair(b = bump(1), a = bump(2))` runs `bump(1)` first, so the counter ends at 12.
+export void test_front_emit_construct_arguments_run_in_the_order_written() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Decl *counter = ast::variable("counter", i32_type(), number(0));
+    counter->exported = true;
+    ast::Param bump_params[1] = {ast::param("d", i32_type())};
+    ast::StmtRef bump_items[2] = {
+        expression(assign(name("counter"), binary(.add, binary(.multiply, name("counter"), number(10)), name("d")))),
+        give(name("d")),
+    };
+    ast::Param pair_params[2] = {ast::param("a", i32_type()), ast::param("b", i32_type())};
+    ast::StmtRef pair_items[1] = {give(binary(.add, name("a"), name("b")))};
+    ast::StmtRef run_items[2] = {
+        expression(call2("pair", arg("b", call1("bump", number(1))), arg("a", call1("bump", number(2))))),
+        give(name("counter")),
+    };
+    ast::DeclRef decls[4] = {
+        counter,
+        function_of("bump", bump_params, i32_type(), bump_items),
+        function_of("pair", pair_params, i32_type(), pair_items),
+        function_of0("run", i32_type(), run_items),
+    };
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    NoArgFn run = (NoArgFn)symbol_of(&host, "front::test::run");
+    test::check_equal(run(), 12);
+    emit_jit::stop(&host);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Errors
+
+export void test_front_emit_construct_a_positional_field_is_an_error() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::DeclRef decls[2] = {point_record(), read_point("f", call1("Point", spanned(number(1), 21, 22)))};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    check_error(&m, "a field of Point is always named", 21U, 22U);
+}
+
+export void test_front_emit_construct_an_unknown_field_is_an_error() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::DeclRef decls[2] = {point_record(), read_point("f", call1("Point", spanned(arg("z", number(1)), 30, 35)))};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    check_error(&m, "no field z in Point", 30U, 35U);
+}
+
+export void test_front_emit_construct_a_field_given_twice_is_an_error() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Expr *built = call2("Point", arg("x", number(1)), spanned(arg("x", number(2)), 40, 45));
+    ast::DeclRef decls[2] = {point_record(), read_point("f", built)};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    check_error(&m, "field x of Point is given twice", 40U, 45U);
+}
+
+export void test_front_emit_construct_an_unknown_parameter_name_is_an_error() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Expr *bad = call3("abc", number(1), spanned(arg("z", number(2)), 50, 55), arg("c", number(3)));
+    ast::StmtRef items[1] = {give(bad)};
+    ast::DeclRef decls[2] = {abc_function(), function_of0("f", i32_type(), items)};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    check_error(&m, "abc has no parameter z", 50U, 55U);
+}
+
+export void test_front_emit_construct_a_parameter_given_twice_is_an_error() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Expr *bad = call3("abc", number(1), arg("b", number(2)), spanned(arg("a", number(3)), 60, 65));
+    ast::StmtRef items[1] = {give(bad)};
+    ast::DeclRef decls[2] = {abc_function(), function_of0("f", i32_type(), items)};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    check_error(&m, "parameter a of abc is given twice", 60U, 65U);
+}

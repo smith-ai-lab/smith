@@ -32,6 +32,7 @@ Where a command cannot take an argument, use the links that act as the verbs by 
 
 A compiler error or warning is clang's, not smith's: fix it as for clang. Messages that start with `smith:`:
 - `<arg> is not a smith command; to compile, run` `smith cc ...`: add `cc`, or fix `CC`.
+- `<word> is not a command.` (with `Did you mean <command>?` for a typo), then the list of commands: the first argument of `smith` is no verb; fix the word.
 - `.metal and other inputs need different compilers...`: split the command.
 - `not an executable: <path>`, `refers to smith itself: <path>`: a `SMITH_*` variable is wrong; fix or unset it.
 - `cannot find clang in /opt/homebrew/opt/llvm/bin`, `cannot find a compiler; set SMITH_CLANG`: a stage0 needs `brew install llvm` or `SMITH_CLANG`.

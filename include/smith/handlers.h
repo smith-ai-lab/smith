@@ -108,6 +108,9 @@ SmithConsoleHandler *smith_handlers_set_console(SmithConsoleHandler *console);
 // The console of the calling thread, null when none is set.
 SmithConsoleHandler *smith_handlers_console(void);
 
+// Flushes stdout and stderr and no other FILE (fflush(nullptr) waits for the lock of a stdin that a thread is reading).
+void smith_handlers_flush_console(void);
+
 // The environment of the calling thread: getenv reaches it while one is set. `get` returns the value of a variable, or
 // null when it is not set; the handler owns the string. `set` and `remove` (std::env's env::set and env::remove) return
 // 0 or an errno; a handler that leaves one null refuses it with ENOSYS. No env handler set is libc's.

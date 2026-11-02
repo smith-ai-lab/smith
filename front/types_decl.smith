@@ -33,8 +33,9 @@
 //                  binding is constant unless `mut` (writes are refused by types_expr), shadowing is an error (the
 //                  earlier declaration is named by its byte offset: the checker has no line table), `_ := f()`
 //                  discards, and a call whose result is not `Void` and is not used is an error, once the function has a
-//                  parameter or an earlier local in that syntax (a function has no marker of its own). Not yet: `(q, r)
-//                  := f()` (destructuring needs tuples in the checker).
+//                  parameter or an earlier local in that syntax (a function has no marker of its own). `(q, r) := f()`
+//                  and `mut (q, r) := f()` split a tuple: one binding per element, `_` discards one, a wrong count
+//                  is an error naming both. Nested patterns are not parsed yet.
 //   Locals         The type is written, or `Auto` takes the initializer's type. A name already in the same scope is an
 //                  error. A local is `const` through the written type.
 //   Calls, Fn      Calls and the `Fn(F)` values are typed by front::types_expr; this module supplies the conversions
@@ -57,6 +58,7 @@ import front::types;
 import front::types_convert;
 import front::types_expr;
 import front::types_fn;
+import front::types_iter;
 import std::arena;
 import std::format;
 import std::mem;
@@ -373,6 +375,51 @@ static void local_declaration(types::Checked *r, const ast::Decl *d) {
                  "of the module");
 }
 
+// `(q, r) := f()` and `mut (q, r) := f()`: one constant (or variable) per element of the tuple the initializer
+// returns; `_` discards an element. The count must match the tuple's length.
+static void destructure_statement(types::Checked *r, const ast::Stmt *s) {
+    if (!(s->kind == .destructure)) {
+        return;
+    }
+    ast::Identifier names[:] = s->kind.destructure.names;
+    Bool is_mut = s->kind.destructure.is_mut;
+    types::TypeRef found = types_expr::infer(r, s->kind.destructure.init);
+    state.new_body = true;
+    if (found == r->table.invalid) {
+        return;
+    }
+    if (found->kind != .tuple) {
+        types::failf(r, s->span, "`(", countof(names), " names) := ...` splits a tuple, but this is a `",
+                     types::show(found), "`; write a single name, or call something that returns a tuple");
+        return;
+    }
+    if (countof(found->slots) != countof(names)) {
+        types::failf(r, s->span, "this destructuring has ", countof(names), " names, but the tuple `",
+                     types::show(found), "` has ", countof(found->slots),
+                     " elements; write one name (or `_`) per element");
+        return;
+    }
+    for (Usize i = 0; i < countof(names); i++) {
+        Str name = names[i].text;
+        if (is_discard(name)) {
+            continue;
+        }
+        const types::Symbol *earlier = types::lookup(&r->scopes, name);
+        if (earlier != nullptr && earlier->kind == .variable) {
+            types::failf(r, names[i].span, "`", name, "` hides a variable of the same name; shadowing is an error, ",
+                         "choose another name");
+            continue;
+        }
+        types::TypeRef type = found->slots[i].type;
+        types::Symbol symbol = {.name = name, .kind = .variable, .type = type, .is_const = !is_mut, .is_new = true};
+        if (!types::declare(&r->scopes, symbol)) {
+            types::failf(r, names[i].span, "`", name, "` is already declared in this scope; choose another name");
+            continue;
+        }
+        note_local(name, type);
+    }
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // return
 
@@ -442,6 +489,33 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
         push(else_branch, nullptr, enter);
     }
     push(then_branch, nullptr, enter);
+}
+
+static void for_in_statement(types::Checked *r, const ast::Stmt *s) {
+    if (!(s->kind == .for_in)) {
+        return;
+    }
+    ast::Identifier names[:] = s->kind.for_in.names;
+    types::TypeRef element = types_iter::element_type(r, s->kind.for_in.iterable, s->kind.for_in.is_tuple);
+    if (element == nullptr) {
+        element = r->table.invalid;
+    }
+    types::push_scope(&r->scopes);
+    push(nullptr, nullptr, leave);
+    push(s->kind.for_in.body, nullptr, enter);
+    for (Usize i = 0; i < countof(names); i++) {
+        const types::Symbol *earlier = types::lookup(&r->scopes, names[i].text);
+        if (earlier != nullptr && earlier->kind == .variable && !is_discard(names[i].text)) {
+            types::failf(r, names[i].span, "`", names[i].text, "` hides a variable of the same name; shadowing is an ",
+                         "error, choose another name");
+        } else if (!is_discard(names[i].text)) {
+            types::Symbol symbol = {
+                .name = names[i].text, .kind = .variable, .type = element, .is_const = true, .is_new = true};
+            types::declare(&r->scopes, symbol);
+            state.new_body = true;
+            note_local(names[i].text, element);
+        }
+    }
 }
 
 static void for_statement(types::Checked *r, const ast::Stmt *s) {
@@ -541,6 +615,8 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
         expression_statement(r, s);
     } else if (s->kind == .declaration) {
         local_declaration(r, s->kind.declaration.decl);
+    } else if (s->kind == .destructure) {
+        destructure_statement(r, s);
     } else if (s->kind == .block) {
         block_statement(r, s);
     } else if (s->kind == .if_stmt) {
@@ -553,6 +629,8 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
         push(s->kind.do_while.body, nullptr, enter);
     } else if (s->kind == .for_stmt) {
         for_statement(r, s);
+    } else if (s->kind == .for_in) {
+        for_in_statement(r, s);
     } else if (s->kind == .return_stmt) {
         return_statement(r, s);
     } else if (s->kind == .defer_stmt) {
@@ -738,6 +816,7 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
 // Checks a whole module for `target`.
 export types::Checked check_module(const ast::Module *m, types::Target target) {
     state = (State){};
+    types_fn::reset();
     types::Checked r = types::check(m, options(target));
     for (Usize i = 0; i < countof(m->decls); i++) {
         check_initializer(&r, m->decls[i]);

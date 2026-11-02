@@ -1,0 +1,68 @@
+// The output of an unknown first argument (#1150): a suggestion when the word is close to a command, today's cc hint
+// for a source file, and the list of commands for anything else; always on stderr, always exit 2.
+// smith-covers: smith.c
+module unknown_command_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+constexpr Usize memory_size = 1U << 25;
+
+static void suggests(const char *typo, const char *command) {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = scratch::sh(&p, typo);
+    scratch::expect_status("unknown: a typo exits 2", 2, &run);
+    scratch::expect_contains("unknown: ... and suggests the command", run.err, command);
+    scratch::expect_contains("unknown: ... then lists the commands", run.err, "\n\nusage: smith <command>");
+    scratch::expect_lacks("unknown: ... with nothing on stdout", run.out, "usage");
+}
+
+export void test_unknown_command_a_typo_of_a_command_suggests_it() {
+    suggests("smith tset", "smith: tset is not a command. Did you mean `test`?");
+    suggests("smith tst", "Did you mean `test`?");
+    suggests("smith buidl", "Did you mean `build`?");
+    suggests("smith chekc", "Did you mean `check`?");
+    suggests("smith help tset", "smith: tset is not a command. Did you mean `test`?");
+}
+
+export void test_unknown_command_a_source_file_gets_the_cc_hint_alone() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = scratch::sh(&p, "smith foo.c");
+    scratch::expect_status("unknown: a source file exits 2", 2, &run);
+    scratch::expect_text("unknown: ... with today's message", run.err,
+                         "smith: foo.c is not a smith command; to compile, run `smith cc foo.c`\n");
+    scratch::Run existing = scratch::sh(&p, "echo x > existing-file && smith existing-file");
+    scratch::expect_status("unknown: an existing file exits 2", 2, &existing);
+    scratch::expect_text("unknown: ... with the same hint", existing.err,
+                         "smith: existing-file is not a smith command; to compile, run `smith cc existing-file`\n");
+}
+
+export void test_unknown_command_anything_else_is_not_a_command_with_the_list() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run word = scratch::sh(&p, "smith frobnicate");
+    scratch::expect_status("unknown: an unknown word exits 2", 2, &word);
+    scratch::expect_contains("unknown: ... says so", word.err,
+                             "smith: frobnicate is not a command.\n\nusage: smith <command>");
+    scratch::expect_lacks("unknown: ... without a suggestion", word.err, "Did you mean");
+    scratch::Run flag = scratch::sh(&p, "smith --frobnicate");
+    scratch::expect_status("unknown: an unknown flag exits 2", 2, &flag);
+    scratch::expect_contains("unknown: ... is named without its dashes", flag.err,
+                             "smith: frobnicate is not a command.");
+}

@@ -1,0 +1,47 @@
+f(x) { a }
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (call
+          (name f)
+          (name x)
+          (lambda
+            (block)))))))
+
+f() { a }
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (call
+          (name f)
+          (lambda
+            (block)))))))
+
+(f() { a })
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (call
+          (name f)
+          (lambda
+            (block)))))))
+
+f(x) { a }.g
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (member g
+          (call
+            (name f)
+            (name x)
+            (lambda
+              (block))))))))
+

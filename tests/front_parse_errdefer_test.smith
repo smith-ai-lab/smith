@@ -1,0 +1,73 @@
+// Tests of `errdefer s` (#1356, A7l of track A of #1112): with an expression statement, with a block, after `defer`,
+// nested in a block, and `errdefer` as a name, which is an error naming the keyword.
+module front_parse_errdefer_test;
+
+import front::ast;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::slice;
+import std::test;
+
+// The dump of a file that must parse without errors.
+static Str dump_of(Str source) {
+    parser::Parsed parsed = parser::parse("x.smith", source);
+    if (countof(parsed.errors) > 0) {
+        Str expected = "no error";
+        test::check_equal(parsed.errors[0].message, expected);
+    }
+    return ast::dump(&parsed.module);
+}
+
+// The first error of a file, or `no error`.
+static Str first_error(Str source) {
+    parser::Parsed parsed = parser::parse("x.smith", source);
+    if (countof(parsed.errors) == 0) return "no error";
+    return parsed.errors[0].message;
+}
+
+// Whether the text has the piece in it.
+static Bool has(Str text, Str piece) {
+    for (Usize i = 0; i + countof(piece) <= countof(text); i++) {
+        if (slice::equal(text[i:i + countof(piece)], piece)) return true;
+    }
+    return false;
+}
+
+export void test_errdefer_with_an_expression_statement() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = dump_of("module m;\nvoid f() { errdefer c::puts(\"x\"); }");
+    test::check_equal(has(got, "errdefer"), true);
+}
+
+export void test_errdefer_with_a_block() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = dump_of("module m;\nvoid f() { errdefer { c::puts(\"x\"); c::puts(\"y\"); } }");
+    test::check_equal(has(got, "errdefer"), true);
+}
+
+export void test_errdefer_after_defer_and_nested() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got =
+        dump_of("module m;\nvoid f() { defer c::puts(\"a\"); { errdefer c::puts(\"b\"); } errdefer c::puts(\"c\"); }");
+    test::check_equal(has(got, "defer"), true);
+    test::check_equal(has(got, "errdefer"), true);
+}
+
+export void test_errdefer_is_not_a_name() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = first_error("module m;\nvoid f() { int errdefer = 1; }");
+    test::check_equal(has(got, "errdefer"), true);
+}
