@@ -581,8 +581,9 @@ static void parse_at_attribute(parse::Parser *p, Prefixes *out) {
     attribute.name.segments = mem::alloc_slice(ast::Identifier, 1);
     attribute.name.segments[0] = (ast::Identifier){.text = parse::text(p, name), .span = name.span};
     attribute.name.span = name.span;
-    while (parse::at(p, lex::colon_colon) && is_name(parse::peek_at(p, 1).kind)) {
-        parse::advance(p);
+    while ((parse::at(p, lex::colon_colon) || parse::at(p, lex::dot)) && is_name(parse::peek_at(p, 1).kind)) {
+        lex::Token separator = parse::advance(p);
+        if (separator.kind == lex::colon_colon) parse::warn_separator(p, separator);
         lex::Token part = parse::advance(p);
         Usize count = countof(attribute.name.segments);
         attribute.name.segments = mem::realloc(attribute.name.segments, count + 1);
@@ -1719,9 +1720,11 @@ static void end_header_import(parse::Parser *p) {
     parse::expect(p, lex::semicolon, "`;` after the import");
 }
 
+static void fix_import(parse::Parser *p, U32 import_start, lex::Token semi, ast::Path path, ast::Text alias);
+
 // `import std::arena;`, `import std::arena as a;`, `import <stdio.h>;`, `import "x.h";`
 static ast::Decl *parse_import(parse::Parser *p, const Prefixes *pre, U32 start) {
-    parse::advance(p);
+    U32 import_start = parse::advance(p).span.start;
     if (parse::at(p, lex::less)) {
         U32 begin = parse::advance(p).span.end;
         while (!parse::at(p, lex::greater) && !parse::at(p, lex::semicolon) && !parse::at(p, lex::end_of_file))
@@ -1745,9 +1748,28 @@ static ast::Decl *parse_import(parse::Parser *p, const Prefixes *pre, U32 start)
         lex::Token name = parse::expect(p, lex::name, "a name after `as`: write `import path as name;`");
         if (name.kind == lex::name) alias = parse::text(p, name);
     }
-    parse::expect(p, lex::semicolon, "`;` after the import");
+    lex::Token semi = parse::expect(p, lex::semicolon, "`;` after the import");
+    if (semi.kind == lex::semicolon) fix_import(p, import_start, semi, path, alias);
     ast::DeclKind kind = {.import_module = {.path = path, .alias = alias}};
     return make(p, start, pre, kind);
+}
+
+// `import std::arena;` is `arena := import std.arena`, and `import std::arena as a;` is `a := import std.arena`: a
+// module is a value (#1676).
+static void fix_import(parse::Parser *p, U32 import_start, lex::Token semi, ast::Path path, ast::Text alias) {
+    Usize count = countof(path.segments);
+    if (count == 0) {
+        return;
+    }
+    char text[:] = format::push(countof(alias) > 0 ? alias : path.segments[count - 1].text, " := import ");
+    for (Usize i = 0; i < count; i += 1) {
+        Str dot = i > 0 ? "." : "";
+        text = format::push(text, dot, path.segments[i].text);
+    }
+    char message[:] = format::push("a module is a value: write `", text, "`");
+    parse::Edits edits = {};
+    edits = with_edit(edits, edit(import_start, semi.span.end, text));
+    warn(p, import_start, semi.span.end, message, edits);
 }
 
 // `static_assert(condition, "message");`, the message optional.
@@ -1820,6 +1842,39 @@ static Bool parse_binding_value(parse::Parser *p, lex::Token name, Bool is_mut, 
         return false;
     }
     return true;
+}
+
+// A path of names joined by `.`: `std.build`, `web.routes.admin`.
+static ast::Path parse_dotted_path(parse::Parser *p) {
+    ast::Path path = {};
+    U32 start = parse::peek(p).span.start;
+    while (!parse::at(p, lex::end_of_file)) {
+        lex::Token token = parse::peek(p);
+        if (!is_name(token.kind)) {
+            parse::expect(p, lex::name, "a module name after `import`");
+            break;
+        }
+        parse::advance(p);
+        path.segments = mem::realloc(path.segments, countof(path.segments) + 1);
+        path.segments[countof(path.segments) - 1] =
+            (ast::Identifier){.text = parse::text(p, token), .span = token.span};
+        if (!parse::accept(p, lex::dot)) break;
+    }
+    path.span = parse::span_from(p, start);
+    return path;
+}
+
+// `build := import std.build`: the module is a value bound to a name (#1676). It is the declaration `import std::build
+// as build;` in the tree until the checker reads modules as values. The position is at the name.
+static ast::Decl *parse_import_binding(parse::Parser *p, const Prefixes *pre, U32 start) {
+    lex::Token name = parse::advance(p);
+    parse::advance(p);
+    parse::advance(p);
+    ast::Path path = parse_dotted_path(p);
+    ast::Text alias = parse::text(p, name);
+    end_line(p, "declaration");
+    ast::DeclKind kind = {.import_module = {.path = path, .alias = alias}};
+    return make(p, start, pre, kind);
 }
 
 // `a := v`, `a: T = v`, `mut a := 0`, `mut a: usize`, `const X := v`; the position is at the first of them.
@@ -1996,6 +2051,9 @@ static ast::Decl *parse_simple(parse::Parser *p, Bool top) {
         recover_line(p);
         return nullptr;
     }
+    if (binding_at(p, 0) && parse::peek_at(p, 1).kind == lex::colon_equal &&
+        parse::peek_at(p, 2).kind == lex::kw_import)
+        return parse_import_binding(p, &pre, start);
     if (starts_binding(p)) return parse_binding(p, &pre, start);
     if (kind == lex::kw_import) return parse_import(p, &pre, start);
     if (kind == lex::kw_static_assert) return parse_static_assert(p, &pre, start);

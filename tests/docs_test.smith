@@ -128,6 +128,22 @@ export void test_docs_depfile_a_links_target_that_is_not_there_is_not_named() {
 
 // --- 3. the options ------------------------------------------------------------------------------------------------
 
+// A fixed cap is a hard error that names the limit and where it was crossed, never a silent skip (#604).
+export void test_docs_caps_too_many_frontmatter_fields_is_an_error_naming_the_limit() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = scratch::sh(
+        &p,
+        "mkdir knowledge && { echo ---; i=0; while [ $i -le 64 ]; do echo \"k$i: v\"; i=$((i+1)); done; echo ---; } "
+        "> knowledge/many.md && smith docs");
+    scratch::expect_status("caps: 65 fields", 2, &run);
+    scratch::expect_contains("caps: names the limit", run.err, "more than 64 frontmatter fields");
+}
+
 export void test_docs_options_a_depfile_needs_a_target() {
     scratch::Project p = scratch::make("p", nullptr); // the command stops at its arguments: no folder is read
     defer scratch::clean(&p);
