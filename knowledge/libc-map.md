@@ -36,7 +36,7 @@ tags: [libc, lint, idiom, libraries]
 | `strtod`, `strtof` | `text::parse_f64`, `text::parse_f32` |
 | `qsort` | `slice::sort(xs)` for numbers, `slice::sort_by(xs, less)` for the rest |
 | `getenv` | `env::get(name)`, an `option` ([direct-call-modules](direct-call-modules.md)) |
-| `setenv`, `unsetenv` | gap: [#917](https://github.com/smith-ai-lab/smith/issues/917) |
+| `setenv`, `unsetenv` | `env::set(name, value)`, `env::remove(name)`, an `option` of `env::Error` |
 | `system` | `process::run(argv)` ([process](process.md)): no shell, the argument vector |
 | `abs` | `math::abs(x)` |
 | `exit`, `_exit`, `abort` | gap (design): [#924](https://github.com/smith-ai-lab/smith/issues/924) |

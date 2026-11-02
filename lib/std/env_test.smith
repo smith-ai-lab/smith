@@ -9,6 +9,10 @@ import <string.h>;
 typedef struct {
     env::Handler base; // first: &fake.base is what set_handler takes
     Usize asked;
+    Usize removed;
+    char last_name[32];
+    char last_value[32];
+    Bool refuse;
 } Fake;
 
 // The fake's variables: HOME is /home/ada, EMPTY is set to nothing, anything else is not set.
@@ -20,9 +24,33 @@ char *fake_get(env::Handler *self, const char *name) {
     return nullptr;
 }
 
+// set stores one variable; get sees it first.
+char *fake_get_written(env::Handler *self, const char *name) {
+    Fake *fake = (Fake *)self;
+    if (fake->last_name[0] != 0 && c::strcmp(name, fake->last_name) == 0) return fake->last_value;
+    return fake_get(self, name);
+}
+
+I32 fake_set(env::Handler *self, const char *name, const char *value) {
+    Fake *fake = (Fake *)self;
+    if (fake->refuse) return 1; // refused
+    __builtin_strncpy(fake->last_name, name, sizeof fake->last_name - 1);
+    __builtin_strncpy(fake->last_value, value, sizeof fake->last_value - 1);
+    return 0;
+}
+
+I32 fake_remove(env::Handler *self, const char *name) {
+    Fake *fake = (Fake *)self;
+    fake->removed += 1;
+    if (c::strcmp(name, fake->last_name) == 0) fake->last_name[0] = 0;
+    return 0;
+}
+
 Fake make_fake() {
     Fake fake = {};
-    fake.base.get = fake_get;
+    fake.base.get = fake_get_written;
+    fake.base.set = fake_set;
+    fake.base.remove = fake_remove;
     return fake;
 }
 
@@ -84,4 +112,69 @@ export void test_env_set_handler_returns_the_previous_one_and_none_set_is_the_pr
     test::check_condition(is_some(value_of("PATH"))); // the process's own, as any process has one
     test::check_condition(is_none(value_of("SMITH_ENV_TEST_NOT_SET_ANYWHERE")));
     test::check_equal(fake.asked, 0);
+}
+
+Bool failed_with(env::Done done, env::Error reason) {
+    return done == .some && done.some == reason;
+}
+
+Bool succeeded(env::Done done) {
+    return done == .none;
+}
+
+export void test_env_set_is_seen_by_get_on_the_fake() {
+    Fake fake = make_fake();
+    env::Handler *before = env::set_handler(&fake.base);
+    defer env::set_handler(before);
+    test::check_condition(succeeded(env::set("GREETING", "hello")));
+    test::check_condition(has(value_of("GREETING"), "hello"));
+}
+
+export void test_env_remove_goes_to_the_handler_and_get_no_longer_sees_it() {
+    Fake fake = make_fake();
+    env::Handler *before = env::set_handler(&fake.base);
+    defer env::set_handler(before);
+    test::check_condition(succeeded(env::set("GREETING", "hello")));
+    test::check_condition(succeeded(env::remove("GREETING")));
+    test::check_equal(fake.removed, 1);
+    test::check_condition(is_none(value_of("GREETING")));
+}
+
+export void test_env_set_with_a_bad_name_is_bad_name_and_never_reaches_the_handler() {
+    Fake fake = make_fake();
+    env::Handler *before = env::set_handler(&fake.base);
+    defer env::set_handler(before);
+    test::check_condition(failed_with(env::set("", "x"), env::BadName));
+    test::check_condition(failed_with(env::set("A=B", "x"), env::BadName));
+    test::check_condition(failed_with(env::remove(""), env::BadName));
+    test::check_equal(fake.removed, 0);
+    test::check_equal(fake.last_name[0], 0);
+}
+
+export void test_env_set_the_handlers_refusal_is_other() {
+    Fake fake = make_fake();
+    fake.refuse = true;
+    env::Handler *before = env::set_handler(&fake.base);
+    defer env::set_handler(before);
+    test::check_condition(failed_with(env::set("X", "y"), env::Other));
+}
+
+export void test_env_set_on_a_handler_with_no_set_is_other() {
+    Fake fake = make_fake();
+    fake.base.set = nullptr;
+    fake.base.remove = nullptr;
+    env::Handler *before = env::set_handler(&fake.base);
+    defer env::set_handler(before);
+    test::check_condition(failed_with(env::set("X", "y"), env::Other));
+    test::check_condition(failed_with(env::remove("X"), env::Other));
+}
+
+export void test_env_set_and_remove_work_on_the_process_when_no_handler_is_set() {
+    test::check_condition(succeeded(env::set("SMITH_ENV_TEST_SET_917", "one")));
+    test::check_condition(has(value_of("SMITH_ENV_TEST_SET_917"), "one"));
+    test::check_condition(succeeded(env::set("SMITH_ENV_TEST_SET_917", "")));
+    test::check_condition(has(value_of("SMITH_ENV_TEST_SET_917"), ""));
+    test::check_condition(succeeded(env::remove("SMITH_ENV_TEST_SET_917")));
+    test::check_condition(is_none(value_of("SMITH_ENV_TEST_SET_917")));
+    test::check_condition(succeeded(env::remove("SMITH_ENV_TEST_SET_917")));
 }
