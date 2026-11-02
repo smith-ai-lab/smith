@@ -1,0 +1,42 @@
+// scripts/frontend_coverage/main.smith (#1730), the tool of `smith build frontend-coverage`: its grouping and summary
+// on a small fixed table of four files (one passes, two fail with the same message at the check stage, one fails
+// differently at the parse stage). The tool is a project of its own in a scratch folder, run by the smith under test;
+// no real file is read or changed. smith-covers: scripts/frontend_coverage/main.smith
+module frontend_coverage_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+constexpr const char *table = "a.smith\tpass\t\n"
+                              "b.smith\tcheck\tunknown name `x`\n"
+                              "c.smith\tparse\texpected `;`, found `y`\n"
+                              "d.smith\tcheck\tunknown name `x`\n";
+
+export void test_frontend_coverage_groups_failures_and_counts_the_passes() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
+    scratch::write(&p, "table.tsv", table);
+    scratch::Run run = scratch::sh(&p, "smith run -- summarize table.tsv");
+    scratch::expect_status("frontend_coverage: the summary is made", 0, &run);
+    scratch::expect_contains("frontend_coverage: one line per file, a pass", run.out, "pass  a.smith\n");
+    scratch::expect_contains("frontend_coverage: and a failure with its stage and message", run.out,
+                             "FAIL  c.smith [parse] expected `;`, found `y`\n");
+    scratch::expect_contains("frontend_coverage: the files passed out of the total", run.out,
+                             "frontend-coverage: 1 of 4 files pass\n");
+    scratch::expect_contains("frontend_coverage: the failures of a stage", run.out, "failed at check  2\n");
+    scratch::expect_contains("frontend_coverage: and of another", run.out, "failed at parse  1\n");
+    scratch::expect_contains("frontend_coverage: two groups", run.out, "failures by message (2 groups):\n");
+    scratch::expect_contains("frontend_coverage: the same message is one group with its count, the biggest first",
+                             run.out,
+                             "   2  unknown name `x`\n        e.g. b.smith\n        e.g. d.smith\n"
+                             "   1  expected `;`, found `y`\n        e.g. c.smith\n");
+    scratch::release(run.out);
+    scratch::release(run.err);
+}
