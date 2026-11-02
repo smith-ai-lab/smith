@@ -92,6 +92,7 @@ export typedef enum {
     fn_value; // `parts` are the parameters, `element` the result
     slice;    // next batch
     floating; // next batch
+    vector;   // `vec(T, N)`: `element` is the lane type, `count` the lanes (#1630)
 } TyKind;
 
 export struct Ty;

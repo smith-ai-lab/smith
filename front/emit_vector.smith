@@ -1,0 +1,209 @@
+// front::emit_vector: `vec(T, N)` (#1630 of #1428): the type, `vec(f32, 4)(1, 2, 3, 4)` and a list `[1, 2, 3, 4]` where
+// a vector is expected, element-wise `+ - * / %` and the six comparisons between two vectors or a vector and a scalar
+// (broadcast), and `v[i]` (the index goes through emit_memory, which treats a vector as an array of its lanes).
+// A vector is one LLVM `<N x T>`: no per-lane loop. Integer vectors: unsigned `+ - *` wrap; the checked signed
+// arithmetic and division of lanes are not emitted yet.
+module front::emit_vector;
+
+import front::ast;
+import front::emit_state as state;
+import front::types;
+import std::mem;
+import <llvm-c/Core.h>;
+
+// A copy of `element` that the emitter owns, as `Ty.element` points to it.
+static state::Ty *own(state::Emitter *e, state::Ty element) {
+    state::OwnedTy *block = mem::alloc(state::OwnedTy);
+    block->ty = element;
+    block->next = e->owned;
+    e->owned = block;
+    return &block->ty;
+}
+
+// The type `<count x element>`.
+export state::Ty make(state::Emitter *e, state::Ty element, U64 count) {
+    c::LLVMTypeRef llvm = c::LLVMVectorType(element.llvm, (U32)count);
+    state::Ty made = {.kind = .vector, .llvm = llvm, .name = "vec", .element = own(e, element), .count = count};
+    return made;
+}
+
+// `vec(T, N)` written as a type.
+export state::TyResult type_vector(state::Emitter *e, const ast::TypeExpr *t) {
+    if (t->kind != .applied) {
+        return state::ty_fail("not a vector type", t->span);
+    }
+    ast::TypeArg args[:] = t->kind.applied.args;
+    if (countof(args) != 2) {
+        return state::ty_fail("not emitted yet: this applied type", t->span);
+    }
+    const ast::TypeArg *first = &args[0];
+    const ast::TypeArg *second = &args[1];
+    if (!(*first == .type) || !(*second == .value)) {
+        return state::ty_fail("not emitted yet: this applied type", t->span);
+    }
+    const ast::TypeExpr *element_type = first->type.type;
+    const ast::Expr *count = second->value.value;
+    if (count->kind != .integer) {
+        return state::ty_fail("a vector's lane count is an integer literal", t->span);
+    }
+    U64 lanes = count->kind.integer.value;
+    state::TyResult element = state::type_of(e, element_type);
+    if (element == .error) return {.error = element.error};
+    return make(e, element.ok, lanes);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Building a vector from its lanes
+
+static state::Status build_finish(state::Emitter *e, const state::Work *w) {
+    state::Ty vector = w->ty;
+    c::LLVMValueRef built = c::LLVMGetPoison(vector.llvm);
+    c::LLVMTypeRef word = c::LLVMInt32TypeInContext(e->context);
+    for (Usize i = (Usize)w->number; i > 0; i--) {
+        state::Value lane = state::pop_value(e);
+        if (!state::same_type(lane.ty, *vector.element)) {
+            try state::convert(e, lane, *vector.element, w->span, .initialize);
+            lane = state::pop_value(e);
+        }
+        built = c::LLVMBuildInsertElement(e->builder, built, lane.llvm, c::LLVMConstInt(word, i - 1, 0), "");
+    }
+    state::push_value(e, (state::Value){.llvm = built, .ty = vector});
+    return state::success();
+}
+
+static state::Status build_from(state::Emitter *e, ast::ExprRef items[:], state::Ty vector, ast::Span span) {
+    if (countof(items) != vector.count) return state::failf(span, vector.name, " lanes: found ", countof(items));
+    state::push_then(e, (state::Work){.then = build_finish, .ty = vector, .number = countof(items), .span = span});
+    for (Usize i = countof(items); i > 0; i--)
+        state::push_eval(e, items[i - 1], state::hint_of(*vector.element));
+    return state::success();
+}
+
+// `vec(T, N)(a, b, ...)`.
+export state::Status construct(state::Emitter *e, const ast::Expr *x) {
+    if (x->kind != .call) {
+        return state::fail("not a vector construction", x->span);
+    }
+    ast::ExprRef args[:] = x->kind.call.args;
+    state::TyResult made = state::type_of_node(e, x);
+    if (made == .error) return {.error = made.error};
+    return build_from(e, args, made.ok, x->span);
+}
+
+// `[a, b, ...]` where the hint is a vector.
+export state::Status list(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    if (x->kind != .array_lit) {
+        return state::fail("not a list", x->span);
+    }
+    ast::ExprRef items[:] = x->kind.array_lit.items;
+    if (!hint.present || hint.ty.kind != .vector) {
+        return state::not_emitted("an array literal", x->span);
+    }
+    return build_from(e, items, hint.ty, x->span);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Operators
+
+// The scalar `lane` in every lane of `vector`.
+static c::LLVMValueRef splat(state::Emitter *e, state::Value lane, state::Ty vector) {
+    c::LLVMTypeRef word = c::LLVMInt32TypeInContext(e->context);
+    c::LLVMValueRef empty = c::LLVMGetPoison(vector.llvm);
+    c::LLVMValueRef first = c::LLVMBuildInsertElement(e->builder, empty, lane.llvm, c::LLVMConstInt(word, 0, 0), "");
+    c::LLVMValueRef mask = c::LLVMConstNull(c::LLVMVectorType(word, (U32)vector.count));
+    return c::LLVMBuildShuffleVector(e->builder, first, empty, mask, "splat");
+}
+
+static Bool is_comparison(ast::BinaryOp op) {
+    return op == .less || op == .greater || op == .less_equal || op == .greater_equal || op == .equal ||
+           op == .not_equal;
+}
+
+static c::LLVMRealPredicate real_predicate(ast::BinaryOp op) {
+    if (op == .equal) return c::LLVMRealOEQ;
+    if (op == .less) return c::LLVMRealOLT;
+    if (op == .greater) return c::LLVMRealOGT;
+    if (op == .less_equal) return c::LLVMRealOLE;
+    if (op == .greater_equal) return c::LLVMRealOGE;
+    return c::LLVMRealUNE; // `!=` is true when either side is NaN, as in C
+}
+
+static c::LLVMIntPredicate int_predicate(ast::BinaryOp op, Bool is_signed) {
+    if (op == .equal) return c::LLVMIntEQ;
+    if (op == .not_equal) return c::LLVMIntNE;
+    if (op == .less) return is_signed ? c::LLVMIntSLT : c::LLVMIntULT;
+    if (op == .greater) return is_signed ? c::LLVMIntSGT : c::LLVMIntUGT;
+    if (op == .less_equal) return is_signed ? c::LLVMIntSLE : c::LLVMIntULE;
+    return is_signed ? c::LLVMIntSGE : c::LLVMIntUGE;
+}
+
+static c::LLVMValueRef float_lanes(state::Emitter *e, ast::BinaryOp op, c::LLVMValueRef a, c::LLVMValueRef b) {
+    if (op == .add) return c::LLVMBuildFAdd(e->builder, a, b, "");
+    if (op == .subtract) return c::LLVMBuildFSub(e->builder, a, b, "");
+    if (op == .multiply) return c::LLVMBuildFMul(e->builder, a, b, "");
+    if (op == .divide) return c::LLVMBuildFDiv(e->builder, a, b, "");
+    return nullptr;
+}
+
+static c::LLVMValueRef integer_lanes(state::Emitter *e, ast::BinaryOp op, c::LLVMValueRef a, c::LLVMValueRef b) {
+    if (op == .add) return c::LLVMBuildAdd(e->builder, a, b, "");
+    if (op == .subtract) return c::LLVMBuildSub(e->builder, a, b, "");
+    if (op == .multiply) return c::LLVMBuildMul(e->builder, a, b, "");
+    return nullptr;
+}
+
+static state::Status binary_finish(state::Emitter *e, const state::Work *w) {
+    if (w->expr->kind != .binary) {
+        return state::fail("not a binary expression", w->span);
+    }
+    ast::BinaryOp op = w->expr->kind.binary.op;
+    state::Value right = state::pop_value(e);
+    state::Value left = state::pop_value(e);
+    state::Ty vector = left.ty;
+    if (vector.kind != .vector) vector = right.ty;
+    state::Ty element = *vector.element;
+    if (left.ty.kind != .vector) left.llvm = splat(e, left, vector);
+    if (right.ty.kind != .vector) right.llvm = splat(e, right, vector);
+    if (is_comparison(op)) {
+        c::LLVMValueRef flags = nullptr;
+        if (element.kind == .floating)
+            flags = c::LLVMBuildFCmp(e->builder, real_predicate(op), left.llvm, right.llvm, "");
+        else
+            flags = c::LLVMBuildICmp(e->builder, int_predicate(op, element.is_signed), left.llvm, right.llvm, "");
+        state::Ty flag = {};
+        state::scalar_type(e, "bool", &flag);
+        state::push_value(e, (state::Value){.llvm = flags, .ty = make(e, flag, vector.count)});
+        return state::success();
+    }
+    c::LLVMValueRef out = nullptr;
+    if (element.kind == .floating) out = float_lanes(e, op, left.llvm, right.llvm);
+    if (element.kind == .integer && !element.is_signed) out = integer_lanes(e, op, left.llvm, right.llvm);
+    if (out == nullptr) return state::not_emitted("this operator on a vector of this element type", w->span);
+    state::push_value(e, (state::Value){.llvm = out, .ty = vector});
+    return state::success();
+}
+
+// The type the checker gave an operand, as the hint of its literals.
+static state::Hint operand_hint(state::Emitter *e, const ast::Expr *x) {
+    state::TyResult made = state::type_of_node(e, x);
+    if (made == .error) {
+        state::free_text(made.error.message);
+        return state::no_hint();
+    }
+    return state::hint_of(made.ok);
+}
+
+// `a op b` where a side is a vector.
+export state::Status binary(state::Emitter *e, const ast::Expr *x) {
+    if (x->kind != .binary) {
+        return state::fail("not a binary expression", x->span);
+    }
+    const ast::Expr *left = x->kind.binary.left;
+    const ast::Expr *right = x->kind.binary.right;
+    state::Hint right_hint = operand_hint(e, right);
+    state::Hint left_hint = operand_hint(e, left);
+    state::push_then(e, (state::Work){.then = binary_finish, .expr = x, .span = x->span});
+    state::push_eval(e, right, right_hint);
+    state::push_eval(e, left, left_hint);
+    return state::success();
+}

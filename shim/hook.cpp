@@ -2416,10 +2416,8 @@ class SmithHook final : public TokenHook, public NameSource {
     // Whether a struct holds a run-time array (a `struct smith_array_...`) as a member, however deep: through arrays,
     // other structs and anonymous members. A worklist of records, so there is no recursion.
     static bool holdsSlice(const RecordDecl *first) {
-        const RecordDecl *work[64];
-        size_t count = 0;
-        work[count++] = first;
-        for (size_t at = 0; at < count; at++) {
+        std::vector<const RecordDecl *> work{first}; // sized by the structs it meets, no cap
+        for (size_t at = 0; at < work.size(); at++) {
             for (const FieldDecl *field : work[at]->fields()) {
                 QualType member = field->getType().getCanonicalType();
                 while (const ArrayType *array = member->getAsArrayTypeUnsafe())
@@ -2427,12 +2425,9 @@ class SmithHook final : public TokenHook, public NameSource {
                 const RecordDecl *inner = member->getAsRecordDecl();
                 if (inner == nullptr) continue;
                 if (inner->getName().starts_with("smith_array_")) return true;
-                if (inner->getDefinition() != nullptr && count < 64) {
-                    bool seen = false;
-                    for (size_t i = 0; i < count; i++)
-                        seen = seen || work[i] == inner->getDefinition();
-                    if (!seen) work[count++] = inner->getDefinition();
-                }
+                if (inner->getDefinition() != nullptr &&
+                    std::find(work.begin(), work.end(), inner->getDefinition()) == work.end())
+                    work.push_back(inner->getDefinition());
             }
         }
         return false;
