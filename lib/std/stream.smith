@@ -1,0 +1,124 @@
+// smith-build: header
+// std::stream, <smith/stream.h>: the runtime core of a lazy generator. A generator body runs as a fiber with a stack of
+// its own that no scheduler owns and only `next` resumes, so each `next` runs the body only as far as its next
+// `yield`, and the body's locals are ordinary locals. The emitter (#1546) lowers `yield` and `stream::next` to these
+// calls; this module is not for a user to call by hand. Issue #1543, of #436 and #1036; knowledge/stream.md.
+//
+// A stream is one pointer to its record, and null means ended: the zero value is an ended stream. `next` and `close`
+// take the address of the pointer and set it to null when the stream ends, so nothing dangles after the end.
+//
+//   Stream *s = stream::start(body, &args, sizeof args); // does not run the body
+//   while (stream::next(&s, &value)) ...                  // runs it to its next yield
+//   stream::close(&s);                                    // ends it early, running the body's cleanup
+//
+// The C names follow `smith_stream_<name>`: `stream::next` is `smith_stream_next`.
+module std::stream;
+
+import std::contract;
+import std::mem;
+import std::task;
+
+// A stream the body of a generator writes. Opaque: only the functions below read it.
+[[std::c_name("SmithStream")]] export typedef struct SmithStream Stream;
+
+struct Stream {
+    void *fiber;                         // the body's task: its own stack, resumed only by next and close
+    task::Group group;                   // the fiber's group, which no one waits for
+    void (*body)(Stream *s, void *args); // the generator
+    void *args;                          // a copy of the arguments, owned by the stream
+    void *slot;                          // where the body writes the value it yields: the reader's
+    Bool started;                        // the body has run at least once
+    Bool closed;                         // the reader ended the stream early: a `yield` returns false
+    Bool ended;                          // the body has reached its end
+};
+
+// Frees the stack, the arguments and the record of a stream whose body is not running, and clears the reader's pointer.
+void release(Stream **s) {
+    Stream *stream = *s;
+    task::fiber_release(stream->fiber);
+    if (stream->args != nullptr) mem::free(stream->args);
+    mem::free(stream);
+    *s = nullptr;
+}
+
+// Where the body writes the value it yields: the `slot` of the `next` that resumed it.
+[[std::c_name("smith_stream_slot")]] export void *slot(Stream *s) {
+    contract::requires(s != nullptr);
+    return s->slot;
+}
+
+// The body hands over the value it wrote into the slot and waits for the next `next`. True when `next` resumed it;
+// false when the stream was closed: the body then runs to its end, and its `defer`s, and calls `finish`.
+[[std::c_name("smith_stream_yield")]] export Bool yield(Stream *s) {
+    contract::requires(s != nullptr);
+    contract::trusted(); // the fiber and the allocator are the edge of this module
+    if (s->closed) return false;
+    task::fiber_suspend();
+    return !s->closed;
+}
+
+// The end of the body, and of every `return`: marks the stream ended and gives the thread back for good. The reader
+// releases the stack, since a fiber cannot unmap the stack it runs on.
+[[std::c_name("smith_stream_finish")]] export [[noreturn]] void finish(Stream *s) {
+    contract::requires(s != nullptr);
+    s->ended = true;
+    task::fiber_finish();
+    contract::trusted(); // the reader never resumes a stream that has ended
+    __builtin_trap();
+}
+
+// The fiber's entry: the body, then its end.
+void entry(void *context) {
+    Stream *stream = (Stream *)context;
+    stream->body(stream, stream->args);
+    finish(stream);
+}
+
+// Makes a stream whose body is `body(s, args)`. The body does not run until the first `next` (lazy): the fiber gets its
+// stack (a guard page and 256 KB) and a copy of the `size` bytes at `args`, which the stream owns until it ends.
+[[std::c_name("smith_stream_start")]] export [[nodiscard]] Stream *start(void (*body)(Stream *s, void *args),
+                                                                         const void *args, Usize size) {
+    contract::requires(body != nullptr && (args != nullptr || size == 0));
+    contract::trusted(); // the fiber and the allocator are the edge of this module
+    Stream *stream = (Stream *)mem::alloc_raw(sizeof(Stream), alignof(Stream));
+    *stream = (Stream){};
+    stream->body = body;
+    if (size > 0) {
+        stream->args = mem::alloc_raw(size, alignof(Usize) * 2);
+        __builtin_memcpy(stream->args, args, size);
+    }
+    stream->group.pending = 1;
+    stream->fiber = task::fiber_start(&stream->group, entry, stream);
+    return stream;
+}
+
+// Runs the body to its next `yield`. True: the body yielded and the value is in `slot`. False: the stream has ended (or
+// was already null); the stack and the record are released and `*s` is null.
+[[std::c_name("smith_stream_next")]] export Bool next(Stream **s, void *slot) {
+    contract::requires(s != nullptr);
+    contract::trusted(); // the fiber and the allocator are the edge of this module
+    if (*s == nullptr) return false;
+    Stream *stream = *s;
+    stream->slot = slot;
+    stream->started = true;
+    task::fiber_resume(stream->fiber);
+    if (stream->ended) {
+        release(s);
+        return false;
+    }
+    return true;
+}
+
+// Ends a stream early. One that never ran is released without running its body. A suspended one is resumed with `yield`
+// returning false, runs to `finish` (its cleanup runs) and is released. Null does nothing. `*s` becomes null.
+[[std::c_name("smith_stream_close")]] export void close(Stream **s) {
+    contract::requires(s != nullptr);
+    contract::trusted(); // the fiber and the allocator are the edge of this module
+    if (*s == nullptr) return;
+    Stream *stream = *s;
+    stream->closed = true;
+    stream->slot = nullptr;
+    while (stream->started && !stream->ended)
+        task::fiber_resume(stream->fiber);
+    release(s);
+}

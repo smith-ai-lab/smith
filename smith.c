@@ -1185,6 +1185,9 @@ static constexpr unsigned char smith_optimize_source[] = {
 static constexpr unsigned char smith_wrapping_source[] = {
 #embed "lib/std/wrapping.smith"
 };
+static constexpr unsigned char smith_stream_source[] = {
+#embed "lib/std/stream.smith"
+};
 static constexpr unsigned char smith_task_source[] = {
 #embed "lib/std/task.smith"
 };
@@ -1269,6 +1272,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY_FLAGS(random, true, "-ffp-contract=off\n"),
     SMITH_LIBRARY(slice, true),
     SMITH_LIBRARY(wrapping, true),
+    SMITH_LIBRARY(stream, true),
     SMITH_LIBRARY(task, true),
     SMITH_LIBRARY(test, true),
     SMITH_LIBRARY(text, true),
