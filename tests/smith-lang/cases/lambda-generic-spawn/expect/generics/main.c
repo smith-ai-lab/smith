@@ -1,6 +1,6 @@
-__extension__({ extern void later_run_later__show_int_i64(later_Slot * slot, [[maybe_unused]] int rest_0, [[maybe_unused]] I64 rest_1) __asm__("_later::run_later(main_show, int, long long)@src/main.smith"); later_run_later__show_int_i64(& a, 3, (__INT64_TYPE__) 4); })
+__extension__({ extern void later_run_later__show_int_i64(later_Slot * slot, [[maybe_unused]] int rest_0, [[maybe_unused]] I64 rest_1) __asm__("_later::run_later(main_show, int, long)@src/main.smith"); later_run_later__show_int_i64(& a, 3, (__INT64_TYPE__) 4); })
 __extension__({ extern void later_run_later__scale_f64(later_Slot * slot, [[maybe_unused]] double rest_0) __asm__("_later::run_later(main_scale, double)@src/main.smith"); later_run_later__scale_f64(& b, 2.5); })
-__extension__({ extern void later_run_later__show_int_i64(later_Slot * slot, [[maybe_unused]] int rest_0, [[maybe_unused]] I64 rest_1) __asm__("_later::run_later(main_show, int, long long)@src/main.smith"); later_run_later__show_int_i64(& c, 5, (__INT64_TYPE__) 6); })
+__extension__({ extern void later_run_later__show_int_i64(later_Slot * slot, [[maybe_unused]] int rest_0, [[maybe_unused]] I64 rest_1) __asm__("_later::run_later(main_show, int, long)@src/main.smith"); later_run_later__show_int_i64(& c, 5, (__INT64_TYPE__) 6); })
 struct smith_pack_later_run_later__show_int_i64 {
     int _0;
     I64 _1;
@@ -10,7 +10,7 @@ static void later_run_later__show_int_i64__lambda0(void * raw) {
     struct smith_pack_later_run_later__show_int_i64 * a = raw;
     main_show(a->_0, a->_1);
 }
-extern void later_run_later__show_int_i64(later_Slot * slot, [[maybe_unused]] int rest_0, [[maybe_unused]] I64 rest_1) __asm__("_later::run_later(main_show, int, long long)@src/main.smith");
+extern void later_run_later__show_int_i64(later_Slot * slot, [[maybe_unused]] int rest_0, [[maybe_unused]] I64 rest_1) __asm__("_later::run_later(main_show, int, long)@src/main.smith");
 [[gnu::weak]][[gnu::visibility("hidden")]] void later_run_later__show_int_i64(later_Slot * slot, [[maybe_unused]] int rest_0, [[maybe_unused]] I64 rest_1) {
     static_assert(sizeof(struct smith_pack_later_run_later__show_int_i64) <= sizeof slot->data, "run_later: too many arguments");
     struct smith_pack_later_run_later__show_int_i64 args = {
