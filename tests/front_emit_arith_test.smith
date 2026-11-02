@@ -317,16 +317,20 @@ export void test_front_emit_signed_checks_branch_to_a_trap() {
     tree_end(&trees);
     char *text = ir_of(&m, target_of("x86_64-unknown-linux-gnu"));
     test::check_equal(contains(text, "llvm.sadd.with.overflow"), true);
+    test::check_equal(contains(text, "call void @smith_contract_fail_overflow(ptr @text"), true);
     test::check_equal(contains(text, "llvm.trap"), true);
     test::check_equal(contains(text, "define i32 @\"front::test::inc\""), true);
     c::LLVMDisposeMessage(text);
     // Division and shifts have their checks too.
     char *division = ir_of(&divided, target_of("x86_64-unknown-linux-gnu"));
     test::check_equal(contains(division, "sdiv"), true);
+    test::check_equal(contains(division, "call void @smith_contract_fail_divide(ptr @text"), true);
+    test::check_equal(contains(division, "call void @smith_contract_fail_overflow(ptr @text"), true);
     test::check_equal(contains(division, "llvm.trap"), true);
     c::LLVMDisposeMessage(division);
     char *shift = ir_of(&shifted, target_of("x86_64-unknown-linux-gnu"));
     test::check_equal(contains(shift, "icmp uge"), true);
+    test::check_equal(contains(shift, "call void @smith_contract_fail_shift(ptr @text"), true);
     c::LLVMDisposeMessage(shift);
 }
 
