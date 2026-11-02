@@ -111,6 +111,7 @@ export typedef enum {
     block;        // `[,]T`, `[,,]T`: a contiguous block with `count` dimensions known at run time, `element` per cell
     stream;       // `stream::Stream(T)`: a built-in iterable of `element`; one pointer, null when ended
     tuple;        // `(A, B)`: `slots` hold the element types, named "0", "1", ... (read as `t.0`, `t.1`)
+    vector;       // `vec(T, N)`: `count` lanes of `element` (a number type, or `bool` for a comparison), one `<N x T>`
 } Kind;
 
 export struct Ty;
@@ -129,6 +130,7 @@ export struct Slot {
 //   enumeration: name, element (the underlying integer), slots (the enumerators, with their values)
 //   function: slots (parameters), element (the result), variadic
 //   tuple: slots (one per element, named by its position)
+//   vector: element, count
 //   option, stream: element    result: element (ok), error      fn_value: element (a function type)
 export struct Ty {
     Kind kind;
@@ -235,6 +237,8 @@ static Bool same_kind(Kind a, Kind b) {
         return b == .stream;
     case .tuple:
         return b == .tuple;
+    case .vector:
+        return b == .vector;
     }
     return false;
 }
@@ -366,6 +370,11 @@ export TypeRef block_of(Table *t, TypeRef element, U64 dimensions) {
     return intern(t, (Ty){.kind = .block, .element = element, .count = dimensions});
 }
 
+// `vec(T, N)`: `count` lanes of `element`.
+export TypeRef vector_of(Table *t, TypeRef element, U64 count) {
+    return intern(t, (Ty){.kind = .vector, .element = element, .count = count});
+}
+
 export TypeRef stream_of(Table *t, TypeRef element) {
     return intern(t, (Ty){.kind = .stream, .element = element});
 }
@@ -447,6 +456,16 @@ static TypeRef part(TypeRef t, Usize i) {
     return t->element;
 }
 
+// A vector is `count` lanes, its size and alignment rounded up to a power of two as LLVM's `<N x T>` is.
+static Layout vector_layout(const Target *target, TypeRef t) {
+    U64 lane = 1;
+    if (t->element->kind != .bool_type) lane = t->element->bits / 8;
+    U64 size = 1;
+    while (size < lane * t->count)
+        size *= 2;
+    return (Layout){.size = size, .align = least(size, target->max_align), .known = true};
+}
+
 // A type with no parts: its size and alignment from the target alone.
 static Layout leaf_layout(const Target *target, TypeRef t) {
     U64 word = target->pointer_bytes;
@@ -459,6 +478,7 @@ static Layout leaf_layout(const Target *target, TypeRef t) {
     if (t->kind == .pointer || t->kind == .fn_value || t->kind == .null_type || t->kind == .stream)
         return (Layout){.size = word, .align = word, .known = true};
     if (t->kind == .slice || t->kind == .text) return (Layout){.size = 2 * word, .align = word, .known = true};
+    if (t->kind == .vector) return vector_layout(target, t);
     if ((t->kind == .record && t->complete) || t->kind == .tuple) return (Layout){.size = 0, .align = 1, .known = true};
     return none;
 }
@@ -603,6 +623,10 @@ static void expand(Piece stack[:], Usize *top, Output *text, TypeRef t) {
     } else if (t->kind == .block) {
         push_piece(stack, top, word(t->count == 2 ? "[,]" : "[,,]"));
         push_piece(stack, top, of(t->element));
+    } else if (t->kind == .vector) {
+        push_piece(stack, top, word(msg(format::push(", ", t->count, ")"))));
+        push_piece(stack, top, of(t->element));
+        put(text, "vec(");
     } else if (t->kind == .option) {
         push_piece(stack, top, word(")"));
         push_piece(stack, top, of(t->element));
@@ -1148,6 +1172,39 @@ static Bool any_invalid(const Checked *r, const Walk *w, Usize base, Usize n) {
     return false;
 }
 
+// `vec(T, N)`: `T` is a number type and `N` an integer literal of 1 or more.
+static TypeRef build_vector(Checked *r, const ast::TypeExpr *node, TypeRef element) {
+    if (!(node->kind == .applied)) {
+        return r->table.invalid;
+    }
+    ast::TypeArg args[:] = node->kind.applied.args;
+    if (countof(args) != 2) {
+        failf(r, node->span, "`vec` takes an element type and a lane count; write `vec(f32, 4)`");
+        return r->table.invalid;
+    }
+    const ast::TypeArg *first = &args[0];
+    const ast::TypeArg *second = &args[1];
+    if (!(*first == .type) || !(*second == .value)) {
+        failf(r, node->span, "`vec` takes an element type and a lane count; write `vec(f32, 4)`");
+        return r->table.invalid;
+    }
+    const ast::Expr *count = second->value.value;
+    if (count->kind != .integer) {
+        failf(r, count->span, "not yet typed: a lane count that is not an integer literal; write `vec(f32, 4)`");
+        return r->table.invalid;
+    }
+    if (count->kind.integer.value < 1) {
+        failf(r, count->span, "a vector has at least one lane; write a count of 1 or more, as in `vec(f32, 4)`");
+        return r->table.invalid;
+    }
+    if (element->kind != .integer && element->kind != .floating) {
+        failf(r, node->span, "the element of `vec` is a number type, found `", show(element),
+              "`; write `vec(f32, 4)` or `vec(i32, 3)`");
+        return r->table.invalid;
+    }
+    return vector_of(&r->table, element, count->kind.integer.value);
+}
+
 static TypeRef build_applied(Checked *r, ast::Span span, ast::Path applied_name, Usize args, const Walk *w, Usize base,
                              Usize n) {
     Str name = path_text(applied_name);
@@ -1231,6 +1288,11 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
     if (node->kind == .applied) {
         ast::Path applied_name = node->kind.applied.name;
         Usize args = countof(node->kind.applied.args);
+        if (same_text(path_text(applied_name), "vec")) {
+            if (n == 1) return build_vector(r, node, w->values[base].type);
+            failf(r, node->span, "`vec` takes an element type and a lane count; write `vec(f32, 4)`");
+            return r->table.invalid;
+        }
         return build_applied(r, node->span, applied_name, args, w, base, n);
     }
     return r->table.invalid;

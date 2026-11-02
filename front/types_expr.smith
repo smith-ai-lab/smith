@@ -1287,6 +1287,55 @@ static Bool adapt_literals(types::Checked *c, const ast::Expr *left, const ast::
     return true;
 }
 
+// The vector type of `l` or `r`: the one that is a vector, or null when neither is.
+static types::TypeRef vector_side(types::TypeRef l, types::TypeRef r) {
+    if (l->kind == .vector) {
+        return l;
+    }
+    if (r->kind == .vector) {
+        return r;
+    }
+    return nullptr;
+}
+
+// A binary operator with a vector: both sides the same vector, or a vector and a scalar of its element (broadcast).
+static void vector_binary(types::Checked *c, const ast::Expr *e, types::TypeRef v) {
+    if (!(e->kind == .binary)) {
+        return;
+    }
+    ast::BinaryOp op = e->kind.binary.op;
+    const ast::Expr *left = e->kind.binary.left;
+    const ast::Expr *right = e->kind.binary.right;
+    types::TypeRef element = v->element;
+    if (typ(c, left)->kind != .vector && literal_like(left) && is_number(typ(c, left)) && !retype(c, left, element)) {
+        poison(c, e);
+        return;
+    }
+    if (typ(c, right)->kind != .vector && literal_like(right) && is_number(typ(c, right)) &&
+        !retype(c, right, element)) {
+        poison(c, e);
+        return;
+    }
+    types::TypeRef l = typ(c, left);
+    types::TypeRef r = typ(c, right);
+    Bool same = (l == v || l == element) && (r == v || r == element);
+    if (!same) {
+        types::failf(c, e->span, "the operands of `", binary_text(op), "` are `", types::show(l), "` and `",
+                     types::show(r), "`; write two `", types::show(v), "`, or a `", types::show(v), "` and a `",
+                     types::show(element), "`");
+        poison(c, e);
+    } else if (is_logical(op) || is_shift(op) || is_bitwise(op)) {
+        not_yet(c, e, msg(format::push("`", binary_text(op), "` on `", types::show(v), "`")));
+    } else if (op == .remainder && !is_integer(element)) {
+        types::failf(c, e->span, "`%` needs integers, found `", types::show(v), "`; write a vector of integers");
+        poison(c, e);
+    } else if (is_ordering(op) || is_equality(op)) {
+        finish(c, e, types::vector_of(&c->table, c->table.bool_type, v->count), nullptr);
+    } else {
+        finish(c, e, v, nullptr);
+    }
+}
+
 static void binary_after(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .binary)) {
@@ -1298,6 +1347,14 @@ static void binary_after(types::Checked *c, Frame f) {
     types::TypeRef bad = invalid(c);
     if (typ(c, left) == bad || typ(c, right) == bad) {
         poison(c, e);
+        return;
+    }
+    types::TypeRef vector = vector_side(typ(c, left), typ(c, right));
+    if (vector != nullptr) {
+        vector_binary(c, e, vector);
+        if (typ(c, e) != bad) {
+            finish(c, e, typ(c, e), f.expected);
+        }
         return;
     }
     types::TypeRef expected = nullptr;
@@ -1360,6 +1417,12 @@ static void assign_target_done(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *target = e->kind.assign.target;
     const ast::Expr *value = e->kind.assign.value;
     types::TypeRef tt = typ(c, target);
+    if (target->kind == .index && typ(c, target->kind.index.base)->kind == .vector &&
+        typ(c, target->kind.index.base)->element->kind == .bool_type) {
+        types::failf(c, target->span, "a lane of `", types::show(typ(c, target->kind.index.base)),
+                     "` cannot be assigned; it is the result of a comparison, so read it or build a new vector");
+        tt = invalid(c);
+    }
     if (tt == invalid(c) || !writable(c, target, "assign to")) {
         push(w, e, nullptr, 3);
         push(w, value, nullptr, 0);
@@ -1734,6 +1797,103 @@ static void construct_after(types::Checked *c, Frame f, types::TypeRef record) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Vectors: `vec(f32, 4)(1, 2, 3, 4)` (spec "Types" of #1428, #1630)
+
+// Whether `callee` is the `vec(T, N)` of a construction: a call of the name `vec`, which no declaration owns.
+static Bool is_vector_callee(const types::Checked *c, const ast::Expr *callee) {
+    if (callee->kind != .call) {
+        return false;
+    }
+    const ast::Expr *name = callee->kind.call.callee;
+    if (name->kind != .name) {
+        return false;
+    }
+    ast::Path path = name->kind.name.path;
+    return countof(path.segments) == 1 && same_text(path.segments[0].text, "vec") &&
+           types::lookup_path(&c->scopes, path) == nullptr;
+}
+
+// The type `vec(T, N)` written as the callee of a construction: its arguments are read as a type and a count.
+static types::TypeRef vector_type(types::Checked *c, const ast::Expr *callee) {
+    if (!(callee->kind == .call) || !(callee->kind.call.callee->kind == .name)) {
+        return invalid(c);
+    }
+    ast::Path vec_path = callee->kind.call.callee->kind.name.path;
+    ast::ExprRef given[:] = callee->kind.call.args;
+    if (countof(given) != 2) {
+        types::failf(c, callee->span, "`vec` takes an element type and a lane count; write `vec(f32, 4)`");
+        return invalid(c);
+    }
+    const ast::Expr *first = given[0];
+    ast::Expr *second = given[1];
+    if (!(first->kind == .name) || !(second->kind == .integer)) {
+        types::failf(c, callee->span, "`vec` takes an element type and a lane count; write `vec(f32, 4)`");
+        return invalid(c);
+    }
+    ast::TypeKind element_kind = {.named = {.path = first->kind.name.path}};
+    ast::TypeExpr *element = ast::make_type(element_kind);
+    element->span = first->span;
+    ast::TypeArg args[:] = mem::alloc_slice(ast::TypeArg, 2);
+    ast::TypeArg element_arg = {.type = {.type = element}};
+    ast::TypeArg count_arg = {.value = {.value = second}};
+    args[0] = element_arg;
+    args[1] = count_arg;
+    ast::TypeKind kind = {.applied = {.name = vec_path, .args = args}};
+    ast::TypeExpr *written = ast::make_type(kind);
+    written->span = callee->span;
+    return types::resolve(c, written);
+}
+
+// Stage 0: the lanes are checked as the element type; the callee `vec(T, N)` is a type, not a value.
+static void vector_before(types::Checked *c, Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call)) {
+        return;
+    }
+    const ast::Expr *callee = e->kind.call.callee;
+    types::TypeRef made = vector_type(c, callee);
+    types::set_type(c, callee, made);
+    if (made == invalid(c)) {
+        poison(c, e);
+        return;
+    }
+    ast::ExprRef args[:] = e->kind.call.args;
+    push(w, e, f.expected, 5);
+    for (Usize i = countof(args); i > 0; i--) {
+        push(w, argument_value(args[i - 1]), made->element, 0);
+    }
+}
+
+static void vector_after(types::Checked *c, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call)) {
+        return;
+    }
+    types::TypeRef made = typ(c, e->kind.call.callee);
+    ast::ExprRef args[:] = e->kind.call.args;
+    Bool ok = true;
+    if (countof(args) != made->count) {
+        types::failf(c, e->span, "`", types::show(made), "` is built from exactly ", made->count, " values, found ",
+                     countof(args), "; write one value for each lane");
+        ok = false;
+    }
+    for (Usize i = 0; i < countof(args) && ok; i++) {
+        const ast::Expr *lane = args[i];
+        if (lane->kind == .named_arg) {
+            types::failf(c, args[i]->span, "a lane of `", types::show(made), "` has no name; write the value alone");
+            ok = false;
+        } else if (typ(c, args[i]) == invalid(c)) {
+            ok = false;
+        }
+    }
+    if (!ok) {
+        poison(c, e);
+        return;
+    }
+    finish(c, e, made, f.expected);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Index, slice and member
 
 static types::TypeRef index_element(types::Checked *c, const ast::Expr *e, const ast::Expr *index,
@@ -1742,6 +1902,14 @@ static types::TypeRef index_element(types::Checked *c, const ast::Expr *e, const
         if (plain_integer(index) && integer_value(index) >= base->count) {
             types::failf(c, index->span, "index ", integer_value(index), " is out of range for `", types::show(base),
                          "`, which has ", base->count, " elements; write an index below ", base->count);
+            return invalid(c);
+        }
+        return base->element;
+    }
+    if (base->kind == .vector) {
+        if (plain_integer(index) && integer_value(index) >= base->count) {
+            types::failf(c, index->span, "index ", integer_value(index), " is out of range for `", types::show(base),
+                         "`, which has ", base->count, " lanes; write an index below ", base->count);
             return invalid(c);
         }
         return base->element;
@@ -2157,7 +2325,8 @@ static void array_literal_before(types::Checked *c, Work *w, Frame f) {
     }
     ast::ExprRef items[:] = e->kind.array_lit.items;
     types::TypeRef wanted = nullptr;
-    if (f.expected != nullptr && (f.expected->kind == .array || f.expected->kind == .slice)) {
+    if (f.expected != nullptr &&
+        (f.expected->kind == .array || f.expected->kind == .slice || f.expected->kind == .vector)) {
         wanted = f.expected->element;
     }
     if (countof(items) == 0 && wanted == nullptr) {
@@ -2179,7 +2348,7 @@ static void array_literal_after(types::Checked *c, Frame f) {
     ast::ExprRef items[:] = e->kind.array_lit.items;
     types::TypeRef expected = f.expected;
     types::TypeRef element = nullptr;
-    if (expected != nullptr && (expected->kind == .array || expected->kind == .slice)) {
+    if (expected != nullptr && (expected->kind == .array || expected->kind == .slice || expected->kind == .vector)) {
         element = expected->element;
     } else if (countof(items) > 0) {
         element = typ(c, items[0]);
@@ -2197,7 +2366,8 @@ static void array_literal_after(types::Checked *c, Frame f) {
             ok = false;
         }
     }
-    if (ok && expected != nullptr && expected->kind == .array && expected->count != countof(items)) {
+    if (ok && expected != nullptr && (expected->kind == .array || expected->kind == .vector) &&
+        expected->count != countof(items)) {
         types::failf(c, e->span, "`", types::show(expected), "` holds ", expected->count, " elements but this has ",
                      countof(items), "; write exactly ", expected->count, " elements");
         ok = false;
@@ -2206,7 +2376,7 @@ static void array_literal_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
-    if (expected != nullptr && (expected->kind == .array || expected->kind == .slice)) {
+    if (expected != nullptr && (expected->kind == .array || expected->kind == .slice || expected->kind == .vector)) {
         finish(c, e, expected, f.expected);
         return;
     }
@@ -2930,6 +3100,10 @@ static void before(types::Checked *c, Work *w, Frame f) {
         value_before(c, w, f);
     } else if (e->kind == .call) {
         const ast::Expr *callee = e->kind.call.callee;
+        if (is_vector_callee(c, callee)) {
+            vector_before(c, w, f);
+            return;
+        }
         types::TypeRef record = constructed_record(c, callee);
         if (record != nullptr) {
             construct_before(w, f, record);
@@ -2998,6 +3172,8 @@ static void after(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .call) {
         if (f.stage == 1) {
             call_callee_done(c, w, f);
+        } else if (f.stage == 5) {
+            vector_after(c, f);
         } else if (f.stage == 3) {
             construct_after(c, f, constructed_record(c, e->kind.call.callee));
         } else {
