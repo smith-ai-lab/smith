@@ -29,7 +29,7 @@ check() {
   done
   for i in $(issues blocked '.[]|select(.pull_request==null and ([.labels[].name]|index("later")|not))|.number'); do
     w=$( { gh api "repos/$R/issues/$i" --jq .body; gh api "repos/$R/issues/$i/comments" --jq '.[].body'; } 2>/dev/null | grep -oiE 'waits for[^.]*' | grep -oE '#[0-9]+' | tr -d '#' | sort -u)
-    [ -z "$w" ] && { seen "w$i" && echo "#$i is blocked with no Waits-for line: unblock it or add one"; continue; }
+    [ -z "$w" ] && { gh api "repos/$R/issues/$i/comments" --jq '.[].body' 2>/dev/null | grep -q "until the lead splits" && continue; seen "w$i" && echo "#$i is blocked with no Waits-for line: unblock it or add one"; continue; }
     open=0; for d in $w; do [ "$(gh api repos/$R/issues/$d --jq .state 2>/dev/null)" = closed ] || open=1; done
     [ $open = 0 ] && seen "u$i" && echo "#$i: everything it waits for is closed; unblock it"
   done
@@ -55,7 +55,7 @@ done
 - **Ready tickets:** open `task` issues that are neither `claimed` nor `blocked`. Fewer than N means runners exit with nothing to take: unblock, close tickets already done, split a large one, or answer a question.
 - **A runner's question:** a ticket a runner marked `blocked` in the last hour. Runners should also post `@lead:` on #1406, which wakes the lead within a minute.
 - **Everything a blocked ticket waits for is closed:** remove `blocked` (the "Waits for #N" lines in its body and comments).
-- **Blocked with no Waits-for line:** nothing will ever unblock it. Add the line, or remove `blocked`. Tickets labelled `later` are skipped.
+- **Blocked with no Waits-for line:** nothing will ever unblock it. Add the line, or remove `blocked`. Skipped: tickets labelled `later`, and tickets blocked "until the lead splits" them (splitting is the lead's own queue).
 - **A green PR not in the merge queue** (never added, or `removed_from_merge_queue` last in its timeline): GitHub ignores auto-merge on a PR that is already green, and the queue drops a PR whose queue run fails. Merge main into it and turn auto-merge on while CI runs (#1522 sat green for 90 minutes).
 - **A red PR untouched for an hour:** its runner has ended. Release its ticket with the failing test named, so the next runner fixes that PR (smith-dev-runner step 1).
 - **Claim age** is the latest `labeled` event for `claimed` in `issues/N/events`, not `updated_at`, which every comment moves. The merge queue has no REST listing: "not moved" means no new commit on main for an hour while pull requests are open.
