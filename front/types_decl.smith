@@ -57,6 +57,7 @@ import front::types;
 import front::types_convert;
 import front::types_expr;
 import front::types_fn;
+import front::types_iter;
 import std::arena;
 import std::format;
 import std::mem;
@@ -442,6 +443,33 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
     push(then_branch, nullptr, enter);
 }
 
+static void for_in_statement(types::Checked *r, const ast::Stmt *s) {
+    if (!(s->kind == .for_in)) {
+        return;
+    }
+    ast::Identifier names[:] = s->kind.for_in.names;
+    types::TypeRef element = types_iter::element_type(r, s->kind.for_in.iterable, s->kind.for_in.is_tuple);
+    if (element == nullptr) {
+        element = r->table.invalid;
+    }
+    types::push_scope(&r->scopes);
+    push(nullptr, nullptr, leave);
+    push(s->kind.for_in.body, nullptr, enter);
+    for (Usize i = 0; i < countof(names); i++) {
+        const types::Symbol *earlier = types::lookup(&r->scopes, names[i].text);
+        if (earlier != nullptr && earlier->kind == .variable && !is_discard(names[i].text)) {
+            types::failf(r, names[i].span, "`", names[i].text, "` hides a variable of the same name; shadowing is an ",
+                         "error, choose another name");
+        } else if (!is_discard(names[i].text)) {
+            types::Symbol symbol = {
+                .name = names[i].text, .kind = .variable, .type = element, .is_const = true, .is_new = true};
+            types::declare(&r->scopes, symbol);
+            state.new_body = true;
+            note_local(names[i].text, element);
+        }
+    }
+}
+
 static void for_statement(types::Checked *r, const ast::Stmt *s) {
     if (!(s->kind == .for_stmt)) {
         return;
@@ -509,6 +537,8 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
         push(s->kind.do_while.body, nullptr, enter);
     } else if (s->kind == .for_stmt) {
         for_statement(r, s);
+    } else if (s->kind == .for_in) {
+        for_in_statement(r, s);
     } else if (s->kind == .return_stmt) {
         return_statement(r, s);
     } else if (s->kind == .defer_stmt) {
