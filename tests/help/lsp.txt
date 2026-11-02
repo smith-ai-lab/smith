@@ -1,0 +1,8 @@
+smith lsp: clangd, the language server
+
+usage: smith lsp [<clangd arguments>]
+
+examples:
+  smith lsp
+
+clangd's own options: smith lsp --help
