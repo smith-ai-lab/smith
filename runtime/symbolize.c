@@ -106,6 +106,11 @@ typedef struct {
     size_t image_count;
     SmithSymFrame frames[smith_sym_frames_max];
     size_t frame_count;
+    // What a limit above refused, counted so the report names it (never a silent cut).
+    size_t images_over;
+    size_t frames_over;
+    size_t values_over;
+    size_t details_over;
 } SmithSymTrace;
 
 typedef struct {
@@ -121,6 +126,7 @@ typedef struct {
 typedef struct {
     char text[smith_sym_notes_max][1200];
     size_t count;
+    size_t over; // notes past smith_sym_notes_max, named at the end of the report
 } SmithSymNotes;
 
 static const char *smith_sym_binary_override;
@@ -138,7 +144,10 @@ static const char *smith_sym_base_name(const char *path) {
 static void smith_sym_note(SmithSymNotes *notes, const char *text) {
     for (size_t i = 0; i < notes->count; i++)
         if (strcmp(notes->text[i], text) == 0) return;
-    if (notes->count < smith_sym_notes_max) snprintf(notes->text[notes->count++], sizeof notes->text[0], "%s", text);
+    if (notes->count < smith_sym_notes_max)
+        snprintf(notes->text[notes->count++], sizeof notes->text[0], "%s", text);
+    else
+        notes->over += 1;
 }
 
 // Parsing.
@@ -177,7 +186,10 @@ static bool smith_sym_hex(const char *word, uint64_t *value) {
 }
 
 static void smith_sym_parse_image(SmithSymTrace *trace, const char *rest) {
-    if (trace->image_count >= smith_sym_images_max) return;
+    if (trace->image_count >= smith_sym_images_max) {
+        trace->images_over += 1;
+        return;
+    }
     SmithSymImage *image = &trace->images[trace->image_count];
     *image = (SmithSymImage){};
     char text[32];
@@ -195,7 +207,10 @@ static void smith_sym_parse_image(SmithSymTrace *trace, const char *rest) {
 }
 
 static void smith_sym_parse_frame(SmithSymTrace *trace, const char *rest, bool exact) {
-    if (trace->frame_count >= smith_sym_frames_max) return;
+    if (trace->frame_count >= smith_sym_frames_max) {
+        trace->frames_over += 1;
+        return;
+    }
     SmithSymFrame *frame = &trace->frames[trace->frame_count];
     *frame = (SmithSymFrame){.exact = exact};
     char address[32];
@@ -215,8 +230,12 @@ static void smith_sym_apply_detail(SmithSymTrace *trace, const char *rest) {
     } else if (smith_sym_starts(rest, "@ ")) {
         if (trace->value_count < smith_sym_values_max)
             smith_sym_copy(trace->values[trace->value_count++], sizeof trace->values[0], rest + 2);
+        else
+            trace->values_over += 1;
     } else if (trace->detail_count < smith_sym_details_max) {
         smith_sym_copy(trace->details[trace->detail_count++], sizeof trace->details[0], rest);
+    } else {
+        trace->details_over += 1;
     }
 }
 
@@ -309,6 +328,11 @@ static size_t smith_sym_rows_for(SmithSymTrace *trace, const SmithSymFrame *fram
             if (smith_symbolize_problem()[0] != '\0') smith_sym_note(notes, smith_symbolize_problem());
         }
     }
+    if (count + (size_t)(found > 0 ? found : 1) > smith_sym_rows_max) {
+        char text[200];
+        snprintf(text, sizeof text, "the stack has more than %zu rows, so the rest are not shown", smith_sym_rows_max);
+        smith_sym_note(notes, text);
+    }
     for (int i = 0; i < found && count < smith_sym_rows_max; i++)
         count = smith_sym_row_add(rows, count, &symbols[i], index);
     if (found == 0 && count < smith_sym_rows_max) {
@@ -374,6 +398,7 @@ typedef struct {
     size_t first; // the failing row
     size_t last;  // the last row of the chain
     bool found;
+    bool cut; // the chain reached smith_sym_chain_max rows with more below it
 } SmithSymChain;
 
 static bool smith_sym_skip(const SmithSymRow *row) {
@@ -396,6 +421,7 @@ static SmithSymChain smith_sym_chain(const SmithSymRow *rows, size_t count) {
         if (i > chain.first && smith_sym_machinery(name) &&
             (smith_sym_starts(bare, "smith_test_") || smith_sym_starts(bare, "std::test::")))
             break;
+        if (i + 1 == chain.first + smith_sym_chain_max && i + 1 < count) chain.cut = true;
     }
     return chain;
 }
@@ -560,6 +586,27 @@ static int smith_sym_width(const SmithSymRow *rows, SmithSymChain chain) {
     return width < 60 ? width : 60;
 }
 
+// The limits a block crossed, each with its number: a frame, an image, a value or a detail past its cap is counted at
+// parse time and named here, never dropped without a word.
+static void smith_sym_print_over(FILE *out, const char *indent, const SmithSymTrace *trace,
+                                 const SmithSymNotes *notes) {
+    if (trace->frames_over > 0)
+        fprintf(out, "%snote: %zu frames past the limit of %zu are not shown\n", indent, trace->frames_over,
+                smith_sym_frames_max);
+    if (trace->images_over > 0)
+        fprintf(out, "%snote: %zu images past the limit of %zu are not read, so their frames have no lines\n", indent,
+                trace->images_over, smith_sym_images_max);
+    if (trace->values_over > 0)
+        fprintf(out, "%snote: %zu values past the limit of %zu are not shown\n", indent, trace->values_over,
+                smith_sym_values_max);
+    if (trace->details_over > 0)
+        fprintf(out, "%snote: %zu details past the limit of %zu are not shown\n", indent, trace->details_over,
+                smith_sym_details_max);
+    if (notes->over > 0)
+        fprintf(out, "%snote: %zu more notes past the limit of %zu are not shown\n", indent, notes->over,
+                smith_sym_notes_max);
+}
+
 // Prints the report of one block to out.
 static void smith_sym_report(FILE *out, SmithSymTrace *trace) {
     static SmithSymRow rows[smith_sym_rows_max];
@@ -598,6 +645,10 @@ static void smith_sym_report(FILE *out, SmithSymTrace *trace) {
         for (size_t i = 0; i < count && i < smith_sym_chain_max; i++)
             smith_sym_print_row(out, indent, &rows[i], 24);
     }
+    if (chain.cut || (!chain.found && trace->site[0] == '\0' && count > smith_sym_chain_max))
+        fprintf(out, "%snote: the stack has more than %zu rows, so the rest are not shown\n", indent,
+                smith_sym_chain_max);
+    smith_sym_print_over(out, indent, trace, &notes);
     for (size_t i = 0; i < notes.count; i++)
         fprintf(out, "%snote: %s\n", indent, notes.text[i]);
 }
