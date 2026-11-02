@@ -1326,7 +1326,7 @@ static const SmithLibrary smith_libraries[] = {
 #include "runtime/make_translate.c"
 
 constexpr size_t smith_build_args_max = 4096;
-constexpr size_t smith_build_manifest_max = 8192;
+constexpr size_t smith_build_manifest_max = 16384;
 constexpr size_t smith_build_chunk = 4096;
 constexpr size_t smith_build_ninja_prefix = 3; // ninja -f .smith/build.ninja
 
@@ -1512,6 +1512,34 @@ static SmithBuildFile smith_build_file(void) {
 static const char *const smith_build_program_libraries[] = {"arena",   "contract", "env", "files",
                                                             "inflate", "mem",      "net", "random"};
 
+// The project's own modules of a build.smith: every .smith file under build/, in the order nftw finds them, sorted so
+// the manifest is the same on every host. The folder is the convention; nothing is scanned for imports.
+constexpr size_t smith_build_modules_max = 64;
+static char smith_build_modules[smith_build_modules_max][PATH_MAX];
+static size_t smith_build_module_count;
+
+static int smith_build_module_entry(const char *path, const struct stat *info, int kind, struct FTW *where) {
+    (void)info;
+    (void)where;
+    size_t length = strlen(path);
+    if (kind != FTW_F || length <= 6 || strcmp(path + length - 6, ".smith") != 0) return 0;
+    if (strpbrk(path, " $:\n") != nullptr) smith_die(smith_exit_usage, "a path ninja cannot hold", path);
+    if (smith_build_module_count >= smith_build_modules_max || length >= PATH_MAX)
+        smith_die(smith_exit_usage, "too many modules under build/", path);
+    memcpy(smith_build_modules[smith_build_module_count++], path, length + 1);
+    return 0;
+}
+
+static int smith_build_module_compare(const void *a, const void *b) {
+    return strcmp((const char *)a, (const char *)b);
+}
+
+static void smith_build_find_modules(void) {
+    smith_build_module_count = 0;
+    nftw("build", smith_build_module_entry, 16, FTW_PHYS);
+    qsort(smith_build_modules, smith_build_module_count, sizeof smith_build_modules[0], smith_build_module_compare);
+}
+
 // The compiles are `-MD` and name the debug info's folder `.`, so the step cache serves them to every project whose
 // build file and libraries are the same (executor.md, "The step cache"): -MMD is refused by it, and a `-g` object
 // that holds the project's folder is shared only by builds in that folder.
@@ -1554,8 +1582,22 @@ static size_t smith_build_program_manifest(char *out, size_t capacity, const cha
                  "build .smith/build-program/runtime.o: cc .smith/runtime.c\n",
                  quoted, own_word, quoted, is_smith ? "cc_smith" : "cc", build_source);
     SMITH_ASSERT(written > 0 && (size_t)written < capacity);
-    char objects[1024] = ".smith/build-program/build.o .smith/build-program/runtime.o";
+    static char objects[smith_build_modules_max * 80 + 1024] =
+        ".smith/build-program/build.o .smith/build-program/runtime.o";
     size_t objects_length = strlen(objects);
+    for (size_t i = 0; is_smith && i < smith_build_module_count; i++) {
+        const char *source = smith_build_modules[i];
+        char object[PATH_MAX + 32];
+        int named = snprintf(object, sizeof object, ".smith/build-program/module-%zu.o", i);
+        SMITH_ASSERT(named > 0 && (size_t)named < sizeof object);
+        int line =
+            snprintf(out + written, capacity - (size_t)written, "build %s: cc_smith %s\n  flags = \n", object, source);
+        SMITH_ASSERT(line > 0 && (size_t)line < capacity - (size_t)written);
+        written += line;
+        int more = snprintf(objects + objects_length, sizeof objects - objects_length, " %s", object);
+        SMITH_ASSERT(more > 0 && (size_t)more < sizeof objects - objects_length);
+        objects_length += (size_t)more;
+    }
     for (size_t i = 0; i < sizeof smith_build_program_libraries / sizeof smith_build_program_libraries[0]; i++) {
         const char *name = smith_build_program_libraries[i];
         const char *flags = strcmp(name, "random") == 0 ? "-ffp-contract=off" : "";
@@ -2016,6 +2058,7 @@ static void smith_build_prepare(const char *self, const char *clang, bool in_pro
     smith_make_folder(".smith/internal");
     smith_make_folder(".smith/build-program");
     static char manifest[smith_build_manifest_max];
+    if (file == SmithBuildFile_Smith) smith_build_find_modules();
     size_t length = smith_build_program_manifest(manifest, sizeof manifest, self, clang, in_process,
                                                  file == SmithBuildFile_Conventions ? smith_conventions_path
                                                  : file == SmithBuildFile_Smith     ? "build.smith"

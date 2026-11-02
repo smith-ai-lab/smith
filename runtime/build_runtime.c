@@ -2809,6 +2809,13 @@ static void smith_put_compile_commands(FILE *out, const SmithBuild *b, bool firs
     if (build_file != nullptr) {
         if (any) fputs(",\n", out);
         smith_json_entry(out, b->root, build_file, nullptr, smith_build_file_words(build_file));
+        const char *const build_modules[] = {"build/**/*.smith", nullptr};
+        const char *const *modules =
+            strcmp(build_file, "build.smith") == 0 ? smith_glob((SmithBuild *)b, build_modules) : nullptr;
+        for (size_t i = 0; modules != nullptr && modules[i] != nullptr; i++) { // build.smith's own modules
+            fputs(",\n", out);
+            smith_json_entry(out, b->root, modules[i], nullptr, smith_build_file_words(build_file));
+        }
     }
     fputs("\n]\n", out);
 }
@@ -2981,6 +2988,15 @@ static void smith_put_build_info(FILE *out, SmithBuild *b) {
         for (size_t j = 1; words[j] != nullptr; j++)
             fprintf(out, "\t%s", words[j]);
         fputc('\n', out);
+        const char *const build_modules[] = {"build/**/*.smith", nullptr};
+        const char *const *modules =
+            strcmp(build_file, "build.smith") == 0 ? smith_glob((SmithBuild *)b, build_modules) : nullptr;
+        for (size_t i = 0; modules != nullptr && modules[i] != nullptr; i++) {
+            fprintf(out, "compile\t%s", modules[i]);
+            for (size_t j = 1; words[j] != nullptr; j++)
+                fprintf(out, "\t%s", words[j]);
+            fputc('\n', out);
+        }
     }
     const char *const *tests = smith_test_tasks(b);
     for (size_t i = 0; tests[i] != nullptr; i++)
