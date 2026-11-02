@@ -25,11 +25,15 @@
 module std::task;
 
 import std::contract;
+import std::mem;
+import std::random;
 import target;
+import <dlfcn.h>;                           // dladdr (macOS): the name of a waiting task's entry
 import <errno.h>;                           // errno's location
 import <fcntl.h>;                           // fcntl: the non-blocking flag
 import <sys/stat.h>;                        // fstat: sockets and pipes park, files do not
 import <sys/socket.h>;                      // getsockopt: how a connect ended
+import <stdio.h>;                           // snprintf: the names in a deadlock's message
 import <pthread.h>;                         // the worker threads, their lock and wake-ups
 import <smith/handlers.h>;                  // SmithHandlers, smith_handlers_table, smith_handlers_set_table
 import <sanitizer/asan_interface.h>;        // unpoison_memory_region
@@ -506,6 +510,164 @@ Scheduler inline_value = {.spawn = inline_spawn, .pause = inline_pause, .wait = 
 // time on the calling thread, in an order that repeats.
 export Scheduler *inline_scheduler() {
     return &inline_value;
+}
+
+// ---- The simulation scheduler: one thread, a random task at each switch. ----
+//
+// For tests. Every task runs on the calling thread. A task that is spawned is queued; at each point where one gives up
+// the thread (`pause`, a task ending, `wait`) the scheduler takes the next ready task by a random draw. Decision n
+// depends on the key and n alone, so a run replays from its key. The state comes from the current allocator and is
+// given back when a `wait` of `main` leaves with no task alive.
+struct Simulation {
+    Scheduler base; // first: the scheduler's address is the simulation's
+    U64 seed;       // from the key
+    U64 decisions;  // the draws so far
+    Task *ready_first;
+    Usize ready_count;
+    Usize live;    // tasks spawned and not ended
+    Task *waiting; // the tasks (not `main`) inside a `wait`, newest first, linked by wait_next
+};
+
+void simulation_queue(Simulation *simulation, Task *task) {
+    task->next = simulation->ready_first;
+    simulation->ready_first = task;
+    simulation->ready_count += 1;
+}
+
+// Takes the task the next draw names out of the ready list. The list order is only a naming; the draw decides.
+Task *simulation_take(Simulation *simulation) {
+    contract::requires(simulation->ready_count > 0);
+    constexpr U64 golden = 0x9E3779B97F4A7C15;
+    U64 bits = random::key_bits(random::key_make(simulation->seed + (simulation->decisions + 1) * golden));
+    simulation->decisions += 1;
+    Usize index = (Usize)(bits % simulation->ready_count);
+    Task *previous = nullptr;
+    Task *task = simulation->ready_first;
+    for (Usize i = 0; i < index; i++) {
+        previous = task;
+        task = task->next;
+    }
+    if (previous == nullptr)
+        simulation->ready_first = task->next;
+    else
+        previous->next = task->next;
+    task->next = nullptr;
+    simulation->ready_count -= 1;
+    return task;
+}
+
+// Runs one drawn task until it pauses or ends.
+void simulation_step(Simulation *simulation) {
+    Task *task = simulation_take(simulation);
+    if (resume(task)) {
+        simulation->live -= 1;
+        release_inline(task);
+    } else {
+        simulation_queue(simulation, task);
+    }
+}
+
+void simulation_spawn(Scheduler *self, Group *group, void (*entry)(void *context), void *context) {
+    contract::requires(group != nullptr && entry != nullptr);
+    Simulation *simulation = (Simulation *)self;
+    Task *task = make_task(group, entry, context);
+    group->pending += 1;
+    simulation->live += 1;
+    simulation_queue(simulation, task);
+}
+
+void simulation_pause(Scheduler *self) {
+    Simulation *simulation = (Simulation *)self;
+    if (current()->resumer != nullptr) { // whoever resumed it queues it when control returns there
+        suspend();
+        return;
+    }
+    for (Usize round = simulation->ready_count; round > 0 && simulation->ready_count > 0; round--)
+        simulation_step(simulation);
+}
+
+// The symbol of a code address (dladdr). glibc declares it and Dl_info only under _GNU_SOURCE, which a .smith file
+// cannot define, so Linux declares what it uses, as std::mem does.
+if constexpr (target::os == target::macos) {
+    typedef c::Dl_info Image;
+
+    I32 image_of(const void *address, Image *info) {
+        // NOLINTNEXTLINE(smith-effects): the loader's own table of images, read-only
+        return c::dladdr(address, info);
+    }
+} else {
+    typedef struct {
+        const char *dli_fname;
+        void *dli_fbase;
+        const char *dli_sname;
+        void *dli_saddr;
+    } Image;
+
+    extern I32 loader_image(const void *address, Image *info) __asm__("dladdr");
+
+    I32 image_of(const void *address, Image *info) {
+        // NOLINTNEXTLINE(smith-effects): the loader's own table of images, read-only
+        return loader_image(address, info);
+    }
+}
+
+// Every task is inside a wait and none can run: a checked failure that names their entry functions.
+[[noreturn]] void simulation_deadlock(Simulation *simulation) {
+    contract::trusted(); // the message is written into a buffer of its own
+    char names[512] = {};
+    Usize used = 0;
+    for (Task *task = simulation->waiting; task != nullptr && used < sizeof(names) - 80; task = task->wait_next) {
+        Image info = {};
+        Bool known = image_of((void *)task->entry, &info) != 0 && info.dli_sname != nullptr;
+        // NOLINTBEGIN(smith-preprocessor): snprintf is a macro under fortification
+        I32 wrote = known ? c::snprintf(names + used, sizeof(names) - used, " %s", info.dli_sname)
+                          : c::snprintf(names + used, sizeof(names) - used, " %p", (void *)task->entry);
+        // NOLINTEND(smith-preprocessor)
+        if (wrote > 0) used += (Usize)wrote;
+    }
+    c::smith_failure_format(c::SmithFailure_Memory,
+                            "task::wait: every task is waiting and none is ready (a deadlock); waiting tasks: %s",
+                            names);
+}
+
+void simulation_unlink_waiting(Simulation *simulation, Task *task) {
+    Task **slot = &simulation->waiting;
+    while (*slot != nullptr && *slot != task)
+        slot = &(*slot)->wait_next;
+    if (*slot == task) *slot = task->wait_next;
+    task->wait_next = nullptr;
+}
+
+void simulation_wait(Scheduler *self, Group *group) {
+    contract::requires(group != nullptr);
+    Simulation *simulation = (Simulation *)self;
+    Task *me = current();
+    Bool is_task = me->resumer != nullptr;
+    if (is_task && group->pending > 0) {
+        me->wait_next = simulation->waiting;
+        simulation->waiting = me;
+    }
+    while (group->pending > 0) {
+        if (simulation->ready_count == 0) simulation_deadlock(simulation);
+        simulation_step(simulation);
+    }
+    if (is_task) {
+        simulation_unlink_waiting(simulation, me);
+    } else if (simulation->live == 0) {
+        mem::free(simulation);
+    }
+}
+
+// A scheduler for tests: tasks run one at a time on the calling thread, and at each switch a random ready task goes
+// next, drawn from `key`, so one key is one order, and a failure replays from it. Install it with `use`. Its state
+// comes from the current allocator and is given back when a `wait` of `main` leaves with no task alive: make one per
+// run. Its `io` is null, so a call reaches the real function.
+export Scheduler *simulation(random::Key key) {
+    Simulation *simulation = mem::alloc(Simulation);
+    *simulation = (Simulation){};
+    simulation->base = (Scheduler){.spawn = simulation_spawn, .pause = simulation_pause, .wait = simulation_wait};
+    simulation->seed = random::key_bits(key);
+    return &simulation->base;
 }
 
 // ---- The default scheduler: one worker thread per core. ----
