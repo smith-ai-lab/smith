@@ -24,6 +24,10 @@
 // made by emit_arith::type_float. Literals, `+ - * /`, unary `-`, ordered comparisons (`!=` unordered), `f32` to `f64`
 // and integer to float conversions, and casts go to emit_arith.
 //
+// SLICES (#1623): `[]T` and `str` are the literal struct `{ ptr, usize }` (emit_memory::type_slice). String literals,
+// `xs[a:b]` and `s[i]` go to emit_memory; an array that is a place, where a slice is expected, becomes `{ address, N }`
+// (`is_array_place`, aliasing the array), and an array value is stored in a slot (`convert_value`).
+//
 // WAVE 3 (#1582 of #1428) added one stub per new area, the same way: emit_option (`?T`, `.some`, `.none`, `if let`;
 // #1584), emit_match (enumerations, `.red`, `match`; #1585), emit_value (an `if` or a block as a value), emit_iter
 // (`for x in xs`; #1586), emit_tuple and emit_lambda (the next batch). This file routes to them and nothing else will
@@ -135,8 +139,12 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
         if (countof(path.segments) == 1 && arith::type_float(e, path.segments[0].text, &ty)) return ty;
         if (countof(path.segments) == 1 && state::same_text(path.segments[0].text, "Void")) return void_type(e);
         if (countof(path.segments) == 1 && matching::type_enum(e, path.segments[0].text, &ty)) return ty;
+        if (countof(path.segments) == 1 &&
+            (state::same_text(path.segments[0].text, "str") || state::same_text(path.segments[0].text, "Str")))
+            return memory::type_slice(e, t);
         return memory::type_record(e, t);
     }
+    if (t->kind == .slice) return memory::type_slice(e, t);
     if (t->kind == .option) return optional::type_option(e, t);
     if (t->kind == .tuple) return tupled::type_tuple(e, t);
     if (t->kind == .function) return lambdas::type_function(e, t);
@@ -246,6 +254,16 @@ static state::Status dispatch_variant(state::Emitter *e, const ast::Expr *x, sta
     return matching::variant(e, x, hint);
 }
 
+// Whether `x` is a place (a name, a member, an index, `p.*`) the checker typed as a fixed array: where a slice is
+// expected it is passed as `{ address, N }`, aliasing the array.
+static Bool is_array_place(state::Emitter *e, const ast::Expr *x) {
+    Bool place = x->kind == .name || x->kind == .member || x->kind == .index;
+    place = place || (x->kind == .unary && x->kind.unary.op == .dereference);
+    if (!place || e->options.checked == nullptr) return false;
+    types::TypeRef t = types::type_of(e->options.checked, x);
+    return t != nullptr && t->kind == .array;
+}
+
 // An `if`, `match` or block used as a value.
 static state::Status dispatch_stmt_expr(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
     if (x->kind != .stmt_expr) {
@@ -260,6 +278,7 @@ static state::Status dispatch_stmt_expr(state::Emitter *e, const ast::Expr *x, s
 // ones nobody emits yet are the last line. (A chain of `if`, see `type_of`.)
 static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
     try debug::expr_location(e, x);
+    if (hint.present && hint.ty.kind == .slice && is_array_place(e, x)) return memory::array_as_slice(e, x, hint);
     if (x->kind == .integer) return arith::integer_literal(e, x, hint);
     if (x->kind == .character) return character_literal(e, x);
     if (x->kind == .name) {
@@ -294,7 +313,9 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     }
     if (x->kind == .query) return memory::query(e, x, hint);
     if (x->kind == .compound) return memory::compound(e, x, hint);
-    // string, type_value, slice_of, try_expr
+    if (x->kind == .string) return memory::string_literal(e, x, hint);
+    if (x->kind == .slice_of) return memory::slice_of(e, x, hint);
+    // type_value, try_expr
     return state::not_emitted("this kind of expression", x->span);
 }
 
@@ -910,6 +931,25 @@ static state::Ty pointer_to(state::Emitter *e, state::Ty *inner) {
     return made;
 }
 
+// A slice or `str` the checker names, when its element is a scalar, a record or an enumeration.
+static Bool slice_of_checked(state::Emitter *e, types::TypeRef base, state::Ty *ty) {
+    state::Ty character = {};
+    if (base->kind == .text) {
+        state::scalar_type(e, "char", &character);
+        *ty = memory::slice_type(e, character, "str");
+        return true;
+    }
+    if (base->kind != .slice) return false;
+    types::TypeRef element = base->element;
+    state::Ty inner = {};
+    Bool known = scalar_of_checked(e, element, &inner);
+    known = known || (element->kind == .record && find_record_by_name(e, element->name, &inner));
+    known = known || (element->kind == .enumeration && matching::type_enum(e, element->name, &inner));
+    if (!known) return false;
+    *ty = memory::slice_type(e, inner, "slice");
+    return true;
+}
+
 // The checker's type of `x` as a `Ty`. A chain of pointers and arrays is walked with a loop, then built from inside.
 // The checker's type of `x`, as a `Ty` (the hook `state::type_of_node`).
 export state::TyResult type_of_node(state::Emitter *e, const ast::Expr *x) {
@@ -929,6 +969,7 @@ export state::TyResult type_of_node(state::Emitter *e, const ast::Expr *x) {
     Bool known = scalar_of_checked(e, base, &ty);
     known = known || (base->kind == .record && find_record_by_name(e, base->name, &ty));
     known = known || (base->kind == .enumeration && matching::type_enum(e, base->name, &ty));
+    known = known || slice_of_checked(e, base, &ty);
     if (!known) {
         if (base->kind == .vector && depth == 0) {
             state::Ty lane = {};
@@ -993,6 +1034,7 @@ static state::Status convert_value(state::Emitter *e, state::Value value, state:
         return state::success();
     }
     if (to.kind == .option) return optional::wrap(e, value, to, span);
+    if (to.kind == .slice && value.ty.kind == .array) return memory::array_value_as_slice(e, value, to);
     state::Ty from = value.ty;
     if (is_plain_integer(from) && is_plain_integer(to) && to.bits > from.bits) {
         Bool same_sign = from.is_signed == to.is_signed;
