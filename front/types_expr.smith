@@ -37,6 +37,15 @@
 // `a[i:j]`; calls (the result of the callee's function type, each argument checked against its parameter by the
 // convert hook, the count checked); casts (the written type; whether the cast is allowed is the cast hook's, J1c);
 // `sizeof`, `alignof`, `countof`; `c ? a : b`; `(T){...}` and `{...}`; lambdas with the types of an expected `Fn(F)`.
+// VALUES (#1511, C2a, spec "Control flow" and "Types" of #1428): `if`, `if let`, `match` and a block used as a value
+// (`ast::stmt_expr`): the last line of a block is its value, an `if` needs an `else` to be a value, and every branch
+// has the one type (the expected one, else the first branch's). A branch that yields no value makes the whole `void`
+// (a block with no last expression, an `if` with no `else`), and where a type is expected that is an error. `match` is
+// exhaustive over an enumeration (a missing enumerator is listed) or `?T` (`.some(x)`, `.none`); `if let .some(x) = o`
+// binds `x` in its `then`. A payload enumeration is not typed yet (J1d), so its patterns report that. `.some(x)` is
+// the value of a `?T`. The walk of a value statement pushes its expressions as frames of the work stack, between
+// pseudo-frames that open and close scopes and bind names, and one last frame that joins the branches' types.
+//
 // NOT YET TYPED (each reported as `not yet typed: <kind>` with its span): `try`, a type used as a value, a name from
 // another module (`arena::push`), nested designators (`.a.b = 1`), a designator index that is not an integer literal.
 //
@@ -64,11 +73,15 @@ export typedef Bool (*Convert)(types::Checked *c, const ast::Expr *e, types::Typ
 // check with `types::mark_cast_checked`. `e` is the cast.
 export typedef Bool (*CastRule)(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to);
 export typedef void (*LambdaBody)(types::Checked *c, const ast::Expr *lambda, types::TypeRef type);
+// A statement inside a block that is a value and that is not an expression: a local, a `return`, a loop. J1d's walk
+// checks it in the scope the block opened. Unset, such a statement is reported as `not yet typed`.
+export typedef void (*Statement)(types::Checked *c, const ast::Stmt *s);
 
 export struct Hooks {
     Convert convert;
     CastRule cast;
     LambdaBody lambda_body;
+    Statement statement;
 };
 
 static Hooks hooks;
@@ -84,6 +97,10 @@ struct Frame {
     const ast::Expr *node;
     types::TypeRef expected;
     U32 stage;
+    // Only for a value statement (stage 100 and up, or its last stage): what the frame is about.
+    const ast::Stmt *source;
+    Usize index;
+    Str message;
 };
 
 struct Work {
@@ -91,10 +108,7 @@ struct Work {
     Usize count;
 };
 
-static void push(Work *w, const ast::Expr *node, types::TypeRef expected, U32 stage) {
-    if (node == nullptr) {
-        return;
-    }
+static void push_frame(Work *w, Frame frame) {
     if (w->count == countof(w->items)) {
         Usize capacity = countof(w->items) * 2;
         if (capacity < 16) {
@@ -102,12 +116,19 @@ static void push(Work *w, const ast::Expr *node, types::TypeRef expected, U32 st
         }
         w->items = mem::realloc(w->items, capacity);
     }
+    w->items[w->count] = frame;
+    w->count += 1;
+}
+
+static void push(Work *w, const ast::Expr *node, types::TypeRef expected, U32 stage) {
+    if (node == nullptr) {
+        return;
+    }
     types::TypeRef wanted = expected;
     if (wanted != nullptr && wanted->kind == .automatic) {
         wanted = nullptr;
     }
-    w->items[w->count] = (Frame){.node = node, .expected = wanted, .stage = stage};
-    w->count += 1;
+    push_frame(w, (Frame){.node = node, .expected = wanted, .stage = stage});
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -537,6 +558,38 @@ static void name_expr(types::Checked *c, Frame f) {
         return;
     }
     finish(c, e, s->type, f.expected);
+}
+
+// `.some(x)` where `?T` is expected: not a leaf, its payload is checked as a `T`.
+static Bool is_some_value(Frame f) {
+    const ast::Expr *e = f.node;
+    types::TypeRef expected = f.expected;
+    if (!(e->kind == .variant) || expected == nullptr || expected->kind != .option) {
+        return false;
+    }
+    return e->kind.variant.payload != nullptr && same_text(e->kind.variant.name, "some");
+}
+
+static void some_before(Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .variant)) {
+        return;
+    }
+    const ast::Expr *payload = e->kind.variant.payload;
+    push(w, e, f.expected, 1);
+    push(w, payload, f.expected->element, 0);
+}
+
+static void some_after(types::Checked *c, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .variant)) {
+        return;
+    }
+    if (typ(c, e->kind.variant.payload) == invalid(c)) {
+        poison(c, e);
+    } else {
+        types::set_type(c, e, f.expected);
+    }
 }
 
 static void variant_expr(types::Checked *c, Frame f) {
@@ -1695,6 +1748,517 @@ static void lambda_expr(types::Checked *c, Frame f) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Values: `if`, `if let`, `match` and blocks used as a value (#1511)
+
+// The pseudo-frames of a value statement, in the `stage` of a frame whose node is the statement's expression. Stage 1
+// is the last frame, which joins the branches' types.
+constexpr U32 stage_enter = 100;     // a block opens its scope
+constexpr U32 stage_leave = 101;     // a block, an arm or an `if let` closes its scope
+constexpr U32 stage_bind = 102;      // `if let`: the scrutinee is an optional; opens a scope with the name it binds
+constexpr U32 stage_arm = 103;       // `match`: checks the patterns of an arm; opens a scope with its binding
+constexpr U32 stage_coverage = 104;  // `match`: every case is named once
+constexpr U32 stage_statement = 105; // a statement of a block that is not an expression: J1d's hook
+constexpr U32 stage_not_yet = 106;   // `message` is not typed yet
+
+// NOLINTBEGIN(readability-identifier-naming)
+enum Act {
+    visit,       // read the statement: its leaves are values
+    plain,       // a statement of a block that is not its value
+    leave_scope, // the scope of a block or of an `if let`'s `then` ends
+};
+// NOLINTEND(readability-identifier-naming)
+
+struct Step {
+    const ast::Stmt *stmt;
+    Act act;
+};
+
+// The static reading of one value statement: the frames to run in order, the expressions that are its values, and
+// whether some branch yields none. It does not depend on any type, so the last frame reads it again.
+struct Plan {
+    const ast::Expr *owner;
+    types::TypeRef expected;
+    types::TypeRef bool_type;
+    Frame out[:];
+    Usize out_count;
+    const ast::Expr *leaves[:];
+    Usize leaf_count;
+    Step steps[:];
+    Usize step_count;
+    Bool no_value;
+};
+
+static void emit(Plan *p, Frame frame) {
+    if (p->out_count == countof(p->out)) {
+        Usize capacity = countof(p->out) * 2;
+        if (capacity < 16) {
+            capacity = 16;
+        }
+        p->out = mem::realloc(p->out, capacity);
+    }
+    p->out[p->out_count] = frame;
+    p->out_count += 1;
+}
+
+static void emit_expr(Plan *p, const ast::Expr *e, types::TypeRef expected) {
+    emit(p, (Frame){.node = e, .expected = expected});
+}
+
+static void emit_pseudo(Plan *p, U32 stage, const ast::Stmt *source, Usize index) {
+    emit(p, (Frame){.node = p->owner, .stage = stage, .source = source, .index = index});
+}
+
+static void emit_not_yet(Plan *p, const ast::Stmt *source, Str message) {
+    emit(p, (Frame){.node = p->owner, .stage = stage_not_yet, .source = source, .message = message});
+}
+
+static void emit_leaf(Plan *p, const ast::Expr *value) {
+    if (value == nullptr) {
+        p->no_value = true;
+        return;
+    }
+    if (p->leaf_count == countof(p->leaves)) {
+        Usize capacity = countof(p->leaves) * 2;
+        if (capacity < 8) {
+            capacity = 8;
+        }
+        p->leaves = mem::realloc(p->leaves, capacity);
+    }
+    p->leaves[p->leaf_count] = value;
+    p->leaf_count += 1;
+    emit_expr(p, value, p->expected);
+}
+
+static void push_step(Plan *p, const ast::Stmt *stmt, Act act) {
+    if (stmt == nullptr && act != leave_scope) {
+        return;
+    }
+    if (p->step_count == countof(p->steps)) {
+        Usize capacity = countof(p->steps) * 2;
+        if (capacity < 16) {
+            capacity = 16;
+        }
+        p->steps = mem::realloc(p->steps, capacity);
+    }
+    p->steps[p->step_count] = (Step){.stmt = stmt, .act = act};
+    p->step_count += 1;
+}
+
+static Bool is_value_stmt(const ast::Stmt *s) {
+    return s->kind == .expression || s->kind == .block || s->kind == .if_stmt || s->kind == .if_let ||
+           s->kind == .match_stmt;
+}
+
+static Bool leaves_early(const ast::Stmt *s) {
+    return s->kind == .return_stmt || s->kind == .break_stmt || s->kind == .continue_stmt;
+}
+
+static void read_block(Plan *p, const ast::Stmt *s) {
+    if (!(s->kind == .block)) {
+        return;
+    }
+    ast::StmtRef items[:] = s->kind.block.items;
+    if (countof(items) == 0) {
+        p->no_value = true;
+        return;
+    }
+    emit_pseudo(p, stage_enter, s, 0);
+    push_step(p, nullptr, leave_scope);
+    const ast::Stmt *last = items[countof(items) - 1];
+    if (is_value_stmt(last)) {
+        push_step(p, last, visit);
+    } else {
+        push_step(p, last, plain);
+        if (!leaves_early(last)) {
+            p->no_value = true;
+        }
+    }
+    for (Usize i = countof(items) - 1; i > 0; i--) {
+        push_step(p, items[i - 1], plain);
+    }
+}
+
+static void read_if(Plan *p, const ast::Stmt *s) {
+    if (!(s->kind == .if_stmt)) {
+        return;
+    }
+    if (s->kind.if_stmt.is_constexpr) {
+        emit_not_yet(p, s, "`if constexpr` used as a value");
+        return;
+    }
+    emit_expr(p, s->kind.if_stmt.condition, p->bool_type);
+    if (s->kind.if_stmt.else_branch == nullptr) {
+        p->no_value = true;
+    }
+    push_step(p, s->kind.if_stmt.else_branch, visit);
+    push_step(p, s->kind.if_stmt.then_branch, visit);
+}
+
+static void read_if_let(Plan *p, const ast::Stmt *s) {
+    if (!(s->kind == .if_let)) {
+        return;
+    }
+    const ast::Expr *value = s->kind.if_let.value;
+    const ast::Stmt *then_branch = s->kind.if_let.then_branch;
+    const ast::Stmt *else_branch = s->kind.if_let.else_branch;
+    emit_expr(p, value, nullptr);
+    emit_pseudo(p, stage_bind, s, 0);
+    if (else_branch == nullptr) {
+        p->no_value = true;
+    }
+    push_step(p, else_branch, visit);
+    push_step(p, nullptr, leave_scope);
+    push_step(p, then_branch, visit);
+}
+
+static void read_match(Plan *p, const ast::Stmt *s) {
+    if (!(s->kind == .match_stmt)) {
+        return;
+    }
+    emit_expr(p, s->kind.match_stmt.value, nullptr);
+    ast::MatchArm arms[:] = s->kind.match_stmt.arms;
+    for (Usize a = 0; a < countof(arms); a++) {
+        emit_pseudo(p, stage_arm, s, a);
+        emit_leaf(p, arms[a].value);
+        emit_pseudo(p, stage_leave, s, 0);
+    }
+    emit_pseudo(p, stage_coverage, s, 0);
+}
+
+static void read_stmt(Plan *p, const ast::Stmt *s) {
+    if (s->kind == .expression) {
+        emit_leaf(p, s->kind.expression.value);
+    } else if (s->kind == .block) {
+        read_block(p, s);
+    } else if (s->kind == .if_stmt) {
+        read_if(p, s);
+    } else if (s->kind == .if_let) {
+        read_if_let(p, s);
+    } else if (s->kind == .match_stmt) {
+        read_match(p, s);
+    } else {
+        emit_not_yet(p, s, "this statement used as a value");
+    }
+}
+
+static void read_plain(Plan *p, const ast::Stmt *s) {
+    if (s->kind == .expression && s->kind.expression.value != nullptr) {
+        emit_expr(p, s->kind.expression.value, nullptr);
+    } else {
+        emit_pseudo(p, stage_statement, s, 0);
+    }
+}
+
+// Reads the whole statement of `e` into a plan.
+static Plan read_value(const types::Checked *c, const ast::Expr *e, types::TypeRef expected) {
+    Plan p = {.owner = e, .expected = expected, .bool_type = c->table.bool_type};
+    if (!(e->kind == .stmt_expr)) {
+        return p;
+    }
+    push_step(&p, e->kind.stmt_expr.stmt, visit);
+    while (p.step_count > 0) {
+        p.step_count -= 1;
+        Step step = p.steps[p.step_count];
+        if (step.act == visit) {
+            read_stmt(&p, step.stmt);
+        } else if (step.act == plain) {
+            read_plain(&p, step.stmt);
+        } else {
+            emit_pseudo(&p, stage_leave, nullptr, 0);
+        }
+    }
+    return p;
+}
+
+// Stage 0: the last frame goes down first, then every frame of the plan, the first on top.
+static void value_before(types::Checked *c, Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    Plan p = read_value(c, e, f.expected);
+    push_frame(w, (Frame){.node = e, .expected = f.expected, .stage = 1, .index = c->error_count});
+    for (Usize i = p.out_count; i > 0; i--) {
+        push_frame(w, p.out[i - 1]);
+    }
+}
+
+static Str word(const ast::Stmt *s) {
+    if (s->kind == .if_stmt || s->kind == .if_let) {
+        return "if";
+    }
+    if (s->kind == .match_stmt) {
+        return "match";
+    }
+    return "block";
+}
+
+// A name the pattern binds, typed as the optional's element; a name that is not a value gets the invalid type, which
+// keeps the uses of it silent.
+static void bind_name(types::Checked *c, Str name, types::TypeRef type) {
+    if (countof(name) == 0) {
+        return;
+    }
+    types::Symbol symbol = {.name = name, .kind = .variable, .type = type};
+    if (!types::declare(&c->scopes, symbol)) {
+        types::failf(c, (ast::Span){}, "`", name, "` is already declared in this scope; choose another name");
+    }
+}
+
+// `if let .some(x) = o`: opens the scope of the `then` with `x` in it.
+static void bind_stage(types::Checked *c, Frame f) {
+    const ast::Stmt *s = f.source;
+    types::push_scope(&c->scopes);
+    if (!(s->kind == .if_let)) {
+        return;
+    }
+    types::TypeRef t = typ(c, s->kind.if_let.value);
+    Str name = s->kind.if_let.pattern.name;
+    Str binding = s->kind.if_let.pattern.binding;
+    types::TypeRef element = invalid(c);
+    if (t == invalid(c)) {
+        bind_name(c, binding, element);
+        return;
+    }
+    if (t->kind != .option) {
+        types::failf(c, s->span, "`if let` takes an optional, but this is a `", types::show(t),
+                     "`; write a value of type `?T`, or an `if` with a comparison");
+    } else if (!same_text(name, "some") && !same_text(name, "none")) {
+        types::failf(c, s->span, "a `?T` is either `.some(x)` or `.none`, not `.", name, "`; write one of those");
+    } else if (same_text(name, "none") && countof(binding) > 0) {
+        types::failf(c, s->span, "`.none` has no value to bind; write `.none` alone");
+    } else if (same_text(name, "some")) {
+        element = t->element;
+    }
+    bind_name(c, binding, element);
+}
+
+// The place of a pattern among the cases of `t`: an enumerator's index, 0 for `.some`, 1 for `.none`; `count` when
+// it names none (and `report` says so).
+static Usize case_of(types::Checked *c, ast::Span span, types::TypeRef t, ast::Pattern pat, Bool report) {
+    Str name = pat.name;
+    if (t->kind == .option) {
+        if (same_text(name, "some")) {
+            return 0;
+        }
+        if (same_text(name, "none") && countof(pat.binding) == 0) {
+            return 1;
+        }
+        if (report && same_text(name, "none")) {
+            types::failf(c, span, "`.none` has no value to bind; write `.none` alone");
+        } else if (report) {
+            types::failf(c, span, "a `?T` is either `.some(x)` or `.none`, not `.", name, "`; write one of those");
+        }
+        return 2;
+    }
+    for (Usize i = 0; i < countof(t->slots); i++) {
+        if (same_text(t->slots[i].name, name)) {
+            if (countof(pat.binding) > 0 && report) {
+                types::failf(c, span, "not yet typed: a payload enumeration");
+                return countof(t->slots);
+            }
+            return i;
+        }
+    }
+    if (report) {
+        types::failf(c, span, "`", types::show(t), "` has no enumerator `", name,
+                     "`; write one of its enumerators in the arm");
+    }
+    return countof(t->slots);
+}
+
+static Bool matchable(types::TypeRef t) {
+    return t->kind == .enumeration || t->kind == .option;
+}
+
+static Usize case_count(types::TypeRef t) {
+    if (t->kind == .option) {
+        return 2;
+    }
+    return countof(t->slots);
+}
+
+// One arm of a `match`: its patterns are cases of the scrutinee, and the scope has what the arm binds.
+static void arm_stage(types::Checked *c, Frame f) {
+    const ast::Stmt *s = f.source;
+    types::push_scope(&c->scopes);
+    if (!(s->kind == .match_stmt)) {
+        return;
+    }
+    types::TypeRef t = typ(c, s->kind.match_stmt.value);
+    ast::MatchArm arms[:] = s->kind.match_stmt.arms;
+    ast::Pattern pats[:] = arms[f.index].patterns;
+    Bool known = t != invalid(c) && matchable(t);
+    for (Usize k = 0; k < countof(pats); k++) {
+        types::TypeRef element = invalid(c);
+        if (known) {
+            Usize at = case_of(c, s->span, t, pats[k], true);
+            if (t->kind == .option && at == 0) {
+                element = t->element;
+            }
+        }
+        bind_name(c, pats[k].binding, element);
+    }
+}
+
+// The enumerators no arm named, as "`.a`, `.b`".
+static Str missing_list(types::TypeRef t, Bool seen[:]) {
+    Str text = "";
+    for (Usize i = 0; i < countof(seen); i++) {
+        if (seen[i]) {
+            continue;
+        }
+        Str name = "none";
+        if (t->kind == .enumeration) {
+            name = t->slots[i].name;
+        } else if (i == 0) {
+            name = "some(x)";
+        }
+        Str piece = msg(format::push("`.", name, "`"));
+        if (countof(text) == 0) {
+            text = piece;
+        } else {
+            text = msg(format::push(text, ", ", piece));
+        }
+    }
+    return text;
+}
+
+// After the arms: every case of the enumeration or `?T` is named, and none twice.
+static void coverage_stage(types::Checked *c, Frame f) {
+    const ast::Stmt *s = f.source;
+    if (!(s->kind == .match_stmt)) {
+        return;
+    }
+    types::TypeRef t = typ(c, s->kind.match_stmt.value);
+    if (t == invalid(c)) {
+        return;
+    }
+    if (!matchable(t)) {
+        types::failf(c, s->span, "`match` takes an enumeration or a `?T`, but this is a `", types::show(t),
+                     "`; match on an enumerator, or write an `if`");
+        return;
+    }
+    Usize total = case_count(t);
+    Bool seen[:] = mem::alloc_slice(Bool, total + 1);
+    Bool clean = true;
+    ast::MatchArm arms[:] = s->kind.match_stmt.arms;
+    for (Usize a = 0; a < countof(arms); a++) {
+        ast::Pattern pats[:] = arms[a].patterns;
+        for (Usize k = 0; k < countof(pats); k++) {
+            Usize at = case_of(c, s->span, t, pats[k], false);
+            if (at >= total) {
+                clean = false;
+            } else if (seen[at]) {
+                types::failf(c, s->span, "`.", pats[k].name, "` is matched twice; remove one arm");
+                clean = false;
+            } else {
+                seen[at] = true;
+            }
+        }
+    }
+    Str missing = missing_list(t, seen[0:total]);
+    if (clean && countof(missing) > 0) {
+        types::failf(c, s->span, "`match` over `", types::show(t), "` does not cover ", missing,
+                     "; add an arm for each, since a `match` must name every case");
+    }
+}
+
+// A statement of a block that is not an expression, in the scope the block opened.
+static void statement_stage(types::Checked *c, Frame f) {
+    const ast::Stmt *s = f.source;
+    if (hooks.statement == nullptr) {
+        types::failf(c, s->span, "not yet typed: a statement inside a block that is used as a value");
+        return;
+    }
+    hooks.statement(c, s);
+}
+
+// The pseudo-frames, by stage.
+static void value_stage(types::Checked *c, Frame f) {
+    if (f.stage == stage_enter) {
+        types::push_scope(&c->scopes);
+    } else if (f.stage == stage_leave) {
+        types::pop_scope(&c->scopes);
+    } else if (f.stage == stage_bind) {
+        bind_stage(c, f);
+    } else if (f.stage == stage_arm) {
+        arm_stage(c, f);
+    } else if (f.stage == stage_coverage) {
+        coverage_stage(c, f);
+    } else if (f.stage == stage_statement) {
+        statement_stage(c, f);
+    } else {
+        types::failf(c, f.source->span, "not yet typed: ", f.message);
+    }
+}
+
+// A value statement with no value: `void`, which is an error where a type is wanted.
+static void finish_void(types::Checked *c, const ast::Expr *e, types::TypeRef expected) {
+    if (expected != nullptr && expected->kind != .void_type) {
+        Str what = "block";
+        if (e->kind == .stmt_expr) {
+            what = word(e->kind.stmt_expr.stmt);
+        }
+        types::failf(c, e->span, "this ", what, " yields no value, but a `", types::show(expected),
+                     "` is expected; end every branch with a value, and give an `if` an `else`");
+        poison(c, e);
+        return;
+    }
+    types::set_type(c, e, c->table.void_type);
+}
+
+// An unsuffixed literal takes the type of the branch before it, when it fits.
+static Bool adapts(types::Checked *c, const ast::Expr *leaf, types::TypeRef to) {
+    return literal_like(leaf) && retype(c, leaf, to);
+}
+
+// The last frame: the branches have the one type. With an expected type each was checked against it already; without
+// one the first branch with a value decides, and an unsuffixed literal after it takes its type.
+static void value_join(types::Checked *c, Frame f) {
+    const ast::Expr *e = f.node;
+    Plan p = read_value(c, e, f.expected);
+    if (c->error_count > f.index) {
+        poison(c, e);
+        return;
+    }
+    Bool no_value = p.no_value;
+    types::TypeRef first = nullptr;
+    for (Usize i = 0; i < p.leaf_count; i++) {
+        types::TypeRef t = typ(c, p.leaves[i]);
+        if (t == invalid(c)) {
+            poison(c, e);
+            return;
+        }
+        if (t->kind == .void_type) {
+            no_value = true;
+        } else if (first == nullptr) {
+            first = t;
+        } else if (f.expected == nullptr && t != first && !adapts(c, p.leaves[i], first)) {
+            types::failf(c, p.leaves[i]->span, "the branches of this value have the types `", types::show(first),
+                         "` and `", types::show(t), "`; give them one type, for example with a cast such as `(",
+                         types::show(first), ")value`");
+            poison(c, e);
+            return;
+        }
+    }
+    if (c->error_count > f.index) {
+        poison(c, e);
+    } else if (no_value || first == nullptr) {
+        finish_void(c, e, f.expected);
+    } else if (f.expected != nullptr) {
+        types::set_type(c, e, f.expected);
+    } else {
+        types::set_type(c, e, first);
+    }
+}
+
+static void value_after(types::Checked *c, Frame f) {
+    if (f.stage == 1) {
+        value_join(c, f);
+    } else {
+        value_stage(c, f);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // The walk
 
 static Bool leaf(types::Checked *c, Frame f) {
@@ -1714,6 +2278,9 @@ static Bool leaf(types::Checked *c, Frame f) {
     } else if (e->kind == .name) {
         name_expr(c, f);
     } else if (e->kind == .variant) {
+        if (is_some_value(f)) {
+            return false;
+        }
         variant_expr(c, f);
     } else if (e->kind == .lambda) {
         lambda_expr(c, f);
@@ -1744,6 +2311,10 @@ static void before(types::Checked *c, Work *w, Frame f) {
         push(w, target, nullptr, 0);
     } else if (e->kind == .conditional) {
         conditional_before(w, c, f);
+    } else if (e->kind == .variant) {
+        some_before(w, f);
+    } else if (e->kind == .stmt_expr) {
+        value_before(c, w, f);
     } else if (e->kind == .call) {
         const ast::Expr *callee = e->kind.call.callee;
         push(w, e, f.expected, 1);
@@ -1796,6 +2367,10 @@ static void after(types::Checked *c, Work *w, Frame f) {
         } else {
             conditional_after(c, f);
         }
+    } else if (e->kind == .variant) {
+        some_after(c, f);
+    } else if (e->kind == .stmt_expr) {
+        value_after(c, f);
     } else if (e->kind == .call) {
         if (f.stage == 1) {
             call_callee_done(c, w, f);

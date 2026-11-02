@@ -1,0 +1,44 @@
+(i32, f64)
+(module m
+  (variable t (tuple (named i32) (named f64))))
+
+(i32,)
+(module m
+  (variable t (tuple (named i32))))
+
+()
+(module m
+  (variable t (tuple)))
+
+((i32, i32), str)
+(module m
+  (variable t (tuple (tuple (named i32) (named i32)) (named str))))
+
+fn()
+(module m
+  (variable t (function_type)))
+
+fn(i32) -> i32
+(module m
+  (variable t (function_type (named i32) (result (named i32)))))
+
+fn(i32, *mut Point) -> (i32, i32)
+(module m
+  (variable t (function_type (named i32) (pointer mut (named Point)) (result (tuple (named i32) (named i32))))))
+
+fn_once(i32) -> ?i32
+(module m
+  (variable t (function_type once (named i32) (result (option (named i32))))))
+
+fn(fn(i32) -> i32) -> fn() -> bool
+(module m
+  (variable t (function_type (function_type (named i32) (result (named i32))) (result (function_type (result (named bool)))))))
+
+Pair(i32)
+(module m
+  (variable t (applied Pair (type_arg (named i32)))))
+
+Pair(*i32, [3]u8)
+(module m
+  (variable t (applied Pair (type_arg (pointer (named i32))) (type_arg (array (named u8) (integer 3))))))
+

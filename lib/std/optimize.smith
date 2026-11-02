@@ -1,0 +1,63 @@
+// smith-build: header
+// std::optimize, <smith/optimize.h>: the optimization barrier. `opaque(x)` returns x unchanged, but the optimizer must
+// treat the result as an unknown value and the argument as used: it cannot fold the value into a constant, and it
+// cannot delete the computation behind it. Every export is a generic function, so the header holds only its record.
+//
+//   opaque_as(F64, x) is the same with the type written, for code that is also lowered to plain C (std::random).
+//   opaque_f64, opaque_f32, opaque_u32 and opaque_pointer are the typed forms, for code also lowered to plain C.
+//   F64 sum = optimize::opaque(a * b); // a benchmark keeps the measured work; a fused add cannot absorb the product
+module std::optimize;
+
+import std::contract;
+import target;
+
+// The typed forms, for code that is also lowered to plain C (std::random is): that lowering has no compiler to answer
+// `if constexpr (T == F64)`, so these name their type. A float goes through the register class that keeps it out of
+// memory on aarch64 ("w"), and "X" (any operand) elsewhere.
+// This is the one place in the standard library where extended asm is allowed: it is the barrier itself.
+export [[maybe_unused]] inline F64 opaque_f64(F64 x) {
+    contract::trusted(); // an empty asm is the edge a proof cannot read; its result is taken as any value
+    if constexpr (target::arch == target::aarch64) {
+        __asm__("" : "+w"(x));
+    } else {
+        __asm__("" : "+X"(x));
+    }
+    return x;
+}
+
+export [[maybe_unused]] inline F32 opaque_f32(F32 x) {
+    contract::trusted(); // an empty asm is the edge a proof cannot read; its result is taken as any value
+    if constexpr (target::arch == target::aarch64) {
+        __asm__("" : "+w"(x));
+    } else {
+        __asm__("" : "+X"(x));
+    }
+    return x;
+}
+
+export [[maybe_unused]] inline U32 opaque_u32(U32 x) {
+    contract::trusted(); // an empty asm is the edge a proof cannot read; its result is taken as any value
+    __asm__("" : "+r"(x));
+    return x;
+}
+
+// A pointer to anything, in a general register; cast the result back to the pointer's type.
+export [[maybe_unused]] inline const void *opaque_pointer(const void *x) {
+    contract::trusted(); // an empty asm is the edge a proof cannot read; its result is taken as any value
+    __asm__("" : "+r"(x));
+    return x;
+}
+
+// x, unchanged, as a value the compiler cannot see through; the type is the argument's own. Integers and pointers go
+// through a general register, a float through its typed form.
+export [[maybe_unused]] inline typeof(x) opaque(auto x) {
+    contract::trusted(); // an empty asm is the edge a proof cannot read; its result is taken as any value
+    if constexpr (typeof(x) == F64) {
+        return opaque_f64(x);
+    } else if constexpr (typeof(x) == F32) {
+        return opaque_f32(x);
+    } else {
+        __asm__("" : "+r"(x));
+        return x;
+    }
+}

@@ -1,6 +1,6 @@
 ---
 name: smith-env
-description: "Using std::env (import std::env; env::get, set_handler): reading an environment variable directly, absent as an option. Load when code imports std::env or includes <smith/env.h>, or on reading HOME, PATH or any environment variable in .smith, or faking the environment in a test."
+description: "Using std::env (import std::env; env::get, set, remove, set_handler): reading an environment variable directly, absent as an option. Load when code imports std::env or includes <smith/env.h>, or on reading HOME, PATH or any environment variable in .smith, or faking the environment in a test."
 ---
 
 # The environment: std::env
@@ -29,4 +29,5 @@ export Usize ask() {
 - **The effect is `env`** (`smith-lang-effects`), inferred from the call.
 - **Test with a fake**: `env::set_handler(&fake.base)` installs an `env::Handler` (C: `SmithEnvHandler {get}`, `smith_handlers_set_env`) for the thread and returns the previous one; restore it with `defer`. `getenv` of any other code on the thread reaches it too. `get(self, name)` returns the value or null. See `lib/std/env_test.smith`.
 - **From C**: `<smith/env.h>` has `smith_env_get(name)` (a slice) and `smith_env_set_handler`; `getenv` itself is faked by the handler.
+- **Writing**: `env::set(name, value)` and `env::remove(name)` return `env::Done`, an `option` of `env::Error` (`BadName`, `NoSpace`, `Other`): `.none` is success. A bad name is `BadName`, not a bug; removing a variable that is not set succeeds. They go to the handler's `set(self, name, value)` and `remove(self, name)` (each returns 0 or an errno; a null entry is refused as `Other`), or to `setenv`/`unsetenv` with no handler. A fake keeps its own table, so `env::get` sees what it was given. C: `smith_env_set`, `smith_env_remove`.
 - The program's arguments are `main(Str args[:])`, not this module.

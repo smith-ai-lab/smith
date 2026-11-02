@@ -3,6 +3,9 @@
 // folder to clang-tidy ("Is a directory"). A scratch git repository of the lint_cache fixture with a folder `sub`: a
 // clean source, a source in a deeper folder, and files that do not compile and must therefore never be read (one
 // git-ignored, one named in `.clang-format-ignore`).
+// smith_lint_expand_dirs is in runtime/verbs.c; smith.c runs the lint it expands to.
+// smith-covers: smith.c runtime/verbs.c runtime/quiet.c runtime/base.h runtime/platform_*.c runtime/slots.c
+// smith-covers: shim/tidy.cpp shim/clang.cpp templates/defaults/ tests/build_fixtures/lint_cache/
 module lint_dir_test;
 
 import std::arena;

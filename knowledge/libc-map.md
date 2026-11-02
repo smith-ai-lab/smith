@@ -22,7 +22,7 @@ tags: [libc, lint, idiom, libraries]
 | `fprintf(stderr, ...)`, `fputs(s, stderr)`, `dprintf`, `perror` | `console::print_error(pieces...)` |
 | `snprintf` | `format::to(buffer, capacity, pieces...)` ([format-library](format-library.md)); `format::hex`, `fixed`, `general`, `scientific`, `pad` for the conversions |
 | `fopen`, `fclose`, `FILE` | `files::open(path, mode)` returning `Result(File, files::Error)`, `files::close` ([files](files.md)) |
-| `fgets` | gap: [#918](https://github.com/smith-ai-lab/smith/issues/918) |
+| `fgets`, `getline` | `files::read_line(file, buffer)` returning `Result(Option(Usize), files::Error)`: the line's length without its newline, `none` at the end, `LineTooLong` when it does not fit ([files](files.md)) |
 | `fflush`, `setvbuf`, `_IONBF`, `_IOFBF` | not needed: the console writes each call unbuffered |
 | `stdout`, `stderr`, `stdin`, `EOF` | `console::write`, `console::write_error`, `console::read` (a count of 0 is the end) and `console::read_line` |
 
@@ -36,11 +36,11 @@ tags: [libc, lint, idiom, libraries]
 | `strtod`, `strtof` | `text::parse_f64`, `text::parse_f32` |
 | `qsort` | `slice::sort(xs)` for numbers, `slice::sort_by(xs, less)` for the rest |
 | `getenv` | `env::get(name)`, an `option` ([direct-call-modules](direct-call-modules.md)) |
-| `setenv`, `unsetenv` | gap: [#917](https://github.com/smith-ai-lab/smith/issues/917) |
+| `setenv`, `unsetenv` | `env::set(name, value)`, `env::remove(name)`, an `option` of `env::Error` |
 | `system` | `process::run(argv)` ([process](process.md)): no shell, the argument vector |
 | `abs` | `math::abs(x)` |
 | `exit`, `_exit`, `abort` | gap (design): [#924](https://github.com/smith-ai-lab/smith/issues/924) |
-| `realpath` | gap: [#919](https://github.com/smith-ai-lab/smith/issues/919) |
+| `realpath` | `files::real_path(path)` |
 
 ## string.h
 
@@ -54,7 +54,8 @@ tags: [libc, lint, idiom, libraries]
 | `strrchr` | `slice::find_last(xs, v)` |
 | `strcspn` | `slice::find_if(xs, pred)` |
 | `memcpy`, `memmove`, `memset`, `memcmp` | `mem::copy`, `mem::move`, `mem::zero` or `mem::fill`, `mem::equal` (reported by `smith-mem`) |
-| `strdup`, `strerror`, `strerror_r` | gap: [#921](https://github.com/smith-ai-lab/smith/issues/921) |
+| `strerror`, `strerror_r` | `files::describe(error)`, `process::describe(error)`, `net::describe(error)`: a constant text for each module's error; `text::os_error(code)` for a raw errno |
+| `strdup` | `text::copy(word)` (into the current allocator, a NUL after the count, freed with `mem::free`); `text::terminated(word)` for a C edge only |
 
 ## math.h
 
@@ -64,7 +65,9 @@ tags: [libc, lint, idiom, libraries]
 | `fabs` | `math::abs(x)` |
 | `isfinite` | `math::is_finite(x)` |
 | `SIZE_MAX`, `UINT64_MAX` | `math::max(Usize)`, `math::max(U64)` |
-| `pow`, `log`, `logf`, `sin`, `cos`, `ldexp`, `ldexpf`, `fmax` | gap: [#916](https://github.com/smith-ai-lab/smith/issues/916) |
+| `pow`, `log`, `logf`, `sin`, `cos` | `math::pow(x, y)`, `math::log(x)`, `math::sin(x)`, `math::cos(x)` |
+| `ldexp`, `ldexpf` | `math::ldexp(x, exponent)` |
+| `fmax`, `fmin` | `math::maximum(a, b)`, `math::minimum(a, b)` |
 
 ## ctype.h
 
@@ -103,7 +106,10 @@ tags: [libc, lint, idiom, libraries]
 | `rename` | `files::move(from, to)` |
 | `opendir`, `readdir`, `closedir`, `dirfd`, `DIR`, `dirent` | `files::list(folder)`, a sorted slice of entries |
 | `mmap`, `munmap`, `PROT_*`, `MAP_*` | `files::map(path)` and `files::unmap(bytes)` for a file; an anonymous mapping is memory, from `mem::alloc_slice` or an arena |
-| `getcwd`, `access`, `readlink`, `symlink`, `lstat`, `fstatat`, `AT_SYMLINK_NOFOLLOW`, `F_OK`, `W_OK` | gap: [#919](https://github.com/smith-ai-lab/smith/issues/919) |
+| `getcwd` | `files::current_folder()` |
+| `access`, `F_OK`, `R_OK`, `W_OK`, `X_OK` | `files::exists(path)`, `files::can(path, files::CanRead / CanWrite / CanRun)` |
+| `readlink`, `symlink` | `files::read_link(path)`, `files::make_link(target, path)` |
+| `lstat`, `fstatat`, `AT_SYMLINK_NOFOLLOW` | gap: [#919](https://github.com/smith-ai-lab/smith/issues/919) |
 | `lseek`, `pwrite`, `ftruncate`, `fchmod`, `flock`, `SEEK_*`, `LOCK_*` | gap: [#920](https://github.com/smith-ai-lab/smith/issues/920) |
 | `isatty` | gap: [#925](https://github.com/smith-ai-lab/smith/issues/925) |
 | `STDIN_FILENO`, `STDOUT_FILENO`, `STDERR_FILENO` | `console::` (no descriptor number in a program) |

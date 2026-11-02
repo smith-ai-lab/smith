@@ -5,6 +5,11 @@
 //     formats identically as itself and as a .smith file (the text goes to standard input, --assume-filename names it);
 //   - the cases of the issue: a C name that is a C++ keyword (`throw`) and a statement that starts with a type named
 //     `import`, and `import <sys/wait.h>;`, `import a::b as x;`, `module a::b;` kept whole.
+// smith.c holds `smith fmt`; every C file of smith is formatted by it.
+// smith-covers: smith.c runtime/verbs.c runtime/quiet.c runtime/base.h runtime/platform_*.c runtime/slots.c
+// smith-covers: shim/format.cpp shim/clang.cpp patches/clang-format-smith.patch patches/smith-format-source-
+// smith-covers: extension.patch patches/smith-lang-format-enum.patch templates/defaults/ tests/smith-fmt/
+// smith-covers: tests/smith-lang/cases/ runtime/*.c lib/ include/ scripts/*.c tests/*.c
 module smith_fmt_test;
 
 import std::arena;

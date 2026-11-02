@@ -1,0 +1,4 @@
+module chain::m64;
+import chain::m65;
+
+export int f64() { return 64; }

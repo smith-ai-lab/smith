@@ -106,6 +106,25 @@ I32 errno_now() {
     Other,    // the system said something else
 } Error;
 
+// What an error says, as a constant text for a message.
+[[std::c_name("smith_process_describe")]] export [[nodiscard]] typeof(const char[:]) describe(Error error) {
+    switch (error) {
+    case NotFound:
+        return "the program was not found";
+    case Denied:
+        return "the program may not be run";
+    case TooMany:
+        return "the system has no more processes or memory";
+    case Broken:
+        return "the child has exited or closed its input";
+    case Gone:
+        return "the child has already exited";
+    case Other:
+        return "the system refused";
+    }
+    return "unknown error";
+}
+
 // When a scripted child of the fake has exited.
 [[std::c_name("SmithProcessExitOn")]] export typedef enum {
     Start,       // at once, like `true`: its output can be read, and a write is Broken
