@@ -534,10 +534,45 @@ static Bool at_attribute_name(const parse::Parser *p) {
     return is_name(kind) || lex::is_keyword(kind);
 }
 
-// One `@name` or `@name(args)` (smith's own spelling; the position is at the `@`). The names carry no namespace.
+// One argument of an attribute: `value`, or `name = value` (a named argument, as in a call).
+static ast::Expr *parse_attribute_argument(parse::Parser *p) {
+    if (!parse::at(p, lex::name) || parse::peek_at(p, 1).kind != lex::equal) return parse::expression(p);
+    lex::Token name = parse::advance(p);
+    parse::advance(p);
+    ast::Expr *value = parse::expression(p);
+    if (value == nullptr) return nullptr;
+    ast::Expr *node = mem::alloc(ast::Expr);
+    node->span = parse::span_from(p, name.span.start);
+    node->kind = {.named_arg = {.name = parse::text(p, name), .value = value}};
+    return node;
+}
+
+// Whether the text between two tokens has a blank line or a comment.
+static Bool gap_is_not_plain(Str gap) {
+    Usize breaks = 0;
+    for (Usize i = 0; i < countof(gap); i++) {
+        if (gap[i] == '\n') breaks += 1;
+        if (gap[i] == '/' && i + 1 < countof(gap) && (gap[i + 1] == '/' || gap[i + 1] == '*')) return true;
+    }
+    return breaks > 1;
+}
+
+// An attribute that ends its line marks the declaration on the next line: not a blank line, a comment, or the end of
+// the block.
+static void check_attribute_target(parse::Parser *p, ast::Span span) {
+    if (!line_ended(p)) return;
+    lex::Token last = p->tokens[p->position - 1];
+    lex::Token next = parse::peek(p);
+    Bool ends = next.kind == lex::right_brace || next.kind == lex::end_of_file;
+    if (!ends && !gap_is_not_plain(p->source[last.span.end:next.span.start])) return;
+    parse::error(p, span, "an attribute marks the declaration on the next line");
+}
+
+// One `@name` or `@name(args)` (smith's own spelling; the position is at the `@`). A name may be qualified
+// (`@serial::rename("id")`).
 static void parse_at_attribute(parse::Parser *p, Prefixes *out) {
     U32 start = parse::advance(p).span.start;
-    ast::Attribute attribute = {};
+    ast::Attribute attribute = {.is_new = true};
     if (!at_attribute_name(p)) {
         parse::error(p, parse::peek(p).span, "an attribute has a name: write `@inline` or `@c_name(\"f\")`");
         return;
@@ -546,9 +581,17 @@ static void parse_at_attribute(parse::Parser *p, Prefixes *out) {
     attribute.name.segments = mem::alloc_slice(ast::Identifier, 1);
     attribute.name.segments[0] = (ast::Identifier){.text = parse::text(p, name), .span = name.span};
     attribute.name.span = name.span;
+    while (parse::at(p, lex::colon_colon) && is_name(parse::peek_at(p, 1).kind)) {
+        parse::advance(p);
+        lex::Token part = parse::advance(p);
+        Usize count = countof(attribute.name.segments);
+        attribute.name.segments = mem::realloc(attribute.name.segments, count + 1);
+        attribute.name.segments[count] = (ast::Identifier){.text = parse::text(p, part), .span = part.span};
+        attribute.name.span = parse::span_from(p, name.span.start);
+    }
     if (parse::accept(p, lex::left_paren)) {
         while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
-            ast::Expr *argument = parse::expression(p);
+            ast::Expr *argument = parse_attribute_argument(p);
             if (argument == nullptr) break;
             attribute.args = push_expr(attribute.args, argument);
             if (!parse::accept(p, lex::comma)) break;
@@ -558,6 +601,7 @@ static void parse_at_attribute(parse::Parser *p, Prefixes *out) {
     attribute.span = parse::span_from(p, start);
     out->attributes = mem::realloc(out->attributes, countof(out->attributes) + 1);
     out->attributes[countof(out->attributes) - 1] = attribute;
+    check_attribute_target(p, attribute.span);
 }
 
 static Bool at_attribute(const parse::Parser *p) {
@@ -1315,6 +1359,22 @@ static FieldList parse_fields(parse::Parser *p, Style *style) {
             continue;
         }
         Usize before = p->position;
+        if (parse::at(p, lex::at)) {
+            Prefixes marks = {};
+            while (parse::at(p, lex::at))
+                parse_at_attribute(p, &marks);
+            if (!new_field_ahead(p)) {
+                if (!parse::at(p, lex::right_brace) && !parse::at(p, lex::end_of_file))
+                    parse::error(p, parse::peek(p).span, "an attribute marks a field written `name: type`");
+                if (p->position == before) parse::advance(p);
+                continue;
+            }
+            style->saw_new = true;
+            ast::FieldDecl marked = parse_new_field(p);
+            marked.attributes = marks.attributes;
+            if (marked.type != nullptr) add_field(&stack[depth].fields, marked);
+            continue;
+        }
         if (new_field_ahead(p)) {
             style->saw_new = true;
             ast::FieldDecl made = parse_new_field(p);
@@ -1479,7 +1539,12 @@ static ast::DeclKind enum_kind(parse::Parser *p, Style *style) {
     parse::expect(p, lex::left_brace, "`{`");
     while (!parse::at(p, lex::right_brace) && !parse::at(p, lex::end_of_file)) {
         Usize before = p->position;
+        Prefixes marks = {};
+        while (parse::at(p, lex::at))
+            parse_at_attribute(p, &marks);
+        if (parse::at(p, lex::right_brace)) continue;
         ast::Enumerator item = parse_enumerator(p, style);
+        item.attributes = marks.attributes;
         if (countof(item.name) > 0) {
             items = mem::realloc(items, countof(items) + 1);
             items[countof(items) - 1] = item;

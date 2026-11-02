@@ -14,7 +14,7 @@ The pipeline, one module group per section below:
 
 - **lex, parse**: text to a `front::ast` tree (`lex`, `parse`, `parse_expr`, `parse_type`, `parse_stmt`, `parse_decl`, `parser`).
 - **fix**: the fixes parse and check errors carry, applied by `smith lint --fix`.
-- **check**: the tree to types (`types`, `types_expr`, `types_convert`, `types_decl`, `types_fn`, `types_iter`).
+- **check**: the tree to types (`types`, `types_expr`, `types_convert`, `types_decl`, `types_attr`, `types_fn`, `types_iter`).
 - **emit**: the checked tree to an LLVM module (`emit*.smith`), then an object (`emit_object`).
 - **drive**: `compile` and `roots` join the stages for `smith cc`; `cimport` reads C headers ([c-header-import](c-header-import.md)).
 
@@ -364,3 +364,7 @@ The front end has its own runner (`tests/front_units/build.c`, `front-project`),
 - To add an e2e case: add `<name>.smith` with `pub fn check() -> i32` returning 0, which is compiled, linked with a `main.c` and run; or add `<name>.error` beside it with the exact diagnostics (scratch folder written `<dir>`).
 - The folder is in `.clang-format-ignore` (`smith fmt` would rewrite `:=`). No test file lists cases: the folder is read.
 - Run all: `smith build test-front`; one test: `smith test --test <name>` (a glob such as `'front_types_expr_test::*golden*'` works for a group).
+
+### front::types_attr (`front/types_attr.smith`, #1628)
+- An attribute may sit on its own line before a declaration, a struct field or an enumerator (`parse_decl`); one followed by a blank line, a comment or the end of the block is the error "an attribute marks the declaration on the next line". `@attribute` marks a struct as an attribute type.
+- `types_attr::check_module` checks every `@name` written so: built-ins (`inline noinline cold pure affine c_name attribute effects`) pass, any other unqualified name must be an `@attribute` struct of the module and its arguments (by position or `name = value`) are a construction of it, known at compile time. `@mod::name` is `not yet typed` (one module is checked at a time). Tests: `tests/front_attr_test.smith`.
