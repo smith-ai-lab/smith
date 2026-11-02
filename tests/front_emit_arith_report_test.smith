@@ -1,0 +1,205 @@
+// Tests of the report a failed arithmetic check writes (#1542 of #1428): source text is read by front::parser, checked
+// by front::types_decl and emitted with `Options.source`, so each report ends with the operator's file, line and
+// column. Every case runs in a forked child with the default failure report (no test hook) and its standard error in a
+// pipe, as in tests/front_emit_cast_test.smith. Memory as there: the tree is in an arena, the emitter and LLVM use the
+// system's allocator.
+module front_emit_arith_report_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <string.h>;
+import <smith/trace.h>;
+import <unistd.h>;
+import <sys/wait.h>;
+
+typedef I32 (*Probe)(Usize, Usize);
+
+// Three lines per function: the body is on line `3 * k + 2`, and the operator's node starts at column 12.
+// k: 0 add, 1 sub, 2 mul, 3 neg, 4 div, 5 rem, 6 udiv, 7 urem, 8 shl, 9 shr, 10 uadd, 11 usub, 12 umul
+constexpr Str program = "export I32 add(I32 a, I32 b) {\n    return a + b;\n}\n"
+                        "export I32 sub(I32 a, I32 b) {\n    return a - b;\n}\n"
+                        "export I32 mul(I32 a, I32 b) {\n    return a * b;\n}\n"
+                        "export I32 neg(I32 a, I32 b) {\n    return -a;\n}\n"
+                        "export I32 div(I32 a, I32 b) {\n    return a / b;\n}\n"
+                        "export I32 rem(I32 a, I32 b) {\n    return a % b;\n}\n"
+                        "export U32 udiv(U32 a, U32 b) {\n    return a / b;\n}\n"
+                        "export U32 urem(U32 a, U32 b) {\n    return a % b;\n}\n"
+                        "export I32 shl(I32 a, I32 b) {\n    return a << b;\n}\n"
+                        "export I32 shr(I32 a, I32 b) {\n    return a >> b;\n}\n"
+                        "export U32 uadd(U32 a, U32 b) {\n    return a + b;\n}\n"
+                        "export U32 usub(U32 a, U32 b) {\n    return a - b;\n}\n"
+                        "export U32 umul(U32 a, U32 b) {\n    return a * b;\n}\n";
+
+struct Scenario {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    parser::Parsed parsed;
+    types::Checked checked;
+};
+
+static void begin(Scenario *s, Str source) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parser::parse("t.smith", source);
+    test::check_equal(countof(s->parsed.errors), (Usize)0);
+    s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+    test::check_equal(s->checked.error_count, (Usize)0);
+    mem::set_allocator(outside);
+}
+
+static emit::Options options_for(emit::Target target, const types::Checked *checked, Str source) {
+    emit::Options options = {};
+    options.target = target;
+    options.checked = checked;
+    options.source = source;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static void jit_scenario(emit_jit::Jit *host, Scenario *s, Str source) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted =
+        emit::module(context, &s->parsed.module, options_for(host->target, &s->checked, source));
+    test::check_equal(emitted == .ok, true);
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    }
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+static Bool contains(const char *text, Str needle) {
+    return c::strstr(text, needle.data) != nullptr; // a literal's text ends with a terminator
+}
+
+// Runs the function at `address` in a child with the default failure report and its standard error in a pipe; the text
+// the child wrote, in `out`.
+static void report_of(Usize address, Usize first, Usize second, char *out, Usize size) {
+    I32 fds[2] = {};
+    test::check_equal(c::pipe(fds), 0);
+    I32 child = c::fork();
+    if (child == 0) {
+        c::smith_failure_hook = nullptr;
+        c::dup2(fds[1], 2);
+        c::close(fds[0]);
+        Probe call = (Probe)address;
+        call(first, second);
+        c::_exit(0);
+    }
+    c::close(fds[1]);
+    Usize used = 0;
+    Isize got = 1;
+    while (got > 0 && used + 1 < size) {
+        got = c::read(fds[0], out + used, size - 1 - used);
+        if (got > 0) used += (Usize)got;
+    }
+    out[used] = 0;
+    c::close(fds[0]);
+    I32 status = 0;
+    c::waitpid(child, &status, 0);
+}
+
+// The report of `name(first, second)` contains `want`.
+static void check_report(emit_jit::Jit *host, Str name, Usize first, Usize second, Str want) {
+    char text[2048] = {};
+    report_of(symbol_of(host, name), first, second, text, sizeof text);
+    test::check_equal(contains(text, want), true);
+}
+
+// The call returns normally: it writes no report.
+static void check_quiet(emit_jit::Jit *host, Str name, Usize first, Usize second) {
+    char text[2048] = {};
+    report_of(symbol_of(host, name), first, second, text, sizeof text);
+    test::check_equal(text[0], (char)0);
+}
+
+constexpr Usize least = 0xFFFFFFFF80000000ULL; // -2147483648 widened, as the argument of an I32 parameter
+
+export void test_front_emit_arith_report_overflow_names_the_operands_and_the_position() {
+    Scenario s = {};
+    begin(&s, program);
+    emit_jit::Jit host = start_jit();
+    jit_scenario(&host, &s, program);
+    check_report(&host, "add", 2147483647, 1, "smith-trace detail 2147483647 + 1 overflows I32 at t.smith:2:12");
+    check_report(&host, "sub", least, 1, "smith-trace detail -2147483648 - 1 overflows I32 at t.smith:5:12");
+    check_report(&host, "mul", 65536, 65536, "smith-trace detail 65536 * 65536 overflows I32 at t.smith:8:12");
+    check_report(&host, "neg", least, 0, "smith-trace detail -(-2147483648) overflows I32 at t.smith:11:12");
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_arith_report_division_by_zero_and_least_by_minus_one() {
+    Scenario s = {};
+    begin(&s, program);
+    emit_jit::Jit host = start_jit();
+    jit_scenario(&host, &s, program);
+    check_report(&host, "div", 7, 0, "smith-trace detail 7 / 0 divides by zero at t.smith:14:12");
+    check_report(&host, "rem", 7, 0, "smith-trace detail 7 % 0 divides by zero at t.smith:17:12");
+    check_report(&host, "udiv", 7, 0, "smith-trace detail 7 / 0 divides by zero at t.smith:20:12");
+    check_report(&host, "urem", 4000000000, 0, "smith-trace detail 4000000000 % 0 divides by zero at t.smith:23:12");
+    check_report(&host, "div", least, (Usize)-1, "smith-trace detail -2147483648 / -1 overflows I32 at t.smith:14:12");
+    check_report(&host, "rem", least, (Usize)-1, "smith-trace detail -2147483648 % -1 overflows I32 at t.smith:17:12");
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_arith_report_shift_past_the_width() {
+    Scenario s = {};
+    begin(&s, program);
+    emit_jit::Jit host = start_jit();
+    jit_scenario(&host, &s, program);
+    check_report(&host, "shl", 1, 40,
+                 "smith-trace detail 1 << 40 shifts past the width of I32 (0 to 31) at t.smith:26:12");
+    check_report(&host, "shl", 1, 32,
+                 "smith-trace detail 1 << 32 shifts past the width of I32 (0 to 31) at t.smith:26:12");
+    check_report(&host, "shl", 1, (Usize)-1,
+                 "smith-trace detail 1 << -1 shifts past the width of I32 (0 to 31) at t.smith:26:12");
+    check_report(&host, "shr", 1, (Usize)-1,
+                 "smith-trace detail 1 >> -1 shifts past the width of I32 (0 to 31) at t.smith:29:12");
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_arith_report_wrapping_and_in_range_values_do_not_fail() {
+    Scenario s = {};
+    begin(&s, program);
+    emit_jit::Jit host = start_jit();
+    jit_scenario(&host, &s, program);
+    check_quiet(&host, "uadd", 4294967295, 1);
+    check_quiet(&host, "usub", 0, 1);
+    check_quiet(&host, "umul", 4294967295, 2);
+    check_quiet(&host, "add", 2147483646, 1);
+    check_quiet(&host, "div", least, 1);
+    check_quiet(&host, "shl", 1, 31);
+    check_quiet(&host, "shr", (Usize)-8, 2);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_arith_report_without_source_names_only_the_file() {
+    Scenario s = {};
+    begin(&s, program);
+    emit_jit::Jit host = start_jit();
+    jit_scenario(&host, &s, ""); // a tree built by hand has no text: no line to name
+    check_report(&host, "add", 2147483647, 1, "smith-trace detail 2147483647 + 1 overflows I32 at t.smith\n");
+    emit_jit::stop(&host);
+}

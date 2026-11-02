@@ -78,7 +78,9 @@ static I32 run_status(const char *const argv[:]) {
 // Tests
 
 // The object defines `front::test::add`; main.c declares it with an `__asm__` label (macOS prepends `_` to the symbol,
-// as the generated headers write) and checks `add(2, 3) == 5`. smith cc links the two; the program exits 0.
+// as the generated headers write) and checks `add(2, 3) == 5`. smith cc links the two; the program exits 0. The signed
+// add has a check that calls std::contract's fail_overflow (#1542); main.c stands it in, since this program links no
+// library.
 export void test_front_emit_object_links_with_a_c_file_and_runs() {
     emit_jit::Jit host = {};
     emit_jit::JitResult started = emit_jit::start();
@@ -101,7 +103,8 @@ export void test_front_emit_object_links_with_a_c_file_and_runs() {
     Bool apple = contains(host.target.triple.data, "apple");
     write_text(format::push(folder, "/main.c").data,
                format::push("int add(int, int) __asm__(\"", apple ? "_" : "", "front::test::add\");\n",
-                            "int main(void) { return add(2, 3) == 5 ? 0 : 1; }\n")
+                            "void smith_contract_fail_overflow(const char *, long, long, const char *, const char *) ",
+                            "{ __builtin_trap(); }\n", "int main(void) { return add(2, 3) == 5 ? 0 : 1; }\n")
                    .data);
     const char *self = c::getenv("SMITH_SELF");
     const char *smith = self != nullptr ? self : "smith";
