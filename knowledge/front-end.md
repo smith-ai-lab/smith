@@ -14,7 +14,7 @@ The pipeline, one module group per section below:
 
 - **lex, parse**: text to a `front::ast` tree (`lex`, `parse`, `parse_expr`, `parse_type`, `parse_stmt`, `parse_decl`, `parser`).
 - **fix**: the fixes parse and check errors carry, applied by `smith lint --fix`.
-- **check**: the tree to types (`types`, `types_expr`, `types_convert`, `types_decl`, `types_attr`, `types_fn`, `types_iter`).
+- **check**: the tree to types (`types`, `types_expr`, `types_convert`, `types_decl`, `types_attr`, `types_fn`, `types_iter`, `types_stream`).
 - **emit**: the checked tree to an LLVM module (`emit*.smith`), then an object (`emit_object`).
 - **drive**: `compile` and `roots` join the stages for `smith cc`; `cimport` reads C headers ([c-header-import](c-header-import.md)).
 
@@ -190,7 +190,8 @@ The types of the front end and the checker's entry point; the API is the top com
 - Down: `expected` types an unsuffixed literal when it fits (`U8 big = 300;` is an error naming the range), `null`, `.none`, `.red`, a `{...}` list, a lambda and both sides of `?:`.
 - Next to a typed operand (`x + 1`) a literal takes the operand's type; any other pair of different types is an error that names the cast to write.
 - Typed: literals, names, operators, assignment, `.` and `->`, `a[i]`, `a[i:j]`, calls (count checked), casts, `sizeof`, `alignof`, `countof`, `?:`.
-- Not yet (`not yet typed: <kind>`): `try`, a type as a value, a name from another module, nested designators, a payload enumeration.
+- Not yet (`not yet typed: <kind>`): `try`, a type as a value, nested designators, a payload enumeration. A name from another module is typed only when the checker is given a loader (next bullet); without one it stays `not yet typed`.
+- Modules are values (#1677): `types::Options.load` (`check_module_with(m, target, load)`) gives the tree of a dotted path (`std.math`). `m := import a.b` binds a `module_name` symbol, and the declarations of `a.b` (and of the modules it imports, once each, so a cycle ends) are declared in the same table under the prefix `a::b::`; `m.name`, `m.b.name` and a type path `m.T` read through the module symbols (`types::through_modules`), and only a `pub` name is found. A missing name is "`a.b` has no public `x`" with the closest name. `sin := m.sin` and `Arena := m.Arena` are a second symbol for the same declaration (a direct alias, no copy). A module name used as a value (`mut x := m`, passed, compared) and a local named like a module are errors. Generic functions of an imported module are not declared yet. Emit and the driver do not read modules yet (a ticket of its own).
 - `Hooks.convert` (set with `set_hooks`) is asked whenever a value of type `from` meets `to`; unset, the default is exact equality. `types_decl::install` wires `types_convert::convert` in.
 - Values (#1511, C2a): `if`, `if let`, `match` and a block used as a value (`stmt_expr`) are typed here; the last line of a block is its value.
 - Every branch has the expected type; a branch with no value makes the whole `void`. `match` is exhaustive over an enumeration or `?T`: a missing case is listed, a repeat is an error.
@@ -240,11 +241,18 @@ Functions and lambdas in the checker; the rules are the top comment of the file.
 - A parameter of type `fn_once(A) -> R` is linear (#1108): `check_once(c, params, body)` follows every path; types_decl calls it per function and types_expr per lambda.
 - Reported: a second use ("used again"), a path that leaves before any use (`return`, end of body, `try`: "not used on every path"), a use inside a loop ("once per turn").
 - A use is a call, or the name passed on or captured; an `fn(A) -> R` parameter may run any number of times.
+- A stored lambda (`Fn(F)`) passes where `fn(A) -> R` is expected when the signatures are the same (#1649); `conform` in types_expr says so before the convert hook. A different signature is an error naming both; `fn_once` stays apart.
 - A lambda written as an argument of a call is non-escaping and captures by reference (`note_arguments(args)` tells which are arguments).
 - Any other lambda is stored (a variable, field or result): captures are copied by value, with no capture list (lead's decision, 2026-11-02).
 - `check_lambda(c, e)` refuses a stored lambda that captures a local pointer or slice into the current function's stack (`p := &x`, `s := xs[1:3]`), naming the capture. A pointer parameter is allowed.
 - Not yet: `fn_once` locals and fields, a lambda with no captures as a C function pointer, how a stored lambda's captures are freed (asked of the lead).
 - No recursion: the walk is a work stack. Tests: `tests/front_types_fn_test.smith`.
+
+### front::types_stream (`front/types_stream.smith`, #1545)
+- A generator is a function whose written result is `stream::Stream(T)` and whose body has a `yield` outside any lambda; a stream-returning function with no `yield` is an ordinary function.
+- `yield x` is valid only in a generator, and `x` converts to `T` by the ordinary conversion. Elsewhere (a lambda included) it is an error that says to return a stream or remove the yield.
+- A generator ends with a plain `return`; `return v` is an error that says to `yield v` first. Its body is checked as the body of a function with no result.
+- No recursion: the search for a `yield` walks statements with a fixed stack. Hooked from `types_decl`; not wired into `smith cc`. Tests: `tests/front_types_stream_test.smith`.
 
 ### front::types_iter (`front/types_iter.smith`, #1514, C3)
 
@@ -254,7 +262,7 @@ Iteration in the checker; the rules are the top comment of the file.
 - `range(a, b)` yields its integers; an unsuffixed literal argument takes the type of the non-literal ones (`range(0, n)` with `n: u32` yields `u32`; all literals give `i32`; mixed non-literals are an error, #1606).
 - `refs(xs)` yields pointers; `zip` and `enumerate` yield tuples, so one name is refused and `for (i, x) in ...` is "not yet typed" (#1557).
 - The loop's names live in the loop's scope and may not shadow. `zip` of unequal lengths is a checked failure at run time (the lead's recommendation, not yet the owner's word, #1514).
-- `types_iter::built_in()` also takes `stream::Stream(T)` as iterable with element `T` (#1613); the `yield` rules are #1545 and the emitter is #1546.
+- `types_iter::built_in()` also takes `stream::Stream(T)` as iterable with element `T` (#1613); the `yield` rules are `types_stream` (#1545) and the emitter is #1546.
 - Not yet: a `for` that builds a value, `continue` as a filter, `sum(for ...)`, user iterators and `utf8::chars`. Tests: `tests/front_types_iter_test.smith`.
 
 ## front::emit (`front/emit*.smith`, #1119)
@@ -267,6 +275,7 @@ Iteration in the checker; the rules are the top comment of the file.
 - Tests run the result in LLJIT (`emit_jit.smith`) and compare golden IR (`tests/front/emit/`).
 
 **Files**: `emit.smith` (passes, the walk, routing), `emit_state.smith` (shared types, `Emitter`, hooks; its own file to break an import cycle), then one file per area, no two tickets sharing one.
+- Slices `[]T` and `str` are `{ data, count }` (#1623): a string literal is a constant `str`, `s[i]` checks the index against the count in every build, `s[a:b]` and `countof(s)` read the pair, and `for x in s` walks it.
 - `emit_vector` (`vec(T, N)`), `emit_arith` (integer expressions), `emit_control`, `emit_call`, `emit_memory`, `emit_debug`, `emit_option`, `emit_iter`, `emit_match`, `emit_value`, `emit_tuple`, `emit_lambda`, `emit_jit` (test helper).
 - Three hooks in `Emitter`, set by `emit::module`, let a handler reach `emit.smith` without importing it: `state::type_of` (a type expression), `state::type_of_node` (the checker's type of a node) and `state::convert`.
 - `state::convert(e, value, to, span, site)` pushes `value` as a `to`: as is, widened by the checker's rules, or wrapped for an option; else the site's error (`initializing X with Y`).
@@ -280,8 +289,9 @@ Iteration in the checker; the rules are the top comment of the file.
 | `emit_iter` | `for x in xs` over a fixed array, `refs(xs)`, `range(n)`, `range(a, b)`, `range(a, b, step)` with a positive literal step | `enumerate`, `zip`, tuple pattern, slice, `str`, block, stream, array value, other steps: `not emitted yet` | #1586 (filled) |
 | `emit_match` | enumerations (an integer `Ty` of the underlying type, enumerators from 0 or as written; `emit_memory` and `emit_call` find one for `as` and parameters), `.red`, `match` over an enumeration (one `switch`, `unreachable` default) or `?T`, as statement and value | a payload enumeration, `match` over `Result`, `if let` over an enumeration | #1585 |
 | `emit_value` | an `if` with an `else` and a block used as a value: one alloca slot (the hint's type, else the join of the branches' checker types), branches convert and store, `endif` loads it; a branch that ended stores nothing; no branch reaching the end gives `unreachable` and `undef` | `for`, `while`, `if let` as a value, a `match` with no type written | #1618 (filled) |
-| `emit_tuple` | stub: tuple types, literals, `t.0`, `(q, r) := f()` are `not emitted yet` | everything | next batch |
+| `emit_tuple` | tuple types `(A, B)`, `(T,)`, `()` as an LLVM struct, `(a, b)`, `t.0` as a value and a place, `(q, r) := f()`; the lexer reads `t.0` and `t.0.1` as an index | `==` between tuples, tuples of slices or `fn` values, `for (i, x)` | #1619 (filled) |
 | `emit_lambda` | `fn(A) -> R` and `fn_once` types (`{ ptr code, ptr context }`), lambdas as internal functions, calls of `fn` values (#1620) | a stored lambda with captures, a function named as a value | next batch |
+| `emit_stream` | `stream::Stream(T)` (one `ptr`), a generator as a ramp and a body on the stream's own stack, `yield`, `stream::next(&s)` (`?T`), `stream::close(&s)` (#1546; see [stream](stream.md)) | `for` over a stream, a generator with debug info | #1546 |
 | floats, slices, `str`, array literals | no route yet: `emit.smith` answers `not emitted yet: this kind of expression` | everything | none yet |
 
 - Routing in `emit.smith`: `type_of` sends `?T`, a tuple and a `fn` type to their file and a one-segment name to `match::type_enum` before records.

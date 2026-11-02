@@ -1,0 +1,108 @@
+// front::types_stream: the checker's rules for `yield` (#1545, 3/4 of the streams re-ticket of #1036). Not wired into
+// `smith cc`; today's forms keep checking exactly as they do.
+//
+// THE RULES
+//
+//   generator   A function whose written result is `stream::Stream(T)` and whose body contains `yield`, anywhere but
+//               inside a lambda. A function that returns a stream and has no `yield` is an ordinary function.
+//   yield x     Valid only in a generator; `x` converts to `T` by the ordinary conversion. Anywhere else it is an
+//               error that says to return a stream or remove the yield.
+//   return      A generator ends with a plain `return`; `return v` is an error that says to `yield v` first.
+//   body        A generator's body has no result value: it is checked as the body of a function with no result.
+//
+// A `yield` in a lambda is checked as outside a generator, so it is refused with the first message; the lead has not
+// ruled on a more specific one (#1545, "Escalate before building").
+//
+// No recursion: the search for a `yield` walks the statements with a stack of fixed size.
+module front::types_stream;
+
+import front::ast;
+import front::types;
+import front::types_expr;
+
+// The statements a statement holds, pushed on `todo` from `n`; returns the new count. A statement nested deeper than
+// the stack is dropped.
+static Usize push_children(const ast::Stmt *s, const ast::Stmt *todo[:], Usize n) {
+    const ast::Stmt *children[2] = {nullptr, nullptr};
+    if (s->kind == .block) {
+        ast::StmtRef items[:] = s->kind.block.items;
+        for (Usize i = 0; i < countof(items) && n < countof(todo); i++) {
+            todo[n] = items[i];
+            n += 1;
+        }
+        return n;
+    } else if (s->kind == .if_stmt) {
+        children[0] = s->kind.if_stmt.then_branch;
+        children[1] = s->kind.if_stmt.else_branch;
+    } else if (s->kind == .if_let) {
+        children[0] = s->kind.if_let.then_branch;
+        children[1] = s->kind.if_let.else_branch;
+    } else if (s->kind == .while_stmt) {
+        children[0] = s->kind.while_stmt.body;
+    } else if (s->kind == .do_while) {
+        children[0] = s->kind.do_while.body;
+    } else if (s->kind == .for_stmt) {
+        children[0] = s->kind.for_stmt.body;
+    } else if (s->kind == .for_in) {
+        children[0] = s->kind.for_in.body;
+    } else if (s->kind == .defer_stmt) {
+        children[0] = s->kind.defer_stmt.body;
+    } else if (s->kind == .errdefer_stmt) {
+        children[0] = s->kind.errdefer_stmt.body;
+    } else if (s->kind == .labeled) {
+        children[0] = s->kind.labeled.body;
+    }
+    for (Usize i = 0; i < 2; i++) {
+        if (children[i] != nullptr && n < countof(todo)) {
+            todo[n] = children[i];
+            n += 1;
+        }
+    }
+    return n;
+}
+
+// The body has a `yield` of its own (one in a lambda is an expression, so the walk never meets it).
+export Bool has_yield(const ast::Stmt *body) {
+    if (body == nullptr) return false;
+    const ast::Stmt *todo[256];
+    todo[0] = body;
+    Usize n = 1;
+    while (n > 0) {
+        n -= 1;
+        const ast::Stmt *s = todo[n];
+        if (s->kind == .yield_stmt) return true;
+        n = push_children(s, todo, n);
+    }
+    return false;
+}
+
+// The element `T` of a generator with this written result and body, else null.
+export types::TypeRef generator_element(types::TypeRef result, const ast::Stmt *body) {
+    if (result == nullptr || result->kind != .stream || !has_yield(body)) return nullptr;
+    return result->element;
+}
+
+// `yield x` in a function whose generator element is `element` (null outside a generator).
+export void check_yield(types::Checked *r, const ast::Stmt *s, types::TypeRef element) {
+    if (!(s->kind == .yield_stmt)) return;
+    const ast::Expr *value = s->kind.yield_stmt.value;
+    if (element == nullptr) {
+        if (value != nullptr) types_expr::infer(r, value);
+        types::failf(r, s->span,
+                     "yield is valid only in a function that returns `stream::Stream(T)`: return a stream, or remove "
+                     "the yield");
+        return;
+    }
+    if (value != nullptr) types_expr::check(r, value, element);
+}
+
+// `return` in a generator: true when it was handled here (a plain `return` is fine, `return v` is refused).
+export Bool check_return(types::Checked *r, const ast::Stmt *s, types::TypeRef element) {
+    if (element == nullptr || !(s->kind == .return_stmt)) return false;
+    const ast::Expr *value = s->kind.return_stmt.value;
+    if (value != nullptr) {
+        types_expr::infer(r, value);
+        types::failf(r, s->span, "a generator ends with a plain `return`: hand the value out with `yield v` first");
+    }
+    return true;
+}

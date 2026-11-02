@@ -182,7 +182,7 @@ newer than every header step's output, so each runs again to find its bytes the 
 
 - `tests/build_*_test.smith` has 89 checks of the executor (a failed job, `-k`, depfiles, restat, pools, parallel output, Ctrl-C,
   the tools, malformed manifests, the logs and the upgrade from ninja); `tests/io.c` has the process capture.
-- `python3 tests/ninja_compare.py <smith>` compares the executor with ninja on random manifests (plain, restat, depfile
+- `tests/ninja_compare.smith` (a smith program: `smith cc tests/ninja_compare.smith lib/std/{arena,contract,env,files,format,mem,net,process,random,text}.smith lib/handlers.c lib/trace.c -o ninja_compare`, then `ninja_compare <smith> [first [last [steps]]]`) compares the executor with ninja on random manifests (plain, restat, depfile
   and multi-output steps, implicit and order-only inputs, aliases, defaults), each edited at random between builds (a
   source changed or only touched, an output deleted or touched, a header a depfile named, a depfile's list, a command, a
   single target asked for) and built with both: the commands run and the files made must be the same in every build. It

@@ -770,14 +770,18 @@ the map.
 ## Install
 
 smith is private and pre-release, and runs on macOS on Apple silicon only. You need Xcode or the Command Line Tools, `git`
-and `gh` signed in. A clone builds with the release of its newest ancestor commit, which `scripts/stage0.c` (plain C23, built with Apple's clang) downloads
-(`stage0-<commit>`, checksum checked):
+and `gh` signed in. A clone builds with the newest release (`stage0-<commit>`), which you download over plain HTTPS and check:
 
 ```sh
 git clone git@github.com:smith-ai-lab/smith && cd smith
-mkdir -p .smith && clang -std=c23 -x c scripts/stage0.c -o .smith/stage0-tool
-.smith/stage0-tool llvm      # builds LLVM 23.1.3 (r9) into ~/.cache/smith/llvm, about 9 minutes, once
-.smith/stage0-tool install   # builds the full smith and installs smith, smith-cc and smith-c++ in ~/.local/bin
+tag=$(curl -fsSIL -o /dev/null -w '%{url_effective}' https://github.com/smith-ai-lab/smith/releases/latest); tag=${tag##*/}
+mkdir -p .smith/stage0 && cd .smith/stage0
+curl -fsSLO https://github.com/smith-ai-lab/smith/releases/download/$tag/smith-darwin-arm64.tar.xz
+curl -fsSLO https://github.com/smith-ai-lab/smith/releases/download/$tag/smith-darwin-arm64.tar.xz.sha256
+shasum -a 256 -c smith-darwin-arm64.tar.xz.sha256 && tar -xJf smith-darwin-arm64.tar.xz && cd ../..
+export PATH=$PWD/.smith/stage0/bin:$PATH
+smith build llvm      # takes the published LLVM pack of this configuration into ~/.cache/smith/llvm (minutes, once)
+smith build install   # builds the full smith and installs smith, smith-cc and smith-c++ in ~/.local/bin
 ```
 
 Put `~/.local/bin` on your `PATH`. To update, pull and run `smith build install`. smith unpacks clang's builtin headers to
