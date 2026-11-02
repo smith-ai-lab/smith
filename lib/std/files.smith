@@ -115,8 +115,40 @@ I32 errno_now() {
     NoSpace,     // the disk is full
     ReadOnly,    // the file system does not take writes
     TooManyOpen, // the process or the system has no more descriptors
+    LineTooLong, // read_line: the line does not fit the buffer
     Other,       // the system said something else
 } Error;
+
+// What an error says, as a constant text for a message.
+[[std::c_name("smith_fs_describe")]] export [[nodiscard]] typeof(const char[:]) describe(Error error) {
+    switch (error) {
+    case NotFound:
+        return "nothing is at the path";
+    case Exists:
+        return "something is there already";
+    case Denied:
+        return "permission denied";
+    case IsFolder:
+        return "the path is a folder";
+    case NotFolder:
+        return "a part of the path is not a folder";
+    case NotEmpty:
+        return "the folder is not empty";
+    case NameTooLong:
+        return "the path is too long";
+    case NoSpace:
+        return "no space left on the device";
+    case ReadOnly:
+        return "the file system is read-only";
+    case TooManyOpen:
+        return "too many open files";
+    case LineTooLong:
+        return "the line does not fit the buffer";
+    case Other:
+        return "the system refused";
+    }
+    return "unknown error";
+}
 
 // How a file is opened, and how write_file puts bytes in a file.
 [[std::c_name("SmithFilesMode")]] export typedef enum {
@@ -154,6 +186,8 @@ I32 errno_now() {
 
 export typedef Result(File, Error) OpenResult;
 export typedef Result(Usize, Error) CountResult;
+export typedef Option(Usize) MaybeCount;
+export typedef Result(MaybeCount, Error) LineResult;
 export typedef Result(Done, Error) DoneResult;
 export typedef Result(Info, Error) InfoResult;
 export typedef typeof(U8[:]) Bytes;
@@ -389,6 +423,38 @@ void reads_log(const char *path) {
         }
     }
     return {.error = Other};
+}
+
+// Reads the next line into the buffer: the bytes up to the next `\n`, which is read but kept out of the count. `none`
+// is the end of the file with nothing read; a last line with no newline is a line. A line longer than the buffer is
+// LineTooLong, never a silent cut (what was read stays in the buffer). Bytes are read one at a time, so nothing is held
+// between calls and a line and a `read` can be mixed on one file.
+[[std::c_name("smith_fs_read_line")]] export [[nodiscard]] LineResult read_line(File file, U8 buffer[:]) {
+    contract::trusted(); // the edge: it calls read a byte at a time, a loop bounded by the buffer that the prover
+                         // cannot see
+    Usize count = 0;
+    for (Usize passes = 0; passes <= countof(buffer); passes++) {
+        U8 byte[1] = {};
+        CountResult got = read(file, byte[0:1]);
+        if (got == .error) {
+            return {.error = got.error};
+        }
+        if (got.ok == 0) {
+            MaybeCount line = count;
+            if (count == 0) line = .none;
+            return {.ok = line};
+        }
+        if (byte[0] == '\n') {
+            MaybeCount line = count;
+            return {.ok = line};
+        }
+        if (count == countof(buffer)) {
+            return {.error = LineTooLong};
+        }
+        buffer[count] = byte[0];
+        count += 1;
+    }
+    return {.error = LineTooLong};
 }
 
 // Writes all of data and returns how many bytes it wrote (all of them, or an error).

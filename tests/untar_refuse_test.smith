@@ -6,6 +6,9 @@
 // tests/untar_sanitizers_test.smith. Every fetch has a cache of its own; the shell functions are those of
 // tests/build_fixtures/untar/prelude. A test's texts are pushed on its test::memory arena, which is also the current
 // allocator, so what scratch returns goes back with it.
+// smith-covers: smith.c runtime/package.c runtime/untar.c runtime/gzip.c runtime/xz.c runtime/cache.c runtime/verbs.c
+// smith-covers: tests/untar.c tests/xz.py tests/build_fixtures/untar/
+// smith.c is declared for the fetch verb.
 module untar_refuse_test;
 
 import std::arena;

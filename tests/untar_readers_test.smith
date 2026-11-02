@@ -12,6 +12,9 @@
 // lib/text.txt (300 lines), lib/deep/random.bin (3000 random bytes), the symlinks lib/hello-link, libs and
 // lib/deep/up-two, empty-folder/}. `source_tree` is that tree's listing, written by a Python script that walks the
 // folder (the same format as `smith_core_tree`), so the golden does not come from the code under test.
+// smith-covers: runtime/package.c runtime/untar.c runtime/gzip.c runtime/xz.c lib/std/inflate.smith
+// smith-covers: include/smith_core.h smith.c tests/units/ tests/fixtures/untar/
+// smith.c is declared: smith_core_extract and smith_core_tree are its library build.
 module untar_readers_test;
 
 import std::arena;

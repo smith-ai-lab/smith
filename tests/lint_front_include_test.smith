@@ -3,6 +3,9 @@
 // command names, so the verb adds that folder as `--extra-arg=-I` when it exists; and a host that is not macOS says in
 // one line that CI's Mac lints with different C types for u64 and usize. A scratch project of the lint_cache fixture
 // with a header in such a folder and a C file that includes it.
+// smith.c adds the front include folder to `smith lint FILE`.
+// smith-covers: smith.c runtime/verbs.c runtime/quiet.c runtime/base.h runtime/platform_*.c runtime/slots.c
+// smith-covers: shim/tidy.cpp shim/clang.cpp templates/defaults/ tests/build_fixtures/lint_cache/
 module lint_front_include_test;
 
 import std::arena;

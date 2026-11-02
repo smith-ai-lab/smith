@@ -1,0 +1,6 @@
+(module destructure
+  (function run
+    (result (named Void))
+    (block
+      (destructure q r (name divmod))
+      (destructure mut a b (name pair)))))

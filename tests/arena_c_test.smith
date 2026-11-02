@@ -5,6 +5,13 @@
 // lib/std/arena_test.smith. The projects are tests/build_fixtures/arena_project, arena_typed and arena_unknown. A
 // test makes its project, then sets its own memory as the current allocator: what scratch returns to it (a Run's texts)
 // is given back with that memory, and scratch::clean frees what make holds.
+// smith-covers: smith.c runtime/verbs.c runtime/lang*.c runtime/front_flag.c runtime/sdk_cache.c runtime/platform_*.c
+// smith-covers: runtime/quiet.c shim/hook.cpp shim/clang.cpp shim/names.h shim/tool.h shim/platform*.h include/smith/
+// smith-covers: runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/cache.c runtime/package.c
+// smith-covers: shim/lld.cpp shim/lsp.cpp shim/clangd.cpp lib/std/arena.smith lib/std/contract.smith
+// smith-covers: lib/std/math.smith lib/trace.c lib/handlers.c lib/std/mem.smith tests/arena.c
+// smith-covers: tests/build_fixtures/arena_*/
+// smith.c is declared for the cc, build and lsp verbs.
 module arena_c_test;
 
 import std::arena;
@@ -278,5 +285,5 @@ export void test_arena_c_unknown_library_lists_the_known_names() {
                              "smith: build.c: smith_library: unknown library \"nope\"; known: handlers, json, trace, "
                              "arena, ascii, autodiff, categorical, clock, console, contract, effects, entropy, env, "
                              "failing, files, format, inflate, "
-                             "math, mem, net, process, random, slice, task, test, text");
+                             "math, mem, net, optimize, process, random, slice, task, test, text");
 }

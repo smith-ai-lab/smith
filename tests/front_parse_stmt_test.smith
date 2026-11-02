@@ -33,9 +33,15 @@ static ast::Expr *stub_expression(parse::Parser *p) {
     while (depth > 0 || !ends_expression(parse::peek(p).kind)) {
         lex::TokenKind kind = parse::peek(p).kind;
         if (kind == lex::end_of_file) break;
+        // A `{` after a name starts a block, never part of the expression (the new `if c {`).
+        if (depth == 0 && kind == lex::left_brace && p->position > 0 &&
+            (p->tokens[p->position - 1].kind == lex::name || p->tokens[p->position - 1].kind == lex::kw_in))
+            break;
         if (opens(kind)) depth += 1;
         if (closes(kind) && depth > 0) depth -= 1;
         parse::advance(p);
+        // A line break ends the expression (Go's rule), as the real expression parser would.
+        if (depth == 0 && lex::ends_statement(p->tokens[p->position - 1])) break;
     }
     if (p->position == 0 || parse::span_from(p, start).end == start) {
         parse::expect(p, lex::name, "an expression");
@@ -75,8 +81,9 @@ static ast::Decl *stub_declaration(parse::Parser *p) {
     return ast::variable(p->source[name_start:name_end], ast::named(type_text), init);
 }
 
-static parse::Parser parser_of(Str source) {
+static parse::Parser parser_in(Str source, Bool new_syntax) {
     lex::Lexed lexed = lex::tokenize(source);
+    if (new_syntax) lexed = lex::tokenize_new(source);
     lex::Tokens tokens = {};
     switch (lexed) {
     case .ok:
@@ -93,6 +100,10 @@ static parse::Parser parser_of(Str source) {
     return p;
 }
 
+static parse::Parser parser_of(Str source) {
+    return parser_in(source, false);
+}
+
 // The statement of source (a block, usually) as the body of a function of a module, dumped.
 static Str dump_of(parse::Parser *p) {
     ast::Stmt *body = parse::statement(p);
@@ -103,12 +114,16 @@ static Str dump_of(parse::Parser *p) {
 }
 
 // The dump of a source that parses with no error and to its end.
-static Str clean_dump(Str source) {
-    parse::Parser p = parser_of(source);
+static Str clean_dump_in(Str source, Bool new_syntax) {
+    parse::Parser p = parser_in(source, new_syntax);
     Str dump = dump_of(&p);
     test::check_equal(countof(p.errors), 0);
     test::check_equal(parse::at(&p, lex::end_of_file), true);
     return dump;
+}
+
+static Str clean_dump(Str source) {
+    return clean_dump_in(source, false);
 }
 
 export void test_parse_stmt_every_form() {
@@ -219,4 +234,85 @@ export void test_parse_stmt_a_long_block_is_read_in_linear_time() {
     test::check_equal(countof(p.errors), 0);
     if (whole->kind == .block) test::check_equal(countof(whole->kind.block.items), count);
     test::check_equal(whole->kind == .block, true);
+}
+
+export void test_parse_stmt_the_new_forms() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "{\n"
+                 "if a {\n x\n }\n"
+                 "if a {\n x\n } else if b {\n y\n } else {\n z\n }\n"
+                 "while a {\n x\n break\n continue\n }\n"
+                 "for x in xs {\n f\n }\n"
+                 "for (i, x) in es {\n f\n }\n"
+                 "match s {\n .a => v\n .b(x) => w\n .c, .d => u\n }\n"
+                 "if let .some(x) = e {\n x\n } else {\n y\n }\n"
+                 "if let .none = e {\n x\n }\n"
+                 "defer f\n"
+                 "if (a) < b {\n x\n }\n"
+                 "return\n"
+                 "}";
+    test::golden("tests/front/parse_stmt/new_forms.txt", clean_dump_in(source, true));
+}
+
+export void test_parse_stmt_old_and_new_forms_mix() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "{\nif (a) {\n x\n }\nif (a) y;\nwhile (a) {\n x\n }\nfor (I32 i = 0; i; i) z;\n"
+                 "if a {\n if (b) c; else d;\n }\nreturn 1\n}";
+    test::golden("tests/front/parse_stmt/new_and_old.txt", clean_dump_in(source, true));
+}
+
+// One error for each malformed new form, and the statement after it parses.
+static Str first_error(Str source) {
+    parse::Parser p = parser_in(source, true);
+    ast::Stmt *whole = parse::statement(&p);
+    test::check_equal(whole != nullptr, true);
+    char all[:] = {};
+    for (Usize i = 0; i < countof(p.errors); i++)
+        all = format::push(all, p.errors[i].message, " | ");
+    return all;
+}
+
+static Str malformed(Usize which) {
+    switch (which) {
+    case 0:
+        return "{\nif a {\n x\n } else y\n}";
+    case 1:
+        return "{\nfor x in {\n f\n }\n}";
+    case 2:
+        return "{\nfor (i, ) in xs {\n f\n }\n}";
+    case 3:
+        return "{\nfor x in xs\n}";
+    case 4:
+        return "{\nmatch s {\n a => v\n }\n}";
+    case 5:
+        return "{\nmatch s {\n .a v\n }\n}";
+    case 6:
+        return "{\nmatch s {\n .a => v\n .b\n }\n}";
+    case 7:
+        return "{\nif let .a x = e {\n x\n }\n}";
+    case 8:
+        return "{\nif let .a() = e {\n x\n }\n}";
+    case 9:
+        return "{\nreturn 1 )\n}";
+    default:
+        return "";
+    }
+}
+
+export void test_parse_stmt_a_malformed_new_form_is_one_error() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    char all[:] = {};
+    for (Usize i = 0; i < 10; i++) {
+        all = format::push(all, first_error(malformed(i)), "\n");
+    }
+    test::golden("tests/front/parse_stmt/new_forms_errors.txt", all);
 }

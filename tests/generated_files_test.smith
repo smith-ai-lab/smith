@@ -6,6 +6,7 @@
 // input of the corpus that is a stale generated header, tests/smith-lang/cases/error-stale-header/src).
 // The guard is a test, so `smith check` runs it on every tree the train checks. `pending` names the files of the
 // steps of #466 that are not done yet (none: the headers, the protocol code and the parser are outputs).
+// smith-covers: * **
 module generated_files_test;
 
 import std::arena;

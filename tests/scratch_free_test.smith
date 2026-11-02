@@ -2,6 +2,8 @@
 // runs a command. Memory scratch returns to the test is the test's to free (the runner's leak check, mem::checked,
 // fails a test that does not: tests/mem_checked_test.smith shows that on a fixture); what make holds for itself is
 // freed by clean. This test frees everything and passes.
+// smith-covers: tests/scratch.smith tests/golden_test.smith tests/build_fixtures/golden/
+// It runs sh, not smith.
 module scratch_free_test;
 
 import std::arena;

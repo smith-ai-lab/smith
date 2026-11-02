@@ -18,6 +18,20 @@
 //   break; continue; return; return e; goto l; l: s; defer s; static_assert(c, "m"); ;
 //   an expression statement, or a declaration (below)
 //
+// The new syntax (#1428, S4) is read beside these, into the same nodes. A statement ends at a `;` or at the end of its
+// line (the lexer's line-break flag, Go's rule: `lex::ends_statement`), or before a `}`.
+//
+//   if c { } else if d { } else { }     no parentheses, braces required; `if let .some(x) = e { } else { }`
+//   while c { }
+//   for x in xs { }                     `for (i, x) in e { }`: a `for_in`
+//   match s { .a => v ... }             one arm per line; `.b(x) => v`; `.c, .d => v`
+//
+// The old and the new form are told apart by a fixed lookahead, no symbol table: `if (c) s` is the old form when the
+// `)` that closes the first `(` is followed by `{` or by the start of a statement, and `if c {` the new one when a `{`
+// comes before the end of the line; `for (` is a new `for` when its `)` is followed by `in`. Where `(` follows the
+// keyword and the token after the `)` could begin a statement or continue the condition (`-`, `*`, `&`, `(`: `if
+// (a) * b {`), the old form wins.
+//
 // A statement starts a declaration, and goes to `parse::declaration`, when it starts with a `type_name`, a path whose
 // last name is a `type_name` (`geometry::Box b`), a type or storage keyword (`const`, `static`, `auto`, `struct`,
 // `int`...), an attribute `[[`, or a `c::` path in the shape of a declaration (`c::size_t n;`, `c::stat *s;`); anything
@@ -50,6 +64,7 @@ enum FrameKind {
     switch_frame, // labels and statements up to `}`
     label_body,   // the statement after `l:`
     defer_body,   // the statement after `defer`
+    for_in_body,  // the body of a `for x in xs`
 };
 // NOLINTEND(readability-identifier-naming)
 
@@ -75,6 +90,10 @@ struct Frame {
     Bool case_open;
     Bool case_default;
     U32 case_start;
+    Bool no_body;         // the `{` of a new form is missing: the body is an empty statement
+    Bool braced;          // the new form of `if` and `while`: the body is a block
+    Bool is_let;          // `if let pattern = value`: `condition` is the value
+    ast::Pattern pattern; // and its pattern
 };
 
 struct Stack {
@@ -324,6 +343,19 @@ static Bool starts_declaration(const parse::Parser *p) {
 // ---------------------------------------------------------------------------------------------------------------
 // Leaf statements
 
+// Whether a line break follows the last token taken and ends a statement (`lex::ends_statement`).
+static Bool last_token_ends_line(const parse::Parser *p) {
+    return p->position > 0 && lex::ends_statement(p->tokens[p->position - 1]);
+}
+
+// The end of a leaf statement: a `;`, the end of the line, or a `}` that closes the block. Anything else is the error
+// "expected `;`".
+static void end_statement(parse::Parser *p) {
+    if (parse::accept(p, lex::semicolon)) return;
+    if (last_token_ends_line(p) || parse::at(p, lex::right_brace)) return;
+    parse::expect(p, lex::semicolon, "`;`");
+}
+
 static ast::Stmt *declaration_statement(parse::Parser *p) {
     U32 start = parse::peek(p).span.start;
     Usize before = countof(p->errors);
@@ -338,7 +370,7 @@ static ast::Stmt *expression_statement(parse::Parser *p) {
     U32 start = parse::peek(p).span.start;
     Usize before = countof(p->errors);
     ast::Expr *value = expression(p);
-    if (countof(p->errors) == before) parse::expect(p, lex::semicolon, "`;`");
+    if (countof(p->errors) == before) end_statement(p);
     return settle(p, start, before, new_stmt({.expression = {.value = value}}));
 }
 
@@ -367,7 +399,7 @@ static Bool extended_asm(const parse::Parser *p) {
 static ast::Stmt *asm_statement(parse::Parser *p) {
     U32 start = parse::peek(p).span.start;
     Usize before = countof(p->errors);
-    parse::error(p, parse::peek(p).span, "extended asm is not part of Smith; use `hint::keep(x)`");
+    parse::error(p, parse::peek(p).span, "extended asm is not part of Smith; use `optimize::opaque(x)`");
     return settle(p, start, before, empty_stmt());
 }
 
@@ -375,7 +407,7 @@ static ast::Stmt *asm_statement(parse::Parser *p) {
 static ast::Stmt *jump(parse::Parser *p, ast::StmtKind kind) {
     U32 start = parse::advance(p).span.start;
     Usize before = countof(p->errors);
-    parse::expect(p, lex::semicolon, "`;`");
+    end_statement(p);
     return settle(p, start, before, new_stmt(kind));
 }
 
@@ -383,8 +415,9 @@ static ast::Stmt *return_statement(parse::Parser *p) {
     U32 start = parse::advance(p).span.start;
     Usize before = countof(p->errors);
     ast::Expr *value = nullptr;
-    if (!parse::at(p, lex::semicolon)) value = expression(p);
-    if (countof(p->errors) == before) parse::expect(p, lex::semicolon, "`;`");
+    Bool bare = parse::at(p, lex::semicolon) || parse::at(p, lex::right_brace) || last_token_ends_line(p);
+    if (!bare) value = expression(p);
+    if (countof(p->errors) == before) end_statement(p);
     return settle(p, start, before, new_stmt({.return_stmt = {.value = value}}));
 }
 
@@ -430,7 +463,135 @@ static Frame open_block(parse::Parser *p) {
     return frame;
 }
 
+// ---- the new forms (#1428, S4)
+
+// The offset of the token after the group that the bracket at `open` starts (`(`/`[`), or the end of the file.
+static Usize after_group(const parse::Parser *p, Usize open) {
+    Usize depth = 0;
+    Usize limit = open + countof(p->tokens);
+    for (Usize i = open; i < limit; i++) {
+        lex::TokenKind kind = parse::peek_at(p, i).kind;
+        if (kind == lex::end_of_file) return i;
+        if (kind == lex::left_paren || kind == lex::left_bracket) depth += 1;
+        if ((kind == lex::right_paren || kind == lex::right_bracket) && depth > 0) {
+            depth -= 1;
+            if (depth == 0) return i + 1;
+        }
+    }
+    return limit;
+}
+
+// Whether a `{` comes at depth 0 from the offset `from` before the statement or the line ends.
+static Bool brace_before_line_end(const parse::Parser *p, Usize from) {
+    Usize depth = 0;
+    Usize limit = from + countof(p->tokens);
+    for (Usize i = from; i < limit; i++) {
+        lex::Token token = parse::peek_at(p, i);
+        if (token.kind == lex::end_of_file) return false;
+        if (depth == 0 && token.kind == lex::left_brace) return true;
+        if (depth == 0 && (token.kind == lex::semicolon || token.kind == lex::right_brace)) return false;
+        if (token.kind == lex::left_paren || token.kind == lex::left_bracket) depth += 1;
+        if ((token.kind == lex::right_paren || token.kind == lex::right_bracket) && depth > 0) depth -= 1;
+        if (depth == 0 && lex::ends_statement(token)) return false;
+    }
+    return false;
+}
+
+// Whether a token continues an expression and so can never begin a statement: the token after `if (a)` in `if (a) < b
+// {`.
+static Bool continues_condition(lex::TokenKind kind) {
+    switch (kind) {
+    case lex::dot:
+    case lex::dot_star:
+    case lex::arrow:
+    case lex::plus:
+    case lex::slash:
+    case lex::percent:
+    case lex::less_less:
+    case lex::greater_greater:
+    case lex::less:
+    case lex::greater:
+    case lex::less_equal:
+    case lex::greater_equal:
+    case lex::equal_equal:
+    case lex::bang_equal:
+    case lex::caret:
+    case lex::pipe:
+    case lex::ampersand_ampersand:
+    case lex::pipe_pipe:
+    case lex::question:
+    case lex::left_bracket:
+    case lex::kw_as:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Whether the `if` or `while` at the position is the new form (no parentheses around the condition).
+static Bool new_header(const parse::Parser *p) {
+    lex::Token next = parse::peek_at(p, 1);
+    if (next.kind == lex::kw_constexpr) return false;
+    if (next.kind != lex::left_paren) return brace_before_line_end(p, 1);
+    Usize after = after_group(p, 1);
+    return continues_condition(parse::peek_at(p, after).kind) && brace_before_line_end(p, after);
+}
+
+// Skips to the `{` of the body (or the `}` that ends the block) after a broken condition.
+static void skip_to_brace(parse::Parser *p) {
+    while (!parse::at(p, lex::end_of_file) && !parse::at(p, lex::left_brace) && !parse::at(p, lex::right_brace))
+        parse::advance(p);
+}
+
+// Braces are required around the body of the new `if`, `while` and `for`.
+// Gives false when there is none: the rest of the line is skipped, and the caller gives the construct an empty body.
+static Bool require_brace(parse::Parser *p, Usize before) {
+    if (countof(p->errors) > before) skip_to_brace(p);
+    if (parse::at(p, lex::left_brace)) return true;
+    if (countof(p->errors) == before) {
+        parse::error(p, parse::peek(p).span, "expected `{`: braces are required around the body");
+    }
+    while (!parse::at(p, lex::end_of_file) && !parse::at(p, lex::right_brace)) {
+        if (parse::advance(p).line_break) break;
+    }
+    return false;
+}
+
+// `.name` or `.name(binding)`; the errors are recorded and the pattern is then empty.
+static ast::Pattern read_pattern(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    Usize before = countof(p->errors);
+    parse::expect(p, lex::dot, "`.` before a variant name");
+    Str name = parse::text(p, parse::expect(p, lex::name, "a variant name"));
+    Str binding = "";
+    if (countof(p->errors) == before && parse::accept(p, lex::left_paren)) {
+        binding = parse::text(p, parse::expect(p, lex::name, "a name for the payload"));
+        parse::expect(p, lex::right_paren, "`)`");
+    }
+    ast::Pattern result = ast::pattern(name, binding);
+    result.span = parse::span_from(p, start);
+    return result;
+}
+
+// `if c {` and `while c {`, without parentheses. `if let .some(x) = e {` is the `if` with a pattern.
+static Frame open_bare(parse::Parser *p, FrameKind kind) {
+    Str let_word = "let";
+    Frame frame = {.kind = kind, .start = parse::advance(p).span.start, .braced = true};
+    Usize before = countof(p->errors);
+    if (kind == if_then && parse::at(p, lex::name) && mem::equal(parse::text(p, parse::peek(p)), let_word) &&
+        parse::peek_at(p, 1).kind == lex::dot) {
+        parse::advance(p);
+        frame.is_let = true;
+        frame.pattern = read_pattern(p);
+        parse::expect(p, lex::equal, "`=` after the pattern");
+    }
+    if (countof(p->errors) == before) frame.condition = expression(p);
+    frame.no_body = !require_brace(p, before);
+    return frame;
+}
+
 static Frame open_if(parse::Parser *p) {
+    if (new_header(p)) return open_bare(p, if_then);
     Frame frame = {.kind = if_then, .start = parse::advance(p).span.start};
     frame.is_constexpr = parse::accept(p, lex::kw_constexpr);
     frame.condition = header(p).condition;
@@ -438,9 +599,90 @@ static Frame open_if(parse::Parser *p) {
 }
 
 static Frame open_while(parse::Parser *p) {
+    if (new_header(p)) return open_bare(p, while_body);
     Frame frame = {.kind = while_body, .start = parse::advance(p).span.start};
     frame.condition = header(p).condition;
     return frame;
+}
+
+// Whether the `for` at the position is `for x in xs` or `for (i, x) in xs`.
+static Bool new_for(const parse::Parser *p) {
+    lex::Token next = parse::peek_at(p, 1);
+    if (next.kind == lex::name) return parse::peek_at(p, 2).kind == lex::kw_in;
+    if (next.kind != lex::left_paren) return false;
+    return parse::peek_at(p, after_group(p, 1)).kind == lex::kw_in;
+}
+
+// `for x in xs {` and `for (i, x) in xs {`. The node is made here, and its body is set when the block is read
+// (`frame.init` holds it).
+static Frame open_for_in(parse::Parser *p) {
+    Frame frame = {.kind = for_in_body, .start = parse::advance(p).span.start};
+    Usize before = countof(p->errors);
+    Bool is_tuple = parse::accept(p, lex::left_paren);
+    ast::Identifier names[:] = {};
+    Usize limit = countof(p->tokens);
+    for (Usize i = 0; i < limit && countof(p->errors) == before; i++) {
+        lex::Token token = parse::expect(p, lex::name, "a name");
+        names = mem::realloc(names, countof(names) + 1);
+        names[countof(names) - 1] = (ast::Identifier){.text = parse::text(p, token), .span = token.span};
+        if (!is_tuple || !parse::accept(p, lex::comma)) break;
+    }
+    if (is_tuple) parse::expect(p, lex::right_paren, "`)`");
+    parse::expect(p, lex::kw_in, "`in`");
+    ast::Expr *iterable = nullptr;
+    if (countof(p->errors) == before) iterable = expression(p);
+    frame.no_body = !require_brace(p, before);
+    frame.init = ast::for_in(names, is_tuple, iterable, nullptr);
+    return frame;
+}
+
+// Skips the balanced `{ }` whose `{` is at `open`.
+static void skip_braces(parse::Parser *p, Usize open) {
+    p->position = open;
+    Usize depth = 0;
+    while (!parse::at(p, lex::end_of_file)) {
+        lex::TokenKind kind = parse::advance(p).kind;
+        if (opens(kind)) depth += 1;
+        if (closes(kind) && depth > 0) depth -= 1;
+        if (depth == 0) return;
+    }
+}
+
+// `match v { .a => x ... }`: one arm per line, `.a, .b => x` for several patterns.
+static ast::Stmt *match_statement(parse::Parser *p) {
+    U32 start = parse::advance(p).span.start;
+    Usize before = countof(p->errors);
+    ast::Expr *value = expression(p);
+    Usize open = p->position;
+    if (countof(p->errors) == before) {
+        parse::expect(p, lex::left_brace, "`{`");
+    }
+    ast::MatchArm arms[:] = {};
+    Usize limit = countof(p->tokens);
+    for (Usize i = 0; i < limit && countof(p->errors) == before; i++) {
+        if (parse::at(p, lex::right_brace) || parse::at(p, lex::end_of_file)) break;
+        U32 arm_start = parse::peek(p).span.start;
+        ast::Pattern patterns[:] = {};
+        for (Usize j = 0; j < limit && countof(p->errors) == before; j++) {
+            patterns = mem::realloc(patterns, countof(patterns) + 1);
+            patterns[countof(patterns) - 1] = read_pattern(p);
+            if (!parse::accept(p, lex::comma)) break;
+        }
+        if (countof(p->errors) == before) parse::expect(p, lex::fat_arrow, "`=>`");
+        ast::Expr *result = nullptr;
+        if (countof(p->errors) == before) result = expression(p);
+        if (countof(p->errors) == before && !last_token_ends_line(p) && !parse::at(p, lex::right_brace))
+            parse::error(p, parse::peek(p).span, "expected the end of the line: one arm per line");
+        arms = mem::realloc(arms, countof(arms) + 1);
+        arms[countof(arms) - 1] = ast::match_arm(patterns, result);
+        arms[countof(arms) - 1].span = parse::span_from(p, arm_start);
+    }
+    if (countof(p->errors) == before) parse::expect(p, lex::right_brace, "`}`");
+    if (countof(p->errors) > before) {
+        skip_braces(p, open);
+        return spanned(p, start, empty_stmt());
+    }
+    return spanned(p, start, ast::match_stmt(value, arms));
 }
 
 static Frame open_simple(parse::Parser *p, FrameKind kind) {
@@ -457,6 +699,7 @@ static Frame open_label(parse::Parser *p) {
 
 // `for [constexpr] (init; cond; step)`. A broken header is skipped as a whole.
 static Frame open_for(parse::Parser *p) {
+    if (new_for(p)) return open_for_in(p);
     Frame frame = {.kind = for_body, .start = parse::advance(p).span.start};
     frame.is_constexpr = parse::accept(p, lex::kw_constexpr);
     Usize open = p->position;
@@ -534,6 +777,8 @@ static ast::Stmt *start(parse::Parser *p, Stack *stack) {
         return nullptr;
     case lex::kw_switch:
         return open_switch(p, stack);
+    case lex::kw_match:
+        return match_statement(p);
     case lex::kw_break:
         return jump(p, break_kind());
     case lex::kw_continue:
@@ -620,10 +865,18 @@ static ast::Stmt *close_one(parse::Parser *p, Frame frame, ast::Stmt *done) {
     ast::Stmt *built = nullptr;
     switch (frame.kind) {
     case if_then:
+        if (frame.is_let) {
+            built = ast::if_let(frame.pattern, frame.condition, done, nullptr);
+            break;
+        }
         built = new_stmt(
             {.if_stmt = {.condition = frame.condition, .then_branch = done, .is_constexpr = frame.is_constexpr}});
         break;
     case if_else:
+        if (frame.is_let) {
+            built = ast::if_let(frame.pattern, frame.condition, frame.first, done);
+            break;
+        }
         built = new_stmt({.if_stmt = {.condition = frame.condition,
                                       .then_branch = frame.first,
                                       .else_branch = done,
@@ -640,6 +893,10 @@ static ast::Stmt *close_one(parse::Parser *p, Frame frame, ast::Stmt *done) {
                                        .is_constexpr = frame.is_constexpr,
                                        .range = frame.range,
                                        .index = frame.index}});
+        break;
+    case for_in_body:
+        built = frame.init;
+        if (built->kind == .for_in) built->kind.for_in.body = done;
         break;
     case label_body:
         built = new_stmt({.labeled = {.label = frame.label, .body = done}});
@@ -664,6 +921,9 @@ static ast::Stmt *deliver(parse::Parser *p, Stack *stack, ast::Stmt *done) {
             return nullptr;
         }
         if (frame->kind == if_then && parse::accept(p, lex::kw_else)) {
+            if (frame->braced && !parse::at(p, lex::left_brace) && !parse::at(p, lex::kw_if)) {
+                parse::error(p, parse::peek(p).span, "expected `{` or `if` after `else`");
+            }
             frame->first = done;
             frame->kind = if_else;
             return nullptr;
@@ -704,6 +964,10 @@ static ast::Stmt *step(parse::Parser *p, Stack *stack) {
     Bool at_end = parse::at(p, lex::right_brace) || parse::at(p, lex::end_of_file);
     if (stack->depth > 0) {
         Frame *frame = top(stack);
+        if (frame->no_body) {
+            frame->no_body = false;
+            return empty_stmt();
+        }
         if (frame->kind == block_frame && at_end) {
             Frame closed = *frame;
             stack->depth -= 1;

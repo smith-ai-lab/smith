@@ -1,5 +1,6 @@
 // The merge rules of .gitattributes (issue #595): two branches that each add a concept line to knowledge/index.md
 // merge with no conflict, in a scratch repository that carries smith's own .gitattributes and index.
+// smith-covers: .gitattributes knowledge/index.md
 module gitattributes_test;
 
 import std::test;

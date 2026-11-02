@@ -5,6 +5,13 @@
 // autodiff::gradient and map must refuse, and the refusal of a smith with no Enzyme. The programs are
 // tests/autodiff/<case>. A test makes its project, then sets its own memory as the current allocator: what scratch
 // returns to it (a Run's texts) is given back with that memory, and scratch::clean frees what make holds.
+// smith-covers: smith.c runtime/verbs.c runtime/lang*.c runtime/front_flag.c runtime/sdk_cache.c runtime/platform_*.c
+// smith-covers: runtime/quiet.c shim/hook.cpp shim/clang.cpp shim/names.h shim/tool.h shim/platform*.h include/smith/
+// smith-covers: runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/cache.c runtime/package.c
+// smith-covers: runtime/changed.c runtime/record.c shim/lld.cpp shim/tidy.cpp shim/clang.cpp lib/std/autodiff.smith
+// smith-covers: lib/std/math.smith lib/std/test.smith lib/std/arena.smith lib/std/contract.smith lib/trace.c
+// smith-covers: lib/handlers.c tests/autodiff/ patches/
+// Enzyme runs inside smith's lld. smith.c is declared for the build, test and lint verbs.
 module autodiff_test;
 
 import std::arena;
