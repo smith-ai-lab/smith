@@ -1,0 +1,19 @@
+smith prove: prove the project's contracts
+
+usage: smith prove [-v] [--budget=<s>] [--emit-ir=<file>] [--function=<name>] [--no-cache] [--induction] [--unroll]
+       smith prove <prover arguments>
+
+flags:
+  -v                      show the cost of each proof
+  --budget=<s>            the time one proof may take
+  --emit-ir=<file>        write the IR that is proved
+  --function=<name>       prove this function only
+  --no-cache              do not use proofs from earlier runs
+  --induction, --unroll   how a loop with an invariant is proved
+  --induction-from=<n>    the passes unrolled before induction starts
+
+examples:
+  smith prove
+  smith prove --function=add
+
+with file names it is the prover itself: smith prove [<options>] <file.c>... [-- <compile flags>]

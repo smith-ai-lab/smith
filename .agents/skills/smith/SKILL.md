@@ -16,7 +16,7 @@ smith is a C toolchain written in C: clang, clang-format, clang-tidy, clangd, ll
 
 ## The verbs
 
-`smith --version` prints the version, `smith --help` (`-h`, `help`) lists the verbs, `smith help <verb>` prints one verb's usage; any other top-level flag is an error.
+`smith --version` prints the version, `smith --help` (`-h`, `help`, and bare `smith`) lists the commands, `smith help <verb>` prints one command's page (flags and examples); any other top-level flag is an error.
 
 | Verb | Load |
 | --- | --- |
