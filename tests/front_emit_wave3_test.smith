@@ -135,7 +135,8 @@ export void test_front_emit_wave3_for_in_over_something_unbuilt_reaches_its_stub
              "a loop over a slice", "xs");
 }
 
-// (A lambda and a `fn` type are emitted since #1620: tests/front_emit_lambda_test.smith. A tuple is emitted since #1619.)
+// (A lambda and a `fn` type are emitted since #1620: tests/front_emit_lambda_test.smith.
+// A tuple is emitted since #1619.)
 
 // ---------------------------------------------------------------------------------------------------------------
 // state::convert
