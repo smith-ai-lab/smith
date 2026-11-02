@@ -25,7 +25,7 @@ check() {
   for i in $(issues blocked '.[].number'); do
     gh api "repos/$R/issues/$i/events" --paginate 2>/dev/null --jq \
       '[.[]|select(.event=="labeled" and .label.name=="blocked")]|last|select(.created_at|fromdateiso8601>now-3600)|"x"' | grep -q x &&
-      gh api "repos/$R/issues/$i/comments" --jq '.[-1].body' 2>/dev/null | grep -qi runner && seen "q$i" && echo "#$i blocked by a runner: a question for you"
+      gh api "repos/$R/issues/$i/comments" --jq '.[-1].body' 2>/dev/null | grep -qi runner && ! gh api "repos/$R/issues/$i/comments" --jq ".[-1].body" | grep -q "(lead" && seen "q$i" && echo "#$i blocked by a runner: a question for you"
   done
   for i in $(issues blocked '.[]|select(.pull_request==null)|.number'); do
     w=$( { gh api "repos/$R/issues/$i" --jq .body; gh api "repos/$R/issues/$i/comments" --jq '.[].body'; } 2>/dev/null | grep -oiE 'waits for[^.]*' | grep -oE '#[0-9]+' | tr -d '#' | sort -u)
