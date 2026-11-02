@@ -3329,7 +3329,7 @@ static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count
 
 static SmithTestFound smith_tests_found[smith_tests_max];
 
-constexpr size_t smith_shard_filter_max = 16384;
+constexpr size_t smith_shard_filter_max = 65536;
 constexpr double smith_shard_cost_unknown = 0.4; // CPU seconds assumed for a test the --costs file does not name
 
 typedef struct {
