@@ -18,6 +18,6 @@ binary needs the macOS that built it: the stage0 release made on macOS 27 did no
   (whatever `WERROR` says); the fix is the form 26 has, or `__builtin_available` with a fallback.
 - **Programs smith builds for users are not changed**: they keep the user's SDK and deployment target
   ([sdk-rule](sdk-rule.md)). Only smith's own binary has the floor.
-- **LLVM's objects are built for the macOS that built them** (`scripts/llvm.sh`, the LLVM release asset, #797): the
+- **LLVM's objects are built for the macOS that built them** (`build_llvm_run_macos`, the LLVM release asset, #797): the
   pack smith links is built on GitHub's `macos-26` runner, so its objects match the floor. One built on a newer macOS
   makes the link warn `has version 27.0.0, which is newer than target minimum of 26.0.0` for each object.

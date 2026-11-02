@@ -29,7 +29,9 @@ static SmithLangBodySpan smith_lang_body_spans[smith_lang_body_sections_max];
 // A declaration is complete: the text written since the one before it is its section.
 static void smith_lang_body_note(SmithLang *lang) {
     if (!lang->body_enabled || lang->body_closed) return;
-    if (lang->dump_used > lang->body_mark && lang->body_count < smith_lang_body_sections_max) {
+    if (lang->dump_used > lang->body_mark && lang->body_count >= smith_lang_body_sections_max) {
+        smith_lang_limit(lang, "declarations whose bodies an importer may run", smith_lang_body_sections_max);
+    } else if (lang->dump_used > lang->body_mark) {
         smith_lang_body_spans[lang->body_count++] =
             (SmithLangBodySpan){(uint32_t)lang->body_mark, (uint32_t)lang->dump_used};
     }
