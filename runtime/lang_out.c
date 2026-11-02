@@ -30,13 +30,15 @@ static bool smith_lang_word_char(char c) {
 }
 
 // Writes a token in the layout of the source: a new line where it began one, a space where it had one.
-static void smith_lang_put(char *buffer, size_t capacity, size_t *used, const char *text, size_t length,
+// Returns false, writing nothing, when the text does not fit: the caller sets `lang->broken`, which says so.
+static bool smith_lang_put(char *buffer, size_t capacity, size_t *used, const char *text, size_t length,
                            bool line_start, bool space) {
     size_t separator = *used > 0 && (line_start || space) ? 1 : 0;
-    if (*used + separator + length + 2 > capacity) return;
+    if (*used + separator + length + 2 > capacity) return false;
     if (separator == 1) buffer[(*used)++] = line_start ? '\n' : ' ';
     memcpy(buffer + *used, text, length);
     *used += length;
+    return true;
 }
 
 // ---- Tokens kept for a later time: a generic's, and the call being read
@@ -172,8 +174,9 @@ static void smith_lang_dump_token(SmithLang *lang, const SmithToken *token) {
                                       : nullptr;
     const char *text = sized != nullptr ? sized->standard : token->text;
     size_t length = sized != nullptr ? strlen(sized->standard) : token->length;
-    smith_lang_put(smith_lang_dump, smith_lang_dump_max, &lang->dump_used, text, length, token->line_start,
-                   token->space_before || joined);
+    if (!smith_lang_put(smith_lang_dump, smith_lang_dump_max, &lang->dump_used, text, length, token->line_start,
+                        token->space_before || joined))
+        lang->broken = true;
 }
 
 // runtime/lang_lex.c: the line and the column (from 1) of the source at a byte offset
@@ -193,7 +196,10 @@ static void smith_lang_put_aligned(SmithLang *lang, const SmithToken *token, con
         size_t wanted = smith_lang_column_of(token->location);
         if (wanted > base + gap) gap = wanted - base;
     }
-    if (lang->header_used + newlines + gap + length + 2 > smith_lang_header_max) return;
+    if (lang->header_used + newlines + gap + length + 2 > smith_lang_header_max) {
+        lang->broken = true;
+        return;
+    }
     for (size_t i = 0; i < newlines; i++)
         smith_lang_header_body[lang->header_used++] = '\n';
     for (size_t i = 0; i < gap; i++)
@@ -260,8 +266,9 @@ static void smith_lang_header_token(SmithLang *lang, const SmithToken *token) {
         return;
     }
     bool fresh_line = lang->header_used > 0 && smith_lang_header_body[lang->header_used - 1] == '\n';
-    smith_lang_put(smith_lang_header_body, smith_lang_header_max, &lang->header_used, text, length,
-                   token->line_start && !fresh_line, token->space_before && !fresh_line);
+    if (!smith_lang_put(smith_lang_header_body, smith_lang_header_max, &lang->header_used, text, length,
+                        token->line_start && !fresh_line, token->space_before && !fresh_line))
+        lang->broken = true;
 }
 
 static void smith_lang_flush_kept(SmithLang *lang, const SmithHost *host) {
