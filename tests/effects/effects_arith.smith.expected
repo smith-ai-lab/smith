@@ -1,0 +1,7 @@
+status 1
+effects_arith.smith:47:14: error: smith-effect: `pure_add` is [[std::pure]], but it has the effects fails: pure_add -> signed overflow of + (effects_arith.smith:47)
+effects_arith.smith:42:5: error: smith-effect: static assertion failed: truncate: `effects_arith::truncate` has the effects fails beyond the allowed ones: truncate -> float to integer conversion out of range (effects_arith.smith:33)
+effects_arith.smith:41:5: error: smith-effect: static assertion failed: negate: `effects_arith::negate` has the effects fails beyond the allowed ones: negate -> signed overflow of - (effects_arith.smith:29)
+effects_arith.smith:40:5: error: smith-effect: static assertion failed: shift: `effects_arith::shift` has the effects fails beyond the allowed ones: shift -> bad shift of << (effects_arith.smith:25)
+effects_arith.smith:39:5: error: smith-effect: static assertion failed: divide: `effects_arith::divide` has the effects fails beyond the allowed ones: divide -> division by zero or overflow of / (effects_arith.smith:21)
+effects_arith.smith:38:5: error: smith-effect: static assertion failed: add: `effects_arith::add` has the effects fails beyond the allowed ones: add -> signed overflow of + (effects_arith.smith:17)

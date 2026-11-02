@@ -21,8 +21,8 @@ static I32 first(I32 values[:]) {
 }
 
 // No failure point: pure holds.
-export [[std::pure]] I32 safe(I32 x) {
-    return x + 1;
+export [[std::pure]] U32 safe(U32 x) {
+    return x + 1U;
 }
 
 // The generic asks for no `fails` of the function it is given.
