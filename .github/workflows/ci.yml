@@ -1,7 +1,7 @@
 name: ci
 
 # The full check (#798, knowledge/ci-hosted.md): Linux carries the tests (8 hosted shards, each building smith itself,
-# no artifact travels) and the owner's Mac runs what only macOS can (`build`, `mechanical`, `prove`, the `--macos-only` tests);
+# no artifact travels) and one macOS job (`macos`) builds and runs what only macOS can (fmt, docs, lint, prove, the `--macos-only` tests);
 # the one job `ci` gathers them, so the ruleset and the merge queue name a single required check. The first job that
 # fails cancels the run. A push to main (a commit the queue checked) also publishes the release and saves the cache.
 on:
@@ -151,140 +151,33 @@ jobs:
       actions: read # llvm.yml's pick-mac lists the queued and running jobs
     secrets: inherit
 
-  build:
-    # smith built once for the run (#798): the stage0 release and the LLVM pack come from the cache (or the release),
-    # compiles from the step cache main saved, then the tests are built too. Every job after this one unpacks the
-    # result instead of compiling smith again.
+  macos:
+    # everything macOS does in a run, in one job (#1709): build smith and the tests, then fmt, docs and lint, then the
+    # proofs, then the macOS-only tests (a documents-only change: docs and the tests that read them). It was five jobs
+    # (build, mechanical, prove, test, docs) handing the build over as an artifact; four of them filled four of the five
+    # hosted macOS slots the free plan allows, so a second run's jobs queued behind the first, and a job that waited
+    # past its time limit was cancelled with no test failing (#1691: docs, #1648: prove). One job takes one slot, so
+    # five runs proceed at once, and nothing is packed or downloaded. The stages run one after another: two verbs
+    # cannot share one tree (they collide on .smith/build.ninja), and every stage runs even when an earlier one failed,
+    # so one run names all failures.
     needs: [changes, pack]
-    # macOS only: the Linux shards build smith themselves. A push to main builds nothing here (the release does).
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs') }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
-    timeout-minutes: 15
-    env:
-      GH_TOKEN: ${{ github.token }}
-      SMITH_CORES: ${{ needs.changes.outputs.cores }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: ./.github/actions/setup-smith
-        with:
-          tests: "true"
-      - uses: ./.github/actions/pack-smith
-        with:
-          name: macos-26
-  mechanical:
-    # fmt, docs and lint (the stages of `smith check` that are not tests or proofs); `prove` is its own job
-    needs: [changes, build]
-    # `!cancelled()` and the build's result: without a status function the implicit success() also looks at the skipped
-    # ancestor `pack` and skips this job, which left fmt, lint, prove and the macOS tests unrun from #1067 on (#1139)
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'full' }}
-    runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
-    timeout-minutes: 15
-    env:
-      GH_TOKEN: ${{ github.token }}
-      SMITH_CORES: ${{ needs.changes.outputs.cores }}
-      SMITH_OUTPUT: full
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: ./.github/actions/use-smith
-        with:
-          name: macos-26
-      - name: Mechanical checks
-        shell: bash
-        run: |
-          # every stage runs, and each failure ends in a line `FAIL <stage>`, so one run names all of them; each stage
-          # prints a `took` line in the job summary (#1139)
-          stage() { # name, then the smith arguments
-            local name=$1 start=$SECONDS code=0
-            shift
-            "$SMITH" "$@" >"$RUNNER_TEMP/$name.log" 2>&1 || code=$?
-            echo "$code $((SECONDS - start))" >"$RUNNER_TEMP/$name.status"
-          }
-          stage fmt fmt --dry-run --Werror
-          stage docs docs
-          stage lint lint
-          failed=0
-          for name in fmt docs lint; do
-            read -r code took <"$RUNNER_TEMP/$name.status"
-            echo "took $name ${took}s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
-            if [ "$code" != 0 ]; then
-              tail -n 60 "$RUNNER_TEMP/$name.log"
-              echo "FAIL $name"
-              echo "::error::smith $name failed"
-              failed=1
-            else
-              echo "ok $name"
-            fi
-          done
-          exit $failed
-  prove:
-    # the proofs of the project, in a job of their own: lint and prove each run the build in this checkout
-    # (`.smith/build.ninja`), so two verbs cannot share one tree, and apart they end at about the same time (#1139)
-    needs: [changes, build]
-    # `!cancelled()` and the build's result: without a status function the implicit success() also looks at the skipped
-    # ancestor `pack` and skips this job, which left fmt, lint, prove and the macOS tests unrun from #1067 on (#1139)
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'full' }}
-    runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
-    timeout-minutes: 15
-    env:
-      GH_TOKEN: ${{ github.token }}
-      SMITH_CORES: ${{ needs.changes.outputs.cores }}
-      SMITH_OUTPUT: full
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: ./.github/actions/use-smith
-        with:
-          name: macos-26
-      - name: Proofs
-        shell: bash
-        run: |
-          stage() { # name, then the smith arguments
-            local name=$1 start=$SECONDS code=0
-            shift
-            "$SMITH" "$@" >"$RUNNER_TEMP/$name.log" 2>&1 || code=$?
-            echo "$code $((SECONDS - start))" >"$RUNNER_TEMP/$name.status"
-          }
-          stage prove prove
-          failed=0
-          for name in prove; do
-            read -r code took <"$RUNNER_TEMP/$name.status"
-            echo "took $name ${took}s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
-            if [ "$code" != 0 ]; then
-              tail -n 60 "$RUNNER_TEMP/$name.log"
-              echo "FAIL $name"
-              echo "::error::smith $name failed"
-              failed=1
-            else
-              echo "ok $name"
-            fi
-          done
-          exit $failed
-  test:
-    # the macOS-only tests (`smith test --macos-only`, 3 of them, one part), on the Mac with the build of this run
-    needs: [changes, build]
-    # `!cancelled()` and the build's result: without a status function the implicit success() also looks at the skipped
-    # ancestor `pack` and skips this job, which left fmt, lint, prove and the macOS tests unrun from #1067 on (#1139)
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'full' }}
-    runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    # hosted: build about 3.5 min, fmt/docs/lint 3 to 5, the proofs and the macOS tests a few more; the owner's Mac
+    # does all of it in about 4 (#1709)
+    timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: ${{ needs.changes.outputs.cores }}
       SMITH_OUTPUT: full
       SMITH_TEST_STATS: "1"
+      SCOPE: ${{ needs.changes.outputs.scope }}
+      MACFLAGS: ${{ fromJSON(needs.changes.outputs.matrix).include[0].flags }}
     steps:
       - name: Tools some tests need
-        if: runner.os == 'macOS'
+        if: needs.changes.outputs.scope == 'full'
         # the editor tests do nothing without nvim; some tests bound a command with coreutils' `timeout`. It runs
-        # while the build downloads: the next step waits for it
+        # while smith builds: the macOS test stage waits for it
         shell: bash
         run: |
           # the owner's Mac already has them: three runners share it, so install only what is missing
@@ -295,64 +188,68 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: ./.github/actions/use-smith
+      - uses: ./.github/actions/setup-smith
         with:
-          name: ${{ matrix.os }}
-      - name: Tools some tests need (wait)
-        if: runner.os == 'macOS'
+          tests: "true"
+      - name: Checks
         shell: bash
         run: |
-          while kill -0 "$(cat "$RUNNER_TEMP/brew.pid")" 2>/dev/null; do sleep 1; done
-          tail -n 3 "$RUNNER_TEMP/brew.log"
-          nvim --version | head -n 1
-      - name: Tests, part ${{ matrix.shard }} of ${{ matrix.count }}
-        shell: bash
-        run: |
-          start=$(date +%s)
-          rc=0
-          shard=
-          if [ "${{ matrix.count }}" -gt 1 ]; then shard="--shard ${{ matrix.shard }}/${{ matrix.count }}"; fi
-          # shellcheck disable=SC2086
-          "$SMITH" test $shard ${{ matrix.flags }} --costs "$PWD/.github/shard-costs.tsv" 2>&1 |
-            tee "$RUNNER_TEMP/test.log" || rc=${PIPESTATUS[0]}
-          took=$(( $(date +%s) - start ))
-          # the artifact below holds .smith/log; `smith test` writes no log there, so keep its output (with the
-          # SMITH_TEST_STATS lines) as test.log, which `smith build ci-times` reads (#1139)
-          mkdir -p .smith/log
-          cp "$RUNNER_TEMP/test.log" .smith/log/test.log
-          {
-            echo "### tests ${{ matrix.os }} ${{ matrix.shard }}/${{ matrix.count }}: $took s"
-            grep -E '^[0-9]+ passed' "$RUNNER_TEMP/test.log" || true
-          } >>"$GITHUB_STEP_SUMMARY"
-          # a failure names its test: the line `FAIL <name>` of the runner, as an annotation and in the summary
-          if [ "$rc" -ne 0 ]; then
-            # each failed test's name and the lines under it (where the check failed, its error), kept for the
-            # `Failed tests` step, which prints them last
-            grep -hE -A6 '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" 2>/dev/null | grep -vE '^--$' | head -n 80 >"$RUNNER_TEMP/failed.txt" || true
-            { echo '```'; cat "$RUNNER_TEMP/failed.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
-            grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 20 |
-              while IFS= read -r line; do echo "::error::$line"; done
+          # each stage's output goes to its own log; each prints `took <stage> <n>s (exit <code>)` in the job summary,
+          # and a failed one prints its last 60 lines and `FAIL <stage>` (#1139)
+          stage() { # name, then the command
+            local name=$1 start=$SECONDS code=0
+            shift
+            "$@" >"$RUNNER_TEMP/$name.log" 2>&1 || code=$?
+            echo "$code $((SECONDS - start))" >"$RUNNER_TEMP/$name.status"
+            echo "took $name $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+          }
+          macos_tests() {
+            while kill -0 "$(cat "$RUNNER_TEMP/brew.pid")" 2>/dev/null; do sleep 1; done
+            tail -n 3 "$RUNNER_TEMP/brew.log"
+            # shellcheck disable=SC2086
+            "$SMITH" test $MACFLAGS --costs "$PWD/.github/shard-costs.tsv"
+          }
+          if [ "$SCOPE" = docs ]; then
+            names="docs readme"
+            stage docs "$SMITH" docs
+            stage readme "$SMITH" test --test readme_test,skills_test
+          else
+            names="fmt docs lint prove test"
+            stage fmt "$SMITH" fmt --dry-run --Werror
+            stage docs "$SMITH" docs
+            stage lint "$SMITH" lint
+            stage prove "$SMITH" prove
+            stage test macos_tests
           fi
-          exit $rc
+          # the test stage's output, with the SMITH_TEST_STATS lines, is the log `smith build ci-times` reads (#1139)
+          mkdir -p .smith/log
+          [ -f "$RUNNER_TEMP/test.log" ] && cp "$RUNNER_TEMP/test.log" .smith/log/test.log
+          failed=0
+          for name in $names; do
+            read -r code took <"$RUNNER_TEMP/$name.status"
+            if [ "$code" != 0 ]; then
+              tail -n 60 "$RUNNER_TEMP/$name.log"
+              echo "FAIL $name"
+              echo "::error::smith $name failed"
+              # a failed test is named as an annotation, as on Linux
+              grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/$name.log" 2>/dev/null | sort -u | head -n 20 |
+                while IFS= read -r line; do echo "::error::$line"; done
+              failed=1
+            else
+              echo "ok $name"
+            fi
+          done
+          exit $failed
       - name: Upload the logs
         if: always()
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: test-log-${{ matrix.os }}-${{ matrix.shard }}-of-${{ matrix.count }}
+          name: test-log-macos-26-1-of-1
           path: .smith/log
-          # .smith is a hidden folder, which upload-artifact v4 leaves out unless asked (no log was uploaded since)
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
-      - name: Failed tests
-        if: failure()
-        # the failed tests are the last lines of this shard's log (#1086); the other shards run on (#1139)
-        run: |
-          if [ -s "$RUNNER_TEMP/failed.txt" ]; then
-            echo "FAILED TESTS of this shard:"
-            cat "$RUNNER_TEMP/failed.txt"
-          fi
 
   test-linux:
     # Linux carries the tests (required): 6 hosted shards of `--skip-macos`, each builds smith itself (a hosted
@@ -430,33 +327,10 @@ jobs:
             echo "FAILED TESTS of this shard:"
             cat "$RUNNER_TEMP/failed.txt"
           fi
-  docs:
-    # a change of the README, knowledge/ or the skills only: the docs check and the tests that read them
-    # (a change that also touches code runs the full check, whose parts include both)
-    needs: [changes, build]
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'docs' }}
-    runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
-    timeout-minutes: 12
-    env:
-      GH_TOKEN: ${{ github.token }}
-      SMITH_CORES: ${{ needs.changes.outputs.cores }}
-      SMITH_OUTPUT: full
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: ./.github/actions/use-smith
-        with:
-          name: macos-26
-      - name: Docs and the tests that read them
-        shell: bash
-        run: |
-          "$SMITH" docs
-          "$SMITH" test --test readme_test,skills_test
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
-    needs: [changes, pack, build, mechanical, prove, test, test-linux, docs]
+    needs: [changes, pack, macos, test-linux]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -465,10 +339,7 @@ jobs:
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
           SCOPE: ${{ needs.changes.outputs.scope }}
-          MECHANICAL: ${{ needs.mechanical.result }}
-          PROVE: ${{ needs.prove.result }}
-          TEST: ${{ needs.test.result }}
-          DOCS: ${{ needs.docs.result }}
+          MACOS: ${{ needs.macos.result }}
           TEST_LINUX: ${{ needs.test-linux.result }}
         run: |
           echo "scope: $SCOPE; jobs: $RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -479,12 +350,12 @@ jobs:
             ;;
           esac
           # A skipped job passes only where `changes` said the area was not touched (#1139). The scope says which jobs
-          # the run owes: `full` owes mechanical, prove, test and test-linux, `docs` owes docs, `release` (a push to main,
+          # the run owes: `full` owes macos and test-linux, `docs` owes macos, `release` (a push to main,
           # whose commit the queue already tested) owes no tests, `none` owes nothing. A job that was owed and skipped (a skipped `pack` skipped the three
           # macOS jobs for hours) fails the check.
           case "$SCOPE" in
-          full) owed="MECHANICAL PROVE TEST TEST_LINUX" ;;
-          docs) owed="DOCS" ;;
+          full) owed="MACOS TEST_LINUX" ;;
+          docs) owed="MACOS" ;;
           release) owed="" ;;
           *) owed="" ;;
           esac
