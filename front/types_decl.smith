@@ -55,6 +55,7 @@ module front::types_decl;
 
 import front::ast;
 import front::types;
+import front::types_attr;
 import front::types_convert;
 import front::types_expr;
 import front::types_fn;
@@ -843,6 +844,7 @@ export types::Checked check_module(const ast::Module *m, types::Target target) {
         check_initializer(&r, m->decls[i]);
     }
     drain(&r);
+    types_attr::check_module(&r, m);
     uninstall();
     return r;
 }

@@ -268,7 +268,12 @@ static ast::TypeExpr *build_type(const Table *t, TypeList done, U32 index) {
     if (c.kind == kind_void) return ast::named("Void");
     if (c.kind == kind_bool) return ast::named("Bool");
     if (c.kind == kind_integer) return ast::named(integer_name(c.a, c.b == 1));
-    if (c.kind == kind_floating) return ast::named(c.a == 32 ? "F32" : "F64");
+    if (c.kind == kind_floating) {
+        Str spelled = "F64";
+        if (c.a == 16) spelled = "F16";
+        if (c.a == 32) spelled = "F32";
+        return ast::named(spelled);
+    }
     if (c.kind == kind_typedef) return ast::named(c.name);
     if (c.kind == kind_struct) return ast::named(t->structs[c.a].name);
     if (c.kind == kind_string) return ast::named("Str");
