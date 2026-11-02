@@ -49,6 +49,7 @@ module front::parse_stmt;
 import front::ast;
 import front::lex;
 import front::parse;
+import front::parse_decl;
 import front::parse_type;
 import std::mem;
 
@@ -364,6 +365,23 @@ static ast::Stmt *declaration_statement(parse::Parser *p) {
         parse::error(p, parse::peek(p).span, "expected a declaration");
     }
     return settle(p, start, before, new_stmt({.declaration = {.decl = decl}}));
+}
+
+// Whether the statement is a binding in smith's own syntax: `a := v` in any source, and `a: T = v` where the tokens
+// are the new ones (there `name:` is no label), with `mut` and `const` before either.
+static Bool new_binding(const parse::Parser *p) {
+    if (!parse_decl::starts_binding(p)) return false;
+    lex::TokenKind kind = parse::peek(p).kind;
+    if (kind == lex::kw_mut || kind == lex::kw_const) return true;
+    return p->new_syntax || parse::peek_at(p, 1).kind == lex::colon_equal;
+}
+
+// `(q, r) := f()`: the declaration parser reads it, whole.
+static ast::Stmt *destructure_statement(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    Usize before = countof(p->errors);
+    ast::Stmt *built = parse_decl::destructure(p);
+    return settle(p, start, before, built);
 }
 
 static ast::Stmt *expression_statement(parse::Parser *p) {
@@ -795,6 +813,8 @@ static ast::Stmt *start(parse::Parser *p, Stack *stack) {
     default:
         break;
     }
+    if (parse_decl::at_destructure(p)) return destructure_statement(p);
+    if (new_binding(p)) return declaration_statement(p);
     if (parse::at(p, lex::name) && parse::peek_at(p, 1).kind == lex::colon) {
         push(stack, open_label(p));
         return nullptr;
