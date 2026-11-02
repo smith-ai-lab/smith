@@ -618,6 +618,23 @@ static void literal_integer(types::Checked *c, Frame f) {
     finish(c, e, default_integer(c, value, suffix), f.expected);
 }
 
+// Whether a float literal is in the range of the 16-bit float `t` (`F16` up to 65504, `BF16` up to about 3.39e38);
+// reports "70000 does not fit F16 ..." when it is not. `F32` and `F64` take every literal.
+static Bool float_fits(types::Checked *c, ast::Span span, F64 value, types::TypeRef t) {
+    if (t->bits != 16) {
+        return true;
+    }
+    Bool brain = t->name[0] == 'B';
+    F64 top = brain ? 3.3895313892515355e38 : 65504.0;
+    if (value <= top) {
+        return true;
+    }
+    Str range = brain ? "up to 3.3895313892515355e38" : "up to 65504";
+    types::failf(c, span, "the literal does not fit ", types::show(t), " (", range, "); write a value ", range,
+                 ", or give it a wider type");
+    return false;
+}
+
 static void literal_float(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .floating)) {
@@ -626,6 +643,10 @@ static void literal_float(types::Checked *c, Frame f) {
     Str suffix = e->kind.floating.suffix;
     types::TypeRef expected = f.expected;
     if (countof(suffix) == 0 && expected != nullptr && expected->kind == .floating) {
+        if (!float_fits(c, e->span, e->kind.floating.value, expected)) {
+            poison(c, e);
+            return;
+        }
         types::set_type(c, e, expected);
         return;
     }

@@ -208,9 +208,7 @@ static Verdict to_integer(const Ctx *c) {
 }
 
 // Whether a float of `bits` bits holds the constant exactly: its significant bits fit the mantissa.
-static Bool exact_in(U32 bits, Literal lit) {
-    U32 digits = 24;
-    if (bits >= 64) digits = 53;
+static Bool exact_in(U32 digits, Literal lit) {
     U64 m = lit.magnitude;
     if (m == 0) return true;
     while ((m & 1) == 0) {
@@ -226,21 +224,28 @@ static Bool exact_in(U32 bits, Literal lit) {
 
 // Whether every value of the integer type `from` is exact in a float of `bits` bits (its significant bits fit the
 // mantissa).
-static Bool always_exact(types::TypeRef from, U32 bits) {
-    U32 digits = 24;
-    if (bits >= 64) digits = 53;
+static Bool always_exact(types::TypeRef from, U32 digits) {
     U32 used = from->bits;
     if (from->is_signed) used -= 1;
     return used <= digits;
 }
 
+// The significant bits of a float type: 11 for `F16`, 8 for `BF16`, 24 for `F32`, 53 for `F64`.
+static U32 mantissa(types::TypeRef t) {
+    if (t->bits >= 64) return 53;
+    if (t->bits == 32) return 24;
+    return t->name[0] == 'B' ? 8 : 11;
+}
+
 static Verdict to_floating(const Ctx *c) {
     types::Kind kind = c->from->kind;
-    if (kind == .floating && c->to->bits >= c->from->bits) return accept(widening);
+    // `F16` and `BF16` have 16 bits each but neither holds the other's values: converting one to the other is a cast.
+    if (kind == .floating && c->to->bits > c->from->bits) return accept(widening);
+    if (kind == .floating && c->to->bits == c->from->bits && c->to == c->from) return accept(widening);
     if (kind == .floating) return needs_cast(c, "narrowing may lose precision");
-    if (kind == .integer && always_exact(c->from, c->to->bits)) return accept(widening);
+    if (kind == .integer && always_exact(c->from, mantissa(c->to))) return accept(widening);
     if (kind == .integer && c->lit.is_constant) {
-        if (exact_in(c->to->bits, c->lit)) return accept(constant_fits);
+        if (exact_in(mantissa(c->to), c->lit)) return accept(constant_fits);
         Str number = literal_text(c->lit);
         Str reason = msg(format::push(number, " is not exactly an ", types::show(c->to)));
         return refuse(c, reason, msg(format::push("write a cast: (", types::show(c->to), ")", number)));
