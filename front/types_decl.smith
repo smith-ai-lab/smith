@@ -105,6 +105,7 @@ struct State {
     Str function;
     types::TypeRef result; // what `return` is checked against
     Bool new_body;         // the function has a parameter or a local in smith's own syntax (so far)
+    const ast::Stmt *tail; // the body's last statement: its value is the function's result, not unused
 };
 
 static State state;
@@ -484,6 +485,9 @@ static void expression_statement(types::Checked *r, const ast::Stmt *s) {
     if (!state.new_body || !(value->kind == .call) || type == nullptr) {
         return;
     }
+    if (s == state.tail && state.result != r->table.void_type) {
+        return;
+    }
     if (type == r->table.void_type || type == r->table.invalid || type == r->table.automatic) {
         return;
     }
@@ -525,7 +529,12 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
 // Walks `root` with the function's result type `result`.
 static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result) {
     types::TypeRef outer = state.result;
+    const ast::Stmt *outer_tail = state.tail;
     state.result = result;
+    state.tail = nullptr;
+    if (root != nullptr && root->kind == .block && countof(root->kind.block.items) > 0) {
+        state.tail = root->kind.block.items[countof(root->kind.block.items) - 1];
+    }
     state.top = 0;
     push(root, nullptr, enter);
     while (state.top > 0) {
@@ -542,6 +551,7 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
         }
     }
     state.result = outer;
+    state.tail = outer_tail;
 }
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -379,3 +379,12 @@ export void test_front_types_decl_an_unused_result_is_refused() {
     clean("fn f(x: i32) {\n}\nfn g(x: i32) { f(x)\n }");
     reading_new = false;
 }
+
+// The last line of a function is its value (#1428), so a call there is used; one before it is not.
+export void test_front_types_decl_a_call_on_the_last_line_is_the_result() {
+    reading_new = true;
+    clean("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) -> i32 { f(x)\n }");
+    fails("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) -> i32 { f(x)\n f(x)\n }", "is not used", "write `_ := ...`");
+    fails("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) { f(x)\n }", "is not used", "write `_ := ...`");
+    reading_new = false;
+}
