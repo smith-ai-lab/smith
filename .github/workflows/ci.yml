@@ -99,6 +99,20 @@ jobs:
           echo "scope=$scope" >>"$GITHUB_OUTPUT"
           echo "scope: $scope, tests: $mode" >>"$GITHUB_STEP_SUMMARY"
 
+      - name: Does the change undo a commit already on main
+        # a stale working tree squashed onto a moved main deletes merged work with every test green (#1455, #1473):
+        # scripts/revert_check.c fails a change that removes the lines of a recent commit; `Reverts #N` in the body
+        # (or the queue entry's commit message) says a revert is meant
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          cc -std=gnu2x -O1 scripts/revert_check.c -o "$RUNNER_TEMP/revert_check"
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then printf '%s\n' "$PR_BODY" >"$RUNNER_TEMP/body"
+          else git log -1 --format=%B HEAD >"$RUNNER_TEMP/body"; fi
+          "$RUNNER_TEMP/revert_check" "$(git merge-base "$BASE" HEAD)" HEAD "$RUNNER_TEMP/body"
+
       - name: Test matrix
         id: linux
         # Linux carries the tests: `--skip-macos` in parts, each building smith itself (no artifact egress). The Mac

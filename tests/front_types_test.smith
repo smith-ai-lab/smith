@@ -296,3 +296,209 @@ export void test_front_types_check_needs_a_target() {
     types::Checked r = types::check(&m, (types::Options){});
     expect(r.error_count, 1);
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Types and generics in smith's own syntax (#1512, C5 of #1428)
+
+static void mark_new(ast::Decl *d) {
+    if (d->kind == .variable) d->kind.variable.is_new = true;
+}
+
+static types::TypeRef own(types::Checked *r, ast::TypeExpr *written) {
+    r->new_syntax = true;
+    types::TypeRef t = types::resolve(r, written);
+    r->new_syntax = false;
+    return t;
+}
+
+static ast::TypeExpr *slice_type(ast::TypeExpr *element) {
+    return ast::make_type({.slice = {.element = element}});
+}
+
+static ast::TypeExpr *fixed(ast::TypeExpr *element, U64 count) {
+    return ast::make_type({.array = {.element = element, .count = ast::integer(count)}});
+}
+
+static ast::TypeExpr *block(ast::TypeExpr *element, U64 first, U64 second) {
+    ast::ExprRef dims[2] = {first == 0 ? nullptr : ast::integer(first), second == 0 ? nullptr : ast::integer(second)};
+    return ast::block_of(element, dims);
+}
+
+export void test_front_types_lowercase_builtins_are_the_same_types() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::Module m = empty_module();
+    types::Checked r = types::check(&m, options());
+    test::check_condition(own(&r, ast::named("i32")) == types::builtin(&r.table, "I32"));
+    test::check_condition(own(&r, ast::named("usize")) == types::builtin(&r.table, "Usize"));
+    test::check_condition(own(&r, ast::named("f64")) == types::builtin(&r.table, "F64"));
+    test::check_condition(own(&r, ast::named("str")) == r.table.text);
+    test::check_condition(own(&r, ast::named("void")) == r.table.void_type);
+    test::check_condition(own(&r, ast::named("bool")) == r.table.bool_type);
+    test::check_condition(own(&r, ast::named("char")) == types::builtin(&r.table, "Char"));
+    test::check_condition(own(&r, ast::named("type")) == types::builtin(&r.table, "type"));
+    expect(r.error_count, 0);
+    // today's spelling of `char` and `bool` stays an error with the fix
+    test::check_condition(types::resolve(&r, ast::named("bool")) == r.table.invalid);
+    test::check_condition(says(r.errors[0].message, "`bool` is a C type: write `Bool`"));
+    // a lowercase user type is not a type
+    test::check_condition(own(&r, ast::named("point")) == r.table.invalid);
+    expect(r.error_count, 2);
+}
+
+export void test_front_types_c_type_names_are_errors_naming_the_sized_type() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::Module m = empty_module();
+    types::Checked r = types::check(&m, options());
+    test::check_condition(own(&r, ast::named("long")) == r.table.invalid);
+    test::check_condition(says(r.errors[0].message, "`long` is a C type: write `i64`"));
+    test::check_condition(own(&r, ast::named("double")) == r.table.invalid);
+    test::check_condition(says(r.errors[1].message, "`double` is a C type: write `f64`"));
+    test::check_condition(own(&r, ast::named("short")) == r.table.invalid);
+    test::check_condition(says(r.errors[2].message, "`short` is a C type: write `i16`"));
+    // `int` is a C type in today's spelling and a concept in smith's own
+    test::check_condition(types::resolve(&r, ast::named("int")) == r.table.invalid);
+    test::check_condition(says(r.errors[3].message, "`int` is a C type: write `i32`"));
+    types::TypeRef concept = own(&r, ast::named("int"));
+    test::check_condition(concept->kind == .concept_type);
+    expect(r.error_count, 4);
+}
+
+export void test_front_types_concepts_stand_in_a_parameter_and_not_in_a_field_or_a_pub_function() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::Param params[1] = {ast::param("a", ast::named("num"))};
+    params[0].is_new = true;
+    ast::FieldDecl fields[1] = {ast::field("x", ast::named("num"))};
+    ast::Decl *shown = ast::function("larger", params, ast::named("i32"), nullptr);
+    ast::Decl *published = ast::function("bigger", params, ast::named("i32"), nullptr);
+    published->exported = true;
+    ast::DeclRef decls[3] = {shown, published, ast::record_decl("Box", fields)};
+    ast::Module m = ast::new_module("sample", decls);
+    types::Checked r = types::check(&m, options());
+    expect(r.error_count, 2);
+    test::check_condition(says(r.errors[0].message,
+                               "`a` has the concept `num` as its type, and a `pub` function is called from C and "
+                               "other modules: write a concrete type such as `i32`, or drop `pub`"));
+    test::check_condition(
+        says(r.errors[1].message,
+             "the field `x` has the concept `num` as its type; a struct field needs a concrete type such as `i32`"));
+    const types::Symbol *larger = types::lookup(&r.scopes, "larger");
+    test::check_condition(larger != nullptr);
+    types::TypeRef first = larger->type->slots[0].type;
+    test::check_condition(first->kind == .concept_type);
+    test::check_condition(says(types::show(first), "num"));
+}
+
+export void test_front_types_arrays_and_blocks_are_one_type_however_they_are_written() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::Module m = empty_module();
+    types::Checked r = types::check(&m, options());
+    types::TypeRef byte = types::builtin(&r.table, "U8");
+    types::TypeRef nested = own(&r, fixed(fixed(ast::named("u8"), 3), 5));
+    test::check_condition(own(&r, block(ast::named("u8"), 5, 3)) == nested);
+    test::check_condition(nested == types::array_of(&r.table, types::array_of(&r.table, byte, 3, false), 5, false));
+    types::TypeRef rows = own(&r, block(ast::named("u8"), 0, 3));
+    test::check_condition(rows == types::slice_of(&r.table, types::array_of(&r.table, byte, 3, false), false));
+    ast::ExprRef two[2] = {nullptr, nullptr};
+    ast::ExprRef three[3] = {nullptr, nullptr, nullptr};
+    types::TypeRef grid = own(&r, ast::block_of(ast::named("u8"), two));
+    test::check_condition(grid->kind == .block && grid->count == 2 && grid->element == byte);
+    test::check_condition(says(types::show(grid), "U8[,]"));
+    types::TypeRef cube = own(&r, ast::block_of(ast::named("u8"), three));
+    test::check_condition(cube != grid && cube->count == 3);
+    // `[][]u8` is jagged: a slice of slices, not a block
+    types::TypeRef jagged = own(&r, slice_type(slice_type(ast::named("u8"))));
+    test::check_condition(jagged != grid && jagged->kind == .slice && jagged->element->kind == .slice);
+    expect(r.error_count, 0);
+}
+
+export void test_front_types_an_alias_is_plain_substitution() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    // Line := []u8
+    ast::ExprKind value_kind = {.type_value = {.type = slice_type(ast::named("u8"))}};
+    ast::Expr *line_value = ast::expr(value_kind);
+    ast::Decl *line = ast::variable("Line", ast::make_type(.auto_type), line_value);
+    mark_new(line);
+    ast::DeclRef decls[1] = {line};
+    ast::Module m = ast::new_module("sample", decls[0:1]);
+    types::Checked r = types::check(&m, options());
+    expect(r.error_count, 0);
+    const types::Symbol *symbol = types::lookup(&r.scopes, "Line");
+    test::check_condition(symbol != nullptr);
+    types::SymbolKind named_kind = symbol->kind;
+    test::check_condition(named_kind == .type_name);
+    types::TypeRef lines = own(&r, slice_type(ast::named("Line")));
+    test::check_condition(lines == own(&r, slice_type(slice_type(ast::named("u8")))));
+    expect(r.error_count, 0);
+}
+
+export void test_front_types_a_type_function_and_a_value_parameter_have_signatures() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    // fn Pair(T: type) -> type;   fn table(const n: usize) -> i32;
+    ast::Param type_param[1] = {ast::param("T", ast::named("type"))};
+    type_param[0].is_new = true;
+    ast::Param value_param[1] = {ast::param("n", ast::named("usize"))};
+    value_param[0].is_new = true;
+    value_param[0].is_const = true;
+    ast::DeclRef decls[2] = {ast::function("Pair", type_param, ast::named("type"), nullptr),
+                             ast::function("table", value_param, ast::named("i32"), nullptr)};
+    ast::Module m = ast::new_module("sample", decls);
+    types::Checked r = types::check(&m, options());
+    expect(r.error_count, 0);
+    const types::Symbol *pair = types::lookup(&r.scopes, "Pair");
+    test::check_condition(pair != nullptr && pair->type->slots[0].type == types::builtin(&r.table, "type"));
+    const types::Symbol *table = types::lookup(&r.scopes, "table");
+    test::check_condition(table != nullptr && table->type->slots[0].type == types::builtin(&r.table, "Usize"));
+    // today's `Type T` still needs `constexpr`
+    ast::Param old[1] = {ast::param("T", ast::named("Type"))};
+    ast::DeclRef old_decls[1] = {ast::function("Old", old, ast::named("Type"), nullptr)};
+    ast::Module n = ast::new_module("sample", old_decls[0:1]);
+    types::Checked q = types::check(&n, options());
+    expect(q.error_count, 1);
+}
+
+export void test_front_types_a_module_variable_takes_its_literals_type() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::TypeExpr *infer = ast::make_type(.auto_type);
+    ast::UnaryOp minus = .negate;
+    ast::ExprKind negative_kind = {.unary = {.op = minus, .operand = ast::integer(1)}};
+    ast::ExprKind real_kind = {.floating = {.value = 2.5}};
+    ast::Expr *negative = ast::expr(negative_kind);
+    ast::Expr *real = ast::expr(real_kind);
+    ast::Decl *a = ast::variable("a", infer, ast::integer(3));
+    ast::Decl *b = ast::variable("b", infer, real);
+    ast::Decl *c = ast::variable("c", infer, negative);
+    ast::Decl *d = ast::variable("d", infer, ast::integer(3));
+    mark_new(a);
+    mark_new(b);
+    mark_new(c);
+    ast::DeclRef decls[4] = {a, b, c, d};
+    ast::Module m = ast::new_module("sample", decls[0:4]);
+    types::Checked r = types::check(&m, options());
+    expect(r.error_count, 0);
+    test::check_condition(types::lookup(&r.scopes, "a")->type == types::builtin(&r.table, "I32"));
+    test::check_condition(types::lookup(&r.scopes, "b")->type == types::builtin(&r.table, "F64"));
+    test::check_condition(types::lookup(&r.scopes, "c")->type == types::builtin(&r.table, "I32"));
+    // today's `Auto d = 3;` is not changed
+    test::check_condition(types::lookup(&r.scopes, "d")->type == r.table.automatic);
+}

@@ -1,0 +1,52 @@
+(module m
+  (function f
+    (result (named Void))
+    (block
+      (if
+        (name a)
+        (block
+          (expression (name x))))
+      (if
+        (name a)
+        (block
+          (expression (name x)))
+        (if
+          (name b)
+          (block
+            (expression (name y)))
+          (block
+            (expression (name z)))))
+      (while
+        (name a)
+        (block
+          (expression (name x))
+          (break)
+          (continue)))
+      (for_in x
+        (name xs)
+        (block
+          (expression (name f))))
+      (for_in tuple i x
+        (name es)
+        (block
+          (expression (name f))))
+      (match (name s) (arm (pattern a) (name v)) (arm (pattern b x) (name w)) (arm (pattern c) (pattern d) (name u)))
+      (if_let
+        (pattern some x)
+        (name e)
+        (block
+          (expression (name x)))
+        (block
+          (expression (name y))))
+      (if_let
+        (pattern none)
+        (name e)
+        (block
+          (expression (name x))))
+      (defer
+        (expression (name f)))
+      (if
+        (name (a) < b)
+        (block
+          (expression (name x))))
+      (return))))

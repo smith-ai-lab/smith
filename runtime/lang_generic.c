@@ -890,7 +890,10 @@ static void smith_lang_generic_note(SmithLang *lang, SmithLangGeneric *generic, 
         smith_lang_note_use(lang, via, name, length, tag);
         return;
     }
-    if (lang->priv_notes_count >= smith_lang_priv_notes_max) return;
+    if (lang->priv_notes_count >= smith_lang_priv_notes_max) {
+        smith_lang_limit(lang, "names a private declaration writes through an import", smith_lang_priv_notes_max);
+        return;
+    }
     if (generic->note_count == 0) generic->note_first = (uint32_t)lang->priv_notes_count;
     SmithLangPrivNote *note = &lang->priv_notes[lang->priv_notes_count++];
     note->via = via;

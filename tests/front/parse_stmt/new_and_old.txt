@@ -1,0 +1,29 @@
+(module m
+  (function f
+    (result (named Void))
+    (block
+      (if
+        (name a)
+        (block
+          (expression (name x))))
+      (if
+        (name a)
+        (expression (name y)))
+      (while
+        (name a)
+        (block
+          (expression (name x))))
+      (for
+        (declaration
+          (variable i (named I32) (name 0)))
+        (name i)
+        (name i)
+        (expression (name z)))
+      (if
+        (name a)
+        (block
+          (if
+            (name b)
+            (expression (name c))
+            (expression (name d)))))
+      (return (name 1)))))

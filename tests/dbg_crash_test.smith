@@ -5,6 +5,12 @@
 // may not debug, has nothing to test, and the tests do nothing. The C program is tests/build_fixtures/dbg_crash/prog.c.
 // A test makes its project, then sets its own memory as the current allocator: what scratch returns to it (a Run's
 // texts, a file it reads) is given back with that memory, and scratch::clean frees what make holds.
+// smith.c dispatches `smith dbg --crash` and `--at`.
+// smith-covers: smith.c runtime/verbs.c runtime/quiet.c runtime/base.h runtime/platform_*.c runtime/slots.c
+// smith-covers: runtime/lang*.c shim/hook.cpp runtime/build_runtime.c runtime/executor*.c runtime/cache.c
+// smith-covers: runtime/sdk_cache.c shim/lldb*.cpp shim/lldb/ runtime/explain.c runtime/symbolize.c
+// smith-covers: shim/symbolize.cpp tests/build_fixtures/dbg_crash/ lib/std/test.smith lib/std/arena.smith
+// smith-covers: lib/std/mem.smith lib/std/format.smith lib/std/files.smith include/smith/
 module dbg_crash_test;
 
 import std::format;

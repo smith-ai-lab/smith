@@ -1,7 +1,7 @@
 module foo;
 
 export I32 f(I32 x) {
-    return x * 2;
+    return x | 16;
 }
 
 export typedef struct { I32 a; I32 b; } Pair;

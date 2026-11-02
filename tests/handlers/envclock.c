@@ -27,6 +27,19 @@ static char *fake_get(SmithEnvHandler *self, const char *name) {
     return strcmp(name, "HOME") == 0 ? "/home/ada" : nullptr;
 }
 
+static int fake_set(SmithEnvHandler *self, const char *name, const char *value) {
+    (void)name;
+    (void)value;
+    ((FakeEnv *)self)->asked += 100;
+    return 0;
+}
+
+static int fake_remove(SmithEnvHandler *self, const char *name) {
+    (void)name;
+    ((FakeEnv *)self)->asked += 1000;
+    return 0;
+}
+
 typedef struct {
     SmithClockHandler clock;
     int64_t now;
@@ -57,20 +70,34 @@ static void fake_fill(SmithEntropyHandler *self, unsigned char *buffer, size_t s
         buffer[i] = fake->next++;
 }
 
+static int fake_pid(SmithProcessHandler *self) {
+    (void)self;
+    return 4242;
+}
+
 int main(void) {
     check("no env handler: getenv is libc's", getenv("PATH") != nullptr && smith_handlers_env() == nullptr);
-    FakeEnv env = {.env = {fake_get}};
+    FakeEnv env = {.env = {fake_get, fake_set, fake_remove}};
     SmithEnvHandler *before_env = smith_handlers_set_env(&env.env);
     check("the setter returns the previous handler", before_env == nullptr && smith_handlers_env() == &env.env);
     char *home = getenv("HOME");
     check("getenv reaches the handler", home != nullptr && strcmp(home, "/home/ada") == 0 && env.asked == 1);
     check("a name the handler does not know is null", getenv("PATH") == nullptr && env.asked == 2);
+    check("set and remove are entries of the handler",
+          env.env.set(&env.env, "A", "b") == 0 && env.env.remove(&env.env, "A") == 0 && env.asked == 1102);
+    env.asked -= 1100;
     smith_handlers_set_env(before_env);
     check("the handler is gone", getenv("PATH") != nullptr && env.asked == 2);
 
+    SmithProcessHandler process = {.id = fake_pid};
+    SmithProcessHandler *before_process = smith_handlers_set_process(&process);
+    check("the process handler has an id member and leaves the others null",
+          process.id(&process) == 4242 && process.parent_id == nullptr && process.set_open_files_max == nullptr);
+    smith_handlers_set_process(before_process);
+
     struct timespec real = {};
     check("no clock handler: clock_gettime is libc's", clock_gettime(CLOCK_MONOTONIC, &real) == 0 && real.tv_sec >= 0);
-    FakeClock fake = {.clock = {fake_now, fake_sleep}, .now = 5'000'000'123};
+    FakeClock fake = {.clock = {fake_now, fake_sleep, nullptr}, .now = 5'000'000'123};
     SmithClockHandler *before_clock = smith_handlers_set_clock(&fake.clock);
     check("the clock setter returns the previous handler", before_clock == nullptr);
     struct timespec time = {};

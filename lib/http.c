@@ -173,6 +173,8 @@ static int smith_http_files_code(SmithFilesError error) {
         return EROFS;
     case SmithFilesError_TooManyOpen:
         return EMFILE;
+    case SmithFilesError_LineTooLong:
+        return EMSGSIZE;
     case SmithFilesError_Other:
         return EIO;
     }

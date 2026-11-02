@@ -1,0 +1,31 @@
+{ }
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (statement_expr
+          (block))))))
+
+f({ })
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (call
+          (name f)
+          (statement_expr
+            (block)))))))
+
+{ 1 } + 2
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (binary add
+          (statement_expr
+            (block))
+          (integer 2))))))
+

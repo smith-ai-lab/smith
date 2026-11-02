@@ -1,0 +1,53 @@
+*
+(module m
+  (variable t (pointer)))
+error 1-1: expected a type, found the end of the file
+
+?
+(module m
+  (variable t (option)))
+error 1-1: expected a type, found the end of the file
+
+[5
+(module m
+  (variable t (array (integer 5))))
+error 2-2: expected `]` to end the array size, found the end of the file
+error 2-2: expected a type, found the end of the file
+
+[5]
+(module m
+  (variable t (array (integer 5))))
+error 3-3: expected a type, found the end of the file
+
+[,3
+(module m
+  (variable t (block_type (absent) (integer 3))))
+error 3-3: expected `]` to end the array size, found the end of the file
+error 3-3: expected a type, found the end of the file
+
+(i32
+(module m
+  (variable t (tuple (named i32))))
+error 4-4: expected `)` to end the tuple type, found the end of the file
+
+(i32)
+(module m
+  (variable t (tuple (named i32))))
+error 0-5: a tuple of one type is written with a comma, `(T,)`; a type needs no parentheses
+
+fn i32
+(module m
+  (variable t (function_type (named i32))))
+error 3-6: expected `(` after `fn`, found `i32`
+error 6-6: expected `)` to end the parameters of the function type, found the end of the file
+
+fn(i32
+(module m
+  (variable t (function_type (named i32))))
+error 6-6: expected `)` to end the parameters of the function type, found the end of the file
+
+fn(i32) ->
+(module m
+  (variable t (function_type (named i32))))
+error 10-10: expected a type, found the end of the file
+

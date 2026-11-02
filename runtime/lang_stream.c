@@ -1400,11 +1400,16 @@ bool smith_lang_feed(SmithLang *lang, const SmithHost *host, const SmithToken *t
             smith_lang_generic_advance(lang, host, &next);
         }
     }
+    if (lang->limit[0] != 0 && !lang->limit_reported) { // a table of the imports or the private declarations filled
+        lang->limit_reported = true;
+        smith_lang_error(lang, host, token->location, "%s; split the module or its imports", lang->limit);
+    }
     if (lang->broken && !lang->broken_reported) { // a table filled: say so, once, since the rest is passed through
         lang->broken_reported = true;
         smith_lang_error(lang, host, token->location,
-                         "this file is larger than the lowering's tables (names, text, a declaration's head or the "
-                         "nesting of braces); the rest of it is not lowered. Split the module");
+                         "this file is larger than the lowering's tables (names, text, the header text of 1 MiB, the "
+                         "private text of 512 KiB, the dump of 4 MiB, a declaration's head or the nesting of "
+                         "braces); the rest of it is not lowered. Split the module");
     }
     bool replaced = lang->changed || lang->out_count != 1 || lang->batch_in != 1;
     if (!replaced) lang->pending_kept_set = false;

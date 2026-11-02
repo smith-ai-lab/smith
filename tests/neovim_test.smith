@@ -4,6 +4,12 @@
 // `runtime plugin/smith.lua`, in a scratch home (XDG_*, the fixture tests/build_fixtures/neovim copied into the test's
 // scratch folder) so that the user's configuration and data are never read or written. The plugin gets the parser from
 // the smith under test (`smith cc --smith-tree-sitter`).
+// smith.c prints the parser (`smith cc --smith-tree-sitter`) and runs `smith new`.
+// smith-covers: smith.c runtime/verbs.c runtime/quiet.c runtime/base.h runtime/platform_*.c runtime/slots.c
+// smith-covers: runtime/build_runtime.c runtime/executor*.c runtime/cache.c runtime/sdk_cache.c
+// smith-covers: runtime/tree_sitter_data.c tree-sitter/grammar.js tree-sitter/tree-sitter.json tree-sitter/src/
+// smith-covers: plugin/smith.lua editors/neovim/ tests/neovim.lua tests/build_fixtures/neovim/ templates/new/
+// smith-covers: runtime/lang*.c shim/hook.cpp
 module neovim_test;
 
 import std::arena;

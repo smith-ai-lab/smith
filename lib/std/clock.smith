@@ -39,6 +39,7 @@ export constexpr U64 second = 1'000'000'000;
 // NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
 constexpr c::clockid_t clock_monotonic = c::CLOCK_MONOTONIC;
 constexpr c::clockid_t clock_realtime = c::CLOCK_REALTIME;
+constexpr c::clockid_t clock_process_cpu = c::CLOCK_PROCESS_CPUTIME_ID;
 constexpr I32 eintr = c::EINTR;
 // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
 
@@ -69,6 +70,14 @@ U64 time_ns(c::clockid_t which) {
 // Nanoseconds since the Unix epoch, the wall clock: it can jump when the system sets it.
 [[std::c_name("smith_clock_now_epoch")]] export [[nodiscard]] I64 now() {
     return (I64)time_ns(clock_realtime);
+}
+
+// The CPU time this process has used, user plus system, in nanoseconds (a fake clock answers its own `cpu`, so a test
+// sets it). Like `monotonic`, it means nothing but as a difference.
+[[std::c_name("smith_clock_cpu")]] export [[nodiscard]] U64 cpu() {
+    c::SmithClockHandler *handler = c::smith_handlers_clock();
+    if (handler != nullptr && handler->cpu != nullptr) return handler->cpu(handler);
+    return time_ns(clock_process_cpu);
 }
 
 // Blocks for ns nanoseconds (a signal does not cut it short). On a fake clock the clock's time moves forward by ns and

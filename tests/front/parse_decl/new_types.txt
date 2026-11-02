@@ -1,0 +1,24 @@
+(module 
+  (struct Point
+    (field x (named f64))
+    (field y (named f64)))
+  (struct Empty pub)
+  (enum Color
+    (enumerator red)
+    (enumerator green)
+    (enumerator blue))
+  (enum Small
+    (named u8)
+    (enumerator low (integer 2))
+    (enumerator high (integer 9)))
+  (enum Shape
+    (enumerator circle (named Circle))
+    (enumerator rect (named Rect))
+    (enumerator empty))
+  (enum Single
+    (enumerator only))
+  (struct Old
+    (field x (named I32)))
+  (enum OldColor
+    (enumerator red)
+    (enumerator green)))

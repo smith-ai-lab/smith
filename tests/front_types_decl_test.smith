@@ -5,6 +5,12 @@
 module front_types_decl_test;
 
 import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
 import front::parser;
 import front::types;
 import front::types_decl;
@@ -40,8 +46,34 @@ static Str join(Str a, Str b) {
     return out;
 }
 
+// Whether `check_text` reads smith's own syntax (the tests of #1510 set it).
+static Bool reading_new = false;
+
+// The module of `source`, read in smith's own syntax (parser::parse reads today's), with the real parsers' hooks.
+static parser::Parsed parse_new(Str source) {
+    parser::Parsed result = {};
+    result.module.file = "t.smith";
+    lex::Lexed lexed = lex::tokenize_new(source);
+    switch (lexed) {
+    case .ok:
+        parse::Parser p = parse::make(lexed.ok, source);
+        p.new_syntax = true;
+        p.hooks.expression = parse_expr::expression;
+        p.hooks.type = parse_type::type;
+        p.hooks.statement = parse_stmt::statement;
+        p.hooks.declaration = parse_decl::declaration;
+        result.module = parse_decl::file(&p, "t.smith");
+        result.errors = p.errors;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    return result;
+}
+
 static types::Checked check_text(Str source) {
-    parser::Parsed p = parser::parse("t.smith", source);
+    parser::Parsed p = reading_new ? parse_new(source) : parser::parse("t.smith", source);
     test::check_equal(countof(p.errors), (Usize)0);
     return types_decl::check_module(&p.module, types::lp64());
 }
@@ -297,4 +329,63 @@ export void test_front_types_decl_show_keeps_const_on_slice_and_array_elements()
     types::TypeRef byte = types::builtin(&t, "U8");
     test::check_condition(has(types::show(types::slice_of(&t, byte, true)), "const U8[:]"));
     test::check_condition(has(types::show(types::array_of(&t, byte, 3, true)), "const U8[3]"));
+}
+
+// #1510 (C1, part 1): a `const` is known at compile time (spec "Modules and declarations"). The bindings of smith's own
+// syntax are module-level: the statement parser does not read `:=` in a body yet.
+export void test_front_types_decl_const_of_constants_is_accepted() {
+    reading_new = true;
+    clean("const a := 3\nconst b := a\nconst f := 2.5\n");
+    reading_new = false;
+}
+
+export void test_front_types_decl_const_of_a_variable_is_refused() {
+    reading_new = true;
+    fails("mut n := 3\nconst a := n\n", "`const a` is known at compile time", "without `const`");
+    reading_new = false;
+}
+
+export void test_front_types_decl_local_constexpr_of_a_variable_is_refused() {
+    fails("Void g() { I32 n = 3; constexpr auto a = n + 1; }", "`const a` is known at compile time", "");
+    clean("Void g() { constexpr auto a = 3; constexpr auto b = a * 2; }");
+}
+
+// #1510 (C1, part 2): in smith's own syntax a name may not shadow another, `_ := f()` discards a result, and an unused
+// result of a call is an error. Bodies are read by the statement parser of #1527.
+export void test_front_types_decl_shadowing_is_refused() {
+    reading_new = true;
+    fails("fn g() { a := 1\n { a := 2\n } }", "`a` hides the `a` declared at byte", "choose another name");
+    fails("fn g(x: i32) { x := 2\n }", "`x` hides", "shadowing is an error");
+    clean("fn g() { { a := 1\n }\n { a := 2\n } }");
+    reading_new = false;
+}
+
+export void test_front_types_decl_an_old_local_may_shadow() {
+    clean("Void g() { I32 a = 1; { I32 a = 2; } }");
+}
+
+// (A parameter in `f`, so that its result `i32` is read in smith's own syntax: a function with none is read in
+// today's.)
+export void test_front_types_decl_a_discard_is_accepted() {
+    reading_new = true;
+    clean("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) { _ := f(x)\n }");
+    clean("fn g(x: i32) { _ := x\n _ := x\n }");
+    reading_new = false;
+}
+
+export void test_front_types_decl_an_unused_result_is_refused() {
+    reading_new = true;
+    fails("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) { f(x)\n }", "is not used", "write `_ := ...`");
+    clean("fn f(x: i32) {\n}\nfn g(x: i32) { f(x)\n }");
+    reading_new = false;
+}
+
+// The last line of a function is its value (#1428), so a call there is used; one before it is not.
+export void test_front_types_decl_a_call_on_the_last_line_is_the_result() {
+    reading_new = true;
+    clean("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) -> i32 { f(x)\n }");
+    fails("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) -> i32 {\n    f(x)\n    return x\n}\n", "is not used",
+          "write `_ := ...`");
+    fails("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) { f(x)\n }", "is not used", "write `_ := ...`");
+    reading_new = false;
 }

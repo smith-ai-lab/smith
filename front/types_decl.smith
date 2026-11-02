@@ -28,6 +28,13 @@
 //                  label's statement, `break`, `continue`, `goto`. A condition is checked against `Bool`; a `return`
 //                  value against the function's result type (a plain `return;` in a function that returns a value is
 //                  an error, a value in a `Void` function too).
+//   Constants      `const X := v` (and `constexpr`), local or of the module, is an error when `v` names a variable
+//                  that is not constant (spec "Modules and declarations"). In smith's own syntax (`is_new`): a
+//                  binding is constant unless `mut` (writes are refused by types_expr), shadowing is an error (the
+//                  earlier declaration is named by its byte offset: the checker has no line table), `_ := f()`
+//                  discards, and a call whose result is not `Void` and is not used is an error, once the function has a
+//                  parameter or an earlier local in that syntax (a function has no marker of its own). Not yet: `(q, r)
+//                  := f()` (destructuring needs tuples in the checker).
 //   Locals         The type is written, or `Auto` takes the initializer's type. A name already in the same scope is an
 //                  error. A local is `const` through the written type.
 //   Calls, Fn      Calls and the `Fn(F)` values are typed by front::types_expr; this module supplies the conversions
@@ -49,6 +56,7 @@ import front::ast;
 import front::types;
 import front::types_convert;
 import front::types_expr;
+import front::types_fn;
 import std::arena;
 import std::format;
 import std::mem;
@@ -95,7 +103,10 @@ struct State {
     Pending pending[:];
     Usize pending_count;
     Str function;
-    types::TypeRef result; // what `return` is checked against
+    types::TypeRef result;      // what `return` is checked against
+    Bool new_body;              // the function has a parameter or a local in smith's own syntax (so far)
+    const ast::Stmt *tails[32]; // the statements whose value is the function's result (the last line, through
+    Usize tail_count;           // blocks and both arms of an if), so a call there is not unused
 };
 
 static State state;
@@ -188,8 +199,47 @@ static Bool is_auto(types::TypeRef t) {
     return t->kind == .automatic;
 }
 
+// A local written in smith's own syntax: constant unless it is `mut`.
+static Bool is_new_variable(const ast::Decl *d) {
+    return d->kind == .variable && d->kind.variable.is_new;
+}
+
+static Bool is_discard(Str name) {
+    return countof(name) == 1 && name[0] == '_';
+}
+
+// Shadowing is an error in smith's own syntax (spec "Modules and declarations"): a name that hides a variable of an
+// enclosing scope. Returns whether `name` shadows one. `_` never does. A binding in today's syntax may shadow.
+static Bool shadows(types::Checked *r, const ast::Decl *d, Str name) {
+    if (!is_new_variable(d) || is_discard(name)) {
+        return false;
+    }
+    const types::Symbol *earlier = types::lookup(&r->scopes, name);
+    if (earlier == nullptr || earlier->kind != .variable) {
+        return false;
+    }
+    if (earlier->decl != nullptr) {
+        types::failf(r, d->span, "`", name, "` hides the `", name, "` declared at byte ", earlier->decl->span.start,
+                     "; shadowing is an error, choose another name");
+    } else {
+        types::failf(r, d->span, "`", name, "` hides a parameter or an outer `", name,
+                     "`; shadowing is an error, choose another name");
+    }
+    return true;
+}
+
 static void declare_local(types::Checked *r, const ast::Decl *d, Str name, types::TypeRef type, Bool is_const) {
-    types::Symbol symbol = {.name = name, .kind = .variable, .type = type, .decl = d, .is_const = is_const};
+    if (is_new_variable(d)) {
+        state.new_body = true;
+    }
+    if (is_discard(name) && is_new_variable(d)) {
+        return; // `_ := f()` discards the value: nothing is declared
+    }
+    if (shadows(r, d, name)) {
+        return;
+    }
+    types::Symbol symbol = {
+        .name = name, .kind = .variable, .type = type, .decl = d, .is_const = is_const, .is_new = is_new_variable(d)};
     if (!types::declare(&r->scopes, symbol)) {
         types::failf(r, d->span, "`", name, "` is already declared in this scope; choose another name");
         return;
@@ -213,6 +263,72 @@ static types::TypeRef auto_type(types::Checked *r, const ast::Decl *d, Str name,
     return found;
 }
 
+// Pushes the operands of `e` that decide whether it is a constant, onto `stack` (a work stack, no recursion).
+static Usize constant_operands(const ast::Expr *e, const ast::Expr *stack[:], Usize top) {
+    if (e->kind == .unary) {
+        stack[top] = e->kind.unary.operand;
+        return top + 1;
+    }
+    if (e->kind == .binary) {
+        stack[top] = e->kind.binary.left;
+        stack[top + 1] = e->kind.binary.right;
+        return top + 2;
+    }
+    if (e->kind == .conditional) {
+        stack[top] = e->kind.conditional.condition;
+        stack[top + 1] = e->kind.conditional.then_value;
+        stack[top + 2] = e->kind.conditional.else_value;
+        return top + 3;
+    }
+    if (e->kind == .cast) {
+        stack[top] = e->kind.cast.operand;
+        return top + 1;
+    }
+    return top;
+}
+
+// The first part of `init` that cannot be known at compile time: a name of a variable that is not constant, or an
+// assignment. A call is not judged here (its callee may be a constexpr function). Null when there is none.
+static const ast::Expr *not_constant(types::Checked *r, const ast::Expr *init) {
+    const ast::Expr *stack[64] = {};
+    Usize top = 1;
+    stack[0] = init;
+    while (top > 0) {
+        top -= 1;
+        const ast::Expr *e = stack[top];
+        if (e == nullptr) {
+            continue;
+        }
+        if (e->kind == .assign || e->kind == .stmt_expr) {
+            return e;
+        }
+        if (e->kind == .name) {
+            const types::Symbol *s = types::lookup_path(&r->scopes, e->kind.name.path);
+            if (s != nullptr && s->kind == .variable && !s->is_const) {
+                return e;
+            }
+        }
+        if (top + 3 > countof(stack)) {
+            return nullptr;
+        }
+        top = constant_operands(e, stack, top);
+    }
+    return nullptr;
+}
+
+// A `const` (or `constexpr`) binding is known at compile time: reports the part of `init` that is not.
+static void require_constant(types::Checked *r, Str name, const ast::Expr *init) {
+    if (init == nullptr || types_expr::is_undefined(init)) {
+        return;
+    }
+    const ast::Expr *bad = not_constant(r, init);
+    if (bad != nullptr) {
+        types::failf(r, bad->span, "`const ", name,
+                     "` is known at compile time, but this is not; use a constant here, or write `", name,
+                     " := ...` without `const`");
+    }
+}
+
 static void local_variable(types::Checked *r, const ast::Decl *d) {
     if (!(d->kind == .variable)) {
         return;
@@ -221,6 +337,8 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
     const ast::TypeExpr *written = d->kind.variable.type;
     const ast::Expr *init = d->kind.variable.init;
     Bool is_constexpr = d->kind.variable.is_constexpr;
+    Bool is_new = d->kind.variable.is_new;
+    Bool is_mut = d->kind.variable.is_mut;
     types::TypeRef type = r->table.automatic;
     if (!(written->kind == .auto_type)) {
         type = types::resolve(r, written);
@@ -236,7 +354,13 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
     } else if (init != nullptr) {
         types_expr::check(r, init, type);
     }
+    if (is_constexpr) {
+        require_constant(r, name, init);
+    }
     Bool is_const = written->qualifiers.is_const || is_constexpr;
+    if (is_new) {
+        is_const = !is_mut || is_constexpr;
+    }
     declare_local(r, d, name, type, is_const);
 }
 
@@ -352,10 +476,69 @@ static void for_statement(types::Checked *r, const ast::Stmt *s) {
     }
 }
 
+// Collects the statements whose value is the function's result: the body's last line, into a block's last line and
+// into both arms of an if with an else (#1428: the last line is the value).
+static void find_tails(const ast::Stmt *root) {
+    state.tail_count = 0;
+    const ast::Stmt *todo[32];
+    Usize n = 0;
+    if (root != nullptr) {
+        todo[0] = root;
+        n = 1;
+    }
+    while (n > 0) {
+        n -= 1;
+        const ast::Stmt *s = todo[n];
+        if (s->kind == .block) {
+            ast::StmtRef items[:] = s->kind.block.items;
+            if (countof(items) > 0) {
+                todo[n] = items[countof(items) - 1];
+                n += 1;
+            }
+        } else if (s->kind == .if_stmt && s->kind.if_stmt.else_branch != nullptr && n + 2 <= countof(todo)) {
+            todo[n] = s->kind.if_stmt.then_branch;
+            todo[n + 1] = s->kind.if_stmt.else_branch;
+            n += 2;
+        } else if (s->kind == .expression && state.tail_count < countof(state.tails)) {
+            state.tails[state.tail_count] = s;
+            state.tail_count += 1;
+        }
+    }
+}
+
+static Bool is_tail(const ast::Stmt *s) {
+    for (Usize i = 0; i < state.tail_count; i++) {
+        if (state.tails[i] == s) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// An expression statement. In smith's own syntax a call whose result is not `Void` must be used or discarded.
+static void expression_statement(types::Checked *r, const ast::Stmt *s) {
+    if (!(s->kind == .expression)) {
+        return;
+    }
+    const ast::Expr *value = s->kind.expression.value;
+    types::TypeRef type = types_expr::infer(r, value);
+    if (!state.new_body || !(value->kind == .call) || type == nullptr) {
+        return;
+    }
+    if (state.result != r->table.void_type && is_tail(s)) {
+        return;
+    }
+    if (type == r->table.void_type || type == r->table.invalid || type == r->table.automatic) {
+        return;
+    }
+    types::failf(r, s->span, "the result of this call, a `", types::show(type),
+                 "`, is not used; use it, or write `_ := ...` to discard it");
+}
+
 // Reads one statement: does what needs no children now, and pushes the children.
 static void enter_statement(types::Checked *r, const ast::Stmt *s) {
     if (s->kind == .expression) {
-        types_expr::infer(r, s->kind.expression.value);
+        expression_statement(r, s);
     } else if (s->kind == .declaration) {
         local_declaration(r, s->kind.declaration.decl);
     } else if (s->kind == .block) {
@@ -387,6 +570,7 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
 static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result) {
     types::TypeRef outer = state.result;
     state.result = result;
+    find_tails(root);
     state.top = 0;
     push(root, nullptr, enter);
     while (state.top > 0) {
@@ -491,15 +675,26 @@ export void check_body(types::Checked *r, const ast::Decl *function) {
     types::push_scope(&r->scopes);
     for (Usize i = 0; i < countof(params) && i < countof(signature->slots); i++) {
         Bool is_const = params[i].type != nullptr && params[i].type->qualifiers.is_const;
-        types::Symbol parameter = {
-            .name = params[i].name, .kind = .variable, .type = signature->slots[i].type, .is_const = is_const};
+        if (params[i].is_new) {
+            is_const = !params[i].is_mut;
+        }
+        types::Symbol parameter = {.name = params[i].name,
+                                   .kind = .variable,
+                                   .type = signature->slots[i].type,
+                                   .is_const = is_const,
+                                   .is_new = params[i].is_new};
         if (!types::declare(&r->scopes, parameter)) {
             types::failf(r, params[i].span, "the parameter `", params[i].name, "` is already declared in `", name,
                          "`; choose another name");
         }
     }
     state.function = name;
+    state.new_body = false;
+    for (Usize i = 0; i < countof(params); i++) {
+        state.new_body = state.new_body || params[i].is_new;
+    }
     walk(r, function->kind.function.body, signature->element);
+    types_fn::check_once(r, params, function->kind.function.body);
     types::pop_scope(&r->scopes);
     drain(r);
 }
@@ -530,6 +725,9 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
     }
     state.function = name;
     types::TypeRef type = symbol->type;
+    if (d->kind.variable.is_constexpr) {
+        require_constant(r, name, d->kind.variable.init);
+    }
     if (is_auto(type)) {
         types_expr::infer(r, d->kind.variable.init);
     } else {
