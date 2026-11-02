@@ -275,6 +275,11 @@ export void test_parse_expr_new_lambdas_and_types() {
                     true);
 }
 
+export void test_parse_expr_new_trailing_blocks() {
+    check_golden_in("tests/front/parse_expr/trailing_blocks.txt", "f(x) { a }\nf() { a }\n(f() { a })\nf(x) { a }.g",
+                    true);
+}
+
 export void test_parse_expr_new_blocks_in_expression_position() {
     check_golden_in("tests/front/parse_expr/new_blocks.txt", "{ }\nf({ })\n{ 1 } + 2", true);
 }
