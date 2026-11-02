@@ -5,17 +5,17 @@ description: "Adopting smith, steps 2 to 4: translate the Makefile with smith bu
 
 # Translate the Makefile, check, test
 
-## 2. Translate the Makefile into a build.c
+## 2. Translate the Makefile into a build.smith
 
 ```sh
-smith build --dump-config > build.c           # in the folder of the Makefile; also GNUmakefile / makefile
+smith build --dump-config > build.smith          # in the folder of the Makefile; also GNUmakefile / makefile
 smith build                                   # builds exactly what make built
 smith build -t commands build/app             # the compile and link commands, to diff against `make -n -B`
 ```
 
 - Until you do this, a folder with a Makefile and no build file does not build: `smith build` and the verbs stop with `this folder has a Makefile and no build.c or build.smith` (they never build by convention behind a Makefile, even beside a `main.c`).
-- **Read the top of build.c.** It lists the options the Makefile read from the command line (`make CFLAGS=...` is `smith build -DCFLAGS=...`) and, under `NOT TRANSLATED`, every construct it did not follow, with the Makefile line (also on stderr as `smith: Makefile:12: not translated: ...`). Do those by hand. `$(shell ...)` is run once during translation and frozen.
-- The result is the low-level API (`smith_object`, `smith_program`, `smith_task`...). Edit it like any build.c (load `smith-build-c`; the translation's rules are in `smith-build-makefile`).
+- **Read the top of build.smith.** It lists the options the Makefile read from the command line (`make CFLAGS=...` is `smith build -DCFLAGS=...`) and, under `NOT TRANSLATED`, every construct it did not follow, with the Makefile line (also on stderr as `smith: Makefile:12: not translated: ...`). Do those by hand. `$(shell ...)` is run once during translation and frozen.
+- The result is the low-level API (`build::object`, `build::program`, `build::task`...). Edit it like any build.smith (load `smith-build-smith`; the translation's rules are in `smith-build-makefile`).
 - Compare before deleting the Makefile: build with both from clean, check the compile and link commands match (apart from the compiler's name and the dependency flags) and the outputs match. `make test` becomes the task `make-test` (a build.c may not name a task after a verb); a plain run of the program is `smith run`.
 - `smith build` runs independent steps in parallel (`-j1` gives make's order). `smith build -t clean` replaces `make clean`.
 - Then delete the Makefile (or keep it one release as a fallback). Commit `build.c`; `.smith/` ignores itself.

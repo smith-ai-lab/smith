@@ -12,9 +12,9 @@
 // Flags: run (`smith run` must succeed and print the project's output block, if it has one), test (`smith test`),
 //   prove (`smith prove` must pass), refuse (`smith prove` must fail and print every line of the project's output
 //   block), rejects (`smith run` must fail and print every line of the output block), port (the project is a C project
-//   with a Makefile: `CC=smith-cc make` builds it, `smith build --dump-config > build.c` translates it, `smith build`
-//   builds that and prints what make's program printed). A project with none of these is compiled only: its headers are
-//   made and each file is syntax-checked with warnings as errors, as the tests of the skills do.
+//   with a Makefile: `CC=smith-cc make` builds it, `smith build --dump-config > build.smith` translates it, `smith
+//   build` builds that and prints what make's program printed). A project with none of these is compiled only: its
+//   headers are made and each file is syntax-checked with warnings as errors, as the tests of the skills do.
 // A block inside an HTML comment is checked and not shown. Also checked: every relative link of the README exists, and
 // every complete smith block passes smith's own idiom checks (no #include or #define, no standard C type names) and is
 // what `smith fmt` writes. Every project of the README is named in a test, `project_case("<project>")` or the list
@@ -239,7 +239,7 @@ constexpr char missing_script[_] =
 
 static void check_port(const scratch::Project *p, const char *label) {
     scratch::Run run =
-        scratch::sh(p, "CC=smith-cc make >out 2>&1 && ./app >printed 2>&1 && smith build --dump-config >build.c "
+        scratch::sh(p, "CC=smith-cc make >out 2>&1 && ./app >printed 2>&1 && smith build --dump-config >build.smith "
                        "2>out && rm -f app ./*.o && smith build >out 2>&1 && ./app >stdout 2>&1 && "
                        "diff printed stdout >out; status=$?; cat out; exit $status");
     scratch::expect_status(format::push(label, ": port (make with smith-cc, --dump-config, build)").data, 0, &run);

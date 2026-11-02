@@ -304,7 +304,7 @@ static const char *smith_make_list(const SmithMakeArgv *argv, const size_t *indi
             continue;
         }
         if (!open) {
-            smith_make_put_text(&out, parts > 0 ? ", (const char *[]){" : "(const char *[]){");
+            smith_make_put_text(&out, parts > 0 ? ", (const char *[_]){" : "(const char *[_]){");
             open = true;
             parts++;
         } else {
@@ -313,9 +313,9 @@ static const char *smith_make_list(const SmithMakeArgv *argv, const size_t *indi
         smith_make_put_item(&out, arg->text);
     }
     if (open) smith_make_put_text(&out, ", nullptr}");
-    if (parts == 0) return "(const char *[]){nullptr}";
+    if (parts == 0) return "(const char *[_]){nullptr}";
     if (parts == 1) return smith_make_take(&out, 0);
-    return smith_make_format("smith_cat(b, %.*s, nullptr)", (int)out.length, out.data);
+    return smith_make_format("build::cat(b, %.*s, nullptr)", (int)out.length, out.data);
 }
 
 // The list of every word of argv.

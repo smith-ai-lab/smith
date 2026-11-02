@@ -213,7 +213,7 @@ static const char *smith_make_render(const char *text, size_t length) {
         }
     }
     if (holes == 1 && format.length == 2) return smith_make.holes[only].expression;
-    return smith_make_format("smith_fmt(b, \"%.*s\"%.*s)", (int)format.length, format.data, (int)arguments.length,
+    return smith_make_format("build::fmt(b, \"%.*s\"%.*s)", (int)format.length, format.data, (int)arguments.length,
                              arguments.data);
 }
 
@@ -337,7 +337,7 @@ static void smith_make_undefined(SmithMakeMachine *m, const char *name, size_t l
     }
     if (smith_make_is_env_name(name, length)) {
         const char *key = smith_make_dup(name, length);
-        smith_make_put_text(&m->buffer, smith_make_hole_text(smith_make_format("smith_env(b, \"%s\", \"\")", key)));
+        smith_make_put_text(&m->buffer, smith_make_hole_text(smith_make_format("build::env(b, \"%s\", \"\")", key)));
         return;
     }
     SmithMakeVar *var = smith_make_var_get(name, length);
@@ -745,7 +745,7 @@ static void smith_make_fn_filter_hole(const SmithMakeWord *patterns, size_t patt
                               "is not supported");
         }
         if (i > 0) smith_make_put_text(&condition, " || ");
-        smith_make_put_format(&condition, "strcmp(%s, %s) == 0", expression,
+        smith_make_put_format(&condition, "c::strcmp(%s, %s) == 0", expression,
                               smith_make_literal(patterns[i].text, patterns[i].length));
     }
     if (pattern_count == 0) smith_make_put_text(&condition, "false");
@@ -1019,7 +1019,7 @@ static const char *smith_make_platform_command(const char *command) {
     if (strcmp(copy, "pwd") == 0) return "b->root";
     if (strcmp(copy, "sysctl -n hw.ncpu") == 0 || strcmp(copy, "nproc") == 0 ||
         strcmp(copy, "getconf _NPROCESSORS_ONLN") == 0)
-        return "smith_fmt(b, \"%d\", b->cpus)";
+        return "build::fmt(b, \"%d\", b->cpus)";
     return nullptr;
 }
 
