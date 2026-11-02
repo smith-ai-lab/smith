@@ -3475,7 +3475,7 @@ void parse_filter(Options *options, const char *value) {
         return;
     }
     // A repeated --test adds up: the filters join as a comma list, and a test runs when any of them matches.
-    static char joined[4096];
+    static char joined[65536];
     Usize used = c::strlen(options->filter);
     if (options->filter != joined) {
         if (used >= sizeof joined) return;
@@ -3610,6 +3610,8 @@ Bool parse_options(I32 argc, char **argv, Options *options) {
             options->explain = nullptr;
         } else if (c::strcmp(flag, "--color") == 0) {
             options->color = true;
+        } else if (flag[0] != '-') {
+            parse_filter(options, flag); // a bare name or path selects tests as --test does
         } else if (i + 1 >= argc || !parse_value(options, flag, argv[i + 1])) {
             return false;
         } else {
@@ -4176,7 +4178,8 @@ static void say_usage(const Runner *runner, Bool help) {
         "[--others <runner>] [--isolate] [--in-process] [--full] [--update] [--list] [--fail-fast] [--costs <file>] "
         "[--cheapest] [--idle-timeout <seconds>] [--verbose] [--stats] [--trace] [--color] "
         "[--explain <smith>] [--explain-max <n>] [--no-explain] [--unchecked] [-h|--help]\n"
-        "--test takes a test file's path, a name (x_test, x_test::name) or a * pattern (x*), not a "
+        "a bare name or path (smith test x_test) is --test; --test takes a test file's path, a name (x_test, "
+        "x_test::name) or a * pattern (x*), not a "
         "prefix; --update writes the files of the selected tests (every test without --test)\n",
         runner->argv[0], (c::uintmax_t)seeds_max, jobs_max);
     if (help) {
@@ -4277,7 +4280,8 @@ static Usize report_run(const Plan *plan, const Options *options, F64 start) {
         explain_filter(options.filter);
         suggest_files(options.filter);
         suggest_names(options.filter);
-        say("--test takes a test file's path (tests/x_test.smith) or a name (x_test, or x_test::name); a substring "
+        say("a bare name or path (smith test x_test) is --test; --test takes a test file's path (tests/x_test.smith) "
+            "or a name (x_test, or x_test::name); a substring "
             "needs a * (x*)\n");
         return 1;
     }
