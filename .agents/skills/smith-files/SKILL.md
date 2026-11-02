@@ -4,7 +4,7 @@ description: "Using std::files (import std::files; files::read_file, write_file,
 ---
 
 # Files by direct calls: std::files
-Call `files::` anywhere. A call returns `Result(T, files::Error)`; the error is what the world said (`NotFound`, `Exists`, `Denied`, `IsFolder`, `NotFolder`, `NotEmpty`, `NameTooLong`, `NoSpace`, `ReadOnly`, `TooManyOpen`, `Other`). Paths are `const char path[:]` (a string literal converts). Memory a call returns comes from the current allocator (smith-mem) and is the caller's region: install an arena first and never free it one block at a time.
+Call `files::` anywhere. A call returns `Result(T, files::Error)`; the error is what the world said (`NotFound`, `Exists`, `Denied`, `IsFolder`, `NotFolder`, `NotEmpty`, `NameTooLong`, `NoSpace`, `ReadOnly`, `TooManyOpen`, `Other`). Paths are `const char path[:]` (a string literal converts). Memory a call returns comes from the current allocator (smith-mem) and is the caller's region: install an arena first and never free it one block at a time. `files::describe(error)` is an error as a constant text for a message.
 
 ```smith
 module scratch;

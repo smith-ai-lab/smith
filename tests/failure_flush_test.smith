@@ -1,5 +1,7 @@
 // A failure reports and exits whatever lock another thread holds (#573): smith lsp's reader thread is blocked in a read
 // on stdin, which holds stdin's lock, and the failure path used to flush every FILE and wait for it forever.
+// smith-covers: smith.c lib/trace.c runtime/quiet.c runtime/base.h runtime/verbs.c runtime/mcp*.c
+// smith-covers: tests/build_fixtures/lsp/
 module failure_flush_test;
 
 import std::arena;

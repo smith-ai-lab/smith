@@ -10,6 +10,7 @@ import std::env;
 import std::files;
 import std::mem;
 import std::test;
+import std::text;
 import scratch;
 import <string.h>;
 
@@ -589,4 +590,11 @@ export void test_files_read_line_too_long_is_an_error_and_a_full_buffer_fits() {
     Line over = next_line(file, buffer[0:4]);
     test::check_condition(over.failed && over.too_long);
     test::check_condition(files::close(file) == .none);
+}
+
+export void test_files_describe_names_every_error() {
+    for (I32 i = 0; i <= (I32)files::Other; i++) {
+        test::check(countof(files::describe((files::Error)i)) > 0);
+    }
+    test::check(text::is(files::describe(files::NotFound), "nothing is at the path"));
 }

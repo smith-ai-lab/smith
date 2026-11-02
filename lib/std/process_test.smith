@@ -9,6 +9,7 @@ import std::arena;
 import std::mem;
 import std::process;
 import std::test;
+import std::text;
 
 // Unwrapping for the checks: the value of a result (a zero when it is an error: the test checked `== .ok` before) and
 // the error (a zero when it is a value).
@@ -311,4 +312,11 @@ export void test_process_a_real_spawned_child_is_waited_for_and_a_kill_after_it_
     process::DoneResult late = process::kill(&child, 15);
     test::check_condition(late == .error && late.error == process::Gone);
     process::close(&child);
+}
+
+export void test_process_describe_names_every_error() {
+    for (I32 i = 0; i <= (I32)process::Other; i++) {
+        test::check(countof(process::describe((process::Error)i)) > 0);
+    }
+    test::check(text::is(process::describe(process::NotFound), "the program was not found"));
 }

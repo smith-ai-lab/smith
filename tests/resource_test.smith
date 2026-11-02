@@ -7,6 +7,11 @@
 // (frameworks, ARC, libLTO) runs on macOS only, with a comment where it is. Each test makes its project with
 // scratch::make and has a test::memory arena as the current allocator, so what scratch returns goes back with the
 // arena.
+// smith-covers: smith.c runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/lang*.c runtime/verbs.c
+// smith-covers: runtime/cache.c runtime/sdk_cache.c runtime/platform_*.c runtime/quiet.c runtime/base.h
+// smith-covers: runtime/symbolize.c runtime/explain.c shim/symbolize.cpp shim/lldb_explain.* shim/clang.cpp
+// smith-covers: shim/hook.cpp shim/lld.cpp include/smith/ lib/trace.c lib/std/ build.c runtime/pack_data.c
+// smith-covers: runtime/package.c runtime/untar.c runtime/xz.c runtime/gzip.c tests/build_fixtures/resource/
 module resource_test;
 
 import std::arena;
