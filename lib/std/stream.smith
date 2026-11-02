@@ -62,7 +62,7 @@ void release(Stream **s) {
 [[std::c_name("smith_stream_finish")]] export [[noreturn]] void finish(Stream *s) {
     contract::requires(s != nullptr);
     s->ended = true;
-    task::fiber_suspend();
+    task::fiber_finish();
     contract::trusted(); // the reader never resumes a stream that has ended
     __builtin_trap();
 }

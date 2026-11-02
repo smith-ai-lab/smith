@@ -1183,6 +1183,13 @@ export void fiber_suspend() {
     suspend();
 }
 
+// The last switch of the calling fiber: it is marked finished first, so AddressSanitizer destroys its fake stack as it
+// leaves (a fiber released while suspended would leak it). The reader must not resume it again, only release it.
+export void fiber_finish() {
+    current()->finished = true;
+    suspend();
+}
+
 // Unmaps the stack and the record of a fiber that is not running: one that never ran, or one that is suspended for
 // good (its reader will not resume it). Frames it left behind are unpoisoned for AddressSanitizer, so the next mapping
 // at that address starts clean.
