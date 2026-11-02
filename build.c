@@ -177,7 +177,7 @@ static const char *const *build_smith_flags(SmithBuild *b, const BuildConfig *co
                      (const char *[]){"-I", "include", "-I", ".smith/include", "-std=gnu2y", nullptr}, nullptr);
 }
 
-// The protocol code smith's debugger server stands on, generated from the official schemas (scripts/protocol.c,
+// The protocol code smith's debugger server stands on, generated from the official schemas (protocol/generate.smith,
 // knowledge/protocol-generation.md): DAP's and MCP's, vendored under schemas/ with their licenses. The generated files
 // are build outputs, never committed: each protocol is a step of the build graph that writes them into
 // .smith/protocol/, and every compile that includes them waits for it.
@@ -198,11 +198,11 @@ constexpr size_t build_protocol_count = sizeof build_protocols / sizeof build_pr
 
 static constexpr char build_library_folder[] = "lib/std"; // the libraries written in .smith
 
-// The generator is a program of smith's own C (scripts/protocol.c, on lib/json.c), built here and not shipped: like
-// scripts/pack.c, a tool of the build. arena, contract, text and mem are the modules of smith, compiled from their
+// The generator is a program of smith's own code (protocol/generate.smith, on lib/json.c), built here and not shipped:
+// like scripts/pack.c, a tool of the build. arena, contract, text and mem are the modules of smith, compiled from their
 // sources. Returns the program's step.
 static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config, const char *folder) {
-    const char *const sources[] = {"scripts/protocol.c",
+    const char *const sources[] = {"protocol/generate.smith",
                                    smith_fmt(b, "%s/arena.smith", build_library_folder),
                                    smith_fmt(b, "%s/contract.smith", build_library_folder),
                                    smith_fmt(b, "%s/text.smith", build_library_folder),
