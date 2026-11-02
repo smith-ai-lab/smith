@@ -1,0 +1,55 @@
+// ci/bench/main.smith (#1670), the tool of `smith build bench`: its table, its tab-separated file and the commands it runs,
+// with a stub in place of smith that only records its arguments. The tool is a project of its own in a scratch folder,
+// run by the smith under test; the scratch folder is a git repository of two commits, so no real tree is built.
+// smith-covers: ci/bench/main.smith
+module ci_bench_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+constexpr const char *make_repo =
+    "mkdir -p repo/runtime && cd repo && git init -q . && echo 'int x;' > runtime/slots.c && echo a > a.smith && "
+    "git add -A && git -c user.email=a@b -c user.name=n commit -qm one && echo b >> a.smith && echo c > c.txt && "
+    "git add -A && git -c user.email=a@b -c user.name=n commit -qm two && "
+    "printf '#!/bin/sh\\necho \"$@\" >> \"$BENCH_CALLS\"\\n' > stub && chmod +x stub";
+
+export void test_ci_bench_runs_each_step_through_the_given_smith_and_writes_the_table() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "ci/bench/main.smith", "main.smith");
+    scratch::Run built = scratch::sh(&p, "smith build release 2>&1 | tail -3; ls build/release | grep -c '^p$'");
+    scratch::expect_contains("bench: the tool builds as a project", built.out, "1");
+    scratch::release(built.out);
+    scratch::release(built.err);
+    scratch::Run made = scratch::sh(&p, make_repo);
+    scratch::expect_status("bench: the repository and the stub are made", 0, &made);
+    scratch::Run run = scratch::sh(&p, "cd repo && BENCH_CALLS=$PWD/calls ../build/release/p ./stub $PWD/out.tsv");
+    scratch::expect_status("bench: every step passes with a stub", 0, &run);
+    scratch::expect_contains("bench: the header", run.out, "step                                             wall s");
+    scratch::expect_contains("bench: a step with a wall budget is ok", run.out, "<0.5       ok\n");
+    scratch::expect_contains("bench: the generated module is of about a thousand lines", run.out,
+                             "compile a .smith module of 997 lines");
+    scratch::expect_contains("bench: its budget is to be decided", run.out, "TBD        tbd\n");
+    scratch::Run table = scratch::sh(&p, "cd repo && cut -f1,5 out.tsv");
+    scratch::expect_contains("bench: the file has a line for each step, with its verdict", table.out,
+                             "build no-op\tok\n");
+    scratch::expect_contains("bench: and the whole-project steps have none", table.out,
+                             "lint of the whole project\t-\n");
+    scratch::Run calls = scratch::sh(&p, "cd repo && cat calls");
+    scratch::expect_contains("bench: fmt gets the source the last commit changed", calls.out, "fmt a.smith\n");
+    scratch::expect_lacks("bench: and not a file that is no source", calls.out, "c.txt");
+    scratch::expect_contains("bench: lint is told what changed", calls.out, "lint --changed=HEAD~1 --quiet\n");
+    scratch::Run slots = scratch::sh(&p, "cd repo && git status --short runtime && echo clean");
+    scratch::expect_text("bench: the one-file change is undone", "clean\n", slots.out);
+    scratch::release(run.out);
+    scratch::release(run.err);
+    scratch::release(table.out);
+    scratch::release(calls.out);
+    scratch::release(slots.out);
+}
