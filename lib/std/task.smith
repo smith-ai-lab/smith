@@ -28,7 +28,7 @@ import std::contract;
 import std::mem;
 import std::random;
 import target;
-import <dlfcn.h>;                           // dladdr: the name of a waiting task's entry
+import <dlfcn.h>;                           // dladdr (macOS): the name of a waiting task's entry
 import <errno.h>;                           // errno's location
 import <fcntl.h>;                           // fcntl: the non-blocking flag
 import <sys/stat.h>;                        // fstat: sockets and pipes park, files do not
@@ -586,14 +586,39 @@ void simulation_pause(Scheduler *self) {
         simulation_step(simulation);
 }
 
+// The symbol of a code address (dladdr). glibc declares it and Dl_info only under _GNU_SOURCE, which a .smith file
+// cannot define, so Linux declares what it uses, as std::mem does.
+if constexpr (target::os == target::macos) {
+    typedef c::Dl_info Image;
+
+    I32 image_of(const void *address, Image *info) {
+        // NOLINTNEXTLINE(smith-effects): the loader's own table of images, read-only
+        return c::dladdr(address, info);
+    }
+} else {
+    typedef struct {
+        const char *dli_fname;
+        void *dli_fbase;
+        const char *dli_sname;
+        void *dli_saddr;
+    } Image;
+
+    extern I32 loader_image(const void *address, Image *info) __asm__("dladdr");
+
+    I32 image_of(const void *address, Image *info) {
+        // NOLINTNEXTLINE(smith-effects): the loader's own table of images, read-only
+        return loader_image(address, info);
+    }
+}
+
 // Every task is inside a wait and none can run: a checked failure that names their entry functions.
 [[noreturn]] void simulation_deadlock(Simulation *simulation) {
     contract::trusted(); // the message is written into a buffer of its own
     char names[512] = {};
     Usize used = 0;
     for (Task *task = simulation->waiting; task != nullptr && used < sizeof(names) - 80; task = task->wait_next) {
-        c::Dl_info info = {};
-        Bool known = c::dladdr((void *)task->entry, &info) != 0 && info.dli_sname != nullptr;
+        Image info = {};
+        Bool known = image_of((void *)task->entry, &info) != 0 && info.dli_sname != nullptr;
         // NOLINTBEGIN(smith-preprocessor): snprintf is a macro under fortification
         I32 wrote = known ? c::snprintf(names + used, sizeof(names) - used, " %s", info.dli_sname)
                           : c::snprintf(names + used, sizeof(names) - used, " %p", (void *)task->entry);
@@ -601,7 +626,7 @@ void simulation_pause(Scheduler *self) {
         if (wrote > 0) used += (Usize)wrote;
     }
     c::smith_failure_format(c::SmithFailure_Memory,
-                            "task::wait: every task is waiting and none is ready (a deadlock); waiting tasks:%s",
+                            "task::wait: every task is waiting and none is ready (a deadlock); waiting tasks: %s",
                             names);
 }
 
