@@ -2,8 +2,8 @@
 //
 // smith is built by its previous release (knowledge/smith-bootstrap.md): smith.c is C23 and its libraries are .smith
 // modules, compiled by the smith that runs this build (`smith-cc`, the default CC), so a smith with the token hook and
-// the LLVM of `smith build llvm` is needed. A fresh clone with no smith builds and runs scripts/stage0.c, which
-// downloads the newest release of an ancestor commit and runs its `smith build`.
+// the LLVM of `smith build llvm` is needed. A fresh clone with no smith downloads the newest release
+// (README.md, Install) and runs its `smith build`.
 //
 // The verbs (smith test, smith check, smith fmt, smith lint, smith docs, smith prove, smith run) mean the same here as
 // in every project and read what this file declares: the tests below are the tests, the compiles are what lint and
@@ -1115,7 +1115,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
                                          smith_list(b, "-I", "include", "-I", ".smith/include", "-I", ".smith/protocol",
                                                     "-I", "runtime/protocol", nullptr),
                                          nullptr);
-    const char *const *sources = smith_glob(b, smith_list(b, "lib/*.c", "tests/*.c", "scripts/header_tool.c", nullptr));
+    const char *const *sources = smith_glob(b, smith_list(b, "lib/*.c", "tests/*.c", nullptr));
     for (size_t i = 0; sources[i] != nullptr; i++) {
         // stub.c is built (build_other_objects) with its -D, tree_sitter.c is the grammar's, and random.c includes the
         // raw lowering of random.smith, which tests/random_c_test.smith writes when it runs

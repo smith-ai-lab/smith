@@ -51,11 +51,7 @@ when, one changed (the generator writes a file only when its bytes change, so wh
 code committed anywhere fails `tests/generated_files_test.smith` (the paths are in `.gitignore`).
 
 To move to another release: replace the files in `schemas/` with the release's (and its `LICENSE`), change the `source` line in `build_protocols` in
-build.c and in `scripts/seed_linux.c`, and `smith build`.
-
-**A Linux machine with no smith:** `scripts/seed_linux.c` builds stage A (smith.c without `-DSMITH_MCP`, so it does not include the protocol code),
-compiles the generator with stage A's `smith-cc` and runs it on `schemas/` into `.smith/seed/protocol/`, and then builds stage B (smith.c with
-`-DSMITH_MCP`) with it. Not run on Linux yet.
+build.c and `smith build`.
 
 ## What a schema becomes
 
