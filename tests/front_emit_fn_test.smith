@@ -1,0 +1,259 @@
+// Tests of what front::emit does for functions in smith's own syntax (#1577, wave 3 of #1428): `pub`, `@inline` and its
+// kin, `@c_name`, `main`, the last line as the value, `_ := f()` and a local `const`. The trees are built by hand, as
+// in tests/front_emit_call_test.smith, which says why a test keeps its tree in an arena and emits with the system's
+// allocator.
+module front_emit_fn_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <string.h>;
+
+typedef I32 (*BinaryI32)(I32, I32);
+typedef I32 (*NullaryI32)();
+typedef void (*NullaryVoid)();
+
+static ast::Expr *name(Str text) {
+    return ast::name(text);
+}
+
+static ast::Expr *number(U64 value) {
+    return ast::integer(value);
+}
+
+static ast::Stmt *expression(ast::Expr *value) {
+    ast::StmtKind kind = {.expression = {.value = value}};
+    return ast::stmt(kind);
+}
+
+static ast::Stmt *declare(ast::Decl *variable) {
+    ast::StmtKind kind = {.declaration = {.decl = variable}};
+    return ast::stmt(kind);
+}
+
+static ast::Expr *call0(Str callee) {
+    ast::ExprRef args[1] = {};
+    return ast::call(ast::name(callee), args[0:0]);
+}
+
+// `fn name(a: i32, b: i32) -> i32 { items }`, not pub.
+static ast::Decl *add_function(Str text, ast::StmtRef items[:]) {
+    ast::Param params[2] = {ast::param("a", ast::named("I32")), ast::param("b", ast::named("I32"))};
+    return ast::function(text, params, ast::named("I32"), ast::block(items));
+}
+
+static ast::Decl *nullary(Str text, Str result, ast::StmtRef items[:]) {
+    ast::Param params[1] = {};
+    return ast::function(text, params[0:0], ast::named(result), ast::block(items));
+}
+
+static ast::Module module_of(ast::DeclRef decls[:]) {
+    return ast::new_module("t", decls);
+}
+
+struct TreeMemory {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    mem::Allocator *outside;
+};
+
+static void tree_begin(TreeMemory *trees) {
+    trees->memory = test::memory(1U << 22);
+    trees->allocator = arena::allocator(&trees->memory);
+    trees->outside = mem::set_allocator(&trees->allocator.base);
+}
+
+static void tree_end(TreeMemory *trees) {
+    mem::set_allocator(trees->outside);
+}
+
+static emit::Options options_for(emit::Target target) {
+    emit::Options options = {};
+    options.target = target;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static Usize jit_function(emit_jit::Jit *host, const ast::Module *m, Str symbol) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, m, options_for(host->target));
+    test::check_equal(emitted == .ok, true);
+    Usize address = 0;
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+        emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+        test::check_equal(found == .ok, true);
+        if (found == .ok) address = found.ok;
+    }
+    return address;
+}
+
+// Whether the module's IR contains `needle`.
+static Bool ir_contains(const ast::Module *m, Str needle) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::Target target = {};
+    target.triple = "x86_64-unknown-linux-gnu";
+    emit::ModuleResult emitted = emit::module(context, m, options_for(target));
+    test::check_equal(emitted == .ok, true);
+    Bool found = false;
+    if (emitted == .ok) {
+        char *ir = c::LLVMPrintModuleToString(emitted.ok);
+        found = c::strstr(ir, needle.data) != nullptr;
+        c::LLVMDisposeMessage(ir);
+        c::LLVMDisposeModule(emitted.ok);
+    }
+    c::LLVMContextDispose(context);
+    return found;
+}
+
+// A function `f` with one attribute (and optionally pub), as a module.
+static Bool f_with(Str attribute, Bool is_pub, Str needle) {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[1] = {expression(name("a"))};
+    ast::Decl *f = add_function("f", items);
+    f->is_pub = is_pub;
+    ast::Attribute attributes[1] = {ast::attribute(attribute)};
+    if (countof(attribute) > 0) f->attributes = attributes;
+    ast::DeclRef decls[1] = {f};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    return ir_contains(&m, needle);
+}
+
+export void test_front_emit_fn_pub_is_external_and_plain_is_internal() {
+    test::check_equal(f_with("", true, "define i32 @\"t::f\"("), true);
+    test::check_equal(f_with("", false, "define internal i32 @\"t::f\"("), true);
+}
+
+export void test_front_emit_fn_attributes_without_a_namespace() {
+    test::check_equal(f_with("inline", true, "alwaysinline"), true);
+    test::check_equal(f_with("noinline", true, "noinline"), true);
+    test::check_equal(f_with("cold", true, "cold"), true);
+}
+
+// `@c_name(<argument>)` on a function that returns its first parameter.
+static ast::Module c_named(ast::Expr *argument) {
+    ast::StmtRef items[1] = {expression(name("a"))};
+    ast::Decl *f = add_function("f", items);
+    // Static storage: the tree outlives this function.
+    static ast::ExprRef args[1];
+    static ast::Attribute attributes[1];
+    args[0] = argument;
+    attributes[0] = ast::attribute("c_name");
+    attributes[0].args = args;
+    attributes[0].span.start = 7;
+    f->attributes = attributes;
+    ast::DeclRef decls[1] = {f};
+    return module_of(decls);
+}
+
+export void test_front_emit_fn_c_name_is_the_symbol() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Module m = c_named(ast::string("smith_x"));
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 f = (BinaryI32)jit_function(&host, &m, "smith_x");
+    test::check_equal(f(5, 6), 5);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_fn_c_name_takes_a_string() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Module m = c_named(number(1));
+    tree_end(&trees);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::Target target = {};
+    target.triple = "x86_64-unknown-linux-gnu";
+    emit::ModuleResult emitted = emit::module(context, &m, options_for(target));
+    test::check_equal(emitted == .error, true);
+    if (emitted == .error) {
+        test::check_equal(emitted.error.span.start, 7);
+        emit::free_error(emitted.error);
+    }
+    c::LLVMContextDispose(context);
+}
+
+export void test_front_emit_fn_main_keeps_its_name() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[1] = {expression(number(7))};
+    ast::DeclRef decls[1] = {nullary("main", "I32", items)};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    NullaryI32 f = (NullaryI32)jit_function(&host, &m, "main");
+    test::check_equal(f(), 7);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_fn_the_last_line_is_the_value() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef items[1] = {expression(ast::binary(.add, name("a"), name("b")))};
+    ast::Decl *f = add_function("add", items);
+    f->is_pub = true;
+    ast::DeclRef decls[1] = {f};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 add = (BinaryI32)jit_function(&host, &m, "t::add");
+    test::check_equal(add(3, 4), 7);
+    test::check_equal(add(-9, 4), -5);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_fn_a_void_function_ends_with_a_call() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef inner_items[1] = {expression(number(1))};
+    ast::StmtRef outer_items[1] = {expression(call0("inner"))};
+    ast::Decl *outer = nullary("outer", "Void", outer_items);
+    outer->is_pub = true;
+    ast::DeclRef decls[2] = {nullary("inner", "Void", inner_items), outer};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    NullaryVoid f = (NullaryVoid)jit_function(&host, &m, "t::outer");
+    f();
+    emit_jit::stop(&host);
+}
+
+// `_ := one()` twice and a local `const LIMIT := 10`, then the sum.
+export void test_front_emit_fn_discard_and_a_local_const() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef one_items[1] = {expression(number(1))};
+    ast::Decl *first = ast::variable("_", ast::make_type(.auto_type), call0("one"));
+    ast::Decl *second = ast::variable("_", ast::make_type(.auto_type), call0("one"));
+    ast::Decl *limit = ast::variable("LIMIT", ast::make_type(.auto_type), number(10));
+    if (limit->kind == .variable) {
+        limit->kind.variable.is_constexpr = true;
+        limit->kind.variable.is_new = true;
+    }
+    ast::StmtRef items[4] = {declare(first), declare(second), declare(limit),
+                             expression(ast::binary(.add, name("LIMIT"), call0("one")))};
+    ast::Decl *main_function = nullary("run", "I32", items[0:4]);
+    main_function->is_pub = true;
+    ast::DeclRef decls[2] = {nullary("one", "I32", one_items), main_function};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    NullaryI32 run = (NullaryI32)jit_function(&host, &m, "t::run");
+    test::check_equal(run(), 11);
+    emit_jit::stop(&host);
+}
