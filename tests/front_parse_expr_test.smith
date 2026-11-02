@@ -363,11 +363,11 @@ export void test_parse_expr_lint_fix_twice_on_every_old_form() {
                  "    Point q = (Point){.x = 1, .y = 2};\n    n++;\n    return a + b + c + q.x;\n}\n";
     fix::Fixed first = fix::fix_text("m.smith", source);
     test::check_condition(first.applied >= 6);
-    // The statement forms (a `;` at the end of a line) are parse_stmt's; these are the expressions'.
-    test::check_condition(contains(first.text, "i32 a = n as i32"));
-    test::check_condition(contains(first.text, "i32 b = p.x + p.*"));
-    test::check_condition(contains(first.text, "i32 c = if n > 0 { a } else { b }"));
-    test::check_condition(contains(first.text, "Point q = Point(x = 1, y = 2)"));
+    // The locals are mended too (#1742): the name first, and the expressions as smith's own.
+    test::check_condition(contains(first.text, "a: i32 = n as i32\n"));
+    test::check_condition(contains(first.text, "b: i32 = p.x + p.*\n"));
+    test::check_condition(contains(first.text, "c: i32 = if n > 0 { a } else { b }\n"));
+    test::check_condition(contains(first.text, "q: Point = Point(x = 1, y = 2)\n"));
     test::check_condition(contains(first.text, "n += 1"));
     fix::Fixed second = fix::fix_text("m.smith", first.text);
     test::check_equal(second.applied, (Usize)0);

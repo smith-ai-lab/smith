@@ -9,12 +9,15 @@ for (;;) break;
 }
 ===
 warning (fix): write the type `I32` as `i32` in smith's own syntax
+warning (fix): a variable is written `i: i32 = ...`: the name comes first and the `;` goes
 warning (no fix): `++` is a statement in Smith: write `i += 1`
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a `for` reads `for x in xs` or `for i in range(a, b)`: write it so
 warning (fix): write the type `I32` as `i32` in smith's own syntax
+warning (fix): a variable is written `i: i32 = ...`: the name comes first and the `;` goes
 warning (fix): a `for` reads `for x in xs` or `for i in range(a, b)`: write it so
 warning (fix): write the type `I32` as `i32` in smith's own syntax
+warning (fix): a variable is written `i: i32 = ...`: the name comes first and the `;` goes
 warning (no fix): `++` is a statement in Smith: write `i += 1`
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a `for` reads `for x in xs` or `for i in range(a, b)`: write it so

@@ -21,6 +21,11 @@
 // the count; `s[i]` and `xs[a:b]` are checked against the count in every build (the index report); `countof(s)` is the
 // count. A slice of a pointer is `not emitted yet`.
 //
+// ARRAY LITERALS (#1624): `[a, b, c]` is an array value (items converted to the element type, inserted into a zero
+// array); where a slice is expected the array is stored in a fresh entry-block slot and the Value is `{ slot, M }`.
+// The hidden array lives as long as the function: a literal evaluated again (in a loop) overwrites the same slot, so a
+// slice kept from an earlier turn sees the later contents. `[]` is `{ null, 0 }` or `[0]T`, and an Error with no type.
+//
 // A NAME THAT IS A GLOBAL is found by `&name`, by the bases of `name[i]`, `name.f` (through `push_place_of`) and, from
 // emit.smith's dispatch, by its bare name (`is_global_name`, `name_ref`, `place_name`): a name that is not a local is
 // tried here before it is reported unknown.
@@ -1023,6 +1028,73 @@ export state::Status compound(state::Emitter *e, const ast::Expr *x, state::Hint
     c::LLVMValueRef slot = state::new_alloca(e, ty, "compound");
     c::LLVMBuildStore(e->builder, c::LLVMConstNull(ty.llvm), slot);
     state::push_then(e, (state::Work){.then = compound_step, .expr = x, .ty = ty, .value = slot, .span = x->span});
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Array literals
+
+// The items are evaluated (first on the bottom of the value stack): each converted to the element type and inserted
+// into the array value; as a slice, the array is stored in a fresh slot of the entry block and the Value is
+// `{ slot, M }`. `w->ty` is the array type, `w->hint` the slice type when the literal stands where a slice is wanted
+// (`w->flag`).
+static state::Status array_literal_finish(state::Emitter *e, const state::Work *w) {
+    state::Ty array = w->ty;
+    c::LLVMValueRef built = c::LLVMConstNull(array.llvm);
+    for (Usize i = (Usize)w->number; i > 0; i--) {
+        state::Value item = state::pop_value(e);
+        if (!state::same_type(item.ty, *array.element)) {
+            try state::convert(e, item, *array.element, w->span, .initialize);
+            item = state::pop_value(e);
+        }
+        built = c::LLVMBuildInsertValue(e->builder, built, item.llvm, (U32)(i - 1), "");
+    }
+    if (!w->flag) {
+        state::push_value(e, (state::Value){.llvm = built, .ty = array});
+        return state::success();
+    }
+    if (w->number == 0) {
+        c::LLVMValueRef none = c::LLVMConstNull(state::pointer_type(e, 0));
+        state::push_value(e, make_slice(e, w->hint.ty, none, c::LLVMConstInt(index_word(e), 0, 0)));
+        return state::success();
+    }
+    return array_value_as_slice(e, (state::Value){.llvm = built, .ty = array}, w->hint.ty);
+}
+
+// `[1, 2, 3]` as a fixed array `[N]T` or, where a slice is expected, as `[]T` over a hidden array kept in the entry
+// block (it lives as long as the function; a literal evaluated again overwrites the same slot). `[]` is `{ null, 0 }`
+// for a slice and `[0]T` for an array; with no type to say which, an Error.
+export state::Status array_literal(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    if (x->kind != .array_lit) {
+        return state::fail("not an array literal", x->span);
+    }
+    ast::ExprRef items[:] = x->kind.array_lit.items;
+    state::Ty want = {};
+    if (hint.present && (hint.ty.kind == .array || hint.ty.kind == .slice)) {
+        want = hint.ty;
+    } else if (countof(items) == 0) {
+        return state::fail("`[]` needs its type; write it", x->span);
+    } else {
+        state::TyResult made = state::type_of_node(e, x);
+        if (made == .error) return {.error = made.error};
+        want = made.ok;
+    }
+    if (want.kind != .array && want.kind != .slice) {
+        return state::failf(x->span, "an array literal where ", want.name, " is expected");
+    }
+    state::Ty array = want;
+    if (want.kind == .slice) array = array_of(e, *want.element, countof(items));
+    if (array.count != countof(items)) {
+        return state::failf(x->span, "the array has ", array.count, " elements, the literal ", countof(items));
+    }
+    state::push_then(e, (state::Work){.then = array_literal_finish,
+                                      .hint = state::hint_of(want),
+                                      .ty = array,
+                                      .flag = want.kind == .slice,
+                                      .number = countof(items),
+                                      .span = x->span});
+    for (Usize i = countof(items); i > 0; i--)
+        state::push_eval(e, items[i - 1], state::hint_of(*array.element));
     return state::success();
 }
 

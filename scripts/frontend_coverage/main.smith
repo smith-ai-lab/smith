@@ -1,0 +1,366 @@
+// `smith build frontend-coverage` (#1730): how much of the tree smith's own front end already handles.
+//
+//   frontend_coverage run SMITH ROOT SCRATCH   every .smith file git tracks under ROOT is copied to SCRATCH, fixed
+//   there
+//                                              with `SMITH lint --fix`, and compiled with `SMITH cc --front-end=new`;
+//                                              the results go to standard output as a table (see summarize)
+//   frontend_coverage summarize RESULTS        reads a table and prints one line per file, then the summary
+//
+// The table has one line per file: `path TAB stage TAB message`. The stage is `pass`, or the stage that failed: `fixer`
+// (`smith lint --fix`), `parse`, `check`, `emit` or `write` (the front end's own, SMITH_FRONT_STAGE). The message is
+// the first error, without its `file:line:column: error:` prefix, so the same failure in two files is one group.
+//
+// The summary: files passed out of total, the failures per stage, then the failures grouped by message, the biggest
+// group first, each with its count and up to 3 example files. The real files are never changed: only the copies are.
+module main;
+
+import std::console;
+import std::env;
+import std::files;
+import std::format;
+import std::mem;
+import std::process;
+import <stdlib.h>;
+import <unistd.h>;
+
+constexpr Usize files_max = 4096;
+constexpr Usize groups_max = 1024;
+constexpr Usize examples_max = 3;
+constexpr Usize path_size = 256;
+constexpr Usize message_size = 240;
+constexpr Usize stage_size = 16;
+
+struct Entry {
+    char path[path_size];
+    char stage[stage_size];
+    char message[message_size];
+};
+
+struct Group {
+    char message[message_size];
+    Usize count;
+    Usize first;
+    Usize examples[examples_max];
+};
+
+static struct Entry entries[files_max];
+static Usize entry_count = 0;
+static struct Group groups[groups_max];
+static Usize group_count = 0;
+
+// Copies the text up to a newline, a tab or the end of `size - 1` bytes into `out`, and ends it.
+static void copy_text(char out[:], const char text[:]) {
+    Usize i = 0;
+    while (i + 1 < countof(out) && i < countof(text) && text[i] != '\n' && text[i] != '\t') {
+        out[i] = text[i];
+        i += 1;
+    }
+    out[i] = '\0';
+}
+
+static Bool same(const char a[:], const char b[:]) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+// The length of a terminated text in a buffer.
+static Usize length_of(const char text[:]) {
+    Usize n = 0;
+    while (n < countof(text) && text[n] != '\0')
+        n += 1;
+    return n;
+}
+
+// A C string as a slice.
+static typeof(const char[:]) view_of(const char *text) {
+    Usize n = 0;
+    while (text[n] != '\0')
+        n += 1;
+    return text[0:n];
+}
+
+// A buffer's text as a slice.
+static typeof(const char[:]) text_of(const char buffer[:]) {
+    return buffer[0:length_of(buffer)];
+}
+
+// Adds a result to the table; a table that is full drops the rest (files_max is far beyond the tree).
+static void add_entry(const char path[:], const char stage[:], const char message[:]) {
+    if (entry_count == files_max) return;
+    struct Entry *entry = &entries[entry_count];
+    copy_text(entry->path[0:path_size], path);
+    copy_text(entry->stage[0:stage_size], stage);
+    copy_text(entry->message[0:message_size], message);
+    entry_count += 1;
+}
+
+// The first position of `byte` in `text` from `from`, or the length of the text.
+static Usize find(const char text[:], char byte, Usize from) {
+    Usize i = from;
+    while (i < countof(text) && text[i] != byte)
+        i += 1;
+    return i;
+}
+
+// Reads `path TAB stage TAB message` lines. Returns false when the file cannot be read.
+static Bool read_table(const char file[:]) {
+    files::BytesResult loaded = files::read_file(file);
+    if (loaded == .error) return false;
+    typeof(char[:]) text = mem::view(loaded.ok, char);
+    defer mem::free(loaded.ok.data);
+    Usize at = 0;
+    while (at < countof(text)) {
+        Usize end = find(text, '\n', at);
+        Usize first = find(text, '\t', at);
+        if (first < end) {
+            Usize second = find(text, '\t', first + 1);
+            Usize message = second < end ? second + 1 : end;
+            add_entry(text[at:first], text[first + 1:second < end ? second : end], text[message:end]);
+        }
+        at = end + 1;
+    }
+    return true;
+}
+
+static Bool is_pass(const struct Entry *entry) {
+    return same(text_of(entry->stage[0:stage_size]), "pass");
+}
+
+// The group of `message`, made when it is the first of its kind.
+static struct Group *group_of(const char message[:]) {
+    for (Usize i = 0; i < group_count; i++) {
+        if (same(text_of(groups[i].message[0:message_size]), message)) return &groups[i];
+    }
+    if (group_count == groups_max) return &groups[groups_max - 1];
+    struct Group *made = &groups[group_count];
+    copy_text(made->message[0:message_size], message);
+    made->count = 0;
+    made->first = group_count;
+    group_count += 1;
+    return made;
+}
+
+static void group_failures() {
+    for (Usize i = 0; i < entry_count; i++) {
+        if (is_pass(&entries[i])) continue;
+        struct Group *group = group_of(text_of(entries[i].message[0:message_size]));
+        if (group->count < examples_max) group->examples[group->count] = i;
+        group->count += 1;
+    }
+}
+
+// Groups in order: the biggest first, ties in the order they first appeared (an insertion sort of a few hundred).
+static void sort_groups() {
+    for (Usize i = 1; i < group_count; i++) {
+        struct Group moved = groups[i];
+        Usize at = i;
+        while (at > 0 && (groups[at - 1].count < moved.count ||
+                          (groups[at - 1].count == moved.count && groups[at - 1].first > moved.first))) {
+            groups[at] = groups[at - 1];
+            at -= 1;
+        }
+        groups[at] = moved;
+    }
+}
+
+// A stage's number of failures, over the stages in the order a file meets them.
+static const char *const stage_names[_] = {"fixer", "parse", "check", "emit", "write"};
+
+static void print_stages() {
+    for (Usize s = 0; s < countof(stage_names); s++) {
+        Usize count = 0;
+        for (Usize i = 0; i < entry_count; i++) {
+            if (same(text_of(entries[i].stage[0:stage_size]), view_of(stage_names[s]))) count += 1;
+        }
+        console::print("  failed at ", format::left(stage_names[s], 6), " ", count, "\n");
+    }
+}
+
+static I32 summarize(const char file[:]) {
+    if (!read_table(file)) {
+        console::print_error("frontend_coverage: cannot read ", file, "\n");
+        return 1;
+    }
+    Usize passed = 0;
+    for (Usize i = 0; i < entry_count; i++) {
+        const char *path = entries[i].path;
+        if (is_pass(&entries[i])) {
+            passed += 1;
+            console::print("pass  ", path, "\n");
+        } else {
+            console::print("FAIL  ", path, " [", (const char *)entries[i].stage, "] ", (const char *)entries[i].message,
+                           "\n");
+        }
+    }
+    group_failures();
+    sort_groups();
+    console::print("\nfrontend-coverage: ", passed, " of ", entry_count, " files pass\n");
+    print_stages();
+    console::print("\nfailures by message (", group_count, " groups):\n");
+    for (Usize g = 0; g < group_count; g++) {
+        console::print(format::pad(groups[g].count, 4), "  ", (const char *)groups[g].message, "\n");
+        Usize shown = groups[g].count < examples_max ? groups[g].count : examples_max;
+        for (Usize e = 0; e < shown; e++)
+            console::print("        e.g. ", (const char *)entries[groups[g].examples[e]].path, "\n");
+    }
+    return 0;
+}
+
+// ------------------------------------------------------------------------------------------------------------ run
+
+static char tree[files_max][path_size];
+static Usize tree_count = 0;
+
+// What a program printed, as text, and its exit status (128 and the signal when killed, 127 when it did not start).
+// `output` is the standard output then the standard error; the memory is the caller's to free with release.
+struct Ran {
+    I32 status;
+    char text[:];
+    char *owned_out;
+    char *owned_err;
+};
+
+static struct Ran run_program(const char *const argv[:]) {
+    process::OutputResult done = process::run(argv);
+    if (done == .error) return (struct Ran){.status = 127, .text = ""};
+    struct Ran ran = {};
+    ran.status = done.ok.exit.signal != 0 ? 128 + (I32)done.ok.exit.signal : (I32)done.ok.exit.status;
+    // The front end and the fixer write their diagnostics to the error stream; a tool with none has them on the output.
+    ran.text = mem::view(done.ok.output, char);
+    if (countof(done.ok.errors) > 0) ran.text = mem::view(done.ok.errors, char);
+    ran.owned_out = (char *)done.ok.output.data;
+    ran.owned_err = (char *)done.ok.errors.data;
+    return ran;
+}
+
+// Gives the memory of a run back.
+static void release(struct Ran *ran) {
+    if (ran->owned_out != nullptr) mem::free(ran->owned_out);
+    if (ran->owned_err != nullptr) mem::free(ran->owned_err);
+    *ran = (struct Ran){};
+}
+
+// The tracked .smith files of `root`, one per line.
+static Bool list_tree(const char *root) {
+    const char *const argv[_] = {"git", "-C", root, "ls-files", "*.smith"};
+    process::OutputResult done = process::run(argv[0:5]);
+    if (done == .error || done.ok.exit.status != 0) return false;
+    typeof(char[:]) text = mem::view(done.ok.output, char);
+    defer mem::free(done.ok.output.data);
+    if (done.ok.errors.data != nullptr) mem::free(done.ok.errors.data);
+    Usize at = 0;
+    while (at < countof(text) && tree_count < files_max) {
+        Usize end = find(text, '\n', at);
+        copy_text(tree[tree_count][0:path_size], text[at:end]);
+        tree_count += 1;
+        at = end + 1;
+    }
+    return true;
+}
+
+// Makes `root` and the folders of `path` below it: every prefix, the ones that exist are left as they are.
+static void make_folders(const char *root, const char *path) {
+    char folder[path_size * 2];
+    format::Written made = format::to(folder, sizeof folder, root, "/", path);
+    for (Usize i = 1; i < made.length; i++) {
+        if (folder[i] != '/') continue;
+        folder[i] = '\0';
+        (void)files::make_folder(folder[0:i]);
+        folder[i] = '/';
+    }
+}
+
+// Copies each file to the scratch tree, never touching the original. Returns false at the first file that fails.
+static Bool copy_tree(const char *root, const char *scratch) {
+    for (Usize i = 0; i < tree_count; i++) {
+        char from[path_size * 2];
+        char to[path_size * 2];
+        format::Written a = format::to(from, sizeof from, root, "/", (const char *)tree[i]);
+        format::Written b = format::to(to, sizeof to, scratch, "/", (const char *)tree[i]);
+        make_folders(scratch, tree[i]);
+        files::BytesResult loaded = files::read_file(from[0:a.length]);
+        if (loaded == .error) return false;
+        defer mem::free(loaded.ok.data);
+        files::CountResult written = files::write_file(to[0:b.length], loaded.ok, files::Replace);
+        if (written == .error) return false;
+    }
+    return true;
+}
+
+// The first position of `needle` in `text`, or the length of the text.
+static Usize find_text(const char text[:], const char needle[:]) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        if (same(text[i:i + countof(needle)], needle)) return i;
+    }
+    return countof(text);
+}
+
+// The first error of a compile's output without its position: `a.smith:3:7: error: message` is `message`. A line with
+// no `error:` (a crash, a missing tool) is the message as it stands. `stage` gets the stage the front end named.
+static void first_error(const char output[:], char message[:], char stage[:]) {
+    copy_text(stage, "parse");
+    Usize named = find_text(output, ": stage: ");
+    if (named < countof(output)) copy_text(stage, output[named + 9:countof(output)]);
+    Usize error = find_text(output, ": error: ");
+    if (error < countof(output)) {
+        copy_text(message, output[error + 9:countof(output)]);
+    } else {
+        copy_text(message, output);
+    }
+}
+
+// The fixer, then the new front end, on the copy of one file (the process is in the scratch tree). Records the result.
+static void measure(const char *smith, const char *path) {
+    char message[message_size];
+    char stage[stage_size];
+    const char *const fix[_] = {smith, "lint", "--fix", path};
+    struct Ran fixed = run_program(fix[0:4]);
+    if (fixed.status != 0) {
+        copy_text(message[0:message_size], fixed.text);
+        add_entry(view_of(path), "fixer", message[0:message_size]);
+        release(&fixed);
+        return;
+    }
+    release(&fixed);
+    char object[path_size + 4];
+    (void)format::to(object, sizeof object, path, ".o");
+    const char *const compile[_] = {smith, "cc", "--front-end=new", "-c", path, "-o", object};
+    struct Ran compiled = run_program(compile[0:7]);
+    if (compiled.status == 0) {
+        add_entry(view_of(path), "pass", "");
+    } else {
+        first_error(compiled.text, message[0:message_size], stage[0:stage_size]);
+        add_entry(view_of(path), stage[0:stage_size], message[0:message_size]);
+    }
+    release(&compiled);
+}
+
+static I32 run(const char *smith, const char *root, const char *scratch) {
+    if (!list_tree(root)) {
+        console::print_error("frontend_coverage: cannot list the files of ", root, "\n");
+        return 1;
+    }
+    if (!copy_tree(root, scratch)) {
+        console::print_error("frontend_coverage: cannot copy the files to ", scratch, "\n");
+        return 1;
+    }
+    (void)c::setenv("SMITH_FRONT_STAGE", "1", 1);
+    if (c::chdir(scratch) != 0) return 1;
+    for (Usize i = 0; i < tree_count; i++)
+        measure(smith, tree[i]);
+    for (Usize i = 0; i < entry_count; i++) {
+        console::print((const char *)entries[i].path, "\t", (const char *)entries[i].stage, "\t",
+                       (const char *)entries[i].message, "\n");
+    }
+    return 0;
+}
+
+I32 main(Str args[:]) {
+    if (countof(args) == 5 && same(args[1], "run")) return run(args[2].data, args[3].data, args[4].data);
+    if (countof(args) == 3 && same(args[1], "summarize")) return summarize(args[2]);
+    console::print_error("usage: frontend_coverage run SMITH ROOT SCRATCH | frontend_coverage summarize RESULTS\n");
+    return 2;
+}

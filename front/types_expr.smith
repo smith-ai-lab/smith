@@ -1744,6 +1744,64 @@ static void call_after(types::Checked *c, Frame f) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Streams: `stream::next(s)` and `stream::close(s)` on a local `stream::Stream(T)` (#1723; the yield rules are in
+// types_stream, which imports this module, so the call rule lives here)
+
+// The name of the stream function a call's callee spells (`next` or `close`), else an empty text.
+static Str stream_callee(const types::Checked *c, const ast::Expr *callee) {
+    if (callee->kind != .name) return "";
+    ast::Path path = callee->kind.name.path;
+    if (countof(path.segments) != 2 || !same_text(path.segments[0].text, "stream")) return "";
+    const types::Symbol *first = types::lookup(&c->scopes, path.segments[0].text);
+    if (first != nullptr && first->kind != .module_name) return "";
+    Str name = path.segments[1].text;
+    if (same_text(name, "next") || same_text(name, "close")) return name;
+    return "";
+}
+
+static void stream_before(Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call)) {
+        return;
+    }
+    ast::ExprRef args[:] = e->kind.call.args;
+    push(w, e, f.expected, 6);
+    for (Usize i = countof(args); i > 0; i--) {
+        push(w, argument_value(args[i - 1]), nullptr, 0);
+    }
+}
+
+static void stream_after(types::Checked *c, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call)) {
+        return;
+    }
+    ast::ExprRef args[:] = e->kind.call.args;
+    Str name = stream_callee(c, e->kind.call.callee);
+    if (countof(args) != 1) {
+        types::failf(c, e->span, "`stream::", name, "` takes one argument, a `stream::Stream(T)`; pass exactly one");
+        poison(c, e);
+        return;
+    }
+    types::TypeRef given = typ(c, args[0]);
+    if (given == invalid(c)) {
+        poison(c, e);
+        return;
+    }
+    if (given->kind != .stream) {
+        types::failf(c, args[0]->span, "`stream::", name, "` got a `", types::show(given),
+                     "`, but a `stream::Stream(T)` is expected; pass a stream");
+        poison(c, e);
+        return;
+    }
+    if (same_text(name, "next")) {
+        finish(c, e, types::option_of(&c->table, given->element), f.expected);
+    } else {
+        types::set_type(c, e, c->table.void_type);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Construction: `Point(x = 1, y = 2)` (spec "Structs, enums and building values" of #1428)
 
 static Str first_field(types::TypeRef record) {
@@ -3147,6 +3205,10 @@ static void before(types::Checked *c, Work *w, Frame f) {
             vector_before(c, w, f);
             return;
         }
+        if (countof(stream_callee(c, callee)) > 0) {
+            stream_before(w, f);
+            return;
+        }
         types::TypeRef record = constructed_record(c, callee);
         if (record != nullptr) {
             construct_before(w, f, record);
@@ -3216,6 +3278,8 @@ static void after(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .call) {
         if (f.stage == 1) {
             call_callee_done(c, w, f);
+        } else if (f.stage == 6) {
+            stream_after(c, f);
         } else if (f.stage == 5) {
             vector_after(c, f);
         } else if (f.stage == 3) {

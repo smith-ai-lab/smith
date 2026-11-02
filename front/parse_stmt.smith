@@ -360,9 +360,27 @@ static Bool c_path_declaration(const parse::Parser *p, Usize last) {
     return after == lex::equal || after == lex::semicolon || after == lex::left_bracket;
 }
 
+// Whether the statement starts with a path written with `.` that ends in a type name and is followed by a name or a
+// `*`: `arena.Arena memory = ...` (what `smith lint --fix` writes for `arena::Arena memory`). A `.` before a type name
+// follows a lowercase name only (`Color.Red` is a member of a type), as in parse_type's paths (#1746).
+static Bool dotted_declaration(const parse::Parser *p) {
+    if (!p->new_syntax) return false;
+    Usize last = 0;
+    while (parse::peek_at(p, last).kind == lex::name && parse::peek_at(p, last + 1).kind == lex::dot) {
+        lex::TokenKind next = parse::peek_at(p, last + 2).kind;
+        if (next != lex::name && next != lex::type_name) return false;
+        last += 2;
+    }
+    if (last == 0 || parse::peek_at(p, last).kind != lex::type_name) return false;
+    if (!parse_type::path_is_type(p, 0)) return false;
+    lex::TokenKind after = parse::peek_at(p, last + 1).kind;
+    return after == lex::name || after == lex::star;
+}
+
 // Whether a statement that starts with a name (a value's, as the case says) is a declaration: a path ending in a type
 // name, a `c::` path in the shape of one, or a path and then a name (`once x`).
 static Bool path_declaration(const parse::Parser *p) {
+    if (dotted_declaration(p)) return true;
     Usize last = 0;
     while (parse::peek_at(p, last + 1).kind == lex::colon_colon) {
         lex::TokenKind next = parse::peek_at(p, last + 2).kind;

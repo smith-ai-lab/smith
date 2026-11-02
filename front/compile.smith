@@ -39,6 +39,7 @@ import std::mem;
 import <llvm-c/Core.h>;
 import <llvm-c/Target.h>;
 import <llvm-c/TargetMachine.h>;
+import <stdlib.h>;
 import <unistd.h>;
 
 static Str as_str(char chars[:]) {
@@ -197,6 +198,39 @@ static files::BytesResult load(Str path) {
     return files::read_file(path);
 }
 
+// The folders `load_module` looks in: those of the file being compiled (the checker's loader takes no context).
+static roots::Roots import_roots;
+
+// The tree of the module at the dotted `path` (`std.math`, NUL-terminated) for the checker (#1714): the file
+// `<root>/std/math.smith` under the project's source folder, else under smith's library folder, parsed as `file`
+// parses and named by its path. Null when no root holds it, it does not parse, or its `module` line disagrees.
+static const ast::Module *load_module(const char *dotted) {
+    Str relative = as_str(format::push((const char *)dotted));
+    Str inside = "";
+    for (Usize i = 0; i < countof(relative); i++) {
+        Str piece = relative[i:i + 1];
+        if (relative[i] == '.') piece = "/";
+        inside = as_str(format::push(inside, piece));
+    }
+    Str folders[2] = {import_roots.source, import_roots.library};
+    for (Usize k = 0; k < 2; k++) {
+        Str path = as_str(format::push(folders[k], "/", inside, ".smith"));
+        if (!files::exists(path)) continue;
+        files::BytesResult loaded = load(path);
+        if (loaded == .error) return nullptr;
+        format::Chars chars = mem::view(loaded.ok, char);
+        Str source = chars;
+        parser::Parsed parsed =
+            starts_with_module(source) ? parser::parse(path, source) : parser::parse_new(path, source);
+        if (countof(parsed.errors) > 0) return nullptr;
+        if (countof(name_module(&parsed.module, path, import_roots)) > 0) return nullptr;
+        ast::Module *copy = mem::alloc(ast::Module);
+        *copy = parsed.module;
+        return copy;
+    }
+    return nullptr;
+}
+
 static Report failed(Str message, Times times) {
     return (Report){.ok = false, .text = message, .times = times};
 }
@@ -230,7 +264,8 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
         c::LLVMDisposeMessage(default_triple);
     }
     mark = clock::monotonic();
-    types::Checked checked = types_decl::check_module(&parsed.module, target_of(wanted));
+    import_roots = folders;
+    types::Checked checked = types_decl::check_module_with(&parsed.module, target_of(wanted), load_module);
     times.check = clock::monotonic() - mark;
     if (checked.error_count > 0) {
         Str all = warned;
@@ -266,6 +301,14 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     return (Report){.ok = true, .text = warned, .times = times};
 }
 
+// The stage that stopped a failed compile: a stage that ran has its time, so the last one with a time is it.
+static Str stage_of(Times times) {
+    if (times.write > 0) return "write";
+    if (times.emit > 0) return "emit";
+    if (times.check > 0) return "check";
+    return "parse";
+}
+
 // The driver's entry: `count` sources and their objects, the default roots, the triple of the compile (null: the
 // default). Nothing is compiled when two files would get one module name. Diagnostics go to stderr.
 [[std::c_name("front_compile_run")]] export I32 run(const char *const *sources, const char *const *outputs, Usize count,
@@ -291,6 +334,10 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
         Report done = file(paths[i].path, output, target, folders);
         if (countof(done.text) > 0) report(done.text);
         if (!done.ok) status = 1;
+        // With SMITH_FRONT_STAGE set, a failed file also names the stage that stopped it (frontend-coverage, #1730).
+        if (!done.ok && c::getenv("SMITH_FRONT_STAGE") != nullptr) {
+            report(as_str(format::push(paths[i].path, ": stage: ", stage_of(done.times), "\n")));
+        }
     }
     return status;
 }

@@ -802,7 +802,7 @@ export void test_parse_decl_old_module_line_and_export() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_fixed("module a::b;\nexport I32 c = 3;\n", "pub c: i32 = 3\n", 4);
+    expect_fixed("module a::b;\nexport I32 c = 3;\n", "pub c: i32 = 3\n", 3);
 }
 
 export void test_parse_decl_old_variables() {
@@ -810,10 +810,10 @@ export void test_parse_decl_old_variables() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_fixed("I32 a = 3;\n", "a: i32 = 3\n", 2);
+    expect_fixed("I32 a = 3;\n", "a: i32 = 3\n", 1);
     expect_fixed("auto a = 3;\n", "a := 3\n", 1);
-    expect_fixed("I32 a;\n", "mut a: i32\n", 2);
-    expect_fixed("static constexpr I32 n = 8;\n", "static const n: i32 = 8\n", 2);
+    expect_fixed("I32 a;\n", "mut a: i32\n", 1);
+    expect_fixed("static constexpr I32 n = 8;\n", "static const n: i32 = 8\n", 1);
     expect_fixed("constexpr auto n = 8;\n", "const n := 8\n", 1);
     expect_fixed("constexpr Type Meters = F64;\n", "Meters := f64\n", 2);
 }
@@ -838,10 +838,10 @@ export void test_parse_decl_old_functions() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_fixed("I32 f(I32 a, I32 b) { }\n", "fn f(a: i32, b: i32) -> i32 { }\n", 4);
+    expect_fixed("I32 f(I32 a, I32 b) { }\n", "fn f(a: i32, b: i32) -> i32 { }\n", 1);
     expect_fixed("void g(void) { }\n", "fn g() { }\n", 1);
-    expect_fixed("constexpr I32 h(I32 a) { }\n", "fn h(a: i32) -> i32 { }\n", 3);
-    expect_fixed("I32 t(constexpr Type T, auto... rest) { }\n", "fn t(T: type, rest: ...) -> i32 { }\n", 2);
+    expect_fixed("constexpr I32 h(I32 a) { }\n", "fn h(a: i32) -> i32 { }\n", 1);
+    expect_fixed("I32 t(constexpr Type T, auto... rest) { }\n", "fn t(T: type, rest: ...) -> i32 { }\n", 1);
     expect_fixed("I32 p(I32 a);\n", "i32 p(i32 a);\n", 2);
     expect_fixed("I32 s(I32 xs[:]) { }\n", "fn s(xs: []i32) -> i32 { }\n", 3);
     expect_fixed("void k(U64 key, U64 keys[3]) { }\n", "fn k(key: u64, keys: [3]u64) { }\n", 3);
@@ -868,22 +868,23 @@ export void test_parse_decl_old_attributes() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_fixed("[[nodiscard]] I32 a = 1;\n", "a: i32 = 1\n", 3);
-    expect_fixed("[[maybe_unused]] I32 a = 1;\n", "_a: i32 = 1\n", 2);
+    expect_fixed("[[nodiscard]] I32 a = 1;\n", "a: i32 = 1\n", 2);
+    expect_fixed("[[maybe_unused]] I32 a = 1;\n", "_a: i32 = 1\n", 1);
     expect_fixed("[[std::affine]] struct K {\n};\n", "@affine struct K {\n}\n", 2);
-    expect_fixed("[[std::c_name(\"k\")]] I32 a = 1;\n", "@c_name(\"k\") a: i32 = 1\n", 3);
-    expect_fixed("[[gnu::cold]] void f(I32 a) { }\n", "@cold fn f(a: i32) { }\n", 3);
-    expect_fixed("void f([[maybe_unused]] I32 a) { }\n", "fn f(_a: i32) { }\n", 2);
+    expect_fixed("[[std::c_name(\"k\")]] I32 a = 1;\n", "@c_name(\"k\") a: i32 = 1\n", 2);
+    expect_fixed("[[gnu::cold]] void f(I32 a) { }\n", "@cold fn f(a: i32) { }\n", 2);
+    expect_fixed("void f([[maybe_unused]] I32 a) { }\n", "fn f(_a: i32) { }\n", 1);
 }
 
-export void test_parse_decl_locals_carry_no_fixes() {
+// A local declaration is mended like a top-level one (#1742): `T *p = e;` is `p: *T = e`, the type written as smith's
+// own, so the next pass reads it; the `;` goes, even where the initializer has a fix of its own at the same place.
+export void test_parse_decl_locals_are_fixed_too() {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parse::Parser p = parser_of("I32 a = 3;\n");
-    p.hooks.declaration = parse_decl::declaration;
-    ast::Decl *one = parse_decl::declaration(&p);
-    test::check_equal(countof(p.warnings), (Usize)0);
-    test::check_equal(one != nullptr, true);
+    expect_fixed("void f(void) {\n    Key *p = &key;\n}\n", "fn f() {\n    p: *Key = &key\n}\n", 2);
+    expect_fixed("void f(void) {\n    U64 n = 3;\n    I32 m;\n}\n", "fn f() {\n    n: u64 = 3\n    mut m: i32\n}\n", 3);
+    expect_fixed("void f(I32 n) {\n    I32 a = (I32)n;\n}\n", "fn f(n: i32) {\n    a: i32 = n as i32\n}\n", 3);
+    expect_fixed("void f(Point *p) {\n}\n", "fn f(p: *Point) {\n}\n", 1);
 }
