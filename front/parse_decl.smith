@@ -942,7 +942,7 @@ static Bool new_field_ahead(const parse::Parser *p) {
 
 // `x: f64`, one to a line, with no `;` or `,` (the position is at the name).
 static ast::FieldDecl parse_new_field(parse::Parser *p) {
-    ast::FieldDecl field = {};
+    ast::FieldDecl field = {.is_new = true};
     U32 start = parse::peek(p).span.start;
     field.name = parse::text(p, parse::advance(p));
     parse::advance(p);
