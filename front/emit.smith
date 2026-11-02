@@ -20,9 +20,9 @@
 // emit_debug (B5: called at fixed points whether or not debug info is on; doing nothing is success). emit_jit is the
 // test helper (LLJIT). The tests are tests/front_emit_*_test.smith.
 //
-// FLOATS (#1617): `f32`/`f64` (`F32`/`F64`) are `floating` types made by emit_arith::type_float. Literals, `+ - * /`,
-// unary `-`, ordered comparisons (`!=` unordered), `f32` to `f64` and integer to float conversions, and casts go to
-// emit_arith.
+// FLOATS (#1617): `f32`/`f64` (`F32`/`F64`), and `f16`/`bf16` (#1629: LLVM `half` and `bfloat`) are `floating` types
+// made by emit_arith::type_float. Literals, `+ - * /`, unary `-`, ordered comparisons (`!=` unordered), `f32` to `f64`
+// and integer to float conversions, and casts go to emit_arith.
 //
 // WAVE 3 (#1582 of #1428) added one stub per new area, the same way: emit_option (`?T`, `.some`, `.none`, `if let`;
 // #1584), emit_match (enumerations, `.red`, `match`; #1585), emit_value (an `if` or a block as a value), emit_iter
@@ -873,7 +873,12 @@ static Bool find_record_by_name(state::Emitter *e, Str name, state::Ty *ty) {
 // An integer or `bool` the checker names, by its bits and signedness when the spelling is not one the emitter knows.
 static Bool scalar_of_checked(state::Emitter *e, types::TypeRef t, state::Ty *ty) {
     if (t->kind == .bool_type) return state::scalar_type(e, "bool", ty);
-    if (t->kind == .floating) return arith::type_float(e, t->bits == 32 ? "F32" : "F64", ty);
+    if (t->kind == .floating) {
+        Str spelled = "F64";
+        if (t->bits == 16) spelled = t->name;
+        if (t->bits == 32) spelled = "F32";
+        return arith::type_float(e, spelled, ty);
+    }
     if (t->kind != .integer) return false;
     if (state::scalar_type(e, t->name, ty)) return true;
     Bool is_signed = t->is_signed;
@@ -943,7 +948,7 @@ static c::LLVMValueRef float_conversion(state::Emitter *e, state::Value value, s
         return nullptr;
     }
     if (from.kind != .integer) return nullptr;
-    U32 holds = to.bits == 32 ? 16 : 32;
+    U32 holds = to.bits == 16 ? 8 : (to.bits == 32 ? 16 : 32);
     if (from.bits > holds) return nullptr;
     if (from.is_signed) return c::LLVMBuildSIToFP(e->builder, value.llvm, to.llvm, "convert");
     return c::LLVMBuildUIToFP(e->builder, value.llvm, to.llvm, "convert");

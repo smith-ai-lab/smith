@@ -313,6 +313,8 @@ export Table start(Target target) {
     add_number(&t, "U32", .integer, 32, false);
     add_number(&t, "U64", .integer, 64, false);
     add_number(&t, "Usize", .integer, word, false);
+    add_number(&t, "F16", .floating, 16, true);  // IEEE half (LLVM `half`)
+    add_number(&t, "BF16", .floating, 16, true); // bfloat16 (LLVM `bfloat`)
     add_number(&t, "F32", .floating, 32, true);
     add_number(&t, "F64", .floating, 64, true);
     add_number(&t, "Char", .integer, 8, false); // the 8-bit character type, a type of its own (not an alias of `U8`)
@@ -338,11 +340,11 @@ export TypeRef integer(const Table *t, U32 bits, Bool is_signed) {
     return nullptr;
 }
 
-// `F32` or `F64`; null for another width.
+// `F32` or `F64` (and `F16`, never `BF16`, for 16); null for another width.
 export TypeRef floating(const Table *t, U32 bits) {
     for (Usize i = 0; i < countof(t->builtins); i++) {
         const Ty *x = t->builtins[i].type;
-        if (x->kind == .floating && x->bits == bits) return x;
+        if (x->kind == .floating && x->bits == bits && !same_text(x->name, "BF16")) return x;
     }
     return nullptr;
 }
@@ -993,6 +995,8 @@ static Str own_builtin(Str name) {
     if (same_text(name, "u32")) return "U32";
     if (same_text(name, "u64")) return "U64";
     if (same_text(name, "usize")) return "Usize";
+    if (same_text(name, "f16")) return "F16";
+    if (same_text(name, "bf16")) return "BF16";
     if (same_text(name, "f32")) return "F32";
     if (same_text(name, "f64")) return "F64";
     if (same_text(name, "bool")) return "Bool";
