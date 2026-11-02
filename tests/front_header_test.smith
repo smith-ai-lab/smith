@@ -53,8 +53,8 @@ static I32 sh_status(Str command) {
     process::OutputResult done = process::run(argv[0:3]);
     if (done != .ok || done.ok.exit.signal != 0) return -1;
     if (done.ok.exit.status != 0) {
-        c::fwrite(done.ok.errors.data, 1, countof(done.ok.errors), c::stderr);
-        c::fwrite(done.ok.output.data, 1, countof(done.ok.output), c::stderr);
+        c::write(2, done.ok.errors.data, countof(done.ok.errors));
+        c::write(2, done.ok.output.data, countof(done.ok.output));
     }
     return done.ok.exit.status;
 }
@@ -207,7 +207,7 @@ export void test_front_header_c_program_links_and_runs() {
                             "int main(void) {\n"
                             "    geometry_shapes_Point a = {2, 3};\n"
                             "    geometry_shapes_Point b = {4, 5};\n"
-                            "    long long n = 41;\n"
+                            "    int64_t n = 41;\n"
                             "    geometry_shapes_bump(&n);\n"
                             "    return geometry_shapes_dot(&a, &b) == 23 && n == 42 && shapes_count() == 3 ? 0 : 1;\n"
                             "}\n")));
