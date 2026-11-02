@@ -62,7 +62,10 @@ check() {
     ready=$(issues task '[.[]|select(.pull_request==null and ([.labels[].name]|(index("claimed") or index("blocked"))|not))]|length')
     [ -n "$ready" ] && [ "$ready" -lt "${n:-0}" ] && seen "ready$ready-$(date +%F)" && echo "only $ready ready tickets for N=$n: write or split tickets"
   fi
-  run=$(gh api "repos/$R/actions/workflows/ci.yml/runs?branch=main&status=completed&per_page=1" --jq '.workflow_runs[0]|"\(.conclusion) \(.head_sha)"' 2>/dev/null)
+  # the `ci` check of main's tip, not the workflow's conclusion: a cancelled cache-warming job (warm) fails the
+  # workflow while every gate passed
+  sha=$(gh api "repos/$R/commits/main" --jq .sha 2>/dev/null)
+  run="$(gh api "repos/$R/commits/$sha/check-runs?check_name=ci" --jq '[.check_runs[]|select(.status=="completed")|.conclusion]|first // "pending"' 2>/dev/null) $sha"
   [ "${run%% *}" = failure ] && seen "red${run##* }" && echo "main's ci is red at ${run##* }"
   for i in $(issues blocked '.[]|select(.pull_request==null)|.number'); do
     w=$( { gh api "repos/$R/issues/$i" --jq .body; gh api "repos/$R/issues/$i/comments?per_page=100" --jq '.[].body'; } 2>/dev/null | grep -oiE 'waits for #[0-9]+')
