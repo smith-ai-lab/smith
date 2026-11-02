@@ -861,6 +861,10 @@ export void test_error_array_empty() {
     corpus_case("error-array-empty");
 }
 
+export void test_error_enum_variants_limit() {
+    corpus_case("error-enum-variants-limit");
+}
+
 export void test_error_array_infer() {
     corpus_case("error-array-infer");
 }

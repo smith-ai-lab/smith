@@ -17,6 +17,7 @@ typedef struct {
     size_t starts[smith_lang_enum_variants_max];
     size_t ends[smith_lang_enum_variants_max];
     size_t count;
+    bool overflow; // a member past smith_lang_enum_variants_max
 } SmithLangEnumVariants;
 
 // The extent of the braces of `enum {` or `enum Tag {` that hold a `;` at their own depth (a payload enum; a C enum has
@@ -46,12 +47,17 @@ static bool smith_lang_enum_extent(SmithLang *lang, const SmithHost *host, size_
 // depth.
 static void smith_lang_enum_split(const SmithToken *span, size_t open, size_t close, SmithLangEnumVariants *out) {
     out->count = 0;
+    out->overflow = false;
     size_t start = open + 1;
     int depth = 0;
     for (size_t at = open + 1; at < close; at++) { // each token of the members
         depth += smith_lang_punct(&span[at], "{");
         depth -= smith_lang_punct(&span[at], "}");
-        if (depth == 0 && smith_lang_punct(&span[at], ";") && out->count < smith_lang_enum_variants_max) {
+        if (depth == 0 && smith_lang_punct(&span[at], ";") && out->count >= smith_lang_enum_variants_max) {
+            out->overflow = true;
+            return;
+        }
+        if (depth == 0 && smith_lang_punct(&span[at], ";")) {
             out->starts[out->count] = start;
             out->ends[out->count] = at;
             out->count += 1;
@@ -67,6 +73,12 @@ static size_t smith_lang_enum_build(SmithLang *lang, const SmithHost *host, cons
                                     SmithToken *made, size_t capacity) {
     SmithLangEnumVariants variants;
     smith_lang_enum_split(span, open, close, &variants);
+    if (variants.overflow) {
+        smith_lang_error(lang, host, name->location,
+                         "the enum `%.*s` has more than %zu variants, the limit of a payload enum", (int)name->length,
+                         name->text, smith_lang_enum_variants_max);
+        return 0;
+    }
     char text[smith_lang_name_max];
     size_t used = 0;
     bool payload = false;

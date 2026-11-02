@@ -64,8 +64,9 @@ static void smith_lang_priv_write(SmithLang *lang, const SmithToken *token) {
     const char *text = token->header_text != nullptr ? token->header_text : token->text;
     size_t length = token->header_text != nullptr ? token->header_length : token->length;
     bool first = lang->priv_used == range->from;
-    smith_lang_put(lang->priv_text, smith_lang_priv_text_max, &lang->priv_used, text, length,
-                   !first && token->line_start, !first && token->space_before);
+    if (!smith_lang_put(lang->priv_text, smith_lang_priv_text_max, &lang->priv_used, text, length,
+                        !first && token->line_start, !first && token->space_before))
+        lang->broken = true;
 }
 
 // A name the kept declaration declares: what the generics that name it find it by.
