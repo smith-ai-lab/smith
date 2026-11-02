@@ -1,14 +1,283 @@
-// front::emit_value: an `if` or a block used as a value. Filled by the next batch of #1428; today every handler is `not
-// emitted yet`, with its final signature, so that ticket edits this file and never front/emit.smith (the wave-3
-// scaffold, #1582 of #1428).
+// front::emit_value: an `if` or a block used as a value (#1618 of #1428, spec "Statements and control flow": `if`,
+// `match` and blocks are expressions). `value_of(e, s, hint)` pushes exactly one Value: the value of `s`, an `if` with
+// an `else`, or a block whose last line is its value. A function's last line, `x := if c { a } else { b }` and a
+// `match` arm's block all come here.
+//
+// THE SLOT. One slot per `value_of`, an alloca in the entry block. Its type is the hint's when there is one. With no
+// hint (`x := if c { a } else { b }`) it is chosen from the checker: the `state::type_of_node` of the last expression
+// of every branch (found with an explicit stack through nested `if`s and blocks; a branch whose last line is `return`,
+// `break` or `continue` has no value and is skipped), and the type every other one converts to (the same type, or an
+// integer that widens to it). None is an Error at the `if`: "the branches of this `if` have types X and Y". Each
+// branch converts its value to the slot's type (`state::convert`, `.initialize`) and stores it; after the `end` block
+// the slot is loaded and pushed.
+//
+// A BLOCK AS A VALUE opens a scope, emits its statements but the last, evaluates the last line with the slot's type as
+// hint, stores it, then runs `control::end_of_block` (pending `defer`s) and closes the scope, in that order, so its
+// locals are not visible afterwards. A last line that is itself an `if` or a block stores into the same slot, as work
+// (no recursion). An `if` is `condbr` to a `then` and an `else` block, both branching to one `end` block; a branch that
+// already ended (`return`, `break`, `continue`) stores nothing and gets no branch. When no branch reaches `end` it gets
+// `unreachable` and the pushed Value is `undef` of the slot's type.
+//
+// NOT HERE (`not emitted yet`): a `for`, `while` or `if let` used as a value, and a `match` with no hint (its handler,
+// emit_match's `value_of`, is #1585's; a block's last line that is a `match` goes there with the slot's type).
 module front::emit_value;
 
 import front::ast;
+import front::emit_control as control;
+import front::emit_match as matching;
 import front::emit_state as state;
 import front::types;
+import <llvm-c/Core.h>;
+
+// ---------------------------------------------------------------------------------------------------------------
+// The slot's type
+
+// Whether a value of `from` converts to `to` with no check: the same type, or a wider integer (the checker's rule:
+// the same signedness, or unsigned to a strictly wider signed).
+static Bool converts_to(state::Ty from, state::Ty to) {
+    if (state::same_type(from, to)) return true;
+    if (from.kind != .integer || to.kind != .integer || to.bits <= from.bits) return false;
+    return from.is_signed == to.is_signed || (!from.is_signed && to.is_signed);
+}
+
+// `found` joins the type chosen so far (`chosen`, when `have`): the wider of the two, or an Error.
+static state::Status join_types(state::Ty *chosen, Bool *have, state::Ty found, ast::Span span) {
+    if (!*have) {
+        *chosen = found;
+        *have = true;
+        return state::success();
+    }
+    if (converts_to(found, *chosen)) return state::success();
+    if (converts_to(*chosen, found)) {
+        *chosen = found;
+        return state::success();
+    }
+    return state::failf(span, "the branches of this `if` have types ", chosen->name, " and ", found.name);
+}
+
+// The statement a branch ends in, or null when it is empty.
+static const ast::Stmt *last_line(const ast::Stmt *s) {
+    if (s->kind != .block) {
+        return s;
+    }
+    ast::StmtRef items[:] = s->kind.block.items;
+    if (countof(items) == 0) return nullptr;
+    return items[countof(items) - 1];
+}
+
+// The type of the value of `s` with no hint: its branches' last expressions, joined. An explicit stack walks nested
+// `if`s and blocks.
+static state::Status infer_type(state::Emitter *e, const ast::Stmt *s, state::Ty *out, Bool *found) {
+    const ast::Stmt *pending[32] = {};
+    Usize depth = 1;
+    pending[0] = s;
+    while (depth > 0) {
+        depth -= 1;
+        const ast::Stmt *top = pending[depth];
+        if (top->kind == .if_stmt) {
+            const ast::Stmt *then_branch = top->kind.if_stmt.then_branch;
+            const ast::Stmt *else_branch = top->kind.if_stmt.else_branch;
+            if (depth + 2 > countof(pending)) return state::fail("an `if` nested more than 32 deep", s->span);
+            if (else_branch != nullptr) {
+                pending[depth] = else_branch;
+                depth += 1;
+            }
+            pending[depth] = then_branch;
+            depth += 1;
+            continue;
+        }
+        const ast::Stmt *last = last_line(top);
+        if (last == nullptr) continue;
+        if (last->kind == .expression) {
+            state::TyResult typed = state::type_of_node(e, last->kind.expression.value);
+            if (typed == .error) {
+                return {.error = typed.error};
+            }
+            try join_types(out, found, typed.ok, s->span);
+        } else if (last->kind == .if_stmt || last->kind == .block) {
+            if (depth == countof(pending)) return state::fail("an `if` nested more than 32 deep", s->span);
+            pending[depth] = last;
+            depth += 1;
+        } else if (last->kind == .match_stmt) {
+            return state::not_emitted("a match inside a value with no type written", last->span);
+        }
+    }
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Branches
+
+static Bool ended(state::Emitter *e) {
+    return c::LLVMGetBasicBlockTerminator(c::LLVMGetInsertBlock(e->builder)) != nullptr;
+}
+
+static void jump_unless_ended(state::Emitter *e, c::LLVMBasicBlockRef target) {
+    if (!ended(e)) c::LLVMBuildBr(e->builder, target);
+}
+
+// What the last line of a branch stores into: the slot and its type, carried in a Work.
+static state::Work into_work(state::Continuation then, const ast::Stmt *s, c::LLVMValueRef slot, state::Ty ty) {
+    state::Work item = {.then = then, .stmt = s, .value = slot, .ty = ty, .span = s->span};
+    return item;
+}
+
+static state::Status into_start(state::Emitter *e, const state::Work *w);
+
+// The value of the last line is on the stack: converted to the slot's type and stored, unless the branch ended.
+static state::Status store_value(state::Emitter *e, const state::Work *w) {
+    state::Value value = state::pop_value(e);
+    if (!state::same_type(value.ty, w->ty)) {
+        try state::convert(e, value, w->ty, w->span, .initialize);
+        value = state::pop_value(e);
+    }
+    if (!ended(e)) c::LLVMBuildStore(e->builder, value.llvm, w->value);
+    return state::success();
+}
+
+// A block's end, as `emit.smith`'s `block_finish`: the scope closes after whatever `end_of_block` pushed.
+static state::Status scope_close(state::Emitter *e, const state::Work *_) {
+    state::end_scope(e);
+    return state::success();
+}
+
+static state::Status block_end(state::Emitter *e, const state::Work *w) {
+    state::push_then(e, (state::Work){.then = scope_close, .span = w->span});
+    try control::end_of_block(e, w->span);
+    return state::success();
+}
+
+// The last line of a block: its value is stored, or it is a statement that stores in its own way.
+static state::Status last_line_into(state::Emitter *e, const ast::Stmt *last, c::LLVMValueRef slot, state::Ty ty) {
+    if (last->kind == .expression) {
+        const ast::Expr *value = last->kind.expression.value;
+        state::push_then(e, into_work(store_value, last, slot, ty));
+        state::push_eval(e, value, state::hint_of(ty));
+        return state::success();
+    }
+    if (last->kind == .if_stmt || last->kind == .block) {
+        state::push_then(e, into_work(into_start, last, slot, ty));
+        return state::success();
+    }
+    if (last->kind == .match_stmt) {
+        state::push_then(e, into_work(store_value, last, slot, ty));
+        return matching::value_of(e, last, state::hint_of(ty));
+    }
+    state::push_statement(e, last); // `return`, `break`, `continue`: nothing is stored
+    return state::success();
+}
+
+static state::Status block_into(state::Emitter *e, const ast::Stmt *s, c::LLVMValueRef slot, state::Ty ty) {
+    if (s->kind != .block) {
+        return state::fail("not a block", s->span);
+    }
+    ast::StmtRef items[:] = s->kind.block.items;
+    state::begin_scope(e);
+    state::push_then(e, (state::Work){.then = block_end, .span = s->span});
+    if (countof(items) == 0) return state::success();
+    try last_line_into(e, items[countof(items) - 1], slot, ty);
+    for (Usize i = countof(items) - 1; i > 0; i--)
+        state::push_statement(e, items[i - 1]);
+    return state::success();
+}
+
+static state::Status branch_on_condition(state::Emitter *e, const state::Work *w) {
+    state::Value condition = state::pop_value(e);
+    if (condition.ty.kind != .boolean) return state::fail("a condition is a Bool; write `x != 0`", w->span);
+    c::LLVMBuildCondBr(e->builder, condition.llvm, w->blocks[0], w->blocks[1]);
+    c::LLVMPositionBuilderAtEnd(e->builder, w->blocks[0]);
+    return state::success();
+}
+
+// The `then` branch is done: leave for `end`, and go on in the `else` block.
+static state::Status after_then(state::Emitter *e, const state::Work *w) {
+    jump_unless_ended(e, w->blocks[1]);
+    c::LLVMPositionBuilderAtEnd(e->builder, w->blocks[0]);
+    return state::success();
+}
+
+// Both branches are done: `end` is where the code goes on, and when nothing jumps to it, it is `unreachable`.
+static state::Status if_end(state::Emitter *e, const state::Work *w) {
+    jump_unless_ended(e, w->blocks[0]);
+    c::LLVMPositionBuilderAtEnd(e->builder, w->blocks[0]);
+    if (c::LLVMGetFirstUse(c::LLVMBasicBlockAsValue(w->blocks[0])) == nullptr) c::LLVMBuildUnreachable(e->builder);
+    return state::success();
+}
+
+static state::Status if_into(state::Emitter *e, const ast::Stmt *s, c::LLVMValueRef slot, state::Ty ty) {
+    if (s->kind != .if_stmt) {
+        return state::fail("not an if", s->span);
+    }
+    const ast::Expr *condition = s->kind.if_stmt.condition;
+    const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
+    const ast::Stmt *else_branch = s->kind.if_stmt.else_branch;
+    if (s->kind.if_stmt.is_constexpr) return state::fail("`if constexpr` belongs to the type checker", s->span);
+    if (else_branch == nullptr) return state::fail("an `if` used as a value needs an `else`", s->span);
+    c::LLVMBasicBlockRef then_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "then");
+    c::LLVMBasicBlockRef else_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "else");
+    c::LLVMBasicBlockRef end_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "endif");
+    state::Work end = {.then = if_end, .span = s->span};
+    end.blocks[0] = end_block;
+    state::push_then(e, end);
+    state::push_then(e, into_work(into_start, else_branch, slot, ty));
+    state::Work after = {.then = after_then, .span = s->span};
+    after.blocks[0] = else_block;
+    after.blocks[1] = end_block;
+    state::push_then(e, after);
+    state::push_then(e, into_work(into_start, then_branch, slot, ty));
+    state::Work branch = {.then = branch_on_condition, .span = condition->span};
+    branch.blocks[0] = then_block;
+    branch.blocks[1] = else_block;
+    state::push_then(e, branch);
+    state::push_eval(e, condition, state::no_hint());
+    return state::success();
+}
+
+// `if` and block branches store into the slot.
+static state::Status into_start(state::Emitter *e, const state::Work *w) {
+    const ast::Stmt *s = w->stmt;
+    if (s->kind == .block) return block_into(e, s, w->value, w->ty);
+    if (s->kind == .if_stmt) return if_into(e, s, w->value, w->ty);
+    return state::not_emitted("this statement as a branch of a value", s->span);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The entry
+
+// Everything has run: the slot is loaded (and `undef` when no branch reached the end, in a block of its own).
+static state::Status finish(state::Emitter *e, const state::Work *w) {
+    c::LLVMValueRef out = nullptr;
+    if (ended(e)) {
+        // No branch reached the end: what follows (the store into a local) goes in a block nothing jumps to.
+        c::LLVMBasicBlockRef dead = c::LLVMAppendBasicBlockInContext(e->context, e->function, "dead");
+        c::LLVMPositionBuilderAtEnd(e->builder, dead);
+        out = c::LLVMGetUndef(w->ty.llvm);
+    } else
+        out = c::LLVMBuildLoad2(e->builder, w->ty.llvm, w->value, "value");
+    state::push_value(e, (state::Value){.llvm = out, .ty = w->ty});
+    return state::success();
+}
+
+// A statement kind this ticket does not give a value to.
+static state::Status unsupported(const ast::Stmt *s) {
+    if (s->kind == .for_stmt) return state::not_emitted("for as a value", s->span);
+    if (s->kind == .while_stmt) return state::not_emitted("while as a value", s->span);
+    return state::not_emitted("this statement as a value", s->span);
+}
 
 export state::Status value_of(state::Emitter *e, const ast::Stmt *s, state::Hint hint) {
-    _ = e;
-    _ = hint;
-    return state::not_emitted("a block or if as a value", s->span);
+    if (s->kind != .if_stmt && s->kind != .block) return unsupported(s);
+    state::Ty ty = {};
+    if (hint.present) {
+        ty = hint.ty;
+    } else {
+        Bool found = false;
+        try infer_type(e, s, &ty, &found);
+        if (!found) state::scalar_type(e, "i32", &ty); // every branch ends: the value is never read
+    }
+    c::LLVMValueRef slot = state::new_alloca(e, ty, "value");
+    state::Work done = {.then = finish, .value = slot, .ty = ty, .span = s->span};
+    state::push_then(e, done);
+    state::push_then(e, into_work(into_start, s, slot, ty));
+    return state::success();
 }
