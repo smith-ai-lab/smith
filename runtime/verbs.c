@@ -57,6 +57,16 @@ typedef struct {
 
 static SmithVerbArgs smith_verb_args;
 
+// Room for `more` arguments in a list of smith_build_args_max: the verb adds its own after the typed ones, and a list
+// that cannot hold them stops with a message, never a verb that quietly runs without them.
+static void smith_verb_room(size_t used, size_t more, const char *what) {
+    if (used + more > smith_build_args_max) {
+        fprintf(stderr, "smith: too many arguments: %s needs %zu more of the %zu a verb takes\n", what, more,
+                (size_t)smith_build_args_max);
+        exit(smith_exit_usage);
+    }
+}
+
 static SmithVerbArgs *smith_verb_split(int count, char **args) {
     SMITH_ASSERT(count >= 0);
     if ((size_t)count > smith_build_args_max) smith_die(smith_exit_usage, "too many arguments", nullptr);
@@ -1196,7 +1206,8 @@ static void smith_verb_take_keep_going(SmithVerbArgs *split) {
             arg[2] == '\0' && i + 1 < split->own_count && split->own[i + 1][0] >= '0' && split->own[i + 1][0] <= '9';
         if (next) value = split->own[++i];
         snprintf(keep_going, sizeof keep_going, "-k%s", value[0] != '\0' ? value : "0");
-        if (split->option_count < smith_build_args_max) split->options[split->option_count++] = keep_going;
+        smith_verb_room(split->option_count, 1, "-k");
+        split->options[split->option_count++] = keep_going;
     }
     split->own_count = kept;
 }
@@ -1209,7 +1220,8 @@ static void smith_test_default_keep_going(SmithVerbArgs *split) {
     for (size_t i = 0; i < split->option_count; i++) {
         if (strncmp(split->options[i], "-k", 2) == 0) return;
     }
-    if (split->option_count < smith_build_args_max) split->options[split->option_count++] = keep_going;
+    smith_verb_room(split->option_count, 1, "the default -k0");
+    split->options[split->option_count++] = keep_going;
 }
 
 // Whether `--changed` is among the arguments, so `--list` is the selection's and not the runner's.
@@ -1356,7 +1368,8 @@ static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
         result = SmithChanged_Full;
     }
     static char costs[PATH_MAX + 16];
-    if (cheapest && smith_changed_write_costs(costs, sizeof costs) && split->own_count + 3 <= smith_build_args_max) {
+    if (cheapest && smith_changed_write_costs(costs, sizeof costs)) {
+        smith_verb_room(split->own_count, 3, "--cheapest");
         split->own[split->own_count++] = (char *)"--costs";
         split->own[split->own_count++] = costs;
         split->own[split->own_count++] = (char *)"--cheapest";
@@ -1367,7 +1380,8 @@ static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
     }
     // The selection names tests of every runner (units, front), so a runner that owns none of them has nothing to
     // run, which is no error: --partial (#1154). A hand-typed --test keeps the error for a name no runner knows.
-    if (result == SmithChanged_Some && split->own_count + 3 <= smith_build_args_max) {
+    if (result == SmithChanged_Some) {
+        smith_verb_room(split->own_count, 3, "--changed");
         split->own[split->own_count++] = (char *)"--partial";
         split->own[split->own_count++] = (char *)"--test";
         split->own[split->own_count++] = (char *)filter;
@@ -1382,7 +1396,8 @@ static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
     // The tests it runs count the lines they run and leave a record each (issue #456): a build option, not the
     // environment, so the smiths the tests start are not instrumented.
     static char record[] = "-DSMITH_RECORD=1";
-    if (split->option_count < smith_build_args_max) split->options[split->option_count++] = record;
+    smith_verb_room(split->option_count, 1, "the record option");
+    split->options[split->option_count++] = record;
     return -1;
 }
 
