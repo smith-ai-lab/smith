@@ -7,7 +7,7 @@
 // tests/build_fixtures/untar/prelude. A test's texts are pushed on its test::memory arena, which is also the current
 // allocator, so what scratch returns goes back with it.
 // smith-covers: smith.c runtime/package.c runtime/untar.c runtime/gzip.c runtime/xz.c runtime/cache.c runtime/verbs.c
-// smith-covers: tests/untar.c tests/xz.py tests/build_fixtures/untar/
+// smith-covers: tests/untar.c tests/xz.smith tests/build_fixtures/untar/
 // smith.c is declared for the fetch verb.
 module untar_refuse_test;
 
@@ -21,7 +21,7 @@ import std::mem;
 static scratch::Project untar_project() {
     scratch::Project p = scratch::make("p", "untar");
     scratch::copy_tree(&p, "tests/untar.c", "tests/untar.c");
-    scratch::copy_tree(&p, "tests/xz.py", "tests/xz.py");
+    scratch::copy_tree(&p, "tests/xz.smith", "tests/xz.smith");
     scratch::copy_tree(&p, "lib", "lib");
     scratch::copy_tree(&p, "runtime", "runtime");
     return p;

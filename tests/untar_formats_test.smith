@@ -2,9 +2,9 @@
 // system's tar and gzip, read back by `smith fetch` into a cache of the case's own, so the real ~/.cache/smith is never
 // touched, extracts to the same tree, modes and bytes as its source folder. The formats and the readers are tested as
 // functions in tests/untar_readers_test.smith, which replaced the other cases of this file (issue #646); the helpers
-// of tests/build_fixtures/untar/prelude (including tests/xz.py) stay for tests/untar_sanitizers_test.smith.
+// of tests/build_fixtures/untar/prelude (including tests/xz.smith) stay for tests/untar_sanitizers_test.smith.
 // smith-covers: smith.c runtime/package.c runtime/untar.c runtime/gzip.c runtime/xz.c runtime/cache.c runtime/verbs.c
-// smith-covers: tests/untar.c tests/xz.py tests/build_fixtures/untar/
+// smith-covers: tests/untar.c tests/xz.smith tests/build_fixtures/untar/
 // smith.c is declared for the fetch verb.
 module untar_formats_test;
 
@@ -18,7 +18,7 @@ import std::mem;
 static scratch::Project untar_project() {
     scratch::Project p = scratch::make("p", "untar");
     scratch::copy_tree(&p, "tests/untar.c", "tests/untar.c");
-    scratch::copy_tree(&p, "tests/xz.py", "tests/xz.py");
+    scratch::copy_tree(&p, "tests/xz.smith", "tests/xz.smith");
     scratch::copy_tree(&p, "lib", "lib");
     scratch::copy_tree(&p, "runtime", "runtime");
     return p;

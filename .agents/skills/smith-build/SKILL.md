@@ -46,6 +46,7 @@ A folder with no `build.c` and a `main.smith` or `main.c` at its root builds, ru
 - A compiler error in build.c means build.c does not compile; the failed step prints clang's message.
 - `smith: error: ...` is the executor's own, for example an input that no step makes and that does not exist, a dependency cycle, or a manifest it cannot read.
 - `smith: no build.c in this folder, and no main.smith or main.c to build by convention`: run from the project's root, add a `main.smith` or `main.c`, or write a build.c. `smith: cannot find ninja` appears only with `SMITH_NINJA` set to something that is not ninja.
+- `smith: build.c: cannot replace .smith/build.ninja`: another smith verb (`lint`, `prove`, `test`, `check`) is building the same folder. A checkout runs one verb at a time; wait for it, or use a second worktree.
 - If smith build itself seems wrong, or smith is missing or broken, stop. Run the command again with `SMITH_VERBOSE=1` and report it to the owner. Do not work around it.
 
 Also in this family: [smith-build-smith](../smith-build-smith/SKILL.md), [smith-build-c](../smith-build-c/SKILL.md), [smith-build-functions](../smith-build-functions/SKILL.md), [smith-build-objects](../smith-build-objects/SKILL.md), [smith-build-makefile](../smith-build-makefile/SKILL.md).

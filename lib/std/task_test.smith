@@ -987,7 +987,14 @@ export void test_task_simulation_all_waiting_is_a_failure_that_names_both_tasks(
     }
     c::close(fds[1]);
     char text[1024] = {};
-    Isize got = c::read(fds[0], text, sizeof(text) - 1);
+    // The report is one write per line, so one read can return only its first line (#1718): read to the end of the
+    // pipe.
+    constexpr Isize room = sizeof(text) - 1;
+    Isize got = 0;
+    for (Isize more = 1; more > 0 && got < room;) {
+        more = c::read(fds[0], text + got, (Usize)(room - got));
+        if (more > 0) got += more;
+    }
     c::close(fds[0]);
     I32 status = 0;
     test::check_equal(c::waitpid(child, &status, 0), child);

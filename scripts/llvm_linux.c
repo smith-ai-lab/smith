@@ -1,6 +1,6 @@
 // Builds smith's pinned LLVM on Linux, static, from source: what build_llvm_run_macos does on macOS, for ELF (issue
-// #305). This file is plain C23: the seed (scripts/stage0.c on a machine with no smith) builds it with the system's C
-// compiler, and `smith build llvm` with smith. It runs from the repository's root:
+// #305). This file is plain C23: `smith build llvm` builds it
+// with smith. It runs from the repository's root:
 //   llvm_linux <llvm source> <cmake> <python> <stamp> <ninja>
 // the same arguments as build_llvm_run_macos, with <cmake> and <python> the programs themselves and <ninja> the ninja
 // to run (an empty argument is the one on PATH). The work lives in the package cache, $CACHE/smith/llvm/<name>/{src,

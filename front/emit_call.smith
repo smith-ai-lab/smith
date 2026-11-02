@@ -26,6 +26,7 @@ import front::emit_lambda as lambdas;
 import front::emit_match as matching;
 import front::emit_memory as memory;
 import front::emit_state as state;
+import front::emit_stream as streams;
 import front::types;
 import std::arena;
 import std::format;
@@ -466,6 +467,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *x, state::Hint _) 
         if (countof(path.segments) == 1 && state::find_local(e, path.segments[0].text, &local) &&
             local.ty.kind == .fn_value)
             return lambdas::call_value(e, x, local.ty);
+        if (streams::is_call(x)) return streams::call(e, x);
     }
     is_imported = imported_callee(e, callee, &imported, &key);
     if (!is_imported && callee->kind != .name) {

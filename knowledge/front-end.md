@@ -275,6 +275,7 @@ Iteration in the checker; the rules are the top comment of the file.
 - Tests run the result in LLJIT (`emit_jit.smith`) and compare golden IR (`tests/front/emit/`).
 
 **Files**: `emit.smith` (passes, the walk, routing), `emit_state.smith` (shared types, `Emitter`, hooks; its own file to break an import cycle), then one file per area, no two tickets sharing one.
+- Slices `[]T` and `str` are `{ data, count }` (#1623): a string literal is a constant `str`, `s[i]` checks the index against the count in every build, `s[a:b]` and `countof(s)` read the pair, and `for x in s` walks it.
 - `emit_vector` (`vec(T, N)`), `emit_arith` (integer expressions), `emit_control`, `emit_call`, `emit_memory`, `emit_debug`, `emit_option`, `emit_iter`, `emit_match`, `emit_value`, `emit_tuple`, `emit_lambda`, `emit_jit` (test helper).
 - Three hooks in `Emitter`, set by `emit::module`, let a handler reach `emit.smith` without importing it: `state::type_of` (a type expression), `state::type_of_node` (the checker's type of a node) and `state::convert`.
 - `state::convert(e, value, to, span, site)` pushes `value` as a `to`: as is, widened by the checker's rules, or wrapped for an option; else the site's error (`initializing X with Y`).
@@ -288,8 +289,9 @@ Iteration in the checker; the rules are the top comment of the file.
 | `emit_iter` | `for x in xs` over a fixed array, `refs(xs)`, `range(n)`, `range(a, b)`, `range(a, b, step)` with a positive literal step | `enumerate`, `zip`, tuple pattern, slice, `str`, block, stream, array value, other steps: `not emitted yet` | #1586 (filled) |
 | `emit_match` | enumerations (an integer `Ty` of the underlying type, enumerators from 0 or as written; `emit_memory` and `emit_call` find one for `as` and parameters), `.red`, `match` over an enumeration (one `switch`, `unreachable` default) or `?T`, as statement and value | a payload enumeration, `match` over `Result`, `if let` over an enumeration | #1585 |
 | `emit_value` | an `if` with an `else` and a block used as a value: one alloca slot (the hint's type, else the join of the branches' checker types), branches convert and store, `endif` loads it; a branch that ended stores nothing; no branch reaching the end gives `unreachable` and `undef` | `for`, `while`, `if let` as a value, a `match` with no type written | #1618 (filled) |
-| `emit_tuple` | stub: tuple types, literals, `t.0`, `(q, r) := f()` are `not emitted yet` | everything | next batch |
+| `emit_tuple` | tuple types `(A, B)`, `(T,)`, `()` as an LLVM struct, `(a, b)`, `t.0` as a value and a place, `(q, r) := f()`; the lexer reads `t.0` and `t.0.1` as an index | `==` between tuples, tuples of slices or `fn` values, `for (i, x)` | #1619 (filled) |
 | `emit_lambda` | `fn(A) -> R` and `fn_once` types (`{ ptr code, ptr context }`), lambdas as internal functions, calls of `fn` values (#1620) | a stored lambda with captures, a function named as a value | next batch |
+| `emit_stream` | `stream::Stream(T)` (one `ptr`), a generator as a ramp and a body on the stream's own stack, `yield`, `stream::next(&s)` (`?T`), `stream::close(&s)` (#1546; see [stream](stream.md)) | `for` over a stream, a generator with debug info | #1546 |
 | floats, slices, `str`, array literals | no route yet: `emit.smith` answers `not emitted yet: this kind of expression` | everything | none yet |
 
 - Routing in `emit.smith`: `type_of` sends `?T`, a tuple and a `fn` type to their file and a one-segment name to `match::type_enum` before records.
