@@ -1,4 +1,4 @@
-// smith-build: link
+// smith-build: header
 // std::stream, <smith/stream.h>: the runtime core of a lazy generator. A generator body runs as a fiber with a stack of
 // its own that no scheduler owns and only `next` resumes, so each `next` runs the body only as far as its next
 // `yield`, and the body's locals are ordinary locals. The emitter (#1546) lowers `yield` and `stream::next` to these
