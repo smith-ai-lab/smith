@@ -75,7 +75,7 @@ static state::TyResult build(state::Emitter *e, const state::Ty items[:], ast::S
         fields[i] = items[i].llvm;
     }
     state::Ty ty = {.kind = .tuple,
-                    .llvm = c::LLVMStructTypeInContext(e->context, fields, (unsigned)countof(items), false),
+                    .llvm = c::LLVMStructTypeInContext(e->context, fields, (U32)countof(items), false),
                     .name = name_of(items),
                     .parts = &block[2],
                     .part_count = countof(items)};
@@ -207,7 +207,7 @@ static state::Status literal_finish(state::Emitter *e, const state::Work *w) {
     for (Usize i = 0; i < count; i++) {
         try state::convert(e, items[i], w->ty.parts[i], w->span, .initialize);
         state::Value converted = state::pop_value(e);
-        built = c::LLVMBuildInsertValue(e->builder, built, converted.llvm, (unsigned)i, "item");
+        built = c::LLVMBuildInsertValue(e->builder, built, converted.llvm, (U32)i, "item");
     }
     state::push_value(e, (state::Value){.llvm = built, .ty = w->ty});
     return state::success();
@@ -265,7 +265,7 @@ static state::Status member_finish(state::Emitter *e, const state::Work *w) {
     state::Value base = state::pop_value(e);
     Usize index = (Usize)w->number;
     try check_member(base.ty, index, w->span);
-    c::LLVMValueRef got = c::LLVMBuildExtractValue(e->builder, base.llvm, (unsigned)index, "item");
+    c::LLVMValueRef got = c::LLVMBuildExtractValue(e->builder, base.llvm, (U32)index, "item");
     state::push_value(e, (state::Value){.llvm = got, .ty = base.ty.parts[index]});
     return state::success();
 }
@@ -285,7 +285,7 @@ static state::Status place_finish(state::Emitter *e, const state::Work *w) {
     state::Value base = state::pop_value(e);
     Usize index = (Usize)w->number;
     try check_member(base.ty, index, w->span);
-    c::LLVMValueRef slot = c::LLVMBuildStructGEP2(e->builder, base.ty.llvm, base.llvm, (unsigned)index, "item");
+    c::LLVMValueRef slot = c::LLVMBuildStructGEP2(e->builder, base.ty.llvm, base.llvm, (U32)index, "item");
     state::push_value(e, (state::Value){.llvm = slot, .ty = base.ty.parts[index]});
     return state::success();
 }
@@ -325,7 +325,7 @@ static state::Status destructure_finish(state::Emitter *e, const state::Work *w)
                 return state::failf(names[i].span, name, " is declared twice in one scope");
         }
         state::Ty ty = value.ty.parts[i];
-        c::LLVMValueRef got = c::LLVMBuildExtractValue(e->builder, value.llvm, (unsigned)i, "item");
+        c::LLVMValueRef got = c::LLVMBuildExtractValue(e->builder, value.llvm, (U32)i, "item");
         c::LLVMValueRef slot = state::new_alloca(e, ty, name);
         c::LLVMBuildStore(e->builder, got, slot);
         state::add_local(e, (state::Local){.name = name, .ty = ty, .address = slot});
