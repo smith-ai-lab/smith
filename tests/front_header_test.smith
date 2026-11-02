@@ -257,14 +257,11 @@ export void test_front_header_the_same_header_is_not_rewritten() {
     write_text(shapes_path(folder), shapes_source());
     compile::Report first = compile::header(shapes_path(folder), header_path(folder), "", roots_of(folder));
     test::check_equal(first.ok, true);
-    struct c::stat before = {};
-    c::stat(header_path(folder).data, &before);
-    c::sleep(1);
+    // Read-only: a rewrite would fail to open the file, so `ok` would be false (st_mtimespec is macOS only).
+    c::chmod(header_path(folder).data, 0o444);
     compile::Report second = compile::header(shapes_path(folder), header_path(folder), "", roots_of(folder));
     test::check_equal(second.ok, true);
-    struct c::stat after = {};
-    c::stat(header_path(folder).data, &after);
-    test::check_equal((I64)after.st_mtimespec.tv_sec, (I64)before.st_mtimespec.tv_sec);
+    c::chmod(header_path(folder).data, 0o644);
     remove_all(folder);
 }
 
