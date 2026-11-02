@@ -68,6 +68,8 @@ export struct Parser {
     Usize position;
     Errors errors;
     Hooks hooks;
+    Bool new_syntax; // the tokens come from lex::tokenize_new: `.`, `(`, `[` and `{` also start smith's own forms
+                     // (#1446)
 };
 
 // A parser at the first token with no errors and no hooks. The tokens must end with the end of the file, as

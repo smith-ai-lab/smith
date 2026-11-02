@@ -1400,6 +1400,10 @@ bool smith_lang_feed(SmithLang *lang, const SmithHost *host, const SmithToken *t
             smith_lang_generic_advance(lang, host, &next);
         }
     }
+    if (lang->limit[0] != 0 && !lang->limit_reported) { // a table of the imports or the private declarations filled
+        lang->limit_reported = true;
+        smith_lang_error(lang, host, token->location, "%s; split the module or its imports", lang->limit);
+    }
     if (lang->broken && !lang->broken_reported) { // a table filled: say so, once, since the rest is passed through
         lang->broken_reported = true;
         smith_lang_error(lang, host, token->location,

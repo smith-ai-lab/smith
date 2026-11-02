@@ -1,0 +1,4 @@
+module chain::m38;
+import chain::m39;
+
+export int f38() { return 38; }

@@ -1,0 +1,4 @@
+module chain::m25;
+import chain::m26;
+
+export int f25() { return 25; }
