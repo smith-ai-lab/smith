@@ -92,6 +92,7 @@ export typedef enum {
     fn_value; // `parts` are the parameters, `element` the result
     slice;    // next batch
     floating; // next batch
+    block;    // `[,]T`, `[,,]T`: `{ ptr, [count x usize] }`, `count` the dimensions, `element` the cell (#1710)
     vector;   // `vec(T, N)`: `element` is the lane type, `count` the lanes (#1630)
 } TyKind;
 
