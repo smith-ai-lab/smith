@@ -185,6 +185,28 @@ export struct RecordType {
     FieldInfo fields[:];
 };
 
+// The state of a function whose lambda is being emitted in the middle of it (#1620, front/emit_lambda.smith):
+// everything the lambda's own function replaces, and what its end needs to finish the lambda.
+export struct SavedFunction {
+    c::LLVMValueRef function;
+    c::LLVMBasicBlockRef entry_block;
+    c::LLVMBasicBlockRef trap_block;
+    Ty result;
+    Local locals[:];
+    Usize local_count;
+    Usize scope_marks[:];
+    Usize scope_count;
+    LoopTarget loops[:];
+    Usize loop_count;
+    DeferEntry defers[:];
+    Usize defer_count;
+    c::LLVMBasicBlockRef insert_block; // where the enclosing function's code was going
+    c::LLVMValueRef lambda_function;   // the lambda's own function
+    Ty fn_ty;                          // the lambda's `fn` type
+    c::LLVMValueRef *loads;            // per enclosing local: the load of its address from the context, in the lambda
+    Bool argument;                     // an argument of a call: it may capture, by reference
+};
+
 // ---------------------------------------------------------------------------------------------------------------
 // The walk's work
 
@@ -272,8 +294,8 @@ export struct Emitter {
 
     EnumType enums[:]; // #1585: the module's enumerations
     Usize enum_count;
-    ast::ExprRef pending_lambdas[:]; // lambda bodies to emit as functions after the current one
-    Usize pending_lambda_count;
+    SavedFunction lambda_frames[:]; // the enclosing functions of the lambda being emitted, innermost last (#1620)
+    Usize lambda_frame_count;
 
     TypeHook type_hook;
     NodeTypeHook node_type_hook;
