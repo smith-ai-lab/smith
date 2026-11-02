@@ -1,0 +1,158 @@
+// Tests of `defer` in the emitter (#1583 of #1428): each scenario is source text in smith's own syntax, checked by
+// front::types_decl, emitted, JITted and called. A function records the order of its deferred calls through a
+// `*mut i32` log, one decimal digit per call (a call appends its digit, so 21 means 2 ran first, then 1).
+module front_emit_defer_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::emit_state;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+
+typedef I32 (*Run)(I32);
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+struct Scenario {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    parser::Parsed parsed;
+    types::Checked checked;
+    Bool has_checked;
+};
+
+// The module of `source`, read in smith's own syntax.
+static parser::Parsed parse_new(Str source) {
+    parser::Parsed result = {};
+    result.module.file = "t.smith";
+    lex::Lexed lexed = lex::tokenize_new(source);
+    switch (lexed) {
+    case .ok:
+        parse::Parser p = parse::make(lexed.ok, source);
+        p.new_syntax = true;
+        p.hooks.expression = parse_expr::expression;
+        p.hooks.type = parse_type::type;
+        p.hooks.statement = parse_stmt::statement;
+        p.hooks.declaration = parse_decl::declaration;
+        result.module = parse_decl::file(&p, "t.smith");
+        result.errors = p.errors;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    return result;
+}
+
+static void begin(Scenario *s, Str source, Bool with_checker) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parse_new(source);
+    test::check_equal(countof(s->parsed.errors), (Usize)0);
+    if (with_checker) {
+        s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+        s->has_checked = true;
+        test::check_equal(s->checked.error_count, (Usize)0);
+    }
+    mem::set_allocator(outside);
+}
+
+static emit::Options options_for(emit::Target target, const Scenario *s) {
+    emit::Options options = {};
+    options.target = target;
+    if (s->has_checked) options.checked = &s->checked;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+// Emits and JITs `source`, then calls `name(arg)`.
+static I32 run(Str source, Str name, I32 arg) {
+    Scenario s = {};
+    begin(&s, source, true);
+    emit_jit::Jit host = start_jit();
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s.parsed.module, options_for(host.target, &s));
+    test::check_equal(emitted == .ok, true);
+    I32 result = -1;
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(&host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+        emit_jit::AddressResult found = emit_jit::lookup(&host, name);
+        test::check_equal(found == .ok, true);
+        if (found == .ok) result = ((Run)found.ok)(arg);
+    } else {
+        emit::free_error(emitted.error);
+    }
+    emit_jit::stop(&host);
+    return result;
+}
+
+static Str prelude() {
+    return "fn note(log: *mut i32, digit: i32) {\n    log.* = log.* * 10 + digit\n}\n";
+}
+
+// `body` is the body of `pub fn t(n: i32) -> i32 { mut log := 0 ... }`: it ends with `log`.
+static I32 log_of(Str body, I32 arg) {
+    Str source = as_str(format::push(prelude(), "pub fn t(n: i32) -> i32 {\n    mut log := 0\n", body, "}\n"));
+    return run(source, "t", arg);
+}
+
+export void test_front_emit_defer_two_defers_in_a_block_run_last_first() {
+    test::check_equal(log_of("    {\n        defer note(&log, 1)\n        defer note(&log, 2)\n    }\n    log\n", 0),
+                      21);
+}
+
+export void test_front_emit_defer_a_nested_blocks_defers_run_before_the_outer_blocks() {
+    test::check_equal(
+        log_of("    {\n        defer note(&log, 1)\n        {\n            defer note(&log, 2)\n        }\n"
+               "        note(&log, 3)\n    }\n    log\n",
+               0),
+        231);
+}
+
+export void test_front_emit_defer_a_defer_in_a_loop_runs_each_turn_and_on_continue_and_break() {
+    Str loop =
+        "    mut i := 0\n    while i < 4 {\n        i += 1\n        defer note(&log, 5)\n"
+        "        if i == 2 {\n            continue\n        }\n        if i == 4 {\n            break\n        }\n"
+        "        note(&log, 1)\n    }\n    log\n";
+    test::check_equal(log_of(loop, 0), 155155);
+}
+
+export void test_front_emit_defer_a_return_runs_every_pending_defer_after_its_value_is_computed() {
+    Str source = "pub fn t(n: i32) -> i32 {\n    mut x := 5\n    defer x = 99\n    return x\n}\n";
+    test::check_equal(run(source, "t", 0), 5);
+    test::check_equal(log_of("    defer note(&log, 1)\n    {\n        defer note(&log, 2)\n        if n == 0 {\n"
+                             "            return 0\n        }\n    }\n    log\n",
+                             1),
+                      2);
+}
+
+export void test_front_emit_defer_a_block_of_statements_is_a_deferred_body() {
+    test::check_equal(log_of("    {\n        defer {\n            note(&log, 1)\n            note(&log, 2)\n        }\n"
+                             "        note(&log, 3)\n    }\n    log\n",
+                             0),
+                      312);
+}

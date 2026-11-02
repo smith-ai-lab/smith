@@ -297,7 +297,8 @@ Iteration in the checker; the rules are the top comment of the file.
 
 **Control flow** (`emit_control.smith`, #1131): `if`/`else`, `while`, `do while`, `for`, `break`, `continue` (through `Emitter.loops`), `&&` and `||` (short circuit with a phi), `!`, `?:`.
 - A condition is a `Bool`: an integer condition is an Error, "a condition is a Bool; write `x != 0`". A function whose end is reached without `return` branches to the `trap` block.
-- `switch`, `goto`, labels and `defer` are `not emitted yet`.
+- `defer body` (#1583) waits on `Emitter.defers` with its scope depth and runs on every way out: the end of its block (newest first, skipped when the end is unreachable), `return` (after its value is computed, before `ret`), and `break`/`continue` (the defers deeper than the loop's `scope_depth`, then the jump); a deferred body is emitted once per way out.
+- `switch`, `goto` and labels are `not emitted yet`.
 - `for x in xs` (`emit_iter`) lowers to the plain indexed loop with no stream object: blocks `forcond`, `forbody`, `forstep`, `endfor` and a hidden counter in the entry block.
 - `range(a, b, step)` adds through `llvm.*add.with.overflow` and ends the loop on overflow; a zero, negative or run-time step is `not emitted yet` (lead's decision, 2026-11-02).
 
