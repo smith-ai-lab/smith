@@ -672,13 +672,14 @@ export void test_front_types_expr_a_stored_lambda_passes_where_a_function_type_i
     declare(&r, "dbl", .variable, types::fn_value_of(&r.table, signature), false);
     declare(&r, "wide", .variable, types::fn_value_of(&r.table, other), false);
     declare(&r, "named", .function_symbol, signature, false);
-    test::check_condition(types_expr::check(&r, ast::name("dbl"), signature) == types::fn_value_of(&r.table, signature));
+    test::check_condition(types_expr::check(&r, ast::name("dbl"), signature) ==
+                          types::fn_value_of(&r.table, signature));
     test::check_condition(types_expr::check(&r, ast::name("named"), signature) == signature);
     expect(r.error_count, 0);
     types_expr::check(&r, ast::name("wide"), signature);
     expect(r.error_count, 1);
-    test::check_condition(says(last(&r), "`I32 (I32)`"));
-    test::check_condition(says(last(&r), "`Fn(I32 (F64))`"));
+    test::check_condition(says(last(&r), "expected `I32 (I32)`, found `Fn(I32 (F64))`; write a value of type "
+                                         "`I32 (I32)`, or convert it with a cast such as `(I32 (I32))value`"));
 }
 
 export void test_front_types_expr_what_is_not_typed_yet_is_reported_with_its_kind() {
