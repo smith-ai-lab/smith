@@ -151,9 +151,11 @@ export void test_front_types_iter_range_yields_its_integers() {
     clean("fn run(n: i32) -> i32 {\n    mut total := 0\n    for i in range(n) {\n        total = total + i\n    }\n    "
           "total\n}\n");
     clean("fn run() {\n    for i in range(2, 10) {\n    }\n}\n");
-    clean("fn run(limit: u32) -> u32 {\n    mut total: u32 = 0\n    for i in range(0, limit) {\n        total = total + i\n    }\n    "
+    clean("fn run(limit: u32) -> u32 {\n    mut total: u32 = 0\n    for i in range(0, limit) {\n        total = total "
+          "+ i\n    }\n    "
           "total\n}\n");
-    clean("fn run(a: usize) -> usize {\n    mut total: usize = 0\n    for i in range(a, 10) {\n        total = total + i\n    }\n    "
+    clean("fn run(a: usize) -> usize {\n    mut total: usize = 0\n    for i in range(a, 10) {\n        total = total + "
+          "i\n    }\n    "
           "total\n}\n");
     fails("fn run(x: i32, y: u32) {\n    for i in range(x, y) {\n    }\n}\n", "U32", "I32");
 }
