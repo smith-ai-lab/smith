@@ -129,6 +129,26 @@ export void test_overlapping_fix_is_skipped() {
     check_count(fixed.skipped, 1);
 }
 
+// An insertion and a deletion that starts at the same offset are both taken, the insertion first (#1742: `n` then the
+// `;` that goes); two insertions at one offset have no order, so the second is skipped.
+export void test_insertion_beside_a_deletion_at_one_offset() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    syntax::Errors errors = errors_of(3);
+    errors[0].fix = fix_of(1);
+    errors[0].fix[0] = edit(3, 4, "");
+    errors[1].fix = fix_of(1);
+    errors[1].fix[0] = edit(3, 3, " as T");
+    errors[2].fix = fix_of(1);
+    errors[2].fix[0] = edit(3, 3, "!");
+    fix::Fixed fixed = fix::apply_fixes("abc;d", errors, none_of());
+    check_text(fixed.text, "abc as Td");
+    check_count(fixed.applied, 2);
+    check_count(fixed.skipped, 1);
+}
+
 export void test_insertion_and_deletion() {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);

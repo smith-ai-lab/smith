@@ -84,13 +84,14 @@ static Str main_for(Str prefix) {
                                "    if (!alpha('q') || alpha('3')) return 3;\n", "    return 0;\n", "}\n"));
 }
 
-// The fixes written for lib/std/ascii.smith are the golden's text, and there are 13 of them.
+// The fixes written for lib/std/ascii.smith are the golden's text, and there are 10 of them.
 export void test_front_migrate_the_fixes_of_ascii_are_the_golden() {
     Str source = read_text("lib/std/ascii.smith");
     test::check_equal(countof(source) > (Usize)0, true);
     fix::Fixed fixed = fix::fix_text("ascii.smith", source);
-    test::check_equal(fixed.applied, (Usize)13);
-    test::check_equal(fixed.skipped, (Usize)0);
+    test::check_equal(fixed.applied, (Usize)10);
+    // The three type fixes inside a declaration are written by the declaration's own fix (#1742), so they are left out.
+    test::check_equal(fixed.skipped, (Usize)3);
     test::golden("tests/front/migrate/ascii.smith", fixed.text);
 }
 
