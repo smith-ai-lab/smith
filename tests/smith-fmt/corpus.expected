@@ -3115,6 +3115,467 @@ module vector_check;
 export I32 sum(I32 a, I32 b) {
     return a + b;
 }
+==> error-import-chain-limit/src/chain/m00.smith <==
+module chain::m00;
+import chain::m01;
+
+export int f00() {
+    return 0;
+}
+==> error-import-chain-limit/src/chain/m01.smith <==
+module chain::m01;
+import chain::m02;
+
+export int f01() {
+    return 1;
+}
+==> error-import-chain-limit/src/chain/m02.smith <==
+module chain::m02;
+import chain::m03;
+
+export int f02() {
+    return 2;
+}
+==> error-import-chain-limit/src/chain/m03.smith <==
+module chain::m03;
+import chain::m04;
+
+export int f03() {
+    return 3;
+}
+==> error-import-chain-limit/src/chain/m04.smith <==
+module chain::m04;
+import chain::m05;
+
+export int f04() {
+    return 4;
+}
+==> error-import-chain-limit/src/chain/m05.smith <==
+module chain::m05;
+import chain::m06;
+
+export int f05() {
+    return 5;
+}
+==> error-import-chain-limit/src/chain/m06.smith <==
+module chain::m06;
+import chain::m07;
+
+export int f06() {
+    return 6;
+}
+==> error-import-chain-limit/src/chain/m07.smith <==
+module chain::m07;
+import chain::m08;
+
+export int f07() {
+    return 7;
+}
+==> error-import-chain-limit/src/chain/m08.smith <==
+module chain::m08;
+import chain::m09;
+
+export int f08() {
+    return 8;
+}
+==> error-import-chain-limit/src/chain/m09.smith <==
+module chain::m09;
+import chain::m10;
+
+export int f09() {
+    return 9;
+}
+==> error-import-chain-limit/src/chain/m10.smith <==
+module chain::m10;
+import chain::m11;
+
+export int f10() {
+    return 10;
+}
+==> error-import-chain-limit/src/chain/m11.smith <==
+module chain::m11;
+import chain::m12;
+
+export int f11() {
+    return 11;
+}
+==> error-import-chain-limit/src/chain/m12.smith <==
+module chain::m12;
+import chain::m13;
+
+export int f12() {
+    return 12;
+}
+==> error-import-chain-limit/src/chain/m13.smith <==
+module chain::m13;
+import chain::m14;
+
+export int f13() {
+    return 13;
+}
+==> error-import-chain-limit/src/chain/m14.smith <==
+module chain::m14;
+import chain::m15;
+
+export int f14() {
+    return 14;
+}
+==> error-import-chain-limit/src/chain/m15.smith <==
+module chain::m15;
+import chain::m16;
+
+export int f15() {
+    return 15;
+}
+==> error-import-chain-limit/src/chain/m16.smith <==
+module chain::m16;
+import chain::m17;
+
+export int f16() {
+    return 16;
+}
+==> error-import-chain-limit/src/chain/m17.smith <==
+module chain::m17;
+import chain::m18;
+
+export int f17() {
+    return 17;
+}
+==> error-import-chain-limit/src/chain/m18.smith <==
+module chain::m18;
+import chain::m19;
+
+export int f18() {
+    return 18;
+}
+==> error-import-chain-limit/src/chain/m19.smith <==
+module chain::m19;
+import chain::m20;
+
+export int f19() {
+    return 19;
+}
+==> error-import-chain-limit/src/chain/m20.smith <==
+module chain::m20;
+import chain::m21;
+
+export int f20() {
+    return 20;
+}
+==> error-import-chain-limit/src/chain/m21.smith <==
+module chain::m21;
+import chain::m22;
+
+export int f21() {
+    return 21;
+}
+==> error-import-chain-limit/src/chain/m22.smith <==
+module chain::m22;
+import chain::m23;
+
+export int f22() {
+    return 22;
+}
+==> error-import-chain-limit/src/chain/m23.smith <==
+module chain::m23;
+import chain::m24;
+
+export int f23() {
+    return 23;
+}
+==> error-import-chain-limit/src/chain/m24.smith <==
+module chain::m24;
+import chain::m25;
+
+export int f24() {
+    return 24;
+}
+==> error-import-chain-limit/src/chain/m25.smith <==
+module chain::m25;
+import chain::m26;
+
+export int f25() {
+    return 25;
+}
+==> error-import-chain-limit/src/chain/m26.smith <==
+module chain::m26;
+import chain::m27;
+
+export int f26() {
+    return 26;
+}
+==> error-import-chain-limit/src/chain/m27.smith <==
+module chain::m27;
+import chain::m28;
+
+export int f27() {
+    return 27;
+}
+==> error-import-chain-limit/src/chain/m28.smith <==
+module chain::m28;
+import chain::m29;
+
+export int f28() {
+    return 28;
+}
+==> error-import-chain-limit/src/chain/m29.smith <==
+module chain::m29;
+import chain::m30;
+
+export int f29() {
+    return 29;
+}
+==> error-import-chain-limit/src/chain/m30.smith <==
+module chain::m30;
+import chain::m31;
+
+export int f30() {
+    return 30;
+}
+==> error-import-chain-limit/src/chain/m31.smith <==
+module chain::m31;
+import chain::m32;
+
+export int f31() {
+    return 31;
+}
+==> error-import-chain-limit/src/chain/m32.smith <==
+module chain::m32;
+import chain::m33;
+
+export int f32() {
+    return 32;
+}
+==> error-import-chain-limit/src/chain/m33.smith <==
+module chain::m33;
+import chain::m34;
+
+export int f33() {
+    return 33;
+}
+==> error-import-chain-limit/src/chain/m34.smith <==
+module chain::m34;
+import chain::m35;
+
+export int f34() {
+    return 34;
+}
+==> error-import-chain-limit/src/chain/m35.smith <==
+module chain::m35;
+import chain::m36;
+
+export int f35() {
+    return 35;
+}
+==> error-import-chain-limit/src/chain/m36.smith <==
+module chain::m36;
+import chain::m37;
+
+export int f36() {
+    return 36;
+}
+==> error-import-chain-limit/src/chain/m37.smith <==
+module chain::m37;
+import chain::m38;
+
+export int f37() {
+    return 37;
+}
+==> error-import-chain-limit/src/chain/m38.smith <==
+module chain::m38;
+import chain::m39;
+
+export int f38() {
+    return 38;
+}
+==> error-import-chain-limit/src/chain/m39.smith <==
+module chain::m39;
+import chain::m40;
+
+export int f39() {
+    return 39;
+}
+==> error-import-chain-limit/src/chain/m40.smith <==
+module chain::m40;
+import chain::m41;
+
+export int f40() {
+    return 40;
+}
+==> error-import-chain-limit/src/chain/m41.smith <==
+module chain::m41;
+import chain::m42;
+
+export int f41() {
+    return 41;
+}
+==> error-import-chain-limit/src/chain/m42.smith <==
+module chain::m42;
+import chain::m43;
+
+export int f42() {
+    return 42;
+}
+==> error-import-chain-limit/src/chain/m43.smith <==
+module chain::m43;
+import chain::m44;
+
+export int f43() {
+    return 43;
+}
+==> error-import-chain-limit/src/chain/m44.smith <==
+module chain::m44;
+import chain::m45;
+
+export int f44() {
+    return 44;
+}
+==> error-import-chain-limit/src/chain/m45.smith <==
+module chain::m45;
+import chain::m46;
+
+export int f45() {
+    return 45;
+}
+==> error-import-chain-limit/src/chain/m46.smith <==
+module chain::m46;
+import chain::m47;
+
+export int f46() {
+    return 46;
+}
+==> error-import-chain-limit/src/chain/m47.smith <==
+module chain::m47;
+import chain::m48;
+
+export int f47() {
+    return 47;
+}
+==> error-import-chain-limit/src/chain/m48.smith <==
+module chain::m48;
+import chain::m49;
+
+export int f48() {
+    return 48;
+}
+==> error-import-chain-limit/src/chain/m49.smith <==
+module chain::m49;
+import chain::m50;
+
+export int f49() {
+    return 49;
+}
+==> error-import-chain-limit/src/chain/m50.smith <==
+module chain::m50;
+import chain::m51;
+
+export int f50() {
+    return 50;
+}
+==> error-import-chain-limit/src/chain/m51.smith <==
+module chain::m51;
+import chain::m52;
+
+export int f51() {
+    return 51;
+}
+==> error-import-chain-limit/src/chain/m52.smith <==
+module chain::m52;
+import chain::m53;
+
+export int f52() {
+    return 52;
+}
+==> error-import-chain-limit/src/chain/m53.smith <==
+module chain::m53;
+import chain::m54;
+
+export int f53() {
+    return 53;
+}
+==> error-import-chain-limit/src/chain/m54.smith <==
+module chain::m54;
+import chain::m55;
+
+export int f54() {
+    return 54;
+}
+==> error-import-chain-limit/src/chain/m55.smith <==
+module chain::m55;
+import chain::m56;
+
+export int f55() {
+    return 55;
+}
+==> error-import-chain-limit/src/chain/m56.smith <==
+module chain::m56;
+import chain::m57;
+
+export int f56() {
+    return 56;
+}
+==> error-import-chain-limit/src/chain/m57.smith <==
+module chain::m57;
+import chain::m58;
+
+export int f57() {
+    return 57;
+}
+==> error-import-chain-limit/src/chain/m58.smith <==
+module chain::m58;
+import chain::m59;
+
+export int f58() {
+    return 58;
+}
+==> error-import-chain-limit/src/chain/m59.smith <==
+module chain::m59;
+import chain::m60;
+
+export int f59() {
+    return 59;
+}
+==> error-import-chain-limit/src/chain/m60.smith <==
+module chain::m60;
+import chain::m61;
+
+export int f60() {
+    return 60;
+}
+==> error-import-chain-limit/src/chain/m61.smith <==
+module chain::m61;
+import chain::m62;
+
+export int f61() {
+    return 61;
+}
+==> error-import-chain-limit/src/chain/m62.smith <==
+module chain::m62;
+import chain::m63;
+
+export int f62() {
+    return 62;
+}
+==> error-import-chain-limit/src/chain/m63.smith <==
+module chain::m63;
+import chain::m64;
+
+export int f63() {
+    return 63;
+}
+==> error-import-chain-limit/src/chain/m64.smith <==
+module chain::m64;
+import chain::m65;
+
+export int f64() {
+    return 64;
+}
+==> error-import-chain-limit/src/chain/m65.smith <==
+module chain::m65;
+
+export int f65() {
+    return 65;
+}
 ==> error-import-cycle/src/cycle/a.smith <==
 module cycle::a;
 import cycle::b;

@@ -84,7 +84,10 @@ static void smith_lang_written_add(SmithLang *lang, const char *lowered, size_t 
 // An import's export that has a C name of its own: `fallback` (prefix + member) is what `x::member` would make.
 static void smith_lang_cname_add(SmithLang *lang, const char *fallback, size_t fallback_length, const char *c_name,
                                  size_t c_name_length) {
-    if (lang->cnames_count >= smith_lang_cnames_max) return;
+    if (lang->cnames_count >= smith_lang_cnames_max) {
+        smith_lang_limit(lang, "imported exports that have a C name", smith_lang_cnames_max);
+        return;
+    }
     SmithLangCName *entry = &lang->cnames[lang->cnames_count++];
     entry->fallback = smith_lang_store(lang, fallback, fallback_length);
     entry->c_name = smith_lang_store(lang, c_name, c_name_length);
@@ -185,7 +188,11 @@ static void smith_lang_written_import(SmithLang *lang, const SmithHost *host, co
             bool known = end - start >= sizeof seen[0];
             for (size_t i = 0; i < count && !known; i++)
                 known = strlen(seen[i]) == end - start && memcmp(seen[i], current_text + start, end - start) == 0;
-            if (known || count >= smith_lang_transitive_max) continue;
+            if (known) continue;
+            if (count >= smith_lang_transitive_max) {
+                smith_lang_limit(lang, "the modules an import reaches", smith_lang_transitive_max);
+                continue;
+            }
             snprintf(seen[count++], sizeof seen[0], "%.*s", (int)(end - start), current_text + start);
         }
     }

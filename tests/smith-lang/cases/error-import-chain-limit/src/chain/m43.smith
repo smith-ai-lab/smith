@@ -1,0 +1,4 @@
+module chain::m43;
+import chain::m44;
+
+export int f43() { return 43; }

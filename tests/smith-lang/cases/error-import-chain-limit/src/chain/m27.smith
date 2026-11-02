@@ -1,0 +1,4 @@
+module chain::m27;
+import chain::m28;
+
+export int f27() { return 27; }

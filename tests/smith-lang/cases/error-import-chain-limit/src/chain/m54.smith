@@ -1,0 +1,4 @@
+module chain::m54;
+import chain::m55;
+
+export int f54() { return 54; }

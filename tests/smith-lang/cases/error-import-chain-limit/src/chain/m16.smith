@@ -1,0 +1,4 @@
+module chain::m16;
+import chain::m17;
+
+export int f16() { return 16; }

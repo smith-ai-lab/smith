@@ -1,0 +1,4 @@
+module chain::m09;
+import chain::m10;
+
+export int f09() { return 9; }
