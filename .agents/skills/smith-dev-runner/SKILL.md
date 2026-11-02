@@ -23,7 +23,7 @@ You are one runner in the pool (#1409). You own exactly one ticket. When it is m
 7. **Start a successor** if #73 says `pool: running`, fewer than N tickets are `claimed`, and there is an eligible ticket (in friction mode: an open unclaimed `friction` issue, and the successor is also in friction mode). Start it with the model that [providers/anthropic.md](../smith-dev-factory/providers/anthropic.md) maps from that ticket's difficulty, and the prompt "load `smith-dev-runner`" (add "friction mode" in friction mode). Then end. If `SMITH_RUNNER_LOOP=1` is set, skip this step: a bash loop starts the next runner ([smith-dev-mac-runner](../smith-dev-mac-runner/SKILL.md)), so a crash costs one ticket, not the chain.
 
 ## Rules while you work
-- **Never guess.** A question the ticket does not settle goes to the lead with the options and your recommendation. Meanwhile, do what is not blocked.
+- **Never guess.** A question the ticket does not settle goes to the lead with the options and your recommendation, as an `@lead:` comment on #1406 (that wakes the lead; a `blocked` label alone waits for the hourly check). Meanwhile, do what is not blocked.
 - **Message the lead only when you need it:** an unsettled question, a split that changes the design, a file conflict with another runner, a stuck ticket. Put several non-urgent points in one message.
 - **Keep your context small.** Read results, not whole logs, unless a check fails.
 - **Write tickets that run.** Before filing a split ticket, run its "Done when" commands as written, and check that every file it lists exists or is marked new.
