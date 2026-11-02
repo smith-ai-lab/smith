@@ -24,6 +24,7 @@ module front::emit_memory;
 
 import front::ast;
 import front::emit_arith as arith;
+import front::emit_match as matching;
 import front::emit_state as state;
 import front::types;
 import std::arena;
@@ -135,7 +136,7 @@ static state::TyResult resolve(state::Emitter *e, const ast::TypeExpr *t) {
     Str name = path.segments[0].text;
     state::Ty ty = {};
     Usize index = 0;
-    if (state::scalar_type(e, name, &ty)) {
+    if (state::scalar_type(e, name, &ty) || matching::type_enum(e, name, &ty)) {
     } else if (find_record_named(e, name, &index)) {
         ty = e->records[index].ty;
     } else {
