@@ -1321,6 +1321,39 @@ static bool smith_test_expand_item(const char *item, SmithChangedBuffer *out) {
     return true;
 }
 
+// Whether a `smith test` flag takes the next word as its value (the runner's options and --base).
+static bool smith_test_flag_takes_value(const char *flag) {
+    static const char *const valued[] = {"--shard",   "--costs",          "--test",         "--others",
+                                         "--explain", "--seed",           "--seeds",        "--explain-max",
+                                         "--jobs",    "--timeout",        "--wall-timeout", "--idle-timeout",
+                                         "--shrink",  "--shrink-seconds", "--shuffle",      "--base"};
+    for (size_t i = 0; i < sizeof valued / sizeof valued[0]; i++) { // bounded by the table
+        if (strcmp(flag, valued[i]) == 0) return true;
+    }
+    return false;
+}
+
+// `smith test x_test` and `smith test tests/x_test.smith` mean `--test x_test` (#1533): a bare word that is no flag's
+// value becomes the value of a --test of its own. With --changed the bare words are --list's refs, so they stay.
+static void smith_test_bare_names(SmithVerbArgs *split) {
+    for (size_t i = 0; i < split->own_count; i++) {
+        if (strcmp(split->own[i], "--changed") == 0) return;
+    }
+    static char *rewritten[smith_build_args_max];
+    size_t used = 0;
+    for (size_t i = 0; i < split->own_count; i++) { // bounded by smith_build_args_max
+        const char *arg = split->own[i];
+        bool value = i > 0 && smith_test_flag_takes_value(split->own[i - 1]);
+        bool bare = arg[0] != '-' && !value;
+        if (bare && used + 2 > smith_build_args_max) return;
+        if (bare) rewritten[used++] = (char *)"--test";
+        if (used >= smith_build_args_max) return;
+        rewritten[used++] = split->own[i];
+    }
+    memcpy(split->own, rewritten, used * sizeof rewritten[0]);
+    split->own_count = used;
+}
+
 static bool smith_test_expand_paths(SmithVerbArgs *split) {
     for (size_t i = 0; i + 1 < split->own_count; i++) { // bounded by smith_build_args_max
         if (strcmp(split->own[i], "--test") != 0) continue;
@@ -1410,6 +1443,7 @@ static int smith_test_project(int count, char **args, const char *self) {
     for (size_t i = 0; i < split->own_count; i++) { // -v is the runner's --verbose
         if (strcmp(split->own[i], "-v") == 0) split->own[i] = (char *)"--verbose";
     }
+    smith_test_bare_names(split);
     smith_verb_take_keep_going(split);
     smith_test_default_keep_going(split);
     int changed = smith_test_take_changed(split, self);
