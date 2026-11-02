@@ -752,7 +752,9 @@ if constexpr (target::os == target::macos) {
         contract::trusted(); // the system's queue is the edge
         struct c::epoll_event events[events_max] = {};
         if (block) unlock_scheduler();
+        if (block) c::write(2, "DBG wait\n", 9);
         I32 count = c::epoll_wait(worker->queue, events, (I32)events_max, block ? -1 : 0); // NOLINT(smith-effects)
+        if (block) c::write(2, count > 0 ? "DBG woke+\n" : "DBG woke0\n", 10);
         if (block) lock_scheduler();
         for (I32 i = 0; i < count; i++) {
             if (events[i].data.ptr == nullptr) { // the wake-up: read it so the eventfd is quiet again
@@ -933,6 +935,7 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
             change.events = (write ? event_out : event_in) | event_oneshot;
             change.data.ptr = task;
             // NOLINTBEGIN(smith-effects)
+            c::write(2, "DBG reg\n", 8);
             if (c::epoll_ctl(worker->queue, control_add, fd, &change) == 0) return true;
             if (*errno_location() != already_there) return false;
             return c::epoll_ctl(worker->queue, control_modify, fd, &change) == 0;
