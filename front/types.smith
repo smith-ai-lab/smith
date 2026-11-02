@@ -26,7 +26,8 @@
 //                      hold the ones that are not a number. `integer(table, bits, is_signed)` and `floating(table,
 //                      bits)` give the fixed-size ones. `Isize` and `Usize` are their own types (as C's `long`
 //                      is not `long long`), the width of the target's pointer.
-//   Makers             `pointer_to`, `array_of`, `slice_of`, `function_of`, `option_of`, `result_of`, `fn_value_of`
+//   Makers             `pointer_to`, `array_of`, `slice_of`, `function_of`, `option_of`, `stream_of`, `result_of`,
+//   `fn_value_of`
 //                      intern a type from its parts. `new_record(table, name, is_union)` and `new_enumeration(table,
 //                      name, underlying)` make a nominal type that is `complete` once `set_fields` has run (a record
 //                      can point to itself, so it is made before its fields).
@@ -108,6 +109,7 @@ export typedef enum {
     concept_type; // `num`, `int`: a family of types, one instance per type (a parameter or local, never a field)
     type_type;    // `type`: a value of it is a type
     block;        // `[,]T`, `[,,]T`: a contiguous block with `count` dimensions known at run time, `element` per cell
+    stream;       // `stream::Stream(T)`: a built-in iterable of `element`; one pointer, null when ended
     tuple;        // `(A, B)`: `slots` hold the element types, named "0", "1", ... (read as `t.0`, `t.1`)
 } Kind;
 
@@ -127,7 +129,7 @@ export struct Slot {
 //   enumeration: name, element (the underlying integer), slots (the enumerators, with their values)
 //   function: slots (parameters), element (the result), variadic
 //   tuple: slots (one per element, named by its position)
-//   option: element    result: element (ok), error      fn_value: element (a function type)
+//   option, stream: element    result: element (ok), error      fn_value: element (a function type)
 export struct Ty {
     Kind kind;
     U32 bits;
@@ -229,6 +231,8 @@ static Bool same_kind(Kind a, Kind b) {
         return b == .type_type;
     case .block:
         return b == .block;
+    case .stream:
+        return b == .stream;
     case .tuple:
         return b == .tuple;
     }
@@ -360,6 +364,10 @@ export TypeRef block_of(Table *t, TypeRef element, U64 dimensions) {
     return intern(t, (Ty){.kind = .block, .element = element, .count = dimensions});
 }
 
+export TypeRef stream_of(Table *t, TypeRef element) {
+    return intern(t, (Ty){.kind = .stream, .element = element});
+}
+
 export TypeRef option_of(Table *t, TypeRef some) {
     return intern(t, (Ty){.kind = .option, .element = some});
 }
@@ -446,7 +454,7 @@ static Layout leaf_layout(const Target *target, TypeRef t) {
         U64 bytes = t->bits / 8;
         return (Layout){.size = bytes, .align = least(bytes, target->max_align), .known = true};
     }
-    if (t->kind == .pointer || t->kind == .fn_value || t->kind == .null_type)
+    if (t->kind == .pointer || t->kind == .fn_value || t->kind == .null_type || t->kind == .stream)
         return (Layout){.size = word, .align = word, .known = true};
     if (t->kind == .slice || t->kind == .text) return (Layout){.size = 2 * word, .align = word, .known = true};
     if ((t->kind == .record && t->complete) || t->kind == .tuple) return (Layout){.size = 0, .align = 1, .known = true};
@@ -597,6 +605,10 @@ static void expand(Piece stack[:], Usize *top, Output *text, TypeRef t) {
         push_piece(stack, top, word(")"));
         push_piece(stack, top, of(t->element));
         put(text, "Option(");
+    } else if (t->kind == .stream) {
+        push_piece(stack, top, word(")"));
+        push_piece(stack, top, of(t->element));
+        put(text, "stream::Stream(");
     } else if (t->kind == .result_type) {
         push_piece(stack, top, word(")"));
         push_piece(stack, top, of(t->error));
@@ -1136,6 +1148,7 @@ static TypeRef build_applied(Checked *r, ast::Span span, ast::Path applied_name,
                              Usize n) {
     Str name = path_text(applied_name);
     if (same_text(name, "Option") && args == 1 && n == 1) return option_of(&r->table, w->values[base].type);
+    if (same_text(name, "stream::Stream") && args == 1 && n == 1) return stream_of(&r->table, w->values[base].type);
     if (same_text(name, "Checked") && args == 2 && n == 2)
         return result_of(&r->table, w->values[base].type, w->values[base + 1].type);
     if (same_text(name, "Fn") && args == 1 && n == 1) {
