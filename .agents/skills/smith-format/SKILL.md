@@ -28,8 +28,8 @@ Usize n = format::length("abc", 12345);                               // 8, writ
 | `F32`, `F64` | the shortest digits that read back the same (`0.1`, `1e22`), as `text::write_f64`; `inf`, `-inf`, `nan`; a `F32` as its `F64` value |
 | `char *`, `const char *` | the terminated string; null is `(null)` |
 | `char[:]`, `const char[:]` | its count of characters (`%.*s`); `format::bytes(p, n)` makes one from a pointer and a length |
-| `format::hex(x, width)` | lowercase hex, zero-padded to `width` (0 for none, at most 16): `%016llx`, `%02x` |
-| `format::fixed(x, places)` | `places` digits (at most 20) correctly rounded, ties to even, as `%.Nf`; a value of 2^63 or more as with no wrapper |
+| `format::hex(x, width)` | lowercase hex, zero-padded to `width` (0 for none, at most 16; more stops the program): `%016llx`, `%02x` |
+| `format::fixed(x, places)` | `places` digits (at most 20; more stops the program) correctly rounded, ties to even, as `%.Nf`; a value of 2^63 or more as with no wrapper |
 | `format::general(x, digits)` | `%.Ng`: `digits` significant digits (1 to 40), exact rounding, fixed or `e` style by the exponent, trailing zeros removed: `0.1`, `1e+22`, `1e-05` |
 | `format::scientific(x, places)` | `%.Ne`: `1.23e+04`, `places` at most 40 |
 | `format::pad(piece, width)`, `format::left(piece, width)` | any piece above (not another pad) in a column of `width` characters, spaces before it or after it: `%5d`, `%12s`, `%-16s`, `%6.1f` as `pad(format::fixed(x, 1), 6)`; a wider piece is written whole; a string or `Text` must outlive the call that writes it; the text of any other piece is held (at most 63 characters) |
