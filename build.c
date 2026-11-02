@@ -177,7 +177,7 @@ static const char *const *build_smith_flags(SmithBuild *b, const BuildConfig *co
                      (const char *[]){"-I", "include", "-I", ".smith/include", "-std=gnu2y", nullptr}, nullptr);
 }
 
-// The protocol code smith's debugger server stands on, generated from the official schemas (scripts/protocol.c,
+// The protocol code smith's debugger server stands on, generated from the official schemas (protocol/generate.smith,
 // knowledge/protocol-generation.md): DAP's and MCP's, vendored under schemas/ with their licenses. The generated files
 // are build outputs, never committed: each protocol is a step of the build graph that writes them into
 // .smith/protocol/, and every compile that includes them waits for it.
@@ -198,11 +198,11 @@ constexpr size_t build_protocol_count = sizeof build_protocols / sizeof build_pr
 
 static constexpr char build_library_folder[] = "lib/std"; // the libraries written in .smith
 
-// The generator is a program of smith's own C (scripts/protocol.c, on lib/json.c), built here and not shipped: like
-// scripts/pack.c, a tool of the build. arena, contract, text and mem are the modules of smith, compiled from their
+// The generator is a program of smith's own code (protocol/generate.smith, on lib/json.c), built here and not shipped:
+// like scripts/pack.c, a tool of the build. arena, contract, text and mem are the modules of smith, compiled from their
 // sources. Returns the program's step.
 static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config, const char *folder) {
-    const char *const sources[] = {"scripts/protocol.c",
+    const char *const sources[] = {"protocol/generate.smith",
                                    smith_fmt(b, "%s/arena.smith", build_library_folder),
                                    smith_fmt(b, "%s/contract.smith", build_library_folder),
                                    smith_fmt(b, "%s/text.smith", build_library_folder),
@@ -3183,6 +3183,43 @@ static int build_coverage_fetch(SmithRun *run) {
     return 0;
 }
 
+// `smith build frontend-coverage [-Dsmith=<path>]` (#1730): how much of the tree smith's own front end handles. Every
+// .smith file git tracks is copied to .smith/frontend-coverage/tree, fixed there with `smith lint --fix` and compiled
+// with `smith cc --front-end=new`; the real files are never touched. scripts/frontend_coverage/main.smith is the tool:
+// a project of its own under .smith/frontend-coverage/tool, built by the smith that runs this build (as
+// build_defer_make does). It writes the results to .smith/frontend-coverage/results.tsv and prints the summary: files
+// passed out of total, the failures per stage and the failures grouped by message. `-Dsmith` names the smith to
+// measure.
+static const char *build_absolute(SmithBuild *b, const char *path) {
+    char home[PATH_MAX];
+    if (path[0] == '/' || getcwd(home, sizeof home) == nullptr) return path;
+    return smith_fmt(b, "%s/%s", home, path);
+}
+
+static int build_frontend_coverage(SmithRun *run) {
+    SmithBuild *b = run->b;
+    const char *work = build_absolute(b, ".smith/frontend-coverage");
+    const char *folder = smith_fmt(b, "%s/tool", work);
+    const char *results = smith_fmt(b, "%s/results.tsv", work);
+    const char *smith = build_absolute(b, run->args[0]);
+    int status = build_make_folder(b, folder);
+    status = status != 0
+                 ? status
+                 : build_exec(smith_list(b, "/bin/cp", "scripts/frontend_coverage/main.smith", folder, nullptr));
+    status = status != 0 ? status
+                         : build_spawn(&(BuildSpawn){.argv = smith_list(b, smith, "build", "release", nullptr),
+                                                     .folder = folder,
+                                                     .log = smith_fmt(b, "%s.log", folder),
+                                                     .tail = 20});
+    if (status != 0) return status;
+    const char *tool = build_defer_tool(b, folder);
+    status = build_spawn(&(BuildSpawn){
+        .argv = smith_list(b, tool, "run", smith, build_absolute(b, "."), smith_fmt(b, "%s/tree", work), nullptr),
+        .log = results,
+        .stdout_only = true});
+    return status != 0 ? status : build_exec(smith_list(b, tool, "summarize", results, nullptr));
+}
+
 static void build_developer_tasks(SmithBuild *b, const char *binary) {
     SmithStep friction = {
         .run = build_friction,
@@ -3201,6 +3238,13 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
         .description = "reporting where CI's time goes",
     };
     smith_task(b, "ci-times", &ci_times);
+    SmithStep frontend_coverage = {
+        .run = build_frontend_coverage,
+        .args =
+            smith_list(b, smith_option_value(b, "smith", binary, "frontend-coverage: the smith to measure"), nullptr),
+        .description = "measuring how much of the tree the new front end handles",
+    };
+    smith_task(b, "frontend-coverage", &frontend_coverage);
     SmithStep bench = {
         .run = build_bench,
         .args = smith_list(b, smith_option_value(b, "smith", binary, "bench: the smith to measure"),

@@ -39,6 +39,7 @@ import std::mem;
 import <llvm-c/Core.h>;
 import <llvm-c/Target.h>;
 import <llvm-c/TargetMachine.h>;
+import <stdlib.h>;
 import <unistd.h>;
 
 static Str as_str(char chars[:]) {
@@ -266,6 +267,14 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     return (Report){.ok = true, .text = warned, .times = times};
 }
 
+// The stage that stopped a failed compile: a stage that ran has its time, so the last one with a time is it.
+static Str stage_of(Times times) {
+    if (times.write > 0) return "write";
+    if (times.emit > 0) return "emit";
+    if (times.check > 0) return "check";
+    return "parse";
+}
+
 // The driver's entry: `count` sources and their objects, the default roots, the triple of the compile (null: the
 // default). Nothing is compiled when two files would get one module name. Diagnostics go to stderr.
 [[std::c_name("front_compile_run")]] export I32 run(const char *const *sources, const char *const *outputs, Usize count,
@@ -291,6 +300,10 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
         Report done = file(paths[i].path, output, target, folders);
         if (countof(done.text) > 0) report(done.text);
         if (!done.ok) status = 1;
+        // With SMITH_FRONT_STAGE set, a failed file also names the stage that stopped it (frontend-coverage, #1730).
+        if (!done.ok && c::getenv("SMITH_FRONT_STAGE") != nullptr) {
+            report(as_str(format::push(paths[i].path, ": stage: ", stage_of(done.times), "\n")));
+        }
     }
     return status;
 }
