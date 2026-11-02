@@ -132,7 +132,7 @@ static void stops_at(Str source, Bool with_checker, Str what, Str at) {
 
 export void test_front_emit_wave3_for_in_over_something_unbuilt_reaches_its_stub() {
     stops_at("fn f(xs: i32) -> i32 {\n    for x in xs {\n        _ := x\n    }\n    0\n}\n", false,
-             "a loop over a slice", "xs");
+             "a loop over a block or a stream", "xs");
 }
 
 export void test_front_emit_wave3_a_tuple_reaches_its_stubs() {
