@@ -225,3 +225,8 @@ export void test_console_is_terminal_asks_the_console_handler() {
     test::check_condition(!console::is_terminal(console::Input));
     fake_isatty_answer = false;
 }
+
+export void test_console_flush_does_not_touch_stdin() {
+    console::flush(); // only stdout and stderr: a read blocked on stdin elsewhere cannot hold it up (#573)
+    test::check_condition(true);
+}
