@@ -7,7 +7,7 @@ tags: [lowering, internals]
 # How the lowering works
 
 - **The hook** is one patch to smith's clang (`patches/clang-token-hook.patch`, about 100 lines, applied by
-  `scripts/llvm.sh`): `clang::TokenHook`, offered tokens as they leave `Preprocessor::Lex`, after macro expansion and
+  `build_llvm_run_macos`): `clang::TokenHook`, offered tokens as they leave `Preprocessor::Lex`, after macro expansion and
   before the parser. It may consume tokens and put others back with `EnterTokenStream`, or change the token where it is,
   and is told when the translation unit's `Sema` exists. Tokens replayed from the lookahead cache are not offered twice.
   A tool links a factory in; nothing else of clang changed. smith's factory (`shim/hook.cpp`) answers only for a main

@@ -1,0 +1,30 @@
+I32
+warning 0-3: write the type `I32` as `i32` in smith's own syntax
+fixed: i32 (1 passes, 0 left)
+
+Usize
+warning 0-5: write the type `Usize` as `usize` in smith's own syntax
+fixed: usize (1 passes, 0 left)
+
+Str
+warning 0-3: write the type `Str` as `str` in smith's own syntax
+fixed: str (1 passes, 0 left)
+
+Type
+warning 0-4: write the type `Type` as `type` in smith's own syntax
+fixed: type (1 passes, 0 left)
+
+const Bool
+warning 0-10: write the type `const Bool` as `bool` in smith's own syntax
+fixed: bool (1 passes, 0 left)
+
+Void
+warning 0-4: write the type `Void` as `void` in smith's own syntax
+fixed: void (1 passes, 0 left)
+
+Point
+fixed: Point (0 passes, 0 left)
+
+i32
+fixed: i32 (0 passes, 0 left)
+

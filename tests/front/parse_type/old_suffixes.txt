@@ -1,0 +1,40 @@
+U8[:]
+warning 0-5: write the type `U8[:]` as `[]u8` in smith's own syntax
+fixed: []u8 (1 passes, 0 left)
+
+I32[4]
+warning 0-6: write the type `I32[4]` as `[4]i32` in smith's own syntax
+fixed: [4]i32 (1 passes, 0 left)
+
+I32[n]
+warning 0-6: write the type `I32[n]` as `[n]i32` in smith's own syntax
+fixed: [n]i32 (1 passes, 0 left)
+
+I32[:][3]
+warning 0-9: write the type `I32[:][3]` as `[,3]i32` in smith's own syntax
+fixed: [,3]i32 (1 passes, 0 left)
+
+I32[:][:]
+warning 0-9: write the type `I32[:][:]` as `[,]i32` in smith's own syntax
+fixed: [,]i32 (1 passes, 0 left)
+
+I32[2][3]
+warning 0-9: write the type `I32[2][3]` as `[2,3]i32` in smith's own syntax
+fixed: [2,3]i32 (1 passes, 0 left)
+
+Point *[:]
+warning 0-10: write the type `Point *[:]` as `[]*Point` in smith's own syntax
+fixed: []*Point (1 passes, 0 left)
+
+const char *const *
+warning 0-19: write the type `const char *const *` as `**char` in smith's own syntax
+fixed: **char (1 passes, 0 left)
+
+U8 *
+warning 0-4: write the type `U8 *` as `*u8` in smith's own syntax
+fixed: *u8 (1 passes, 0 left)
+
+Point **
+warning 0-8: write the type `Point **` as `**Point` in smith's own syntax
+fixed: **Point (1 passes, 0 left)
+

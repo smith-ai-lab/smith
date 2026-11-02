@@ -1,34 +1,42 @@
 (I32)x
+  warning 1-4: write the type `I32` as `i32` in smith's own syntax
   warning 0-6: a cast is `x as T`: write `x as I32`
   fixed: x as I32
   warnings left: 0
 
 (Point *)p
+  warning 1-8: write the type `Point *` as `*Point` in smith's own syntax
   warning 0-10: a cast is `x as T`: write `x as Point *`
   fixed: p as Point *
   warnings left: 0
 
 (I32)(U8)x
+  warning 1-4: write the type `I32` as `i32` in smith's own syntax
+  warning 6-8: write the type `U8` as `u8` in smith's own syntax
   warning 0-10: a cast is `x as T`: write `x as I32`
   fixed: x as U8 as I32
   warnings left: 0
 
 -(I32)x
+  warning 2-5: write the type `I32` as `i32` in smith's own syntax
   warning 1-7: a cast is `x as T`: write `x as I32`
   fixed: -(x as I32)
   warnings left: 0
 
 (I32)-x
+  warning 1-4: write the type `I32` as `i32` in smith's own syntax
   warning 0-7: a cast is `x as T`: write `x as I32`
   fixed: -x as I32
   warnings left: 0
 
 (I32)x + 1
+  warning 1-4: write the type `I32` as `i32` in smith's own syntax
   warning 0-6: a cast is `x as T`: write `x as I32`
   fixed: x as I32 + 1
   warnings left: 0
 
 *(Point *)p
+  warning 2-9: write the type `Point *` as `*Point` in smith's own syntax
   warning 0-11: `*p` reads through a pointer as `p.*`
   fixed: (p as Point *).*
   warnings left: 0
@@ -87,16 +95,21 @@ p->a->b
   warnings left: 1
 
 (I32)*p
+  warning 1-4: write the type `I32` as `i32` in smith's own syntax
   warning 0-7: a cast is `x as T`: write `x as I32`
   fixed: p.* as I32
   warnings left: 0
 
 *(I32 *)p
+  warning 2-7: write the type `I32 *` as `*i32` in smith's own syntax
   warning 0-9: `*p` reads through a pointer as `p.*`
   fixed: (p as I32 *).*
   warnings left: 0
 
 (I32)(U8)(U16)x
+  warning 1-4: write the type `I32` as `i32` in smith's own syntax
+  warning 6-8: write the type `U8` as `u8` in smith's own syntax
+  warning 10-13: write the type `U16` as `u16` in smith's own syntax
   warning 0-15: a cast is `x as T`: write `x as I32`
   fixed: x as U16 as U8 as I32
   warnings left: 0

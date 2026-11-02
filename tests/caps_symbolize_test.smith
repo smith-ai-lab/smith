@@ -1,0 +1,36 @@
+// Fixed-size caps of smith symbolize that dropped input silently (issue #1664): a trace past a limit is reported with
+// a note that names the limit and how many were not shown.
+// smith-covers: runtime/symbolize.c runtime/explain.c smith.c
+module caps_symbolize_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+constexpr Usize memory_size = 1U << 22;
+
+// A trace of one block with 70 frames, 20 values, 60 details and 40 images: each count is past its limit.
+constexpr char trace[_] =
+    "{ echo 'smith-trace begin check failed'; for i in $(seq 1 70); do echo \"smith-trace pc 0x$((4096 + i))\"; done; "
+    "for i in $(seq 1 20); do echo \"smith-trace detail @ v$i = $i\"; done; "
+    "for i in $(seq 1 60); do echo \"smith-trace detail a$i = $i   (u64)\"; done; "
+    "for i in $(seq 1 40); do echo \"smith-trace image - 0x$((1048576 + i * 256)) 0x0 0x10 /usr/lib/x$i\"; done; "
+    "echo 'smith-trace end'; } > trace.txt; smith symbolize trace.txt";
+
+export void test_caps_symbolize_names_every_limit_a_trace_crossed() {
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::Run run = scratch::sh(&p, trace);
+    scratch::expect_status("caps: smith symbolize of a long trace", 0, &run);
+    scratch::expect_contains("caps: ... frames", run.out, "note: 6 frames past the limit of 64 are not shown");
+    scratch::expect_contains("caps: ... images", run.out, "note: 8 images past the limit of 32 are not read");
+    scratch::expect_contains("caps: ... values", run.out, "note: 4 values past the limit of 16 are not shown");
+    scratch::expect_contains("caps: ... details", run.out, "note: 12 details past the limit of 48 are not shown");
+    scratch::expect_contains("caps: ... rows of the chain", run.out,
+                             "note: the stack has more than 32 rows, so the rest are not shown");
+}
