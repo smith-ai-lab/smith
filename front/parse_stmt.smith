@@ -105,6 +105,12 @@ struct Frame {
     Str head;        // and what replaces it
     ast::Span close; // the `)`, when `has_close`
     Str message;
+    // An old `switch` and the fix that writes it as `match` (case_fix): its edits so far, in source order.
+    parse::Edits switch_edits;
+    Usize switch_edit_count;
+    Usize switch_warning; // where its warning is in `warnings`
+    Usize last_label;     // the edit of the open case's last label
+    Bool switch_bad;      // a case has no `match` arm: the warning keeps no fix
 };
 
 struct Stack {
@@ -971,17 +977,47 @@ static Frame open_for(parse::Parser *p) {
     return frame;
 }
 
-// `switch (v) {`; null, with the rest skipped, when the `{` is missing.
+static void add_switch_edit(Frame *frame, parse::Edit one) {
+    frame->switch_edits = mem::realloc(frame->switch_edits, frame->switch_edit_count + 1);
+    frame->switch_edits[frame->switch_edit_count] = one;
+    frame->switch_edit_count += 1;
+}
+
+// `switch (v) {`; null, with the rest skipped, when the `{` is missing. Its warning has no fix until the cases are
+// known: when each one is `case .a:`, one expression and `break`, close_braces gives it the edits.
 static ast::Stmt *open_switch(parse::Parser *p, Stack *stack) {
+    Usize warning = countof(p->warnings);
     warn(p, parse::peek(p).span, "`switch` is `match` in smith: write `match v { .a => x }`, one arm per line");
     U32 start = parse::advance(p).span.start;
-    Frame frame = {.kind = switch_frame, .start = start};
+    Frame frame = {.kind = switch_frame, .start = start, .switch_warning = warning};
+    Usize group_end = after_group(p, 0);
+    Str condition = "";
+    if (parse::at(p, lex::left_paren) && group_end >= 3) condition = tokens_text(p, 1, group_end - 2);
+    frame.switch_bad = countof(condition) == 0;
     frame.condition = header(p).condition;
     Usize before = countof(p->errors);
     parse::expect(p, lex::left_brace, "`{`");
     if (countof(p->errors) > before) return settle(p, start, before, empty_stmt());
+    U32 brace_end = p->tokens[p->position - 1].span.end;
+    char head[:] = format::push("match ", condition, " {");
+    add_switch_edit(&frame, edit((ast::Span){.start = start, .end = brace_end}, head));
     push(stack, frame);
     return nullptr;
+}
+
+// A habit from another language at the start of a statement: a warning that names the smith form. Parsing goes on.
+static void habit_warning(parse::Parser *p) {
+    lex::Token first = parse::peek(p);
+    Str impl_word = "impl";
+    if (first.kind == lex::name && mem::equal(parse::text(p, first), impl_word) &&
+        (parse::peek_at(p, 1).kind == lex::name || parse::peek_at(p, 1).kind == lex::type_name)) {
+        warn(p, first.span, "smith has no `impl`: write a function that takes the value, `fn area(s: Shape)`");
+    } else if (first.kind == lex::ampersand && parse::peek_at(p, 1).kind == lex::kw_mut) {
+        ast::Span both = {.start = first.span.start, .end = parse::peek_at(p, 1).span.end};
+        warn(p, both, "smith has no `&mut`: write `&x`, which is a `*mut T` when `x` is `mut`");
+    } else if (first.kind == lex::question) {
+        warn(p, first.span, "smith has no `?` operator: write `try f()` to return the error of a `Result`");
+    }
 }
 
 // The statement at the position: a finished leaf, or null after opening a frame.
@@ -1033,15 +1069,39 @@ static ast::Stmt *start(parse::Parser *p, Stack *stack) {
     }
     if (extended_asm(p)) return asm_statement(p);
     if (starts_declaration(p)) return declaration_statement(p);
+    habit_warning(p);
     return expression_statement(p);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Closing a construct
 
+// The arm of a closing case of an old switch: the last label ends in ` =>` and the `break` goes. A case of any other
+// shape leaves the switch with no fix.
+static void case_fix(Frame *frame) {
+    if (frame->switch_bad) return;
+    if (frame->body_count != 2 || frame->case_default || frame->value_count == 0) {
+        frame->switch_bad = true;
+        return;
+    }
+    ast::Stmt *first = frame->body[0];
+    ast::Stmt *second = frame->body[1];
+    if (first->kind != .expression || second->kind != .break_stmt) {
+        frame->switch_bad = true;
+        return;
+    }
+    Str label = frame->switch_edits[frame->last_label].text;
+    char arm[:] = format::push(label[0:countof(label) - 2], " => ");
+    frame->switch_edits[frame->last_label].text = arm;
+    Str nothing = "";
+    ast::Span gone = {.start = first->span.end, .end = second->span.end};
+    add_switch_edit(frame, edit(gone, nothing));
+}
+
 // The open case of a switch frame goes to its list of cases.
 static void flush_case(const parse::Parser *p, Frame *frame) {
     if (!frame->case_open) return;
+    case_fix(frame);
     ast::SwitchCase one = {.values = frame->values[0:frame->value_count],
                            .is_default = frame->case_default,
                            .body = frame->body[0:frame->body_count],
@@ -1075,6 +1135,11 @@ static ast::Stmt *close_braces(parse::Parser *p, Frame frame) {
     flush_case(p, &frame);
     parse::expect(p, lex::right_brace, "`}`");
     if (frame.kind == switch_frame) {
+        if (!frame.switch_bad && countof(frame.cases) > 0) {
+            parse::ParseError *warning = &p->warnings[frame.switch_warning];
+            warning->message = "a `switch` is a `match` in smith: write it so";
+            warning->fix = frame.switch_edits[0:frame.switch_edit_count];
+        }
         return spanned(p, frame.start, new_stmt({.switch_stmt = {.value = frame.condition, .cases = frame.cases}}));
     }
     return spanned(p, frame.start, new_stmt({.block = {.items = frame.items[0:frame.item_count]}}));
@@ -1183,6 +1248,11 @@ static void take_label(parse::Parser *p, Stack *stack) {
         frame->case_start = token.span.start;
     }
     Usize before = countof(p->errors);
+    Bool plain = token.kind == lex::kw_case && parse::peek_at(p, 0).kind == lex::dot &&
+                 parse::peek_at(p, 1).kind == lex::name && parse::peek_at(p, 2).kind == lex::colon;
+    if (!plain) frame->switch_bad = true;
+    Str name = "";
+    if (plain) name = tokens_text(p, 0, 1);
     if (token.kind == lex::kw_default) {
         frame->case_default = true;
     } else {
@@ -1195,6 +1265,12 @@ static void take_label(parse::Parser *p, Stack *stack) {
     }
     if (countof(p->errors) == before) parse::expect(p, lex::colon, "`:`");
     if (countof(p->errors) > before) skip_label(p);
+    if (plain && countof(p->errors) == before) {
+        ast::Span label = {.start = token.span.start, .end = p->tokens[p->position].span.start};
+        char comma[:] = format::push(name, ", ");
+        add_switch_edit(frame, edit(label, comma));
+        frame->last_label = frame->switch_edit_count - 1;
+    }
 }
 
 // One step of the loop: what the position and the frame on top ask for. A statement that is complete is given.
