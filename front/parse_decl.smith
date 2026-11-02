@@ -1018,9 +1018,10 @@ static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
     if (unused) name = as_str(format::push("_", name));
     if (to == at + 3 && p->tokens[at].kind == lex::kw_auto && p->tokens[at + 1].kind == lex::ellipsis)
         return as_str(format::push(prefix, name, ": ..."));
-    Str type = trimmed(source_between(p, p->tokens[at].span.start, p->tokens[to - 2].span.end));
-    if (same_text(type, "auto")) return "";
-    if (is_const && same_text(type, "Type")) return as_str(format::push(prefix, name, ": type"));
+    Str type = trimmed(parse::mended(p, p->tokens[at].span.start, p->tokens[to - 2].span.end));
+    Str raw = trimmed(source_between(p, p->tokens[at].span.start, p->tokens[to - 2].span.end));
+    if (same_text(raw, "auto")) return "";
+    if (is_const && same_text(raw, "Type")) return as_str(format::push(prefix, name, ": type"));
     if (is_const) return as_str(format::push(prefix, "const ", name, ": ", type));
     return as_str(format::push(prefix, name, ": ", type));
 }
@@ -1069,7 +1070,7 @@ static void fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize
         warn(p, head.type_start, end, message, none);
         return;
     }
-    Str result = trimmed(source_between(p, head.type_start, head.name.span.start));
+    Str result = trimmed(parse::mended(p, head.type_start, head.name.span.start));
     Str written = as_str(format::push("fn ", name, "(", params, ")"));
     if (!same_text(result, "void")) written = as_str(format::push(written, " -> ", result));
     parse::Edits edits = {};
@@ -1089,8 +1090,9 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     Bool has_init = equal_end > 0;
     Bool automatic = type->kind == .auto_type;
     Str name = named(pre, parse::text(p, head.name));
-    Str written = trimmed(source_between(p, head.type_start, head.name.span.start));
-    Bool type_value = pre->is_constexpr && head.name.kind == lex::type_name && same_text(written, "Type");
+    Str written = trimmed(parse::mended(p, head.type_start, head.name.span.start));
+    Str raw = trimmed(source_between(p, head.type_start, head.name.span.start));
+    Bool type_value = pre->is_constexpr && head.name.kind == lex::type_name && same_text(raw, "Type");
     Bool fixable = last.kind == lex::semicolon && !suffixed && !pre->is_extern;
     if (pre->is_constexpr && (pre->constexpr_end > head.type_start || !has_init)) fixable = false;
     if (automatic && !has_init) fixable = false;
@@ -1166,8 +1168,7 @@ static ast::Decl *parse_variable(parse::Parser *p, const Prefixes *pre, Head hea
     // A range `for (T x : xs)`: the `:` is the statement's, which reads the range.
     Bool before_range = index_of_range || (init == nullptr && parse::at(p, lex::colon));
     if (!before_range) parse::expect(p, lex::semicolon, "`;` after the declaration");
-    if (pre->top && !before_range && !failed_since(p, errors_before))
-        fix_variable(p, pre, head, type, equal_end, full != type);
+    if (!before_range && !failed_since(p, errors_before)) fix_variable(p, pre, head, type, equal_end, full != type);
     ast::DeclKind kind = {.variable = {.name = name,
                                        .type = full,
                                        .init = init,
