@@ -5,7 +5,7 @@
 //    register the same flag, so scripts/defer_init.c moved each tool's initializers out of the section dyld runs at
 //    load, into __DATA,__smith_<name>; the tool that runs runs them here, in the order the linker put the objects.
 // 2. The resource directory. clangd and clang-tidy find the compiler's builtin headers and modules by the path of
-//    their own executable, which is smith's, so scripts/llvm.sh redirects their one call that does it
+//    their own executable, which is smith's, so build_llvm_run_macos redirects their one call that does it
 //    (clang::GetResourcesPath(const char *, void *), in clangd's CompileCommands.cpp and in Tooling.cpp) to
 //    smith_resource_path, which answers with the resource directory of the folder the tool is run in (its argv[0] is
 //    <folder>/bin/<tool>): the folder smith writes from its embedded copy of clang's files on first use, which the
@@ -31,7 +31,7 @@ extern "C" {
 
 inline const char *smith_tool_program = nullptr; // argv[0] of the tool that is running: <folder>/bin/<tool>
 
-// The call that scripts/llvm.sh redirects to. [[gnu::used]]: the objects that call it name it, nothing here does.
+// The call that build_llvm_run_macos redirects to. [[gnu::used]]: the objects that call it name it, nothing here does.
 [[gnu::used]] inline std::string smith_resource_path(const char * /*argv0*/, void * /*main_address*/) {
     return clang::GetResourcesPath(llvm::StringRef(smith_tool_program));
 }

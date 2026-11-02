@@ -1,7 +1,7 @@
 // scripts/defer_init.c on Mach-O objects, from tests/defer.sh (issue #292): it moves a Mach-O object's static
-// initializers out of the section dyld runs at load (scripts/llvm.sh uses it on the objects of clang-format, clang-tidy
-// and clangd). Two objects with an initializer each and a main that runs the section of one of them by hand. macOS
-// only.
+// initializers out of the section dyld runs at load (build_llvm_run_macos uses it on the objects of clang-format,
+// clang-tidy and clangd). Two objects with an initializer each and a main that runs the section of one of them by hand.
+// macOS only.
 module defer_init_test;
 
 import std::arena;
