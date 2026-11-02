@@ -149,3 +149,36 @@ export void test_caps_mcp_launch_names_its_limits() {
     scratch::expect_contains("caps: 18 breakpoints name the limit", run.out,
                              "launch: 18 breakpoints given, at most 16 (the limit)");
 }
+
+// The reader's own tables said "too many rules" or "a recipe has too many lines" and named no number.
+export void test_caps_make_names_the_limit_of_a_recipe() {
+    scratch::Project p = start(nullptr);
+    defer finish(&p);
+    (void)scratch::sh(&p, "{ echo 'all:'; for i in $(seq 1 520); do printf '\\ttrue %s\\n' $i; done; } > Makefile");
+    scratch::Run run = scratch::sh(&p, "smith build --dump-config 2>&1");
+    scratch::expect_contains("caps: 520 recipe lines name the limit", run.out,
+                             "more than 512 lines in the recipe of all (the limit)");
+}
+
+export void test_caps_make_names_the_limit_of_rules() {
+    scratch::Project p = start(nullptr);
+    defer finish(&p);
+    (void)scratch::sh(&p, "{ for i in $(seq 1 16400); do printf 't%s:\\n\\ttrue\\n' $i; done; } > Makefile");
+    scratch::Run run = scratch::sh(&p, "smith build --dump-config 2>&1");
+    scratch::expect_contains("caps: 16400 rules name the limit", run.out, "more than 16384 rules (the limit)");
+}
+
+// A file that imports more than 128 modules stops with an error that names the limit. The raw lowering
+// (runtime/lang_lex.c) says so first; the import table's own check (runtime/lang_import.c, smith_lang_limit), which
+// used to drop the 129th import silently, is the second line behind it and is not reached by this input.
+export void test_caps_lowering_names_the_imports_limit() {
+    scratch::Project p = start(nullptr);
+    defer finish(&p);
+    (void)scratch::sh(&p, "for i in $(seq 0 129); do printf \"module m$i;\\nexport I32 f$i(void) { return $i; }\\n\" > "
+                          "m$i.smith; done; "
+                          "{ printf 'module main;\\n'; for i in $(seq 0 129); do printf \"import m$i;\\n\"; done; "
+                          "printf 'I32 main(void) { return 0; }\\n'; } > main.smith");
+    scratch::Run run = scratch::sh(&p, "smith cc main.smith $(for i in $(seq 0 129); do echo m$i.smith; done) "
+                                       "-o app 2>&1");
+    scratch::expect_contains("caps: 130 imports name the limit", run.out, "the raw lowering reads at most 128 modules");
+}

@@ -17,12 +17,12 @@ smith-debug is the short guide for users; this is how it is built.
 
 ## How it is built
 
-- **LLVM** (`scripts/llvm.sh`) builds with `lldb` in `LLVM_ENABLE_PROJECTS`. LLVM installs lldb as a dylib and no static
+- **LLVM** (`build_llvm_run_macos`) builds with `lldb` in `LLVM_ENABLE_PROJECTS`. LLVM installs lldb as a dylib and no static
   libraries, so a marked step of the script copies lldb's static libraries from the build tree into the install
   (`liblldb[A-Z]*.a`) and makes `libsmithlldb.a`: the objects that make `liblldb.dylib` (the SB API; no library holds
   them), the driver's and lldb-dap's objects with the symbol `main` renamed (`smith_lldb_driver_main`,
   `smith_lldb_dap_tool_main`), and Platform.cpp. All of them have their static initializers moved out of the section
-  dyld runs at load (`scripts/defer_init.c`, section `__smith_lldb`), run by `shim/lldb.cpp` and `shim/lldb_dap.cpp`
+  dyld runs at load (`macho/defer_init.smith`, section `__smith_lldb`), run by `shim/lldb.cpp` and `shim/lldb_dap.cpp`
   with `smith_tool_start` when a debugger command runs.
 - **build.c** links them when the install has `libsmithlldb.a` (`-DSMITH_LLDB`, the shims `lldb` and `lldb_dap`,
   `-ledit` and the frameworks Foundation, CoreFoundation, CoreServices and Security). An install without lldb gives a
@@ -102,7 +102,7 @@ folder needs none either; from another folder it sends `"sourceMap": [[".", "<pr
 The debugger shows a `.smith` declaration with its whole module name, the same in every object (issue #27): `bt` says
 `geometry::box::area(b=(w = 2, h = 3))`, `frame variable` says `(geometry::box::Box) b = ...`, and the DAP adapter's
 stack frames and variables say the same. clang takes the name of a debug entry from `CGDebugInfo`; a patch
-(`patches/clang-debug-name.patch`, about 60 lines, applied by `scripts/llvm.sh`) asks a process-wide hook,
+(`patches/clang-debug-name.patch`, about 60 lines, applied by `build_llvm_run_macos`) asks a process-wide hook,
 `clang::CodeGen::DebugNameHook`, which `shim/hook.cpp` answers from the lowering's table of names
 (`smith_lang_written_find`), for each function, variable, typedef and tag at file scope. A name the lowering did not
 make, and every declaration of a `.c` file, gets `null` and keeps clang's: the objects of smith's own `.c` files are the

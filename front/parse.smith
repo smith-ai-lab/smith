@@ -139,6 +139,16 @@ export void warning_fix(Parser *p, ast::Span span, Str message, Edits edits) {
     p->warnings[countof(p->warnings) - 1] = failure;
 }
 
+// The old module separator `::` read where a path continues: a warning whose fix writes `.` (#1676). `.` is the only
+// separator of smith's own syntax.
+export void warn_separator(Parser *p, lex::Token colons) {
+    Str dot = ".";
+    Edit change = {.span = colons.span, .text = dot};
+    Edits edits = mem::alloc_slice(Edit, 1);
+    edits[0] = change;
+    warning_fix(p, colons.span, "`::` is written `.`: write `a.b`", edits);
+}
+
 // Takes the token when it has this kind. Else it records `expected <what>, found <text>` at the token (`found the end
 // of the file` at the end) and takes nothing: the token at the position is returned either way.
 export lex::Token expect(Parser *p, lex::TokenKind kind, Str what) {

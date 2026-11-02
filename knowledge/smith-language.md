@@ -8,7 +8,7 @@ tags: [smith-lang, lowering]
 
 **`.smith` files are C with modules, lowered to C as clang reads them** ([the language](smith-language.md), issue
 #11). The one change to clang is a token hook on its `Preprocessor` (`patches/clang-token-hook.patch`, about 100
-lines, applied by `scripts/llvm.sh`), which offers a `TokenHook` the identifiers it watches, after macro expansion and
+lines, applied by `build_llvm_run_macos`), which offers a `TokenHook` the identifiers it watches, after macro expansion and
 before the parser; plain C in a `.smith` file costs the compiler under 1%. The language is smith's own C
 (`runtime/lang*.c`, which knows nothing of clang), and the clang side is `shim/hook.cpp`: the hook, and the parser's
 name lookup as the lowering's questions. A second patch (`patches/clang-debug-name.patch`, about 60 lines, a process-wide

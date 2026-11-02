@@ -118,6 +118,13 @@ static void *smith_make_alloc(size_t size) {
     return smith_make.pool + start;
 }
 
+// A fixed table is full: stop, naming what filled it and the limit, never drop the rest.
+[[noreturn]] static void smith_make_too_many(const char *things, size_t limit) {
+    char message[160];
+    snprintf(message, sizeof message, "make: more than %zu %s (the limit)", limit, things);
+    smith_die(smith_exit_usage, message, nullptr);
+}
+
 static const char **smith_make_new_list(size_t count) {
     return (const char **)smith_make_alloc(count * sizeof(char *));
 }
@@ -194,7 +201,8 @@ static const char *smith_make_take(const SmithMakeBuffer *buffer, size_t from) {
     char message[1024];
     vsnprintf(message, sizeof message, format, arguments);
     va_end(arguments);
-    if (smith_make.diag_count >= smith_make_diags_max) return;
+    if (smith_make.diag_count >= smith_make_diags_max)
+        smith_make_too_many("different reports; fix the first ones", smith_make_diags_max);
     for (size_t i = 0; i < smith_make.diag_count; i++) { // the same report once
         const SmithMakeDiag *seen = &smith_make.diags[i];
         if (seen->where.line == where.line && seen->where.file == where.file && strcmp(seen->message, message) == 0)
@@ -356,7 +364,7 @@ static size_t smith_make_hole(const char *expression) {
     for (size_t i = 0; i < smith_make.hole_count; i++) {
         if (strcmp(smith_make.holes[i].expression, expression) == 0) return i;
     }
-    if (smith_make.hole_count >= smith_make_holes_max) smith_die(smith_exit_usage, "make: too many options", nullptr);
+    if (smith_make.hole_count >= smith_make_holes_max) smith_make_too_many("options", smith_make_holes_max);
     smith_make.holes[smith_make.hole_count] = (SmithMakeHole){smith_make_copy(expression)};
     return smith_make.hole_count++;
 }
@@ -406,7 +414,7 @@ static SmithMakeVar *smith_make_var_find(const char *name, size_t length) {
 static SmithMakeVar *smith_make_var_get(const char *name, size_t length) {
     SmithMakeVar *found = smith_make_var_find(name, length);
     if (found != nullptr) return found;
-    if (smith_make.var_count >= smith_make_vars_max) smith_die(smith_exit_usage, "make: too many variables", nullptr);
+    if (smith_make.var_count >= smith_make_vars_max) smith_make_too_many("variables", smith_make_vars_max);
     uint32_t at = smith_make_hash(name, length) & (smith_make_slots - 1);
     for (size_t probes = 0; probes < smith_make_slots && smith_make.slots[at] != 0; probes++)
         at = (at + 1) & (smith_make_slots - 1);
