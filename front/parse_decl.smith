@@ -1299,7 +1299,7 @@ static Bool binding_at(const parse::Parser *p, Usize at) {
 }
 
 // `a := v`, `a: T = v`, `mut ...` and `const X := v`; a `const` and `mut` together is read to be told off.
-static Bool starts_binding(const parse::Parser *p) {
+export Bool starts_binding(const parse::Parser *p) {
     lex::TokenKind kind = parse::peek(p).kind;
     if (kind == lex::kw_mut) return true;
     if (kind == lex::kw_const) return binding_at(p, 1) || parse::peek_at(p, 1).kind == lex::kw_mut;

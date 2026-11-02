@@ -7,7 +7,9 @@ module front_parse_stmt_test;
 import front::ast;
 import front::lex;
 import front::parse;
+import front::parse_decl;
 import front::parse_stmt;
+import front::parse_type;
 import std::arena;
 import std::format;
 import std::mem;
@@ -315,4 +317,21 @@ export void test_parse_stmt_a_malformed_new_form_is_one_error() {
         all = format::push(all, first_error(malformed(i)), "\n");
     }
     test::golden("tests/front/parse_stmt/new_forms_errors.txt", all);
+}
+
+// Bindings in smith's own syntax inside a body: the declaration parser's binding parser reads them, `is_new` set.
+export void test_parse_stmt_bindings_in_smith_syntax() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "{\na := 3\nb: i32 = 4\nmut c := 0\nmut d: i32 = 1\n_ := f()\n(q, r) := g()\nmut (s, t) := h()\nx\n}";
+    parse::Parser p = parser_in(source, true);
+    p.hooks.declaration = parse_decl::declaration;
+    p.hooks.type = parse_type::type;
+    p.new_syntax = true;
+    Str dump = dump_of(&p);
+    test::check_equal(countof(p.errors), 0);
+    test::check_equal(parse::at(&p, lex::end_of_file), true);
+    test::golden("tests/front/parse_stmt/new_bindings.txt", dump);
 }
