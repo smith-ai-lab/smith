@@ -143,8 +143,9 @@ export void test_front_emit_wave3_match_reaches_its_stub() {
              "match", "match n");
 }
 
-export void test_front_emit_wave3_for_in_reaches_its_stub() {
-    stops_at("fn f(xs: i32) -> i32 {\n    for x in xs {\n        _ := x\n    }\n    0\n}\n", false, "for in", "for x");
+export void test_front_emit_wave3_for_in_over_something_unbuilt_reaches_its_stub() {
+    stops_at("fn f(xs: i32) -> i32 {\n    for x in xs {\n        _ := x\n    }\n    0\n}\n", false,
+             "a loop over a slice", "xs");
 }
 
 export void test_front_emit_wave3_a_tuple_reaches_its_stubs() {
