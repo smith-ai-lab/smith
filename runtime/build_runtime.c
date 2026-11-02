@@ -2501,6 +2501,16 @@ static void smith_handlers_asan_options(SmithBuild *b, const SmithProgram *progr
     smith_step(b, &step);
 }
 
+// The program's own -mmacosx-version-min (the deployment flags of build.c), or nothing: the dylib built on a newer
+// macOS must target the same minimum, or a program that loads it aborts (issue #1724).
+static const char *const *smith_handlers_deployment(SmithBuild *b, const SmithProgram *program) {
+    constexpr char prefix[] = "-mmacosx-version-min=";
+    for (size_t i = 0; program->flags != nullptr && program->flags[i] != nullptr; i++) // bounded by the flags
+        if (strncmp(program->flags[i], prefix, sizeof prefix - 1) == 0)
+            return smith_one(smith_copy_string(program->flags[i]));
+    return smith_list(b, nullptr);
+}
+
 // The step that links the dylib into `folder` (once for each folder), and the arguments a program of that folder adds
 // to its link line.
 static const char *const *smith_handlers_link(SmithBuild *b, const SmithProgram *program, const char *folder) {
@@ -2524,8 +2534,8 @@ static const char *const *smith_handlers_link(SmithBuild *b, const SmithProgram 
                                      nullptr};
         const char *const tail[] = {source, "-o", dylib, nullptr};
         SmithStep step = {
-            .command =
-                smith_cat(b, smith_one(smith_copy_string(program->linker)), smith_copy_list(flags), tail, nullptr),
+            .command = smith_cat(b, smith_one(smith_copy_string(program->linker)),
+                                 smith_handlers_deployment(b, program), smith_copy_list(flags), tail, nullptr),
             .inputs = smith_one(source),
             .implicit_inputs = smith_cat(b, smith_one(smith_compiler_file(program->linker)),
                                          smith_one(".smith/include/smith/handlers.h"), nullptr),
@@ -3319,7 +3329,7 @@ static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count
 
 static SmithTestFound smith_tests_found[smith_tests_max];
 
-constexpr size_t smith_shard_filter_max = 4096;
+constexpr size_t smith_shard_filter_max = 65536;
 constexpr double smith_shard_cost_unknown = 0.4; // CPU seconds assumed for a test the --costs file does not name
 
 typedef struct {

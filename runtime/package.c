@@ -795,6 +795,9 @@ bool smith_core_tree(const char *folder, char *out, size_t out_size) {
     memset(&smith_core_walk, 0, sizeof smith_core_walk);
     smith_core_walk.base = strlen(folder) + 1;
     bool ok = nftw(folder, smith_core_walk_visit, 16, FTW_PHYS) == 0 && !smith_core_walk.full;
+    if (smith_core_walk.full)
+        fprintf(stderr, "smith: the listing of %s passed %zu entries or %zu bytes of text\n", folder,
+                sizeof smith_core_walk.lines / sizeof smith_core_walk.lines[0], sizeof smith_core_walk.pool);
     qsort((void *)smith_core_walk.lines, smith_core_walk.count, sizeof smith_core_walk.lines[0],
           smith_core_compare_lines);
     size_t at = 0;

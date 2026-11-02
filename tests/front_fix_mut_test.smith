@@ -64,3 +64,21 @@ export void test_front_fix_mut_code_that_needs_nothing_is_left_alone() {
     expect("fn f(p: *mut i32) {\n    mut n := 0\n    n = 2\n    p.* = n\n}\n",
            "fn f(p: *mut i32) {\n    mut n := 0\n    n = 2\n    p.* = n\n}\n", 0);
 }
+
+// A C function-pointer declarator (#1743): the fix writes the function value as `Fn(R (A))`, then the name. The rest of
+// the declaration (`;`, `name: T`) has fixes of its own (#1744, #1745), so the text is not clean yet, but the
+// declarator error is gone and a second run changes nothing.
+export void test_front_fix_function_pointer_declarator_is_rewritten() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Usize count = 0;
+    Str got = fixed("I32 (*f)(I32 x);\n", &count);
+    Str want = "Fn(I32 (i32 x)) f;\n";
+    test::check_equal(got, want);
+    Usize again = 0;
+    Str twice = fixed(got, &again);
+    test::check_equal(twice, want);
+    test::check_equal(again, (Usize)0);
+}
