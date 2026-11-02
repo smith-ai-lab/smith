@@ -11,17 +11,14 @@ one the release job published for an earlier commit ([release](release.md)). The
 replaced the committed C lowering in `bootstrap/`): "We want to be able to write Smith in idiomatic Smith, including all of
 Smith's libraries", and "Getting rid of a second copy to maintain".
 
-**A clone with no smith** builds and runs `scripts/stage0.c`: a plain C23 file (a `.c`: the lint gate rejects a module-less `.smith`; the C
-rule keeps it the same as a `.smith`), so Apple's clang builds it (`mkdir -p .smith && clang -std=c23 -x c scripts/stage0.c -o .smith/stage0-tool &&
-.smith/stage0-tool [arguments of smith build]`) and the bootstrap needs no shell. It fetches the tags, walks `git rev-list HEAD` for the first commit that
-has a release `stage0-<commit>`, downloads it (`curl` over plain HTTPS from the release's public URL, a child process; no `gh`, no login, no GraphQL, #829), checks the SHA-256 (`scripts/sha256.h`, smith's own, on every platform), unpacks it with `tar` into `.smith/stage0/` and runs
-`.smith/stage0/bin/smith build` with that `bin/` first on `PATH`, so its `smith-cc` is the `CC` of the build. Nothing in
-the repository records which release to use. Before that build it runs the release's `smith build llvm -Dfetch=1`, which
-puts the published LLVM pack into `~/.cache/smith/llvm/<name>` when it is not there (about 1.6 GB, minutes) and does
-nothing when it is. When no pack is published for the configuration it stops and says so rather than building LLVM from
-source (about two hours); `SMITH_STAGE0_LLVM=build` allows that. A first argument of `llvm`, `enzyme` or `clean` skips
-the step.
-`SMITH_STAGE0_RELEASE=<tag>` names another release. With a smith installed, `smith build` is all it takes, and CI does that.
+**A clone with no smith** downloads the newest release and builds with it. The release is `stage0-<commit>` of main's newest
+published commit: `https://github.com/smith-ai-lab/smith/releases/latest` redirects to its tag, and
+`https://github.com/smith-ai-lab/smith/releases/download/<tag>/smith-<os>-<arch>.tar.xz` (plain HTTPS: no `gh`, no login, no GraphQL, #829)
+holds the tarball beside its `.sha256`. Check the checksum, unpack it, put its `bin/` first on `PATH` (so its `smith-cc` is the `CC` of the
+build), then `smith build llvm`, which puts the published LLVM pack into `~/.cache/smith/llvm/<name>` when it is not there (about 1.6 GB,
+minutes) and then `smith build`. The README's Install section has the commands. CI does the same in `.github/actions/fetch-smith`, which reads the
+newest tags from the repository's releases feed and takes the first with a tarball for the platform. Nothing in the repository records which release to
+use, and there is no C or shell bootstrap to maintain. Nothing in a clone newer than the release fails to build with it, because of the lag rule below.
 
 **How the build uses it.** `CC` defaults to `smith-cc`. `build.c` compiles `lib/std/{arena,contract,inflate,io,random,text}.smith`
 to objects with it and links them beside `smith.c`, which (and `runtime/package.c` in it) sees only their generated headers
@@ -50,11 +47,4 @@ release carries its own embedded runtime and headers, and the tree gives it `bui
 first release (`stage0-4f1d091`), which compiles every commit since because of the lag rule. A release is pruned after a
 while ([release](release.md)): a clone older than the 20 newest releases (and a week each) pulls main first.
 
-**On Linux** (issue #305) a release has a Linux build, `smith-linux-<arch>.tar.xz`, once the Linux CI job publishes it;
-`stage0.c` takes it the same way. When no release can be had (no Linux build yet, the chain broken, or the download
-failing) it builds smith from source instead: `scripts/seed_linux.c`, the seed (`SMITH_STAGE0_SEED=1` asks for it,
-`=0` never builds it), which takes the published LLVM pack of the configuration (`llvm-23.1.3-r14-linux-x86_64`, fetched with `curl` and checked by `scripts/llvm_pack.c`) and builds the pinned LLVM with `scripts/llvm_linux.c` only when no pack exists (`llvm_pack fetch` exits 3; a pack that exists but fails to download stops the seed; `SMITH_SEED_FETCH=0` always builds), then stage A (`smith.c`, the shims
-and LLVM, with weak stand-ins for the libraries made from their headers' `smith-names` and `smith-bodies` lines), the
-libraries compiled by stage A, stage B linked with them, and stage B's `smith build`. It needs the system's C and C++
-compiler (clang 19 or GCC 13 or later), lld (the link of smith), curl, tar and xz: with the pack that is minutes; without
-one it also needs cmake, ninja, python3, curl and patch, and about two hours and 15 GB the first time.
+**On Linux** a release has a Linux build, `smith-linux-<arch>.tar.xz`, which the Linux CI job publishes, and it is downloaded the same way.

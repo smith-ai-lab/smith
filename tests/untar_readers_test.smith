@@ -1091,3 +1091,18 @@ export void test_an_extraction_does_not_remember_the_last() {
     is_tree(&t, "an extraction after a refusal", &second, source_tree);
     is_tree(&t, "a gzip between them", &gz, source_tree);
 }
+
+// A package of more entries than the listing holds is refused with a message naming the limit, never a short list
+// (#1665).
+export void test_untar_listing_past_its_entries_says_so() {
+    Case t = start();
+    defer finish(&t);
+    const char *folder = folder_for(&t, "many");
+    scratch::Run made =
+        scratch::sh(&t.project, join(&t, join(&t, "cd ", folder), " && for i in $(seq 2049); do : > f$i; done"));
+    defer scratch::release(made.out);
+    defer scratch::release(made.err);
+    char *tree = arena::push_slice(&t.memory, char, text_capacity).data;
+    Bool listed = c::smith_core_tree(folder, tree, text_capacity);
+    test::check_equal(listed, false);
+}

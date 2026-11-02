@@ -3329,7 +3329,7 @@ static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count
 
 static SmithTestFound smith_tests_found[smith_tests_max];
 
-constexpr size_t smith_shard_filter_max = 16384;
+constexpr size_t smith_shard_filter_max = 65536;
 constexpr double smith_shard_cost_unknown = 0.4; // CPU seconds assumed for a test the --costs file does not name
 
 typedef struct {
@@ -3707,8 +3707,8 @@ static const char *const *smith_tests_imported(SmithBuild *b, const char *const 
 // .objects, so no library is defined twice. Returns the new count of objects.
 static size_t smith_tests_libraries(SmithBuild *b, const SmithTests *copy, const SmithTests *tests,
                                     const char *const *imported, const char **objects, size_t used) {
-    static const char *const libraries[] = {"arena",   "math",   "random", "trace", "contract", "mem",
-                                            "failing", "format", "env",    "clock", "console",  "files"};
+    static const char *const libraries[] = {"arena",  "random", "trace", "contract", "mem",  "failing",
+                                            "format", "env",    "clock", "console",  "files"};
     for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
         const char *source = smith_library(b, libraries[i]); // C or a .smith module
         if (smith_tests_links(tests, source)) continue;
