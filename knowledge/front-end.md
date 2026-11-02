@@ -75,6 +75,8 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - A warning is an old form that still compiles; `parser::Parsed.warnings` carries them, and tests that count `errors` ignore them.
 - The errors are the current allocator's, as the tree is.
 
+**Fix-its** (S6, #1442, `front/fix.smith`): a `ParseError` has `fix` (a list of `Edit`: a span and its replacement text). `parse::error_fix(p, span, message, edits)` and `parse::warning_fix` record one; `warning_fix` appends to `Parser.warnings` (`parser::Parsed.warnings`, ignored by `front/compile.smith`); the old forms get fixes ticket by ticket (#1428). `parse_type` (F1, #1506) records one warning per old type with one edit that writes the whole type in smith's own syntax: lowercase built-ins and sized types for C's names, `*T`, `[]T`, `[N]T` and `[a,b]T` for the suffixes, `(A, B)` for `struct { A, B }`, `fn(A) -> R` for `Fn(R (A))`, with `const` dropped; `volatile`, `restrict`, `long double` and a variadic function type are warnings with no edit. While fixing, `fn(` written by an earlier pass is read as a function type. `fix::apply_fixes(source, errors, warnings)` (errors first, then the warnings with the wider span first, so a cast or a declaration is mended whole before a type inside it and the next pass mends that type) takes each fix whose edits overlap none already taken (the first error wins; the rest count as skipped), `fix::fix_text` parses and applies until a pass applies nothing (at most 8), and `smith lint --fix FILE.smith...` (`runtime/front_flag.c`, no `--` among the arguments) runs that over files and prints `path: N fixes applied`. Tests: `tests/front_fix_test.smith`.
+
 ### parse_expr and parse_type (`front/parse_expr.smith`, `front/parse_type.smith`, #1145)
 
 `parse_expr::expression(p)` and `parse_type::type(p)` are the hooks. Goldens: `tests/front/parse_expr/`, `tests/front/parse_type/`.
@@ -124,6 +126,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - Anonymous records: an unnamed field `union { I32 a; F32 b; };` is read by `parse_fields` with an explicit stack of open records (16 deep, then an error, #1286).
 - An enumerator that is a name alone is a plain value; a variant is a payload only when a type comes before its name (`Circle circle;`, #1267).
 - Import alias (A7k, #1353): `import lib::text as tx;` keeps `alias`; `as` is a keyword only right after an import path (`parse_decl::at_as`).
+- Modules as values (#1676): `x := import a.b.c` (and `pub x := import ...`) reads into the same `import_module` declaration, `alias` being `x` and the path joined by `.` (`parse_import_binding`). `import a::b;` and `import a::b as m;` still read and record a warning that writes `b := import a.b` / `m := import a.b`; every `::` in a path (`parse_type::path`, an `@a::b` attribute) records `parse::warn_separator`, whose fix writes `.`. `.` before a type name continues a type path after a lowercase name (`build.Build`); `Color.Red` stays a member. `import(a.b).f(1)` as an expression waits for the checker ticket that reads modules as values.
 - `Type T` without `constexpr` (A7m, #1357) parses as an ordinary parameter; the checker reports it (N1, #1339: write `constexpr Type T`).
 - Declarations in smith's own syntax (S3, #1444): `a := v`, `a: T = v`, `mut a: T`, `const X := v`, `pub`, `@attr`, `fn name(a: T, mut b: T, const n: usize, T: type, rest: ...) -> R { }`.
 - Also `struct Name { field: T }` and `enum Name: u8 { low = 2 }`, one member per line with no `;` or `,`. New is told from old by the first one or two tokens.
@@ -264,7 +267,7 @@ Iteration in the checker; the rules are the top comment of the file.
 - Tests run the result in LLJIT (`emit_jit.smith`) and compare golden IR (`tests/front/emit/`).
 
 **Files**: `emit.smith` (passes, the walk, routing), `emit_state.smith` (shared types, `Emitter`, hooks; its own file to break an import cycle), then one file per area, no two tickets sharing one.
-- `emit_arith` (integer expressions), `emit_control`, `emit_call`, `emit_memory`, `emit_debug`, `emit_option`, `emit_iter`, `emit_match`, `emit_value`, `emit_tuple`, `emit_lambda`, `emit_jit` (test helper).
+- `emit_vector` (`vec(T, N)`), `emit_arith` (integer expressions), `emit_control`, `emit_call`, `emit_memory`, `emit_debug`, `emit_option`, `emit_iter`, `emit_match`, `emit_value`, `emit_tuple`, `emit_lambda`, `emit_jit` (test helper).
 - Three hooks in `Emitter`, set by `emit::module`, let a handler reach `emit.smith` without importing it: `state::type_of` (a type expression), `state::type_of_node` (the checker's type of a node) and `state::convert`.
 - `state::convert(e, value, to, span, site)` pushes `value` as a `to`: as is, widened by the checker's rules, or wrapped for an option; else the site's error (`initializing X with Y`).
 - `type_of_node` with no `Options.checked` is an Error, "this needs the checker's types".
@@ -278,7 +281,7 @@ Iteration in the checker; the rules are the top comment of the file.
 | `emit_match` | enumerations (an integer `Ty` of the underlying type, enumerators from 0 or as written; `emit_memory` and `emit_call` find one for `as` and parameters), `.red`, `match` over an enumeration (one `switch`, `unreachable` default) or `?T`, as statement and value | a payload enumeration, `match` over `Result`, `if let` over an enumeration | #1585 |
 | `emit_value` | an `if` with an `else` and a block used as a value: one alloca slot (the hint's type, else the join of the branches' checker types), branches convert and store, `endif` loads it; a branch that ended stores nothing; no branch reaching the end gives `unreachable` and `undef` | `for`, `while`, `if let` as a value, a `match` with no type written | #1618 (filled) |
 | `emit_tuple` | stub: tuple types, literals, `t.0`, `(q, r) := f()` are `not emitted yet` | everything | next batch |
-| `emit_lambda` | stub: `fn` types and lambdas are `not emitted yet` | everything | next batch |
+| `emit_lambda` | `fn(A) -> R` and `fn_once` types (`{ ptr code, ptr context }`), lambdas as internal functions, calls of `fn` values (#1620) | a stored lambda with captures, a function named as a value | next batch |
 | floats, slices, `str`, array literals | no route yet: `emit.smith` answers `not emitted yet: this kind of expression` | everything | none yet |
 
 - Routing in `emit.smith`: `type_of` sends `?T`, a tuple and a `fn` type to their file and a one-segment name to `match::type_enum` before records.
@@ -310,7 +313,8 @@ Iteration in the checker; the rules are the top comment of the file.
 - Checked casts (K2, #1329): `Options.checked` is the checker's `types::Checked` (null: no cast is checked). `cast` asks `types::cast_checked(...).needed`, then converts, converts back and compares.
 - `p.x` through a pointer loads it and takes the pointee's field, as `->` does (#1580); `pp.x` on a pointer to a pointer is an Error. `p as usize` is `ptrtoint`, `n as *u8` is `inttoptr`, pointer-wide only.
 - Zero is initialization (K3, #1330): a local `T t;` stores the zero of `T` at the declaration; `T t = undefined;` makes the slot with no store. `auto t;` is an Error.
-- Still not emitted: floats, slices, unions, pointer arithmetic and comparison, function pointers.
+- `vec(T, N)` (#1630): `T` a number type, `N` an integer literal of 1 or more; `vec(f32, 4)(1, 2, 3, 4)` or a list `[1, 2, 3, 4]` where a vector is expected; element-wise `+ - * / %` and the comparisons (a `vec(bool, N)`) between two vectors of one type or a vector and a scalar of its element; `v[i]` and `v[i] = x` (a constant index out of range is an error, a run-time one is checked). Emitted as one `<N x T>`. Not yet: signed integer lanes' arithmetic (the overflow checks), integer division, bitwise operators and unary `-` on a vector, `v += w`, swizzles, writing a lane of a `vec(bool, N)`.
+- `fn` values (#1620): a lambda is an internal function `<symbol>::lambda.<n>` taking its context first; a lambda written as a call argument captures locals by reference, one that captures nothing has a null context, `f(a, b)` on a `fn` local is an indirect call. Still not emitted: slices, unions, pointer arithmetic and comparison, a stored lambda with captures, a function named as a value.
 
 **Calls** (`emit_call.smith`, #1132): `f(a, b)` names a function or a prototype (a `Decl.function` with no body) of the module; a path is joined by `::` and a prototype named with `::` is its own symbol.
 - Arguments run left to right with the parameter as hint; count and types must match (an Error at the argument), after `state::convert`.

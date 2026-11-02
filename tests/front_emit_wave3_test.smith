@@ -184,10 +184,7 @@ export void test_front_emit_wave3_a_member_named_by_a_digit_reaches_the_tuple_st
     emit_jit::stop(&host);
 }
 
-export void test_front_emit_wave3_a_lambda_and_a_function_type_reach_their_stubs() {
-    stops_at("fn f(g: fn(i32) -> i32) -> i32 {\n    0\n}\n", false, "a function type", "fn(i32)");
-    stops_at("fn f() -> i32 {\n    _ := fn(x: i32) -> i32 { x }\n    0\n}\n", false, "a lambda", "fn(x");
-}
+// (A lambda and a `fn` type are emitted since #1620: tests/front_emit_lambda_test.smith.)
 
 // ---------------------------------------------------------------------------------------------------------------
 // state::convert

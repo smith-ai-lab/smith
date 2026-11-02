@@ -8,13 +8,17 @@ for (U8 c : cs) x = c;
 for (;;) break;
 }
 ===
+warning (fix): write the type `I32` as `i32` in smith's own syntax
 warning (no fix): `++` is a statement in Smith: write `i += 1`
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a `for` reads `for x in xs` or `for i in range(a, b)`: write it so
+warning (fix): write the type `I32` as `i32` in smith's own syntax
 warning (fix): a `for` reads `for x in xs` or `for i in range(a, b)`: write it so
+warning (fix): write the type `I32` as `i32` in smith's own syntax
 warning (no fix): `++` is a statement in Smith: write `i += 1`
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a `for` reads `for x in xs` or `for i in range(a, b)`: write it so
+warning (fix): write the type `U8` as `u8` in smith's own syntax
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a `for` reads `for x in xs` or `for i in range(a, b)`: write it so
 warning (no fix): this `for` has no range form: write `for x in ...`, or `while`

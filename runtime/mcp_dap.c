@@ -187,7 +187,10 @@ static void smith_mcp_response_store(SmithMcpSession *session, int64_t request_s
     for (size_t i = 0; i < smith_mcp_responses_max && slot == nullptr; i++) {
         if (!session->responses[i].used) slot = &session->responses[i];
     }
-    if (slot == nullptr) slot = &session->responses[0]; // all full: the adapter answers what nobody asked
+    if (slot == nullptr) { // all full: the adapter answers what nobody asked; the first goes, and the next call says so
+        slot = &session->responses[0];
+        session->responses_dropped++;
+    }
     slot->used = true;
     slot->request_seq = request_seq;
     slot->size = size;

@@ -1,6 +1,6 @@
 // A C interface to lldb-dap's own main, linked into smith as `smith dap`: a Debug Adapter Protocol server on stdio (or
-// `--connection`), for editors and agents. scripts/llvm.sh renames the symbol of its main (tools/lldb-dap/tool), so
-// every option and every message is lldb-dap's own. lldb's static initializers are deferred (tool.h).
+// `--connection`), for editors and agents. build_llvm_run_macos renames the symbol of its main (tools/lldb-dap/tool),
+// so every option and every message is lldb-dap's own. lldb's static initializers are deferred (tool.h).
 #include "tool.h"
 
 extern "C" void smith_lldb_slice_formatters(void);
