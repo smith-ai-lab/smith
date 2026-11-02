@@ -74,6 +74,13 @@ struct SmithFileHandler {
     int (*access)(SmithFileHandler *self, const char *path, int mode);    // mode is access's (R_OK, W_OK, X_OK)
     ssize_t (*readlink)(SmithFileHandler *self, const char *path, char *buffer, size_t size); // bytes, no NUL
     int (*symlink)(SmithFileHandler *self, const char *target, const char *path);
+    // Descriptor calls (std::files seek, write_at, truncate, set_mode, lock; the lock goes with the file's close); each
+    // may be null, which is libc's own call (lseek, pwrite, ftruncate, fchmod, flock). As libc: -1 with errno set.
+    off_t (*lseek)(SmithFileHandler *self, int fd, off_t offset, int whence);
+    ssize_t (*pwrite)(SmithFileHandler *self, int fd, const void *data, size_t size, off_t offset);
+    int (*ftruncate)(SmithFileHandler *self, int fd, off_t size);
+    int (*fchmod)(SmithFileHandler *self, int fd, mode_t mode);
+    int (*flock)(SmithFileHandler *self, int fd, int operation); // LOCK_EX, LOCK_SH, LOCK_UN, LOCK_NB
 };
 
 // Sets the files of the calling thread (null: libc's), returning the ones it had.
