@@ -24,6 +24,7 @@ You are one runner in the pool (#1409). You own exactly one ticket. When it is m
 
 ## Rules while you work
 - **Never guess.** A question the ticket does not settle goes to the lead with the options and your recommendation, as an `@lead:` comment on #1406 (that wakes the lead; a `blocked` label alone waits for the hourly check). Meanwhile, do what is not blocked.
+- **Write the new syntax.** Code in `.smith` and in docs uses the syntax of #1428, even when the ticket's examples use an older spelling (`I32`, `fn[a](x)`, a trailing `;`): translate them by the spec and do not stop to ask. Ask only when the spec has no answer for a form.
 - **Message the lead only when you need it:** an unsettled question, a split that changes the design, a file conflict with another runner, a stuck ticket. Put several non-urgent points in one message.
 - **Keep your context small.** Read results, not whole logs, unless a check fails.
 - **Write tickets that run.** Before filing a split ticket, run its "Done when" commands as written, and check that every file it lists exists or is marked new.

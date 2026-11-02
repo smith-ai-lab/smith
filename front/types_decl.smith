@@ -29,9 +29,12 @@
 //                  value against the function's result type (a plain `return;` in a function that returns a value is
 //                  an error, a value in a `Void` function too).
 //   Constants      `const X := v` (and `constexpr`), local or of the module, is an error when `v` names a variable
-//                  that is not constant (spec "Modules and declarations"). Not yet: constant by default, shadowing and
-//                  an unused result (they wait for the AST's `is_new`, #1524), `_ := f()` and `(q, r) := f()` (the
-//                  statement parser does not read bindings in a body yet; destructuring also needs tuples, #1512).
+//                  that is not constant (spec "Modules and declarations"). In smith's own syntax (`is_new`): a
+//                  binding is constant unless `mut` (writes are refused by types_expr), shadowing is an error (the
+//                  earlier declaration is named by its byte offset: the checker has no line table), `_ := f()`
+//                  discards, and a call whose result is not `Void` and is not used is an error, once the function has a
+//                  parameter or an earlier local in that syntax (a function has no marker of its own). Not yet: `(q, r)
+//                  := f()` (destructuring needs tuples in the checker).
 //   Locals         The type is written, or `Auto` takes the initializer's type. A name already in the same scope is an
 //                  error. A local is `const` through the written type.
 //   Calls, Fn      Calls and the `Fn(F)` values are typed by front::types_expr; this module supplies the conversions
@@ -53,6 +56,7 @@ import front::ast;
 import front::types;
 import front::types_convert;
 import front::types_expr;
+import front::types_fn;
 import std::arena;
 import std::format;
 import std::mem;
@@ -100,6 +104,7 @@ struct State {
     Usize pending_count;
     Str function;
     types::TypeRef result; // what `return` is checked against
+    Bool new_body;         // the function has a parameter or a local in smith's own syntax (so far)
 };
 
 static State state;
@@ -197,7 +202,40 @@ static Bool is_new_variable(const ast::Decl *d) {
     return d->kind == .variable && d->kind.variable.is_new;
 }
 
+static Bool is_discard(Str name) {
+    return countof(name) == 1 && name[0] == '_';
+}
+
+// Shadowing is an error in smith's own syntax (spec "Modules and declarations"): a name that hides a variable of an
+// enclosing scope. Returns whether `name` shadows one. `_` never does. A binding in today's syntax may shadow.
+static Bool shadows(types::Checked *r, const ast::Decl *d, Str name) {
+    if (!is_new_variable(d) || is_discard(name)) {
+        return false;
+    }
+    const types::Symbol *earlier = types::lookup(&r->scopes, name);
+    if (earlier == nullptr || earlier->kind != .variable) {
+        return false;
+    }
+    if (earlier->decl != nullptr) {
+        types::failf(r, d->span, "`", name, "` hides the `", name, "` declared at byte ", earlier->decl->span.start,
+                     "; shadowing is an error, choose another name");
+    } else {
+        types::failf(r, d->span, "`", name, "` hides a parameter or an outer `", name,
+                     "`; shadowing is an error, choose another name");
+    }
+    return true;
+}
+
 static void declare_local(types::Checked *r, const ast::Decl *d, Str name, types::TypeRef type, Bool is_const) {
+    if (is_new_variable(d)) {
+        state.new_body = true;
+    }
+    if (is_discard(name) && is_new_variable(d)) {
+        return; // `_ := f()` discards the value: nothing is declared
+    }
+    if (shadows(r, d, name)) {
+        return;
+    }
     types::Symbol symbol = {
         .name = name, .kind = .variable, .type = type, .decl = d, .is_const = is_const, .is_new = is_new_variable(d)};
     if (!types::declare(&r->scopes, symbol)) {
@@ -436,10 +474,27 @@ static void for_statement(types::Checked *r, const ast::Stmt *s) {
     }
 }
 
+// An expression statement. In smith's own syntax a call whose result is not `Void` must be used or discarded.
+static void expression_statement(types::Checked *r, const ast::Stmt *s) {
+    if (!(s->kind == .expression)) {
+        return;
+    }
+    const ast::Expr *value = s->kind.expression.value;
+    types::TypeRef type = types_expr::infer(r, value);
+    if (!state.new_body || !(value->kind == .call) || type == nullptr) {
+        return;
+    }
+    if (type == r->table.void_type || type == r->table.invalid || type == r->table.automatic) {
+        return;
+    }
+    types::failf(r, s->span, "the result of this call, a `", types::show(type),
+                 "`, is not used; use it, or write `_ := ...` to discard it");
+}
+
 // Reads one statement: does what needs no children now, and pushes the children.
 static void enter_statement(types::Checked *r, const ast::Stmt *s) {
     if (s->kind == .expression) {
-        types_expr::infer(r, s->kind.expression.value);
+        expression_statement(r, s);
     } else if (s->kind == .declaration) {
         local_declaration(r, s->kind.declaration.decl);
     } else if (s->kind == .block) {
@@ -589,7 +644,12 @@ export void check_body(types::Checked *r, const ast::Decl *function) {
         }
     }
     state.function = name;
+    state.new_body = false;
+    for (Usize i = 0; i < countof(params); i++) {
+        state.new_body = state.new_body || params[i].is_new;
+    }
     walk(r, function->kind.function.body, signature->element);
+    types_fn::check_once(r, params, function->kind.function.body);
     types::pop_scope(&r->scopes);
     drain(r);
 }
