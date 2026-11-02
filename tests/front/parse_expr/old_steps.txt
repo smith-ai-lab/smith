@@ -1,0 +1,47 @@
+i++;
+  warning 0-3: `++` is a statement in Smith: write `i += 1`
+  fixed: i += 1;
+  warnings left: 0
+
+i--;
+  warning 0-3: `--` is a statement in Smith: write `i -= 1`
+  fixed: i -= 1;
+  warnings left: 0
+
+++i;
+  warning 0-3: `++` is a statement in Smith: write `i += 1`
+  fixed: i += 1;
+  warnings left: 0
+
+--i;
+  warning 0-3: `--` is a statement in Smith: write `i -= 1`
+  fixed: i -= 1;
+  warnings left: 0
+
+x = i++;
+  warning 5-7: `++` is a statement in Smith: write `i += 1` (no fix)
+  fixed: x = i++;
+  warnings left: 1
+
+f(i++)
+  warning 3-5: `++` is a statement in Smith: write `i += 1` (no fix)
+  fixed: f(i++)
+  warnings left: 1
+
+a[i]++;
+  warning 0-6: `++` is a statement in Smith: write `i += 1`
+  fixed: a[i] += 1;
+  warnings left: 0
+
+xs.iter().map(f).collect()
+  warning 0-7: a method chain such as `.iter().map(f)` has no form in Smith: write a function that returns a stream (no fix)
+  warning 0-13: a method chain such as `.iter().map(f)` has no form in Smith: write a function that returns a stream (no fix)
+  warning 0-24: a method chain such as `.iter().map(f)` has no form in Smith: write a function that returns a stream (no fix)
+  fixed: xs.iter().map(f).collect()
+  warnings left: 3
+
+xs.iter()
+  warning 0-7: a method chain such as `.iter().map(f)` has no form in Smith: write a function that returns a stream (no fix)
+  fixed: xs.iter()
+  warnings left: 1
+

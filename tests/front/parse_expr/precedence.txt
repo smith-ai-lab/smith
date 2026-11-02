@@ -103,6 +103,20 @@ a - -b
     (block
       (return (unary logical_not (unary logical_not (name a)))))))
 
+!!!a
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (unary logical_not (unary logical_not (unary logical_not (name a))))))))
+
+-!-a + b
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary add (unary negate (unary logical_not (unary negate (name a)))) (name b))))))
+
 x += y *= 2
 (module m
   (function f
