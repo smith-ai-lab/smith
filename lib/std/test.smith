@@ -3477,7 +3477,7 @@ void parse_filter(Options *options, const char *value) {
         return;
     }
     // A repeated --test adds up: the filters join as a comma list, and a test runs when any of them matches.
-    static char joined[4096];
+    static char joined[65536];
     Usize used = c::strlen(options->filter);
     if (options->filter != joined) {
         if (used >= sizeof joined) return;
