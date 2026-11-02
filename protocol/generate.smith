@@ -1061,6 +1061,26 @@ void gen_mark_ambiguous(Generator *g) {
 // ---------------------------------------------------------------------------------------------------------------
 // Emitting
 
+// Writes v in decimal into out (at least 21 bytes) with no printf: I64 is long on Linux and long long on macOS, so no
+// one format fits both.
+void gen_decimal(char out[:], I64 v) {
+    char digits[20];
+    U64 u = v < 0 ? 0 - (U64)v : (U64)v;
+    Usize n = 0;
+    do {
+        digits[n++] = (char)('0' + u % 10);
+        u /= 10;
+    } while (u != 0);
+    Usize at = 0;
+    if (v < 0) {
+        out[at++] = '-';
+    }
+    while (n > 0) {
+        out[at++] = digits[--n];
+    }
+    out[at] = 0;
+}
+
 [[gnu::format(c::printf, 2, 3)]] void gen_emit(Sink *s, const char *format, ...) {
     __builtin_va_list arguments;
     __builtin_va_start(arguments, format);
@@ -1223,7 +1243,9 @@ void gen_constant_check(Generator *g, Sink *s, const GenField *f) {
         gen_literal(s, gen_constant_value(g, f));
         gen_emit(s, ", error)");
     } else {
-        gen_emit(s, "smith_protocol_const_integer(member, %lld, error)", (long long)g->types[f->type].constant);
+        char number[24];
+        gen_decimal(number, g->types[f->type].constant);
+        gen_emit(s, "smith_protocol_const_integer(member, %s, error)", number);
     }
 }
 
@@ -1283,7 +1305,9 @@ void gen_write_member(Generator *g, Sink *s, const GenField *f) {
         gen_literal(s, gen_constant_value(g, f));
         gen_emit(s, "));\n");
     } else if (constant == 2) {
-        gen_emit(s, "%ssmith_json_write_i64(writer, %lld);\n", indent, (long long)g->types[f->type].constant);
+        char number[24];
+        gen_decimal(number, g->types[f->type].constant);
+        gen_emit(s, "%ssmith_json_write_i64(writer, %s);\n", indent, number);
     } else {
         gen_emit(s, "%s%s(writer, &value->%s);\n", indent, gen_fn(g, f->type, "write"), f->ident);
     }
