@@ -1,0 +1,131 @@
+// front::fix_directive, the fix-it for the preprocessor lines of a `.smith` file (#1748, part of #1428).
+//
+// The lexer stops at the first `#` (there is no preprocessor in a `.smith` file). A `#define` of a constant and a
+// `#include` of a header have a spelling in smith's own syntax, so the error of that `#` carries one fix with the edits
+// of every such line in the file:
+//
+//   #define LIMIT 4                 const LIMIT := 4
+//   #include <sys/stat.h>           stat := import c <sys/stat.h>
+//
+// Everything else (`#if`, `#pragma`, `#error`, a function-like `#define`, a `#include "h"`) is left as it is: the lexer
+// stops there with the same message and no fix, and each is a ticket of its own.
+//
+//   fix_directive::edits(source)    the edits for the simple directives in `source` (none when it has none)
+module front::fix_directive;
+
+import front::ast;
+import front::parse;
+import std::ascii;
+import std::format;
+import std::mem;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+static Usize skip_blanks(Str s, Usize i, Usize end) {
+    while (i < end && (s[i] == ' ' || s[i] == '\t'))
+        i += 1;
+    return i;
+}
+
+static Bool is_word_char(char c) {
+    return ascii::alpha(c) || ascii::digit(c) || c == '_';
+}
+
+// The end of the word at i (identifier characters only).
+static Usize word_end(Str s, Usize i, Usize end) {
+    while (i < end && is_word_char(s[i]))
+        i += 1;
+    return i;
+}
+
+static Bool starts_with(Str s, Usize i, Usize end, Str word) {
+    if (i + countof(word) > end) return false;
+    for (Usize k = 0; k < countof(word); k++) {
+        if (s[i + k] != word[k]) return false;
+    }
+    return true;
+}
+
+static void push(parse::Edits *edits, Usize start, Usize end, Str text) {
+    parse::Edit change = {.span = {.start = (U32)start, .end = (U32)end}, .text = text};
+    *edits = mem::realloc(*edits, countof(*edits) + 1);
+    (*edits)[countof(*edits) - 1] = change;
+}
+
+// `#define NAME value` on the line s[hash:end]: the constant's spelling, or nothing for a function-like macro, an
+// empty one or a continued line.
+static Bool define_edit(Str s, Usize hash, Usize at, Usize end, parse::Edits *edits) {
+    Usize name_start = skip_blanks(s, at, end);
+    Usize name_end = word_end(s, name_start, end);
+    if (name_end == name_start || ascii::digit(s[name_start])) return false;
+    if (name_end == end || (s[name_end] != ' ' && s[name_end] != '\t')) return false;
+    Usize value = skip_blanks(s, name_end, end);
+    Usize last = end;
+    while (last > value && (s[last - 1] == ' ' || s[last - 1] == '\t' || s[last - 1] == '\r'))
+        last -= 1;
+    if (value == last || s[last - 1] == '\\') return false;
+    push(edits, hash, last, as_str(format::push("const ", s[name_start:name_end], " := ", s[value:last])));
+    return true;
+}
+
+// The binding's name for a header path: the file's name without its extension, other characters as `_`.
+static typeof(char[:]) binding_name(Str path) {
+    Usize from = 0;
+    for (Usize i = 0; i < countof(path); i++) {
+        if (path[i] == '/') from = i + 1;
+    }
+    Usize to = countof(path);
+    for (Usize i = from; i < countof(path); i++) {
+        if (path[i] == '.') {
+            to = i;
+            break;
+        }
+    }
+    char name[:] = {};
+    name = mem::realloc(name, to - from);
+    for (Usize i = from; i < to; i++)
+        name[i - from] = is_word_char(path[i]) ? path[i] : '_';
+    return name;
+}
+
+// `#include <path>` on the line s[hash:end]: `name := import c <path>`; a quoted include has no spelling yet.
+static Bool include_edit(Str s, Usize hash, Usize at, Usize end, parse::Edits *edits) {
+    Usize open = skip_blanks(s, at, end);
+    if (open >= end || s[open] != '<') return false;
+    Usize close = open + 1;
+    while (close < end && s[close] != '>')
+        close += 1;
+    if (close >= end || close == open + 1) return false;
+    Str path = s[open + 1:close];
+    char name[:] = binding_name(path);
+    if (countof(name) == 0 || ascii::digit(name[0])) return false;
+    push(edits, hash, close + 1, as_str(format::push(name, " := import c <", path, ">")));
+    return true;
+}
+
+// The directive on the line s[start:end], when its first non-blank byte is `#` and it is one of the two simple forms.
+static void line_edit(Str s, Usize start, Usize end, parse::Edits *edits) {
+    Usize hash = skip_blanks(s, start, end);
+    if (hash >= end || s[hash] != '#') return;
+    Usize word = skip_blanks(s, hash + 1, end);
+    if (starts_with(s, word, end, "define") && word + 6 < end && !is_word_char(s[word + 6])) {
+        define_edit(s, hash, word + 6, end, edits);
+    } else if (starts_with(s, word, end, "include") && word + 7 < end && !is_word_char(s[word + 7])) {
+        include_edit(s, hash, word + 7, end, edits);
+    }
+}
+
+// The edits of every simple `#define` and `#include` line of `source`, in order of position.
+export parse::Edits edits(Str source) {
+    parse::Edits found = {};
+    Usize start = 0;
+    for (Usize i = 0; i <= countof(source); i++) {
+        if (i == countof(source) || source[i] == '\n') {
+            line_edit(source, start, i, &found);
+            start = i + 1;
+        }
+    }
+    return found;
+}
