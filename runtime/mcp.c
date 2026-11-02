@@ -120,8 +120,9 @@ typedef struct {
     SmithMcpResponse responses[smith_mcp_responses_max];
     SmithMcpEvent events[smith_mcp_events_max];
     size_t event_first, event_count, events_dropped;
-    bool stopped;  // the program is stopped (the last stop event was taken, and it has not resumed)
-    bool finished; // the program has exited or the adapter has terminated
+    size_t responses_dropped; // responses that found the table full and replaced the first
+    bool stopped;             // the program is stopped (the last stop event was taken, and it has not resumed)
+    bool finished;            // the program has exited or the adapter has terminated
     bool has_exit_code;
     int64_t exit_code;
     int64_t thread; // the thread of the last stop

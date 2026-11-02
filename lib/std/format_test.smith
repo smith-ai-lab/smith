@@ -157,11 +157,20 @@ export void test_format_hex_matches_libc(random::Key key) {
     char out[capacity];
     char expected[capacity];
     U64 value = test_format_draw(take(key_stream));
-    U32 width = (U32)(random::key_bits(take(key_stream)) % 20); // past 16 stops at 16
+    U32 width = (U32)(random::key_bits(take(key_stream)) % 17);
     (void)format::to(out, sizeof out, format::hex(value, width));
-    U32 libc_width = width < 16 ? width : 16;
-    __builtin_snprintf(expected, sizeof expected, "%0*jx", (I32)libc_width, (c::uintmax_t)value);
+    __builtin_snprintf(expected, sizeof expected, "%0*jx", (I32)width, (c::uintmax_t)value);
     test::check(is(out, expected));
+}
+
+export void test_format_hex_past_16_stops() {
+    test::expect_abort();
+    (void)format::hex(1, 17);
+}
+
+export void test_format_fixed_past_20_stops() {
+    test::expect_abort();
+    (void)format::fixed(1.0, 21);
 }
 
 export void test_format_hex_known() {
@@ -265,7 +274,7 @@ export void test_format_fixed_special_values() {
                      format::fixed(-math::infinity(F64), 2), " ", format::fixed(math::nan(F64), 2), " ",
                      format::fixed(big, 2), " ", format::fixed(-0.0, 1));
     test::check(is(out, "inf -inf nan 1e30 -0.0"));
-    (void)format::to(out, sizeof out, format::fixed(1.5, 30)); // more than 20 places is 20
+    (void)format::to(out, sizeof out, format::fixed(1.5, 20)); // the most places there are
     test::check(is(out, "1.50000000000000000000"));
 }
 

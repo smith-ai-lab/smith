@@ -222,6 +222,8 @@ export void test_macos_mcp_a_c_program_session() {
     calls = call(calls, "1", "launch", "{\"program\":\"prog\",\"breakpoints\":[{\"file\":\"prog.c\",\"line\":10}]}");
     calls = call(calls, "2", "stack", "{}");
     calls = call(calls, "3", "variables", "{\"frame\":1,\"depth\":2}");
+    calls = call(calls, "15", "variables", "{\"depth\":99}");
+    calls = call(calls, "16", "variables", "{\"max\":9999}");
     calls = call(calls, "4", "evaluate", "{\"expression\":\"p.x + p.y\"}");
     calls = call(calls, "5", "evaluate", "{\"expression\":\"sum = 9\"}");
     calls = call(calls, "6", "breakpoint", "{\"file\":\"prog.c\",\"line\":17,\"condition\":\"r == 7\"}");
@@ -233,7 +235,7 @@ export void test_macos_mcp_a_c_program_session() {
     calls = call(calls, "12", "continue", "{}");
     calls = call(calls, "13", "stop", "{}");
     calls = call(calls, "14", "stack", "{}");
-    serve(&p, calls, "14");
+    serve(&p, calls, "16");
     scratch::expect_text("a C session: nothing on stderr", "", scratch::read(&p, "err.txt"));
     scratch::expect_text("a C session: every line of stdout is a JSON message", "0",
                          scratch::capture(&p, "grep -vc '^{\"' out.jsonl"));
@@ -246,6 +248,10 @@ export void test_macos_mcp_a_c_program_session() {
     scratch::expect_text("variables of the caller's frame, with the struct opened",
                          "frame #1, scope locals\np (Point)\n  x = 3 (int)\n  y = 4 (int)\nr = 1 (int)",
                          scratch::capture(&p, "sed 's/^r = [0-9-]* (int)/r = 1 (int)/' r3.txt"));
+    scratch::expect_contains("a depth past the limit is an error", answer(&p, "15"),
+                             "depth 99 is past the limit of 6 levels");
+    scratch::expect_contains("a max past the limit is an error", answer(&p, "16"),
+                             "max 9999 is past the limit of 500 variables per list");
     scratch::expect_text("evaluate reads", "p.x + p.y = 7 (int)", answer(&p, "4"));
     scratch::expect_contains("an assignment is refused", answer(&p, "5"),
                              "refused: the expression may change the program");

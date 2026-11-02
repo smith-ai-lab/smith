@@ -22,6 +22,7 @@ module front::emit_call;
 
 import front::ast;
 import front::emit_control as control;
+import front::emit_lambda as lambdas;
 import front::emit_match as matching;
 import front::emit_memory as memory;
 import front::emit_state as state;
@@ -51,27 +52,10 @@ static void release(Signature sig) {
     if (sig.owned) mem::free(sig.params.data);
 }
 
-// The type a type expression says, with `Void` for the result of a function that returns nothing. (front::emit's
-// `type_of` cannot be imported from here; this is its mapping.)
+// The type a type expression says, with `Void` for the result of a function that returns nothing (the hook of
+// front::emit's `type_of`, which cannot be imported from here).
 static state::TyResult type_for(state::Emitter *e, const ast::TypeExpr *t) {
-    if (t->kind == .named) {
-        ast::Path path = t->kind.named.path;
-        if (countof(path.segments) == 1) {
-            Str text = path.segments[0].text;
-            if (state::same_text(text, "Void")) {
-                state::Ty none = {.kind = .integer, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
-                return none;
-            }
-            state::Ty ty = {};
-            if (state::scalar_type(e, text, &ty)) return ty;
-            if (matching::type_enum(e, text, &ty)) return ty;
-        }
-        return memory::type_record(e, t);
-    }
-    if (t->kind == .pointer) return memory::type_pointer(e, t);
-    if (t->kind == .array) return memory::type_array(e, t);
-    if (t->kind == .auto_type) return state::ty_fail("`auto` where a type is needed", t->span);
-    return state::ty_fail("not emitted yet: this kind of type", t->span);
+    return state::type_of(e, t);
 }
 
 // The path joined by `::`, in the allocator in force.
@@ -398,6 +382,20 @@ static state::Status call_finish(state::Emitter *e, const state::Work *w) {
     return state::success();
 }
 
+// A lambda written as an argument is made by `emit_lambda::argument` (it may capture by reference); any other argument
+// is evaluated.
+static state::Status lambda_argument(state::Emitter *e, const state::Work *w) {
+    return lambdas::argument(e, w->expr, w->hint);
+}
+
+static void push_argument(state::Emitter *e, const ast::Expr *arg, state::Hint hint) {
+    const ast::Expr *value = value_of(arg);
+    if (value->kind == .lambda)
+        state::push_then(e, (state::Work){.then = lambda_argument, .expr = value, .hint = hint, .span = value->span});
+    else
+        state::push_eval(e, value, hint);
+}
+
 // `Expr.call`.
 export state::Status call(state::Emitter *e, const ast::Expr *x, state::Hint _) {
     if (x->kind != .call) {
@@ -411,6 +409,10 @@ export state::Status call(state::Emitter *e, const ast::Expr *x, state::Hint _) 
     ast::Path path = callee->kind.name.path;
     Usize record = 0;
     if (countof(path.segments) == 1 && find_record(e, path.segments[0].text, &record)) return construct(e, x, record);
+    state::Local local = {};
+    if (countof(path.segments) == 1 && state::find_local(e, path.segments[0].text, &local) &&
+        local.ty.kind == .fn_value)
+        return lambdas::call_value(e, x, local.ty);
     Str key = join(path);
     SignatureResult found = find(e, key, callee->span);
     if (found == .error) {
@@ -436,7 +438,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *x, state::Hint _) 
     state::push_then(e, (state::Work){.then = call_finish, .expr = x, .number = count, .span = x->span});
     // The first argument runs first: it is pushed last.
     for (Usize i = count; i > 0; i--)
-        state::push_eval(e, value_of(args[i - 1]), state::hint_of(sig.params[slot[i - 1]]));
+        push_argument(e, args[i - 1], state::hint_of(sig.params[slot[i - 1]]));
     state::free_text(key);
     release(sig);
     return state::success();
