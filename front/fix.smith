@@ -97,7 +97,7 @@ export Bool store(Str path, Str text) {
 export Fixed fix_text(Str file, Str source) {
     Fixed total = {.text = source};
     for (Usize pass = 0; pass < fix_passes; pass++) {
-        parser::Parsed parsed = parser::parse(file, total.text);
+        parser::Parsed parsed = parser::parse_fixing(file, total.text);
         Fixed fixed = apply_fixes(total.text, parsed.errors);
         if (fixed.applied == 0) break;
         total.text = fixed.text;

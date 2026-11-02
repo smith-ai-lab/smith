@@ -1,0 +1,43 @@
+struct { I32, F32 }
+warning 9-12: write the type `I32` as `i32` in smith's own syntax
+warning 14-17: write the type `F32` as `f32` in smith's own syntax
+warning 0-19: write the type `struct { I32, F32 }` as `(I32, F32)` in smith's own syntax
+fixed: (i32, f32) (2 passes, 0 left)
+
+struct { I32 }
+warning 9-12: write the type `I32` as `i32` in smith's own syntax
+warning 0-14: write the type `struct { I32 }` as `(I32,)` in smith's own syntax
+fixed: (i32,) (2 passes, 0 left)
+
+Fn(Bool (I32, I32))
+warning 9-12: write the type `I32` as `i32` in smith's own syntax
+warning 14-17: write the type `I32` as `i32` in smith's own syntax
+warning 0-19: write the type `Fn(Bool (I32, I32))` as `fn(I32, I32) -> Bool` in smith's own syntax
+fixed: fn(i32, i32) -> bool (3 passes, 0 left)
+
+Fn(void (U8 *, Usize))
+warning 9-13: write the type `U8 *` as `*u8` in smith's own syntax
+warning 15-20: write the type `Usize` as `usize` in smith's own syntax
+warning 0-22: write the type `Fn(void (U8 *, Usize))` as `fn(U8 *, Usize)` in smith's own syntax
+fixed: fn(*u8, usize) (2 passes, 0 left)
+
+Fn(I32 ())
+warning 0-10: write the type `Fn(I32 ())` as `fn() -> I32` in smith's own syntax
+fixed: fn() -> i32 (2 passes, 0 left)
+
+Fn(I32 (I32, ...))
+warning 8-11: write the type `I32` as `i32` in smith's own syntax
+warning 0-18: a variadic function type has no spelling in smith's own syntax yet: write the function by hand (no fix)
+fixed: Fn(I32 (i32, ...)) (1 passes, 1 left)
+
+Fn(Bool (Fn(I32 (I32)), I32))
+warning 17-20: write the type `I32` as `i32` in smith's own syntax
+warning 9-22: write the type `Fn(I32 (I32))` as `fn(I32) -> I32` in smith's own syntax
+warning 24-27: write the type `I32` as `i32` in smith's own syntax
+warning 0-29: write the type `Fn(Bool (Fn(I32 (I32)), I32))` as `fn(Fn(I32 (I32)), I32) -> Bool` in smith's own syntax
+fixed: fn(fn(i32) -> i32, i32) -> bool (5 passes, 0 left)
+
+Option(I32 *)
+warning 7-12: write the type `I32 *` as `*i32` in smith's own syntax
+fixed: Option(*i32) (1 passes, 0 left)
+

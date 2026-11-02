@@ -68,6 +68,8 @@ export struct Parser {
     Usize position;
     Errors errors;
     Hooks hooks;
+    Bool fixes; // an old form of today's syntax also records a warning with the edits that write the new form (#1428);
+                // `smith lint --fix` sets it, and no other reader does yet: the corpus still builds with no warning
     Bool new_syntax; // the tokens come from lex::tokenize_new: `.`, `(`, `[` and `{` also start smith's own forms
                      // (#1446)
 };
