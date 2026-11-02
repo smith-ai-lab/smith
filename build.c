@@ -1111,8 +1111,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
                                          smith_list(b, "-I", "include", "-I", ".smith/include", "-I", ".smith/protocol",
                                                     "-I", "runtime/protocol", nullptr),
                                          nullptr);
-    const char *const *sources =
-        smith_glob(b, smith_list(b, "lib/*.c", "tests/*.c", "scripts/defer_init.c", "scripts/header_tool.c", nullptr));
+    const char *const *sources = smith_glob(b, smith_list(b, "lib/*.c", "tests/*.c", "scripts/header_tool.c", nullptr));
     for (size_t i = 0; sources[i] != nullptr; i++) {
         // stub.c is built (build_other_objects) with its -D, tree_sitter.c is the grammar's, and random.c includes the
         // raw lowering of random.smith, which tests/random_c_test.smith writes when it runs
@@ -1534,6 +1533,27 @@ static int build_copy_tree(SmithBuild *b, const char *from, const char *to) {
     return status != 0 ? status : build_exec(smith_list(b, "/bin/chmod", "-R", "u+w", to, nullptr));
 }
 
+// The program that moves a Mach-O object's static initializers (the tools' and the prover's), macho/defer_init.smith
+// with macho/main.smith as its main: a project of its own under `folder` (whose last name is the program's), built by
+// the smith that runs this build, because the std modules it imports come with a project. Its path is
+// build_defer_tool(folder).
+static const char *build_defer_tool(SmithBuild *b, const char *folder) {
+    return smith_fmt(b, "%s/build/release/%s", folder, strrchr(folder, 0x2f) + 1);
+}
+
+static int build_defer_make(SmithBuild *b, const char *folder) {
+    int status = build_make_folder(b, folder);
+    status = status != 0
+                 ? status
+                 : build_exec(smith_list(b, "/bin/cp", "macho/defer_init.smith", "macho/main.smith", folder, nullptr));
+    return status != 0 ? status
+                       : build_spawn(&(BuildSpawn){
+                             .argv = smith_list(b, smith_env(b, "SMITH_SELF", "smith"), "build", "release", nullptr),
+                             .folder = folder,
+                             .log = smith_fmt(b, "%s.log", folder),
+                             .tail = 20});
+}
+
 static int build_write_text(const char *path, const char *text, mode_t mode) {
     FILE *file = fopen(path, "w");
     if (file == nullptr) return 1;
@@ -1712,7 +1732,7 @@ static int build_z3_compile(SmithBuild *b, const BuildProve *prove, const char *
 }
 
 // Z3's static initializers. libz3.a has about ten thousand, which dyld would run in every smith process at load (the
-// prover is in all of them). They are moved to __DATA,__smith_prove (scripts/defer_init.c, as for the tools in
+// prover is in all of them). They are moved to __DATA,__smith_prove (macho/defer_init.smith, as for the tools in
 // build_llvm_run_macos), and shim/prove.cpp runs them when `smith prove` does. The archive is rebuilt from the objects
 // of Z3's build, in the order Z3's own archive step used.
 static int build_z3_objects(SmithRun *run, const BuildProve *prove, const char *deferred) {
@@ -1737,12 +1757,12 @@ static int build_z3_objects(SmithRun *run, const BuildProve *prove, const char *
         size_t length = strlen(word);
         if (length < 2 || strcmp(word + length - 2, ".o") != 0) continue;
         count++;
-        int status =
-            build_spawn(&(BuildSpawn){.argv = smith_list(b, smith_fmt(b, "%s/tools/defer_init", prove->cache),
-                                                         smith_fmt(b, "%s/z3-build/%s", prove->cache, word),
-                                                         smith_fmt(b, "%s/%05d.o", deferred, count), "prove", nullptr),
-                                      .log = "/dev/null",
-                                      .stdout_only = true});
+        int status = build_spawn(
+            &(BuildSpawn){.argv = smith_list(b, build_defer_tool(b, smith_fmt(b, "%s/tools/defer-init", prove->cache)),
+                                             smith_fmt(b, "%s/z3-build/%s", prove->cache, word),
+                                             smith_fmt(b, "%s/%05d.o", deferred, count), "prove", nullptr),
+                          .log = "/dev/null",
+                          .stdout_only = true});
         if (status != 0) return status;
     }
     return 0;
@@ -1751,9 +1771,7 @@ static int build_z3_objects(SmithRun *run, const BuildProve *prove, const char *
 static int build_z3_defer(SmithRun *run, const BuildProve *prove) {
     SmithBuild *b = run->b;
     const char *deferred = smith_fmt(b, "%s/z3-deferred", prove->cache);
-    int status = build_exec(smith_list(b, "/usr/bin/clang", "-std=gnu23", "-O1", "-Wall", "-Wextra", "-Werror",
-                                       "scripts/defer_init.c", "-o", smith_fmt(b, "%s/tools/defer_init", prove->cache),
-                                       nullptr));
+    int status = build_defer_make(b, smith_fmt(b, "%s/tools/defer-init", prove->cache));
     status = status != 0 ? status : build_remove(b, deferred);
     status = status != 0 ? status : build_make_folder(b, deferred);
     status = status != 0 ? status : build_z3_objects(run, prove, deferred);
@@ -2103,7 +2121,7 @@ typedef struct {
     const char *cmake; // the CMake package
     const char *python;
     const char *ninja;
-    const char *defer;   // scripts/defer_init.c, built with the host compiler
+    const char *defer;   // the tool of macho/defer_init.smith (build_defer_tool)
     const char *objcopy; // the llvm-objcopy of the install
     const char *build;   // cache/build
     const char *install; // cache/install
@@ -2272,7 +2290,7 @@ static int build_llvm_extract(SmithBuild *b, const char *archive, const char *fo
     return status != 0 ? status : build_spawn(&(BuildSpawn){.argv = member != nullptr ? one : all, .folder = folder});
 }
 
-// An object through scripts/defer_init.c: its static initializers move out of the section dyld runs at load, to run
+// An object through macho/defer_init.smith: its static initializers move out of the section dyld runs at load, to run
 // when the tool `group` runs. Its output is not wanted.
 static int build_llvm_defer(SmithBuild *b, const BuildLlvm *llvm, const char *from, const char *to, const char *group) {
     return build_spawn(&(BuildSpawn){
@@ -2299,7 +2317,7 @@ static int build_llvm_archive(SmithBuild *b, const char *library, const char *co
 //   - clang-format's main is its one object, ClangFormat.cpp.o, with the symbol `main` renamed. clang-tidy's and
 //     clangd's are functions in libclangTidyMain.a and libclangdMain.a, whose members are copied as they are;
 //   - those objects' static initializers, which declare the flags and collide (clang-format and clang-tidy both have
-//     -fallback-style), are moved out of __mod_init_func (scripts/defer_init.c), to run when the tool runs;
+//     -fallback-style), are moved out of __mod_init_func (macho/defer_init.smith), to run when the tool runs;
 //   - clangd's code actions ("tweaks") are objects that register themselves by static initializers and that nothing
 //     names, so they are copied too, with their initializers deferred like clangd's own, and the whole of
 //     libsmithtools.a is linked (-force_load) so that none is left out;
@@ -2499,7 +2517,7 @@ static int build_llvm_run_macos(SmithRun *run, const char *source, const char *n
                       .cmake = build_cmake_package(b),
                       .python = build_python_package(b),
                       .ninja = ninja,
-                      .defer = build_llvm_part(b, cache, "build/defer_init"),
+                      .defer = build_defer_tool(b, build_llvm_part(b, cache, "build/defer-init")),
                       .objcopy = build_llvm_part(b, cache, "install/bin/llvm-objcopy"),
                       .build = build_llvm_part(b, cache, "build"),
                       .install = build_llvm_part(b, cache, "install")};
@@ -2507,9 +2525,7 @@ static int build_llvm_run_macos(SmithRun *run, const char *source, const char *n
     status = status != 0 ? status : build_make_folder(b, build_parent(b, stamp));
     status = status != 0 ? status : build_llvm_patches(b, source, cache);
     status = status != 0 ? status : build_llvm_compile(run, &llvm);
-    status = status != 0 ? status
-                         : build_exec(smith_list(b, "/usr/bin/clang", "-std=gnu23", "-O1", "-Wall", "-Wextra",
-                                                 "-Werror", "scripts/defer_init.c", "-o", llvm.defer, nullptr));
+    status = status != 0 ? status : build_defer_make(b, build_llvm_part(b, cache, "build/defer-init"));
     status = status != 0 ? status : build_llvm_tools(b, &llvm);
     status = status != 0 ? status : build_llvm_lldb(b, &llvm);
     status = status != 0 ? status : build_llvm_identity(run, &llvm);
@@ -2634,7 +2650,7 @@ static void build_llvm(SmithBuild *b) {
         .description = "fetching or building LLVM 23.1.3 and the prover's libraries (static, from source)",
         .inputs = smith_cat(
             b,
-            (const char *[]){"scripts/defer_init.c", "patches/enzyme/quiet-caching-call.patch",
+            (const char *[]){"macho/defer_init.smith", "macho/main.smith", "patches/enzyme/quiet-caching-call.patch",
                              "patches/clang-token-hook.patch", "patches/clang-debug-name.patch",
                              "patches/clang-format-smith.patch", "patches/smith-editor-defaults.patch",
                              "patches/smith-format-source-extension.patch", "patches/smith-command-hook.patch",

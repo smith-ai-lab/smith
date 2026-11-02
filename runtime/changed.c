@@ -405,7 +405,7 @@ static void smith_changed_find_functions(SmithChangedFunctions *all) {
         offset = end != nullptr ? (size_t)(end - smith_rec_source) + 1 : strlen(smith_rec_source);
     }
     smith_changed_line_offset[smith_rec_line_count + 1] = offset;
-    for (size_t line = 1; line <= smith_rec_line_count && all->count < smith_changed_functions_max; line++) {
+    for (size_t line = 1; line <= smith_rec_line_count; line++) {
         if (!smith_rec_line_opens[line]) continue;
         size_t last = line;
         while (last < smith_rec_line_count && smith_rec_line_inside[last + 1] &&
@@ -417,6 +417,10 @@ static void smith_changed_find_functions(SmithChangedFunctions *all) {
         const char *start = paren;
         while (start > text && smith_changed_word(start[-1])) // the identifier before the parenthesis
             start--;
+        if (all->count >= smith_changed_functions_max) {
+            smith_changed_cross("the functions of one source file (512)");
+            return;
+        }
         size_t at = all->count++;
         all->open[at] = line;
         all->close[at] = last;
@@ -538,9 +542,13 @@ static void smith_changed_run_only(SmithChangedFunctions *all) {
 }
 
 static void smith_changed_local_name(const char *name) {
-    if (name[0] == '\0' || smith_changed_local_count >= smith_changed_local_max) return;
+    if (name[0] == '\0') return;
     for (size_t i = 0; i < smith_changed_local_count; i++) { // bounded by the names
         if (strcmp(smith_changed_local_names[i], name) == 0) return;
+    }
+    if (smith_changed_local_count >= smith_changed_local_max) {
+        smith_changed_cross("the local names of one function (32)");
+        return;
     }
     snprintf(smith_changed_local_names[smith_changed_local_count++], sizeof smith_changed_local_names[0], "%s", name);
 }
@@ -626,12 +634,15 @@ static void smith_changed_embeds(void) {
     for (size_t p = 0; p < smith_changed_path_count; p++) {
         const char *path = smith_changed_paths[p];
         if (!smith_changed_is_source(path) || smith_changed_is_test(path) || !smith_changed_in_smith(path)) continue;
-        for (size_t i = 0; i < smith_changed_file_count && smith_changed_embedded_count < smith_changed_embedded_max;
-             i++) {
+        for (size_t i = 0; i < smith_changed_file_count; i++) {
             if (!smith_changed_ends(smith_changed_files[i], ".c") || strcmp(smith_changed_files[i], path) == 0)
                 continue;
-            if (smith_changed_embed_touch(smith_changed_files[i], path))
-                smith_changed_embedded[smith_changed_embedded_count++] = path;
+            if (!smith_changed_embed_touch(smith_changed_files[i], path)) continue;
+            if (smith_changed_embedded_count >= smith_changed_embedded_max) {
+                smith_changed_cross("the embedded files placed through their includer (16)");
+                return;
+            }
+            smith_changed_embedded[smith_changed_embedded_count++] = path;
         }
     }
 }
