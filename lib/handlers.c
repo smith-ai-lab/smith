@@ -157,6 +157,11 @@ SmithConsoleHandler *smith_handlers_console(void) {
     return smith_handlers_console_current();
 }
 
+void smith_handlers_flush_console(void) {
+    fflush(stdout); // not every FILE: a thread blocked in a read holds stdin's lock (#573)
+    fflush(stderr);
+}
+
 // The environment and the clock, found the same way.
 
 __attribute__((noinline)) static SmithEnvHandler *smith_handlers_env_get(void) {

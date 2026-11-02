@@ -122,6 +122,12 @@ Written write_all(I32 descriptor, const U8 *bytes, Usize size) {
     return done;
 }
 
+// Flushes stdout and stderr, and no other FILE: a thread blocked in a read holds stdin's lock, and fflush(nullptr)
+// would wait for it (#573).
+[[std::c_name("smith_console_flush")]] export void flush() {
+    c::smith_handlers_flush_console();
+}
+
 // Writes the bytes to stdout, all of them or an error.
 [[std::c_name("smith_console_write")]] export Written write(const U8 bytes[:]) {
     return write_all(stdout_fd, bytes.data, countof(bytes));
