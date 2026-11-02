@@ -34,7 +34,8 @@ F64 missing(Bool negative) {
 | `math::is_finite(x)` | `c::isfinite` | neither infinite nor not-a-number; `x` is `F32` or `F64` |
 | `math::sqrt(x)` | `c::sqrt`, `c::sqrtf` | the square root, correctly rounded |
 | `math::abs(x)` | `c::fabs`, `c::fabsf` | the absolute value (the sign bit cleared) |
-| `math::pow(x, y)`, `math::log(x)`, `math::sin(x)`, `math::cos(x)` | `c::pow`, `c::log`, `c::logf`, `c::sin`, `c::cos` | libm's functions, in the type of `x` |
+| `math::pow(x, y)`, `math::sin(x)`, `math::cos(x)` | `c::pow`, `c::sin`, `c::cos` | libm's functions, in the type of `x` |
+| `math::log(x)` | `c::log`, `c::logf` | the natural logarithm, fdlibm's algorithm: within 1 ulp and the same bits on every platform (0 gives -inf, a negative NaN); C calls `smith_log_float` and `smith_log_double` from `<smith/math.h>`, and a library that links it (`random`) brings `lib/std/math.smith` |
 | `math::ldexp(x, exponent)` | `c::ldexp`, `c::ldexpf` | `x` times two to the `exponent` (an `I32`) |
 | `math::maximum(a, b)`, `math::minimum(a, b)` | `c::fmax`, `c::fmin` | the number wins over a not-a-number |
 | `math::max(Usize)` | `c::SIZE_MAX` | the largest value of an unsigned integer type |
