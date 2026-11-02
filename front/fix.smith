@@ -116,29 +116,13 @@ static core::Errors checker_fixes(const ast::Module *module) {
 }
 
 // The text of a file as smith's own syntax (`fn`, `x: T`, `mut`, `*mut T`), which is what the checker's fixes mend; a
-// text its lexer cannot read in that syntax is read as today's (`parser::parse`).
+// text that does not read cleanly in that syntax is read as today's (`parser::parse`).
 export parser::Parsed parse_for_fix(Str file, Str source) {
-    lex::Lexed lexed = lex::tokenize_new(source);
-    if (lexed == .error) return parser::parse(file, source);
-    parser::Parsed result = {};
-    core::Parser p = core::make(lexed.ok, source);
-    p.new_syntax = true;
-    p.hooks.expression = parse_expr::expression;
-    p.hooks.type = parse_type::type;
-    p.hooks.statement = parse_stmt::statement;
-    p.hooks.declaration = parse_decl::declaration;
-    result.module = parse_decl::file(&p, file);
-    result.errors = p.errors;
-    result.warnings = p.warnings;
-    return result;
-}
-
-// Whether the parse has an error that is not a warning: a module the parser could not read is not checked.
-static Bool has_errors(core::Errors errors) {
-    for (Usize i = 0; i < countof(errors); i++) {
-        if (!errors[i].warning) return true;
+    if (lex::tokenize_new(source) != .error) {
+        parser::Parsed own = parser::parse_new(file, source);
+        if (countof(own.errors) == 0) return own;
     }
-    return false;
+    return parser::parse(file, source);
 }
 
 // Writes `text` over the file `path`. False when it cannot.
@@ -158,7 +142,7 @@ export Fixed fix_text(Str file, Str source) {
     for (Usize pass = 0; pass < fix_passes; pass++) {
         parser::Parsed parsed = parse_for_fix(file, total.text);
         core::Errors errors = parsed.errors;
-        if (!has_errors(errors)) {
+        if (countof(errors) == 0) {
             core::Errors more = checker_fixes(&parsed.module);
             for (Usize i = 0; i < countof(more); i++) {
                 errors = mem::realloc(errors, countof(errors) + 1);
