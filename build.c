@@ -223,7 +223,10 @@ static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config
         smith_object(b, &objects[i]);
         linked[i] = &objects[i];
     }
-    SmithProgram program = {.linker = config->cc, .output = smith_fmt(b, "%s/protocol", folder), .objects = linked};
+    SmithProgram program = {.linker = config->cc,
+                            .output = smith_fmt(b, "%s/protocol", folder),
+                            .flags = config->platform->deployment,
+                            .objects = linked};
     smith_program(b, &program);
     return program.step;
 }
@@ -576,6 +579,7 @@ static const char *build_resource_pack(SmithBuild *b, const BuildConfig *config,
     SmithProgram program = {
         .linker = config->cc,
         .output = smith_fmt(b, "%s/pack", folder),
+        .flags = config->platform->deployment,
         .objects = (const SmithObject *[]){&tool, nullptr},
         .libraries = config->platform->pack_libraries,
     };
