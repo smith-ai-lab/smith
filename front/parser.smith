@@ -14,6 +14,7 @@
 module front::parser;
 
 import front::ast;
+import front::fix_directive;
 import front::lex;
 import front::parse;
 import front::parse_decl;
@@ -30,6 +31,14 @@ export struct Parsed {
     parse::Errors warnings;
 };
 
+// The fix of a lexer error: a `#` that starts a simple `#define` or `#include` line carries the edits of all such lines
+// (front::fix_directive, #1748); any other lexer error has none.
+static parse::Edits lex_fix(Str source, lex::LexError failure) {
+    parse::Edits none = {};
+    if (failure.span.start >= countof(source) || source[failure.span.start] != '#') return none;
+    return fix_directive::edits(source);
+}
+
 // Reads the text of the file called `file`. A file with errors still has the module of what could be read.
 export Parsed parse(Str file, Str source) {
     Parsed result = {};
@@ -38,6 +47,7 @@ export Parsed parse(Str file, Str source) {
     if (lexed == .error) {
         lex::LexError failure = lexed.error;
         parse::ParseError first = {.span = failure.span, .message = failure.message};
+        first.fix = lex_fix(source, failure);
         result.errors = mem::realloc(result.errors, 1);
         result.errors[0] = first;
         return result;
@@ -62,6 +72,7 @@ export Parsed parse_new(Str file, Str source) {
     if (lexed == .error) {
         lex::LexError failure = lexed.error;
         parse::ParseError first = {.span = failure.span, .message = failure.message};
+        first.fix = lex_fix(source, failure);
         result.errors = mem::realloc(result.errors, 1);
         result.errors[0] = first;
         return result;
