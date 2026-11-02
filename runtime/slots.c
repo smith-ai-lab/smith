@@ -107,9 +107,14 @@ static int smith_slots_count(void) {
         value = strtol(old, &end, 10);
         if (*end != '\0' || errno != 0 || value < 0) smith_die(smith_exit_usage, "SMITH_SLOTS needs a number", old);
         if (value == 0) return 0;
+        if (value > smith_slots_max && !given_cores)
+            smith_die(smith_exit_usage, "SMITH_SLOTS is above the pool's limit of 64 tokens", old);
     }
-    if (!given_cores && value > 0) return value > smith_slots_max ? smith_slots_max : (int)value;
+    if (!given_cores && value > 0) return (int)value; // at most smith_slots_max: checked above
     int count = smith_slots_cores();
+    if (count > smith_slots_max && given_cores)
+        smith_die(smith_exit_usage, "SMITH_CORES is above the pool's limit of 64 tokens", cores);
+    // A policy bound, not a data cap: a host with more cores than tokens uses 64 of them.
     return count > smith_slots_max ? smith_slots_max : count;
 }
 
