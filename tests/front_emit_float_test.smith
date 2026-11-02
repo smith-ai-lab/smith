@@ -1,0 +1,263 @@
+// Tests of `f32` and `f64` in the emitter (#1617 of #1428): source text in smith's own syntax, checked and run through
+// the JIT.
+
+module front_emit_float_test;
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <stdio.h>;
+import <smith/trace.h>;
+import <string.h>;
+import <unistd.h>;
+import <sys/wait.h>;
+
+struct Scenario {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    parser::Parsed parsed;
+    types::Checked checked;
+    Bool has_checked;
+};
+
+// The module of `source`, read in smith's own syntax.
+static parser::Parsed parse_new(Str source) {
+    parser::Parsed result = {};
+    result.module.file = "t.smith";
+    lex::Lexed lexed = lex::tokenize_new(source);
+    switch (lexed) {
+    case .ok:
+        parse::Parser p = parse::make(lexed.ok, source);
+        p.new_syntax = true;
+        p.hooks.expression = parse_expr::expression;
+        p.hooks.type = parse_type::type;
+        p.hooks.statement = parse_stmt::statement;
+        p.hooks.declaration = parse_decl::declaration;
+        result.module = parse_decl::file(&p, "t.smith");
+        result.errors = p.errors;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    return result;
+}
+
+static void begin(Scenario *s, Str source, Bool with_checker) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parse_new(source);
+    test::check_equal(countof(s->parsed.errors), (Usize)0);
+    if (with_checker) {
+        s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+        s->has_checked = true;
+        test::check_equal(s->checked.error_count, (Usize)0);
+    }
+    mem::set_allocator(outside);
+}
+
+static emit::Options options_for(emit::Target target, const Scenario *s) {
+    emit::Options options = {};
+    options.target = target;
+    if (s->has_checked) options.checked = &s->checked;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static Bool contains(const char *text, Str needle) {
+    return text != nullptr && c::strstr(text, needle.data) != nullptr;
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+// Emits `source` (with the checker's types), returns its IR text and adds it to `host`.
+static char *ir_of(Str source, emit_jit::Jit *host, Scenario *s) {
+    begin(s, source, true);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s->parsed.module, options_for(host->target, s));
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    } else {
+        Str expected = "no error";
+        test::check_equal(emitted.error.message, expected);
+    }
+    return text;
+}
+
+typedef F64 (*Unary)(F64);
+typedef F64 (*Binary)(F64, F64);
+typedef F32 (*Single)(F32, F32);
+typedef I32 (*Test)(F64, F64);
+typedef F64 (*FromInt)(I32);
+typedef F64 (*Widen)(F32);
+typedef F32 (*Narrow)(F64);
+typedef I32 (*ToInt)(F64);
+typedef I32 (*Nullary)();
+typedef I64 (*ToWide)(F64);
+
+export void test_front_emit_float_parameters_results_locals_and_arithmetic() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("pub fn calc(a: f64, b: f64) -> f64 {\n    mut x: f64 = 0\n    x += a * b\n    x = x - 1.0\n"
+                     "    negated := -x\n    negated / 2.0\n}\n"
+                     "pub fn single(a: f32, b: f32) -> f32 {\n    c: f32 = 0.5\n    a + b * c\n}\n"
+                     "pub fn plus(a: f64) -> f64 {\n    +a\n}\n"
+                     "pub fn infinite() -> f64 {\n    1.0 / 0.0\n}\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    test::check_equal(contains(ir, "fadd"), true);
+    test::check_equal(contains(ir, "fneg"), true);
+    Binary calc = (Binary)symbol_of(&host, "calc");
+    Single single = (Single)symbol_of(&host, "single");
+    Unary plus = (Unary)symbol_of(&host, "plus");
+    F64 (*infinity)() = (F64 (*)())symbol_of(&host, "infinite");
+    test::check_equal(calc(3.0, 2.0), -2.5);
+    test::check_equal(single(1.0F, 4.0F), 3.0F);
+    test::check_equal(plus(2.0), 2.0);
+    test::check_equal(infinity() > 1.0e308, true);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_float_comparisons_and_nan() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir =
+        ir_of("pub fn lt(a: f64, b: f64) -> i32 {\n    if a < b {\n        return 1\n    }\n    0\n}\n"
+              "pub fn le(a: f64, b: f64) -> i32 {\n    if a <= b {\n        return 1\n    }\n    0\n}\n"
+              "pub fn gt(a: f64, b: f64) -> i32 {\n    if a > b {\n        return 1\n    }\n    0\n}\n"
+              "pub fn ge(a: f64, b: f64) -> i32 {\n    if a >= b {\n        return 1\n    }\n    0\n}\n"
+              "pub fn eq(a: f64, b: f64) -> i32 {\n    if a == b {\n        return 1\n    }\n    0\n}\n"
+              "pub fn ne(a: f64, b: f64) -> i32 {\n    if a != b {\n        return 1\n    }\n    0\n}\n"
+              "pub fn nan_ne() -> i32 {\n    n := 0.0 / 0.0\n    if n != n {\n        return 1\n    }\n    0\n}\n"
+              "pub fn nan_eq() -> i32 {\n    n := 0.0 / 0.0\n    if n == n {\n        return 1\n    }\n    0\n}\n"
+              "pub fn literal(a: f64) -> i32 {\n    if 1.5 < a {\n        return 1\n    }\n    0\n}\n",
+              &host, &s);
+    test::check_equal(ir != nullptr, true);
+    test::check_equal(contains(ir, "fcmp olt"), true);
+    test::check_equal(contains(ir, "fcmp une"), true);
+    Test lt = (Test)symbol_of(&host, "lt");
+    Test le = (Test)symbol_of(&host, "le");
+    Test gt = (Test)symbol_of(&host, "gt");
+    Test ge = (Test)symbol_of(&host, "ge");
+    Test eq = (Test)symbol_of(&host, "eq");
+    Test ne = (Test)symbol_of(&host, "ne");
+    test::check_equal(lt(1.0, 2.0), (I32)1);
+    test::check_equal(lt(2.0, 2.0), (I32)0);
+    test::check_equal(le(2.0, 2.0), (I32)1);
+    test::check_equal(gt(3.0, 2.0), (I32)1);
+    test::check_equal(ge(1.0, 2.0), (I32)0);
+    test::check_equal(eq(2.0, 2.0), (I32)1);
+    test::check_equal(ne(2.0, 2.0), (I32)0);
+    test::check_equal(ne(2.0, 3.0), (I32)1);
+    I32 (*nan_ne)() = (I32 (*)())symbol_of(&host, "nan_ne");
+    I32 (*nan_eq)() = (I32 (*)())symbol_of(&host, "nan_eq");
+    I32 (*literal)(F64) = (I32 (*)(F64))symbol_of(&host, "literal");
+    test::check_equal(nan_ne(), (I32)1);
+    test::check_equal(nan_eq(), (I32)0);
+    test::check_equal(literal(2.0), (I32)1);
+    test::check_equal(literal(1.0), (I32)0);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_float_implicit_conversions() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("pub fn widen(a: f32) -> f64 {\n    a\n}\n"
+                     "pub fn from_int(n: i32) -> f64 {\n    n\n}\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    test::check_equal(contains(ir, "fpext"), true);
+    test::check_equal(contains(ir, "sitofp"), true);
+    Widen widen = (Widen)symbol_of(&host, "widen");
+    FromInt from_int = (FromInt)symbol_of(&host, "from_int");
+    test::check_equal(widen(1.5F), 1.5);
+    test::check_equal(from_int(-7), -7.0);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_float_casts() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("pub fn narrow(a: f64) -> f32 {\n    a as f32\n}\n"
+                     "pub fn wide(n: i64) -> f64 {\n    n as f64\n}\n"
+                     "pub fn truncate(a: f64) -> i32 {\n    a as i32\n}\n"
+                     "pub fn literal_truncate() -> i32 {\n    2.9 as i32\n}\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    test::check_equal(contains(ir, "fptrunc"), true);
+    test::check_equal(contains(ir, "fptosi"), true);
+    test::check_equal(contains(ir, "call void @smith_contract_fail_cast(i64 %"), true);
+    Narrow narrow = (Narrow)symbol_of(&host, "narrow");
+    F64 (*wide)(I64) = (F64 (*)(I64))symbol_of(&host, "wide");
+    ToInt truncate = (ToInt)symbol_of(&host, "truncate");
+    Nullary literal_truncate = (Nullary)symbol_of(&host, "literal_truncate");
+    test::check_equal(narrow(0.5), 0.5F);
+    test::check_equal(wide(1234567890123), 1234567890123.0);
+    test::check_equal(truncate(2.9), (I32)2);
+    test::check_equal(truncate(-2.9), (I32)-2);
+    test::check_equal(literal_truncate(), (I32)2);
+    emit_jit::stop(&host);
+}
+
+// Runs the function at `address` in a child and says whether it died.
+static Bool traps(Usize address, F64 argument) {
+    ToInt call = (ToInt)address;
+    I32 child = c::fork();
+    if (child == 0) {
+        c::smith_failure_hook = nullptr;
+        call(argument);
+        c::_exit(0);
+    }
+    I32 status = 0;
+    c::waitpid(child, &status, 0);
+    return status != 0;
+}
+
+export void test_front_emit_float_cast_to_an_integer_that_does_not_fit_calls_the_report() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("pub fn truncate(a: f64) -> i32 {\n    a as i32\n}\n"
+                     "pub fn byte(a: f64) -> u8 {\n    a as u8\n}\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    Usize truncate_at = symbol_of(&host, "truncate");
+    Usize byte_at = symbol_of(&host, "byte");
+    test::check_equal(traps(truncate_at, 1.0e10), true);
+    test::check_equal(traps(truncate_at, -1.0e10), true);
+    test::check_equal(traps(truncate_at, 0.0 / 0.0), true);
+    test::check_equal(traps(truncate_at, 2147483647.0), false);
+    test::check_equal(traps(byte_at, 256.0), true);
+    test::check_equal(traps(byte_at, -1.0), true);
+    test::check_equal(traps(byte_at, 255.9), false);
+    emit_jit::stop(&host);
+}
