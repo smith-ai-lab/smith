@@ -3,6 +3,9 @@
 // touched, extracts to the same tree, modes and bytes as its source folder. The formats and the readers are tested as
 // functions in tests/untar_readers_test.smith, which replaced the other cases of this file (issue #646); the helpers
 // of tests/build_fixtures/untar/prelude (including tests/xz.py) stay for tests/untar_sanitizers_test.smith.
+// smith-covers: smith.c runtime/package.c runtime/untar.c runtime/gzip.c runtime/xz.c runtime/cache.c runtime/verbs.c
+// smith-covers: tests/untar.c tests/xz.py tests/build_fixtures/untar/
+// smith.c is declared for the fetch verb.
 module untar_formats_test;
 
 import std::arena;

@@ -1,0 +1,27 @@
+// Tests of std::math.
+module std::math_test;
+
+import std::math;
+import std::test;
+
+export void test_math_pow_log_trig() {
+    test::check_equal(math::pow(2.0, 10.0), 1024.0);
+    test::check_equal(math::pow(2.0f, 3.0f), 8.0f);
+    test::check_equal(math::log(1.0), 0.0);
+    test::check_equal(math::log(1.0f), 0.0f);
+    test::check_equal(math::sin(0.0), 0.0);
+    test::check_equal(math::cos(0.0), 1.0);
+    test::check_equal(math::cos(0.0f), 1.0f);
+}
+
+export void test_math_ldexp() {
+    test::check_equal(math::ldexp(1.5, 4), 24.0);
+    test::check_equal(math::ldexp(3.0f, -1), 1.5f);
+}
+
+export void test_math_maximum_minimum() {
+    test::check_equal(math::maximum(1.0, 2.0), 2.0);
+    test::check_equal(math::minimum(1.0f, 2.0f), 1.0f);
+    test::check_equal(math::maximum(math::nan(F64), 3.0), 3.0);
+    test::check_equal(math::minimum(3.0, math::nan(F64)), 3.0);
+}

@@ -167,9 +167,9 @@ constexpr char loud_error[_] =
     "error: smith-effect: `bad` is [[std::pure]], but it has the effects console, globals: bad -> "
     "fx::lib::noisy (main.smith:4) "
     "-> printf (lib.smith:4)";
-constexpr char lib_loud[_] = "module fx::lib;\nimport <stdio.h>;\nexport I32 plain(I32 x) { return x + 1; }\n"
+constexpr char lib_loud[_] = "module fx::lib;\nimport <stdio.h>;\nexport I32 plain(I32 x) { return x | 1; }\n"
                              "export I32 noisy(I32 x) { c::printf(\"%d\\n\", x); return x; }\n";
-constexpr char lib_quiet[_] = "module fx::lib;\nimport <stdio.h>;\nexport I32 plain(I32 x) { return x + 1; }\nexport "
+constexpr char lib_quiet[_] = "module fx::lib;\nimport <stdio.h>;\nexport I32 plain(I32 x) { return x | 1; }\nexport "
                               "I32 noisy(I32 x) { return x; }\n";
 
 static void write_modules(const scratch::Project *p) {
@@ -695,7 +695,7 @@ export void test_within_in_modules_the_link_judges_a_function_of_another_module_
     scratch::Run made = scratch::sh(&p, "mkdir -p fx3");
     scratch::expect_status("the folder of the module", 0, &made);
     scratch::write(&p, "fx3/lib.smith",
-                   "module fx3::lib;\nimport <stdio.h>;\nexport I32 plain(I32 x) { return x + 1; }\n"
+                   "module fx3::lib;\nimport <stdio.h>;\nexport I32 plain(I32 x) { return x | 1; }\n"
                    "export I32 noisy(I32 x) { c::printf(\"%d\\n\", x); return x; }\n");
     scratch::write(&p, "main.smith",
                    "module main;\nimport fx3::lib as lib;\nimport std::effects;\n"
@@ -750,6 +750,12 @@ export void test_fails_smith() {
     effects_case("effects_fails.smith");
 }
 
+// Signed arithmetic, division, shifts and float-to-int casts in a module are failure points (#351, #1100); unsigned
+// arithmetic and a shift by a constant inside the width are not.
+export void test_fails_arithmetic_smith() {
+    effects_case("effects_arith.smith");
+}
+
 // A callee in another file: the link judges it from the summary and the chain goes through the file.
 export void test_fails_a_callee_in_another_file_reaches_a_pure_caller_at_the_link() {
     scratch::Project p = scratch::make("p", nullptr);
@@ -761,7 +767,7 @@ export void test_fails_a_callee_in_another_file_reaches_a_pure_caller_at_the_lin
     scratch::Run made = scratch::sh(&p, "mkdir -p fx4");
     scratch::expect_status("the folder of the module", 0, &made);
     scratch::write(&p, "fx4/lib.smith",
-                   "module fx4::lib;\nimport std::contract;\nexport I32 plain(I32 x) { return x + 1; }\n"
+                   "module fx4::lib;\nimport std::contract;\nexport I32 plain(I32 x) { return x | 1; }\n"
                    "export I32 get(I32 xs[:], Usize i) { return xs[i]; }\n"
                    "export I32 checked(I32 x) { contract::assert(x > 0); return x; }\n");
     scratch::write(

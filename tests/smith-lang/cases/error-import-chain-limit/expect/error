@@ -1,0 +1,1 @@
+src/chain/m00.smith:2:1: the lowering's table of the modules the import cycle search reads holds 64 and is full; split the module or its imports

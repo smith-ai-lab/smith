@@ -33,3 +33,19 @@ export typeof(a) neg(Int a) {
     __builtin_sub_overflow((typeof(a))0, a, &result);
     return result;
 }
+
+// a << n, wrapped: the low bits of the shifted value; n at or past the width of a gives 0.
+export typeof(a) shl(Int a, U32 n) {
+    typeof(a) result = 0;
+    if (n < sizeof(a) * 8) {
+        __builtin_mul_overflow(a, (U64)1 << n, &result);
+    }
+    return result;
+}
+
+// The low bits of x as a T, for any integer T and x: wrapping::to(U8, 300) is 44, wrapping::to(I8, 200) is -56.
+export T to(constexpr Type T, Int x) {
+    T result = 0;
+    __builtin_add_overflow(x, 0, &result);
+    return result;
+}

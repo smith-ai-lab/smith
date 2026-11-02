@@ -1,0 +1,112 @@
+f(a = 1, b = 2)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (call (name f) (named_arg a (integer 1)) (named_arg b (integer 2)))))))
+
+Point(x = 1)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (call (name Point) (named_arg x (integer 1)))))))
+
+f(a, b = c)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (call (name f) (name a) (named_arg b (name c)))))))
+
+.red
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (variant red)))))
+
+.circle(r)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (variant circle (name r))))))
+
+.some(.circle(Circle(radius = 1)))
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (variant some (variant circle (call (name Circle) (named_arg radius (integer 1)))))))))
+
+(1, 2)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (tuple_literal (integer 1) (integer 2))))))
+
+(x,)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (tuple_literal (name x))))))
+
+()
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (tuple_literal)))))
+
+((1, 2), 3)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (tuple_literal (tuple_literal (integer 1) (integer 2)) (integer 3))))))
+
+(a + b)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary add (name a) (name b))))))
+
+[1, 2, 3]
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (array_literal (integer 1) (integer 2) (integer 3))))))
+
+[]
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (array_literal)))))
+
+[[1], [2, 3]]
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (array_literal (array_literal (integer 1)) (array_literal (integer 2) (integer 3)))))))
+
+[x,]
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (array_literal (name x))))))
+
+xs[0]
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (index (name xs) (integer 0))))))
+

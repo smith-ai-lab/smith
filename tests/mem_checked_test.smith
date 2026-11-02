@@ -1,6 +1,12 @@
 // mem::checked (issue #239, lib/std/mem.smith): the allocator the test runner sets around every test, which finds a
 // leak (naming its allocation site), a double free, a free of a foreign block and a use after free. The runner cases
 // use the fixture tests/build_fixtures/runner_checked; the arena cases a C program, tests/mem_checked/main.c.
+// smith-covers: smith.c runtime/verbs.c runtime/lang*.c runtime/front_flag.c runtime/sdk_cache.c runtime/platform_*.c
+// smith-covers: runtime/quiet.c shim/hook.cpp shim/clang.cpp shim/names.h shim/tool.h shim/platform*.h include/smith/
+// smith-covers: runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/cache.c runtime/package.c
+// smith-covers: lib/std/mem.smith lib/std/test.smith lib/std/arena.smith lib/std/contract.smith lib/handlers.c
+// smith-covers: lib/trace.c shim/mem.h tests/mem_checked/ tests/build_fixtures/runner_checked/
+// smith.c is declared for the build verb.
 module mem_checked_test;
 
 import std::arena;
