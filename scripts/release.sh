@@ -5,7 +5,9 @@
 #   release.sh publish <smith>        guard, package, add to the draft release, prune (CI, `smith build release`)
 #   release.sh finish <tag>           publish the draft release the jobs added to (CI's `publish` job)
 #   release.sh package <smith> <dir>  write the tarball and its checksum into <dir>
-#   release.sh fetch <tag> <dir>      download over plain HTTPS (curl, no gh), check the checksum, extract into <dir>
+#   release.sh fetch <tag> <dir>      download through the API's asset endpoint (curl, no gh), check the checksum, extract into <dir>
+#   release.sh asset <tag> <name> <out>  download one asset of a release (the API asset endpoint, #1757)
+#   release.sh tags                   the published stage0 tags, newest first
 #   release.sh prune                  read "tag date" lines on stdin, print the tags to delete
 #   release.sh guard                  succeed only when HEAD is main's tip
 set -eu
@@ -114,11 +116,58 @@ publish() {
     done
 }
 
+# The GitHub API, not the release's download URL: a private repository's download URL wants a login, while a cloud
+# container's proxy authenticates the API (#1757). $GITHUB_TOKEN, when set (CI), goes as a bearer token; the signed
+# storage URL the endpoint redirects to gets no header (curl drops it on another host).
+api=https://api.github.com/repos/smith-ai-lab/smith
+call() {
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+        curl -fsSL --retry 3 -H "Authorization: Bearer $GITHUB_TOKEN" "$@"
+    else
+        curl -fsSL --retry 3 "$@"
+    fi
+}
+
+# The releases, newest first, as the API prints them (one key per line), pages of 100 until a page has none.
+releases() {
+    page=1
+    while [ "$page" -le 5 ]; do
+        text=$(call -H 'Accept: application/vnd.github+json' "$api/releases?per_page=100&page=$page") ||
+            die "cannot fetch $api/releases?per_page=100&page=$page"
+        case $text in *'"tag_name"'*) ;; *) break ;; esac
+        printf '%s\n' "$text"
+        page=$((page + 1))
+    done
+}
+
+# "<tag>" lines of the published (not draft) releases whose tag starts with stage0-.
+tags() {
+    releases | awk '/"tag_name": "/ { tag = $2; gsub(/[",]/, "", tag) }
+        /"draft": true/ { tag = "" }
+        /"draft": false/ && tag ~ /^stage0-/ { print tag }'
+}
+
+# The asset id of <name> in the published release <tag>, empty when there is none.
+asset_id() {
+    releases | awk -v want="$1" -v file="$2" '
+        /"tag_name": "/ { tag = $2; gsub(/[",]/, "", tag); id = "" }
+        /"draft": true/ { tag = "" }
+        /\/releases\/assets\/[0-9]+"/ { id = $2; sub(/.*\//, "", id); gsub(/[",]/, "", id) }
+        /^ *"name": "/ && tag == want && id != "" { n = $0; sub(/^ *"name": "/, "", n); sub(/".*/, "", n)
+            if (n == file) { print id; exit } }'
+}
+
+asset() {
+    id=$(asset_id "$1" "$2")
+    [ -n "$id" ] || return 1
+    call -H 'Accept: application/octet-stream' -o "$3" "$api/releases/assets/$id" ||
+        die "cannot download $api/releases/assets/$id ($1/$2)"
+}
+
 fetch() {
     mkdir -p "$2"
-    base=https://github.com/smith-ai-lab/smith/releases/download/$1
     for file in "$name" "$name.sha256"; do
-        curl -fsSL --retry 3 -o "$2/$file" "$base/$file" || die "cannot download $base/$file"
+        asset "$1" "$file" "$2/$file" || die "release $1 has no $file"
     done
     (cd "$2" && shasum -a 256 -c "$name.sha256" >/dev/null) || die "the checksum of $1 does not match"
     tar -C "$2" -xJf "$2/$name"
@@ -129,7 +178,9 @@ publish) publish "$2" ;;
 finish) finish "$2" ;;
 package) package "$2" "$3" ;;
 fetch) fetch "$2" "$3" ;;
+asset) asset "$2" "$3" "$4" || die "release $2 has no $3" ;;
+tags) tags ;;
 prune) prune ;;
 guard) guard ;;
-*) die "usage: release.sh publish <smith> | finish <tag> | package <smith> <dir> | fetch <tag> <dir> | prune | guard" ;;
+*) die "usage: release.sh publish <smith> | finish <tag> | package <smith> <dir> | fetch <tag> <dir> | asset <tag> <name> <out> | tags | prune | guard" ;;
 esac

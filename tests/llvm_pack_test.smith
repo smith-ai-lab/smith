@@ -146,7 +146,7 @@ export void test_llvm_pack_fetch_refuses_a_bad_part_and_says_when_to_build() {
     scratch::expect_contains(
         "llvm_pack: a cut network is an error naming the URL, not 3",
         capture(&p, "mkdir c6 && CURL_FAIL=1 \"$tool\" fetch \"$PWD/c6\" n1 \"$PWD/stamp\" 2>&1; echo \"rc=$?\""),
-        "https://github.com/smith-ai-lab/smith/releases/download/llvm-n1-");
+        "https://api.github.com/repos/smith-ai-lab/smith/releases?per_page=100");
     scratch::expect_contains(
         "llvm_pack: and rc 1",
         capture(&p, "CURL_FAIL=1 \"$tool\" fetch \"$PWD/c6\" n1 \"$PWD/stamp\" >/dev/null 2>&1; echo \"rc=$?\""),

@@ -1,9 +1,9 @@
 name: fetch-smith
 description: >
   Downloads the newest smith release that has a tarball for this platform (#1689), checks its SHA-256 and puts its
-  `bin/` first on PATH, so `smith build` can build this tree. The tags come from the public releases feed of the
-  repository (the newest ten, newest first; no gh, no login, no GraphQL, #829), and the first release whose tarball
-  and checksum both exist is the one used. The lag rule (knowledge/smith-bootstrap.md) lets a release newer than the
+  `bin/` first on PATH, so `smith build` can build this tree. The tags and the files come from the GitHub API's
+  releases list and asset endpoint through `scripts/release.sh` (#1757; curl with the job's token, no gh, no
+  GraphQL, #829), newest tag first, and the first release whose tarball and checksum both exist is the one used. The lag rule (knowledge/smith-bootstrap.md) lets a release newer than the
   checkout build it.
 
 runs:
@@ -11,17 +11,18 @@ runs:
   steps:
     - name: Download the newest release
       shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
         set -eu
         os=$(uname -s | tr A-Z a-z)
         arch=$(uname -m)
         name="smith-$os-$arch.tar.xz"
-        base=https://github.com/smith-ai-lab/smith
-        tags=$(curl -fsSL "$base/releases.atom" | sed -n 's|.*releases/tag/\(stage0-[0-9a-f]*\).*|\1|p')
+        tags=$(sh scripts/release.sh tags | head -10)
         mkdir -p .smith/stage0
         for tag in $tags; do
-          if curl -fsSL --retry 3 -o ".smith/stage0/$name" "$base/releases/download/$tag/$name" &&
-             curl -fsSL --retry 3 -o ".smith/stage0/$name.sha256" "$base/releases/download/$tag/$name.sha256"; then
+          if sh scripts/release.sh asset "$tag" "$name" ".smith/stage0/$name" &&
+             sh scripts/release.sh asset "$tag" "$name.sha256" ".smith/stage0/$name.sha256"; then
             want=$(cut -d' ' -f1 ".smith/stage0/$name.sha256")
             if command -v sha256sum >/dev/null; then got=$(sha256sum ".smith/stage0/$name" | cut -d' ' -f1)
             else got=$(shasum -a 256 ".smith/stage0/$name" | cut -d' ' -f1); fi

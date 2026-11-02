@@ -132,49 +132,128 @@ static void check_element(const char *name) {
     if (name[0] == '\0' || name[0] == '.' || strchr(name, '/') != nullptr) die("not a plain name:", name);
 }
 
-// The public URL of a file of a release.
-static void asset_url(char *url, const char *tag, const char *name) {
-    int written = snprintf(url, path_max, "https://github.com/smith-ai-lab/smith/releases/download/%s/%s", tag, name);
-    if (written < 0 || (size_t)written >= path_max) die("a URL is too long:", name);
+// Releases go through the GitHub API, not the download URL: a private repository's download URL wants a login, while a
+// cloud container's proxy authenticates the API (#1757). $GITHUB_TOKEN, when set (CI), is sent as a bearer token.
+static const char *const api_base = "https://api.github.com/repos/smith-ai-lab/smith";
+constexpr int pages_max = 5; // pages of 100 releases
+
+// Runs curl on a URL with an Accept header, into a file, and says whether it succeeded.
+static bool call(const char *url, const char *accept, const char *path) {
+    char accept_header[128];
+    char auth_header[path_max];
+    const char *argv[16];
+    size_t n = 0;
+    snprintf(accept_header, sizeof accept_header, "Accept: %s", accept);
+    argv[n++] = "curl";
+    argv[n++] = "-fsSL";
+    argv[n++] = "--retry";
+    argv[n++] = "3";
+    argv[n++] = "-H";
+    argv[n++] = accept_header;
+    const char *token = getenv("GITHUB_TOKEN");
+    if (token != nullptr && token[0] != '\0') {
+        join(auth_header, "Authorization: Bearer %s", token, "");
+        argv[n++] = "-H";
+        argv[n++] = auth_header;
+    }
+    argv[n++] = "-o";
+    argv[n++] = path;
+    argv[n++] = url;
+    argv[n] = nullptr;
+    return run(argv, false) == 0;
 }
 
-static void download(const char *url, const char *path) {
-    if (run((const char *const[]){"curl", "-fsSL", "--retry", "3", "-o", path, url, nullptr}, false) != 0)
-        die("cannot download", url);
+// What a scan of one page of the releases found.
+typedef struct {
+    bool any;   // the page has a release at all
+    bool found; // the asset is in it
+    char id[32];
+} Scan;
+
+// The text between the quotes after `key` on a line of the API's pretty-printed JSON ("key": "value" or "key": 123).
+static bool value_of(const char *line, const char *key, char *out, size_t size) {
+    const char *at = strstr(line, key);
+    if (at == nullptr) return false;
+    at += strlen(key);
+    while (*at == ' ' || *at == '"')
+        at++;
+    size_t length = strcspn(at, "\",\n");
+    if (length >= size) length = size - 1;
+    memcpy(out, at, length);
+    out[length] = '\0';
+    return true;
 }
 
-// The HTTP status of one byte of the URL (a signed storage URL refuses a HEAD request), read from a file curl writes.
-static int http_status(const char *url, const char *scratch_file) {
-    char format[path_max + 32];
-    snprintf(format, sizeof format, "%%output{%s}%%{http_code}", scratch_file);
-    run((const char *const[]){"curl", "-sSL", "--retry", "3", "-r", "0-0", "-o", "/dev/null", "-w", format, url,
-                              nullptr},
-        false);
-    FILE *file = fopen(scratch_file, "r");
-    char text[16] = "";
-    if (file != nullptr && fgets(text, sizeof text, file) == nullptr) text[0] = '\0';
-    if (file != nullptr) fclose(file);
-    int status = (int)strtol(text, nullptr, 10);
-    remove(scratch_file);
-    return status;
+// Reads a page of releases (one key per line): the id of the asset `name` in the published release `tag`. A draft is
+// no release, a release's own "name" comes before its assets and has no asset id yet.
+static Scan scan_page(const char *path, const char *tag, const char *name) {
+    Scan scan = {};
+    FILE *file = fopen(path, "r");
+    if (file == nullptr) die("cannot read", path);
+    char line[path_max];
+    char current[path_max] = "";
+    char id[32] = "";
+    char value[path_max];
+    while (fgets(line, sizeof line, file) != nullptr) {
+        if (value_of(line, "\"tag_name\":", current, sizeof current)) {
+            scan.any = true;
+            id[0] = '\0';
+        } else if (strstr(line, "\"draft\": true") != nullptr) {
+            current[0] = '\0';
+        } else if (strstr(line, "/releases/assets/") != nullptr) {
+            const char *slash = strrchr(line, '/');
+            if (slash != nullptr) value_of(slash + 1, "", id, sizeof id);
+        } else if (id[0] != '\0' && strcmp(current, tag) == 0 && value_of(line, "\"name\":", value, sizeof value) &&
+                   strcmp(value, name) == 0) {
+            snprintf(scan.id, sizeof scan.id, "%s", id);
+            scan.found = true;
+            break;
+        }
+    }
+    fclose(file);
+    return scan;
 }
 
-// Whether the release is published: its checksum file answers 200 or 206. 404 is "no"; a network that does not answer
-// or any other status is an error naming the URL, since nothing says there is no pack.
-static bool release_exists(const char *tag) {
-    char url[path_max];
-    char status_file[path_max];
-    char name[path_max];
-    snprintf(name, sizeof name, "%s.sha256", tag);
-    asset_url(url, tag, name);
+// The asset id of `name` in the release `tag`, read from the releases list (newest first); false when there is none.
+// A list that cannot be fetched is an error naming the URL, since nothing says there is no release.
+static bool find_asset(const char *tag, const char *name, char id[32]) {
     const char *temporary = getenv("TMPDIR") != nullptr ? getenv("TMPDIR") : "/tmp";
-    snprintf(status_file, sizeof status_file, "%s/llvm_pack-status-%d", temporary, (int)getpid());
-    int status = http_status(url, status_file);
-    if (status == 200 || status == 206) return true;
-    if (status == 404) return false;
-    char message[64];
-    snprintf(message, sizeof message, "cannot fetch the pack (HTTP status %d):", status);
-    die(message, url);
+    char list[path_max];
+    snprintf(list, sizeof list, "%s/llvm_pack-releases-%d", temporary, (int)getpid());
+    for (int page = 1; page <= pages_max; page++) {
+        char url[path_max];
+        char number[16];
+        snprintf(number, sizeof number, "%d", page);
+        join(url, "%s/releases?per_page=100&page=%s", api_base, number);
+        if (!call(url, "application/vnd.github+json", list)) {
+            remove(list);
+            die("cannot fetch the pack (the releases list):", url);
+        }
+        Scan scan = scan_page(list, tag, name);
+        remove(list);
+        if (scan.found) {
+            snprintf(id, 32, "%s", scan.id);
+            return true;
+        }
+        if (!scan.any) break;
+    }
+    return false;
+}
+
+static void download(const char *tag, const char *name, const char *path) {
+    char id[32];
+    if (!find_asset(tag, name, id)) die("the release has no asset:", name);
+    char url[path_max];
+    join(url, "%s/releases/assets/%s", api_base, id);
+    if (!call(url, "application/octet-stream", path)) die("cannot download", url);
+}
+
+// Whether the release is published: its checksum file is among its assets.
+static bool release_exists(const char *tag) {
+    char name[path_max];
+    char id[32];
+    join(name, "%s.sha256", tag, "");
+    return find_asset(tag, name, id);
 }
 
 static void make_folder(const char *path) {
@@ -401,9 +480,7 @@ static void download_parts(const char *tag, const char *stage, const Manifest *m
         char path[path_max];
         char hex[65];
         join(path, "%s/%s", stage, manifest->name[i]);
-        char url[path_max];
-        asset_url(url, tag, manifest->name[i]);
-        download(url, path);
+        download(tag, manifest->name[i], path);
         if (!sha256_file(path, hex) || strcmp(hex, manifest->hex[i]) != 0)
             die("the checksum of a part does not match:", manifest->name[i]);
         append(output, path);
@@ -468,9 +545,8 @@ static int fetch(const char *cache, const char *name, const char *stamp) {
     char tag[path_max];
     tag_of(name, tag);
     if (!release_exists(tag)) {
-        char url[path_max];
-        asset_url(url, tag, tag);
-        fprintf(stderr, "llvm_pack: no release %s published (HTTP 404 for %s.sha256 under %s)\n", tag, tag, url);
+        fprintf(stderr, "llvm_pack: no release %s published (no %s.sha256 among the assets of %s/releases)\n", tag, tag,
+                api_base);
         return exit_unavailable;
     }
     char stage[path_max];
@@ -486,10 +562,8 @@ static int fetch(const char *cache, const char *name, const char *stamp) {
     join(archive, "%s/pack.tar.xz", stage, "");
     join(unpacked, "%s/unpacked", stage, "");
     char pattern[path_max];
-    char url[path_max];
     join(pattern, "%s.sha256", tag, "");
-    asset_url(url, tag, pattern);
-    download(url, manifest_path);
+    download(tag, pattern, manifest_path);
     static Manifest manifest;
     read_manifest(manifest_path, &manifest);
     download_parts(tag, stage, &manifest, archive);

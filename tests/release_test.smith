@@ -241,8 +241,17 @@ export void test_release_fetch_checks_the_checksum_and_runs() {
     scratch::expect_text("release: fetch-corrupt", "release: the checksum of stage0-real does not match",
                          capture(&p, "sh \"$script\" fetch stage0-real ../dl2 2>&1 | tail -1"));
     scratch::expect_text("release: fetch-no-gh", "0", capture(&p, "grep -c '^gh ' \"$GH_LOG\" || true"));
-    scratch::expect_text("release: fetch-url-in-the-error",
-                         capture(&p, "echo \"release: cannot download "
-                                     "https://github.com/smith-ai-lab/smith/releases/download/stage0-nope/$name\""),
+    scratch::expect_text("release: fetch-missing-release-is-named",
+                         capture(&p, "echo \"release: release stage0-nope has no $name\""),
                          capture(&p, "sh \"$script\" fetch stage0-nope ../dl3 2>&1 | tail -1"));
+    scratch::expect_contains("release: fetch-uses-the-asset-endpoint", capture(&p, "cat \"$GH_LOG\""),
+                             "https://api.github.com/repos/smith-ai-lab/smith/releases/assets/");
+    scratch::expect_text("release: fetch-no-download-url", "0",
+                         capture(&p, "grep -c 'releases/download' \"$GH_LOG\" || true"));
+    scratch::expect_text("release: a token goes as a bearer header", "yes",
+                         capture(&p, "GITHUB_TOKEN=tok sh \"$script\" fetch stage0-real ../dl4 >/dev/null 2>&1; "
+                                     "grep -q 'Authorization: Bearer tok' \"$GH_LOG\" && echo yes"));
+    scratch::expect_text("release: tags lists published stage0 tags only", "stage0-real",
+                         capture(&p, "mkdir -p ../gh/stage0-draft ../gh/other && : >../gh/other/f && "
+                                     "GH_DRAFTS=stage0-draft sh \"$script\" tags"));
 }

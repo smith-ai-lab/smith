@@ -1,20 +1,55 @@
 #!/bin/sh
-# A stub curl for the release URLs: https://github.com/<owner>/<repo>/releases/download/<tag>/<name> is the file
-# $GH_DIR/<tag>/<name>, an absent one is HTTP 404 (exit 22 with -f, and the status written for `-w %output{FILE}...`),
-# and every call is logged to $GH_LOG. $CURL_FAIL, when set, is a network that is cut (exit 6).
+# A stub curl for the GitHub API (#1757): GET .../releases?per_page=100&page=N lists the "releases" (a folder
+# $GH_DIR/<tag> each, its files the assets, ids from 1001 in directory order) as the API prints them, one key per line;
+# GET .../releases/assets/<id> with Accept: application/octet-stream is that file, and an unknown id is HTTP 404 (exit 22
+# with -f). A tag listed in $GH_DRAFTS (space separated) is a draft. Every call is logged to $GH_LOG. $CURL_FAIL, when
+# set, is a network that is cut (exit 6).
 echo "curl $*" >>"$GH_LOG"
 [ -z "${CURL_FAIL:-}" ] || exit 6
 out=
-format=
 while [ $# -gt 1 ]; do
-    case $1 in -o) out=$2; shift 2 ;; -w) format=$2; shift 2 ;; *) shift ;; esac
+    case $1 in -o) out=$2; shift 2 ;; -H) shift 2 ;; *) shift ;; esac
 done
-file=$GH_DIR/${1#*/releases/download/}
-code=200
-[ -f "$file" ] || code=404
-if [ -n "$format" ]; then
-    path=${format#*%output\{}
-    printf %s "$code" >"${path%%\}*}"
-fi
-[ "$code" = 200 ] || exit 22
-[ -z "$out" ] || cp "$file" "$out"
+url=$1
+[ -z "$out" ] || exec >"$out"
+case $url in
+*/releases\?*)
+    case $url in *page=1) ;; *) echo '[]'; exit 0 ;; esac
+    id=1000
+    echo '['
+    for d in "$GH_DIR"/*; do
+        [ -d "$d" ] || continue
+        tag=${d##*/}
+        draft=false
+        case " ${GH_DRAFTS:-} " in *" $tag "*) draft=true ;; esac
+        printf '  {\n    "url": "https://api.github.com/repos/smith-ai-lab/smith/releases/%s",\n' "$id"
+        printf '    "author": {\n      "login": "bot",\n      "id": 1,\n      "url": "https://api.github.com/users/bot"\n    },\n'
+        printf '    "tag_name": "%s",\n    "name": "%s",\n    "draft": %s,\n    "assets": [\n' "$tag" "$tag" "$draft"
+        for f in "$d"/*; do
+            [ -f "$f" ] || continue
+            id=$((id + 1))
+            printf '      {\n        "url": "https://api.github.com/repos/smith-ai-lab/smith/releases/assets/%s",\n' "$id"
+            printf '        "id": %s,\n        "name": "%s",\n        "size": 1\n      },\n' "$id" "${f##*/}"
+        done
+        printf '    ],\n    "body": "\\"name\\": \\"x\\""\n  },\n'
+    done
+    echo ']'
+    ;;
+*/releases/assets/*)
+    want=${url##*/}
+    id=1000
+    for d in "$GH_DIR"/*; do
+        [ -d "$d" ] || continue
+        for f in "$d"/*; do
+            [ -f "$f" ] || continue
+            id=$((id + 1))
+            if [ "$id" = "$want" ]; then
+                cat "$f"
+                exit 0
+            fi
+        done
+    done
+    exit 22
+    ;;
+*) exit 22 ;;
+esac

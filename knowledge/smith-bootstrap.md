@@ -12,12 +12,10 @@ replaced the committed C lowering in `bootstrap/`): "We want to be able to write
 Smith's libraries", and "Getting rid of a second copy to maintain".
 
 **A clone with no smith** downloads the newest release and builds with it. The release is `stage0-<commit>` of main's newest
-published commit: `https://github.com/smith-ai-lab/smith/releases/latest` redirects to its tag, and
-`https://github.com/smith-ai-lab/smith/releases/download/<tag>/smith-<os>-<arch>.tar.xz` (plain HTTPS: no `gh`, no login, no GraphQL, #829)
-holds the tarball beside its `.sha256`. Check the checksum, unpack it, put its `bin/` first on `PATH` (so its `smith-cc` is the `CC` of the
+published commit: `scripts/release.sh tags` lists the tags, and `scripts/release.sh asset <tag> smith-<os>-<arch>.tar.xz <out>` downloads the tarball (and its `.sha256`) through the GitHub API's asset endpoint (no `gh`, no GraphQL, #829; the plain download URL needs a login, #1757). Check the checksum, unpack it, put its `bin/` first on `PATH` (so its `smith-cc` is the `CC` of the
 build), then `smith build llvm`, which puts the published LLVM pack into `~/.cache/smith/llvm/<name>` when it is not there (about 1.6 GB,
 minutes) and then `smith build`. The README's Install section has the commands. CI does the same in `.github/actions/fetch-smith`, which reads the
-newest tags from the repository's releases feed and takes the first with a tarball for the platform. Nothing in the repository records which release to
+newest tags from the API's releases list (`scripts/release.sh tags`, #1757) and takes the first with a tarball for the platform. Nothing in the repository records which release to
 use, and there is no C or shell bootstrap to maintain. Nothing in a clone newer than the release fails to build with it, because of the lag rule below.
 
 **How the build uses it.** `CC` defaults to `smith-cc`. `build.c` compiles `lib/std/{arena,contract,inflate,io,random,text}.smith`
