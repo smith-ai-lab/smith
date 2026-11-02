@@ -986,7 +986,7 @@ static void tail_warning(Stack *st, ast::Span span, Str message, parse::Edits ed
 // `(T)x` is `x as T`, and `(x as T)` as the operand of a prefix operator.
 static void cast_warning(Stack *st, const Pending *op, const ast::Expr *operand) {
     parse::Parser *p = st->parser;
-    Str type_text = p->source[op->head.start + 1:op->head.end - 1];
+    Str type_text = parse::mended(p, op->head.start + 1, op->head.end - 1);
     Bool wrap = prefix_above(st);
     parse::Edits edits = {};
     edits = with_edit(edits, from_to(op->head.start, operand->span.start), wrap ? "(" : "");

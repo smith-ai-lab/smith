@@ -743,3 +743,156 @@ export Chars push(auto... args) {
     Written written = to(memory, characters + 1, args...);
     return cut(memory, written.length);
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Reading numbers
+
+// NOLINTBEGIN(readability-identifier-naming)
+// An enum's constants are written short in a module (format::Empty, C's SmithFormatError_Empty), and the check wants
+// C's Type_Value.
+
+// Why a parse refused its text.
+[[std::c_name("SmithFormatError")]] export typedef enum {
+    Empty,   // there is no text, or no digit in it
+    Invalid, // a stray character: a +, a space, a capital hex digit, the text of inf or nan
+    Range,   // the number does not fit the type (for a float: it would round to infinity)
+} Error;
+// NOLINTEND(readability-identifier-naming)
+
+// The result of each number type, named: a generic whose result is a Result finds its struct through these typedefs,
+// and a caller that spells the same Result(T, format::Error) gets the same struct. (A parse of a Usize or an Isize
+// names its own: `typedef Result(Usize, format::Error) Size;`.)
+export typedef Result(U8, Error) U8Result;
+export typedef Result(U16, Error) U16Result;
+export typedef Result(U32, Error) U32Result;
+export typedef Result(U64, Error) U64Result;
+export typedef Result(I8, Error) I8Result;
+export typedef Result(I16, Error) I16Result;
+export typedef Result(I32, Error) I32Result;
+export typedef Result(I64, Error) I64Result;
+export typedef Result(F32, Error) F32Result;
+export typedef Result(F64, Error) F64Result;
+
+// The digits of a whole number as a magnitude, or why there is none. `ok` says which of the two it is.
+typedef struct {
+    U64 value;
+    Bool ok;
+    Bool negative;
+    Error error;
+} Magnitude;
+
+// The value of a digit in base 2 to 16, 16 for a character that is none (hexadecimal digits are lowercase, as
+// format::hex writes them).
+static U32 digit_value(char c) {
+    if (c >= '0' && c <= '9') return (U32)(c - '0');
+    if (c >= 'a' && c <= 'f') return (U32)(c - 'a') + 10;
+    return 16;
+}
+
+// The digits of word from start on (start is 0, or 1 after a minus sign) in base. A stray character wins over a value
+// that does not fit, and no digit at all is Empty.
+static Magnitude magnitude(const char word[:], Usize start, U32 base) {
+    if (start >= countof(word)) return (Magnitude){.error = Empty};
+    U64 value = 0;
+    Bool overflow = false;
+    Bool stray = false;
+    for (Usize i = start; i < countof(word); i++) {
+        U32 digit = digit_value(word[i]);
+        if (digit >= base) {
+            stray = true;
+        } else if (value > (~(U64)0 - digit) / base) {
+            overflow = true;
+        } else {
+            value = value * base + digit;
+        }
+    }
+    if (stray) return (Magnitude){.error = Invalid};
+    if (overflow) return (Magnitude){.error = Range};
+    return (Magnitude){.value = value, .ok = true};
+}
+
+// The magnitude of a whole number that may start with a minus sign, and whether it did.
+static Magnitude signed_magnitude(const char word[:], U32 base) {
+    Bool negative = countof(word) > 0 && word[0] == '-';
+    Magnitude m = magnitude(word, negative ? 1 : 0, base);
+    m.negative = negative;
+    return m;
+}
+
+// Whether the digits of word from start on are `digits [. digits]` with at least one digit, and the new place.
+static Bool scan_digits(const char word[:], Usize *at) {
+    Usize begin = *at;
+    while (*at < countof(word) && word[*at] >= '0' && word[*at] <= '9')
+        *at += 1;
+    return *at > begin;
+}
+
+// Whether word is a decimal number as parse_f64 reads one: a sign, digits with a fraction (-90, 0.25, .5, 5.) and an
+// exponent (1e-5, 2.5E+3). A float that is one and was refused did not fit.
+static Bool is_decimal(const char word[:]) {
+    Usize at = 0;
+    if (at < countof(word) && (word[at] == '-' || word[at] == '+')) at += 1;
+    Bool whole = scan_digits(word, &at);
+    Bool fraction = false;
+    if (at < countof(word) && word[at] == '.') {
+        at += 1;
+        fraction = scan_digits(word, &at);
+    }
+    if (!whole && !fraction) return false;
+    if (at < countof(word) && (word[at] == 'e' || word[at] == 'E')) {
+        at += 1;
+        if (at < countof(word) && (word[at] == '-' || word[at] == '+')) at += 1;
+        if (!scan_digits(word, &at)) return false;
+    }
+    return at == countof(word);
+}
+
+// Why a float was refused: no text (or a lone sign), a stray character, or a value that rounds to infinity.
+static Error float_error(const char word[:]) {
+    if (countof(word) == 0 || (countof(word) == 1 && (word[0] == '-' || word[0] == '+'))) return Empty;
+    return is_decimal(word) ? Range : Invalid;
+}
+
+static F32Result read_f32(const char word[:]) {
+    F32 value = 0;
+    if (text::parse_f32(word, &value)) return {.ok = value};
+    return {.error = float_error(word)};
+}
+
+static F64Result read_f64(const char word[:]) {
+    F64 value = 0;
+    if (text::parse_f64(word, &value)) return {.ok = value};
+    return {.error = float_error(word)};
+}
+
+// The number in word as the type T in base (2 to 16; only 10 for a float, which has no other), in one call:
+// `format::parse_base(word, U8, 16)` is a `Result(U8, format::Error)`. A whole number is digits with a leading - for a
+// signed T, and a value that does not fit T is Range. A float is as text::parse_f64 reads one.
+export [[nodiscard]] Result(T, Error) parse_base(const char word[:], constexpr Type T, U32 base) {
+    contract::requires(base >= 2 && base <= 16);
+    if constexpr (T == F32) {
+        contract::requires(base == 10);
+        return read_f32(word);
+    } else if constexpr (T == F64) {
+        contract::requires(base == 10);
+        return read_f64(word);
+    } else if constexpr (is_integer(T) && is_signed(T)) {
+        constexpr U64 half = (U64)1 << (sizeof(T) * 8 - 1);
+        Magnitude m = signed_magnitude(word, base);
+        if (!m.ok) return {.error = m.error};
+        if (m.value > (m.negative ? half : half - 1)) return {.error = Range};
+        return {.ok = (T)(m.negative ? 0 - m.value : m.value)};
+    } else {
+        constexpr U64 high = ~(U64)0 >> (64 - sizeof(T) * 8);
+        Magnitude m = magnitude(word, 0, base);
+        if (!m.ok) return {.error = m.error};
+        if (m.value > high) return {.error = Range};
+        return {.ok = (T)m.value};
+    }
+}
+
+// The number in word as the type T, in decimal: `format::parse(word, I32)` is a `Result(I32, format::Error)`. For
+// hexadecimal, `format::parse_base(word, U64, 16)` reads what format::hex writes.
+export [[nodiscard]] Result(T, Error) parse(const char word[:], constexpr Type T) {
+    return parse_base(word, T, 10);
+}

@@ -1,0 +1,547 @@
+// The stage0 release of smith (issue #111, knowledge/release.md): a GitHub Release `stage0-<full commit>` per merge to
+// main, holding a smith-<os>-<arch>.tar.xz (bin/smith and the links smith-cc and smith-c++) and its .sha256 for each
+// platform: each platform's job adds its own to a draft release, which `finish` publishes. It replaces
+// scripts/release.sh (#1674 of #1669), subcommand for subcommand.
+//
+// Usage:
+//   release publish <smith>        guard, package, add to the draft release, prune (CI, `smith build release`)
+//   release finish <tag>           publish the draft release the jobs added to (CI's `publish` job)
+//   release package <smith> <dir>  write the tarball and its checksum into <dir>
+//   release fetch <tag> <dir>      download over plain HTTPS (curl, no gh), check the checksum, extract into <dir>
+//   release prune                  read "tag date" lines on stdin, print the tags to delete
+//   release guard                  succeed only when HEAD is main's tip
+// RELEASE_KEEP (default 20) is how many of the newest releases prune keeps, RELEASE_XZ_LEVEL (default 6) the xz level.
+// A failure prints `release: <what>` on stderr and exits 1. The programs it runs (git, gh, tar, curl, shasum, cp, rm,
+// mkdir, mktemp, uname) are looked up on PATH, as the script did.
+module release::publish;
+
+import std::arena;
+import std::clock;
+import std::console;
+import std::env;
+import std::files;
+import std::format;
+import std::mem;
+import std::process;
+import std::text;
+import <stdlib.h>;
+
+typedef typeof(const char[:]) Text;
+
+// The pieces as text, with a terminator after it that the count does not count, so that `.data` of it is a C string.
+Text chars_text(format::Chars made) {
+    const char *first = made.data;
+    return first[0:countof(made)];
+}
+
+Text join(auto... pieces) {
+    return chars_text(format::push(pieces...));
+}
+
+// Whether two texts are the same characters (a literal is a text here, as it is for any parameter of this type).
+Bool same(Text a, Text b) {
+    return mem::equal(a, b);
+}
+
+// How many releases a prune keeps unless RELEASE_KEEP says otherwise.
+constexpr Usize keep_default = 20;
+
+// What `gh release list` is asked for; more than this many releases is not a case the prune tries to handle.
+constexpr Usize listed_max = 1000;
+
+// GitHub answered one push's two jobs with a 403 ("Resource not accessible by integration") on a token that could
+// write, and the next push's passed (#1139): the create of a draft is tried three times, 20 seconds apart.
+constexpr U32 create_tries = 3;
+constexpr U64 create_wait = 20 * clock::second;
+
+// `release: message` on stderr and the exit status 1.
+void die(Text message, Text more) {
+    console::print_error("release: ", message, more, "\n");
+    c::exit(1);
+}
+
+// The text of a slice of bytes a program wrote, without the newlines at its end (as `$(...)` does), as a copy with a
+// terminator after it, so that `.data` of it is a C string.
+Text trimmed(process::Bytes bytes) {
+    const char *first = (const char *)bytes.data;
+    Usize length = countof(bytes);
+    while (length > 0 && first[length - 1] == '\n') {
+        length -= 1;
+    }
+    return text::copy(first[0:length]);
+}
+
+// A program run with no stdin and its output captured. A program that cannot be started is a failure of the release.
+process::Output exec(const char *const argv[:]) {
+    process::OutputResult ran = process::run(argv);
+    if (ran == .ok) return ran.ok;
+    die("cannot run ", text::make(argv[0]));
+    process::Output none = {};
+    return none;
+}
+
+// True when the program ran and exited with 0; what it wrote is dropped.
+Bool succeeds(const char *const argv[:]) {
+    process::Output output = exec(argv);
+    return output.exit.status == 0 && output.exit.signal == 0;
+}
+
+// True when the program ran and exited with 0; its messages (stderr) reach ours, as they did in the shell.
+Bool passes(const char *const argv[:]) {
+    process::Output output = exec(argv);
+    if (countof(output.errors) > 0) {
+        console::write_error(output.errors);
+    }
+    return output.exit.status == 0 && output.exit.signal == 0;
+}
+
+// What a program printed on stdout (without its last newline) when it succeeded; a failure of it is ours.
+Text output_of(const char *const argv[:]) {
+    process::Output output = exec(argv);
+    if (output.exit.status != 0 || output.exit.signal != 0) {
+        if (countof(output.errors) > 0) {
+            console::write_error(output.errors);
+        }
+        die("cannot run ", text::make(argv[0]));
+    }
+    return trimmed(output.output);
+}
+
+Bool ends_with(Text whole, Text tail) {
+    return countof(whole) >= countof(tail) && mem::equal(whole[countof(whole) - countof(tail):], tail);
+}
+
+Bool contains(Text whole, Text part) {
+    if (countof(part) > countof(whole)) return false;
+    for (Usize at = 0; at + countof(part) <= countof(whole); at++) {
+        if (mem::equal(whole[at:at + countof(part)], part)) return true;
+    }
+    return false;
+}
+
+// The value of an environment variable, or the fallback.
+Text setting(Text name, Text fallback) {
+    env::Value value = env::get(name);
+    return value == .some ? value.some : fallback;
+}
+
+// ---------------------------------------------------------------- the guard
+
+// By hand, HEAD must be on main and equal origin/main; the workflow's checkout of a push to main is that commit.
+void guard() {
+    const char *const rev_head[_] = {"git", "rev-parse", "HEAD"};
+    Text head = output_of(rev_head[0:3]);
+    if (same(setting("GITHUB_ACTIONS", ""), "true")) {
+        if (!same(setting("GITHUB_REF", ""), "refs/heads/main") || !mem::equal(setting("GITHUB_SHA", ""), head)) {
+            die("CI releases only the commit of a push to main", "");
+        }
+        return;
+    }
+    const char *const rev_branch[_] = {"git", "rev-parse", "--abbrev-ref", "HEAD"};
+    if (!same(output_of(rev_branch[0:4]), "main")) {
+        die("refusing: HEAD is not on main", "");
+    }
+    const char *const fetch[_] = {"git", "fetch", "--quiet", "origin", "main"};
+    if (!passes(fetch[0:5])) {
+        die("cannot fetch origin/main", "");
+    }
+    const char *const rev_origin[_] = {"git", "rev-parse", "origin/main"};
+    if (!mem::equal(output_of(rev_origin[0:3]), head)) {
+        die("refusing: HEAD is not origin/main", "");
+    }
+}
+
+// ---------------------------------------------------------------- the package
+
+// The name of this platform's tarball: smith-<os>-<arch>.tar.xz, as `uname` says them, the system lower case.
+Text tarball_name() {
+    const char *const system[_] = {"uname", "-s"};
+    const char *const machine[_] = {"uname", "-m"};
+    Text os = output_of(system[0:2]);
+    if (countof(os) > 32) die("unknown system ", os);
+    char lower[32] = {};
+    for (Usize i = 0; i < countof(os); i++) {
+        lower[i] = os[i] >= 'A' && os[i] <= 'Z' ? (char)(os[i] - 'A' + 'a') : os[i];
+    }
+    return join("smith-", lower[0:countof(os)], "-", output_of(machine[0:2]), ".tar.xz");
+}
+
+// A fresh folder of the system's temporary files.
+Text temporary_folder() {
+    const char *const make[_] = {"mktemp", "-d"};
+    return output_of(make[0:2]);
+}
+
+// The SHA-256 of a file, as 64 hex digits.
+Text checksum_of(Text path) {
+    const char *const sum[_] = {"shasum", "-a", "256", path.data};
+    Text line = output_of(sum[0:4]);
+    Usize length = 0;
+    while (length < countof(line) && line[length] != ' ') {
+        length += 1;
+    }
+    return line[0:length];
+}
+
+// `<digest>  <name>` into the file: the format `shasum -c` reads in the folder of the tarball.
+void write_checksum(Text tarball, Text file, Text name) {
+    Text line = join(checksum_of(tarball), "  ", name, "\n");
+    const U8 *bytes = (const U8 *)line.data;
+    files::CountResult written = files::write_file(file, bytes[0:countof(line)], files::Replace);
+    if (written == .error) die("cannot write ", file);
+}
+
+// The tarball of the smith into <out>: bin/smith, the links smith-cc and smith-c++, and on macOS the handlers runtime
+// smith is linked with, which travels beside it. The checksum goes beside it, in `shasum -a 256` format.
+void package(Text smith, Text out) {
+    if (!files::can(smith, files::CanRun)) {
+        die(smith, " is not a program");
+    }
+    Text name = tarball_name();
+    Text stage = temporary_folder();
+    Text bin = join(stage, "/bin");
+    const char *const make[_] = {"mkdir", "-p", bin.data, out.data};
+    if (!passes(make[0:4])) die("cannot make ", bin);
+    const char *const copy[_] = {"cp", smith.data, join(bin, "/smith").data};
+    if (!passes(copy[0:3])) die("cannot copy ", smith);
+    Text folder = ".";
+    Usize slash = countof(smith);
+    while (slash > 0 && smith[slash - 1] != '/') {
+        slash -= 1;
+    }
+    if (slash > 0) folder = smith[0:slash - 1];
+
+    Text dylib = join(folder, "/libsmith_handlers.dylib");
+    if (files::exists(dylib)) {
+        const char *const copy_dylib[_] = {"cp", dylib.data, join(bin, "/").data};
+        if (!passes(copy_dylib[0:3])) die("cannot copy ", dylib);
+    }
+    _ = files::make_link("smith", join(bin, "/smith-cc"));
+    _ = files::make_link("smith", join(bin, "/smith-c++"));
+    const char *const version[_] = {"tar", "--version"};
+    Text level = setting("RELEASE_XZ_LEVEL", "6");
+    Text tarball = join(out, "/", name);
+    if (contains(trimmed(exec(version[0:2]).output), "bsdtar")) { // macOS's
+        const char *const archive[_] = {"tar",        "--options", join("xz:compression-level=", level).data,
+                                        "-C",         stage.data,  "-cJf",
+                                        tarball.data, "bin"};
+        if (!passes(archive[0:8])) die("cannot write ", tarball);
+    } else { // GNU tar runs xz, which reads its level from XZ_OPT
+        _ = env::set("XZ_OPT", join("-", level));
+        const char *const archive[_] = {"tar", "-C", stage.data, "-cJf", tarball.data, "bin"};
+        if (!passes(archive[0:6])) die("cannot write ", tarball);
+    }
+    const char *const clean[_] = {"rm", "-rf", stage.data};
+    _ = passes(clean[0:3]);
+    write_checksum(tarball, join(tarball, ".sha256"), name);
+}
+
+// ---------------------------------------------------------------- prune
+
+// The next line of the text, without its newline; false at the end. (std::text's take_line cuts a `#` comment.)
+Bool take_line(Text *rest, Text *line) {
+    Text all = *rest;
+    if (countof(all) == 0) return false;
+    Usize length = 0;
+    while (length < countof(all) && all[length] != '\n') {
+        length += 1;
+    }
+    *line = all[0:length];
+    *rest = length < countof(all) ? all[length + 1:] : all[length:];
+    return true;
+}
+
+// One release the prune reads: its tag, when it was made, and the ISO week of that day.
+struct Release {
+    Text tag;
+    Text date;
+    I64 week;
+};
+
+constexpr Usize date_length = 20; // 2026-09-01T10:00:00Z
+
+I64 digits(Text date, Usize at, Usize count) {
+    I64 value = 0;
+    for (Usize i = at; i < at + count; i++) {
+        if (date[i] < '0' || date[i] > '9') die("bad date ", date);
+        value = value * 10 + (I64)(date[i] - '0');
+    }
+    return value;
+}
+
+// Days since 1970-01-01 of a day of the proleptic Gregorian calendar.
+I64 days_since_epoch(I64 year, I64 month, I64 day) {
+    I64 y = month <= 2 ? year - 1 : year;
+    I64 era = (y >= 0 ? y : y - 399) / 400;
+    I64 year_of_era = y - era * 400;
+    I64 day_of_year = (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
+    I64 day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    return era * 146097 + day_of_era - 719468;
+}
+
+// How many ISO weeks a year has: 53 when it starts on a Thursday, or on a Wednesday in a leap year.
+I64 weeks_in(I64 year) {
+    I64 a = (year + year / 4 - year / 100 + year / 400) % 7;
+    I64 b = (year - 1 + (year - 1) / 4 - (year - 1) / 100 + (year - 1) / 400) % 7;
+    return a == 4 || b == 3 ? 53 : 52;
+}
+
+// The ISO year and week of a "YYYY-MM-DDTHH:MM:SSZ" time as year * 100 + week (2026-W36 is 202636), which sorts and
+// compares like the `%G-W%V` the script used. A text that is not such a time is a failure.
+I64 week_of(Text date) {
+    if (countof(date) != date_length || date[4] != '-' || date[7] != '-' || date[10] != 'T' || date[13] != ':' ||
+        date[16] != ':' || date[19] != 'Z') {
+        die("bad date ", date);
+    }
+    I64 year = digits(date, 0, 4);
+    I64 month = digits(date, 5, 2);
+    I64 day = digits(date, 8, 2);
+    if (month < 1 || month > 12 || day < 1 || day > 31) die("bad date ", date);
+    I64 days = days_since_epoch(year, month, day);
+    I64 weekday = ((days + 3) % 7 + 7) % 7 + 1; // Monday is 1, Sunday 7; 1970-01-01 was a Thursday
+    I64 ordinal = days - days_since_epoch(year, 1, 1) + 1;
+    I64 week = (ordinal - weekday + 10) / 7;
+    if (week < 1) return (year - 1) * 100 + weeks_in(year - 1);
+    if (week > weeks_in(year)) return (year + 1) * 100 + 1;
+    return year * 100 + week;
+}
+
+// True when `a` sorts before `b` the way `sort -r` of the lines "date tag" puts the newer first: by date, then tag.
+Bool newer(const Release *a, const Release *b) {
+    Usize shared = countof(a->date) < countof(b->date) ? countof(a->date) : countof(b->date);
+    for (Usize i = 0; i < shared; i++) {
+        if (a->date[i] != b->date[i]) return a->date[i] > b->date[i];
+    }
+    if (countof(a->date) != countof(b->date)) return countof(a->date) > countof(b->date);
+    shared = countof(a->tag) < countof(b->tag) ? countof(a->tag) : countof(b->tag);
+    for (Usize i = 0; i < shared; i++) {
+        if (a->tag[i] != b->tag[i]) return a->tag[i] > b->tag[i];
+    }
+    return countof(a->tag) > countof(b->tag);
+}
+
+// "tag date" lines in, the tags to delete out, one per line: keep the newest `keep` and the newest of each ISO week.
+// Pure: it reads only its text. The result is in memory of the current allocator.
+Text prune_tags(Text lines, Usize keep) {
+    Usize count = 0;
+    Text rest = lines;
+    Text line = "";
+    Usize lines_count = 1;
+    for (Usize i = 0; i < countof(lines); i++) {
+        if (lines[i] == '\n') lines_count += 1;
+    }
+    Release list[:] = mem::alloc_slice(Release, lines_count);
+    while (take_line(&rest, &line)) {
+        Text tag = "";
+        Text date = "";
+        Text words = line;
+        if (!text::take_word(&words, &tag) || !text::take_word(&words, &date)) {
+            continue;
+        }
+        list[count++] = (Release){.tag = tag, .date = date, .week = week_of(date)};
+    }
+    for (Usize i = 1; i < count; i++) { // insertion sort, newest first
+        Release moving = list[i];
+        Usize at = i;
+        while (at > 0 && newer(&moving, &list[at - 1])) {
+            list[at] = list[at - 1];
+            at -= 1;
+        }
+        list[at] = moving;
+    }
+    Text out = "";
+    for (Usize i = 0; i < count; i++) {
+        Bool fresh = true;
+        for (Usize k = 0; k < i; k++) {
+            if (list[k].week == list[i].week) fresh = false;
+        }
+        if (i >= keep && !fresh) out = join(out, list[i].tag, "\n");
+    }
+    return out;
+}
+
+// All of stdin.
+Text read_input() {
+    Text input = "";
+    U8 block[4096] = {};
+    for (Usize rounds = 0; rounds < ~(Usize)0; rounds++) { // each round reads a block or ends
+        console::Count got = console::read(block[0:4096]);
+        if (got == .error || got.ok == 0) break;
+        const char *chars = (const char *)block;
+        input = join(input, chars[0:got.ok]);
+    }
+    return input;
+}
+
+Usize keep_count() {
+    U64 keep = keep_default;
+    Text given = setting("RELEASE_KEEP", "");
+    if (countof(given) > 0 && !text::parse_u64(given, &keep)) {
+        die("bad RELEASE_KEEP ", given);
+    }
+    return (Usize)keep;
+}
+
+// ---------------------------------------------------------------- the draft, finish, publish
+
+// True when GitHub has a release (a draft included) of the tag.
+Bool release_exists(Text tag) {
+    const char *const view[_] = {"gh", "release", "view", tag.data};
+    return succeeds(view[0:4]);
+}
+
+// Jobs racing to make a draft can leave two drafts of one tag (GitHub allows that): the oldest is kept, so every job
+// uploads into the same one.
+void delete_extra_drafts(Text tag) {
+    Text query = join(".[]|select(.draft and .tag_name==\"", tag, "\")|.id");
+    const char *const list[_] = {"gh", "api", "repos/{owner}/{repo}/releases", "--paginate", "--jq", query.data};
+    process::Output listed = exec(list[0:6]);
+    if (listed.exit.status != 0) return;
+    Text rest = trimmed(listed.output);
+    Text line = "";
+    U64 oldest = ~(U64)0;
+    Text ids = rest;
+    while (take_line(&ids, &line)) {
+        U64 id = 0;
+        if (text::parse_u64(line, &id) && id < oldest) oldest = id;
+    }
+    while (take_line(&rest, &line)) {
+        U64 id = 0;
+        if (!text::parse_u64(line, &id) || id == oldest) continue;
+        const char *const remove[_] = {"gh", "api", "-X", "DELETE", join("repos/{owner}/{repo}/releases/", line).data};
+        _ = succeeds(remove[0:5]);
+    }
+}
+
+// The draft release `tag` at commit `commit`, made if missing.
+void draft(Text tag, Text commit) {
+    if (release_exists(tag)) return;
+    Text notes = join("The smith of commit ", commit, ", for building the next commits (knowledge/release.md).");
+    const char *const create[_] = {"gh",        "release", "create", tag.data,  "--draft", "--target",
+                                   commit.data, "--title", tag.data, "--notes", notes.data};
+    for (U32 tries = 1; !succeeds(create[0:11]) && !release_exists(tag); tries++) {
+        if (tries >= create_tries) die("cannot create the draft ", tag);
+        clock::sleep(create_wait);
+    }
+    delete_extra_drafts(tag);
+}
+
+// Publishes the draft `tag` once every job has added its assets (CI's `publish` job). Immutable from here on.
+void finish(Text tag) {
+    const char *const edit[_] = {"gh", "release", "edit", tag.data, "--draft=false"};
+    if (!passes(edit[0:5])) die("cannot publish ", tag);
+    console::print("release: published ", tag, "\n");
+}
+
+// Deletes the releases the prune names. Another platform's job prunes the same tags: one already deleted is no failure.
+void delete_old(Text tags) {
+    Text rest = tags;
+    Text old = "";
+    while (take_line(&rest, &old)) {
+        const char *const remove[_] = {"gh", "release", "delete", old.data, "--cleanup-tag", "--yes"};
+        if (!passes(remove[0:6]) && release_exists(old)) {
+            console::print_error("release: could not delete ", old, "\n");
+        }
+    }
+}
+
+void prune_old() {
+    const char *const list[_] = {"gh",
+                                 "release",
+                                 "list",
+                                 "--limit",
+                                 "1000",
+                                 "--json",
+                                 "tagName,createdAt",
+                                 "--jq",
+                                 ".[]|select(.tagName|startswith(\"stage0-\"))|.tagName+\" \"+.createdAt"};
+    process::Output listed = exec(list[0:9]);
+    if (listed.exit.status != 0) return; // a failed prune leaves old releases, never a failed release
+    delete_old(prune_tags(trimmed(listed.output), keep_count()));
+}
+
+// Guard, package the smith, add the tarball and checksum to the draft of this commit, prune.
+void publish(Text smith) {
+    guard();
+    const char *const rev_head[_] = {"git", "rev-parse", "HEAD"};
+    Text head = output_of(rev_head[0:3]);
+    Text tag = join("stage0-", head);
+    const char *const version[_] = {smith.data, "version"};
+    if (!ends_with(trimmed(exec(version[0:2]).output), join("commit ", head))) {
+        die(smith, join(" was not built from ", head));
+    }
+    Text out = temporary_folder();
+    package(smith, out);
+    // One release holds every platform's tarball, and it is a draft until `finish` publishes it: the repository's
+    // releases are immutable, so a published release takes no more assets. Each job adds its own pair to the draft
+    // (--clobber makes a re-run replace its own files); the first creates the draft.
+    draft(tag, head);
+    Text name = tarball_name();
+    const char *const upload[_] = {
+        "gh",       "release", "upload", tag.data, join(out, "/", name).data, join(out, "/", name, ".sha256").data,
+        "--clobber"};
+    if (!passes(upload[0:7])) die(join("cannot add ", name, " to "), tag);
+    console::print("release: added ", name, " to the draft ", tag, "\n");
+    const char *const clean[_] = {"rm", "-rf", out.data};
+    _ = passes(clean[0:3]);
+    prune_old();
+}
+
+// ---------------------------------------------------------------- fetch
+
+// Downloads the tarball of the release over plain HTTPS (no gh login), checks its checksum and extracts bin/ into dir.
+void fetch(Text tag, Text folder) {
+    Text name = tarball_name();
+    const char *const make[_] = {"mkdir", "-p", folder.data};
+    if (!passes(make[0:3])) die("cannot make ", folder);
+    Text base = join("https://github.com/smith-ai-lab/smith/releases/download/", tag);
+    for (U32 which = 0; which < 2; which++) {
+        Text file = name;
+        if (which == 1) file = join(name, ".sha256");
+        Text url = join(base, "/", file);
+        const char *const download[_] = {"curl", "-fsSL", "--retry", "3", "-o", join(folder, "/", file).data, url.data};
+        if (!passes(download[0:7])) die("cannot download ", url);
+    }
+    Text tarball = join(folder, "/", name);
+    files::BytesResult recorded = files::read_file(join(tarball, ".sha256"));
+    const char *digits_text = recorded == .ok ? (const char *)recorded.ok.data : "";
+    Usize recorded_length = recorded == .ok ? countof(recorded.ok) : 0;
+    Text words = digits_text[0:recorded_length];
+    Text first = "";
+    if (!text::take_word(&words, &first) || !mem::equal(first, checksum_of(tarball))) {
+        die("the checksum of ", join(tag, " does not match"));
+    }
+    const char *const extract[_] = {"tar", "-C", folder.data, "-xJf", tarball.data};
+    if (!passes(extract[0:5])) die("cannot extract ", tarball);
+}
+
+I32 main(Str args[:]) {
+    Usize argc = countof(args);
+    Text words[4] = {};
+    for (Usize i = 0; i < argc && i < 4; i++) {
+        words[i] = text::make(args[i].data);
+    }
+    for (Usize i = argc; i < 4; i++) {
+        words[i] = text::make("");
+    }
+    Text command = words[1];
+    Text first = words[2];
+    Text second = words[3];
+    if (same(command, "publish") && argc == 3) {
+        publish(first);
+    } else if (same(command, "finish") && argc == 3) {
+        finish(first);
+    } else if (same(command, "package") && argc == 4) {
+        package(first, second);
+    } else if (same(command, "fetch") && argc == 4) {
+        fetch(first, second);
+    } else if (same(command, "prune") && argc == 2) {
+        console::print(prune_tags(read_input(), keep_count()));
+    } else if (same(command, "guard") && argc == 2) {
+        guard();
+    } else {
+        die("usage: release publish <smith> | finish <tag> | package <smith> <dir> | fetch <tag> <dir> | prune | guard",
+            "");
+    }
+    return 0;
+}

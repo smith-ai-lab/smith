@@ -12,6 +12,12 @@ inputs:
     description: build the tests too ("true" or "false")
     default: "false"
 
+  artifact:
+    description: >
+      the name of an artifact holding `build/` and `.smith/` of this run's `build-linux` job (#1758): restore it and
+      set SMITH instead of fetching the previous smith and building (empty: build here)
+    default: ""
+
 outputs:
   llvm-key:
     description: the cache key of the LLVM pack
@@ -50,9 +56,11 @@ runs:
         restore-keys: smith-steps-${{ runner.os }}-
 
     - name: Fetch the previous smith
+      if: inputs.artifact == ''
       uses: ./.github/actions/fetch-smith
 
     - name: Fetch the LLVM pack
+      if: inputs.artifact == ''
       shell: bash
       run: |
         start=$(date +%s)
@@ -63,6 +71,7 @@ runs:
         echo "fetch: $(( $(date +%s) - start )) s (step cache: ${{ steps.steps.outputs.cache-matched-key || 'none' }})" | tee -a "$GITHUB_STEP_SUMMARY"
 
     - name: Build smith
+      if: inputs.artifact == ''
       shell: bash
       env:
         # the cache is saved whole, so it is kept small: the least recently used results go past this
@@ -75,7 +84,7 @@ runs:
         echo "build: $(( $(date +%s) - start )) s ($smith)" | tee -a "$GITHUB_STEP_SUMMARY"
 
     - name: Build the tests
-      if: inputs.tests == 'true'
+      if: inputs.artifact == '' && inputs.tests == 'true'
       shell: bash
       env:
         SMITH_CACHE_MAX: 1G
@@ -101,3 +110,25 @@ runs:
           exit 1
         fi
         echo "tests built: $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+
+    - name: Download the build of this run
+      if: inputs.artifact != ''
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.artifact }}
+        path: ${{ runner.temp }}/smith-build
+
+    - name: Restore the build of this run
+      if: inputs.artifact != ''
+      shell: bash
+      run: |
+        start=$(date +%s)
+        # same checkout path in every job, so the absolute paths inside build/ still hold. The files get the time of
+        # now, newer than the checkout's sources, so nothing looks out of date and is rebuilt
+        tar -x --zstd -f "$RUNNER_TEMP/smith-build/build.tar.zst"
+        find build .smith -exec touch -h {} +
+        smith=$(ls "$PWD"/build/*/smith | head -n 1)
+        echo "SMITH=$smith" >>"$GITHUB_ENV"
+        # the pack, when the cache above missed it (the first run of a configuration)
+        "$smith" build llvm
+        echo "restore: $(( $(date +%s) - start )) s ($smith)" | tee -a "$GITHUB_STEP_SUMMARY"
