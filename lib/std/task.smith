@@ -1161,3 +1161,37 @@ export void spawn(Group *group, auto f, auto *arg) {
     Scheduler *scheduler = current_scheduler();
     scheduler->pause(scheduler);
 }
+
+// A fiber for std::stream: a task that no scheduler owns and only its reader resumes. It runs `entry(context)` on a
+// stack of its own (a guard page and 256 KB, the inline scheduler's mapping), with a copy of the handlers of its
+// creator, and does not run until the first `fiber_resume`. `group` must outlive it: the task's end counts down its
+// `pending`, which the caller sets to 1. Never null.
+export void *fiber_start(Group *group, void (*entry)(void *context), void *context) {
+    contract::requires(group != nullptr && entry != nullptr);
+    return make_task(group, entry, context);
+}
+
+// Enters the fiber from the calling task, which it returns to at its next `fiber_suspend` or at its end. True when the
+// fiber has ended (its stack can be released), false when it suspended.
+export Bool fiber_resume(void *fiber) {
+    contract::requires(fiber != nullptr);
+    return resume((Task *)fiber);
+}
+
+// The calling fiber gives the thread back to whoever resumed it, and returns when it is resumed again.
+export void fiber_suspend() {
+    suspend();
+}
+
+// Unmaps the stack and the record of a fiber that is not running: one that never ran, or one that is suspended for
+// good (its reader will not resume it). Frames it left behind are unpoisoned for AddressSanitizer, so the next mapping
+// at that address starts clean.
+export void fiber_release(void *fiber) {
+    contract::requires(fiber != nullptr);
+    Task *task = (Task *)fiber;
+    contract::trusted(); // the stack is the fiber's own, and no one holds the fiber any more
+    if constexpr (target::address_sanitizer) {
+        c::__asan_unpoison_memory_region((void *)(Usize)task->bottom, task->size);
+    }
+    release_inline(task);
+}
