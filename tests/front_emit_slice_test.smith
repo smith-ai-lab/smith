@@ -1,0 +1,178 @@
+// Tests of slices and `str` in the emitter (#1623 of #1428): `[]T` and `str` as parameters, results and locals, string
+// literals, `s[i]`, `xs[a:b]`, `countof`, an array passed as a slice, and `for` over a slice; from source text in
+// smith's own syntax through the parser's hooks, the checker, front::emit and the JIT, with golden IR.
+module front_emit_slice_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <string.h>;
+
+typedef I32 (*Nullary)();
+typedef I32 (*Unary)(I32);
+
+struct Scenario {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    parser::Parsed parsed;
+    types::Checked checked;
+};
+
+static parser::Parsed parse_new(Str source) {
+    parser::Parsed result = {};
+    result.module.file = "t.smith";
+    lex::Lexed lexed = lex::tokenize_new(source);
+    switch (lexed) {
+    case .ok:
+        parse::Parser p = parse::make(lexed.ok, source);
+        p.new_syntax = true;
+        p.hooks.expression = parse_expr::expression;
+        p.hooks.type = parse_type::type;
+        p.hooks.statement = parse_stmt::statement;
+        p.hooks.declaration = parse_decl::declaration;
+        result.module = parse_decl::file(&p, "t.smith");
+        result.errors = p.errors;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    return result;
+}
+
+static void begin(Scenario *s, Str source) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parse_new(source);
+    test::check_equal(countof(s->parsed.errors), (Usize)0);
+    s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+    if (s->checked.error_count > 0) {
+        Str none = "no error";
+        test::check_equal(s->checked.errors[0].message, none);
+    }
+    test::check_equal(s->checked.error_count, (Usize)0);
+    mem::set_allocator(outside);
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static Bool contains(const char *text, Str needle) {
+    return text != nullptr && c::strstr(text, needle.data) != nullptr;
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+// Emits `source` into the JIT and returns the IR text (free with LLVMDisposeMessage), or null.
+static char *emit_source(Str source, emit_jit::Jit *host, Scenario *s) {
+    begin(s, source);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::Options options = {};
+    options.target = host->target;
+    options.checked = &s->checked;
+    emit::ModuleResult emitted = emit::module(context, &s->parsed.module, options);
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    } else {
+        Str none = "no error";
+        test::check_equal(emitted.error.message, none);
+    }
+    return text;
+}
+
+export void test_front_emit_slice_types_literals_and_golden_ir() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = emit_source("pub fn name() -> str {\n    \"hi\"\n}\n"
+                           "pub fn pass(xs: []i32) -> []i32 {\n    xs\n}\n"
+                           "pub fn len() -> usize {\n    countof(name())\n}\n",
+                           &host, &s);
+    if (ir != nullptr) {
+        test::check_equal(contains(ir, "{ ptr, i64 }"), true);
+        test::check_equal(contains(ir, "private unnamed_addr constant [3 x i8] c\"hi\\00\""), true);
+        c::LLVMDisposeMessage(ir);
+    }
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_slice_index_slicing_and_countof() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    emit_source("fn at(s: str, i: usize) -> char {\n    s[i]\n}\n"
+                "fn tail(s: str) -> str {\n    s[1:]\n}\n"
+                "fn head(s: str) -> str {\n    s[:2]\n}\n"
+                "fn put(xs: []i32) -> i32 {\n    xs[1] = 7\n    xs[1]\n}\n"
+                "pub fn run() -> i32 {\n"
+                "    if at(\"abc\", 1) != 'b' {\n        return 1\n    }\n"
+                "    if countof(tail(\"abc\")) != 2 || countof(head(\"abc\")) != 2 {\n        return 2\n    }\n"
+                "    if at(tail(\"abc\"), 0) != 'b' {\n        return 3\n    }\n"
+                "    mut a: [3]i32\n    if put(a) != 7 || a[1] != 7 {\n        return 4\n    }\n"
+                "    0\n}\n",
+                &host, &s);
+    Nullary run = (Nullary)symbol_of(&host, "run");
+    test::check_equal(run(), (I32)0);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_slice_array_passed_as_a_slice_and_for_loops() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    emit_source(
+        "fn total(xs: []i32) -> i32 {\n    mut sum := 0\n    for x in xs {\n        sum += x\n    }\n    sum\n}\n"
+        "fn bump(xs: []i32) {\n    for p in refs(xs) {\n        p.* += 1\n    }\n}\n"
+        "fn make() -> [3]i32 {\n    mut a: [3]i32\n    a[0] = 1\n    a[1] = 2\n    a[2] = 3\n    a\n}\n"
+        "fn letters(s: str) -> usize {\n    mut n: usize = 0\n    for _ in s {\n        n += 1\n    }\n    n\n}\n"
+        "pub fn run() -> i32 {\n"
+        "    mut a: [3]i32\n    a[0] = 1\n    a[1] = 2\n    a[2] = 3\n"
+        "    if total(a) != 6 || total(a[1:]) != 5 {\n        return 1\n    }\n"
+        "    bump(a)\n    if a[0] != 2 {\n        return 2\n    }\n"
+        "    if total(make()) != 6 {\n        return 3\n    }\n"
+        "    if letters(\"hello\") != 5 || letters(\"\") != 0 {\n        return 4\n    }\n"
+        "    0\n}\n",
+        &host, &s);
+    Nullary run = (Nullary)symbol_of(&host, "run");
+    test::check_equal(run(), (I32)0);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_slice_out_of_range_index_and_slicing_call_the_index_report() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = emit_source("pub fn at(xs: []i32, i: usize) -> i32 {\n    xs[i]\n}\n"
+                           "pub fn part(s: str, a: usize, b: usize) -> str {\n    s[a:b]\n}\n",
+                           &host, &s);
+    test::check_equal(contains(ir, "call void @smith_contract_fail_index(i64 %"), true);
+    test::check_equal(contains(ir, "%backwards = icmp ugt"), true);
+    test::check_equal(contains(ir, "%past = icmp ugt"), true);
+    if (ir != nullptr) c::LLVMDisposeMessage(ir);
+    emit_jit::stop(&host);
+}

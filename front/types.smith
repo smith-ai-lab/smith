@@ -819,14 +819,20 @@ export struct Checked;
 // What J1d supplies: checks the body of one function of the module (its scopes are already set up to the module's).
 export typedef void (*BodyChecker)(Checked *r, const ast::Decl *function);
 
+// Gives the module at a dotted path (`std.math`, NUL-terminated), or null when there is none (#1677). Without one, an
+// import declares its alias and nothing from the module.
+export typedef const ast::Module *(*ModuleLoader)(const char *path);
+
 export struct Options {
     Target target;
     BodyChecker bodies; // null: bodies are not checked
+    ModuleLoader load;  // null: imports are not read
 };
 
 export struct Checked {
     Options options;
     Bool new_syntax; // the type being resolved is written in smith's own syntax (`x: int`): lowercase names, concepts
+    Str prefix;      // `m::` while the declarations of the module imported as `m` are declared; else empty
     Table table;
     Scopes scopes;
     NodeType nodes[:]; // open addressing on the node's address; a null node is an empty slot
@@ -988,6 +994,10 @@ static void push_made(Walk *w, TypeRef type) {
     w->value_count += 1;
 }
 
+// A type path `a.T`, `a::T` or `a.b.T`: through the modules when its first name is one, else the whole path as a name
+// (`c::printf`); inside an imported module, that module's own names first.
+static const Symbol *type_through_modules(const Checked *r, ast::Path path);
+
 static Str path_text(ast::Path path) {
     Output text = {};
     for (Usize i = 0; i < countof(path.segments); i++) {
@@ -1081,7 +1091,7 @@ static TypeRef resolve_name(Checked *r, ast::Span span, ast::Path path) {
             return r->table.invalid;
         }
     }
-    const Symbol *found = lookup_path(&r->scopes, path);
+    const Symbol *found = type_through_modules(r, path);
     if (found == nullptr && is_c_path(path)) {
         failf(r, span, "not yet typed: c:: name `", path_text(path), "`");
         return r->table.invalid;
@@ -1344,7 +1354,10 @@ export const Slot *member(TypeRef t, Str name) {
     return nullptr;
 }
 
-static Str qualified(Bool from_c, Str name) {
+// The name a declaration is known by: `c::` before a C name, and the alias of the module being imported (`m::`) before
+// a name of that module (#1677).
+static Str qualified(const Checked *r, Bool from_c, Str name) {
+    if (countof(r->prefix) > 0) return msg(format::push(r->prefix, name));
     if (!from_c) return name;
     return msg(format::push("c::", name));
 }
@@ -1365,11 +1378,11 @@ static void declare_nominal(Checked *r, const ast::Decl *d) {
     Bool exported = d->exported;
     ast::Span span = d->span;
     if (d->kind == .record) {
-        Str name = qualified(from_c, d->kind.record.name);
+        Str name = qualified(r, from_c, d->kind.record.name);
         Ty *made = new_record(&r->table, name, d->kind.record.is_union);
         declare_in_module(r, type_symbol(name, made, d, exported), span);
     } else if (d->kind == .enumeration) {
-        Str name = qualified(from_c, d->kind.enumeration.name);
+        Str name = qualified(r, from_c, d->kind.enumeration.name);
         const ast::TypeExpr *over = d->kind.enumeration.underlying;
         TypeRef underlying = builtin(&r->table, "I32");
         if (over != nullptr) {
@@ -1401,7 +1414,7 @@ static void declare_own_alias(Checked *r, const ast::Decl *d) {
     r->new_syntax = true;
     TypeRef target = resolve(r, init->kind.type_value.type);
     r->new_syntax = false;
-    declare_in_module(r, type_symbol(d->kind.variable.name, target, d, d->exported), d->span);
+    declare_in_module(r, type_symbol(qualified(r, false, d->kind.variable.name), target, d, d->exported), d->span);
 }
 
 // Pass 2: aliases in the order written.
@@ -1414,7 +1427,7 @@ static void declare_alias(Checked *r, const ast::Decl *d) {
     Bool exported = d->exported;
     ast::Span span = d->span;
     if (d->kind == .type_alias) {
-        Str name = qualified(from_c, d->kind.type_alias.name);
+        Str name = qualified(r, from_c, d->kind.type_alias.name);
         const ast::TypeExpr *aliased = d->kind.type_alias.type;
         TypeRef target = resolve(r, aliased);
         declare_in_module(r, type_symbol(name, target, d, exported), span);
@@ -1570,34 +1583,322 @@ static void declare_variable(Checked *r, const ast::Decl *d, Str name, const ast
     declare_in_module(r, symbol, d->span);
 }
 
+static Bool declare_module_alias(Checked *r, const ast::Decl *d);
+
 // Pass 3 for one declaration.
 static void declare_member(Checked *r, const ast::Decl *d) {
     Bool from_c = d->from_c;
     ast::Span span = d->span;
     if (d->kind == .record) {
-        Str name = qualified(from_c, d->kind.record.name);
+        Str name = qualified(r, from_c, d->kind.record.name);
         fill_record(r, name, d->kind.record.opaque, d->kind.record.fields);
     } else if (d->kind == .enumeration) {
-        Str name = qualified(from_c, d->kind.enumeration.name);
+        Str name = qualified(r, from_c, d->kind.enumeration.name);
         fill_enumeration(r, name, d->kind.enumeration.items);
     } else if (d->kind == .function) {
-        Str name = qualified(from_c, d->kind.function.name);
+        Str name = qualified(r, from_c, d->kind.function.name);
         declare_function(r, d, name, d->kind.function.params, d->kind.function.result, d->kind.function.variadic);
     } else if (d->kind == .variable) {
-        Str name = qualified(from_c, d->kind.variable.name);
+        Str name = qualified(r, from_c, d->kind.variable.name);
         const ast::TypeExpr *written = d->kind.variable.type;
         Bool is_constexpr = d->kind.variable.is_constexpr;
         Bool is_new = d->kind.variable.is_new;
         const ast::Expr *init = d->kind.variable.init;
-        if (!is_own_alias(d)) declare_variable(r, d, name, written, is_constexpr, is_new, init);
-    } else if (d->kind == .import_module) {
-        ast::Path path = d->kind.import_module.path;
-        Str last = path.segments[countof(path.segments) - 1].text;
-        Symbol symbol = {.name = last, .kind = .module_name, .type = r->table.invalid, .decl = d};
-        declare_in_module(r, symbol, span);
+        if (is_own_alias(d) || declare_module_alias(r, d)) return;
+        declare_variable(r, d, name, written, is_constexpr, is_new, init);
     } else if (d->kind == .if_constexpr) {
         failf(r, span, "not yet typed: if constexpr");
     }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Modules as values (#1677): `m := import a.b` binds `m`, and `m.name` is a public declaration of `a.b`
+
+// Whether other modules may name the symbol: `pub` or `export` on its declaration.
+export Bool is_public(const Symbol *s) {
+    return s->exported || (s->decl != nullptr && (s->decl->is_pub || s->decl->exported));
+}
+
+static Str joined(ast::Path path, Str separator) {
+    Str text = path.segments[0].text;
+    for (Usize i = 1; i < countof(path.segments); i++)
+        text = msg(format::push(text, separator, path.segments[i].text));
+    return text;
+}
+
+// The prefix of every name of the module a module symbol stands for: `std::math::`. The declarations of a module
+// are in the table once, under this prefix, however many names it is imported by.
+static Str prefix_of_import(const ast::Decl *import) {
+    if (import->kind != .import_module) return "";
+    return msg(format::push(joined(import->kind.import_module.path, "::"), "::"));
+}
+
+// The module's path as written, `std.math`.
+export Str module_dotted(const Symbol *s) {
+    if (s->decl->kind != .import_module) return "";
+    return joined(s->decl->kind.import_module.path, ".");
+}
+
+// The names of `m.a.b`, the root first.
+export struct Names {
+    Str items[8];
+    Usize count;
+};
+
+// The names of a chain of `.` that starts at a plain name; none (count 0) for anything else.
+export Names member_names(const ast::Expr *e) {
+    Names out = {};
+    Names reversed = {};
+    const ast::Expr *at = e;
+    while (at->kind == .member && !at->kind.member.arrow) {
+        if (reversed.count == 7) return out;
+        reversed.items[reversed.count] = at->kind.member.name;
+        reversed.count += 1;
+        at = at->kind.member.base;
+    }
+    if (at->kind != .name || countof(at->kind.name.path.segments) != 1) return out;
+    out.items[0] = at->kind.name.path.segments[0].text;
+    out.count = 1;
+    while (reversed.count > 0) {
+        reversed.count -= 1;
+        out.items[out.count] = reversed.items[reversed.count];
+        out.count += 1;
+    }
+    return out;
+}
+
+// The result of reading a name through modules.
+export struct Through {
+    const Symbol *symbol; // where the names ended (null: a name was missing)
+    const Symbol *module; // the module symbol a missing name was looked up in
+    Str missing;
+    Bool stopped; // `symbol` is not a module and names remain
+};
+
+// A name as the code being checked sees it: inside an imported module, that module's own names first.
+export const Symbol *scoped(const Checked *r, Str name) {
+    const Symbol *found = nullptr;
+    if (countof(r->prefix) > 0) found = lookup(&r->scopes, msg(format::push(r->prefix, name)));
+    if (found == nullptr) found = lookup(&r->scopes, name);
+    return found;
+}
+
+// Reads `names`: the first is a module symbol, each next name is looked up in the module before. In the code being
+// checked a name that is not `pub` is missing; inside an imported module it is not.
+export Through through_modules(const Checked *r, const Names *names) {
+    Through out = {.symbol = scoped(r, names->items[0])};
+    for (Usize i = 1; i < names->count; i++) {
+        const Symbol *module = out.symbol;
+        if (module == nullptr || module->kind != .module_name) {
+            out.stopped = true;
+            return out;
+        }
+        Str prefix = prefix_of_import(module->decl);
+        Str full = msg(format::push(prefix, names->items[i]));
+        const Symbol *next = lookup(&r->scopes, full);
+        if (next == nullptr || (countof(r->prefix) == 0 && !is_public(next))) {
+            return (Through){.module = module, .missing = names->items[i]};
+        }
+        out.symbol = next;
+    }
+    return out;
+}
+
+static const Symbol *type_through_modules(const Checked *r, ast::Path path) {
+    Usize count = countof(path.segments);
+    if (count > 1 && count <= 8) {
+        const Symbol *first = scoped(r, path.segments[0].text);
+        if (first != nullptr && first->kind == .module_name) {
+            Names names = {.count = count};
+            for (Usize i = 0; i < count; i++)
+                names.items[i] = path.segments[i].text;
+            Through t = through_modules(r, &names);
+            return t.stopped ? nullptr : t.symbol;
+        }
+    }
+    const Symbol *found = nullptr;
+    if (countof(r->prefix) > 0) found = lookup(&r->scopes, msg(format::push(r->prefix, path_text(path))));
+    if (found == nullptr) found = lookup_path(&r->scopes, path);
+    return found;
+}
+
+static Usize distance(Str a, Str b) {
+    Usize row[65] = {};
+    if (countof(a) > 64 || countof(b) > 64) return 65;
+    for (Usize j = 0; j <= countof(b); j++)
+        row[j] = j;
+    for (Usize i = 1; i <= countof(a); i++) {
+        Usize diagonal = row[0];
+        row[0] = i;
+        for (Usize j = 1; j <= countof(b); j++) {
+            Usize above = row[j];
+            Usize best = diagonal + (a[i - 1] == b[j - 1] ? 0 : 1);
+            if (above + 1 < best) best = above + 1;
+            if (row[j - 1] + 1 < best) best = row[j - 1] + 1;
+            row[j] = best;
+            diagonal = above;
+        }
+    }
+    return row[countof(b)];
+}
+
+// Reports `std.math has no public sinn`, with the closest public name when one is near.
+export void report_missing(Checked *r, ast::Span span, Through t) {
+    Str prefix = prefix_of_import(t.module->decl);
+    Str best = "";
+    Usize best_distance = 3;
+    for (Usize i = 0; i < r->scopes.count; i++) {
+        const Symbol *s = &r->scopes.symbols[i];
+        Str name = s->name;
+        if (countof(name) <= countof(prefix) || !is_public(s)) continue;
+        if (!same_text(name[0:countof(prefix)], prefix)) continue;
+        Str rest = name[countof(prefix):countof(name)];
+        Usize d = distance(rest, t.missing);
+        if (d < best_distance) {
+            best_distance = d;
+            best = rest;
+        }
+    }
+    if (countof(best) > 0) {
+        failf(r, span, "`", module_dotted(t.module), "` has no public `", t.missing, "`; did you mean `", best, "`?");
+    } else {
+        failf(r, span, "`", module_dotted(t.module), "` has no public `", t.missing,
+              "`; write the name of one of its `pub` declarations");
+    }
+}
+
+// What `sin := m.sin` or `Arena := arena.Arena` stands for: the symbol of a function, constant or type of a module,
+// or null (an error is reported when a name is missing). A name for the same declaration: no copy and no call through
+// a pointer.
+static const Symbol *alias_target(Checked *r, const ast::Decl *d, Bool *reported) {
+    if (d->kind != .variable) return nullptr;
+    const ast::Expr *init = d->kind.variable.init;
+    if (!d->kind.variable.is_new || init == nullptr || init->kind != .member) return nullptr;
+    Names names = member_names(init);
+    if (names.count < 2) return nullptr;
+    const Symbol *first = scoped(r, names.items[0]);
+    if (first == nullptr || first->kind != .module_name) return nullptr;
+    Through t = through_modules(r, &names);
+    if (t.symbol == nullptr) {
+        report_missing(r, init->span, t);
+        *reported = true;
+        return nullptr;
+    }
+    if (t.stopped || t.symbol->kind == .module_name) return nullptr;
+    return t.symbol;
+}
+
+static void declare_alias_symbol(Checked *r, const ast::Decl *d, const Symbol *target) {
+    if (d->kind != .variable) return;
+    Symbol alias = *target;
+    alias.name = qualified(r, false, d->kind.variable.name);
+    alias.decl = target->decl;
+    alias.exported = d->exported || d->is_pub;
+    declare_in_module(r, alias, d->span);
+}
+
+// `Arena := arena.Arena`: a type alias, declared with the aliases (pass 2) so a signature may use it.
+static Bool declare_module_type_alias(Checked *r, const ast::Decl *d) {
+    if (d->kind != .variable) return false;
+    Bool reported = false;
+    const Symbol *target = alias_target(r, d, &reported);
+    if (reported) return true;
+    if (target == nullptr || target->kind != .type_name) return false;
+    declare_alias_symbol(r, d, target);
+    return true;
+}
+
+// `sin := m.sin`: a function or constant, declared with the members (pass 3).
+static Bool declare_module_alias(Checked *r, const ast::Decl *d) {
+    Bool reported = false;
+    const Symbol *target = alias_target(r, d, &reported);
+    if (reported) return true;
+    if (target == nullptr || target->kind == .type_name) return target != nullptr;
+    declare_alias_symbol(r, d, target);
+    return true;
+}
+
+// One module waiting to be declared: its prefix and the tree.
+struct Pending {
+    Str prefix;
+    const ast::Module *module;
+};
+
+static constexpr Usize max_modules = 256;
+
+static Bool has_prefix(const Pending list[:], Usize count, Str prefix) {
+    for (Usize i = 0; i < count; i++) {
+        if (same_text(list[i].prefix, prefix)) return true;
+    }
+    return false;
+}
+
+// Declares the module symbol of every `x := import a.b` of `m`, and, with a loader, reads each module they name
+// (and the modules those import) into `list` once, a cycle ending where it started.
+static Usize collect_imports(Checked *r, const ast::Module *m, Pending list[:]) {
+    Usize count = 0;
+    Usize next = 0;
+    const ast::Module *at = m;
+    Str scope = "";
+    while (at != nullptr) {
+        for (Usize i = 0; i < countof(at->decls); i++) {
+            const ast::Decl *d = at->decls[i];
+            if (d->kind != .import_module) continue;
+            ast::Path path = d->kind.import_module.path;
+            Str alias = d->kind.import_module.alias;
+            if (countof(alias) == 0) alias = path.segments[countof(path.segments) - 1].text;
+            Symbol symbol = {.name = msg(format::push(scope, alias)),
+                             .kind = .module_name,
+                             .type = r->table.invalid,
+                             .decl = d,
+                             .exported = d->exported || d->is_pub};
+            declare_in_module(r, symbol, d->span);
+            if (r->options.load == nullptr) continue;
+            Str prefix = prefix_of_import(d);
+            if (has_prefix(list, count, prefix)) continue;
+            const ast::Module *loaded = r->options.load(joined(path, ".").data);
+            if (loaded == nullptr) {
+                failf(r, d->span, "cannot find the module `", joined(path, "."), "`; check its path under the roots");
+            } else if (count == countof(list)) {
+                failf(r, d->span, "more than ", countof(list), " modules are imported; the checker reads that many");
+            } else {
+                list[count] = (Pending){.prefix = prefix, .module = loaded};
+                count += 1;
+            }
+        }
+        at = nullptr;
+        if (next < count) {
+            at = list[next].module;
+            scope = list[next].prefix;
+            next += 1;
+        }
+    }
+    return count;
+}
+
+// Declares the public and private declarations of the imported modules, each under its prefix, before the module's
+// own (#1677). A generic function is not declared (its use reports itself).
+static void declare_imported(Checked *r, Pending list[:], Usize count) {
+    for (Usize k = 0; k < count; k++) {
+        const ast::Module *m = list[k].module;
+        r->prefix = list[k].prefix;
+        for (Usize i = 0; i < countof(m->decls); i++)
+            declare_nominal(r, m->decls[i]);
+        for (Usize i = 0; i < countof(m->decls); i++) {
+            if (!declare_module_type_alias(r, m->decls[i])) declare_alias(r, m->decls[i]);
+        }
+        for (Usize i = 0; i < countof(m->decls); i++) {
+            const ast::Decl *d = m->decls[i];
+            Usize before = r->error_count;
+            Usize symbols = r->scopes.count;
+            declare_member(r, d);
+            if (d->kind == .function && r->error_count > before) {
+                r->error_count = before;
+                r->scopes.count = symbols;
+            }
+        }
+    }
+    r->prefix = "";
 }
 
 // Declares the names of `m`, resolves the types of its declarations and, when `o.bodies` is set, checks each body.
@@ -1608,10 +1909,13 @@ export Checked check(const ast::Module *m, Options o) {
         fail(&r, (ast::Span){}, "the target has no pointer width; pass a target such as types::lp64() in the options");
         return r;
     }
+    Pending pending[:] = mem::alloc_slice(Pending, o.load == nullptr ? 0 : max_modules);
+    declare_imported(&r, pending, collect_imports(&r, m, pending));
     for (Usize i = 0; i < countof(m->decls); i++)
         declare_nominal(&r, m->decls[i]);
-    for (Usize i = 0; i < countof(m->decls); i++)
-        declare_alias(&r, m->decls[i]);
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        if (!declare_module_type_alias(&r, m->decls[i])) declare_alias(&r, m->decls[i]);
+    }
     for (Usize i = 0; i < countof(m->decls); i++)
         declare_member(&r, m->decls[i]);
     if (o.bodies == nullptr) return r;
