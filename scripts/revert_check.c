@@ -13,6 +13,7 @@
 //
 // Prints one line per file and exits 1 on a hit, 0 otherwise, 2 on a usage error. Plain C23, libc and git through
 // popen, no allocation: the tables are static. Files with more than max_lines lines are skipped.
+#define _POSIX_C_SOURCE 200809L // popen and pclose, which glibc hides under -std=c2x
 #include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
