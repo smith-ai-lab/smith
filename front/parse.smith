@@ -68,6 +68,8 @@ export struct Parser {
     Errors errors;
     Errors warnings; // old forms that still compile, with their fixes: kept apart so `errors` stays the failures
     Hooks hooks;
+    Bool head; // the next expression is a condition head (`if`, `while`, `for ... in`, `match`): no trailing block
+               // at its top level, so a `{` opens the body (#961)
     Bool new_syntax; // the tokens come from lex::tokenize_new: `.`, `(`, `[` and `{` also start smith's own forms
                      // (#1446)
 };

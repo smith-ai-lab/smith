@@ -87,6 +87,11 @@ export typedef enum {
     pointer;
     array;
     record;
+    option;   // `?T`: `element` is the payload
+    tuple;    // `parts` are the elements
+    fn_value; // `parts` are the parameters, `element` the result
+    slice;    // next batch
+    floating; // next batch
 } TyKind;
 
 export struct Ty;
@@ -102,6 +107,8 @@ export struct Ty {
     Ty *element;
     U64 count;
     U32 address_space;
+    Ty *parts; // a tuple's elements, a `fn` value's parameters; owned like `element`, chained through `Emitter.owned`
+    Usize part_count;
 };
 
 // A type, or the reason there is none.
@@ -144,12 +151,26 @@ export struct Local {
 export struct LoopTarget {
     c::LLVMBasicBlockRef break_block;
     c::LLVMBasicBlockRef continue_block;
+    Usize scope_depth; // `e->scope_count` when the loop's body starts
 };
 
 // A `defer`red statement, run when the block it was in ends: the scope depth is `scope_count` when it was pushed.
 export struct DeferEntry {
     const ast::Stmt *body;
     Usize scope_depth;
+};
+
+// An enumeration of the module: its enumerators and their values (filled by emit_match).
+export struct Enumerator {
+    Str name;
+    U64 value;
+};
+
+// (A slice of `Str` is not a field type today, so the enumerators are one slice of pairs, not `names` and `values`.)
+export struct EnumType {
+    Str name;
+    Ty ty;
+    Enumerator items[:];
 };
 
 export struct FieldInfo {
@@ -168,6 +189,13 @@ export struct RecordType {
 
 export struct Emitter;
 export struct Work;
+
+// Where a conversion happens: it names the Error when there is none.
+export typedef enum {
+    initialize;   // "initializing X with Y"
+    return_value; // "returning Y from a function that returns X"
+    assign;       // "assigning Y to X"
+} ConvertSite;
 
 // What a `then` item runs: the state and the item itself, which carries the data its pusher stored in it.
 export typedef Status (*Continuation)(Emitter *e, const Work *w);
@@ -197,6 +225,11 @@ export struct Work {
 
 // ---------------------------------------------------------------------------------------------------------------
 // The emitter
+
+// The three hooks emit.smith sets: what a handler cannot call without importing front::emit (a cycle).
+export typedef TyResult (*TypeHook)(Emitter *e, const ast::TypeExpr *t);
+export typedef TyResult (*NodeTypeHook)(Emitter *e, const ast::Expr *x);
+export typedef Status (*ConvertHook)(Emitter *e, Value value, Ty to, ast::Span span, ConvertSite site);
 
 // Every field the tickets after B1 need. A ticket that finds one missing escalates; it does not edit this.
 // A `Ty.element` block and the next one; `ty` is first, so a block's address is the element's.
@@ -235,6 +268,15 @@ export struct Emitter {
 
     RecordType records[:]; // B3b
     Usize record_count;
+
+    EnumType enums[:]; // #1585: the module's enumerations
+    Usize enum_count;
+    ast::ExprRef pending_lambdas[:]; // lambda bodies to emit as functions after the current one
+    Usize pending_lambda_count;
+
+    TypeHook type_hook;
+    NodeTypeHook node_type_hook;
+    ConvertHook convert_hook;
 
     Work work[:]; // the work stack, the next to run last
     Usize work_count;
@@ -307,6 +349,37 @@ export Value pop_value(Emitter *e) {
 export Value peek_value(Emitter *e) {
     contract::requires(e->value_count > 0);
     return e->values[e->value_count - 1];
+}
+
+// The loop targets: the last pop gives the slice back (`realloc(xs, 0)` frees it and gives the empty slice).
+export void push_loop(Emitter *e, LoopTarget target) {
+    if (e->loop_count == countof(e->loops)) {
+        Usize capacity = countof(e->loops) * 2;
+        if (capacity < 4) capacity = 4;
+        e->loops = mem::realloc(e->loops, capacity);
+    }
+    e->loops[e->loop_count] = target;
+    e->loop_count += 1;
+}
+
+export void pop_loop(Emitter *e) {
+    e->loop_count -= 1;
+    if (e->loop_count == 0) e->loops = mem::realloc(e->loops, 0);
+}
+
+// The type a type expression says.
+export TyResult type_of(Emitter *e, const ast::TypeExpr *t) {
+    return e->type_hook(e, t);
+}
+
+// The checker's type of an expression, as a `Ty`.
+export TyResult type_of_node(Emitter *e, const ast::Expr *x) {
+    return e->node_type_hook(e, x);
+}
+
+// Pushes `value` as a `to`, or the Error for `site`.
+export Status convert(Emitter *e, Value value, Ty to, ast::Span span, ConvertSite site) {
+    return e->convert_hook(e, value, to, span, site);
 }
 
 export Hint no_hint() {

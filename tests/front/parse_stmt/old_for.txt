@@ -8,9 +8,11 @@ for (U8 c : cs) x = c;
 for (;;) break;
 }
 ===
+warning (no fix): `++` is a statement in Smith: write `i += 1`
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a `for` reads `for x in xs` or `for i in range(a, b)`: write it so
 warning (fix): a `for` reads `for x in xs` or `for i in range(a, b)`: write it so
+warning (no fix): `++` is a statement in Smith: write `i += 1`
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a `for` reads `for x in xs` or `for i in range(a, b)`: write it so
 warning (fix): a statement ends with the line, not `;`: remove it

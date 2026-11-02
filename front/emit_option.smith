@@ -1,0 +1,41 @@
+// front::emit_option: `?T`, `.some(x)`, `.none` and `if let`. Filled by #1584; today every handler is `not emitted
+// yet`, with its final signature, so that ticket edits this file and never front/emit.smith (the wave-3 scaffold, #1582
+// of #1428).
+module front::emit_option;
+
+import front::ast;
+import front::emit_state as state;
+import front::types;
+
+// The type `?T` says.
+export state::TyResult type_option(state::Emitter *e, const ast::TypeExpr *t) {
+    _ = e;
+    return state::ty_fail("not emitted yet: an option type", t->span);
+}
+
+// The option type the checker gives a node.
+export state::TyResult from_checked(state::Emitter *e, types::TypeRef t) {
+    _ = e;
+    _ = t;
+    return state::ty_fail("not emitted yet: an option type", (ast::Span){});
+}
+
+// `.some(x)` and `.none`.
+export state::Status variant(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    _ = e;
+    _ = hint;
+    return state::not_emitted("an option value", x->span);
+}
+
+export state::Status if_let(state::Emitter *e, const ast::Stmt *s) {
+    _ = e;
+    return state::not_emitted("if let", s->span);
+}
+
+// Pushes the `?T` holding `value`.
+export state::Status wrap(state::Emitter *e, state::Value value, state::Ty to, ast::Span span) {
+    _ = e;
+    _ = value;
+    _ = to;
+    return state::not_emitted("wrapping a value in an option", span);
+}

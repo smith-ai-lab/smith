@@ -1,0 +1,42 @@
+(module m
+  (function f
+    (result (named Void))
+    (block
+      (expression
+        (call
+          (name f)
+          (name x)
+          (lambda
+            (block
+              (expression (name a))))))
+      (expression
+        (call
+          (name f)
+          (lambda
+            (block
+              (expression (name a))))))
+      (if
+        (call (name ready))
+        (block
+          (expression (name a))))
+      (while
+        (call (name ready))
+        (block
+          (expression (name a))))
+      (for_in x
+        (call (name items))
+        (block
+          (expression (name a))))
+      (match (call (name pick)) (arm (pattern a) (name b)))
+      (if
+        (call
+          (name any)
+          (name xs)
+          (lambda
+            (block
+              (expression (name a)))))
+        (block
+          (expression (name b))))
+      (expression (call (name g) (name y)))
+      (block
+        (expression (name a))))))

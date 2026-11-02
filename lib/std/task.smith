@@ -306,6 +306,21 @@ void task_main(Task *task) {
     c::smith_failure_format(c::SmithFailure_Capacity, "%s", what);
 }
 
+// Linux 6.13 and later install a guard page as a marker inside the mapping (MADV_GUARD_INSTALL, 102): the page faults
+// like a PROT_NONE one, but the mapping stays one VMA, so `vm.max_map_count` (65530 by default) no longer caps the live
+// tasks at about 32,000. An older kernel refuses it (EINVAL) and the guard is an mprotect, two VMAs per task.
+// Makes the `page` bytes at `region` fault on any access. False when the system refuses.
+Bool install_guard(void *region, Usize page) {
+    contract::trusted(); // it changes the mapping's protection
+    // NOLINTBEGIN(smith-effects): the system's memory is the edge of this module
+    if constexpr (target::os == target::linux) {
+        constexpr I32 advise_guard_install = 102;
+        if (c::madvise(region, page, advise_guard_install) == 0) return true;
+    }
+    return c::mprotect(region, page, protect_none) == 0;
+    // NOLINTEND(smith-effects)
+}
+
 // One mapping: a guard page and `stack_size` bytes above it. Never null: the system refusing the memory is a checked
 // failure.
 void *map_stack(Usize extra) {
@@ -314,7 +329,7 @@ void *map_stack(Usize extra) {
     Usize page = (Usize)c::sysconf(page_size_name);
     void *region = c::mmap(nullptr, page + stack_size + extra, protect_both, map_private_anonymous, -1, 0);
     if ((Usize)region == ~(Usize)0) refuse("task: the system refused a stack");
-    if (c::mprotect(region, page, protect_none) != 0) refuse("task: the system refused a guard page");
+    if (!install_guard(region, page)) refuse("task: the system refused a guard page");
     // NOLINTEND(smith-effects)
     return region;
 }
