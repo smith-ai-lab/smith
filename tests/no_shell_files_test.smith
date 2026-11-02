@@ -134,11 +134,11 @@ export void test_a_new_shell_file_fails() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run made = scratch::sh(
-        &p, "git init -q . && mkdir -p scripts tests/build_fixtures src && printf 'echo hi\\n' > x.sh && "
-            "printf '#!/bin/bash\\necho hi\\n' > tool && printf '#!/usr/bin/env sh\\n' > src/env && "
-            "printf '#!/bin/sh\\n' > tests/build_fixtures/curl && "
-            "printf '#!/usr/bin/env python3\\n' > p.py && printf 'int ok;\\n' > src/ok.c && git add -f -A");
+    scratch::Run made =
+        scratch::sh(&p, "git init -q . && mkdir -p scripts tests/build_fixtures src && printf 'echo hi\\n' > x.sh && "
+                        "printf '#!/bin/bash\\necho hi\\n' > tool && printf '#!/usr/bin/env sh\\n' > src/env && "
+                        "printf '#!/bin/sh\\n' > tests/build_fixtures/curl && "
+                        "printf '#!/usr/bin/env python3\\n' > p.py && printf 'int ok;\\n' > src/ok.c && git add -f -A");
     scratch::expect_status("the repository is made", 0, &made);
     scratch::expect_text("the new shell files", "src/env\ntool\nx.sh\n", offenders(&p, p.dir));
 }
