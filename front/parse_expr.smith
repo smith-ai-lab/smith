@@ -1451,6 +1451,11 @@ static Outcome postfix_step(parse::Parser *p, Stack *st) {
         break;
     case lex::dot:
     case lex::arrow:
+        // A `.` that starts a line is not a continuation where the line before it ends a statement (`.b => x` after
+        // `.a => f(1)` in a match, the Go rule of lex::ends_statement).
+        if (p->new_syntax && token.kind == lex::dot && p->position > 0 &&
+            lex::ends_statement(p->tokens[p->position - 1]))
+            return .absent;
         result = member(p, base);
         break;
     case lex::dot_star:
