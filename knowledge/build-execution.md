@@ -42,7 +42,7 @@ compiler it is:
 - a compiler that is not smith: its executable's real path, size and mtime (a copy of the same bytes is a new compiler);
 - smith (a program named `smith...`: `smith-cc`, `smith-c++`) is the clang it runs, not its own file, which changes with
   every build of smith and would rebuild every project after each install. `<smith-cc> --smith-which -c a.c` says which: with clang linked in,
-  `clang in-process <clang>` and `identity <llvm version> <hash>`, where `scripts/llvm.sh` hashes the archives that get
+  `clang in-process <clang>` and `identity <llvm version> <hash>`, where `build_llvm_run_macos` hashes the archives that get
   linked (and the four objects of `libclangmain.a`) into `lib/smith-clang.id` of the install, `smith build` compiles it
   into smith (`-DSMITH_CLANG_ID=`), and so a smith rebuilt against the same LLVM is the same compiler and a rebuilt LLVM
   is another; with an external clang (`$SMITH_CLANG`, or a stage0's), `clang <path>`, and that clang's real path, size
