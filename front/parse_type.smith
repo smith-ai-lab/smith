@@ -35,6 +35,7 @@ module front::parse_type;
 import front::ast;
 import front::lex;
 import front::parse;
+import std::arena;
 import std::format;
 import std::mem;
 import std::text;
@@ -156,12 +157,22 @@ export Bool starts_type(const parse::Parser *p, Usize offset) {
     }
 }
 
+// Whether `fn` or `fn_once` starts a function type `offset` tokens ahead. Today's lexer reads them as names, so while
+// fixing (`smith lint --fix` reads a text again after each pass) a name followed by `(` counts too, and a type that a
+// pass has already written is read.
+static Bool fn_word(const parse::Parser *p, Usize offset) {
+    lex::Token token = parse::peek_at(p, offset);
+    if (token.kind == lex::kw_fn || token.kind == lex::kw_fn_once) return true;
+    if (token.kind != lex::name || parse::peek_at(p, offset + 1).kind != lex::left_paren) return false;
+    return text::is(parse::text(p, token), "fn") || text::is(parse::text(p, token), "fn_once");
+}
+
 // Whether the tokens from `offset` start a type of the new syntax that no expression starts: `*`, `?`, `fn`, `fn_once`,
 // `type`, or a bracket group followed directly by a type (`[5]T`, `[]T`, `[,3]T`). A parenthesis is never judged here:
 // `(A, B)` is a tuple type where a type is expected, and a parenthesized value where it is not.
 export Bool starts_new_type(const parse::Parser *p, Usize offset) {
     lex::TokenKind kind = parse::peek_at(p, offset).kind;
-    if (kind == lex::star || kind == lex::question || kind == lex::kw_fn || kind == lex::kw_fn_once) return true;
+    if (kind == lex::star || kind == lex::question || fn_word(p, offset)) return true;
     if (kind != lex::left_bracket) return false;
     Usize depth = 0;
     Usize at = offset;
@@ -494,6 +505,8 @@ export Bool at_slice_pointer_declarator(const parse::Parser *p) {
     return parse::peek_at(p, i + 1).kind == lex::left_bracket;
 }
 
+static Bool c_declarator_ahead(const parse::Parser *p);
+
 // The suffixes of a type: pointers (with the qualifiers after each) and runs of brackets.
 static ast::TypeExpr *suffixes(parse::Parser *p, U32 start, ast::TypeExpr *base) {
     ast::TypeExpr *type_so_far = base;
@@ -505,7 +518,7 @@ static ast::TypeExpr *suffixes(parse::Parser *p, U32 start, ast::TypeExpr *base)
             type_so_far = node(start, p, q, {.pointer = {.pointee = type_so_far}});
         } else if (parse::at(p, lex::left_bracket)) {
             type_so_far = brackets(p, start, type_so_far);
-        } else if (parse::at(p, lex::left_paren) && parse::peek_at(p, 1).kind == lex::star) {
+        } else if (c_declarator_ahead(p)) {
             // C's `(*p)[:]` and `(*p)[4]` are left for the declaration to report, with the name it knows.
             if (!at_slice_pointer_declarator(p)) function_pointer(p);
             break;
@@ -676,7 +689,8 @@ static ast::TypeExpr *new_tuple(parse::Parser *p, U32 start) {
 
 // `fn(A, B) -> R` and `fn_once(A) -> R`: the position is at the keyword. Without `->` the function has no result.
 static ast::TypeExpr *new_function(parse::Parser *p, U32 start) {
-    Bool is_once = parse::advance(p).kind == lex::kw_fn_once;
+    lex::Token word = parse::advance(p);
+    Bool is_once = word.kind == lex::kw_fn_once || text::is(parse::text(p, word), "fn_once");
     parse::expect(p, lex::left_paren, "`(` after `fn`");
     ast::TypeRef params[:] = {};
     while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
@@ -728,12 +742,294 @@ static Bool c_declarator_ahead(const parse::Parser *p) {
     return after == lex::left_paren || after == lex::left_bracket;
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Fix-its for today's type forms (F1, #1506 of #1428). Each old form still parses into the same node as its new form
+// and records one warning per type with the edit that writes the whole type in smith's own syntax: capitalized
+// built-ins and C's names become the lowercase sized types, `T *`, `T[:]` and `T[N]` become `*T`, `[]T` and `[N]T` (two
+// or more brackets, `[:][3]`, one block `[,3]T`), `struct { A, B }` becomes `(A, B)` and `Fn(R (A))` becomes
+// `fn(A) -> R`. `const` is dropped (constant is the default). A type with no smith spelling (`volatile`, `restrict`,
+// `long double`, a variadic function type) is a warning with no edit that says what to do. A type inside another is
+// read first, so its warning comes first and wins an overlap; the next pass of `smith lint --fix` mends the outer one.
+
+// The tokens of an old type: the first (qualifiers included), the base's first, the one after the base, the one after
+// the whole type.
+struct OldType {
+    Usize first;
+    Usize base;
+    Usize after;
+    Usize end;
+};
+
+// The type being written in smith's own syntax: what goes before the base, the brackets of the run being read (`dims`
+// of them), and what is wrong with the type when it has no spelling.
+struct Rewrite {
+    char prefix[:];
+    char run[:];
+    Usize dims;
+    Str problem;
+};
+
+// The source text of the tokens from `from` up to but not including `to`.
+static Str source_of(const parse::Parser *p, Usize from, Usize to) {
+    return p->source[p->tokens[from].span.start:p->tokens[to - 1].span.end];
+}
+
+// Text built by `format::push`, as the read-only `Str`.
+static Str frozen(char chars[:]) {
+    return chars;
+}
+
+// The word with its capitals made lowercase.
+static Str lowered(Str word) {
+    char out[:] = mem::alloc_slice(char, countof(word));
+    for (Usize i = 0; i < countof(word); i += 1) {
+        char c = word[i];
+        out[i] = c >= 'A' && c <= 'Z' ? (char)(c + 32) : c;
+    }
+    return frozen(out);
+}
+
+// Whether two texts are equal.
+static Bool same(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i += 1) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+// Whether a name is one of the capitalized built-ins of today's spelling.
+static Bool old_builtin(Str w) {
+    return text::is(w, "I8") || text::is(w, "I16") || text::is(w, "I32") || text::is(w, "I64") ||
+           text::is(w, "Isize") || text::is(w, "U8") || text::is(w, "U16") || text::is(w, "U32") ||
+           text::is(w, "U64") || text::is(w, "Usize") || text::is(w, "F32") || text::is(w, "F64") ||
+           text::is(w, "Bool") || text::is(w, "Char") || text::is(w, "Str") || text::is(w, "Void") ||
+           text::is(w, "Type");
+}
+
+// The sized type of a C typedef name such as `size_t` or `uint32_t`; empty for any other name.
+static Str c_type_name(Str w) {
+    if (text::is(w, "size_t") || text::is(w, "uintptr_t")) return "usize";
+    if (text::is(w, "ssize_t") || text::is(w, "ptrdiff_t") || text::is(w, "intptr_t")) return "isize";
+    if (text::is(w, "int8_t")) return "i8";
+    if (text::is(w, "int16_t")) return "i16";
+    if (text::is(w, "int32_t")) return "i32";
+    if (text::is(w, "int64_t") || text::is(w, "intmax_t")) return "i64";
+    if (text::is(w, "uint8_t")) return "u8";
+    if (text::is(w, "uint16_t")) return "u16";
+    if (text::is(w, "uint32_t")) return "u32";
+    if (text::is(w, "uint64_t") || text::is(w, "uintmax_t")) return "u64";
+    return "";
+}
+
+// The sized type of C's keyword types, the words joined by one space (`unsigned long`); empty when there is none.
+static Str keyword_type(Str w) {
+    if (text::is(w, "int") || text::is(w, "signed") || text::is(w, "signed int")) return "i32";
+    if (text::is(w, "unsigned") || text::is(w, "unsigned int")) return "u32";
+    if (text::is(w, "short") || text::is(w, "short int") || text::is(w, "signed short")) return "i16";
+    if (text::is(w, "unsigned short") || text::is(w, "unsigned short int")) return "u16";
+    if (text::is(w, "long") || text::is(w, "long int") || text::is(w, "long long") || text::is(w, "long long int"))
+        return "i64";
+    if (text::is(w, "unsigned long") || text::is(w, "unsigned long int") || text::is(w, "unsigned long long"))
+        return "u64";
+    if (text::is(w, "signed char")) return "i8";
+    if (text::is(w, "unsigned char")) return "u8";
+    if (text::is(w, "float")) return "f32";
+    if (text::is(w, "double")) return "f64";
+    return "";
+}
+
+// `volatile` and `restrict` have no spelling yet; `const` is the default and is dropped.
+static void note_qualifier(lex::TokenKind kind, Rewrite *r) {
+    if (kind == lex::kw_const) return;
+    r->problem = "`volatile` and `restrict` have no spelling in smith's own syntax: remove them";
+}
+
+// The base when it is C's keyword types: `unsigned long` is `u64`.
+static Str keyword_base(const parse::Parser *p, const OldType *t, Rewrite *r) {
+    char words[:] = {};
+    for (Usize i = t->base; i < t->after; i += 1) {
+        words = format::push(words, i > t->base ? " " : "", parse::text(p, p->tokens[i]));
+    }
+    Str sized = keyword_type(words);
+    if (countof(sized) > 0) return sized;
+    if (text::is(words, "char") || text::is(words, "void") || text::is(words, "bool")) return frozen(words);
+    r->problem = frozen(format::push("`", words, "` has no sized type in smith: write the type by hand"));
+    return frozen(words);
+}
+
+// `struct { A, B }` as `(A, B)`, and `(A,)` for one element.
+static Str tuple_base(const parse::Parser *p, const ast::TypeExpr *base) {
+    ast::TypeKind kind = base->kind;
+    if (kind != .tuple) {
+        return "";
+    }
+    ast::TypeRef elements[:] = kind.tuple.elements;
+    char joined[:] = {};
+    for (Usize i = 0; i < countof(elements); i += 1) {
+        ast::Span span = elements[i]->span;
+        joined = format::push(joined, i > 0 ? ", " : "", p->source[span.start:span.end]);
+    }
+    if (countof(elements) == 1) joined = format::push(joined, ",");
+    return frozen(format::push("(", joined, ")"));
+}
+
+// The function type that is the one argument of `Fn(R (A, B))` when the base is that applied `Fn`; else null.
+static ast::TypeExpr *fn_type_of(const ast::TypeExpr *base) {
+    ast::TypeKind kind = base->kind;
+    if (kind != .applied) return nullptr;
+    ast::Path name = kind.applied.name;
+    ast::TypeArg args[:] = kind.applied.args;
+    if (countof(name.segments) != 1 || !text::is(name.segments[0].text, "Fn") || countof(args) != 1) return nullptr;
+    ast::TypeArg only = args[0];
+    if (only != .type || only.type.type == nullptr) return nullptr;
+    ast::TypeKind inner = only.type.type->kind;
+    return inner == .function ? only.type.type : nullptr;
+}
+
+// `Fn(R (A, B))` as `fn(A, B) -> R` from its function type: no `->` for a result of `void`.
+static Str fn_base(const parse::Parser *p, const ast::TypeExpr *function, Rewrite *r) {
+    ast::TypeKind kind = function->kind;
+    if (kind != .function) {
+        return "";
+    }
+    ast::TypeRef params[:] = kind.function.params;
+    char joined[:] = {};
+    for (Usize i = 0; i < countof(params); i += 1) {
+        ast::Span span = params[i]->span;
+        joined = format::push(joined, i > 0 ? ", " : "", p->source[span.start:span.end]);
+    }
+    if (kind.function.variadic) {
+        r->problem = "a variadic function type has no spelling in smith's own syntax yet: write the function by hand";
+    }
+    char written[:] = format::push("fn(", joined, ")");
+    ast::TypeExpr *result = kind.function.result;
+    if (result == nullptr) return frozen(written);
+    Str shown = p->source[result->span.start:result->span.end];
+    if (text::is(shown, "void") || text::is(shown, "Void")) return frozen(written);
+    return frozen(format::push(written, " -> ", shown));
+}
+
+// The base in smith's own spelling, or as it is when it has no old form.
+static Str head_of(const parse::Parser *p, const OldType *t, const ast::TypeExpr *base, Rewrite *r) {
+    lex::TokenKind first = p->tokens[t->base].kind;
+    if (is_keyword_type(first)) return keyword_base(p, t, r);
+    if (first == lex::kw_struct && base->kind == .tuple) return tuple_base(p, base);
+    ast::TypeExpr *function = fn_type_of(base);
+    if (function != nullptr) return fn_base(p, function, r);
+    ast::TypeKind kind = base->kind;
+    if (kind == .named && countof(kind.named.path.segments) == 1) {
+        Str word = kind.named.path.segments[0].text;
+        if (old_builtin(word)) return lowered(word);
+        Str sized = c_type_name(word);
+        if (countof(sized) > 0) return sized;
+    }
+    return source_of(p, t->base, t->after);
+}
+
+// Puts the bracket run being read in front of what is written so far: `[]`, `[3]`, `[,3]` (a block, as `[3][4]` is the
+// same type as `[3,4]`).
+static void flush_run(Rewrite *r) {
+    if (r->dims == 0) return;
+    r->prefix = format::push("[", r->run, "]", r->prefix);
+    char none[:] = {};
+    r->run = none;
+    r->dims = 0;
+}
+
+// The bracket that opens at token `open`: its size joins the run (empty for a slice). Gives the token after it.
+static Usize scan_bracket(const parse::Parser *p, Usize open, Usize end, Rewrite *r) {
+    Usize close = open;
+    Usize depth = 0;
+    for (Usize j = open; j < end && close == open; j += 1) {
+        if (p->tokens[j].kind == lex::left_bracket) depth += 1;
+        if (p->tokens[j].kind == lex::right_bracket) depth -= 1;
+        if (depth == 0) close = j;
+    }
+    if (close == open) {
+        r->problem = "this array size has no spelling in smith's own syntax: write the type by hand";
+        return end;
+    }
+    Usize from = open + 1;
+    while (from < close && is_qualifier(p->tokens[from].kind)) {
+        note_qualifier(p->tokens[from].kind, r);
+        from += 1;
+    }
+    Str size = "";
+    if (from < close && p->tokens[from].kind != lex::colon) size = source_of(p, from, close);
+    r->run = format::push(r->run, r->dims > 0 ? "," : "", size);
+    r->dims += 1;
+    return close + 1;
+}
+
+// The suffixes of the type, from the token after the base: each star and run of brackets goes in front.
+static void scan_suffixes(const parse::Parser *p, const OldType *t, Rewrite *r) {
+    Usize i = t->after;
+    while (i < t->end) {
+        lex::TokenKind kind = p->tokens[i].kind;
+        if (kind == lex::left_bracket) {
+            i = scan_bracket(p, i, t->end, r);
+            continue;
+        }
+        flush_run(r);
+        if (kind == lex::star) {
+            r->prefix = format::push("*", r->prefix);
+        } else if (is_qualifier(kind)) {
+            note_qualifier(kind, r);
+        } else {
+            r->problem = "this type has no spelling in smith's own syntax: write it by hand";
+            return;
+        }
+        i += 1;
+    }
+    flush_run(r);
+}
+
+// Whether an error was recorded from `since` on: the type did not parse, so there is nothing to mend.
+static Bool failed_since(const parse::Parser *p, Usize since) {
+    return countof(p->errors) > since;
+}
+
+// Whether a name starts right at `end`: `char *name` written `*char name` needs the space the star did not have.
+static Bool glued(const parse::Parser *p, U32 end) {
+    if (end >= countof(p->source)) return false;
+    char c = p->source[end];
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+// Records the warning of an old type: the edit that writes it in smith's own syntax, or a message alone.
+static void warn_old_type(parse::Parser *p, const OldType *t, const ast::TypeExpr *base) {
+    Rewrite r = {};
+    for (Usize i = t->first; i < t->base; i += 1) {
+        note_qualifier(p->tokens[i].kind, &r);
+    }
+    Str head = head_of(p, t, base, &r);
+    scan_suffixes(p, t, &r);
+    Str old_text = source_of(p, t->first, t->end);
+    ast::Span span = {.start = p->tokens[t->first].span.start, .end = p->tokens[t->end - 1].span.end};
+    Str shown = frozen(format::push(r.prefix, head));
+    Str written = glued(p, span.end) ? frozen(format::push(shown, " ")) : shown;
+    parse::Edits edits = {};
+    if (countof(r.problem) > 0) {
+        parse::warning_fix(p, span, r.problem, edits);
+        return;
+    }
+    if (same(shown, old_text)) return;
+    edits = mem::alloc_slice(parse::Edit, 1);
+    edits[0] = (parse::Edit){.span = span, .text = written};
+    char message[:] = format::push("write the type `", old_text, "` as `", shown, "` in smith's own syntax");
+    parse::warning_fix(p, span, message, edits);
+}
+
 // Reads one type: qualifiers, the base, the applied form of a type name followed by `(`, the suffixes.
 static ast::TypeExpr *read(parse::Parser *p) {
     if (at_new_type(p)) return new_type(p);
+    Usize errors_before = countof(p->errors);
+    OldType old = {.first = p->position};
     U32 start = parse::peek(p).span.start;
     ast::Qualifiers q = {};
     take_qualifiers(p, &q);
+    old.base = p->position;
     ast::TypeExpr *base = plain(p, start, q);
     if (base == nullptr) return nullptr;
     Bool call_shape = parse::at(p, lex::left_paren) && !c_declarator_ahead(p);
@@ -745,7 +1041,11 @@ static ast::TypeExpr *read(parse::Parser *p) {
         Bool is_vec = countof(name.segments) == 1 && text::is(last, "vec");
         if (capital || is_lambda || is_vec || group_then_name(p, 0)) base = applied(p, start, q, name);
     }
-    return suffixes(p, start, base);
+    old.after = p->position;
+    ast::TypeExpr *result = suffixes(p, start, base);
+    old.end = p->position;
+    if (!failed_since(p, errors_before)) warn_old_type(p, &old, base);
+    return result;
 }
 
 // Reads a type at the position, or records an error and gives null. The hook `parse::Hooks.type`.
