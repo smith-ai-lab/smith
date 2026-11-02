@@ -4053,12 +4053,14 @@ static void smith_not_a_command(const char *word) {
 // hint; a typo of a command gets the command; anything else gets the list.
 [[noreturn]] static void smith_bare_arguments(int argc, char **argv) {
     // A flag first (`smith -c a.c`) is a compile command whose file comes later; a word is judged alone.
-    int last = argv[1][0] == '-' ? argc - 1 : 1;
+    const char *first = argv[1];
+    int last = first[0] == '-' ? argc - 1 : 1;
     bool file = false;
     for (int i = 1; i <= last && !file; i++) { // bounded by argc
+        const char *arg = argv[i];
         struct stat info = {};
-        file = smith_has_other_input_extension(argv[i]) || smith_ends_with(argv[i], ".metal") ||
-               (argv[i][0] != '-' && stat(argv[i], &info) == 0);
+        file = smith_has_other_input_extension(arg) || smith_ends_with(arg, ".metal") ||
+               (arg[0] != '-' && stat(arg, &info) == 0);
     }
     if (!file) {
         smith_not_a_command(argv[1]);
