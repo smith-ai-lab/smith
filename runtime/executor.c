@@ -271,6 +271,9 @@ typedef struct {
         *verb; // the project verb that asked for its target (smith run), for the message when the project has none
 } SmithExecOptions;
 
+constexpr size_t smith_exec_recap_max = 16; // failed steps the recap lists; the rest are counted
+constexpr size_t smith_exec_recap_line = 200;
+
 struct SmithExec {
     SmithIo *io;
     SmithArena *arena;
@@ -291,6 +294,9 @@ struct SmithExec {
     size_t started_edges;
     size_t finished_edges;
     int failures;
+    char recap[smith_exec_recap_max][smith_exec_recap_line]; // the failed steps, for the recap at the end
+    bool recap_console[smith_exec_recap_max];                // whether a recap entry ran in the console pool (a test)
+    size_t recap_count;
     char first_failed[256]; // the first failed step, "step 46 compile smith.c": the last line names it
     int failures_left;      // failed jobs the build can still take before it stops starting new ones
     int stopped;            // the signal that interrupted the build, or 0
