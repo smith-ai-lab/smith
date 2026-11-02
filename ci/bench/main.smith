@@ -1,0 +1,315 @@
+// `smith build bench` (issue #639): measures each budget line of the speed table on this machine and prints it. Every
+// step runs one command and reports its wall seconds and the CPU seconds (user plus system) of the command and every
+// process it waited for. The table is also written as tab-separated lines for CI to record and compare: step, wall s,
+// CPU s, budget s (or -1), verdict (ok, over, tbd, -, failed), load average at the start. It replaces scripts/bench.c
+// (#1670 of #1669).
+//
+// Usage: bench SMITH TSV [full]
+// SMITH is the smith under test (an absolute or repository-relative path); TSV is the file written. `full` also runs
+// `smith test` (slow; the line is CPU seconds).
+// The commands run with SMITH_SLOTS=0 and SMITH_CORES=4: a wait for a slot is the queue's, not the step's. A command
+// runs through `sh -c 'cd FOLDER && exec COMMAND >/dev/null 2>&1'`, so its output is dropped and it may run in another
+// folder; the shell is replaced by the command, so what is measured is the command's.
+module main;
+
+import std::clock;
+import std::console;
+import std::files;
+import std::format;
+import std::mem;
+import std::process;
+import std::text;
+import <stdlib.h>;
+
+constexpr Usize max_rows = 32;
+constexpr Usize module_functions = 110;
+constexpr Usize argv_max = 32;
+constexpr Usize name_size = 64;
+constexpr Usize path_size = 512;
+constexpr Usize text_size = 1U << 18;
+
+struct Row {
+    char name[name_size];
+    F64 wall;
+    F64 cpu;
+    F64 budget;  // seconds; negative: none ("TBD" when tbd)
+    Bool by_cpu; // the budget is on CPU seconds, else on wall
+    Bool tbd;
+    F64 load;
+    I32 status;
+};
+
+static struct Row rows[max_rows];
+static Usize row_count = 0;
+static const char *smith_path = nullptr;
+static char absolute[path_size];
+static char module_text[text_size];
+
+// The characters as bytes to write, and a list of words as the argv a call wants (a cast, as the types do not say it).
+static typeof(const U8[:]) as_bytes(const char text[:]) {
+    const U8 *bytes = (const U8 *)text.data;
+    return bytes[0:countof(text)];
+}
+
+static typeof(const char *const[:]) argv_of(const char **words, Usize count) {
+    const char *const *fixed = (const char *const *)words;
+    return fixed[0:count];
+}
+
+static F64 seconds_of(U64 nanoseconds) {
+    return (F64)nanoseconds / 1e9;
+}
+
+// Runs argv (counted, at most argv_max - 5 words) in `folder` (null: here) with its output dropped; returns its exit
+// status (128 and the signal when killed, 127 when it did not start), its wall seconds and its CPU seconds.
+static I32 measure(const char *const words[:], const char *folder, F64 *wall, F64 *cpu) {
+    const char *argv[argv_max];
+    argv[0] = "/bin/sh";
+    argv[1] = "-c";
+    argv[2] = "cd \"$1\" || exit 126; shift; exec \"$@\" >/dev/null 2>&1";
+    argv[3] = "sh";
+    argv[4] = folder != nullptr ? folder : ".";
+    Usize count = 5;
+    for (Usize i = 0; i < countof(words) && count < argv_max; i++) {
+        argv[count] = words[i];
+        count += 1;
+    }
+    U64 start = clock::monotonic();
+    process::ChildResult started = process::spawn(argv_of(argv, count));
+    if (started == .error) return 127;
+    process::Child child = started.ok;
+    process::ExitResult ended = process::wait(&child);
+    *wall = seconds_of(clock::monotonic() - start);
+    *cpu = seconds_of(child.user_ns + child.system_ns);
+    process::close(&child);
+    if (ended == .error) return 127;
+    return ended.ok.signal != 0 ? 128 + ended.ok.signal : ended.ok.status;
+}
+
+static struct Row *record(const char name[:], F64 budget, Bool by_cpu) {
+    struct Row *row = &rows[row_count < max_rows ? row_count : max_rows - 1];
+    row_count = row_count < max_rows ? row_count + 1 : row_count;
+    Usize length = countof(name) < name_size - 1 ? countof(name) : name_size - 1;
+    for (Usize i = 0; i < length; i++) {
+        row->name[i] = name[i];
+    }
+    row->name[length] = '\0';
+    row->budget = budget;
+    row->by_cpu = by_cpu;
+    row->tbd = false;
+    F64 load[1] = {};
+    (void)c::getloadavg(load, 1);
+    row->load = load[0];
+    return row;
+}
+
+static typeof(const char[:]) name_of(const struct Row *row) {
+    Usize length = 0;
+    while (length < name_size && row->name[length] != '\0') {
+        length += 1;
+    }
+    return row->name[0:length];
+}
+
+static void step(const char name[:], F64 budget, Bool by_cpu, const char *const words[:], const char *folder) {
+    struct Row *row = record(name, budget, by_cpu);
+    row->status = measure(words, folder, &row->wall, &row->cpu);
+    console::print_error("bench: ", name, ": ", format::fixed(row->wall, 2), " s wall, ", format::fixed(row->cpu, 2),
+                         " s cpu, status ", row->status, "\n");
+}
+
+static void run_quiet(const char *const words[:], const char *folder) {
+    F64 wall = 0;
+    F64 cpu = 0;
+    (void)measure(words, folder, &wall, &cpu);
+}
+
+// build with nothing changed: one warm-up build first so the measured one is a true no-op.
+static void bench_noop() {
+    const char *const argv[_] = {smith_path, "build"};
+    run_quiet(argv[0:2], nullptr);
+    step("build no-op", 0.5, false, argv[0:2], nullptr);
+}
+
+// A one-line comment appended to runtime/slots.c (restored after), then built.
+static void bench_one_file() {
+    const char path[:] = "runtime/slots.c";
+    files::BytesResult original = files::read_file(path);
+    if (original == .error) return;
+    defer mem::free(original.ok.data);
+    const char *const argv[_] = {smith_path, "build"};
+    char note[64];
+    format::Written made = format::to(note, sizeof note, "\n// bench ", clock::now(), "\n");
+    files::CountResult appended = files::write_file(path, as_bytes(note[0:made.length]), files::Append);
+    if (appended == .ok) step("build after a one-file change", 3.0, false, argv[0:2], nullptr);
+    (void)files::write_file(path, original.ok, files::Replace);
+    run_quiet(argv[0:2], nullptr); // the tree is as it was, rebuilt
+}
+
+// A fresh worktree of HEAD, built with the caches this machine has already filled.
+static void bench_worktree() {
+    const char *folder = ".smith/bench-worktree";
+    const char *const clean[_] = {"git", "worktree", "remove", "--force", folder};
+    const char *const add[_] = {"git", "worktree", "add", "--detach", folder, "HEAD"};
+    run_quiet(clean[0:5], nullptr);
+    F64 wall = 0;
+    F64 cpu = 0;
+    if (measure(add[0:6], nullptr, &wall, &cpu) != 0) return;
+    const char *const argv[_] = {smith_path, "build"};
+    step("build in a fresh worktree", 10.0, false, argv[0:2], folder);
+    run_quiet(clean[0:5], nullptr);
+}
+
+// Whether `name` is a C or a .smith source: it ends in .c, .h or .smith.
+static Bool is_source(const char name[:]) {
+    Usize length = countof(name);
+    if (length > 2 && name[length - 2] == '.' && (name[length - 1] == 'c' || name[length - 1] == 'h')) return true;
+    return length > 6 && text::is(name[length - 6:], ".smith");
+}
+
+// fmt of the files the last commit changed (at most five), and lint of the project.
+static void bench_fmt_lint() {
+    const char *words[argv_max];
+    static char names[5][path_size];
+    words[0] = smith_path;
+    words[1] = "fmt";
+    Usize count = 2;
+    const char *const diff[_] = {"git", "diff", "--name-only", "HEAD~1", "HEAD"};
+    process::OutputResult listed = process::run(diff[0:5]);
+    if (listed == .ok) {
+        typeof(char[:]) all = mem::view(listed.ok.output, char);
+        Usize at = 0;
+        while (at < countof(all) && count < 7) {
+            Usize end = at;
+            while (end < countof(all) && all[end] != '\n') {
+                end += 1;
+            }
+            typeof(const char[:]) name = all[at:end];
+            at = end + 1;
+            if (countof(name) == 0 || countof(name) >= path_size || !is_source(name)) continue;
+            char *slot = names[count - 2];
+            format::Written made = format::to(slot, path_size, name);
+            files::InfoResult found = files::info(slot[0:made.length]);
+            if (found == .error) continue;
+            words[count] = slot;
+            count += 1;
+        }
+        mem::free(listed.ok.output.data);
+        if (listed.ok.errors.data != nullptr) mem::free(listed.ok.errors.data);
+    }
+    if (count == 2) {
+        words[count] = "runtime/slots.c";
+        count += 1;
+    }
+    step("fmt on a typical change", 0.5, false, argv_of(words, count), nullptr);
+    const char *const whole[_] = {smith_path, "fmt", "--dry-run"};
+    step("fmt of the whole project (dry run)", -1, false, whole[0:3], nullptr);
+    const char *const changed[_] = {smith_path, "lint", "--changed=HEAD~1", "--quiet"};
+    step("lint on a typical change (--changed=HEAD~1)", 3.0, false, changed[0:4], nullptr);
+    const char *const lint[_] = {smith_path, "lint", "--quiet"};
+    step("lint of the whole project", -1, false, lint[0:3], nullptr);
+    const char *const docs[_] = {smith_path, "docs"};
+    step("docs (knowledge, skills)", -1, false, docs[0:2], nullptr);
+}
+
+// A module of about 1,000 lines: module_functions functions of ten lines, generated, compiled to an object.
+static void bench_module() {
+    (void)files::make_folder(".smith");
+    (void)files::make_folder(".smith/bench");
+    Usize length = format::to(module_text, text_size,
+                              "module bench::big;\n\nexport struct Point {\n    i32 x;\n    i32 y;\n};\n\n")
+                       .length;
+    for (Usize i = 0; i < module_functions; i++) {
+        length += format::to(module_text + length, text_size - length, "export i32 f", i,
+                             "(Point p, i32 n) {\n    i32 total = 0;\n    for (i32 i = 0; i < n; i++) {\n"
+                             "        if (i % 2 == 0) total += p.x * i + ",
+                             i, ";\n        else total -= p.y + i;\n    }\n    return total;\n}\n\n")
+                      .length;
+    }
+    const char *path = ".smith/bench/big.smith";
+    files::CountResult written =
+        files::write_file(".smith/bench/big.smith", as_bytes(module_text[0:length]), files::Replace);
+    if (written == .error) return;
+    Usize lines = 0;
+    for (Usize i = 0; i < length; i++) {
+        lines += module_text[i] == '\n' ? 1 : 0;
+    }
+    const char *const argv[_] = {smith_path, "cc", "-c", path, "-o", ".smith/bench/big.o"};
+    char name[name_size];
+    format::Written made = format::to(name, sizeof name, "compile a .smith module of ", lines, " lines");
+    run_quiet(argv[0:6], nullptr); // the first run writes the embedded files
+    step(name[0:made.length], 0, false, argv[0:6], nullptr);
+    rows[row_count - 1].tbd = true;
+}
+
+static void bench_long(Bool full) {
+    if (!full) return;
+    const char *const argv[_] = {smith_path, "test"};
+    step("full test suite (CPU s)", 600.0, true, argv[0:2], nullptr);
+}
+
+static typeof(const char[:]) verdict(const struct Row *row) {
+    if (row->status != 0) return "failed";
+    if (row->tbd) return "tbd";
+    if (row->budget < 0) return "-";
+    return (row->by_cpu ? row->cpu : row->wall) < row->budget ? "ok" : "over";
+}
+
+// The budget column: `<0.5`, `<600.0 cpu`, `TBD` or `-`.
+static typeof(const char[:]) budget_text(char out[:], const struct Row *row) {
+    if (row->tbd) return "TBD";
+    if (row->budget < 0) return "-";
+    format::Written made =
+        format::to(out.data, countof(out), "<", format::fixed(row->budget, 1), row->by_cpu ? " cpu" : "");
+    return out[0:made.length];
+}
+
+static I32 report(const char tsv[:]) {
+    F64 load[3] = {0, 0, 0};
+    (void)c::getloadavg(load, 3);
+    console::print(format::left("step", 46), " ", format::pad("wall s", 8), " ", format::pad("cpu s", 8), "  ",
+                   format::left("budget s", 10), " verdict\n");
+    I32 failed = 0;
+    static char table[1U << 14];
+    Usize used = 0;
+    for (Usize i = 0; i < row_count; i++) {
+        const struct Row *row = &rows[i];
+        char budget[32];
+        console::print(format::left(name_of(row), 46), " ", format::pad(format::fixed(row->wall, 2), 8), " ",
+                       format::pad(format::fixed(row->cpu, 2), 8), "  ",
+                       format::left(budget_text(budget[0:32], row), 10), " ", verdict(row), "\n");
+        failed += row->status != 0 ? 1 : 0;
+        used += format::to(table + used, sizeof table - used, name_of(row), "\t", format::fixed(row->wall, 3), "\t",
+                           format::fixed(row->cpu, 3), "\t",
+                           format::fixed(row->tbd || row->budget < 0 ? -1.0 : row->budget, 3), "\t", verdict(row), "\t",
+                           format::fixed(row->load, 2), "\n")
+                    .length;
+    }
+    console::print("load average at the end: ", format::fixed(load[0], 2), " ", format::fixed(load[1], 2), " ",
+                   format::fixed(load[2], 2), " (the machine is shared; compare the CPU column)\n");
+    (void)files::write_file(tsv, as_bytes(table[0:used]), files::Replace);
+    return failed != 0 ? 1 : 0;
+}
+
+I32 main(Str args[:]) {
+    if (countof(args) < 3) {
+        console::print_error("usage: bench SMITH TSV [full]\n");
+        return 2;
+    }
+    smith_path = c::realpath(args[1].data, absolute) != nullptr ? absolute : args[1].data;
+    Bool full = false;
+    for (Usize i = 3; i < countof(args); i++) {
+        full = full || text::is(args[i], "full");
+    }
+    // The steps measure the work, not the queue: no wait for a slot (a CI job holding them would add minutes of wall),
+    // and the share of one slot, four cores, which is what the budgets are stated for.
+    (void)c::setenv("SMITH_SLOTS", "0", 1);
+    (void)c::setenv("SMITH_CORES", "4", 1);
+    bench_noop();
+    bench_one_file();
+    bench_worktree();
+    bench_fmt_lint();
+    bench_module();
+    bench_long(full);
+    return report(args[2]);
+}
