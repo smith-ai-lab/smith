@@ -694,6 +694,7 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
     }
 
     void run_link(Link *pair, void (*second)(Link *pair)) {
+        task::use(nullptr); // a test before this one on the worker may leave the thread's lock count raised: reset it
         task::limit_workers(1);
         {
             task::Group group = {};
@@ -788,6 +789,7 @@ export void test_task_an_accept_and_a_connect_in_two_tasks_on_one_worker_both_co
         test::check_equal(c::bind(meeting.listener, (struct c::sockaddr *)&meeting.address, sizeof(meeting.address)),
                           0);                                 // NOLINT(smith-effects)
         test::check_equal(c::listen(meeting.listener, 4), 0); // NOLINT(smith-effects)
+        task::use(nullptr);
         task::limit_workers(1);
         {
             task::Group group = {};
