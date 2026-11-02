@@ -215,7 +215,10 @@ static bool smith_rec_once(const char *path) {
     for (size_t i = 0; i < smith_rec_seen_count; i++) { // bounded by the files
         if (strcmp(smith_rec_seen[i], path) == 0) return false;
     }
-    if (smith_rec_seen_count < smith_rec_seen_max) smith_rec_seen[smith_rec_seen_count++] = smith_cov_copy(path);
+    if (smith_rec_seen_count >= smith_rec_seen_max)
+        smith_cov_cross("the files a record lists once (1024)");
+    else
+        smith_rec_seen[smith_rec_seen_count++] = smith_cov_copy(path);
     return true;
 }
 
@@ -283,8 +286,11 @@ static void smith_rec_write_includes(FILE *out, const char *file) {
             length > 2 && (strcmp(relative + length - 2, ".c") == 0 || strcmp(relative + length - 2, ".h") == 0);
         if (!code) {
             smith_rec_write_input(out, "input", relative);
-        } else if (smith_rec_write_outside(out, relative) && smith_rec_queue_count < smith_rec_queue_max) {
-            smith_rec_queue[smith_rec_queue_count++] = smith_cov_copy(relative);
+        } else if (smith_rec_write_outside(out, relative)) {
+            if (smith_rec_queue_count >= smith_rec_queue_max)
+                smith_cov_cross("the headers a record follows (512)");
+            else
+                smith_rec_queue[smith_rec_queue_count++] = smith_cov_copy(relative);
         }
         smith_rec_source_path[0] = '\0';
     }
@@ -423,7 +429,10 @@ static void smith_rec_name(SmithRecResult *result, const char *path) {
     for (size_t i = 0; i < result->named_count; i++) { // bounded by the files of the record
         if (strcmp(smith_rec_named[result->named_first + i], path) == 0) return;
     }
-    if (smith_rec_named_used >= smith_rec_named_max) return;
+    if (smith_rec_named_used >= smith_rec_named_max) {
+        smith_cov_cross("the files the records name (262144)");
+        return;
+    }
     smith_rec_named[smith_rec_named_used++] = smith_cov_copy(path);
     result->named_count++;
 }

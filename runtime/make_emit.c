@@ -287,8 +287,9 @@ static const char *smith_make_list(const SmithMakeArgv *argv, const size_t *indi
                 smith_make_put_text(&out, parts > 0 ? ", " : "");
                 smith_make_put_text(&out, smith_make_array_name(&smith_make.vars[s->var]));
                 smith_make.vars[s->var].used_as_array = true;
-                if (smith_make_ref_log_count < smith_make_ref_log_max)
-                    smith_make_ref_log[smith_make_ref_log_count++] = s->var;
+                if (smith_make_ref_log_count >= smith_make_ref_log_max)
+                    smith_make_too_many("array references in one Makefile", smith_make_ref_log_max);
+                smith_make_ref_log[smith_make_ref_log_count++] = s->var;
                 parts++;
                 k += length - 1;
                 continue;
