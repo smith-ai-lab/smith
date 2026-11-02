@@ -71,12 +71,22 @@ static Bool is_segment(lex::TokenKind kind) {
     return kind == lex::name || kind == lex::type_name;
 }
 
+// Whether the token `offset` ahead continues a path: `::` (the old separator, which warns) or `.` before a type name
+// (`build.Build`; a `.` before a lowercase name is a member access and ends the path).
+static Bool at_separator(const parse::Parser *p, Usize offset, lex::TokenKind before) {
+    lex::TokenKind kind = parse::peek_at(p, offset).kind;
+    if (kind == lex::colon_colon) return true;
+    // Only after a lowercase name: `Color.Red` stays a member of a type.
+    return kind == lex::dot && p->new_syntax && before == lex::name &&
+           parse::peek_at(p, offset + 1).kind == lex::type_name;
+}
+
 // The offset of the last segment of the path that starts `offset` tokens ahead, or the largest Usize when no path
 // starts there.
 static Usize path_last(const parse::Parser *p, Usize offset) {
     if (!is_segment(parse::peek_at(p, offset).kind)) return no_path;
     Usize last = offset;
-    while (parse::peek_at(p, last + 1).kind == lex::colon_colon && is_segment(parse::peek_at(p, last + 2).kind)) {
+    while (at_separator(p, last + 1, parse::peek_at(p, last).kind) && is_segment(parse::peek_at(p, last + 2).kind)) {
         last += 2;
     }
     return last;
@@ -189,9 +199,10 @@ export ast::Path path(parse::Parser *p) {
         result.segments = mem::realloc(result.segments, countof(result.segments) + 1);
         ast::Identifier segment = {.text = parse::text(p, token), .span = token.span};
         result.segments[countof(result.segments) - 1] = segment;
-        Bool more = parse::at(p, lex::colon_colon) && is_segment(parse::peek_at(p, 1).kind);
+        Bool more = at_separator(p, 0, token.kind) && is_segment(parse::peek_at(p, 1).kind);
         if (!more) break;
-        parse::advance(p);
+        lex::Token separator = parse::advance(p);
+        if (separator.kind == lex::colon_colon) parse::warn_separator(p, separator);
     }
     result.span = parse::span_from(p, first.span.start);
     return result;
