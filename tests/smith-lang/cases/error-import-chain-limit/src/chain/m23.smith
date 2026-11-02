@@ -1,0 +1,4 @@
+module chain::m23;
+import chain::m24;
+
+export int f23() { return 23; }

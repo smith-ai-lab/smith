@@ -36,7 +36,7 @@ tags: [libc, lint, idiom, libraries]
 | `strtod`, `strtof` | `text::parse_f64`, `text::parse_f32` |
 | `qsort` | `slice::sort(xs)` for numbers, `slice::sort_by(xs, less)` for the rest |
 | `getenv` | `env::get(name)`, an `option` ([direct-call-modules](direct-call-modules.md)) |
-| `setenv`, `unsetenv` | gap: [#917](https://github.com/smith-ai-lab/smith/issues/917) |
+| `setenv`, `unsetenv` | `env::set(name, value)`, `env::remove(name)`, an `option` of `env::Error` |
 | `system` | `process::run(argv)` ([process](process.md)): no shell, the argument vector |
 | `abs` | `math::abs(x)` |
 | `exit`, `_exit`, `abort` | gap (design): [#924](https://github.com/smith-ai-lab/smith/issues/924) |
@@ -54,8 +54,8 @@ tags: [libc, lint, idiom, libraries]
 | `strrchr` | `slice::find_last(xs, v)` |
 | `strcspn` | `slice::find_if(xs, pred)` |
 | `memcpy`, `memmove`, `memset`, `memcmp` | `mem::copy`, `mem::move`, `mem::zero` or `mem::fill`, `mem::equal` (reported by `smith-mem`) |
-| `strerror`, `strerror_r` | `files::describe(error)`, `process::describe(error)`, `net::describe(error)`: a constant text for each module's error |
-| `strdup` | gap: `text::copy` and `text::terminated`, [#921](https://github.com/smith-ai-lab/smith/issues/921) (blocked: a new export in `std::text` breaks `front/compile.smith`) |
+| `strerror`, `strerror_r` | `files::describe(error)`, `process::describe(error)`, `net::describe(error)`: a constant text for each module's error; `text::os_error(code)` for a raw errno |
+| `strdup` | `text::copy(word)` (into the current allocator, a NUL after the count, freed with `mem::free`); `text::terminated(word)` for a C edge only |
 
 ## math.h
 

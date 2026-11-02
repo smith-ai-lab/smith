@@ -970,7 +970,7 @@ export void test_lsp_modules_build_and_open() {
         return;
     }
     scratch::Project p = folder(&root, "modules");
-    scratch::expect_text("modules: the same two files build and run with smith cc", "20",
+    scratch::expect_text("modules: the same two files build and run with smith cc", "26",
                          scratch::capture(&p, "smith cc main.smith foo.smith -o demo 2>&1 && ./demo"));
     const char *log = session(&p, "open main.smith foo.smith");
     scratch::expect_count("modules: both files open", 2, count_prefix(log, "diagnostics "));

@@ -12,6 +12,12 @@
     host->error(host->context, location, message);
 }
 
+// A table of the lowering is full: the first one is kept, and smith_lang_feed reports it with its name and size.
+static void smith_lang_limit(SmithLang *lang, const char *table, size_t size) {
+    if (lang->limit[0] != 0) return;
+    snprintf(lang->limit, sizeof lang->limit, "the lowering's table of %s holds %zu and is full", table, size);
+}
+
 // A note for the error that is reported next at `error_location`, at `location` (0: no place, the note stands alone).
 // A host without notes says nothing of them: the error's own text stands.
 [[gnu::format(printf, 4, 5)]] static void smith_lang_note(const SmithHost *host, uint32_t error_location,

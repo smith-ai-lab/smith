@@ -28,6 +28,10 @@
 //                  label's statement, `break`, `continue`, `goto`. A condition is checked against `Bool`; a `return`
 //                  value against the function's result type (a plain `return;` in a function that returns a value is
 //                  an error, a value in a `Void` function too).
+//   Constants      `const X := v` (and `constexpr`), local or of the module, is an error when `v` names a variable
+//                  that is not constant (spec "Modules and declarations"). Not yet: constant by default, shadowing and
+//                  an unused result (they wait for the AST's `is_new`, #1524), `_ := f()` and `(q, r) := f()` (the
+//                  statement parser does not read bindings in a body yet; destructuring also needs tuples, #1512).
 //   Locals         The type is written, or `Auto` takes the initializer's type. A name already in the same scope is an
 //                  error. A local is `const` through the written type.
 //   Calls, Fn      Calls and the `Fn(F)` values are typed by front::types_expr; this module supplies the conversions
@@ -213,6 +217,72 @@ static types::TypeRef auto_type(types::Checked *r, const ast::Decl *d, Str name,
     return found;
 }
 
+// Pushes the operands of `e` that decide whether it is a constant, onto `stack` (a work stack, no recursion).
+static Usize constant_operands(const ast::Expr *e, const ast::Expr *stack[:], Usize top) {
+    if (e->kind == .unary) {
+        stack[top] = e->kind.unary.operand;
+        return top + 1;
+    }
+    if (e->kind == .binary) {
+        stack[top] = e->kind.binary.left;
+        stack[top + 1] = e->kind.binary.right;
+        return top + 2;
+    }
+    if (e->kind == .conditional) {
+        stack[top] = e->kind.conditional.condition;
+        stack[top + 1] = e->kind.conditional.then_value;
+        stack[top + 2] = e->kind.conditional.else_value;
+        return top + 3;
+    }
+    if (e->kind == .cast) {
+        stack[top] = e->kind.cast.operand;
+        return top + 1;
+    }
+    return top;
+}
+
+// The first part of `init` that cannot be known at compile time: a name of a variable that is not constant, or an
+// assignment. A call is not judged here (its callee may be a constexpr function). Null when there is none.
+static const ast::Expr *not_constant(types::Checked *r, const ast::Expr *init) {
+    const ast::Expr *stack[64] = {};
+    Usize top = 1;
+    stack[0] = init;
+    while (top > 0) {
+        top -= 1;
+        const ast::Expr *e = stack[top];
+        if (e == nullptr) {
+            continue;
+        }
+        if (e->kind == .assign || e->kind == .stmt_expr) {
+            return e;
+        }
+        if (e->kind == .name) {
+            const types::Symbol *s = types::lookup_path(&r->scopes, e->kind.name.path);
+            if (s != nullptr && s->kind == .variable && !s->is_const) {
+                return e;
+            }
+        }
+        if (top + 3 > countof(stack)) {
+            return nullptr;
+        }
+        top = constant_operands(e, stack, top);
+    }
+    return nullptr;
+}
+
+// A `const` (or `constexpr`) binding is known at compile time: reports the part of `init` that is not.
+static void require_constant(types::Checked *r, Str name, const ast::Expr *init) {
+    if (init == nullptr || types_expr::is_undefined(init)) {
+        return;
+    }
+    const ast::Expr *bad = not_constant(r, init);
+    if (bad != nullptr) {
+        types::failf(r, bad->span, "`const ", name,
+                     "` is known at compile time, but this is not; use a constant here, or write `", name,
+                     " := ...` without `const`");
+    }
+}
+
 static void local_variable(types::Checked *r, const ast::Decl *d) {
     if (!(d->kind == .variable)) {
         return;
@@ -235,6 +305,9 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
         type = auto_type(r, d, name, init);
     } else if (init != nullptr) {
         types_expr::check(r, init, type);
+    }
+    if (is_constexpr) {
+        require_constant(r, name, init);
     }
     Bool is_const = written->qualifiers.is_const || is_constexpr;
     declare_local(r, d, name, type, is_const);
@@ -530,6 +603,9 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
     }
     state.function = name;
     types::TypeRef type = symbol->type;
+    if (d->kind.variable.is_constexpr) {
+        require_constant(r, name, d->kind.variable.init);
+    }
     if (is_auto(type)) {
         types_expr::infer(r, d->kind.variable.init);
     } else {

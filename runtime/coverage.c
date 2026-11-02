@@ -49,10 +49,16 @@ static char smith_cov_commit[64];
 static char smith_cov_text[smith_cov_text_max + 1];
 static bool smith_cov_overflow;
 
+// An input crossed a fixed limit: what it dropped would make the numbers wrong, so the run says which limit, once.
+static void smith_cov_cross(const char *limit) {
+    if (!smith_cov_overflow) fprintf(stderr, "smith coverage: %s crossed its limit, the table is not used\n", limit);
+    smith_cov_overflow = true;
+}
+
 static const char *smith_cov_copy(const char *text) {
     size_t length = strlen(text);
     if (smith_cov_pool_used + length + 1 > smith_cov_pool_max) {
-        smith_cov_overflow = true;
+        smith_cov_cross("the pool of names (8 MiB)");
         return "";
     }
     char *at = smith_cov_pool + smith_cov_pool_used;
@@ -80,7 +86,7 @@ static int smith_cov_file_index(const char *path) {
     int at = smith_cov_file_find(path);
     if (at >= 0) return at;
     if (smith_cov_file_count >= smith_cov_files_max) {
-        smith_cov_overflow = true;
+        smith_cov_cross("the file table (1024 files)");
         return -1;
     }
     smith_cov_files[smith_cov_file_count] = smith_cov_copy(path);
@@ -127,6 +133,7 @@ static size_t smith_cov_slurp(const char *path) {
     FILE *file = fopen(path, "rb");
     if (file == nullptr) return 0;
     size_t size = fread(smith_cov_text, 1, smith_cov_text_max, file);
+    if (size == smith_cov_text_max && fgetc(file) != EOF) smith_cov_cross("a coverage file (32 MiB)");
     fclose(file);
     smith_cov_text[size] = '\0';
     return size;
@@ -147,7 +154,11 @@ static void smith_cov_bits_read(const char *hex, uint8_t *bits) {
 static void smith_cov_table_line(char *const *field, size_t count) {
     if (count >= 2 && strcmp(field[0], "commit") == 0) {
         snprintf(smith_cov_commit, sizeof smith_cov_commit, "%s", field[1]);
-    } else if (count >= 5 && strcmp(field[0], "fn") == 0 && smith_cov_function_count < smith_cov_functions_max) {
+    } else if (count >= 5 && strcmp(field[0], "fn") == 0) {
+        if (smith_cov_function_count >= smith_cov_functions_max) {
+            smith_cov_cross("the function table (65536 functions)");
+            return;
+        }
         int file = smith_cov_file_index(field[1]);
         if (file < 0) return;
         smith_cov_functions[smith_cov_function_count++] =
@@ -157,7 +168,11 @@ static void smith_cov_table_line(char *const *field, size_t count) {
         int file = smith_cov_file_index(field[1]);
         if (file >= 0)
             smith_cov_ranges_read(field[2], field[0][0] == 'i' ? smith_cov_inst[file] : smith_cov_cover[file]);
-    } else if (count >= 3 && strcmp(field[0], "test") == 0 && smith_cov_test_count < smith_cov_tests_max) {
+    } else if (count >= 3 && strcmp(field[0], "test") == 0) {
+        if (smith_cov_test_count >= smith_cov_tests_max) {
+            smith_cov_cross("the test table (6144 tests)");
+            return;
+        }
         smith_cov_test_names[smith_cov_test_count] = smith_cov_copy(field[1]);
         smith_cov_bits_read(field[2], smith_cov_test_bits[smith_cov_test_count++]);
     }
@@ -247,7 +262,11 @@ static void smith_cov_lcov_line(char *line, SmithCovRecord *record) {
         record->first_function = smith_cov_function_count;
     } else if (record->file < 0) {
         return;
-    } else if (strncmp(line, "FN:", 3) == 0 && smith_cov_function_count < smith_cov_functions_max) {
+    } else if (strncmp(line, "FN:", 3) == 0) {
+        if (smith_cov_function_count >= smith_cov_functions_max) {
+            smith_cov_cross("the function table (65536 functions)");
+            return;
+        }
         char *comma = strchr(line + 3, ',');
         if (comma == nullptr) return;
         *comma = '\0';
@@ -557,7 +576,11 @@ static void smith_cov_diff_line(char *line) {
     if (strncmp(line, "diff --git ", 11) == 0) {
         char *b = strstr(line, " b/");
         snprintf(smith_cov_diff_path, sizeof smith_cov_diff_path, "%s", b != nullptr ? b + 3 : "");
-    } else if (strncmp(line, "@@ ", 3) == 0 && smith_cov_hunk_count < smith_cov_hunks_max) {
+    } else if (strncmp(line, "@@ ", 3) == 0) {
+        if (smith_cov_hunk_count >= smith_cov_hunks_max) {
+            smith_cov_cross("the diff's hunks (8192)");
+            return;
+        }
         const char *side = strchr(line, smith_cov_new_side ? '+' : '-');
         char *end = nullptr;
         unsigned long first = side != nullptr ? strtoul(side + 1, &end, 10) : 0;
@@ -637,7 +660,7 @@ static int smith_cov_report(const char *table, const char *base, const char *out
     snprintf(range, sizeof range, "%s..HEAD", base);
     smith_cov_new_side = true;
     const char *const diff[] = {"diff", "-U0", "--no-renames", range, "--", nullptr};
-    if (!smith_changed_git(diff, smith_cov_diff_line)) {
+    if (!smith_changed_git(diff, smith_cov_diff_line) || smith_cov_overflow) {
         fprintf(out, "changed\tunknown\tunknown\n");
         return fclose(out) == 0 ? 0 : 1;
     }
@@ -690,11 +713,13 @@ bool smith_core_coverage_report(const char *table, const SmithCoreChanged *chang
     }
     if (ok) {
         smith_cov_totals(out);
+        if (count > smith_cov_hunks_max) smith_cov_cross("the changed hunks (8192)");
         for (size_t i = 0; i < count && smith_cov_hunk_count < smith_cov_hunks_max; i++) { // bounded by the argument
             smith_cov_hunks[smith_cov_hunk_count++] = (SmithCovHunk){
                 smith_cov_file_find(changed[i].path), changed[i].path, changed[i].first, changed[i].count, true};
         }
-        smith_cov_uncovered(out);
+        ok = !smith_cov_overflow;
+        if (ok) smith_cov_uncovered(out);
     }
     if (out != nullptr) fclose(out);
     return ok;
