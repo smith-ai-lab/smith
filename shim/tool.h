@@ -2,7 +2,7 @@
 // deferred initializers is read through the platform layer (shim/platform.h).
 //
 // 1. Static initializers. The tools declare their flags as global llvm::cl::opt objects, which LLVM aborts on when two
-//    register the same flag, so scripts/defer_init.c moved each tool's initializers out of the section dyld runs at
+//    register the same flag, so macho/defer_init.smith moved each tool's initializers out of the section dyld runs at
 //    load, into __DATA,__smith_<name>; the tool that runs runs them here, in the order the linker put the objects.
 // 2. The resource directory. clangd and clang-tidy find the compiler's builtin headers and modules by the path of
 //    their own executable, which is smith's, so build_llvm_run_macos redirects their one call that does it
