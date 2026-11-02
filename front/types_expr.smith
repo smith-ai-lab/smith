@@ -46,6 +46,12 @@
 // the value of a `?T`. The walk of a value statement pushes its expressions as frames of the work stack, between
 // pseudo-frames that open and close scopes and bind names, and one last frame that joins the branches' types.
 //
+// CONSTRUCTION AND POINTERS (#1513, C2b, spec "Structs, enums and building values" and "Pointers"): `Point(x = 1)`
+// (a call whose callee names a struct: named fields in any order, a field left out is zero), named arguments of a
+// function (`f(b = 1, a = 2)`, matched by the parameter names of its declaration), `[1, 2, 3]`, and, for a variable of
+// smith's own syntax (`Symbol.is_new`): constant unless `mut`, `&x` is `*mut T` for a `mut x` and else `*T`, `p.x`
+// through a pointer, and a write through `*T` is an error naming `*mut T`.
+//
 // NOT YET TYPED (each reported as `not yet typed: <kind>` with its span): `try`, a type used as a value, a name from
 // another module (`arena::push`), nested designators (`.a.b = 1`), a designator index that is not an integer literal.
 //
@@ -278,6 +284,100 @@ static const types::Symbol *const_variable(const types::Checked *c, const ast::E
     return nullptr;
 }
 
+// The variable at the root of a place (`x` in `x`, `x.a`, `x[i]`, `(*p).a` is `p`), else null.
+static const types::Symbol *root_symbol(const types::Checked *c, const ast::Expr *e) {
+    const ast::Expr *at = e;
+    while (at != nullptr) {
+        if (at->kind == .name) {
+            const types::Symbol *s = types::lookup_path(&c->scopes, at->kind.name.path);
+            if (s != nullptr && s->kind == .variable) {
+                return s;
+            }
+            return nullptr;
+        }
+        if (at->kind == .member) {
+            at = at->kind.member.base;
+        } else if (at->kind == .index) {
+            at = at->kind.index.base;
+        } else if (at->kind == .unary && at->kind.unary.op == .dereference) {
+            at = at->kind.unary.operand;
+        } else {
+            return nullptr;
+        }
+    }
+    return nullptr;
+}
+
+// Whether `e` is written in smith's own syntax: the variable at its root was declared there (#1524).
+static Bool in_new_syntax(const types::Checked *c, const ast::Expr *e) {
+    const types::Symbol *s = root_symbol(c, e);
+    return s != nullptr && s->is_new;
+}
+
+// The constant variable that writing to `e` would change: `x` itself, or `x` in `x.a` and `x[i]` (a field of a
+// constant record, an element of a constant array), when `x` is constant and written in smith's own syntax. A write
+// through a pointer changes what it points to, not `x`, so a pointer ends the walk. Null when there is none.
+static const types::Symbol *constant_place(const types::Checked *c, const ast::Expr *e) {
+    const ast::Expr *at = e;
+    while (at != nullptr) {
+        if (at->kind == .name) {
+            const types::Symbol *s = types::lookup_path(&c->scopes, at->kind.name.path);
+            if (s != nullptr && s->kind == .variable && s->is_new && s->is_const) {
+                return s;
+            }
+            return nullptr;
+        }
+        const ast::Expr *base = nullptr;
+        if (at->kind == .member) {
+            base = at->kind.member.base;
+        } else if (at->kind == .index) {
+            base = at->kind.index.base;
+        } else {
+            return nullptr;
+        }
+        types::TypeRef t = types::type_of(c, base);
+        if (t == nullptr || t->kind == .pointer || t->kind == .slice) {
+            return nullptr;
+        }
+        at = base;
+    }
+    return nullptr;
+}
+
+// The read-only pointer (`*T`, which is `pointee_const`) that writing to `e` goes through, else null: `p.*`, `p.x` and
+// `p[i]` where `p` is a `*T`. Only for a place written in smith's own syntax, where `*T` is read-only and `*mut T`
+// writable (a C `const T *` keeps the rules it had).
+static types::TypeRef readonly_pointer(const types::Checked *c, const ast::Expr *e) {
+    if (!in_new_syntax(c, e)) {
+        return nullptr;
+    }
+    const ast::Expr *at = e;
+    while (at != nullptr) {
+        const ast::Expr *base = nullptr;
+        if (at->kind == .unary && at->kind.unary.op == .dereference) {
+            base = at->kind.unary.operand;
+        } else if (at->kind == .member) {
+            base = at->kind.member.base;
+        } else if (at->kind == .index) {
+            base = at->kind.index.base;
+        } else {
+            return nullptr;
+        }
+        types::TypeRef t = types::type_of(c, base);
+        if (t == nullptr) {
+            return nullptr;
+        }
+        if (t->kind == .pointer) {
+            if (t->pointee_const) {
+                return t;
+            }
+            return nullptr;
+        }
+        at = base;
+    }
+    return nullptr;
+}
+
 // Whether `e` may be written to; reports and says what to write when it may not.
 static Bool writable(types::Checked *c, const ast::Expr *e, Str verb) {
     if (!is_lvalue(e)) {
@@ -286,9 +386,22 @@ static Bool writable(types::Checked *c, const ast::Expr *e, Str verb) {
         return false;
     }
     const types::Symbol *s = const_variable(c, e);
-    if (s != nullptr) {
+    if (s != nullptr && !s->is_new) {
         types::failf(c, e->span, "cannot ", verb, " `", s->name,
                      "`, it is declared const; remove `const` from its declaration");
+        return false;
+    }
+    const types::Symbol *constant = constant_place(c, e);
+    if (constant != nullptr) {
+        types::failf(c, e->span, "cannot ", verb, " `", constant->name, "`, `", constant->name,
+                     "` is constant: declare it `mut ", constant->name, "`");
+        return false;
+    }
+    types::TypeRef through = readonly_pointer(c, e);
+    if (through != nullptr) {
+        types::failf(c, e->span, "cannot ", verb, " this place, it is behind the read-only pointer `*",
+                     types::show(through->element), "`; take a `*mut ", types::show(through->element),
+                     "` to write through it");
         return false;
     }
     return true;
@@ -687,7 +800,9 @@ static types::TypeRef unary_address(types::Checked *c, const ast::Expr *e, const
                      "`&variable`");
         return invalid(c);
     }
-    Bool constant = const_variable(c, operand) != nullptr;
+    // `&x` is `*mut T` when `x` is `mut`, else `*T` (the same for `&x.a` and `&xs[i]`; through a `*T`, read-only).
+    Bool constant = const_variable(c, operand) != nullptr || constant_place(c, operand) != nullptr ||
+                    readonly_pointer(c, operand) != nullptr;
     return types::pointer_to(&c->table, t, constant);
 }
 
@@ -1191,13 +1306,44 @@ static types::TypeRef callable(types::TypeRef t) {
     return nullptr;
 }
 
+static Bool is_named(const ast::Expr *arg) {
+    return arg->kind == .named_arg;
+}
+
+static Bool has_named(ast::ExprRef args[:]) {
+    for (Usize i = 0; i < countof(args); i++) {
+        if (is_named(args[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The expression an argument gives: the value of `name = value`, else the argument itself.
+static const ast::Expr *argument_value(const ast::Expr *arg) {
+    if (arg->kind == .named_arg) {
+        return arg->kind.named_arg.value;
+    }
+    return arg;
+}
+
 static void push_arguments(Work *w, ast::ExprRef args[:], types::TypeRef signature) {
     for (Usize i = countof(args); i > 0; i--) {
         types::TypeRef wanted = nullptr;
         if (signature != nullptr && i - 1 < countof(signature->slots)) {
             wanted = signature->slots[i - 1].type;
         }
-        push(w, args[i - 1], wanted, 0);
+        push(w, argument_value(args[i - 1]), wanted, 0);
+    }
+}
+
+// A `name = value` argument has the type of its value.
+static void type_named_arguments(types::Checked *c, ast::ExprRef args[:]) {
+    for (Usize i = 0; i < countof(args); i++) {
+        const ast::Expr *arg = args[i];
+        if (arg->kind == .named_arg) {
+            types::set_type(c, arg, typ(c, arg->kind.named_arg.value));
+        }
     }
 }
 
@@ -1215,6 +1361,72 @@ static Bool arity_ok(types::Checked *c, const ast::Expr *e, types::TypeRef signa
                  wanted, " argument", plural, ", `", types::show(signature), "`; write exactly ", wanted, " argument",
                  plural);
     return false;
+}
+
+// The declaration of the function a call names, when the callee is a plain name (its parameters have names).
+static const ast::Decl *callee_function(const types::Checked *c, const ast::Expr *callee) {
+    if (callee->kind != .name) {
+        return nullptr;
+    }
+    const types::Symbol *s = types::lookup_path(&c->scopes, callee->kind.name.path);
+    if (s != nullptr && s->kind == .function_symbol && s->decl != nullptr && s->decl->kind == .function) {
+        return s->decl;
+    }
+    return nullptr;
+}
+
+static Str parameter_list(ast::Param params[:]) {
+    if (countof(params) == 0) {
+        return "none";
+    }
+    return msg(format::push("`", params[0].name, "`"));
+}
+
+// Which parameter does the argument `i` of a call with names fill: by position, or by its name. Reports an unknown
+// name, a name given twice and a name that a position already filled; returns countof(params) for those.
+static Usize argument_slot(types::Checked *c, ast::ExprRef args[:], Usize i, ast::Param params[:], Bool taken[:]) {
+    Usize slot = i;
+    const ast::Expr *arg = args[i];
+    if (arg->kind == .named_arg) {
+        Str name = arg->kind.named_arg.name;
+        slot = countof(params);
+        for (Usize k = 0; k < countof(params); k++) {
+            if (same_text(params[k].name, name)) {
+                slot = k;
+            }
+        }
+        if (slot == countof(params)) {
+            types::failf(c, args[i]->span, "the function has no parameter `", name,
+                         "`; name one of its parameters, such as ", parameter_list(params));
+            return slot;
+        }
+    }
+    if (slot < countof(taken) && taken[slot]) {
+        types::failf(c, args[i]->span, "the parameter `", params[slot].name,
+                     "` is given twice; give each parameter once");
+        return countof(params);
+    }
+    if (slot < countof(taken)) {
+        taken[slot] = true;
+    }
+    return slot;
+}
+
+// Pushes the arguments of a call that names some, each against the type of the parameter it fills.
+static void push_named_arguments(types::Checked *c, Work *w, ast::ExprRef args[:], types::TypeRef signature,
+                                 ast::Param params[:]) {
+    Bool taken[:] = mem::alloc_slice(Bool, countof(params));
+    Usize slots[:] = mem::alloc_slice(Usize, countof(args));
+    for (Usize i = 0; i < countof(args); i++) {
+        slots[i] = argument_slot(c, args, i, params, taken);
+    }
+    for (Usize i = countof(args); i > 0; i--) {
+        types::TypeRef wanted = nullptr;
+        if (slots[i - 1] < countof(signature->slots)) {
+            wanted = signature->slots[slots[i - 1]].type;
+        }
+        push(w, argument_value(args[i - 1]), wanted, 0);
+    }
 }
 
 static void call_callee_done(types::Checked *c, Work *w, Frame f) {
@@ -1240,6 +1452,22 @@ static void call_callee_done(types::Checked *c, Work *w, Frame f) {
     if (!arity_ok(c, e, signature, countof(args))) {
         signature = nullptr;
     }
+    const ast::Decl *function = callee_function(c, callee);
+    ast::Param params[:] = {};
+    if (function != nullptr && function->kind == .function) {
+        params = function->kind.function.params;
+    }
+    if (has_named(args) && signature != nullptr) {
+        if (countof(params) != countof(signature->slots)) {
+            types::failf(c, e->span,
+                         "named arguments need a function whose parameters have names; call a function "
+                         "by its name, or pass the arguments by position");
+            push_arguments(w, args, nullptr);
+            return;
+        }
+        push_named_arguments(c, w, args, signature, params);
+        return;
+    }
     push_arguments(w, args, signature);
 }
 
@@ -1248,12 +1476,109 @@ static void call_after(types::Checked *c, Frame f) {
     if (!(e->kind == .call)) {
         return;
     }
+    type_named_arguments(c, e->kind.call.args);
     types::TypeRef signature = callable(typ(c, e->kind.call.callee));
     if (signature == nullptr) {
         poison(c, e);
         return;
     }
     finish(c, e, signature->element, f.expected);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Construction: `Point(x = 1, y = 2)` (spec "Structs, enums and building values" of #1428)
+
+static Str first_field(types::TypeRef record) {
+    if (countof(record->slots) == 0) {
+        return "field";
+    }
+    return record->slots[0].name;
+}
+
+// The record a call constructs when its callee names a struct (or an alias of one), else null.
+static types::TypeRef constructed_record(const types::Checked *c, const ast::Expr *callee) {
+    if (callee->kind != .name) {
+        return nullptr;
+    }
+    const types::Symbol *s = types::lookup_path(&c->scopes, callee->kind.name.path);
+    if (s == nullptr || s->kind != .type_name || s->type == nullptr || s->type->kind != .record) {
+        return nullptr;
+    }
+    return s->type;
+}
+
+// Stage 0 of a construction: each field's value is checked against the field's type; the callee is not a value.
+static void construct_before(Work *w, Frame f, types::TypeRef record) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call)) {
+        return;
+    }
+    ast::ExprRef args[:] = e->kind.call.args;
+    push(w, e, f.expected, 3);
+    for (Usize i = countof(args); i > 0; i--) {
+        types::TypeRef wanted = nullptr;
+        const ast::Expr *arg = args[i - 1];
+        if (arg->kind == .named_arg) {
+            const types::Slot *field = types::member(record, arg->kind.named_arg.name);
+            if (field != nullptr) {
+                wanted = field->type;
+            }
+        }
+        push(w, argument_value(args[i - 1]), wanted, 0);
+    }
+}
+
+// The values are typed: every argument is a named, known field, given once. A field left out is zero.
+static void construct_after(types::Checked *c, Frame f, types::TypeRef record) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call)) {
+        return;
+    }
+    ast::ExprRef args[:] = e->kind.call.args;
+    Str shown = types::show(record);
+    Bool seen[:] = mem::alloc_slice(Bool, countof(record->slots));
+    Bool ok = true;
+    for (Usize i = 0; i < countof(args); i++) {
+        const ast::Expr *arg = args[i];
+        if (!(arg->kind == .named_arg)) {
+            types::failf(c, args[i]->span, "a field of `", shown, "` is always named; write `", shown, "(",
+                         first_field(record), " = value)`");
+            ok = false;
+            continue;
+        }
+        Str name = arg->kind.named_arg.name;
+        const types::Slot *field = types::member(record, name);
+        if (field == nullptr) {
+            if (countof(record->slots) == 0) {
+                types::failf(c, args[i]->span, "`", shown, "` has no field `", name, "`; it has no fields at all");
+            } else {
+                types::failf(c, args[i]->span, "`", shown, "` has no field `", name,
+                             "`; write one of its fields, such as `", record->slots[0].name, "`");
+            }
+            ok = false;
+            continue;
+        }
+        Usize index = 0;
+        for (Usize k = 0; k < countof(record->slots); k++) {
+            if (same_text(record->slots[k].name, name)) {
+                index = k;
+            }
+        }
+        if (seen[index]) {
+            types::failf(c, args[i]->span, "the field `", name, "` of `", shown, "` is given twice; remove one");
+            ok = false;
+        }
+        seen[index] = true;
+        if (typ(c, arg->kind.named_arg.value) == invalid(c)) {
+            ok = false;
+        }
+    }
+    type_named_arguments(c, args);
+    if (!ok) {
+        poison(c, e);
+        return;
+    }
+    finish(c, e, record, f.expected);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1353,6 +1678,10 @@ static void slice_after(types::Checked *c, Frame f) {
 static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::TypeRef base, Bool arrow) {
     Bool through_pointer = base->kind == .pointer && base->element->kind == .record;
     if (arrow && through_pointer) {
+        return base->element;
+    }
+    // smith's own syntax has no `->`: `p.x` reads through a pointer (spec "Pointers" of #1428)
+    if (!arrow && through_pointer && e->kind == .member && in_new_syntax(c, e->kind.member.base)) {
         return base->element;
     }
     if (!arrow && base->kind == .record) {
@@ -1650,6 +1979,85 @@ static void compound_expr(types::Checked *c, Work *w, Frame f) {
         push(w, items[i].value, wanted, 0);
     }
     finish(c, e, t, f.expected);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Array literals and what only a call may hold
+
+// `[1, 2, 3]`: where an array or a slice of `T` is expected each element is checked as a `T`; with nothing expected,
+// the first element's type is the one every element must have (a hidden array of that many elements).
+static void array_literal_before(types::Checked *c, Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .array_lit)) {
+        return;
+    }
+    ast::ExprRef items[:] = e->kind.array_lit.items;
+    types::TypeRef wanted = nullptr;
+    if (f.expected != nullptr && (f.expected->kind == .array || f.expected->kind == .slice)) {
+        wanted = f.expected->element;
+    }
+    if (countof(items) == 0 && wanted == nullptr) {
+        types::failf(c, e->span, "an empty `[]` needs a type; give the variable an array or slice type before `=`");
+        poison(c, e);
+        return;
+    }
+    push(w, e, f.expected, 4);
+    for (Usize i = countof(items); i > 0; i--) {
+        push(w, items[i - 1], wanted, 0);
+    }
+}
+
+static void array_literal_after(types::Checked *c, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .array_lit)) {
+        return;
+    }
+    ast::ExprRef items[:] = e->kind.array_lit.items;
+    types::TypeRef expected = f.expected;
+    types::TypeRef element = nullptr;
+    if (expected != nullptr && (expected->kind == .array || expected->kind == .slice)) {
+        element = expected->element;
+    } else if (countof(items) > 0) {
+        element = typ(c, items[0]);
+    }
+    Bool ok = element != invalid(c);
+    for (Usize i = 0; i < countof(items) && ok; i++) {
+        types::TypeRef t = typ(c, items[i]);
+        if (t == invalid(c)) {
+            ok = false;
+        } else if (t != element && !(expected != nullptr && expected->kind != .automatic && element != nullptr &&
+                                     expected->element == element)) {
+            types::failf(c, items[i]->span, "the elements of `[...]` have one type: element ", i + 1, " is `",
+                         types::show(t), "` but the first is `", types::show(element), "`; convert it with `as ",
+                         types::show(element), "`");
+            ok = false;
+        }
+    }
+    if (ok && expected != nullptr && expected->kind == .array && expected->count != countof(items)) {
+        types::failf(c, e->span, "`", types::show(expected), "` holds ", expected->count, " elements but this has ",
+                     countof(items), "; write exactly ", expected->count, " elements");
+        ok = false;
+    }
+    if (!ok) {
+        poison(c, e);
+        return;
+    }
+    if (expected != nullptr && (expected->kind == .array || expected->kind == .slice)) {
+        finish(c, e, expected, f.expected);
+        return;
+    }
+    finish(c, e, types::array_of(&c->table, element, countof(items), false), f.expected);
+}
+
+// A `name = value` outside a call has nothing to name.
+static void named_argument_alone(types::Checked *c, const ast::Expr *e) {
+    if (!(e->kind == .named_arg)) {
+        return;
+    }
+    types::failf(c, e->span, "`", e->kind.named_arg.name,
+                 " = ...` names an argument, so it only goes in a call: write `f(", e->kind.named_arg.name,
+                 " = value)` or a bare value here");
+    poison(c, e);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -2317,6 +2725,11 @@ static void before(types::Checked *c, Work *w, Frame f) {
         value_before(c, w, f);
     } else if (e->kind == .call) {
         const ast::Expr *callee = e->kind.call.callee;
+        types::TypeRef record = constructed_record(c, callee);
+        if (record != nullptr) {
+            construct_before(w, f, record);
+            return;
+        }
         push(w, e, f.expected, 1);
         push(w, callee, nullptr, 0);
     } else if (e->kind == .index) {
@@ -2341,6 +2754,12 @@ static void before(types::Checked *c, Work *w, Frame f) {
         cast_before(c, w, f);
     } else if (e->kind == .query) {
         query_before(c, w, f);
+    } else if (e->kind == .array_lit) {
+        array_literal_before(c, w, f);
+    } else if (e->kind == .tuple_lit) {
+        not_yet(c, e, "a tuple `(a, b)`, it waits for the tuple type (#1512)");
+    } else if (e->kind == .named_arg) {
+        named_argument_alone(c, e);
     } else {
         compound_expr(c, w, f);
     }
@@ -2374,6 +2793,8 @@ static void after(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .call) {
         if (f.stage == 1) {
             call_callee_done(c, w, f);
+        } else if (f.stage == 3) {
+            construct_after(c, f, constructed_record(c, e->kind.call.callee));
         } else {
             call_after(c, f);
         }
@@ -2385,6 +2806,8 @@ static void after(types::Checked *c, Work *w, Frame f) {
         member_after(c, f);
     } else if (e->kind == .cast) {
         cast_after(c, f);
+    } else if (e->kind == .array_lit) {
+        array_literal_after(c, f);
     } else {
         query_after(c, f);
     }

@@ -618,13 +618,15 @@ export typedef enum {
     module_name;
 } SymbolKind;
 
-// A name and what it means. `is_const` is the variable's own `const`.
+// A name and what it means. `is_const` is the variable's own `const`, and in smith's own syntax (`is_new`, #1524)
+// the absence of `mut`: constant is the default there.
 export struct Symbol {
     Str name;
     SymbolKind kind;
     TypeRef type;
     const ast::Decl *decl;
     Bool is_const;
+    Bool is_new; // declared in smith's own syntax (`x := v`, `x: T = v`, `mut x`, a parameter `x: T`)
     Bool exported;
 };
 
