@@ -36,7 +36,9 @@ import <sanitizer/asan_interface.h>;        // unpoison_memory_region
 import <sanitizer/common_interface_defs.h>; // the fiber calls: start_switch_fiber, finish_switch_fiber
 import <smith/trace.h>;                     // smith_failure_format
 import <sys/mman.h>;                        // mmap, mprotect, munmap: the stacks
-import <unistd.h>;                          // sysconf: the size of a page
+import <stdio.h>;
+import <stdlib.h>;
+import <unistd.h>; // sysconf: the size of a page
 if constexpr (target::os == target::macos) {
     import <sys/event.h>; // kqueue: a task waiting on a socket or a pipe
 } else {
@@ -754,8 +756,9 @@ if constexpr (target::os == target::macos) {
         if (block) unlock_scheduler();
         I32 count = c::epoll_wait(worker->queue, events, (I32)events_max, block ? 3000 : 0); // NOLINT(smith-effects)
         if (block && count == 0 && io_total > 0 && busy == 0 && ready_total == 0) {          // DBG
-            c::smith_failure_format(c::SmithFailure_Memory, "DBGHANG parked=%zu total=%zu live=%zu q=%d wfd=%d",
-                                    worker->io_parked, io_total, live, worker->queue, worker->wake_fd);
+            c::dprintf(2, "DBGHANG parked=%zu total=%zu live=%zu q=%d wfd=%d\n", worker->io_parked, io_total, live,
+                       worker->queue, worker->wake_fd);
+            c::abort();
         }
         if (block) lock_scheduler();
         for (I32 i = 0; i < count; i++) {
