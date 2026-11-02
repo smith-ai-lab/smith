@@ -12,8 +12,8 @@
 //   * An identifier is a `type_name` when its first character is an uppercase ASCII letter (`I32`, `Point`, `Option`)
 //     and a `name` otherwise (`x`, `printf`, `_tmp`); what `c::EOF` is, is the parser's question. A keyword has a kind
 //     of its own (`kw_if`): C23's keywords, `_Atomic _BitInt _Complex _Decimal32 _Decimal64 _Decimal128 _Generic
-//     _Imaginary _Noreturn` and smith's `module import export defer try countof`. `int`, `char`, `long`, `unsigned`
-//     and the rest of C's type keywords stay keywords: the parser decides what it accepts.
+//     _Imaginary _Noreturn` and smith's `module import export defer errdefer try countof`. `int`, `char`, `long`,
+//     `unsigned` and the rest of C's type keywords stay keywords: the parser decides what it accepts.
 //   * A literal has the form checked, not its value (the parser decodes it): `integer` (decimal, `0x`, octal, `0b`,
 //     `'` between digits, the suffixes `u l ll wb`), `floating` (decimal and hexadecimal, `f l` and `f16`..`f128`
 //     style suffixes), `character` and `string`, with the prefixes `u8`, `u`, `U` and `L` and C's escapes.
@@ -100,6 +100,7 @@ export enum TokenKind {
     kw_import,
     kw_export,
     kw_defer,
+    kw_errdefer,
     kw_try,
     kw_countof,
     kw_fn,
@@ -183,7 +184,7 @@ export typedef struct {
 export typedef Result(Tokens, LexError) Lexed;
 
 // The names and the texts of the kinds, in the order of the enumeration (a test checks the tables are as long as it).
-static const char *const kind_names[126] = {
+static const char *const kind_names[127] = {
     "end_of_file",
     "type_name",
     "name",
@@ -249,6 +250,7 @@ static const char *const kind_names[126] = {
     "kw_import",
     "kw_export",
     "kw_defer",
+    "kw_errdefer",
     "kw_try",
     "kw_countof",
     "kw_fn",
@@ -312,7 +314,7 @@ static const char *const kind_names[126] = {
     "dot_star",
 };
 
-static const char *const kind_texts[126] = {
+static const char *const kind_texts[127] = {
     "",
     "",
     "",
@@ -378,6 +380,7 @@ static const char *const kind_texts[126] = {
     "import",
     "export",
     "defer",
+    "errdefer",
     "try",
     "countof",
     "fn",

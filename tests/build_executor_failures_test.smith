@@ -47,6 +47,8 @@ export void test_build_executor_a_failed_job_says_why_and_stops_the_build() {
                              "to-out to-err");
     scratch::expect_contains("failure: the build says why it stopped", run.err,
                              "build stopped: subcommand failed (step ");
+    scratch::expect_contains("failure: a recap of the failed step comes before the last line", run.err,
+                             "smith: 1 failed:\n  step 1 ");
     char state[16];
     (void)format::to(state, sizeof state, yes_no(&p, "good"), " ", yes_no(&p, "after"));
     scratch::expect_text("failure: the first failure stops the others", "no no", state);
