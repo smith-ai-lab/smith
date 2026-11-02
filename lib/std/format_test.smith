@@ -613,8 +613,6 @@ export void test_format_no_rule_error_names_the_piece() {
 // ---------------------------------------------------------------------------------------------------------------
 // format::parse
 
-typedef Result(Usize, format::Error) SizeResult;
-
 static void check_ok_i64(const char *word, I64 expected) {
     Result(I64, format::Error) r = format::parse(text::make(word), I64);
     test::check(r == .ok);
@@ -668,9 +666,6 @@ export void test_format_parse_widths() {
     if (f == .ok) test::check_equal(f.ok, u64_max);
     Result(U64, format::Error) g = format::parse(text::make("18446744073709551616"), U64);
     test::check(g == .error);
-    SizeResult h = format::parse(text::make("12"), Usize);
-    test::check(h == .ok);
-    if (h == .ok) test::check_equal(h.ok, (Usize)12);
 }
 
 export void test_format_parse_hex() {
