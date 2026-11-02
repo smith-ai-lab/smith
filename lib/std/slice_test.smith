@@ -379,3 +379,50 @@ export void test_all_any() {
     test::check_equal(slice::all(none, positive), true);
     test::check_equal(slice::any(none, positive), false);
 }
+
+Bool is(const char got[:], const char want[:]) {
+    return slice::equal(got, want);
+}
+
+export void test_copy() {
+    I32 dst[3] = {0, 0, 0};
+    const I32 src[:] = (I32[3]){4, 5, 6};
+    slice::copy(dst[0:3], src);
+    test::check_equal(dst[0], 4);
+    test::check_equal(dst[2], 6);
+    I32 none[1] = {7};
+    slice::copy(none[0:0], src[0:0]);
+    test::check_equal(none[0], 7);
+}
+
+export void test_take() {
+    const char s[:] = "abcde";
+    const char head[:] = slice::take(&s, 2);
+    test::check_equal(is(head, "ab"), true);
+    test::check_equal(is(s, "cde"), true);
+    const char rest[:] = slice::take(&s, 99);
+    test::check_equal(is(rest, "cde"), true);
+    test::check_equal(countof(s), 0);
+}
+
+export void test_take_until() {
+    const char s[:] = "a=b=";
+    const char first[:] = slice::take_until(&s, '=');
+    test::check_equal(is(first, "a"), true);
+    const char second[:] = slice::take_until(&s, '=');
+    test::check_equal(is(second, "b"), true);
+    test::check_equal(countof(s), 0);
+    const char t[:] = "xyz";
+    const char all[:] = slice::take_until(&t, '=');
+    test::check_equal(is(all, "xyz"), true);
+    test::check_equal(countof(t), 0);
+}
+
+export void test_take_while() {
+    const char s[:] = "12ab";
+    const char digits[:] = slice::take_while(&s, ascii::digit);
+    test::check_equal(is(digits, "12"), true);
+    test::check_equal(is(s, "ab"), true);
+    const char none[:] = slice::take_while(&s, ascii::digit);
+    test::check_equal(countof(none), 0);
+}
