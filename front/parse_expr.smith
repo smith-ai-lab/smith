@@ -540,14 +540,16 @@ static ast::Initializer item(parse::Parser *p, ListFix *fix) {
 }
 
 // The warning of a braced list. A typed one `(P){.x = 1}` is `P(x = 1)` when every item has a field designator and the
-// type is a name; an untyped one `{1, 2}` is `[1, 2]` when no item has a designator; any other has no mechanical fix
+// type is a name, and `(P){}` is `P()`; an untyped one `{1, 2}` is `[1, 2]` when no item has a designator; any other
+// has no mechanical fix
 // (`P p = {.x = 1};` gets its type from the declaration's rewrite, F2).
 static void list_warning(parse::Parser *p, ast::TypeExpr *type, U32 start, U32 rparen, lex::Token open,
                          lex::Token close, ListFix *fix) {
     ast::Span whole = parse::span_from(p, start);
     Bool plain = !fix->complex && countof(fix->edits) + fix->positional > 0;
     if (type != nullptr) {
-        if (plain && fix->positional == 0 && type->kind == .named) {
+        Bool empty = !fix->complex && countof(fix->edits) + fix->positional + fix->designated == 0;
+        if ((plain || empty) && fix->positional == 0 && type->kind == .named) {
             parse::Edits edits = fix->edits;
             edits = with_edit(edits, from_to(start, start + 1), "");
             edits = with_edit(edits, from_to(rparen, open.span.end), "(");
@@ -984,7 +986,7 @@ static void tail_warning(Stack *st, ast::Span span, Str message, parse::Edits ed
 // `(T)x` is `x as T`, and `(x as T)` as the operand of a prefix operator.
 static void cast_warning(Stack *st, const Pending *op, const ast::Expr *operand) {
     parse::Parser *p = st->parser;
-    Str type_text = p->source[op->head.start + 1:op->head.end - 1];
+    Str type_text = parse::mended(p, op->head.start + 1, op->head.end - 1);
     Bool wrap = prefix_above(st);
     parse::Edits edits = {};
     edits = with_edit(edits, from_to(op->head.start, operand->span.start), wrap ? "(" : "");

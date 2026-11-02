@@ -1,5 +1,7 @@
-typedef struct {struct smith_array_f32_n {
-float * data; __SIZE_TYPE__ count [1]; } weights;struct smith_array_char_n {
+typedef struct {
+struct smith_array_f32_n {
+float * data; __SIZE_TYPE__ count [1]; } weights;
+struct smith_array_char_n {
 char * data; __SIZE_TYPE__ count [1]; } name;
 } slices_Layer;
 typedef struct smith_array_i32_n { __INT32_TYPE__ * data; __SIZE_TYPE__ count [1]; } slices_Numbers;

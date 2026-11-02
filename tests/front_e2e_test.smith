@@ -203,3 +203,39 @@ export void test_front_e2e_a_warning_line_says_warning() {
     test::check_equal(line, expected);
     test::check_equal(has(line, "error"), false);
 }
+
+// Two files (#1714): `app` calls `m.scale` and `mul := m.scale` of the module `mathlib` (a file under the library
+// root), the two objects link, and the program runs. The importer's object leaves `mathlib::scale` undefined and
+// the importer's object defines it.
+export void test_front_e2e_a_call_through_a_module_value_links_and_runs() {
+    Str folder = folder_for("modules");
+    c::mkdir(as_str(format::push(folder, "/lib")).data, 0o700);
+    c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
+    Str library = as_str(format::push(folder, "/lib/mathlib.smith"));
+    write_text(library, "pub fn scale(x: f64, k: f64) -> f64 {\n    x * k\n}\n");
+    Str app = as_str(format::push(folder, "/src/app.smith"));
+    write_text(app, "m := import mathlib\nmul := m.scale\n\n"
+                    "pub fn check() -> i32 {\n    a := m.scale(2.0, 3.0)\n    b := mul(k = 3.0, x = 2.0)\n"
+                    "    if a != 6.0 {\n        return 1\n    }\n    if b != a {\n        return 2\n    }\n    0\n}\n");
+    roots::Roots folders = {.source = as_str(format::push(folder, "/src")),
+                            .library = as_str(format::push(folder, "/lib"))};
+    compile::Report imported = compile::file(library, as_str(format::push(folder, "/mathlib.o")), "", folders);
+    test::check_equal(imported.ok, true);
+    compile::Report report = compile::file(app, as_str(format::push(folder, "/app.o")), "", folders);
+    Str none = "";
+    if (!report.ok) test::check_equal(report.text, none);
+    test::check_equal(report.ok, true);
+    if (report.ok && imported.ok) {
+        test::check_equal(sh_status(as_str(format::push("nm ", folder, "/app.o | grep -q ' U .*mathlib::scale'"))), 0);
+        test::check_equal(sh_status(as_str(format::push("nm ", folder, "/mathlib.o | grep -q ' T .*mathlib::scale'"))),
+                          0);
+        write_text(as_str(format::push(folder, "/main.c")),
+                   as_str(format::push("int check(void) __asm__(\"", prefix(), "app::check\");\n",
+                                       stand_ins("__builtin_trap();"), "int main(void) { return check(); }\n")));
+        I32 linked = sh_status(as_str(format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/app.o ", folder,
+                                                   "/mathlib.o -o ", folder, "/prog")));
+        test::check_equal(linked, 0);
+        if (linked == 0) test::check_equal(sh_status(as_str(format::push(folder, "/prog"))), 0);
+    }
+    remove_all(folder);
+}

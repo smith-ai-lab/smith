@@ -139,6 +139,38 @@ export void warning_fix(Parser *p, ast::Span span, Str message, Edits edits) {
     p->warnings[countof(p->warnings) - 1] = failure;
 }
 
+// The source between two offsets with the fixes of the old types inside it applied, so a declaration or a cast that
+// writes its type again writes the type as smith's own (`Key *` is `*Key`): without it the next pass reads `p: Key *`
+// or `as I32`, which is no form at all. Edits are taken in source order, the wider first, and one that starts inside
+// another is left out.
+export Str mended(const Parser *p, U32 start, U32 end) {
+    Edits inside = {};
+    for (Usize i = 0; i < countof(p->warnings); i++) {
+        Edits fix = p->warnings[i].fix;
+        for (Usize j = 0; j < countof(fix); j++) {
+            if (fix[j].span.start < start || fix[j].span.end > end) continue;
+            inside = mem::realloc(inside, countof(inside) + 1);
+            Usize at = countof(inside) - 1;
+            while (at > 0 &&
+                   (inside[at - 1].span.start > fix[j].span.start ||
+                    (inside[at - 1].span.start == fix[j].span.start && inside[at - 1].span.end < fix[j].span.end))) {
+                inside[at] = inside[at - 1];
+                at -= 1;
+            }
+            inside[at] = fix[j];
+        }
+    }
+    char text[:] = format::push("");
+    U32 from = start;
+    for (Usize i = 0; i < countof(inside); i++) {
+        if (inside[i].span.start < from) continue;
+        text = format::push(text, p->source[from:inside[i].span.start], inside[i].text);
+        from = inside[i].span.end;
+    }
+    text = format::push(text, p->source[from:end]);
+    return text;
+}
+
 // The old module separator `::` read where a path continues: a warning whose fix writes `.` (#1676). `.` is the only
 // separator of smith's own syntax.
 export void warn_separator(Parser *p, lex::Token colons) {

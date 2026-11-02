@@ -27,6 +27,7 @@ import front::emit_match as matching;
 import front::emit_memory as memory;
 import front::emit_state as state;
 import front::emit_stream as streams;
+import front::types;
 import std::arena;
 import std::format;
 import std::mem;
@@ -139,8 +140,54 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
     return sig;
 }
 
+// The prototype of a function of an imported module, declared when the first call needs it (#1714): an external
+// function named by `key`, the symbol the module's own object defines.
+static SignatureResult imported_function(state::Emitter *e, Str key, const ast::Decl *d) {
+    SignatureResult made = signature(e, d);
+    if (made == .error) return made;
+    Signature sig = made.ok;
+    char *label = state::cstr(key);
+    sig.function = c::LLVMGetNamedFunction(e->module, label);
+    if (sig.function == nullptr) sig.function = c::LLVMAddFunction(e->module, label, sig.type);
+    mem::free(label);
+    return sig;
+}
+
+// The function of an imported module a callee names: `m.sin`, `r.math.sin` (a module imported by another), or `sin`
+// after `sin := m.sin`. The checker has declared each under its module's path (`lib::math::sin`), which is also the
+// symbol the module's object defines. Returns false for any other callee.
+static Bool imported_callee(state::Emitter *e, const ast::Expr *callee, const ast::Decl **found, Str *symbol) {
+    if (e->options.checked == nullptr) return false;
+    types::Names names = {};
+    if (callee->kind == .member) {
+        names = types::member_names(callee);
+    } else if (callee->kind == .name && countof(callee->kind.name.path.segments) == 1) {
+        for (Usize i = 0; i < countof(e->tree->decls); i++) {
+            const ast::Decl *d = e->tree->decls[i];
+            if (d->kind != .variable || !d->kind.variable.is_new || d->kind.variable.init == nullptr) continue;
+            if (!state::same_text(d->kind.variable.name, callee->kind.name.path.segments[0].text)) continue;
+            if (d->kind.variable.init->kind == .member) names = types::member_names(d->kind.variable.init);
+        }
+    }
+    if (names.count < 2) return false;
+    const types::Scopes *scopes = &e->options.checked->scopes;
+    Str prefix = "";
+    for (Usize i = 0; i + 1 < names.count; i++) {
+        const types::Symbol *module = types::lookup(scopes, state::msg(format::push(prefix, names.items[i])));
+        if (module == nullptr || module->kind != .module_name || module->decl->kind != .import_module) return false;
+        prefix = state::msg(format::push(join(module->decl->kind.import_module.path), "::"));
+    }
+    Str full = state::msg(format::push(prefix, names.items[names.count - 1]));
+    const types::Symbol *target = types::lookup(scopes, full);
+    if (target == nullptr || target->kind != .function_symbol || target->decl->kind != .function) return false;
+    *found = target->decl;
+    *symbol = full;
+    return true;
+}
+
 // The function a call names: one of the module's with a body, or a prototype of the module.
-static SignatureResult find(state::Emitter *e, Str key, ast::Span span) {
+static SignatureResult find(state::Emitter *e, Str key, ast::Span span, const ast::Decl *imported) {
+    if (imported != nullptr) return imported_function(e, key, imported);
     for (Usize i = 0; i < e->function_count; i++) {
         if (state::same_text(e->functions[i].name, key)) {
             state::FunctionInfo info = e->functions[i];
@@ -181,7 +228,8 @@ static Str given_name(const ast::Expr *a) {
 }
 
 // The declaration of the function `key` names, with or without a body (its parameters' names), or null.
-static const ast::Decl *find_decl(state::Emitter *e, Str key) {
+static const ast::Decl *find_decl(state::Emitter *e, Str key, const ast::Decl *imported) {
+    if (imported != nullptr) return imported;
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
         if (d->kind == .function && state::same_text(d->kind.function.name, key)) return d;
@@ -191,14 +239,15 @@ static const ast::Decl *find_decl(state::Emitter *e, Str key) {
 
 // The parameter each argument fills: `slot[i]` for `args[i]`. By position until the first named argument, then by
 // name among the declaration's parameters (the checker's `argument_slot`).
-static state::Status assign_slots(state::Emitter *e, Str key, ast::ExprRef args[:], Usize slot[64]) {
+static state::Status assign_slots(state::Emitter *e, Str key, ast::ExprRef args[:], Usize slot[64],
+                                  const ast::Decl *imported) {
     Bool named = false;
     for (Usize i = 0; i < countof(args); i++) {
         slot[i] = i;
         if (is_named(args[i])) named = true;
     }
     if (!named) return state::success();
-    const ast::Decl *d = find_decl(e, key);
+    const ast::Decl *d = find_decl(e, key, imported);
     if (d == nullptr) {
         return state::failf(args[0]->span, "the arguments of ", key, " cannot be named: it has no declaration here");
     }
@@ -331,23 +380,25 @@ static state::Status call_finish(state::Emitter *e, const state::Work *w) {
     }
     ast::ExprRef args[:] = x->kind.call.args;
     const ast::Expr *callee = x->kind.call.callee;
-    if (callee->kind != .name) {
+    const ast::Decl *imported = nullptr;
+    Str key = "";
+    Bool is_imported = imported_callee(e, callee, &imported, &key);
+    if (!is_imported && callee->kind != .name) {
         return state::fail("not a name", w->span);
     }
-    ast::Path path = callee->kind.name.path;
     Usize count = (Usize)w->number;
     state::Value values[64];
     for (Usize i = count; i > 0; i--)
         values[i - 1] = state::pop_value(e);
-    Str key = join(path);
-    SignatureResult found = find(e, key, callee->span);
+    if (!is_imported && callee->kind == .name) key = join(callee->kind.name.path);
+    SignatureResult found = find(e, key, callee->span, imported);
     if (found == .error) {
         state::free_text(key);
         return {.error = found.error};
     }
     Signature sig = found.ok;
     Usize slot[64];
-    state::Status slotted = assign_slots(e, key, args, slot);
+    state::Status slotted = assign_slots(e, key, args, slot, imported);
     if (slotted == .error) {
         state::free_text(key);
         release(sig);
@@ -404,19 +455,26 @@ export state::Status call(state::Emitter *e, const ast::Expr *x, state::Hint _) 
     }
     const ast::Expr *callee = x->kind.call.callee;
     ast::ExprRef args[:] = x->kind.call.args;
-    if (callee->kind != .name) {
+    const ast::Decl *imported = nullptr;
+    Str key = "";
+    Bool is_imported = false;
+    if (callee->kind == .name) {
+        ast::Path path = callee->kind.name.path;
+        Usize record = 0;
+        if (countof(path.segments) == 1 && find_record(e, path.segments[0].text, &record))
+            return construct(e, x, record);
+        state::Local local = {};
+        if (countof(path.segments) == 1 && state::find_local(e, path.segments[0].text, &local) &&
+            local.ty.kind == .fn_value)
+            return lambdas::call_value(e, x, local.ty);
+        if (streams::is_call(x)) return streams::call(e, x);
+    }
+    is_imported = imported_callee(e, callee, &imported, &key);
+    if (!is_imported && callee->kind != .name) {
         return state::not_emitted("call of something that is not a name", x->span);
     }
-    ast::Path path = callee->kind.name.path;
-    Usize record = 0;
-    if (countof(path.segments) == 1 && find_record(e, path.segments[0].text, &record)) return construct(e, x, record);
-    state::Local local = {};
-    if (countof(path.segments) == 1 && state::find_local(e, path.segments[0].text, &local) &&
-        local.ty.kind == .fn_value)
-        return lambdas::call_value(e, x, local.ty);
-    if (streams::is_call(x)) return streams::call(e, x);
-    Str key = join(path);
-    SignatureResult found = find(e, key, callee->span);
+    if (!is_imported && callee->kind == .name) key = join(callee->kind.name.path);
+    SignatureResult found = find(e, key, callee->span, imported);
     if (found == .error) {
         state::free_text(key);
         return {.error = found.error};
@@ -431,7 +489,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *x, state::Hint _) 
         return wrong;
     }
     Usize slot[64];
-    state::Status slotted = assign_slots(e, key, args, slot);
+    state::Status slotted = assign_slots(e, key, args, slot, imported);
     if (slotted == .error) {
         state::free_text(key);
         release(sig);
