@@ -1,0 +1,287 @@
+// A small xz writer for tests/build_fixtures/untar/prelude, so that the archive tests need no xz program (macOS has
+// none, and Homebrew's is not to be relied on): `xz [-c] [--check=none|crc32|crc64|sha256] [-T<n>]
+// [--block-size=<bytes>] <file>` writes the .xz stream to standard output. It writes the container itself (stream
+// header, blocks, index, footer) and stores each block as LZMA2's uncompressed chunks (control byte 1, then 2, up to 64
+// KiB each), which every xz reader must decode; it has no compressor, so what the tests exercise is the container, the
+// checks and the block sizes, not LZMA2's decoder. Several blocks (a block size) are what the xz program makes with
+// --block-size; one block is its default.
+module xz;
+
+import std::arena;
+import std::ascii;
+import std::contract;
+import std::files;
+import std::inflate;
+import std::mem;
+import <string.h>;
+import <unistd.h>;
+
+constexpr Usize chunk_max = 65536;
+constexpr U64 crc64_polynomial = 0xC96C5795D7870F42ULL;
+
+// A check is its id in the stream flags: 0 none, 1 CRC-32, 4 CRC-64, 10 SHA-256.
+typedef U8 Check;
+constexpr Check check_none = 0;
+constexpr Check check_crc32 = 1;
+constexpr Check check_crc64 = 4;
+constexpr Check check_sha256 = 10;
+
+// The id of a check in the stream flags and the size of what it stores.
+Usize check_size(Check kind) {
+    if (kind == check_crc32) return 4;
+    if (kind == check_crc64) return 8;
+    if (kind == check_sha256) return 32;
+    return 0;
+}
+
+// ---- the output: a buffer with a write position, sized by the caller for what it will write
+
+struct Out {
+    U8 *bytes;
+    Usize at;
+};
+
+void put(Out *out, U8 byte) {
+    out->bytes[out->at] = byte;
+    out->at++;
+}
+
+void put_le(Out *out, U64 value, Usize width) {
+    for (Usize i = 0; i < width; i++)
+        put(out, (U8)(value >> (8 * i)));
+}
+
+void put_bytes(Out *out, const U8 data[:]) {
+    if (countof(data) == 0) return;
+    mem::copy(out->bytes[out->at:out->at + countof(data)], data);
+    out->at += countof(data);
+}
+
+// A variable-length integer: seven bits at a time, low first, the high bit set while more follow.
+void put_vli(Out *out, U64 value) {
+    U64 left = value;
+    while (left >= 0x80) {
+        put(out, (U8)((left & 0x7F) | 0x80));
+        left >>= 7;
+    }
+    put(out, (U8)left);
+}
+
+// Zero bytes up to a multiple of four, counted from `start`.
+void pad4(Out *out, Usize start) {
+    while ((out->at - start) % 4 != 0)
+        put(out, 0);
+}
+
+// ---- the checks
+
+U64 crc64(const U8 data[:]) {
+    U64 value = ~0ULL;
+    for (Usize i = 0; i < countof(data); i++) {
+        value ^= data[i];
+        for (I32 bit = 0; bit < 8; bit++)
+            value = (value >> 1) ^ ((value & 1) != 0 ? crc64_polynomial : 0);
+    }
+    return ~value;
+}
+
+constexpr U32 sha_k[64] = {
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
+
+U32 rotr(U32 x, U32 n) {
+    return (x >> n) | (x << (32 - n));
+}
+
+// One 64-byte block folded into the eight words of the state.
+void sha_block(U32 state[8], const U8 block[:]) {
+    U32 w[64];
+    for (Usize i = 0; i < 16; i++)
+        w[i] = ((U32)block[4 * i] << 24) | ((U32)block[4 * i + 1] << 16) | ((U32)block[4 * i + 2] << 8) |
+               (U32)block[4 * i + 3];
+    for (Usize i = 16; i < 64; i++) {
+        U32 s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
+        U32 s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+    U32 v[8];
+    for (Usize i = 0; i < 8; i++)
+        v[i] = state[i];
+    for (Usize i = 0; i < 64; i++) {
+        U32 s1 = rotr(v[4], 6) ^ rotr(v[4], 11) ^ rotr(v[4], 25);
+        U32 choose = (v[4] & v[5]) ^ (~v[4] & v[6]);
+        U32 t1 = v[7] + s1 + choose + sha_k[i] + w[i];
+        U32 s0 = rotr(v[0], 2) ^ rotr(v[0], 13) ^ rotr(v[0], 22);
+        U32 majority = (v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]);
+        U32 t2 = s0 + majority;
+        for (Usize j = 7; j > 0; j--)
+            v[j] = v[j - 1];
+        v[4] += t1;
+        v[0] = t1 + t2;
+    }
+    for (Usize i = 0; i < 8; i++)
+        state[i] += v[i];
+}
+
+// The SHA-256 of data, written big-endian to out.
+void sha256(Out *out, const U8 data[:]) {
+    Usize size = countof(data);
+    U32 state[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+    Usize whole = size / 64;
+    for (Usize i = 0; i < whole; i++)
+        sha_block(state, data[64 * i:64 * i + 64]);
+    U8 tail[128] = {};
+    Usize rest = size - 64 * whole;
+    if (rest > 0) mem::copy(tail[0:rest], data[64 * whole:size]);
+    tail[rest] = 0x80;
+    Usize tail_size = rest < 56 ? 64 : 128;
+    U64 bits = (U64)size * 8;
+    for (Usize i = 0; i < 8; i++)
+        tail[tail_size - 1 - i] = (U8)(bits >> (8 * i));
+    for (Usize at = 0; at < tail_size; at += 64)
+        sha_block(state, tail[at:at + 64]);
+    for (Usize i = 0; i < 8; i++)
+        for (Usize j = 0; j < 4; j++)
+            put(out, (U8)(state[i] >> (24 - 8 * j)));
+}
+
+void put_check(Out *out, Check kind, const U8 data[:]) {
+    if (kind == check_crc32) put_le(out, inflate::crc32(0, data.data, countof(data)), 4);
+    if (kind == check_crc64) put_le(out, crc64(data), 8);
+    if (kind == check_sha256) sha256(out, data);
+}
+
+// ---- the container
+
+// A block: its header (size byte, flags with one filter and no sizes, LZMA2's id and its one property byte, padding,
+// CRC-32), the chunks, the end marker, padding to four bytes, the check. Returns the unpadded size, which the index
+// records. The dictionary is 8 MiB, which is property byte 22.
+Usize put_block(Out *out, Check kind, const U8 data[:]) {
+    Usize size = countof(data);
+    Usize start = out->at;
+    const U8 header[8] = {2, 0x00, 0x21, 0x01, 22, 0, 0, 0};
+    put_bytes(out, header);
+    put_le(out, inflate::crc32(0, header, 8), 4);
+    Usize header_size = out->at - start;
+    for (Usize done = 0; done < size; done += chunk_max) {
+        Usize n = size - done < chunk_max ? size - done : chunk_max;
+        put(out, done == 0 ? 1 : 2);
+        put(out, (U8)((n - 1) >> 8));
+        put(out, (U8)(n - 1));
+        put_bytes(out, data[done:done + n]);
+    }
+    put(out, 0);
+    Usize packed = out->at - start - header_size;
+    pad4(out, start);
+    put_check(out, kind, data);
+    return header_size + packed + check_size(kind);
+}
+
+// What put_block returns for n bytes: its 12-byte header, the chunks (3 bytes each), the end marker, the check.
+Usize unpadded_size(Check kind, Usize n) {
+    return 12 + n + 3 * ((n + chunk_max - 1) / chunk_max) + 1 + check_size(kind);
+}
+
+// The stream: header, blocks of `block_size` bytes (0: one block), index, footer.
+void put_stream(Out *out, Check kind, const U8 data[:], Usize block_size) {
+    Usize size = countof(data);
+    const U8 flags[2] = {0, kind};
+    const U8 magic[6] = {0xFD, '7', 'z', 'X', 'Z', 0};
+    put_bytes(out, magic);
+    put_bytes(out, flags);
+    put_le(out, inflate::crc32(0, flags, 2), 4);
+    Usize each = block_size == 0 ? (size == 0 ? 1 : size) : block_size;
+    Usize count = size == 0 ? 1 : (size + each - 1) / each;
+    for (Usize b = 0; b < count; b++) {
+        Usize at = b * each;
+        put_block(out, kind, data[at:at + (size - at < each ? size - at : each)]);
+    }
+    Usize index_start = out->at;
+    put(out, 0);
+    put_vli(out, count);
+    for (Usize b = 0; b < count; b++) {
+        Usize at = b * each;
+        Usize n = size - at < each ? size - at : each;
+        put_vli(out, unpadded_size(kind, n));
+        put_vli(out, n);
+    }
+    pad4(out, index_start);
+    put_le(out, inflate::crc32(0, out->bytes + index_start, out->at - index_start), 4);
+    Usize backward = (out->at - index_start) / 4 - 1;
+    U8 footer[6] = {0, 0, 0, 0, 0, kind};
+    footer[0] = (U8)backward;
+    footer[1] = (U8)(backward >> 8);
+    footer[2] = (U8)(backward >> 16);
+    footer[3] = (U8)(backward >> 24);
+    footer[4] = 0;
+    put_le(out, inflate::crc32(0, footer, 6), 4);
+    put_bytes(out, footer);
+    put(out, 'Y');
+    put(out, 'Z');
+}
+
+// ---- the command line
+
+Bool starts_with(const char *text, const char *prefix) {
+    return c::strncmp(text, prefix, c::strlen(prefix)) == 0;
+}
+
+// A decimal number, or 0 for text that is not one.
+Usize number(const char *text) {
+    Usize value = 0;
+    for (Usize i = 0; text[i] != '\0'; i++) {
+        if (!ascii::digit(text[i])) return 0;
+        value = value * 10 + (Usize)(text[i] - '0');
+    }
+    return value;
+}
+
+Bool check_named(const char *name, Check *kind) {
+    if (c::strcmp(name, "none") == 0)
+        *kind = check_none;
+    else if (c::strcmp(name, "crc32") == 0)
+        *kind = check_crc32;
+    else if (c::strcmp(name, "crc64") == 0)
+        *kind = check_crc64;
+    else if (c::strcmp(name, "sha256") == 0)
+        *kind = check_sha256;
+    else
+        return false;
+    return true;
+}
+
+I32 main(Str args[:]) {
+    Check kind = check_crc64;
+    Usize block_size = 0;
+    const char *path = nullptr;
+    for (Usize i = 1; i < countof(args); i++) {
+        const char *argument = args[i].data;
+        if (starts_with(argument, "--check=")) {
+            if (!check_named(argument + 8, &kind)) return 2;
+        } else if (starts_with(argument, "--block-size=")) {
+            block_size = number(argument + 13);
+        } else if (argument[0] != '-') {
+            path = argument;
+        }
+    }
+    if (path == nullptr) return 2;
+    files::BytesResult loaded = files::read_file(path[0:c::strlen(path)]);
+    if (loaded == .error) return 1;
+    files::Bytes data = loaded.ok;
+    Usize each = block_size == 0 ? (countof(data) == 0 ? 1 : countof(data)) : block_size;
+    Usize count = countof(data) == 0 ? 1 : (countof(data) + each - 1) / each;
+    // The most a stream takes: the data, three bytes of chunk header for every 64 KiB and every block, and for each
+    // block a header, padding, a check and two index entries.
+    Usize capacity = 64 + countof(data) + 3 * (countof(data) / chunk_max + count + 1) + count * 160;
+    U8 buffer[:] = mem::alloc_slice(U8, capacity);
+    Out out = {.bytes = buffer.data, .at = 0};
+    put_stream(&out, kind, data, block_size);
+    (void)c::write(1, out.bytes, out.at);
+    return 0;
+}
