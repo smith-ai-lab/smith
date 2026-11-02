@@ -52,6 +52,10 @@ static I32 sh_status(Str command) {
     const char *const argv[4] = {"sh", "-c", command.data, nullptr};
     process::OutputResult done = process::run(argv[0:3]);
     if (done != .ok || done.ok.exit.signal != 0) return -1;
+    if (done.ok.exit.status != 0) {
+        c::fwrite(done.ok.errors.data, 1, countof(done.ok.errors), c::stderr);
+        c::fwrite(done.ok.output.data, 1, countof(done.ok.output), c::stderr);
+    }
     return done.ok.exit.status;
 }
 
