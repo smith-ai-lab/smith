@@ -381,22 +381,45 @@ static ast::TypeExpr *plain(parse::Parser *p, U32 start, ast::Qualifiers q) {
     return nullptr;
 }
 
-// The error of a function-pointer declarator, and recovery past it: the two parenthesis groups of `I32 (*f)(I32)`.
-static void function_pointer(parse::Parser *p) {
+// The error of a function-pointer declarator, and recovery past it: the two parenthesis groups of `I32 (*f)(I32)`. The
+// fix rewrites the type and both groups, from `start`, to `Fn(I32 (I32)) f` (the name is left out when there is none).
+static void function_pointer(parse::Parser *p, U32 start) {
     Str message = "C's function-pointer declarator is not Smith: write the function value as `Fn(I32 (I32))`, a result "
                   "type and the parameter types in parentheses, inside `Fn(...)`";
-    parse::error(p, parse::peek(p).span, message);
+    U32 open = parse::peek(p).span.start;
+    Str name = "";
+    Str params = "";
+    U32 end = open;
     for (Usize group = 0; group < 2 && parse::at(p, lex::left_paren); group += 1) {
+        U32 inner = parse::peek(p).span.end;
+        U32 close = inner;
         Usize depth = 0;
         for (Usize i = 0; i < countof(p->tokens); i += 1) {
-            lex::TokenKind kind = parse::peek(p).kind;
-            if (kind == lex::end_of_file) return;
-            if (kind == lex::left_paren) depth += 1;
-            if (kind == lex::right_paren) depth -= 1;
+            lex::Token token = parse::peek(p);
+            if (token.kind == lex::end_of_file) {
+                parse::error(p, parse::peek(p).span, message);
+                return;
+            }
+            if (token.kind == lex::left_paren) depth += 1;
+            if (token.kind == lex::right_paren) depth -= 1;
+            if (group == 0 && depth == 1 && token.kind == lex::name) name = parse::text(p, token);
+            close = token.span.start;
+            end = token.span.end;
             parse::advance(p);
             if (depth == 0) break;
         }
+        if (group == 1) params = p->source[inner:close];
     }
+    Str type = p->source[start:open];
+    while (countof(type) > 0 && type[countof(type) - 1] == ' ') {
+        type = type[0:countof(type) - 1];
+    }
+    Str gap = countof(name) > 0 ? " " : "";
+    parse::Edits edits = mem::alloc_slice(parse::Edit, 1);
+    ast::Span span = {.start = start, .end = end};
+    edits[0] = (parse::Edit){.span = span, .text = format::push("Fn(", type, " (", params, "))", gap, name)};
+    ast::Span at = {.start = open, .end = end};
+    parse::error_fix(p, at, message, edits);
 }
 
 // One bracket suffix: `[:]`, `[const restrict :]` or `[N]`.
@@ -531,7 +554,7 @@ static ast::TypeExpr *suffixes(parse::Parser *p, U32 start, ast::TypeExpr *base)
             type_so_far = brackets(p, start, type_so_far);
         } else if (c_declarator_ahead(p)) {
             // C's `(*p)[:]` and `(*p)[4]` are left for the declaration to report, with the name it knows.
-            if (!at_slice_pointer_declarator(p)) function_pointer(p);
+            if (!at_slice_pointer_declarator(p)) function_pointer(p, start);
             break;
         } else {
             break;
