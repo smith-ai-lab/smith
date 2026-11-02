@@ -1311,10 +1311,10 @@ static bool smith_test_expand_item(const char *item, SmithChangedBuffer *out) {
 
 // Whether a `smith test` flag takes the next word as its value (the runner's options and --base).
 static bool smith_test_flag_takes_value(const char *flag) {
-    static const char *const valued[] = {"--shard",        "--costs",    "--test",         "--others", "--explain",
-                                         "--seed",         "--seeds",    "--explain-max",  "--jobs",   "--timeout",
-                                         "--wall-timeout", "--idle-timeout", "--shrink", "--shrink-seconds",
-                                         "--shuffle",      "--base"};
+    static const char *const valued[] = {"--shard",   "--costs",          "--test",         "--others",
+                                         "--explain", "--seed",           "--seeds",        "--explain-max",
+                                         "--jobs",    "--timeout",        "--wall-timeout", "--idle-timeout",
+                                         "--shrink",  "--shrink-seconds", "--shuffle",      "--base"};
     for (size_t i = 0; i < sizeof valued / sizeof valued[0]; i++) { // bounded by the table
         if (strcmp(flag, valued[i]) == 0) return true;
     }
