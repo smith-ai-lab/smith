@@ -23,8 +23,11 @@
 // THE PASSES. `emit::module` makes the module, sets its triple and data layout from `Options.target` (it never asks
 // the host), then (1) declares every record, then (2) every function with its symbol and type (and every global), so
 // that a call finds any function whatever the order, then (3) emits the bodies. A function's LLVM name is its module's
-// path and its name joined by `::` (`front::test::add`), the label the generated headers give; exported is external
-// linkage, the rest internal. At the end it runs the verifier; its message becomes an `Error`.
+// path and its name joined by `::` (`front::test::add`), the label the generated headers give, unless the function has
+// `@c_name("x")` (then `x`) or is `main` (then `main`); `pub`, exported, a c_name and `main` are external linkage, the
+// rest internal. `@inline`, `@noinline` and `@cold` (or `[[std::...]]`) are LLVM attributes. The last line of a body
+// that is an expression is its value, `_ := f()` drops the value, and a local `const X := v` is a constant slot. At the
+// end it runs the verifier; its message becomes an `Error`.
 //
 // THE WALK has no recursion (a compile error in a module): an explicit work stack and a value stack, both in the
 // `Emitter` (emit_state.smith, with every field the later tickets need; one that is missing is an escalation, not an
@@ -53,7 +56,8 @@
 //     no one jumps to, so the IR stays valid. Allocas go through `state::new_alloca`, which puts them in the entry
 //     block. Locals are `Local`s in `e->locals`, scopes bracket them (`state::begin_scope`, `end_scope`).
 //  6. Hooks B2 fills: `emit_control::end_of_block` (runs when a block ends, before its locals go) and
-//     `emit_control::before_return` (before `ret`): the pending `defer`s run there.
+//     `emit_control::before_return` (before `ret`): the pending `defer`s run there. A hook may push work: it runs
+//     before the scope closes or the `ret` is built (the closing and the `ret` are continuations pushed first).
 //  7. Writing handlers in today's smith (issue #1153): dispatch on a node's kind with a chain of `if (x->kind ==
 //     .name)`, never `switch`/`case`, in a file that imports front::ast: a `case .name:` label spells an export of
 //     front::ast, so the compiler reads ast's function bodies, which do not compile. Read the payload fields you need
@@ -236,9 +240,15 @@ static state::Status expression_statement(state::Emitter *e, const ast::Stmt *s)
     return state::success();
 }
 
-static state::Status block_finish(state::Emitter *e, const state::Work *w) {
-    try control::end_of_block(e, w->span);
+static state::Status block_close(state::Emitter *e, const state::Work *_) {
     state::end_scope(e);
+    return state::success();
+}
+
+// The block's end: the scope closes after whatever work `end_of_block` pushed (a deferred statement sees the locals).
+static state::Status block_finish(state::Emitter *e, const state::Work *w) {
+    state::push_then(e, (state::Work){.then = block_close, .span = w->span});
+    try control::end_of_block(e, w->span);
     return state::success();
 }
 
@@ -304,13 +314,30 @@ static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::
     if (d->kind != .variable) {
         return state::fail("not a variable", span);
     }
-    if (d->kind.variable.is_constexpr || d->kind.variable.is_thread_local || d->is_static || d->is_extern)
+    const ast::TypeExpr *type = d->kind.variable.type;
+    if (state::same_text(d->kind.variable.name, "_") && d->kind.variable.init != nullptr) {
+        // `_ := f()`: the value is computed and dropped; no slot, no local.
+        state::Hint dropped = state::no_hint();
+        if (type->kind != .auto_type) {
+            state::TyResult made = type_of(e, type);
+            if (made == .error) {
+                return {.error = made.error};
+            }
+            dropped = state::hint_of(made.ok);
+        }
+        state::push_then(e, (state::Work){.then = drop_value, .span = span});
+        state::push_eval(e, d->kind.variable.init, dropped);
+        return state::success();
+    }
+    // A local `const X := v` is a constant local; today's `constexpr T x` is not emitted yet.
+    Bool is_const_local = d->kind.variable.is_constexpr && d->kind.variable.is_new;
+    if ((d->kind.variable.is_constexpr && !is_const_local) || d->kind.variable.is_thread_local || d->is_static ||
+        d->is_extern)
         return state::not_emitted("this kind of variable", span);
     for (Usize i = e->scope_marks[e->scope_count - 1]; i < e->local_count; i++) {
         if (state::same_text(e->locals[i].name, d->kind.variable.name))
             return state::failf(span, d->kind.variable.name, " is declared twice in one scope");
     }
-    const ast::TypeExpr *type = d->kind.variable.type;
     Bool is_auto = type->kind == .auto_type;
     if (d->kind.variable.init == nullptr) return declare_zero(e, d, span, true);
     state::Local shadow = {};
@@ -341,12 +368,22 @@ static state::Status declaration_statement(state::Emitter *e, const ast::Stmt *s
     return state::not_emitted("this kind of declaration in a block", s->span);
 }
 
+static state::Status ret_value(state::Emitter *e, const state::Work *w) {
+    c::LLVMBuildRet(e->builder, w->value);
+    return state::success();
+}
+
+static state::Status ret_void(state::Emitter *e, const state::Work *_) {
+    c::LLVMBuildRetVoid(e->builder);
+    return state::success();
+}
+
 static state::Status return_finish(state::Emitter *e, const state::Work *w) {
     state::Value value = state::pop_value(e);
     if (!state::same_type(value.ty, e->result))
         return state::failf(w->span, "returning ", value.ty.name, " from a function that returns ", e->result.name);
+    state::push_then(e, (state::Work){.then = ret_value, .value = value.llvm, .ty = value.ty, .span = w->span});
     try control::before_return(e, w->span);
-    c::LLVMBuildRet(e->builder, value.llvm);
     return state::success();
 }
 
@@ -427,6 +464,38 @@ static Str symbol_of(const ast::Module *m, Str name) {
     return symbol;
 }
 
+// `@c_name` or today's `[[std::c_name]]`.
+static Bool is_c_name(ast::Attribute attribute) {
+    ast::Path name = attribute.name;
+    Usize n = countof(name.segments);
+    if (n == 1) return state::same_text(name.segments[0].text, "c_name");
+    return n == 2 && state::same_text(name.segments[0].text, "std") &&
+           state::same_text(name.segments[1].text, "c_name");
+}
+
+static Bool is_string(const ast::Expr *x) {
+    return x->kind == .string;
+}
+
+// The function's c_name, or "" when it has none (checked by `check_function`).
+static Str c_name_of(const ast::Decl *d) {
+    for (Usize i = 0; i < countof(d->attributes); i++) {
+        if (!is_c_name(d->attributes[i])) continue;
+        const ast::Expr *argument = d->attributes[i].args[0];
+        if (argument->kind == .string) return argument->kind.string.bytes;
+    }
+    return "";
+}
+
+// The LLVM name: the c_name if there is one, `main` for a `main`, else the module path joined with `::`. A fresh
+// string the caller frees.
+static Str function_symbol(const ast::Module *m, const ast::Decl *d, Str name) {
+    Str own = c_name_of(d);
+    if (countof(own) > 0) return state::msg(format::push(own));
+    if (state::same_text(name, "main")) return state::msg(format::push(name));
+    return symbol_of(m, name);
+}
+
 static state::Status check_function(const ast::Decl *d) {
     if (d->kind != .function) {
         return state::fail("not a function", d->span);
@@ -434,9 +503,10 @@ static state::Status check_function(const ast::Decl *d) {
     Bool variadic = d->kind.function.variadic;
     ast::Param params[:] = d->kind.function.params;
     for (Usize i = 0; i < countof(d->attributes); i++) {
-        ast::Path name = d->attributes[i].name;
-        if (state::same_text(name.segments[countof(name.segments) - 1].text, "c_name"))
-            return state::not_emitted("c_name", d->attributes[i].span);
+        if (!is_c_name(d->attributes[i])) continue;
+        ast::Attribute attribute = d->attributes[i];
+        if (countof(attribute.args) != 1 || !is_string(attribute.args[0]))
+            return state::fail("`@c_name` takes one string", attribute.span);
     }
     if (variadic) return state::not_emitted("variadic function", d->span);
     for (Usize i = 0; i < countof(params); i++) {
@@ -461,8 +531,9 @@ static void add_function(state::Emitter *e, state::FunctionInfo info) {
 static void add_function_attributes(state::Emitter *e, const ast::Decl *d, c::LLVMValueRef function) {
     for (Usize i = 0; i < countof(d->attributes); i++) {
         ast::Path name = d->attributes[i].name;
-        if (countof(name.segments) != 2 || !state::same_text(name.segments[0].text, "std")) continue;
-        Str word = name.segments[1].text;
+        Usize n = countof(name.segments);
+        if (n == 0 || n > 2 || (n == 2 && !state::same_text(name.segments[0].text, "std"))) continue;
+        Str word = name.segments[n - 1].text;
         Str kind = "";
         if (state::same_text(word, "inline")) kind = "alwaysinline";
         if (state::same_text(word, "noinline")) kind = "noinline";
@@ -506,12 +577,13 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
         result = made_result.ok;
     }
     c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, types, (U32)count, 0);
-    Str symbol = symbol_of(e->tree, name);
+    Str symbol = function_symbol(e->tree, d, name);
     char *label = state::cstr(symbol);
     c::LLVMValueRef function = c::LLVMAddFunction(e->module, label, type);
     mem::free(label);
     add_function_attributes(e, d, function);
-    if (d->exported)
+    Bool external = d->exported || d->is_pub || countof(c_name_of(d)) > 0 || state::same_text(name, "main");
+    if (external)
         c::LLVMSetLinkage(function, c::LLVMExternalLinkage);
     else
         c::LLVMSetLinkage(function, c::LLVMInternalLinkage);
@@ -560,6 +632,40 @@ static state::Status declare_params(state::Emitter *e, const ast::Decl *d, state
     return state::success();
 }
 
+// The last line of a body is its value: a body block whose last item is an expression statement.
+static Bool is_expression_statement(const ast::Stmt *s) {
+    return s->kind == .expression;
+}
+
+static Bool ends_in_expression(const ast::Stmt *body) {
+    if (body->kind == .block) {
+        ast::StmtRef items[:] = body->kind.block.items;
+        return countof(items) > 0 && is_expression_statement(items[countof(items) - 1]);
+    }
+    return false;
+}
+
+// The body block with its last expression returned as `return <expression>` is: the same continuation.
+static state::Status value_block(state::Emitter *e, const ast::Stmt *body) {
+    try debug::stmt_location(e, body);
+    if (body->kind != .block) {
+        return state::fail("not a block", body->span);
+    }
+    ast::StmtRef items[:] = body->kind.block.items;
+    const ast::Stmt *last = items[countof(items) - 1];
+    if (last->kind != .expression) {
+        return state::fail("not an expression statement", last->span);
+    }
+    ast::Expr *value = last->kind.expression.value;
+    state::begin_scope(e);
+    state::push_then(e, (state::Work){.then = block_finish, .span = body->span});
+    state::push_then(e, (state::Work){.then = return_finish, .span = last->span});
+    state::push_eval(e, value, state::hint_of(e->result));
+    for (Usize i = countof(items) - 1; i > 0; i--)
+        state::push_statement(e, items[i - 1]);
+    return state::success();
+}
+
 // Pass 3: one body.
 static state::Status emit_function(state::Emitter *e, const ast::Decl *d, state::FunctionInfo info) {
     if (d->kind != .function) {
@@ -570,18 +676,24 @@ static state::Status emit_function(state::Emitter *e, const ast::Decl *d, state:
     state::begin_scope(e);
     try debug::begin_function(e, d);
     try declare_params(e, d, info);
-    state::push_statement(e, body);
+    Bool is_void_result = c::LLVMGetTypeKind(info.result.llvm) == c::LLVMVoidTypeKind;
+    if (is_void_result || !ends_in_expression(body))
+        state::push_statement(e, body);
+    else
+        try value_block(e, body);
     try run(e);
-    state::end_scope(e);
     // The end of a function reached without `return`: a `Void` function returns, any other traps.
     c::LLVMBasicBlockRef last = c::LLVMGetInsertBlock(e->builder);
-    if (c::LLVMGetBasicBlockTerminator(last) != nullptr) return state::success();
-    if (c::LLVMGetTypeKind(info.result.llvm) == c::LLVMVoidTypeKind) {
-        try control::before_return(e, d->span);
-        c::LLVMBuildRetVoid(e->builder);
-    } else {
-        arith::trap_here(e);
+    if (c::LLVMGetBasicBlockTerminator(last) == nullptr) {
+        if (is_void_result) {
+            state::push_then(e, (state::Work){.then = ret_void, .span = d->span});
+            try control::before_return(e, d->span);
+            try run(e);
+        } else {
+            arith::trap_here(e);
+        }
     }
+    state::end_scope(e);
     return state::success();
 }
 
