@@ -104,8 +104,8 @@ build_untar() {
     smith cc -std=gnu23 -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined -Wall -Wextra -Werror \
         -Wno-unused-function -I "$SMITH_REPO/.smith/include" "$here/tests/untar.c" "$here/lib/std/arena.smith" \
         "$here/lib/std/contract.smith" "$here/lib/std/env.smith" "$here/lib/std/files.smith" \
-        "$here/lib/std/inflate.smith" "$here/lib/std/mem.smith" \
-        "$here/lib/std/net.smith" "$here/lib/std/random.smith" "$PWD/handlers.o" -o "$PWD/untar"
+        "$here/lib/std/inflate.smith" "$here/lib/std/math.smith" "$here/lib/std/mem.smith" \
+        "$here/lib/std/net.smith" "$here/lib/std/optimize.smith" "$here/lib/std/random.smith" "$PWD/handlers.o" -o "$PWD/untar"
 }
 
 # The sanitized untar and the seeds, made once and shared by every test of the run and of the runs after it (#639: ten
@@ -123,7 +123,7 @@ shared_untar() {
     key=$({ stat $statfmt "${SMITH_SELF:-$(command -v smith)}" 2>/dev/null
         cat "$here/tests/untar.c" "$here"/runtime/*.c "$here"/runtime/*.h "$here/lib/std/arena.smith" \
             "$here/lib/std/contract.smith" "$here/lib/std/inflate.smith" \
-            "$here/lib/std/random.smith" "$here/lib/std/env.smith" "$here/lib/std/files.smith" \
+            "$here/lib/std/math.smith" "$here/lib/std/optimize.smith" "$here/lib/std/random.smith" "$here/lib/std/env.smith" "$here/lib/std/files.smith" \
             "$here/lib/std/mem.smith" "$here/lib/std/net.smith" "$here/lib/handlers.c" "$here/prelude"; } | shasum -a 256 | cut -c1-16)
     dir=$base/$key
     if [ ! -e "$dir/done" ]; then
