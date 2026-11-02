@@ -4,8 +4,8 @@ module main;
 import <stdio.h>;
 import std::arena;
 
-[[std::pure]] I32 twice(I32 x) {
-    return x * 2;
+[[std::pure]] I32 masked(I32 x) {
+    return x & 0x7F;
 }
 
 [[std::effects(alloc, unknown, fails)]] I32 grow(arena::Arena *a) {
@@ -17,7 +17,7 @@ import std::arena;
 export [[std::alloc]] I32 reserve(void);
 
 [[std::c_name("std_scope_doubled")]] export I32 doubled(I32 x) {
-    return twice(x);
+    return masked(x);
 }
 
 [[std::affine]] typedef struct {
@@ -27,7 +27,7 @@ export [[std::alloc]] I32 reserve(void);
 I32 main(void) {
     alignas(arena::align_max) static U8 memory[4096];
     arena::Arena a = arena::fixed(memory, sizeof memory);
-    Handle h = {.id = twice(2)};
+    Handle h = {.id = masked(4)};
     c::printf("%d %d\n", grow(&a), h.id);
     return 0;
 }

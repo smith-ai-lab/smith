@@ -1,0 +1,53 @@
+module effects_arith;
+
+import std::effects;
+import std::wrapping;
+
+// Unsigned arithmetic wraps: no failure point.
+export [[std::pure]] U32 unsigned_ok(U32 a, U32 b) {
+    return a + b * 3U - (a << 2U);
+}
+
+// A constant the compiler folds, and a constant divisor, are no points.
+export [[std::pure]] I32 folded(I32 a) {
+    return (a >> 1) / 4 % (2 + 3);
+}
+
+export I32 add(I32 a, I32 b) {
+    return a + b;
+}
+
+export I32 divide(I32 a, I32 b) {
+    return a / b;
+}
+
+export I32 shift(I32 a, I32 b) {
+    return a << b;
+}
+
+export I32 negate(I32 a) {
+    return -a;
+}
+
+export I32 truncate(F64 x) {
+    return (I32)x;
+}
+
+export void check_each() {
+    static_assert(effects::within(unsigned_ok, effects::none), "unsigned wraps");
+    static_assert(effects::within(add, effects::none), "add");
+    static_assert(effects::within(divide, effects::none), "divide");
+    static_assert(effects::within(shift, effects::none), "shift");
+    static_assert(effects::within(negate, effects::none), "negate");
+    static_assert(effects::within(truncate, effects::none), "truncate");
+}
+
+// An error: signed `+` is a failure point.
+export [[std::pure]] I32 pure_add(I32 a, I32 b) {
+    return a + b;
+}
+
+// The opt-out is no point.
+export [[std::pure]] I32 wrapped(I32 a, I32 b) {
+    return wrapping::add(a, b);
+}
