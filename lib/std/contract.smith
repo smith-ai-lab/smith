@@ -102,6 +102,38 @@ check_assert(Bool condition) {
     c::smith_failure_format(c::SmithFailure_Check, "index %zu is outside 0 to %zu", (Usize)bits, (Usize)length);
 }
 
+// The arithmetic checks of the front end (#1542): a failed signed `+ - *`, negation, `/ %` or shift calls one of these
+// with the operands widened to 64 bits (signed or unsigned as the type says), and `at` is ` at file:line:column`.
+// `+ - *` and `MIN / -1`, `MIN % -1` (always signed) stop here, naming the operation, the operands and the type.
+[[std::c_name("smith_contract_fail_overflow")]] export [[noreturn]] void
+fail_overflow(const char *op, U64 a, U64 b, const char *type, const char *at) {
+    c::smith_failure_format(c::SmithFailure_Check, "%zd %s %zd overflows %s%s", (Isize)a, op, (Isize)b, type, at);
+}
+
+// A negation of the least value stops here.
+[[std::c_name("smith_contract_fail_negate")]] export [[noreturn]] void fail_negate(U64 a, const char *type,
+                                                                                   const char *at) {
+    c::smith_failure_format(c::SmithFailure_Check, "-(%zd) overflows %s%s", (Isize)a, type, at);
+}
+
+// A division or remainder by zero stops here.
+[[std::c_name("smith_contract_fail_divide")]] export [[noreturn]] void fail_divide(const char *op, U64 a, I32 is_signed,
+                                                                                   const char *at) {
+    if (is_signed != 0) c::smith_failure_format(c::SmithFailure_Check, "%zd %s 0 divides by zero%s", (Isize)a, op, at);
+    c::smith_failure_format(c::SmithFailure_Check, "%zu %s 0 divides by zero%s", (Usize)a, op, at);
+}
+
+// A shift by a negative amount, or by the width or more, stops here; `bits` is the width of the type.
+[[std::c_name("smith_contract_fail_shift")]] export [[noreturn]] void
+fail_shift(const char *op, U64 a, U64 amount, I32 is_signed, U32 bits, const char *type, const char *at) {
+    if (is_signed != 0) {
+        c::smith_failure_format(c::SmithFailure_Check, "%zd %s %zd shifts past the width of %s (0 to %u)%s", (Isize)a,
+                                op, (Isize)amount, type, bits - 1, at);
+    }
+    c::smith_failure_format(c::SmithFailure_Check, "%zu %s %zu shifts past the width of %s (0 to %u)%s", (Usize)a, op,
+                            (Usize)amount, type, bits - 1, at);
+}
+
 // What an optimized build writes in place of `ensures`, `invariant` and `assert` when `smith prove` proved the check
 // holds (issue #325, `.smith/proved/<source>.pts`): the lowering names it where the call stood, never you. It checks
 // nothing and has no effect, so a function whose only failure point was that check does not `fail`.

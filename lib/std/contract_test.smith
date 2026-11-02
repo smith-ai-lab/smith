@@ -50,3 +50,24 @@ export void test_contract_a_false_invariant_stops() {
     test::expect_abort();
     (void)sum(5);
 }
+
+// The front end's arithmetic checks (#1542): each stops as a failed contract does.
+export void test_contract_a_failed_overflow_stops() {
+    test::expect_abort();
+    contract::fail_overflow("+", 2147483647, 1, "I32", " at t.smith:2:12");
+}
+
+export void test_contract_a_failed_negate_stops() {
+    test::expect_abort();
+    contract::fail_negate(0xFFFFFFFF80000000ULL, "I32", " at t.smith:2:12");
+}
+
+export void test_contract_a_failed_divide_stops() {
+    test::expect_abort();
+    contract::fail_divide("/", 7, 1, " at t.smith:2:12");
+}
+
+export void test_contract_a_failed_shift_stops() {
+    test::expect_abort();
+    contract::fail_shift("<<", 1, 40, 1, 32, "I32", " at t.smith:2:12");
+}
