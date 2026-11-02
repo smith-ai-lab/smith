@@ -1,41 +1,284 @@
-// front::emit_option: `?T`, `.some(x)`, `.none` and `if let`. Filled by #1584; today every handler is `not emitted
-// yet`, with its final signature, so that ticket edits this file and never front/emit.smith (the wave-3 scaffold, #1582
-// of #1428).
+// front::emit_option: `?T`, `.some(x)`, `.none` and `if let` (#1584 of #1428).
+//
+// Layout. `?T` is the LLVM struct `{ i8 tag, T payload }`: tag 0 is `.none`, tag 1 is `.some`, the payload follows the
+// tag at `T`'s alignment (the data layout places it). The zero value of every `?T` is therefore `.none`, which is what
+// a declaration without an initializer stores. The `Ty` is kind `option`, `element` the payload's `Ty` (owned like the
+// other `Ty.element` blocks) and `name` as written (`?i32`). This is not the layout of the old token lowering
+// (`struct smith_enum_option_*`, an `int` tag with `some = 0`): objects of the two do not pass an option to each other.
+//
+// What a `?T` can be made from.
+//   `.some(x)`   `x` is evaluated with the payload's type as its hint and converted to it with `state::convert`, so
+//                `.some(n)` with `n: i32` into a `?i64` widens. The `?T` comes from the hint, else from the checker.
+//   `.none`      the zero struct, with the same two sources of its type.
+//   `wrap`       called by `state::convert` when the target is a `?T` and the value is not one: the value is
+//                converted to the payload type, then built as `.some`. This is `return n` in a function that returns
+//                `?i32`, `x: ?i32 = 5`, an assignment and a call argument.
+//   `if let .some(x) = o { .. } else { .. }`  branches on the tag; `x` is a constant local holding the payload in the
+//                `then` branch (`_` binds nothing). `if let .none = o` has no binding.
+//
+// For #1585: `is_some` (an `i1`) and `payload` read an option value.
+//
+// Left: `?*T` (an option of a pointer; its layout waits for the re-ticket of #86), `match` over `?T` (#1585), `if let`
+// as a value, `try`, and `==` between options.
 module front::emit_option;
 
 import front::ast;
 import front::emit_state as state;
 import front::types;
+import std::format;
+import std::mem;
+import <llvm-c/Core.h>;
+
+static state::Ty *own(state::Emitter *e, state::Ty element) {
+    state::OwnedTy *block = mem::alloc(state::OwnedTy);
+    block->ty = element;
+    block->next = e->owned;
+    e->owned = block;
+    return &block->ty;
+}
+
+// `?payload`.
+static state::TyResult build(state::Emitter *e, state::Ty payload, ast::Span span) {
+    if (payload.kind == .pointer) return state::ty_fail("not emitted yet: an option of a pointer", span);
+    state::Ty *inner = own(e, payload);
+    c::LLVMTypeRef fields[2];
+    fields[0] = c::LLVMInt8TypeInContext(e->context);
+    fields[1] = payload.llvm;
+    state::Ty ty = {.kind = .option,
+                    .llvm = c::LLVMStructTypeInContext(e->context, fields, 2, false),
+                    .name = state::msg(format::push("?", payload.name)),
+                    .element = inner};
+    return ty;
+}
 
 // The type `?T` says.
 export state::TyResult type_option(state::Emitter *e, const ast::TypeExpr *t) {
-    _ = e;
-    return state::ty_fail("not emitted yet: an option type", t->span);
+    if (t->kind != .option) return state::ty_fail("not an option type", t->span);
+    const ast::TypeExpr *inner = t->kind.option.inner;
+    if (inner->kind == .pointer) return state::ty_fail("not emitted yet: an option of a pointer", t->span);
+    state::TyResult made = state::type_of(e, inner);
+    if (made == .error) {
+        return {.error = made.error};
+    }
+    return build(e, made.ok, t->span);
 }
 
-// The option type the checker gives a node.
+// The payload the checker names, as a `Ty`: a `bool`, an integer, or a record of the module (an option is walked by
+// `from_checked`'s loop).
+static state::TyResult payload_of_checked(state::Emitter *e, types::TypeRef t) {
+    state::Ty ty = {};
+    if (t->kind == .bool_type && state::scalar_type(e, "bool", &ty)) return ty;
+    if (t->kind == .integer) {
+        if (state::scalar_type(e, t->name, &ty)) return ty;
+        Str spelled = "u64";
+        if (t->bits == 8) spelled = t->is_signed ? "i8" : "u8";
+        if (t->bits == 16) spelled = t->is_signed ? "i16" : "u16";
+        if (t->bits == 32) spelled = t->is_signed ? "i32" : "u32";
+        if (t->bits == 64) spelled = t->is_signed ? "i64" : "u64";
+        if (state::scalar_type(e, spelled, &ty)) return ty;
+    }
+    if (t->kind == .record) {
+        for (Usize i = 0; i < e->record_count; i++) {
+            if (state::same_text(e->records[i].name, t->name)) {
+                ty = e->records[i].ty;
+                return ty;
+            }
+        }
+    }
+    if (t->kind == .pointer) return state::ty_fail("not emitted yet: an option of a pointer", (ast::Span){});
+    Str shown = types::show(t);
+    Str message = state::msg(format::push("not emitted yet: an option of ", shown));
+    state::free_text(shown);
+    state::TyResult failed = state::ty_fail(message, (ast::Span){});
+    state::free_text(message);
+    return failed;
+}
+
+// The option type the checker gives a node. Options of options are walked from the inside out, up to 8 deep.
 export state::TyResult from_checked(state::Emitter *e, types::TypeRef t) {
-    _ = e;
-    _ = t;
-    return state::ty_fail("not emitted yet: an option type", (ast::Span){});
+    types::TypeRef chain[8];
+    Usize depth = 0;
+    types::TypeRef base = t;
+    while (base->kind == .option) {
+        if (depth == countof(chain))
+            return state::ty_fail("not emitted yet: an option nested more than 8 deep", (ast::Span){});
+        chain[depth] = base;
+        depth += 1;
+        base = base->element;
+    }
+    state::TyResult made = payload_of_checked(e, base);
+    for (Usize i = depth; i > 0; i--) {
+        if (made == .error) {
+            return {.error = made.error};
+        }
+        made = build(e, made.ok, (ast::Span){});
+    }
+    return made;
+}
+
+// `o`'s tag is `.some`: an `i1`.
+export c::LLVMValueRef is_some(state::Emitter *e, state::Value o) {
+    c::LLVMValueRef tag = c::LLVMBuildExtractValue(e->builder, o.llvm, 0, "tag");
+    c::LLVMValueRef zero = c::LLVMConstNull(c::LLVMInt8TypeInContext(e->context));
+    return c::LLVMBuildICmp(e->builder, c::LLVMIntNE, tag, zero, "is_some");
+}
+
+// `o`'s payload (undefined when it is `.none`).
+export state::Value payload(state::Emitter *e, state::Value o) {
+    c::LLVMValueRef got = c::LLVMBuildExtractValue(e->builder, o.llvm, 1, "payload");
+    return (state::Value){.llvm = got, .ty = *o.ty.element};
+}
+
+// The `?T` holding the payload `inner`.
+static state::Value some_of(state::Emitter *e, state::Ty ty, c::LLVMValueRef inner) {
+    c::LLVMValueRef zero = c::LLVMConstNull(ty.llvm);
+    c::LLVMValueRef one = c::LLVMConstInt(c::LLVMInt8TypeInContext(e->context), 1, false);
+    c::LLVMValueRef tagged = c::LLVMBuildInsertValue(e->builder, zero, one, 0, "some");
+    return (state::Value){.llvm = c::LLVMBuildInsertValue(e->builder, tagged, inner, 1, "some"), .ty = ty};
+}
+
+// The payload is on the value stack: convert it, build the option.
+static state::Status some_finish(state::Emitter *e, const state::Work *w) {
+    state::Value value = state::pop_value(e);
+    try state::convert(e, value, *w->ty.element, w->span, .initialize);
+    state::Value converted = state::pop_value(e);
+    state::push_value(e, some_of(e, w->ty, converted.llvm));
+    return state::success();
+}
+
+// The `?T` a `.some` or `.none` builds: the hint, else the checker's type of the node.
+static state::Status option_of_node(state::Emitter *e, const ast::Expr *x, state::Hint hint, state::Ty *ty) {
+    if (hint.present && hint.ty.kind == .option) {
+        *ty = hint.ty;
+        return state::success();
+    }
+    state::TyResult checked = state::type_of_node(e, x);
+    if (checked == .ok && checked.ok.kind == .option) {
+        *ty = checked.ok;
+        return state::success();
+    }
+    if (checked == .error) state::free_text(checked.error.message);
+    Str name = "some";
+    if (x->kind == .variant) name = x->kind.variant.name;
+    return state::failf(x->span, ".", name, " needs the ?T it builds; write the type");
 }
 
 // `.some(x)` and `.none`.
 export state::Status variant(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
-    _ = e;
-    _ = hint;
-    return state::not_emitted("an option value", x->span);
+    if (x->kind != .variant) {
+        return state::fail("not a variant", x->span);
+    }
+    Str name = x->kind.variant.name;
+    const ast::Expr *inner = x->kind.variant.payload;
+    Bool is_none = state::same_text(name, "none");
+    if (!is_none && !state::same_text(name, "some")) {
+        return state::failf(x->span, "an option has .some and .none, not .", name);
+    }
+    if (is_none && inner != nullptr) {
+        return state::fail(".none has no value", x->span);
+    }
+    if (!is_none && inner == nullptr) {
+        return state::fail(".some needs a value", x->span);
+    }
+    state::Ty ty = {};
+    try option_of_node(e, x, hint, &ty);
+    if (is_none) {
+        state::push_value(e, (state::Value){.llvm = c::LLVMConstNull(ty.llvm), .ty = ty});
+        return state::success();
+    }
+    state::push_then(e, (state::Work){.then = some_finish, .ty = ty, .span = x->span});
+    state::push_eval(e, inner, state::hint_of(*ty.element));
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// `if let`
+
+static void jump(state::Emitter *e, c::LLVMBasicBlockRef block) {
+    c::LLVMBasicBlockRef here = c::LLVMGetInsertBlock(e->builder);
+    if (c::LLVMGetBasicBlockTerminator(here) == nullptr) c::LLVMBuildBr(e->builder, block);
+}
+
+// The `then` branch is done: close its scope, leave for the end, and go on in the `else` block when there is one.
+static state::Status after_then(state::Emitter *e, const state::Work *w) {
+    state::end_scope(e);
+    jump(e, w->blocks[1]);
+    c::LLVMPositionBuilderAtEnd(e->builder, w->flag ? w->blocks[0] : w->blocks[1]);
+    return state::success();
+}
+
+static state::Status branch_end(state::Emitter *e, const state::Work *w) {
+    jump(e, w->blocks[0]);
+    c::LLVMPositionBuilderAtEnd(e->builder, w->blocks[0]);
+    return state::success();
+}
+
+// The scrutinee is on the value stack: test its tag, bind the payload, and run the branches.
+static state::Status if_let_branch(state::Emitter *e, const state::Work *w) {
+    const ast::Stmt *s = w->stmt;
+    if (s->kind != .if_let) {
+        return state::fail("not an if let", s->span);
+    }
+    state::Value o = state::pop_value(e);
+    if (o.ty.kind != .option) {
+        return state::failf(s->span, "if let needs an option, not ", o.ty.name);
+    }
+    ast::Pattern pattern = s->kind.if_let.pattern;
+    Bool wants_some = state::same_text(pattern.name, "some");
+    if (!wants_some && !state::same_text(pattern.name, "none")) {
+        return state::failf(pattern.span, "an option has .some and .none, not .", pattern.name);
+    }
+    if (!wants_some && countof(pattern.binding) > 0) {
+        return state::fail(".none has no payload to bind", pattern.span);
+    }
+    const ast::Stmt *else_branch = s->kind.if_let.else_branch;
+    Bool has_else = else_branch != nullptr;
+    c::LLVMBasicBlockRef then_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "let_then");
+    c::LLVMBasicBlockRef else_block = nullptr;
+    if (has_else) else_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "let_else");
+    c::LLVMBasicBlockRef end_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "let_end");
+    if (!has_else) else_block = end_block;
+    c::LLVMValueRef some = is_some(e, o);
+    if (wants_some)
+        c::LLVMBuildCondBr(e->builder, some, then_block, else_block);
+    else
+        c::LLVMBuildCondBr(e->builder, some, else_block, then_block);
+    c::LLVMPositionBuilderAtEnd(e->builder, then_block);
+    state::begin_scope(e);
+    Str binding = pattern.binding;
+    if (wants_some && countof(binding) > 0 && !state::same_text(binding, "_")) {
+        state::Value inner = payload(e, o);
+        c::LLVMValueRef slot = state::new_alloca(e, inner.ty, binding);
+        c::LLVMBuildStore(e->builder, inner.llvm, slot);
+        state::add_local(e, (state::Local){.name = binding, .ty = inner.ty, .address = slot});
+    }
+    if (has_else) {
+        state::Work end = {.then = branch_end, .span = s->span};
+        end.blocks[0] = end_block;
+        state::push_then(e, end);
+        state::push_statement(e, else_branch);
+    }
+    state::Work after = {.then = after_then, .flag = has_else, .span = s->span};
+    after.blocks[0] = else_block;
+    after.blocks[1] = end_block;
+    state::push_then(e, after);
+    state::push_statement(e, s->kind.if_let.then_branch);
+    return state::success();
 }
 
 export state::Status if_let(state::Emitter *e, const ast::Stmt *s) {
-    _ = e;
-    return state::not_emitted("if let", s->span);
+    if (s->kind != .if_let) {
+        return state::fail("not an if let", s->span);
+    }
+    state::push_then(e, (state::Work){.then = if_let_branch, .stmt = s, .span = s->span});
+    state::push_eval(e, s->kind.if_let.value, state::no_hint());
+    return state::success();
 }
 
 // Pushes the `?T` holding `value`.
 export state::Status wrap(state::Emitter *e, state::Value value, state::Ty to, ast::Span span) {
-    _ = e;
-    _ = value;
-    _ = to;
-    return state::not_emitted("wrapping a value in an option", span);
+    try state::convert(e, value, *to.element, span, .initialize);
+    state::Value converted = state::pop_value(e);
+    state::push_value(e, some_of(e, to, converted.llvm));
+    return state::success();
 }

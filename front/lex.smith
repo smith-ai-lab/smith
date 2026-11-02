@@ -111,6 +111,7 @@ export enum TokenKind {
     kw_as,
     kw_fn_once,
     kw_type,
+    kw_yield,
     left_paren,
     right_paren,
     left_bracket,
@@ -184,7 +185,7 @@ export typedef struct {
 export typedef Result(Tokens, LexError) Lexed;
 
 // The names and the texts of the kinds, in the order of the enumeration (a test checks the tables are as long as it).
-static const char *const kind_names[127] = {
+static const char *const kind_names[128] = {
     "end_of_file",
     "type_name",
     "name",
@@ -261,6 +262,7 @@ static const char *const kind_names[127] = {
     "kw_as",
     "kw_fn_once",
     "kw_type",
+    "kw_yield",
     "left_paren",
     "right_paren",
     "left_bracket",
@@ -314,7 +316,7 @@ static const char *const kind_names[127] = {
     "dot_star",
 };
 
-static const char *const kind_texts[127] = {
+static const char *const kind_texts[128] = {
     "",
     "",
     "",
@@ -391,6 +393,7 @@ static const char *const kind_texts[127] = {
     "as",
     "fn_once",
     "type",
+    "yield",
     "(",
     ")",
     "[",
@@ -456,7 +459,7 @@ export Str kind_text(TokenKind kind) {
 
 // Whether a kind is one of the keywords.
 export Bool is_keyword(TokenKind kind) {
-    return kind >= kw_alignas && kind <= kw_type;
+    return kind >= kw_alignas && kind <= kw_yield;
 }
 
 // Whether a kind is a punctuator.
@@ -671,7 +674,7 @@ static Result(Usize, LexError) scan_quoted(Str s, Usize start, Usize quote_at) {
 // The kind of the identifier or keyword in s[start:end].
 static TokenKind identifier_kind(Str s, Usize start, Usize end, Bool new_syntax) {
     Str word = s[start:end];
-    Usize last_keyword = new_syntax ? (Usize)kw_type : (Usize)kw_countof;
+    Usize last_keyword = new_syntax ? (Usize)kw_yield : (Usize)kw_countof;
     for (Usize k = (Usize)kw_alignas; k <= last_keyword; k++) {
         if (same(kind_text((TokenKind)k), word)) return (TokenKind)k;
     }

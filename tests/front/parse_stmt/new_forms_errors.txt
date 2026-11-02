@@ -8,3 +8,4 @@ expected `=>`, found `}` |
 expected `=` after the pattern, found `x` | 
 expected a name for the payload, found `)` | 
 expected `;`, found `)` | 
+yield needs a value: `yield x` (a plain `return` ends the stream) | 
