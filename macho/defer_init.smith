@@ -1,0 +1,121 @@
+// Moves a Mach-O object's static initializers out of the section dyld runs at load: `defer_init in.o out.o name`.
+//
+// clang-format, clang-tidy and clangd each declare their flags as global llvm::cl::opt objects, built by static
+// initializers, and LLVM aborts when two of them register the same flag ("fallback-style" is in clang-format and
+// clang-tidy). smith links all three, so their initializers must not run at load. This renames the object's
+// __DATA,__mod_init_func section to __DATA,__smith_<name> and makes it plain data that the linker keeps
+// (S_ATTR_NO_DEAD_STRIP), so that the shim for the tool (shim/tool.h) runs the pointers in it when that tool is the one
+// that runs. A 64-bit Mach-O object (what clang makes for arm64 and x86_64) is the only input; it is read whole,
+// patched in place and written to the new file. Prints how many sections it changed.
+module defer_init;
+
+import std::arena;
+import std::console;
+import std::contract;
+import std::files;
+import std::mem;
+
+constexpr U32 magic_64 = 0xFEEDFACF;
+constexpr U32 segment_64 = 0x19;
+constexpr U32 no_dead_strip = 0x10000000; // S_ATTR_NO_DEAD_STRIP on a regular section
+constexpr Usize object_max = 64U << 20;
+constexpr Usize header_size = 32;
+constexpr Usize segment_header_size = 72;
+constexpr Usize section_size = 80;
+constexpr Usize name_size = 16;
+constexpr Usize flags_offset = 64;    // in a section header
+constexpr Usize sections_offset = 64; // in a segment command: where nsects is
+constexpr U32 sections_max = 1U << 12;
+constexpr U32 commands_max = 1U << 16;
+
+// The 32-bit little-endian word at `offset` (the host's byte order, as the object's: clang makes it for this machine).
+U32 word(const U8 object[:], Usize offset) {
+    contract::requires(offset + 4 <= countof(object));
+    return (U32)object[offset] | (U32)object[offset + 1] << 8 | (U32)object[offset + 2] << 16 |
+           (U32)object[offset + 3] << 24;
+}
+
+void set_word(U8 object[:], Usize offset, U32 value) {
+    contract::requires(offset + 4 <= countof(object));
+    for (Usize i = 0; i < 4; i++)
+        object[offset + i] = (U8)(value >> (8 * i));
+}
+
+// Patches the section header at `section` if it is __mod_init_func; returns whether it did.
+Bool patch_section(U8 object[:], Usize section, const char name[:]) {
+    contract::requires(section + section_size <= countof(object));
+    contract::requires(countof(name) <= name_size);
+    const char original[:] = "__mod_init_func";
+    for (Usize i = 0; i < countof(original); i++) {
+        if (object[section + i] != (U8)original[i]) return false;
+    }
+    if (object[section + countof(original)] != 0) return false; // the name ends there
+    for (Usize i = 0; i < name_size; i++)
+        object[section + i] = i < countof(name) ? (U8)name[i] : 0;
+    set_word(object, section + flags_offset, no_dead_strip); // type 0: regular data
+    return true;
+}
+
+// Patches every __mod_init_func of the object and returns how many there were; none when it is no 64-bit Mach-O
+// object or a command or segment runs past its end.
+export Option(U32) patch(U8 object[:], const char name[:]) {
+    contract::requires(countof(name) <= name_size);
+    Usize size = countof(object);
+    if (size < header_size || word(object, 0) != magic_64) return .none;
+    U32 commands = word(object, 16);
+    if (commands > commands_max) return .none;
+    Usize offset = header_size;
+    U32 patched = 0;
+    for (U32 i = 0; i < commands; i++) { // bounded by commands
+        if (offset + 8 > size) return .none;
+        U32 command = word(object, offset);
+        Usize length = word(object, offset + 4);
+        if (length < 8 || offset + length > size) return .none;
+        if (command == segment_64) {
+            if (segment_header_size > length) return .none;
+            U32 sections = word(object, offset + sections_offset);
+            if (sections > sections_max) return .none;
+            if (segment_header_size + (Usize)sections * section_size > length) return .none;
+            for (U32 s = 0; s < sections; s++) // bounded by sections
+                patched += patch_section(object, offset + segment_header_size + (Usize)s * section_size, name) ? 1 : 0;
+        }
+        offset += length;
+    }
+    return patched;
+}
+
+I32 fail(const char what[:], const char path[:]) {
+    console::print_error("defer_init: ", what, " ", path, "\n");
+    return 1;
+}
+
+// The tool on files: reads `from`, defers its initializers into the section `__smith_<name>`, writes `to` and prints
+// the count. Returns the exit status: 0, or 1 with the reason on stderr.
+export I32 run(const char from[:], const char to[:], const char name[:]) {
+    const char tag[:] = "__smith_";
+    if (countof(tag) + countof(name) > name_size) return fail("the name is too long:", name);
+    char section[name_size];
+    Usize length = 0;
+    for (Usize i = 0; i < countof(tag); i++)
+        section[length++] = tag[i];
+    for (Usize i = 0; i < countof(name); i++)
+        section[length++] = name[i];
+    arena::Arena memory = arena::growing(1U << 20, nullptr);
+    defer arena::release(&memory);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::BytesResult read = files::read_file(from);
+    switch (read) {
+    case .error:
+        return fail("cannot read", from);
+    case .ok:
+        if (countof(read.ok) > object_max) return fail("the object is larger than 64 MiB:", from);
+        Option(U32) patched = patch(read.ok, section[0:length]);
+        if (patched == .none) return fail("not a 64-bit Mach-O object:", from);
+        files::CountResult written = files::write_file(to, read.ok, files::Replace);
+        if (written == .error) return fail("cannot write", to);
+        console::print(from, ": ", patched.some, " initializer section(s) deferred as ", section[0:length], "\n");
+        return 0;
+    }
+}
