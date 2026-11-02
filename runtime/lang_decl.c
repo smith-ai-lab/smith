@@ -69,7 +69,7 @@ static SmithLangName *smith_lang_name_find(SmithLang *lang, const char *text, si
 static SmithLangName *smith_lang_name_add(SmithLang *lang, const char *text, size_t length, SmithLangNameKind kind,
                                           bool exported) {
     if (lang->names_count >= smith_lang_names_max) {
-        lang->broken = true;
+        smith_lang_limit(lang, "names", smith_lang_names_max);
         return nullptr;
     }
     SmithLangName *name = &lang->names[lang->names_count++];

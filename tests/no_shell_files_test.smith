@@ -81,7 +81,7 @@ static const char *first_line(const char *path) {
 
 // The shell files that exist today, waiting for their port, and the fake programs of the build tests.
 static Bool exempt(const char *name) {
-    return c::strcmp(name, "scripts/llvm.sh") == 0 || starts_with(name, "tests/build_fixtures/");
+    return starts_with(name, "tests/build_fixtures/");
 }
 
 static Bool ends_with_sh(const char *name) {
@@ -137,7 +137,7 @@ export void test_a_new_shell_file_fails() {
     scratch::Run made = scratch::sh(
         &p, "git init -q . && mkdir -p scripts tests/build_fixtures src && printf 'echo hi\\n' > x.sh && "
             "printf '#!/bin/bash\\necho hi\\n' > tool && printf '#!/usr/bin/env sh\\n' > src/env && "
-            "printf '#!/bin/sh\\n' > scripts/llvm.sh && printf '#!/bin/sh\\n' > tests/build_fixtures/curl && "
+            "printf '#!/bin/sh\\n' > scripts/release.sh && printf '#!/bin/sh\\n' > tests/build_fixtures/curl && "
             "printf '#!/usr/bin/env python3\\n' > p.py && printf 'int ok;\\n' > src/ok.c && git add -f -A");
     scratch::expect_status("the repository is made", 0, &made);
     scratch::expect_text("the new shell files", "src/env\ntool\nx.sh\n", offenders(&p, p.dir));

@@ -1,7 +1,7 @@
 // The only C++ in smith: a C interface to clang's own main, linked into smith so that it compiles in its own process.
 //
 // clang_main is the function the clang binary's main calls (clang/tools/driver/driver.cpp), so every flag, response
-// file, job, diagnostic and crash report is clang's own. scripts/llvm.sh keeps it, with cc1, cc1as and
+// file, job, diagnostic and crash report is clang's own. build_llvm_run_macos keeps it, with cc1, cc1as and
 // cc1gen-reproducer, in libclangmain.a. This file is clang-driver.cpp's main, with the program path chosen here.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/InitLLVM.h"
