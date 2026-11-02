@@ -14,7 +14,7 @@ The pipeline, one module group per section below:
 
 - **lex, parse**: text to a `front::ast` tree (`lex`, `parse`, `parse_expr`, `parse_type`, `parse_stmt`, `parse_decl`, `parser`).
 - **fix**: the fixes parse and check errors carry, applied by `smith lint --fix`.
-- **check**: the tree to types (`types`, `types_expr`, `types_convert`, `types_decl`, `types_attr`, `types_fn`, `types_iter`).
+- **check**: the tree to types (`types`, `types_expr`, `types_convert`, `types_decl`, `types_attr`, `types_fn`, `types_iter`, `types_stream`).
 - **emit**: the checked tree to an LLVM module (`emit*.smith`), then an object (`emit_object`).
 - **drive**: `compile` and `roots` join the stages for `smith cc`; `cimport` reads C headers ([c-header-import](c-header-import.md)).
 
@@ -245,6 +245,12 @@ Functions and lambdas in the checker; the rules are the top comment of the file.
 - Not yet: `fn_once` locals and fields, a lambda with no captures as a C function pointer, how a stored lambda's captures are freed (asked of the lead).
 - No recursion: the walk is a work stack. Tests: `tests/front_types_fn_test.smith`.
 
+### front::types_stream (`front/types_stream.smith`, #1545)
+- A generator is a function whose written result is `stream::Stream(T)` and whose body has a `yield` outside any lambda; a stream-returning function with no `yield` is an ordinary function.
+- `yield x` is valid only in a generator, and `x` converts to `T` by the ordinary conversion. Elsewhere (a lambda included) it is an error that says to return a stream or remove the yield.
+- A generator ends with a plain `return`; `return v` is an error that says to `yield v` first. Its body is checked as the body of a function with no result.
+- No recursion: the search for a `yield` walks statements with a fixed stack. Hooked from `types_decl`; not wired into `smith cc`. Tests: `tests/front_types_stream_test.smith`.
+
 ### front::types_iter (`front/types_iter.smith`, #1514, C3)
 
 Iteration in the checker; the rules are the top comment of the file.
@@ -253,7 +259,7 @@ Iteration in the checker; the rules are the top comment of the file.
 - `range(a, b)` yields its integers; an unsuffixed literal argument takes the type of the non-literal ones (`range(0, n)` with `n: u32` yields `u32`; all literals give `i32`; mixed non-literals are an error, #1606).
 - `refs(xs)` yields pointers; `zip` and `enumerate` yield tuples, so one name is refused and `for (i, x) in ...` is "not yet typed" (#1557).
 - The loop's names live in the loop's scope and may not shadow. `zip` of unequal lengths is a checked failure at run time (the lead's recommendation, not yet the owner's word, #1514).
-- `types_iter::built_in()` also takes `stream::Stream(T)` as iterable with element `T` (#1613); the `yield` rules are #1545 and the emitter is #1546.
+- `types_iter::built_in()` also takes `stream::Stream(T)` as iterable with element `T` (#1613); the `yield` rules are `types_stream` (#1545) and the emitter is #1546.
 - Not yet: a `for` that builds a value, `continue` as a filter, `sum(for ...)`, user iterators and `utf8::chars`. Tests: `tests/front_types_iter_test.smith`.
 
 ## front::emit (`front/emit*.smith`, #1119)
