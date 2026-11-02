@@ -21,10 +21,12 @@ import front::parse_stmt;
 import front::parse_type;
 import std::mem;
 
-// What reading a file gave: the module (the declarations read before and after each error) and the errors.
+// What reading a file gave: the module (the declarations read before and after each error), the errors and the warnings (old forms
+// that still compile; the compile ignores them, `smith lint --fix` mends them).
 export struct Parsed {
     ast::Module module;
     parse::Errors errors;
+    parse::Errors warnings;
 };
 
 // Reads the text of the file called `file`. A file with errors still has the module of what could be read.
@@ -46,5 +48,6 @@ export Parsed parse(Str file, Str source) {
     p.hooks.declaration = parse_decl::declaration;
     result.module = parse_decl::file(&p, file);
     result.errors = p.errors;
+    result.warnings = p.warnings;
     return result;
 }

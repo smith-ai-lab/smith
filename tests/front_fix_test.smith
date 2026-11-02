@@ -39,6 +39,11 @@ static syntax::Errors errors_of(Usize n) {
     return errors;
 }
 
+static syntax::Errors none_of() {
+    syntax::Errors none = {};
+    return none;
+}
+
 static syntax::Edits fix_of(Usize n) {
     syntax::Edits edits = {};
     return mem::realloc(edits, n);
@@ -77,7 +82,7 @@ export void test_error_fix_records_its_edits() {
     syntax::Edits made = parsed.errors[0].fix;
     check_count(countof(made), 1);
     check_text(made[0].text, "new");
-    check_flag(parsed.errors[0].warning, false);
+    check_count(countof(parsed.warnings), 0);
 }
 
 export void test_error_without_a_fix_has_none() {
@@ -101,7 +106,7 @@ export void test_fixes_apply_in_order_of_position() {
     errors[0].fix[0] = edit(6, 7, "B");
     errors[1].fix = fix_of(1);
     errors[1].fix[0] = edit(0, 1, "A");
-    fix::Fixed fixed = fix::apply_fixes("a bcd b", errors);
+    fix::Fixed fixed = fix::apply_fixes("a bcd b", errors, none_of());
     check_text(fixed.text, "A bcd B");
     check_count(fixed.applied, 2);
     check_count(fixed.skipped, 0);
@@ -118,7 +123,7 @@ export void test_overlapping_fix_is_skipped() {
     errors[1].fix = fix_of(2);
     errors[1].fix[0] = edit(5, 6, "Q");
     errors[1].fix[1] = edit(2, 4, "zz");
-    fix::Fixed fixed = fix::apply_fixes("abcdefg", errors);
+    fix::Fixed fixed = fix::apply_fixes("abcdefg", errors, none_of());
     check_text(fixed.text, "xyzdefg");
     check_count(fixed.applied, 1);
     check_count(fixed.skipped, 1);
@@ -133,7 +138,7 @@ export void test_insertion_and_deletion() {
     errors[0].fix = fix_of(2);
     errors[0].fix[0] = edit(1, 1, "-");
     errors[0].fix[1] = edit(2, 3, "");
-    fix::Fixed fixed = fix::apply_fixes("abc", errors);
+    fix::Fixed fixed = fix::apply_fixes("abc", errors, none_of());
     check_text(fixed.text, "a-b");
 }
 
@@ -146,7 +151,7 @@ export void test_text_reaches_a_fixed_point() {
     Usize total = 0;
     for (Usize pass = 0; pass < 8; pass++) {
         parser::Parsed parsed = reader("x.smith", source);
-        fix::Fixed fixed = fix::apply_fixes(source, parsed.errors);
+        fix::Fixed fixed = fix::apply_fixes(source, parsed.errors, none_of());
         if (fixed.applied == 0) break;
         total += fixed.applied;
         source = fixed.text;
@@ -172,4 +177,30 @@ export void test_a_file_is_stored_and_a_second_run_applies_nothing() {
     Str got = chars;
     check_text(got, "module a;\n");
     check_signed(fix::fix_file("/tmp/front_fix_test_missing.smith"), -1);
+}
+
+export void test_a_warning_is_kept_apart_and_its_fix_applies() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    syntax::Parser p = {};
+    syntax::Edits edits = fix_of(1);
+    edits[0] = edit(1, 2, "X");
+    syntax::warning_fix(&p, edits[0].span, "old form", edits);
+    check_count(countof(p.errors), 0);
+    check_count(countof(p.warnings), 1);
+    fix::Fixed fixed = fix::apply_fixes("abc", p.errors, p.warnings);
+    check_count(fixed.applied, 1);
+    check_text(fixed.text, "aXc");
+}
+
+export void test_a_source_without_old_forms_has_no_warnings() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed parsed = parser::parse(file_name, "module a;");
+    check_count(countof(parsed.errors), 0);
+    check_count(countof(parsed.warnings), 0);
 }
