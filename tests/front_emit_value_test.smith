@@ -1,0 +1,207 @@
+// Tests of an `if` or a block used as a value in the emitter (#1618 of #1428). Each scenario is source text in smith's
+// own syntax, read by front::parser's hooks, checked by front::types_decl and emitted, then run through the JIT.
+module front_emit_value_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::emit_state;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <string.h>;
+
+struct Scenario {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    parser::Parsed parsed;
+    types::Checked checked;
+    Bool has_checked;
+};
+
+// The module of `source`, read in smith's own syntax.
+static parser::Parsed parse_new(Str source) {
+    parser::Parsed result = {};
+    result.module.file = "t.smith";
+    lex::Lexed lexed = lex::tokenize_new(source);
+    switch (lexed) {
+    case .ok:
+        parse::Parser p = parse::make(lexed.ok, source);
+        p.new_syntax = true;
+        p.hooks.expression = parse_expr::expression;
+        p.hooks.type = parse_type::type;
+        p.hooks.statement = parse_stmt::statement;
+        p.hooks.declaration = parse_decl::declaration;
+        result.module = parse_decl::file(&p, "t.smith");
+        result.errors = p.errors;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    return result;
+}
+
+static void begin(Scenario *s, Str source, Bool with_checker) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parse_new(source);
+    test::check_equal(countof(s->parsed.errors), (Usize)0);
+    if (with_checker) {
+        s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+        s->has_checked = true;
+        test::check_equal(s->checked.error_count, (Usize)0);
+    }
+    mem::set_allocator(outside);
+}
+
+static emit::Options options_for(emit::Target target, const Scenario *s) {
+    emit::Options options = {};
+    options.target = target;
+    if (s->has_checked) options.checked = &s->checked;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static Bool contains(const char *text, Str needle) {
+    return text != nullptr && c::strstr(text, needle.data) != nullptr;
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+// Emits `source` (with the checker's types), returns its IR text and adds it to `host`.
+static char *ir_with(Str source, emit_jit::Jit *host, Scenario *s, Bool with_checker) {
+    begin(s, source, with_checker);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s->parsed.module, options_for(host->target, s));
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    } else {
+        Str expected = "no error";
+        test::check_equal(emitted.error.message, expected);
+    }
+    return text;
+}
+
+static char *ir_of(Str source, emit_jit::Jit *host, Scenario *s) {
+    return ir_with(source, host, s, true);
+}
+
+typedef I32 (*Pick)(I32);
+typedef I64 (*Wide)(I64, I64);
+typedef I32 (*Choose)(I32, I32);
+
+export void test_front_emit_value_an_if_chain_is_the_functions_last_line() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("pub fn sign(n: i32) -> i32 {\n    if n < 0 {\n        -1\n    } else if n == 0 {\n        0\n"
+                     "    } else {\n        1\n    }\n}\n",
+                     &host, &s);
+    test::check_equal(contains(ir, "br i1"), true);
+    test::check_equal(contains(ir, "endif"), true);
+    Pick sign = (Pick)symbol_of(&host, "sign");
+    test::check_equal(sign(-5), -1);
+    test::check_equal(sign(0), 0);
+    test::check_equal(sign(9), 1);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_value_an_if_initializes_a_local_with_and_without_a_type() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    ir_of("pub fn typed(c: bool) -> i32 {\n    x: i32 = if c { 7 } else { 9 }\n    x + 1\n}\n"
+          "pub fn inferred(a: i32, b: i32) -> i32 {\n    x := if a > b { a } else { b }\n    x * 2\n}\n"
+          "pub fn nested(a: i32) -> i32 {\n    x := if a > 0 {\n        if a > 10 { 100 } else { 10 }\n    } else {\n"
+          "        0\n    }\n    x\n}\n",
+          &host, &s);
+    typedef I32 (*Flag)(I32);
+    Flag typed = (Flag)symbol_of(&host, "typed");
+    Choose inferred = (Choose)symbol_of(&host, "inferred");
+    Pick nested = (Pick)symbol_of(&host, "nested");
+    test::check_equal(typed(1), 8);
+    test::check_equal(typed(0), 10);
+    test::check_equal(inferred(3, 5), 10);
+    test::check_equal(inferred(8, 5), 16);
+    test::check_equal(nested(50), 100);
+    test::check_equal(nested(5), 10);
+    test::check_equal(nested(-5), 0);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_value_a_block_has_a_value_and_its_locals_stay_inside() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    ir_of("pub fn tail(n: i64, top: i64) -> i64 {\n    if n > top {\n        return top\n    }\n    {\n"
+          "        doubled := n * 2\n        doubled - n\n    }\n}\n"
+          "pub fn branch(n: i64, top: i64) -> i64 {\n    if n > top {\n        r := top\n        r + 1\n"
+          "    } else {\n        n\n    }\n}\n",
+          &host, &s);
+    Wide tail = (Wide)symbol_of(&host, "tail");
+    Wide branch = (Wide)symbol_of(&host, "branch");
+    test::check_equal(tail(7, 5), (I64)5);
+    test::check_equal(tail(3, 5), (I64)3);
+    test::check_equal(branch(9, 5), (I64)6);
+    test::check_equal(branch(3, 5), (I64)3);
+    emit_jit::stop(&host);
+}
+
+// The checker does not type a `return` inside a value block yet, so these two are emitted without it (the hint gives
+// the slot's type).
+export void test_front_emit_value_a_branch_that_returns_stores_nothing() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_with("pub fn early(n: i32) -> i32 {\n    x: i32 = if n < 0 {\n        return -1\n    } else {\n"
+                       "        n * 2\n    }\n    x + 1\n}\n"
+                       "pub fn both(n: i32) -> i32 {\n    x: i32 = if n < 0 {\n        return 1\n    } else {\n"
+                       "        return 2\n    }\n    x\n}\n",
+                       &host, &s, false);
+    test::check_equal(contains(ir, "unreachable"), true);
+    Pick early = (Pick)symbol_of(&host, "early");
+    Pick both = (Pick)symbol_of(&host, "both");
+    test::check_equal(early(-3), -1);
+    test::check_equal(early(4), 9);
+    test::check_equal(both(-1), 1);
+    test::check_equal(both(1), 2);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_value_a_narrower_branch_widens_to_the_slot() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("pub fn pick(c: bool, small: i32) -> i64 {\n    wide: i64 = 100\n"
+                     "    x: i64 = if c { small } else { wide }\n    x + 1\n}\n",
+                     &host, &s);
+    test::check_equal(contains(ir, "sext i32"), true);
+    typedef I64 (*Mixed)(Bool, I32);
+    Mixed mixed = (Mixed)symbol_of(&host, "pick");
+    test::check_equal(mixed(true, 4), (I64)5);
+    test::check_equal(mixed(false, 4), (I64)101);
+    emit_jit::stop(&host);
+}

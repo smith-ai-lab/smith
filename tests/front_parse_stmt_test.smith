@@ -304,6 +304,8 @@ static Str malformed(Usize which) {
         return "{\nif let .a() = e {\n x\n }\n}";
     case 9:
         return "{\nreturn 1 )\n}";
+    case 10:
+        return "{\nyield\n}";
     default:
         return "";
     }
@@ -315,10 +317,19 @@ export void test_parse_stmt_a_malformed_new_form_is_one_error() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     char all[:] = {};
-    for (Usize i = 0; i < 10; i++) {
+    for (Usize i = 0; i < 11; i++) {
         all = format::push(all, first_error(malformed(i)), "\n");
     }
     test::golden("tests/front/parse_stmt/new_forms_errors.txt", all);
+}
+
+export void test_parse_stmt_yield_in_smith_syntax() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "{\nwhile n {\n yield n\n if n {\n yield n + 1\n }\n }\nyield 2; return\n}";
+    test::golden("tests/front/parse_stmt/new_yield.txt", clean_dump_in(source, true));
 }
 
 // Bindings in smith's own syntax inside a body: the declaration parser's binding parser reads them, `is_new` set.

@@ -1,6 +1,7 @@
 // front::emit_control: control flow for the emitter (B2, #1131 of #1112). Statements: `if`, `while`, `do while`, `for`,
 // `break`, `continue`; expressions: comparisons, `&&`, `||` (short circuit: blocks and a phi), `!`, `?:` and `true`
-// and `false`. `switch`, `goto`, labels and `defer` are later tickets and keep their `not emitted yet`.
+// and `false`. `defer` runs on every way out of its block (below). `switch`, `goto` and labels keep their `not emitted
+// yet`.
 //
 // How it works with the walk (the protocol is at the top of front/emit.smith): a statement makes its blocks, then
 // pushes its pieces as work in reverse order, so they run as: the condition (an `eval`), `branch_on_condition`, the
@@ -8,6 +9,11 @@
 // `Work.expr` and the blocks from `Work.blocks`. A block that already ends in a terminator (after `return`, `break`)
 // gets no branch. `break` and `continue` find their blocks on `Emitter.loops`; a loop pushes its target when its body
 // starts and pops it when it ends, and the last pop gives the slice back.
+//
+// `defer body` pushes the body on `Emitter.defers` with the scope depth it was in. A block's end runs and removes its
+// own (newest first) unless its end is unreachable; `return` runs all of them after its value is computed; `break` and
+// `continue` run those deeper than the loop (`LoopTarget.scope_depth`) and then jump. A deferred body is emitted once
+// per way out, so a local in it gets a slot each time.
 //
 // Conditions are `Bool` (the module rule): an integer where a condition is expected is an Error with the condition's
 // span, "a condition is a Bool; write `x != 0`".
@@ -31,6 +37,12 @@ static void jump(state::Emitter *e, c::LLVMBasicBlockRef block) {
     if (c::LLVMGetBasicBlockTerminator(here) == nullptr) c::LLVMBuildBr(e->builder, block);
 }
 
+// A continuation that jumps to `blocks[0]` once the work pushed after it (a `break`'s deferred bodies) has run.
+static state::Status jump_to(state::Emitter *e, const state::Work *w) {
+    jump(e, w->blocks[0]);
+    return state::success();
+}
+
 static void position(state::Emitter *e, c::LLVMBasicBlockRef block) {
     c::LLVMPositionBuilderAtEnd(e->builder, block);
 }
@@ -39,22 +51,6 @@ static state::Ty bool_type(state::Emitter *e) {
     state::Ty ty = {};
     state::scalar_type(e, "Bool", &ty);
     return ty;
-}
-
-// The loop targets: the last pop gives the slice back (`realloc(xs, 0)` frees it and gives the empty slice).
-static void push_loop(state::Emitter *e, state::LoopTarget target) {
-    if (e->loop_count == countof(e->loops)) {
-        Usize capacity = countof(e->loops) * 2;
-        if (capacity < 4) capacity = 4;
-        e->loops = mem::realloc(e->loops, capacity);
-    }
-    e->loops[e->loop_count] = target;
-    e->loop_count += 1;
-}
-
-static void pop_loop(state::Emitter *e) {
-    e->loop_count -= 1;
-    if (e->loop_count == 0) e->loops = mem::realloc(e->loops, 0);
 }
 
 // An Error of this module: the walk ends, so the loop targets go back now.
@@ -147,7 +143,7 @@ export state::Status if_stmt(state::Emitter *e, const ast::Stmt *s) {
 
 static state::Status while_end(state::Emitter *e, const state::Work *w) {
     jump(e, w->blocks[0]);
-    pop_loop(e);
+    state::pop_loop(e);
     position(e, w->blocks[1]);
     return state::success();
 }
@@ -163,7 +159,9 @@ export state::Status while_stmt(state::Emitter *e, const ast::Stmt *s) {
     c::LLVMBasicBlockRef end_block = new_block(e, "endwhile");
     jump(e, condition_block);
     position(e, condition_block);
-    push_loop(e, (state::LoopTarget){.break_block = end_block, .continue_block = condition_block});
+    state::push_loop(e, (state::LoopTarget){.break_block = end_block,
+                                            .continue_block = condition_block,
+                                            .scope_depth = e->scope_count});
     state::Work end = {.then = while_end, .span = s->span};
     end.blocks[0] = condition_block;
     end.blocks[1] = end_block;
@@ -181,7 +179,7 @@ static state::Status do_condition(state::Emitter *e, const state::Work *w) {
     const ast::Expr *condition = w->stmt->kind.do_while.condition;
     jump(e, w->blocks[1]);
     position(e, w->blocks[1]);
-    pop_loop(e);
+    state::pop_loop(e);
     push_condition(e, condition, w->blocks[0], w->blocks[2], 1);
     return state::success();
 }
@@ -196,7 +194,9 @@ export state::Status do_while(state::Emitter *e, const ast::Stmt *s) {
     c::LLVMBasicBlockRef end_block = new_block(e, "enddo");
     jump(e, body_block);
     position(e, body_block);
-    push_loop(e, (state::LoopTarget){.break_block = end_block, .continue_block = condition_block});
+    state::push_loop(e, (state::LoopTarget){.break_block = end_block,
+                                            .continue_block = condition_block,
+                                            .scope_depth = e->scope_count});
     state::Work next = {.then = do_condition, .stmt = s, .span = s->span};
     next.blocks[0] = body_block;
     next.blocks[1] = condition_block;
@@ -244,7 +244,8 @@ static state::Status for_start(state::Emitter *e, const state::Work *w) {
     c::LLVMBasicBlockRef step_block = new_block(e, "forstep");
     jump(e, condition_block);
     position(e, condition_block);
-    push_loop(e, (state::LoopTarget){.break_block = end_block, .continue_block = step_block});
+    state::push_loop(
+        e, (state::LoopTarget){.break_block = end_block, .continue_block = step_block, .scope_depth = e->scope_count});
     state::Work next = {.then = for_step, .stmt = w->stmt, .span = w->span};
     next.blocks[0] = step_block;
     next.blocks[1] = condition_block;
@@ -260,7 +261,7 @@ static state::Status for_start(state::Emitter *e, const state::Work *w) {
 }
 
 static state::Status for_end(state::Emitter *e, const state::Work *w) {
-    pop_loop(e);
+    state::pop_loop(e);
     state::end_scope(e);
     position(e, w->blocks[0]);
     return state::success();
@@ -286,15 +287,34 @@ export state::Status for_stmt(state::Emitter *e, const ast::Stmt *s) {
     return state::success();
 }
 
+// The pending `defer`s a jump out of the loop on top leaves: pushes the jump to `target` as work, then the bodies of
+// the entries deeper than the loop, so the innermost runs first and the jump last. Nothing is removed from `defers`:
+// the other paths out of those blocks still need them.
+static void leave_loop(state::Emitter *e, c::LLVMBasicBlockRef target, ast::Span span) {
+    Usize depth = e->loops[e->loop_count - 1].scope_depth;
+    Usize first = e->defer_count;
+    while (first > 0 && e->defers[first - 1].scope_depth > depth)
+        first -= 1;
+    if (first == e->defer_count) {
+        jump(e, target);
+        return;
+    }
+    state::Work next = {.then = jump_to, .span = span};
+    next.blocks[0] = target;
+    state::push_then(e, next);
+    for (Usize i = first; i < e->defer_count; i++)
+        state::push_statement(e, e->defers[i].body);
+}
+
 export state::Status break_stmt(state::Emitter *e, const ast::Stmt *s) {
     if (e->loop_count == 0) return stop(e, "`break` outside a loop", s->span);
-    jump(e, e->loops[e->loop_count - 1].break_block);
+    leave_loop(e, e->loops[e->loop_count - 1].break_block, s->span);
     return state::success();
 }
 
 export state::Status continue_stmt(state::Emitter *e, const ast::Stmt *s) {
     if (e->loop_count == 0) return stop(e, "`continue` outside a loop", s->span);
-    jump(e, e->loops[e->loop_count - 1].continue_block);
+    leave_loop(e, e->loops[e->loop_count - 1].continue_block, s->span);
     return state::success();
 }
 
@@ -525,16 +545,42 @@ export state::Status labeled(state::Emitter *_, const ast::Stmt *s) {
     return state::not_emitted("label", s->span);
 }
 
-export state::Status defer_stmt(state::Emitter *_, const ast::Stmt *s) {
-    return state::not_emitted("defer", s->span);
-}
-
-// Called when a block ends, before its locals go out of scope: B2 runs the `defer`s of that scope here.
-export state::Status end_of_block(state::Emitter *_, ast::Span _) {
+// `defer body`: the body waits on `defers` with the depth of the block it is in, and emits nothing now.
+export state::Status defer_stmt(state::Emitter *e, const ast::Stmt *s) {
+    if (s->kind != .defer_stmt) {
+        return state::fail("not a defer", s->span);
+    }
+    const ast::Stmt *body = s->kind.defer_stmt.body;
+    if (e->defer_count == countof(e->defers)) {
+        Usize capacity = countof(e->defers) * 2;
+        if (capacity < 4) capacity = 4;
+        e->defers = mem::realloc(e->defers, capacity);
+    }
+    e->defers[e->defer_count] = (state::DeferEntry){.body = body, .scope_depth = e->scope_count};
+    e->defer_count += 1;
     return state::success();
 }
 
-// Called by `return` before it returns: B2 runs the pending `defer`s here. Nothing to do before B2.
-export state::Status before_return(state::Emitter *_, ast::Span _) {
+// Called when a block ends, before its locals go out of scope: the `defer`s of this scope run here, the newest first,
+// and leave `defers`. A block whose end cannot be reached (it ended in `return`, `break` or `continue`) runs none.
+export state::Status end_of_block(state::Emitter *e, ast::Span _) {
+    Usize first = e->defer_count;
+    while (first > 0 && e->defers[first - 1].scope_depth >= e->scope_count)
+        first -= 1;
+    c::LLVMBasicBlockRef here = c::LLVMGetInsertBlock(e->builder);
+    if (c::LLVMGetBasicBlockTerminator(here) == nullptr) {
+        for (Usize i = first; i < e->defer_count; i++)
+            state::push_statement(e, e->defers[i].body);
+    }
+    e->defer_count = first;
+    if (first == 0 && countof(e->defers) > 0) e->defers = mem::realloc(e->defers, 0);
+    return state::success();
+}
+
+// Called by `return` after its value is computed, before `ret`: every pending `defer` runs, the newest first. None is
+// removed: the function's other paths still need them.
+export state::Status before_return(state::Emitter *e, ast::Span _) {
+    for (Usize i = 0; i < e->defer_count; i++)
+        state::push_statement(e, e->defers[i].body);
     return state::success();
 }

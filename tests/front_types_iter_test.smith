@@ -123,6 +123,14 @@ export void test_front_types_iter_element_has_the_element_type() {
     fails("fn run(xs: []i32) {\n    for x in xs {\n        s: str = x\n    }\n}\n", "found I32", "expected Str");
 }
 
+export void test_front_types_iter_stream_yields_its_elements() {
+    clean("fn run(s: stream::Stream(i32)) -> i32 {\n    mut total := 0\n    for x in s {\n        total = total + x\n  "
+          "  }\n    "
+          "total\n}\n");
+    fails("fn run(s: stream::Stream(i32)) {\n    for x in s {\n        t: str = x\n    }\n}\n", "found I32",
+          "expected Str");
+}
+
 export void test_front_types_iter_str_yields_bytes() {
     clean("fn run(s: str) -> u8 {\n    mut last: u8 = 0\n    for b in s {\n        last = b\n    }\n    last\n}\n");
     fails("fn run(s: str) {\n    for b in s {\n        c: str = b\n    }\n}\n", "found U8", "expected Str");
@@ -151,6 +159,13 @@ export void test_front_types_iter_range_yields_its_integers() {
     clean("fn run(n: i32) -> i32 {\n    mut total := 0\n    for i in range(n) {\n        total = total + i\n    }\n    "
           "total\n}\n");
     clean("fn run() {\n    for i in range(2, 10) {\n    }\n}\n");
+    clean("fn run(limit: u32) -> u32 {\n    mut total: u32 = 0\n    for i in range(0, limit) {\n        total = total "
+          "+ i\n    }\n    "
+          "total\n}\n");
+    clean("fn run(a: usize) -> usize {\n    mut total: usize = 0\n    for i in range(a, 10) {\n        total = total + "
+          "i\n    }\n    "
+          "total\n}\n");
+    fails("fn run(x: i32, y: u32) {\n    for i in range(x, y) {\n    }\n}\n", "U32", "I32");
 }
 
 export void test_front_types_iter_range_of_a_string_is_refused() {

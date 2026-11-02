@@ -13,8 +13,16 @@
 //                                     standard output for each file, 0 when every file could be read and written
 module front::fix;
 
+import front::ast;
 import front::parse as core;
+import front::lex;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
 import front::parser;
+import front::types;
+import front::types_decl;
 import std::files;
 import std::format;
 import std::mem;
@@ -106,6 +114,29 @@ export Fixed apply_fixes(Str source, core::Errors errors, core::Errors warnings)
 
 constexpr Usize fix_passes = 8;
 
+// The errors of the checker that carry a fix, as parse errors, so `apply_fixes` takes both kinds (#1516).
+static core::Errors checker_fixes(const ast::Module *module) {
+    core::Errors out = {};
+    types::Checked checked = types_decl::check_module(module, types::lp64());
+    for (Usize i = 0; i < checked.error_count; i++) {
+        types::Error e = checked.errors[i];
+        if (countof(e.fix) == 0) continue;
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = (core::ParseError){.span = e.span, .message = e.message, .fix = e.fix};
+    }
+    return out;
+}
+
+// The text of a file as smith's own syntax (`fn`, `x: T`, `mut`, `*mut T`), which is what the checker's fixes mend; a
+// text that does not read cleanly in that syntax is read as today's (`parser::parse`).
+export parser::Parsed parse_for_fix(Str file, Str source) {
+    if (lex::tokenize_new(source) != .error) {
+        parser::Parsed own = parser::parse_new(file, source);
+        if (countof(own.errors) == 0) return own;
+    }
+    return parser::parse(file, source);
+}
+
 // Writes `text` over the file `path`. False when it cannot.
 export Bool store(Str path, Str text) {
     U8 bytes[:] = {};
@@ -121,8 +152,16 @@ export Bool store(Str path, Str text) {
 export Fixed fix_text(Str file, Str source) {
     Fixed total = {.text = source};
     for (Usize pass = 0; pass < fix_passes; pass++) {
-        parser::Parsed parsed = parser::parse(file, total.text);
-        Fixed fixed = apply_fixes(total.text, parsed.errors, parsed.warnings);
+        parser::Parsed parsed = parse_for_fix(file, total.text);
+        core::Errors errors = parsed.errors;
+        if (countof(errors) == 0) {
+            core::Errors more = checker_fixes(&parsed.module);
+            for (Usize i = 0; i < countof(more); i++) {
+                errors = mem::realloc(errors, countof(errors) + 1);
+                errors[countof(errors) - 1] = more[i];
+            }
+        }
+        Fixed fixed = apply_fixes(total.text, errors, parsed.warnings);
         if (fixed.applied == 0) break;
         total.text = fixed.text;
         total.applied += fixed.applied;

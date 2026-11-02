@@ -20,6 +20,10 @@
 // emit_debug (B5: called at fixed points whether or not debug info is on; doing nothing is success). emit_jit is the
 // test helper (LLJIT). The tests are tests/front_emit_*_test.smith.
 //
+// FLOATS (#1617): `f32`/`f64` (`F32`/`F64`) are `floating` types made by emit_arith::type_float. Literals, `+ - * /`,
+// unary `-`, ordered comparisons (`!=` unordered), `f32` to `f64` and integer to float conversions, and casts go to
+// emit_arith.
+//
 // WAVE 3 (#1582 of #1428) added one stub per new area, the same way: emit_option (`?T`, `.some`, `.none`, `if let`;
 // #1584), emit_match (enumerations, `.red`, `match`; #1585), emit_value (an `if` or a block as a value), emit_iter
 // (`for x in xs`; #1586), emit_tuple and emit_lambda (the next batch). This file routes to them and nothing else will
@@ -127,6 +131,7 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
         ast::Path path = t->kind.named.path;
         state::Ty ty = {};
         if (countof(path.segments) == 1 && state::scalar_type(e, path.segments[0].text, &ty)) return ty;
+        if (countof(path.segments) == 1 && arith::type_float(e, path.segments[0].text, &ty)) return ty;
         if (countof(path.segments) == 1 && state::same_text(path.segments[0].text, "Void")) return void_type(e);
         if (countof(path.segments) == 1 && matching::type_enum(e, path.segments[0].text, &ty)) return ty;
         return memory::type_record(e, t);
@@ -163,6 +168,13 @@ static state::Status dispatch_unary(state::Emitter *e, const ast::Expr *x, ast::
     }
 }
 
+// Whether the checker typed `x` as `f32` or `f64` (false with no checker result).
+static Bool checked_floating(state::Emitter *e, const ast::Expr *x) {
+    if (e->options.checked == nullptr) return false;
+    types::TypeRef t = types::type_of(e->options.checked, x);
+    return t != nullptr && t->kind == .floating;
+}
+
 static state::Status dispatch_binary(state::Emitter *e, const ast::Expr *x, ast::BinaryOp op, state::Hint hint) {
     switch (op) {
     case .add:
@@ -182,6 +194,7 @@ static state::Status dispatch_binary(state::Emitter *e, const ast::Expr *x, ast:
     case .greater_equal:
     case .equal:
     case .not_equal:
+        if (x->kind == .binary && checked_floating(e, x->kind.binary.left)) return arith::float_comparison(e, x, hint);
         return control::comparison(e, x, hint);
     case .logical_and:
     case .logical_or:
@@ -258,10 +271,15 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     if (x->kind == .tuple_lit) return tupled::literal(e, x, hint);
     if (x->kind == .lambda) return lambdas::lambda(e, x, hint);
     if (x->kind == .stmt_expr) return dispatch_stmt_expr(e, x, hint);
-    if (x->kind == .cast) return memory::cast(e, x, hint);
+    if (x->kind == .floating) return arith::float_literal(e, x, hint);
+    if (x->kind == .cast) {
+        const ast::Expr *operand = x->kind.cast.operand;
+        if (checked_floating(e, x) || checked_floating(e, operand)) return arith::float_cast(e, x, hint);
+        return memory::cast(e, x, hint);
+    }
     if (x->kind == .query) return memory::query(e, x, hint);
     if (x->kind == .compound) return memory::compound(e, x, hint);
-    // floating, string, type_value, slice_of, try_expr
+    // string, type_value, slice_of, try_expr
     return state::not_emitted("this kind of expression", x->span);
 }
 
@@ -855,6 +873,7 @@ static Bool find_record_by_name(state::Emitter *e, Str name, state::Ty *ty) {
 // An integer or `bool` the checker names, by its bits and signedness when the spelling is not one the emitter knows.
 static Bool scalar_of_checked(state::Emitter *e, types::TypeRef t, state::Ty *ty) {
     if (t->kind == .bool_type) return state::scalar_type(e, "bool", ty);
+    if (t->kind == .floating) return arith::type_float(e, t->bits == 32 ? "F32" : "F64", ty);
     if (t->kind != .integer) return false;
     if (state::scalar_type(e, t->name, ty)) return true;
     Bool is_signed = t->is_signed;
@@ -914,6 +933,22 @@ export state::TyResult type_of_node(state::Emitter *e, const ast::Expr *x) {
     return ty;
 }
 
+// `fpext` of an `f32`, or `sitofp` / `uitofp` of an integer the float's mantissa holds (24 bits for `f32`, 53 for
+// `f64`: `i16`/`u16` and narrower to `f32`, `i32`/`u32` and narrower to `f64`). Null when `from` does not convert.
+static c::LLVMValueRef float_conversion(state::Emitter *e, state::Value value, state::Ty to) {
+    state::Ty from = value.ty;
+    if (to.kind != .floating) return nullptr;
+    if (from.kind == .floating) {
+        if (to.bits > from.bits) return c::LLVMBuildFPExt(e->builder, value.llvm, to.llvm, "widen");
+        return nullptr;
+    }
+    if (from.kind != .integer) return nullptr;
+    U32 holds = to.bits == 32 ? 16 : 32;
+    if (from.bits > holds) return nullptr;
+    if (from.is_signed) return c::LLVMBuildSIToFP(e->builder, value.llvm, to.llvm, "convert");
+    return c::LLVMBuildUIToFP(e->builder, value.llvm, to.llvm, "convert");
+}
+
 static Bool is_plain_integer(state::Ty t) {
     return t.kind == .integer;
 }
@@ -943,6 +978,11 @@ static state::Status convert_value(state::Emitter *e, state::Value value, state:
             state::push_value(e, (state::Value){.llvm = wide, .ty = to});
             return state::success();
         }
+    }
+    c::LLVMValueRef floated = float_conversion(e, value, to);
+    if (floated != nullptr) {
+        state::push_value(e, (state::Value){.llvm = floated, .ty = to});
+        return state::success();
     }
     return convert_failure(value, to, span, site);
 }

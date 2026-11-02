@@ -62,9 +62,14 @@ static types::TypeRef refuse(types::Checked *r, const ast::Expr *e, types::TypeR
 // The element of a built-in iterable of type `t`, or null with the error reported.
 static types::TypeRef built_in(types::Checked *r, const ast::Expr *e, types::TypeRef t) {
     if (t == r->table.invalid) return nullptr;
-    if (t->kind == .array || t->kind == .slice || t->kind == .block) return t->element;
+    if (t->kind == .array || t->kind == .slice || t->kind == .block || t->kind == .stream) return t->element;
     if (t->kind == .text) return types::builtin(&r->table, "U8");
     return refuse(r, e, t);
+}
+
+// An integer literal with no suffix, which takes its type from the other arguments.
+static Bool plain_integer(const ast::Expr *e) {
+    return e->kind == .integer && countof(e->kind.integer.suffix) == 0;
 }
 
 static types::TypeRef range_element(types::Checked *r, const ast::Expr *call) {
@@ -76,14 +81,22 @@ static types::TypeRef range_element(types::Checked *r, const ast::Expr *call) {
         types::failf(r, call->span, "`range` takes a count, `range(n)`, or `range(a, b)`, or `range(a, b, step)`");
         return nullptr;
     }
-    types::TypeRef first = types_expr::infer(r, args[0]);
-    for (Usize i = 1; i < countof(args); i++) {
-        types_expr::check(r, args[i], first);
+    // An integer literal takes the type of the non-literal arguments; with only literals the type is `i32`.
+    Usize base = 0;
+    for (Usize i = 0; i < countof(args); i++) {
+        if (!plain_integer(args[i])) {
+            base = i;
+            break;
+        }
+    }
+    types::TypeRef first = types_expr::infer(r, args[base]);
+    for (Usize i = 0; i < countof(args); i++) {
+        if (i != base) types_expr::check(r, args[i], first);
     }
     if (first == r->table.invalid) return nullptr;
     if (first->kind != .integer) {
         Str shown = types::show(first);
-        types::failf(r, args[0]->span, "`range` counts integers, and this is a `", shown, "`");
+        types::failf(r, args[base]->span, "`range` counts integers, and this is a `", shown, "`");
         return nullptr;
     }
     return first;

@@ -208,7 +208,11 @@ static void fetch(const char *tag, const char *folder, const char *name) {
 // Builds scripts/seed_linux.c with the system's C compiler ($CC, else cc) and runs it in this process's place.
 [[noreturn]] static void seed(void) {
     seed_on_failure = false;
-    fputs("stage0: no Linux release to use: building smith from source (scripts/seed_linux.c)\n", stderr);
+    fputs("stage0: no Linux release to use: building smith from source (scripts/seed_linux.c)\n"
+          "stage0: this can take hours on a shared container. A prebuilt smith is faster: stop this and run\n"
+          "stage0:   PATH=/home/user/smith/build/Linux-x86_64:$PATH smith build ...\n"
+          "stage0: (SMITH_STAGE0_SEED=0 makes stage0 report the failure instead of building)\n",
+          stderr);
     const char *cc = getenv("CC") != nullptr && *getenv("CC") != '\0' ? getenv("CC") : "cc";
     if (!run((const char *[]){cc, "-std=gnu2x", "-O1", "-x", "c", "scripts/seed_linux.c", "-o", ".smith/seed-tool",
                               nullptr},
