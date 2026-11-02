@@ -58,9 +58,34 @@ static bool smith_front_requested(int count, char **args) {
     return requested;
 }
 
+// The include paths and macros of the command line, one on each line after `used` bytes of `flags`: a header is read
+// with the `-I`, `-isystem`, `-iquote`, `-D`, `-U`, `-include` and `-std=` the compile has. What does not fit is left
+// out.
+static void smith_front_command_flags(char *flags, size_t size, size_t used, int count, char **args) {
+    static const char *const separate[] = {"-I", "-isystem", "-iquote", "-D", "-U", "-include"};
+    for (int i = 0; i < count; i++) { // bounded by count
+        const char *argument = args[i];
+        bool take = strncmp(argument, "-std=", 5) == 0;
+        for (size_t k = 0; k < sizeof separate / sizeof separate[0] && !take; k++)
+            take = strncmp(argument, separate[k], strlen(separate[k])) == 0;
+        if (!take) continue;
+        bool pair = false;
+        for (size_t k = 0; k < sizeof separate / sizeof separate[0]; k++)
+            pair = pair || strcmp(argument, separate[k]) == 0;
+        if (pair && i + 1 >= count) break;
+        int more = snprintf(flags + used, size - used, pair ? "%s\n%s\n" : "%s\n", argument, pair ? args[i + 1] : "");
+        if (more < 0 || (size_t)more >= size - used) {
+            flags[used] = '\0'; // no room: leave it out
+            break;
+        }
+        used += (size_t)more;
+        if (pair) i++;
+    }
+}
+
 // The flags front::cimport reads a C header with (#1762), one on each line, in $SMITH_FRONT_CIMPORT_FLAGS for
 // front::compile: the compiler's resource directory and, where there is one, the SDK. The caller's own value stays.
-static void smith_front_cimport_flags(const char *self) {
+static void smith_front_cimport_flags(const char *self, int count, char **args) {
     if (getenv("SMITH_FRONT_CIMPORT_FLAGS") != nullptr) return;
     char folder[PATH_MAX];
     char programs[PATH_MAX];
@@ -72,12 +97,13 @@ static void smith_front_cimport_flags(const char *self) {
 #ifdef __APPLE__
     smith_sdk_environment(self);
 #endif
-    static char flags[2 * PATH_MAX + 64];
+    static char flags[1U << 16];
     int written = snprintf(flags, sizeof flags, "-resource-dir\n%s\n", resource);
     SMITH_ASSERT(written > 0 && (size_t)written < sizeof flags);
     const char *sdk = getenv("SDKROOT");
     if (sdk != nullptr && *sdk != '\0' && strlen(sdk) < PATH_MAX)
-        snprintf(flags + written, sizeof flags - (size_t)written, "-isysroot\n%s\n", sdk);
+        written += snprintf(flags + written, sizeof flags - (size_t)written, "-isysroot\n%s\n", sdk);
+    smith_front_command_flags(flags, sizeof flags, (size_t)written, count, args);
     setenv("SMITH_FRONT_CIMPORT_FLAGS", flags, 1);
 }
 
@@ -126,7 +152,7 @@ static int smith_front_rewrite(char **argv, int first, int count, char **args, c
         smith_front_object_name(smith_front_sources[i], single ? output : nullptr, compile_only, i);
         smith_front_objects[i] = smith_front_names[i];
     }
-    if (sources > 0) smith_front_cimport_flags(self);
+    if (sources > 0) smith_front_cimport_flags(self, count, args);
     if (sources > 0 && front_compile_run(smith_front_sources, smith_front_objects, sources, triple) != 0) return -1;
     int used = first;
     size_t seen = 0;
