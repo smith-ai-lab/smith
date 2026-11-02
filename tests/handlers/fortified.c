@@ -27,7 +27,7 @@ static ssize_t fr(SmithConsoleHandler *s, void *b, size_t size) {
     return 0;
 }
 int main(void) {
-    Fake f = {.console = {fw, fr}};
+    Fake f = {.console = {fw, fr, nullptr}};
     SmithConsoleHandler *prev = smith_handlers_set_console(&f.console);
     volatile int n = 7;
     printf("x%d\n", n);
