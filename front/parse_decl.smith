@@ -33,9 +33,9 @@
 // struct {...} N;` is `struct N {...}`, `};` is `}` and the attributes `[[nodiscard]]`, `[[maybe_unused]]` (a `_`
 // prefix),
 // `[[gnu::always_inline]]` (`@inline`), `[[gnu::noinline]]`, `[[gnu::cold]]`, `[[std::affine]]` and
-// `[[std::c_name("f")]]` are `@name`. A form with no mechanical fix (a prototype, a parameter with no name, an array
-// suffix or `auto`, a bit-field, `extern`) is a warning with no edits. Types are copied as written: the fixes of
-// `parse_type` mend them.
+// `[[std::c_name("f")]]` are `@name`. A form with no mechanical fix (a prototype, a parameter with no name, a qualified
+// slice or `auto`, a bit-field, `extern`) is a warning with no edits; `I32 xs[3]` is `xs: [3]I32`. Types are copied as
+// written: the fixes of `parse_type` mend them.
 //
 // Nothing here recurses: a nested `if constexpr` is read with an explicit stack of open blocks; nested types and
 // bodies are the hooks'.
@@ -991,8 +991,31 @@ struct Head {
     lex::Token name;
 };
 
+// The array suffixes after a parameter's name, `xs[3]` or `m[:][2]`: the tokens `at` to `to` lose them, the new end
+// comes back (0 when a suffix has no fix: `[]`, `[const :]`) and `dims` is the same suffixes as smith writes them in
+// front of the type, the first one outermost: `[3]`, `[][2]`.
+static Usize strip_suffixes(const parse::Parser *p, Usize at, Usize to, Str *dims) {
+    Str none = "";
+    *dims = none;
+    for (Usize guard = 0; guard < 8 && to > at + 2 && p->tokens[to - 1].kind == lex::right_bracket; guard++) {
+        Usize open = to - 1;
+        while (open > at && p->tokens[open].kind != lex::left_bracket)
+            open -= 1;
+        if (p->tokens[open].kind != lex::left_bracket || open <= at + 1) return 0;
+        Str inner = trimmed(source_between(p, p->tokens[open].span.end, p->tokens[to - 1].span.start));
+        if (countof(inner) == 0) return 0;
+        if (same_text(inner, ":")) inner = none;
+        if (countof(inner) > 0 && inner[0] == ':') return 0;
+        if (starts_with(inner, "const") || starts_with(inner, "restrict") || starts_with(inner, "static")) return 0;
+        *dims = as_str(format::push("[", inner, "]", *dims));
+        to = open;
+    }
+    return to;
+}
+
 // One parameter, the tokens `from` to `to` (not taken), as smith writes it: `name: T`, `const n: T`, `T: type`,
-// `rest: ...`, an attribute first. Empty when it has no mechanical fix (no name, an array suffix, `auto x`).
+// `rest: ...`, an attribute first. An array suffix moves in front of the type (`I32 xs[3]` is `xs: [3]I32`). Empty when
+// it has no mechanical fix (no name, `auto x`, a qualified slice).
 static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
     Usize at = from;
     Str prefix = "";
@@ -1011,7 +1034,9 @@ static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
     }
     Bool is_const = at < to && p->tokens[at].kind == lex::kw_constexpr;
     if (is_const) at += 1;
-    if (to <= at + 1) return "";
+    Str dims = "";
+    to = strip_suffixes(p, at, to, &dims);
+    if (to == 0 || to <= at + 1) return "";
     lex::Token last = p->tokens[to - 1];
     if (last.kind != lex::name && !(is_const && last.kind == lex::type_name)) return "";
     Str name = parse::text(p, last);
@@ -1021,6 +1046,7 @@ static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
     Str type = trimmed(source_between(p, p->tokens[at].span.start, p->tokens[to - 2].span.end));
     if (same_text(type, "auto")) return "";
     if (is_const && same_text(type, "Type")) return as_str(format::push(prefix, name, ": type"));
+    type = as_str(format::push(dims, type));
     if (is_const) return as_str(format::push(prefix, "const ", name, ": ", type));
     return as_str(format::push(prefix, name, ": ", type));
 }
