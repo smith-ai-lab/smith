@@ -32,11 +32,18 @@ static const char *smith_changed_paths[smith_changed_paths_max]; // the changed 
 static char smith_changed_kinds[smith_changed_paths_max];        // A added, M modified, D deleted
 static size_t smith_changed_path_count;
 static bool smith_changed_overflow;
+static const char *smith_changed_limit; // the first limit crossed, named in the line the fallback prints
 static char smith_changed_text[smith_changed_text_max + 1];
 static FILE *smith_changed_log; // where the selection says what it did: nullptr is stderr, the core's is a buffer
 
 static FILE *smith_changed_out(void) {
     return smith_changed_log != nullptr ? smith_changed_log : stderr;
+}
+
+// An input crossed a fixed limit: the selection is not trusted and the whole suite runs. The first limit is kept.
+static void smith_changed_cross(const char *limit) {
+    if (!smith_changed_overflow) smith_changed_limit = limit;
+    smith_changed_overflow = true;
 }
 
 // The files that select the whole suite: the patches, the shims that no record sees and the runner's own build. The
@@ -70,7 +77,7 @@ static const char *smith_changed_buffer_text(const SmithChangedBuffer *buffer) {
 
 static const char *smith_changed_copy(const char *text, size_t length) {
     if (smith_changed_pool_used + length + 1 > smith_changed_pool_max) {
-        smith_changed_overflow = true;
+        smith_changed_cross("the pool of path text (2 MiB)");
         return "";
     }
     char *at = smith_changed_pool + smith_changed_pool_used;
@@ -125,6 +132,7 @@ static size_t smith_changed_read(const char *path) {
     FILE *file = fopen(path, "rb");
     if (file == nullptr) return 0;
     size_t size = fread(smith_changed_text, 1, smith_changed_text_max, file);
+    if (size == smith_changed_text_max && fgetc(file) != EOF) smith_changed_cross("a source file (2 MiB)");
     fclose(file);
     smith_changed_text[size] = '\0';
     return size;
@@ -139,7 +147,7 @@ static int smith_changed_find(const char *path) {
 
 static void smith_changed_add_file(const char *path) {
     if (smith_changed_file_count >= smith_changed_files_max || smith_changed_find(path) >= 0) {
-        if (smith_changed_find(path) < 0) smith_changed_overflow = true;
+        if (smith_changed_find(path) < 0) smith_changed_cross("the file table (16384 files)");
         return;
     }
     smith_changed_files[smith_changed_file_count++] = smith_changed_copy(path, strlen(path));
@@ -183,7 +191,7 @@ static void smith_changed_on_file(char *text) {
 
 static void smith_changed_add_path(char kind, const char *path) {
     if (smith_changed_path_count >= smith_changed_paths_max) {
-        smith_changed_overflow = true;
+        smith_changed_cross("the changed paths (4096)");
         return;
     }
     smith_changed_kinds[smith_changed_path_count] = kind;
@@ -212,7 +220,7 @@ static void smith_changed_edge(size_t from, const char *suffix) {
     for (size_t j = 0; j < smith_changed_file_count; j++) { // bounded by the files
         if (j == from || !smith_changed_suffix(smith_changed_files[j], suffix)) continue;
         if (smith_changed_edge_count >= smith_changed_edges_max) {
-            smith_changed_overflow = true;
+            smith_changed_cross("the include graph (131072 edges)");
             return;
         }
         smith_changed_from[smith_changed_edge_count] = (uint32_t)from;
@@ -544,9 +552,14 @@ static bool smith_changed_build_c_local(const char *base, const char *head) {
     smith_changed_hunk_overflow = false;
     const char *const diff[] = {"diff", "-U0", "--no-color", "--no-ext-diff", base, "--", "build.c", nullptr};
     const char *const range[] = {"diff", "-U0", "--no-color", "--no-ext-diff", base, head, "--", "build.c", nullptr};
-    if (!smith_changed_git(head != nullptr ? range : diff, smith_changed_on_hunk) || smith_changed_hunk_overflow ||
-        smith_changed_hunk_count == 0)
+    bool read = smith_changed_git(head != nullptr ? range : diff, smith_changed_on_hunk);
+    if (read && smith_changed_hunk_overflow) {
+        fprintf(smith_changed_out(),
+                "smith test --changed: build.c's diff has more than %zu hunks, the whole suite runs\n",
+                smith_changed_hunks_max);
         return false;
+    }
+    if (!read || smith_changed_hunk_count == 0) return false;
     smith_rec_source_path[0] = '\0';
     if (!smith_rec_load_source("build.c")) return false;
     SmithChangedFunctions *all = &smith_changed_functions;
@@ -1001,7 +1014,7 @@ static void smith_changed_filter_add(SmithChangedBuffer *filter, const char *nam
             capacity *= 2;
         void *memory = mmap(nullptr, capacity, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
         if (memory == MAP_FAILED) { // the OS refuses: the whole suite is the safe answer
-            smith_changed_overflow = true;
+            smith_changed_cross("memory for the changed files");
             return;
         }
         if (filter->used > 0) memcpy(memory, filter->data, filter->used);
@@ -1207,11 +1220,18 @@ static bool smith_changed_collect(const char *base_name, const char *head, bool 
     return true;
 }
 
+// The overflow's answer: one line naming the limit, then the whole suite.
+static SmithChangedResult smith_changed_overflow_full(void) {
+    fprintf(smith_changed_out(), "smith test --changed: %s crossed its limit, the whole suite runs\n",
+            smith_changed_limit != nullptr ? smith_changed_limit : "an input");
+    return SmithChanged_Full;
+}
+
 // The rest of the decision, from the files and the changed paths already read (by git, or given to the core). `gate`
 // judges build.c by the functions of its diff, which asks git for them.
 static SmithChangedResult smith_changed_decide(const char *base, const char *head, SmithChangedBuffer *filter,
                                                bool gate) {
-    if (smith_changed_overflow) return SmithChanged_Full;
+    if (smith_changed_overflow) return smith_changed_overflow_full();
     size_t full = smith_changed_full_path();
     if (full > 0) {
         fprintf(smith_changed_out(), "smith test --changed: %s selects the whole suite\n",
@@ -1259,7 +1279,8 @@ static SmithChangedResult smith_changed_decide(const char *base, const char *hea
             smith_changed_filter_file(smith_changed_files[i], filter);
     }
     bool all = selected == tests && !narrowed;
-    return smith_changed_overflow ? SmithChanged_Full : all ? SmithChanged_Full : SmithChanged_Some;
+    if (smith_changed_overflow) return smith_changed_overflow_full();
+    return all ? SmithChanged_Full : SmithChanged_Some;
 }
 
 // Decides which tests to run from the changes `smith_changed_collect` reads. With `head`, the changes are those of
@@ -1298,7 +1319,7 @@ static void smith_changed_on_merge_base(char *text) {
 // Decides, from the changes already read, whether one of them selects every file (SmithChanged_Full; `why` names the
 // path) or not (SmithChanged_Some, with the graph built: ask `smith_changed_lint_wants`).
 static SmithChangedResult smith_changed_lint_decide(const char **why) {
-    if (smith_changed_overflow) return SmithChanged_Full;
+    if (smith_changed_overflow) return smith_changed_overflow_full();
     for (size_t p = 0; p < smith_changed_path_count; p++) {
         if (!smith_changed_lints_all(smith_changed_paths[p])) continue;
         *why = smith_changed_paths[p];
@@ -1358,6 +1379,7 @@ static void smith_changed_reset(void) {
     smith_changed_edge_count = 0;
     smith_changed_path_count = 0;
     smith_changed_overflow = false;
+    smith_changed_limit = nullptr;
     smith_changed_label[0] = '\0';
     memset(smith_changed_hit, 0, sizeof smith_changed_hit);
     memset(smith_changed_chosen, 0, sizeof smith_changed_chosen);

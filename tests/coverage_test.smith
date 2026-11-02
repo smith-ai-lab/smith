@@ -109,6 +109,29 @@ export void test_the_report_names_the_changed_lines_no_test_ran() {
     test::check_equal(done, false);
 }
 
+// A table with more tests than the 6144 it keeps is refused (and says so on stderr), not read as its first 6144: the
+// totals and the uncovered lines would be wrong with no sign (#604, audit E).
+export void test_a_table_past_the_test_limit_is_refused() {
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    constexpr Usize head = 17; // "smith-coverage 1\n"
+    constexpr Usize row = 10;  // "test\tt\t00\n"
+    constexpr Usize rows = 6145;
+    char *table = mem::alloc_slice(char, head + rows * row + 2).data;
+    const char *first = "smith-coverage 1\n";
+    mem::copy(table[0:head], first[0:head]);
+    const char *one = "test\tt\t00\n";
+    for (Usize i = 0; i < rows; i++)
+        mem::copy(table[head + i * row:head + (i + 1) * row], one[0:row]);
+    table[head + rows * row] = '\0';
+    const c::SmithCoreChanged changed[_] = {{"prog.c", 5, 1}};
+    char *report = mem::alloc_slice(char, report_capacity).data;
+    Bool done = c::smith_core_coverage_report(table, changed, countof(changed), report, report_capacity);
+    test::check_equal(done, false);
+}
+
 // The verb's wiring: `smith test --coverage report` reads git's diff from a base to HEAD and writes the file. A real
 // repository and a program built with coverage are what a unit test cannot show.
 export void test_the_report_verb_reads_git_diff() {
