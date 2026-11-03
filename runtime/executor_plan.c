@@ -174,6 +174,14 @@ static void smith_plan_load_deps(SmithExec *exec, SmithEdge *edge) {
     for (size_t i = from; i < depth; i++)
         fprintf(stderr, "%s -> ", exec->graph.nodes[stack[i]].path);
     fprintf(stderr, "%s\n", exec->graph.nodes[again].path);
+    bool recorded = false; // an edge of the cycle has inputs read back from .smith_deps
+    for (size_t i = from; i < depth; i++) {
+        uint32_t made = exec->graph.nodes[stack[i]].edge;
+        if (made != 0 && exec->graph.edges[made].dep_count != 0) recorded = true;
+    }
+    if (recorded)
+        fprintf(stderr, "smith: the cycle runs through inputs recorded in .smith/.smith_deps, which can be stale: "
+                        "move .smith/.smith_deps and .smith/.smith_log aside and build again\n");
     exit(smith_exec_failed);
 }
 
