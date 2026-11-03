@@ -19,7 +19,7 @@ const sized = ['U8', 'U16', 'U32', 'U64', 'I8', 'I16', 'I32', 'I64', 'Usize', 'I
 function commaSep(rule) { return optional(commaSep1(rule)); }
 function commaSep1(rule) { return seq(rule, repeat(seq(',', rule))); }
 
-const soft = ['module', 'import', 'export', 'Type'];
+const soft = ['module', 'import', 'export', 'Type', 'fn'];
 
 module.exports = grammar(C, {
   name: 'smith',
@@ -49,6 +49,8 @@ module.exports = grammar(C, {
     [$.field_designator, $.variant_expression],
     [$.call_expression, $.trailing_call_expression],
     [$.expression, $.lambda_capture_list],
+    [$.expression, $.fn_type, $.fn_lambda],
+    [$.expression, $.fn_lambda],
     [$.macro_type_specifier, $.type_call],
     [$.type_specifier, $.expression, $._new_type],
     [$.array_type, $.array_literal, $.lambda_capture_list],
@@ -179,7 +181,7 @@ module.exports = grammar(C, {
     array_literal: $ => prec.dynamic(-10, seq('[', commaSep($.expression), optional(','), ']')),
 
     // fn(x: i32) -> i32: x + 1
-    fn_lambda: $ => prec(1, seq('fn', '(', commaSep($._fn_parameter), ')', optional(seq('->', $._new_type)), ':', $.expression)),
+    fn_lambda: $ => prec.dynamic(1, seq('fn', '(', commaSep($._fn_parameter), ')', optional(seq('->', $._new_type)), ':', $.expression)),
 
     _top_level_item: ($, original) => choice(
       original,
