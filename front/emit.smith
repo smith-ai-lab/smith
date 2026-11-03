@@ -818,6 +818,55 @@ static void add_function_attributes(state::Emitter *e, const ast::Decl *d, c::LL
     }
 }
 
+// `main(args: []str)` is C's `int main(int argc, char **argv)`: it builds argc slices on the stack, each pointing into
+// argv's own characters (not copied), and calls the body, which was declared as the internal `main.args`.
+static void add_args_entry(state::Emitter *e, c::LLVMValueRef body, c::LLVMTypeRef body_type, state::Ty args) {
+    c::LLVMTypeRef word = c::LLVMInt64TypeInContext(e->context);
+    if (e->target_data != nullptr) word = c::LLVMIntPtrTypeInContext(e->context, e->target_data);
+    c::LLVMTypeRef pointer = state::pointer_type(e, 0);
+    c::LLVMTypeRef int32 = c::LLVMInt32TypeInContext(e->context);
+    c::LLVMTypeRef main_params[2] = {int32, pointer};
+    c::LLVMTypeRef main_type = c::LLVMFunctionType(int32, main_params, 2, 0);
+    c::LLVMValueRef main_function = c::LLVMAddFunction(e->module, "main", main_type);
+    c::LLVMSetLinkage(main_function, c::LLVMExternalLinkage);
+    c::LLVMTypeRef length_params[1] = {pointer};
+    c::LLVMTypeRef length_type = c::LLVMFunctionType(word, length_params, 1, 0);
+    c::LLVMValueRef length = c::LLVMGetNamedFunction(e->module, "strlen");
+    if (length == nullptr) length = c::LLVMAddFunction(e->module, "strlen", length_type);
+    c::LLVMBuilderRef b = c::LLVMCreateBuilderInContext(e->context);
+    c::LLVMBasicBlockRef entry = c::LLVMAppendBasicBlockInContext(e->context, main_function, "entry");
+    c::LLVMBasicBlockRef test = c::LLVMAppendBasicBlockInContext(e->context, main_function, "test");
+    c::LLVMBasicBlockRef step = c::LLVMAppendBasicBlockInContext(e->context, main_function, "step");
+    c::LLVMBasicBlockRef done = c::LLVMAppendBasicBlockInContext(e->context, main_function, "done");
+    c::LLVMValueRef argc = c::LLVMGetParam(main_function, 0);
+    c::LLVMValueRef argv = c::LLVMGetParam(main_function, 1);
+    c::LLVMPositionBuilderAtEnd(b, entry);
+    c::LLVMValueRef count = c::LLVMBuildSExt(b, argc, word, "count");
+    c::LLVMValueRef cells = c::LLVMBuildArrayAlloca(b, args.element->llvm, count, "cells");
+    c::LLVMValueRef index = c::LLVMBuildAlloca(b, word, "index");
+    c::LLVMBuildStore(b, c::LLVMConstInt(word, 0, 0), index);
+    c::LLVMBuildBr(b, test);
+    c::LLVMPositionBuilderAtEnd(b, test);
+    c::LLVMValueRef at = c::LLVMBuildLoad2(b, word, index, "at");
+    c::LLVMBuildCondBr(b, c::LLVMBuildICmp(b, c::LLVMIntULT, at, count, "more"), step, done);
+    c::LLVMPositionBuilderAtEnd(b, step);
+    c::LLVMValueRef from[1] = {at};
+    c::LLVMValueRef slot = c::LLVMBuildGEP2(b, pointer, argv, from, 1, "slot");
+    c::LLVMValueRef text = c::LLVMBuildLoad2(b, pointer, slot, "text");
+    c::LLVMValueRef size = c::LLVMBuildCall2(b, length_type, length, &text, 1, "size");
+    c::LLVMValueRef cell = c::LLVMBuildGEP2(b, args.element->llvm, cells, from, 1, "cell");
+    c::LLVMBuildStore(b, text, c::LLVMBuildStructGEP2(b, args.element->llvm, cell, 0, "data"));
+    c::LLVMBuildStore(b, size, c::LLVMBuildStructGEP2(b, args.element->llvm, cell, 1, "count"));
+    c::LLVMBuildStore(b, c::LLVMBuildAdd(b, at, c::LLVMConstInt(word, 1, 0), "next"), index);
+    c::LLVMBuildBr(b, test);
+    c::LLVMPositionBuilderAtEnd(b, done);
+    c::LLVMValueRef slice = c::LLVMGetUndef(args.llvm);
+    slice = c::LLVMBuildInsertValue(b, slice, cells, 0, "data");
+    slice = c::LLVMBuildInsertValue(b, slice, count, 1, "count");
+    c::LLVMBuildRet(b, c::LLVMBuildCall2(b, body_type, body, &slice, 1, "result"));
+    c::LLVMDisposeBuilder(b);
+}
+
 // Pass 2: the function's symbol, type and linkage.
 static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
     if (d->kind != .function) {
@@ -851,12 +900,15 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
         result = made_result.ok;
     }
     c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, types, (U32)count, 0);
+    Bool takes_args = state::same_text(name, "main") && count == 1 && params[0].kind == .slice;
     Str symbol = function_symbol(e->tree, d, name);
+    if (takes_args) symbol = state::msg(format::push("main.args"));
     char *label = state::cstr(symbol);
     c::LLVMValueRef function = c::LLVMAddFunction(e->module, label, type);
     mem::free(label);
     add_function_attributes(e, d, function);
     Bool external = d->exported || d->is_pub || countof(state::c_name_of(d)) > 0 || state::same_text(name, "main");
+    if (takes_args) external = false;
     if (external)
         c::LLVMSetLinkage(function, c::LLVMExternalLinkage);
     else
@@ -867,6 +919,7 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
                                           .llvm_type = type,
                                           .result = result,
                                           .params = params[0:count]});
+    if (takes_args) add_args_entry(e, function, type, params[0]);
     return state::success();
 }
 
