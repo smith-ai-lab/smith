@@ -1,0 +1,11 @@
+import c <stdio.h>
+
+# The only use of an array parameter is `countof`: it still counts as a use, so -Wunused-parameter has nothing to say
+# (the conventions make it an error).
+fn cells(m: [3][2]i32) -> usize:
+    countof(m) * countof(m[0])
+
+pub fn main() -> i32:
+    let m: [3][2]i32 = [[0, 0], [0, 0], [0, 0]]
+    let _ = stdio.printf("%zu\n", cells(m))
+    0
