@@ -17,7 +17,7 @@ The only file of the factory that names models (#1409). Tickets name difficultie
 Opus is never in the mapping. Only the lead assigns it, per ticket, and the lead's daily handover on #73 reports every use.
 
 ## Launching a runner
-- **Cloud:** a session tagged `smith-runner`, permission mode `auto`, with the prompt `You are a smith runner. Load the skill smith-dev-runner and follow it.` (add `Friction mode.` for the friction runner). Its model is the mapping's model for the ticket's difficulty.
+- **Cloud:** a session (`create_session`) with `source_url` `https://github.com/smith-ai-lab/smith` (without it the session has no checkout and no skills: a successor started without it on 2026-11-02 stalled on 'smith-dev-runner skill not found', and the cloud pool was empty for six hours), tagged `smith-runner`, permission mode `auto`, with the prompt `You are a smith runner. Load the skill smith-dev-runner and follow it.` (add `Friction mode.` for the friction runner). Its model is the mapping's model for the ticket's difficulty.
 - **Mac:** a bash loop of `claude -p` processes on the owner's API credits, with the key read from 1Password by `apiKeyHelper` passed on the command line. See [smith-dev-mac-runner](../../smith-dev-mac-runner/SKILL.md). Same prompt, same mapping.
 
 ## Model choice guidance

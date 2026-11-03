@@ -403,7 +403,8 @@ static void function_pointer(parse::Parser *p, U32 start) {
             }
             if (token.kind == lex::left_paren) depth += 1;
             if (token.kind == lex::right_paren) depth -= 1;
-            if (group == 0 && depth == 1 && token.kind == lex::name) name = parse::text(p, token);
+            if (group == 0 && depth == 1 && (token.kind == lex::name || token.kind == lex::type_name))
+                name = parse::text(p, token);
             close = token.span.start;
             end = token.span.end;
             parse::advance(p);
@@ -936,7 +937,10 @@ static Str fn_base(const parse::Parser *p, const ast::TypeExpr *function, Rewrit
     }
     ast::TypeRef params[:] = kind.function.params;
     char joined[:] = {};
-    for (Usize i = 0; i < countof(params); i += 1) {
+    // C's `(void)` is no parameters.
+    Usize count = countof(params);
+    if (count == 1 && text::is(p->source[params[0]->span.start:params[0]->span.end], "void")) count = 0;
+    for (Usize i = 0; i < count; i += 1) {
         ast::Span span = params[i]->span;
         joined = format::push(joined, i > 0 ? ", " : "", p->source[span.start:span.end]);
     }
