@@ -37,6 +37,11 @@
 extern "C" int smith_clang_main(const char *program, int argc, char **argv, bool lld, const char *resource);
 extern "C" int smith_lang_command(int argc, char **argv, int first, char **out, size_t capacity);
 
+// front::compile's entry (front/compile.smith), which `--front-end=new` sends a .smith file to (#1974): the module goes
+// out as bitcode when the output is named `*.bc`. Declared by hand, as in runtime/front_flag.c (the lag rule).
+extern "C" int32_t front_compile_run(const char *const *sources, const char *const *outputs, size_t count,
+                                     const char *triple);
+
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -128,11 +133,70 @@ bool is_smith(const std::string &file) {
     return file.size() > 6 && file.compare(file.size() - 6, 6, ".smith") == 0;
 }
 
-// Compiles one file to bitcode in `output` with the clang smith runs in process. Returns clang's exit status.
+// Whether the compile asks for smith's own front end (`--front-end=new`, the flag of `smith cc`).
+bool wants_new_front_end(const std::vector<std::string> &flags) {
+    for (const std::string &flag : flags) {
+        if (flag == "--front-end=new") return true;
+    }
+    return false;
+}
+
+// What front::cimport reads a C header with: the compiler's resource directory and the include paths and macros of the
+// compile, one word on each line (the same text runtime/front_flag.c makes for `smith cc --front-end=new`).
+void set_cimport_flags(const char *resource, const std::vector<std::string> &flags) {
+    if (std::getenv("SMITH_FRONT_CIMPORT_FLAGS") != nullptr) return;
+    std::string text = std::string("-resource-dir\n") + resource + "\n";
+    for (size_t i = 0; i < flags.size(); i++) {
+        const std::string &flag = flags[i];
+        bool pair = flag == "-I" || flag == "-isystem" || flag == "-iquote" || flag == "-D" || flag == "-U" ||
+                    flag == "-include";
+        bool joined = flag.rfind("-I", 0) == 0 || flag.rfind("-D", 0) == 0 || flag.rfind("-U", 0) == 0 ||
+                      flag.rfind("-isystem", 0) == 0 || flag.rfind("-iquote", 0) == 0 || flag.rfind("-std=", 0) == 0;
+        if (pair && i + 1 < flags.size()) {
+            text += flag + "\n" + flags[++i] + "\n";
+        } else if (joined) {
+            text += flag + "\n";
+        }
+    }
+    setenv("SMITH_FRONT_CIMPORT_FLAGS", text.c_str(), 1);
+}
+
+// Compiles a .smith file with smith's own front end to bitcode in `output` (#1974): front::compile writes a module
+// named `*.bc` as emitted, with no object and no clang. Returns 0, or 1 with the diagnostics on stderr.
+int compile_with_new_front_end(const char *resource, const std::string &file, const std::vector<std::string> &flags,
+                               const std::string &output) {
+    std::fflush(nullptr);
+    pid_t child = fork();
+    if (child < 0) return 2;
+    if (child == 0) {
+        set_cimport_flags(resource, flags);
+        const char *sources[] = {file.c_str()};
+        const char *outputs[] = {output.c_str()};
+        int status = front_compile_run(sources, outputs, 1, nullptr);
+        std::fflush(nullptr);
+        _exit(status);
+    }
+    int status = 0;
+    if (waitpid(child, &status, 0) < 0) return 2;
+    if (WIFEXITED(status)) {
+        if (WEXITSTATUS(status) == 0 && access(output.c_str(), R_OK) != 0) {
+            std::fprintf(stderr, "smith: prove: compiling %s wrote no bitcode\n", file.c_str());
+            return 2;
+        }
+        return WEXITSTATUS(status);
+    }
+    std::fprintf(stderr, "smith: prove: the front end stopped on signal %d compiling %s\n", WTERMSIG(status),
+                 file.c_str());
+    return 2;
+}
+
+// Compiles one file to bitcode in `output` with the clang smith runs in process. Returns clang's exit status. A .smith
+// file goes through smith's own front end instead when the flags have `--front-end=new`.
 int compile(const char *program, const char *resource, const std::string &file, const std::vector<std::string> &flags,
             const std::string &output) {
     // A .smith file is C2y and lowered by the compiler's hook: smith_lang_command gives it `-x c` and the standard.
     bool smith = is_smith(file);
+    if (smith && wants_new_front_end(flags)) return compile_with_new_front_end(resource, file, flags, output);
     std::vector<std::string> words = {"clang"};
     if (!smith) words.push_back("-std=gnu23");
     words.insert(words.end(), flags.begin(), flags.end());
