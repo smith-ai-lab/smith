@@ -51,9 +51,37 @@ module.exports = grammar(C, {
     [$.expression, $.lambda_capture_list],
   ]),
 
+  // The layout tokens of the syntax of #1428 come from scanner.c: they have no width and are returned only where a
+  // rule below asks for them.
+  externals: ($, original) => original.concat([$._indent, $._dedent, $._newline]),
+
   rules: {
+    // `#` and a space (or `##`) starts a comment in the syntax of #1428; `#word` stays a directive of C.
+    comment: ($, original) => choice(original, token(/#[ \t#][^\n]*/)),
+
+    // fn f(x: i32) -> i32: and its block (piece 1 of #1977: the rest of the syntax follows)
+    fn_declaration: $ => seq(
+      'fn', field('name', $.identifier),
+      field('parameters', $.fn_parameters),
+      optional(seq('->', field('type', $.type_specifier))),
+      field('body', $.layout_block)),
+    fn_parameters: $ => seq('(', commaSep(seq($.identifier, ':', $.type_specifier)), ')'),
+
+    // The body after a `:`: indented lines, or one statement on the same line
+    layout_block: $ => seq(':', choice(
+      seq($._indent, repeat1($._layout_statement), $._dedent),
+      $._layout_simple_statement)),
+    _layout_statement: $ => choice($._layout_simple_statement, $.layout_if_statement),
+    _layout_simple_statement: $ => seq(choice($.layout_return_statement, $.layout_expression_statement), $._newline),
+    layout_return_statement: $ => seq('return', optional($.expression)),
+    layout_expression_statement: $ => $.expression,
+    layout_if_statement: $ => seq(
+      'if', field('condition', $.expression), field('consequence', $.layout_block),
+      optional(seq('else', field('alternative', choice($.layout_block, $.layout_if_statement))))),
+
     _top_level_item: ($, original) => choice(
       original,
+      $.fn_declaration,
       $.module_declaration,
       $.import_declaration,
       $.export_declaration,
