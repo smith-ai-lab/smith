@@ -71,6 +71,7 @@ export enum How {
     to_some,
     to_ok,
     array_to_slice,
+    array_to_block,
     add_const,
     to_void_pointer,
     null_to_pointer,
@@ -312,6 +313,18 @@ static Verdict to_slice(const Ctx *c) {
     return accept(add_const);
 }
 
+// A fixed array of arrays (`[4][2]T`) is a block `[,]T` of the same shape: the first `count` dimensions are its sizes.
+static Verdict to_block(const Ctx *c) {
+    if (c->from->kind != .array) return no_rule(c);
+    types::TypeRef inner = c->from;
+    for (U64 i = 0; i < c->to->count; i++) {
+        if (inner->kind != .array) return needs_cast(c, "the array has fewer dimensions than the block");
+        inner = inner->element;
+    }
+    if (inner != c->to->element) return needs_cast(c, "the elements are different types");
+    return accept(array_to_block);
+}
+
 static Verdict to_text(const Ctx *c) {
     types::Kind kind = c->from->kind;
     if (kind != .slice && kind != .array) return no_rule(c);
@@ -334,6 +347,7 @@ static Verdict by_target(const Ctx *c) {
     if (kind == .enumeration) return to_enumeration(c);
     if (kind == .pointer) return to_pointer(c);
     if (kind == .slice) return to_slice(c);
+    if (kind == .block) return to_block(c);
     if (kind == .text) return to_text(c);
     return no_rule(c);
 }
