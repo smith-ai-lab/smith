@@ -1,0 +1,89 @@
+// Tests of `textDocument/hover` (#1892): a document is opened, then hover asks for the type under a position. A local,
+// a function and a struct field give their types; a position over nothing, and a document that was never opened, give
+// null.
+module front_lsp_hover_test;
+
+import front::lsp_server;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; same && k < countof(needle); k++)
+            same = text[i + k] == needle[k];
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+// \n is written as the two characters of JSON's escape; the line breaks of the document are those.
+static Str document() {
+    return "struct Point:\\n    x: i32\\n    y: i32\\n\\nfn twice(n: i32) -> i32:\\n    return n + n\\n\\n"
+           "fn main() -> i32:\\n    let p = Point(x = 1, y = 2)\\n    let a = twice(p.x)\\n    return a\\n";
+}
+
+static void open() {
+    (void)lsp_server::handle(
+        as_str(format::push("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/"
+                            "didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///t/h.smith\","
+                            "\"text\":\"",
+                            document(), "\"}}}")));
+}
+
+static Str hover(Str uri, U64 line, U64 character) {
+    return lsp_server::handle(as_str(format::push(
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"", uri,
+        "\"},\"position\":{\"line\":", line, ",\"character\":", character, "}}}")));
+}
+
+export void test_lsp_hover_over_a_local_gives_its_type() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open();
+    Str out = hover("file:///t/h.smith", 10, 11);
+    test::check(has(out, "\"id\":3"));
+    test::check(has(out, "\"kind\":\"markdown\""));
+    test::check(has(out, "I32"));
+    test::check(has(out, "\"start\":{\"line\":10,\"character\":11}"));
+}
+
+export void test_lsp_hover_over_a_function_gives_its_type() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open();
+    Str out = hover("file:///t/h.smith", 9, 14);
+    test::check(has(out, "\"kind\":\"markdown\""));
+    test::check(has(out, "twice") || has(out, "I32"));
+}
+
+export void test_lsp_hover_over_a_struct_field_gives_its_type() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open();
+    Str out = hover("file:///t/h.smith", 9, 20);
+    test::check(has(out, "\"kind\":\"markdown\""));
+    test::check(has(out, "I32"));
+}
+
+export void test_lsp_hover_over_nothing_and_over_an_unopened_document_is_null() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open();
+    test::check(has(hover("file:///t/h.smith", 40, 0), "\"result\":null"));
+    test::check(has(hover("file:///t/none.smith", 0, 0), "\"result\":null"));
+}
