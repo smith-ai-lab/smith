@@ -66,6 +66,7 @@ import front::types_expr;
 import front::types_fn;
 import front::types_iter;
 import front::types_stream;
+import front::lint;
 import front::types_undefined;
 import front::parse as syntax;
 import front::when;
@@ -923,6 +924,7 @@ static types::Checked check_once(const ast::Module *m, types::Target target, typ
     }
     drain(&r);
     types_attr::check_module(&r, m);
+    lint::check_module(&r, m);
     uninstall();
     return r;
 }
