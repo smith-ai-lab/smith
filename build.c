@@ -823,7 +823,7 @@ static const char *const build_front_modules[] = {
     "cimport",     "compile",      "emit_option",   "emit_match",
     "emit_value",  "emit_iter",    "emit_tuple",    "emit_lambda",
     "emit_vector", "emit_stream",  "fix_directive", "fix_method",
-    "lsp_server",  "lsp_hover",
+    "lsp_server",  "lsp_hover",    "lsp_semantic",
 };
 constexpr size_t build_front_module_count = sizeof build_front_modules / sizeof build_front_modules[0];
 
@@ -2786,12 +2786,13 @@ static int build_friction(SmithRun *run) {
 
 // The tree-sitter parser for .smith files (#466): a build output, never committed. A step generates parser.c,
 // grammar.json, node-types.json and the runtime's headers into tree-sitter/src/ (gitignored) from
-// tree-sitter/grammar.js and tree-sitter-c's, with the tree-sitter CLI; parser.c is compiled and linked into a shared
-// library, which smith embeds (runtime/tree_sitter_data.c) and `smith cc --smith-tree-sitter` unpacks for the Neovim
-// plugin. Everything is pinned and fetched by smith_package: the CLI by version and the sha256 of its release (a .gz of
-// one file, per platform), tree-sitter-c by version and the sha256 of its source archive. The CLI is kept in
-// $XDG_CACHE_HOME/smith/tools (else ~/.cache/smith/tools), and is needed only on the machine that builds smith. ABI 15
-// is what Neovim 0.12 loads. `smith build tree-sitter -Dcorpus` also runs the grammar's corpus tests.
+// tree-sitter/grammar.js and tree-sitter-c's, with the tree-sitter CLI; parser.c (and scanner.c, the layout tokens) is
+// compiled and linked into a shared library, which smith embeds (runtime/tree_sitter_data.c) and `smith cc
+// --smith-tree-sitter` unpacks for the Neovim plugin. Everything is pinned and fetched by smith_package: the CLI by
+// version and the sha256 of its release (a .gz of one file, per platform), tree-sitter-c by version and the sha256 of
+// its source archive. The CLI is kept in $XDG_CACHE_HOME/smith/tools (else ~/.cache/smith/tools), and is needed only on
+// the machine that builds smith. ABI 15 is what Neovim 0.12 loads. `smith build tree-sitter -Dcorpus` also runs the
+// grammar's corpus tests.
 typedef struct {
     const char *asset; // the release's file, without .gz
     const char *hash;
@@ -2832,6 +2833,11 @@ static int build_tree_sitter_run(SmithRun *run) {
     if (strcmp(run->args[0], "none") == 0) return 0;
     const char *cli = build_tree_sitter_cli(b);
     if (cli == nullptr) return 1;
+    // The CLI compiles the scanner from src/ when it tests the grammar: copy it there (-p keeps its time, so nothing
+    // after it reruns when it did not change).
+    if (build_make_folder(b, "tree-sitter/src") != 0 ||
+        build_exec(smith_list(b, "/bin/cp", "-p", "tree-sitter/scanner.c", "tree-sitter/src/scanner.c", nullptr)) != 0)
+        return 1;
     if (strcmp(run->args[0], "corpus") == 0)
         return build_spawn(&(BuildSpawn){.argv = smith_list(b, cli, "test", nullptr), .folder = "tree-sitter"});
     const char *c_source = build_package_path(
@@ -2875,10 +2881,12 @@ static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, con
     SmithStep generate = {
         .run = build_tree_sitter_run,
         .args = smith_list(b, "generate", nullptr),
-        .inputs = smith_list(b, "tree-sitter/grammar.js", "tree-sitter/tree-sitter.json", nullptr),
-        .outputs = smith_list(b, "tree-sitter/src/parser.c", "tree-sitter/src/grammar.json",
-                              "tree-sitter/src/node-types.json", "tree-sitter/src/tree_sitter/alloc.h",
-                              "tree-sitter/src/tree_sitter/array.h", "tree-sitter/src/tree_sitter/parser.h", nullptr),
+        .inputs =
+            smith_list(b, "tree-sitter/grammar.js", "tree-sitter/tree-sitter.json", "tree-sitter/scanner.c", nullptr),
+        .outputs =
+            smith_list(b, "tree-sitter/src/parser.c", "tree-sitter/src/grammar.json", "tree-sitter/src/node-types.json",
+                       "tree-sitter/src/tree_sitter/alloc.h", "tree-sitter/src/tree_sitter/array.h",
+                       "tree-sitter/src/tree_sitter/parser.h", "tree-sitter/src/scanner.c", nullptr),
         .description = "generating the tree-sitter parser",
         .restat =
             true, // a file whose bytes did not change keeps its time (build_tree_sitter_run): nothing after it reruns
@@ -2893,13 +2901,23 @@ static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, con
         .implicit_inputs = generate.outputs,
     };
     smith_object(b, &parser);
+    // The external scanner (layout tokens, tree-sitter/scanner.c) is compiled the same way and linked beside the
+    // parser.
+    SmithObject scanner = {
+        .compiler = config->cc,
+        .source = "tree-sitter/src/scanner.c",
+        .output = smith_fmt(b, "%s/tree-sitter-scanner.o", folder),
+        .flags = parser.flags,
+        .implicit_inputs = generate.outputs,
+    };
+    smith_object(b, &scanner);
     // Not smith_program: that links the handlers runtime into every program, which a library Neovim loads must not
     // need.
     const char *library = smith_fmt(b, "%s/smith-tree-sitter.%s", folder, build_is_linux(b) ? "so" : "dylib");
     SmithStep link = {
         .command = smith_cat(b, smith_list(b, config->cc, "-shared", nullptr), config->platform->deployment,
-                             smith_list(b, parser.output, "-o", library, nullptr), nullptr),
-        .inputs = parser.step.outputs,
+                             smith_list(b, parser.output, scanner.output, "-o", library, nullptr), nullptr),
+        .inputs = smith_cat(b, parser.step.outputs, scanner.step.outputs, nullptr),
         .implicit_inputs = smith_list(b, build_compiler_file(b, config), nullptr),
         .outputs = smith_list(b, library, nullptr),
         .description = smith_fmt(b, "link %s", library),

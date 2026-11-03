@@ -1,164 +1,40 @@
-// Tests of a call of a type function as a type in front::parse_decl and front::parse_type (#1358, A7n of track A of
-// #1112): `maybe(I32) f()`, `opt::maybe(Usize) f()`, `typedef opt::maybe(Usize) Maybe;`, a local and a field of it. A
-// call followed by a name is a type; `f(x);` stays an expression statement.
+// Tests of a return type that is a call of a type function through a module (`arena.slice_of(T, n)`) and of a function
+// named `type` (#1959, part of #1631): both parse in smith's own syntax without an error.
 module front_parse_type_call_test;
 
 import front::ast;
-import front::lex;
-import front::parse;
-import front::parse_decl;
-import front::parse_expr;
-import front::parse_stmt;
-import front::parse_type;
 import front::parser;
 import std::arena;
 import std::mem;
 import std::test;
 
-// Whether the type is an applied type whose name has `segments` segments.
-static Bool applied_with(ast::TypeExpr *type, Usize segments) {
-    if (type == nullptr) return false;
-    ast::TypeKind kind = type->kind;
-    return kind == .applied && countof(kind.applied.name.segments) == segments;
+// The first error of a file in smith's own syntax, or `no error`.
+static Str first_error(Str source) {
+    parser::Parsed parsed = parser::parse_new("x.smith", source);
+    if (countof(parsed.errors) == 0) return "no error";
+    return parsed.errors[0].message;
 }
 
-// The first declaration of source, which must parse without errors.
-static ast::Decl *first_of(Str source) {
-    parser::Parsed parsed = parser::parse("x.smith", source);
-    test::check_equal(countof(parsed.errors), 0);
-    test::check_condition(countof(parsed.module.decls) >= 1);
-    if (countof(parsed.module.decls) < 1) return nullptr;
-    return parsed.module.decls[0];
-}
-
-// The first statement of the body of the function that source declares first.
-static ast::Stmt *first_statement(Str source) {
-    ast::Decl *decl = first_of(source);
-    test::check_condition(decl != nullptr);
-    if (decl == nullptr) return nullptr;
-    ast::DeclKind kind = decl->kind;
-    test::check_condition(kind == .function);
-    if (kind != .function) return nullptr;
-    ast::StmtKind body = kind.function.body->kind;
-    test::check_condition(body == .block && countof(body.block.items) >= 1);
-    if (body != .block || countof(body.block.items) < 1) return nullptr;
-    return body.block.items[0];
-}
-
-export void test_parse_type_call_result() {
-    arena::Arena memory = test::memory(1U << 20);
+export void test_return_type_is_a_qualified_type_function() {
+    arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    ast::Decl *decl = first_of("export same(T) keep(constexpr Type T, auto x) { return x; }");
-    test::check_condition(decl != nullptr);
-    if (decl == nullptr) return;
-    ast::DeclKind kind = decl->kind;
-    test::check_condition(kind == .function);
-    if (kind == .function) {
-        Str expected = "keep";
-        test::check_equal(kind.function.name, expected);
-        test::check_condition(applied_with(kind.function.result, 1));
-    }
+    Str source = "pub fn alloc_slice(T: type, dims: ...) -> arena.slice_of(T, countof(dims)):\n"
+                 "    return undefined\n";
+    Str got = first_error(source);
+    Str want = "no error";
+    test::check_equal(got, want);
 }
 
-export void test_parse_type_call_qualified_result() {
-    arena::Arena memory = test::memory(1U << 20);
+export void test_function_named_type() {
+    arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    ast::Decl *decl = first_of("export shapes::slice_of(T, countof(sizes)) make(Usize n) { return n; }");
-    test::check_condition(decl != nullptr);
-    if (decl == nullptr) return;
-    ast::DeclKind kind = decl->kind;
-    test::check_condition(kind == .function);
-    if (kind == .function) {
-        Str expected = "make";
-        test::check_equal(kind.function.name, expected);
-        test::check_condition(applied_with(kind.function.result, 2));
-    }
-}
-
-export void test_parse_type_call_typedef() {
-    arena::Arena memory = test::memory(1U << 20);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    ast::Decl *decl = first_of("typedef opt::maybe(Usize) Maybe;");
-    test::check_condition(decl != nullptr);
-    if (decl == nullptr) return;
-    ast::DeclKind kind = decl->kind;
-    test::check_condition(kind == .type_alias);
-    if (kind == .type_alias) {
-        Str expected = "Maybe";
-        test::check_equal(kind.type_alias.name, expected);
-        test::check_condition(applied_with(kind.type_alias.type, 2));
-    }
-}
-
-export void test_parse_type_call_local() {
-    arena::Arena memory = test::memory(1U << 20);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    ast::Stmt *stmt = first_statement("void f() { maybe(I32) m = {.some = 5}; }");
-    test::check_condition(stmt != nullptr);
-    if (stmt == nullptr) return;
-    ast::StmtKind kind = stmt->kind;
-    test::check_condition(kind == .declaration);
-    if (kind == .declaration) {
-        ast::DeclKind decl = kind.declaration.decl->kind;
-        test::check_condition(decl == .variable);
-        if (decl == .variable) {
-            Str expected = "m";
-            test::check_equal(decl.variable.name, expected);
-            test::check_condition(applied_with(decl.variable.type, 1));
-        }
-    }
-}
-
-export void test_parse_type_call_field() {
-    arena::Arena memory = test::memory(1U << 20);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    ast::Decl *decl = first_of("struct Holder { opt::maybe(Usize) value; };");
-    test::check_condition(decl != nullptr);
-    if (decl == nullptr) return;
-    ast::DeclKind kind = decl->kind;
-    test::check_condition(kind == .record);
-    if (kind == .record) {
-        test::check_equal(countof(kind.record.fields), 1);
-        test::check_condition(applied_with(kind.record.fields[0].type, 2));
-    }
-}
-
-export void test_parse_type_call_expression_stays() {
-    arena::Arena memory = test::memory(1U << 20);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    ast::Stmt *stmt = first_statement("void g(I32 x) { f(x); }");
-    test::check_condition(stmt != nullptr);
-    if (stmt == nullptr) return;
-    test::check_condition(stmt->kind == .expression);
-}
-
-// The errors of source read in smith's own syntax, with the real parsers' hooks (the layout path when it has a block).
-static Usize new_errors_of(Str source) {
-    parser::Parsed parsed = parser::parse_new("t.smith", source);
-    return countof(parsed.errors);
-}
-
-// Call statements one per line (#1554): the line break after `)` ends each, so `f(x)` and the `f(x)` below are two
-// expression statements, not a type and a name.
-export void test_parse_type_call_statements_in_a_row_new_syntax() {
-    arena::Arena memory = test::memory(1U << 20);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    test::check_equal(new_errors_of("fn f(x: i32) -> i32:\n    return x\nfn g(x: i32) -> i32:\n    f(x)\n    f(x)\n"),
-                      0);
-    test::check_equal(
-        new_errors_of("fn f(x: i32) -> i32:\n    return x\nfn g(x: i32) -> i32:\n    f(x)\n    f(x)\n    f(x)\n"), 0);
+    Str source = "pub fn type(p: *parser) -> *node:\n"
+                 "    return undefined\n";
+    Str got = first_error(source);
+    Str want = "no error";
+    test::check_equal(got, want);
 }

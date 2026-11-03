@@ -44,6 +44,7 @@ import std::clock;
 import std::files;
 import std::format;
 import std::mem;
+import <llvm-c/BitWriter.h>;
 import <llvm-c/Core.h>;
 import <llvm-c/Target.h>;
 import <llvm-c/TargetMachine.h>;
@@ -115,7 +116,7 @@ static Bool word_at(Str source, Usize at, Str word) {
 }
 
 // Whether the first token of `source` is the keyword `module`: today's syntax (every file in it has the line).
-static Bool starts_with_module(Str source) {
+export Bool starts_with_module(Str source) {
     Usize i = 0;
     while (i < countof(source)) {
         if (ascii::space(source[i])) {
@@ -329,7 +330,21 @@ export struct Hover {
     U32 start;
     U32 end;
     Str type;
+    Str doc; // the comment above the name's declaration in a C header, without its markers; empty when there is none
 };
+
+// The symbol of a name that a C header declared (`c::printf`, or `c.printf` in smith's own syntax), or null: headers
+// declare their names as `c::name`, whatever the import is called, so the member of a plain name reads the same row.
+static const types::Symbol *header_symbol(const types::Checked *checked, const ast::Expr *at) {
+    const types::Symbol *found = nullptr;
+    if (at->kind == .name) {
+        found = types::lookup_path(&checked->scopes, at->kind.name.path);
+    } else if (at->kind == .member && at->kind.member.base->kind == .name) {
+        found = types::lookup(&checked->scopes, as_str(format::push("c::", at->kind.member.name)));
+    }
+    if (found == nullptr || found->decl == nullptr || !found->decl->from_c) return nullptr;
+    return found;
+}
 
 // The innermost checked expression of the text `source` of `path` that covers the byte `offset`, with its type (the
 // language server's hover, #1892). Nothing is read or written; the result is the current allocator's.
@@ -343,8 +358,30 @@ export Hover hover_at(Str path, Str source, roots::Roots folders, U32 offset) {
     const ast::Expr *at = ast::expr_at(&parsed.module, offset);
     if (at == nullptr) return (Hover){};
     types::TypeRef type = types::type_of(&checked, at);
+    const types::Symbol *named = header_symbol(&checked, at);
+    if (type == nullptr && named != nullptr) type = named->type; // `c.f` before the checker binds `c` (#1961)
     if (type == nullptr) return (Hover){};
-    return (Hover){.found = true, .start = at->span.start, .end = at->span.end, .type = types::show(type)};
+    Str doc = "";
+    if (named != nullptr) doc = named->decl->doc;
+    return (Hover){.found = true, .start = at->span.start, .end = at->span.end, .type = types::show(type), .doc = doc};
+}
+
+static Bool ends_with_bc(Str name) {
+    return countof(name) > 3 && roots::same(name[countof(name) - 3:countof(name)], ".bc");
+}
+
+// The module as bitcode in `output`, for an output named `*.bc`: `smith prove` (#1974) reads bitcode, not an object.
+static Report write_bitcode(c::LLVMModuleRef ir, Str path, Str output, Str warned, Times times) {
+    char *bitcode_path = state::cstr(output);
+    defer mem::free(bitcode_path);
+    Times timed = times;
+    U64 mark = clock::monotonic();
+    I32 failed_write = c::LLVMWriteBitcodeToFile(ir, bitcode_path);
+    timed.write = clock::monotonic() - mark;
+    if (failed_write != 0) {
+        return failed(as_str(format::push(warned, path, ": error: cannot write the bitcode\n")), timed);
+    }
+    return (Report){.ok = true, .text = warned, .times = timed};
 }
 
 // Compiles `path` to the object `output` for `triple`; `roots` are the folders names start from.
@@ -407,6 +444,7 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     c::LLVMModuleRef ir = emitted.ok;
     defer c::LLVMDisposeModule(ir);
 
+    if (ends_with_bc(output)) return write_bitcode(ir, path, output, warned, times);
     emit_object::ObjectOptions object_options = {.target = options.target, .optimization = 0};
     mark = clock::monotonic();
     emit_object::WriteResult written = emit_object::write(ir, object_options, output);

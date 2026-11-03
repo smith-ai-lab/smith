@@ -25,6 +25,10 @@
 #include <vector>
 
 #include "llvm/BinaryFormat/MachO.h"
+#include "llvm/DebugInfo/DWARF/DWARFCompileUnit.h"
+#include "llvm/DebugInfo/DWARF/DWARFContext.h"
+#include "llvm/DebugInfo/DWARF/DWARFDie.h"
+#include "llvm/DebugInfo/DWARF/DWARFUnit.h"
 #include "llvm/DebugInfo/Symbolize/Symbolize.h"
 #include "llvm/Object/Binary.h"
 #include "llvm/Object/BuildID.h"
@@ -60,7 +64,56 @@ llvm::symbolize::LLVMSymbolizer &symbolizer() {
     return instance;
 }
 
+// The same symbolizer asked for the name as the source writes it (`DW_AT_name`), for frames of a .smith unit (#1979).
+llvm::symbolize::LLVMSymbolizer &source_symbolizer() {
+    static llvm::symbolize::LLVMSymbolizer instance = [] {
+        llvm::symbolize::LLVMSymbolizer::Options options;
+        options.PrintFunctions = llvm::symbolize::FunctionNameKind::ShortName;
+        options.Demangle = false;
+        options.UseSymbolTable = true;
+#if defined(__aarch64__)
+        options.DefaultArch = "arm64";
+#elif defined(__x86_64__)
+        options.DefaultArch = "x86_64";
+#endif
+        return llvm::symbolize::LLVMSymbolizer(options);
+    }();
+    return instance;
+}
+
 std::string last_problem;
+
+// Whether the compile unit at an address of a module was made by smith's front end (producer "smith", set in
+// front/emit_debug.smith). Only those frames print their DW_AT_name; C, C++ and Objective-C keep the linkage name.
+bool is_smith_unit(const std::string &module, uint64_t address) {
+    static std::string cached_module;
+    static std::unique_ptr<llvm::DWARFContext> context;
+    static llvm::object::OwningBinary<llvm::object::Binary> owner;
+    if (cached_module != module) {
+        cached_module = module;
+        context.reset();
+        auto binary = llvm::object::createBinary(module);
+        if (!binary) {
+            llvm::consumeError(binary.takeError());
+            return false;
+        }
+        owner = std::move(*binary);
+        if (const auto *object = llvm::dyn_cast<llvm::object::ObjectFile>(owner.getBinary()))
+            context = llvm::DWARFContext::create(*object);
+    }
+    if (!context) return false;
+    llvm::DWARFCompileUnit *unit = context->getCompileUnitForCodeAddress(address);
+    if (unit == nullptr) return false;
+    llvm::DWARFDie die = unit->getUnitDIE();
+    auto value = die.find(llvm::dwarf::DW_AT_producer);
+    if (!value) return false;
+    auto text = value->getAsCString();
+    if (!text) {
+        llvm::consumeError(text.takeError());
+        return false;
+    }
+    return llvm::StringRef(*text) == "smith";
+}
 
 struct DebugEntry {
     uint64_t address;
@@ -199,12 +252,14 @@ const DebugMap &debug_map(const char *path) {
     return cached_map;
 }
 
-int fill(const llvm::DIInliningInfo &info, SmithSymbol *out, int capacity) {
+int fill(const llvm::DIInliningInfo &info, const llvm::DIInliningInfo *source, SmithSymbol *out, int capacity) {
     int count = 0;
     for (uint32_t i = 0; i < info.getNumberOfFrames() && count < capacity; i++) {
         const llvm::DILineInfo &frame = info.getFrame(i);
         SmithSymbol &symbol = out[count++];
         std::string name = frame.FunctionName == kBad ? "" : frame.FunctionName;
+        if (source != nullptr && i < source->getNumberOfFrames() && source->getFrame(i).FunctionName != kBad)
+            name = source->getFrame(i).FunctionName;
 #ifndef __APPLE__
         // A module's symbol is `_` and its path (runtime/lang_head.c); Mach-O's reader drops that underscore, ELF's
         // keeps it.
@@ -232,7 +287,17 @@ int symbolize_with(const std::string &module, uint64_t address, SmithSymbol *out
         llvm::consumeError(result.takeError());
         return 0;
     }
-    return has_lines(*result) ? fill(*result, out, capacity) : 0;
+    if (!has_lines(*result)) return 0;
+    // A .smith frame prints its source name, the full path `geometry.box.area`; every other frame keeps the linkage
+    // name.
+    if (!is_smith_unit(module, address)) return fill(*result, nullptr, out, capacity);
+    auto source =
+        source_symbolizer().symbolizeInlinedCode(module, {address, llvm::object::SectionedAddress::UndefSection});
+    if (!source) {
+        llvm::consumeError(source.takeError());
+        return fill(*result, nullptr, out, capacity);
+    }
+    return fill(*result, &*source, out, capacity);
 }
 
 // The debug map: the object the address's function came from, and the address in it.

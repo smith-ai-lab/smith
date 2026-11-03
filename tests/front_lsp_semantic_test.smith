@@ -1,0 +1,190 @@
+// Tests of `textDocument/semanticTokens` (#2008): a document is opened and the tokens come back as the protocol's
+// numbers; each test decodes them and asks what lies at a line and a column. Every kind of the ticket has a place: a
+// comment, a keyword, a type, a function, a parameter, a local, a field, a number, a string and an attribute, with the
+// modifiers where the checker knows them.
+module front_lsp_semantic_test;
+
+import front::lsp_server;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; same && k < countof(needle); k++)
+            same = text[i + k] == needle[k];
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+// \n is written as the two characters of JSON's escape; the line breaks of the document are those.
+static Str document() {
+    return "# a point\\nstruct Point:\\n    x: i32\\n    y: i32\\n\\nfn twice(n: i32) -> i32:\\n    return n + n\\n\\n"
+           "fn main() -> i32:\\n    let p = Point(x = 1, y = 2)\\n    let a = twice(p.x)\\n    return a\\n";
+}
+
+static void open(Str uri, Str text) {
+    (void)lsp_server::handle(as_str(format::push(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"", uri,
+        "\",\"text\":\"", text, "\"}}}")));
+}
+
+// What a token is: whether there is one, its length, type and modifiers.
+struct Found {
+    Bool there;
+    U64 length;
+    U64 type;
+    U64 modifiers;
+};
+
+// The five numbers per token that follow `"data":[` in a reply, decoded to absolute places; the token at `line` and
+// `column`.
+static Found token_at(Str reply, U64 line, U64 column) {
+    Usize at = 0;
+    while (at < countof(reply) && !has(reply[at:countof(reply)], "\"data\":["))
+        at += 1;
+    while (at < countof(reply) && reply[at] != '[')
+        at += 1;
+    at += 1;
+    U64 numbers[5] = {};
+    Usize have = 0;
+    U64 now_line = 0;
+    U64 now_column = 0;
+    U64 value = 0;
+    Bool digits = false;
+    while (at <= countof(reply)) {
+        char c = at < countof(reply) ? reply[at] : ']';
+        at += 1;
+        if (c >= '0' && c <= '9') {
+            value = value * 10 + (U64)(c - '0');
+            digits = true;
+            continue;
+        }
+        if (!digits) break;
+        numbers[have] = value;
+        have += 1;
+        value = 0;
+        digits = false;
+        if (have == 5) {
+            now_line += numbers[0];
+            now_column = numbers[0] == 0 ? now_column + numbers[1] : numbers[1];
+            if (now_line == line && now_column == column) {
+                return (Found){.there = true, .length = numbers[2], .type = numbers[3], .modifiers = numbers[4]};
+            }
+            have = 0;
+        }
+        if (c == ']') break;
+    }
+    return (Found){};
+}
+
+static Str tokens(Str uri) {
+    return lsp_server::handle(as_str(format::push(
+        "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"textDocument/semanticTokens/full\",\"params\":{\"textDocument\":{"
+        "\"uri\":\"",
+        uri, "\"}}}")));
+}
+
+// The type numbers are the legend's order: namespace 0, type 1, function 2, method 3, parameter 4, variable 5,
+// property 6, enumMember 7, keyword 8, comment 9, string 10, number 11, decorator 12. The modifiers: declaration 1,
+// readonly 2, defaultLibrary 4.
+export void test_semantic_tokens_classify_names_and_words() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open("file:///t/s.smith", document());
+    Str out = tokens("file:///t/s.smith");
+    test::check(has(out, "\"id\":4"));
+    Found comment = token_at(out, 0, 0);
+    test::check(comment.there && comment.type == 9 && comment.length == 9);
+    Found keyword = token_at(out, 1, 0);
+    test::check(keyword.there && keyword.type == 8 && keyword.length == 6);
+    Found point = token_at(out, 1, 7);
+    test::check(point.there && point.type == 1 && point.modifiers == 1);
+    Found field = token_at(out, 2, 4);
+    test::check(field.there && field.type == 6 && field.modifiers == 1);
+    Found builtin = token_at(out, 2, 7);
+    test::check(builtin.there && builtin.type == 1);
+    Found function = token_at(out, 5, 3);
+    test::check(function.there && function.type == 2 && function.modifiers == 1);
+    Found parameter = token_at(out, 5, 9);
+    test::check(parameter.there && parameter.type == 4 && parameter.modifiers == 3);
+    Found parameter_use = token_at(out, 6, 11);
+    test::check(parameter_use.there && parameter_use.type == 4 && parameter_use.modifiers == 2);
+}
+
+export void test_semantic_tokens_tell_a_local_from_a_call_and_a_field() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open("file:///t/s.smith", document());
+    Str out = tokens("file:///t/s.smith");
+    Found local = token_at(out, 9, 8);
+    test::check(local.there && local.type == 5 && local.modifiers == 3);
+    Found constructed = token_at(out, 9, 12);
+    test::check(constructed.there && constructed.type == 1 && constructed.modifiers == 0);
+    Found number = token_at(out, 9, 22);
+    test::check(number.there && number.type == 11);
+    Found call = token_at(out, 10, 12);
+    test::check(call.there && call.type == 2 && call.modifiers == 0);
+    Found use = token_at(out, 10, 18);
+    test::check(use.there && use.type == 5 && use.modifiers == 2);
+    Found member = token_at(out, 10, 20);
+    test::check(member.there && member.type == 6 && member.modifiers == 0);
+}
+
+export void test_semantic_tokens_of_a_file_that_does_not_parse_still_come() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open("file:///t/broken.smith", "fn (:\\n    let x = \\\"text\\\" + 3 # c\\n");
+    Str out = tokens("file:///t/broken.smith");
+    Found keyword = token_at(out, 0, 0);
+    test::check(keyword.there && keyword.type == 8);
+    Found text = token_at(out, 1, 12);
+    test::check(text.there && text.type == 10);
+    Found number = token_at(out, 1, 21);
+    test::check(number.there && number.type == 11);
+    Found comment = token_at(out, 1, 23);
+    test::check(comment.there && comment.type == 9);
+}
+
+export void test_semantic_tokens_range_and_unknown_documents() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open("file:///t/s.smith", document());
+    Str out = lsp_server::handle(
+        "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"textDocument/semanticTokens/range\",\"params\":{\"textDocument\":{"
+        "\"uri\":\"file:///t/s.smith\"},\"range\":{\"start\":{\"line\":5,\"character\":0},\"end\":{\"line\":7,"
+        "\"character\":0}}}}");
+    Found inside = token_at(out, 5, 0);
+    test::check(inside.there && inside.type == 8 && inside.length == 2);
+    test::check(!token_at(out, 1, 0).there);
+    test::check(!token_at(out, 9, 4).there);
+    Str none = tokens("file:///t/never-opened.smith");
+    test::check(has(none, "\"result\":null"));
+}
+
+export void test_initialize_declares_the_legend() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str out = lsp_server::handle("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}");
+    test::check(has(out, "\"semanticTokensProvider\""));
+    test::check(has(out, "\"tokenTypes\":[\"namespace\",\"type\",\"function\""));
+    test::check(has(out, "\"tokenModifiers\":[\"declaration\",\"readonly\",\"defaultLibrary\"]"));
+    test::check(has(out, "\"full\":true"));
+}

@@ -263,6 +263,8 @@ export struct Param {
     Bool is_new;         // written in smith's own syntax (`x: T`), not today's `T x`
     Bool is_const;       // `const n: usize`: known at compile time
     Bool is_keyword;     // after the `;` of the parameter list: a call can only pass it by name
+    Bool is_pack;        // `xs...`: gathers the leftover positional arguments
+    Bool is_gather;      // `; kw...`: gathers the leftover named arguments into a named tuple
     Expr *default_value; // `port: u16 = 443`: what a call that leaves the argument out passes (null when none)
     Attribute attributes[:];
     Span span;
@@ -385,7 +387,8 @@ export typedef enum {
     } reflect_member; // `x.[f]`, `x->[f]`: the field is any expression, such as `fields(T)[i]`
     struct {
         Expr *pattern;
-    } expand; // `pattern...` as an argument or a list item; `rest...` expands the name `rest`
+        Bool named; // after the `;` of a call: `f(x; s...)` passes the fields of `s` as named arguments
+    } expand;       // `pattern...` as an argument or a list item; `rest...` expands the name `rest`
     struct {
         Text name;
         Expr *value;
@@ -1751,6 +1754,7 @@ static void expr_head_more(Output *text, Expr *e) {
     }
     if (e->kind == .expand) {
         put(text, "expand");
+        put_flag(text, e->kind.expand.named, "named");
     }
     if (e->kind == .generic_select) {
         put(text, "generic_select");
@@ -2119,6 +2123,8 @@ static void other_head(Output *text, Node node) {
         put_flag(text, node.param->is_new, "new");
         put_flag(text, node.param->is_const, "const");
         put_flag(text, node.param->is_keyword, "keyword");
+        put_flag(text, node.param->is_pack, "pack");
+        put_flag(text, node.param->is_gather, "gather");
         break;
     case .field:
         put(text, "field ");
@@ -2289,4 +2295,140 @@ export const Expr *expr_at(const Module *m, U32 offset) {
         items.data[at].count = items.length - before;
     }
     return best;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Declared names (the language server's semantic tokens, #2008)
+
+// What a declared name is.
+// NOLINTBEGIN(readability-identifier-naming)
+// The constants are bare names in the module, so they carry a prefix of their own.
+export enum SymbolKind {
+    sym_function,
+    sym_type,
+    sym_variable,
+    sym_parameter,
+    sym_field,
+    sym_variant,
+    sym_module,
+};
+// NOLINTEND(readability-identifier-naming)
+
+// One declared name: what it is, whether it is read-only (a `let` without `mut`, a `const`, a parameter), and the bytes
+// of its declaration, in which the name is the first word that spells it. `scope` is the bytes where an unqualified use
+// means it: the whole file for a module-level name, the function for a parameter or a local. A field or a variant is
+// reached only after a `.`.
+export struct Symbol {
+    Str name;
+    SymbolKind kind;
+    Bool readonly;
+    Span at;
+    Span scope;
+};
+
+export typedef typeof(Symbol[:]) Symbols;
+
+static void note(Symbols *list, Usize *used, Symbol symbol) {
+    if (*used == countof(*list)) {
+        Symbols grown = mem::alloc_slice(Symbol, *used == 0 ? 64 : *used * 2);
+        for (Usize i = 0; i < *used; i++)
+            grown[i] = (*list)[i];
+        *list = grown;
+    }
+    (*list)[*used] = symbol;
+    *used += 1;
+}
+
+static Symbol symbol_of(Str name, SymbolKind kind, Bool readonly, Span at, Span everywhere) {
+    return (Symbol){.name = name, .kind = kind, .readonly = readonly, .at = at, .scope = everywhere};
+}
+
+// The names a record, an enumeration, a function or a variable declares.
+static void note_decl(Symbols *list, Usize *used, const Decl *d, Span everywhere) {
+    switch (d->kind) {
+    case .function:
+        note(list, used, symbol_of(d->kind.function.name, sym_function, true, d->span, everywhere));
+        for (Usize i = 0; i < countof(d->kind.function.params); i++) {
+            Param p = d->kind.function.params[i];
+            note(list, used, symbol_of(p.name, sym_parameter, !p.is_mut, p.span, d->span));
+        }
+        break;
+    case .record:
+        note(list, used, symbol_of(d->kind.record.name, sym_type, true, d->span, everywhere));
+        for (Usize i = 0; i < countof(d->kind.record.fields); i++) {
+            FieldDecl f = d->kind.record.fields[i];
+            note(list, used, symbol_of(f.name, sym_field, false, f.span, everywhere));
+        }
+        break;
+    case .enumeration:
+        note(list, used, symbol_of(d->kind.enumeration.name, sym_type, true, d->span, everywhere));
+        for (Usize i = 0; i < countof(d->kind.enumeration.items); i++) {
+            Enumerator e = d->kind.enumeration.items[i];
+            note(list, used, symbol_of(e.name, sym_variant, true, e.span, everywhere));
+        }
+        break;
+    case .type_alias:
+        note(list, used, symbol_of(d->kind.type_alias.name, sym_type, true, d->span, everywhere));
+        break;
+    case .variable:
+        note(list, used, symbol_of(d->kind.variable.name, sym_variable, !d->kind.variable.is_mut, d->span, everywhere));
+        break;
+    case .import_module:
+    case .import_c:
+    case .import_from:
+    case .static_assert_decl:
+    case .if_constexpr:
+        break;
+    }
+}
+
+// The names bound by a statement: `for x in`, `let (a, b) =`; each is a local of the enclosing function.
+static void note_stmt(Symbols *list, Usize *used, const Stmt *s, Span everywhere) {
+    if (s->kind == .for_in) {
+        for (Usize i = 0; i < countof(s->kind.for_in.names); i++) {
+            Identifier n = s->kind.for_in.names[i];
+            note(list, used, symbol_of(n.text, sym_variable, !n.is_mut, n.span, s->span));
+        }
+    } else if (s->kind == .destructure) {
+        for (Usize i = 0; i < countof(s->kind.destructure.names); i++) {
+            Identifier n = s->kind.destructure.names[i];
+            note(list, used, symbol_of(n.text, sym_variable, !n.is_mut, n.span, everywhere));
+        }
+    }
+}
+
+// The imports: `import std.math` declares `math`, `import std.math as m` declares `m`, a header's alias or `c`.
+static void note_import(Symbols *list, Usize *used, const Decl *d, Span everywhere) {
+    if (d->kind == .import_module) {
+        Str name = d->kind.import_module.alias;
+        Usize count = countof(d->kind.import_module.path.segments);
+        if (countof(name) == 0 && count > 0) name = d->kind.import_module.path.segments[count - 1].text;
+        note(list, used, symbol_of(name, sym_module, true, d->span, everywhere));
+    } else if (d->kind == .import_c && countof(d->kind.import_c.alias) > 0) {
+        note(list, used, symbol_of(d->kind.import_c.alias, sym_module, true, d->span, everywhere));
+    }
+}
+
+// Every name `m` declares, in no particular order; a local's or a parameter's scope is the declaring function, or
+// the statement for a name a loop binds; a `let` pattern's names carry `everywhere` for the caller to narrow to the
+// function. The list is the current allocator's.
+export Symbols symbols(const Module *m, Span everywhere) {
+    Items items = {};
+    add(&items, {.module = m});
+    Symbols list = {};
+    Usize used = 0;
+    for (Usize at = 0; at < items.length; at++) {
+        Node node = items.data[at].node;
+        if (node == .decl) {
+            note_decl(&list, &used, node.decl, everywhere);
+            note_import(&list, &used, node.decl, everywhere);
+        } else if (node == .stmt) {
+            note_stmt(&list, &used, node.stmt, everywhere);
+        }
+        Usize before = items.length;
+        other_children(&items, node);
+        items.data[at].first = before;
+        items.data[at].count = items.length - before;
+    }
+    return list[0:used];
 }
