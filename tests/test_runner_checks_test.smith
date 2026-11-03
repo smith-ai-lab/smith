@@ -59,8 +59,8 @@ export void test_runner_checks_a_passing_test_prints_its_line_its_output_and_the
                              runner::plain(&p, iso, "--test passing --verbose").out);
         scratch::expect_text(runner::label(iso, "pass: without --verbose only the summary"), "1 passed, 0 failed",
                              runner::plain(&p, iso, "--test passing").out);
-        scratch::expect_text(runner::label(iso, "pass: the C names pass too, and hide the output"),
-                             "PASS c_passing\n\n1 passed, 0 failed",
+        scratch::expect_text(runner::label(iso, "pass: a C test shows its output under the line"),
+                             "PASS c_passing\n    this output is shown\n\n1 passed, 0 failed",
                              runner::plain(&p, iso, "--test c_passing --verbose").out);
     }
 }
