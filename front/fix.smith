@@ -273,6 +273,11 @@ export Fixed fix_text(Str file, Str source) {
         Fixed fixed = apply_fixes(total.text, errors, parsed.warnings);
         if (fixed.applied == 0) break;
         total.text = fixed.text;
+        // Once the text lexes as smith's own syntax (no old form is left in it), its `//` comments are written `#`
+        // now: the next pass would otherwise read it with the old parser, which takes `pub const m: usize = 16` for
+        // an old declaration and mends it again (#1956).
+        Str hashed = hash_comments(total.text);
+        if (!mem::equal(hashed, total.text) && lex::tokenize_new(hashed) != .error) total.text = hashed;
         total.applied += fixed.applied;
         total.skipped = fixed.skipped;
     }

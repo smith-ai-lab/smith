@@ -1246,7 +1246,10 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
         warn(p, head.type_start, head.name.span.end, message, none);
         return;
     }
-    Str lead = pre->is_constexpr && !type_value ? "const " : "let ";
+    // A global of C is writable: `let mut` (`pub let mut` with the `export` before it); a local is `let`.
+    Str lead = "let ";
+    if (pre->is_constexpr && !type_value) lead = "const ";
+    if (!pre->is_constexpr && pre->top) lead = "let mut ";
     written = as_str(format::push(dims.text, written));
     Str text = as_str(format::push(lead, name, ": ", written, " ="));
     U32 to = equal_end;
