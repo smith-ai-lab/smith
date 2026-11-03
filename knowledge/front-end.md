@@ -356,6 +356,7 @@ Iteration in the checker; the rules are the top comment of the file.
 - `let _ = f()` evaluates and drops the value; a local `const X = v` is an ordinary slot stored once. Tests: `tests/front_emit_fn_test.smith`.
 
 **Debug info** (`emit_debug.smith`, B5, #1135): with `Options.debug_info`, a DIBuilder, a C11 compile unit (producer `smith`), a `DISubprogram` per function (name as the source writes it, the full path, `geometry.box.area`; linkage name the symbol, `geometry::box::area`; #1979), a `DILocalVariable` per parameter and local, and a `DILocation` on every instruction.
+- `smith cc --front-end=new -g` sets `SMITH_FRONT_DEBUG=1` (`runtime/front_flag.c`), which `front::compile` reads into `Options.debug_info`; without `-g` an object has none. `smith dbg` then shows `area(w=3, h=4) at hello.smith:2:5` and the locals (#1979). A lambda or generator with `-g` is still `not emitted` (`emit_lambda`, `emit_stream`). `start_function` clears the builder's location so one function's entry branch never carries the previous function's scope.
 - A name or literal keeps the location of the statement or operator around it; a continuation gets the location of the node that pushed it (`debug::then_location`).
 - The line table is `Emitter.line_starts`; there is no file-level state, so two emits can run at once. `debug::release` runs on every exit. Test: `tests/front_emit_debug_test.smith`.
 

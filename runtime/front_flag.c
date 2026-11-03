@@ -110,6 +110,19 @@ static void smith_front_cimport_flags(const char *self, int count, char **args) 
     setenv("SMITH_FRONT_CIMPORT_FLAGS", flags, 1);
 }
 
+// `-g` (or `-g<level>`, not `-g0`) on the command line sets $SMITH_FRONT_DEBUG to 1 for front::compile, which then emits
+// debug info (#1979): the line table, the source names and the variables `smith dbg`, `dap` and `symbolize` read. Without
+// `-g` it is unset, so an object has none.
+static void smith_front_debug_flag(int count, char **args) {
+    bool debug = false;
+    for (int i = 0; i < count; i++) { // bounded by count
+        if (strncmp(args[i], "-g", 2) != 0 || strcmp(args[i], "-g0") == 0) continue;
+        debug = strcmp(args[i], "-gdwarf-aranges") != 0;
+    }
+    if (debug) setenv("SMITH_FRONT_DEBUG", "1", 1);
+    else unsetenv("SMITH_FRONT_DEBUG");
+}
+
 // Whether `--smith-header` is among the arguments: the new front end writes a header instead of an object (#1621).
 static bool smith_front_header_requested(int count, char **args) {
     for (int i = 0; i < count; i++) { // bounded by count
@@ -156,6 +169,7 @@ static int smith_front_rewrite(char **argv, int first, int count, char **args, c
         smith_front_objects[i] = smith_front_names[i];
     }
     if (sources > 0) smith_front_cimport_flags(self, count, args);
+    if (sources > 0) smith_front_debug_flag(count, args);
     if (sources > 0 && front_compile_run(smith_front_sources, smith_front_objects, sources, triple) != 0) return -1;
     int used = first;
     size_t seen = 0;

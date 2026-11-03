@@ -828,6 +828,9 @@ static void start_function(state::Emitter *e, state::FunctionInfo info) {
     c::LLVMBasicBlockRef entry = c::LLVMAppendBasicBlockInContext(e->context, info.llvm, "entry");
     c::LLVMBasicBlockRef body = c::LLVMAppendBasicBlockInContext(e->context, info.llvm, "body");
     c::LLVMPositionBuilderAtEnd(e->builder, entry);
+    // The previous function's location must not reach this function's branch (its subprogram is another one, #1979).
+    c::LLVMSetCurrentDebugLocation2(e->builder, nullptr);
+    c::LLVMSetCurrentDebugLocation2(e->alloca_builder, nullptr);
     c::LLVMValueRef jump = c::LLVMBuildBr(e->builder, body);
     c::LLVMPositionBuilderBefore(e->alloca_builder, jump);
     c::LLVMPositionBuilderAtEnd(e->builder, body);
