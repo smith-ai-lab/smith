@@ -2465,7 +2465,10 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
         return base;
     }
     Str found = types::show(base);
-    if (arrow && base->kind == .record) {
+    if (base->kind == .enumeration && base->has_payload) {
+        types::failf(c, e->span, "`", found, "` is a payload enumeration, so a payload can't be read with `.",
+                     arrow ? "->" : ".", "`; test the variant first, with `if let .variant(v) = x:` or a `match`");
+    } else if (arrow && base->kind == .record) {
         types::failf(c, e->span, "`->` needs a pointer to a record, found `", found, "`; write `.` instead");
     } else if (through_pointer) {
         types::failf(c, e->span, "`.` needs a record, found the pointer `", found, "`; write `->` instead");
