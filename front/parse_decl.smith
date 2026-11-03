@@ -1215,6 +1215,31 @@ static Bool is_number_type(Str type) {
            same_text(type, "isize") || same_text(type, "usize") || same_text(type, "f32") || same_text(type, "f64");
 }
 
+// The number of elements of the flat list `{a, b, c}` the tokens from `from` to `to` (not taken) hold; 0 when they
+// are not one list, the list is empty or an element is designated (`[i] = v`, `.f = v`) or nested.
+static U32 list_length(const parse::Parser *p, U32 from, U32 to) {
+    Usize at = 0;
+    while (at < countof(p->tokens) && p->tokens[at].span.start < from)
+        at += 1;
+    if (at >= countof(p->tokens) || p->tokens[at].kind != lex::left_brace) return 0;
+    U32 count = 0;
+    Bool element = false;
+    for (at += 1; at < countof(p->tokens) && p->tokens[at].span.start < to; at += 1) {
+        lex::TokenKind kind = p->tokens[at].kind;
+        if (kind == lex::right_brace) return element ? count + 1 : count;
+        if (kind == lex::comma) {
+            if (!element) return 0;
+            count += 1;
+            element = false;
+            continue;
+        }
+        if (kind == lex::dot || kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace)
+            return 0;
+        element = true;
+    }
+    return 0;
+}
+
 // `T a = v;` is `let a: T = v`, `T a;` is `let mut a: T = undefined` (`= 0` for a static or a file's number, which C
 // zeroes), `auto a = v;` is `let a = v`, `constexpr T N = v;` is `const N: T = v` and `constexpr Type N = T;` is
 // `let N = T`; the `;` goes. The position is after the `;`. An array suffix, `extern` and
@@ -1234,7 +1259,13 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     if (suffixed && !has_init && (pre->is_static || pre->top)) fixable = false;
     Str value = "";
     if (has_init) value = trimmed(source_between(p, equal_end, last.span.start));
-    if (suffixed && countof(value) > 0 && value[0] == '{') fixable = false;
+    if (suffixed && countof(value) > 0 && value[0] == '{') {
+        // `T xs[_] = {a, b};` is `let xs: [2]T = [a, b]`: smith has no `[_]` length (not settled), so the count of the
+        // elements is written; any other `{...}` list on an array has no spelling yet.
+        U32 count = same_text(dims.text, "[_]") ? list_length(p, equal_end, last.span.start) : 0;
+        if (count == 0) fixable = false;
+        dims.text = as_str(format::push("[", count, "]"));
+    }
     if (pre->is_constexpr && (pre->constexpr_end > head.type_start || !has_init)) fixable = false;
     if (automatic && !has_init) fixable = false;
     if (!fixable) {
@@ -2261,6 +2292,22 @@ static Bool parse_binding_value(parse::Parser *p, lex::Token name, Str opener, B
     return false;
 }
 
+// `let xs: [_]i32 = [1, 2, 3]` and `const s: [_]char = "abc"`: a `[_]` length is the initializer's element count, a
+// string literal's bytes and its terminator, as in C. The length is written into the type, so the checker, the
+// emitter and the headers all see an ordinary `[3]`. Any other initializer is left alone for them to report.
+static void infer_array_length(ast::TypeExpr *type, const ast::Expr *init) {
+    if (type == nullptr || init == nullptr || type->kind != .array) return;
+    const ast::Expr *count = type->kind.array.count;
+    if (count == nullptr || count->kind != .name || countof(count->kind.name.path.segments) != 1) return;
+    Str word = count->kind.name.path.segments[0].text;
+    if (countof(word) != 1 || word[0] != '_') return;
+    if (init->kind == .array_lit) {
+        type->kind.array.count = ast::integer(countof(init->kind.array_lit.items));
+    } else if (init->kind == .string) {
+        type->kind.array.count = ast::integer(countof(init->kind.string.bytes) + 1);
+    }
+}
+
 // `let a = v`, `let a: T = v`, `let mut a: usize = 0`, `const X = v`; the position is at the first of them.
 static ast::Decl *parse_binding(parse::Parser *p, const Prefixes *pre, U32 start) {
     Bool is_let = let_at(p, 0);
@@ -2290,6 +2337,7 @@ static ast::Decl *parse_binding(parse::Parser *p, const Prefixes *pre, U32 start
         return nullptr;
     }
     end_line(p, "declaration");
+    infer_array_length(type, init);
     ast::DeclKind kind = {.variable = {.name = parse::text(p, name),
                                        .type = type,
                                        .init = init,
