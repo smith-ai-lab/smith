@@ -1,0 +1,41 @@
+// front::lsp_symbols: `textDocument/documentSymbol` for `.smith` on smith's own front end (#1893, a piece of #1887).
+// The named declarations of a file (functions, structs, enums, constants, variables, type aliases) with the bytes each
+// covers, as a flat list of `DocumentSymbol`.
+//
+//   result(path, source)   the JSON for the `result` of the reply: an array, empty when the text does not parse
+//
+// The text is the current allocator's.
+module front::lsp_symbols;
+
+import front::compile;
+import front::lsp_definition;
+import front::roots;
+import std::format;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+// The LSP `SymbolKind` of a kind named by `compile::symbols`.
+static U32 kind_number(Str kind) {
+    if (roots::same(kind, "function")) return 12;
+    if (roots::same(kind, "struct")) return 23;
+    if (roots::same(kind, "enum")) return 10;
+    if (roots::same(kind, "constant")) return 14;
+    if (roots::same(kind, "type")) return 26;
+    return 13;
+}
+
+// The `result` of a documentSymbol request for the text `source` of the file `path`.
+export Str result(Str path, Str source) {
+    compile::Symbols found = compile::symbols(path, source);
+    Str list = "";
+    for (Usize i = 0; i < countof(found); i++) {
+        Str range = as_str(format::push("{\"start\":", lsp_definition::position(source, found[i].start),
+                                        ",\"end\":", lsp_definition::position(source, found[i].end), "}"));
+        list = as_str(format::push(list, i == 0 ? "" : ",", "{\"name\":\"", lsp_definition::escape(found[i].name),
+                                   "\",\"kind\":", kind_number(found[i].kind), ",\"range\":", range,
+                                   ",\"selectionRange\":", range, "}"));
+    }
+    return as_str(format::push("[", list, "]"));
+}
