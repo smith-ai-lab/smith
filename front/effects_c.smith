@@ -125,7 +125,8 @@ export c::LLVMModuleRef compile(c::LLVMContextRef context, Str path) {
     defer effects_cache::free_text(file);
     const char *name = (const char *)file.data;
     const char *const plain[9] = {smith, driver, "-S", "-emit-llvm", "-O0", "-gline-tables-only", "-o", "-", name};
-    const char *const typed[11] = {smith, driver, "-x", kind, "-S", "-emit-llvm", "-O0", "-gline-tables-only", "-o", "-", name};
+    const char *const typed[11] = {smith, driver, "-x", kind, "-S", "-emit-llvm", "-O0", "-gline-tables-only",
+                                   "-o",  "-",    name};
     process::OutputResult done = {};
     if (c::strlen(kind) == 0) {
         done = process::run(plain[0:9]);
