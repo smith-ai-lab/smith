@@ -1519,10 +1519,20 @@ static Bool has_trailing_lambda(const parse::Parser *p, Bool head) {
 static ast::Expr *call(parse::Parser *p, ast::Expr *callee, Bool head) {
     parse::advance(p);
     ast::ExprRef args[:] = {};
+    Bool after_semicolon = false;
     while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
+        // `f(x; s...)`: after the `;`, a `s...` passes the fields of `s` as named arguments.
+        if (p->new_syntax && parse::at(p, lex::semicolon)) {
+            if (after_semicolon) parse::error(p, parse::peek(p).span, "a call has one `;`: put every spread after it");
+            parse::advance(p);
+            after_semicolon = true;
+            continue;
+        }
         ast::Expr *arg = argument(p);
         if (arg == nullptr) return nullptr;
+        if (after_semicolon && arg->kind == .expand) arg->kind.expand.named = true;
         args = parse_type::with_expr(args, arg);
+        if (parse::at(p, lex::semicolon) && p->new_syntax) continue;
         if (!parse::accept(p, lex::comma)) break;
     }
     parse::expect(p, lex::right_paren, "`)` to end the arguments");
