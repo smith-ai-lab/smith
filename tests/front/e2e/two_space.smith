@@ -1,0 +1,12 @@
+fn twice(n: i32) -> i32:
+  n * 2
+
+pub fn check() -> i32:
+  if twice(2) != 4:
+    return 1
+  let mut total: i32 = 0
+  if total == 0:
+     total = 3
+  if total != 3:
+    return 2
+  0

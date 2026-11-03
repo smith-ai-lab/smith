@@ -99,7 +99,8 @@ export void test_front_effects_pass_sets() {
     test::check_equal(bits(&g, "bad"), effects_table::console | effects_table::globals);
     test::check_equal(bits(&g, "ping"), effects_table::alloc);
     test::check_equal(bits(&g, "pong"), effects_table::alloc);
-    test::check_equal(bits(&g, "indirect"), effects_table::unknown);
+    test::check_equal(bits(&g, "indirect"),
+                      0u); // calls its parameter: the call site that passes a function decides (#2020)
     test::check_equal(bits(&g, "unlisted"), effects_table::unknown);
     test::check_equal(bits(&g, "boom"), effects_table::fails);
     test::check_equal(bits(&g, "not_in_the_graph"), effects_table::unknown);

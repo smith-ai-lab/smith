@@ -878,6 +878,15 @@ export struct Instance {
 
 export const Usize max_instances = 256;
 
+// The name `import c <stdio.h>` binds (`stdio`, or the `as` name) and the header's declarations, which are also
+// declared as `c::name` (one entity however many bindings reach it, #1678).
+export struct HeaderBinding {
+    Str name;
+    const ast::Module *header;
+};
+
+export const Usize max_header_bindings = 32;
+
 // The instance a call of a generic function was checked against (the emitter reads it).
 export struct InstanceUse {
     const ast::Expr *call;
@@ -886,6 +895,8 @@ export struct InstanceUse {
 
 export struct Checked {
     Options options;
+    HeaderBinding bindings[32];
+    Usize binding_count;
     Instance instances[:];
     Usize instance_count;
     InstanceUse uses[:]; // the calls of generic functions, each with its instance
@@ -1102,6 +1113,7 @@ static void push_made(Walk *w, TypeRef type) {
 // A type path `a.T`, `a::T` or `a.b.T`: through the modules when its first name is one, else the whole path as a name
 // (`c::printf`); inside an imported module, that module's own names first.
 static const Symbol *type_through_modules(const Checked *r, ast::Path path);
+export const HeaderBinding *header_binding(const Checked *r, Str name);
 
 static Str path_text(ast::Path path) {
     Output text = {};
@@ -1197,6 +1209,11 @@ static TypeRef resolve_name(Checked *r, ast::Span span, ast::Path path) {
         }
     }
     const Symbol *found = type_through_modules(r, path);
+    if (found == nullptr && countof(path.segments) == 2 && header_binding(r, path.segments[0].text) != nullptr) {
+        failf(r, span, "`", path_text(path), "` is not declared by that header; check its spelling, or import the ",
+              "header that declares it");
+        return r->table.invalid;
+    }
     if (found == nullptr && is_c_path(path) && r->options.headers != nullptr) {
         failf(r, span, "`", path_text(path), "` is not declared by any C header this file imports; ",
               "write `import <h>;` for the header that has it, and check its spelling");
@@ -1847,12 +1864,19 @@ export Bool is_type_parameter(const ast::Param *p) {
     return is_type_name(p->type);
 }
 
-// A function with a body and a compile-time parameter, whose result is not a type, is a template (#1908): its body is
-// checked in each instance, not here. A type function (`-> type`) and a prototype are ordinary.
+// Whether a parameter is written `auto x` in today's syntax: its type is the type each call passes, so the function is
+// a template with one instance per set of argument types (#1934).
+export Bool is_auto_param(const ast::Param *p) {
+    return !p->is_new && p->type != nullptr && p->type->kind == .auto_type && !p->is_rest && !p->is_pack &&
+           !p->is_gather;
+}
+
+// A function with a body and a compile-time or `auto` parameter, whose result is not a type, is a template (#1908,
+// #1934): its body is checked in each instance, not here. A type function (`-> type`) and a prototype are ordinary.
 static Bool is_template(const ast::Decl *d, ast::Param list[:], const ast::TypeExpr *result_type) {
     if (d->kind != .function || d->kind.function.body == nullptr || is_type_name(result_type)) return false;
     for (Usize i = 0; i < countof(list); i++) {
-        if (is_compile_time(&list[i])) return true;
+        if (is_compile_time(&list[i]) || is_auto_param(&list[i])) return true;
     }
     return false;
 }
@@ -2001,6 +2025,63 @@ export Usize instance_called(const Checked *r, const ast::Expr *call) {
 // The instance of the template `template` for what a call passed, one per set of arguments: made (cloned, its
 // compile-time parameters taken out, its signature typed) on the first call and found after. Its index in
 // `r->instances`, or `max_instances` when there are too many.
+// Fills `bindings` from what the call passed, one per compile-time or `auto` parameter in order. Returns how many
+// parameters the instance keeps; `auto_syntax` is set when the kept parameters are written in today's syntax.
+static Usize bind_given(Checked *r, ast::Param all[:], Binding given[:], Binding bindings[:], Bool *auto_syntax) {
+    Usize kept_count = 0;
+    Usize bound = 0;
+    for (Usize i = 0; i < countof(all); i++) {
+        if (is_auto_param(&all[i])) {
+            kept_count += 1;
+            bindings[bound] = given[bound];
+            bindings[bound].name = msg(format::push("$auto.", all[i].name));
+            bound += 1;
+            continue;
+        }
+        if (!is_compile_time(&all[i])) {
+            kept_count += 1;
+            *auto_syntax = *auto_syntax || !all[i].is_new;
+            continue;
+        }
+        bindings[bound] = given[bound];
+        bindings[bound].name = all[i].name;
+        if (!bindings[bound].is_type) {
+            r->new_syntax = true;
+            bindings[bound].type = resolve(r, all[i].type);
+            r->new_syntax = false;
+        }
+        bound += 1;
+    }
+    return kept_count;
+}
+
+// The parameters an instance keeps, with their types: an `auto` parameter has the type it was bound to.
+static void keep_params(Checked *r, ast::Param all[:], Binding bindings[:], Bool auto_syntax, ast::Param kept[:],
+                        Slot slots[:]) {
+    Usize at = 0;
+    Usize taken = 0; // the next binding for an `auto` parameter
+    for (Usize i = 0; i < countof(all); i++) {
+        if (is_compile_time(&all[i])) {
+            taken += 1;
+            continue;
+        }
+        kept[at] = all[i];
+        slots[at].name = all[i].name;
+        if (is_auto_param(&all[i])) {
+            slots[at].type = bindings[taken].type;
+            taken += 1;
+        } else {
+            r->new_syntax = !auto_syntax;
+            slots[at].type = all[i].type == nullptr ? r->table.invalid : resolve(r, all[i].type);
+            r->new_syntax = false;
+        }
+        at += 1;
+    }
+}
+
+// The instance of the template `template` for what a call passed, one per set of arguments: made (cloned, its
+// compile-time parameters taken out, its signature typed) on the first call and found after. Its index in
+// `r->instances`, or `max_instances` when there are too many.
 export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]) {
     Usize found = find_instance(r, template, given);
     if (found < r->instance_count) return found;
@@ -2013,43 +2094,18 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]
     ast::Decl *copy = ast_clone::clone_decl(template);
     if (copy->kind != .function) return max_instances;
     ast::Param all[:] = copy->kind.function.params;
-    Usize kept_count = 0;
     Binding bindings[:] = mem::alloc_slice(Binding, countof(given));
-    Usize bound = 0;
+    Bool auto_syntax = false; // the types of an `auto` template are written in today's syntax
     push_scope(&r->scopes);
-    for (Usize i = 0; i < countof(all); i++) {
-        if (!is_compile_time(&all[i])) {
-            kept_count += 1;
-            continue;
-        }
-        bindings[bound] = given[bound];
-        bindings[bound].name = all[i].name;
-        if (!bindings[bound].is_type) {
-            r->new_syntax = true;
-            bindings[bound].type = resolve(r, all[i].type);
-            r->new_syntax = false;
-        }
-        bound += 1;
-    }
+    Usize kept_count = bind_given(r, all, given, bindings, &auto_syntax);
     Instance made = {.template = template, .decl = copy, .bindings = bindings};
     bind_instance(r, &made);
     ast::Param kept[:] = mem::alloc_slice(ast::Param, kept_count);
     Slot slots[:] = mem::alloc_slice(Slot, kept_count);
-    Usize at = 0;
-    for (Usize i = 0; i < countof(all); i++) {
-        if (is_compile_time(&all[i])) {
-            continue;
-        }
-        kept[at] = all[i];
-        slots[at].name = all[i].name;
-        r->new_syntax = true;
-        slots[at].type = all[i].type == nullptr ? r->table.invalid : resolve(r, all[i].type);
-        r->new_syntax = false;
-        at += 1;
-    }
+    keep_params(r, all, bindings, auto_syntax, kept, slots);
     TypeRef result = r->table.void_type;
     if (copy->kind.function.result != nullptr) {
-        r->new_syntax = true;
+        r->new_syntax = !auto_syntax;
         result = resolve(r, copy->kind.function.result);
         r->new_syntax = false;
     }
@@ -2211,23 +2267,79 @@ export const Symbol *scoped(const Checked *r, Str name) {
     return found;
 }
 
-// `c.name` after `import c <h>` (#1961): the member of a bare `c` that no local or module of the file binds, spelled
-// as the name `c::name` the header's declaration has. The text is `name`, empty when `e` is not that shape. The caller
-// has checked that no local `c` is in scope (the checker through `scoped`, the emitter through its locals).
-export Str c_member_name(const ast::Expr *e) {
+// The binding `import c <h>` made under `name`, or null.
+export const HeaderBinding *header_binding(const Checked *r, Str name) {
+    for (Usize i = 0; i < r->binding_count; i++)
+        if (same_text(r->bindings[i].name, name)) return &r->bindings[i];
+    return nullptr;
+}
+
+// Whether the header declares `name`: a function, variable, type or enumerator, directly or through its includes.
+static Bool header_has(const ast::Module *header, Str name) {
+    for (Usize i = 0; i < countof(header->decls); i++) {
+        const ast::Decl *d = header->decls[i];
+        if (d->kind == .function && same_text(d->kind.function.name, name)) return true;
+        if (d->kind == .variable && same_text(d->kind.variable.name, name)) return true;
+        if (d->kind == .record && same_text(d->kind.record.name, name)) return true;
+        if (d->kind == .type_alias && same_text(d->kind.type_alias.name, name)) return true;
+        if (d->kind != .enumeration) continue;
+        if (same_text(d->kind.enumeration.name, name)) return true;
+        for (Usize k = 0; k < countof(d->kind.enumeration.items); k++)
+            if (same_text(d->kind.enumeration.items[k].name, name)) return true;
+    }
+    return false;
+}
+
+// The binding a name of a header is read through, or null: `stdio.printf` has the base `stdio`. The text of the base
+// is empty when `e` is not `name.member`.
+export Str c_member_base(const ast::Expr *e) {
     if (e->kind != .member || e->kind.member.arrow) return "";
     const ast::Expr *base = e->kind.member.base;
     if (base->kind != .name || countof(base->kind.name.path.segments) != 1) return "";
-    if (!same_text(base->kind.name.path.segments[0].text, "c")) return "";
+    return base->kind.name.path.segments[0].text;
+}
+
+// `stdio.name` after `import c <stdio.h>` (#1678): the member of a header binding that no local or module of the file
+// hides, spelled as the name `c::name` the header's declaration has. Empty when `e` is not that shape, the base is no
+// binding, or the header does not declare the name. The caller has checked that no local hides the base (the checker
+// through `scoped`, the emitter through its locals).
+export Str c_member_name(const Checked *r, const ast::Expr *e) {
+    Str base = c_member_base(e);
+    if (countof(base) == 0 || e->kind != .member) return "";
+    const HeaderBinding *binding = header_binding(r, base);
+    if (binding == nullptr || !header_has(binding->header, e->kind.member.name)) return "";
     return e->kind.member.name;
 }
 
-// The header declaration `c.name` stands for, or null: `e` has that shape, no name `c` is in scope and a header
-// declared `c::name`.
+// The header declaration `stdio.name` stands for, or null.
 export const Symbol *c_member(const Checked *r, const ast::Expr *e) {
-    Str name = c_member_name(e);
-    if (countof(name) == 0 || scoped(r, "c") != nullptr) return nullptr;
+    Str name = c_member_name(r, e);
+    if (countof(name) == 0 || scoped(r, c_member_base(e)) != nullptr) return nullptr;
     return lookup(&r->scopes, msg(format::push("c::", name)));
+}
+
+// The text of the error for `base.name` when `base` is a header binding that lacks `name`, or `c.name` with no `c`
+// bound: empty when `e` is neither.
+export Str c_member_error(const Checked *r, const ast::Expr *e, syntax::Edits *fix) {
+    Str base = c_member_base(e);
+    if (countof(base) == 0 || e->kind != .member || r->binding_count == 0 || scoped(r, base) != nullptr) return "";
+    Str name = e->kind.member.name;
+    const HeaderBinding *binding = header_binding(r, base);
+    if (binding != nullptr) {
+        if (header_has(binding->header, name)) return "";
+        return msg(format::push("`", base, ".", name,
+                                "` is not declared by that header; check its spelling, or import ",
+                                "the header that declares it"));
+    }
+    if (!same_text(base, "c")) return "";
+    for (Usize i = 0; i < r->binding_count; i++)
+        if (header_has(r->bindings[i].header, name)) {
+            *fix = mem::realloc(*fix, 1); // `smith lint --fix` writes the binding where `c` stood (#1678)
+            (*fix)[0] = (syntax::Edit){.span = e->kind.member.base->span, .text = r->bindings[i].name};
+            return msg(format::push("there is no global `c`: write `", r->bindings[i].name, ".", name, "`"));
+        }
+    return msg(format::push("there is no global `c`: import the header that declares `", name,
+                            "` (`import c <h>`) and write `h.", name, "`"));
 }
 
 // Reads `names`: the first is a module symbol, each next name is looked up in the module before. In the code being
@@ -2262,6 +2374,12 @@ static const Symbol *type_through_modules(const Checked *r, ast::Path path) {
             Through t = through_modules(r, &names);
             return t.stopped ? nullptr : t.symbol;
         }
+    }
+    if (count == 2 && header_binding(r, path.segments[0].text) != nullptr &&
+        scoped(r, path.segments[0].text) == nullptr) {
+        const HeaderBinding *binding = header_binding(r, path.segments[0].text);
+        if (!header_has(binding->header, path.segments[1].text)) return nullptr;
+        return lookup(&r->scopes, msg(format::push("c::", path.segments[1].text))); // `stdio.size_t` is `c::size_t`
     }
     const Symbol *found = nullptr;
     if (countof(r->prefix) > 0) found = lookup(&r->scopes, msg(format::push(r->prefix, path_text(path))));
@@ -2479,6 +2597,17 @@ static void declare_enumerators(Checked *r, const ast::Decl *d) {
     }
 }
 
+// The name a header binds without `as`: its file name without the extension (`sys/stat.h` binds `stat`).
+static Str header_stem(Str header) {
+    Usize begin = 0;
+    for (Usize i = 0; i < countof(header); i++)
+        if (header[i] == '/') begin = i + 1;
+    Usize end = countof(header);
+    for (Usize i = begin; i < countof(header); i++)
+        if (header[i] == '.') end = i;
+    return header[begin:end];
+}
+
 // Declares what each `import <h>;` of `m` brings, as `c::name` (#1762): the header's declarations in the three passes
 // a module's own take.
 static void declare_headers(Checked *r, const ast::Module *m) {
@@ -2497,11 +2626,24 @@ static void declare_headers(Checked *r, const ast::Module *m) {
         } else {
             continue;
         }
+        if (import->kind == .import_c && countof(import->kind.import_c.language) > 0 &&
+            !same_text(import->kind.import_c.language, "c")) {
+            failf(r, import->span, same_text(import->kind.import_c.language, "cpp") ? "C++" : "Objective-C",
+                  " headers are not imported yet");
+            continue;
+        }
         const ast::Module *header = r->options.headers(name, angled);
         if (header == nullptr) {
             failf(r, import->span, "cannot read the C header `", name,
                   "`; check that it exists and that its flags are right");
             continue;
+        }
+        if (import->kind == .import_c && countof(import->kind.import_c.language) > 0 &&
+            r->binding_count < max_header_bindings) {
+            Str binding = import->kind.import_c.alias;
+            if (countof(binding) == 0) binding = header_stem(name);
+            r->bindings[r->binding_count] = (HeaderBinding){.name = binding, .header = header};
+            r->binding_count++;
         }
         r->prefix = "c::"; // a type in a header names another by its bare name: it is looked up as `c::name`
         for (Usize i = 0; i < countof(header->decls); i++)

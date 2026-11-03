@@ -2430,6 +2430,28 @@ static void check_pack(ast::Param *param, Bool after_semicolon) {
     param->is_gather = true;
 }
 
+// A bare `...` ends the parameters of an `extern fn`: it declares a C variadic. True; an error elsewhere.
+static Bool parse_bare_dots(parse::Parser *p, const Prefixes *pre) {
+    lex::Token dots = parse::advance(p);
+    if (!pre->is_extern) {
+        parse::error(p, dots.span,
+                     "a Smith function names its variadic parameters: `rest...`; a bare `...` only declares a "
+                     "C function with `extern fn`");
+    } else if (!parse::at(p, lex::right_paren)) {
+        parse::error(p, parse::peek(p).span, "`...` is the last parameter of an `extern fn`");
+    }
+    return true;
+}
+
+// `extern fn name(a: i32, ...) -> r` has no body: the linker provides it.
+static ast::Decl *extern_function(parse::Parser *p, const Prefixes *pre, U32 start, Str name, ParamList params,
+                                  ast::TypeExpr *result, Bool variadic) {
+    parse::accept(p, lex::semicolon);
+    ast::DeclKind kind = {
+        .function = {.name = name, .params = params, .result = result, .body = nullptr, .variadic = variadic}};
+    return make(p, start, pre, kind);
+}
+
 // `fn name(a: i32, mut b: i32) -> r { body }`, the `-> r` optional (no result is none, not `void`); the position is at
 // `fn`.
 static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 start) {
@@ -2446,7 +2468,12 @@ static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 
     }
     ParamList params = {};
     Bool keyword_only = false;
+    Bool variadic = false;
     while (!failed_since(p, errors_before) && !parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
+        if (parse::at(p, lex::ellipsis)) {
+            variadic = parse_bare_dots(p, pre);
+            break;
+        }
         ast::Param param = {};
         if (!parse_new_param(p, &param)) break;
         param.is_keyword = keyword_only;
@@ -2469,6 +2496,9 @@ static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 
     if (!failed_since(p, errors_before)) parse::expect(p, lex::right_paren, "`)`");
     ast::TypeExpr *result = nullptr;
     if (!failed_since(p, errors_before) && parse::accept(p, lex::arrow)) result = parse::type(p);
+    if (pre->is_extern && !failed_since(p, errors_before) && !parse::at(p, lex::colon) &&
+        !parse::at(p, lex::left_brace))
+        return extern_function(p, pre, start, parse::text(p, name), params, result, variadic);
     if (p->layout) return finish_layout_function(p, pre, start, name, params, result, errors_before);
     if (!failed_since(p, errors_before) && !parse::at(p, lex::left_brace)) {
         parse::error(p, parse::peek(p).span, "a function has a body: expected `{` after the parameters");

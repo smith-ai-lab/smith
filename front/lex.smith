@@ -996,7 +996,11 @@ struct Layout {
     Usize count;
     Usize level;
     Usize depth;
+    Usize stops[128];
 };
+
+// The deepest nesting of blocks (the scanner of the tree-sitter grammar has the same limit).
+static constexpr Usize max_levels = 128;
 
 static void put(Layout *l, TokenKind kind, Usize at) {
     Token t = {.kind = kind, .span = {.start = (U32)at, .end = (U32)at}};
@@ -1010,7 +1014,7 @@ static Result(Usize, LexError) indentation(Str source, Usize at) {
     while (start > 0 && source[start - 1] != '\n')
         start -= 1;
     for (Usize i = start; i < at; i++) {
-        if (source[i] == '\t') return {.error = error_at(i, i + 1, "indent with 4 spaces, not a tab")};
+        if (source[i] == '\t') return {.error = error_at(i, i + 1, "indent with spaces, not a tab")};
     }
     return at - start;
 }
@@ -1022,25 +1026,28 @@ static Result(Bool, LexError) line_start(Layout *l, Str source, Token first, Tok
     Result(Usize, LexError) measured = indentation(source, at);
     if (measured == .error) return {.error = measured.error};
     Usize columns = measured.ok;
-    if (columns % 4 != 0) return {.error = error_at(at - columns, at, "indent with a multiple of 4 spaces")};
-    Usize wanted = columns / 4;
-    if (wanted > l->level) {
-        if (wanted != l->level + 1 || before != colon)
-            return {.error = error_at(at - columns, at, "unexpected indent")};
+    Usize current = l->level == 0 ? 0 : l->stops[l->level - 1];
+    if (columns > current) {
+        if (before != colon) return {.error = error_at(at - columns, at, "unexpected indent")};
+        if (l->level >= max_levels) return {.error = error_at(at - columns, at, "blocks nested more than 128 deep")};
         put(l, newline, at);
         put(l, indent, at);
-        l->level = wanted;
+        l->stops[l->level] = columns;
+        l->level += 1;
         return true;
     }
-    if (wanted == l->level) {
+    if (columns == current) {
         if (before != end_of_file) put(l, newline, at);
         return true;
     }
-    while (l->level > wanted) {
+    while (l->level > 0 && l->stops[l->level - 1] > columns) {
         put(l, newline, at);
         put(l, dedent, at);
         l->level -= 1;
     }
+    current = l->level == 0 ? 0 : l->stops[l->level - 1];
+    if (current != columns)
+        return {.error = error_at(at - columns, at, "this line's indentation matches no open block")};
     return true;
 }
 
@@ -1051,10 +1058,10 @@ static void open_or_close(Layout *l, TokenKind kind) {
 
 // The tokens with layout (#1808, of the revision of #1428): a statement ends with `newline`, a `:` that ends a line and
 // is followed by a more indented line opens a block with `indent`, and every level a line drops closes with `dedent`
-// (each one after a `newline`); the end of the file closes the open levels. Indentation is 4 spaces a level. Inside an
-// open `(`, `[` or `{`, after a binary operator at the end of a line, and on blank and comment-only lines, line breaks
-// and indentation count for nothing. `tokens` is what `tokenize_new` gave, ending with `end_of_file`; the result is the
-// current allocator's.
+// (each one after a `newline`); the end of the file closes the open levels. Indentation is any consistent width: a
+// block is as deep as its first line, and a dedent lands on an open block. Inside an open `(`, `[` or `{`, after a
+// binary operator at the end of a line, and on blank and comment-only lines, line breaks and indentation count for
+// nothing. `tokens` is what `tokenize_new` gave, ending with `end_of_file`; the result is the current allocator's.
 export Lexed layout(Str source, Tokens tokens) {
     Layout l = {.out = mem::alloc_slice(Token, countof(tokens) * 6 + 4)};
     TokenKind before = end_of_file;

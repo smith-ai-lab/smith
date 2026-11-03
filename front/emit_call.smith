@@ -194,7 +194,9 @@ static SignatureResult imported_function(state::Emitter *e, Str key, const ast::
     if (made == .error) return made;
     Signature sig = made.ok;
     Str own = state::c_name_of(d); // `@c_name("__enzyme_autodiff")`: the symbol is the C name, not the module's path
-    char *label = state::cstr(countof(own) > 0 ? own : key);
+    Str named = key;
+    if (d->is_extern && d->kind == .function) named = d->kind.function.name; // an extern's symbol is its own name
+    char *label = state::cstr(countof(own) > 0 ? own : named);
     sig.function = c::LLVMGetNamedFunction(e->module, label);
     if (sig.function == nullptr) sig.function = c::LLVMAddFunction(e->module, label, sig.type);
     mem::free(label);
@@ -210,11 +212,11 @@ static Bool c_callee(state::Emitter *e, const ast::Expr *callee, const ast::Decl
     Str full = "";
     if (callee->kind == .name) {
         full = join(callee->kind.name.path);
-    } else if (callee->kind == .member) { // `c.name` after `import c <h>` (#1961), unless a local `c` hides it
+    } else if (callee->kind ==
+                   .member) { // `stdio.name` after `import c <stdio.h>` (#1678), unless a local hides the binding
         state::Local local = {};
-        if (state::find_local(e, "c", &local)) return false;
-        Str name = types::c_member_name(callee);
-        if (countof(name) == 0) return false;
+        Str name = types::c_member_name(e->options.checked, callee);
+        if (countof(name) == 0 || state::find_local(e, types::c_member_base(callee), &local)) return false;
         full = state::msg(format::push("c::", name)); // an owned copy, as `join` makes
     } else {
         return false;
@@ -358,6 +360,7 @@ static const types::Instance *callee_of(state::Emitter *e, const ast::Expr *writ
 static Str prototype_symbol(state::Emitter *e, const ast::Decl *d, Str name) {
     Str own = state::c_name_of(d);
     if (countof(own) > 0) return state::msg(format::push(own));
+    if (d->is_extern) return state::msg(format::push(name)); // an extern's symbol is its own name
     return symbol_for(e, name);
 }
 

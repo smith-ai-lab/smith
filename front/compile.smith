@@ -399,6 +399,166 @@ export Hover hover_at(Str path, Str source, roots::Roots folders, U32 offset) {
     return (Hover){.found = true, .start = at->span.start, .end = at->span.end, .type = types::show(type), .doc = doc};
 }
 
+// One thing completion offers: its name, what the editor draws for it (LSP's `CompletionItemKind`: 2 method, 3
+// function, 5 field, 6 variable, 7 type, 9 module), its type as text and, for a C header's name, the comment above it.
+export struct Candidate {
+    Str label;
+    U32 kind;
+    Str detail;
+    Str doc;
+};
+
+export typedef typeof(Candidate[:]) Candidates;
+
+static Bool starts_with_text(Str text, Str prefix) {
+    if (countof(prefix) > countof(text)) return false;
+    for (Usize i = 0; i < countof(prefix); i++)
+        if (text[i] != prefix[i]) return false;
+    return true;
+}
+
+static Bool equal_text(Str a, Str b) {
+    return countof(a) == countof(b) && starts_with_text(a, b);
+}
+
+static Candidates offer(Candidates list, Candidate item) {
+    for (Usize i = 0; i < countof(list); i++)
+        if (equal_text(list[i].label, item.label)) return list;
+    list = mem::realloc(list, countof(list) + 1);
+    list[countof(list) - 1] = item;
+    return list;
+}
+
+static Bool is_word(char ch) {
+    return ascii::alpha(ch) || ascii::digit(ch) || ch == '_';
+}
+
+// Whether the variable `v` may be written at `offset`: a variable declared inside a function (its scope is the whole
+// file in the list) is a local of that function, seen after its declaration and nowhere else; any other is a global.
+static Bool visible_variable(ast::Symbols names, ast::Symbol v, U32 offset) {
+    for (Usize i = 0; i < countof(names); i++) {
+        ast::Symbol f = names[i];
+        if (f.kind != ast::sym_function || f.at.start > v.at.start || v.at.end > f.at.end) continue;
+        if (f.at.start == v.at.start) continue;
+        return f.at.start <= offset && offset <= f.at.end && v.at.start < offset;
+    }
+    return true;
+}
+
+// The names a position can write unqualified: the names of the file whose scope covers `offset` (a local only after
+// its declaration), that start with `prefix`.
+static Candidates names_at(Candidates list, const ast::Module *m, Str source, U32 offset, Str prefix) {
+    ast::Span everywhere = {.start = 0, .end = (U32)countof(source)};
+    ast::Symbols names = ast::symbols(m, everywhere);
+    for (Usize i = 0; i < countof(names); i++) {
+        ast::Symbol s = names[i];
+        if (s.kind == ast::sym_field || s.kind == ast::sym_variant) continue;
+        if (s.scope.start > offset || offset > s.scope.end) continue;
+        if (s.kind == ast::sym_variable && !visible_variable(names, s, offset)) continue;
+        if (s.scope.start != everywhere.start || s.scope.end != everywhere.end) {
+            if (s.at.start >= offset) continue;
+        }
+        if (!starts_with_text(s.name, prefix) || countof(s.name) == 0) continue;
+        U32 kind = 6;
+        if (s.kind == ast::sym_function) kind = 3;
+        if (s.kind == ast::sym_type) kind = 7;
+        if (s.kind == ast::sym_module) kind = 9;
+        list = offer(list, (Candidate){.label = s.name, .kind = kind});
+    }
+    return list;
+}
+
+// Whether `name` is the name an `import c <header>` is reached by: `c`, or the alias of one.
+static Bool header_qualifier(const ast::Module *m, Str name) {
+    if (equal_text(name, "c")) return true;
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind == .import_c && countof(d->kind.import_c.alias) > 0 && equal_text(d->kind.import_c.alias, name))
+            return true;
+    }
+    return false;
+}
+
+// What follows the `.` after the receiver `base`: its fields and its methods (a function of the module that defines
+// its type or of this one, whose first parameter is the receiver, seen through one pointer), or, when `base` names a C
+// header, that header's names.
+static Candidates members_of(Candidates list, const types::Checked *checked, const ast::Module *m,
+                             const ast::Expr *base, Str prefix) {
+    if (base->kind == .name && countof(base->kind.name.path.segments) == 1 &&
+        header_qualifier(m, base->kind.name.path.segments[0].text) && types::type_of(checked, base) == nullptr) {
+        for (Usize i = 0; i < countof(checked->scopes.symbols) && i < checked->scopes.count; i++) {
+            const types::Symbol *s = &checked->scopes.symbols[i];
+            if (s->decl == nullptr || !s->decl->from_c || !starts_with_text(s->name, "c::")) continue;
+            Str label = s->name[3:countof(s->name)];
+            if (!starts_with_text(label, prefix) || s->type == nullptr) continue;
+            U32 kind = s->kind == .function_symbol ? 3 : 6;
+            if (s->kind == .type_name) kind = 7;
+            list = offer(
+                list, (Candidate){.label = label, .kind = kind, .detail = types::show(s->type), .doc = s->decl->doc});
+        }
+        return list;
+    }
+    types::TypeRef type = types::type_of(checked, base);
+    if (type == nullptr) return list;
+    types::TypeRef self = type->kind == .pointer ? type->element : type;
+    Str module = "";
+    if (self->kind == .record) {
+        for (Usize i = countof(self->name); i >= 2 && countof(module) == 0; i--)
+            if (self->name[i - 1] == ':' && self->name[i - 2] == ':') module = self->name[0:i];
+        for (Usize i = 0; i < countof(self->slots); i++) {
+            if (!types::field_visible(self, &self->slots[i]) || !starts_with_text(self->slots[i].name, prefix))
+                continue;
+            list = offer(
+                list, (Candidate){.label = self->slots[i].name, .kind = 5, .detail = types::show(self->slots[i].type)});
+        }
+    }
+    for (Usize i = 0; i < countof(checked->scopes.symbols) && i < checked->scopes.count; i++) {
+        const types::Symbol *s = &checked->scopes.symbols[i];
+        if (s->kind != .function_symbol || s->type == nullptr || s->type->kind != .function) continue;
+        if (countof(s->type->slots) == 0 || s->generic) continue;
+        types::TypeRef takes = s->type->slots[0].type;
+        if (takes->kind == .pointer) takes = takes->element;
+        if (takes != self) continue;
+        Str label = s->name;
+        if (starts_with_text(label, module) && countof(module) > 0) {
+            if (!types::is_public(s)) continue;
+            label = label[countof(module):countof(label)];
+        }
+        Bool qualified = false;
+        for (Usize k = 0; k + 1 < countof(label); k++)
+            if (label[k] == ':' && label[k + 1] == ':') qualified = true;
+        if (qualified || !starts_with_text(label, prefix)) continue;
+        list = offer(list, (Candidate){.label = label, .kind = 2, .detail = types::show(s->type)});
+    }
+    return list;
+}
+
+// What the editor may offer at the byte `offset` of the text `source` of `path` (the language server's completion,
+// #1894): after a `.`, the fields and methods of the receiver, or a C header's names; else the names in scope. The
+// word being typed is dropped from the text first (a `.` and a word do not parse alone); the result is the current
+// allocator's.
+export Candidates completion_at(Str path, Str source, roots::Roots folders, U32 offset) {
+    if (offset > countof(source)) offset = (U32)countof(source);
+    U32 word = offset;
+    while (word > 0 && is_word(source[word - 1]))
+        word -= 1;
+    Str prefix = source[word:offset];
+    Bool dot = word > 0 && source[word - 1] == '.';
+    Str edited = as_str(format::push(source[0:dot ? word - 1 : word], dot ? "" : "_", source[offset:countof(source)]));
+    Bool today = starts_with_module(source);
+    parser::Parsed parsed = today ? parser::parse(path, edited) : parser::parse_new(path, edited);
+    Candidates list = {};
+    if (countof(parsed.errors) > 0) return list;
+    if (!dot) return names_at(list, &parsed.module, edited, offset, prefix);
+    import_roots = folders;
+    header_folder = folder_of(path);
+    types::Checked checked = types_decl::check_module_headers(&parsed.module, types::lp64(), load_module, load_header);
+    if (word < 2) return list;
+    const ast::Expr *base = ast::expr_at(&parsed.module, word - 2);
+    if (base == nullptr) return list;
+    return members_of(list, &checked, &parsed.module, base, prefix);
+}
+
 // Where a name is declared (the language server's go-to-definition, #1893): in `file` (empty: the file asked about),
 // the bytes `start` to `end`, or, for a declaration read from a C header, the `line` and `column` (1-based) clang gives
 // when `by_line` is set.
