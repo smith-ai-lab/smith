@@ -1,0 +1,6 @@
+import lib
+import c <stdio.h>
+
+pub fn main() -> i32:
+    let _ = stdio.printf("%u %u\n", lib.cost(3), lib.twice(3))
+    0
