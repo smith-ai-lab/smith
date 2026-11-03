@@ -3713,6 +3713,7 @@ static void generic_before(types::Checked *c, Work *w, Frame f, const types::Sym
     }
     types::TypeRef signature = c->instances[at].signature;
     types::set_type(c, e->kind.call.callee, signature);
+    types::use_instance(c, e, at);
     push(w, e, f.expected, 2);
     Usize runtime = countof(signature->slots);
     types::Binding bound_list[:] = c->instances[at].bindings;
