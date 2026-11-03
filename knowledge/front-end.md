@@ -87,6 +87,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - New syntax (S5, #1446, with `Parser.new_syntax`): `named_arg` (`f(a = 1)`), a capitalized path called with named arguments is a construction (`Point(x = 1)`), `.name(payload)`, `(a, b)`, `[1, 2, 3]`, `p.*`.
 - `x as T` binds tighter than every binary operator and after prefix ones (`-x as T` is `(-x) as T`); `&x` is `address_of`.
 - `fn(x) { body }` and `fn[a](x: i32) -> R { body }` are lambdas; a `fn` with no body is a type (`fn_has_body` scans to the `{`). `if`, `match`, `for` and `{` start `stmt_expr`.
+- An old lambda `[x](I32 a) -> I32 { }` has a fix-it (#1771, `lambda_warning` in parse_expr): the bracket group becomes `fn` (`fn()` with no parameters) and each `T a` becomes `a: T`; the result type has its own fix. Without it the new parser read the brackets as an array called with `(I32 a)`.
 - A trailing block (#961): a `{` on the same line as a call's `)` is a lambda with no parameters, appended as the last argument; a condition head takes none at its top level (`Parser.head`).
 - Old expression forms are warnings with fixes (F4, #1509): `(T)x` to `x as T`, `p->x` to `p.x`, `*p` to `p.*`, `c ? a : b` to `if c { a } else { b }`, `(P){.x = 1}` to `P(x = 1)`, `{1, 2}` to `[1, 2]`, `i++;` to `i += 1`.
 - Forms with no mechanical fix stay warnings with no edits (a typed list with positional items, `++` as a value, a method chain). Two edits at one offset clash, so a nested fix lands on the next pass.
