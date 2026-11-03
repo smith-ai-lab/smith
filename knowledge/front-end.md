@@ -163,6 +163,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - `fix::fix_text(file, source)` parses and applies until a pass applies nothing (at most 8); `fix::fix_file(path)` does it on a file; `fix::fix_run` is what the driver calls.
 - The parse fixes are F2 (declarations), F3 (statements) and F4 (expressions) above, each with its goldens `old_*.txt`; F1's are the warnings those record.
 - The checker's fixes (M1, #1516): `fix_text` runs `types_decl::check_module` when the parse has no error that is not a warning; a `types::Error` has a `fix` too (`types::fail_fix`).
+- A discarded value (#1915): a cast to `Void` (`(void)x;`) is refused with the fix `_ = x` (`discard_fix` in `front/types_decl.smith`: the cast's head, up to its operand, becomes `_ = `).
 - Assigning to a name declared without `mut` inserts `mut ` before its name (a local or parameter, not `const`, not after an attribute).
 - Writing through a `*T` turns the declaration's `*T` into `*mut T`; when that pointer is `p := &x` of a constant `x`, the fix adds `mut` to `x`.
 - No fix removes a `mut`. In smith's own syntax `*T` is read-only (`pointee_const`) and `*mut T` writable.
