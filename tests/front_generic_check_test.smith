@@ -1,0 +1,158 @@
+// Tests of the checker's generic functions (#1908, part of #1700): a function with a `T: type` or `const n: usize`
+// parameter is a template, and a call makes (once) and checks an instance for the arguments it passes. Each scenario
+// checks source text read by front::parser in an arena it sets as the current allocator.
+module front_generic_check_test;
+
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str errors_of(const types::Checked *r) {
+    Str text = "";
+    for (Usize i = 0; i < r->error_count; i++) {
+        Str line = r->errors[i].message;
+        char joined[:] = mem::alloc_slice(char, countof(text) + countof(line) + 1);
+        for (Usize k = 0; k < countof(text); k++) {
+            joined[k] = text[k];
+        }
+        for (Usize k = 0; k < countof(line); k++) {
+            joined[countof(text) + k] = line[k];
+        }
+        joined[countof(joined) - 1] = '\n';
+        text = joined;
+    }
+    return text;
+}
+
+static types::Checked checked(Str source) {
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    return types_decl::check_module(&p.module, types::lp64());
+}
+
+static Bool has_instance(const types::Checked *r, Str name) {
+    for (Usize i = 0; i < r->instance_count; i++) {
+        types::Instance x = r->instances[i];
+        if (x.decl->kind == .function && has(x.decl->kind.function.name, name) &&
+            countof(x.decl->kind.function.name) == countof(name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static Str pick_source() {
+    return "fn pick(T: type, a: T, b: T) -> T:\n    return a\n\n";
+}
+
+export void test_front_generic_two_instances_of_one_function() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "fn pick(T: type, a: T, b: T) -> T:\n    return a\n\n"
+                 "fn run() -> i32:\n    let y: f64 = pick(f64, 1.5, 2.5)\n    let z: i32 = pick(i32, 3, 4)\n    return "
+                 "pick(i32, 1, 2)\n";
+    types::Checked r = checked(source);
+    test::check_equal(countof(errors_of(&r)), (Usize)0);
+    test::check_equal(r.instance_count, (Usize)2);
+    test::check_condition(has_instance(&r, "pick.f64"));
+    test::check_condition(has_instance(&r, "pick.i32"));
+}
+
+export void test_front_generic_an_instance_calls_another_instance() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "fn pick(T: type, a: T, b: T) -> T:\n    return a\n\n"
+                 "fn twice(T: type, a: T) -> T:\n    return pick(T, a, a)\n\n"
+                 "fn run() -> i32:\n    return twice(i32, 5)\n";
+    types::Checked r = checked(source);
+    test::check_equal(countof(errors_of(&r)), (Usize)0);
+    test::check_condition(has_instance(&r, "twice.i32"));
+    test::check_condition(has_instance(&r, "pick.i32"));
+}
+
+export void test_front_generic_a_constant_parameter_gives_an_array_length() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "fn table(const n: usize) -> usize:\n    let t: [n]f32 = undefined\n    return n\n\n"
+                 "fn run() -> usize:\n    return table(64)\n";
+    types::Checked r = checked(source);
+    test::check_equal(countof(errors_of(&r)), (Usize)0);
+    test::check_condition(has_instance(&r, "table.64"));
+}
+
+export void test_front_generic_a_wrong_number_of_arguments_is_an_error() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "fn pick(T: type, a: T, b: T) -> T:\n    return a\n\n"
+                 "fn run() -> i32:\n    return pick(i32, 1)\n";
+    types::Checked r = checked(source);
+    test::check_condition(has(errors_of(&r), "this call passes 2 arguments but `pick` takes 3"));
+}
+
+export void test_front_generic_a_value_where_a_type_is_expected_is_an_error() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "fn pick(T: type, a: T, b: T) -> T:\n    return a\n\n"
+                 "fn run() -> i32:\n    return pick(3, 1, 2)\n";
+    types::Checked r = checked(source);
+    test::check_condition(has(errors_of(&r), "`T` is a type argument, but this is a value"));
+}
+
+export void test_front_generic_a_type_where_a_value_is_expected_is_an_error() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "fn table(const n: usize) -> usize:\n    return n\n\n"
+                 "fn run() -> usize:\n    return table(i32)\n";
+    types::Checked r = checked(source);
+    test::check_condition(has(errors_of(&r), "`n` is a value argument, but this is a type"));
+}
+
+export void test_front_generic_an_argument_not_known_at_compile_time_is_an_error() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "fn table(const n: usize) -> usize:\n    return n\n\n"
+                 "fn run(k: usize) -> usize:\n    return table(k)\n";
+    types::Checked r = checked(source);
+    test::check_condition(has(errors_of(&r), "`n` must be known at compile time"));
+}
+
+export void test_front_generic_a_template_body_is_not_checked_alone() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = checked(pick_source());
+    test::check_equal(countof(errors_of(&r)), (Usize)0);
+    test::check_equal(r.instance_count, (Usize)0);
+}

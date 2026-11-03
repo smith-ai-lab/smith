@@ -1,0 +1,4 @@
+# An array literal must have the length its type states.
+pub fn main() -> i32:
+    let xs: [3]i32 = [1, 2]
+    xs[0]
