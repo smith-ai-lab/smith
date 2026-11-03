@@ -3,8 +3,19 @@
 // does not change with `-O`. A function's set is the union of the sets of its calls, solved to a fixed point over the
 // call graph of every module added to the graph. A declaration with no body is a leaf: a function of libc or libSystem
 // takes its set from front::effects_table, an LLVM intrinsic is pure (`llvm.trap` fails), any other is `unknown`.
-// Writing a global variable (a function-local static is one in IR) is `globals`; inline assembly and a call through a
-// pointer are `unknown` (piece 3 of #1939 traces pointers).
+// Writing a global variable (a function-local static is one in IR) is `globals`; inline assembly is `unknown`.
+//
+// Function values (piece 3 of #1939). A call through a pointer is not `unknown` any more:
+//   - a call through a parameter of the function is "calls parameter k": the set of the function leaves it out, and
+//     each call site that passes a function there takes that function's set instead (a generic `map` is a different
+//     IR function for each instantiation, so it has its own set already). A parameter with a ceiling
+//     (`write_param_ceiling`, `f: fn(f32) -> f32 @pure`) counts as the ceiling in the function, and every function
+//     passed there is judged against it at the call (effects_ceiling::check);
+//   - a function that is passed on to another one that calls it passes the obligation on;
+//   - a pointer that went through memory (a field, a load) cannot be traced: a call through it takes the union of the
+//     sets of every function in the build whose address is taken and whose type matches the call's, or `unknown` when
+//     there is none. A function passed to a callee the build does not define counts as called by it.
+//   - `dlopen` and run-time generated code reach here as calls of `dlopen`, which the table makes `unknown`.
 //
 //   let graph = effects_pass::make();            // one graph for a whole build
 //   effects_pass::add_module(&graph, ir, &cache); // for each module of the build
@@ -39,9 +50,22 @@ export struct Cause {
 
 export constexpr Usize none = ~(Usize)0;
 
+export constexpr Usize max_params = 16; // parameters whose function values are followed
+
+// A piece of text a slice of the graph holds.
+export struct Text {
+    Str text;
+};
+
 export struct Graph {
     Summary items[:];
     Usize count;
+    U32 ceilings[:];     // max_params entries for each item: a parameter's ceiling plus 1, 0 for none
+    U32 calls_param[:];  // max_params entries for each item: 1 when the function calls (or passes on) that parameter
+    Text param_types[:]; // max_params entries for each item: the function type that is called through it
+    Text taken_names[:]; // the functions whose address is taken
+    Text taken_types[:]; // their function types, as text
+    Usize taken_count;
     U32 sets[:];     // the solved set of each item
     Cause causes[:]; // bit_count entries for each item
     Usize table[:];  // open addressing over the names: index + 1, 0 for empty
@@ -62,6 +86,15 @@ export void release(Graph *g) {
     mem::free(g->sets.data);
     mem::free(g->causes.data);
     mem::free(g->table.data);
+    mem::free(g->ceilings.data);
+    mem::free(g->calls_param.data);
+    for (Usize i = 0; i < g->taken_count; i++) {
+        effects_cache::free_text(g->taken_names[i].text);
+        effects_cache::free_text(g->taken_types[i].text);
+    }
+    mem::free(g->param_types.data);
+    mem::free(g->taken_names.data);
+    mem::free(g->taken_types.data);
     *g = (Graph){};
 }
 
@@ -116,12 +149,20 @@ static Usize append(Graph *g, const Summary *summary) {
         g->items = mem::realloc(g->items, capacity);
         g->sets = mem::realloc(g->sets, capacity);
         g->causes = mem::realloc(g->causes, capacity * effects_table::bit_count);
+        g->ceilings = mem::realloc(g->ceilings, capacity * max_params);
+        g->calls_param = mem::realloc(g->calls_param, capacity * max_params);
+        g->param_types = mem::realloc(g->param_types, capacity * max_params);
     }
     if ((g->count + 1) * 2 > countof(g->table)) {
         grow_table(g);
     }
     g->items[g->count] = effects_cache::copy_summary(summary);
     g->sets[g->count] = 0;
+    for (Usize p = 0; p < max_params; p++) {
+        g->ceilings[g->count * max_params + p] = 0;
+        g->calls_param[g->count * max_params + p] = 0;
+        g->param_types[g->count * max_params + p] = (Text){.text = ""};
+    }
     for (Usize b = 0; b < effects_table::bit_count; b++) {
         g->causes[g->count * effects_table::bit_count + b] = (Cause){.callee = none, .line = 0};
     }
@@ -190,9 +231,97 @@ static Bool writes_global(c::LLVMValueRef instruction) {
     return global != nullptr && c::LLVMIsGlobalConstant(global) == 0;
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Ceilings on parameters, and the function values of a call
+
+static const char *const ceiling_key = "smith-effects";
+
+// Puts a ceiling on parameter `slot` (from 0) of `function`: the same attribute as a function's ceiling
+// (front::effects_ceiling), on the parameter.
+export void write_param_ceiling(c::LLVMValueRef function, U32 slot, U32 mask) {
+    c::LLVMContextRef context = c::LLVMGetModuleContext(c::LLVMGetGlobalParent(function));
+    Str digits = effects_cache::as_str(format::push(mask));
+    c::LLVMAttributeRef attribute = c::LLVMCreateStringAttribute(context, ceiling_key, (U32)c::strlen(ceiling_key),
+                                                                 digits.data, (U32)countof(digits));
+    c::LLVMAddAttributeAtIndex(function, slot + 1, attribute);
+    effects_cache::free_text(digits);
+}
+
+// True and the mask when parameter `slot` of `function` has a ceiling.
+export Bool param_ceiling(c::LLVMValueRef function, U32 slot, U32 *mask) {
+    c::LLVMAttributeRef attribute =
+        c::LLVMGetStringAttributeAtIndex(function, slot + 1, ceiling_key, (U32)c::strlen(ceiling_key));
+    if (attribute == nullptr) return false;
+    U32 length = 0;
+    const char *chars = c::LLVMGetStringAttributeValue(attribute, &length);
+    U32 value = 0;
+    for (U32 i = 0; i < length; i++) {
+        value = value * 10 + (U32)(chars[i] - '0');
+    }
+    *mask = value;
+    return true;
+}
+
+// The text of a function type, which is what "the same type" means for a call through a pointer (pointers are opaque in
+// IR). Free it with `effects_cache::free_text`.
+static Str type_text(c::LLVMTypeRef type) {
+    char *chars = c::LLVMPrintTypeToString(type);
+    Str text = effects_cache::dup(chars[0:c::strlen(chars)]);
+    c::LLVMDisposeMessage(chars);
+    return text;
+}
+
+static Bool is_call(c::LLVMValueRef instruction) {
+    c::LLVMOpcode op = c::LLVMGetInstructionOpcode(instruction);
+    return op == c::LLVMCall || op == c::LLVMInvoke;
+}
+
+// The parameter number of `value` when it is a parameter of `function`, else `none`.
+static Usize param_slot(c::LLVMValueRef function, c::LLVMValueRef value) {
+    if (c::LLVMIsAArgument(value) == nullptr) return none;
+    U32 n = c::LLVMCountParams(function);
+    for (U32 i = 0; i < n; i++) {
+        if (c::LLVMGetParam(function, i) == value) return i;
+    }
+    return none;
+}
+
+// A pointer a call is given that came out of memory: a load, so a field or a variable (not a function, a parameter or
+// an address of a variable).
+static Bool is_loaded_pointer(c::LLVMValueRef value) {
+    return c::LLVMIsALoadInst(value) != nullptr && c::LLVMGetTypeKind(c::LLVMTypeOf(value)) == c::LLVMPointerTypeKind;
+}
+
 static U64 fold_line(U64 hash, U32 line) {
     char bytes[4] = {(char)(line & 255), (char)((line >> 8) & 255), (char)((line >> 16) & 255), (char)(line >> 24)};
     return effects_cache::hash_bytes(bytes[0:4], hash);
+}
+
+// What a call adds to the hash: the callee, or the type it is called through, and each argument that is a function (by
+// name), a parameter (by number) or a loaded pointer.
+static U64 hash_call(c::LLVMValueRef function, c::LLVMValueRef call, U64 seed) {
+    U64 hash = seed;
+    c::LLVMValueRef callee = c::LLVMGetCalledValue(call);
+    if (callee != nullptr && c::LLVMIsAFunction(callee) != nullptr) {
+        hash = effects_cache::hash_bytes(value_name(callee), hash);
+    } else if (callee != nullptr && c::LLVMGetInstructionOpcode(call) != c::LLVMCallBr) {
+        Str type = type_text(c::LLVMGetCalledFunctionType(call));
+        hash = effects_cache::hash_bytes(type, hash);
+        effects_cache::free_text(type);
+        hash = fold_line(hash, (U32)param_slot(function, callee));
+    }
+    if (!is_call(call)) return hash;
+    for (U32 k = 0; k < c::LLVMGetNumArgOperands(call) && k < max_params; k++) {
+        c::LLVMValueRef arg = c::LLVMGetOperand(call, k);
+        if (c::LLVMIsAFunction(arg) != nullptr) {
+            hash = effects_cache::hash_bytes(value_name(arg), fold_line(hash, k + 200));
+        } else if (param_slot(function, arg) != none) {
+            hash = fold_line(fold_line(hash, k + 300), (U32)param_slot(function, arg));
+        } else if (is_loaded_pointer(arg)) {
+            hash = fold_line(hash, k + 400);
+        }
+    }
+    return hash;
 }
 
 // The hash of a function's IR as the pass reads it: for every instruction its opcode and source line, for a call the
@@ -200,16 +329,17 @@ static U64 fold_line(U64 hash, U32 line) {
 // costs most of the pass (a debug location prints as a number that stays the same when only the line moves).
 static U64 hash_of(c::LLVMValueRef function) {
     U64 hash = 14695981039346656037ull;
+    for (U32 p = 0; p < c::LLVMCountParams(function) && p < max_params; p++) {
+        U32 mask = 0;
+        if (param_ceiling(function, p, &mask)) hash = fold_line(fold_line(hash, p + 100), mask);
+    }
     for (c::LLVMBasicBlockRef b = c::LLVMGetFirstBasicBlock(function); b != nullptr; b = c::LLVMGetNextBasicBlock(b)) {
         for (c::LLVMValueRef i = c::LLVMGetFirstInstruction(b); i != nullptr; i = c::LLVMGetNextInstruction(i)) {
             hash = fold_line(hash, (U32)c::LLVMGetInstructionOpcode(i));
             hash = fold_line(hash, c::LLVMGetDebugLocLine(i));
             c::LLVMOpcode op = c::LLVMGetInstructionOpcode(i);
             if (op == c::LLVMCall || op == c::LLVMInvoke || op == c::LLVMCallBr) {
-                c::LLVMValueRef callee = c::LLVMGetCalledValue(i);
-                if (callee != nullptr && c::LLVMIsAFunction(callee) != nullptr) {
-                    hash = effects_cache::hash_bytes(value_name(callee), hash);
-                }
+                hash = hash_call(function, i, hash);
             } else if (writes_global(i)) {
                 hash = fold_line(hash, 1);
             }
@@ -218,33 +348,65 @@ static U64 hash_of(c::LLVMValueRef function) {
     return hash;
 }
 
-// The call an instruction makes: true and the callee's graph name when it is a direct call of a function; `*own`
-// gets `unknown` for inline assembly and a call through a pointer.
-static Bool direct_callee(c::LLVMValueRef instruction, Str *name, U32 *own) {
+// The calls an instruction makes and the function values it passes, in `summary`: the callee when it is a function,
+// a parameter or a pointer from memory, and each argument that is a function, a parameter or a loaded pointer.
+// `*own` gets `unknown` for inline assembly.
+static void scan_call(c::LLVMValueRef function, c::LLVMValueRef instruction, Summary *summary) {
+    U32 line = c::LLVMGetDebugLocLine(instruction);
     c::LLVMValueRef callee = c::LLVMGetCalledValue(instruction);
+    Str name = "";
     if (callee != nullptr && c::LLVMIsAFunction(callee) != nullptr) {
-        *name = symbol_of(callee);
-        return true;
+        name = symbol_of(callee);
+        effects_cache::push_call(summary, (Call){.callee = name, .line = line});
+    } else if (callee != nullptr && c::LLVMIsAInlineAsm(callee) != nullptr) {
+        summary->own |= effects_table::unknown;
+        return;
+    } else {
+        Str type = type_text(c::LLVMGetCalledFunctionType(instruction));
+        Usize slot = callee == nullptr ? none : param_slot(function, callee);
+        if (slot != none && slot < max_params)
+            effects_cache::push_call(
+                summary, (Call){.callee = type, .line = line, .kind = effects_cache::call_param, .slot = (U32)slot});
+        else
+            effects_cache::push_call(summary, (Call){.callee = type, .line = line, .kind = effects_cache::call_memory});
+        effects_cache::free_text(type);
+        return;
     }
-    *own |= effects_table::unknown;
-    return false;
-}
-
-static void add_call(Summary *summary, Str name, U32 line) {
-    effects_cache::push_call(summary, (Call){.callee = name, .line = line});
+    U32 n = c::LLVMGetNumArgOperands(instruction);
+    for (U32 k = 0; k < n && k < max_params; k++) {
+        c::LLVMValueRef arg = c::LLVMGetOperand(instruction, k);
+        Call pass = {.callee = name, .line = line, .slot = k};
+        if (c::LLVMIsAFunction(arg) != nullptr) {
+            pass.kind = effects_cache::pass_function;
+            pass.target = symbol_of(arg);
+            effects_cache::push_call(summary, pass);
+            effects_cache::free_text(pass.target);
+        } else if (param_slot(function, arg) != none) {
+            pass.kind = effects_cache::pass_param;
+            pass.arg = (U32)param_slot(function, arg);
+            effects_cache::push_call(summary, pass);
+        } else if (is_loaded_pointer(arg)) {
+            pass.kind = effects_cache::pass_memory;
+            effects_cache::push_call(summary, pass);
+        }
+    }
+    effects_cache::free_text(name);
 }
 
 // Scans the body of `function`: the bits it adds itself and the calls it makes.
 static void scan(c::LLVMValueRef function, Summary *summary) {
+    for (U32 p = 0; p < c::LLVMCountParams(function) && p < max_params; p++) {
+        U32 mask = 0;
+        if (param_ceiling(function, p, &mask))
+            effects_cache::push_call(
+                summary, (Call){.callee = "", .kind = effects_cache::param_ceiling, .slot = p, .arg = mask});
+    }
     for (c::LLVMBasicBlockRef b = c::LLVMGetFirstBasicBlock(function); b != nullptr; b = c::LLVMGetNextBasicBlock(b)) {
         for (c::LLVMValueRef i = c::LLVMGetFirstInstruction(b); i != nullptr; i = c::LLVMGetNextInstruction(i)) {
-            c::LLVMOpcode op = c::LLVMGetInstructionOpcode(i);
-            if (op == c::LLVMCall || op == c::LLVMInvoke || op == c::LLVMCallBr) {
-                Str name = "";
-                if (direct_callee(i, &name, &summary->own)) {
-                    add_call(summary, name, c::LLVMGetDebugLocLine(i));
-                    effects_cache::free_text(name);
-                }
+            if (is_call(i)) {
+                scan_call(function, i, summary);
+            } else if (c::LLVMGetInstructionOpcode(i) == c::LLVMCallBr) {
+                summary->own |= effects_table::unknown;
             } else if (writes_global(i)) {
                 summary->own |= effects_table::globals;
             }
@@ -252,10 +414,39 @@ static void scan(c::LLVMValueRef function, Summary *summary) {
     }
 }
 
+// True when something uses `function` other than as the callee of a call: its address is taken.
+static Bool address_taken(c::LLVMValueRef function) {
+    for (c::LLVMUseRef use = c::LLVMGetFirstUse(function); use != nullptr; use = c::LLVMGetNextUse(use)) {
+        c::LLVMValueRef user = c::LLVMGetUser(use);
+        if (c::LLVMIsAInstruction(user) != nullptr && is_call(user) && c::LLVMGetCalledValue(user) == function) {
+            // Still taken when it is also one of the arguments.
+            Bool as_argument = false;
+            for (U32 k = 0; k < c::LLVMGetNumArgOperands(user); k++) {
+                if (c::LLVMGetOperand(user, k) == function) as_argument = true;
+            }
+            if (!as_argument) continue;
+        }
+        return true;
+    }
+    return false;
+}
+
+static void add_taken(Graph *g, c::LLVMValueRef function) {
+    if (g->taken_count == countof(g->taken_names)) {
+        Usize capacity = countof(g->taken_names) == 0 ? 16 : countof(g->taken_names) * 2;
+        g->taken_names = mem::realloc(g->taken_names, capacity);
+        g->taken_types = mem::realloc(g->taken_types, capacity);
+    }
+    g->taken_names[g->taken_count] = (Text){.text = symbol_of(function)};
+    g->taken_types[g->taken_count] = (Text){.text = type_text(c::LLVMGlobalGetValueType(function))};
+    g->taken_count += 1;
+}
+
 // Adds every function the module defines to the graph, from the cache when a function's IR hash is the one the cache
 // has (no scan) and from a scan otherwise, which is then put in the cache. `cache` may be null.
 export void add_module(Graph *g, c::LLVMModuleRef module, Cache *cache) {
     for (c::LLVMValueRef f = c::LLVMGetFirstFunction(module); f != nullptr; f = c::LLVMGetNextFunction(f)) {
+        if (address_taken(f)) add_taken(g, f);
         if (c::LLVMIsDeclaration(f) != 0) continue;
         Summary summary = {.name = symbol_of(f), .hash = hash_of(f), .defined = true};
         Bool hit = cache != nullptr && effects_cache::lookup(cache, &summary);
@@ -287,29 +478,96 @@ static U32 leaf_set(Str name) {
     return effects_table::unknown;
 }
 
-// Gives each name that is called and not defined a leaf in the graph, and each call its target.
+static void need_leaf(Graph *g, Str name) {
+    if (find(g, name) != none) return;
+    Summary leaf = {.name = name, .own = leaf_set(name)};
+    append(g, &leaf);
+}
+
+// Gives each name that is called, passed or has its address taken, and that nothing defines, a leaf in the graph.
 static void resolve(Graph *g) {
     for (Usize i = 0; i < g->count; i++) {
         for (Usize k = 0; k < effects_cache::call_count(&g->items[i]); k++) {
-            Str callee = effects_cache::call_at(&g->items[i], k).callee;
-            if (find(g, callee) != none) continue;
-            Summary leaf = {.name = callee, .own = leaf_set(callee)};
-            append(g, &leaf);
+            Call call = effects_cache::call_at(&g->items[i], k);
+            if (call.kind == effects_cache::call_direct || call.kind == effects_cache::pass_function)
+                need_leaf(g, call.kind == effects_cache::call_direct ? call.callee : call.target);
+            if (call.kind == effects_cache::pass_function) need_leaf(g, call.callee);
         }
+    }
+    for (Usize t = 0; t < g->taken_count; t++) {
+        need_leaf(g, g->taken_names[t].text);
     }
     g->resolved = g->count;
 }
 
 // One bit at a time, so a cause is recorded for each.
-static Bool take(Graph *g, Usize caller, Usize callee, U32 line) {
-    U32 added = g->sets[callee] & ~g->sets[caller];
+static Bool take_bits(Graph *g, Usize caller, U32 bits, Usize from, U32 line) {
+    U32 added = bits & ~g->sets[caller];
     if (added == 0) return false;
     for (Usize b = 0; b < effects_table::bit_count; b++) {
         if ((added & (1u << b)) != 0)
-            g->causes[caller * effects_table::bit_count + b] = (Cause){.callee = callee, .line = line};
+            g->causes[caller * effects_table::bit_count + b] = (Cause){.callee = from, .line = line};
     }
     g->sets[caller] |= added;
     return true;
+}
+
+static Bool take(Graph *g, Usize caller, Usize callee, U32 line) {
+    if (callee == none) return false;
+    return take_bits(g, caller, g->sets[callee], callee, line);
+}
+
+// A call through a pointer that cannot be traced: the union of the sets of the functions of that type whose address is
+// taken, and `unknown` when there is none.
+static Bool take_taken(Graph *g, Usize caller, Str type, U32 line) {
+    Bool changed = false;
+    Bool any = false;
+    for (Usize t = 0; t < g->taken_count; t++) {
+        if (!mem::equal(g->taken_types[t].text, type)) continue;
+        any = true;
+        if (take(g, caller, find(g, g->taken_names[t].text), line)) changed = true;
+    }
+    if (!any && take_bits(g, caller, effects_table::unknown, none, line)) changed = true;
+    return changed;
+}
+
+static Bool is_defined(const Graph *g, Usize index) {
+    return g->items[index].defined;
+}
+
+// Calls of parameter `slot` of the function at `index`: true when it is newly known to be called, with the type called.
+static Bool mark_called(Graph *g, Usize index, U32 slot, Str type) {
+    if (slot >= max_params || g->calls_param[index * max_params + slot] != 0) {
+        return false;
+    }
+    g->calls_param[index * max_params + slot] = 1;
+    g->param_types[index * max_params + slot] = (Text){.text = type};
+    return true;
+}
+
+// A function value that function `i` calls itself or passes on to another one: the effects it takes from a
+// ceiling, from the function passed, or from the functions of the type whose address is taken.
+static Bool apply(Graph *g, Usize i, Call call) {
+    Usize target = call.kind == effects_cache::call_param ? i : find(g, call.callee);
+    if (call.kind == effects_cache::call_direct) return take(g, i, target, call.line);
+    if (call.kind == effects_cache::call_memory) return take_taken(g, i, call.callee, call.line);
+    if (call.kind == effects_cache::call_param) {
+        U32 limit = call.slot < max_params ? g->ceilings[i * max_params + call.slot] : 0;
+        if (limit != 0) return take_bits(g, i, limit - 1, none, call.line);
+        return mark_called(g, i, call.slot, call.callee);
+    }
+    if (call.kind == effects_cache::param_ceiling || target == none || call.slot >= max_params) return false;
+    // The callee of a pass: a function the build does not define may call a function it is given (not a pointer that
+    // may be data: `free(p)` is passed one).
+    Bool called = g->calls_param[target * max_params + call.slot] != 0 ||
+                  (!is_defined(g, target) && call.kind == effects_cache::pass_function);
+    if (!called) return false;
+    Str type = g->param_types[target * max_params + call.slot].text;
+    if (call.kind == effects_cache::pass_function) return take(g, i, find(g, call.target), call.line);
+    if (call.kind == effects_cache::pass_memory) return take_taken(g, i, type, call.line);
+    U32 limit = call.arg < max_params ? g->ceilings[i * max_params + call.arg] : 0;
+    if (limit != 0) return take_bits(g, i, limit - 1, none, call.line);
+    return mark_called(g, i, call.arg, type);
 }
 
 // Solves the sets of every function of the graph: each starts with what its body adds itself and takes the sets of
@@ -322,18 +580,42 @@ export void solve(Graph *g) {
             if ((g->sets[i] & (1u << b)) != 0)
                 g->causes[i * effects_table::bit_count + b] = (Cause){.callee = none, .line = 0};
         }
+        for (Usize p = 0; p < max_params; p++) {
+            g->ceilings[i * max_params + p] = 0;
+            g->calls_param[i * max_params + p] = 0;
+        }
+        for (Usize k = 0; k < effects_cache::call_count(&g->items[i]); k++) {
+            Call call = effects_cache::call_at(&g->items[i], k);
+            if (call.kind == effects_cache::param_ceiling && call.slot < max_params)
+                g->ceilings[i * max_params + call.slot] = call.arg + 1;
+        }
     }
     Bool changed = true;
     while (changed) {
         changed = false;
         for (Usize i = 0; i < g->count; i++) {
             for (Usize k = 0; k < effects_cache::call_count(&g->items[i]); k++) {
-                Call call = effects_cache::call_at(&g->items[i], k);
-                if (take(g, i, find(g, call.callee), call.line)) changed = true;
+                if (apply(g, i, effects_cache::call_at(&g->items[i], k))) changed = true;
             }
         }
     }
     g->solved = true;
+}
+
+// The function values a function passes: how many calls it records, the call at `k`, and the ceiling of parameter
+// `slot` of the function at `index` (true and the mask when it has one). effects_ceiling judges the passes with them.
+export Usize call_total(const Graph *g, Usize index) {
+    return effects_cache::call_count(&g->items[index]);
+}
+
+export Call call_item(const Graph *g, Usize index, Usize k) {
+    return effects_cache::call_at(&g->items[index], k);
+}
+
+export Bool param_limit(const Graph *g, Usize index, Usize slot, U32 *mask) {
+    if (index == none || slot >= max_params || g->ceilings[index * max_params + slot] == 0) return false;
+    *mask = g->ceilings[index * max_params + slot] - 1;
+    return true;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
