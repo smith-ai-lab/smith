@@ -34,6 +34,7 @@ import front::parser;
 import front::roots;
 import front::types;
 import front::types_decl;
+import front::when;
 import front::parse;
 import std::arena;
 import std::ascii;
@@ -575,6 +576,16 @@ static Str function_line(Str path, Str source, const ast::Decl *d, ast::Identifi
     return as_str(format::push(head, " __asm__(\"", label_start, module_label, "::", name, "\");\n"));
 }
 
+// `text` between `#if cond` and `#endif` when the declaration or field carries `@when(cond)` (#1801).
+static Str guarded(ast::Attribute list[:], Str text, Bool own_lines) {
+    const ast::Attribute *when_here = when::find(list);
+    if (when_here == nullptr || countof(when_here->args) != 1) return text;
+    Str condition = when::c_text(when_here->args[0]);
+    if (countof(condition) == 0) return text;
+    if (own_lines) return as_str(format::push("\n#if ", condition, "\n", text, "\n#endif\n"));
+    return as_str(format::push("#if ", condition, "\n", text, "#endif\n"));
+}
+
 // The header's text for the parsed module, or "" with the errors in `*problems`.
 static Str header_text(Str path, Str source, const ast::Module *m, Str triple, Str *problems) {
     Str module_c = joined(m, "_");
@@ -603,9 +614,11 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
                 continue;
             }
             Bool star = spelled.text[countof(spelled.text) - 1] == '*';
-            fields = as_str(format::push(fields, spelled.text, star ? "" : " ", field.name, "; "));
+            Str one = as_str(format::push(spelled.text, star ? "" : " ", field.name, "; "));
+            fields = as_str(format::push(fields, guarded(d->kind.record.fields[k].attributes, one, true)));
         }
-        types = as_str(format::push(types, "typedef struct { ", fields, "} ", prefix, d->kind.record.name, ";\n"));
+        Str made = as_str(format::push("typedef struct { ", fields, "} ", prefix, d->kind.record.name, ";\n"));
+        types = as_str(format::push(types, guarded(d->attributes, made, false)));
     }
     Str body = "";
     Str label_start = label_prefix(triple);
@@ -616,7 +629,7 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
         if (roots::same(d->kind.function.name, "main")) continue;
         Str line = function_line(path, source, d, structs, prefix, module_c, module_label, label_start, problems);
         if (countof(line) == 0) continue;
-        body = as_str(format::push(body, count == 0 ? "" : "\n", line));
+        body = as_str(format::push(body, count == 0 ? "" : "\n", guarded(d->attributes, line, false)));
         count += 1;
     }
     if (countof(*problems) > 0) return "";
