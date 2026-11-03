@@ -1,0 +1,264 @@
+// front::format: the driver of `smith fmt` on smith's own front end (#1889, part of #1886). It lexes a file with the new
+// syntax, adds the layout tokens and writes every statement back on its own line in the one style of the syntax tour:
+//
+//   format(source)   The source formatted, or the first error of the lexer or the layout.
+//
+// What it writes:
+//   * 4 spaces of indentation a level, taken from the `indent` and `dedent` tokens; a line that goes on inside an open
+//     bracket (or after a binary operator) keeps its break and is indented two levels deeper than its statement.
+//   * The space inside a line comes from front::format_space::space_between.
+//   * Comments make no tokens: they are taken from the text between two tokens. `#` and `##` comments are kept as they
+//     were written, on a line of their own or trailing a line, with the spaces after the last character cut.
+//   * At most one blank line in a row, none at the start or the end of the file, one final newline, no trailing spaces.
+//   * Lines over 100 columns are left as they are written (no wrapping).
+// It is lossless on comments and idempotent: formatting what it wrote changes nothing.
+module front::format;
+
+import front::ast;
+import front::format_space;
+import front::lex;
+import std::arena;
+import std::mem;
+
+// Why formatting stopped: where, and what is wrong (a literal).
+export typedef struct {
+    ast::Span span;
+    Str message;
+} FormatError;
+
+// The formatted text.
+export typedef typeof(char[:]) Text;
+
+export typedef Result(Text, FormatError) Formatted;
+
+// The text being written.
+struct Out {
+    char data[:];
+    Usize used;
+};
+
+static void out_reserve(Out *out, Usize more) {
+    if (out->used + more <= countof(out->data)) return;
+    Usize size = 2 * countof(out->data);
+    if (size < out->used + more) size = out->used + more + 256;
+    char grown[:] = mem::alloc_slice(char, size);
+    if (out->used > 0) mem::copy(grown[0:out->used], out->data[0:out->used]);
+    out->data = grown;
+}
+
+static void out_text(Out *out, Str text) {
+    out_reserve(out, countof(text));
+    for (Usize i = 0; i < countof(text); i++)
+        out->data[out->used + i] = text[i];
+    out->used += countof(text);
+}
+
+static void out_spaces(Out *out, Usize count) {
+    out_reserve(out, count);
+    for (Usize i = 0; i < count; i++)
+        out->data[out->used + i] = ' ';
+    out->used += count;
+}
+
+static void out_newline(Out *out) {
+    out_text(out, "\n");
+}
+
+// What the writer remembers between two tokens.
+//   level          The open `indent` levels.
+//   pending_end    A `newline` token ended the line that is still open (its newline is not written yet, so a
+//                  trailing comment can still join it).
+//   mid            A line is open: something was written on it and its newline is not written yet.
+//   continued      The line being written goes on a statement that began on an earlier line.
+//   prev, before   The kinds of the last two tokens written on the statement (newline at its start).
+//   depth, bracket The open brackets and, for each, whether it is the `[` of an index or a slice.
+struct Writer {
+    Out out;
+    Usize level;
+    Bool pending_end;
+    Bool mid;
+    Bool continued;
+    lex::TokenKind prev;
+    lex::TokenKind before;
+    Usize depth;
+    Bool bracket[32];
+};
+
+static Bool blank(char c) {
+    return c == ' ' || c == '\t' || c == '\r';
+}
+
+// The text with the blanks after its last character cut.
+static Str trimmed(Str text) {
+    Usize end = countof(text);
+    while (end > 0 && blank(text[end - 1]))
+        end -= 1;
+    return text[0:end];
+}
+
+// The text with the blanks before its first character cut.
+static Str skip_blanks(Str text) {
+    Usize start = 0;
+    while (start < countof(text) && blank(text[start]))
+        start += 1;
+    return text[start:countof(text)];
+}
+
+static Usize indent_columns(const Writer *w) {
+    return w->level * 4 + (w->continued ? 8 : 0);
+}
+
+// Ends the open line.
+static void end_line(Writer *w) {
+    if (w->mid) out_newline(&w->out);
+    w->mid = false;
+    w->pending_end = false;
+}
+
+// The gap before a token, cut into its lines: [0] is what trails the previous token on its line, the lines after the
+// first newline are blank or comment lines, and the last one is the indentation of the token. Writes the trailing
+// comment, then the comment lines with the blank line that precedes them. Gives whether a blank line precedes the
+// token itself.
+static Bool write_gap(Writer *w, Str gap, Bool token_starts_line) {
+    Usize start = 0;
+    Usize first_end = 0;
+    while (first_end < countof(gap) && gap[first_end] != '\n')
+        first_end += 1;
+    Str trailing = skip_blanks(trimmed(gap[0:first_end]));
+    if (countof(trailing) > 0) {
+        if (w->mid) out_text(&w->out, " ");
+        out_text(&w->out, trailing);
+        w->mid = true;
+    }
+    if (first_end == countof(gap)) return false;
+    if (token_starts_line || countof(trailing) > 0) end_line(w);
+    Bool blank_before = false;
+    start = first_end + 1;
+    while (start < countof(gap)) {
+        Usize stop = start;
+        while (stop < countof(gap) && gap[stop] != '\n')
+            stop += 1;
+        if (stop == countof(gap)) break;
+        Str line = skip_blanks(trimmed(gap[start:stop]));
+        if (countof(line) == 0) {
+            blank_before = true;
+        } else {
+            if (blank_before && w->out.used > 0) out_newline(&w->out);
+            blank_before = false;
+            out_spaces(&w->out, indent_columns(w));
+            out_text(&w->out, line);
+            out_newline(&w->out);
+        }
+        start = stop + 1;
+    }
+    return blank_before;
+}
+
+// Whether the text has a newline.
+static Bool has_newline(Str text) {
+    for (char c : text) {
+        if (c == '\n') return true;
+    }
+    return false;
+}
+
+// The space between the last token written and the next one, by the rule of format_space.
+static Bool space_before(const Writer *w, lex::TokenKind next) {
+    format_space::SpaceContext context = {.prev_unary = format_space::operand_expected(w->before),
+                                          .in_brackets = w->depth > 0 && w->depth <= 32 && w->bracket[w->depth - 1]};
+    return format_space::space_between(w->prev, next, context);
+}
+
+// Counts the bracket a token opens or closes.
+static void track_brackets(Writer *w, lex::TokenKind kind) {
+    if (kind == lex::left_bracket || kind == lex::left_paren || kind == lex::left_brace) {
+        if (w->depth < 32) w->bracket[w->depth] = kind == lex::left_bracket && w->before != lex::kw_fn;
+        w->depth += 1;
+    } else if ((kind == lex::right_bracket || kind == lex::right_paren || kind == lex::right_brace) && w->depth > 0) {
+        w->depth -= 1;
+    }
+}
+
+// Writes one token of the source: starts its line when it opens a statement (or goes on one after a break), or puts
+// the space the rule asks for.
+static void write_token(Writer *w, Str source, lex::Token token, Bool new_line) {
+    if (new_line) {
+        out_spaces(&w->out, indent_columns(w));
+        w->mid = true;
+    } else if (space_before(w, token.kind)) {
+        out_text(&w->out, " ");
+    }
+    out_text(&w->out, lex::text(source, token));
+    track_brackets(w, token.kind);
+    w->before = w->prev;
+    w->prev = token.kind;
+}
+
+// Handles one token that is not a layout token. gap is the source between it and the token before.
+static void write_real(Writer *w, Str source, lex::Token token, Str gap) {
+    Bool starts_statement = w->pending_end || !w->mid;
+    Bool breaks = !starts_statement && has_newline(gap);
+    if (starts_statement) {
+        w->continued = false;
+        w->prev = lex::newline;
+        w->before = lex::newline;
+        w->depth = 0;
+    }
+    if (breaks) w->continued = true;
+    Bool blank_before = write_gap(w, gap, starts_statement || breaks);
+    if (starts_statement || breaks) end_line(w);
+    if (blank_before && w->out.used > 0 && starts_statement) out_newline(&w->out);
+    write_token(w, source, token, starts_statement || breaks);
+}
+
+// Writes what follows the last token: the comments after it, and the final newline.
+static void write_end(Writer *w, Str gap) {
+    write_gap(w, gap, true);
+    end_line(w);
+}
+
+// The writer for source, with room for its text.
+static Writer make_writer(Str source) {
+    Writer w = {};
+    w.out.data = mem::alloc_slice(char, countof(source) + 256);
+    w.prev = lex::newline;
+    w.before = lex::newline;
+    return w;
+}
+
+static FormatError format_error(lex::LexError e) {
+    FormatError error = {.span = e.span, .message = e.message};
+    return error;
+}
+
+// Walks the tokens with layout and writes them.
+static void walk(Writer *w, Str source, lex::Tokens tokens) {
+    Usize previous_end = 0;
+    for (lex::Token token : tokens) {
+        if (token.kind == lex::newline) {
+            w->pending_end = w->mid;
+        } else if (token.kind == lex::indent) {
+            w->level += 1;
+        } else if (token.kind == lex::dedent) {
+            if (w->level > 0) w->level -= 1;
+        } else if (token.kind == lex::end_of_file) {
+            write_end(w, source[previous_end:token.span.start]);
+        } else {
+            write_real(w, source, token, source[previous_end:token.span.start]);
+            previous_end = token.span.end;
+        }
+    }
+}
+
+// The source in the style of the syntax tour, allocated by the current allocator; or the first error of the lexer or the
+// layout (a tab in the indentation, a character that is no token).
+export Formatted format(Str source) {
+    lex::Lexed lexed = lex::tokenize_new(source);
+    if (lexed == .error) return {.error = format_error(lexed.error)};
+    lex::Lexed laid = lex::layout(source, lexed.ok);
+    if (laid == .error) return {.error = format_error(laid.error)};
+    Writer w = make_writer(source);
+    walk(&w, source, laid.ok);
+    Text result = w.out.data[0:w.out.used];
+    return {.ok = result};
+}

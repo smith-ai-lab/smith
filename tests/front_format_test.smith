@@ -1,0 +1,122 @@
+// Tests of front::format (#1889, part of #1886), the driver of `smith fmt` on smith's own front end: the golden pairs of
+// tests/front/format/ (`<name>.smith` before, `<name>.expected` after), the properties that make a formatter safe
+// (formatting twice changes nothing, comments survive) and the sources of tests/front/e2e/ that format without error.
+// Add a case by adding a pair of files.
+module front_format_test;
+
+import front::format;
+import front::roots;
+import std::arena;
+import std::files;
+import std::mem;
+import std::test;
+
+static Str text_of(Str path) {
+    files::BytesResult loaded = files::read_file(path);
+    test::check_equal(loaded == .ok, true);
+    if (loaded == .error) return "";
+    format::Text chars = mem::view(loaded.ok, char);
+    return chars;
+}
+
+static Usize copy_into(char path[:], Usize used, Str part) {
+    for (Usize i = 0; i < countof(part); i++)
+        path[used + i] = part[i];
+    return used + countof(part);
+}
+
+// a + b + c, in the allocator in force, with a terminator after it that the count does not count.
+static Str join3(Str a, Str b, Str c) {
+    char path[:] = mem::alloc_slice(char, countof(a) + countof(b) + countof(c) + 1);
+    Usize used = copy_into(path, 0, a);
+    used = copy_into(path, used, b);
+    used = copy_into(path, used, c);
+    path[used] = 0;
+    return path[0:used];
+}
+
+// The source formatted; an error is shown as its message.
+static Str formatted(Str source) {
+    format::Formatted done = format::format(source);
+    if (done == .error) return done.error.message;
+    return done.ok;
+}
+
+static void expect_format(Str source, Str expected) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str once = formatted(source);
+    test::check_equal(once, expected);
+    test::check_equal(formatted(once), once);
+}
+
+export void test_format_empty_and_blank_sources() {
+    expect_format("", "");
+    expect_format("\n\n", "");
+    expect_format("# only a comment", "# only a comment\n");
+}
+
+export void test_format_one_statement_per_line_with_the_style_of_the_tour() {
+    expect_format("fn f()->i32:\n    return -1\n", "fn f() -> i32:\n    return -1\n");
+    expect_format("let x=a+b*-c\n", "let x = a + b * -c\n");
+    expect_format("x = f( a ,b )", "x = f(a, b)\n");
+}
+
+export void test_format_keeps_trailing_and_own_line_comments() {
+    expect_format("let x = 1 # one\n# two\nlet y = 2\n", "let x = 1 # one\n# two\nlet y = 2\n");
+    expect_format("fn f():\n    # inside\n    g()\n", "fn f():\n    # inside\n    g()\n");
+}
+
+export void test_format_collapses_blank_lines_and_trailing_spaces() {
+    expect_format("let a = 1   \n\n\n\nlet b = 2\n\n\n", "let a = 1\n\nlet b = 2\n");
+}
+
+export void test_format_a_lexing_error_is_the_result() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    format::Formatted done = format::format("fn f():\n\treturn 1\n");
+    test::check_equal(done == .error, true);
+}
+
+static Bool ends_with(Str text, Str suffix) {
+    return countof(text) > countof(suffix) && roots::same(text[countof(text) - countof(suffix):], suffix);
+}
+
+// Every pair of tests/front/format/.
+export void test_format_every_golden_pair() {
+    files::EntriesResult listing = files::list("tests/front/format");
+    test::check_equal(listing == .ok, true);
+    if (listing != .ok) return;
+    for (files::Entry entry : listing.ok) {
+        Str file = entry.name;
+        if (!ends_with(file, ".smith")) continue;
+        Str name = file[0:countof(file) - 6];
+        Str before_path = join3("tests/front/format/", name, ".smith");
+        Str after_path = join3("tests/front/format/", name, ".expected");
+        expect_format(text_of(before_path), text_of(after_path));
+    }
+}
+
+// Formatting twice changes nothing, over every program of tests/front/e2e/ that the formatter accepts.
+export void test_format_twice_changes_nothing_over_the_e2e_programs() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::EntriesResult listing = files::list("tests/front/e2e");
+    test::check_equal(listing == .ok, true);
+    if (listing != .ok) return;
+    for (files::Entry entry : listing.ok) {
+        if (!ends_with(entry.name, ".smith")) continue;
+        Str path = join3("tests/front/e2e/", entry.name, "");
+        format::Formatted first = format::format(text_of(path));
+        if (first == .ok) {
+            Str once = first.ok;
+            test::check_equal(formatted(once), once);
+        }
+    }
+}
