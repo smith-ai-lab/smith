@@ -313,6 +313,14 @@ static const types::Symbol *root_symbol(const types::Checked *c, const ast::Expr
     return nullptr;
 }
 
+// A type written inside an expression: `bool` and `char` are types in a body that has smith's own syntax (#1960).
+static types::TypeRef resolve_written(types::Checked *c, const ast::TypeExpr *t) {
+    c->new_syntax = c->new_body;
+    types::TypeRef found = types::resolve(c, t);
+    c->new_syntax = false;
+    return found;
+}
+
 // Whether `e` is written in smith's own syntax: the variable at its root was declared there (#1524).
 static Bool in_new_syntax(const types::Checked *c, const ast::Expr *e) {
     const types::Symbol *s = root_symbol(c, e);
@@ -2500,7 +2508,7 @@ static void cast_before(types::Checked *c, Work *w, Frame f) {
     if (!(e->kind == .cast)) {
         return;
     }
-    types::TypeRef to = types::resolve(c, e->kind.cast.type);
+    types::TypeRef to = resolve_written(c, e->kind.cast.type);
     const ast::Expr *operand = e->kind.cast.operand;
     types::set_type(c, e, to);
     push(w, e, f.expected, 1);
@@ -2546,7 +2554,7 @@ static void query_before(types::Checked *c, Work *w, Frame f) {
     }
     types::TypeRef size = types::builtin(&c->table, "Usize");
     if (e->kind.query.type != nullptr) {
-        types::TypeRef t = types::resolve(c, e->kind.query.type);
+        types::TypeRef t = resolve_written(c, e->kind.query.type);
         Bool counting = e->kind.query.op == .count_of;
         if (counting) {
             count_check(c, e, t);
@@ -2722,7 +2730,7 @@ static void compound_expr(types::Checked *c, Work *w, Frame f) {
     }
     types::TypeRef t = f.expected;
     if (e->kind.compound.type != nullptr) {
-        t = types::resolve(c, e->kind.compound.type);
+        t = resolve_written(c, e->kind.compound.type);
     } else if (t == nullptr) {
         types::failf(c, e->span,
                      "a `{...}` list needs a type; write `(T){...}` or give the variable a type before `=`");
@@ -2845,7 +2853,7 @@ static types::TypeRef lambda_param(types::Checked *c, const ast::Param *p, types
         }
         return given;
     }
-    types::TypeRef written = types::resolve(c, p->type);
+    types::TypeRef written = resolve_written(c, p->type);
     if (given != nullptr && written != given && written != invalid(c)) {
         types::failf(c, p->span, "the lambda parameter `", p->name, "` is `", types::show(written), "` but `",
                      types::show(given), "` is expected; write `", types::show(given), "` or leave the type out");
@@ -2859,7 +2867,7 @@ static types::TypeRef lambda_result(types::Checked *c, const ast::Expr *e, types
         return nullptr;
     }
     if (e->kind.lambda.result != nullptr) {
-        return types::resolve(c, e->kind.lambda.result);
+        return resolve_written(c, e->kind.lambda.result);
     }
     if (signature != nullptr) {
         return signature->element;
@@ -3579,6 +3587,101 @@ static void tuple_after(types::Checked *c, Frame f) {
 }
 
 // Stage 0 of a node with children: decides what is pushed.
+// ---------------------------------------------------------------------------------------------------------------
+// Spread: `f(x; s...)` passes each field of the struct or named tuple `s` as the named argument of that name (#1914)
+
+static Bool is_spread(const ast::Expr *arg) {
+    if (arg->kind == .expand) return arg->kind.expand.named;
+    return false;
+}
+
+// The value a spread argument spreads.
+static ast::Expr *spread_value(const ast::Expr *arg) {
+    if (arg->kind == .expand) return arg->kind.expand.pattern;
+    return nullptr;
+}
+
+static Bool has_spread(ast::ExprRef args[:]) {
+    for (Usize i = 0; i < countof(args); i++) {
+        if (is_spread(args[i])) return true;
+    }
+    return false;
+}
+
+// Whether the spread's value is a name or a chain of fields of one: it is read once per field, so it must have no
+// effect of its own.
+static Bool plain_place(const ast::Expr *e) {
+    const ast::Expr *at = e;
+    while (at->kind == .member)
+        at = at->kind.member.base;
+    return at->kind == .name;
+}
+
+// The arguments of a call with each spread replaced by one `field = s.field` per field of `s`; null when the spread
+// is refused (the error is reported).
+static Bool spread_into(types::Checked *c, const ast::Expr *arg, ast::ExprRef out[:], Usize *count) {
+    ast::Expr *pattern = spread_value(arg);
+    types::TypeRef t = typ(c, pattern);
+    if (t == invalid(c)) return false;
+    if (t->kind != .record && t->kind != .tuple) {
+        types::failf(c, arg->span, "cannot spread a value of type `", types::show(t),
+                     "`; spread a struct or a named tuple after the `;`");
+        return false;
+    }
+    if (!plain_place(pattern)) {
+        types::failf(c, arg->span, "a spread reads each field of its value; spread a name, such as `opts...`");
+        return false;
+    }
+    for (Usize k = 0; k < countof(t->slots); k++) {
+        if (types::is_position(t->slots[k].name)) {
+            types::failf(c, arg->span, "cannot spread a tuple whose fields have no names; name them, such as ",
+                         "`(retry = 3)`");
+            return false;
+        }
+        ast::ExprKind member = {.member = {.base = pattern, .name = t->slots[k].name}};
+        ast::Expr *field = ast::expr(member);
+        field->span = arg->span;
+        ast::Expr *named = ast::named_arg(t->slots[k].name, field);
+        named->span = arg->span;
+        out[*count] = named;
+        *count += 1;
+    }
+    return true;
+}
+
+static void spread_resolved(types::Checked *c, Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call)) return;
+    ast::ExprRef args[:] = e->kind.call.args;
+    Usize room = countof(args);
+    for (Usize i = 0; i < countof(args); i++) {
+        if (!is_spread(args[i])) continue;
+        types::TypeRef spread_type = typ(c, spread_value(args[i]));
+        room += countof(spread_type->slots);
+    }
+    ast::ExprRef *block = (ast::ExprRef *)mem::alloc_array_raw(sizeof(ast::ExprRef), room, alignof(ast::ExprRef));
+    ast::ExprRef all[:] = block[0:room];
+    Usize count = 0;
+    Bool ok = true;
+    for (Usize i = 0; i < countof(args); i++) {
+        if (!is_spread(args[i])) {
+            all[count] = args[i];
+            count += 1;
+        } else if (!spread_into(c, args[i], all, &count)) {
+            ok = false;
+        }
+    }
+    if (!ok) {
+        poison(c, e);
+        return;
+    }
+    ast::Expr *made = ast::call(e->kind.call.callee, all[0:count]);
+    made->span = e->span;
+    types::set_method(c, e, made);
+    push(w, e, nullptr, 8);
+    push(w, made, f.expected, 0);
+}
+
 static void call_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .call)) {
@@ -3601,6 +3704,15 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
     if (method_shaped(c, callee) && callee->kind == .member) {
         push(w, e, f.expected, 7);
         push(w, callee->kind.member.base, nullptr, 0);
+        return;
+    }
+    ast::ExprRef args[:] = e->kind.call.args;
+    if (has_spread(args)) {
+        // `f(x; s...)`: the spread values are typed first, then the call is rewritten (stage 9).
+        push(w, e, f.expected, 9);
+        for (Usize i = countof(args); i > 0; i--) {
+            if (is_spread(args[i - 1])) push(w, spread_value(args[i - 1]), nullptr, 0);
+        }
         return;
     }
     push(w, e, f.expected, 1);
@@ -3697,6 +3809,8 @@ static void after(types::Checked *c, Work *w, Frame f) {
             call_callee_done(c, w, f);
         } else if (f.stage == 7) {
             method_resolved(c, w, f);
+        } else if (f.stage == 9) {
+            spread_resolved(c, w, f);
         } else if (f.stage == 8) {
             types::set_type(c, e, typ(c, types::method_of(c, e)));
         } else if (f.stage == 6) {

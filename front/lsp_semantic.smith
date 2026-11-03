@@ -1,0 +1,414 @@
+// front::lsp_semantic: `textDocument/semanticTokens/full` and `/range` for `.smith` on smith's own front end (#2008, a
+// piece of #1887). Highlighting comes from smith's own parser: the lexer gives keywords, literals and comments, and the
+// names the file declares (`ast::symbols`) say whether a name is a type, a function, a parameter, a local, a field, a
+// variant or a module.
+//
+//   legend()                                  the JSON of `legend` for the server's capabilities
+//   result(path, source, from, to)            the JSON for the `result` of the reply: `{"data":[...]}` for the tokens
+//                                             that start in the bytes `from` to `to` of `source`
+//
+// A file that does not parse still gets the tokens the lexer reads, and the names the parser got to; a file the lexer
+// stops in gets the tokens before the error, so highlighting does not flicker while typing. Columns are bytes (LSP asks
+// for UTF-16 units; the two agree on ASCII). The text is the current allocator's.
+module front::lsp_semantic;
+
+import front::ast;
+import front::compile;
+import front::lex;
+import front::parser;
+import std::arena;
+import std::mem;
+
+// The token types, in the order of the legend; the protocol's standard names, so every editor colours them.
+// NOLINTBEGIN(readability-identifier-naming)
+enum Type {
+    namespace_type,
+    type_type,
+    function_type,
+    method_type,
+    parameter_type,
+    variable_type,
+    property_type,
+    enum_member_type,
+    keyword_type,
+    comment_type,
+    string_type,
+    number_type,
+    decorator_type,
+};
+// NOLINTEND(readability-identifier-naming)
+
+// The modifiers, as bits of the legend's order.
+constexpr U32 declaration_bit = 1;
+constexpr U32 readonly_bit = 2;
+constexpr U32 default_library_bit = 4;
+
+// One token to send: its bytes (on one line), its type and its modifiers.
+struct Entry {
+    U32 start;
+    U32 end;
+    U32 type;
+    U32 modifiers;
+};
+
+typedef Entry Entries[:];
+
+// A list being filled: `data` holds `used` entries and has room for more.
+struct Found {
+    Entries data;
+    Usize used;
+};
+
+static void add(Found *found, Entry entry) {
+    if (entry.end <= entry.start) return;
+    if (found->used == countof(found->data)) {
+        Entries grown = mem::alloc_slice(Entry, found->used == 0 ? 256 : found->used * 2);
+        for (Usize i = 0; i < found->used; i++)
+            grown[i] = found->data[i];
+        found->data = grown;
+    }
+    found->data[found->used] = entry;
+    found->used += 1;
+}
+
+// A token of the bytes `start` to `end`, cut at each line break (a client wants a token on one line).
+static void add_lines(Found *found, Str source, U32 start, U32 end, U32 type, U32 modifiers) {
+    U32 from = start;
+    for (U32 i = start; i < end && i < countof(source); i++) {
+        if (source[i] != '\n') continue;
+        add(found, (Entry){.start = from, .end = i, .type = type, .modifiers = modifiers});
+        from = i + 1;
+    }
+    add(found, (Entry){.start = from, .end = end, .type = type, .modifiers = modifiers});
+}
+
+// The comments in the text between two tokens, which holds only white space and comments.
+static void add_comments(Found *found, Str source, U32 from, U32 to) {
+    U32 i = from;
+    while (i < to && i < countof(source)) {
+        Bool slashes = i + 1 < countof(source) && source[i] == '/' && source[i + 1] == '/';
+        Bool block = i + 1 < countof(source) && source[i] == '/' && source[i + 1] == '*';
+        U32 end = i;
+        if (source[i] == '#' || slashes) {
+            while (end < countof(source) && source[end] != '\n')
+                end += 1;
+        } else if (block) {
+            end = i + 2;
+            while (end + 1 < countof(source) && !(source[end] == '*' && source[end + 1] == '/'))
+                end += 1;
+            end = end + 2 < countof(source) ? end + 2 : (U32)countof(source);
+        } else {
+            i += 1;
+            continue;
+        }
+        add_lines(found, source, i, end, comment_type, 0);
+        i = end;
+    }
+}
+
+static Bool covers(ast::Span span, U32 offset) {
+    return span.start <= offset && offset < span.end;
+}
+
+static Bool same_text(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++)
+        if (a[i] != b[i]) return false;
+    return true;
+}
+
+// What the file declares, and for each token whether it is where a name is declared.
+struct Names {
+    ast::Symbols symbols;
+    Bool declared[:];
+    ast::Span whole;
+};
+
+// The bytes of the innermost function declaration that covers `at`, or `whole` when none does.
+static ast::Span function_around(const Names *names, ast::Span at) {
+    ast::Span best = names->whole;
+    for (Usize i = 0; i < countof(names->symbols); i++) {
+        ast::Symbol s = names->symbols[i];
+        Bool inside = s.kind == ast::sym_function && s.at.start <= at.start && at.end <= s.at.end;
+        if (inside && s.at.end - s.at.start < best.end - best.start) best = s.at;
+    }
+    return best;
+}
+
+// Where an unqualified use of the symbol means it: a local is the function it is in.
+static ast::Span scope_of(const Names *names, ast::Symbol s) {
+    Bool wide = s.scope.start == names->whole.start && s.scope.end == names->whole.end;
+    if (s.kind == ast::sym_variable && wide) return function_around(names, s.at);
+    return s.scope;
+}
+
+// The index of the first token that starts at `offset` or later (the tokens are in order).
+static Usize first_from(lex::Tokens tokens, U32 offset) {
+    Usize low = 0;
+    Usize high = countof(tokens);
+    while (low < high) {
+        Usize middle = low + (high - low) / 2;
+        if (tokens[middle].span.start < offset)
+            low = middle + 1;
+        else
+            high = middle;
+    }
+    return low;
+}
+
+// Marks, for each symbol, the first token inside its declaration that spells its name.
+static void mark_declarations(Names *names, Str source, lex::Tokens tokens) {
+    names->declared = mem::alloc_slice(Bool, countof(tokens));
+    for (Usize k = 0; k < countof(names->symbols); k++) {
+        ast::Symbol s = names->symbols[k];
+        for (Usize i = first_from(tokens, s.at.start); i < countof(tokens) && tokens[i].span.start < s.at.end; i++) {
+            Bool word = tokens[i].kind == lex::name || tokens[i].kind == lex::type_name;
+            if (word && same_text(lex::text(source, tokens[i]), s.name)) {
+                names->declared[i] = true;
+                break;
+            }
+        }
+    }
+}
+
+// The symbol an unqualified (`member` false) or member name at `offset` means: of the symbols with that name whose
+// scope covers it, the one with the narrowest scope. Null when none.
+static const ast::Symbol *lookup(const Names *names, Str name, U32 offset, Bool member) {
+    const ast::Symbol *best = nullptr;
+    ast::Span best_scope = names->whole;
+    for (Usize i = 0; i < countof(names->symbols); i++) {
+        const ast::Symbol *s = &names->symbols[i];
+        Bool is_member = s->kind == ast::sym_field || s->kind == ast::sym_variant;
+        if (is_member != member || !same_text(s->name, name)) continue;
+        ast::Span scope = scope_of(names, *s);
+        if (!covers(scope, offset)) continue;
+        if (best == nullptr || scope.end - scope.start < best_scope.end - best_scope.start) {
+            best = s;
+            best_scope = scope;
+        }
+    }
+    return best;
+}
+
+static Bool upper_first(Str name) {
+    return countof(name) > 0 && name[0] >= 'A' && name[0] <= 'Z';
+}
+
+static Bool is_kind(lex::Tokens tokens, Usize at, lex::TokenKind kind) {
+    return at < countof(tokens) && tokens[at].kind == kind;
+}
+
+// Whether `name` is one of the types smith has built in.
+static Bool builtin_type(Str name) {
+    Str known[_] = {"i8",  "i16",   "i32",   "i64", "u8",  "u16",  "u32",
+                    "u64", "isize", "usize", "f32", "f64", "bool", "str"};
+    for (Usize i = 0; i < countof(known); i++)
+        if (same_text(known[i], name)) return true;
+    return false;
+}
+
+// What a name after a `.` or `::` is: `after` is the name before the dot, when it is one.
+static Entry member_entry(const Names *names, Str name, Str before, Bool called, U32 offset) {
+    const ast::Symbol *s = lookup(names, name, offset, true);
+    Bool library = same_text(before, "std");
+    U32 bit = library ? default_library_bit : 0;
+    if (s != nullptr && s->kind == ast::sym_variant) return (Entry){.type = enum_member_type, .modifiers = bit};
+    if (s != nullptr || (!called && !upper_first(name))) return (Entry){.type = property_type, .modifiers = bit};
+    if (called) return (Entry){.type = method_type, .modifiers = bit};
+    return (Entry){.type = type_type, .modifiers = bit};
+}
+
+// The symbol with the name `name` whose declaration covers `offset` (a field is declared where no `.` precedes it), the
+// narrowest of them.
+static const ast::Symbol *declared_at(const Names *names, Str name, U32 offset) {
+    const ast::Symbol *best = nullptr;
+    for (Usize i = 0; i < countof(names->symbols); i++) {
+        const ast::Symbol *s = &names->symbols[i];
+        if (!same_text(s->name, name) || !covers(s->at, offset)) continue;
+        if (best == nullptr || s->at.end - s->at.start < best->at.end - best->at.start) best = s;
+    }
+    return best;
+}
+
+// The type and modifiers of the symbol `s` found for a name.
+static Entry symbol_entry(ast::Symbol s) {
+    U32 readonly = s.readonly ? readonly_bit : 0;
+    switch (s.kind) {
+    case ast::sym_function:
+        return (Entry){.type = function_type};
+    case ast::sym_type:
+        return (Entry){.type = type_type};
+    case ast::sym_parameter:
+        return (Entry){.type = parameter_type, .modifiers = readonly};
+    case ast::sym_module:
+        return (Entry){.type = namespace_type, .modifiers = same_text(s.name, "std") ? default_library_bit : 0};
+    case ast::sym_field:
+        return (Entry){.type = property_type};
+    case ast::sym_variant:
+        return (Entry){.type = enum_member_type, .modifiers = readonly_bit};
+    default:
+        return (Entry){.type = variable_type, .modifiers = readonly};
+    }
+}
+
+// The token at `i`, a name, as an entry.
+static Entry name_entry(const Names *names, Str source, lex::Tokens tokens, Usize i) {
+    lex::Token token = tokens[i];
+    Str name = lex::text(source, token);
+    Bool called = is_kind(tokens, i + 1, lex::left_paren);
+    Bool member = i > 0 && (tokens[i - 1].kind == lex::dot || tokens[i - 1].kind == lex::colon_colon);
+    Entry entry = {.type = variable_type};
+    const ast::Symbol *here = names->declared[i] ? declared_at(names, name, token.span.start) : nullptr;
+    if (here != nullptr) {
+        entry = symbol_entry(*here);
+    } else if (member) {
+        Str before = "";
+        if (i > 1) before = lex::text(source, tokens[i - 2]);
+        entry = member_entry(names, name, before, called, token.span.start);
+    } else {
+        const ast::Symbol *s = lookup(names, name, token.span.start, false);
+        if (s != nullptr)
+            entry = symbol_entry(*s);
+        else if (called)
+            entry.type = function_type;
+        else if (upper_first(name) || builtin_type(name))
+            entry.type = type_type;
+    }
+    if (names->declared[i]) entry.modifiers |= declaration_bit;
+    entry.start = token.span.start;
+    entry.end = token.span.end;
+    return entry;
+}
+
+// The entries of one token, if it makes any; `i` moves past a second token that joined it (an attribute's name).
+static void token_entry(Found *found, const Names *names, Str source, lex::Tokens tokens, Usize *i) {
+    lex::Token token = tokens[*i];
+    lex::TokenKind kind = token.kind;
+    if (kind == lex::name) {
+        Entry entry = name_entry(names, source, tokens, *i);
+        add_lines(found, source, entry.start, entry.end, entry.type, entry.modifiers);
+    } else if (kind == lex::type_name) {
+        add_lines(found, source, token.span.start, token.span.end, type_type,
+                  names->declared[*i] ? declaration_bit : 0);
+    } else if (kind == lex::at && is_kind(tokens, *i + 1, lex::name) && tokens[*i + 1].span.start == token.span.end) {
+        add_lines(found, source, token.span.start, tokens[*i + 1].span.end, decorator_type, 0);
+        *i += 1;
+    } else if (kind == lex::integer || kind == lex::floating) {
+        add_lines(found, source, token.span.start, token.span.end, number_type, 0);
+    } else if (kind == lex::string || kind == lex::character) {
+        add_lines(found, source, token.span.start, token.span.end, string_type, 0);
+    } else if (lex::is_keyword(kind)) {
+        add_lines(found, source, token.span.start, token.span.end, keyword_type, 0);
+    }
+}
+
+// The tokens of `source`: all of them, or those before the lexer's error.
+static lex::Tokens tokens_of(Str source, Bool today) {
+    lex::Lexed lexed = today ? lex::tokenize(source) : lex::tokenize_new(source);
+    if (lexed == .ok) return lexed.ok;
+    Str before = source[0:lexed.error.span.start];
+    lex::Lexed again = today ? lex::tokenize(before) : lex::tokenize_new(before);
+    if (again == .ok) return again.ok;
+    return {};
+}
+
+static Found collect(Str path, Str source) {
+    Bool today = compile::starts_with_module(source);
+    lex::Tokens tokens = tokens_of(source, today);
+    parser::Parsed parsed = today ? parser::parse(path, source) : parser::parse_new(path, source);
+    Names names = {.whole = {.start = 0, .end = (U32)countof(source)}};
+    names.symbols = ast::symbols(&parsed.module, names.whole);
+    mark_declarations(&names, source, tokens);
+    Found found = {};
+    U32 previous = 0;
+    for (Usize i = 0; i < countof(tokens); i++) {
+        add_comments(&found, source, previous, tokens[i].span.start);
+        token_entry(&found, &names, source, tokens, &i);
+        previous = tokens[i].span.end;
+    }
+    return found;
+}
+
+// The text being written: `data` holds `used` characters.
+struct Text {
+    char data[:];
+    Usize used;
+};
+
+static void put_char(Text *text, char c) {
+    if (text->used == countof(text->data)) {
+        char grown[:] = mem::alloc_slice(char, text->used == 0 ? 1024 : text->used * 2);
+        for (Usize i = 0; i < text->used; i++)
+            grown[i] = text->data[i];
+        text->data = grown;
+    }
+    text->data[text->used] = c;
+    text->used += 1;
+}
+
+static void put(Text *text, Str piece) {
+    for (Usize i = 0; i < countof(piece); i++)
+        put_char(text, piece[i]);
+}
+
+static void put_number(Text *text, U64 value) {
+    char digits[20];
+    Usize count = 0;
+    do {
+        digits[count] = (char)('0' + value % 10);
+        value /= 10;
+        count += 1;
+    } while (value > 0);
+    while (count > 0) {
+        count -= 1;
+        put_char(text, digits[count]);
+    }
+}
+
+// The legend, the same order as `Type` and the modifier bits.
+export Str legend() {
+    return "{\"tokenTypes\":[\"namespace\",\"type\",\"function\",\"method\",\"parameter\",\"variable\",\"property\","
+           "\"enumMember\",\"keyword\",\"comment\",\"string\",\"number\",\"decorator\"],"
+           "\"tokenModifiers\":[\"declaration\",\"readonly\",\"defaultLibrary\"]}";
+}
+
+// The tokens that start in the bytes `from` to `to` of the text `source` of the file `path`, as the JSON of a reply's
+// `result`: five numbers per token (lines and columns since the one before, length, type, modifiers).
+export Str result(Str path, Str source, U32 from, U32 to) {
+    Found found = collect(path, source);
+    Text out = {};
+    put(&out, "{\"data\":[");
+    U64 line = 0;
+    U32 line_start = 0;
+    U32 cursor = 0;
+    U64 last_line = 0;
+    U32 last_column = 0;
+    Bool first = true;
+    for (Usize k = 0; k < found.used; k++) {
+        Entry e = found.data[k];
+        while (cursor < e.start && cursor < countof(source)) {
+            if (source[cursor] == '\n') {
+                line += 1;
+                line_start = cursor + 1;
+            }
+            cursor += 1;
+        }
+        if (e.start < from || e.start >= to) continue;
+        U32 column = e.start - line_start;
+        if (!first) put_char(&out, ',');
+        put_number(&out, line - last_line);
+        put_char(&out, ',');
+        put_number(&out, line == last_line ? column - last_column : column);
+        put_char(&out, ',');
+        put_number(&out, e.end - e.start);
+        put_char(&out, ',');
+        put_number(&out, e.type);
+        put_char(&out, ',');
+        put_number(&out, e.modifiers);
+        first = false;
+        last_line = line;
+        last_column = column;
+    }
+    put(&out, "]}");
+    return out.data[0:out.used];
+}

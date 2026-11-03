@@ -230,6 +230,13 @@ static Str hash_comments(Str source) {
             i = end > i ? end : i + 1;
             continue;
         }
+        if (source[i] == '#' && (i + 1 >= n || source[i + 1] == ' ' || source[i + 1] == '\n' || source[i + 1] == '#')) {
+            // A `#` comment written already: what is in it stays (the pass that wrote it may run again, #1956).
+            while (i < n && source[i] != '\n') {
+                i += 1;
+            }
+            continue;
+        }
         if (i + 1 < n && source[i] == '/' && source[i + 1] == '/') {
             Bool blank = i + 2 >= n || source[i + 2] == ' ' || source[i + 2] == '\n';
             Str spaced = blank ? "#" : "# ";
@@ -273,6 +280,11 @@ export Fixed fix_text(Str file, Str source) {
         Fixed fixed = apply_fixes(total.text, errors, parsed.warnings);
         if (fixed.applied == 0) break;
         total.text = fixed.text;
+        // Once the text lexes as smith's own syntax (no old form is left in it), its `//` comments are written `#`
+        // now: the next pass would otherwise read it with the old parser, which takes `pub const m: usize = 16` for
+        // an old declaration and mends it again (#1956).
+        Str hashed = hash_comments(total.text);
+        if (!mem::equal(hashed, total.text) && lex::tokenize_new(hashed) != .error) total.text = hashed;
         total.applied += fixed.applied;
         total.skipped = fixed.skipped;
     }

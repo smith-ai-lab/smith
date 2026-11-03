@@ -95,6 +95,7 @@ export typedef enum {
     floating; // next batch
     block;    // `[,]T`, `[,,]T`: `{ ptr, [count x usize] }`, `count` the dimensions, `element` the cell (#1710)
     vector;   // `vec(T, N)`: `element` is the lane type, `count` the lanes (#1630)
+    result;   // `Result(T, E)`: `{ i8 tag, T ok, E error }`, `parts` are `ok` and `error` (tag 0 ok, 1 error)
 } TyKind;
 
 export struct Ty;

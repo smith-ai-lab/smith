@@ -1,0 +1,357 @@
+// front::effects_pass: effect inference as one pass over LLVM IR (#2018, piece 1 of #1939). The IR is what the
+// front end lowers to, or what clang makes of C, C++ and Objective-C; it is read before optimization, so the result
+// does not change with `-O`. A function's set is the union of the sets of its calls, solved to a fixed point over the
+// call graph of every module added to the graph. A declaration with no body is a leaf: a function of libc or libSystem
+// takes its set from front::effects_table, an LLVM intrinsic is pure (`llvm.trap` fails), any other is `unknown`.
+// Writing a global variable (a function-local static is one in IR) is `globals`; inline assembly and a call through a
+// pointer are `unknown` (piece 3 of #1939 traces pointers).
+//
+//   let graph = effects_pass::make();            // one graph for a whole build
+//   effects_pass::add_module(&graph, ir, &cache); // for each module of the build
+//   effects_pass::solve(&graph);
+//   effects_pass::set_of(&graph, "main")          // the set, as front::effects_table's bits
+//   effects_pass::cause_of(&graph, "main", bit)   // the call that first added `bit`: callee and source line
+//
+// The summary of a function is cached by a hash of the IR the pass reads (front::effects_cache): a function whose
+// hash is the same as in the cache is not scanned again. A function with internal linkage is named
+// `<module>:<function>`, so two translation units with a `static helper` do not meet.
+module front::effects_pass;
+
+import <llvm-c/Core.h>;
+import <string.h>;
+
+import front::effects_cache;
+import front::effects_table;
+import std::arena;
+import std::format;
+import std::mem;
+
+export typedef effects_cache::Call Call;
+export typedef effects_cache::Summary Summary;
+export typedef effects_cache::Cache Cache;
+
+// Where a bit of a function's set came from: the call of `callee` (an index into the graph) at `line`; `callee` is
+// `none` for a bit the function's own body adds (a write to a global), and `line` 0 when IR has no debug location.
+export struct Cause {
+    Usize callee;
+    U32 line;
+};
+
+export constexpr Usize none = ~(Usize)0;
+
+export struct Graph {
+    Summary items[:];
+    Usize count;
+    U32 sets[:];     // the solved set of each item
+    Cause causes[:]; // bit_count entries for each item
+    Usize table[:];  // open addressing over the names: index + 1, 0 for empty
+    Usize resolved;  // items whose calls are resolved
+    Bool solved;
+};
+
+export Graph make() {
+    return (Graph){};
+}
+
+// Frees the graph (the cache keeps its own copies).
+export void release(Graph *g) {
+    for (Usize i = 0; i < g->count; i++) {
+        effects_cache::release_summary(&g->items[i]);
+    }
+    mem::free(g->items.data);
+    mem::free(g->sets.data);
+    mem::free(g->causes.data);
+    mem::free(g->table.data);
+    *g = (Graph){};
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The names of the graph
+
+static U64 name_hash(Str name) {
+    return effects_cache::hash_bytes(name, 14695981039346656037ull);
+}
+
+static Bool same_name(Str a, Str b) {
+    return mem::equal(a, b);
+}
+
+// The index of `name`, or `none`.
+export Usize find(const Graph *g, Str name) {
+    if (countof(g->table) == 0) return none;
+    Usize mask = countof(g->table) - 1;
+    Usize slot = (Usize)name_hash(name) & mask;
+    while (g->table[slot] != 0) {
+        Usize index = g->table[slot] - 1;
+        if (same_name(g->items[index].name, name)) return index;
+        slot = (slot + 1) & mask;
+    }
+    return none;
+}
+
+static void insert_slot(Graph *g, Usize index) {
+    Usize mask = countof(g->table) - 1;
+    Usize slot = (Usize)name_hash(g->items[index].name) & mask;
+    while (g->table[slot] != 0) {
+        slot = (slot + 1) & mask;
+    }
+    g->table[slot] = index + 1;
+}
+
+static void grow_table(Graph *g) {
+    Usize size = countof(g->table) == 0 ? 64 : countof(g->table) * 2;
+    mem::free(g->table.data);
+    g->table = mem::alloc_slice(Usize, size);
+    for (Usize i = 0; i < g->count; i++) {
+        insert_slot(g, i);
+    }
+}
+
+// Adds a copy of `summary` (the graph owns the copy) and returns its index. A name already in the graph is a
+// redefinition: the first stays and `none` is returned.
+static Usize append(Graph *g, const Summary *summary) {
+    if (find(g, summary->name) != none) return none;
+    if (g->count == countof(g->items)) {
+        Usize capacity = countof(g->items) == 0 ? 32 : countof(g->items) * 2;
+        g->items = mem::realloc(g->items, capacity);
+        g->sets = mem::realloc(g->sets, capacity);
+        g->causes = mem::realloc(g->causes, capacity * effects_table::bit_count);
+    }
+    if ((g->count + 1) * 2 > countof(g->table)) {
+        grow_table(g);
+    }
+    g->items[g->count] = effects_cache::copy_summary(summary);
+    g->sets[g->count] = 0;
+    for (Usize b = 0; b < effects_table::bit_count; b++) {
+        g->causes[g->count * effects_table::bit_count + b] = (Cause){.callee = none, .line = 0};
+    }
+    insert_slot(g, g->count);
+    g->count += 1;
+    g->solved = false;
+    return g->count - 1;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Reading a function of the IR
+
+static Str text_of(const char *chars, Usize length) {
+    return chars[0:length];
+}
+
+static Str value_name(c::LLVMValueRef value) {
+    Usize length = 0;
+    const char *chars = c::LLVMGetValueName2(value, &length);
+    return text_of(chars, length);
+}
+
+static Bool is_local_linkage(c::LLVMValueRef function) {
+    c::LLVMLinkage linkage = c::LLVMGetLinkage(function);
+    return linkage == c::LLVMInternalLinkage || linkage == c::LLVMPrivateLinkage;
+}
+
+// The name a function has in the graph: its own, or `<module>:<name>` with internal linkage. In the allocator in
+// force; free it with `mem::free(name.data)`.
+static Str symbol_of(c::LLVMValueRef function) {
+    Str name = value_name(function);
+    if (!is_local_linkage(function)) return effects_cache::dup(name);
+    Usize length = 0;
+    const char *module = c::LLVMGetModuleIdentifier(c::LLVMGetGlobalParent(function), &length);
+    return effects_cache::as_str(format::push(text_of(module, length), ":", name));
+}
+
+// The global variable a pointer is made from, looking through GEPs and casts (a function-local static is a global
+// variable in IR), or null.
+static c::LLVMValueRef base_global(c::LLVMValueRef pointer) {
+    c::LLVMValueRef at = pointer;
+    for (Usize steps = 0; steps < 16 && at != nullptr; steps++) {
+        if (c::LLVMIsAGlobalVariable(at) != nullptr) return at;
+        Bool through = c::LLVMIsAGetElementPtrInst(at) != nullptr || c::LLVMIsABitCastInst(at) != nullptr ||
+                       c::LLVMIsAAddrSpaceCastInst(at) != nullptr;
+        if (c::LLVMIsAConstantExpr(at) != nullptr) {
+            c::LLVMOpcode op = c::LLVMGetConstOpcode(at);
+            through = op == c::LLVMGetElementPtr || op == c::LLVMBitCast || op == c::LLVMAddrSpaceCast;
+        }
+        if (!through) return nullptr;
+        at = c::LLVMGetOperand(at, 0);
+    }
+    return nullptr;
+}
+
+static Bool writes_global(c::LLVMValueRef instruction) {
+    c::LLVMOpcode op = c::LLVMGetInstructionOpcode(instruction);
+    c::LLVMValueRef pointer = nullptr;
+    if (op == c::LLVMStore)
+        pointer = c::LLVMGetOperand(instruction, 1);
+    else if (op == c::LLVMAtomicRMW || op == c::LLVMAtomicCmpXchg)
+        pointer = c::LLVMGetOperand(instruction, 0);
+    else
+        return false;
+    c::LLVMValueRef global = base_global(pointer);
+    return global != nullptr && c::LLVMIsGlobalConstant(global) == 0;
+}
+
+static U64 fold_line(U64 hash, U32 line) {
+    char bytes[4] = {(char)(line & 255), (char)((line >> 8) & 255), (char)((line >> 16) & 255), (char)(line >> 24)};
+    return effects_cache::hash_bytes(bytes[0:4], hash);
+}
+
+// The hash of a function's IR as the pass reads it: for every instruction its opcode and source line, for a call the
+// callee's name, for a write the global's name. Printing the function would hash more than the summary depends on, and
+// costs most of the pass (a debug location prints as a number that stays the same when only the line moves).
+static U64 hash_of(c::LLVMValueRef function) {
+    U64 hash = 14695981039346656037ull;
+    for (c::LLVMBasicBlockRef b = c::LLVMGetFirstBasicBlock(function); b != nullptr; b = c::LLVMGetNextBasicBlock(b)) {
+        for (c::LLVMValueRef i = c::LLVMGetFirstInstruction(b); i != nullptr; i = c::LLVMGetNextInstruction(i)) {
+            hash = fold_line(hash, (U32)c::LLVMGetInstructionOpcode(i));
+            hash = fold_line(hash, c::LLVMGetDebugLocLine(i));
+            c::LLVMOpcode op = c::LLVMGetInstructionOpcode(i);
+            if (op == c::LLVMCall || op == c::LLVMInvoke || op == c::LLVMCallBr) {
+                c::LLVMValueRef callee = c::LLVMGetCalledValue(i);
+                if (callee != nullptr && c::LLVMIsAFunction(callee) != nullptr) {
+                    hash = effects_cache::hash_bytes(value_name(callee), hash);
+                }
+            } else if (writes_global(i)) {
+                hash = fold_line(hash, 1);
+            }
+        }
+    }
+    return hash;
+}
+
+// The call an instruction makes: true and the callee's graph name when it is a direct call of a function; `*own`
+// gets `unknown` for inline assembly and a call through a pointer.
+static Bool direct_callee(c::LLVMValueRef instruction, Str *name, U32 *own) {
+    c::LLVMValueRef callee = c::LLVMGetCalledValue(instruction);
+    if (callee != nullptr && c::LLVMIsAFunction(callee) != nullptr) {
+        *name = symbol_of(callee);
+        return true;
+    }
+    *own |= effects_table::unknown;
+    return false;
+}
+
+static void add_call(Summary *summary, Str name, U32 line) {
+    effects_cache::push_call(summary, (Call){.callee = name, .line = line});
+}
+
+// Scans the body of `function`: the bits it adds itself and the calls it makes.
+static void scan(c::LLVMValueRef function, Summary *summary) {
+    for (c::LLVMBasicBlockRef b = c::LLVMGetFirstBasicBlock(function); b != nullptr; b = c::LLVMGetNextBasicBlock(b)) {
+        for (c::LLVMValueRef i = c::LLVMGetFirstInstruction(b); i != nullptr; i = c::LLVMGetNextInstruction(i)) {
+            c::LLVMOpcode op = c::LLVMGetInstructionOpcode(i);
+            if (op == c::LLVMCall || op == c::LLVMInvoke || op == c::LLVMCallBr) {
+                Str name = "";
+                if (direct_callee(i, &name, &summary->own)) {
+                    add_call(summary, name, c::LLVMGetDebugLocLine(i));
+                    effects_cache::free_text(name);
+                }
+            } else if (writes_global(i)) {
+                summary->own |= effects_table::globals;
+            }
+        }
+    }
+}
+
+// Adds every function the module defines to the graph, from the cache when a function's IR hash is the one the cache
+// has (no scan) and from a scan otherwise, which is then put in the cache. `cache` may be null.
+export void add_module(Graph *g, c::LLVMModuleRef module, Cache *cache) {
+    for (c::LLVMValueRef f = c::LLVMGetFirstFunction(module); f != nullptr; f = c::LLVMGetNextFunction(f)) {
+        if (c::LLVMIsDeclaration(f) != 0) continue;
+        Summary summary = {.name = symbol_of(f), .hash = hash_of(f), .defined = true};
+        Bool hit = cache != nullptr && effects_cache::lookup(cache, &summary);
+        if (!hit) {
+            scan(f, &summary);
+            if (cache != nullptr) effects_cache::store(cache, &summary);
+        }
+        append(g, &summary);
+        effects_cache::release_summary(&summary);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Leaves and the fixed point
+
+// The set of a name nothing in the graph defines: an LLVM intrinsic is pure but for the traps, the C library by the
+// table, and anything else is `unknown`.
+static U32 leaf_set(Str name) {
+    U32 set = 0;
+    Str intrinsic = "llvm.";
+    if (countof(name) >= countof(intrinsic) && mem::equal(name[0:countof(intrinsic)], intrinsic)) {
+        Str rest = name[countof(intrinsic):countof(name)];
+        Str trap = "trap";
+        Str debugtrap = "debugtrap";
+        if (mem::equal(rest, trap) || mem::equal(rest, debugtrap)) return effects_table::fails;
+        return 0;
+    }
+    if (effects_table::leaf(name, &set)) return set;
+    return effects_table::unknown;
+}
+
+// Gives each name that is called and not defined a leaf in the graph, and each call its target.
+static void resolve(Graph *g) {
+    for (Usize i = 0; i < g->count; i++) {
+        for (Usize k = 0; k < effects_cache::call_count(&g->items[i]); k++) {
+            Str callee = effects_cache::call_at(&g->items[i], k).callee;
+            if (find(g, callee) != none) continue;
+            Summary leaf = {.name = callee, .own = leaf_set(callee)};
+            append(g, &leaf);
+        }
+    }
+    g->resolved = g->count;
+}
+
+// One bit at a time, so a cause is recorded for each.
+static Bool take(Graph *g, Usize caller, Usize callee, U32 line) {
+    U32 added = g->sets[callee] & ~g->sets[caller];
+    if (added == 0) return false;
+    for (Usize b = 0; b < effects_table::bit_count; b++) {
+        if ((added & (1u << b)) != 0)
+            g->causes[caller * effects_table::bit_count + b] = (Cause){.callee = callee, .line = line};
+    }
+    g->sets[caller] |= added;
+    return true;
+}
+
+// Solves the sets of every function of the graph: each starts with what its body adds itself and takes the sets of
+// its calls until nothing changes. The sets only grow and have 13 bits, so it ends.
+export void solve(Graph *g) {
+    resolve(g);
+    for (Usize i = 0; i < g->count; i++) {
+        g->sets[i] = g->items[i].own;
+        for (Usize b = 0; b < effects_table::bit_count; b++) {
+            if ((g->sets[i] & (1u << b)) != 0)
+                g->causes[i * effects_table::bit_count + b] = (Cause){.callee = none, .line = 0};
+        }
+    }
+    Bool changed = true;
+    while (changed) {
+        changed = false;
+        for (Usize i = 0; i < g->count; i++) {
+            for (Usize k = 0; k < effects_cache::call_count(&g->items[i]); k++) {
+                Call call = effects_cache::call_at(&g->items[i], k);
+                if (take(g, i, find(g, call.callee), call.line)) changed = true;
+            }
+        }
+    }
+    g->solved = true;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Reading the result
+
+// The solved set of a function by its name (`<module>:<name>` with internal linkage), or `unknown` when the graph has
+// no such name.
+export U32 set_of(const Graph *g, Str name) {
+    Usize index = find(g, name);
+    if (index == none) return effects_table::unknown;
+    return g->sets[index];
+}
+
+export Str name_of(const Graph *g, Usize index) {
+    return g->items[index].name;
+}
+
+// The call that first added bit `bit` (0 to 12) to the function at `index`.
+export Cause cause_of(const Graph *g, Usize index, Usize bit) {
+    return g->causes[index * effects_table::bit_count + bit];
+}
