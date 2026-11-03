@@ -2154,6 +2154,18 @@ I32 mine(I32 argc, char *argv[]) {
     I32 xs[1] = {};
     return first(xs) + argc;
 }
+==> error-attribute-before-export/src/std/order.smith <==
+module std::order;
+
+// an attribute before `export` used to drop the export without a word
+[[nodiscard]] export int first() {
+    return 1;
+}
+
+// after `export` is the place
+export [[nodiscard]] int second() {
+    return 2;
+}
 ==> error-c-name-function/src/uses/math.smith <==
 module uses::math;
 import <math.h>;
