@@ -1849,7 +1849,10 @@ static const ast::Expr *method_call(const ast::Expr *e, const types::Symbol *fn,
         return e;
     }
     ast::ExprRef given[:] = e->kind.call.args;
-    ast::ExprRef all[:] = mem::alloc_slice(ast::ExprRef, countof(given) + 1);
+    // Not mem::alloc_slice: its instance for a pointer element draws the lint of a multilevel conversion.
+    ast::ExprRef *block =
+        (ast::ExprRef *)mem::alloc_array_raw(sizeof(ast::ExprRef), countof(given) + 1, alignof(ast::ExprRef));
+    ast::ExprRef all[:] = block[0:countof(given) + 1];
     ast::Expr *self = (ast::Expr *)callee->kind.member.base;
     types::TypeRef takes = fn->type->slots[0].type;
     if (takes->kind == .pointer && base_type->kind != .pointer) {
