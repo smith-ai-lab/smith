@@ -308,6 +308,52 @@ static Bool call_target(state::Emitter *e, const ast::Expr *x, const ast::Decl *
     return imported_callee(e, callee, found, symbol);
 }
 
+// The instance of a generic function that `x` calls, or null.
+// The name of an instance's function: `pick.i32`.
+static Str instance_key(const types::Instance *instance) {
+    if (instance->decl->kind != .function) return state::msg(format::push(""));
+    return state::msg(format::push(instance->decl->kind.function.name));
+}
+
+static const types::Instance *instance_call(state::Emitter *e, const ast::Expr *x) {
+    if (e->options.checked == nullptr) return nullptr;
+    Usize at = types::instance_called(e->options.checked, x);
+    if (at >= e->options.checked->instance_count) return nullptr;
+    return &e->options.checked->instances[at];
+}
+
+// The arguments of a call of an instance: those of the runtime parameters, the type and constant arguments left out.
+static ArgumentList runtime_arguments(const types::Instance *instance, ast::ExprRef args[:]) {
+    ArgumentList kept = {};
+    if (instance->template->kind != .function) return args;
+    ast::Param params[:] = instance->template->kind.function.params;
+    kept = mem::realloc(kept, countof(args));
+    Usize count = 0;
+    for (Usize i = 0; i < countof(args) && i < countof(params); i++) {
+        if (types::is_compile_time(&params[i])) {
+            continue;
+        }
+        kept[count] = args[i];
+        count += 1;
+    }
+    return kept[0:count];
+}
+
+// What a call names when it calls an instance of a generic function: the instance, its key and the runtime arguments;
+// or, for any other call, the imported function `call_target` finds (and null).
+static const types::Instance *callee_of(state::Emitter *e, const ast::Expr *written, ast::ExprRef args[:],
+                                        ArgumentList *runtime, const ast::Decl **imported, Str *key, Bool *found) {
+    const types::Instance *instance = instance_call(e, written);
+    *found = false;
+    if (instance == nullptr) {
+        *found = call_target(e, written, imported, key);
+        return nullptr;
+    }
+    *runtime = runtime_arguments(instance, args);
+    *key = instance_key(instance);
+    return instance;
+}
+
 // The symbol of a prototype of this module: its `@c_name`, else the module's path and its name.
 static Str prototype_symbol(state::Emitter *e, const ast::Decl *d, Str name) {
     Str own = state::c_name_of(d);
@@ -363,6 +409,12 @@ static const ast::Decl *find_decl(state::Emitter *e, Str key, const ast::Decl *i
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
         if (d->kind == .function && state::same_text(d->kind.function.name, key)) return d;
+    }
+    if (e->options.checked != nullptr) {
+        for (Usize i = 0; i < e->options.checked->instance_count; i++) {
+            const ast::Decl *d = e->options.checked->instances[i].decl;
+            if (d->kind == .function && state::same_text(d->kind.function.name, key)) return d;
+        }
     }
     return nullptr;
 }
@@ -630,15 +682,16 @@ static state::Status call_finish(state::Emitter *e, const state::Work *w) {
     const ast::Expr *callee = x->kind.call.callee;
     const ast::Decl *imported = nullptr;
     Str key = "";
-    Bool is_imported = call_target(e, written, &imported, &key);
-    if (!is_imported && callee->kind != .name) {
+    Bool is_imported = false;
+    const types::Instance *instance = callee_of(e, written, written_args, &written_args, &imported, &key, &is_imported);
+    if (!is_imported && instance == nullptr && callee->kind != .name) {
         return state::fail("not a name", w->span);
     }
     Usize count = (Usize)w->number;
     state::Value values[64];
     for (Usize i = count; i > 0; i--)
         values[i - 1] = state::pop_value(e);
-    if (!is_imported && callee->kind == .name) key = join(callee->kind.name.path);
+    if (!is_imported && instance == nullptr && callee->kind == .name) key = join(callee->kind.name.path);
     ast::ExprRef args[:] = filled_arguments(e, key, written_args, imported);
     SignatureResult found = find(e, key, callee->span, imported);
     if (found == .error) {
@@ -727,11 +780,11 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
             return lambdas::call_value(e, x, local.ty);
         if (streams::is_call(x)) return streams::call(e, x);
     }
-    is_imported = call_target(e, written, &imported, &key);
-    if (!is_imported && callee->kind != .name) {
+    const types::Instance *instance = callee_of(e, written, written_args, &written_args, &imported, &key, &is_imported);
+    if (!is_imported && instance == nullptr && callee->kind != .name) {
         return state::not_emitted("call of something that is not a name", x->span);
     }
-    if (!is_imported && callee->kind == .name) key = join(callee->kind.name.path);
+    if (!is_imported && instance == nullptr && callee->kind == .name) key = join(callee->kind.name.path);
     SignatureResult found = find(e, key, callee->span, imported);
     if (found == .error) {
         state::free_text(key);

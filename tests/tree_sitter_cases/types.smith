@@ -1,28 +1,20 @@
-module std::arena;
+# Types as ordinary arguments, compile-time `if` on a type, and the sized types.
+import std.arena
 
-export T *push(Arena *a, Type T) {
-    return (T *)push_bytes(a, sizeof(T), alignof(T));
-}
+pub fn push(a: *arena.Arena, T: type) -> *T:
+    push_bytes(a, sizeof(T), alignof(T)).cast(*T)
 
-export void write_value(Writer *w, Type T, T value) {
-    if constexpr (T == F32 || T == F64) {
-        write_float(w, (F64)value);
-    } else if constexpr (sizeof(T) == 8) {
-        write_u64(w, (U64)value);
-    } else {
-        write_u32(w, (U32)value);
-    }
-}
+pub fn write_value(w: *Writer, T: type, value: T):
+    if T == f32 || T == f64:
+        write_float(w, value.to(f64))
+    else if sizeof(T) == 8:
+        write_u64(w, value.to(u64))
+    else:
+        write_u32(w, value.to(u32))
 
-void use(Arena *a) {
-    Point *p = push(a, Point);
-    F32 *xs = push_array(a, F32, 1024);
-    I16 small = 3;
-    Isize signed_size = -1;
-    F16 half = 1;
-    (void)p;
-    (void)xs;
-    (void)small;
-    (void)signed_size;
-    (void)half;
-}
+fn use(a: *arena.Arena):
+    let p = push(a, Point)
+    let xs = push_array(a, f32, 1024)
+    let small: i16 = 3
+    let signed_size: isize = -1
+    let half: f16 = 1
