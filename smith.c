@@ -1163,6 +1163,9 @@ static constexpr unsigned char smith_env_source[] = {
 static constexpr unsigned char smith_math_source[] = {
 #embed "lib/std/math.smith"
 };
+static constexpr unsigned char smith_math_trig_source[] = {
+#embed "lib/std/math_trig.smith"
+};
 static constexpr unsigned char smith_mem_source[] = {
 #embed "lib/std/mem.smith"
 };
@@ -1265,6 +1268,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(inflate, true),
     SMITH_LIBRARY(json, false),
     SMITH_LIBRARY(math, true),
+    SMITH_LIBRARY(math_trig, true),
     SMITH_LIBRARY(mem, true),
     SMITH_LIBRARY(process, true),
     SMITH_LIBRARY(net, true),
@@ -1510,7 +1514,7 @@ static SmithBuildFile smith_build_file(void) {
 // compiles build.c itself (an external SMITH_CLANG knows no .smith): the runtime's package.c and the executor use them
 // through their headers. random declares -ffp-contract=off.
 static const char *const smith_build_program_libraries[] = {"arena", "contract", "env", "files", "inflate",
-                                                            "math",  "mem",      "net", "random"};
+                                                            "math",  "math_trig", "mem",      "net", "random"};
 
 // The compiles are `-MD` and name the debug info's folder `.`, so the step cache serves them to every project whose
 // build file and libraries are the same (executor.md, "The step cache"): -MMD is refused by it, and a `-g` object
