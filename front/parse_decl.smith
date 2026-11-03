@@ -2120,6 +2120,7 @@ static ast::Decl *parse_import(parse::Parser *p, const Prefixes *pre, U32 start)
     } else {
         end_import(p);
     }
+    parse::bind_module(p, countof(alias) > 0 ? alias : last);
     ast::DeclKind kind = {.import_module = {.path = path, .alias = alias}};
     return make(p, start, pre, kind);
 }
