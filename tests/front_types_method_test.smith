@@ -107,7 +107,7 @@ static void fails(Str source, Str first, Str second) {
 }
 
 static Str head() {
-    return "list := import lib.list\n\n";
+    return "import lib.list\n\n";
 }
 
 export void test_front_types_method_in_the_type_module_by_pointer() {

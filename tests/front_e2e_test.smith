@@ -214,7 +214,7 @@ export void test_front_e2e_a_call_through_a_module_value_links_and_runs() {
     Str library = as_str(format::push(folder, "/lib/mathlib.smith"));
     write_text(library, "pub fn scale(x: f64, k: f64) -> f64 {\n    x * k\n}\n");
     Str app = as_str(format::push(folder, "/src/app.smith"));
-    write_text(app, "m := import mathlib\nmul := m.scale\n\n"
+    write_text(app, "import mathlib as m\nmul := m.scale\n\n"
                     "pub fn check() -> i32 {\n    a := m.scale(2.0, 3.0)\n    b := mul(k = 3.0, x = 2.0)\n"
                     "    if a != 6.0 {\n        return 1\n    }\n    if b != a {\n        return 2\n    }\n    0\n}\n");
     roots::Roots folders = {.source = as_str(format::push(folder, "/src")),

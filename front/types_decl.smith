@@ -9,7 +9,7 @@
 //                                  every lambda body. Errors are in `Checked.errors`, each at a span and each naming
 //                                  what was expected and what to write.
 //   check_module_with(module, target, load)
-//                                  check_module that also reads the modules the file imports (`m := import a.b`),
+//                                  check_module that also reads the modules the file imports (`import a.b as m`),
 //                                  `load` giving the tree of a dotted path (#1677): `m.name` is then a public
 //                                  declaration of that module, and `sin := m.sin` a name for it. Without `load`,
 //                                  an import binds a name and reads nothing.
@@ -952,7 +952,7 @@ export types::Checked check_module_headers(const ast::Module *m, types::Target t
     return mac;
 }
 
-// Checks a whole module, reading the modules it imports with `load` (#1677): `m := import a.b` makes `m.name` the
+// Checks a whole module, reading the modules it imports with `load` (#1677): `import a.b as m` makes `m.name` the
 // public declaration `name` of `a.b`.
 export types::Checked check_module_with(const ast::Module *m, types::Target target, types::ModuleLoader load) {
     return check_module_headers(m, target, load, nullptr);

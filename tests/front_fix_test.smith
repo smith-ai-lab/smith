@@ -234,7 +234,7 @@ export void test_define_and_include_lines_get_one_fix() {
     // The header binding is the spelling of #1428; the new parser reads it once #1678 lands, so only the text is
     // checked.
     fix::Fixed fixed = fix::fix_text("t.smith", "#include <sys/stat.h>\n#define LIMIT 4\nconst X := LIMIT\n");
-    check_text(fixed.text, "stat := import c <sys/stat.h>\nconst LIMIT := 4\nconst X := LIMIT\n");
+    check_text(fixed.text, "import c <sys/stat.h>\nconst LIMIT := 4\nconst X := LIMIT\n");
     check_count(fixed.applied, 1);
 }
 

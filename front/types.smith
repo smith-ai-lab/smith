@@ -1732,7 +1732,7 @@ static void declare_member(Checked *r, const ast::Decl *d) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Modules as values (#1677): `m := import a.b` binds `m`, and `m.name` is a public declaration of `a.b`
+// Modules as values (#1677): `import a.b as m` binds `m`, and `m.name` is a public declaration of `a.b`
 
 // Whether other modules may name the symbol: `pub` or `export` on its declaration.
 export Bool is_public(const Symbol *s) {
@@ -1749,6 +1749,7 @@ static Str joined(ast::Path path, Str separator) {
 // The prefix of every name of the module a module symbol stands for: `std::math::`. The declarations of a module
 // are in the table once, under this prefix, however many names it is imported by.
 static Str prefix_of_import(const ast::Decl *import) {
+    if (import->kind == .import_from) return msg(format::push(joined(import->kind.import_from.path, "::"), "::"));
     if (import->kind != .import_module) return "";
     return msg(format::push(joined(import->kind.import_module.path, "::"), "::"));
 }
@@ -1953,7 +1954,7 @@ static Bool has_prefix(const Pending list[:], Usize count, Str prefix) {
     return false;
 }
 
-// Declares the module symbol of every `x := import a.b` of `m`, and, with a loader, reads each module they name
+// Declares the module symbol of every `import a.b as x` of `m`, and, with a loader, reads each module they name
 // (and the modules those import) into `list` once, a cycle ending where it started.
 static Usize collect_imports(Checked *r, const ast::Module *m, Pending list[:]) {
     Usize count = 0;
@@ -1963,16 +1964,25 @@ static Usize collect_imports(Checked *r, const ast::Module *m, Pending list[:]) 
     while (at != nullptr) {
         for (Usize i = 0; i < countof(at->decls); i++) {
             const ast::Decl *d = at->decls[i];
-            if (d->kind != .import_module) continue;
-            ast::Path path = d->kind.import_module.path;
-            Str alias = d->kind.import_module.alias;
-            if (countof(alias) == 0) alias = path.segments[countof(path.segments) - 1].text;
-            Symbol symbol = {.name = msg(format::push(scope, alias)),
-                             .kind = .module_name,
-                             .type = r->table.invalid,
-                             .decl = d,
-                             .exported = d->exported || d->is_pub};
-            declare_in_module(r, symbol, d->span);
+            ast::Path path = {};
+            if (d->kind == .import_from) {
+                path = d->kind.import_from.path;
+            } else if (d->kind == .import_module) {
+                path = d->kind.import_module.path;
+            } else {
+                continue;
+            }
+            if (countof(path.segments) == 0) continue;
+            if (d->kind == .import_module) {
+                Str alias = d->kind.import_module.alias;
+                if (countof(alias) == 0) alias = path.segments[countof(path.segments) - 1].text;
+                Symbol symbol = {.name = msg(format::push(scope, alias)),
+                                 .kind = .module_name,
+                                 .type = r->table.invalid,
+                                 .decl = d,
+                                 .exported = d->exported || d->is_pub};
+                declare_in_module(r, symbol, d->span);
+            }
             if (r->options.load == nullptr) continue;
             Str prefix = prefix_of_import(d);
             if (has_prefix(list, count, prefix)) continue;
@@ -2050,10 +2060,20 @@ static void declare_headers(Checked *r, const ast::Module *m) {
     r->in_header = true;
     for (Usize k = 0; k < countof(m->decls); k++) {
         const ast::Decl *import = m->decls[k];
-        if (import->kind != .import_c) continue;
-        const ast::Module *header = r->options.headers(import->kind.import_c.header, import->kind.import_c.angled);
+        Str name = "";
+        Bool angled = false;
+        if (import->kind == .import_c) {
+            name = import->kind.import_c.header;
+            angled = import->kind.import_c.angled;
+        } else if (import->kind == .import_from && countof(import->kind.import_from.header) > 0) {
+            name = import->kind.import_from.header;
+            angled = import->kind.import_from.angled;
+        } else {
+            continue;
+        }
+        const ast::Module *header = r->options.headers(name, angled);
         if (header == nullptr) {
-            failf(r, import->span, "cannot read the C header `", import->kind.import_c.header,
+            failf(r, import->span, "cannot read the C header `", name,
                   "`; check that it exists and that its flags are right");
             continue;
         }
@@ -2081,6 +2101,40 @@ static void declare_headers(Checked *r, const ast::Module *m) {
     r->in_header = false;
 }
 
+// Binds what each `from a.b import x, y` of `m` names (#1809): `x` is the declaration `x` of `a.b` (or `c::x` of a C
+// header), under the bare name, as if the module wrote `x := b.x`.
+static void declare_from(Checked *r, const ast::Decl *d) {
+    if (d->kind == .import_from) {
+        ast::Identifier names[:] = d->kind.import_from.names;
+        ast::Path path = d->kind.import_from.path;
+        Bool header = countof(d->kind.import_from.header) > 0;
+        Str prefix = "c::";
+        Str where = d->kind.import_from.header;
+        if (!header) {
+            prefix = prefix_of_import(d);
+            where = joined(path, ".");
+        }
+        Bool is_pub = d->exported || d->is_pub;
+        for (Usize i = 0; i < countof(names); i++) {
+            ast::Identifier name = names[i];
+            const Symbol *target = lookup(&r->scopes, msg(format::push(prefix, name.text)));
+            if (target == nullptr || (!header && !is_public(target))) {
+                failf(r, name.span, "`", where, "` has no public `", name.text, "`");
+                continue;
+            }
+            Symbol alias = *target;
+            alias.name = name.text;
+            alias.exported = is_pub;
+            declare_in_module(r, alias, name.span);
+        }
+    }
+}
+
+static void declare_from_names(Checked *r, const ast::Module *m) {
+    for (Usize k = 0; k < countof(m->decls); k++)
+        declare_from(r, m->decls[k]);
+}
+
 // Declares the names of `m`, resolves the types of its declarations and, when `o.bodies` is set, checks each body.
 // Errors are in the result, never an abort.
 export Checked check(const ast::Module *m, Options o) {
@@ -2092,6 +2146,7 @@ export Checked check(const ast::Module *m, Options o) {
     Pending pending[:] = mem::alloc_slice(Pending, o.load == nullptr ? 0 : max_modules);
     declare_headers(&r, m);
     declare_imported(&r, pending, collect_imports(&r, m, pending));
+    declare_from_names(&r, m);
     for (Usize i = 0; i < countof(m->decls); i++)
         declare_nominal(&r, m->decls[i]);
     for (Usize i = 0; i < countof(m->decls); i++) {

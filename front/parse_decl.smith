@@ -1765,69 +1765,256 @@ static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start
 // Whether the next token is the name `as`, a keyword only right after an import path.
 static Bool at_as(parse::Parser *p) {
     Str keyword = "as";
-    return parse::at(p, lex::name) && slice::equal(parse::text(p, parse::peek(p)), keyword);
+    return parse::at(p, lex::kw_as) ||
+           (parse::at(p, lex::name) && slice::equal(parse::text(p, parse::peek(p)), keyword));
 }
 
-// The `;` after a C header: an alias there is an error naming the form.
-static void end_header_import(parse::Parser *p) {
+// Whether `c` can be part of a name.
+static Bool is_name_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+// The name a header binds: its file name without the extension (`sys/stat.h` binds `stat`, `<vector>` binds `vector`);
+// empty when that is not a valid name (`x-y.h`), where `as name` is required.
+static Str header_default_name(Str header) {
+    Usize begin = 0;
+    for (Usize i = 0; i < countof(header); i++)
+        if (header[i] == '/') begin = i + 1;
+    Usize end = countof(header);
+    for (Usize i = begin; i < countof(header); i++)
+        if (header[i] == '.') end = i;
+    Str name = header[begin:end];
+    if (countof(name) == 0 || (name[0] >= '0' && name[0] <= '9')) return "";
+    for (Usize i = 0; i < countof(name); i++)
+        if (!is_name_char(name[i])) return "";
+    return name;
+}
+
+// `c`, `cpp` or `objc` followed by a header: `import c <stdio.h>`.
+static Bool at_header_language(parse::Parser *p) {
+    if (!parse::at(p, lex::name)) return false;
+    Str text = parse::text(p, parse::peek(p));
+    Bool known = same_text(text, "c") || same_text(text, "cpp") || same_text(text, "objc");
+    lex::TokenKind next = parse::peek_at(p, 1).kind;
+    return known && (next == lex::less || next == lex::string);
+}
+
+// `<stdio.h>` or `"x.h"`: reads the header and whether it was angled.
+static Bool parse_header_spec(parse::Parser *p, Str *header, Bool *angled) {
+    if (parse::at(p, lex::string)) {
+        *header = string_value(p, parse::advance(p));
+        *angled = false;
+        return true;
+    }
+    if (!parse::at(p, lex::less)) {
+        parse::error(p, parse::peek(p).span, "a header in `<...>` or quotes");
+        return false;
+    }
+    U32 begin = parse::advance(p).span.end;
+    while (!parse::at(p, lex::greater) && !parse::at(p, lex::semicolon) && !parse::at(p, lex::end_of_file) &&
+           !line_ended(p))
+        parse::advance(p);
+    *header = source_between(p, begin, parse::peek(p).span.start);
+    *angled = true;
+    parse::expect(p, lex::greater, "`>`");
+    return true;
+}
+
+// The spelling of a header as written: `<stdio.h>` or `"x.h"`.
+static typeof(char[:]) header_spelling(Str header, Bool angled) {
+    if (angled) return format::push("<", header, ">");
+    return format::push("\"", header, "\"");
+}
+
+static void fix_import(parse::Parser *p, U32 import_start, lex::Token semi, ast::Path path, ast::Text alias);
+
+// The old `import <stdio.h>;` and `import "x.h";`: an error-free read that records the new spelling as a warning.
+static ast::Decl *parse_old_header_import(parse::Parser *p, const Prefixes *pre, U32 start, U32 import_start) {
+    Str header = "";
+    Bool angled = false;
+    if (!parse_header_spec(p, &header, &angled)) {
+        recover_line(p);
+        return nullptr;
+    }
     if (at_as(p)) {
         parse::error(p, parse::peek(p).span, "a C header has no alias: write `import path as name;` for a module");
         parse::advance(p);
         if (parse::at(p, lex::name)) parse::advance(p);
     }
-    parse::expect(p, lex::semicolon, "`;` after the import");
+    lex::Token semi = parse::expect(p, lex::semicolon, "`;` after the import");
+    if (semi.kind == lex::semicolon) {
+        Str name = header_default_name(header);
+        Str suffix = "";
+        if (countof(name) == 0) suffix = " as name";
+        char text[:] = format::push("import c ", header_spelling(header, angled), suffix);
+        char message[:] = format::push("a header import is a statement: write `", text, "`");
+        parse::Edits edits = {};
+        if (countof(name) > 0) edits = with_edit(edits, edit(import_start, semi.span.end, text));
+        warn(p, import_start, semi.span.end, message, edits);
+    }
+    ast::DeclKind kind = {.import_c = {.header = header, .angled = angled}};
+    return make(p, start, pre, kind);
 }
 
-static void fix_import(parse::Parser *p, U32 import_start, lex::Token semi, ast::Path path, ast::Text alias);
+// The end of an import line: a redundant `as` repeats the name the import binds anyway.
+static void end_import(parse::Parser *p) {
+    end_line(p, "import");
+}
 
-// `import std::arena;`, `import std::arena as a;`, `import <stdio.h>;`, `import "x.h";`
+// `as name` after a module or header; the name, or empty. `end` is where the import ended, for the fix-it.
+static ast::Text parse_alias(parse::Parser *p, U32 before_as, Str default_name) {
+    ast::Text alias = {};
+    if (!at_as(p)) return alias;
+    parse::advance(p);
+    lex::Token name = parse::expect(p, lex::name, "a name after `as`: write `import path as name;`");
+    if (name.kind != lex::name) return alias;
+    alias = parse::text(p, name);
+    if (countof(default_name) > 0 && slice::equal(alias, default_name)) {
+        parse::Edits edits = {};
+        edits = with_edit(edits, edit(before_as, name.span.end, ""));
+        char message[:] = format::push("`as ", alias, "` repeats the name the import binds: remove it");
+        warn(p, before_as, name.span.end, message, edits);
+    }
+    return alias;
+}
+
+// `import c <stdio.h>`, `import c <sys/stat.h> as st`, `import cpp <vector>`, `import objc <Foundation/Foundation.h>`.
+static ast::Decl *parse_header_import(parse::Parser *p, const Prefixes *pre, U32 start) {
+    ast::Text language = parse::text(p, parse::advance(p));
+    Str header = "";
+    Bool angled = false;
+    if (!parse_header_spec(p, &header, &angled)) {
+        recover_line(p);
+        return nullptr;
+    }
+    Str name = header_default_name(header);
+    U32 line_end = parse::peek(p).span.start;
+    ast::Text alias = parse_alias(p, line_end > 0 ? line_end - 1 : 0, name);
+    if (countof(alias) == 0 && countof(name) == 0) {
+        char message[:] = format::push("`", header, "` is not a name: write `import ", language, " ",
+                                       header_spelling(header, angled), " as name`");
+        parse::error(p, (ast::Span){.start = start, .end = line_end}, message);
+    }
+    end_import(p);
+    ast::DeclKind kind = {.import_c = {.header = header, .angled = angled, .language = language, .alias = alias}};
+    return make(p, start, pre, kind);
+}
+
+// A module path of names joined by `.`; `old` is set when a `::` joined two of them (the old `import std::math;`).
+static ast::Path parse_import_path(parse::Parser *p, Bool *old) {
+    ast::Path path = {};
+    U32 start = parse::peek(p).span.start;
+    while (!parse::at(p, lex::end_of_file)) {
+        lex::Token token = parse::peek(p);
+        if (!is_name(token.kind)) {
+            parse::expect(p, lex::name, "a module name after `import`");
+            break;
+        }
+        parse::advance(p);
+        path.segments = mem::realloc(path.segments, countof(path.segments) + 1);
+        path.segments[countof(path.segments) - 1] =
+            (ast::Identifier){.text = parse::text(p, token), .span = token.span};
+        if (parse::accept(p, lex::colon_colon)) {
+            *old = true;
+            continue;
+        }
+        if (!parse::accept(p, lex::dot)) break;
+    }
+    path.span = parse::span_from(p, start);
+    return path;
+}
+
+// `import std.arena`, `import std.arena as a`, `import c <stdio.h>`, and the old `import std::arena;`,
+// `import <stdio.h>;`, `import "x.h";`. An import is a statement of the top level, one per line.
 static ast::Decl *parse_import(parse::Parser *p, const Prefixes *pre, U32 start) {
     U32 import_start = parse::advance(p).span.start;
-    if (parse::at(p, lex::less)) {
-        U32 begin = parse::advance(p).span.end;
-        while (!parse::at(p, lex::greater) && !parse::at(p, lex::semicolon) && !parse::at(p, lex::end_of_file))
-            parse::advance(p);
-        Str header = source_between(p, begin, parse::peek(p).span.start);
-        parse::expect(p, lex::greater, "`>`");
-        end_header_import(p);
-        ast::DeclKind kind = {.import_c = {.header = header, .angled = true}};
-        return make(p, start, pre, kind);
+    if (parse::at(p, lex::less) || parse::at(p, lex::string))
+        return parse_old_header_import(p, pre, start, import_start);
+    if (at_header_language(p)) return parse_header_import(p, pre, start);
+    Bool old = false;
+    ast::Path path = parse_import_path(p, &old);
+    if (countof(path.segments) == 0) {
+        recover_line(p);
+        return nullptr;
     }
-    if (parse::at(p, lex::string)) {
-        Str header = string_value(p, parse::advance(p));
-        end_header_import(p);
-        ast::DeclKind kind = {.import_c = {.header = header, .angled = false}};
-        return make(p, start, pre, kind);
+    Str last = path.segments[countof(path.segments) - 1].text;
+    Str default_name = last;
+    if (old) default_name = "";
+    ast::Text alias = parse_alias(p, path.span.end, default_name);
+    if (parse::at(p, lex::semicolon)) old = true; // `import serial;`: the old spelling, mended like `import a::b;`
+    if (old) {
+        lex::Token semi = parse::expect(p, lex::semicolon, "`;` after the import");
+        if (semi.kind == lex::semicolon) fix_import(p, import_start, semi, path, alias);
+    } else {
+        end_import(p);
     }
-    ast::Path path = parse_path(p, "a module name, `<header.h>` or \"header.h\" after `import`");
-    ast::Text alias = {};
-    if (at_as(p)) {
-        parse::advance(p);
-        lex::Token name = parse::expect(p, lex::name, "a name after `as`: write `import path as name;`");
-        if (name.kind == lex::name) alias = parse::text(p, name);
-    }
-    lex::Token semi = parse::expect(p, lex::semicolon, "`;` after the import");
-    if (semi.kind == lex::semicolon) fix_import(p, import_start, semi, path, alias);
     ast::DeclKind kind = {.import_module = {.path = path, .alias = alias}};
     return make(p, start, pre, kind);
 }
 
-// `import std::arena;` is `arena := import std.arena`, and `import std::arena as a;` is `a := import std.arena`: a
-// module is a value (#1676).
+// `import std::arena;` is `import std.arena`, and `import std::arena as a;` is `import std.arena as a`.
 static void fix_import(parse::Parser *p, U32 import_start, lex::Token semi, ast::Path path, ast::Text alias) {
     Usize count = countof(path.segments);
     if (count == 0) {
         return;
     }
-    char text[:] = format::push(countof(alias) > 0 ? alias : path.segments[count - 1].text, " := import ");
+    char text[:] = format::push("import ");
     for (Usize i = 0; i < count; i += 1) {
         Str dot = i > 0 ? "." : "";
         text = format::push(text, dot, path.segments[i].text);
     }
-    char message[:] = format::push("a module is a value: write `", text, "`");
+    if (countof(alias) > 0 && !slice::equal(alias, path.segments[count - 1].text))
+        text = format::push(text, " as ", alias);
+    char message[:] = format::push("an import has no `::` or `;`: write `", text, "`");
     parse::Edits edits = {};
     edits = with_edit(edits, edit(import_start, semi.span.end, text));
     warn(p, import_start, semi.span.end, message, edits);
+}
+
+// Whether the position starts `from std.math import sin`: the name `from` and a module or a header after it.
+static Bool at_from_import(parse::Parser *p) {
+    if (!parse::at(p, lex::name) || !same_text(parse::text(p, parse::peek(p)), "from")) return false;
+    lex::TokenKind next = parse::peek_at(p, 1).kind;
+    return is_name(next);
+}
+
+// `from std.math import sin, cos` and `from c <stdlib.h> import malloc, free`: the names are bound in this module.
+static ast::Decl *parse_from_import(parse::Parser *p, const Prefixes *pre, U32 start) {
+    parse::advance(p);
+    ast::Path path = {};
+    ast::Text header = {};
+    ast::Text language = {};
+    Bool angled = false;
+    if (at_header_language(p)) {
+        language = parse::text(p, parse::advance(p));
+        Str spelled = "";
+        if (!parse_header_spec(p, &spelled, &angled)) {
+            recover_line(p);
+            return nullptr;
+        }
+        header = spelled;
+    } else {
+        Bool old = false;
+        path = parse_import_path(p, &old);
+        if (old) parse::error(p, path.span, "a module path is joined by `.`: write `from std.math import name`");
+    }
+    parse::expect(p, lex::kw_import, "`import` after the module in `from`");
+    ast::Identifier names[:] = {};
+    while (!parse::at(p, lex::end_of_file)) {
+        lex::Token name = parse::peek(p);
+        if (!is_name(name.kind)) {
+            parse::expect(p, lex::name, "a name to bring in");
+            break;
+        }
+        parse::advance(p);
+        names = mem::realloc(names, countof(names) + 1);
+        names[countof(names) - 1] = (ast::Identifier){.text = parse::text(p, name), .span = name.span};
+        if (!parse::accept(p, lex::comma)) break;
+    }
+    end_import(p);
+    ast::DeclKind kind = {
+        .import_from = {.path = path, .header = header, .angled = angled, .language = language, .names = names}};
+    return make(p, start, pre, kind);
 }
 
 // `static_assert(condition, "message");`, the message optional.
@@ -1900,39 +2087,6 @@ static Bool parse_binding_value(parse::Parser *p, lex::Token name, Bool is_mut, 
         return false;
     }
     return true;
-}
-
-// A path of names joined by `.`: `std.build`, `web.routes.admin`.
-static ast::Path parse_dotted_path(parse::Parser *p) {
-    ast::Path path = {};
-    U32 start = parse::peek(p).span.start;
-    while (!parse::at(p, lex::end_of_file)) {
-        lex::Token token = parse::peek(p);
-        if (!is_name(token.kind)) {
-            parse::expect(p, lex::name, "a module name after `import`");
-            break;
-        }
-        parse::advance(p);
-        path.segments = mem::realloc(path.segments, countof(path.segments) + 1);
-        path.segments[countof(path.segments) - 1] =
-            (ast::Identifier){.text = parse::text(p, token), .span = token.span};
-        if (!parse::accept(p, lex::dot)) break;
-    }
-    path.span = parse::span_from(p, start);
-    return path;
-}
-
-// `build := import std.build`: the module is a value bound to a name (#1676). It is the declaration `import std::build
-// as build;` in the tree until the checker reads modules as values. The position is at the name.
-static ast::Decl *parse_import_binding(parse::Parser *p, const Prefixes *pre, U32 start) {
-    lex::Token name = parse::advance(p);
-    parse::advance(p);
-    parse::advance(p);
-    ast::Path path = parse_dotted_path(p);
-    ast::Text alias = parse::text(p, name);
-    end_line(p, "declaration");
-    ast::DeclKind kind = {.import_module = {.path = path, .alias = alias}};
-    return make(p, start, pre, kind);
 }
 
 // `a := v`, `a: T = v`, `mut a := 0`, `mut a: usize`, `const X := v`; the position is at the first of them.
@@ -2109,9 +2263,7 @@ static ast::Decl *parse_simple(parse::Parser *p, Bool top) {
         recover_line(p);
         return nullptr;
     }
-    if (binding_at(p, 0) && parse::peek_at(p, 1).kind == lex::colon_equal &&
-        parse::peek_at(p, 2).kind == lex::kw_import)
-        return parse_import_binding(p, &pre, start);
+    if (at_from_import(p)) return parse_from_import(p, &pre, start);
     if (starts_binding(p)) return parse_binding(p, &pre, start);
     if (kind == lex::kw_import) return parse_import(p, &pre, start);
     if (kind == lex::kw_static_assert) return parse_static_assert(p, &pre, start);
