@@ -1,0 +1,231 @@
+================================================================================
+control: if as a value, while, for, break and continue
+================================================================================
+
+fn f(c: bool) -> i64:
+    let x: i64 = if c:
+        small
+    else:
+        wide
+    while i < 3:
+        i += 1
+        if i == 2:
+            continue
+        break
+    for i in range(0, 3):
+        total += i
+    for i, x in enumerate(xs):
+        total += x
+    x + 1
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (fn_declaration
+    (identifier)
+    (fn_parameters
+      (identifier)
+      (type_identifier))
+    (type_identifier)
+    (layout_block
+      (layout_let_block
+        (layout_pattern
+          (identifier))
+        (type_identifier)
+        (layout_if_statement
+          (identifier)
+          (layout_block
+            (layout_expression_statement
+              (identifier)))
+          (layout_block
+            (layout_expression_statement
+              (identifier)))))
+      (layout_while_statement
+        (binary_expression
+          (identifier)
+          (number_literal))
+        (layout_block
+          (layout_expression_statement
+            (assignment_expression
+              (identifier)
+              (number_literal)))
+          (layout_if_statement
+            (binary_expression
+              (identifier)
+              (number_literal))
+            (layout_block
+              (layout_continue_statement)))
+          (layout_break_statement)))
+      (layout_for_statement
+        (layout_pattern
+          (identifier))
+        (call_expression
+          (identifier)
+          (argument_list
+            (number_literal)
+            (number_literal)))
+        (layout_block
+          (layout_expression_statement
+            (assignment_expression
+              (identifier)
+              (identifier)))))
+      (layout_for_statement
+        (layout_pattern
+          (identifier))
+        (layout_pattern
+          (identifier))
+        (call_expression
+          (identifier)
+          (argument_list
+            (identifier)))
+        (layout_block
+          (layout_expression_statement
+            (assignment_expression
+              (identifier)
+              (identifier)))))
+      (layout_expression_statement
+        (binary_expression
+          (identifier)
+          (number_literal))))))
+
+================================================================================
+control: match, if let and while let
+================================================================================
+
+fn f(o: ?i32) -> i32:
+    match o:
+        .some(n): n
+        .none: 0
+    match c:
+        .red, .green:
+            1
+        _: 2
+    if let .some(v) = o:
+        return v
+    else:
+        return 3
+    while let .some(n) = next():
+        total += n
+    0
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (fn_declaration
+    (identifier)
+    (fn_parameters
+      (identifier)
+      (optional_type
+        (type_identifier)))
+    (type_identifier)
+    (layout_block
+      (layout_match_statement
+        (identifier)
+        (layout_match_arm
+          (layout_pattern
+            (variant_expression
+              (identifier))
+            (layout_pattern
+              (identifier)))
+          (layout_block
+            (layout_expression_statement
+              (identifier))))
+        (layout_match_arm
+          (layout_pattern
+            (variant_expression
+              (identifier)))
+          (layout_block
+            (layout_expression_statement
+              (number_literal)))))
+      (layout_match_statement
+        (identifier)
+        (layout_match_arm
+          (layout_pattern
+            (variant_expression
+              (identifier)))
+          (layout_pattern
+            (variant_expression
+              (identifier)))
+          (layout_block
+            (layout_expression_statement
+              (number_literal))))
+        (layout_match_arm
+          (layout_pattern
+            (identifier))
+          (layout_block
+            (layout_expression_statement
+              (number_literal)))))
+      (layout_if_statement
+        (layout_pattern
+          (variant_expression
+            (identifier))
+          (layout_pattern
+            (identifier)))
+        (identifier)
+        (layout_block
+          (layout_return_statement
+            (identifier)))
+        (layout_block
+          (layout_return_statement
+            (number_literal))))
+      (layout_while_statement
+        (layout_pattern
+          (variant_expression
+            (identifier))
+          (layout_pattern
+            (identifier)))
+        (call_expression
+          (identifier)
+          (argument_list))
+        (layout_block
+          (layout_expression_statement
+            (assignment_expression
+              (identifier)
+              (identifier)))))
+      (layout_expression_statement
+        (number_literal)))))
+
+================================================================================
+control: defer, errdefer and try
+================================================================================
+
+fn f(log: *mut i32):
+    defer note(log, 1)
+    errdefer cleanup()
+    let n = try parse(s)
+    try save(n)
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (fn_declaration
+    (identifier)
+    (fn_parameters
+      (identifier)
+      (pointer_type
+        (type_identifier)))
+    (layout_block
+      (layout_defer_statement
+        (call_expression
+          (identifier)
+          (argument_list
+            (identifier)
+            (number_literal))))
+      (layout_defer_statement
+        (call_expression
+          (identifier)
+          (argument_list)))
+      (layout_let_declaration
+        (layout_pattern
+          (identifier))
+        (try_expression
+          (call_expression
+            (identifier)
+            (argument_list
+              (identifier)))))
+      (layout_expression_statement
+        (try_expression
+          (call_expression
+            (identifier)
+            (argument_list
+              (identifier))))))))
