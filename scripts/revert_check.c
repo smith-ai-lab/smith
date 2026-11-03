@@ -8,8 +8,9 @@
 // non-trivial lines that C added to f and still present in BASE, and those are at least 90% of the non-trivial lines C
 // added to f. A rewrite of a few lines is normal editing and passes; a stale tree takes whole files back. A line is
 // non-trivial when it has 4 or more characters after trimming (so `}` and `*/` count for nothing). A deliberate revert
-// says so: BODY_FILE (the pull request's body, or the merge group's head commit message) with `Reverts #N` skips the
-// commit whose subject ends in `(#N)`.
+// or rewrite says so: BODY_FILE (the pull request's body, or the merge group's head commit message) with `Reverts #N`
+// or `Rewrites #N` skips the commit whose subject ends in `(#N)` (a rewrite: a later piece of a chain replaces the
+// lines an earlier piece added, as #1875 did to #1855's).
 //
 // Prints one line per file and exits 1 on a hit, 0 otherwise, 2 on a usage error. Plain C23, libc and git through
 // popen (so build it with -std=gnu2x: glibc hides popen under -std=c2x), no allocation: the tables are static. Files
@@ -159,15 +160,20 @@ static long subject_number(const char *subject) {
     return end != nullptr && strcmp(end, ")") == 0 ? number : 0;
 }
 
-static bool declared_revert(const Commit *commit) {
-    long number = subject_number(commit->subject);
-    if (number == 0) return false;
-    char want[32];
-    snprintf(want, sizeof want, "Reverts #%ld", number);
+// `word #N` in the body, not followed by another digit.
+static bool body_names(const char *word, long number) {
+    char want[48];
+    snprintf(want, sizeof want, "%s #%ld", word, number);
     for (const char *at = body; (at = strstr(at, want)) != nullptr; at++) {
         if (!isdigit((unsigned char)at[strlen(want)])) return true;
     }
     return false;
+}
+
+static bool declared_revert(const Commit *commit) {
+    long number = subject_number(commit->subject);
+    if (number == 0) return false;
+    return body_names("Reverts", number) || body_names("Rewrites", number);
 }
 
 // How many non-trivial lines `commit` added to `path` the change removes (and BASE still has), and how many it added.
@@ -205,7 +211,7 @@ static bool check_file(const char *base, const char *head, const char *path) {
         int matched = reverted_lines(&commits[i], path, &total);
         if (matched < min_lines || matched * 100 < total * min_percent) continue;
         printf("%s: this change deletes %d lines that %.7s (%s) added; a stale working tree? rebase onto main and "
-               "keep only your ticket's files\n",
+               "keep only your ticket's files (a deliberate rewrite says `Rewrites #N` in the pull request's body)\n",
                path, matched, commits[i].sha, commits[i].subject);
         return true;
     }

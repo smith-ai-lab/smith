@@ -87,3 +87,21 @@ export void test_revert_check_lets_a_declared_revert_through() {
     scratch::Run prefix = check(&p, "stale", "Reverts #70 and Reverts #80");
     scratch::expect_status("revert_check: #70 is not #7", 1, &prefix);
 }
+
+export void test_revert_check_lets_a_declared_rewrite_through() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    repository(&p);
+    scratch::Run one = check(&p, "stale", "Rewrites #7: the parser replaces it");
+    scratch::expect_status("revert_check: one rewrite declared, the other still fails", 1, &one);
+    scratch::expect_lacks("revert_check: #7 is let through as a rewrite", one.out, "(work (#7))");
+    scratch::expect_contains("revert_check: the failure names the keyword", one.out, "`Rewrites #N`");
+    scratch::Run both = check(&p, "stale", "Rewrites #7, Reverts #8");
+    scratch::expect_status("revert_check: a rewrite and a revert together pass", 0, &both);
+    scratch::Run prefix = check(&p, "stale", "Rewrites #70 and Rewrites #80");
+    scratch::expect_status("revert_check: Rewrites #70 is not #7", 1, &prefix);
+}
