@@ -292,8 +292,8 @@ export typedef typeof(Problem[:]) Problems;
 static Problems problems_of(Problems list, parse::Errors found, Bool error) {
     for (Usize i = 0; i < countof(found); i++) {
         list = mem::realloc(list, countof(list) + 1);
-        list[countof(list) - 1] =
-            (Problem){.start = found[i].span.start, .end = found[i].span.end, .error = error, .message = found[i].message};
+        list[countof(list) - 1] = (Problem){
+            .start = found[i].span.start, .end = found[i].span.end, .error = error, .message = found[i].message};
     }
     return list;
 }

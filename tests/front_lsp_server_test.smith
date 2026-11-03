@@ -36,7 +36,8 @@ export void test_lsp_initialize_replies_with_the_capabilities_and_the_id() {
     defer mem::set_allocator(outside);
     Str out = lsp_server::handle("{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"initialize\",\"params\":{}}");
     test::check(has(out, "Content-Length: "));
-    test::check(has(out, "\r\n\r\n{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"capabilities\":{\"textDocumentSync\":1}"));
+    test::check(
+        has(out, "\r\n\r\n{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"capabilities\":{\"textDocumentSync\":1}"));
 }
 
 export void test_lsp_did_open_reports_a_type_error_at_its_line_and_column() {
@@ -59,9 +60,10 @@ export void test_lsp_a_clean_document_has_no_diagnostics_and_a_change_replaces_t
     defer mem::set_allocator(outside);
     Str clean = lsp_server::handle(open_with("fn main() -> i32:\\n    return 0\\n"));
     test::check(has(clean, "\"diagnostics\":[]"));
-    Str changed = lsp_server::handle("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{"
-                                     "\"textDocument\":{\"uri\":\"file:///t/a.smith\",\"version\":2},"
-                                     "\"contentChanges\":[{\"text\":\"fn main() -> i32:\\n    return \\\"s\\\"\\n\"}]}}");
+    Str changed =
+        lsp_server::handle("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{"
+                           "\"textDocument\":{\"uri\":\"file:///t/a.smith\",\"version\":2},"
+                           "\"contentChanges\":[{\"text\":\"fn main() -> i32:\\n    return \\\"s\\\"\\n\"}]}}");
     test::check(has(changed, "\"severity\":1"));
 }
 

@@ -1,16 +1,18 @@
 // front::lsp_server: `smith lsp --smith`, the language server for `.smith` files on smith's own front end (#1887, slice
 // 1 of its pieces; design in knowledge/front-end.md). JSON-RPC 2.0 over stdio with LSP's `Content-Length` framing.
 //
-//   handle(body)   one message (the JSON text, no header) in, the replies out as framed messages (empty: none); what the
+//   handle(body)   one message (the JSON text, no header) in, the replies out as framed messages (empty: none); what
+//   the
 //                  tests drive, with no pipe
-//   run()          C: `front_lsp_run`: reads messages from stdin until `exit` or the end of the input, writes the replies
+//   run()          C: `front_lsp_run`: reads messages from stdin until `exit` or the end of the input, writes the
+//   replies
 //                  to stdout; returns 0 after `shutdown` then `exit`, else 1
 //
 // Served: `initialize` (full document sync), `shutdown`, `exit`, `textDocument/didOpen` and `didChange` (each answered
-// by `textDocument/publishDiagnostics` from front::compile::diagnose) and `didClose` (clears them). Any other request is
-// answered with the error -32601; any other notification is ignored. A position is a line and a byte count in the line
-// (LSP asks for UTF-16 units; the two agree on ASCII). One thread, one message at a time; the memory of a message is
-// the current allocator's, which `run` makes an arena that it resets after each one.
+// by `textDocument/publishDiagnostics` from front::compile::diagnose) and `didClose` (clears them). Any other request
+// is answered with the error -32601; any other notification is ignored. A position is a line and a byte count in the
+// line (LSP asks for UTF-16 units; the two agree on ASCII). One thread, one message at a time; the memory of a message
+// is the current allocator's, which `run` makes an arena that it resets after each one.
 module front::lsp_server;
 
 import front::compile;
@@ -126,13 +128,15 @@ export Str diagnostics(Str uri, Str source) {
                                    ",\"end\":", position(source, found[i].end), "},\"severity\":", severity,
                                    ",\"source\":\"smith\",\"message\":\"", escape(found[i].message), "\"}"));
     }
-    return frame(as_str(format::push("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"",
-                                     escape(uri), "\",\"diagnostics\":[", list, "]}}")));
+    return frame(as_str(
+        format::push("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"",
+                     escape(uri), "\",\"diagnostics\":[", list, "]}}")));
 }
 
 static Str cleared(Str uri) {
-    return frame(as_str(format::push("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"",
-                                     escape(uri), "\",\"diagnostics\":[]}}")));
+    return frame(as_str(
+        format::push("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"",
+                     escape(uri), "\",\"diagnostics\":[]}}")));
 }
 
 // The text of the last change of a `didChange` (full sync: it is the whole document).
@@ -164,8 +168,10 @@ export Str handle(Str body) {
         exiting = true;
         return "";
     }
-    if (roots::same(method, "textDocument/didOpen")) return diagnostics(string_of(document, "uri"), string_of(document, "text"));
-    if (roots::same(method, "textDocument/didChange")) return diagnostics(string_of(document, "uri"), last_change(params));
+    if (roots::same(method, "textDocument/didOpen"))
+        return diagnostics(string_of(document, "uri"), string_of(document, "text"));
+    if (roots::same(method, "textDocument/didChange"))
+        return diagnostics(string_of(document, "uri"), last_change(params));
     if (roots::same(method, "textDocument/didClose")) return cleared(string_of(document, "uri"));
     if (countof(id) == 0) return "";
     return failure(id, "-32601", as_str(format::push("method not found: ", method)));
