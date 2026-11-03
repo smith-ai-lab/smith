@@ -1,10 +1,15 @@
 // `smith build frontend-coverage` (#1730): how much of the tree smith's own front end already handles.
 //
-//   frontend_coverage run SMITH ROOT SCRATCH   every .smith file git tracks under ROOT is copied to SCRATCH, fixed
-//   there
-//                                              with `SMITH lint --fix`, and compiled with `SMITH cc --front-end=new`;
-//                                              the results go to standard output as a table (see summarize)
-//   frontend_coverage summarize RESULTS        reads a table and prints one line per file, then the summary
+//   frontend_coverage run SMITH ROOT SCRATCH   every .smith file git tracks under ROOT is copied to SCRATCH and fixed
+//                                              there with `SMITH lint --fix` (all of them, so a module a file imports
+//                                              is fixed before the file is compiled), then compiled with
+//                                              `SMITH cc --front-end=new` from the folder of its project (the nearest
+//                                              folder with a build.c, build.smith or main.smith, else the repo) with
+//                                              the roots `src` (the project folder itself) and `lib` (the standard
+//                                              library); the results go to standard output as a table (see summarize)
+//   frontend_coverage summarize RESULTS [SMITH]
+//                                              reads a table and prints one line per file, then the summary; with
+//                                              SMITH, the summary names the smith that was measured
 //
 // The table has one line per file: `path TAB stage TAB message`. The stage is `pass`, or the stage that failed: `fixer`
 // (`smith lint --fix`), `parse`, `check`, `emit` or `write` (the front end's own, SMITH_FRONT_STAGE). The message is
@@ -179,41 +184,6 @@ static void print_stages() {
     }
 }
 
-static I32 summarize(const char file[:]) {
-    if (!read_table(file)) {
-        console::print_error("frontend_coverage: cannot read ", file, "\n");
-        return 1;
-    }
-    Usize passed = 0;
-    for (Usize i = 0; i < entry_count; i++) {
-        const char *path = entries[i].path;
-        if (is_pass(&entries[i])) {
-            passed += 1;
-            console::print("pass  ", path, "\n");
-        } else {
-            console::print("FAIL  ", path, " [", (const char *)entries[i].stage, "] ", (const char *)entries[i].message,
-                           "\n");
-        }
-    }
-    group_failures();
-    sort_groups();
-    console::print("\nfrontend-coverage: ", passed, " of ", entry_count, " files pass\n");
-    print_stages();
-    console::print("\nfailures by message (", group_count, " groups):\n");
-    for (Usize g = 0; g < group_count; g++) {
-        console::print(format::pad(groups[g].count, 4), "  ", (const char *)groups[g].message, "\n");
-        Usize shown = groups[g].count < examples_max ? groups[g].count : examples_max;
-        for (Usize e = 0; e < shown; e++)
-            console::print("        e.g. ", (const char *)entries[groups[g].examples[e]].path, "\n");
-    }
-    return 0;
-}
-
-// ------------------------------------------------------------------------------------------------------------ run
-
-static char tree[files_max][path_size];
-static Usize tree_count = 0;
-
 // What a program printed, as text, and its exit status (128 and the signal when killed, 127 when it did not start).
 // `output` is the standard output then the standard error; the memory is the caller's to free with release.
 struct Ran {
@@ -243,6 +213,64 @@ static void release(struct Ran *ran) {
     *ran = (struct Ran){};
 }
 
+// The first line of `SMITH version`: which smith was measured. Empty when it does not run.
+static void print_measured(const char *smith) {
+    const char *const argv[_] = {smith, "version"};
+    struct Ran ran = run_program(argv[0:2]);
+    Usize end = find(ran.text, '\n', 0);
+    if (ran.status == 0) {
+        console::print("frontend-coverage: measured ", ran.text[0:end], "\n");
+    } else {
+        console::print("frontend-coverage: measured a smith whose version is unknown\n");
+    }
+    release(&ran);
+}
+
+static I32 summarize(const char file[:], const char *smith) {
+    if (!read_table(file)) {
+        console::print_error("frontend_coverage: cannot read ", file, "\n");
+        return 1;
+    }
+    Usize passed = 0;
+    for (Usize i = 0; i < entry_count; i++) {
+        const char *path = entries[i].path;
+        if (is_pass(&entries[i])) {
+            passed += 1;
+            console::print("pass  ", path, "\n");
+        } else {
+            console::print("FAIL  ", path, " [", (const char *)entries[i].stage, "] ", (const char *)entries[i].message,
+                           "\n");
+        }
+    }
+    group_failures();
+    sort_groups();
+    console::print("\n");
+    if (smith != nullptr) print_measured(smith);
+    console::print("frontend-coverage: ", passed, " of ", entry_count, " files pass\n");
+    print_stages();
+    console::print("\nfailures by message (", group_count, " groups):\n");
+    for (Usize g = 0; g < group_count; g++) {
+        console::print(format::pad(groups[g].count, 4), "  ", (const char *)groups[g].message, "\n");
+        Usize shown = groups[g].count < examples_max ? groups[g].count : examples_max;
+        for (Usize e = 0; e < shown; e++)
+            console::print("        e.g. ", (const char *)entries[groups[g].examples[e]].path, "\n");
+    }
+    return 0;
+}
+
+// ------------------------------------------------------------------------------------------------------------ run
+
+static char tree[files_max][path_size];
+static Usize tree_count = 0;
+
+constexpr Usize projects_max = 256;
+
+// The folders of the projects of the tree (a build.c, build.smith or main.smith, not the library's own); the first
+// is the repository itself (the empty folder).
+static char projects[projects_max][path_size];
+static Bool linked_source[projects_max];
+static Usize project_count = 1;
+
 // The tracked .smith files of `root`, one per line.
 static Bool list_tree(const char *root) {
     const char *const argv[_] = {"git", "-C", root, "ls-files", "*.smith"};
@@ -259,6 +287,72 @@ static Bool list_tree(const char *root) {
         at = end + 1;
     }
     return true;
+}
+
+// The folders of the projects: every tracked build.c, build.smith and main.smith outside lib/ (a fixture with only a
+// main.smith is a project too), other than the repository's own.
+static void list_projects(const char *root) {
+    const char *const argv[_] = {"git", "-C", root, "ls-files", "*build.c", "*build.smith", "*main.smith"};
+    process::OutputResult done = process::run(argv[0:7]);
+    if (done == .error || done.ok.exit.status != 0) return;
+    typeof(char[:]) text = mem::view(done.ok.output, char);
+    defer mem::free(done.ok.output.data);
+    if (done.ok.errors.data != nullptr) mem::free(done.ok.errors.data);
+    projects[0][0] = '\0';
+    Usize at = 0;
+    while (at < countof(text) && project_count < projects_max) {
+        Usize end = find(text, '\n', at);
+        typeof(const char[:]) line = text[at:end];
+        Usize slash = countof(line);
+        while (slash > 0 && line[slash - 1] != '/')
+            slash -= 1;
+        // `tests/f/build.c` is the project `tests/f`; `build.c` alone is the repository; a file of lib/ is a module.
+        // The list is sorted, so a folder with two of the files is listed twice in a row.
+        Bool library = countof(line) >= 4 && same(line[0:4], "lib/");
+        Bool again = project_count > 1 && same(text_of(projects[project_count - 1][0:path_size]), line[0:slash - 1]);
+        if (slash > 1 && !library && !again) {
+            copy_text(projects[project_count][0:path_size], line[0:slash - 1]);
+            project_count += 1;
+        }
+        at = end + 1;
+    }
+}
+
+// The project of a file: the longest project folder that holds it (0, the repository, when none does).
+static Usize project_of(const char path[:]) {
+    Usize best = 0;
+    Usize best_length = 0;
+    for (Usize i = 1; i < project_count; i++) {
+        typeof(const char[:]) folder = text_of(projects[i][0:path_size]);
+        if (countof(folder) + 1 < countof(path) && countof(folder) > best_length &&
+            same(path[0:countof(folder)], folder) && path[countof(folder)] == '/') {
+            best = i;
+            best_length = countof(folder);
+        }
+    }
+    return best;
+}
+
+// Gives each project the two roots the front end looks under, from the folder of the project: `lib` is the library of
+// the copied tree (unless the project has its own), and `src` is the project folder itself (unless it has a src
+// folder).
+static void link_roots(const char *scratch) {
+    for (Usize i = 0; i < project_count; i++) {
+        char folder[path_size * 2];
+        char link[path_size * 2 + 8];
+        char library[path_size * 2];
+        typeof(const char[:]) name = text_of(projects[i][0:path_size]);
+        format::Written made = format::to(folder, sizeof folder, scratch, countof(name) > 0 ? "/" : "", name);
+        (void)format::to(link, sizeof link, (const char *)folder, "/src");
+        if (!files::exists(view_of(link))) {
+            linked_source[i] = c::symlink(".", link) == 0;
+        }
+        if (i == 0) continue;
+        (void)format::to(link, sizeof link, (const char *)folder, "/lib");
+        (void)format::to(library, sizeof library, scratch, "/lib");
+        if (!files::exists(view_of(link))) (void)c::symlink(library, link);
+        (void)made;
+    }
 }
 
 // Makes `root` and the folders of `path` below it: every prefix, the ones that exist are left as they are.
@@ -312,22 +406,38 @@ static void first_error(const char output[:], char message[:], char stage[:]) {
     }
 }
 
-// The fixer, then the new front end, on the copy of one file (the process is in the scratch tree). Records the result.
-static void measure(const char *smith, const char *path) {
+// The fixer on the copy of one file (the process is in the scratch tree). Records a failure.
+static void fix(const char *smith, const char *path) {
     char message[message_size];
-    char stage[stage_size];
     const char *const fix[_] = {smith, "lint", "--fix", path};
     struct Ran fixed = run_program(fix[0:4]);
     if (fixed.status != 0) {
         copy_text(message[0:message_size], fixed.text);
         add_entry(view_of(path), "fixer", message[0:message_size]);
-        release(&fixed);
-        return;
     }
     release(&fixed);
-    char object[path_size + 4];
-    (void)format::to(object, sizeof object, path, ".o");
-    const char *const compile[_] = {smith, "cc", "--front-end=new", "-c", path, "-o", object};
+}
+
+// The new front end on one fixed file, from the folder of its project. Records the result.
+static void measure(const char *smith, const char *scratch, const char *path) {
+    char message[message_size];
+    char stage[stage_size];
+    Usize project = project_of(view_of(path));
+    typeof(const char[:]) folder = text_of(projects[project][0:path_size]);
+    typeof(const char[:]) inside = view_of(path)[countof(folder) > 0 ? countof(folder) + 1 : 0:countof(view_of(path))];
+    char name[path_size + 8];
+    // A file under the project's own src folder is named from there; any other is named below the `src` link.
+    Bool real_src = countof(inside) > 4 && same(inside[0:4], "src/");
+    (void)format::to(name, sizeof name, linked_source[project] && !real_src ? "src/" : "", inside);
+    char home[path_size * 2];
+    (void)format::to(home, sizeof home, scratch, countof(folder) > 0 ? "/" : "", folder);
+    if (c::chdir(home) != 0) {
+        add_entry(view_of(path), "parse", "cannot enter the project folder");
+        return;
+    }
+    char object[path_size + 12];
+    (void)format::to(object, sizeof object, (const char *)name, ".o");
+    const char *const compile[_] = {smith, "cc", "--front-end=new", "-c", name, "-o", object};
     struct Ran compiled = run_program(compile[0:7]);
     if (compiled.status == 0) {
         add_entry(view_of(path), "pass", "");
@@ -347,10 +457,20 @@ static I32 run(const char *smith, const char *root, const char *scratch) {
         console::print_error("frontend_coverage: cannot copy the files to ", scratch, "\n");
         return 1;
     }
+    list_projects(root);
     (void)c::setenv("SMITH_FRONT_STAGE", "1", 1);
     if (c::chdir(scratch) != 0) return 1;
-    for (Usize i = 0; i < tree_count; i++)
-        measure(smith, tree[i]);
+    // All the fixes first: a file imports modules that must already be in the new syntax when it is compiled.
+    Bool fixed[files_max];
+    for (Usize i = 0; i < tree_count; i++) {
+        Usize before = entry_count;
+        fix(smith, tree[i]);
+        fixed[i] = entry_count == before;
+    }
+    link_roots(scratch);
+    for (Usize i = 0; i < tree_count; i++) {
+        if (fixed[i]) measure(smith, scratch, tree[i]);
+    }
     for (Usize i = 0; i < entry_count; i++) {
         console::print((const char *)entries[i].path, "\t", (const char *)entries[i].stage, "\t",
                        (const char *)entries[i].message, "\n");
@@ -360,7 +480,9 @@ static I32 run(const char *smith, const char *root, const char *scratch) {
 
 I32 main(Str args[:]) {
     if (countof(args) == 5 && same(args[1], "run")) return run(args[2].data, args[3].data, args[4].data);
-    if (countof(args) == 3 && same(args[1], "summarize")) return summarize(args[2]);
-    console::print_error("usage: frontend_coverage run SMITH ROOT SCRATCH | frontend_coverage summarize RESULTS\n");
+    if (countof(args) == 3 && same(args[1], "summarize")) return summarize(args[2], nullptr);
+    if (countof(args) == 4 && same(args[1], "summarize")) return summarize(args[2], args[3].data);
+    console::print_error(
+        "usage: frontend_coverage run SMITH ROOT SCRATCH | frontend_coverage summarize RESULTS [SMITH]\n");
     return 2;
 }
