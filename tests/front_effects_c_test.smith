@@ -1,0 +1,124 @@
+// Tests of front::effects_c (#2021, piece 4 of #1939): C and C++ files compiled to IR and read by the same pass as
+// smith's own modules. A smith function that calls a C function has the C function's set and the chain names the C
+// line; C++'s new, delete and throw come from the runtime module. Objective-C is written as IR text, as the
+// container's compiler is not asked for the Apple SDK.
+module front_effects_c_test;
+
+import <llvm-c/Core.h>;
+import <llvm-c/IRReader.h>;
+
+import front::effects_c;
+import front::effects_cache;
+import front::effects_pass;
+import front::effects_table;
+import std::test;
+
+// A smith module as the pass reads it: `caller` calls the C function `helper`, `pure_caller` calls `quiet`.
+static const char *smith_ir = "declare i32 @helper(i32)\n"
+                              "declare i32 @quiet(i32)\n"
+                              "define void @caller() {\n"
+                              "  %r = call i32 @helper(i32 1)\n"
+                              "  ret void\n"
+                              "}\n"
+                              "define void @pure_caller() {\n"
+                              "  %r = call i32 @quiet(i32 1)\n"
+                              "  ret void\n"
+                              "}\n";
+
+static const char *objc_ir = "declare ptr @objc_alloc_init(ptr)\n"
+                             "declare ptr @objc_msgSend(ptr, ptr, ...)\n"
+                             "declare ptr @objc_retain(ptr)\n"
+                             "define void @make(ptr %c) {\n"
+                             "  %o = call ptr @objc_alloc_init(ptr %c)\n"
+                             "  ret void\n"
+                             "}\n"
+                             "define void @send(ptr %o, ptr %s) {\n"
+                             "  %r = call ptr (ptr, ptr, ...) @objc_msgSend(ptr %o, ptr %s)\n"
+                             "  ret void\n"
+                             "}\n"
+                             "define void @keep(ptr %o) {\n"
+                             "  %r = call ptr @objc_retain(ptr %o)\n"
+                             "  ret void\n"
+                             "}\n";
+
+static c::LLVMModuleRef parse(c::LLVMContextRef context, const char *text, const char *name) {
+    c::LLVMMemoryBufferRef buffer = c::LLVMCreateMemoryBufferWithMemoryRangeCopy(text, c::strlen(text), name);
+    c::LLVMModuleRef module = nullptr;
+    char *problem = nullptr;
+    if (c::LLVMParseIRInContext(context, buffer, &module, &problem) != 0) {
+        c::LLVMDisposeMessage(problem);
+        test::check(false);
+    }
+    return module;
+}
+
+export void test_front_effects_c_language_of() {
+    test::check(effects_c::language_of("a.c") == effects_c::lang_c);
+    test::check(effects_c::language_of("a.cpp") == effects_c::lang_cpp);
+    test::check(effects_c::language_of("a.cc") == effects_c::lang_cpp);
+    test::check(effects_c::language_of("a.m") == effects_c::lang_objc);
+    test::check(effects_c::language_of("a.mm") == effects_c::lang_objcpp);
+}
+
+export void test_front_effects_c_smith_calls_c() {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    defer c::LLVMContextDispose(context);
+    effects_pass::Graph g = effects_pass::make();
+    defer effects_pass::release(&g);
+    test::check(effects_c::add_source(&g, context, "tests/effects_c/util.c", nullptr));
+    c::LLVMModuleRef module = parse(context, smith_ir, "smith.ll");
+    defer c::LLVMDisposeModule(module);
+    effects_pass::add_module(&g, module, nullptr);
+    effects_pass::solve(&g);
+    test::check_equal(effects_pass::set_of(&g, "quiet"), 0u);
+    test::check_equal(effects_pass::set_of(&g, "helper"), effects_table::console | effects_table::globals);
+    test::check_equal(effects_pass::set_of(&g, "pure_caller"), 0u);
+    test::check_equal(effects_pass::set_of(&g, "caller"), effects_table::console | effects_table::globals);
+    // caller -> helper -> printf (util.c:7)
+    Usize caller = effects_pass::find(&g, "caller");
+    Usize helper = effects_pass::find(&g, "helper");
+    Usize printf_at = effects_pass::find(&g, "printf");
+    test::check(caller != effects_pass::none && helper != effects_pass::none && printf_at != effects_pass::none);
+    test::check_equal(effects_pass::cause_of(&g, caller, 3).callee, helper);
+    effects_pass::Cause last = effects_pass::cause_of(&g, helper, 3);
+    test::check_equal(last.callee, printf_at);
+    test::check_equal(last.line, 7u);
+}
+
+export void test_front_effects_c_cpp_runtime() {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    defer c::LLVMContextDispose(context);
+    effects_pass::Graph g = effects_pass::make();
+    defer effects_pass::release(&g);
+    effects_c::add_runtime(&g, context, nullptr);
+    test::check(effects_c::add_source(&g, context, "tests/effects_c/runtime.cpp", nullptr));
+    effects_pass::solve(&g);
+    test::check_equal(effects_pass::set_of(&g, "_Z4makei"), effects_table::alloc);
+    test::check_equal(effects_pass::set_of(&g, "_Z4dropPi"), effects_table::alloc);
+    test::check_equal(effects_pass::set_of(&g, "_Z7give_upi"), effects_table::alloc | effects_table::fails);
+    test::check_equal(effects_pass::set_of(&g, "_Z5plaini"), 0u);
+}
+
+export void test_front_effects_c_objc_runtime() {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    defer c::LLVMContextDispose(context);
+    effects_pass::Graph g = effects_pass::make();
+    defer effects_pass::release(&g);
+    effects_c::add_runtime(&g, context, nullptr);
+    c::LLVMModuleRef module = parse(context, objc_ir, "objc.ll");
+    defer c::LLVMDisposeModule(module);
+    effects_pass::add_module(&g, module, nullptr);
+    effects_pass::solve(&g);
+    test::check_equal(effects_pass::set_of(&g, "make"), effects_table::alloc);
+    test::check_equal(effects_pass::set_of(&g, "send"), effects_table::unknown);
+    test::check_equal(effects_pass::set_of(&g, "keep"), 0u);
+}
+
+export void test_front_effects_c_missing_file() {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    defer c::LLVMContextDispose(context);
+    effects_pass::Graph g = effects_pass::make();
+    defer effects_pass::release(&g);
+    test::check(!effects_c::add_source(&g, context, "tests/effects_c/no_such_file.c", nullptr));
+    test::check_equal(g.count, 0ul);
+}
