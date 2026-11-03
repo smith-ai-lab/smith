@@ -1,6 +1,6 @@
 // Tests of `textDocument/hover` (#1892): a document is opened, then hover asks for the type under a position. A local,
 // a function and a struct field give their types; a position over nothing, and a document that was never opened, give
-// null.
+// null; a name from a C header gets its type and the comment above it (#1943).
 module front_lsp_hover_test;
 
 import front::lsp_server;
@@ -8,6 +8,7 @@ import std::arena;
 import std::format;
 import std::mem;
 import std::test;
+import <stdlib.h>;
 
 static Bool has(Str text, Str needle) {
     for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
@@ -86,4 +87,27 @@ export void test_lsp_hover_over_nothing_and_over_an_unopened_document_is_null() 
     open();
     test::check(has(hover("file:///t/h.smith", 40, 0), "\"result\":null"));
     test::check(has(hover("file:///t/none.smith", 0, 0), "\"result\":null"));
+}
+
+// The document `import c <places.h>` and a call of `c.places_add`; the header is tests/front/cimport/places.h, found
+// from the folder of the document's path.
+static void open_with_header() {
+    c::setenv("SMITH_FRONT_CIMPORT_FLAGS", "-I\ntests/front/cimport\n", 1); // the header has no includes of its own
+    (void)lsp_server::handle(as_str(
+        format::push("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
+                     "\"tests/front/cimport/h.smith\",\"text\":\"import c <places.h>\\n\\nfn main() -> i32:\\n"
+                     "    return c.places_add(1, 2)\\n\"}}}")));
+}
+
+export void test_lsp_hover_over_a_name_from_a_c_header_gives_its_type_and_comment() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open_with_header();
+    Str out = hover("tests/front/cimport/h.smith", 3, 15);
+    test::check(has(out, "\"kind\":\"markdown\""));
+    test::check(has(out, "Adds two numbers."));
+    test::check(has(out, "Both are read, neither is written."));
+    test::check(has(out, "\"start\":{\"line\":3,\"character\":11}"));
 }
