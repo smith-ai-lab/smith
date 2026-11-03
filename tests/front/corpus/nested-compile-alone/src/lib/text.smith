@@ -1,0 +1,2 @@
+
+pub usize length(*char s);
