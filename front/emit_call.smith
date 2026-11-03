@@ -415,7 +415,8 @@ static ArgumentList filled_arguments(state::Emitter *e, Str key, ast::ExprRef ar
         if (!given[k] && params[k].default_value != nullptr) extra += 1;
     }
     if (extra == 0) return args;
-    ast::ExprRef filled[:] = mem::alloc_slice(ast::ExprRef, countof(args) + extra);
+    ArgumentList filled = {};
+    filled = mem::realloc(filled, countof(args) + extra);
     for (Usize i = 0; i < countof(args); i++)
         filled[i] = args[i];
     Usize at = countof(args);
@@ -493,7 +494,8 @@ static ArgumentList filled_fields(state::RecordType record, ast::ExprRef args[:]
     for (Usize k = 0; k < countof(record.fields) && k < 64; k++) {
         if (!given[k] && record.fields[k].default_value != nullptr) extra += 1;
     }
-    ast::ExprRef filled[:] = mem::alloc_slice(ast::ExprRef, countof(args) + extra);
+    ArgumentList filled = {};
+    filled = mem::realloc(filled, countof(args) + extra);
     for (Usize i = 0; i < countof(args); i++)
         filled[i] = args[i];
     Usize at = countof(args);
