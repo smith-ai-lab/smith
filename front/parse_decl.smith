@@ -1333,6 +1333,8 @@ static ast::FieldDecl parse_field(parse::Parser *p, Style *style, Bool top) {
 
 // A field in smith's own syntax starts with a lowercase name and `:` (the old form starts with a type).
 static Bool new_field_ahead(const parse::Parser *p) {
+    if (parse::at(p, lex::kw_pub))
+        return parse::peek_at(p, 1).kind == lex::name && parse::peek_at(p, 2).kind == lex::colon;
     return parse::at(p, lex::name) && parse::peek_at(p, 1).kind == lex::colon;
 }
 
@@ -1340,6 +1342,7 @@ static Bool new_field_ahead(const parse::Parser *p) {
 static ast::FieldDecl parse_new_field(parse::Parser *p) {
     ast::FieldDecl field = {.is_new = true};
     U32 start = parse::peek(p).span.start;
+    if (parse::accept(p, lex::kw_pub)) field.is_pub = true;
     field.name = parse::text(p, parse::advance(p));
     parse::advance(p);
     field.type = parse::type(p);
