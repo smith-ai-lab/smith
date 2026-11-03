@@ -372,3 +372,15 @@ export void test_parse_expr_lint_fix_twice_on_every_old_form() {
     fix::Fixed second = fix::fix_text("m.smith", first.text);
     test::check_equal(second.applied, (Usize)0);
 }
+
+// After `.` a keyword is a member name (#1770): `x.module`, `t.type`.
+export void test_parse_expr_keyword_is_a_member_name() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("x.module.type");
+    ast::Expr *e = parse::expression(&p);
+    test::check_condition(e != nullptr);
+    test::check_equal(countof(p.errors), 0UL);
+}
