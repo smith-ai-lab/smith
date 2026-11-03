@@ -1,0 +1,106 @@
+================================================================================
+types2: options, pointers, slices, arrays and blocks
+================================================================================
+
+fn f(a: ?i32, b: *mut u8, c: *void, d: []i32, e: []mut u8, g: [5]i32, h: [2][3]i64, i: [,]i32, j: [3, 3]i32, k: [, 3]f32):
+    a
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (fn_declaration
+    (identifier)
+    (fn_parameters
+      (identifier)
+      (optional_type
+        (type_identifier))
+      (identifier)
+      (pointer_type
+        (type_identifier))
+      (identifier)
+      (pointer_type
+        (type_identifier))
+      (identifier)
+      (array_type
+        (type_identifier))
+      (identifier)
+      (array_type
+        (type_identifier))
+      (identifier)
+      (array_type
+        (number_literal)
+        (type_identifier))
+      (identifier)
+      (array_type
+        (number_literal)
+        (array_type
+          (number_literal)
+          (type_identifier)))
+      (identifier)
+      (array_type
+        (type_identifier))
+      (identifier)
+      (array_type
+        (number_literal)
+        (number_literal)
+        (type_identifier))
+      (identifier)
+      (array_type
+        (number_literal)
+        (type_identifier)))
+    (layout_block
+      (layout_expression_statement
+        (identifier)))))
+
+================================================================================
+types2: tuples, function types, type functions and dotted names
+================================================================================
+
+fn f(a: (i32, f64), b: (count: i32, ms: f64), c: fn(i32) -> i32, d: fn(), e: Option(i32), f: vec(f32, 4), g: m.Vec) -> ?*mut u8:
+    a
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (fn_declaration
+    (identifier)
+    (fn_parameters
+      (identifier)
+      (tuple_type
+        (tuple_type_item
+          (type_identifier))
+        (tuple_type_item
+          (type_identifier)))
+      (identifier)
+      (tuple_type
+        (tuple_type_item
+          (identifier)
+          (type_identifier))
+        (tuple_type_item
+          (identifier)
+          (type_identifier)))
+      (identifier)
+      (fn_type
+        (type_identifier)
+        (type_identifier))
+      (identifier)
+      (fn_type)
+      (identifier)
+      (type_call
+        (type_identifier)
+        (identifier))
+      (identifier)
+      (type_call
+        (type_identifier)
+        (identifier)
+        (number_literal))
+      (identifier)
+      (dotted_type
+        (type_identifier)
+        (type_identifier)))
+    (optional_type
+      (pointer_type
+        (type_identifier)))
+    (layout_block
+      (layout_expression_statement
+        (identifier)))))

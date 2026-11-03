@@ -1,0 +1,85 @@
+// Tests of the pieces std::autodiff needs from the emitter (#1975, part of #1631): Enzyme's entry points are variadic
+// prototypes with a `@c_name`, its markers are extern globals with a `@c_name`. The emitter declares each under the
+// C name Enzyme looks for at link time (`__enzyme_autodiff`, `enzyme_out`) and calls the variadic one with C's default
+// promotions. The trees are built by hand as in front_emit_call_test.smith.
+module front_emit_autodiff_test;
+
+import front::ast;
+import front::emit;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+
+static ast::Attribute c_name_attribute(Str symbol) {
+    // Static storage: the tree outlives this function.
+    static ast::ExprRef args[1];
+    args[0] = ast::string(symbol);
+    ast::Attribute attribute = ast::attribute("c_name");
+    attribute.args = args;
+    return attribute;
+}
+
+struct TreeMemory {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    mem::Allocator *outside;
+};
+
+static void tree_begin(TreeMemory *trees) {
+    trees->memory = test::memory(1U << 22);
+    trees->allocator = arena::allocator(&trees->memory);
+    trees->outside = mem::set_allocator(&trees->allocator.base);
+}
+
+static void tree_end(TreeMemory *trees) {
+    mem::set_allocator(trees->outside);
+}
+
+// The IR of the module, as text (LLVM's, disposed of by the caller).
+static char *ir_of(const ast::Module *m) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::Target target = {};
+    target.triple = "x86_64-unknown-linux-gnu";
+    emit::Options options = {};
+    options.target = target;
+    emit::ModuleResult emitted = emit::module(context, m, options);
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        c::LLVMDisposeModule(emitted.ok);
+    }
+    c::LLVMContextDispose(context);
+    return text;
+}
+
+// A tree with the prototype `@c_name("__enzyme_autodiff") F64 reverse(I32 f, ...)` and the function
+// `F64 run(F64 x) { return reverse(1, x); }`.
+static ast::Module reverse_module() {
+    static ast::Attribute attributes[1];
+    attributes[0] = c_name_attribute("__enzyme_autodiff");
+    ast::Param params[1] = {ast::param("f", ast::named("I32"))};
+    ast::Decl *reverse = ast::function("reverse", params, ast::named("F64"), nullptr);
+    if (reverse->kind == .function) reverse->kind.function.variadic = true;
+    reverse->attributes = attributes;
+    ast::ExprRef args[2] = {ast::integer(1), ast::name("x")};
+    ast::StmtRef items[1] = {ast::return_value(ast::call(ast::name("reverse"), args))};
+    ast::Param run_params[1] = {ast::param("x", ast::named("F64"))};
+    ast::Decl *run = ast::function("run", run_params, ast::named("F64"), ast::block(items));
+    run->exported = true;
+    ast::DeclRef decls[2] = {reverse, run};
+    return ast::new_module("front::test", decls);
+}
+
+export void test_front_emit_autodiff_a_variadic_c_name_prototype_is_declared_under_the_c_name() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Module m = reverse_module();
+    tree_end(&trees);
+    char *text = ir_of(&m);
+    if (text == nullptr) return;
+    test::check_equal(c::strstr(text, "declare double @__enzyme_autodiff(i32, ...)") != nullptr, true);
+    test::check_equal(c::strstr(text, "call double (i32, ...) @__enzyme_autodiff(i32 1, double") != nullptr, true);
+    c::LLVMDisposeMessage(text);
+}
