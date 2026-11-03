@@ -68,8 +68,8 @@ export void test_a_path_in_an_expression_and_a_type_is_mended() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str source = "fn f(b: *mut build::Build) {\n    c::printf(1)\n}\n";
-    Str want = "fn f(b: *mut build.Build) {\n    c.printf(1)\n}\n";
+    Str source = "fn f(b: *mut build::Build):\n    c::printf(1)\n";
+    Str want = "fn f(b: *mut build.Build):\n    c.printf(1)\n";
     test::check_equal(mended(source), want);
 }
 
@@ -78,7 +78,7 @@ export void test_a_dotted_type_path_reads() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parser::Parsed parsed = parser::parse_new("x.smith", "fn f(b: *mut build.Build) {\n}\n");
+    parser::Parsed parsed = parser::parse_new("x.smith", "fn f(b: *mut build.Build):\n    return\n");
     test::check_equal(countof(parsed.errors), (Usize)0);
     test::check_equal(countof(parsed.warnings), (Usize)0);
 }
@@ -88,7 +88,7 @@ export void test_an_attribute_path_is_mended() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str source = "@serial::rename(\"a\")\nfn f() {\n}\n";
-    Str want = "@serial.rename(\"a\")\nfn f() {\n}\n";
+    Str source = "@serial::rename(\"a\")\nfn f():\n    return\n";
+    Str want = "@serial.rename(\"a\")\nfn f():\n    return\n";
     test::check_equal(mended(source), want);
 }
