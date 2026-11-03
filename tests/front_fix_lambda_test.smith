@@ -1,0 +1,37 @@
+// Tests of the fix-it for an old lambda (#1771, part of #1428): `[factor](I32 a) -> I32 { ... }` goes through
+// `smith lint --fix` to `fn(a: i32) -> i32 { ... }`, and the text it ends with parses with no error. Before, the
+// bracket group stayed and the new parser read it as an array called with `(I32 a)`: "expected `)` to end the
+// arguments, found `a`".
+module front_fix_lambda_test;
+
+import front::fix;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Usize errors_in(Str source) {
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    return countof(parsed.errors);
+}
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+    test::check_equal(errors_in(first.text), (Usize)0);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+export void test_front_fix_lambda_a_capture_and_a_typed_parameter() {
+    expect_fixed("module m;\nI32 f(I32 factor) {\n    return g([factor](I32 a) -> I32 { return a * factor; });\n}\n",
+                 "fn f(factor: i32) -> i32 {\n    return g(fn(a: i32) -> i32 { return a * factor })\n}\n");
+}
+
+export void test_front_fix_lambda_no_parameters() {
+    expect_fixed("module m;\nvoid f() {\n    run([] { work(); });\n}\n", "fn f() {\n    run(fn() { work() })\n}\n");
+}

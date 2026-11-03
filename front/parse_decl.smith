@@ -1331,9 +1331,13 @@ static ast::FieldDecl parse_field(parse::Parser *p, Style *style, Bool top) {
     return finish_field(p, field, false, start, style, top);
 }
 
-// A field in smith's own syntax starts with a lowercase name and `:` (the old form starts with a type).
+// A field in smith's own syntax starts with a lowercase name and `:` (the old form starts with a type). A keyword may
+// name a field (`module: str`); `int : 3`, an unnamed C bit-field, is not one.
 static Bool new_field_ahead(const parse::Parser *p) {
-    return parse::at(p, lex::name) && parse::peek_at(p, 1).kind == lex::colon;
+    lex::TokenKind kind = parse::peek(p).kind;
+    if (parse::peek_at(p, 1).kind != lex::colon) return false;
+    if (kind == lex::name) return true;
+    return lex::is_keyword(kind) && parse::peek_at(p, 2).kind != lex::integer;
 }
 
 // `x: f64`, one to a line, with no `;` or `,` (the position is at the name).

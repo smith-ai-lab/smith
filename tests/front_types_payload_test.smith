@@ -1,0 +1,167 @@
+// Tests of payload enumerations in the checker (#1774, part of #1428, spec "Structs, enums and building values"):
+// `enum Shape { circle: Circle  rect: Rect  empty }` declares, `.circle(Circle(radius = 1))` builds, and a `match` arm
+// `.circle(c)` binds what the enumerator carries. Each scenario is source text in smith's own syntax; one test per
+// rule, an accepted case and a refused one with its message.
+module front_types_payload_test;
+
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str join(Str a, Str b) {
+    char out[:] = mem::alloc_slice(char, countof(a) + countof(b));
+    for (Usize i = 0; i < countof(a); i++) {
+        out[i] = a[i];
+    }
+    for (Usize i = 0; i < countof(b); i++) {
+        out[countof(a) + i] = b[i];
+    }
+    return out;
+}
+
+// The module of `source`, read in smith's own syntax (parser::parse reads today's), with the real parsers' hooks.
+static parser::Parsed parse_new(Str source) {
+    parser::Parsed result = {};
+    result.module.file = "t.smith";
+    lex::Lexed lexed = lex::tokenize_new(source);
+    switch (lexed) {
+    case .ok:
+        parse::Parser p = parse::make(lexed.ok, source);
+        p.new_syntax = true;
+        p.hooks.expression = parse_expr::expression;
+        p.hooks.type = parse_type::type;
+        p.hooks.statement = parse_stmt::statement;
+        p.hooks.declaration = parse_decl::declaration;
+        result.module = parse_decl::file(&p, "t.smith");
+        result.errors = p.errors;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    return result;
+}
+
+static types::Checked check_text(Str source) {
+    parser::Parsed p = parse_new(source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    return types_decl::check_module(&p.module, types::lp64());
+}
+
+// The errors, one per line.
+static Str errors_of(const types::Checked *r) {
+    Str text = "";
+    for (Usize i = 0; i < r->error_count; i++) {
+        text = join(text, join(r->errors[i].message, "\n"));
+    }
+    return text;
+}
+
+// `source` checks with no error.
+static void clean(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    Str errors = errors_of(&r);
+    Str none = "";
+    test::check_equal(errors, none);
+}
+
+// `source` gives exactly one error, which says `first` and `second`.
+static void fails(Str source, Str first, Str second) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    Str errors = errors_of(&r);
+    test::check_equal(r.error_count, (Usize)1);
+    test::check_condition(has(errors, first));
+    test::check_condition(has(errors, second));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Payload enumerations
+
+static Str shapes(Str rest) {
+    return join("struct Circle {\n    radius: f32\n}\nstruct Rect {\n    w: f32\n    h: f32\n}\nenum Shape {\n    "
+                "circle: Circle\n    rect: Rect\n    empty\n}\n",
+                rest);
+}
+
+export void test_front_types_payload_enumeration_declares() {
+    clean(shapes(""));
+}
+
+export void test_front_types_payload_variant_builds_with_its_payload() {
+    clean(shapes("fn make() -> Shape {\n    s: Shape = .circle(Circle(radius = 1))\n    return s\n}\n"));
+}
+
+export void test_front_types_payload_variant_without_payload_builds() {
+    clean(shapes("fn make() -> Shape {\n    s: Shape = .empty\n    return s\n}\n"));
+}
+
+export void test_front_types_payload_variant_checks_its_payload_type() {
+    fails(shapes("fn make() -> Shape {\n    s: Shape = .circle(Rect(w = 1, h = 2))\n    return s\n}\n"), "Circle", "");
+}
+
+export void test_front_types_payload_variant_needs_its_payload() {
+    fails(shapes("fn make() -> Shape {\n    s: Shape = .circle\n    return s\n}\n"), "`.circle` carries a `Circle`",
+          "`.circle(value)`");
+}
+
+export void test_front_types_payload_variant_that_carries_nothing_takes_none() {
+    fails(shapes("fn make() -> Shape {\n    s: Shape = .empty(1)\n    return s\n}\n"), "`.empty` carries no value",
+          "`.empty` alone");
+}
+
+export void test_front_types_payload_match_binds_what_the_variant_carries() {
+    clean(
+        shapes("fn area(s: Shape) -> f32 {\n    a: f32 = match s {\n        .circle(c) => c.radius * c.radius\n        "
+               ".rect(r) => r.w * r.h\n        .empty => 0\n    }\n    return a\n}\n"));
+}
+
+export void test_front_types_payload_match_must_cover_every_variant() {
+    fails(shapes("fn area(s: Shape) -> f32 {\n    a: f32 = match s {\n        .circle(c) => c.radius\n        "
+                 ".rect(r) => r.w\n    }\n    return a\n}\n"),
+          "does not cover `.empty`", "");
+}
+
+export void test_front_types_payload_match_binding_has_the_payload_type() {
+    fails(shapes(
+              "fn area(s: Shape) -> f32 {\n    a: f32 = match s {\n        .circle(c) => c.w\n        .rect(r) => r.w\n"
+              "        .empty => 0\n    }\n    return a\n}\n"),
+          "w", "");
+}
+
+export void test_front_types_payload_match_binding_on_a_bare_variant_is_refused() {
+    fails(shapes("fn area(s: Shape) -> f32 {\n    a: f32 = match s {\n        .circle(c) => 1\n        .rect(r) => 2\n"
+                 "        .empty(e) => 0\n    }\n    return a\n}\n"),
+          "`.empty` carries no value to bind", "");
+}

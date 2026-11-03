@@ -392,3 +392,15 @@ export void test_parse_expr_a_line_starting_with_a_dot_continues_inside_parenthe
     test::check_condition(parse::expression(&top) != nullptr);
     test::check_equal(parse::peek(&top).kind == lex::dot, true);
 }
+
+// After `.` a keyword is a member name (#1770): `x.module`, `t.type`.
+export void test_parse_expr_keyword_is_a_member_name() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("x.module.type");
+    ast::Expr *e = parse::expression(&p);
+    test::check_condition(e != nullptr);
+    test::check_equal(countof(p.errors), 0UL);
+}
