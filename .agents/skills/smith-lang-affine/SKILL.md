@@ -46,3 +46,5 @@ Each message is at the second use, with a note at the first. The loop and index 
 In `.smith` files of smith's own front end the same rules are checked by `front/affine.smith` (straight-line code, branches, `defer`; loops, elements and slices follow in #1987), with the same messages and the same note at the first use.
 
 Not checked: unions, `_Atomic`, a cast that hides the type. A struct holding an affine member is not affine itself (reading the member is a use). Template functions and functions with another error are skipped.
+
+Payload enums in the new front end: no narrowing rule is built (#1988). A payload is read only through `match` or `if let .variant(v) = x:`, which test the variant first, so `x.variant` is a compile error that suggests both.

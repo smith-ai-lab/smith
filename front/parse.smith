@@ -49,6 +49,8 @@ export typedef struct {
 
 export typedef typeof(Edit[:]) Edits;
 
+export typedef typeof(Str[:]) Names;
+
 // What went wrong and where. `fix` is the edits that mend it (empty: none), applied together or not at all by
 // `smith lint --fix` (parser::apply_fixes). An old form that still compiles goes in the parser's `warnings`, not here.
 export typedef struct {
@@ -83,9 +85,28 @@ export struct Parser {
     Bool for_init; // a declaration is the init of a `for (...)`: its `;` stays, it separates the header's parts
     Bool new_syntax; // the tokens come from lex::tokenize_new: `.`, `(`, `[` and `{` also start smith's own forms
                      // (#1446)
+    Names modules;   // the names that the imports read so far bind (`import std.format` binds `format`): `m.to(x)` on
+                     // one is a call of the module's function, not the conversion `x.to(T)` (#2104)
     Bool layout;     // the tokens went through lex::layout: blocks are `:` and `indent` ... `dedent`, a statement ends
                      // with `newline` (#1856; parser::parse_new chooses, #1859 removes the other path)
 };
+
+// Records that an import binds `name` in the file.
+export void bind_module(Parser *p, Str name) {
+    if (countof(name) == 0) return;
+    Usize count = countof(p->modules);
+    p->modules = mem::realloc(p->modules, count + 1);
+    p->modules[count] = name;
+}
+
+// Whether an import has bound `name`.
+export Bool is_module(const Parser *p, Str name) {
+    for (Usize i = 0; i < countof(p->modules); i += 1) {
+        Str bound = p->modules[i];
+        if (countof(bound) == countof(name) && (countof(name) == 0 || mem::equal(bound, name))) return true;
+    }
+    return false;
+}
 
 // A parser at the first token with no errors and no hooks. The tokens must end with the end of the file, as
 // lex::tokenize gives them.

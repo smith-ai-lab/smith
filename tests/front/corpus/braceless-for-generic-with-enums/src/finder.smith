@@ -1,0 +1,6 @@
+pub fn first_positive(a: i32, b: i32) -> ?i32:
+    if a > 0:
+        return a
+    if b > 0:
+        return b
+    return .none
