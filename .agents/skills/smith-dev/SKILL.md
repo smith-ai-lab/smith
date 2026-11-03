@@ -16,6 +16,7 @@ description: "Start here for any change to smith itself (smith.c, runtime/, shim
 | add or change a verb or the compiler links | [smith-dev-verbs](../smith-dev-verbs/SKILL.md) |
 | change what `smith new` writes or the default `.clang-format` and `.clang-tidy` | [smith-dev-new](../smith-dev-new/SKILL.md) |
 | change the `.smith` language, its hook or its tools | [smith-dev-language](../smith-dev-language/SKILL.md) |
+| write anything in the new syntax (#1428): the tour, every feature, today's forms → new | [smith-dev-syntax](../smith-dev-syntax/SKILL.md) |
 | add a library or port one to `.smith` | [smith-dev-library](../smith-dev-library/SKILL.md) |
 | write smith's own C | [smith-dev-c](../smith-dev-c/SKILL.md) |
 | change a concept or a skill | [smith-dev-docs](../smith-dev-docs/SKILL.md) |
