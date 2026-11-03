@@ -213,8 +213,18 @@ static Bool is_c_path(ast::Path path) {
 
 // `c::name` where `name` is a function a header declared.
 static Bool c_callee(state::Emitter *e, const ast::Expr *callee, const ast::Decl **found, Str *symbol) {
-    if (callee->kind != .name) return false;
-    Str full = join(callee->kind.name.path);
+    Str full = "";
+    if (callee->kind == .name) {
+        full = join(callee->kind.name.path);
+    } else if (callee->kind == .member) { // `c.name` after `import c <h>` (#1961), unless a local `c` hides it
+        state::Local local = {};
+        if (state::find_local(e, "c", &local)) return false;
+        Str name = types::c_member_name(callee);
+        if (countof(name) == 0) return false;
+        full = state::msg(format::push("c::", name)); // an owned copy, as `join` makes
+    } else {
+        return false;
+    }
     const types::Symbol *target = types::lookup(&e->options.checked->scopes, full);
     if (target == nullptr || target->kind != .function_symbol || target->decl->kind != .function) {
         state::free_text(full);
@@ -234,6 +244,7 @@ static Bool imported_callee(state::Emitter *e, const ast::Expr *callee, const as
     if (callee->kind == .name && is_c_path(callee->kind.name.path)) {
         return c_callee(e, callee, found, symbol);
     }
+    if (callee->kind == .member && c_callee(e, callee, found, symbol)) return true;
     if (callee->kind == .member) {
         names = types::member_names(callee);
     } else if (callee->kind == .name && countof(callee->kind.name.path.segments) == 1) {

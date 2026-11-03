@@ -341,10 +341,21 @@ static state::Status dispatch_stmt_expr(state::Emitter *e, const ast::Expr *x, s
 // `c::EOF`, `c::O_RDONLY`: a constant a header declared (an enumerator, a macro with a value, a `static const`),
 // emitted where it is used as its initializer, typed as the checker typed it (#1762). Null when `x` is no such name.
 static const ast::Expr *c_constant(state::Emitter *e, const ast::Expr *x) {
-    if (x->kind != .name || e->options.checked == nullptr) return nullptr;
-    ast::Path path = x->kind.name.path;
-    if (countof(path.segments) != 2 || !state::same_text(path.segments[0].text, "c")) return nullptr;
-    Str full = state::msg(format::push("c::", path.segments[1].text));
+    if (e->options.checked == nullptr) return nullptr;
+    Str full = "";
+    if (x->kind == .member) { // `c.name` after `import c <h>` (#1961), unless a local `c` hides it
+        state::Local local = {};
+        if (state::find_local(e, "c", &local)) return nullptr;
+        Str name = types::c_member_name(x);
+        if (countof(name) == 0) return nullptr;
+        full = state::msg(format::push("c::", name));
+    } else if (x->kind == .name) {
+        ast::Path path = x->kind.name.path;
+        if (countof(path.segments) != 2 || !state::same_text(path.segments[0].text, "c")) return nullptr;
+        full = state::msg(format::push("c::", path.segments[1].text));
+    } else {
+        return nullptr;
+    }
     const types::Symbol *symbol = types::lookup(&e->options.checked->scopes, full);
     state::free_text(full);
     if (symbol == nullptr || symbol->kind != .variable || symbol->decl == nullptr || !symbol->decl->from_c)
