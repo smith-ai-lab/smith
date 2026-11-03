@@ -5,6 +5,7 @@
 #include "tool.h"
 
 #include "clang/Format/Format.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdlib>
@@ -46,7 +47,10 @@ std::unique_ptr<Transport> newXPCTransport() {
 // smith's defaults for the editor: the fallback style of clangd's formatting is `file:<style>` (the default of its
 // --fallback-style, so the flag still wins), and its checks use <tidy> where no .clang-tidy governs a file. A project's
 // own file wins whole in both. The strings live for the process.
+static std::string styleFile;
+
 extern "C" void smith_clangd_defaults(const char *style, const char *tidy) {
+    styleFile = style;
     static std::string fallback;
     static std::string checks;
     fallback = std::string("file:") + style;
@@ -70,4 +74,23 @@ extern "C" int smith_clangd_main(int argc, char **argv) {
 #else
     return clang::clangd::clangdMain(argc, argv);
 #endif
+}
+
+// The formatting of a C, Objective-C or C++ file by smith's own style (the file `smith_clangd_defaults` was given),
+// with clang-format's library and no patch: `smith lsp` answers textDocument/formatting itself where the project has no
+// .clang-format (shim/lsp.cpp). Calls `edit` once per replacement of [begin, end) of `text`; returns 0, or 1 when the
+// style cannot be read or parsed.
+extern "C" int smith_lsp_format(const char *name, const char *text, size_t size, size_t begin, size_t end,
+                                void (*edit)(void *, size_t, size_t, const char *, size_t), void *context) {
+    if (styleFile.empty()) return 1;
+    auto buffer = llvm::MemoryBuffer::getFile(styleFile);
+    if (!buffer) return 1;
+    clang::format::FormatStyle style = clang::format::getLLVMStyle(clang::format::guessLanguage(name, {text, size}));
+    if (clang::format::parseConfiguration((*buffer)->getMemBufferRef(), &style)) return 1;
+    clang::tooling::Replacements fixes = clang::format::reformat(
+        style, {text, size}, {clang::tooling::Range((unsigned)begin, (unsigned)(end - begin))}, name);
+    for (const clang::tooling::Replacement &fix : fixes)
+        edit(context, fix.getOffset(), fix.getLength(), fix.getReplacementText().data(),
+             fix.getReplacementText().size());
+    return 0;
 }
