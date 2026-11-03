@@ -7,7 +7,7 @@ description: "Method calls in the new syntax (#1428): `xs.push(5)` for `list.pus
 
 `x.f(args)` is the call `f(x, args)`, or `f(&x, args)` when `f` takes a pointer first. There is one way to write it: where the method form applies, `smith lint --fix` rewrites the module-qualified call. The tour is [smith-dev-syntax-methods](../smith-dev-syntax-methods/SKILL.md).
 
-```smith
+```smith fragment
 list := import lib.list
 
 fn run() -> i32 {
