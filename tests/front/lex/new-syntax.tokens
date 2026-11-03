@@ -5,7 +5,7 @@
 1:13 right_paren )
 1:15 arrow ->
 1:18 type_name I32
-1:22 left_brace { [eol]
+1:21 colon : [eol]
 2:5 name let
 2:9 kw_mut mut
 2:13 name x
@@ -20,34 +20,30 @@
 3:20 type_name I32 [eol]
 4:5 kw_match match
 4:11 name x
-4:13 left_brace { [eol]
+4:12 colon : [eol]
 5:9 integer 1
-5:11 fat_arrow =>
-5:14 kw_return return
-5:21 integer 0 [eol]
-6:5 right_brace } [eol]
-7:5 kw_for for
-7:9 left_paren (
-7:10 name i
-7:12 kw_in in
-7:15 name xs
-7:17 right_paren )
-7:19 name f
-7:20 left_paren (
-7:21 at @
-7:22 name i
-7:23 right_paren ) [eol]
-8:5 kw_return return
-8:12 name y [eol]
-9:1 right_brace } [eol]
-10:1 kw_type type
-10:6 type_name Point
-10:12 equal =
-10:14 kw_struct struct
-10:21 left_brace {
-10:23 type_name I32
-10:27 name x
-10:29 right_brace } [eol]
-11:1 kw_fn_once fn_once
-11:9 name g [eol]
-12:1 end_of_file
+5:10 colon :
+5:12 kw_return return
+5:19 integer 0 [eol]
+6:5 kw_for for
+6:9 name i
+6:11 kw_in in
+6:14 name xs
+6:16 colon :
+6:18 name f
+6:19 left_paren (
+6:20 at @
+6:21 name i
+6:22 right_paren ) [eol]
+7:5 kw_return return
+7:12 name y [eol]
+8:1 kw_type type
+8:6 type_name Point
+8:12 equal =
+8:14 kw_struct struct
+8:20 colon : [eol]
+9:5 type_name I32
+9:9 name x [eol]
+10:1 kw_fn_once fn_once
+10:9 name g [eol]
+11:1 end_of_file

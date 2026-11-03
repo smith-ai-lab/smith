@@ -607,10 +607,13 @@ static Bool gap_is_not_plain(Str gap) {
 // An attribute that ends its line marks the declaration on the next line: not a blank line, a comment, or the end of
 // the block.
 static void check_attribute_target(parse::Parser *p, ast::Span span) {
-    if (!line_ended(p)) return;
+    if (!line_ended(p) && !(p->layout && at_line_end(p))) return;
     lex::Token last = p->tokens[p->position - 1];
-    lex::Token next = parse::peek(p);
-    Bool ends = next.kind == lex::right_brace || next.kind == lex::end_of_file;
+    Usize ahead = 0;
+    while (p->layout && parse::peek_at(p, ahead).kind == lex::newline) // layout path: the line break is a token
+        ahead += 1;
+    lex::Token next = parse::peek_at(p, ahead);
+    Bool ends = next.kind == lex::right_brace || next.kind == lex::end_of_file || next.kind == lex::dedent;
     if (!ends && !gap_is_not_plain(p->source[last.span.end:next.span.start])) return;
     parse::error(p, span, "an attribute marks the declaration on the next line");
 }
@@ -1495,11 +1498,12 @@ static FieldList parse_fields(parse::Parser *p, Style *style) {
         Usize before = p->position;
         if (parse::at(p, lex::at)) {
             Prefixes marks = {};
-            while (parse::at(p, lex::at))
+            while (parse::at(p, lex::at)) {
                 parse_at_attribute(p, &marks);
-            skip_newlines(p);
+                skip_newlines(p); // layout path: stacked attributes, one per line
+            }
             if (!new_field_ahead(p)) {
-                if (!parse::at(p, lex::right_brace) && !parse::at(p, lex::end_of_file))
+                if (!parse::at(p, lex::right_brace) && !parse::at(p, lex::end_of_file) && !parse::at(p, lex::dedent))
                     parse::error(p, parse::peek(p).span, "an attribute marks a field written `name: type`");
                 if (p->position == before) parse::advance(p);
                 continue;
