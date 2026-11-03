@@ -3850,6 +3850,15 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
         stream_before(w, f);
         return;
     }
+    if (callee->kind == .member) {
+        syntax::Edits fix = {};
+        Str lacking = types::c_member_error(c, callee, &fix);
+        if (countof(lacking) > 0) { // `stdio.nothing(1)`, or `c.printf(...)` with no `c` bound
+            types::fail_fix(c, callee->span, lacking, fix);
+            poison(c, e);
+            return;
+        }
+    }
     types::TypeRef record = constructed_record(c, callee);
     if (record != nullptr) {
         construct_before(w, f, record);
@@ -3914,8 +3923,15 @@ static void before(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .member) {
         const ast::Expr *base = e->kind.member.base;
         const types::Symbol *header = types::c_member(c, e);
-        if (header != nullptr) { // `c.name` after `import c <h>`: the header's declaration
+        if (header != nullptr) { // `stdio.name` after `import c <stdio.h>`: the header's declaration
             finish(c, e, header->type, f.expected);
+            return;
+        }
+        syntax::Edits fix = {};
+        Str lacking = types::c_member_error(c, e, &fix);
+        if (countof(lacking) > 0) {
+            types::fail_fix(c, e->span, lacking, fix);
+            poison(c, e);
             return;
         }
         if (module_value(c, f, types::member_names(e))) return;

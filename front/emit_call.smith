@@ -210,11 +210,11 @@ static Bool c_callee(state::Emitter *e, const ast::Expr *callee, const ast::Decl
     Str full = "";
     if (callee->kind == .name) {
         full = join(callee->kind.name.path);
-    } else if (callee->kind == .member) { // `c.name` after `import c <h>` (#1961), unless a local `c` hides it
+    } else if (callee->kind ==
+                   .member) { // `stdio.name` after `import c <stdio.h>` (#1678), unless a local hides the binding
         state::Local local = {};
-        if (state::find_local(e, "c", &local)) return false;
-        Str name = types::c_member_name(callee);
-        if (countof(name) == 0) return false;
+        Str name = types::c_member_name(e->options.checked, callee);
+        if (countof(name) == 0 || state::find_local(e, types::c_member_base(callee), &local)) return false;
         full = state::msg(format::push("c::", name)); // an owned copy, as `join` makes
     } else {
         return false;

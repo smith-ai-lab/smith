@@ -189,6 +189,9 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
         ast::Path path = t->kind.named.path;
         state::Ty ty = {};
         if (countof(path.segments) == 2 && state::same_text(path.segments[0].text, "c")) return type_of_header(e, t);
+        if (countof(path.segments) == 2 && e->options.checked != nullptr &&
+            types::header_binding(e->options.checked, path.segments[0].text) != nullptr)
+            return type_of_header(e, t); // `stdio.size_t` is the header's `c::size_t`
         if (countof(path.segments) == 2) return type_of_imported(e, t);
         if (countof(path.segments) == 1 && state::scalar_type(e, path.segments[0].text, &ty)) return ty;
         if (countof(path.segments) == 1 && arith::type_float(e, path.segments[0].text, &ty)) return ty;
@@ -343,11 +346,10 @@ static state::Status dispatch_stmt_expr(state::Emitter *e, const ast::Expr *x, s
 static const ast::Expr *c_constant(state::Emitter *e, const ast::Expr *x) {
     if (e->options.checked == nullptr) return nullptr;
     Str full = "";
-    if (x->kind == .member) { // `c.name` after `import c <h>` (#1961), unless a local `c` hides it
+    if (x->kind == .member) { // `stdio.name` after `import c <stdio.h>` (#1678), unless a local hides the binding
         state::Local local = {};
-        if (state::find_local(e, "c", &local)) return nullptr;
-        Str name = types::c_member_name(x);
-        if (countof(name) == 0) return nullptr;
+        Str name = types::c_member_name(e->options.checked, x);
+        if (countof(name) == 0 || state::find_local(e, types::c_member_base(x), &local)) return nullptr;
         full = state::msg(format::push("c::", name));
     } else if (x->kind == .name) {
         ast::Path path = x->kind.name.path;

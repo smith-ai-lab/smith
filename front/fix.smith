@@ -18,6 +18,7 @@
 module front::fix;
 
 import front::ast;
+import front::cimport;
 import front::parse as core;
 import front::fix_method;
 import front::lex;
@@ -29,9 +30,11 @@ import front::parser;
 import front::roots;
 import front::types;
 import front::types_decl;
+import std::arena;
 import std::files;
 import std::format;
 import std::mem;
+import <stdlib.h>;
 import <unistd.h>;
 
 // The text with the fixes applied, and how many fixes that was and how many were left out because an edit of theirs
@@ -137,10 +140,45 @@ export void set_loader(types::ModuleLoader load) {
     loader = load;
 }
 
+static arena::Arena header_arena;
+static Bool header_arena_made = false;
+static Str header_folder = ".";
+
+// The declarations of a C header, for the fix that names a binding (#1678): read as front::compile reads one, with
+// the flags of SMITH_FRONT_CIMPORT_FLAGS; null when clang cannot read it.
+static const ast::Module *load_header(Str header, Bool angled) {
+    Str name = as_str(format::push(header));
+    Str folder = as_str(format::push(header_folder));
+    if (!header_arena_made) {
+        header_arena = arena::growing(1U << 20, nullptr);
+        header_arena_made = true;
+    }
+    Str empty = "";
+    const char *flags = empty.data;
+    const char *given = c::getenv("SMITH_FRONT_CIMPORT_FLAGS");
+    if (given != nullptr) flags = given;
+    cimport::Header got = cimport::read(&header_arena, name.data, !angled, folder.data, flags);
+    if (countof(got.error) > 0) return nullptr;
+    ast::Module *module = mem::alloc(ast::Module);
+    module->decls = got.decls;
+    return module;
+}
+
+// Whether the module imports a header with a language (`import c <h>`): only then does the checker need clang.
+static Bool imports_header(const ast::Module *module) {
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind != .import_c) continue;
+        if (countof(d->kind.import_c.language) > 0) return true;
+    }
+    return false;
+}
+
 // The errors of the checker that carry a fix, as parse errors, so `apply_fixes` takes both kinds (#1516).
 static core::Errors checker_fixes(Str source, const ast::Module *module) {
     core::Errors out = {};
-    types::Checked checked = types_decl::check_module_with(module, types::lp64(), loader);
+    types::HeaderLoader headers = imports_header(module) ? load_header : nullptr;
+    types::Checked checked = types_decl::check_module_headers(module, types::lp64(), loader, headers);
     for (Usize i = 0; i < checked.error_count; i++) {
         types::Error e = checked.errors[i];
         if (countof(e.fix) == 0) continue;
@@ -267,6 +305,12 @@ static Str hash_comments(Str source) {
 // applies none (at most 8 passes). `applied` counts the fixes of all the passes.
 export Fixed fix_text(Str file, Str source) {
     Fixed total = {.text = source};
+    header_folder = ".";
+    for (Usize i = countof(file); i > 0; i--) { // a quoted header is looked up beside the file
+        if (file[i - 1] != '/') continue;
+        header_folder = i == 1 ? file[0:1] : file[0:i - 1];
+        break;
+    }
     for (Usize pass = 0; pass < fix_passes; pass++) {
         parser::Parsed parsed = parse_for_fix(file, total.text);
         core::Errors errors = parsed.errors;
@@ -287,6 +331,10 @@ export Fixed fix_text(Str file, Str source) {
         if (!mem::equal(hashed, total.text) && lex::tokenize_new(hashed) != .error) total.text = hashed;
         total.applied += fixed.applied;
         total.skipped = fixed.skipped;
+    }
+    if (header_arena_made) { // what the headers declared is not needed once the passes are done
+        arena::release(&header_arena);
+        header_arena_made = false;
     }
     // The comments are written even when a form the fixer cannot mend is left, so no `//` hides the other causes.
     if (total.applied > 0) total.text = hash_comments(total.text);
