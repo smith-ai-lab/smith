@@ -225,6 +225,40 @@ export void test_a_source_without_old_forms_has_no_warnings() {
     check_count(countof(parsed.warnings), 0);
 }
 
+export void test_define_and_include_lines_get_one_fix() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    // The header binding is the spelling of #1428; the new parser reads it once #1678 lands, so only the text is
+    // checked.
+    fix::Fixed fixed = fix::fix_text("t.smith", "#include <sys/stat.h>\n#define LIMIT 4\nconst X := LIMIT\n");
+    check_text(fixed.text, "stat := import c <sys/stat.h>\nconst LIMIT := 4\nconst X := LIMIT\n");
+    check_count(fixed.applied, 1);
+}
+
+export void test_a_fixed_define_reads_in_smiths_own_syntax() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "#define LIMIT 4\nconst X := LIMIT\n");
+    check_text(fixed.text, "const LIMIT := 4\nconst X := LIMIT\n");
+    parser::Parsed again = parser::parse_new("t.smith", fixed.text);
+    check_count(countof(again.errors), 0);
+}
+
+export void test_other_directives_stay_errors_without_a_fix() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed parsed = parser::parse(file_name, "#if 1\n#define F(x) x\n#include \"h.h\"\n");
+    check_count(countof(parsed.errors), 1);
+    syntax::Edits none = parsed.errors[0].fix;
+    check_count(countof(none), 0);
+}
+
 // `(P){}` is `P()`: an empty compound literal of a named type is rewritten, and the text reads in the new syntax.
 export void test_an_empty_compound_literal_is_rewritten_to_a_call() {
     arena::Arena memory = test::memory(1U << 22);

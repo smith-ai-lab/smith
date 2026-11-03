@@ -819,6 +819,7 @@ static const char *const build_front_modules[] = {
     "emit_arith", "emit_control", "emit_call",  "emit_memory", "emit_debug",    "emit_object",
     "roots",      "fix",          "cimport",    "compile",     "emit_option",   "emit_match",
     "emit_value", "emit_iter",    "emit_tuple", "emit_lambda", "emit_vector",   "emit_stream",
+    "fix_directive",
 };
 constexpr size_t build_front_module_count = sizeof build_front_modules / sizeof build_front_modules[0];
 
@@ -3123,11 +3124,14 @@ static int build_docs_gate_test(SmithRun *run) {
     return failed;
 }
 
+static const char *build_absolute(SmithBuild *b, const char *path);
+static int build_tool_make(SmithBuild *b, const char *folder, const char *source);
+
 // `smith build ci-times [-Dn=10] [-Devent=pull_request]` (issue #360): where CI's time goes. The last n green runs of
 // ci.yml (a pull request, a merge queue entry with -Devent=merge_group, or a push to main) are downloaded with `gh`
 // into .smith/ci-times/<run id> (kept, so a run is fetched once): every job's steps in seconds (steps.tsv) and the
-// `test-log-*` artifacts, one for each part of the test matrix. scripts/ci_times.c, compiled here, prints the report.
-// A run that had no tests (its scope was documents only) has no logs and is counted.
+// `test-log-*` artifacts, one for each part of the test matrix. ci/times/main.smith, built here as a project of its
+// own, prints the report. A run that had no tests (its scope was documents only) has no logs and is counted.
 static int build_ci_times_fetch(SmithBuild *b, const char *id, const char *folder) {
     const char *steps = smith_fmt(b, "%s/steps.tsv", folder);
     if (access(steps, R_OK) == 0) return 0;
@@ -3164,27 +3168,25 @@ static int build_ci_times(SmithRun *run) {
     const char *const *ids = build_lines(b, list);
     for (size_t i = 0; status == 0 && ids != nullptr && ids[i] != nullptr; i++)
         status = build_ci_times_fetch(b, ids[i], smith_fmt(b, "%s/%s", root, ids[i]));
-    const char *tool = smith_fmt(b, "%s/ci_times", root);
-    const char *const compile[] = {
-        smith_env(b, "CC", "smith-cc"), "-std=c23", "-O1", "scripts/ci_times.c", "-o", tool, nullptr};
-    status = status != 0 ? status : build_exec(compile);
     if (status != 0) return status;
-    return build_exec(smith_cat(b, smith_list(b, tool, root, nullptr), ids, nullptr));
+    const char *tool_folder = build_absolute(b, smith_fmt(b, "%s/tool", root));
+    status = build_tool_make(b, tool_folder, "ci/times/main.smith");
+    if (status != 0) return status;
+    return build_exec(smith_cat(b, smith_list(b, build_defer_tool(b, tool_folder), root, nullptr), ids, nullptr));
 }
 
 // `smith build bench [-Dfull=1] [-Dsmith=<path>]` (issue #639): measures each budget line of the speed
 // table (no-op build, one-file build, fresh worktree, fmt, lint, a .smith module's compile, optionally the full test
 // suite's CPU) with the smith this build made, prints the table and writes it to .smith/bench.tsv.
-// scripts/bench.c, compiled here, does the measuring.
+// ci/bench/main.smith, built here as a project of its own, does the measuring.
 static int build_bench(SmithRun *run) {
     SmithBuild *b = run->b;
     const char *folder = ".smith/bench";
-    const char *tool = smith_fmt(b, "%s/bench", folder);
     if (build_make_folder(b, ".smith") != 0 || build_make_folder(b, folder) != 0) return 1;
-    const char *const compile[] = {
-        smith_env(b, "CC", "smith-cc"), "-std=c23", "-O1", "scripts/bench.c", "-o", tool, nullptr};
-    int status = build_exec(compile);
+    const char *tool_folder = build_absolute(b, smith_fmt(b, "%s/tool", folder));
+    int status = build_tool_make(b, tool_folder, "ci/bench/main.smith");
     if (status != 0) return status;
+    const char *tool = build_defer_tool(b, tool_folder);
     const char *const *argv = smith_list(b, tool, run->args[0], ".smith/bench.tsv", nullptr);
     if (run->args[1][0] != '\0') argv = smith_cat(b, argv, smith_list(b, "full", nullptr), nullptr);
     return build_exec(argv);
@@ -3209,6 +3211,21 @@ static const char *build_absolute(SmithBuild *b, const char *path) {
     char home[PATH_MAX];
     if (path[0] == '/' || getcwd(home, sizeof home) == nullptr) return path;
     return smith_fmt(b, "%s/%s", home, path);
+}
+
+// A tool written in one .smith file: a project of its own under `folder` (whose last name is the program's) with the
+// file as its main.smith, built by the smith that runs this build (the std modules it imports come with a project).
+// Its path is build_defer_tool(folder).
+static int build_tool_make(SmithBuild *b, const char *folder, const char *source) {
+    int status = build_make_folder(b, folder);
+    status = status != 0 ? status
+                         : build_exec(smith_list(b, "/bin/cp", source, smith_fmt(b, "%s/main.smith", folder), nullptr));
+    return status != 0 ? status
+                       : build_spawn(&(BuildSpawn){
+                             .argv = smith_list(b, smith_env(b, "SMITH_SELF", "smith"), "build", "release", nullptr),
+                             .folder = folder,
+                             .log = smith_fmt(b, "%s.log", folder),
+                             .tail = 20});
 }
 
 static int build_frontend_coverage(SmithRun *run) {

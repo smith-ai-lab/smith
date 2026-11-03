@@ -4,6 +4,7 @@
 // refusals) stays in tests/random.c, run by tests/random_c_test.smith.
 module std::random_test;
 
+import std::math;
 import std::random;
 import std::test;
 import <math.h>;
@@ -332,7 +333,7 @@ static I64 log_worst_double() {
         if (!__builtin_isfinite(x) || x == 0.0) {
             continue;
         }
-        I64 distance = ulps_double(random::log_double(x), c::log(x));
+        I64 distance = ulps_double(math::log(x), c::log(x));
         if (distance > worst) {
             worst = distance;
         }
@@ -366,7 +367,7 @@ static I64 log_worst_float() {
         if (!__builtin_isfinite(x) || x == 0.0F) {
             continue;
         }
-        I64 distance = ulps_float(random::log_float(x), c::logf(x));
+        I64 distance = ulps_float(math::log(x), c::logf(x));
         if (distance > worst) {
             worst = distance;
         }
@@ -385,27 +386,26 @@ export void test_random_log_float_is_within_one_ulp() {
 export void test_random_log_special_values() {
     F64 infinity = __builtin_inf();
     F32 infinity_float = __builtin_inff();
-    test::check_equal(random::log_double(0.0), -infinity);
-    test::check_equal(random::log_double(-0.0), -infinity);
-    test::check_equal(random::log_float(0.0F), -infinity_float);
-    test::check_equal(random::log_float(-0.0F), -infinity_float);
-    test::check(__builtin_isnan(random::log_double(-1.0)));
-    test::check(__builtin_isnan(random::log_double(-infinity)));
-    test::check(__builtin_isnan(random::log_double(-0x1p-1074)));
-    test::check(__builtin_isnan(random::log_float(-1.0F)));
-    test::check(__builtin_isnan(random::log_float(-infinity_float)));
-    test::check(__builtin_isnan(random::log_float(-0x1p-149F)));
-    test::check_equal(random::log_double(infinity), infinity);
-    test::check_equal(random::log_float(infinity_float), infinity_float);
-    test::check(__builtin_isnan(random::log_double(__builtin_nan(""))));
-    test::check(__builtin_isnan(random::log_float(__builtin_nanf(""))));
-    test::check_equal(random::log_double(1.0), 0.0);
-    test::check_equal(random::log_float(1.0F), 0.0F);
-    test::check_less_equal(ulps_double(random::log_double(0x1p-1074), c::log(0x1p-1074)), 1); // the smallest subnormal
-    test::check_less_equal(ulps_float(random::log_float(0x1p-149F), c::logf(0x1p-149F)), 1);
-    test::check_less_equal(ulps_double(random::log_double(0x1.fffffffffffffp+1023), c::log(0x1.fffffffffffffp+1023)),
-                           1);
-    test::check_less_equal(ulps_float(random::log_float(0x1.fffffep+127F), c::logf(0x1.fffffep+127F)), 1);
+    test::check_equal(math::log(0.0), -infinity);
+    test::check_equal(math::log(-0.0), -infinity);
+    test::check_equal(math::log(0.0F), -infinity_float);
+    test::check_equal(math::log(-0.0F), -infinity_float);
+    test::check(__builtin_isnan(math::log(-1.0)));
+    test::check(__builtin_isnan(math::log(-infinity)));
+    test::check(__builtin_isnan(math::log(-0x1p-1074)));
+    test::check(__builtin_isnan(math::log(-1.0F)));
+    test::check(__builtin_isnan(math::log(-infinity_float)));
+    test::check(__builtin_isnan(math::log(-0x1p-149F)));
+    test::check_equal(math::log(infinity), infinity);
+    test::check_equal(math::log(infinity_float), infinity_float);
+    test::check(__builtin_isnan(math::log(__builtin_nan(""))));
+    test::check(__builtin_isnan(math::log(__builtin_nanf(""))));
+    test::check_equal(math::log(1.0), 0.0);
+    test::check_equal(math::log(1.0F), 0.0F);
+    test::check_less_equal(ulps_double(math::log(0x1p-1074), c::log(0x1p-1074)), 1); // the smallest subnormal
+    test::check_less_equal(ulps_float(math::log(0x1p-149F), c::logf(0x1p-149F)), 1);
+    test::check_less_equal(ulps_double(math::log(0x1.fffffffffffffp+1023), c::log(0x1.fffffffffffffp+1023)), 1);
+    test::check_less_equal(ulps_float(math::log(0x1.fffffep+127F), c::logf(0x1.fffffep+127F)), 1);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -519,8 +519,8 @@ export void test_random_pinned_values() {
         pin(&pins, float_bits(random::normal_float_sample(random::key_make(word), (random::NormalFloat){1.0F, 2.0F})));
         pin(&pins, double_bits(random::normal_double_sample(random::key_make(word), (random::NormalDouble){1.0, 2.0})));
         pin(&pins, random::bernoulli_sample(random::key_make(word), (random::Bernoulli){0.3}) ? 1 : 0);
-        pin(&pins, float_bits(random::log_float(random::key_unit_float(random::key_make(word)) + 0.25F)));
-        pin(&pins, double_bits(random::log_double(random::key_unit_double(random::key_make(word)) + 0.25)));
+        pin(&pins, float_bits(math::log(random::key_unit_float(random::key_make(word)) + 0.25F)));
+        pin(&pins, double_bits(math::log(random::key_unit_double(random::key_make(word)) + 0.25)));
     }
     Usize order[8];
     random::permutation_sample(random::key_make(42), (random::Permutation){8}, order);

@@ -25,3 +25,14 @@ export void test_math_maximum_minimum() {
     test::check_equal(math::maximum(math::nan(F64), 3.0), 3.0);
     test::check_equal(math::minimum(3.0, math::nan(F64)), 3.0);
 }
+
+export void test_math_log_is_fdlibm_in_both_types() {
+    F64 infinity = math::infinity(F64);
+    F32 infinity_float = math::infinity(F32);
+    F64 not_a_number = math::log(-1.0);
+    test::check_equal(math::log_double(1.0), 0.0);
+    test::check_equal(math::log_float(1.0f), 0.0f);
+    test::check_equal(math::log(infinity), infinity);
+    test::check_equal(math::log(0.0f), -infinity_float);
+    test::check(not_a_number != not_a_number);
+}
