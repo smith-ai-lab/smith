@@ -84,18 +84,18 @@ static void fails(Str source, Str first, Str second) {
 }
 
 export void test_front_types_typeof_a_parameter_types_the_next_one() {
-    clean("fn larger(a: num, b: typeof(a)) -> typeof(a) {\n    a\n}\n");
+    clean("fn larger(a: num, b: typeof(a)) -> typeof(a):\n    a\n");
 }
 
 export void test_front_types_typeof_a_type_is_that_type() {
-    clean("fn first(a: i32, b: typeof(i32)) -> typeof(i32) {\n    a\n}\n");
+    clean("fn first(a: i32, b: typeof(i32)) -> typeof(i32):\n    a\n");
 }
 
 export void test_front_types_typeof_a_name_out_of_scope_is_refused() {
-    fails("fn f(a: i32, b: typeof(zzz)) -> i32 {\n    a\n}\n", "unknown type", "zzz");
+    fails("fn f(a: i32, b: typeof(zzz)) -> i32:\n    a\n", "unknown type", "zzz");
 }
 
 export void test_front_types_typeof_an_expression_is_not_typed_yet() {
-    fails("fn f(a: i32, b: typeof(a + 1)) -> i32 {\n    a\n}\n", "not yet typed: `typeof` of an expression",
+    fails("fn f(a: i32, b: typeof(a + 1)) -> i32:\n    a\n", "not yet typed: `typeof` of an expression",
           "write `typeof(x)`");
 }

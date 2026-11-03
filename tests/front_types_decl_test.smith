@@ -346,9 +346,10 @@ export void test_front_types_decl_local_constexpr_of_a_variable_is_refused() {
 // unused result of a call is an error. Bodies are read by the statement parser of #1527.
 export void test_front_types_decl_shadowing_is_refused() {
     reading_new = true;
-    fails("fn g() { let a = 1\n { let a = 2\n } }", "`a` hides the `a` declared at byte", "choose another name");
-    fails("fn g(x: i32) { let x = 2\n }", "`x` hides", "shadowing is an error");
-    clean("fn g() { { let a = 1\n }\n { let a = 2\n } }");
+    fails("fn g():\n    let a = 1\n    if true:\n        let a = 2\n", "`a` hides the `a` declared at byte",
+          "choose another name");
+    fails("fn g(x: i32):\n    let x = 2\n", "`x` hides", "shadowing is an error");
+    clean("fn g():\n    if true:\n        let a = 1\n    if true:\n        let a = 2\n");
     reading_new = false;
 }
 
@@ -360,38 +361,38 @@ export void test_front_types_decl_an_old_local_may_shadow() {
 // today's.)
 export void test_front_types_decl_a_discard_is_accepted() {
     reading_new = true;
-    clean("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) { let _ = f(x)\n }");
-    clean("fn g(x: i32) { let _ = x\n let _ = x\n }");
+    clean("fn f(x: i32) -> i32:\n    return x\nfn g(x: i32):\n    let _ = f(x)\n");
+    clean("fn g(x: i32):\n    let _ = x\n    let _ = x\n");
     reading_new = false;
 }
 
 export void test_front_types_decl_an_unused_result_is_refused() {
     reading_new = true;
-    fails("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) { f(x)\n }", "is not used", "write `let _ = ...`");
-    clean("fn f(x: i32) {\n}\nfn g(x: i32) { f(x)\n }");
+    fails("fn f(x: i32) -> i32:\n    return x\nfn g(x: i32):\n    f(x)\n", "is not used", "write `let _ = ...`");
+    clean("fn f(x: i32):\nfn g(x: i32):\n    f(x)\n");
     reading_new = false;
 }
 
 // The last line of a function is its value (#1428), so a call there is used; one before it is not.
 export void test_front_types_decl_a_call_on_the_last_line_is_the_result() {
     reading_new = true;
-    clean("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) -> i32 { f(x)\n }");
-    fails("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) -> i32 {\n    f(x)\n    return x\n}\n", "is not used",
+    clean("fn f(x: i32) -> i32:\n    return x\nfn g(x: i32) -> i32:\n    f(x)\n");
+    fails("fn f(x: i32) -> i32:\n    return x\nfn g(x: i32) -> i32:\n    f(x)\n    return x\n", "is not used",
           "write `let _ = ...`");
-    fails("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) { f(x)\n }", "is not used", "write `let _ = ...`");
+    fails("fn f(x: i32) -> i32:\n    return x\nfn g(x: i32):\n    f(x)\n", "is not used", "write `let _ = ...`");
     reading_new = false;
 }
 
 // #1558: `let (q, r) = f()` splits a tuple.
 export void test_front_types_decl_destructuring_splits_a_tuple() {
     reading_new = true;
-    Str head = "fn divmod(a: i32, b: i32) -> (i32, i32) { return (a / b, a % b)\n }\n";
-    clean(join(head, "fn g() { let (q, r) = divmod(7, 2)\n let _ = q + r\n }"));
-    clean(join(head, "fn g() { let (q, _) = divmod(7, 2)\n let _ = q\n }"));
-    clean(join(head, "fn g() { let (mut q, mut r) = divmod(7, 2)\n q = r\n }"));
-    clean(join(head, "fn g() { let (q, mut r) = divmod(7, 2)\n r = q\n }"));
-    fails(join(head, "fn g() { let (q, mut r) = divmod(7, 2)\n q = r\n }"), "cannot", "declare it `mut q`");
-    fails(join(head, "fn g() { let (a, b, c) = divmod(7, 2)\n }"), "3 names", "2 elements");
-    fails(join(head, "fn g() { let (q, r) = divmod(7, 2)\n q = 1\n }"), "cannot", "declare it `mut q`");
+    Str head = "fn divmod(a: i32, b: i32) -> (i32, i32):\n    return (a / b, a % b)\n";
+    clean(join(head, "fn g():\n    let (q, r) = divmod(7, 2)\n    let _ = q + r\n"));
+    clean(join(head, "fn g():\n    let (q, _) = divmod(7, 2)\n    let _ = q\n"));
+    clean(join(head, "fn g():\n    let (mut q, mut r) = divmod(7, 2)\n    q = r\n"));
+    clean(join(head, "fn g():\n    let (q, mut r) = divmod(7, 2)\n    r = q\n"));
+    fails(join(head, "fn g():\n    let (q, mut r) = divmod(7, 2)\n    q = r\n"), "cannot", "declare it `mut q`");
+    fails(join(head, "fn g():\n    let (a, b, c) = divmod(7, 2)\n"), "3 names", "2 elements");
+    fails(join(head, "fn g():\n    let (q, r) = divmod(7, 2)\n    q = 1\n"), "cannot", "declare it `mut q`");
     reading_new = false;
 }

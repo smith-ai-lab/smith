@@ -84,57 +84,55 @@ static void fails(Str source, Str first, Str second) {
 }
 
 export void test_front_types_stream_yield_in_a_generator_is_accepted() {
-    clean("fn countdown(from: i32) -> stream::Stream(i32) {\n    let mut n = from\n    while n > 0 {\n        yield "
+    clean("fn countdown(from: i32) -> stream::Stream(i32):\n    let mut n = from\n    while n > 0:\n        yield "
           "n\n   "
-          "     n -= 1\n    }\n}\n");
+          "     n -= 1\n");
 }
 
 export void test_front_types_stream_yield_converts_to_the_element() {
-    fails("fn names() -> stream::Stream(i32) {\n    yield \"a\"\n}\n", "Str", "I32");
+    fails("fn names() -> stream::Stream(i32):\n    yield \"a\"\n", "Str", "I32");
 }
 
 export void test_front_types_stream_yield_outside_a_generator_is_refused() {
-    fails("fn f() -> i32 {\n    yield 1\n    0\n}\n", "yield is valid only in a function that returns",
-          "remove the yield");
+    fails("fn f() -> i32:\n    yield 1\n    0\n", "yield is valid only in a function that returns", "remove the yield");
 }
 
 export void test_front_types_stream_return_with_a_value_is_refused() {
-    fails("fn g() -> stream::Stream(i32) {\n    yield 1\n    return 3\n}\n", "a generator ends with a plain `return`",
+    fails("fn g() -> stream::Stream(i32):\n    yield 1\n    return 3\n", "a generator ends with a plain `return`",
           "`yield v`");
 }
 
 export void test_front_types_stream_plain_return_ends_the_stream() {
-    clean("fn g(n: i32) -> stream::Stream(i32) {\n    if n < 0 {\n        return\n    }\n    yield n\n}\n");
+    clean("fn g(n: i32) -> stream::Stream(i32):\n    if n < 0:\n        return\n    yield n\n");
 }
 
 export void test_front_types_stream_last_line_value_is_refused() {
-    fails("fn one() -> i32 {\n    1\n}\n\nfn g(n: i32) -> stream::Stream(i32) {\n    yield n\n    one()\n}\n",
-          "is not used", "let _ = ...");
+    fails("fn one() -> i32:\n    1\n\nfn g(n: i32) -> stream::Stream(i32):\n    yield n\n    one()\n", "is not used",
+          "let _ = ...");
 }
 
 export void test_front_types_stream_returning_a_stream_without_yield_is_ordinary() {
-    clean("fn pass(s: stream::Stream(i32)) -> stream::Stream(i32) {\n    s\n}\n");
+    clean("fn pass(s: stream::Stream(i32)) -> stream::Stream(i32):\n    s\n");
 }
 
 export void test_front_types_stream_next_and_close_on_a_local() {
-    clean("fn countdown(from: i32) -> stream::Stream(i32) {\n    let mut n = from\n    while n > 0 {\n        yield "
+    clean("fn countdown(from: i32) -> stream::Stream(i32):\n    let mut n = from\n    while n > 0:\n        yield "
           "n\n   "
-          "     n -= 1\n    }\n}\n\nfn drain() {\n    let s = countdown(3)\n    let mut go = true\n    while go {\n"
-          "        let next: ?i32 = stream::next(s)\n        go = false\n    }\n    stream::close(s)\n}\n");
+          "     n -= 1\n\nfn drain():\n    let s = countdown(3)\n    let mut go = true\n    while go:\n"
+          "        let next: ?i32 = stream::next(s)\n        go = false\n    stream::close(s)\n");
 }
 
 export void test_front_types_stream_next_of_a_non_stream_is_refused() {
-    fails("fn f(n: i32) {\n    let _ = stream::next(n)\n}\n", "`stream::next` got a `I32`",
+    fails("fn f(n: i32):\n    let _ = stream::next(n)\n", "`stream::next` got a `I32`",
           "`stream::Stream(T)` is expected");
 }
 
 export void test_front_types_stream_close_of_a_non_stream_is_refused() {
-    fails("fn f(n: i32) {\n    stream::close(n)\n}\n", "`stream::close` got a `I32`",
-          "`stream::Stream(T)` is expected");
+    fails("fn f(n: i32):\n    stream::close(n)\n", "`stream::close` got a `I32`", "`stream::Stream(T)` is expected");
 }
 
 export void test_front_types_stream_next_is_an_optional_of_the_element() {
-    fails("fn countdown() -> stream::Stream(i32) {\n    yield 1\n}\n\nfn f() {\n    let s = countdown()\n"
-          "    let n: i32 = stream::next(s)\n}\n",
+    fails("fn countdown() -> stream::Stream(i32):\n    yield 1\n\nfn f():\n    let s = countdown()\n"
+          "    let n: i32 = stream::next(s)\n",
           "found Option(I32)", "expected I32");
 }
