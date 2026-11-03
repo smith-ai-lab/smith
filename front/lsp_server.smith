@@ -8,15 +8,18 @@
 //   replies
 //                  to stdout; returns 0 after `shutdown` then `exit`, else 1
 //
-// Served: `initialize` (full document sync), `shutdown`, `exit`, `textDocument/didOpen` and `didChange` (each answered
-// by `textDocument/publishDiagnostics` from front::compile::diagnose) and `didClose` (clears them). Any other request
-// is answered with the error -32601; any other notification is ignored. A position is a line and a byte count in the
-// line (LSP asks for UTF-16 units; the two agree on ASCII). One thread, one message at a time; the memory of a message
-// is the current allocator's, which `run` makes an arena that it resets after each one.
+// Served: `textDocument/definition` and `documentSymbol` (#1893), `initialize` (full document sync), `shutdown`,
+// `exit`, `textDocument/didOpen` and `didChange` (each answered by `textDocument/publishDiagnostics` from
+// front::compile::diagnose) and `didClose` (clears them). Any other request is answered with the error -32601; any
+// other notification is ignored. A position is a line and a byte count in the line (LSP asks for UTF-16 units; the two
+// agree on ASCII). One thread, one message at a time; the memory of a message is the current allocator's, which `run`
+// makes an arena that it resets after each one.
 module front::lsp_server;
 
 import front::compile;
+import front::lsp_definition;
 import front::lsp_hover;
+import front::lsp_symbols;
 import front::roots;
 import std::arena;
 import std::format;
@@ -205,6 +208,37 @@ static Str hover_result(Str uri, const c::SmithJsonValue *position_param) {
     return lsp_hover::result(path_of(uri), source, l, ch);
 }
 
+// The open document of `uri` and the line and character a request's `position` names; false when the document is not
+// open or the position is missing.
+static Bool locate(Str uri, const c::SmithJsonValue *position_param, Document **slot, U64 *l, U64 *ch) {
+    *slot = find_document(uri);
+    if (*slot == nullptr || position_param == nullptr) return false;
+    const c::SmithJsonValue *line = c::smith_json_member(position_param, "line");
+    const c::SmithJsonValue *character = c::smith_json_member(position_param, "character");
+    if (line == nullptr || character == nullptr) return false;
+    for (Usize i = 0; i < countof(line->text); i++)
+        if (line->text[i] >= '0' && line->text[i] <= '9') *l = *l * 10 + (U64)(line->text[i] - '0');
+    for (Usize i = 0; i < countof(character->text); i++)
+        if (character->text[i] >= '0' && character->text[i] <= '9') *ch = *ch * 10 + (U64)(character->text[i] - '0');
+    return true;
+}
+
+// The `result` of a `textDocument/definition` request: null for a document that is not open.
+static Str definition_result(Str uri, const c::SmithJsonValue *position_param) {
+    Document *slot = nullptr;
+    U64 l = 0;
+    U64 ch = 0;
+    if (!locate(uri, position_param, &slot, &l, &ch)) return "null";
+    return lsp_definition::result(path_of(uri), as_str(slot->text[0:slot->text_length]), l, ch);
+}
+
+// The `result` of a `textDocument/documentSymbol` request: an empty list for a document that is not open.
+static Str symbols_result(Str uri) {
+    Document *slot = find_document(uri);
+    if (slot == nullptr) return "[]";
+    return lsp_symbols::result(path_of(uri), as_str(slot->text[0:slot->text_length]));
+}
+
 // The text of the last change of a `didChange` (full sync: it is the whole document).
 static Str last_change(const c::SmithJsonValue *params) {
     const c::SmithJsonValue *changes = c::smith_json_member(params, "contentChanges");
@@ -224,7 +258,8 @@ export Str handle(Str body) {
     const c::SmithJsonValue *params = c::smith_json_member(message, "params");
     const c::SmithJsonValue *document = params == nullptr ? nullptr : c::smith_json_member(params, "textDocument");
     if (roots::same(method, "initialize")) {
-        return reply(id, "{\"capabilities\":{\"textDocumentSync\":1,\"hoverProvider\":true},\"serverInfo\":{\"name\":"
+        return reply(id, "{\"capabilities\":{\"textDocumentSync\":1,\"hoverProvider\":true,\"definitionProvider\":true,"
+                         "\"documentSymbolProvider\":true},\"serverInfo\":{\"name\":"
                          "\"smith lsp\"}}");
     }
     if (roots::same(method, "shutdown")) {
@@ -251,6 +286,12 @@ export Str handle(Str body) {
         const c::SmithJsonValue *at = params == nullptr ? nullptr : c::smith_json_member(params, "position");
         return reply(id, hover_result(string_of(document, "uri"), at));
     }
+    if (roots::same(method, "textDocument/definition")) {
+        const c::SmithJsonValue *at = params == nullptr ? nullptr : c::smith_json_member(params, "position");
+        return reply(id, definition_result(string_of(document, "uri"), at));
+    }
+    if (roots::same(method, "textDocument/documentSymbol"))
+        return reply(id, symbols_result(string_of(document, "uri")));
     if (countof(id) == 0) return "";
     return failure(id, "-32601", as_str(format::push("method not found: ", method)));
 }

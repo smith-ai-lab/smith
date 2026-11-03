@@ -1,0 +1,87 @@
+// Tests of `textDocument/definition` and `textDocument/documentSymbol` (#1893): a document is opened, then a call jumps
+// to its function in the same file and through an import, and the outline lists the file's declarations.
+module front_lsp_definition_test;
+
+import front::lsp_server;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; same && k < countof(needle); k++)
+            same = text[i + k] == needle[k];
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+// \n is written as the two characters of JSON's escape; the line breaks of the document are those.
+static Str document() {
+    return "import std.math\\n\\nstruct Point:\\n    x: i32\\n    y: i32\\n\\nfn twice(n: i32) -> i32:\\n"
+           "    return n + n\\n\\nfn main() -> i32:\\n    let a = twice(2)\\n    let b = math.abs(a)\\n    return b\\n";
+}
+
+static void open() {
+    (void)lsp_server::handle(as_str(
+        format::push("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
+                     "\"file:///t/d.smith\",\"text\":\"",
+                     document(), "\"}}}")));
+}
+
+static Str ask(Str method, U64 line, U64 character) {
+    return lsp_server::handle(as_str(
+        format::push("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"", method,
+                     "\",\"params\":{\"textDocument\":{\"uri\":\"file:///t/d.smith\"},\"position\":{\"line\":", line,
+                     ",\"character\":", character, "}}}")));
+}
+
+export void test_lsp_definition_of_a_call_is_its_function() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open();
+    Str out = ask("textDocument/definition", 10, 12);
+    test::check(has(out, "\"id\":4"));
+    test::check(has(out, "\"uri\":\"file:///t/d.smith\""));
+    test::check(has(out, "\"start\":{\"line\":6,\"character\":0}"));
+}
+
+export void test_lsp_definition_through_an_import_is_in_the_module() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open();
+    Str out = ask("textDocument/definition", 11, 17);
+    test::check(has(out, "lib/std/math.smith"));
+    test::check(has(out, "\"range\""));
+}
+
+export void test_lsp_definition_of_nothing_is_null() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open();
+    test::check(has(ask("textDocument/definition", 40, 0), "\"result\":null"));
+}
+
+export void test_lsp_document_symbols_list_the_declarations() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open();
+    Str out = ask("textDocument/documentSymbol", 0, 0);
+    test::check(has(out, "\"name\":\"Point\",\"kind\":23"));
+    test::check(has(out, "\"name\":\"twice\",\"kind\":12"));
+    test::check(has(out, "\"name\":\"main\",\"kind\":12"));
+}
