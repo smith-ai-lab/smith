@@ -1448,7 +1448,8 @@ static ast::Expr *member(parse::Parser *p, ast::Expr *base) {
     }
     if (parse::at(p, lex::left_bracket)) return reflect_member(p, base, arrow);
     lex::Token name = parse::peek(p);
-    if (name.kind != lex::name && name.kind != lex::type_name && name.kind != lex::integer) {
+    if (name.kind != lex::name && name.kind != lex::type_name && name.kind != lex::integer &&
+        !lex::is_keyword(name.kind)) {
         parse::expect(p, lex::name, "a member name");
         return nullptr;
     }
