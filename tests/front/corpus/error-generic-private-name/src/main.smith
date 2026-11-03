@@ -1,0 +1,7 @@
+# An importer cannot name what the module keeps private: a type built from outside, a global, a function.
+import scale
+
+pub fn main() -> i32:
+    let r = scale.Range(0, 1)
+    scale.counter = 3
+    r.low + scale.clamp_to_base(5) + scale.spread(0)
