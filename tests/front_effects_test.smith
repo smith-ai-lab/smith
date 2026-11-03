@@ -1,0 +1,80 @@
+// Tests of front::effects (#1966, piece 2 of #1939): the set of each function of tests/effects/effects_chain.smith,
+// through a call graph, a libc leaf, `unknown`, a checked slice index and a write to a global.
+module front_effects_test;
+
+import front::effects;
+import front::effects_table;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Str text(char chars[:]) {
+    return chars;
+}
+
+static Str chain() {
+    return text("module effects_chain;\n"
+                "import <stdio.h>;\n"
+                "import <stdlib.h>;\n"
+                "import <string.h>;\n"
+                "I32 counter = 0;\n"
+                "static void log_it(const char *text) { c::printf(\"%s\\n\", text); counter = 1; }\n"
+                "export I32 length(const char *text) { return (I32)c::strlen(text); }\n"
+                "export I32 bad(const char *text) { log_it(text); return 0; }\n"
+                "export void *grab(U32 size) { return c::malloc(size); }\n"
+                "export I32 at(I32 values[:], Usize index) { return values[index]; }\n"
+                "export I32 mystery(Fn(I32 (I32)) f) { return f(1); }\n"
+                "export I32 nowhere(I32 x) { return c::no_such_function(x); }\n");
+}
+
+static U32 set_for(const effects::Effects *e, Str name) {
+    U32 set = 0xffffffffu;
+    Bool found = effects::set_of(e, name, &set);
+    test::check(found);
+    return set;
+}
+
+export void test_front_effects_the_chain_functions() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed p = parser::parse("t.smith", chain());
+    Usize problems = countof(p.errors);
+    test::check_equal(problems, (Usize)0);
+    types::Checked r = types_decl::check_module(&p.module, types::lp64());
+    effects::Effects e = effects::infer(&r, &p.module);
+    U32 log_it = set_for(&e, text("log_it"));
+    U32 length = set_for(&e, text("length"));
+    U32 bad = set_for(&e, text("bad"));
+    U32 grab = set_for(&e, text("grab"));
+    U32 at = set_for(&e, text("at"));
+    U32 mystery = set_for(&e, text("mystery"));
+    U32 nowhere = set_for(&e, text("nowhere"));
+    test::check_equal(log_it, effects_table::console | effects_table::globals);
+    test::check_equal(length, 0u);
+    test::check_equal(bad, effects_table::console | effects_table::globals);
+    test::check_equal(grab, effects_table::alloc);
+    test::check_equal(at, effects_table::fails);
+    test::check_equal(mystery, effects_table::unknown);
+    test::check_equal(nowhere, effects_table::unknown);
+}
+
+export void test_front_effects_a_caller_names_the_first_call() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed p = parser::parse("t.smith", chain());
+    types::Checked r = types_decl::check_module(&p.module, types::lp64());
+    effects::Effects e = effects::infer(&r, &p.module);
+    effects::Cause cause = effects::cause_of(&e, text("bad"), effects_table::console);
+    test::check(cause.at != nullptr);
+    Usize length = countof(cause.callee);
+    test::check_equal(length, (Usize)6); // log_it
+    U32 none = 7;
+    test::check(!effects::set_of(&e, text("no_such"), &none));
+}
