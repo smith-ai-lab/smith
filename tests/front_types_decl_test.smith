@@ -288,10 +288,6 @@ export void test_front_types_decl_a_c_name_is_not_yet_typed() {
     fails("Void f() { c::exit(1); }", "not yet typed: c:: name `c::exit`", "");
 }
 
-export void test_front_types_decl_switch_is_not_yet_typed() {
-    fails("Void f(I32 n) { switch (n) { default: return; } }", "not yet typed: switch", "");
-}
-
 export void test_front_types_decl_static_assert_in_a_body_is_not_yet_typed() {
     fails("Void f() { static_assert(true); }", "not yet typed: static_assert in a body", "");
 }
@@ -395,4 +391,23 @@ export void test_front_types_decl_destructuring_splits_a_tuple() {
     fails(join(head, "fn g():\n    let (a, b, c) = divmod(7, 2)\n"), "3 names", "2 elements");
     fails(join(head, "fn g():\n    let (q, r) = divmod(7, 2)\n    q = 1\n"), "cannot", "declare it `mut q`");
     reading_new = false;
+}
+
+// #1916: a `switch` over an enumeration is typed (its case bodies in a scope each), `countof` of an `Auto` parameter is
+// accepted, and a type passed as a value is `Auto`.
+export void test_front_types_decl_a_switch_over_an_enumeration_is_typed() {
+    reading_new = false;
+    clean("typedef enum { red; green; } Color;\nI32 f(Color c) {\n    switch (c) {\n    case .red: return 1;\n    default: return 0;\n    }\n}\n");
+    clean("I32 g(I32 n) {\n    switch (n) {\n    case 1: { I32 x = 2; return x; }\n    case 2: { I32 x = 3; return x; }\n    default: return 0;\n    }\n}\n");
+    fails("I32 g(I32 n) {\n    switch (n) {\n    case 1: return missing;\n    default: return 0;\n    }\n}\n", "missing", "declare");
+}
+
+export void test_front_types_decl_a_switch_over_a_payload_enumeration_is_typed() {
+    reading_new = false;
+    clean("typedef struct { F64 r; } Circle;\ntypedef enum { Circle circle; empty; } Shape;\nF64 area(Shape s) {\n    switch (s) {\n    case .circle: return 1.0;\n    case .empty: return 0.0;\n    }\n}\n");
+}
+
+export void test_front_types_decl_countof_of_an_auto_parameter_is_accepted() {
+    reading_new = false;
+    clean("Usize count(auto xs[:]) {\n    return countof(xs);\n}\n");
 }

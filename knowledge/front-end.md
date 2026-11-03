@@ -237,7 +237,7 @@ Declarations, statements and bodies, joining J1a to J1c. `types_decl::check_modu
 - Statements: blocks (a scope each), expression statements, locals (a written type or `Auto`), `if`, `while`, `do`/`while`, `for (init; cond; step)`, `return`, `defer`, labels, `break`, `continue`, `goto`.
 - A condition is checked against `Bool`; a `return` value against the result type. The walk is an explicit work stack.
 - Lambdas are checked after the body that holds them: the hook keeps a copy of the scopes, and `drain` walks each body with the parameters from the expected `Fn(F)`.
-- Not yet typed: `switch`, `static_assert` in a body, `if constexpr` and `for constexpr`, a local type or function, a `c::` name (#1124). A function that falls off its end is not reported.
+- `switch` is typed (#1916): the value, each case value against it (a payload enumeration's variants are not checked by name) and each case body in a scope of its own. A type used as a value is `Auto`, and `countof` of an `Auto` is accepted: the instance decides. Not yet typed: `static_assert` in a body, `if constexpr` and `for constexpr`, a local type or function, a `c::` name (#1124). A function that falls off its end is not reported.
 - Spelling (K5, #1347): `Char` is a builtin 8-bit unsigned type of its own; `char` and `bool` in a type position are errors in today's syntax. A character literal has type `Char`.
 - `const` and `constexpr` bindings are known at compile time (#1510, C1): `const a = n` with `n` not constant is an error naming `const a` (`require_constant`).
 - In smith's own syntax (`is_new`): a name that hides an enclosing one is an error naming the earlier declaration by byte offset; `let _ = f()` declares nothing.
