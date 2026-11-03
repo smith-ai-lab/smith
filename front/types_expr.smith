@@ -47,11 +47,11 @@
 // pseudo-frames that open and close scopes and bind names, and one last frame that joins the branches' types.
 //
 // CONSTRUCTION AND POINTERS (#1513, C2b, spec "Structs, enums and building values" and "Pointers"): `Point(x = 1)`
-// (a call whose callee names a struct: positional fields in order, then named ones in any order; a field left out is
-// zero until defaults land), named arguments of a function (`f(b = 1, a = 2)`, matched by the parameter names of its
-// declaration), `[1, 2, 3]`, and, for a variable of smith's own syntax (`Symbol.is_new`): constant unless `mut`, `&x`
-// is `*mut T` for a `mut x` and else `*T`, `p.x` through a pointer, and a write through `*T` is an error naming `*mut
-// T`.
+// (a call whose callee names a struct: positional fields in order, then named ones in any order; a field left out takes
+// its default, and with none it is an error, #1847), named arguments of a function (`f(b = 1, a = 2)`, matched by the
+// parameter names of its declaration), `[1, 2, 3]`, and, for a variable of smith's own syntax (`Symbol.is_new`):
+// constant unless `mut`, `&x` is `*mut T` for a `mut x` and else `*T`, `p.x` through a pointer, and a write through
+// `*T` is an error naming `*mut T`.
 //
 // NOT YET TYPED (each reported as `not yet typed: <kind>` with its span): `try`, a type used as a value, a name from
 // another module (`arena::push`), nested designators (`.a.b = 1`), a designator index that is not an integer literal.
@@ -1649,15 +1649,33 @@ static void type_named_arguments(types::Checked *c, ast::ExprRef args[:]) {
     }
 }
 
-// Reports a wrong argument count; true when the count is right.
-static Bool arity_ok(types::Checked *c, const ast::Expr *e, types::TypeRef signature, Usize given) {
+// How many arguments a call must give: every parameter up to the last one without a default.
+static Usize required_arguments(ast::Param params[:], Usize wanted) {
+    if (countof(params) != wanted) return wanted;
+    Usize required = 0;
+    for (Usize i = 0; i < countof(params); i++) {
+        if (params[i].default_value == nullptr) required = i + 1;
+    }
+    return required;
+}
+
+// Reports a wrong argument count; true when the count is right. A parameter with a default may be left out.
+static Bool arity_ok(types::Checked *c, const ast::Expr *e, types::TypeRef signature, ast::Param params[:],
+                     Usize given) {
     Usize wanted = countof(signature->slots);
-    if (given == wanted || (given > wanted && signature->variadic)) {
+    Usize required = required_arguments(params, wanted);
+    if ((given >= required && given <= wanted) || (given > wanted && signature->variadic)) {
         return true;
     }
     Str plural = "s";
     if (wanted == 1) {
         plural = "";
+    }
+    if (required != wanted) {
+        types::failf(c, e->span, "this call passes ", given, " argument", given == 1 ? "" : "s",
+                     " but the function takes ", required, " to ", wanted, " arguments, `", types::show(signature),
+                     "`");
+        return false;
     }
     types::failf(c, e->span, "this call passes ", given, " argument", given == 1 ? "" : "s", " but the function takes ",
                  wanted, " argument", plural, ", `", types::show(signature), "`; write exactly ", wanted, " argument",
@@ -1752,13 +1770,13 @@ static void call_callee_done(types::Checked *c, Work *w, Frame f) {
         push_arguments(w, args, nullptr);
         return;
     }
-    if (!arity_ok(c, e, signature, countof(args))) {
-        signature = nullptr;
-    }
     const ast::Decl *function = callee_function(c, callee);
     ast::Param params[:] = {};
     if (function != nullptr && function->kind == .function) {
         params = function->kind.function.params;
+    }
+    if (!arity_ok(c, e, signature, params, countof(args))) {
+        signature = nullptr;
     }
     if (has_named(args) && signature != nullptr) {
         if (countof(params) != countof(signature->slots)) {
@@ -2118,6 +2136,7 @@ static void construct_after(types::Checked *c, Frame f, types::TypeRef record) {
     Str shown = types::show(record);
     Bool seen[:] = mem::alloc_slice(Bool, countof(record->slots));
     Bool ok = private_construction(c, e, record);
+    Bool built_here = ok;
     Bool by_name = false;
     for (Usize i = 0; i < countof(args); i++) {
         const ast::Expr *arg = args[i];
@@ -2140,6 +2159,13 @@ static void construct_after(types::Checked *c, Frame f, types::TypeRef record) {
         }
     }
     type_named_arguments(c, args);
+    for (Usize k = 0; k < countof(record->slots); k++) {
+        if (!built_here || seen[k] || record->slots[k].default_value != nullptr) continue;
+        types::failf(c, e->span, "the field `", record->slots[k].name, "` of `", shown,
+                     "` is left out and has no default; give it a value, or write a default in the struct (`",
+                     record->slots[k].name, ": T = value`)");
+        ok = false;
+    }
     if (!ok) {
         poison(c, e);
         return;

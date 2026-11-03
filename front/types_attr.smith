@@ -180,10 +180,55 @@ static void check_all(types::Checked *r, ast::Attribute list[:]) {
         check_attribute(r, &list[i]);
 }
 
+// A default (`x: T = 3`, a field's or a parameter's): known at compile time, and of the type it fills.
+static void check_default(types::Checked *r, const ast::Expr *value, types::TypeRef wanted) {
+    if (value == nullptr) return;
+    if (!is_constant(r, value)) {
+        types::fail(r, value->span, "a default must be a compile-time constant");
+        return;
+    }
+    if (wanted != nullptr) types_expr::check(r, value, wanted);
+}
+
+// The defaults of a struct's fields.
+static void check_field_defaults(types::Checked *r, const ast::Decl *d) {
+    if (!(d->kind == .record)) return;
+    const types::Symbol *symbol = types::lookup(&r->scopes, d->kind.record.name);
+    if (symbol == nullptr || symbol->type == nullptr || symbol->type->kind != .record) return;
+    for (Usize k = 0; k < countof(d->kind.record.fields) && k < countof(symbol->type->slots); k++)
+        check_default(r, d->kind.record.fields[k].default_value, symbol->type->slots[k].type);
+}
+
+// The defaults of a function's parameters; a parameter without one may not follow one with one.
+static void check_parameter_defaults(types::Checked *r, const ast::Decl *d) {
+    if (!(d->kind == .function)) return;
+    const types::Symbol *symbol = types::lookup(&r->scopes, d->kind.function.name);
+    ast::Param params[:] = d->kind.function.params;
+    Bool had_default = false;
+    for (Usize k = 0; k < countof(params); k++) {
+        const ast::Param *param = &params[k];
+        if (param->default_value == nullptr) {
+            if (had_default && param->is_new && !param->is_rest) {
+                types::failf(r, param->span, "the parameter `", param->name,
+                             "` has no default but follows one that has; give it a default, or move it before the "
+                             "parameters with defaults");
+            }
+            continue;
+        }
+        had_default = true;
+        types::TypeRef wanted = nullptr;
+        if (symbol != nullptr && symbol->type != nullptr && k < countof(symbol->type->slots))
+            wanted = symbol->type->slots[k].type;
+        check_default(r, param->default_value, wanted);
+    }
+}
+
 export void check_module(types::Checked *r, const ast::Module *m) {
     for (Usize i = 0; i < countof(m->decls); i++) {
         const ast::Decl *d = m->decls[i];
         if (d->from_c) continue;
+        if (d->kind == .record && !d->kind.record.opaque) check_field_defaults(r, d);
+        if (d->kind == .function) check_parameter_defaults(r, d);
         check_all(r, d->attributes);
         if (d->kind == .record) {
             for (Usize k = 0; k < countof(d->kind.record.fields); k++)

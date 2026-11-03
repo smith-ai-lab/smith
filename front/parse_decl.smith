@@ -1427,6 +1427,7 @@ static ast::FieldDecl parse_new_field(parse::Parser *p) {
         recover_line(p);
         return field;
     }
+    if (parse::accept(p, lex::equal)) field.default_value = parse::expression(p);
     end_line(p, "field");
     field.span = parse::span_from(p, start);
     return field;
@@ -2315,6 +2316,7 @@ static Bool parse_new_param(parse::Parser *p, ast::Param *param) {
     } else {
         param->type = parse::type(p);
         if (param->type == nullptr) return false;
+        if (parse::accept(p, lex::equal)) param->default_value = parse::expression(p);
     }
     param->attributes = pre.attributes;
     param->span = parse::span_from(p, start);

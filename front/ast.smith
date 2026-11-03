@@ -102,7 +102,8 @@ export struct FieldDecl {
     Str name;
     TypeExpr *type;
     Expr *bit_width;
-    Bool is_new; // written in smith's own syntax (`x: T`), not today's `T x;`
+    Expr *default_value; // `x: T = 3`: what a construction that leaves the field out gets (null when it has none)
+    Bool is_new;         // written in smith's own syntax (`x: T`), not today's `T x;`
     Bool is_pub; // `pub x: T`: other modules may name it; a new-syntax field without it is private to its module
     Attribute attributes[:];
     Span span;
@@ -245,10 +246,11 @@ export struct Param {
     Str name;
     TypeExpr *type;
     Bool is_constexpr;
-    Bool is_rest;  // `auto... rest`
-    Bool is_mut;   // `mut x: T`
-    Bool is_new;   // written in smith's own syntax (`x: T`), not today's `T x`
-    Bool is_const; // `const n: usize`: known at compile time
+    Bool is_rest;        // `auto... rest`
+    Bool is_mut;         // `mut x: T`
+    Bool is_new;         // written in smith's own syntax (`x: T`), not today's `T x`
+    Bool is_const;       // `const n: usize`: known at compile time
+    Expr *default_value; // `port: u16 = 443`: what a call that leaves the argument out passes (null when none)
     Attribute attributes[:];
     Span span;
 };
