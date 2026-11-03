@@ -391,3 +391,30 @@ export void test_comments_are_written_when_another_form_stays() {
     fix::Fixed fixed = fix::fix_text("t.smith", "int f() {\n    return 1; // one\n}\nint a[3];\n/* two\n   lines */\n");
     check_text(fixed.text, "fn f() -> i32 {\n    return 1 # one\n}\ni32 a[3];\n# two\n#   lines \n");
 }
+
+// A function type written with the names of its parameters (`Fn(void (Key key))`) is `fn(Key)`: the names are dropped,
+// in a field and a parameter alike (#1957).
+export void test_a_function_type_with_parameter_names_is_rewritten() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "module m;\ntypedef struct {\n    Fn(void (Key key, U32 n)) hook;\n"
+                                                "    Fn(Node * (Node *)) make;\n} Hooks;\n"
+                                                "static void run(Fn(void (Key key)) f) {\n}\n");
+    check_text(fixed.text, "struct Hooks {\n    hook: fn(Key, u32)\n    make: fn(*Node) -> *Node\n}\n"
+                           "static fn run(f: fn(Key)) {\n}\n");
+}
+
+// The same in a typedef: the name goes with the parameter, and no `Fn(` is left.
+export void test_a_typedef_of_a_function_type_with_parameter_names_is_rewritten() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "module m;\ntypedef Fn(U32 (U32 x)) Callback;\n");
+    parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
+    check_count(countof(again.errors), 0);
+    check_flag(fixed.applied > 0, true);
+    check_text(fixed.text[0:3], "let");
+}

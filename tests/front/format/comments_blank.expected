@@ -1,0 +1,14 @@
+# A shape program.
+
+import std.list # trailing
+fn area(s: Shape) -> f64:
+    match s:
+        .circle(c): 3.14 * c.radius * c.radius
+        .square(q): q.side * q.side
+
+pub fn main() -> i32:
+    let mut shapes = list.init(Shape)
+    shapes.push(.circle(Circle(radius = 2)))
+    # own line comment
+    let total = sum(for s in shapes.items(): s.area())
+    return -1
