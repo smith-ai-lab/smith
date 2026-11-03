@@ -1,0 +1,121 @@
+// Tests of the checker's types for the causes #1918 lists (part of #1902). First cause: an array length that is a
+// named constant or arithmetic on constants, as in `[N]u8` and `[N * 2 + 1]u8`. Each scenario is source text in
+// smith's own syntax; an accepted case and a refused one with its message.
+module front_check_types_test;
+
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str join(Str a, Str b) {
+    char out[:] = mem::alloc_slice(char, countof(a) + countof(b));
+    for (Usize i = 0; i < countof(a); i++) {
+        out[i] = a[i];
+    }
+    for (Usize i = 0; i < countof(b); i++) {
+        out[countof(a) + i] = b[i];
+    }
+    return out;
+}
+
+static types::Checked check_text(Str source) {
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    return types_decl::check_module(&p.module, types::lp64());
+}
+
+// The errors, one per line.
+static Str errors_of(const types::Checked *r) {
+    Str text = "";
+    for (Usize i = 0; i < r->error_count; i++) {
+        text = join(text, join(r->errors[i].message, "\n"));
+    }
+    return text;
+}
+
+// `source` checks with no error.
+static void clean(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    Str errors = errors_of(&r);
+    Str none = "";
+    test::check_equal(errors, none);
+}
+
+// `source` gives exactly one error, which says `first` and `second`.
+static void fails(Str source, Str first, Str second) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    Str errors = errors_of(&r);
+    test::check_equal(r.error_count, (Usize)1);
+    test::check_condition(has(errors, first));
+    test::check_condition(has(errors, second));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Array lengths
+
+// A function whose body declares `let mut buffer: [<length>]u8`, after the constants in `before`.
+static Str with_length(Str before, Str length) {
+    return join(before, join("fn run():\n    let mut buffer: [", join(length, "]u8 = undefined\n    buffer[0] = 1\n")));
+}
+
+export void test_front_check_types_array_length_literal() {
+    clean(with_length("", "4"));
+}
+
+export void test_front_check_types_array_length_named_constant() {
+    clean(with_length("const N = 4\n\n", "N"));
+}
+
+export void test_front_check_types_array_length_arithmetic() {
+    clean(with_length("const n = 8\n\n", "n + 1"));
+    clean(with_length("const n = 8\n\n", "n - 1"));
+    clean(with_length("", "1 << 3"));
+}
+
+export void test_front_check_types_array_length_in_a_struct_and_a_parameter() {
+    clean("const N = 4\n\nstruct Block:\n    bytes: [N]u8\n\nfn first(xs: [N]u8) -> u8:\n    return xs[0]\n");
+}
+
+export void test_front_check_types_array_length_variable_is_refused() {
+    fails(with_length("let mut n = 4\n\n", "n"), "an array length that is not a constant", "");
+}
+
+export void test_front_check_types_array_length_negative_is_refused() {
+    fails(with_length("const n = 2\n\n", "n - 3"), "an array length that is not a constant", "");
+}
+
+export void test_front_check_types_array_length_division_by_zero_is_refused() {
+    fails(with_length("", "4 / 0"), "an array length that is not a constant", "");
+}
