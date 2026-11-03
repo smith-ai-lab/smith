@@ -88,7 +88,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - `x as T` binds tighter than every binary operator and after prefix ones (`-x as T` is `(-x) as T`); `&x` is `address_of`.
 - `fn(x) { body }` and `fn[a](x: i32) -> R { body }` are lambdas; a `fn` with no body is a type (`fn_has_body` scans to the `{`). `if`, `match`, `for` and `{` start `stmt_expr`.
 - A trailing block (#961): a `{` on the same line as a call's `)` is a lambda with no parameters, appended as the last argument; a condition head takes none at its top level (`Parser.head`).
-- Old expression forms are warnings with fixes (F4, #1509): `(T)x` to `x as T`, `p->x` to `p.x`, `*p` to `p.*`, `c ? a : b` to `if c { a } else { b }`, `(P){.x = 1}` to `P(x = 1)`, `{1, 2}` to `[1, 2]`, `i++;` to `i += 1`.
+- Old expression forms are warnings with fixes (F4, #1509): `(T)x` to `x as T`, `p->x` to `p.x`, `*p` to `p.*`, `c ? a : b` to `if c { a } else { b }`, `(P){.x = 1}` to `P(x = 1)`, `{1, 2}` to `[1, 2]`, `i++;` to `i += 1`. A variable of a named type with an untyped list of only `.field = value` items, `P p = {.x = 1};`, is `p := P(x = 1)` (#1767); a `{` followed by `.name =` is that list even in smith's own syntax, where a block never starts that way.
 - Forms with no mechanical fix stay warnings with no edits (a typed list with positional items, `++` as a value, a method chain). Two edits at one offset clash, so a nested fix lands on the next pass.
 - `{1, 2}` is read as an array even where it initializes a struct (`P p = {1, 2};`): the parser has no types, so that one needs the checker.
 - Types: qualifiers, paths, `auto`, `struct X`, `typeof`, `*`, `[:]`, `[N]`, applied types `Option(I32)`; `T[:][3]` is a slice of arrays. `Fn(R (P...))` is a function type.
