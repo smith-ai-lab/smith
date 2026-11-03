@@ -734,6 +734,12 @@ static void unknown_name(types::Checked *c, const ast::Expr *e, ast::Path path) 
         }
     }
     if (countof(path.segments) > 1 && same_text(path.segments[0].text, "c")) {
+        if (c->options.headers != nullptr) {
+            types::failf(c, e->span, "`", name, "` is not declared by any C header this file imports; ",
+                         "write `import <h>;` for the header that has it, and check its spelling");
+            poison(c, e);
+            return;
+        }
         not_yet(c, e, msg(format::push("c:: name `", name, "`")));
         return;
     }
@@ -3161,7 +3167,10 @@ static Bool leaf(types::Checked *c, Frame f) {
     } else if (e->kind == .character) {
         literal_character(c, f);
     } else if (e->kind == .string) {
-        finish(c, e, c->table.text, f.expected);
+        // A literal where a C function wants `const char *`: its bytes, with the zero byte after them (#1762).
+        Bool as_pointer = f.expected != nullptr && f.expected->kind == .pointer &&
+                          f.expected->element->kind == .integer && f.expected->element->bits == 8;
+        finish(c, e, as_pointer ? f.expected : c->table.text, f.expected);
     } else if (e->kind == .boolean) {
         finish(c, e, c->table.bool_type, f.expected);
     } else if (e->kind == .null_pointer) {
