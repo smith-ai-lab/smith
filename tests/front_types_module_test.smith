@@ -220,12 +220,11 @@ export void test_front_types_module_private_field_is_an_error_outside() {
           "mark it pub or call a function of lib.math");
 }
 
-export void test_front_types_module_construction_needs_every_field_pub() {
+export void test_front_types_module_construction_names_only_pub_fields() {
     fails("m := import lib.math\nHandle := m.Handle\n\nfn run() -> m.Handle {\n    return Handle(len = 1, items = "
           "2)\n}\n",
           "items is private to lib.math", "");
-    fails("m := import lib.math\nHandle := m.Handle\n\nfn run() -> m.Handle {\n    return Handle(len = 1)\n}\n",
-          "items is private to lib.math", "");
+    clean("m := import lib.math\nHandle := m.Handle\n\nfn run() -> m.Handle {\n    return Handle(len = 1)\n}\n");
     clean("m := import lib.math\nPoint := m.Point\n\nfn run() -> m.Point {\n    return Point(x = 1.0, y = 2.0)\n}\n");
 }
 

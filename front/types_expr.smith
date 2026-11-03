@@ -1844,26 +1844,20 @@ static void construct_before(Work *w, Frame f, types::TypeRef record) {
     }
 }
 
-// A construction outside the module that declares the record needs every field `pub`: false (after an error naming
-// the first private field, the one the call names if it names one) when it has a private one.
+// Outside the module that declares the record, a construction may name only `pub` fields; a field it leaves out,
+// private ones included, is zero (#1428). False, after an error naming the first private field it names, when it
+// names one.
 static Bool private_construction(types::Checked *c, const ast::Expr *e, types::TypeRef record, ast::ExprRef args[:]) {
-    const types::Slot *first = nullptr;
-    for (Usize k = 0; k < countof(record->slots) && first == nullptr; k++) {
-        if (!types::field_visible(record, &record->slots[k])) first = &record->slots[k];
-    }
-    if (first == nullptr) return true;
-    Str named = first->name;
     for (Usize i = 0; i < countof(args); i++) {
         const ast::Expr *arg = args[i];
         if (!(arg->kind == .named_arg)) continue;
         const types::Slot *field = types::member(record, arg->kind.named_arg.name);
         if (field != nullptr && !types::field_visible(record, field)) {
-            named = field->name;
-            break;
+            types::private_field(c, e->span, record, field->name);
+            return false;
         }
     }
-    types::private_field(c, e->span, record, named);
-    return false;
+    return true;
 }
 
 // The values are typed: every argument is a named, known field, given once. A field left out is zero.
