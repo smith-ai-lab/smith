@@ -372,3 +372,23 @@ export void test_parse_expr_lint_fix_twice_on_every_old_form() {
     fix::Fixed second = fix::fix_text("m.smith", first.text);
     test::check_equal(second.applied, (Usize)0);
 }
+
+// A `.` that starts a line continues the call before it inside parentheses and brackets, where a line break ends
+// nothing (#1773); at the top level of a statement it still ends the statement.
+export void test_parse_expr_a_line_starting_with_a_dot_continues_inside_parentheses() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser inside = parser_in("f(a, g(x)\n.name)", true);
+    ast::Expr *call = parse::expression(&inside);
+    test::check_condition(call != nullptr);
+    test::check_equal(countof(inside.errors), 0);
+    test::check_equal(parse::peek(&inside).kind == lex::end_of_file, true);
+    parse::Parser bracket = parser_in("xs[g(x)\n.index]", true);
+    test::check_condition(parse::expression(&bracket) != nullptr);
+    test::check_equal(countof(bracket.errors), 0);
+    parse::Parser top = parser_in("g(x)\n.name", true);
+    test::check_condition(parse::expression(&top) != nullptr);
+    test::check_equal(parse::peek(&top).kind == lex::dot, true);
+}
