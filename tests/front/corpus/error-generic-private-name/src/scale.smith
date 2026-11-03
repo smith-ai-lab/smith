@@ -1,0 +1,16 @@
+let base: i32 = 10
+
+struct Range:
+    low: i32
+    high: i32
+
+fn clamp_to_base(x: i32) -> i32:
+    if x > base:
+        base
+    else:
+        x
+
+let mut counter: i32 = 0
+
+pub fn spread(x: i32) -> i32:
+    clamp_to_base(x) + counter

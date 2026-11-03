@@ -145,6 +145,7 @@ export struct Ty {
     Bool is_union;
     Bool complete;
     Bool has_payload; // an enumeration whose enumerators carry values (`circle: Circle`)
+    Bool affine;      // a record marked `@affine`: a value is used at most once (front::affine, #1986)
     TypeRef element;
     TypeRef error;
     U64 count;
@@ -820,9 +821,12 @@ export const Symbol *lookup_path(const Scopes *s, ast::Path path) {
 // The result
 
 export struct Error {
-    Str message;
+    Str message; // `$line` in it is the line of `related` when the message is printed
     ast::Span span;
-    syntax::Edits fix; // the edits `smith lint --fix` applies together (#1516); empty: none
+    Bool has_related;    // another place the error is about, printed as a `note:` (the first use, #1986)
+    ast::Span related;   // where
+    Str related_message; // and what the note says
+    syntax::Edits fix;   // the edits `smith lint --fix` applies together (#1516); empty: none
 };
 
 // One entry of the side table.
@@ -899,6 +903,16 @@ export void fail(Checked *r, ast::Span span, Str message) {
     }
     r->errors[r->error_count] = (Error){.message = msg(format::push(message)), .span = span};
     r->error_count += 1;
+}
+
+// Records an error at `span` that is also about another place: `related` gets the note `related_message`, and a `$line`
+// in `message` becomes the line of `related`.
+export void fail_related(Checked *r, ast::Span span, Str message, ast::Span related, Str related_message) {
+    fail(r, span, message);
+    Error *e = &r->errors[r->error_count - 1];
+    e->has_related = true;
+    e->related = related;
+    e->related_message = related_message;
 }
 
 // A message built with format::push, kept as a `Str` (for an error that is rewritten after the check).
@@ -1660,6 +1674,16 @@ static Symbol type_symbol(Str name, TypeRef type, const ast::Decl *d, Bool expor
     return (Symbol){.name = name, .kind = .type_name, .type = type, .decl = d, .exported = exported};
 }
 
+// Whether a declaration carries `@affine` (written `[[std::affine]]` in today's syntax).
+static Bool marks_affine(const ast::Decl *d) {
+    for (Usize i = 0; i < countof(d->attributes); i++) {
+        ast::Identifier segments[:] = d->attributes[i].name.segments;
+        Usize n = countof(segments);
+        if (n > 0 && same_text(segments[n - 1].text, "affine")) return true;
+    }
+    return false;
+}
+
 // Pass 1: the nominal types, so that any order of use works.
 static void declare_nominal(Checked *r, const ast::Decl *d) {
     Bool from_c = d->from_c;
@@ -1668,6 +1692,7 @@ static void declare_nominal(Checked *r, const ast::Decl *d) {
     if (d->kind == .record) {
         Str name = qualified(r, from_c, d->kind.record.name);
         Ty *made = new_record(&r->table, name, d->kind.record.is_union);
+        made->affine = marks_affine(d);
         declare_in_module(r, type_symbol(name, made, d, exported), span);
     } else if (d->kind == .enumeration) {
         Str name = qualified(r, from_c, d->kind.enumeration.name);

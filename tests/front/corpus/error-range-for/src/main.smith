@@ -1,0 +1,11 @@
+# A `for` loops over arrays, slices, `str`, blocks and streams only.
+fn errors(p: *i32, n: i32) -> i32:
+    let mut t = 0
+    for x in p:
+        t += 1
+    for x in n:
+        t += 1
+    t
+
+pub fn main() -> i32:
+    0

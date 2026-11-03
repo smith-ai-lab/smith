@@ -1,0 +1,6 @@
+# A lambda passed where a function type is expected has that type's parameter count.
+fn apply(f: fn(i32) -> i32, x: i32) -> i32:
+    f(x)
+
+pub fn main() -> i32:
+    apply(fn(a: i32, b: i32) -> i32: a + b, 4)
