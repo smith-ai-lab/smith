@@ -1855,6 +1855,25 @@ export const Symbol *scoped(const Checked *r, Str name) {
     return found;
 }
 
+// `c.name` after `import c <h>` (#1961): the member of a bare `c` that no local or module of the file binds, spelled
+// as the name `c::name` the header's declaration has. The text is `name`, empty when `e` is not that shape. The caller
+// has checked that no local `c` is in scope (the checker through `scoped`, the emitter through its locals).
+export Str c_member_name(const ast::Expr *e) {
+    if (e->kind != .member || e->kind.member.arrow) return "";
+    const ast::Expr *base = e->kind.member.base;
+    if (base->kind != .name || countof(base->kind.name.path.segments) != 1) return "";
+    if (!same_text(base->kind.name.path.segments[0].text, "c")) return "";
+    return e->kind.member.name;
+}
+
+// The header declaration `c.name` stands for, or null: `e` has that shape, no name `c` is in scope and a header
+// declared `c::name`.
+export const Symbol *c_member(const Checked *r, const ast::Expr *e) {
+    Str name = c_member_name(e);
+    if (countof(name) == 0 || scoped(r, "c") != nullptr) return nullptr;
+    return lookup(&r->scopes, msg(format::push("c::", name)));
+}
+
 // Reads `names`: the first is a module symbol, each next name is looked up in the module before. In the code being
 // checked a name that is not `pub` is missing; inside an imported module it is not.
 export Through through_modules(const Checked *r, const Names *names) {
