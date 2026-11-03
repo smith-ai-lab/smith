@@ -813,8 +813,8 @@ static ast::Expr *statement_value(parse::Parser *p) {
 // ---------------------------------------------------------------------------------------------------------------
 // Primary expressions
 
-// Whether the path at the position is called with a named argument: `Point(x = 1)`, a construction in smith's own
-// syntax (an applied type never has `name =` inside).
+// Whether the path at the position is called as a construction: `Point(x = 1)` or the empty `Point()`, in smith's own
+// syntax (an applied type never has `name =` inside, and `T()` names no type with arguments).
 static Bool named_construction(const parse::Parser *p) {
     Usize last = 0;
     lex::TokenKind first = parse::peek_at(p, 0).kind;
@@ -825,6 +825,7 @@ static Bool named_construction(const parse::Parser *p) {
         last += 2;
     }
     if (parse::peek_at(p, last + 1).kind != lex::left_paren) return false;
+    if (parse::peek_at(p, last + 2).kind == lex::right_paren) return true;
     return parse::peek_at(p, last + 2).kind == lex::name && parse::peek_at(p, last + 3).kind == lex::equal;
 }
 
