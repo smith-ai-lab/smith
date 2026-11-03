@@ -161,6 +161,24 @@ export void test_prove_smith_module_a_contract_in_a_smith_function_is_proved_and
     has("smith module: ... with its line", &run, "geometry/box.smith:5)");
 }
 
+// 11b. A .smith source compiled by smith's own front end (`-- --front-end=new`, #1974) reaches the prover as bitcode
+// with no clang: front::compile writes the module as emitted and the prover names the function as written. (A contract
+// needs std::contract under the new front end, which waits for the tree's switch-over, #1631.)
+export void test_prove_smith_module_compiled_by_the_new_front_end_is_read_by_the_prover() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "plain.smith", "module geometry::plain;\n\nexport I32 twice(I32 x) {\n    return x + x;\n}\n");
+    scratch::Run run = scratch::sh(&p, "mkdir -p src/geometry && mv plain.smith src/geometry/ && "
+                                       "smith prove -v src/geometry/plain.smith -- --front-end=new 2>&1");
+    scratch::expect_status("new front end: the prover reads the bitcode", 0, &run);
+    has("new front end: ... the function is named as written", &run, "geometry::plain::twice");
+    has("new front end: ... and has no contract", &run, "0 of 1 functions have contracts");
+}
+
 export void test_prove_smith_module_a_contract_that_is_false_fails_at_the_smith_line_with_the_values() {
     scratch::Project p = fresh();
     defer scratch::clean(&p);
