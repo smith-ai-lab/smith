@@ -96,5 +96,5 @@ export void test_parse_typeof_of_new_syntax_slice_and_pointer() {
     defer mem::set_allocator(outside);
     check_type_operand("typeof([]u8)");
     check_type_operand("typeof([4]i32)");
-    check_type_operand("typeof(*u8)");
+    check_type_operand("typeof(*[]u8)");
 }

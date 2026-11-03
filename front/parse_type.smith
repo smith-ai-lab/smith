@@ -282,12 +282,25 @@ static Bool is_reflected(const parse::Parser *p) {
     return parse::peek_at(p, last + 2).kind == lex::left_bracket;
 }
 
+// Whether the operand of `typeof` starts a type of the new syntax. A `*` is also a dereference (`typeof(*p)`,
+// `typeof(*(t)nullptr)`), so it counts only when the stars end at a word that names a type or at a type of its own.
+static Bool typeof_new_type(const parse::Parser *p) {
+    Usize at = 0;
+    for (Usize i = 0; i < countof(p->tokens); i += 1) {
+        if (parse::peek_at(p, at).kind != lex::star) break;
+        at += 1;
+    }
+    if (at == 0) return starts_new_type(p, 0);
+    lex::TokenKind after = parse::peek_at(p, at).kind;
+    return after == lex::type_name || after == lex::kw_type || is_keyword_type(after) || starts_new_type(p, at);
+}
+
 // `typeof(e)` or `typeof(T)`: the position is at the keyword.
 static ast::TypeExpr *type_of(parse::Parser *p, U32 start, ast::Qualifiers q) {
     parse::advance(p);
     parse::expect(p, lex::left_paren, "`(` after `typeof`");
     ast::Expr *operand = nullptr;
-    if ((starts_type(p, 0) || starts_new_type(p, 0)) && !is_reflected(p)) {
+    if ((starts_type(p, 0) || typeof_new_type(p)) && !is_reflected(p)) {
         ast::TypeExpr *inner = parse::type(p);
         operand = ast::expr({.type_value = {.type = inner}});
     } else {
