@@ -74,3 +74,27 @@ export void test_parse_typeof_reflected_error_says_what_to_write() {
     Str expected = "expected `]` to end the reflected member, found `)`";
     test::check_equal(p.errors[0].message, expected);
 }
+
+// Checks that `typeof(source)` reads its operand as a type (`type_value`) with no error.
+static void check_type_operand(Str source) {
+    parse::Parser p = parser_of(source);
+    ast::TypeExpr *t = parse_type::type(&p);
+    test::check_equal(countof(p.errors), 0);
+    test::check_condition(t != nullptr);
+    if (t->kind != .type_of) {
+        test::check_condition(false);
+        return;
+    }
+    test::check_condition(t->kind.type_of.operand->kind == .type_value);
+}
+
+// What `smith lint --fix` writes for `typeof(const char[:])`: the operand starts with a bracket (#1772).
+export void test_parse_typeof_of_new_syntax_slice_and_pointer() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    check_type_operand("typeof([]u8)");
+    check_type_operand("typeof([4]i32)");
+    check_type_operand("typeof(*[]u8)");
+}
