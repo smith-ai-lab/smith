@@ -820,7 +820,7 @@ static const char *const build_front_modules[] = {
     "emit_memory", "emit_debug",   "emit_object",  "roots",           "fix",          "cimport",
     "compile",     "emit_option",  "emit_match",   "emit_value",      "emit_iter",    "emit_tuple",
     "emit_lambda", "emit_vector",  "emit_stream",  "fix_directive",   "fix_method",   "lsp_server",
-    "lsp_hover",   "lsp_semantic",
+    "lsp_hover",   "lsp_semantic", "effects_table",
 };
 constexpr size_t build_front_module_count = sizeof build_front_modules / sizeof build_front_modules[0];
 
