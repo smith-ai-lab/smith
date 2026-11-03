@@ -1907,8 +1907,8 @@ static void method_resolved(types::Checked *c, Work *w, Frame f) {
     const types::Symbol *local = function_named(c, name, false);
     if (record->kind == .record && types::member(record, name) != nullptr) {
         if (own != nullptr || local != nullptr) {
-            types::failf(c, e->span, "`", types::show(record), "` has a field `", name,
-                         "` and a function `", name, "`; rename one, a field and a method of one type cannot share a name");
+            types::failf(c, e->span, "`", types::show(record), "` has a field `", name, "` and a function `", name,
+                         "`; rename one, a field and a method of one type cannot share a name");
             poison(c, e);
             push_arguments(w, args, nullptr);
             return;
