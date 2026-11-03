@@ -1008,14 +1008,6 @@ static ast::Span between(U32 start, const ast::Expr *last) {
     return span;
 }
 
-// Whether the operator pending below the one just taken applies to the value that comes next (a prefix operator, a
-// `sizeof`, a `try`): `as` binds tighter than those, so a cast that is their operand is written in parentheses.
-static Bool prefix_above(const Stack *st) {
-    if (st->op_count == 0) return false;
-    Form form = st->ops[st->op_count - 1].form;
-    return form == .prefix || form == .query_form || form == .try_form;
-}
-
 // Records a fix whose last edit inserts `tail` at `end`. When the warning recorded last is a fix of something inside
 // (its last edit inserts at the same `end`), the two are one fix: two inserts at one offset clash, and `smith lint
 // --fix` reads the text between its passes with today's lexer, which does not know `as` or `if`, so a nested form
@@ -1039,23 +1031,31 @@ static void tail_warning(Stack *st, ast::Span span, Str message, parse::Edits ed
     parse::warning_fix(p, span, message, edits);
 }
 
-// `(T)x` is `x as T`, and `(x as T)` as the operand of a prefix operator.
-static void cast_warning(Stack *st, const Pending *op, const ast::Expr *operand) {
-    parse::Parser *p = st->parser;
-    Str type_text = parse::mended(p, op->head.start + 1, op->head.end - 1);
-    Bool wrap = prefix_above(st);
-    parse::Edits edits = {};
-    edits = with_edit(edits, from_to(op->head.start, operand->span.start), wrap ? "(" : "");
-    Str tail = as_str(format::push(" as ", type_text, wrap ? ")" : ""));
-    Str message = as_str(format::push("a cast is `x as T`: write `x as ", type_text, "`"));
-    tail_warning(st, from_to(op->head.start, operand->span.end), message, edits, operand->span.end, tail);
-}
-
 // Whether a value reads as a postfix chain (`p.x`, `f(x)`, a name, a group), so `.*` can follow it as it is.
 static Bool is_postfix_level(Str source, const ast::Expr *e) {
     if (source[e->span.start] == '(') return true;
     if (e->kind == .unary) return e->kind.unary.op == .dereference;
-    return e->kind != .query && e->kind != .try_expr && e->kind != .cast;
+    return e->kind != .query && e->kind != .try_expr;
+}
+
+// The conversion function that writes a cast to `type`: `cast` for a pointer, else `to` (#1811).
+static Str conversion_name(const ast::TypeExpr *type) {
+    if (type->kind == .pointer) return "cast";
+    return "to";
+}
+
+// `(T)x` is `x.to(T)`, or `p.cast(T)` when T is a pointer type; the operand is parenthesized when it is not a postfix
+// chain (`(-x).to(T)`).
+static void cast_warning(Stack *st, const Pending *op, const ast::Expr *operand) {
+    parse::Parser *p = st->parser;
+    Str type_text = parse::mended(p, op->head.start + 1, op->head.end - 1);
+    Str name = conversion_name(op->type);
+    Bool plain = is_postfix_level(p->source, operand);
+    parse::Edits edits = {};
+    edits = with_edit(edits, from_to(op->head.start, operand->span.start), plain ? "" : "(");
+    Str tail = as_str(format::push(plain ? "" : ")", ".", name, "(", type_text, ")"));
+    Str message = as_str(format::push("a cast is `x.", name, "(T)`: write `x.", name, "(", type_text, ")`"));
+    tail_warning(st, from_to(op->head.start, operand->span.end), message, edits, operand->span.end, tail);
 }
 
 // `*p` is `p.*`, and `(-x).*` when the operand is not a postfix chain.
@@ -1528,15 +1528,55 @@ static ast::Expr *member(parse::Parser *p, ast::Expr *base) {
                 {.member = {.base = base, .name = parse::text(p, name), .arrow = arrow}});
 }
 
-// `x as T`: binds tighter than every binary operator, so pending prefix operators apply first (`-x as T` is `(-x) as
-// T`). The position is at `as`.
+// `x as T` is no longer a cast (#1811): it still reads, as an error whose fix writes `x.to(T)` (`p.cast(T)` for a
+// pointer type), the operand in parentheses when it is not a postfix chain. Pending prefix operators apply first. The
+// position is at `as`.
 static ast::Expr *as_cast(parse::Parser *p, Stack *st) {
     reduce_above(st, prefix_prec, false);
     ast::Expr *operand = st->values[st->value_count - 1];
     parse::advance(p);
     ast::TypeExpr *type = parse::type(p);
     if (type == nullptr) return nullptr;
-    return make(parse::span_from(p, operand->span.start), {.cast = {.type = type, .operand = operand}});
+    ast::Span whole = parse::span_from(p, operand->span.start);
+    Bool plain = is_postfix_level(p->source, operand);
+    parse::Edits edits = {};
+    if (!plain) edits = with_edit(edits, at_offset(operand->span.start), "(");
+    Str name = conversion_name(type);
+    Str type_text = parse::mended(p, type->span.start, whole.end);
+    Str call_text = as_str(format::push(plain ? "" : ")", ".", name, "(", type_text, ")"));
+    edits = with_edit(edits, from_to(operand->span.end, whole.end), call_text);
+    Str message = as_str(format::push("`as` is gone: write `x.", name, "(T)`"));
+    parse::error_fix(p, whole, message, edits);
+    return make(whole, {.cast = {.type = type, .operand = operand}});
+}
+
+static Bool same_text(Str a, Str b) {
+    return countof(a) == countof(b) && (countof(a) == 0 || mem::equal(a, b));
+}
+
+// Whether a conversion call `.to(T)`, `.wrap(T)` or `.cast(T)` starts at the `.` the position is at: the three are
+// built-in functions, so the argument is always a type.
+static Bool conversion_ahead(const parse::Parser *p) {
+    if (parse::peek(p).kind != lex::dot) return false;
+    lex::Token name = parse::peek_at(p, 1);
+    if (name.kind != lex::name || parse::peek_at(p, 2).kind != lex::left_paren) return false;
+    Str word = parse::text(p, name);
+    Bool known = same_text(word, "to") || same_text(word, "wrap") || same_text(word, "cast");
+    return known;
+}
+
+// `x.to(T)`, `x.wrap(T)`, `p.cast(T)`: the position is at the `.`.
+static ast::Expr *conversion(parse::Parser *p, ast::Expr *operand) {
+    parse::advance(p);
+    Str word = parse::text(p, parse::advance(p));
+    parse::advance(p);
+    ast::CastForm form = .convert;
+    if (same_text(word, "wrap")) form = .wrapping;
+    if (same_text(word, "cast")) form = .reinterpret;
+    ast::TypeExpr *type = parse::type(p);
+    if (type == nullptr) return nullptr;
+    parse::expect(p, lex::right_paren, "`)` to end the type");
+    return make(parse::span_from(p, operand->span.start), {.cast = {.type = type, .operand = operand, .form = form}});
 }
 
 // Whether the position lies inside an unclosed `(` or `[` of the statement, so a line break there ends nothing: the
@@ -1574,7 +1614,7 @@ static Outcome postfix_step(parse::Parser *p, Stack *st) {
         if (p->new_syntax && token.kind == lex::dot && p->position > 0 &&
             lex::ends_statement(p->tokens[p->position - 1]) && !inside_brackets(p))
             return .absent;
-        result = member(p, base);
+        result = conversion_ahead(p) ? conversion(p, base) : member(p, base);
         break;
     case lex::dot_star:
         parse::advance(p);

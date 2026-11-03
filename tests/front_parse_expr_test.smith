@@ -263,9 +263,15 @@ export void test_parse_expr_new_calls_variants_and_tuples() {
 
 export void test_parse_expr_new_dereference_and_casts() {
     check_golden_in("tests/front/parse_expr/new_operators.txt",
-                    "p.*\np.x.*\np.*.x\n&x\nx as f64\n-x as f64\na + b as f64\nx as u8 as i32\na * b as f64\n"
-                    "x as *mut u8\nx as ?i32\n&x as *i32\nf(x) as u8",
+                    "p.*\np.x.*\np.*.x\n&x\nx.to(f64)\n(-x).to(f64)\na + b.to(f64)\nx.to(u8).to(i32)\na * b.to(f64)\n"
+                    "x.cast(*mut u8)\nx.to(?i32)\n(&x).cast(*i32)\nf(x).to(u8)\nn.wrap(u8)\nxs[0].wrap(i8)",
                     true);
+}
+
+// `x as T` is gone (#1811): an error whose fix writes the call, in parentheses when the operand is no postfix chain.
+export void test_parse_expr_new_as_is_an_error_with_a_fix() {
+    check_golden_in("tests/front/parse_expr/new_as.txt",
+                    "x as f64\n-x as f64\na + b as f64\nx as u8 as i32\nx as *mut u8\n", true);
 }
 
 export void test_parse_expr_new_lambdas_and_types() {
@@ -364,7 +370,7 @@ export void test_parse_expr_lint_fix_twice_on_every_old_form() {
     fix::Fixed first = fix::fix_text("m.smith", source);
     test::check_condition(first.applied >= 6);
     // The locals are mended too (#1742): the name first, and the expressions as smith's own.
-    test::check_condition(contains(first.text, "a: i32 = n as i32\n"));
+    test::check_condition(contains(first.text, "a: i32 = n.to(i32)\n"));
     test::check_condition(contains(first.text, "b: i32 = p.x + p.*\n"));
     test::check_condition(contains(first.text, "c: i32 = if n > 0 { a } else { b }\n"));
     test::check_condition(contains(first.text, "q: Point = Point(x = 1, y = 2)\n"));

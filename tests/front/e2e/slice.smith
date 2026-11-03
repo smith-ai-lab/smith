@@ -1,7 +1,7 @@
 fn total(xs: []i32) -> i64 {
     mut sum: i64 = 0
     for x in xs {
-        sum += x as i64
+        sum += x.to(i64)
     }
     sum
 }
@@ -9,7 +9,7 @@ fn total(xs: []i32) -> i64 {
 fn count_char(s: str, wanted: Char) -> usize {
     mut n: usize = 0
     for c in s {
-        if c as Char == wanted {
+        if c.to(Char) == wanted {
             n += 1
         }
     }
@@ -18,7 +18,7 @@ fn count_char(s: str, wanted: Char) -> usize {
 
 fn first_word(s: str) -> str {
     mut i: usize = 0
-    while i < countof(s) && s[i] as Char != ' ' {
+    while i < countof(s) && s[i].to(Char) != ' ' {
         i += 1
     }
     s[0:i]
@@ -42,7 +42,7 @@ pub fn check() -> i32 {
         return 3
     }
     w := first_word("hello world")
-    if countof(w) != 5 || w[4] as Char != 'o' {
+    if countof(w) != 5 || w[4].to(Char) != 'o' {
         return 4
     }
     0

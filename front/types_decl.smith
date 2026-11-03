@@ -165,12 +165,23 @@ static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from
     if (e->kind == .cast) {
         lit = literal_of(e->kind.cast.operand);
     }
+    ast::CastForm form = .convert;
+    if (e->kind == .cast) form = e->kind.cast.form;
+    if (form == .wrapping && !(from->kind == .integer && to->kind == .integer)) {
+        types::fail(c, e->span, "`wrap` keeps the low bits of an integer: it converts an integer to an integer");
+        return false;
+    }
+    if (form == .reinterpret && to->kind != .pointer) {
+        types::fail(c, e->span,
+                    "`cast` reinterprets a pointer, or an integer of pointer size, as another pointer type");
+        return false;
+    }
     types_convert::Verdict verdict = types_convert::cast_ok(&c->table, from, to, lit);
     if (!verdict.ok) {
         types::fail(c, e->span, verdict.message);
         return false;
     }
-    if (verdict.checked) {
+    if (verdict.checked && form != .wrapping) {
         types::mark_cast_checked(c, e, from);
     }
     return true;

@@ -236,9 +236,8 @@ export void test_front_types_expr_a_mismatch_names_the_expected_type_and_what_to
     var(&r, "s", "Str");
     ast::Expr *name = ast::name("s");
     test::check_condition(types_expr::check(&r, name, ty(&r, "I32")) == r.table.invalid);
-    test::check_condition(says(
-        last(&r),
-        "expected `I32`, found `Str`; write a value of type `I32`, or convert it with a cast such as `(I32)value`"));
+    test::check_condition(says(last(&r), "expected `I32`, found `Str`; write a value of type `I32`, or convert it with "
+                                         "a conversion such as `value.to(I32)`"));
     expect(r.error_count, 1);
     test::check_condition(types_expr::check(&r, ast::name("s"), ty(&r, "Str")) == ty(&r, "Str"));
     expect(r.error_count, 1);
@@ -313,9 +312,8 @@ export void test_front_types_expr_operand_errors_name_the_types_and_what_to_writ
     var(&r, "s", "Str");
     var(&r, "f", "F64");
     types_expr::infer(&r, binary(.add, ast::name("a"), ast::name("c")));
-    test::check_condition(says(
-        last(&r),
-        "the operands of `+` have different types, `I32` and `U8`; make both `I32` with a cast, for example `(I32)y`"));
+    test::check_condition(says(last(&r), "the operands of `+` have different types, `I32` and `U8`; make both `I32` "
+                                         "with a conversion, for example `y.to(I32)`"));
     types_expr::infer(&r, binary(.logical_and, ast::name("a"), flag(true)));
     test::check_condition(says(last(&r), "`&&` needs Bool operands, found `I32`; write a comparison such as `x != 0`"));
     types_expr::infer(&r, binary(.add, ast::name("s"), ast::name("s")));
@@ -385,9 +383,8 @@ export void test_front_types_expr_assignment_checks_the_value_against_the_target
     test::check_condition(types_expr::infer(&r, assign(.add, ast::name("x"), num(1))) == ty(&r, "U8"));
     expect(r.error_count, 0);
     types_expr::infer(&r, assign(.plain, ast::name("x"), ast::name("s")));
-    test::check_condition(
-        says(last(&r),
-             "expected `U8`, found `Str`; write a value of type `U8`, or convert it with a cast such as `(U8)value`"));
+    test::check_condition(says(last(&r), "expected `U8`, found `Str`; write a value of type `U8`, or convert it with a "
+                                         "conversion such as `value.to(U8)`"));
     types_expr::infer(&r, assign(.plain, num(1), ast::name("x")));
     test::check_condition(says(
         last(&r),
@@ -468,9 +465,8 @@ export void test_front_types_expr_calls_use_the_callees_function_type() {
         "this call passes 1 argument but the function takes 2 arguments, `Bool (I32, U8)`; write exactly 2 arguments"));
     ast::ExprRef wrong[2] = {ast::name("s"), num(1)};
     types_expr::infer(&r, ast::call(ast::name("add"), wrong));
-    test::check_condition(says(
-        last(&r),
-        "expected `I32`, found `Str`; write a value of type `I32`, or convert it with a cast such as `(I32)value`"));
+    test::check_condition(says(last(&r), "expected `I32`, found `Str`; write a value of type `I32`, or convert it with "
+                                         "a conversion such as `value.to(I32)`"));
     ast::ExprRef big[2] = {num(1), num(256)};
     types_expr::infer(&r, ast::call(ast::name("add"), big));
     test::check_condition(
@@ -521,13 +517,11 @@ export void test_front_types_expr_a_conditional_gives_the_expected_type_to_both_
     test::check_condition(types_expr::infer(&r, mixed) == ty(&r, "U8"));
     expect(r.error_count, 0);
     types_expr::infer(&r, conditional(ast::name("n"), num(1), num(2)));
-    test::check_condition(says(
-        last(&r),
-        "expected `Bool`, found `I32`; write a value of type `Bool`, or convert it with a cast such as `(Bool)value`"));
+    test::check_condition(says(last(&r), "expected `Bool`, found `I32`; write a value of type `Bool`, or convert it "
+                                         "with a conversion such as `value.to(Bool)`"));
     types_expr::infer(&r, conditional(ast::name("b"), ast::name("x"), ast::name("s")));
-    test::check_condition(
-        says(last(&r),
-             "expected `U8`, found `Str`; write a value of type `U8`, or convert it with a cast such as `(U8)value`"));
+    test::check_condition(says(last(&r), "expected `U8`, found `Str`; write a value of type `U8`, or convert it with a "
+                                         "conversion such as `value.to(U8)`"));
     expect(r.error_count, 2);
 }
 
@@ -679,7 +673,7 @@ export void test_front_types_expr_a_stored_lambda_passes_where_a_function_type_i
     types_expr::check(&r, ast::name("wide"), signature);
     expect(r.error_count, 1);
     test::check_condition(says(last(&r), "expected `I32 (I32)`, found `Fn(I32 (F64))`; write a value of type "
-                                         "`I32 (I32)`, or convert it with a cast such as `(I32 (I32))value`"));
+                                         "`I32 (I32)`, or convert it with a conversion such as `value.to(I32 (I32))`"));
 }
 
 export void test_front_types_expr_what_is_not_typed_yet_is_reported_with_its_kind() {
@@ -861,7 +855,7 @@ export void test_front_types_expr_an_if_value_needs_a_bool_and_branches_of_one_t
     test::check_condition(types_expr::infer(&r, as_value(branch(ast::name("x"), braces(num(1)), braces(num(2))))) ==
                           r.table.invalid);
     test::check_condition(says(last(&r), "expected `Bool`, found `U8`; write a value of type `Bool`, or convert it "
-                                         "with a cast such as `(Bool)value`") ||
+                                         "with a conversion such as `value.to(Bool)`") ||
                           countof(last(&r)) > 0);
     types_expr::infer(&r, as_value(branch(flag(true), braces(ast::name("x")), braces(ast::name("f")))));
     test::check_condition(countof(last(&r)) > 0);
@@ -1032,9 +1026,9 @@ export void test_front_types_expr_a_struct_is_built_by_a_call_with_named_fields(
     var(&r, "s", "Str");
     ast::ExprRef wrong[1] = {named("x", ast::name("s"))};
     test::check_condition(types_expr::infer(&r, ast::call(ast::name("Point"), wrong)) == r.table.invalid);
-    test::check_condition(
-        says(last(&r), "expected `I32`, found `Str`; write a value of type `I32`, or convert it with a cast such as "
-                       "`(I32)value`"));
+    test::check_condition(says(
+        last(&r), "expected `I32`, found `Str`; write a value of type `I32`, or convert it with a conversion such as "
+                  "`value.to(I32)`"));
     // the result is checked against what is expected
     types_expr::check(&r, ast::call(ast::name("Point"), only_x), ty(&r, "I32"));
     test::check_condition(countof(last(&r)) > 0);
@@ -1115,7 +1109,7 @@ export void test_front_types_expr_an_array_literal_is_an_array_of_its_elements()
     ast::ExprRef mixed[2] = {num(1), ast::name("f")};
     types_expr::infer(&r, ast::array_literal(mixed));
     test::check_condition(says(last(&r), "the elements of `[...]` have one type: element 2 is `F32` but the first is "
-                                         "`I32`; convert it with `as I32`"));
+                                         "`I32`; convert it with `.to(I32)`"));
     ast::ExprRef none[1] = {};
     types_expr::infer(&r, ast::array_literal(none[0:0]));
     test::check_condition(

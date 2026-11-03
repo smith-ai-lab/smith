@@ -19,11 +19,11 @@ pub fn check() -> i32 {
     mut x: f64 = 0
     x += 0.25
     x = -x
-    if x as i32 != 0 || (x * -8.0) as i32 != 2 {
+    if x.to(i32) != 0 || (x * -8.0).to(i32) != 2 {
         return 3
     }
     n: i32 = 7
-    if (n as f64) / 2.0 != 3.5 {
+    if (n.to(f64)) / 2.0 != 3.5 {
         return 4
     }
     0

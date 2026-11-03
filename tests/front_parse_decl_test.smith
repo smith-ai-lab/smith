@@ -894,6 +894,6 @@ export void test_parse_decl_locals_are_fixed_too() {
     defer mem::set_allocator(outside);
     expect_fixed("void f(void) {\n    Key *p = &key;\n}\n", "fn f() {\n    p: *Key = &key\n}\n", 2);
     expect_fixed("void f(void) {\n    U64 n = 3;\n    I32 m;\n}\n", "fn f() {\n    n: u64 = 3\n    mut m: i32\n}\n", 3);
-    expect_fixed("void f(I32 n) {\n    I32 a = (I32)n;\n}\n", "fn f(n: i32) {\n    a: i32 = n as i32\n}\n", 3);
+    expect_fixed("void f(I32 n) {\n    I32 a = (I32)n;\n}\n", "fn f(n: i32) {\n    a: i32 = n.to(i32)\n}\n", 3);
     expect_fixed("void f(Point *p) {\n}\n", "fn f(p: *Point) {\n}\n", 1);
 }

@@ -185,10 +185,10 @@ export void test_front_emit_float_implicit_conversions() {
 export void test_front_emit_float_casts() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = ir_of("pub fn narrow(a: f64) -> f32 {\n    a as f32\n}\n"
-                     "pub fn wide(n: i64) -> f64 {\n    n as f64\n}\n"
-                     "pub fn truncate(a: f64) -> i32 {\n    a as i32\n}\n"
-                     "pub fn literal_truncate() -> i32 {\n    2.9 as i32\n}\n",
+    char *ir = ir_of("pub fn narrow(a: f64) -> f32 {\n    a.to(f32)\n}\n"
+                     "pub fn wide(n: i64) -> f64 {\n    n.to(f64)\n}\n"
+                     "pub fn truncate(a: f64) -> i32 {\n    a.to(i32)\n}\n"
+                     "pub fn literal_truncate() -> i32 {\n    (2.9).to(i32)\n}\n",
                      &host, &s);
     test::check_equal(ir != nullptr, true);
     test::check_equal(contains(ir, "fptrunc"), true);
@@ -223,8 +223,8 @@ static Bool traps(Usize address, F64 argument) {
 export void test_front_emit_float_cast_to_an_integer_that_does_not_fit_calls_the_report() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = ir_of("pub fn truncate(a: f64) -> i32 {\n    a as i32\n}\n"
-                     "pub fn byte(a: f64) -> u8 {\n    a as u8\n}\n",
+    char *ir = ir_of("pub fn truncate(a: f64) -> i32 {\n    a.to(i32)\n}\n"
+                     "pub fn byte(a: f64) -> u8 {\n    a.to(u8)\n}\n",
                      &host, &s);
     test::check_equal(ir != nullptr, true);
     Usize truncate_at = symbol_of(&host, "truncate");
@@ -244,8 +244,8 @@ export void test_front_emit_half_and_bfloat_are_llvm_half_and_bfloat() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
     char *ir = ir_of("pub fn half(a: f16) -> f16 {\n    a * a\n}\n"
-                     "pub fn brain(a: bf16) -> f32 {\n    b: bf16 = a + 1.0\n    b as f32\n}\n"
-                     "pub fn across(a: f16) -> bf16 {\n    a as bf16\n}\n",
+                     "pub fn brain(a: bf16) -> f32 {\n    b: bf16 = a + 1.0\n    b.to(f32)\n}\n"
+                     "pub fn across(a: f16) -> bf16 {\n    a.to(bf16)\n}\n",
                      &host, &s);
     test::check_equal(ir != nullptr, true);
     test::check_equal(contains(ir, "fmul half"), true);
