@@ -1,0 +1,8 @@
+extern fn printf(format: *u8, ...) -> i32
+
+struct Pair:
+    a: i32
+    b: i32
+
+pub fn check() -> i32:
+    printf("%d", Pair(a = 1, b = 2))

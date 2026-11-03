@@ -1237,7 +1237,8 @@ static TypeRef resolve_name(Checked *r, ast::Span span, ast::Path path) {
 
 static Bool is_composite(const ast::TypeExpr *node) {
     return node->kind == .pointer || node->kind == .array || node->kind == .slice || node->kind == .function ||
-           node->kind == .applied || node->kind == .option || node->kind == .block_type || node->kind == .tuple;
+           node->kind == .applied || node->kind == .option || node->kind == .block_type || node->kind == .tuple ||
+           node->kind == .record;
 }
 
 // The children of a composite type, in the order their types are wanted: a function's parameters and then its result,
@@ -1249,6 +1250,7 @@ static Usize child_count(const ast::TypeExpr *node) {
         return n;
     }
     if (node->kind == .tuple) return countof(node->kind.tuple.elements);
+    if (node->kind == .record) return countof(node->kind.record.fields);
     if (node->kind == .applied) {
         Usize n = 0;
         for (Usize i = 0; i < countof(node->kind.applied.args); i++) {
@@ -1272,6 +1274,7 @@ static const ast::TypeExpr *child(const ast::TypeExpr *node, Usize i) {
         return node->kind.function.result;
     }
     if (node->kind == .tuple) return node->kind.tuple.elements[i];
+    if (node->kind == .record) return node->kind.record.fields[i].type;
     Usize seen = 0;
     if (node->kind == .applied) {
         for (Usize k = 0; k < countof(node->kind.applied.args); k++) {
@@ -1319,9 +1322,33 @@ static TypeRef leaf_type(Checked *r, const ast::TypeExpr *node) {
         failf(r, node->span, "the C type `", node->kind.unsupported_c.spelling,
               "` has no smith type; use a fixed-size type such as `F64` or `I64`");
     } else {
-        failf(r, node->span, "not yet typed: an anonymous struct or union as a type; declare it with a name");
+        failf(r, node->span, "not yet typed: this kind of type");
     }
     return r->table.invalid;
+}
+
+// An anonymous struct or union used as a type (a payload variant `struct { I32 a; } one;`): a nominal record of its
+// own, one per place it is written, whose fields are the children's types.
+static TypeRef build_record(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize base, Usize n) {
+    if (!(node->kind == .record)) return r->table.invalid;
+    ast::FieldDecl members[:] = node->kind.record.fields;
+    Slot fields[:] = mem::alloc_slice(Slot, n);
+    for (Usize i = 0; i < n; i++) {
+        fields[i].name = members[i].name;
+        fields[i].is_pub = true;
+        fields[i].default_value = members[i].default_value;
+        fields[i].type = w->values[base + i].type;
+        for (Usize k = 0; k < i; k++) {
+            if (same_text(fields[k].name, members[i].name)) {
+                failf(r, members[i].span, "the field `", members[i].name, "` is declared twice; rename one");
+            }
+        }
+    }
+    Str name = node->kind.record.is_union ? "(anonymous union)" : "(anonymous struct)";
+    Ty *made = new_record(&r->table, name, node->kind.record.is_union);
+    set_fields(made, fields);
+    made->owner = r->prefix;
+    return made;
 }
 
 static Bool any_invalid(const Checked *r, const Walk *w, Usize base, Usize n) {
@@ -1551,6 +1578,7 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
         if (node->kind.function.result != nullptr) result = w->values[base + params].type;
         return function_of(&r->table, slots, result, node->kind.function.variadic);
     }
+    if (node->kind == .record) return build_record(r, node, w, base, n);
     if (node->kind == .tuple) {
         Slot elements[:] = mem::alloc_slice(Slot, n);
         for (Usize i = 0; i < n; i++) {
@@ -1864,12 +1892,19 @@ export Bool is_type_parameter(const ast::Param *p) {
     return is_type_name(p->type);
 }
 
-// A function with a body and a compile-time parameter, whose result is not a type, is a template (#1908): its body is
-// checked in each instance, not here. A type function (`-> type`) and a prototype are ordinary.
+// Whether a parameter is written `auto x` in today's syntax: its type is the type each call passes, so the function is
+// a template with one instance per set of argument types (#1934).
+export Bool is_auto_param(const ast::Param *p) {
+    return !p->is_new && p->type != nullptr && p->type->kind == .auto_type && !p->is_rest && !p->is_pack &&
+           !p->is_gather;
+}
+
+// A function with a body and a compile-time or `auto` parameter, whose result is not a type, is a template (#1908,
+// #1934): its body is checked in each instance, not here. A type function (`-> type`) and a prototype are ordinary.
 static Bool is_template(const ast::Decl *d, ast::Param list[:], const ast::TypeExpr *result_type) {
     if (d->kind != .function || d->kind.function.body == nullptr || is_type_name(result_type)) return false;
     for (Usize i = 0; i < countof(list); i++) {
-        if (is_compile_time(&list[i])) return true;
+        if (is_compile_time(&list[i]) || is_auto_param(&list[i])) return true;
     }
     return false;
 }
@@ -2018,6 +2053,63 @@ export Usize instance_called(const Checked *r, const ast::Expr *call) {
 // The instance of the template `template` for what a call passed, one per set of arguments: made (cloned, its
 // compile-time parameters taken out, its signature typed) on the first call and found after. Its index in
 // `r->instances`, or `max_instances` when there are too many.
+// Fills `bindings` from what the call passed, one per compile-time or `auto` parameter in order. Returns how many
+// parameters the instance keeps; `auto_syntax` is set when the kept parameters are written in today's syntax.
+static Usize bind_given(Checked *r, ast::Param all[:], Binding given[:], Binding bindings[:], Bool *auto_syntax) {
+    Usize kept_count = 0;
+    Usize bound = 0;
+    for (Usize i = 0; i < countof(all); i++) {
+        if (is_auto_param(&all[i])) {
+            kept_count += 1;
+            bindings[bound] = given[bound];
+            bindings[bound].name = msg(format::push("$auto.", all[i].name));
+            bound += 1;
+            continue;
+        }
+        if (!is_compile_time(&all[i])) {
+            kept_count += 1;
+            *auto_syntax = *auto_syntax || !all[i].is_new;
+            continue;
+        }
+        bindings[bound] = given[bound];
+        bindings[bound].name = all[i].name;
+        if (!bindings[bound].is_type) {
+            r->new_syntax = true;
+            bindings[bound].type = resolve(r, all[i].type);
+            r->new_syntax = false;
+        }
+        bound += 1;
+    }
+    return kept_count;
+}
+
+// The parameters an instance keeps, with their types: an `auto` parameter has the type it was bound to.
+static void keep_params(Checked *r, ast::Param all[:], Binding bindings[:], Bool auto_syntax, ast::Param kept[:],
+                        Slot slots[:]) {
+    Usize at = 0;
+    Usize taken = 0; // the next binding for an `auto` parameter
+    for (Usize i = 0; i < countof(all); i++) {
+        if (is_compile_time(&all[i])) {
+            taken += 1;
+            continue;
+        }
+        kept[at] = all[i];
+        slots[at].name = all[i].name;
+        if (is_auto_param(&all[i])) {
+            slots[at].type = bindings[taken].type;
+            taken += 1;
+        } else {
+            r->new_syntax = !auto_syntax;
+            slots[at].type = all[i].type == nullptr ? r->table.invalid : resolve(r, all[i].type);
+            r->new_syntax = false;
+        }
+        at += 1;
+    }
+}
+
+// The instance of the template `template` for what a call passed, one per set of arguments: made (cloned, its
+// compile-time parameters taken out, its signature typed) on the first call and found after. Its index in
+// `r->instances`, or `max_instances` when there are too many.
 export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]) {
     Usize found = find_instance(r, template, given);
     if (found < r->instance_count) return found;
@@ -2030,43 +2122,18 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]
     ast::Decl *copy = ast_clone::clone_decl(template);
     if (copy->kind != .function) return max_instances;
     ast::Param all[:] = copy->kind.function.params;
-    Usize kept_count = 0;
     Binding bindings[:] = mem::alloc_slice(Binding, countof(given));
-    Usize bound = 0;
+    Bool auto_syntax = false; // the types of an `auto` template are written in today's syntax
     push_scope(&r->scopes);
-    for (Usize i = 0; i < countof(all); i++) {
-        if (!is_compile_time(&all[i])) {
-            kept_count += 1;
-            continue;
-        }
-        bindings[bound] = given[bound];
-        bindings[bound].name = all[i].name;
-        if (!bindings[bound].is_type) {
-            r->new_syntax = true;
-            bindings[bound].type = resolve(r, all[i].type);
-            r->new_syntax = false;
-        }
-        bound += 1;
-    }
+    Usize kept_count = bind_given(r, all, given, bindings, &auto_syntax);
     Instance made = {.template = template, .decl = copy, .bindings = bindings};
     bind_instance(r, &made);
     ast::Param kept[:] = mem::alloc_slice(ast::Param, kept_count);
     Slot slots[:] = mem::alloc_slice(Slot, kept_count);
-    Usize at = 0;
-    for (Usize i = 0; i < countof(all); i++) {
-        if (is_compile_time(&all[i])) {
-            continue;
-        }
-        kept[at] = all[i];
-        slots[at].name = all[i].name;
-        r->new_syntax = true;
-        slots[at].type = all[i].type == nullptr ? r->table.invalid : resolve(r, all[i].type);
-        r->new_syntax = false;
-        at += 1;
-    }
+    keep_params(r, all, bindings, auto_syntax, kept, slots);
     TypeRef result = r->table.void_type;
     if (copy->kind.function.result != nullptr) {
-        r->new_syntax = true;
+        r->new_syntax = !auto_syntax;
         result = resolve(r, copy->kind.function.result);
         r->new_syntax = false;
     }

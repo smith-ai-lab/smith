@@ -8,7 +8,8 @@
 //   replies
 //                  to stdout; returns 0 after `shutdown` then `exit`, else 1
 //
-// Served: `textDocument/definition` and `documentSymbol` (#1893), `initialize` (full document sync), `shutdown`,
+// Served: `textDocument/completion` (#1894), `textDocument/definition` and `documentSymbol` (#1893), `initialize` (full
+// document sync), `shutdown`,
 // `exit`, `textDocument/didOpen` and `didChange` (each answered by `textDocument/publishDiagnostics` from
 // front::compile::diagnose) and `didClose` (clears them). Any other request is answered with the error -32601; any
 // other notification is ignored. A position is a line and a byte count in the line (LSP asks for UTF-16 units; the two
@@ -17,6 +18,7 @@
 module front::lsp_server;
 
 import front::compile;
+import front::lsp_completion;
 import front::lsp_definition;
 import front::lsp_hover;
 import front::lsp_symbols;
@@ -252,6 +254,15 @@ static Bool locate(Str uri, const c::SmithJsonValue *position_param, Document **
     return true;
 }
 
+// The `result` of a `textDocument/completion` request: null for a document that is not open.
+static Str completion_result(Str uri, const c::SmithJsonValue *position_param) {
+    Document *slot = nullptr;
+    U64 l = 0;
+    U64 ch = 0;
+    if (!locate(uri, position_param, &slot, &l, &ch)) return "null";
+    return lsp_completion::result(path_of(uri), as_str(slot->text[0:slot->text_length]), l, ch);
+}
+
 // The `result` of a `textDocument/definition` request: null for a document that is not open.
 static Str definition_result(Str uri, const c::SmithJsonValue *position_param) {
     Document *slot = nullptr;
@@ -290,6 +301,7 @@ export Str handle(Str body) {
         return reply(id,
                      as_str(format::push("{\"capabilities\":{\"textDocumentSync\":1,\"hoverProvider\":true,"
                                          "\"definitionProvider\":true,\"documentSymbolProvider\":true,"
+                                         "\"completionProvider\":{\"triggerCharacters\":[\".\"]},"
                                          "\"semanticTokensProvider\":{\"legend\":",
                                          lsp_semantic::legend(),
                                          ",\"full\":true,\"range\":true}},\"serverInfo\":{\"name\":\"smith lsp\"}}")));
@@ -321,6 +333,10 @@ export Str handle(Str body) {
     if (roots::same(method, "textDocument/definition")) {
         const c::SmithJsonValue *at = params == nullptr ? nullptr : c::smith_json_member(params, "position");
         return reply(id, definition_result(string_of(document, "uri"), at));
+    }
+    if (roots::same(method, "textDocument/completion")) {
+        const c::SmithJsonValue *at = params == nullptr ? nullptr : c::smith_json_member(params, "position");
+        return reply(id, completion_result(string_of(document, "uri"), at));
     }
     if (roots::same(method, "textDocument/documentSymbol"))
         return reply(id, symbols_result(string_of(document, "uri")));
