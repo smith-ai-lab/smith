@@ -271,10 +271,20 @@ static char projects[projects_max][path_size];
 static Bool linked_source[projects_max];
 static Usize project_count = 1;
 
-// The tracked .smith files of `root`, one per line.
+// Whether `path` is a .smith file (the others in the tree are C headers that only get copied).
+static Bool is_smith(const char *path) {
+    typeof(const char[:]) text = view_of(path);
+    return countof(text) > 6 && same(text[countof(text) - 6:countof(text)], ".smith");
+}
+
+// The folder of the real tree: its `.smith/include` holds the headers smith writes for the libraries (<smith/test.h>)
+// and its `include` the headers of smith's own runtime.
+static const char *include_root = nullptr;
+
+// The tracked .smith files of `root` and the C headers beside them (a file imports them), one per line.
 static Bool list_tree(const char *root) {
-    const char *const argv[_] = {"git", "-C", root, "ls-files", "*.smith"};
-    process::OutputResult done = process::run(argv[0:5]);
+    const char *const argv[_] = {"git", "-C", root, "ls-files", "*.smith", "*.h"};
+    process::OutputResult done = process::run(argv[0:6]);
     if (done == .error || done.ok.exit.status != 0) return false;
     typeof(char[:]) text = mem::view(done.ok.output, char);
     defer mem::free(done.ok.output.data);
@@ -437,8 +447,13 @@ static void measure(const char *smith, const char *scratch, const char *path) {
     }
     char object[path_size + 12];
     (void)format::to(object, sizeof object, (const char *)name, ".o");
-    const char *const compile[_] = {smith, "cc", "--front-end=new", "-c", name, "-o", object};
-    struct Ran compiled = run_program(compile[0:7]);
+    char include[path_size * 2];
+    (void)format::to(include, sizeof include, "-I", include_root, "/.smith/include");
+    char own[path_size * 2];
+    (void)format::to(own, sizeof own, "-I", include_root, "/include");
+    const char *const compile[_] = {
+        smith, "cc", "--front-end=new", (const char *)include, (const char *)own, "-c", name, "-o", object};
+    struct Ran compiled = run_program(compile[0:9]);
     if (compiled.status == 0) {
         add_entry(view_of(path), "pass", "");
     } else {
@@ -449,6 +464,7 @@ static void measure(const char *smith, const char *scratch, const char *path) {
 }
 
 static I32 run(const char *smith, const char *root, const char *scratch) {
+    include_root = root;
     if (!list_tree(root)) {
         console::print_error("frontend_coverage: cannot list the files of ", root, "\n");
         return 1;
@@ -463,6 +479,8 @@ static I32 run(const char *smith, const char *root, const char *scratch) {
     // All the fixes first: a file imports modules that must already be in the new syntax when it is compiled.
     Bool fixed[files_max];
     for (Usize i = 0; i < tree_count; i++) {
+        fixed[i] = false;
+        if (!is_smith(tree[i])) continue;
         Usize before = entry_count;
         fix(smith, tree[i]);
         fixed[i] = entry_count == before;

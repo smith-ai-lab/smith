@@ -137,30 +137,57 @@ static Str as_text(char chars[:]) {
 }
 
 static Str prelude() {
-    return "import std::stream;\n\n"
-           "fn note(log: *mut i32, digit: i32) {\n    log.* = log.* * 10 + digit\n}\n\n"
-           "fn countdown(from: i32) -> stream::Stream(i32) {\n    let mut n = from\n    while n > 0 {\n        yield "
-           "n\n"
-           "        n -= 1\n    }\n}\n\n"
-           "fn bump(counter: *mut i32) -> stream::Stream(i32) {\n    let mut k = 0\n    while k < 10 {\n"
-           "        counter.* += 1\n        let v = counter.*\n        yield v\n        k += 1\n    }\n}\n\n"
-           "fn one() -> stream::Stream(i32) {\n    yield 7\n    return\n    yield 8\n}\n\n"
-           "fn tidy(log: *mut i32) -> stream::Stream(i32) {\n    defer note(log, 9)\n    yield 1\n    yield 2\n}\n\n";
+    return "import std::stream;\n"
+           "\n"
+           "fn note(log: *mut i32, digit: i32):\n"
+           "    log.* = log.* * 10 + digit\n"
+           "\n"
+           "fn countdown(from: i32) -> stream::Stream(i32):\n"
+           "    let mut n = from\n"
+           "    while n > 0:\n"
+           "        yield n\n"
+           "        n -= 1\n"
+           "\n"
+           "fn bump(counter: *mut i32) -> stream::Stream(i32):\n"
+           "    let mut k = 0\n"
+           "    while k < 10:\n"
+           "        counter.* += 1\n"
+           "        let v = counter.*\n"
+           "        yield v\n"
+           "        k += 1\n"
+           "\n"
+           "fn one() -> stream::Stream(i32):\n"
+           "    yield 7\n"
+           "    return\n"
+           "    yield 8\n"
+           "\n"
+           "fn tidy(log: *mut i32) -> stream::Stream(i32):\n"
+           "    defer note(log, 9)\n"
+           "    yield 1\n"
+           "    yield 2\n"
+           "\n";
 }
 
 // `pub fn t(n: i32) -> i32 { <body> }` after the prelude.
 static I32 t_of(Str body, I32 arg) {
-    Str source = as_text(format::push(prelude(), "pub fn t(n: i32) -> i32 {\n", body, "}\n"));
+    Str source = as_text(format::push(prelude(), "pub fn t(n: i32) -> i32:\n", body));
     return run(source, "t", arg);
 }
 
 // The `n`th (from 0) value `s` gives, or -1 once it has ended.
 static Str nth_of(Str make) {
-    return as_text(
-        format::push("    let mut s = ", make,
-                     "\n    let mut got = -1\n    let mut i = 0\n    while i <= n {\n"
-                     "        if let .some(x) = stream::next(&s) {\n            got = x\n        } else {\n"
-                     "            got = -1\n        }\n        i += 1\n    }\n    stream::close(&s)\n    got\n"));
+    return as_text(format::push("    let mut s = ", make,
+                                "\n"
+                                "    let mut got = -1\n"
+                                "    let mut i = 0\n"
+                                "    while i <= n:\n"
+                                "        if let .some(x) = stream::next(&s):\n"
+                                "            got = x\n"
+                                "        else:\n"
+                                "            got = -1\n"
+                                "        i += 1\n"
+                                "    stream::close(&s)\n"
+                                "    got\n"));
 }
 
 export void test_front_emit_stream_next_reads_the_values_then_none() {
@@ -180,21 +207,30 @@ export void test_front_emit_stream_a_return_ends_the_stream() {
 
 export void test_front_emit_stream_the_body_runs_only_as_far_as_the_next_yield() {
     // The digits are the counter after the call, after the first `next` and after the second.
-    test::check_equal(
-        t_of("    let mut c = 0\n    let mut s = bump(&c)\n    let mut seen = c * 100\n"
-             "    if let .some(_) = stream::next(&s) {\n        seen += c * 10\n    }\n"
-             "    if let .some(_) = stream::next(&s) {\n        seen += c\n    }\n    stream::close(&s)\n    seen\n",
-             0),
-        12);
+    test::check_equal(t_of("    let mut c = 0\n"
+                           "    let mut s = bump(&c)\n"
+                           "    let mut seen = c * 100\n"
+                           "    if let .some(_) = stream::next(&s):\n"
+                           "        seen += c * 10\n"
+                           "    if let .some(_) = stream::next(&s):\n"
+                           "        seen += c\n"
+                           "    stream::close(&s)\n"
+                           "    seen\n",
+                           0),
+                      12);
 }
 
 export void test_front_emit_stream_close_ends_a_half_read_stream() {
     // The counter is 1 after one `next`; after the close, `next` gives none.
-    test::check_equal(
-        t_of("    let mut c = 0\n    let mut s = bump(&c)\n    let _ = stream::next(&s)\n    stream::close(&s)\n"
-             "    if let .some(_) = stream::next(&s) {\n        return 99\n    }\n    c\n",
-             0),
-        1);
+    test::check_equal(t_of("    let mut c = 0\n"
+                           "    let mut s = bump(&c)\n"
+                           "    let _ = stream::next(&s)\n"
+                           "    stream::close(&s)\n"
+                           "    if let .some(_) = stream::next(&s):\n"
+                           "        return 99\n"
+                           "    c\n",
+                           0),
+                      1);
 }
 
 export void test_front_emit_stream_close_on_an_unread_stream_never_runs_the_body() {
@@ -218,13 +254,21 @@ export void test_front_emit_stream_a_generator_reads_its_arguments_when_it_runs(
 }
 
 export void test_front_emit_stream_yield_outside_a_generator_is_an_error() {
-    stops_with("fn f() -> i32 {\n    yield 1\n    0\n}\n", "`yield` is valid only in a function that returns");
+    stops_with("fn f() -> i32:\n"
+               "    yield 1\n"
+               "    0\n",
+               "`yield` is valid only in a function that returns");
 }
 
 export void test_front_emit_stream_golden_ir_of_a_generator() {
     Scenario s = {};
-    begin(&s, "import std::stream;\n\nfn countdown(from: i32) -> stream::Stream(i32) {\n    let mut n = from\n"
-              "    while n > 0 {\n        yield n\n        n -= 1\n    }\n}\n");
+    begin(&s, "import std::stream;\n"
+              "\n"
+              "fn countdown(from: i32) -> stream::Stream(i32):\n"
+              "    let mut n = from\n"
+              "    while n > 0:\n"
+              "        yield n\n"
+              "        n -= 1\n");
     c::LLVMContextRef context = c::LLVMContextCreate();
     emit::Target target = {};
     target.triple = "x86_64-unknown-linux-gnu";

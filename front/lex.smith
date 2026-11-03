@@ -14,8 +14,8 @@
 //     of its own (`kw_if`): C23's keywords, `_Atomic _BitInt _Complex _Decimal32 _Decimal64 _Decimal128 _Generic
 //     _Imaginary _Noreturn` and smith's `module import export defer errdefer try countof`. `int`, `char`, `long`,
 //     `unsigned` and the rest of C's type keywords stay keywords: the parser decides what it accepts.
-//   * A literal has the form checked, not its value (the parser decodes it): `integer` (decimal, `0x`, octal, `0b`,
-//     `'` between digits, the suffixes `u l ll wb`), `floating` (decimal and hexadecimal, `f l` and `f16`..`f128`
+//   * A literal has the form checked, not its value (the parser decodes it): `integer` (decimal, `0x`, octal, `0o`,
+//     `0b`, `'` between digits, the suffixes `u l ll wb`), `floating` (decimal and hexadecimal, `f l` and `f16`..`f128`
 //     style suffixes), `character` and `string`, with the prefixes `u8`, `u`, `U` and `L` and C's escapes.
 //   * The punctuators are C's without the preprocessor's `#` and `##`, plus `::`. `[:]` is three tokens, `[[` is two
 //     and `]]` is two. There are no trigraphs and no digraphs.
@@ -620,12 +620,13 @@ static Bool suffix_of(Str suffix, Str allowed) {
     return true;
 }
 
-// The radix a number starts with, and how many characters its prefix (`0x`, `0b`) takes.
+// The radix a number starts with: 16 for `0x`, 2 for `0b`, 8 for `0o`, else 10 (a prefix takes two characters).
 static U32 number_radix(Str s, Usize i) {
     Usize n = countof(s);
     if (s[i] != '0' || i + 1 >= n) return 10;
     if (s[i + 1] == 'x' || s[i + 1] == 'X') return 16;
     if (s[i + 1] == 'b' || s[i + 1] == 'B') return 2;
+    if (s[i + 1] == 'o' || s[i + 1] == 'O') return 8;
     return 10;
 }
 
@@ -639,6 +640,24 @@ static Result(Usize, LexError) exponent(Str s, Usize start, Usize i, char marker
     return digit_run(s, p, 10);
 }
 
+// Whether the `.` at p, after the digits of a number, starts a method call (`3.to(u8)`) and not a fraction: a letter
+// follows, and the word is neither an exponent (`1.e5`) nor a floating suffix (`1.f`).
+static Bool method_dot(Str s, Usize p) {
+    Usize n = countof(s);
+    if (p + 1 >= n || (!ascii::alpha(s[p + 1]) && s[p + 1] != '_')) return false;
+    Usize q = p + 1;
+    while (q < n && is_identifier_part(s[q]))
+        q += 1;
+    Str word = s[p + 1:q];
+    if (word[0] == 'e' || word[0] == 'E') {
+        Usize k = 1;
+        if (k < countof(word) && (word[k] == '+' || word[k] == '-')) k += 1;
+        if (k < countof(word) && ascii::digit(word[k])) return false;
+        if (q < n && (s[q] == '+' || s[q] == '-') && countof(word) == 1) return false;
+    }
+    return !suffix_of(word, "fFlLdDxX0123456789");
+}
+
 // One number at i: an integer or a floating constant, with its suffix.
 static Result(Scanned, LexError) scan_number(Str s, Usize i) {
     Usize n = countof(s);
@@ -648,12 +667,12 @@ static Result(Scanned, LexError) scan_number(Str s, Usize i) {
     Usize first = p;
     p = digit_run(s, p, radix);
     Bool floating_point = false;
-    if (p < n && s[p] == '.' && radix != 2) {
+    if (p < n && s[p] == '.' && radix != 2 && radix != 8 && !method_dot(s, p)) {
         floating_point = true;
         p = digit_run(s, p + 1, radix);
     }
     Bool has_exponent = false;
-    if (radix != 2 && (first < p || floating_point)) {
+    if (radix != 2 && radix != 8 && (first < p || floating_point)) {
         Result(Usize, LexError) exponent_end = exponent(s, i, p, radix == 16 ? 'p' : 'e');
         if (exponent_end == .error) return {.error = exponent_end.error};
         Usize after = exponent_end.ok;
