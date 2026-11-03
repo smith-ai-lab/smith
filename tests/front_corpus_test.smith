@@ -9,6 +9,7 @@ module front_corpus_test;
 
 import front::compile;
 import front::roots;
+import std::console;
 import std::files;
 import std::format;
 import std::mem;
@@ -132,7 +133,7 @@ static void check_headers(Str dir, Str folder, Str modules) {
         test::check_equal(report.ok, true);
         Str got = replace(text_of(made), as_str(format::push(folder, "/")), "");
         if (report.ok && !roots::same(got, text_of(want_path))) {
-            c::fprintf(c::stderr, "%.*s", (int)countof(got), got.data);
+            (void)console::print_error(got);
             test::check_equal(got, text_of(want_path));
         }
     }
@@ -213,7 +214,7 @@ static void run_case(Str name) {
         Str want = text_of(errors_path);
         if (!roots::same(want, got)) test::check_equal(got, want);
     } else {
-        if (!built.ok) c::fprintf(c::stderr, "%.*s\n", (int)countof(built.text), built.text.data);
+        if (!built.ok) (void)console::print_error(built.text, "\n");
         if (!built.ok) test::check_equal(built.text, as_str(format::push("")));
         test::check_equal(built.ok, true);
         if (built.ok) check_headers(dir, folder, modules);
