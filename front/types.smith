@@ -954,6 +954,11 @@ static NodeType *entry_of(Checked *r, const ast::Expr *node) {
 // Records that the call `node`, written `x.f(args)`, is the call `rewritten`, `f(x, args)` or `f(&x, args)`.
 export void set_method(Checked *r, const ast::Expr *node, const ast::Expr *rewritten) {
     NodeType *entry = entry_of(r, node);
+    if (entry == nullptr) {
+        // The call's type is recorded after its rewritten form is checked; make the entry now.
+        set_type(r, node, nullptr);
+        entry = entry_of(r, node);
+    }
     if (entry != nullptr) entry->method = rewritten;
 }
 
