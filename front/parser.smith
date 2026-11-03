@@ -31,11 +31,26 @@ export struct Parsed {
     parse::Errors warnings;
 };
 
+// The fix of a `//` comment: `#` in its place, with a space after it when the comment has none. (A `/*` has no fix.)
+static parse::Edits slash_comment_edits(Str source, ast::Span at) {
+    parse::Edits none = {};
+    if (source[at.start + 1] != '/') return none;
+    Bool spaced = at.end >= countof(source) || source[at.end] == ' ' || source[at.end] == '\n';
+    Str text = spaced ? "#" : "# ";
+    parse::Edit change = {.span = at, .text = text};
+    parse::Edits edits = {};
+    edits = mem::realloc(edits, 1);
+    edits[0] = change;
+    return edits;
+}
+
 // The fix of a lexer error: a `#` that starts a simple `#define` or `#include` line carries the edits of all such lines
 // (front::fix_directive, #1748); any other lexer error has none.
 static parse::Edits lex_fix(Str source, lex::LexError failure) {
     parse::Edits none = {};
-    if (failure.span.start >= countof(source) || source[failure.span.start] != '#') return none;
+    if (failure.span.start >= countof(source)) return none;
+    if (source[failure.span.start] == '/') return slash_comment_edits(source, failure.span);
+    if (source[failure.span.start] != '#') return none;
     return fix_directive::edits(source);
 }
 
@@ -63,6 +78,27 @@ export Parsed parse(Str file, Str source) {
     return result;
 }
 
+// Which path a file takes, decided here and nowhere else (#1856; #1859 deletes it with the brace path): the layout
+// path, with `newline`, `indent` and `dedent` from lex::layout, when the file has an indented block (a file with none
+// has no
+// `:` block to read, and the layout tokens would only add `newline`s to the declaration parser, #1857, before it reads
+// them); the brace path, today's tokens, otherwise. Gives true, and the tokens with layout in `laid`, for the layout
+// path.
+static Bool takes_layout(Str source, lex::Tokens tokens, lex::Tokens *laid) {
+    lex::Lexed made = lex::layout(source, tokens);
+    if (made == .error) return false;
+    Bool indents = false;
+    for (lex::Token token : made.ok) {
+        if (token.kind == lex::indent) indents = true;
+    }
+    if (!indents) {
+        mem::free(made.ok.data);
+        return false;
+    }
+    *laid = made.ok;
+    return true;
+}
+
 // Reads the text of the file called `file` in smith's own syntax (#1578): what `parse` does with `lex::tokenize_new`
 // and `Parser.new_syntax` set. The errors and the warnings come back as for `parse`.
 export Parsed parse_new(Str file, Str source) {
@@ -77,8 +113,11 @@ export Parsed parse_new(Str file, Str source) {
         result.errors[0] = first;
         return result;
     }
-    parse::Parser p = parse::make(lexed.ok, source);
+    lex::Tokens tokens = lexed.ok;
+    Bool layout = takes_layout(source, lexed.ok, &tokens);
+    parse::Parser p = parse::make(tokens, source);
     p.new_syntax = true;
+    p.layout = layout;
     p.hooks.expression = parse_expr::expression;
     p.hooks.type = parse_type::type;
     p.hooks.statement = parse_stmt::statement;

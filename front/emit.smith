@@ -1235,7 +1235,8 @@ static state::Status declare_all(state::Emitter *e) {
                 try declare_function(e, d);
         } else if (d->kind == .variable) {
             if (!is_module_alias(e, d)) try memory::global_variable(e, d);
-        } else if (d->kind != .record && d->kind != .enumeration && d->kind != .import_module && d->kind != .import_c) {
+        } else if (d->kind != .record && d->kind != .enumeration && d->kind != .import_module && d->kind != .import_c &&
+                   d->kind != .import_from) {
             return state::not_emitted("this kind of declaration", d->span);
         }
     }

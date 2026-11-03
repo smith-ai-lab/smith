@@ -83,6 +83,8 @@ export struct Parser {
     Bool for_init; // a declaration is the init of a `for (...)`: its `;` stays, it separates the header's parts
     Bool new_syntax; // the tokens come from lex::tokenize_new: `.`, `(`, `[` and `{` also start smith's own forms
                      // (#1446)
+    Bool layout;     // the tokens went through lex::layout: blocks are `:` and `indent` ... `dedent`, a statement ends
+                     // with `newline` (#1856; parser::parse_new chooses, #1859 removes the other path)
 };
 
 // A parser at the first token with no errors and no hooks. The tokens must end with the end of the file, as

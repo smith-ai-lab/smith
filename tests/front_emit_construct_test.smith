@@ -235,6 +235,28 @@ export void test_front_emit_construct_fields_in_any_order_and_a_left_out_field_i
     emit_jit::stop(&host);
 }
 
+export void test_front_emit_construct_positional_fields_fill_in_field_order() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::DeclRef decls[4] = {
+        point_record(),
+        read_point("both", call2("Point", number(1), number(2))),
+        read_point("mixed", call2("Point", number(1), arg("y", number(2)))),
+        read_point("one", call1("Point", number(3))),
+    };
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    NoArgFn both = (NoArgFn)symbol_of(&host, "front::test::both");
+    NoArgFn mixed = (NoArgFn)symbol_of(&host, "front::test::mixed");
+    NoArgFn one = (NoArgFn)symbol_of(&host, "front::test::one");
+    test::check_equal(both(), 12);
+    test::check_equal(mixed(), 12);
+    test::check_equal(one(), 30);
+    emit_jit::stop(&host);
+}
+
 export void test_front_emit_construct_nothing_given_is_all_zero() {
     TreeMemory trees = {};
     tree_begin(&trees);
@@ -340,13 +362,24 @@ export void test_front_emit_construct_arguments_run_in_the_order_written() {
 // ---------------------------------------------------------------------------------------------------------------
 // Errors
 
-export void test_front_emit_construct_a_positional_field_is_an_error() {
+export void test_front_emit_construct_a_positional_argument_after_a_named_one_is_an_error() {
     TreeMemory trees = {};
     tree_begin(&trees);
-    ast::DeclRef decls[2] = {point_record(), read_point("f", call1("Point", spanned(number(1), 21, 22)))};
+    ast::Expr *built = call2("Point", arg("x", number(1)), spanned(number(2), 21, 22));
+    ast::DeclRef decls[2] = {point_record(), read_point("f", built)};
     ast::Module m = module_of(decls);
     tree_end(&trees);
-    check_error(&m, "a field of Point is always named", 21U, 22U);
+    check_error(&m, "a positional argument cannot follow a named one", 21U, 22U);
+}
+
+export void test_front_emit_construct_too_many_positional_arguments_is_an_error() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Expr *built = call3("Point", number(1), number(2), spanned(number(3), 21, 22));
+    ast::DeclRef decls[2] = {point_record(), read_point("f", built)};
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    check_error(&m, "no field  in Point", 21U, 22U);
 }
 
 export void test_front_emit_construct_an_unknown_field_is_an_error() {

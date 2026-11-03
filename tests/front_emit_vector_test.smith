@@ -151,8 +151,8 @@ export void test_front_emit_vector_lane_write_and_integer_lanes() {
     emit_jit::Jit host = start_jit();
     char *ir =
         ir_of("pub fn lanes() -> i32 {\n    let mut m = vec(i32, 3)(0, 0, 0)\n    m[0] = 5\n    m[2] = m[0] + 1\n"
-              "    let u = vec(u8, 2)(250, 1)\n    let w = u + 10\n    m[0] + m[1] * 100 + m[2] * 1000 + (w[0] as "
-              "i32) * 10000\n}\n",
+              "    let u = vec(u8, 2)(250, 1)\n    let w = u + 10\n    m[0] + m[1] * 100 + m[2] * 1000 + (w[0].to("
+              "i32)) * 10000\n}\n",
               &host, &s);
     test::check_equal(ir != nullptr, true);
     Lanes lanes = (Lanes)symbol_of(&host, "lanes");
@@ -164,7 +164,7 @@ export void test_front_emit_vector_from_a_list_and_through_a_parameter() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
     char *ir = ir_of("fn second(v: vec(f32, 2)) -> f32 {\n    v[1]\n}\n"
-                     "pub fn lanes() -> i32 {\n    let l: vec(f32, 2) = [1.5, 2.5]\n    second(l + 1.0) as i32\n}\n",
+                     "pub fn lanes() -> i32 {\n    let l: vec(f32, 2) = [1.5, 2.5]\n    second(l + 1.0).to(i32)\n}\n",
                      &host, &s);
     test::check_equal(ir != nullptr, true);
     Lanes lanes = (Lanes)symbol_of(&host, "lanes");

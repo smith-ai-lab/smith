@@ -124,6 +124,21 @@ static void casts(Str source, Usize want) {
     test::check_equal(checked_casts(&r), want);
 }
 
+// `to`, `wrap` and `cast` (#1811): `to` traps on a narrowing, `wrap` keeps the low bits and never traps, `cast` is for
+// pointers.
+export void test_front_types_decl_to_is_checked_wrap_is_not_and_cast_takes_a_pointer() {
+    casts("U8 a(I32 x) { return x.to(U8); }", 1);
+    casts("U8 a(I32 x) { return x.wrap(U8); }", 0);
+    casts("I64 a(I32 x) { return x.to(I64); }", 0);
+    casts("I64 a(I32 x) { return x.wrap(I64); }", 0);
+    casts("F64 a(I32 x) { return x.to(F64); }", 0);
+    casts("U8 *a(I32 *p) { return p.cast(U8 *); }", 0);
+    casts("Usize a(I32 *p) { return p.to(Usize); }", 0);
+    fails("F64 a(I32 x) { return x.wrap(F64); }", "`wrap`", "integer");
+    fails("I32 a(F64 x) { return x.wrap(I32); }", "`wrap`", "integer");
+    fails("I32 a(I64 x) { return x.cast(I32); }", "`cast`", "pointer");
+}
+
 export void test_front_types_decl_casts_that_can_lose_a_value_are_marked_checked() {
     casts("U8 a(I32 x) { return (U8)x; }", 1);
     casts("U32 a(I32 x) { return (U32)x; }", 1);
@@ -140,10 +155,10 @@ export void test_front_types_decl_casts_that_can_lose_a_value_are_marked_checked
 
 export void test_front_types_decl_a_refused_cast_and_the_decided_implicit_rules_report() {
     fails("I32 f(I32 *p) { return (I32)p; }", "expected I32", "cast through Usize");
-    fails("F64 x = 1;\nF32 y = 16777217;", "16777217 is not exactly an F32", "write a cast");
+    fails("F64 x = 1;\nF32 y = 16777217;", "16777217 is not exactly an F32", "write a conversion");
     clean("F64 x = 0;");
-    fails("F32 a(I32 x) { return x; }", "found I32", "write a cast: (F32)x");
-    fails("Str a(U8 xs[:]) { return xs; }", "found U8[:]", "(Str)xs");
+    fails("F32 a(I32 x) { return x; }", "found I32", "write a conversion: x.to(F32)");
+    fails("Str a(U8 xs[:]) { return xs; }", "found U8[:]", "xs.to(Str)");
     fails("U8 a() { return (U8)300; }", "300 does not fit U8", "wrapping::to(U8, x)");
     fails("U32 a() { return (U32)-1; }", "-1 does not fit U32", "wrapping::to(U32, x)");
     fails("I32 a() { return (I32)1e30; }", "does not fit I32", "wrapping::to(I32, x)");

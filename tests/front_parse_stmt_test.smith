@@ -19,7 +19,7 @@ import std::test;
 
 static Bool ends_expression(lex::TokenKind kind) {
     return kind == lex::semicolon || kind == lex::right_paren || kind == lex::comma || kind == lex::colon ||
-           kind == lex::right_brace || kind == lex::end_of_file;
+           kind == lex::right_brace || kind == lex::kw_else || kind == lex::end_of_file;
 }
 
 static Bool opens(lex::TokenKind kind) {
@@ -521,4 +521,110 @@ export void test_parse_stmt_habits_from_other_languages_warn() {
         }
         test::check_equal(found, true);
     }
+}
+
+// ---- blocks are `:` and indentation (#1856): the tokens go through lex::layout and the parser has `layout` set. The
+// source starts with the `:` of the function that owns the body, which is taken here.
+
+static parse::Parser layout_parser(Str source) {
+    lex::Lexed lexed = lex::tokenize_new(source);
+    lex::Tokens tokens = {};
+    switch (lexed) {
+    case .ok:
+        tokens = lexed.ok;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    lex::Lexed laid = lex::layout(source, tokens);
+    switch (laid) {
+    case .ok:
+        tokens = laid.ok;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(laid.error.message, expected);
+    }
+    parse::Parser p = parse::make(tokens, source);
+    p.hooks.expression = stub_expression;
+    p.hooks.declaration = stub_declaration;
+    p.hooks.statement = parse_stmt::statement;
+    p.new_syntax = true;
+    p.layout = true;
+    parse::accept(&p, lex::colon);
+    return p;
+}
+
+export void test_parse_stmt_layout_blocks() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = ":\n"
+                 "    if a:\n        x\n"
+                 "    if a:\n        x\n    else if b:\n        y\n    else:\n        z\n"
+                 "    if a: x else: y\n"
+                 "    while a:\n        x\n        break\n        continue\n"
+                 "    for x in xs:\n        f\n"
+                 "    for (i, x) in es:\n        f\n"
+                 "    match s:\n        .a: v\n        .b(x): w\n        .c, .d: u\n"
+                 "    if let .some(x) = e:\n        x\n    else:\n        y\n"
+                 "    if let .none = e:\n        x\n"
+                 "    defer f\n"
+                 "    defer:\n        g\n        h\n"
+                 "    while n:\n        if n:\n            while m:\n                x\n        y\n"
+                 "    return\n";
+    parse::Parser p = layout_parser(source);
+    Str dump = dump_of(&p);
+    char problems[:] = {};
+    for (Usize i = 0; i < countof(p.errors); i++)
+        problems = format::push(problems, p.errors[i].message, " | ");
+    char shown[:] = format::push(problems, "\n", dump);
+    test::golden("tests/front/parse_stmt/layout_forms.txt", shown);
+    test::check_equal(countof(p.errors), 0);
+    test::check_equal(parse::at(&p, lex::end_of_file), true);
+}
+
+static Str layout_errors(Str source) {
+    parse::Parser p = layout_parser(source);
+    ast::Stmt *whole = parse::statement(&p);
+    test::check_equal(whole != nullptr, true);
+    char all[:] = {};
+    for (Usize i = 0; i < countof(p.errors); i++)
+        all = format::push(all, p.errors[i].message, " | ");
+    return all;
+}
+
+static Str malformed_layout(Usize which) {
+    switch (which) {
+    case 0:
+        return ":\n    if a x\n    y\n";
+    case 1:
+        return ":\n    if a:\n    y\n";
+    case 2:
+        return ":\n    if a:\n        x\n    else y\n";
+    case 3:
+        return ":\n    for x in:\n        f\n";
+    case 4:
+        return ":\n    match s:\n        a: v\n    z\n";
+    case 5:
+        return ":\n    match s:\n        .a v\n    z\n";
+    case 6:
+        return ":\n    if let .a x = e:\n        x\n    y\n";
+    default:
+        return "";
+    }
+}
+
+export void test_parse_stmt_layout_malformed_forms_are_one_error() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    char all[:] = {};
+    for (Usize i = 0; i < 7; i++) {
+        all = format::push(all, layout_errors(malformed_layout(i)), "\n");
+    }
+    test::golden("tests/front/parse_stmt/layout_errors.txt", all);
 }

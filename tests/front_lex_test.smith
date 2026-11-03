@@ -156,6 +156,14 @@ export void test_lex_the_longest_punctuator_wins_and_slices_are_three_tokens() {
     expect_dump("<:%>", "1:1 less <\n1:2 colon :\n1:3 percent %\n1:4 greater >\n1:5 end_of_file\n");
 }
 
+// The error of source in smith's own syntax, or an empty one.
+static lex::LexError error_of_new(Str source) {
+    lex::Lexed lexed = lex::tokenize_new(source);
+    lex::LexError none = {};
+    if (lexed == .error) return lexed.error;
+    return none;
+}
+
 // The tokens of source in smith's own syntax (#1428); an error fails the test.
 static lex::Tokens new_tokens_of(Str source) {
     lex::Lexed lexed = lex::tokenize_new(source);
@@ -305,8 +313,8 @@ export void test_lex_layout_the_end_of_the_file_closes_every_open_level() {
 }
 
 export void test_lex_layout_blank_and_comment_lines_are_ignored() {
-    expect_layout("a:\n\n    // note\n    b\n  /* x */\n\nc", "a : newline indent b newline dedent c newline eof ");
-    expect_layout("a // end\n    // deeper note\nb", "a newline b newline eof ");
+    expect_layout("a:\n\n    # note\n    b\n  # x\n\nc", "a : newline indent b newline dedent c newline eof ");
+    expect_layout("a # end\n    # deeper note\nb", "a newline b newline eof ");
 }
 
 export void test_lex_layout_brackets_ignore_newlines_and_indentation() {
@@ -735,4 +743,32 @@ export void test_lex_a_tuple_index_is_an_integer_after_a_dot_in_the_new_syntax()
                    "1\n1:11 name f\n1:12 left_paren (\n1:13 name x\n1:14 right_paren )\n1:15 dot .\n1:16 integer "
                    "2\n1:18 floating .5\n1:21 floating 1.5\n1:24 end_of_file\n";
     test::check_equal(actual, expected);
+}
+
+// Comments in smith's own syntax (#1428 revision): `#` and `##` to the end of the line; `//` and `/* */` are errors.
+export void test_lex_new_hash_comments_end_at_the_line() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    lex::Tokens tokens = new_tokens_of("a # note\n## doc\n#\nb # \"x\" // y\n");
+    test::check_equal(countof(tokens), (Usize)3);
+    test::check_equal(tokens[0].kind == lex::name, true);
+    test::check_equal(tokens[1].kind == lex::name, true);
+    test::check_equal(tokens[2].kind == lex::end_of_file, true);
+}
+
+export void test_lex_new_slash_comments_and_hash_words_are_errors() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str slash = "`//` and `/* */` are not comments in smith: write `#`";
+    test::check_equal(error_of_new("a // b\n").message, slash);
+    test::check_equal(error_of_new("a /* b */\n").message, slash);
+    test::check_equal(error_of_new("a // b\n").span.start, (U32)2);
+    lex::LexError directive = error_of_new("#if X\n");
+    test::check_equal(directive.span.end, (U32)1);
+    lex::LexError fine = error_of_new("a # fine\n");
+    test::check_equal(fine.span.end, (U32)0);
 }

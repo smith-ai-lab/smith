@@ -220,6 +220,14 @@ export typedef enum {
     count_of;
 } QueryOp;
 
+// Which conversion a cast node is: `x.to(T)` (checked), `x.wrap(T)` (keeps the low bits) or `p.cast(T)` (reinterprets
+// a pointer), #1811.
+export typedef enum {
+    convert;
+    wrapping;
+    reinterpret;
+} CastForm;
+
 export typedef enum {
     struct {
         Text name;
@@ -336,6 +344,7 @@ export typedef enum {
     struct {
         TypeExpr *type;
         Expr *operand;
+        CastForm form;
     } cast;
     struct {
         QueryOp op;
@@ -538,7 +547,16 @@ export typedef enum {
     struct {
         Text header;
         Bool angled;
-    } import_c; // `import <stdio.h>;` and `import "x.h";`
+        Text language; // `c`, `cpp` or `objc`; empty for the old `import <stdio.h>;`
+        Text alias;    // `import c <sys/stat.h> as st`, empty when absent
+    } import_c;        // `import c <stdio.h>` and the old `import <stdio.h>;` and `import "x.h";`
+    struct {
+        Path path;   // `from std.math import sin, cos`; empty for a header
+        Text header; // `from c <stdlib.h> import malloc`; empty for a module
+        Bool angled;
+        Text language;
+        Identifier names[:];
+    } import_from;
     struct {
         Expr *condition;
         Text message;
@@ -1401,6 +1419,7 @@ static void decl_children(Items *items, Decl *d) {
         break;
     case .import_module:
     case .import_c:
+    case .import_from:
         break;
     case .static_assert_decl:
         add_expr(items, d->kind.static_assert_decl.condition, false);
@@ -1681,6 +1700,16 @@ static void literal_head(Output *text, Expr *e) {
 static void expr_head_more(Output *text, Expr *e) {
     if (e->kind == .cast) {
         put(text, "cast");
+        switch (e->kind.cast.form) {
+        case .convert:
+            break;
+        case .wrapping:
+            put(text, " wrap");
+            break;
+        case .reinterpret:
+            put(text, " pointer");
+            break;
+        }
     }
     if (e->kind == .query) {
         put(text, "query ");
@@ -1928,6 +1957,36 @@ static void type_head(Output *text, TypeExpr *t) {
     put_qualifiers(text, t->qualifiers);
 }
 
+// `import_c ...` and `from ... import ...` of the dump.
+static void put_header_import(Output *text, Decl *d) {
+    if (d->kind == .import_c) {
+        put(text, pick(d->kind.import_c.angled, "import_c angled ", "import_c "));
+        put(text, d->kind.import_c.header);
+        if (countof(d->kind.import_c.language) > 0) {
+            put(text, " lang ");
+            put(text, d->kind.import_c.language);
+        }
+        if (countof(d->kind.import_c.alias) > 0) {
+            put(text, " as ");
+            put(text, d->kind.import_c.alias);
+        }
+    } else if (d->kind == .import_from) {
+        put(text, "from ");
+        if (countof(d->kind.import_from.header) > 0) {
+            put(text, d->kind.import_from.language);
+            put(text, " ");
+            put(text, d->kind.import_from.header);
+        } else {
+            put_path(text, d->kind.import_from.path);
+        }
+        put(text, " import");
+        for (Usize i = 0; i < countof(d->kind.import_from.names); i++) {
+            put(text, " ");
+            put(text, d->kind.import_from.names[i].text);
+        }
+    }
+}
+
 static void decl_head(Output *text, Decl *d) {
     switch (d->kind) {
     case .variable:
@@ -1965,8 +2024,8 @@ static void decl_head(Output *text, Decl *d) {
         }
         break;
     case .import_c:
-        put(text, pick(d->kind.import_c.angled, "import_c angled ", "import_c "));
-        put(text, d->kind.import_c.header);
+    case .import_from:
+        put_header_import(text, d);
         break;
     case .static_assert_decl:
         put(text, "static_assert ");

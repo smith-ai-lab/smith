@@ -28,7 +28,7 @@ pub fn check() -> i32 {
         return 1
     }
     let top: Level = .high
-    if top as u8 != 9 {
+    if top.to(u8) != 9 {
         return 2
     }
     let mut seen = 0

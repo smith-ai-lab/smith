@@ -150,7 +150,7 @@ export void test_front_emit_tuple_literals_members_and_places_read_back() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
     char *ir = ir_of("fn divmod(a: i32, b: i32) -> (i32, i32) {\n    (a / b, a % b)\n}\n"
-                     "fn widen(p: (i32, i64)) -> i64 {\n    p.0 as i64 + p.1\n}\n"
+                     "fn widen(p: (i32, i64)) -> i64 {\n    (p.0).to(i64) + p.1\n}\n"
                      "pub fn quotient(n: i32) -> i32 {\n    let (q, r) = divmod(n, 5)\n    q\n}\n"
                      "pub fn remainder(n: i32) -> i32 {\n    let (_, r) = divmod(n, 5)\n    r\n}\n"
                      "pub fn widened(n: i32) -> i32 {\n    let mut t: (i32, i64) = (1, 2)\n    t.0 = 40\n"

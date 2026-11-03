@@ -547,14 +547,27 @@ static Bool same(Str a, Str b) {
     return true;
 }
 
+// Whether the `#` at p starts a comment of smith's own syntax: `# text`, a bare `#` and `##` doc comments. `#word` with
+// no space is an old preprocessor directive, which scan_punctuator reports.
+static Bool starts_hash_comment(Str s, Usize p) {
+    if (p + 1 >= countof(s)) return true;
+    char next = s[p + 1];
+    return next == ' ' || next == '\t' || next == '\n' || next == '\r' || next == '#';
+}
+
 // The end of the comment or the white space at i (i itself when there is none); a block comment that never ends is an
-// error.
-static Result(Usize, LexError) skip_trivia(Str s, Usize i) {
+// error. In smith's own syntax (`new_syntax`) a comment starts with `#` and `//` and `/*` are errors.
+static Result(Usize, LexError) skip_trivia(Str s, Usize i, Bool new_syntax) {
     Usize n = countof(s);
     Usize p = i;
     while (p < n) {
         if (is_blank(s[p])) {
             p += 1;
+        } else if (new_syntax && s[p] == '#' && starts_hash_comment(s, p)) {
+            while (p < n && s[p] != '\n')
+                p += 1;
+        } else if (new_syntax && s[p] == '/' && p + 1 < n && (s[p + 1] == '/' || s[p + 1] == '*')) {
+            return {.error = error_at(p, p + 2, "`//` and `/* */` are not comments in smith: write `#`")};
         } else if (s[p] == '/' && p + 1 < n && s[p + 1] == '/') {
             while (p < n && s[p] != '\n')
                 p += 1;
@@ -787,12 +800,12 @@ static Result(Usize, LexError) fill(Str source, Tokens tokens, Bool new_syntax) 
     Usize n = countof(source);
     Usize count = 0;
     Usize i = 0;
-    i = try skip_trivia(source, i);
+    i = try skip_trivia(source, i, new_syntax);
     while (i < n) {
         Result(Scanned, LexError) next = scan_token(source, i, new_syntax);
         if (next == .error) return {.error = next.error};
         Scanned scanned = next.ok;
-        Usize after = try skip_trivia(source, scanned.end);
+        Usize after = try skip_trivia(source, scanned.end, new_syntax);
         Token token = {.kind = scanned.kind,
                        .span = {.start = (U32)i, .end = (U32)scanned.end},
                        .line_break = has_newline(source[scanned.end:after])};

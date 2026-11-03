@@ -1,4 +1,4 @@
-// Tests of modules as values (#1676 of #1428): `build := import std.build` reads as a module bound to a name, `.` is
+// Tests of modules as values (#1676 of #1428): `import std.build` reads as a module bound to a name, `.` is
 // the only separator, and the old forms (`import a::b;`, `a::b`, `@serial::rename`) read as before and record a
 // warning whose fix writes the new form, so `smith lint --fix` mends them and a second run changes nothing.
 module front_parse_import_value_test;
@@ -33,7 +33,7 @@ export void test_a_module_is_bound_to_a_name() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     Str want = "(module \n  (import a::b::c as x))\n";
-    test::check_equal(dump_of("x := import a.b.c\n"), want);
+    test::check_equal(dump_of("import a.b.c as x\n"), want);
 }
 
 export void test_a_public_module_binding() {
@@ -42,7 +42,7 @@ export void test_a_public_module_binding() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     Str want = "(module \n  (import std::math as m pub))\n";
-    test::check_equal(dump_of("pub m := import std.math\n"), want);
+    test::check_equal(dump_of("pub import std.math as m\n"), want);
 }
 
 export void test_import_fix_binds_the_last_name() {
@@ -50,7 +50,7 @@ export void test_import_fix_binds_the_last_name() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str want = "build := import std.build\n";
+    Str want = "import std.build\n";
     test::check_equal(mended("import std::build;\n"), want);
 }
 
@@ -59,7 +59,7 @@ export void test_import_fix_binds_the_alias() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str want = "m := import std.math\n";
+    Str want = "import std.math as m\n";
     test::check_equal(mended("import std::math as m;\n"), want);
 }
 

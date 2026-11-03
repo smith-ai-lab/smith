@@ -142,7 +142,9 @@ static Verdict refuse(const Ctx *c, Str reason, Str fix) {
 }
 
 static Str write_cast(const Ctx *c) {
-    return msg(format::push("write a cast: (", types::show(c->to), ")x"));
+    Str name = "to";
+    if (c->to->kind == .pointer) name = "cast";
+    return msg(format::push("write a conversion: x.", name, "(", types::show(c->to), ")"));
 }
 
 static Verdict needs_cast(const Ctx *c, Str reason) {
@@ -190,8 +192,8 @@ static Verdict integer_to_integer(const Ctx *c) {
         Str number = literal_text(c->lit);
         Str reason = msg(format::push(number, " does not fit ", types::show(to)));
         return refuse(c, reason,
-                      msg(format::push("write a value that fits ", types::show(to), " or a cast: (", types::show(to),
-                                       ")", number)));
+                      msg(format::push("write a value that fits ", types::show(to), " or a conversion: ", number,
+                                       ".to(", types::show(to), ")")));
     }
     if (from->is_signed != to->is_signed && to->bits >= from->bits)
         return needs_cast(c, "a sign change may lose a value");
@@ -249,7 +251,7 @@ static Verdict to_floating(const Ctx *c) {
         if (exact_in(mantissa(c->to), c->lit)) return accept(constant_fits);
         Str number = literal_text(c->lit);
         Str reason = msg(format::push(number, " is not exactly an ", types::show(c->to)));
-        return refuse(c, reason, msg(format::push("write a cast: (", types::show(c->to), ")", number)));
+        return refuse(c, reason, msg(format::push("write a conversion: ", number, ".to(", types::show(c->to), ")")));
     }
     if (kind == .integer) return needs_cast(c, "this integer may not be exact in the float, so it may round");
     return no_rule(c);
@@ -331,7 +333,7 @@ static Verdict to_text(const Ctx *c) {
     types::TypeRef element = c->from->element;
     if (element == c->char_type) return accept(text_from_chars);
     if (element->kind == .integer && element->bits == 8)
-        return refuse(c, "only a Char slice makes a Str, not a U8 or I8 slice", "write the cast (Str)xs");
+        return refuse(c, "only a Char slice makes a Str, not a U8 or I8 slice", "write the conversion xs.to(Str)");
     return refuse(c, "only characters make a Str", "write a slice or an array of Char");
 }
 

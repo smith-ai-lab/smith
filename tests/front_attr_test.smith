@@ -139,7 +139,7 @@ export void test_front_attr_own_line_before_an_enumerator() {
 export void test_front_attr_needs_a_declaration_on_the_next_line() {
     Str message = "an attribute marks the declaration on the next line";
     test::check_equal(parse_error_of("@inline\n\nfn f() {\n}\n"), message);
-    test::check_equal(parse_error_of("@inline\n// why\nfn f() {\n}\n"), message);
+    test::check_equal(parse_error_of("@inline\n# why\nfn f() {\n}\n"), message);
     test::check_equal(parse_error_of("struct A {\n    x: i32\n    @cold\n}\n"), message);
     test::check_equal(parse_error_of("@inline\n"), message);
 }

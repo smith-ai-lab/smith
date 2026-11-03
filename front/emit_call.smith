@@ -13,8 +13,9 @@
 //
 // Named arguments (`connect(host = x, retry = true)`) fill the parameter of that name, by position until the first
 // named one (the checker's `argument_slot`); they are evaluated in the order written and passed in parameter order. A
-// call of a name that is a record of the module builds a value of it, `Point(x = 1, y = 2)`: every field named, in any
-// order, a field left out zero; the value starts as `LLVMConstNull` and each field is inserted in the order written.
+// call of a name that is a record of the module builds a value of it, `Point(1, y = 2)`: positional fields in order,
+// then named ones in any order, a field left out zero; the value starts as `LLVMConstNull` and each field is inserted
+// in the order written.
 //
 // `Void` is a type of its own here (an LLVM `void`, kind `integer`, zero bits, named `Void`): a call of a function
 // that returns it pushes one value of that type, so an expression statement drops it like any other.
@@ -428,6 +429,15 @@ static Bool find_field(state::RecordType record, Str name, Usize *found) {
     return false;
 }
 
+// The field argument `i` fills: the one at its position, or the one it names.
+static Bool field_for(state::RecordType record, ast::ExprRef args[:], Usize i, Usize *found) {
+    if (!is_named(args[i])) {
+        *found = i;
+        return i < countof(record.fields);
+    }
+    return find_field(record, given_name(args[i]), found);
+}
+
 // The field values are on the value stack, the first deepest: start from zero and insert each.
 static state::Status construct_finish(state::Emitter *e, const state::Work *w) {
     const ast::Expr *x = w->expr;
@@ -452,7 +462,7 @@ static state::Status construct_finish(state::Emitter *e, const state::Work *w) {
     c::LLVMValueRef built = c::LLVMConstNull(record.ty.llvm);
     for (Usize i = 0; i < count; i++) {
         Usize field = 0;
-        if (!find_field(record, given_name(args[i]), &field))
+        if (!field_for(record, args, i, &field))
             return state::failf(args[i]->span, "no field ", given_name(args[i]), " in ", name);
         if (!state::same_type(values[i].ty, record.fields[field].ty))
             return state::failf(args[i]->span, "field ", record.fields[field].name, " of ", name, " is ",
@@ -463,7 +473,7 @@ static state::Status construct_finish(state::Emitter *e, const state::Work *w) {
     return state::success();
 }
 
-// `Point(x = 1, y = 2)`: a record of the module built by a call whose arguments are all named fields.
+// `Point(1, y = 2)`: a record of the module built by a call: positional fields in order, then named ones.
 static state::Status construct(state::Emitter *e, const ast::Expr *x, Usize at) {
     if (x->kind != .call) {
         return state::fail("not a call", x->span);
@@ -475,21 +485,24 @@ static state::Status construct(state::Emitter *e, const ast::Expr *x, Usize at) 
     Bool seen[64];
     for (Usize i = 0; i < 64; i++)
         seen[i] = false;
+    Bool by_name = false;
     for (Usize i = 0; i < count; i++) {
-        if (!is_named(args[i]))
-            return state::failf(args[i]->span, "a field of ", record.name, " is always named; write ", record.name,
-                                "(x = ...)");
-        Str given = given_name(args[i]);
+        if (is_named(args[i]))
+            by_name = true;
+        else if (by_name)
+            return state::fail("a positional argument cannot follow a named one", args[i]->span);
         Usize field = 0;
-        if (!find_field(record, given, &field))
-            return state::failf(args[i]->span, "no field ", given, " in ", record.name);
-        if (seen[field]) return state::failf(args[i]->span, "field ", given, " of ", record.name, " is given twice");
+        if (!field_for(record, args, i, &field))
+            return state::failf(args[i]->span, "no field ", given_name(args[i]), " in ", record.name);
+        if (seen[field])
+            return state::failf(args[i]->span, "field ", record.fields[field].name, " of ", record.name,
+                                " is given twice");
         seen[field] = true;
     }
     state::push_then(e, (state::Work){.then = construct_finish, .expr = x, .number = count, .span = x->span});
     for (Usize i = count; i > 0; i--) {
         Usize field = 0;
-        find_field(record, given_name(args[i - 1]), &field);
+        field_for(record, args, i - 1, &field);
         state::push_eval(e, value_of(args[i - 1]), state::hint_of(record.fields[field].ty));
     }
     return state::success();
