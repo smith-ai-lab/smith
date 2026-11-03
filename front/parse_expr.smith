@@ -640,6 +640,15 @@ static void lambda_warning(parse::Parser *p, U32 start, U32 bracket_end, const a
                        edits);
 }
 
+// Whether the position is at the head of a lambda in today's form: `[`, names and commas, `]`, then `(`. In smith's own
+// syntax a `[` otherwise starts an array literal, and an array literal is never called (#1786).
+static Bool at_old_lambda(const parse::Parser *p) {
+    Usize at = 1;
+    while (parse::peek_at(p, at).kind == lex::name || parse::peek_at(p, at).kind == lex::comma)
+        at += 1;
+    return parse::peek_at(p, at).kind == lex::right_bracket && parse::peek_at(p, at + 1).kind == lex::left_paren;
+}
+
 // `[x, y](I32 a) -> I32 { ... }`: the position is at the bracket.
 static ast::Expr *lambda(parse::Parser *p) {
     U32 start = parse::advance(p).span.start;
@@ -883,7 +892,7 @@ static ast::Expr *primary(parse::Parser *p) {
         if (p->new_syntax) return statement_value(p);
         return initializer_list(p, nullptr, token.span.start, 0);
     case lex::left_bracket:
-        if (p->new_syntax) return array_literal(p);
+        if (p->new_syntax && !at_old_lambda(p)) return array_literal(p);
         return lambda(p);
     case lex::kw_fn:
         return fn_lambda(p);
