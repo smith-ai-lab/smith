@@ -8,7 +8,6 @@ import std::arena;
 import std::format;
 import std::mem;
 import std::test;
-import <stdlib.h>;
 
 static Bool has(Str text, Str needle) {
     for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
@@ -89,14 +88,13 @@ export void test_lsp_hover_over_nothing_and_over_an_unopened_document_is_null() 
     test::check(has(hover("file:///t/none.smith", 0, 0), "\"result\":null"));
 }
 
-// The document `import c <places.h>` and a call of `c.places_add`; the header is tests/front/cimport/places.h, found
-// from the folder of the document's path.
+// The document imports tests/front/cimport/places.h by its quoted name, found from the folder of the document's path
+// (an angled name would need an include flag in the process's environment), and calls `c::places_add`.
 static void open_with_header() {
-    c::setenv("SMITH_FRONT_CIMPORT_FLAGS", "-I\ntests/front/cimport\n", 1); // the header has no includes of its own
     (void)lsp_server::handle(as_str(
         format::push("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
-                     "\"tests/front/cimport/h.smith\",\"text\":\"import c <places.h>\\n\\nfn main() -> i32:\\n"
-                     "    return c.places_add(1, 2)\\n\"}}}")));
+                     "\"tests/front/cimport/h.smith\",\"text\":\"module h;\\nimport \\\"places.h\\\";\\n\\n"
+                     "I32 main(void) {\\n    return c::places_add(1, 2);\\n}\\n\"}}}")));
 }
 
 export void test_lsp_hover_over_a_name_from_a_c_header_gives_its_type_and_comment() {
@@ -105,9 +103,9 @@ export void test_lsp_hover_over_a_name_from_a_c_header_gives_its_type_and_commen
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     open_with_header();
-    Str out = hover("tests/front/cimport/h.smith", 3, 15);
+    Str out = hover("tests/front/cimport/h.smith", 4, 15);
     test::check(has(out, "\"kind\":\"markdown\""));
     test::check(has(out, "Adds two numbers."));
     test::check(has(out, "Both are read, neither is written."));
-    test::check(has(out, "\"start\":{\"line\":3,\"character\":11}"));
+    test::check(has(out, "\"start\":{\"line\":4,\"character\":11}"));
 }
