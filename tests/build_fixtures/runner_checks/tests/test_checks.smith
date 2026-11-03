@@ -4,7 +4,7 @@ import std::math;
 import std::test;
 
 void test_passing(void) {
-    c::printf("this output is hidden\n");
+    c::printf("this output is shown\n");
     test::check_equal(1 + 1, 2);
     test::check(true);
     test::check_near(0.1 + 0.2, 0.3, 1e-9);
