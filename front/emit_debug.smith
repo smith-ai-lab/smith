@@ -4,7 +4,7 @@
 //
 // What it makes: a compile unit (C11 until smith has a DWARF language code of its own, producer "smith", not
 // optimized) and a file from `Module.file`, the module flags `Debug Info Version` and `Dwarf Version` 5, a
-// `DISubprogram` per function (name as written, linkage name the symbol, a subroutine type of basic types, pointers to
+// `DISubprogram` per function (name as the source writes it, `box.area`; linkage name the symbol, a subroutine type of basic types, pointers to
 // them, and an unspecified type for what is neither), a `DILocalVariable` with a declare record per parameter and
 // local, and a `DILocation` on every instruction: the line and 1-based byte column of a node's `Span.start` in
 // `options.source`.
@@ -173,6 +173,29 @@ static Bool found_function(state::Emitter *e, state::FunctionInfo *info) {
     return false;
 }
 
+// The name a person reads for a function: its module's last word and its own name, `box.area` for the symbol
+// `geometry::box::area` (#1979), or a copy of the symbol when it has no module (`main`, a C name).
+format::Chars source_name(Str symbol) {
+    Usize last = 0; // where the symbol's last `::` starts, and the one before it
+    Usize before = 0;
+    Bool found_last = false;
+    Bool found_before = false;
+    for (Usize i = countof(symbol); i >= 2; i--) {
+        if (symbol[i - 2] != ':' || symbol[i - 1] != ':') continue;
+        if (!found_last) {
+            last = i - 2;
+            found_last = true;
+        } else {
+            before = i;
+            found_before = true;
+            break;
+        }
+    }
+    if (!found_last) return format::push(symbol);
+    Str module_word = symbol[(found_before ? before : 0):last];
+    return format::push(module_word, ".", symbol[last + 2:countof(symbol)]);
+}
+
 // At the start of a function's body: `e->function` is the LLVM function, `d` its declaration.
 export state::Status begin_function(state::Emitter *e, const ast::Decl *d) {
     if (e->debug_builder == nullptr) return state::success();
@@ -188,9 +211,11 @@ export state::Status begin_function(state::Emitter *e, const ast::Decl *d) {
         e->debug_builder, e->file, (c::LLVMMetadataRef *)(Usize)types.data, (U32)count + 1, 0);
     mem::free((void *)(Usize)types.data);
     Position at = position_of(e, d->span.start);
+    format::Chars shown = source_name(info.symbol);
     c::LLVMMetadataRef subprogram = c::LLVMDIBuilderCreateFunction(
-        e->debug_builder, e->file, info.name.data, countof(info.name), info.symbol.data, countof(info.symbol), e->file,
+        e->debug_builder, e->file, shown.data, countof(shown), info.symbol.data, countof(info.symbol), e->file,
         at.line, subroutine, !d->exported, 1, at.line, 0, 0);
+    mem::free((void *)(Usize)shown.data);
     c::LLVMSetSubprogram(e->function, subprogram);
     e->scope = subprogram;
     e->parameters_left = (U32)count;

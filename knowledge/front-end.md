@@ -351,7 +351,7 @@ Iteration in the checker; the rules are the top comment of the file.
 - A function named `main` has the symbol `main`. The last line of a body, an expression statement with a non-`Void` result, is returned as `return <expression>`.
 - `let _ = f()` evaluates and drops the value; a local `const X = v` is an ordinary slot stored once. Tests: `tests/front_emit_fn_test.smith`.
 
-**Debug info** (`emit_debug.smith`, B5, #1135): with `Options.debug_info`, a DIBuilder, a C11 compile unit (producer `smith`), a `DISubprogram` per function, a `DILocalVariable` per parameter and local, and a `DILocation` on every instruction.
+**Debug info** (`emit_debug.smith`, B5, #1135): with `Options.debug_info`, a DIBuilder, a C11 compile unit (producer `smith`), a `DISubprogram` per function (name as the source writes it, the module's last word and the function, `box.area`; linkage name the symbol, `geometry::box::area`; #1979), a `DILocalVariable` per parameter and local, and a `DILocation` on every instruction.
 - A name or literal keeps the location of the statement or operator around it; a continuation gets the location of the node that pushed it (`debug::then_location`).
 - The line table is `Emitter.line_starts`; there is no file-level state, so two emits can run at once. `debug::release` runs on every exit. Test: `tests/front_emit_debug_test.smith`.
 
