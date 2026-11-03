@@ -124,7 +124,10 @@ export inline typeof(x) tan(auto x) {
 
 // The angle equivalent to `angle` within [-pi, pi], for |angle| <= angle_max.
 export F32 wrap(F32 angle) {
-    F32 wrapped = angle - tau_float * __builtin_floorf((angle + pi_float) / tau_float);
+    F32 turns = (angle + pi_float) / tau_float;
+    F32 floor_turns = (F32)(I32)turns; // |angle| <= 2^20, so turns fits an I32; the cast truncates toward zero
+    if (floor_turns > turns) floor_turns -= 1.0f; // floor, with no call into libm (the link has no -lm)
+    F32 wrapped = angle - tau_float * floor_turns;
     if (wrapped < -pi_float) wrapped += tau_float; // rounding can land one step past either end
     if (wrapped > pi_float) wrapped -= tau_float;
     return wrapped;
