@@ -690,8 +690,8 @@ export void test_front_types_expr_what_is_not_typed_yet_is_reported_with_its_kin
     test::check_condition(types_expr::infer(&r, ast::expr(attempt)) == r.table.invalid);
     test::check_condition(says(last(&r), "not yet typed: try"));
     ast::ExprKind value = {.type_value = {.type = ast::named("U8")}};
-    types_expr::infer(&r, ast::expr(value));
-    test::check_condition(says(last(&r), "not yet typed: a type used as a value"));
+    // #1916: a type used as a value is `Auto`; the instance decides, and nothing is reported.
+    test::check_condition(types_expr::infer(&r, ast::expr(value)) == r.table.automatic);
     types_expr::infer(&r, ast::name("zz"));
     test::check_condition(says(last(&r), "unknown name `zz`; declare it before it is used, for example `I32 zz = 0;`, "
                                          "or import the module that has it"));
@@ -701,7 +701,7 @@ export void test_front_types_expr_what_is_not_typed_yet_is_reported_with_its_kin
     declare(&r, "arena", .module_name, r.table.invalid, false);
     types_expr::infer(&r, ast::name("arena::push"));
     test::check_condition(says(last(&r), "not yet typed: `arena::push`, a name from another module"));
-    expect(r.error_count, 5);
+    expect(r.error_count, 4);
     test::check_condition(r.errors[0].span.start == 0);
 }
 

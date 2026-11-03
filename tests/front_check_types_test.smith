@@ -1,6 +1,6 @@
-// Tests of the checker's types for the causes #1918 lists (part of #1902). First cause: an array length that is a
-// named constant or arithmetic on constants, as in `[N]u8` and `[N * 2 + 1]u8`. Each scenario is source text in
-// smith's own syntax; an accepted case and a refused one with its message.
+// Tests of the types the checker makes from type expressions (#1918, part of #1902): the applied type `Result(T, E)`.
+// Each scenario is source text in smith's own syntax, read by front::parser's hooks and checked by front::types_decl,
+// and builds in an arena it sets as the current allocator.
 module front_check_types_test;
 
 import front::ast;
@@ -65,8 +65,8 @@ static void clean(Str source) {
     defer mem::set_allocator(outside);
     types::Checked r = check_text(source);
     Str errors = errors_of(&r);
-    Str none = "";
-    test::check_equal(errors, none);
+    test::check_equal(r.error_count, (Usize)0);
+    test::check_condition(has(errors, ""));
 }
 
 // `source` gives exactly one error, which says `first` and `second`.
@@ -80,6 +80,13 @@ static void fails(Str source, Str first, Str second) {
     test::check_equal(r.error_count, (Usize)1);
     test::check_condition(has(errors, first));
     test::check_condition(has(errors, second));
+}
+export void test_front_check_types_result_is_an_applied_type() {
+    clean("fn f(r: Result(i32, u8)) -> Result(i32, u8):\n    r\n");
+}
+
+export void test_front_check_types_result_converts_to_its_value_type() {
+    fails("fn f(r: Result(i32, u8)):\n    let n: str = r\n", "Result", "Str");
 }
 
 // ---------------------------------------------------------------------------------------------------------------

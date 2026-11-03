@@ -1303,7 +1303,7 @@ static TypeRef build_applied(Checked *r, ast::Span span, ast::Path applied_name,
     Str name = path_text(applied_name);
     if (same_text(name, "Option") && args == 1 && n == 1) return option_of(&r->table, w->values[base].type);
     if (same_text(name, "stream::Stream") && args == 1 && n == 1) return stream_of(&r->table, w->values[base].type);
-    if (same_text(name, "Checked") && args == 2 && n == 2)
+    if ((same_text(name, "Checked") || same_text(name, "Result")) && args == 2 && n == 2)
         return result_of(&r->table, w->values[base].type, w->values[base + 1].type);
     if (same_text(name, "Fn") && args == 1 && n == 1) {
         TypeRef argument = w->values[base].type;

@@ -49,6 +49,8 @@ extern "C" void smith_effects_editor_start(void (*listener)(const char *source))
 extern "C" void smith_effects_editor_object(const char *source, const char *object);
 extern "C" void smith_effects_editor_saved(const char *source);
 extern "C" void smith_effects_editor_pending(int pending);
+extern "C" int smith_lsp_format(const char *name, const char *text, size_t size, size_t begin, size_t end,
+                                void (*edit)(void *, size_t, size_t, const char *, size_t), void *context);
 extern char **environ;
 
 namespace {
@@ -583,6 +585,70 @@ bool sendFrame(int fd, const std::string &body);
 
 // ---- The editor's side of the effects
 
+// The byte offset of an LSP position (a line, and a column in UTF-16 units) in `text`; the end of the line for a column
+// past it, the end of the text for a line past it.
+size_t offsetOfPosition(const std::string &text, int64_t line, int64_t column) {
+    size_t at = 0;
+    for (int64_t seen = 0; seen < line; seen++) {
+        size_t next = text.find('\n', at);
+        if (next == std::string::npos) return text.size();
+        at = next + 1;
+    }
+    int64_t units = 0;
+    while (at < text.size() && text[at] != '\n' && units < column) {
+        unsigned char lead = (unsigned char)text[at];
+        size_t bytes = lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
+        units += bytes == 4 ? 2 : 1;
+        at += bytes;
+    }
+    return std::min(at, text.size());
+}
+
+// The LSP position of a byte offset in `text`.
+Object positionOfOffset(const std::string &text, size_t offset) {
+    int64_t line = 0;
+    size_t start = 0;
+    for (size_t at = 0; at < offset && at < text.size(); at++) {
+        if (text[at] == '\n') {
+            line++;
+            start = at + 1;
+        }
+    }
+    int64_t units = 0;
+    for (size_t at = start; at < offset && at < text.size();) {
+        unsigned char lead = (unsigned char)text[at];
+        size_t bytes = lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
+        units += bytes == 4 ? 2 : 1;
+        at += bytes;
+    }
+    return Object{{"line", line}, {"character", units}};
+}
+
+// Whether a .clang-format or _clang-format governs the file: one in its folder or any folder above.
+bool hasClangFormat(const std::string &path) {
+    std::string folder = path;
+    while (true) {
+        size_t slash = folder.rfind('/');
+        if (slash == std::string::npos) return false;
+        folder.resize(slash);
+        for (const char *name : {"/.clang-format", "/_clang-format"}) {
+            struct stat info;
+            if (stat((folder + name).c_str(), &info) == 0) return true;
+        }
+        if (folder.empty()) return false;
+    }
+}
+
+// Files clangd formats: the C family. A .smith file is not one.
+bool isCFamily(StringRef path) {
+    for (const char *suffix : {".c", ".h", ".m", ".mm", ".cc", ".cpp", ".cxx", ".hpp"})
+        if (path.ends_with(suffix)) return true;
+    return false;
+}
+
+// The editor's end: the answers of clangd's thread and the layer's own both write there.
+std::mutex toEditorLock;
+
 // What the layer does for the cross-file effects (skill smith-lang-effects, issue #246): it tells the plugin which
 // object each source is built into, so a saved source's summary lands where the build keeps it; it has the saved file
 // parsed again (clangd's own `forceRebuild`, no text is sent: the editor's text is clangd's draft); when a summary is
@@ -615,10 +681,13 @@ class Editor {
         std::lock_guard<std::mutex> guard(lock);
         if (*method == "textDocument/didOpen") {
             versions[uri->str()] = document->getInteger("version").value_or(0);
+            if (auto text = document->getString("text")) texts[uri->str()] = text->str();
         } else if (*method == "textDocument/didChange") {
             versions[uri->str()] = document->getInteger("version").value_or(versions[uri->str()]);
+            applyChanges(texts[uri->str()], params->getArray("contentChanges"));
         } else if (*method == "textDocument/didClose") {
             versions.erase(uri->str());
+            texts.erase(uri->str());
         } else if (*method == "textDocument/didSave") {
             saved.push_back(uri->str());
         }
@@ -663,10 +732,97 @@ class Editor {
         return sendFrame(serverFd, body);
     }
 
+    // `textDocument/formatting` and `rangeFormatting` of a C-family file that no .clang-format governs: answered here,
+    // with smith's style through clang-format's library, and not sent to clangd, which would format by LLVM's. True
+    // when answered. Every other message is clangd's (the patch smith-editor-defaults.patch did this inside it).
+    bool answerFormatting(const std::string &body, int editorFd) {
+        auto parsed = llvm::json::parse(body);
+        if (!parsed) {
+            llvm::consumeError(parsed.takeError());
+            return false;
+        }
+        Object *message = parsed->getAsObject();
+        if (message == nullptr) return false;
+        auto method = message->getString("method");
+        Object *params = message->getObject("params");
+        const Value *id = message->get("id");
+        if (!method || params == nullptr || id == nullptr) return false;
+        bool range = *method == "textDocument/rangeFormatting";
+        if (!range && *method != "textDocument/formatting") return false;
+        Object *document = params->getObject("textDocument");
+        auto uri = document == nullptr ? std::nullopt : document->getString("uri");
+        if (!uri) return false;
+        std::string path = pathOfUri(*uri);
+        if (!isCFamily(path) || hasClangFormat(path)) return false;
+        std::string text;
+        {
+            std::lock_guard<std::mutex> guard(lock);
+            auto found = texts.find(uri->str());
+            if (found == texts.end()) return false;
+            text = found->second;
+        }
+        size_t begin = 0, end = text.size();
+        if (range) {
+            Object *span = params->getObject("range");
+            Object *from = span == nullptr ? nullptr : span->getObject("start");
+            Object *to = span == nullptr ? nullptr : span->getObject("end");
+            if (from == nullptr || to == nullptr) return false;
+            begin =
+                offsetOfPosition(text, from->getInteger("line").value_or(0), from->getInteger("character").value_or(0));
+            end = offsetOfPosition(text, to->getInteger("line").value_or(0), to->getInteger("character").value_or(0));
+            if (end < begin) end = begin;
+        }
+        struct Edits {
+            const std::string *text;
+            Array list;
+        } edits{&text, Array()};
+        int failed = smith_lsp_format(
+            path.c_str(), text.data(), text.size(), begin, end,
+            [](void *context, size_t offset, size_t length, const char *with, size_t withSize) {
+                Edits *edits = static_cast<Edits *>(context);
+                Object span{{"start", positionOfOffset(*edits->text, offset)},
+                            {"end", positionOfOffset(*edits->text, offset + length)}};
+                edits->list.push_back(Object{{"range", std::move(span)}, {"newText", std::string(with, withSize)}});
+            },
+            &edits);
+        if (failed != 0) return false; // no style to give: clangd answers
+        Object reply{{"jsonrpc", "2.0"}, {"id", *id}, {"result", std::move(edits.list)}};
+        std::lock_guard<std::mutex> guard(toEditorLock);
+        sendFrame(editorFd, llvm::formatv("{0}", Value(std::move(reply))).str());
+        return true;
+    }
+
   private:
     int serverFd;
     std::mutex lock, sending;
-    std::map<std::string, int64_t> versions; // the open documents
+    std::map<std::string, int64_t> versions;  // the open documents
+    std::map<std::string, std::string> texts; // their text, as the editor last sent it
+
+    // The editor's `contentChanges` applied to a document's text: a change with a range replaces it, one without
+    // replaces the whole text.
+    static void applyChanges(std::string &text, const Array *changes) {
+        if (changes == nullptr) return;
+        for (const Value &entry : *changes) {
+            const Object *change = entry.getAsObject();
+            if (change == nullptr) continue;
+            auto with = change->getString("text");
+            if (!with) continue;
+            const Object *span = change->getObject("range");
+            if (span == nullptr) {
+                text = with->str();
+                continue;
+            }
+            const Object *from = span->getObject("start");
+            const Object *to = span->getObject("end");
+            if (from == nullptr || to == nullptr) continue;
+            size_t first =
+                offsetOfPosition(text, from->getInteger("line").value_or(0), from->getInteger("character").value_or(0));
+            size_t last =
+                offsetOfPosition(text, to->getInteger("line").value_or(0), to->getInteger("character").value_or(0));
+            if (last < first) last = first;
+            text.replace(first, last - first, with->str());
+        }
+    }
     std::vector<std::string> saved;
 
     // `textDocument/didChange` with no changes and `forceRebuild`: clangd keeps its draft and parses it again.
@@ -1630,12 +1786,13 @@ extern "C" int smith_lsp_run(int argc, char **argv, int (*server)(int, char **))
     Layer *layer = new Layer; // lives as long as the process: the reading of the editor's messages can outlast clangd
     int serverInput = toServer[1];
     editor = new Editor(serverInput);
-    std::thread([layer, fromEditor, serverInput] {
+    std::thread([layer, fromEditor, serverInput, toEditor] {
         Frames frames(fromEditor);
         std::string body;
         while (frames.next(body)) {
             layer->toServer(body);
             editor->observe(body);
+            if (editor->answerFormatting(body, toEditor)) continue;
             if (!editor->forward(body)) break;
             editor->afterForward();
         }
@@ -1645,7 +1802,9 @@ extern "C" int smith_lsp_run(int argc, char **argv, int (*server)(int, char **))
         Frames frames(outgoing);
         std::string body;
         while (frames.next(body)) {
-            if (!sendFrame(toEditor, layer->toEditor(std::move(body)))) break;
+            std::string out = layer->toEditor(std::move(body));
+            std::lock_guard<std::mutex> guard(toEditorLock);
+            if (!sendFrame(toEditor, out)) break;
         }
     });
     int status = server(argc, argv);
