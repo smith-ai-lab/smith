@@ -642,13 +642,20 @@ static Result(Usize, LexError) exponent(Str s, Usize start, Usize i, char marker
 
 // Whether the `.` at p, after the digits of a number, starts a method call (`3.to(u8)`) and not a fraction: a letter
 // follows, and the word is neither an exponent (`1.e5`) nor a floating suffix (`1.f`).
-static Bool method_dot(Str s, Usize p) {
+static Bool method_dot(Str s, Usize p, U32 radix) {
     Usize n = countof(s);
     if (p + 1 >= n || (!ascii::alpha(s[p + 1]) && s[p + 1] != '_')) return false;
     Usize q = p + 1;
     while (q < n && is_identifier_part(s[q]))
         q += 1;
     Str word = s[p + 1:q];
+    if (radix == 16) {
+        // `0x1.fffffep+127`: hex digits then the `p` of the exponent make a fraction.
+        Usize k = 0;
+        while (k < countof(word) && digit_value(word[k]) < 16)
+            k += 1;
+        if (k < countof(word) && (word[k] == 'p' || word[k] == 'P')) return false;
+    }
     if (word[0] == 'e' || word[0] == 'E') {
         Usize k = 1;
         if (k < countof(word) && (word[k] == '+' || word[k] == '-')) k += 1;
@@ -667,7 +674,7 @@ static Result(Scanned, LexError) scan_number(Str s, Usize i) {
     Usize first = p;
     p = digit_run(s, p, radix);
     Bool floating_point = false;
-    if (p < n && s[p] == '.' && radix != 2 && radix != 8 && !method_dot(s, p)) {
+    if (p < n && s[p] == '.' && radix != 2 && radix != 8 && !method_dot(s, p, radix)) {
         floating_point = true;
         p = digit_run(s, p + 1, radix);
     }
