@@ -1119,7 +1119,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     Str written = trimmed(parse::mended(p, head.type_start, head.name.span.start));
     Str raw = trimmed(source_between(p, head.type_start, head.name.span.start));
     Bool type_value = pre->is_constexpr && head.name.kind == lex::type_name && same_text(raw, "Type");
-    Bool fixable = last.kind == lex::semicolon && !suffixed && !pre->is_extern;
+    Bool fixable = last.kind == lex::semicolon && !suffixed && !pre->is_extern && !p->for_init;
     if (pre->is_constexpr && (pre->constexpr_end > head.type_start || !has_init)) fixable = false;
     if (automatic && !has_init) fixable = false;
     if (!fixable) {

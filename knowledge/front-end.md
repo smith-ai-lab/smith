@@ -112,6 +112,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - `yield x` (#1544) is `ast::yield_stmt`, dumped `(yield <value>)`; whether it stands in a generator is the checker's (#1545).
 - `errdefer <statement>` is `errdefer_stmt` (A7l, #1356), read like `defer`; that it needs a function returning a `result` or `option` is the checker's rule.
 - Old statement forms are warnings with fixes (F3, #1508): a `;` before a line break or `}` is removed; `if (c) s` and `while (c) s` lose parentheses and gain braces.
+- C's three-part `for (init; cond; step) { body }` that is not a counting loop is `{ init; while cond { body step; } }` (#1768): the whole `for` is one edit, so the init's own fix runs in the next pass. A body with a `continue` (the step would be skipped), a body without braces and `for constexpr` get a warning with no edits.
 - `for (T i = a; i < b; i++)` becomes `for i in range(a, b)`, `for (T x : xs)` becomes `for x in xs`; a fix's edits all apply or none.
 - A `switch` whose labels are all `case .name:` with one expression statement and `break` each becomes `match` (#1569); any other `switch`, `goto` and labels keep a warning with no fix.
 - `impl`, `&mut` and Rust's `?` at the start of a statement are warnings naming the smith form. A postfix `.` that starts a line after a finished statement does not continue it.
