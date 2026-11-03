@@ -862,6 +862,17 @@ export void fail(Checked *r, ast::Span span, Str message) {
     r->error_count += 1;
 }
 
+// A message built with format::push, kept as a `Str` (for an error that is rewritten after the check).
+export Str message_of(char chars[:]) {
+    return chars;
+}
+
+// Appends an error that was made elsewhere.
+export void add_error(Checked *r, Error error) {
+    fail(r, error.span, error.message);
+    r->errors[r->error_count - 1].fix = error.fix;
+}
+
 // Records an error that carries a fix: the edits that mend it, applied together or not at all.
 export void fail_fix(Checked *r, ast::Span span, Str message, syntax::Edits fix) {
     fail(r, span, message);
