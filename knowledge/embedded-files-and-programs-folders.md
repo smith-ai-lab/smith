@@ -6,7 +6,7 @@ tags: [compiler, cache]
 ---
 # The embedded files and the programs folders
 
-**The files the driver looks up beside itself are embedded** (`scripts/pack.c`, `#embed`, LZFSE; about 20 MB in
+**The files the driver looks up beside itself are embedded** (`release/pack.smith`, `#embed`, LZFSE; about 20 MB in
 smith): the builtin headers, the sanitizers' ignore lists, the macOS compiler-rt runtimes (not iOS's), and
 `libLTO.dylib`, which the system `ld` loads for `-flto` (lld has LLVM inside and needs none). On first use (about 1 s, then a `stat`) smith writes them
 to `$XDG_DATA_HOME/smith/clang/llvm-<version>-<key>` (else `~/.local/share/...`); the key is the pack's contents

@@ -88,7 +88,7 @@ static struct timespec smith_platform_mtime(const struct stat *info) {
 
 static unsigned char smith_platform_scratch[1U << 22]; // for libcompression: LZFSE needs a fraction of it
 
-// Decompresses a file of the resource pack (scripts/pack.c compresses with LZFSE) into out; returns its size.
+// Decompresses a file of the resource pack (release/pack.smith compresses with LZFSE) into out; returns its size.
 static size_t smith_platform_decompress(unsigned char *out, size_t capacity, const unsigned char *in, size_t size) {
     SMITH_ASSERT(compression_decode_scratch_buffer_size(COMPRESSION_LZFSE) <= sizeof smith_platform_scratch);
     return compression_decode_buffer(out, capacity, in, size, smith_platform_scratch, COMPRESSION_LZFSE);

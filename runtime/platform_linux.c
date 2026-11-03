@@ -122,7 +122,7 @@ static struct timespec smith_platform_mtime(const struct stat *info) {
     return state == 'T' || state == 't' ? 1 : 0;
 }
 
-// The resource pack is stored uncompressed on Linux (scripts/pack.c compresses only on macOS, with Apple's
+// The resource pack is stored uncompressed on Linux (release/pack.smith compresses only on macOS, with Apple's
 // libcompression), so every file of it has its stored size equal to its size and nothing calls this; 0 says so.
 static size_t smith_platform_decompress(unsigned char *out, size_t capacity, const unsigned char *in, size_t size) {
     (void)out;

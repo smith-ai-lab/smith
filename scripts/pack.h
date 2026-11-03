@@ -1,4 +1,4 @@
-// The format of the file scripts/pack.c writes and smith.c embeds: the files of clang's resource directory, each
+// The format of the file release/pack.smith writes and smith.c embeds: the files of clang's resource directory, each
 // compressed on its own. Native byte order (it is made and read on the same machine); no padding to rely on.
 //
 //   SmithPackHeader
