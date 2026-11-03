@@ -848,13 +848,15 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
     }
 }
 
-// Checks a whole module, reading the modules it imports with `load` (#1677): `m := import a.b` makes `m.name` the
-// public declaration `name` of `a.b`.
-export types::Checked check_module_with(const ast::Module *m, types::Target target, types::ModuleLoader load) {
+// `check_module_with` that also reads the C headers the file imports (`import <stdio.h>;`, #1762): `headers` gives the
+// declarations of one, and `c::printf`, `c::FILE` are then names of the module.
+export types::Checked check_module_headers(const ast::Module *m, types::Target target, types::ModuleLoader load,
+                                           types::HeaderLoader headers) {
     state = (State){};
     types_fn::reset();
     types::Options chosen = options(target);
     chosen.load = load;
+    chosen.headers = headers;
     types::Checked r = types::check(m, chosen);
     for (Usize i = 0; i < countof(m->decls); i++) {
         check_initializer(&r, m->decls[i]);
@@ -863,6 +865,12 @@ export types::Checked check_module_with(const ast::Module *m, types::Target targ
     types_attr::check_module(&r, m);
     uninstall();
     return r;
+}
+
+// Checks a whole module, reading the modules it imports with `load` (#1677): `m := import a.b` makes `m.name` the
+// public declaration `name` of `a.b`.
+export types::Checked check_module_with(const ast::Module *m, types::Target target, types::ModuleLoader load) {
+    return check_module_headers(m, target, load, nullptr);
 }
 
 // Checks a whole module for `target`.

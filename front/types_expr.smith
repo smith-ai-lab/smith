@@ -42,7 +42,7 @@
 // has the one type (the expected one, else the first branch's). A branch that yields no value makes the whole `void`
 // (a block with no last expression, an `if` with no `else`), and where a type is expected that is an error. `match` is
 // exhaustive over an enumeration (a missing enumerator is listed) or `?T` (`.some(x)`, `.none`); `if let .some(x) = o`
-// binds `x` in its `then`. A payload enumeration is not typed yet (J1d), so its patterns report that. `.some(x)` is
+// binds `x` in its `then`. A payload enumeration's `.circle(c)` binds `c` as what the enumerator carries. `.some(x)` is
 // the value of a `?T`. The walk of a value statement pushes its expressions as frames of the work stack, between
 // pseudo-frames that open and close scopes and bind names, and one last frame that joins the branches' types.
 //
@@ -734,6 +734,12 @@ static void unknown_name(types::Checked *c, const ast::Expr *e, ast::Path path) 
         }
     }
     if (countof(path.segments) > 1 && same_text(path.segments[0].text, "c")) {
+        if (c->options.headers != nullptr) {
+            types::failf(c, e->span, "`", name, "` is not declared by any C header this file imports; ",
+                         "write `import <h>;` for the header that has it, and check its spelling");
+            poison(c, e);
+            return;
+        }
         not_yet(c, e, msg(format::push("c:: name `", name, "`")));
         return;
     }
@@ -819,14 +825,38 @@ static void name_expr(types::Checked *c, Frame f) {
     finish(c, e, s->type, f.expected);
 }
 
-// `.some(x)` where `?T` is expected: not a leaf, its payload is checked as a `T`.
-static Bool is_some_value(Frame f) {
-    const ast::Expr *e = f.node;
-    types::TypeRef expected = f.expected;
-    if (!(e->kind == .variant) || expected == nullptr || expected->kind != .option) {
+// Whether an enumerator of a payload enumeration carries a value (`void` is what one that carries nothing has).
+static Bool carries_value(types::TypeRef t) {
+    if (t->kind == .void_type) {
         return false;
     }
-    return e->kind.variant.payload != nullptr && same_text(e->kind.variant.name, "some");
+    return true;
+}
+
+// What `.name(x)` carries where `expected` is wanted: the `T` of `.some(x)` over `?T`, the type an enumerator of a
+// payload enumeration carries; null for anything else (a leaf: `variant_expr` says what is wrong).
+static types::TypeRef carried_type(Frame f) {
+    const ast::Expr *e = f.node;
+    types::TypeRef expected = f.expected;
+    if (!(e->kind == .variant) || expected == nullptr || e->kind.variant.payload == nullptr) {
+        return nullptr;
+    }
+    Str name = e->kind.variant.name;
+    if (expected->kind == .option) {
+        return same_text(name, "some") ? expected->element : nullptr;
+    }
+    if (expected->kind == .enumeration && expected->has_payload) {
+        const types::Slot *slot = types::member(expected, name);
+        if (slot != nullptr && carries_value(slot->type)) {
+            return slot->type;
+        }
+    }
+    return nullptr;
+}
+
+// `.some(x)` or `.circle(x)` where the type is known: not a leaf, its payload is checked as the type it carries.
+static Bool is_some_value(Frame f) {
+    return carried_type(f) != nullptr;
 }
 
 static void some_before(Work *w, Frame f) {
@@ -836,7 +866,7 @@ static void some_before(Work *w, Frame f) {
     }
     const ast::Expr *payload = e->kind.variant.payload;
     push(w, e, f.expected, 1);
-    push(w, payload, f.expected->element, 0);
+    push(w, payload, carried_type(f), 0);
 }
 
 static void some_after(types::Checked *c, Frame f) {
@@ -869,7 +899,21 @@ static void variant_expr(types::Checked *c, Frame f) {
         types::set_type(c, e, expected);
         return;
     }
-    if (expected->kind == .enumeration && types::member(expected, name) != nullptr) {
+    const types::Slot *slot = nullptr;
+    if (expected->kind == .enumeration) {
+        slot = types::member(expected, name);
+    }
+    if (slot != nullptr && expected->has_payload && carries_value(slot->type)) {
+        types::failf(c, e->span, "`.", name, "` carries a `", types::show(slot->type), "`; write `.", name, "(value)`");
+        poison(c, e);
+        return;
+    }
+    if (slot != nullptr && e->kind.variant.payload != nullptr) {
+        types::failf(c, e->span, "`.", name, "` carries no value; write `.", name, "` alone");
+        poison(c, e);
+        return;
+    }
+    if (slot != nullptr) {
         types::set_type(c, e, expected);
         return;
     }
@@ -2018,6 +2062,10 @@ static types::TypeRef index_element(types::Checked *c, const ast::Expr *e, const
     if (base->kind == .slice) {
         return base->element;
     }
+    if (base->kind == .block) { // a row: a block of one dimension fewer, a slice for the last two
+        if (base->count == 2) return types::slice_of(&c->table, base->element, false);
+        return types::block_of(&c->table, base->element, base->count - 1);
+    }
     if (base->kind == .text) {
         return types::builtin(&c->table, "U8");
     }
@@ -2196,7 +2244,7 @@ static void cast_after(types::Checked *c, Frame f) {
 }
 
 static Bool countable(types::TypeRef t) {
-    return t->kind == .array || t->kind == .slice || t->kind == .text;
+    return t->kind == .array || t->kind == .slice || t->kind == .text || t->kind == .block;
 }
 
 static void count_check(types::Checked *c, const ast::Expr *e, types::TypeRef t) {
@@ -2896,8 +2944,9 @@ static Usize case_of(types::Checked *c, ast::Span span, types::TypeRef t, ast::P
     }
     for (Usize i = 0; i < countof(t->slots); i++) {
         if (same_text(t->slots[i].name, name)) {
-            if (countof(pat.binding) > 0 && report) {
-                types::failf(c, span, "not yet typed: a payload enumeration");
+            Bool carries = t->has_payload && carries_value(t->slots[i].type);
+            if (report && countof(pat.binding) > 0 && !carries) {
+                types::failf(c, span, "`.", name, "` carries no value to bind; write `.", name, "` alone");
                 return countof(t->slots);
             }
             return i;
@@ -2938,6 +2987,8 @@ static void arm_stage(types::Checked *c, Frame f) {
             Usize at = case_of(c, s->span, t, pats[k], true);
             if (t->kind == .option && at == 0) {
                 element = t->element;
+            } else if (t->kind == .enumeration && at < countof(t->slots) && t->has_payload) {
+                element = t->slots[at].type;
             }
         }
         bind_name(c, pats[k].binding, element);
@@ -3116,7 +3167,10 @@ static Bool leaf(types::Checked *c, Frame f) {
     } else if (e->kind == .character) {
         literal_character(c, f);
     } else if (e->kind == .string) {
-        finish(c, e, c->table.text, f.expected);
+        // A literal where a C function wants `const char *`: its bytes, with the zero byte after them (#1762).
+        Bool as_pointer = f.expected != nullptr && f.expected->kind == .pointer &&
+                          f.expected->element->kind == .integer && f.expected->element->bits == 8;
+        finish(c, e, as_pointer ? f.expected : c->table.text, f.expected);
     } else if (e->kind == .boolean) {
         finish(c, e, c->table.bool_type, f.expected);
     } else if (e->kind == .null_pointer) {
