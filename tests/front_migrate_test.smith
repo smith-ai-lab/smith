@@ -1,0 +1,118 @@
+// Tests of the migration path (#1587, wave 3 of #1428): lib/std/ascii.smith, fixed by what `smith lint --fix` runs
+// (`fix::fix_text`) with no hand edit, compiled by the new front end, linked with a C file and run. The fixed text is
+// the golden tests/front/migrate/ascii.smith; lib/std/ascii.smith itself is not changed. The helpers are copied from
+// tests/front_join_test.smith.
+module front_migrate_test;
+
+import front::compile;
+import front::fix;
+import front::roots;
+import std::files;
+import std::format;
+import std::mem;
+import std::process;
+import std::test;
+import <stdio.h>;
+import <stdlib.h>;
+import <sys/stat.h>;
+import <unistd.h>;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+static const char *smith_path() {
+    const char *self = c::getenv("SMITH_SELF");
+    return self != nullptr ? self : "smith";
+}
+
+static Str folder_for(Str name) {
+    Str path = as_str(format::push("/tmp/front_migrate_", (I64)c::getpid(), "_", name));
+    c::mkdir(path.data, 0o700);
+    return path;
+}
+
+static void write_text(Str path, Str text) {
+    c::FILE *file = c::fopen(path.data, "w");
+    test::check_equal(file != nullptr, true);
+    if (file == nullptr) return;
+    c::fwrite(text.data, 1, countof(text), file);
+    c::fclose(file);
+}
+
+// The text of a file, empty when it cannot be read.
+static Str read_text(Str path) {
+    Str text = "";
+    c::FILE *file = c::fopen(path.data, "r");
+    if (file == nullptr) return text;
+    char chunk[4096];
+    Usize got = c::fread(chunk, 1, 4096, file);
+    while (got > 0) {
+        text = as_str(format::push(text, chunk[0:got]));
+        got = c::fread(chunk, 1, 4096, file);
+    }
+    c::fclose(file);
+    return text;
+}
+
+static Bool exists(Str path) {
+    return c::access(path.data, 0) == 0;
+}
+
+static Bool apple() {
+    return exists("/System/Library/CoreServices");
+}
+
+static I32 sh(Str command) {
+    const char *const argv[4] = {"sh", "-c", command.data, nullptr};
+    process::OutputResult done = process::run(argv[0:3]);
+    if (done == .ok) return done.ok.exit.signal == 0 ? (I32)done.ok.exit.status : -1;
+    return -1;
+}
+
+static void remove_all(Str folder) {
+    sh(as_str(format::push("rm -rf ", folder)));
+}
+
+// A C program that calls std::ascii by the label the object defines and returns 0 when the answers are right.
+static Str main_for(Str prefix) {
+    return as_str(format::push("_Bool digit(char) __asm__(\"", prefix, "std::ascii::digit\");\n",
+                               "_Bool space(char) __asm__(\"", prefix, "std::ascii::space\");\n",
+                               "_Bool alpha(char) __asm__(\"", prefix, "std::ascii::alpha\");\n", "int main(void) {\n",
+                               "    if (!digit('7') || digit('x')) return 1;\n",
+                               "    if (!space(' ') || space('a')) return 2;\n",
+                               "    if (!alpha('q') || alpha('3')) return 3;\n", "    return 0;\n", "}\n"));
+}
+
+// The fixes written for lib/std/ascii.smith are the golden's text, and there are 10 of them.
+export void test_front_migrate_the_fixes_of_ascii_are_the_golden() {
+    Str source = read_text("lib/std/ascii.smith");
+    test::check_equal(countof(source) > (Usize)0, true);
+    fix::Fixed fixed = fix::fix_text("ascii.smith", source);
+    test::check_equal(fixed.applied, (Usize)10);
+    // The three type fixes inside a declaration are written by the declaration's own fix (#1742), so they are left out.
+    test::check_equal(fixed.skipped, (Usize)3);
+    test::golden("tests/front/migrate/ascii.smith", fixed.text);
+}
+
+// The golden, in a folder's lib/std/ascii.smith (no `module` line, so the new parser reads it and the path names the
+// module), goes through compile::file to an object that links with a C file and runs with exit status 0.
+export void test_front_migrate_the_golden_compiles_links_and_runs() {
+    Str folder = folder_for("golden");
+    sh(as_str(format::push("mkdir -p ", folder, "/lib/std")));
+    Str path = as_str(format::push(folder, "/lib/std/ascii.smith"));
+    write_text(path, read_text("tests/front/migrate/ascii.smith"));
+    roots::Roots roots = {.source = as_str(format::push(folder, "/src")),
+                          .library = as_str(format::push(folder, "/lib"))};
+    compile::Report report = compile::file(path, as_str(format::push(folder, "/ascii.o")), "", roots);
+    test::check_equal(countof(report.text), (Usize)0);
+    test::check_equal(report.ok, true);
+    if (report.ok) {
+        write_text(as_str(format::push(folder, "/main.c")), main_for(apple() ? "_" : ""));
+        I32 linked =
+            sh(as_str(format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/ascii.o -o ", folder, "/prog")));
+        test::check_equal(linked, 0);
+        if (linked == 0) test::check_equal(sh(as_str(format::push(folder, "/prog"))), 0);
+    }
+    remove_all(folder);
+}

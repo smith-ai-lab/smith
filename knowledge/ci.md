@@ -41,14 +41,15 @@ When the tests do not build, the step `Build the tests` of `setup-smith` ends wi
 `file:line:col: error:` lines and the command that failed (also in the job summary, #1118). The errors go to stdout and
 only the full output of the nested build is in `.smith/log/.smith_task_units-build.log` (a hidden file).
 
-**Why each Linux shard builds smith itself** (measured on 2026-10-31 over 60 runs of each event, #1139). A shard spends
-about 2.5 min before its first test: restore of the pack and step cache 0.5, `fetch` 0.2, `build` 1.2, `tests built` 1.1;
-its tests then take 1.4 (a pull request's `--changed` shards, 4 then, 2 since 2026-11-02 when the 20 hosted slots of the free plan were full most hours) to 2.4 min (the queue's 8). One `build-linux` job that
-saved `build/` and `.smith/` for the shards to restore would put that 2.5 min, plus a save (about 0.5) and a restore
-(0.3 to 0.5) of a build of about 1 GB, in series ahead of every shard: the verdict gets about 1 min later, and only the
-runner minutes drop (about 17 of 41 per queue run). So the shards stay independent; the cut that does shorten the wall
-clock is balance (`.github/shard-costs.tsv`, queue shard medians 3.5 to 5.7 min, about 0.5 min to gain) or a smith that
-builds only the shard's own test programs (about 1 min).
+**Why one job builds smith for the Linux shards** (#1758). A shard used to spend about 2.5 of its 5.6 median minutes
+before its first test (pack and step cache restore 0.5, `fetch` 0.2, `build` 1.2, `tests built` 1.1), measured on
+2026-10-31 over 60 runs of each event (#1139). Then one `build-linux` job looked worse: the verdict got about 1 min
+later and only runner minutes dropped (about 17 of 41 per queue run), so the shards built for themselves. On
+2026-11-02 the trade-off flipped: the free plan's 20 hosted job slots were full most hours and runs waited 15 to 40 min
+for a runner, so runner minutes are the limit (owner: no paid runners). Now `build-linux` builds smith and the tests
+once, packs `build/` and `.smith/` with `tar --zstd`, and uploads it as the artifact `build-linux` (1 day); each shard
+restores it (`setup-smith` with `artifact: build-linux`), touches the files so none looks older than the checkout's
+sources, and runs its tests. Measurement before and after (3 queue runs, 3 pull request runs): in the PR of #1758.
 
 **A red pull request** is its author's: read the failing job (`gh run view --log-failed`), fix it on the branch, push.
 A conflict with main is fixed by merging main into the branch, never by a rebase or a force-push.

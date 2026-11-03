@@ -159,6 +159,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - Assigning to a name declared without `mut` inserts `mut ` before its name (a local or parameter, not `const`, not after an attribute).
 - Writing through a `*T` turns the declaration's `*T` into `*mut T`; when that pointer is `p := &x` of a constant `x`, the fix adds `mut` to `x`.
 - No fix removes a `mut`. In smith's own syntax `*T` is read-only (`pointee_const`) and `*mut T` writable.
+- Preprocessor lines (#1748, `front/fix_directive.smith`): the error of the first `#` carries one fix for every simple line in the file: `#define N 4` becomes `const N := 4` and `#include <h.h>` becomes `h := import c <h.h>`. `#if`, `#pragma`, `#error`, a function-like `#define` and `#include "h"` keep the error with no fix.
 - Tests: `tests/front_fix_test.smith`, `tests/front_fix_mut_test.smith`.
 
 ## The checker
@@ -173,6 +174,7 @@ The types of the front end and the checker's entry point; the API is the top com
 - Records and enumerations are declared first, then typedefs, then fields, signatures and variables, so use before declaration works for records only.
 - `types::check(module, options)` returns a `Checked`: the table, the scope, the errors and a side table of expression types (`set_type`, `type_of`), not a field of the ast.
 - `options.bodies` is the hook that checks function bodies (`types_decl` fills it). A construct not typed is reported as `not yet typed: <kind>`.
+- `typeof` (#1747): `typeof(x)` is the type of the parameter or variable `x` in scope, and a function's parameters are in scope for the ones after them and for its result (`fn larger(a: num, b: typeof(a)) -> typeof(a)`); `typeof(T)` is `T` for a plain type name. Any other operand is `not yet typed` (types.smith cannot reach the expression checker, and has no recursion).
 - Tuples (#1557): the kind `tuple` is interned by its elements (`tuple_of`), shown `(I32, Bool)`, its slots named `0`, `1`, so `t.0` is a `member`.
 - `stream::Stream(T)` (#1613) is the type kind `Kind.stream`, interned by `types::stream_of`, shown `stream::Stream(i32)`, one pointer in layout.
 - Smith's own syntax (#1512, C5): `Checked.new_syntax` is set around types written there (`Param.is_new`, `variable.is_new`, `FieldDecl.is_new`).
@@ -190,7 +192,8 @@ The types of the front end and the checker's entry point; the API is the top com
 - Down: `expected` types an unsuffixed literal when it fits (`U8 big = 300;` is an error naming the range), `null`, `.none`, `.red`, a `{...}` list, a lambda and both sides of `?:`.
 - Next to a typed operand (`x + 1`) a literal takes the operand's type; any other pair of different types is an error that names the cast to write.
 - Typed: literals, names, operators, assignment, `.` and `->`, `a[i]`, `a[i:j]`, calls (count checked), casts, `sizeof`, `alignof`, `countof`, `?:`.
-- Not yet (`not yet typed: <kind>`): `try`, a type as a value, a name from another module, nested designators, a payload enumeration.
+- Not yet (`not yet typed: <kind>`): `try`, a type as a value, nested designators, a payload enumeration. A name from another module is typed only when the checker is given a loader (next bullet); without one it stays `not yet typed`.
+- Modules are values (#1677): `types::Options.load` (`check_module_with(m, target, load)`) gives the tree of a dotted path (`std.math`). `m := import a.b` binds a `module_name` symbol, and the declarations of `a.b` (and of the modules it imports, once each, so a cycle ends) are declared in the same table under the prefix `a::b::`; `m.name`, `m.b.name` and a type path `m.T` read through the module symbols (`types::through_modules`), and only a `pub` name is found. A missing name is "`a.b` has no public `x`" with the closest name. `sin := m.sin` and `Arena := m.Arena` are a second symbol for the same declaration (a direct alias, no copy). A module name used as a value (`mut x := m`, passed, compared) and a local named like a module are errors. Generic functions of an imported module are not declared yet. The driver (#1714) gives the checker a loader (`compile::load_module`: `a/b.smith` under the source folder, then the library folder, named by its path) and emit calls a function through a module value (`m.sin(x)`, `m.re.sin(x)`, `sin := m.sin` then `sin(x)`): it declares an external prototype named by the module's path and the function (`a::b::sin`, the symbol the old pipeline uses) when the first call needs it, and a module alias is not emitted as a global. Not yet: a record or enumeration of an imported module in a signature, and aliases of types.
 - `Hooks.convert` (set with `set_hooks`) is asked whenever a value of type `from` meets `to`; unset, the default is exact equality. `types_decl::install` wires `types_convert::convert` in.
 - Values (#1511, C2a): `if`, `if let`, `match` and a block used as a value (`stmt_expr`) are typed here; the last line of a block is its value.
 - Every branch has the expected type; a branch with no value makes the whole `void`. `match` is exhaustive over an enumeration or `?T`: a missing case is listed, a repeat is an error.
@@ -240,6 +243,7 @@ Functions and lambdas in the checker; the rules are the top comment of the file.
 - A parameter of type `fn_once(A) -> R` is linear (#1108): `check_once(c, params, body)` follows every path; types_decl calls it per function and types_expr per lambda.
 - Reported: a second use ("used again"), a path that leaves before any use (`return`, end of body, `try`: "not used on every path"), a use inside a loop ("once per turn").
 - A use is a call, or the name passed on or captured; an `fn(A) -> R` parameter may run any number of times.
+- A stored lambda (`Fn(F)`) passes where `fn(A) -> R` is expected when the signatures are the same (#1649); `conform` in types_expr says so before the convert hook. A different signature is an error naming both; `fn_once` stays apart.
 - A lambda written as an argument of a call is non-escaping and captures by reference (`note_arguments(args)` tells which are arguments).
 - Any other lambda is stored (a variable, field or result): captures are copied by value, with no capture list (lead's decision, 2026-11-02).
 - `check_lambda(c, e)` refuses a stored lambda that captures a local pointer or slice into the current function's stack (`p := &x`, `s := xs[1:3]`), naming the capture. A pointer parameter is allowed.
@@ -250,6 +254,7 @@ Functions and lambdas in the checker; the rules are the top comment of the file.
 - A generator is a function whose written result is `stream::Stream(T)` and whose body has a `yield` outside any lambda; a stream-returning function with no `yield` is an ordinary function.
 - `yield x` is valid only in a generator, and `x` converts to `T` by the ordinary conversion. Elsewhere (a lambda included) it is an error that says to return a stream or remove the yield.
 - A generator ends with a plain `return`; `return v` is an error that says to `yield v` first. Its body is checked as the body of a function with no result.
+- `stream::next(s)` on a local `stream::Stream(T)` has type `option(T)`; `stream::close(s)` closes it (#1723). The call rule lives in `types_expr` (`stream_callee`), because `types_stream` imports `types_expr`.
 - No recursion: the search for a `yield` walks statements with a fixed stack. Hooked from `types_decl`; not wired into `smith cc`. Tests: `tests/front_types_stream_test.smith`.
 
 ### front::types_iter (`front/types_iter.smith`, #1514, C3)
@@ -273,6 +278,7 @@ Iteration in the checker; the rules are the top comment of the file.
 - Tests run the result in LLJIT (`emit_jit.smith`) and compare golden IR (`tests/front/emit/`).
 
 **Files**: `emit.smith` (passes, the walk, routing), `emit_state.smith` (shared types, `Emitter`, hooks; its own file to break an import cycle), then one file per area, no two tickets sharing one.
+- Slices `[]T` and `str` are `{ data, count }` (#1623): a string literal is a constant `str`, `s[i]` checks the index against the count in every build, `s[a:b]` and `countof(s)` read the pair, and `for x in s` walks it.
 - `emit_vector` (`vec(T, N)`), `emit_arith` (integer expressions), `emit_control`, `emit_call`, `emit_memory`, `emit_debug`, `emit_option`, `emit_iter`, `emit_match`, `emit_value`, `emit_tuple`, `emit_lambda`, `emit_jit` (test helper).
 - Three hooks in `Emitter`, set by `emit::module`, let a handler reach `emit.smith` without importing it: `state::type_of` (a type expression), `state::type_of_node` (the checker's type of a node) and `state::convert`.
 - `state::convert(e, value, to, span, site)` pushes `value` as a `to`: as is, widened by the checker's rules, or wrapped for an option; else the site's error (`initializing X with Y`).
@@ -286,8 +292,9 @@ Iteration in the checker; the rules are the top comment of the file.
 | `emit_iter` | `for x in xs` over a fixed array, `refs(xs)`, `range(n)`, `range(a, b)`, `range(a, b, step)` with a positive literal step | `enumerate`, `zip`, tuple pattern, slice, `str`, block, stream, array value, other steps: `not emitted yet` | #1586 (filled) |
 | `emit_match` | enumerations (an integer `Ty` of the underlying type, enumerators from 0 or as written; `emit_memory` and `emit_call` find one for `as` and parameters), `.red`, `match` over an enumeration (one `switch`, `unreachable` default) or `?T`, as statement and value | a payload enumeration, `match` over `Result`, `if let` over an enumeration | #1585 |
 | `emit_value` | an `if` with an `else` and a block used as a value: one alloca slot (the hint's type, else the join of the branches' checker types), branches convert and store, `endif` loads it; a branch that ended stores nothing; no branch reaching the end gives `unreachable` and `undef` | `for`, `while`, `if let` as a value, a `match` with no type written | #1618 (filled) |
-| `emit_tuple` | stub: tuple types, literals, `t.0`, `(q, r) := f()` are `not emitted yet` | everything | next batch |
+| `emit_tuple` | tuple types `(A, B)`, `(T,)`, `()` as an LLVM struct, `(a, b)`, `t.0` as a value and a place, `(q, r) := f()`; the lexer reads `t.0` and `t.0.1` as an index | `==` between tuples, tuples of slices or `fn` values, `for (i, x)` | #1619 (filled) |
 | `emit_lambda` | `fn(A) -> R` and `fn_once` types (`{ ptr code, ptr context }`), lambdas as internal functions, calls of `fn` values (#1620) | a stored lambda with captures, a function named as a value | next batch |
+| `emit_stream` | `stream::Stream(T)` (one `ptr`), a generator as a ramp and a body on the stream's own stack, `yield`, `stream::next(&s)` (`?T`), `stream::close(&s)` (#1546; see [stream](stream.md)) | `for` over a stream, a generator with debug info | #1546 |
 | floats, slices, `str`, array literals | no route yet: `emit.smith` answers `not emitted yet: this kind of expression` | everything | none yet |
 
 - Routing in `emit.smith`: `type_of` sends `?T`, a tuple and a `fn` type to their file and a one-segment name to `match::type_enum` before records.
@@ -314,6 +321,7 @@ Iteration in the checker; the rules are the top comment of the file.
 **Memory** (`emit_memory.smith`, #1133): pointer, array (`T[N]`, N a literal) and record types (`Decl.record` becomes a named struct `<module path>::<name>`); a union, bit-field or unknown record is an Error.
 - Every lvalue is a place (address plus stored type): `&x`, `*p`, `a[i]`, `s.f`, `p->f`; a read is the place plus a load; a base that is no lvalue is spilled.
 - An array's index is checked against its count (a constant index in range needs no check); a pointer's is not.
+- Array literals (#1624): `[a, b, c]` is an array value, its items converted to the element type; where a slice is expected it is stored in a fresh entry-block slot of the function and the value is `{ slot, count }`, so a literal evaluated again in a loop overwrites the same slot. `[]` is `{ null, 0 }` or `[0]T`, and an error with no type.
 - `(Point){.x = 1}` and `{0, 0}` fill a zeroed temporary; `null` takes the expected pointer type; `sizeof`, `alignof` and `countof` read the target data, never the host.
 - A file-scope variable is a global with a constant initializer, read and assigned by its bare name (`memory::is_global_name`). `emit::module` calls `memory::release`.
 - Checked casts (K2, #1329): `Options.checked` is the checker's `types::Checked` (null: no cast is checked). `cast` asks `types::cast_checked(...).needed`, then converts, converts back and compares.

@@ -1,0 +1,36 @@
+name: fetch-smith
+description: >
+  Downloads the newest smith release that has a tarball for this platform (#1689), checks its SHA-256 and puts its
+  `bin/` first on PATH, so `smith build` can build this tree. The tags come from the public releases feed of the
+  repository (the newest ten, newest first; no gh, no login, no GraphQL, #829), and the first release whose tarball
+  and checksum both exist is the one used. The lag rule (knowledge/smith-bootstrap.md) lets a release newer than the
+  checkout build it.
+
+runs:
+  using: composite
+  steps:
+    - name: Download the newest release
+      shell: bash
+      run: |
+        set -eu
+        os=$(uname -s | tr A-Z a-z)
+        arch=$(uname -m)
+        name="smith-$os-$arch.tar.xz"
+        base=https://github.com/smith-ai-lab/smith
+        tags=$(curl -fsSL "$base/releases.atom" | sed -n 's|.*releases/tag/\(stage0-[0-9a-f]*\).*|\1|p')
+        mkdir -p .smith/stage0
+        for tag in $tags; do
+          if curl -fsSL --retry 3 -o ".smith/stage0/$name" "$base/releases/download/$tag/$name" &&
+             curl -fsSL --retry 3 -o ".smith/stage0/$name.sha256" "$base/releases/download/$tag/$name.sha256"; then
+            want=$(cut -d' ' -f1 ".smith/stage0/$name.sha256")
+            if command -v sha256sum >/dev/null; then got=$(sha256sum ".smith/stage0/$name" | cut -d' ' -f1)
+            else got=$(shasum -a 256 ".smith/stage0/$name" | cut -d' ' -f1); fi
+            [ "$want" = "$got" ] || { echo "fetch-smith: checksum of $tag/$name differs" >&2; exit 1; }
+            tar -xJf ".smith/stage0/$name" -C .smith/stage0
+            echo "fetch-smith: using $tag" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "$PWD/.smith/stage0/bin" >>"$GITHUB_PATH"
+            exit 0
+          fi
+        done
+        echo "fetch-smith: no release has $name (looked at: $tags)" >&2
+        exit 1

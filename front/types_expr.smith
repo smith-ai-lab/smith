@@ -498,6 +498,9 @@ static Bool is_null_target(types::TypeRef to) {
 
 // The default of the convert hook: exact equality, `null` for a pointer, a function for its `Fn`.
 static Bool conform(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
+    if (from->kind == .fn_value && to->kind == .function && from->element == to) {
+        return true; // a stored lambda where `fn(A) -> R` is expected (#1649)
+    }
     if (hooks.convert != nullptr) {
         return hooks.convert(c, e, from, to);
     }
@@ -746,6 +749,39 @@ export Bool is_undefined(const ast::Expr *e) {
     return countof(path.segments) == 1 && same_text(path.segments[0].text, "undefined");
 }
 
+// `m.sin`, `m.b.T`, `m::sin`: names read through modules (#1677). A function or constant takes its type; a module, a
+// type and a name that is missing are errors that say so. False when the first name is not a module.
+static Bool module_value(types::Checked *c, Frame f, types::Names names) {
+    const ast::Expr *e = f.node;
+    if (names.count < 2 || c->options.load == nullptr) return false;
+    const types::Symbol *first = types::scoped(c, names.items[0]);
+    if (first == nullptr || first->kind != .module_name) return false;
+    types::Through t = types::through_modules(c, &names);
+    if (t.symbol == nullptr) {
+        types::report_missing(c, e->span, t);
+        poison(c, e);
+        return true;
+    }
+    if (t.stopped) {
+        types::failf(c, e->span, "`", t.symbol->name, "` has no members; only a module has names after a `.`");
+        poison(c, e);
+        return true;
+    }
+    if (t.symbol->kind == .module_name) {
+        types::failf(c, e->span, "`", types::module_dotted(t.symbol),
+                     "` is a module: a module is known only at compile ", "time, so write a name of it, such as `",
+                     names.items[names.count - 1], ".name`");
+        poison(c, e);
+    } else if (t.symbol->kind == .type_name) {
+        types::failf(c, e->span, "`", names.items[names.count - 1], "` is a type, not a value; write a variable, a ",
+                     "function or a constant here");
+        poison(c, e);
+    } else {
+        finish(c, e, t.symbol->type, f.expected);
+    }
+    return true;
+}
+
 static void name_expr(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .name)) {
@@ -758,18 +794,25 @@ static void name_expr(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
+    if (s == nullptr && countof(path.segments) > 1 && countof(path.segments) <= 8) {
+        types::Names names = {.count = countof(path.segments)};
+        for (Usize i = 0; i < names.count; i++)
+            names.items[i] = path.segments[i].text;
+        if (module_value(c, f, names)) return;
+    }
     if (s == nullptr) {
         unknown_name(c, e, path);
         return;
     }
-    if (s->kind == .type_name || s->kind == .module_name) {
-        Str name = path_str(path);
-        Str what = "module";
-        if (s->kind == .type_name) {
-            what = "type";
-        }
-        types::failf(c, e->span, "`", name, "` is a ", what,
-                     ", not a value; write a variable, a function or a constant here");
+    if (s->kind == .module_name) {
+        types::failf(c, e->span, "`", path_str(path), "` is a module: a module is known only at compile time, so it ",
+                     "cannot be stored, passed or compared; write a name of it, such as `", path_str(path), ".name`");
+        poison(c, e);
+        return;
+    }
+    if (s->kind == .type_name) {
+        types::failf(c, e->span, "`", path_str(path), "` is a type, not a value; write a variable, a function or a ",
+                     "constant here");
         poison(c, e);
         return;
     }
@@ -1698,6 +1741,64 @@ static void call_after(types::Checked *c, Frame f) {
         return;
     }
     finish(c, e, signature->element, f.expected);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Streams: `stream::next(s)` and `stream::close(s)` on a local `stream::Stream(T)` (#1723; the yield rules are in
+// types_stream, which imports this module, so the call rule lives here)
+
+// The name of the stream function a call's callee spells (`next` or `close`), else an empty text.
+static Str stream_callee(const types::Checked *c, const ast::Expr *callee) {
+    if (callee->kind != .name) return "";
+    ast::Path path = callee->kind.name.path;
+    if (countof(path.segments) != 2 || !same_text(path.segments[0].text, "stream")) return "";
+    const types::Symbol *first = types::lookup(&c->scopes, path.segments[0].text);
+    if (first != nullptr && first->kind != .module_name) return "";
+    Str name = path.segments[1].text;
+    if (same_text(name, "next") || same_text(name, "close")) return name;
+    return "";
+}
+
+static void stream_before(Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call)) {
+        return;
+    }
+    ast::ExprRef args[:] = e->kind.call.args;
+    push(w, e, f.expected, 6);
+    for (Usize i = countof(args); i > 0; i--) {
+        push(w, argument_value(args[i - 1]), nullptr, 0);
+    }
+}
+
+static void stream_after(types::Checked *c, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call)) {
+        return;
+    }
+    ast::ExprRef args[:] = e->kind.call.args;
+    Str name = stream_callee(c, e->kind.call.callee);
+    if (countof(args) != 1) {
+        types::failf(c, e->span, "`stream::", name, "` takes one argument, a `stream::Stream(T)`; pass exactly one");
+        poison(c, e);
+        return;
+    }
+    types::TypeRef given = typ(c, args[0]);
+    if (given == invalid(c)) {
+        poison(c, e);
+        return;
+    }
+    if (given->kind != .stream) {
+        types::failf(c, args[0]->span, "`stream::", name, "` got a `", types::show(given),
+                     "`, but a `stream::Stream(T)` is expected; pass a stream");
+        poison(c, e);
+        return;
+    }
+    if (same_text(name, "next")) {
+        finish(c, e, types::option_of(&c->table, given->element), f.expected);
+    } else {
+        types::set_type(c, e, c->table.void_type);
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -3104,6 +3205,10 @@ static void before(types::Checked *c, Work *w, Frame f) {
             vector_before(c, w, f);
             return;
         }
+        if (countof(stream_callee(c, callee)) > 0) {
+            stream_before(w, f);
+            return;
+        }
         types::TypeRef record = constructed_record(c, callee);
         if (record != nullptr) {
             construct_before(w, f, record);
@@ -3127,6 +3232,7 @@ static void before(types::Checked *c, Work *w, Frame f) {
         push(w, base, nullptr, 0);
     } else if (e->kind == .member) {
         const ast::Expr *base = e->kind.member.base;
+        if (module_value(c, f, types::member_names(e))) return;
         push(w, e, f.expected, 1);
         push(w, base, nullptr, 0);
     } else if (e->kind == .cast) {
@@ -3172,6 +3278,8 @@ static void after(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .call) {
         if (f.stage == 1) {
             call_callee_done(c, w, f);
+        } else if (f.stage == 6) {
+            stream_after(c, f);
         } else if (f.stage == 5) {
             vector_after(c, f);
         } else if (f.stage == 3) {

@@ -48,9 +48,9 @@ changes a debug configuration of yours.
   (`runtime/tree_sitter_data.c`); `smith cc --smith-tree-sitter` writes it once to the runtime folder, named for its
   bytes, and prints the path, which the plugin loads (no compile in Neovim, no CLI or Node for users, and the grammar
   always matches the installed smith). Neovim 0.12 loads parsers itself, so nvim-treesitter is not required, and works
-  if present. Without `smith` on the `PATH`, or with a smith that has no parser, the plugin says once why. The Linux
-  seed (`scripts/seed_linux.c`) builds a smith without the parser: the query fails with `this smith was built without
-  the tree-sitter parser (a seed build); rebuild with `smith build``, and a Linux smith that `build.c` builds has it.
+  if present. Without `smith` on the `PATH`, or with a smith that has no parser, the plugin says once why. A smith
+  built without the parser fails the query with `this smith was built without the tree-sitter parser; rebuild with
+  `smith build``, and a smith that `build.c` builds has it.
 - **Plain C stays C**: `module`, `import`, `export`, `type`, `throw`, `new` and `class` are names wherever C allows names
   (`int import;`, `module = 1;`, `s->type`), and `U8` is a variable in a file that declares one.
 - **`vim.lsp.enable("smith")`** runs `smith lsp` (clangd from smith's LLVM) for `c`, `cpp`, `objc`, `objcpp` and `smith`, with the

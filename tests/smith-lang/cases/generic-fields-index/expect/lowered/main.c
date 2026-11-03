@@ -1,10 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-typedef struct {struct smith_array_f64_n {
+typedef struct {
+struct smith_array_f64_n {
 double * data; __SIZE_TYPE__ count [1]; } xs;
 __INT32_TYPE__ fixed[3];
-__INT32_TYPE__ grid[2][2];struct smith_array_f32_n_2 {
+__INT32_TYPE__ grid[2][2];
+struct smith_array_f32_n_2 {
 float * data; __SIZE_TYPE__ count [1]; } rows;
 __INT32_TYPE__ n;
 } main_Bag;
@@ -23,7 +25,8 @@ return t;
 } [ [ clang :: unavailable ( "main::show is a generic function: call it from a .smith module" ) ] ] void main_show ( void ) ; [ [ clang :: unavailable ( "main::first is a generic function: call it from a .smith module" ) ] ] void main_first ( void ) ;
 __INT32_TYPE__ main(void) {
 double v[4] = {1, 2, 3, 4};
-float r[3][2] = {{1, 2}, {3, 4}, {5, 6}};struct smith_array_f32_n_2 rows = r;
+float r[3][2] = {{1, 2}, {3, 4}, {5, 6}};
+struct smith_array_f32_n_2 rows = r;
 main_Bag a = {.xs = v[0:4], .fixed = {5, 6, 7}, .grid = {{1, 2}, {3, 4}}, .rows = rows, .n = 1};__extension__({extern void main_show__Bag(main_Bag*x,main_Bag y)__asm__("_main::show(main_Bag)");main_show__Bag(&a,a);});
 main_Outer o = {a};
 printf("first %g\n",__extension__({extern double main_first__Bag(main_Outer*o)__asm__("_main::first(main_Bag)");main_first__Bag(&o);}));

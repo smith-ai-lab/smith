@@ -1,7 +1,6 @@
 name: ci
 
-# The full check (#798, knowledge/ci-hosted.md): Linux carries the tests (8 hosted shards, each building smith itself,
-# no artifact travels) and one macOS job (`macos`) builds and runs what only macOS can (fmt, docs, lint, prove, the `--macos-only` tests);
+# The full check (#798, knowledge/ci-hosted.md): Linux carries the tests (8 hosted shards that restore the one build `build-linux` made, #1758) and one macOS job (`macos`) builds and runs what only macOS can (fmt, docs, lint, prove, the `--macos-only` tests);
 # the one job `ci` gathers them, so the ruleset and the merge queue name a single required check. The first job that
 # fails cancels the run. A push to main (a commit the queue checked) also publishes the release and saves the cache.
 on:
@@ -39,6 +38,9 @@ jobs:
       mac: ${{ steps.mac.outputs.mac }}
       # SMITH_CORES of a macOS job: the Mac's 16 cores shared by its 3 runners (overflow only); a hosted runner has 3
       cores: ${{ steps.mac.outputs.cores }}
+      # where the Linux test shards run: hosted ubuntu-latest, the Mac's Linux runners (#1140) only as overflow
+      linux-runner: ${{ steps.mac.outputs.linux }}
+      linux-cores: ${{ steps.mac.outputs.linux-cores }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -253,19 +255,51 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  test-linux:
-    # Linux carries the tests (required): 6 hosted shards of `--skip-macos`, each builds smith itself (a hosted
-    # runner is free, and no ~1 GB artifact travels: storage egress), so none waits for `build`
+  build-linux:
+    # builds smith and the tests once for the Linux shards (#1758): a hosted runner minute is the scarce thing (the free
+    # plan's 20 slots were full most hours on 2026-11-02), so one job builds, and each shard restores it as an artifact
+    # instead of spending about 2.5 min of its own on it (knowledge/ci.md)
     needs: [changes, pack]
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: "4"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-smith
+        with:
+          tests: "true"
+      - name: Pack the build
+        shell: bash
+        run: |
+          start=$(date +%s)
+          tar -c --zstd -f "$RUNNER_TEMP/build.tar.zst" build .smith
+          ls -l "$RUNNER_TEMP/build.tar.zst"
+          echo "pack: $(( $(date +%s) - start )) s ($(du -h "$RUNNER_TEMP/build.tar.zst" | cut -f1))" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Save the build for the shards
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-linux
+          path: ${{ runner.temp }}/build.tar.zst
+          compression-level: 0
+          retention-days: 1
+
+  test-linux:
+    # Linux carries the tests (required): hosted shards of `--skip-macos`, each restoring the build of `build-linux` (#1758)
+    needs: [changes, pack, build-linux]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    runs-on: ${{ fromJSON(needs.changes.outputs.linux-runner) }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.linux) }}
     env:
       GH_TOKEN: ${{ github.token }}
-      SMITH_CORES: "4"
+      SMITH_CORES: ${{ needs.changes.outputs.linux-cores }}
       SMITH_OUTPUT: full
       SMITH_TEST_STATS: "1"
     steps:
@@ -274,7 +308,7 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup-smith
         with:
-          tests: "true"
+          artifact: build-linux
       - name: Neovim 0.11+ for the editor tests (#1017)
         # the runner's nvim is 0.9 and the plugin needs `vim.uv`: `smith build nvim` fetches the pinned release (by
         # hash, kept in ~/.cache/smith/tools) and prints its bin/, which goes first on the PATH
@@ -332,7 +366,7 @@ jobs:
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
-    needs: [changes, pack, macos, test-linux]
+    needs: [changes, pack, macos, build-linux, test-linux]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -423,9 +457,7 @@ jobs:
         run: '"$SMITH" build release'
 
   release-linux:
-    # the same draft release gets the Linux tarball (`release.sh publish` adds it to the draft the other job made). Until
-    # a Linux release exists, setup builds smith from source (scripts/seed_linux.c, about two hours): expected once,
-    # for the first push to main after this job exists; the hosted limit is 6 hours. `publish` publishes without this
+    # the same draft release gets the Linux tarball (`release publish`, release/publish.smith, adds it to the draft the other job made). `publish` publishes without this
     # job's tarball when it fails, so `install` never waits for Linux.
     needs: changes
     if: needs.changes.outputs.scope == 'release'
@@ -443,7 +475,6 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install lld
-        # the seed (scripts/seed_linux.c) links smith with `-fuse-ld=lld`, which the hosted image does not have
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
       - name: Release
@@ -463,7 +494,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Publish the release
-        run: sh scripts/release.sh finish "stage0-$GITHUB_SHA"
+        # no smith on this runner (a hosted Ubuntu, 3 minutes): the one command of `release finish`
+        # (release/publish.smith), which stays for use by hand
+        run: |
+          gh release edit "stage0-$GITHUB_SHA" --draft=false
+          echo "release: published stage0-$GITHUB_SHA"
 
   install:
     # the owner's Mac installs the release just published, so the installed smith is always main's: a download and a
@@ -483,7 +518,13 @@ jobs:
         run: |
           export PATH="/opt/homebrew/bin:$PATH"
           tmp=$(mktemp -d)
-          sh scripts/release.sh fetch "stage0-$GITHUB_SHA" "$tmp"
+          # release/publish.smith, compiled by the smith installed now (the previous release's)
+          L=lib/std
+          smith cc -w -I include -I .smith/include release/publish.smith $L/files.smith $L/console.smith \
+            $L/format.smith $L/mem.smith $L/arena.smith $L/contract.smith $L/env.smith $L/text.smith \
+            $L/process.smith $L/clock.smith lib/handlers.c lib/trace.c -o "$tmp.release"
+          "$tmp.release" fetch "stage0-$GITHUB_SHA" "$tmp"
+          rm -f "$tmp.release"
           mkdir -p "$HOME/.local/bin"
           for f in "$tmp"/bin/*; do
             # copy beside, then rename over: a smith running now keeps its old file

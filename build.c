@@ -2,8 +2,8 @@
 //
 // smith is built by its previous release (knowledge/smith-bootstrap.md): smith.c is C23 and its libraries are .smith
 // modules, compiled by the smith that runs this build (`smith-cc`, the default CC), so a smith with the token hook and
-// the LLVM of `smith build llvm` is needed. A fresh clone with no smith builds and runs scripts/stage0.c, which
-// downloads the newest release of an ancestor commit and runs its `smith build`.
+// the LLVM of `smith build llvm` is needed. A fresh clone with no smith downloads the newest release
+// (README.md, Install) and runs its `smith build`.
 //
 // The verbs (smith test, smith check, smith fmt, smith lint, smith docs, smith prove, smith run) mean the same here as
 // in every project and read what this file declares: the tests below are the tests, the compiles are what lint and
@@ -177,7 +177,7 @@ static const char *const *build_smith_flags(SmithBuild *b, const BuildConfig *co
                      (const char *[]){"-I", "include", "-I", ".smith/include", "-std=gnu2y", nullptr}, nullptr);
 }
 
-// The protocol code smith's debugger server stands on, generated from the official schemas (scripts/protocol.c,
+// The protocol code smith's debugger server stands on, generated from the official schemas (protocol/generate.smith,
 // knowledge/protocol-generation.md): DAP's and MCP's, vendored under schemas/ with their licenses. The generated files
 // are build outputs, never committed: each protocol is a step of the build graph that writes them into
 // .smith/protocol/, and every compile that includes them waits for it.
@@ -198,11 +198,11 @@ constexpr size_t build_protocol_count = sizeof build_protocols / sizeof build_pr
 
 static constexpr char build_library_folder[] = "lib/std"; // the libraries written in .smith
 
-// The generator is a program of smith's own C (scripts/protocol.c, on lib/json.c), built here and not shipped: like
-// scripts/pack.c, a tool of the build. arena, contract, text and mem are the modules of smith, compiled from their
+// The generator is a program of smith's own code (protocol/generate.smith, on lib/json.c), built here and not shipped:
+// like scripts/pack.c, a tool of the build. arena, contract, text and mem are the modules of smith, compiled from their
 // sources. Returns the program's step.
 static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config, const char *folder) {
-    const char *const sources[] = {"scripts/protocol.c",
+    const char *const sources[] = {"protocol/generate.smith",
                                    smith_fmt(b, "%s/arena.smith", build_library_folder),
                                    smith_fmt(b, "%s/contract.smith", build_library_folder),
                                    smith_fmt(b, "%s/text.smith", build_library_folder),
@@ -223,7 +223,10 @@ static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config
         smith_object(b, &objects[i]);
         linked[i] = &objects[i];
     }
-    SmithProgram program = {.linker = config->cc, .output = smith_fmt(b, "%s/protocol", folder), .objects = linked};
+    SmithProgram program = {.linker = config->cc,
+                            .output = smith_fmt(b, "%s/protocol", folder),
+                            .flags = config->platform->deployment,
+                            .objects = linked};
     smith_program(b, &program);
     return program.step;
 }
@@ -576,6 +579,7 @@ static const char *build_resource_pack(SmithBuild *b, const BuildConfig *config,
     SmithProgram program = {
         .linker = config->cc,
         .output = smith_fmt(b, "%s/pack", folder),
+        .flags = config->platform->deployment,
         .objects = (const SmithObject *[]){&tool, nullptr},
         .libraries = config->platform->pack_libraries,
     };
@@ -808,11 +812,12 @@ static size_t build_library_objects(SmithBuild *b, const BuildConfig *config, co
 
 // The modules of front/ that smith links; emit_jit is a test helper and cimport needs the edge files of track C.
 static const char *const build_front_modules[] = {
-    "ast",         "lex",        "parse",       "parse_expr",    "parse_type",  "parse_stmt",   "parse_decl",
-    "parser",      "types",      "types_expr",  "types_convert", "types_decl",  "types_attr",   "types_stream",
-    "types_fn",    "types_iter", "emit_state",  "emit",          "emit_arith",  "emit_control", "emit_call",
-    "emit_memory", "emit_debug", "emit_object", "roots",         "fix",         "compile",      "emit_option",
-    "emit_match",  "emit_value", "emit_iter",   "emit_tuple",    "emit_lambda", "emit_vector",
+    "ast",        "lex",          "parse",       "parse_expr",  "parse_type",    "parse_stmt",
+    "parse_decl", "parser",       "types",       "types_expr",  "types_convert", "types_decl",
+    "types_attr", "types_stream", "types_fn",    "types_iter",  "emit_state",    "emit",
+    "emit_arith", "emit_control", "emit_call",   "emit_memory", "emit_debug",    "emit_object",
+    "roots",      "fix",          "compile",     "emit_option", "emit_match",    "emit_value",
+    "emit_iter",  "emit_tuple",   "emit_lambda", "emit_vector", "emit_stream",   "fix_directive",
 };
 constexpr size_t build_front_module_count = sizeof build_front_modules / sizeof build_front_modules[0];
 
@@ -1111,7 +1116,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
                                          smith_list(b, "-I", "include", "-I", ".smith/include", "-I", ".smith/protocol",
                                                     "-I", "runtime/protocol", nullptr),
                                          nullptr);
-    const char *const *sources = smith_glob(b, smith_list(b, "lib/*.c", "tests/*.c", "scripts/header_tool.c", nullptr));
+    const char *const *sources = smith_glob(b, smith_list(b, "lib/*.c", "tests/*.c", nullptr));
     for (size_t i = 0; sources[i] != nullptr; i++) {
         // stub.c is built (build_other_objects) with its -D, tree_sitter.c is the grammar's, and random.c includes the
         // raw lowering of random.smith, which tests/random_c_test.smith writes when it runs
@@ -1349,13 +1354,26 @@ static void build_install(SmithBuild *b, const BuildConfig *config, const char *
 }
 
 // `smith build release` (issue #111, knowledge/release.md): publishes the built smith as the GitHub Release
-// `stage0-<commit>` and prunes the old ones. scripts/release.sh refuses unless HEAD is main's tip (or CI's push to
-// main). No test or install is an input: CI's check and install jobs come first, and a failure here breaks neither.
-static void build_release(SmithBuild *b, const char *binary) {
-    SmithStep release = {
-        .command = (const char *[]){"sh", "scripts/release.sh", "publish", binary, nullptr},
-        .description = "publishing the stage0 release",
+// `stage0-<commit>` and prunes the old ones. release/publish.smith (module release::publish, which replaced
+// scripts/release.sh, #1674) refuses unless HEAD is main's tip (or CI's push to main); the smith just built compiles it
+// first (`release-tool`, a program until the build can run a module itself, #1667). No test or install is an input:
+// CI's check and install jobs come first, and a failure here breaks neither.
+static void build_release(SmithBuild *b, const char *binary, const char *folder) {
+    const char *tool = smith_fmt(b, "%s/release", folder);
+    SmithStep compile = {
+        .command = smith_list(b, binary, "cc", "-w", "-I", "include", "-I", ".smith/include", "release/publish.smith",
+                              "lib/std/files.smith", "lib/std/console.smith", "lib/std/format.smith",
+                              "lib/std/mem.smith", "lib/std/arena.smith", "lib/std/contract.smith", "lib/std/env.smith",
+                              "lib/std/text.smith", "lib/std/process.smith", "lib/std/clock.smith", "lib/handlers.c",
+                              "lib/trace.c", "-o", tool, nullptr),
+        .description = "compiling the release tool",
         .inputs = (const char *[]){binary, nullptr},
+    };
+    smith_task(b, "release-tool", &compile);
+    SmithStep release = {
+        .command = (const char *[]){tool, "publish", binary, nullptr},
+        .description = "publishing the stage0 release",
+        .inputs = (const char *[]){binary, "release-tool", nullptr},
     };
     smith_task(b, "release", &release);
 }
@@ -2534,7 +2552,7 @@ static int build_llvm_run_macos(SmithRun *run, const char *source, const char *n
 
 // After a build of LLVM (issue #618): every other LLVM folder of the cache goes, and its Enzyme, but the previous
 // release's, the one the smith that runs this build links (its identity is what `smith-cc --smith-which` prints), so a
-// build of the previous commit still works. scripts/llvm_prune.c does it; when the identity cannot be read nothing is
+// build of the previous commit still works. llvm/prune.smith does it; when the identity cannot be read nothing is
 // removed.
 static int build_llvm_prune(SmithRun *run) {
     SmithBuild *b = run->b;
@@ -2547,7 +2565,27 @@ static int build_llvm_prune(SmithRun *run) {
     const char *current = build_llvm_folder(b);
     const char *name = strrchr(current, '/') + 1;
     const char *tool = smith_fmt(b, "%s/../llvm_prune", current);
-    const char *const compile[] = {cc, "-std=c23", "-O1", "scripts/llvm_prune.c", "-o", tool, nullptr};
+    const char *const compile[] = {cc,
+                                   "-O1",
+                                   "-w",
+                                   "-I",
+                                   "include",
+                                   "-I",
+                                   ".smith/include",
+                                   "llvm/prune.smith",
+                                   "lib/std/files.smith",
+                                   "lib/std/console.smith",
+                                   "lib/std/format.smith",
+                                   "lib/std/mem.smith",
+                                   "lib/std/arena.smith",
+                                   "lib/std/contract.smith",
+                                   "lib/std/env.smith",
+                                   "lib/std/text.smith",
+                                   "lib/handlers.c",
+                                   "lib/trace.c",
+                                   "-o",
+                                   tool,
+                                   nullptr};
     int status = build_exec(compile);
     if (status != 0) return status;
     const char *const prune[] = {tool, smith_fmt(b, "%s/..", current), name, identity, nullptr};
@@ -3084,11 +3122,14 @@ static int build_docs_gate_test(SmithRun *run) {
     return failed;
 }
 
+static const char *build_absolute(SmithBuild *b, const char *path);
+static int build_tool_make(SmithBuild *b, const char *folder, const char *source);
+
 // `smith build ci-times [-Dn=10] [-Devent=pull_request]` (issue #360): where CI's time goes. The last n green runs of
 // ci.yml (a pull request, a merge queue entry with -Devent=merge_group, or a push to main) are downloaded with `gh`
 // into .smith/ci-times/<run id> (kept, so a run is fetched once): every job's steps in seconds (steps.tsv) and the
-// `test-log-*` artifacts, one for each part of the test matrix. scripts/ci_times.c, compiled here, prints the report.
-// A run that had no tests (its scope was documents only) has no logs and is counted.
+// `test-log-*` artifacts, one for each part of the test matrix. ci/times/main.smith, built here as a project of its
+// own, prints the report. A run that had no tests (its scope was documents only) has no logs and is counted.
 static int build_ci_times_fetch(SmithBuild *b, const char *id, const char *folder) {
     const char *steps = smith_fmt(b, "%s/steps.tsv", folder);
     if (access(steps, R_OK) == 0) return 0;
@@ -3125,27 +3166,25 @@ static int build_ci_times(SmithRun *run) {
     const char *const *ids = build_lines(b, list);
     for (size_t i = 0; status == 0 && ids != nullptr && ids[i] != nullptr; i++)
         status = build_ci_times_fetch(b, ids[i], smith_fmt(b, "%s/%s", root, ids[i]));
-    const char *tool = smith_fmt(b, "%s/ci_times", root);
-    const char *const compile[] = {
-        smith_env(b, "CC", "smith-cc"), "-std=c23", "-O1", "scripts/ci_times.c", "-o", tool, nullptr};
-    status = status != 0 ? status : build_exec(compile);
     if (status != 0) return status;
-    return build_exec(smith_cat(b, smith_list(b, tool, root, nullptr), ids, nullptr));
+    const char *tool_folder = build_absolute(b, smith_fmt(b, "%s/tool", root));
+    status = build_tool_make(b, tool_folder, "ci/times/main.smith");
+    if (status != 0) return status;
+    return build_exec(smith_cat(b, smith_list(b, build_defer_tool(b, tool_folder), root, nullptr), ids, nullptr));
 }
 
 // `smith build bench [-Dfull=1] [-Dsmith=<path>]` (issue #639): measures each budget line of the speed
 // table (no-op build, one-file build, fresh worktree, fmt, lint, a .smith module's compile, optionally the full test
 // suite's CPU) with the smith this build made, prints the table and writes it to .smith/bench.tsv.
-// scripts/bench.c, compiled here, does the measuring.
+// ci/bench/main.smith, built here as a project of its own, does the measuring.
 static int build_bench(SmithRun *run) {
     SmithBuild *b = run->b;
     const char *folder = ".smith/bench";
-    const char *tool = smith_fmt(b, "%s/bench", folder);
     if (build_make_folder(b, ".smith") != 0 || build_make_folder(b, folder) != 0) return 1;
-    const char *const compile[] = {
-        smith_env(b, "CC", "smith-cc"), "-std=c23", "-O1", "scripts/bench.c", "-o", tool, nullptr};
-    int status = build_exec(compile);
+    const char *tool_folder = build_absolute(b, smith_fmt(b, "%s/tool", folder));
+    int status = build_tool_make(b, tool_folder, "ci/bench/main.smith");
     if (status != 0) return status;
+    const char *tool = build_defer_tool(b, tool_folder);
     const char *const *argv = smith_list(b, tool, run->args[0], ".smith/bench.tsv", nullptr);
     if (run->args[1][0] != '\0') argv = smith_cat(b, argv, smith_list(b, "full", nullptr), nullptr);
     return build_exec(argv);
@@ -3157,6 +3196,58 @@ static int build_bench(SmithRun *run) {
 static int build_coverage_fetch(SmithRun *run) {
     (void)run;
     return 0;
+}
+
+// `smith build frontend-coverage [-Dsmith=<path>]` (#1730): how much of the tree smith's own front end handles. Every
+// .smith file git tracks is copied to .smith/frontend-coverage/tree, fixed there with `smith lint --fix` and compiled
+// with `smith cc --front-end=new`; the real files are never touched. scripts/frontend_coverage/main.smith is the tool:
+// a project of its own under .smith/frontend-coverage/tool, built by the smith that runs this build (as
+// build_defer_make does). It writes the results to .smith/frontend-coverage/results.tsv and prints the summary: files
+// passed out of total, the failures per stage and the failures grouped by message. `-Dsmith` names the smith to
+// measure.
+static const char *build_absolute(SmithBuild *b, const char *path) {
+    char home[PATH_MAX];
+    if (path[0] == '/' || getcwd(home, sizeof home) == nullptr) return path;
+    return smith_fmt(b, "%s/%s", home, path);
+}
+
+// A tool written in one .smith file: a project of its own under `folder` (whose last name is the program's) with the
+// file as its main.smith, built by the smith that runs this build (the std modules it imports come with a project).
+// Its path is build_defer_tool(folder).
+static int build_tool_make(SmithBuild *b, const char *folder, const char *source) {
+    int status = build_make_folder(b, folder);
+    status = status != 0 ? status
+                         : build_exec(smith_list(b, "/bin/cp", source, smith_fmt(b, "%s/main.smith", folder), nullptr));
+    return status != 0 ? status
+                       : build_spawn(&(BuildSpawn){
+                             .argv = smith_list(b, smith_env(b, "SMITH_SELF", "smith"), "build", "release", nullptr),
+                             .folder = folder,
+                             .log = smith_fmt(b, "%s.log", folder),
+                             .tail = 20});
+}
+
+static int build_frontend_coverage(SmithRun *run) {
+    SmithBuild *b = run->b;
+    const char *work = build_absolute(b, ".smith/frontend-coverage");
+    const char *folder = smith_fmt(b, "%s/tool", work);
+    const char *results = smith_fmt(b, "%s/results.tsv", work);
+    const char *smith = build_absolute(b, run->args[0]);
+    int status = build_make_folder(b, folder);
+    status = status != 0
+                 ? status
+                 : build_exec(smith_list(b, "/bin/cp", "scripts/frontend_coverage/main.smith", folder, nullptr));
+    status = status != 0 ? status
+                         : build_spawn(&(BuildSpawn){.argv = smith_list(b, smith, "build", "release", nullptr),
+                                                     .folder = folder,
+                                                     .log = smith_fmt(b, "%s.log", folder),
+                                                     .tail = 20});
+    if (status != 0) return status;
+    const char *tool = build_defer_tool(b, folder);
+    status = build_spawn(&(BuildSpawn){
+        .argv = smith_list(b, tool, "run", smith, build_absolute(b, "."), smith_fmt(b, "%s/tree", work), nullptr),
+        .log = results,
+        .stdout_only = true});
+    return status != 0 ? status : build_exec(smith_list(b, tool, "summarize", results, nullptr));
 }
 
 static void build_developer_tasks(SmithBuild *b, const char *binary) {
@@ -3177,6 +3268,13 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
         .description = "reporting where CI's time goes",
     };
     smith_task(b, "ci-times", &ci_times);
+    SmithStep frontend_coverage = {
+        .run = build_frontend_coverage,
+        .args =
+            smith_list(b, smith_option_value(b, "smith", binary, "frontend-coverage: the smith to measure"), nullptr),
+        .description = "measuring how much of the tree the new front end handles",
+    };
+    smith_task(b, "frontend-coverage", &frontend_coverage);
     SmithStep bench = {
         .run = build_bench,
         .args = smith_list(b, smith_option_value(b, "smith", binary, "bench: the smith to measure"),
@@ -3283,7 +3381,7 @@ void build(SmithBuild *b) {
     config.binary = smith.outputs[0];
     const char *const *tested = build_test(b, &config, config.binary, folder);
     build_install(b, &config, config.binary, tested);
-    build_release(b, config.binary);
+    build_release(b, config.binary, folder);
     build_nvim_task(b);
     build_llvm(b);
     build_developer_tasks(b, config.binary);

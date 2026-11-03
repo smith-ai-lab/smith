@@ -54,7 +54,7 @@ import std::optimize;
 // key_unit_float or key_unit_double, or splits it for its parts. An exponential distribution with a rate, where
 // 1 - unit lies in (0, 1], so the log is safe:
 //   F64 exponential_sample(random::Key key, F64 rate) {
-//       return -random::log_double(1.0 - random::key_unit_double(key)) / rate;
+//       return -math::log_double(1.0 - random::key_unit_double(key)) / rate;
 //   }
 //
 // A draw is a pure function of its key, so it does not depend on the draws before it: part i of a split is the same
@@ -72,7 +72,7 @@ import std::optimize;
 //
 // The numbers are part of the API: smith never changes what a key gives. To keep that true on every machine, the
 // library keeps a multiply from fusing with an add whatever -ffp-contract says, and refuses -ffast-math, and its
-// logarithm is its own (log_float and log_double), the same bits everywhere; only sqrt and sqrtf come from libm, and
+// logarithm is its own (math::log), the same bits everywhere; only sqrt and sqrtf come from libm, and
 // IEEE requires those to be exactly rounded.
 // On platforms where sqrt is not inlined, link libm (-lm).
 //
@@ -310,9 +310,7 @@ U64 word(const Key *key, U64 n) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// The logarithm: fdlibm's e_log.c and e_logf.c (Copyright (C) 1993 by Sun Microsystems, Inc., permission to use, copy,
-// modify and distribute is granted provided this notice is preserved), in the FreeBSD msun version. The exponent is
-// split off through the bits, then an odd polynomial in s = f / (2 + f) gives log(1 + f). No tables.
+// Bits of a float and a float of bits.
 
 U64 double_bits(F64 x) {
     return __builtin_bit_cast(U64, x);
@@ -328,138 +326,6 @@ U32 float_bits(F32 x) {
 
 F32 bits_float(U32 bits) {
     return __builtin_bit_cast(F32, bits);
-}
-
-constexpr F64 log_double_ln2_hi = 6.93147180369123816490e-01; // 3fe62e42 fee00000
-constexpr F64 log_double_ln2_lo = 1.90821492927058770002e-10; // 3dea39ef 35793c76
-constexpr F64 log_double_two54 = 1.80143985094819840000e+16;  // 2^54
-constexpr F64 log_double_lg1 = 6.666666666666735130e-01;
-constexpr F64 log_double_lg2 = 3.999999999940941908e-01;
-constexpr F64 log_double_lg3 = 2.857142874366239149e-01;
-constexpr F64 log_double_lg4 = 2.222219843214978396e-01;
-constexpr F64 log_double_lg5 = 1.818357216161805012e-01;
-constexpr F64 log_double_lg6 = 1.531383769920937332e-01;
-constexpr F64 log_double_lg7 = 1.479819860511658591e-01;
-
-// log(1 + f) for f in the range after reduction, with the exponent k added back.
-F64 log_double_finish(F64 f, I32 k, U32 hx) {
-    F64 s = f / (2.0 + f);
-    F64 dk = (F64)k;
-    F64 z = mul_double(s, s);
-    F64 w = mul_double(z, z);
-    U32 mixed =
-        (hx - 0x6147a) | (0x6b851 - hx); // positive as a signed value: the range where log(1+f) = f - hfsq + ...
-    static const F64 even[3] = {log_double_lg2, log_double_lg4, log_double_lg6};
-    static const F64 odd[4] = {log_double_lg1, log_double_lg3, log_double_lg5, log_double_lg7};
-    F64 t1 = mul_double(w, horner_double(even, 3, w));
-    F64 t2 = mul_double(z, horner_double(odd, 4, w));
-    F64 r = t2 + t1;
-    if (mixed != 0 && mixed < 0x80000000U) {
-        F64 hfsq = mul_double(mul_double(0.5, f), f);
-        F64 inner = mul_double(s, hfsq + r);
-        if (k == 0) return f - (hfsq - inner);
-        return mul_double(dk, log_double_ln2_hi) - ((hfsq - (inner + mul_double(dk, log_double_ln2_lo))) - f);
-    }
-    F64 inner = mul_double(s, f - r);
-    if (k == 0) return f - inner;
-    return mul_double(dk, log_double_ln2_hi) - ((inner - mul_double(dk, log_double_ln2_lo)) - f);
-}
-
-[[std::c_name("smith_log_double")]] export [[nodiscard]] F64 log_double(F64 x) {
-    U64 bits = double_bits(x);
-    U32 hx = (U32)(bits >> 32); // fdlibm's signed hx is negative when hx >= 0x80000000 here
-    U32 lx = (U32)bits;
-    I32 k = 0;
-    if (hx < 0x00100000 || hx >= 0x80000000U) { // x < 2^-1022, or negative
-        if (((hx & 0x7fffffffU) | lx) == 0) return -math::infinity(F64);
-        if (hx >= 0x80000000U) return math::nan(F64);
-        k -= 54; // subnormal: scale up
-        x *= log_double_two54;
-        bits = double_bits(x);
-        hx = (U32)(bits >> 32);
-    }
-    if (hx >= 0x7ff00000) return x + x; // inf or NaN
-    k += (I32)(hx >> 20) - 1023;
-    hx &= 0x000fffff;
-    U32 half = (hx + 0x95f64) & 0x100000; // 0x100000 when x is above sqrt(2): use x/2
-    bits = (bits & 0xffffffffULL) | ((U64)(hx | (half ^ 0x3ff00000)) << 32); // x or x/2, in [sqrt(2)/2, sqrt(2))
-    x = bits_double(bits);
-    k += (I32)(half >> 20);
-    F64 f = x - 1.0;
-    if ((0x000fffff & (2 + hx)) < 3) { // -2^-20 <= f < 2^-20
-        if (f == 0.0) {
-            if (k == 0) return 0.0;
-            F64 dk = (F64)k;
-            return mul_double(dk, log_double_ln2_hi) + mul_double(dk, log_double_ln2_lo);
-        }
-        F64 r = mul_double(mul_double(f, f), 0.5 - mul_double(0.33333333333333333, f));
-        if (k == 0) return f - r;
-        F64 dk = (F64)k;
-        return mul_double(dk, log_double_ln2_hi) - ((r - mul_double(dk, log_double_ln2_lo)) - f);
-    }
-    return log_double_finish(f, k, hx);
-}
-
-constexpr F32 log_float_ln2_hi = 6.9313812256e-01f; // 0x3f317180
-constexpr F32 log_float_ln2_lo = 9.0580006145e-06f; // 0x3717f7d1
-constexpr F32 log_float_two25 = 3.355443200e+07f;   // 2^25
-constexpr F32 log_float_lg1 = 0xaaaaaa.0p-24f;      // 0.66666662693
-constexpr F32 log_float_lg2 = 0xccce13.0p-25f;      // 0.40000972152
-constexpr F32 log_float_lg3 = 0x91e9ee.0p-25f;      // 0.28498786688
-constexpr F32 log_float_lg4 = 0xf89e26.0p-26f;      // 0.24279078841
-
-F32 log_float_finish(F32 f, I32 k, U32 ix) {
-    F32 s = f / (2.0f + f);
-    F32 dk = (F32)k;
-    F32 z = mul_float(s, s);
-    F32 w = mul_float(z, z);
-    U32 mixed = (ix - (0x6147aU << 3)) | ((0x6b851U << 3) - ix);
-    F32 t1 = mul_float(w, log_float_lg2 + mul_float(w, log_float_lg4));
-    F32 t2 = mul_float(z, log_float_lg1 + mul_float(w, log_float_lg3));
-    F32 r = t2 + t1;
-    if (mixed != 0 && mixed < 0x80000000U) {
-        F32 hfsq = mul_float(mul_float(0.5f, f), f);
-        F32 inner = mul_float(s, hfsq + r);
-        if (k == 0) return f - (hfsq - inner);
-        return mul_float(dk, log_float_ln2_hi) - ((hfsq - (inner + mul_float(dk, log_float_ln2_lo))) - f);
-    }
-    F32 inner = mul_float(s, f - r);
-    if (k == 0) return f - inner;
-    return mul_float(dk, log_float_ln2_hi) - ((inner - mul_float(dk, log_float_ln2_lo)) - f);
-}
-
-// The natural logarithm the distributions use, fdlibm's algorithm: within 1 ulp of the true value and the same bits on
-// every platform, which libm's log does not promise. 0 gives -inf, a negative gives NaN, inf gives inf, NaN gives NaN,
-// and subnormals work.
-[[std::c_name("smith_log_float")]] export [[nodiscard]] F32 log_float(F32 x) {
-    U32 ix = float_bits(x);
-    I32 k = 0;
-    if (ix < 0x00800000 || ix >= 0x80000000U) { // x < 2^-126, or negative
-        if ((ix & 0x7fffffffU) == 0) return -math::infinity(F32);
-        if (ix >= 0x80000000U) return math::nan(F32);
-        k -= 25; // subnormal: scale up
-        x *= log_float_two25;
-        ix = float_bits(x);
-    }
-    if (ix >= 0x7f800000) return x + x; // inf or NaN
-    k += (I32)(ix >> 23) - 127;
-    ix &= 0x007fffff;
-    U32 half = (ix + (0x95f64U << 3)) & 0x800000; // 0x800000 when x is above sqrt(2): use x/2
-    x = bits_float(ix | (half ^ 0x3f800000U));
-    k += (I32)(half >> 23);
-    F32 f = x - 1.0f;
-    if ((0x007fffffU & (0x8000U + ix)) < 0xc000U) { // -2^-9 <= f < 2^-9
-        if (f == 0.0f) {
-            if (k == 0) return 0.0f;
-            F32 dk = (F32)k;
-            return mul_float(dk, log_float_ln2_hi) + mul_float(dk, log_float_ln2_lo);
-        }
-        F32 r = mul_float(mul_float(f, f), 0.5f - mul_float(0.33333333333333333f, f));
-        if (k == 0) return f - r;
-        F32 dk = (F32)k;
-        return mul_float(dk, log_float_ln2_hi) - ((r - mul_float(dk, log_float_ln2_lo)) - f);
-    }
-    return log_float_finish(f, k, ix);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -645,7 +511,7 @@ F64 ppnd16(F64 p) {
         return mul_double(q, horner_double(ppnd16_a, 8, r)) / horner_double(ppnd16_b, 8, r);
     }
     F64 tail = q < 0 ? p : 1.0 - p;
-    F64 r = __builtin_elementwise_sqrt(-log_double(tail));
+    F64 r = __builtin_elementwise_sqrt(-math::log_double(tail));
     F64 value = 0;
     if (r <= 5.0) {
         r += -1.6;
@@ -673,7 +539,7 @@ F32 ppnd7(F32 p) {
         return mul_float(q, horner_float(ppnd7_a, 4, r)) / horner_float(ppnd7_b, 4, r);
     }
     F32 tail = q < 0 ? p : 1.0f - p;
-    F32 r = __builtin_elementwise_sqrt(-log_float(tail));
+    F32 r = __builtin_elementwise_sqrt(-math::log_float(tail));
     F32 value = 0;
     if (r <= 5.0f) {
         r -= 1.6f;
