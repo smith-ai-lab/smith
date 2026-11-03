@@ -125,7 +125,7 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
             return signature_failed(state::fail("a parameter cannot be Void", source[i].span));
         }
         all[i] = made.ok;
-        types[i] = made.ok.llvm;
+        types[i] = state::abi_type(e, made.ok);
     }
     state::TyResult made_result = type_for(e, result_type);
     if (made_result == .error) {
@@ -671,6 +671,14 @@ static c::LLVMValueRef promoted(state::Emitter *e, state::Value value) {
     return value.llvm;
 }
 
+// What the call passes for an argument of the parameter type `param`: an array goes through a temporary, as a pointer.
+static c::LLVMValueRef passed(state::Emitter *e, state::Value value, state::Ty param) {
+    if (param.kind != .array) return value.llvm;
+    c::LLVMValueRef temporary = state::new_alloca(e, param, "argument");
+    c::LLVMBuildStore(e->builder, value.llvm, temporary);
+    return temporary;
+}
+
 // The arguments' values are on the value stack, the first deepest: check them and call.
 static state::Status call_finish(state::Emitter *e, const state::Work *w) {
     const ast::Expr *written = w->expr;
@@ -720,7 +728,7 @@ static state::Status call_finish(state::Emitter *e, const state::Work *w) {
             state::Status converted = state::convert(e, values[i], sig.params[slot[i]], args[i]->span, .initialize);
             if (converted == .ok) {
                 values[i] = state::pop_value(e);
-                argv[slot[i]] = values[i].llvm;
+                argv[slot[i]] = passed(e, values[i], sig.params[slot[i]]);
                 continue;
             }
             state::free_text(converted.error.message);
@@ -730,7 +738,7 @@ static state::Status call_finish(state::Emitter *e, const state::Work *w) {
             release(sig);
             return wrong;
         }
-        argv[slot[i]] = values[i].llvm;
+        argv[slot[i]] = passed(e, values[i], sig.params[slot[i]]);
     }
     c::LLVMValueRef made = nullptr;
     if (is_void(sig.result))
