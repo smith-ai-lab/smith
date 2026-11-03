@@ -76,7 +76,9 @@ static Str math_source() {
            "pub fn twice(x: f64) -> f64 {\n    x + x\n}\n\n"
            "fn hidden() -> i32 {\n    1\n}\n\n"
            "pub tau := 6.28\n\n"
-           "pub struct Point {\n    x: f64\n    y: f64\n}\n\n"
+           "pub struct Point {\n    pub x: f64\n    pub y: f64\n}\n\n"
+           "pub struct Handle {\n    pub len: i32\n    items: i32\n}\n\n"
+           "pub fn handle() -> Handle {\n    return Handle(len = 1, items = 2)\n}\n\n"
            "pub fn origin() -> Point {\n    return Point(x = 0.0, y = 0.0)\n}\n";
 }
 
@@ -206,4 +208,32 @@ export void test_front_types_module_is_not_a_run_time_value() {
 export void test_front_types_module_local_cannot_shadow_it() {
     fails("m := import lib.math\n\nfn run() -> i32 {\n    m := 1\n    return 1\n}\n", "hides the module `m`",
           "shadowing is an error");
+}
+
+export void test_front_types_module_pub_field_is_visible_outside() {
+    clean("m := import lib.math\n\nfn run(h: m.Handle) -> i32 {\n    h.len\n}\n");
+    clean("m := import lib.math\n\nfn run() -> i32 {\n    mut h: m.Handle\n    return m.handle().len\n}\n");
+}
+
+export void test_front_types_module_private_field_is_an_error_outside() {
+    fails("m := import lib.math\n\nfn run(h: m.Handle) -> i32 {\n    h.items\n}\n", "items is private to lib.math",
+          "mark it pub or call a function of lib.math");
+}
+
+export void test_front_types_module_construction_names_only_pub_fields() {
+    fails("m := import lib.math\nHandle := m.Handle\n\nfn run() -> m.Handle {\n    return Handle(len = 1, items = "
+          "2)\n}\n",
+          "items is private to lib.math", "");
+    clean("m := import lib.math\nHandle := m.Handle\n\nfn run() -> m.Handle {\n    return Handle(len = 1)\n}\n");
+    clean("m := import lib.math\nPoint := m.Point\n\nfn run() -> m.Point {\n    return Point(x = 1.0, y = 2.0)\n}\n");
+}
+
+export void test_front_types_module_own_fields_are_all_visible() {
+    clean("pub struct List {\n    pub len: i32\n    items: i32\n}\n\npub fn make() -> i32 {\n"
+          "    l := List(len = 1, items = 2)\n    return l.items\n}\n");
+}
+
+export void test_front_types_module_pub_field_of_a_private_struct_is_an_error() {
+    fails("struct List {\n    pub len: i32\n}\n", "the field `len` is `pub`, but `List` is not",
+          "mark the struct `pub`");
 }

@@ -121,7 +121,8 @@ export typedef const Ty *TypeRef;
 export struct Slot {
     Str name;
     TypeRef type;
-    U64 value; // an enumerator's value
+    U64 value;   // an enumerator's value
+    Bool is_pub; // a field other modules may name (`pub x: T`, or any field written in today's syntax)
 };
 
 // Which fields mean something depends on `kind`:
@@ -146,6 +147,7 @@ export struct Ty {
     TypeRef error;
     U64 count;
     Str name;
+    Str owner; // a record: the prefix of the module that declares it (`lib::math::`), empty for the module checked
     Slot slots[:];
 };
 
@@ -1389,6 +1391,28 @@ export const Slot *member(TypeRef t, Str name) {
     return nullptr;
 }
 
+// Whether the module being checked may name the field: it is `pub`, or the record is the module's own.
+// A message for the one that may not is `private_field`.
+export Bool field_visible(const Ty *record, const Slot *field) {
+    return field->is_pub || countof(record->owner) == 0;
+}
+
+// Reports a field the module being checked may not name: it is private to the module that declares the record.
+export void private_field(Checked *r, ast::Span span, const Ty *record, Str name) {
+    Str module = record->owner[0:countof(record->owner) - 2];
+    Str dotted = module;
+    for (Usize i = 0; i + 1 < countof(module); i++) {
+        if (module[i] == ':' && module[i + 1] == ':') {
+            Str head = module[0:i];
+            Str tail = module[i + 2:countof(module)];
+            dotted = msg(format::push(head, ".", tail));
+            module = dotted;
+            i = 0;
+        }
+    }
+    failf(r, span, name, " is private to ", dotted, "; mark it pub or call a function of ", dotted);
+}
+
 // The name a declaration is known by: `c::` before a C name, and the alias of the module being imported (`m::`) before
 // a name of that module (#1677).
 static Str qualified(const Checked *r, Bool from_c, Str name) {
@@ -1473,7 +1497,10 @@ static void declare_alias(Checked *r, const ast::Decl *d) {
     }
 }
 
-static void fill_record(Checked *r, Str name, Bool opaque, ast::FieldDecl members[:]) {
+static void fill_record(Checked *r, const ast::Decl *d, Str name) {
+    if (!(d->kind == .record)) return;
+    Bool opaque = d->kind.record.opaque;
+    ast::FieldDecl members[:] = d->kind.record.fields;
     const Symbol *symbol = lookup(&r->scopes, name);
     if (symbol == nullptr || opaque) return;
     Usize n = countof(members);
@@ -1481,6 +1508,11 @@ static void fill_record(Checked *r, Str name, Bool opaque, ast::FieldDecl member
     for (Usize i = 0; i < n; i++) {
         const ast::FieldDecl *f = &members[i];
         fields[i].name = f->name;
+        fields[i].is_pub = f->is_pub || !f->is_new;
+        if (f->is_pub && !(d->is_pub || d->exported)) {
+            failf(r, f->span, "the field `", f->name, "` is `pub`, but `", name,
+                  "` is not; nothing outside the module can see the type, so mark the struct `pub` or drop the `pub`");
+        }
         r->new_syntax = true;
         fields[i].type = resolve(r, f->type);
         r->new_syntax = false;
@@ -1500,7 +1532,10 @@ static void fill_record(Checked *r, Str name, Bool opaque, ast::FieldDecl member
         }
     }
     Ty *record = own(&r->table, symbol->type);
-    if (record != nullptr) set_fields(record, fields);
+    if (record != nullptr) {
+        set_fields(record, fields);
+        record->owner = r->prefix;
+    }
 }
 
 static void fill_enumeration(Checked *r, Str name, ast::Enumerator members[:]) {
@@ -1641,7 +1676,7 @@ static void declare_member(Checked *r, const ast::Decl *d) {
     ast::Span span = d->span;
     if (d->kind == .record) {
         Str name = qualified(r, from_c, d->kind.record.name);
-        fill_record(r, name, d->kind.record.opaque, d->kind.record.fields);
+        fill_record(r, d, name);
     } else if (d->kind == .enumeration) {
         Str name = qualified(r, from_c, d->kind.enumeration.name);
         fill_enumeration(r, name, d->kind.enumeration.items);

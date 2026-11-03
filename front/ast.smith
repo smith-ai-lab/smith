@@ -103,6 +103,7 @@ export struct FieldDecl {
     TypeExpr *type;
     Expr *bit_width;
     Bool is_new; // written in smith's own syntax (`x: T`), not today's `T x;`
+    Bool is_pub; // `pub x: T`: other modules may name it; a new-syntax field without it is private to its module
     Attribute attributes[:];
     Span span;
 };
