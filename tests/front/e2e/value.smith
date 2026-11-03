@@ -13,14 +13,14 @@ fn clamp(n: i64, top: i64) -> i64 {
         return top
     }
     {
-        doubled := n * 2
+        let doubled = n * 2
         doubled - n
     }
 }
 
 fn pick(c: bool, small: i32) -> i64 {
-    wide: i64 = 100
-    x: i64 = if c { small } else { wide }
+    let wide: i64 = 100
+    let x: i64 = if c { small } else { wide }
     x + 1
 }
 

@@ -50,6 +50,7 @@ export typedef Str Text;
 export struct Identifier {
     Str text;
     Span span;
+    Bool is_mut; // `mut` before the name in a pattern: `let (q, mut r) = f()`
 };
 
 // `x`, `c::printf`, `geometry::Box`.
@@ -456,7 +457,7 @@ export typedef enum {
         Identifier names[:];
         Bool is_mut;
         Expr *init;
-    } destructure; // `(q, r) := f()`
+    } destructure; // `let (q, mut r) = f()`
     struct {
         Pattern pattern;
         Expr *value;
@@ -515,7 +516,7 @@ export typedef enum {
         Bool is_constexpr;
         Bool is_thread_local;
         Bool is_mut; // `x: T = v` mutable local in the new syntax
-        Bool is_new; // written in smith's own syntax (`x := v`, `x: T = v`, `mut x ...`)
+        Bool is_new; // written in smith's own syntax (`let x = v`, `let x: T = v`, `let mut x ...`)
     } variable;      // `auto x = ...` has the type auto_type
     struct {
         Text name;
@@ -948,7 +949,7 @@ export Stmt *for_in(Identifier names[:], Bool is_tuple, Expr *iterable, Stmt *bo
     return stmt(kind);
 }
 
-// `(q, r) := f()`.
+// `let (q, r) = f()`.
 export Stmt *destructure(Identifier names[:], Bool is_mut, Expr *init) {
     StmtKind kind = {.destructure = {.names = copy_names(names), .is_mut = is_mut, .init = init}};
     return stmt(kind);
@@ -1053,8 +1054,10 @@ static void put_flag(Output *text, Bool set, Str word) {
 }
 
 static void put_names(Output *text, Identifier names[:]) {
-    for (Usize i = 0; i < countof(names); i++)
+    for (Usize i = 0; i < countof(names); i++) {
+        put_flag(text, names[i].is_mut, "mut");
         put_word(text, names[i].text);
+    }
 }
 
 static void put_qualifiers(Output *text, Qualifiers q) {

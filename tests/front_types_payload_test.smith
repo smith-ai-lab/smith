@@ -97,48 +97,50 @@ export void test_front_types_payload_enumeration_declares() {
 }
 
 export void test_front_types_payload_variant_builds_with_its_payload() {
-    clean(shapes("fn make() -> Shape {\n    s: Shape = .circle(Circle(radius = 1))\n    return s\n}\n"));
+    clean(shapes("fn make() -> Shape {\n    let s: Shape = .circle(Circle(radius = 1))\n    return s\n}\n"));
 }
 
 export void test_front_types_payload_variant_without_payload_builds() {
-    clean(shapes("fn make() -> Shape {\n    s: Shape = .empty\n    return s\n}\n"));
+    clean(shapes("fn make() -> Shape {\n    let s: Shape = .empty\n    return s\n}\n"));
 }
 
 export void test_front_types_payload_variant_checks_its_payload_type() {
-    fails(shapes("fn make() -> Shape {\n    s: Shape = .circle(Rect(w = 1, h = 2))\n    return s\n}\n"), "Circle", "");
+    fails(shapes("fn make() -> Shape {\n    let s: Shape = .circle(Rect(w = 1, h = 2))\n    return s\n}\n"), "Circle",
+          "");
 }
 
 export void test_front_types_payload_variant_needs_its_payload() {
-    fails(shapes("fn make() -> Shape {\n    s: Shape = .circle\n    return s\n}\n"), "`.circle` carries a `Circle`",
+    fails(shapes("fn make() -> Shape {\n    let s: Shape = .circle\n    return s\n}\n"), "`.circle` carries a `Circle`",
           "`.circle(value)`");
 }
 
 export void test_front_types_payload_variant_that_carries_nothing_takes_none() {
-    fails(shapes("fn make() -> Shape {\n    s: Shape = .empty(1)\n    return s\n}\n"), "`.empty` carries no value",
+    fails(shapes("fn make() -> Shape {\n    let s: Shape = .empty(1)\n    return s\n}\n"), "`.empty` carries no value",
           "`.empty` alone");
 }
 
 export void test_front_types_payload_match_binds_what_the_variant_carries() {
-    clean(
-        shapes("fn area(s: Shape) -> f32 {\n    a: f32 = match s {\n        .circle(c) => c.radius * c.radius\n        "
-               ".rect(r) => r.w * r.h\n        .empty => 0\n    }\n    return a\n}\n"));
+    clean(shapes(
+        "fn area(s: Shape) -> f32 {\n    let a: f32 = match s {\n        .circle(c) => c.radius * c.radius\n        "
+        ".rect(r) => r.w * r.h\n        .empty => 0\n    }\n    return a\n}\n"));
 }
 
 export void test_front_types_payload_match_must_cover_every_variant() {
-    fails(shapes("fn area(s: Shape) -> f32 {\n    a: f32 = match s {\n        .circle(c) => c.radius\n        "
+    fails(shapes("fn area(s: Shape) -> f32 {\n    let a: f32 = match s {\n        .circle(c) => c.radius\n        "
                  ".rect(r) => r.w\n    }\n    return a\n}\n"),
           "does not cover `.empty`", "");
 }
 
 export void test_front_types_payload_match_binding_has_the_payload_type() {
-    fails(shapes(
-              "fn area(s: Shape) -> f32 {\n    a: f32 = match s {\n        .circle(c) => c.w\n        .rect(r) => r.w\n"
-              "        .empty => 0\n    }\n    return a\n}\n"),
+    fails(shapes("fn area(s: Shape) -> f32 {\n    let a: f32 = match s {\n        .circle(c) => c.w\n        .rect(r) "
+                 "=> r.w\n"
+                 "        .empty => 0\n    }\n    return a\n}\n"),
           "w", "");
 }
 
 export void test_front_types_payload_match_binding_on_a_bare_variant_is_refused() {
-    fails(shapes("fn area(s: Shape) -> f32 {\n    a: f32 = match s {\n        .circle(c) => 1\n        .rect(r) => 2\n"
-                 "        .empty(e) => 0\n    }\n    return a\n}\n"),
+    fails(shapes(
+              "fn area(s: Shape) -> f32 {\n    let a: f32 = match s {\n        .circle(c) => 1\n        .rect(r) => 2\n"
+              "        .empty(e) => 0\n    }\n    return a\n}\n"),
           "`.empty` carries no value to bind", "");
 }

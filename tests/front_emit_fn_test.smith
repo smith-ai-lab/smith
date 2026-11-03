@@ -1,6 +1,6 @@
 // Tests of what front::emit does for functions in smith's own syntax (#1577, wave 3 of #1428): `pub`, `@inline` and its
-// kin, `@c_name`, `main`, the last line as the value, `_ := f()` and a local `const`. The trees are built by hand, as
-// in tests/front_emit_call_test.smith, which says why a test keeps its tree in an arena and emits with the system's
+// kin, `@c_name`, `main`, the last line as the value, `let _ = f()` and a local `const`. The trees are built by hand,
+// as in tests/front_emit_call_test.smith, which says why a test keeps its tree in an arena and emits with the system's
 // allocator.
 module front_emit_fn_test;
 
@@ -233,7 +233,7 @@ export void test_front_emit_fn_a_void_function_ends_with_a_call() {
     emit_jit::stop(&host);
 }
 
-// `_ := one()` twice and a local `const LIMIT := 10`, then the sum.
+// `let _ = one()` twice and a local `const LIMIT = 10`, then the sum.
 export void test_front_emit_fn_discard_and_a_local_const() {
     TreeMemory trees = {};
     tree_begin(&trees);

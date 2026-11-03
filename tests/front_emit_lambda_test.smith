@@ -153,37 +153,38 @@ export void test_front_emit_lambda_a_lambda_with_no_captures_is_called() {
 }
 
 export void test_front_emit_lambda_a_capture_is_read_and_a_mut_capture_is_written() {
-    passes(
-        "fn twice(x: i32, f: fn(i32) -> i32) -> i32 {\n    f(f(x))\n}\n"
-        "fn repeat(n: i32, body: fn()) {\n    mut i := 0\n    while i < n {\n        body()\n        i += 1\n    }\n}\n"
-        "pub fn check() -> i32 {\n    step := 10\n"
-        "    if twice(1, fn(x: i32) -> i32 { x + step }) != 21 {\n        return 2\n    }\n"
-        "    mut count := 0\n    repeat(3) {\n        count += 2\n    }\n"
-        "    if count != 6 {\n        return 3\n    }\n    0\n}\n");
+    passes("fn twice(x: i32, f: fn(i32) -> i32) -> i32 {\n    f(f(x))\n}\n"
+           "fn repeat(n: i32, body: fn()) {\n    let mut i = 0\n    while i < n {\n        body()\n        i += 1\n    "
+           "}\n}\n"
+           "pub fn check() -> i32 {\n    let step = 10\n"
+           "    if twice(1, fn(x: i32) -> i32 { x + step }) != 21 {\n        return 2\n    }\n"
+           "    let mut count = 0\n    repeat(3) {\n        count += 2\n    }\n"
+           "    if count != 6 {\n        return 3\n    }\n    0\n}\n");
 }
 
 export void test_front_emit_lambda_a_stored_lambda_with_no_captures_is_called_through_a_local() {
     passes("fn apply(f: fn(i32) -> i32, x: i32) -> i32 {\n    f(x)\n}\n"
-           "pub fn check() -> i32 {\n    step := 10\n    mut count := 0\n    count += step\n"
-           "    dbl := fn(x: i32) -> i32 { x * 2 }\n"
+           "pub fn check() -> i32 {\n    let step = 10\n    let mut count = 0\n    count += step\n"
+           "    let dbl = fn(x: i32) -> i32 { x * 2 }\n"
            "    if dbl(21) != 42 {\n        return 4\n    }\n"
            "    if dbl(4) != 8 {\n        return 5\n    }\n    0\n}\n");
 }
 
 export void test_front_emit_lambda_return_leaves_only_the_lambda() {
-    passes("fn apply(f: fn(i32) -> i32, x: i32) -> i32 {\n    f(x)\n}\n"
-           "pub fn check() -> i32 {\n"
-           "    r := apply(fn(x: i32) -> i32 {\n        if x > 2 {\n            return 100\n        }\n        x\n    "
-           "}, 5)\n"
-           "    if r != 100 {\n        return 1\n    }\n"
-           "    if apply(fn(x: i32) -> i32 {\n        if x > 2 {\n            return 100\n        }\n        x\n    }, "
-           "1) != 1 {\n        return 2\n    }\n    0\n}\n");
+    passes(
+        "fn apply(f: fn(i32) -> i32, x: i32) -> i32 {\n    f(x)\n}\n"
+        "pub fn check() -> i32 {\n"
+        "    let r = apply(fn(x: i32) -> i32 {\n        if x > 2 {\n            return 100\n        }\n        x\n    "
+        "}, 5)\n"
+        "    if r != 100 {\n        return 1\n    }\n"
+        "    if apply(fn(x: i32) -> i32 {\n        if x > 2 {\n            return 100\n        }\n        x\n    }, "
+        "1) != 1 {\n        return 2\n    }\n    0\n}\n");
 }
 
 export void test_front_emit_lambda_a_loop_with_break_inside_a_lambda_inside_a_loop() {
     passes("fn apply(f: fn(i32) -> i32, x: i32) -> i32 {\n    f(x)\n}\n"
-           "pub fn check() -> i32 {\n    mut total := 0\n    mut i := 0\n    while i < 3 {\n"
-           "        total += apply(fn(n: i32) -> i32 {\n            mut k := 0\n            while true {\n"
+           "pub fn check() -> i32 {\n    let mut total = 0\n    let mut i = 0\n    while i < 3 {\n"
+           "        total += apply(fn(n: i32) -> i32 {\n            let mut k = 0\n            while true {\n"
            "                if k >= n {\n                    break\n                }\n                k += 1\n        "
            "    }\n"
            "            k\n        }, i + 1)\n        i += 1\n    }\n"
@@ -192,8 +193,8 @@ export void test_front_emit_lambda_a_loop_with_break_inside_a_lambda_inside_a_lo
 
 export void test_front_emit_lambda_a_lambda_in_a_lambda_captures_through_it() {
     passes("fn apply(f: fn(i32) -> i32, x: i32) -> i32 {\n    f(x)\n}\n"
-           "pub fn check() -> i32 {\n    base := 100\n"
-           "    r := apply(fn(x: i32) -> i32 { apply(fn(y: i32) -> i32 { y + base }, x) }, 5)\n"
+           "pub fn check() -> i32 {\n    let base = 100\n"
+           "    let r = apply(fn(x: i32) -> i32 { apply(fn(y: i32) -> i32 { y + base }, x) }, 5)\n"
            "    if r != 105 {\n        return 1\n    }\n    0\n}\n");
 }
 
@@ -206,7 +207,7 @@ export void test_front_emit_lambda_the_function_type_is_a_code_and_a_context() {
 }
 
 export void test_front_emit_lambda_a_stored_lambda_with_captures_is_not_emitted_yet() {
-    stops_with("pub fn check() -> i32 {\n    k := 3\n    f := fn(x: i32) -> i32 { x + k }\n    f(1)\n}\n", true,
+    stops_with("pub fn check() -> i32 {\n    let k = 3\n    let f = fn(x: i32) -> i32 { x + k }\n    f(1)\n}\n", true,
                "not emitted yet: a stored lambda with captures", "fn(x: i32)");
 }
 

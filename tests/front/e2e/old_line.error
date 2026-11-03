@@ -1,1 +1,1 @@
-<dir>/src/old_line.smith:1:18: error: a declaration ends with the line, not `;`: remove it
+<dir>/src/old_line.smith:1:17: error: a declaration ends with the line, not `;`: remove it

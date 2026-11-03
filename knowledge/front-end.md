@@ -110,7 +110,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - New syntax (S4, #1445): a statement ends at `;`, at the end of its line or before `}`; `return` at the end of a line has no value.
 - `if c { } else if d { } else { }` and `while c { }` take no parentheses and require braces; `if let .some(x) = e { }`; `for x in xs { }`; `for (i, x) in e { }`.
 - `match s { .a => v }` is one arm per line, patterns joined by `,`. Old and new forms are told apart by fixed lookahead (`new_header`, `new_for`).
-- Bindings (#1527): `a := 3`, `b: i32 = 4`, `mut c := 0`, `_ := f()` go through `parse_decl`'s `starts_binding`; `(q, r) := g()` is `destructure`. `name:` is a binding only with `Parser.new_syntax` (else a label).
+- Bindings (#1810 of #1428): `let a = 3`, `let b: i32 = 4`, `let mut c = 0`, `let _ = f()`, `const X = v` go through `parse_decl`'s `starts_binding`; `let` is the name `let` read in context (`let_at`: a name, `mut` or `(` follows), not a keyword. A binding with no `= value` is an error that says to give one or write `= undefined` (an `extern let` has none); `let (q, mut r) = g()` is `destructure`, `mut` marking one name (`Identifier.is_mut`). `name:` is a binding only with `Parser.new_syntax` (else a label).
 - `yield x` (#1544) is `ast::yield_stmt`, dumped `(yield <value>)`; whether it stands in a generator is the checker's (#1545).
 - `errdefer <statement>` is `errdefer_stmt` (A7l, #1356), read like `defer`; that it needs a function returning a `result` or `option` is the checker's rule.
 - Old statement forms are warnings with fixes (F3, #1508): a `;` before a line break or `}` is removed; `if (c) s` and `while (c) s` lose parentheses and gain braces.
@@ -132,11 +132,11 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - Import alias (A7k, #1353): `import lib::text as tx;` keeps `alias`; `as` is a keyword only right after an import path (`parse_decl::at_as`).
 - Imports (#1809): `import a.b.c` / `import a.b.c as x` (and `pub import ...`) are one-line statements that read into an `import_module` declaration, `alias` being `x` (empty when absent) and the path joined by `.` (`parse_import`); `import c <h.h>` / `import cpp <h>` / `import objc <h>` (`as name` optional) read into `import_c` with `language` and `alias`, the default name being the header's file name without the extension (`as` is required when that is not a name); `from a.b import x, y` and `from c <h.h> import x` read into `import_from`, and the checker binds each name in the module (`declare_from_names`; nested imported modules do not bind theirs yet). An `as` that repeats the default name is a warning whose fix removes it. The old `m := import a.b` is gone. `import a::b;` and `import a::b as m;` still read and record a warning that writes `import a.b` / `import a.b as m`; every `::` in a path (`parse_type::path`, an `@a::b` attribute) records `parse::warn_separator`, whose fix writes `.`. `.` before a type name continues a type path after a lowercase name (`build.Build`); `Color.Red` stays a member. `import(a.b).f(1)` as an expression waits for the checker ticket that reads modules as values.
 - `Type T` without `constexpr` (A7m, #1357) parses as an ordinary parameter; the checker reports it (N1, #1339: write `constexpr Type T`).
-- Declarations in smith's own syntax (S3, #1444): `a := v`, `a: T = v`, `mut a: T`, `const X := v`, `pub`, `@attr`, `fn name(a: T, mut b: T, const n: usize, T: type, rest: ...) -> R { }`.
+- Declarations in smith's own syntax (S3, #1444; `let` since #1810): `let a = v`, `let a: T = v`, `let mut a: T = v`, `const X = v`, `pub let mut`, `extern let mut`, `pub`, `@attr`, `fn name(a: T, mut b: T, const n: usize, T: type, rest: ...) -> R { }`.
 - Also `struct Name { field: T }` and `enum Name: u8 { low = 2 }`, one member per line with no `;` or `,`. New is told from old by the first one or two tokens.
 - Keywords as names (#1770): after `.` a keyword is a member name (`x.module`, `t.type`) and in a struct body a field may be named with one (`module: str`); both positions are unambiguous. A local or parameter named with a keyword is still an error, and `int : 3` stays an unnamed C bit-field.
 - A declaration ends with its line; a `;` or `,` there is an error with a fix that deletes it. After an error the parse skips to the end of the line (`recover_line`).
-- `parse_decl::at_destructure(p)` and `destructure(p)` read `(q, r) := f()` for the statement parser; `declaration` on one is an error.
+- `parse_decl::at_destructure(p)` and `destructure(p)` read `let (q, mut r) = f()` for the statement parser; `declaration` on one is an error.
 - Old declaration forms are warnings with fixes (F2, #1507): `module a::b;` removed, `export` to `pub`, `I32 a = 3;` to `a: I32 = 3`, `R f(A a) {...}` to `fn f(a: A) -> R {...}`.
 - Likewise fields and enum members to one per line, `typedef struct {...} N;` to `struct N {...}`, and `[[gnu::x]]` or `[[std::x]]` attributes to `@name`.
 - No mechanical fix, so a warning with no edits: a prototype, a parameter with no name, an array suffix, a bit-field, `extern`, a typedef whose tag has another name.
@@ -166,7 +166,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - Assigning to a name declared without `mut` inserts `mut ` before its name (a local or parameter, not `const`, not after an attribute).
 - Writing through a `*T` turns the declaration's `*T` into `*mut T`; when that pointer is `p := &x` of a constant `x`, the fix adds `mut` to `x`.
 - No fix removes a `mut`. In smith's own syntax `*T` is read-only (`pointee_const`) and `*mut T` writable.
-- Preprocessor lines (#1748, `front/fix_directive.smith`): the error of the first `#` carries one fix for every simple line in the file: `#define N 4` becomes `const N := 4` and `#include <h.h>` becomes `import c <h.h>`. `#if defined(__APPLE__)` / `defined(__linux__)` (also `#ifdef`, `#ifndef`, `!`, `#elif`, `#else`) around whole top-level declarations becomes `@when(target.os == .macos)` (`.linux`, `!=` for the `#else`) on each declaration, the `#if`/`#else`/`#endif` lines removed (#1801); an `#if` about anything else, inside a function, nested or around another directive keeps the error with no fix, as do `#pragma`, `#error`, a function-like `#define` and `#include "h"`.
+- Preprocessor lines (#1748, `front/fix_directive.smith`): the error of the first `#` carries one fix for every simple line in the file: `#define N 4` becomes `const N = 4` and `#include <h.h>` becomes `import c <h.h>`. `#if defined(__APPLE__)` / `defined(__linux__)` (also `#ifdef`, `#ifndef`, `!`, `#elif`, `#else`) around whole top-level declarations becomes `@when(target.os == .macos)` (`.linux`, `!=` for the `#else`) on each declaration, the `#if`/`#else`/`#endif` lines removed (#1801); an `#if` about anything else, inside a function, nested or around another directive keeps the error with no fix, as do `#pragma`, `#error`, a function-like `#define` and `#include "h"`.
 - Method calls (#1797, `front/fix_method.smith`, skill `smith-lang-methods`): after a clean check, `fix::checker_fixes` makes one fix for each call `m.f(a, ...)` where `m` is an imported module, `a` has a record type `m` defines and `f` is a `pub` function of `m` taking that type first; it writes `a.f(...)` (the receiver of `&x` is `x`). It needs the modules read, so `fix_run` sets a loader over `src/` and `lib/`; without a loader (`fix::set_loader`) nothing is rewritten. Tested by `tests/front_fix_method_test.smith`.
 - Tests: `tests/front_fix_test.smith`, `tests/front_fix_mut_test.smith`.
 
@@ -239,10 +239,10 @@ Declarations, statements and bodies, joining J1a to J1c. `types_decl::check_modu
 - Lambdas are checked after the body that holds them: the hook keeps a copy of the scopes, and `drain` walks each body with the parameters from the expected `Fn(F)`.
 - Not yet typed: `switch`, `static_assert` in a body, `if constexpr` and `for constexpr`, a local type or function, a `c::` name (#1124). A function that falls off its end is not reported.
 - Spelling (K5, #1347): `Char` is a builtin 8-bit unsigned type of its own; `char` and `bool` in a type position are errors in today's syntax. A character literal has type `Char`.
-- `const` and `constexpr` bindings are known at compile time (#1510, C1): `const a := n` with `n` not constant is an error naming `const a` (`require_constant`).
-- In smith's own syntax (`is_new`): a name that hides an enclosing one is an error naming the earlier declaration by byte offset; `_ := f()` declares nothing.
-- A call whose result is not `Void` and is unused is an error (`write _ := ...`), judged once the function has a parameter or an earlier local in that syntax.
-- `(q, r) := f()` and `mut (q, r) := f()` (#1558, `destructure_statement`) split a tuple: `_` discards one, a count that differs from the tuple's is an error naming both.
+- `const` and `constexpr` bindings are known at compile time (#1510, C1): `const a = n` with `n` not constant is an error naming `const a` (`require_constant`).
+- In smith's own syntax (`is_new`): a name that hides an enclosing one is an error naming the earlier declaration by byte offset; `let _ = f()` declares nothing.
+- A call whose result is not `Void` and is unused is an error (`write let _ = ...`), judged once the function has a parameter or an earlier local in that syntax.
+- `let (q, r) = f()` and `let (q, mut r) = f()` (#1558, `destructure_statement`) split a tuple: `_` discards one, a count that differs from the tuple's is an error naming both.
 - `undefined` (K3b, #1334) is taken only as a local's whole initializer with the declared type (`types_expr::is_undefined`, `local_variable`).
 - Tests: `tests/front_types_decl_test.smith` (all of `lib/std/ascii.smith` checks clean), goldens `tests/front/types/decl_*.txt`.
 
@@ -336,7 +336,7 @@ Iteration in the checker; the rules are the top comment of the file.
 - A file-scope variable is a global with a constant initializer, read and assigned by its bare name (`memory::is_global_name`). `emit::module` calls `memory::release`.
 - Checked casts (K2, #1329): `Options.checked` is the checker's `types::Checked` (null: no cast is checked). `cast` asks `types::cast_checked(...).needed`, then converts, converts back and compares.
 - `p.x` through a pointer loads it and takes the pointee's field, as `->` does (#1580); `pp.x` on a pointer to a pointer is an Error. `p as usize` is `ptrtoint`, `n as *u8` is `inttoptr`, pointer-wide only.
-- Zero is initialization (K3, #1330): a local `T t;` stores the zero of `T` at the declaration; `T t = undefined;` makes the slot with no store. `auto t;` is an Error.
+- There are no zero values (#1810 of #1428): a declaration with no value is an Error (checker and emitter); `= undefined` makes the slot with no store, except that with `Options.fill_undefined` (`compile` sets it: objects are made at optimization 0) the slot is filled with the byte 0xAA (`declare_undefined`). The fix-it writes `let mut x: T = undefined` for `T x;` (`= 0` for a static or a file's number, which C zeroes). A read of an `undefined` local before a write is not yet an error (#1854).
 - `vec(T, N)` (#1630): `T` a number type, `N` an integer literal of 1 or more; `vec(f32, 4)(1, 2, 3, 4)` or a list `[1, 2, 3, 4]` where a vector is expected; element-wise `+ - * / %` and the comparisons (a `vec(bool, N)`) between two vectors of one type or a vector and a scalar of its element; `v[i]` and `v[i] = x` (a constant index out of range is an error, a run-time one is checked). Emitted as one `<N x T>`. Not yet: signed integer lanes' arithmetic (the overflow checks), integer division, bitwise operators and unary `-` on a vector, `v += w`, swizzles, writing a lane of a `vec(bool, N)`.
 - `fn` values (#1620): a lambda is an internal function `<symbol>::lambda.<n>` taking its context first; a lambda written as a call argument captures locals by reference, one that captures nothing has a null context, `f(a, b)` on a `fn` local is an indirect call. Still not emitted: slices, unions, pointer arithmetic and comparison, a stored lambda with captures, a function named as a value.
 
@@ -348,7 +348,7 @@ Iteration in the checker; the rules are the top comment of the file.
 
 **Functions in smith's own syntax** (`emit.smith`, #1577): `pub` is external linkage; `@inline`, `@noinline`, `@cold` are `alwaysinline`, `noinline`, `cold`; `@c_name("x")` makes `x` the symbol.
 - A function named `main` has the symbol `main`. The last line of a body, an expression statement with a non-`Void` result, is returned as `return <expression>`.
-- `_ := f()` evaluates and drops the value; a local `const X := v` is an ordinary slot stored once. Tests: `tests/front_emit_fn_test.smith`.
+- `let _ = f()` evaluates and drops the value; a local `const X = v` is an ordinary slot stored once. Tests: `tests/front_emit_fn_test.smith`.
 
 **Debug info** (`emit_debug.smith`, B5, #1135): with `Options.debug_info`, a DIBuilder, a C11 compile unit (producer `smith`), a `DISubprogram` per function, a `DILocalVariable` per parameter and local, and a `DILocation` on every instruction.
 - A name or literal keeps the location of the statement or operator around it; a continuation gets the location of the node that pushed it (`debug::then_location`).
@@ -391,7 +391,7 @@ The front end has its own runner (`tests/front_units/build.c`, `front-project`),
 - Golden files under `tests/front/<area>/` hold dumps (ast, tokens, IR, checker types, parser cases); rewrite them with the runner's `--update` or `FRONT_UPDATE=1` for the corpus.
 - The e2e corpus `tests/front/e2e/` is run by `tests/front_e2e_test.smith` through `compile::file`; each case is a module in smith's own syntax.
 - To add an e2e case: add `<name>.smith` with `pub fn check() -> i32` returning 0, which is compiled, linked with a `main.c` and run; or add `<name>.error` beside it with the exact diagnostics (scratch folder written `<dir>`).
-- The folder is in `.clang-format-ignore` (`smith fmt` would rewrite `:=`). No test file lists cases: the folder is read.
+- The folder is in `.clang-format-ignore` (`smith fmt` would rewrite the new forms). No test file lists cases: the folder is read.
 - Run all: `smith build test-front`; one test: `smith test --test <name>` (a glob such as `'front_types_expr_test::*golden*'` works for a group).
 
 ### front::types_attr (`front/types_attr.smith`, #1628)

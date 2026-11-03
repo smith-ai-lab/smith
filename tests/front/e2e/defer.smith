@@ -12,7 +12,7 @@ fn early(log: *mut i32, leave: bool) -> i32 {
 }
 
 pub fn check() -> i32 {
-    mut log := 0
+    let mut log = 0
     if early(&log, true) != 7 || log != 1 {
         return 1
     }
@@ -21,7 +21,7 @@ pub fn check() -> i32 {
         return 2
     }
     log = 0
-    mut i := 0
+    let mut i = 0
     while i < 3 {
         i += 1
         defer note(&log, 5)

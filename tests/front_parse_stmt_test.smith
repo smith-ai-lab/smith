@@ -338,7 +338,8 @@ export void test_parse_stmt_bindings_in_smith_syntax() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str source = "{\na := 3\nb: i32 = 4\nmut c := 0\nmut d: i32 = 1\n_ := f()\n(q, r) := g()\nmut (s, t) := h()\nx\n}";
+    Str source = "{\nlet a = 3\nb: i32 = 4\nlet mut c = 0\nlet mut d: i32 = 1\nlet _ = f()\nlet (q, r) = g()\nlet (mut "
+                 "s, mut t) = h()\nx\n}";
     parse::Parser p = parser_in(source, true);
     p.hooks.declaration = parse_decl::declaration;
     p.hooks.type = parse_type::type;

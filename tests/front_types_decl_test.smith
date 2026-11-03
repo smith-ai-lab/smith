@@ -264,7 +264,7 @@ export void test_front_types_decl_a_value_returned_from_a_void_function() {
 }
 
 export void test_front_types_decl_auto_without_a_value() {
-    fails("Void f() { Auto x; }", "`Auto x` has no value", "Auto x = value;");
+    fails("Void f() { Auto x; }", "`x` needs a value", "= undefined");
 }
 
 export void test_front_types_decl_auto_from_null() {
@@ -327,13 +327,13 @@ export void test_front_types_decl_show_keeps_const_on_slice_and_array_elements()
 // syntax are module-level: the statement parser does not read `:=` in a body yet.
 export void test_front_types_decl_const_of_constants_is_accepted() {
     reading_new = true;
-    clean("const a := 3\nconst b := a\nconst f := 2.5\n");
+    clean("const a = 3\nconst b = a\nconst f = 2.5\n");
     reading_new = false;
 }
 
 export void test_front_types_decl_const_of_a_variable_is_refused() {
     reading_new = true;
-    fails("mut n := 3\nconst a := n\n", "`const a` is known at compile time", "without `const`");
+    fails("let mut n = 3\nconst a = n\n", "`const a` is known at compile time", "without `const`");
     reading_new = false;
 }
 
@@ -342,13 +342,13 @@ export void test_front_types_decl_local_constexpr_of_a_variable_is_refused() {
     clean("Void g() { constexpr auto a = 3; constexpr auto b = a * 2; }");
 }
 
-// #1510 (C1, part 2): in smith's own syntax a name may not shadow another, `_ := f()` discards a result, and an unused
-// result of a call is an error. Bodies are read by the statement parser of #1527.
+// #1510 (C1, part 2): in smith's own syntax a name may not shadow another, `let _ = f()` discards a result, and an
+// unused result of a call is an error. Bodies are read by the statement parser of #1527.
 export void test_front_types_decl_shadowing_is_refused() {
     reading_new = true;
-    fails("fn g() { a := 1\n { a := 2\n } }", "`a` hides the `a` declared at byte", "choose another name");
-    fails("fn g(x: i32) { x := 2\n }", "`x` hides", "shadowing is an error");
-    clean("fn g() { { a := 1\n }\n { a := 2\n } }");
+    fails("fn g() { let a = 1\n { let a = 2\n } }", "`a` hides the `a` declared at byte", "choose another name");
+    fails("fn g(x: i32) { let x = 2\n }", "`x` hides", "shadowing is an error");
+    clean("fn g() { { let a = 1\n }\n { let a = 2\n } }");
     reading_new = false;
 }
 
@@ -360,14 +360,14 @@ export void test_front_types_decl_an_old_local_may_shadow() {
 // today's.)
 export void test_front_types_decl_a_discard_is_accepted() {
     reading_new = true;
-    clean("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) { _ := f(x)\n }");
-    clean("fn g(x: i32) { _ := x\n _ := x\n }");
+    clean("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) { let _ = f(x)\n }");
+    clean("fn g(x: i32) { let _ = x\n let _ = x\n }");
     reading_new = false;
 }
 
 export void test_front_types_decl_an_unused_result_is_refused() {
     reading_new = true;
-    fails("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) { f(x)\n }", "is not used", "write `_ := ...`");
+    fails("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) { f(x)\n }", "is not used", "write `let _ = ...`");
     clean("fn f(x: i32) {\n}\nfn g(x: i32) { f(x)\n }");
     reading_new = false;
 }
@@ -377,19 +377,21 @@ export void test_front_types_decl_a_call_on_the_last_line_is_the_result() {
     reading_new = true;
     clean("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) -> i32 { f(x)\n }");
     fails("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) -> i32 {\n    f(x)\n    return x\n}\n", "is not used",
-          "write `_ := ...`");
-    fails("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) { f(x)\n }", "is not used", "write `_ := ...`");
+          "write `let _ = ...`");
+    fails("fn f(x: i32) -> i32 { return x\n }\nfn g(x: i32) { f(x)\n }", "is not used", "write `let _ = ...`");
     reading_new = false;
 }
 
-// #1558: `(q, r) := f()` splits a tuple.
+// #1558: `let (q, r) = f()` splits a tuple.
 export void test_front_types_decl_destructuring_splits_a_tuple() {
     reading_new = true;
     Str head = "fn divmod(a: i32, b: i32) -> (i32, i32) { return (a / b, a % b)\n }\n";
-    clean(join(head, "fn g() { (q, r) := divmod(7, 2)\n _ := q + r\n }"));
-    clean(join(head, "fn g() { (q, _) := divmod(7, 2)\n _ := q\n }"));
-    clean(join(head, "fn g() { mut (q, r) := divmod(7, 2)\n q = r\n }"));
-    fails(join(head, "fn g() { (a, b, c) := divmod(7, 2)\n }"), "3 names", "2 elements");
-    fails(join(head, "fn g() { (q, r) := divmod(7, 2)\n q = 1\n }"), "cannot", "declare it `mut q`");
+    clean(join(head, "fn g() { let (q, r) = divmod(7, 2)\n let _ = q + r\n }"));
+    clean(join(head, "fn g() { let (q, _) = divmod(7, 2)\n let _ = q\n }"));
+    clean(join(head, "fn g() { let (mut q, mut r) = divmod(7, 2)\n q = r\n }"));
+    clean(join(head, "fn g() { let (q, mut r) = divmod(7, 2)\n r = q\n }"));
+    fails(join(head, "fn g() { let (q, mut r) = divmod(7, 2)\n q = r\n }"), "cannot", "declare it `mut q`");
+    fails(join(head, "fn g() { let (a, b, c) = divmod(7, 2)\n }"), "3 names", "2 elements");
+    fails(join(head, "fn g() { let (q, r) = divmod(7, 2)\n q = 1\n }"), "cannot", "declare it `mut q`");
     reading_new = false;
 }

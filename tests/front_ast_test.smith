@@ -327,7 +327,7 @@ export void test_front_ast_dump_of_the_new_syntax_expressions() {
     test::golden("tests/front/ast/syntax_expressions.txt", ast::dump(&m));
 }
 
-// match shape { .circle(r) => r, .square, .rect => 0 }  for (i, x) in xs { }  for x in xs { }  (q, r) := f()
+// match shape { .circle(r) => r, .square, .rect => 0 }  for (i, x) in xs { }  for x in xs { }  let (q, r) = f()
 // if let .some(v) = o { } else { }
 export void test_front_ast_dump_of_the_new_syntax_statements() {
     arena::Arena memory = test::memory(1U << 22);

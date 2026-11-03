@@ -13,9 +13,10 @@
 //             reference and cannot outlive the call. Any other lambda is stored (a variable, a field, a result): it is
 //             a context and a function pointer, and storing it copies its captures by value into the allocator
 //             (spec: "Captures: no list"). The copy is a pointer or slice into the current function's stack when a
-//             capture is such a variable (`p := &x`, `s := xs[1:3]` where `x`, `xs` are locals), and that dangles once
-//             the function returns, so the checker refuses it and names the capture. `check_lambda(c, e)` is the API,
-//             called by types_expr when it types a lambda; `note_arguments(args)` tells it which lambdas are arguments.
+//             capture is such a variable (`let p = &x`, `let s = xs[1:3]` where `x`, `xs` are locals), and that dangles
+//             once the function returns, so the checker refuses it and names the capture. `check_lambda(c, e)` is the
+//             API, called by types_expr when it types a lambda; `note_arguments(args)` tells it which lambdas are
+//             arguments.
 //
 // No recursion: the walk over a body is a work stack of frames, in the current allocator (std::mem).
 module front::types_fn;

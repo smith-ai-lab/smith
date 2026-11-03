@@ -4,7 +4,7 @@
 // `#include` of a header have a spelling in smith's own syntax, so the error of that `#` carries one fix with the edits
 // of every such line in the file:
 //
-//   #define LIMIT 4                 const LIMIT := 4
+//   #define LIMIT 4                 const LIMIT = 4
 //   #include <sys/stat.h>           import c <sys/stat.h>   (`as name` only when the file's name is not a name)
 //
 //   #if defined(__APPLE__)          @when(target.os == .macos)   (before each declaration of the branch;
@@ -73,7 +73,7 @@ static Bool define_edit(Str s, Usize hash, Usize at, Usize end, parse::Edits *ed
     while (last > value && (s[last - 1] == ' ' || s[last - 1] == '\t' || s[last - 1] == '\r'))
         last -= 1;
     if (value == last || s[last - 1] == '\\') return false;
-    push(edits, hash, last, as_str(format::push("const ", s[name_start:name_end], " := ", s[value:last])));
+    push(edits, hash, last, as_str(format::push("const ", s[name_start:name_end], " = ", s[value:last])));
     return true;
 }
 
