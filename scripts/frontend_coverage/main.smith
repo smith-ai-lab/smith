@@ -595,7 +595,7 @@ static I32 run(const char *smith, const char *root, const char *scratch) {
     }
     for (Usize i = 0; i < entry_count; i++) {
         console::print((const char *)entries[i].path, "\t", (const char *)entries[i].stage, "\t",
-                       (const char *)entries[i].message, "\n");
+                       (const char *)entries[i].message, "\t", (const char *)entries[i].position, "\n");
     }
     return 0;
 }
