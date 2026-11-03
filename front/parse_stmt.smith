@@ -929,7 +929,8 @@ static ast::Stmt *match_layout(parse::Parser *p) {
         if (countof(p->errors) == before) parse::expect(p, lex::colon, "`:` after the pattern");
         ast::Expr *result = nullptr;
         if (countof(p->errors) == before) result = expression(p);
-        if (countof(p->errors) == before && !parse::at(p, lex::newline) && !parse::at(p, lex::dedent))
+        Bool block_ended = p->position > 0 && p->tokens[p->position - 1].kind == lex::dedent; // `.a: do:` and its block
+        if (countof(p->errors) == before && !block_ended && !parse::at(p, lex::newline) && !parse::at(p, lex::dedent))
             parse::error(p, parse::peek(p).span, "expected the end of the line: one arm per line");
         if (countof(p->errors) == before) parse::accept(p, lex::newline);
         arms = mem::realloc(arms, countof(arms) + 1);

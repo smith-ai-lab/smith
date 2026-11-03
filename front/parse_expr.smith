@@ -728,13 +728,35 @@ static Usize after_group(const parse::Parser *p, Usize offset, lex::TokenKind op
     return offset;
 }
 
+// The token that opens a lambda's body: the `:` of the layout path, a `{` otherwise.
+static lex::TokenKind body_opener(const parse::Parser *p) {
+    return p->layout ? lex::colon : lex::left_brace;
+}
+
+// The body of a lambda or a `do:` in the layout path, after its `:`: an indented block on the lines that follow, or
+// one expression on the same line, which is a block of that one statement.
+static ast::Stmt *layout_body(parse::Parser *p) {
+    if (parse::at(p, lex::newline)) return parse::statement(p);
+    U32 start = parse::peek(p).span.start;
+    ast::Expr *value = parse::expression(p);
+    if (value == nullptr) return nullptr;
+    ast::Stmt *line = ast::new_stmt((ast::Stmt){.kind = {.expression = {.value = value}}});
+    line->span = parse::span_from(p, start);
+    ast::StmtRef list[:] = {};
+    list = mem::realloc(list, 1);
+    list[0] = line;
+    ast::Stmt *body = ast::block(list);
+    body->span = line->span;
+    return body;
+}
+
 // Whether the `fn` at the position starts a lambda (a body follows its parameters and result) and not a function type.
 static Bool fn_has_body(const parse::Parser *p) {
     Usize at = 1;
     if (parse::peek_at(p, at).kind == lex::left_bracket) at = after_group(p, at, lex::left_bracket, lex::right_bracket);
     if (parse::peek_at(p, at).kind != lex::left_paren) return false;
     at = after_group(p, at, lex::left_paren, lex::right_paren);
-    if (parse::peek_at(p, at).kind == lex::left_brace) return true;
+    if (parse::peek_at(p, at).kind == body_opener(p)) return true;
     if (parse::peek_at(p, at).kind != lex::arrow) return false;
     Usize depth = 0;
     for (Usize i = at + 1; i < at + 1 + countof(p->tokens); i += 1) {
@@ -745,10 +767,10 @@ static Bool fn_has_body(const parse::Parser *p) {
             depth -= 1;
         }
         if (depth > 0) continue;
-        if (kind == lex::left_brace) return true;
+        if (kind == body_opener(p)) return true;
         if (kind == lex::comma || kind == lex::semicolon || kind == lex::equal || kind == lex::right_brace)
             return false;
-        if (kind == lex::end_of_file) return false;
+        if (kind == lex::end_of_file || kind == lex::newline || kind == lex::dedent) return false;
     }
     return false;
 }
@@ -796,10 +818,26 @@ static ast::Expr *fn_lambda(parse::Parser *p) {
         result = parse::type(p);
         if (result == nullptr) return nullptr;
     }
-    ast::Stmt *body = parse::statement(p);
+    ast::Stmt *body = nullptr;
+    if (p->layout) {
+        if (!expect_ok(p, lex::colon, "`:` to start the lambda's body")) return nullptr;
+        body = layout_body(p);
+    } else {
+        body = parse::statement(p);
+    }
     if (body == nullptr) return nullptr;
     return make(parse::span_from(p, start),
                 {.lambda = {.captures = captures, .params = params, .result = result, .body = body}});
+}
+
+// `do:` and then an indented block, or one expression: a block used as a value, its last line the value. The position
+// is at `do`.
+static ast::Expr *do_block(parse::Parser *p) {
+    U32 start = parse::advance(p).span.start;
+    if (!expect_ok(p, lex::colon, "`:` after `do`")) return nullptr;
+    ast::Stmt *body = layout_body(p);
+    if (body == nullptr) return nullptr;
+    return make(parse::span_from(p, start), {.stmt_expr = {.stmt = body}});
 }
 
 // An `if`, `match`, `for` or block in expression position: the statement it is.
@@ -909,13 +947,16 @@ static ast::Expr *primary(parse::Parser *p) {
     case lex::dot:
         return variant_value(p);
     case lex::left_brace:
-        if (p->new_syntax && !designated_list_ahead(p)) return statement_value(p);
+        if (p->new_syntax && !p->layout && !designated_list_ahead(p)) return statement_value(p);
         return initializer_list(p, nullptr, token.span.start, 0);
     case lex::left_bracket:
         if (p->new_syntax && !at_old_lambda(p)) return array_literal(p);
         return lambda(p);
     case lex::kw_fn:
         return fn_lambda(p);
+    case lex::kw_do:
+        if (p->layout) return do_block(p);
+        return name_or_type(p);
     case lex::kw_fn_once:
         return type_value(p);
     case lex::kw_if:
@@ -1425,12 +1466,13 @@ static ast::Expr *argument(parse::Parser *p) {
     return make(parse::span_from(p, name.span.start), {.named_arg = {.name = parse::text(p, name), .value = value}});
 }
 
-// The trailing block of a call, `f(x) { ... }`: a `{` on the line of the `)` is a lambda with no parameters, the call's
-// last argument. The position is at the `{`.
+// The trailing block of a call, `f(x) { ... }` (layout path: `f(x):` and an indented block): a `{` on the line of the
+// `)` is a lambda with no parameters, the call's last argument. The position is at the `{`, or at the `:`.
 static ast::Expr *trailing_block(parse::Parser *p) {
     U32 start = parse::peek(p).span.start;
     ast::Identifier captures[:] = {};
     ast::Param params[:] = {};
+    if (p->layout) parse::advance(p);
     ast::Stmt *body = parse::statement(p);
     if (body == nullptr) return nullptr;
     return make(parse::span_from(p, start),
@@ -1440,8 +1482,21 @@ static ast::Expr *trailing_block(parse::Parser *p) {
 // Whether a trailing block follows the `)` just taken: smith's own syntax, not in a condition head, and the `{` on the
 // same line (a line break after the `)` ends the statement).
 static Bool has_trailing_block(const parse::Parser *p, Bool head) {
+    if (p->layout) {
+        // `f(x):` at the end of the line, with an indented block under it; a `:` followed by more on the line is a
+        // slice, a conditional or an arm.
+        return !head && parse::at(p, lex::colon) && parse::peek_at(p, 1).kind == lex::newline &&
+               parse::peek_at(p, 2).kind == lex::indent;
+    }
     if (!p->new_syntax || head || !parse::at(p, lex::left_brace) || p->position == 0) return false;
     return !p->tokens[p->position - 1].line_break;
+}
+
+// Whether a trailing lambda follows the `)` just taken (layout path): `fn(a, b): ...` on the same line.
+static Bool has_trailing_lambda(const parse::Parser *p, Bool head) {
+    if (!p->layout || head || !parse::at(p, lex::kw_fn) || p->position == 0) return false;
+    if (p->tokens[p->position - 1].line_break) return false;
+    return fn_has_body(p);
 }
 
 // `f(a, b)` and `f(a) { ... }`: the position is at the parenthesis.
@@ -1459,6 +1514,10 @@ static ast::Expr *call(parse::Parser *p, ast::Expr *callee, Bool head) {
         ast::Expr *block = trailing_block(p);
         if (block == nullptr) return nullptr;
         args = parse_type::with_expr(args, block);
+    } else if (has_trailing_lambda(p, head)) {
+        ast::Expr *lambda_arg = fn_lambda(p); // `sort(xs) fn(a, b): a < b`: the trailing lambda
+        if (lambda_arg == nullptr) return nullptr;
+        args = parse_type::with_expr(args, lambda_arg);
     }
     chain_warning(p, callee);
     return make(parse::span_from(p, callee->span.start), {.call = {.callee = callee, .args = args}});
@@ -1604,6 +1663,9 @@ static Bool inside_brackets(const parse::Parser *p) {
 // A postfix operator applied to the last operand, if one is at the position.
 static Outcome postfix_step(parse::Parser *p, Stack *st) {
     lex::Token token = parse::peek(p);
+    // A block that ends the operand (`do:` or a lambda in an arm) is the end of it: `.b` after its `dedent` starts the
+    // next line.
+    if (p->layout && p->position > 0 && p->tokens[p->position - 1].kind == lex::dedent) return .absent;
     ast::Expr *base = st->values[st->value_count - 1];
     ast::Expr *result = nullptr;
     switch (token.kind) {
