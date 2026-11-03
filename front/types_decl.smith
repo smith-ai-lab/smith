@@ -67,6 +67,7 @@ import front::types_fn;
 import front::types_iter;
 import front::types_stream;
 import front::types_undefined;
+import front::parse as syntax;
 import front::when;
 import std::arena;
 import std::format;
@@ -160,6 +161,20 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     return false;
 }
 
+// `(Void)x` written as a statement discards a value; smith writes that `_ = x`. The fix replaces the cast's head, from
+// the cast to its operand, with `_ = `. Empty for any other cast.
+static syntax::Edits discard_fix(const ast::Expr *e, types::TypeRef to) {
+    syntax::Edits edits = {};
+    if (e->kind != .cast || to->kind != .void_type) {
+        return edits;
+    }
+    edits = mem::realloc(edits, 1);
+    Str word = "_ = ";
+    ast::Span head = {.start = e->span.start, .end = e->kind.cast.operand->span.start};
+    edits[0] = (syntax::Edit){.span = head, .text = word};
+    return edits;
+}
+
 // Whether the cast `e` may be written; a cast that can lose a value is marked for a run-time check (K1, #1328).
 static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
     types_convert::Literal lit = types_convert::no_literal();
@@ -179,7 +194,7 @@ static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from
     }
     types_convert::Verdict verdict = types_convert::cast_ok(&c->table, from, to, lit);
     if (!verdict.ok) {
-        types::fail(c, e->span, verdict.message);
+        types::fail_fix(c, e->span, verdict.message, discard_fix(e, to));
         return false;
     }
     if (verdict.checked && form != .wrapping) {
@@ -376,7 +391,9 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
     Bool is_mut = d->kind.variable.is_mut;
     types::TypeRef type = r->table.automatic;
     if (!(written->kind == .auto_type)) {
+        r->new_syntax = is_new; // a local's `*T` is read-only in smith's own syntax (#1899), as a parameter's is
         type = types::resolve(r, written);
+        r->new_syntax = false;
     }
     if (init == nullptr) {
         types::failf(r, d->span, "`", name, "` needs a value: give one, or write `= undefined`");

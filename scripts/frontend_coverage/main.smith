@@ -11,12 +11,17 @@
 //                                              reads a table and prints one line per file, then the summary; with
 //                                              SMITH, the summary names the smith that was measured
 //
-// The table has one line per file: `path TAB stage TAB message`. The stage is `pass`, or the stage that failed: `fixer`
-// (`smith lint --fix`), `parse`, `check`, `emit` or `write` (the front end's own, SMITH_FRONT_STAGE). The message is
-// the first error, without its `file:line:column: error:` prefix, so the same failure in two files is one group.
+// The table has one line per diagnostic, or one per passing file: `path TAB stage TAB message TAB position`. The stage
+// is `pass`, or the stage that failed: `fixer` (`smith lint --fix`), `parse`, `check`, `emit` or `write` (the front
+// end's own, SMITH_FRONT_STAGE). The message is the error without its `file:line:column: error:` prefix; the position
+// is `line:column` (absent when the line has none). A file that fails has one line for every error its stage reported
+// (#1922), the lines of a file next to each other, so the first error cannot hide the next.
 //
-// The summary: files passed out of total, the failures per stage, then the failures grouped by message, the biggest
-// group first, each with its count and up to 3 example files. The real files are never changed: only the copies are.
+// The summary: files passed out of total, the failed files per stage, then the causes: a diagnostic's message with
+// its names (`...`) and numbers replaced by `<name>` and `<n>`, the biggest first, each with its occurrences, its
+// files and up to 3 example locations. A parse error is the only one of its file (the parser stops at the first,
+// parser recovery is not counted here): the summary says how many files are stopped there. The real files are never
+// changed: only the copies are.
 module main;
 
 import std::console;
@@ -29,26 +34,31 @@ import <stdlib.h>;
 import <unistd.h>;
 
 constexpr Usize files_max = 4096;
-constexpr Usize groups_max = 1024;
+constexpr Usize entries_max = 32768;
+constexpr Usize groups_max = 2048;
 constexpr Usize examples_max = 3;
 constexpr Usize path_size = 256;
 constexpr Usize message_size = 240;
 constexpr Usize stage_size = 16;
+constexpr Usize position_size = 24;
 
 struct Entry {
     char path[path_size];
     char stage[stage_size];
     char message[message_size];
+    char position[position_size];
 };
 
 struct Group {
     char message[message_size];
     Usize count;
+    Usize files;
+    Usize last_file;
     Usize first;
     Usize examples[examples_max];
 };
 
-static struct Entry entries[files_max];
+static struct Entry entries[entries_max];
 static Usize entry_count = 0;
 static struct Group groups[groups_max];
 static Usize group_count = 0;
@@ -93,12 +103,13 @@ static typeof(const char[:]) text_of(const char buffer[:]) {
 }
 
 // Adds a result to the table; a table that is full drops the rest (files_max is far beyond the tree).
-static void add_entry(const char path[:], const char stage[:], const char message[:]) {
-    if (entry_count == files_max) return;
+static void add_entry(const char path[:], const char stage[:], const char message[:], const char position[:]) {
+    if (entry_count == entries_max) return;
     struct Entry *entry = &entries[entry_count];
     copy_text(entry->path[0:path_size], path);
     copy_text(entry->stage[0:stage_size], stage);
     copy_text(entry->message[0:message_size], message);
+    copy_text(entry->position[0:position_size], position);
     entry_count += 1;
 }
 
@@ -123,7 +134,10 @@ static Bool read_table(const char file[:]) {
         if (first < end) {
             Usize second = find(text, '\t', first + 1);
             Usize message = second < end ? second + 1 : end;
-            add_entry(text[at:first], text[first + 1:second < end ? second : end], text[message:end]);
+            Usize third = find(text, '\t', message);
+            Usize position = third < end ? third + 1 : end;
+            add_entry(text[at:first], text[first + 1:second < end ? second : end],
+                      text[message:third < end ? third : end], text[position:end]);
         }
         at = end + 1;
     }
@@ -134,26 +148,82 @@ static Bool is_pass(const struct Entry *entry) {
     return same(text_of(entry->stage[0:stage_size]), "pass");
 }
 
-// The group of `message`, made when it is the first of its kind.
-static struct Group *group_of(const char message[:]) {
+// Whether entry `i` is the first line of its file (the lines of a file are next to each other).
+static Bool starts_file(Usize i) {
+    return i == 0 || !same(text_of(entries[i - 1].path[0:path_size]), text_of(entries[i].path[0:path_size]));
+}
+
+static Bool is_digit(char c) {
+    return c >= '0' && c <= '9';
+}
+
+// The cause of a message (#1922): the names between backticks become `<name>` and each number `<n>`, so the same
+// failure in two places is one cause. Stops at the end of `out`.
+static void cause_of(char out[:], const char message[:]) {
+    Usize o = 0;
+    Usize i = 0;
+    while (i < countof(message) && o + 8 < countof(out)) {
+        if (message[i] == '`') {
+            Usize close = i + 1;
+            while (close < countof(message) && message[close] != '`')
+                close += 1;
+            if (close < countof(message)) {
+                const char *name = "`<name>`";
+                for (Usize k = 0; k < 8; k++)
+                    out[o + k] = name[k];
+                o += 8;
+                i = close + 1;
+                continue;
+            }
+        }
+        if (is_digit(message[i])) {
+            while (i < countof(message) && is_digit(message[i])) {
+                i += 1;
+            }
+            out[o] = '<';
+            out[o + 1] = 'n';
+            out[o + 2] = '>';
+            o += 3;
+            continue;
+        }
+        out[o] = message[i];
+        o += 1;
+        i += 1;
+    }
+    out[o] = '\0';
+}
+
+// The group of `cause`, made when it is the first of its kind.
+static struct Group *group_of(const char cause[:]) {
     for (Usize i = 0; i < group_count; i++) {
-        if (same(text_of(groups[i].message[0:message_size]), message)) return &groups[i];
+        if (same(text_of(groups[i].message[0:message_size]), cause)) return &groups[i];
     }
     if (group_count == groups_max) return &groups[groups_max - 1];
     struct Group *made = &groups[group_count];
-    copy_text(made->message[0:message_size], message);
+    copy_text(made->message[0:message_size], cause);
     made->count = 0;
+    made->files = 0;
+    made->last_file = 0;
     made->first = group_count;
     group_count += 1;
     return made;
 }
 
+// Every diagnostic of a failed file counts, in the group of its cause; `file` numbers the files from 1.
 static void group_failures() {
+    Usize file = 0;
     for (Usize i = 0; i < entry_count; i++) {
+        if (starts_file(i)) file += 1;
         if (is_pass(&entries[i])) continue;
-        struct Group *group = group_of(text_of(entries[i].message[0:message_size]));
+        char cause[message_size];
+        cause_of(cause[0:message_size], text_of(entries[i].message[0:message_size]));
+        struct Group *group = group_of(text_of(cause[0:message_size]));
         if (group->count < examples_max) group->examples[group->count] = i;
         group->count += 1;
+        if (group->last_file != file) {
+            group->last_file = file;
+            group->files += 1;
+        }
     }
 }
 
@@ -178,7 +248,7 @@ static void print_stages() {
     for (Usize s = 0; s < countof(stage_names); s++) {
         Usize count = 0;
         for (Usize i = 0; i < entry_count; i++) {
-            if (same(text_of(entries[i].stage[0:stage_size]), view_of(stage_names[s]))) count += 1;
+            if (starts_file(i) && same(text_of(entries[i].stage[0:stage_size]), view_of(stage_names[s]))) count += 1;
         }
         console::print("  failed at ", format::left(stage_names[s], 6), " ", count, "\n");
     }
@@ -226,17 +296,44 @@ static void print_measured(const char *smith) {
     release(&ran);
 }
 
+// The causes table: occurrences, files, the cause, and up to 3 places (`path:line:column`, or the file alone).
+static void print_causes() {
+    Usize diagnostics = 0;
+    for (Usize g = 0; g < group_count; g++)
+        diagnostics += groups[g].count;
+    console::print("\nfailures by cause (", group_count, " causes, ", diagnostics, " diagnostics):\n");
+    console::print("  count  files  cause\n");
+    for (Usize g = 0; g < group_count; g++) {
+        console::print(format::pad(groups[g].count, 7), format::pad(groups[g].files, 7), "  ",
+                       (const char *)groups[g].message, "\n");
+        Usize shown = groups[g].count < examples_max ? groups[g].count : examples_max;
+        for (Usize e = 0; e < shown; e++) {
+            const struct Entry *at = &entries[groups[g].examples[e]];
+            if (at->position[0] != '\0') {
+                console::print("                e.g. ", (const char *)at->path, ":", (const char *)at->position, "\n");
+            } else {
+                console::print("                e.g. ", (const char *)at->path, "\n");
+            }
+        }
+    }
+}
+
 static I32 summarize(const char file[:], const char *smith) {
     if (!read_table(file)) {
         console::print_error("frontend_coverage: cannot read ", file, "\n");
         return 1;
     }
     Usize passed = 0;
+    Usize files = 0;
     for (Usize i = 0; i < entry_count; i++) {
         const char *path = entries[i].path;
+        if (starts_file(i)) files += 1;
         if (is_pass(&entries[i])) {
             passed += 1;
             console::print("pass  ", path, "\n");
+        } else if (entries[i].position[0] != '\0') {
+            console::print("FAIL  ", path, ":", (const char *)entries[i].position, " [", (const char *)entries[i].stage,
+                           "] ", (const char *)entries[i].message, "\n");
         } else {
             console::print("FAIL  ", path, " [", (const char *)entries[i].stage, "] ", (const char *)entries[i].message,
                            "\n");
@@ -246,15 +343,9 @@ static I32 summarize(const char file[:], const char *smith) {
     sort_groups();
     console::print("\n");
     if (smith != nullptr) print_measured(smith);
-    console::print("frontend-coverage: ", passed, " of ", entry_count, " files pass\n");
+    console::print("frontend-coverage: ", passed, " of ", files, " files pass\n");
     print_stages();
-    console::print("\nfailures by message (", group_count, " groups):\n");
-    for (Usize g = 0; g < group_count; g++) {
-        console::print(format::pad(groups[g].count, 4), "  ", (const char *)groups[g].message, "\n");
-        Usize shown = groups[g].count < examples_max ? groups[g].count : examples_max;
-        for (Usize e = 0; e < shown; e++)
-            console::print("        e.g. ", (const char *)entries[groups[g].examples[e]].path, "\n");
-    }
+    print_causes();
     return 0;
 }
 
@@ -271,10 +362,20 @@ static char projects[projects_max][path_size];
 static Bool linked_source[projects_max];
 static Usize project_count = 1;
 
-// The tracked .smith files of `root`, one per line.
+// Whether `path` is a .smith file (the others in the tree are C headers that only get copied).
+static Bool is_smith(const char *path) {
+    typeof(const char[:]) text = view_of(path);
+    return countof(text) > 6 && same(text[countof(text) - 6:countof(text)], ".smith");
+}
+
+// The folder of the real tree: its `.smith/include` holds the headers smith writes for the libraries (<smith/test.h>)
+// and its `include` the headers of smith's own runtime.
+static const char *include_root = nullptr;
+
+// The tracked .smith files of `root` and the C headers beside them (a file imports them), one per line.
 static Bool list_tree(const char *root) {
-    const char *const argv[_] = {"git", "-C", root, "ls-files", "*.smith"};
-    process::OutputResult done = process::run(argv[0:5]);
+    const char *const argv[_] = {"git", "-C", root, "ls-files", "*.smith", "*.h"};
+    process::OutputResult done = process::run(argv[0:6]);
     if (done == .error || done.ok.exit.status != 0) return false;
     typeof(char[:]) text = mem::view(done.ok.output, char);
     defer mem::free(done.ok.output.data);
@@ -392,18 +493,50 @@ static Usize find_text(const char text[:], const char needle[:]) {
     return countof(text);
 }
 
-// The first error of a compile's output without its position: `a.smith:3:7: error: message` is `message`. A line with
-// no `error:` (a crash, a missing tool) is the message as it stands. `stage` gets the stage the front end named.
-static void first_error(const char output[:], char message[:], char stage[:]) {
+// The stage the front end named in a compile's output (`path: stage: check`), `parse` when it named none.
+static void stage_named(const char output[:], char stage[:]) {
     copy_text(stage, "parse");
     Usize named = find_text(output, ": stage: ");
     if (named < countof(output)) copy_text(stage, output[named + 9:countof(output)]);
-    Usize error = find_text(output, ": error: ");
-    if (error < countof(output)) {
-        copy_text(message, output[error + 9:countof(output)]);
-    } else {
-        copy_text(message, output);
+}
+
+// The `line:column` before an `: error:` at `error` in `line`: the text after the last-but-one colon of what comes
+// before it. Empty when the line has no such position.
+static typeof(const char[:]) position_of(const char line[:], Usize error) {
+    Usize colons = 0;
+    Usize at = error;
+    while (at > 0 && colons < 2) {
+        at -= 1;
+        if (line[at] == ':') colons += 1;
     }
+    if (colons < 2) return line[0:0];
+    return line[at + 1:error];
+}
+
+// Every error of a compile's output, as an entry each: `a.smith:3:7: error: message` is `message` at `3:7`. Output
+// with no `error:` line (a crash, a missing tool) is one entry with the text as it stands. Returns how many.
+static Usize record_errors(const char *path, const char output[:], const char stage[:]) {
+    Usize made = 0;
+    Usize at = 0;
+    while (at < countof(output)) {
+        Usize end = find(output, '\n', at);
+        typeof(const char[:]) line = output[at:end];
+        Usize error = find_text(line, ": error: ");
+        if (error < countof(line)) {
+            char message[message_size];
+            copy_text(message[0:message_size], line[error + 9:countof(line)]);
+            add_entry(view_of(path), stage, message[0:message_size], position_of(line, error));
+            made += 1;
+        }
+        at = end + 1;
+    }
+    if (made == 0) {
+        char message[message_size];
+        copy_text(message[0:message_size], output);
+        add_entry(view_of(path), stage, message[0:message_size], "");
+        made = 1;
+    }
+    return made;
 }
 
 // The fixer on the copy of one file (the process is in the scratch tree). Records a failure.
@@ -413,14 +546,13 @@ static void fix(const char *smith, const char *path) {
     struct Ran fixed = run_program(fix[0:4]);
     if (fixed.status != 0) {
         copy_text(message[0:message_size], fixed.text);
-        add_entry(view_of(path), "fixer", message[0:message_size]);
+        add_entry(view_of(path), "fixer", message[0:message_size], "");
     }
     release(&fixed);
 }
 
 // The new front end on one fixed file, from the folder of its project. Records the result.
 static void measure(const char *smith, const char *scratch, const char *path) {
-    char message[message_size];
     char stage[stage_size];
     Usize project = project_of(view_of(path));
     typeof(const char[:]) folder = text_of(projects[project][0:path_size]);
@@ -432,23 +564,29 @@ static void measure(const char *smith, const char *scratch, const char *path) {
     char home[path_size * 2];
     (void)format::to(home, sizeof home, scratch, countof(folder) > 0 ? "/" : "", folder);
     if (c::chdir(home) != 0) {
-        add_entry(view_of(path), "parse", "cannot enter the project folder");
+        add_entry(view_of(path), "parse", "cannot enter the project folder", "");
         return;
     }
     char object[path_size + 12];
     (void)format::to(object, sizeof object, (const char *)name, ".o");
-    const char *const compile[_] = {smith, "cc", "--front-end=new", "-c", name, "-o", object};
-    struct Ran compiled = run_program(compile[0:7]);
+    char include[path_size * 2];
+    (void)format::to(include, sizeof include, "-I", include_root, "/.smith/include");
+    char own[path_size * 2];
+    (void)format::to(own, sizeof own, "-I", include_root, "/include");
+    const char *const compile[_] = {
+        smith, "cc", "--front-end=new", (const char *)include, (const char *)own, "-c", name, "-o", object};
+    struct Ran compiled = run_program(compile[0:9]);
     if (compiled.status == 0) {
-        add_entry(view_of(path), "pass", "");
+        add_entry(view_of(path), "pass", "", "");
     } else {
-        first_error(compiled.text, message[0:message_size], stage[0:stage_size]);
-        add_entry(view_of(path), stage[0:stage_size], message[0:message_size]);
+        stage_named(compiled.text, stage[0:stage_size]);
+        (void)record_errors(path, compiled.text, text_of(stage[0:stage_size]));
     }
     release(&compiled);
 }
 
 static I32 run(const char *smith, const char *root, const char *scratch) {
+    include_root = root;
     if (!list_tree(root)) {
         console::print_error("frontend_coverage: cannot list the files of ", root, "\n");
         return 1;
@@ -463,6 +601,8 @@ static I32 run(const char *smith, const char *root, const char *scratch) {
     // All the fixes first: a file imports modules that must already be in the new syntax when it is compiled.
     Bool fixed[files_max];
     for (Usize i = 0; i < tree_count; i++) {
+        fixed[i] = false;
+        if (!is_smith(tree[i])) continue;
         Usize before = entry_count;
         fix(smith, tree[i]);
         fixed[i] = entry_count == before;
@@ -473,7 +613,7 @@ static I32 run(const char *smith, const char *root, const char *scratch) {
     }
     for (Usize i = 0; i < entry_count; i++) {
         console::print((const char *)entries[i].path, "\t", (const char *)entries[i].stage, "\t",
-                       (const char *)entries[i].message, "\n");
+                       (const char *)entries[i].message, "\t", (const char *)entries[i].position, "\n");
     }
     return 0;
 }

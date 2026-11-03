@@ -322,6 +322,31 @@ export Problems diagnose(Str path, Str source, roots::Roots folders) {
     return list;
 }
 
+// What a hover finds: the bytes of the expression under the cursor and its type as text; `found` is false when the
+// text does not parse, or no checked expression covers the offset.
+export struct Hover {
+    Bool found;
+    U32 start;
+    U32 end;
+    Str type;
+};
+
+// The innermost checked expression of the text `source` of `path` that covers the byte `offset`, with its type (the
+// language server's hover, #1892). Nothing is read or written; the result is the current allocator's.
+export Hover hover_at(Str path, Str source, roots::Roots folders, U32 offset) {
+    Bool today = starts_with_module(source);
+    parser::Parsed parsed = today ? parser::parse(path, source) : parser::parse_new(path, source);
+    if (countof(parsed.errors) > 0) return (Hover){};
+    import_roots = folders;
+    header_folder = folder_of(path);
+    types::Checked checked = types_decl::check_module_headers(&parsed.module, types::lp64(), load_module, load_header);
+    const ast::Expr *at = ast::expr_at(&parsed.module, offset);
+    if (at == nullptr) return (Hover){};
+    types::TypeRef type = types::type_of(&checked, at);
+    if (type == nullptr) return (Hover){};
+    return (Hover){.found = true, .start = at->span.start, .end = at->span.end, .type = types::show(type)};
+}
+
 // Compiles `path` to the object `output` for `triple`; `roots` are the folders names start from.
 export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     Times times = {};

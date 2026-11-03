@@ -36,8 +36,8 @@ export void test_lsp_initialize_replies_with_the_capabilities_and_the_id() {
     defer mem::set_allocator(outside);
     Str out = lsp_server::handle("{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"initialize\",\"params\":{}}");
     test::check(has(out, "Content-Length: "));
-    test::check(
-        has(out, "\r\n\r\n{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"capabilities\":{\"textDocumentSync\":1}"));
+    test::check(has(out, "\r\n\r\n{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"capabilities\":{\"textDocumentSync\":1,"
+                         "\"hoverProvider\":true}"));
 }
 
 export void test_lsp_did_open_reports_a_type_error_at_its_line_and_column() {

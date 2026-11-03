@@ -380,3 +380,14 @@ export void test_a_slash_comment_becomes_a_hash_comment() {
     fix::Fixed fixed = fix::fix_text("t.smith", "int f() {\n    return 1; // \"x\" // a\n}\n// end\n");
     check_text(fixed.text, "fn f() -> i32 {\n    return 1 # \"x\" // a\n}\n# end\n");
 }
+
+// Comments are written as `#` even when a form the fixer cannot mend stays (an array suffix here), so `//` and
+// `/* */` do not hide the other causes of the file; a `/* */` comment over two lines becomes two `#` lines.
+export void test_comments_are_written_when_another_form_stays() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "int f() {\n    return 1; // one\n}\nint a[3];\n/* two\n   lines */\n");
+    check_text(fixed.text, "fn f() -> i32 {\n    return 1 # one\n}\ni32 a[3];\n# two\n#   lines \n");
+}

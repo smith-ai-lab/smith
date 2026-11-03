@@ -823,7 +823,7 @@ static const char *const build_front_modules[] = {
     "cimport",     "compile",      "emit_option",   "emit_match",
     "emit_value",  "emit_iter",    "emit_tuple",    "emit_lambda",
     "emit_vector", "emit_stream",  "fix_directive", "fix_method",
-    "lsp_server",
+    "lsp_server",  "lsp_hover",
 };
 constexpr size_t build_front_module_count = sizeof build_front_modules / sizeof build_front_modules[0];
 
@@ -3276,8 +3276,9 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
     smith_task(b, "ci-times", &ci_times);
     SmithStep frontend_coverage = {
         .run = build_frontend_coverage,
-        .args =
-            smith_list(b, smith_option_value(b, "smith", binary, "frontend-coverage: the smith to measure"), nullptr),
+        .args = smith_list(
+            b, smith_option_value(b, "smith", binary, "frontend-coverage: the smith to measure"),
+            smith_option_value(b, "all", "1", "frontend-coverage: every error of a file (always, #1922)"), nullptr),
         .description = "measuring how much of the tree the new front end handles",
     };
     smith_task(b, "frontend-coverage", &frontend_coverage);

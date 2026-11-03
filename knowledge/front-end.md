@@ -62,7 +62,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - `lex::tokenize_new` is the same for smith's own syntax; the new parser calls it, `parser::parse` still calls `tokenize`.
 - Kinds are a plain enum (`lex::plus`, `lex::kw_if`). An identifier is `type_name` when its first character is uppercase, else `name`: the parser needs no symbol table.
 - Keywords are C23's plus smith's `module import export defer errdefer try countof`; C's type keywords stay keywords. Literals are `integer`, `floating`, `character`, `string`.
-- The tokenizer checks the form of a literal (separators, suffixes, prefixes, escapes) and the parser decodes the value.
+- The tokenizer checks the form of a literal (separators, suffixes, prefixes, escapes) and the parser decodes the value. `0o755` is octal (#1900); a `.` after the digits of an integer that starts a word which is no exponent or suffix is a method call (`3.to(u8)` is `3`, `.`, `to`), while `1.e5` and `1.f` stay floating.
 - Punctuators are C's without `#` and `##`, plus `::`, `:=`, `=>`, `@` and `.*` (one token). `[:]` is three tokens, `[[` and `]]` two each; no trigraphs or digraphs.
 - The keywords `fn pub mut match in as fn_once type yield` exist only through `tokenize_new`; `tokenize` keeps them names, because today's code uses them as names.
 - Each `Token` has `line_break`, recorded only. `lex::ends_statement(token)` is Go's rule: a break ends a statement after a name, literal, `)`, `]`, `}`, `return`, `break` or `continue`.
@@ -163,6 +163,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - `fix::fix_text(file, source)` parses and applies until a pass applies nothing (at most 8); `fix::fix_file(path)` does it on a file; `fix::fix_run` is what the driver calls.
 - The parse fixes are F2 (declarations), F3 (statements) and F4 (expressions) above, each with its goldens `old_*.txt`; F1's are the warnings those record.
 - The checker's fixes (M1, #1516): `fix_text` runs `types_decl::check_module` when the parse has no error that is not a warning; a `types::Error` has a `fix` too (`types::fail_fix`).
+- A discarded value (#1915): a cast to `Void` (`(void)x;`) is refused with the fix `_ = x` (`discard_fix` in `front/types_decl.smith`: the cast's head, up to its operand, becomes `_ = `).
 - Assigning to a name declared without `mut` inserts `mut ` before its name (a local or parameter, not `const`, not after an attribute).
 - Writing through a `*T` turns the declaration's `*T` into `*mut T`; when that pointer is `p := &x` of a constant `x`, the fix adds `mut` to `x`.
 - No fix removes a `mut`. In smith's own syntax `*T` is read-only (`pointee_const`) and `*mut T` writable.
@@ -183,7 +184,7 @@ The types of the front end and the checker's entry point; the API is the top com
 - `types::check(module, options)` returns a `Checked`: the table, the scope, the errors and a side table of expression types (`set_type`, `type_of`), not a field of the ast.
 - `options.bodies` is the hook that checks function bodies (`types_decl` fills it). A construct not typed is reported as `not yet typed: <kind>`.
 - `typeof` (#1747): `typeof(x)` is the type of the parameter or variable `x` in scope, and a function's parameters are in scope for the ones after them and for its result (`fn larger(a: num, b: typeof(a)) -> typeof(a)`); `typeof(T)` is `T` for a plain type name. Any other operand is `not yet typed` (types.smith cannot reach the expression checker, and has no recursion).
-- Tuples (#1557): the kind `tuple` is interned by its elements (`tuple_of`), shown `(I32, Bool)`, its slots named `0`, `1`, so `t.0` is a `member`.
+- Tuples (#1557): the kind `tuple` is interned by its elements (`tuple_of`), shown `(I32, Bool)`, its slots named `0`, `1`, so `t.0` is a `member`. Named tuples (#1912, piece 1 of #1820): `(count: i32, ms: f64)` is a tuple type whose slots carry the written names (`tuple.names`), `(count = 3, ms = 1.5)` is a `tuple_lit` whose items are `named_arg` nodes; the name is part of the type's identity (names and types in order), `t.count` is a `member`, and the emitter finds its index in the checker's slots. Naming some elements and not others is a parse error.
 - `stream::Stream(T)` (#1613) is the type kind `Kind.stream`, interned by `types::stream_of`, shown `stream::Stream(i32)`, one pointer in layout.
 - Smith's own syntax (#1512, C5): `Checked.new_syntax` is set around types written there (`Param.is_new`, `variable.is_new`, `FieldDecl.is_new`).
 - There the lowercase built-ins (`i8`..`usize`, `f32`, `f64`, `bool`, `char`, `str`, `void`, `type`) equal `I8`..`Usize`, `F32`, `F64`, `Bool`, `Char`, `Str`, `Void`.
@@ -302,7 +303,7 @@ Iteration in the checker; the rules are the top comment of the file.
 | `emit_iter` | `for x in xs` over a fixed array, `refs(xs)`, `range(n)`, `range(a, b)`, `range(a, b, step)` with a positive literal step | `enumerate`, `zip`, tuple pattern, slice, `str`, block, stream, array value, other steps: `not emitted yet` | #1586 (filled) |
 | `emit_match` | enumerations (an integer `Ty` of the underlying type, enumerators from 0 or as written; `emit_memory` and `emit_call` find one for `as` and parameters), `.red`, `match` over an enumeration (one `switch`, `unreachable` default) or `?T`, as statement and value | a payload enumeration, `match` over `Result`, `if let` over an enumeration | #1585 |
 | `emit_value` | an `if` with an `else` and a block used as a value: one alloca slot (the hint's type, else the join of the branches' checker types), branches convert and store, `endif` loads it; a branch that ended stores nothing; no branch reaching the end gives `unreachable` and `undef` | `for`, `while`, `if let` as a value, a `match` with no type written | #1618 (filled) |
-| `emit_tuple` | tuple types `(A, B)`, `(T,)`, `()` as an LLVM struct, `(a, b)`, `t.0` as a value and a place, `(q, r) := f()`; the lexer reads `t.0` and `t.0.1` as an index | `==` between tuples, tuples of slices or `fn` values, `for (i, x)` | #1619 (filled) |
+| `emit_tuple` | tuple types `(A, B)`, `(T,)`, `()` as an LLVM struct, `(a, b)`, `t.0` and `t.name` as a value and a place, named tuples `(x = 1)`, `(q, r) := f()`; the lexer reads `t.0` and `t.0.1` as an index | `==` between tuples, tuples of slices or `fn` values, `for (i, x)` | #1619 (filled) |
 | `emit_lambda` | `fn(A) -> R` and `fn_once` types (`{ ptr code, ptr context }`), lambdas as internal functions, calls of `fn` values (#1620) | a stored lambda with captures, a function named as a value | next batch |
 | `emit_stream` | `stream::Stream(T)` (one `ptr`), a generator as a ramp and a body on the stream's own stack, `yield`, `stream::next(&s)` (`?T`), `stream::close(&s)` (#1546; see [stream](stream.md)) | `for` over a stream, a generator with debug info | #1546 |
 | floats, slices, `str`, array literals | no route yet: `emit.smith` answers `not emitted yet: this kind of expression` | everything | none yet |
@@ -369,6 +370,7 @@ Iteration in the checker; the rules are the top comment of the file.
 - The other arguments go to clang as before with each `.smith` file replaced by its object (`-c` leaves only objects).
 - `compile::file(path, output, triple, roots)` does one file and gives a `Report` (ok, diagnostics, nanoseconds per stage); `compile::run` (C name `front_compile_run`) is what `runtime/front_flag.c` calls.
 - A diagnostic is `file:line:column: error: message`; a failing stage stops the next, so a type error writes no object.
+- `smith build frontend-coverage` (#1730, #1922) reads every `error:` line of a failed file, not only the first: the parser reports one error and stops, the checker reports every error it finds, emit one. Its summary counts the failed files per stage and the diagnostics per cause (names and numbers replaced), so how much is left after the first cause of each file is fixed can be read from it.
 - The parser's warnings of a file in smith's own syntax print as `file:line:column: warning: message` before any error and do not stop the compile.
 - The target is the driver's (`--target=` or LLVM's default triple); the checker's pointer width follows the triple. Casts are checked (`Options.checked`).
 - Modules are named by path (`front::roots`; owner, 2026-10-31): `src/game/replay.smith` is `game::replay`, `lib/std/ascii.smith` is `std::ascii`. Roots are `src` and `lib`; roots from `build.smith` are later.
@@ -389,7 +391,7 @@ Declarations read from C headers become `front::ast` nodes with `from_c` set; th
 `smith lsp --smith` is a language server for `.smith` written in `.smith` on this front end (the plan: #1887, with #1377's zero patches). Plain `smith lsp` stays clangd; an editor registers the server per file type, so there is no proxy.
 - JSON-RPC 2.0 over stdio with `Content-Length` framing; `lsp_server::handle(body)` is one message in, the framed replies out, which the tests drive with no pipe (`tests/front_lsp_server_test.smith`); `run` (C: `front_lsp_run`) is the loop, one arena reset per message.
 - Slice 1 serves `initialize` (full sync), `shutdown`, `exit`, `didOpen`, `didChange` and `didClose`; each open or change answers with `textDocument/publishDiagnostics` from `compile::diagnose(path, source, roots)`: the parser's errors (and, in smith's own syntax, its warnings as severity 2), or the checker's errors when it parsed. Any other request gets -32601.
-- Columns are bytes in the line (LSP counts UTF-16 units). The next slices (#1892 hover, #1893 definition and symbols, #1894 completion) add methods to the table in `lsp_server::handle`; #1895 makes plain `smith lsp` clangd without patches.
+- Columns are bytes in the line (LSP counts UTF-16 units). Hover (#1892, `front/lsp_hover.smith`): `textDocument/hover` returns the type of the innermost checked expression under the position (`ast::expr_at`, `compile::hover_at`) as markdown with its range; the server keeps the open documents' text by uri (fixed slots) for it. The next slices (#1893 definition and symbols, #1894 completion) add methods to the table in `lsp_server::handle`; #1895 makes plain `smith lsp` clangd without patches.
 
 ## Tests
 

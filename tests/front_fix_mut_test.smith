@@ -95,3 +95,9 @@ export void test_front_fix_mut_a_cast_to_void_ends_its_statement() {
     parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
     test::check_equal(countof(parsed.errors), (Usize)0);
 }
+
+// A pointer written `*T` on a local (#1899) becomes `*mut T`, and the constant it points at becomes `mut`.
+export void test_front_fix_mut_a_written_pointer_local_becomes_mut() {
+    expect("fn f() -> i32:\n    let x: i32 = 0\n    let q: *i32 = &x\n    q.* = 3\n    return x\n",
+           "fn f() -> i32:\n    let mut x: i32 = 0\n    let q: *mut i32 = &x\n    q.* = 3\n    return x\n", 1);
+}

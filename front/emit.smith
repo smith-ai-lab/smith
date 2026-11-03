@@ -254,11 +254,14 @@ static state::Status character_literal(state::Emitter *e, const ast::Expr *x) {
     return state::success();
 }
 
-// `t.0`: a member whose name starts with a digit.
-static Bool is_tuple_member(const ast::Expr *x) {
+// `t.0` (a member whose name starts with a digit) or `t.count` on a named tuple the checker typed.
+static Bool is_tuple_member(const state::Emitter *e, const ast::Expr *x) {
     if (x->kind != .member) return false;
     Str name = x->kind.member.name;
-    return countof(name) > 0 && name[0] >= '0' && name[0] <= '9';
+    if (countof(name) > 0 && name[0] >= '0' && name[0] <= '9') return true;
+    if (e->options.checked == nullptr || x->kind.member.arrow) return false;
+    types::TypeRef base = types::type_of(e->options.checked, x->kind.member.base);
+    return base != nullptr && base->kind == .tuple;
 }
 
 // Whether the checker typed `x` as an option (false with no checker result).
@@ -349,7 +352,7 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     if (x->kind == .null_pointer) return memory::null_pointer(e, x, hint);
     if (x->kind == .index) return memory::index(e, x, hint);
     if (x->kind == .member) {
-        if (is_tuple_member(x)) return tupled::member(e, x, hint);
+        if (is_tuple_member(e, x)) return tupled::member(e, x, hint);
         return memory::member(e, x, hint);
     }
     if (x->kind == .variant) return dispatch_variant(e, x, hint);
@@ -379,7 +382,7 @@ static state::Status dispatch_place(state::Emitter *e, const ast::Expr *x) {
     if (x->kind == .unary && x->kind.unary.op == .dereference) return memory::place_dereference(e, x);
     if (x->kind == .index) return memory::place_index(e, x);
     if (x->kind == .member) {
-        if (is_tuple_member(x)) return tupled::place_member(e, x);
+        if (is_tuple_member(e, x)) return tupled::place_member(e, x);
         return memory::place_member(e, x);
     }
     return state::fail("this expression is not assignable", x->span);
