@@ -73,10 +73,11 @@ static void compile_example(Str folder, Str name, Str source) {
     c::mkdir(src.data, 0o700);
     Str path = as_str(format::push(src, "/", name, ".smith"));
     write_text(path, source);
-    roots::Roots folders = {.source = src, .library = as_str(format::push(folder, "/lib"))};
+    roots::Roots folders = {.source = src, .library = as_str(format::push(repo(), "/lib"))};
     compile::Report report = compile::file(path, as_str(format::push(folder, "/", name, ".o")), "", folders);
-    test::check_equal(report.ok, true);
+    // The diagnostics first, so a failure shows them.
     if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    test::check_equal(report.ok, true);
 }
 
 // One concept: every ```smith block of the file is compiled.
