@@ -6,6 +6,8 @@ tags: [language, plugin, effects]
 ---
 # Effect inference (issue #207, first step)
 
+> **Direction (#1939, owner, 2026-11-03):** the new front end infers effects in one pass over the unoptimized LLVM IR of the whole build, for every source language (`front/effects_pass.smith`, `knowledge/front-end.md`); `@pure` and `@effects(...)` become ceilings only. This page describes the plugin, which stays until the old pipeline goes (#1632); #2022 rewrites it for the IR pass.
+
 What a function does to the world, as a set of effects (`alloc`, `files`, `net`, `console`, `clock`, `process`, `env`,
 `entropy`, `globals`, `unknown`, `fails`: one bit each, `shim/effects_table.h`), computed by `shim/effects_infer.cpp`, a second plugin of the
 kind [affine-types](affine-types.md) is (an AddAfterMainAction that reads the translation unit when it is complete, and

@@ -552,12 +552,16 @@ static void list_warning(parse::Parser *p, ast::TypeExpr *type, U32 start, U32 r
     Bool plain = !fix->complex && countof(fix->edits) + fix->positional > 0;
     if (type != nullptr) {
         Bool empty = !fix->complex && countof(fix->edits) + fix->positional + fix->designated == 0;
-        if ((plain || empty) && fix->positional == 0 && type->kind == .named) {
+        // Every item named, or none named: `(P){a, b}` is `P(a, b)` (#1958). A mix has no fix.
+        Bool unmixed = fix->positional == 0 || fix->designated == 0;
+        if ((plain || empty) && unmixed && type->kind == .named) {
             parse::Edits edits = fix->edits;
             edits = with_edit(edits, from_to(start, start + 1), "");
             edits = with_edit(edits, from_to(rparen, open.span.end), "(");
             edits = with_edit(edits, close.span, ")");
-            parse::warning_fix(p, whole, "a compound literal `(P){.x = 1}` is written `P(x = 1)`", edits);
+            Str message = fix->positional > 0 ? "a compound literal `(P){a, b}` is written `P(a, b)`"
+                                              : "a compound literal `(P){.x = 1}` is written `P(x = 1)`";
+            parse::warning_fix(p, whole, message, edits);
             return;
         }
         parse::warning_fix(p, whole, "a compound literal is written `P(x = 1, y = 2)`: name each field", no_edits());
@@ -588,6 +592,14 @@ static Bool designated_list_ahead(const parse::Parser *p) {
            parse::peek_at(p, 3).kind == lex::equal;
 }
 
+// Whether the items are the single integer `0`, C's way to zero a struct.
+static Bool is_lone_zero(ast::Initializer items[:]) {
+    if (countof(items) != 1) return false;
+    ast::Initializer only = items[0];
+    if (countof(only.designators) > 0 || only.value == nullptr) return false;
+    return only.value->kind == .integer && only.value->kind.integer.value == 0;
+}
+
 // `{ items }`: the position is at the brace. `type` is null for a list alone; `rparen` is where the `)` of a typed
 // list's type starts.
 static ast::Expr *initializer_list(parse::Parser *p, ast::TypeExpr *type, U32 start, U32 rparen) {
@@ -602,6 +614,7 @@ static ast::Expr *initializer_list(parse::Parser *p, ast::TypeExpr *type, U32 st
         if (!parse::accept(p, lex::comma)) break;
     }
     lex::Token close = parse::expect(p, lex::right_brace, "`}` to end the list");
+    if (type != nullptr && is_lone_zero(items)) fix.complex = true; // `(P){0}` zeroes P: it is no argument list
     if (close.kind == lex::right_brace) list_warning(p, type, start, rparen, open, close, &fix);
     return make(parse::span_from(p, start), {.compound = {.type = type, .items = items}});
 }
@@ -1506,10 +1519,20 @@ static Bool has_trailing_lambda(const parse::Parser *p, Bool head) {
 static ast::Expr *call(parse::Parser *p, ast::Expr *callee, Bool head) {
     parse::advance(p);
     ast::ExprRef args[:] = {};
+    Bool after_semicolon = false;
     while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
+        // `f(x; s...)`: after the `;`, a `s...` passes the fields of `s` as named arguments.
+        if (p->new_syntax && parse::at(p, lex::semicolon)) {
+            if (after_semicolon) parse::error(p, parse::peek(p).span, "a call has one `;`: put every spread after it");
+            parse::advance(p);
+            after_semicolon = true;
+            continue;
+        }
         ast::Expr *arg = argument(p);
         if (arg == nullptr) return nullptr;
+        if (after_semicolon && arg->kind == .expand) arg->kind.expand.named = true;
         args = parse_type::with_expr(args, arg);
+        if (parse::at(p, lex::semicolon) && p->new_syntax) continue;
         if (!parse::accept(p, lex::comma)) break;
     }
     parse::expect(p, lex::right_paren, "`)` to end the arguments");

@@ -1,0 +1,158 @@
+// Tests of spreading a struct or named tuple as named arguments (piece 3b of #1914): `f(x; opts...)` passes each
+// field of `opts` by its name. Each scenario is source text in smith's own syntax, parsed, checked and, when it is
+// valid, run through the JIT.
+module front_kw_spread_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::emit_tuple;
+import front::emit_state;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+
+struct Scenario {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    parser::Parsed parsed;
+    types::Checked checked;
+    Bool has_checked;
+};
+
+static void begin(Scenario *s, Str source, Bool with_checker) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parser::parse_new("t.smith", source);
+    test::check_equal(countof(s->parsed.errors), (Usize)0);
+    if (with_checker) {
+        s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+        s->has_checked = true;
+        test::check_equal(s->checked.error_count, (Usize)0);
+    }
+    mem::set_allocator(outside);
+}
+
+static emit::Options options_for(emit::Target target, const Scenario *s) {
+    emit::Options options = {};
+    options.target = target;
+    if (s->has_checked) options.checked = &s->checked;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+// Emits `source` (with the checker's types), returns its IR text and adds it to `host`.
+static char *ir_of(Str source, emit_jit::Jit *host, Scenario *s) {
+    begin(s, source, true);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s->parsed.module, options_for(host->target, s));
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    } else {
+        Str expected = "no error";
+        test::check_equal(emitted.error.message, expected);
+    }
+    return text;
+}
+
+typedef I32 (*Pick)(I32);
+
+// The checker's first error message for `source` ("" when it has none).
+static Str first_error(Str source) {
+    Scenario s = {};
+    s.memory = test::memory(1U << 22);
+    s.allocator = arena::allocator(&s.memory);
+    mem::Allocator *outside = mem::set_allocator(&s.allocator.base);
+    s.parsed = parser::parse_new("t.smith", source);
+    test::check_equal(countof(s.parsed.errors), (Usize)0);
+    s.checked = types_decl::check_module(&s.parsed.module, types::lp64());
+    Str message = "";
+    if (s.checked.error_count > 0) message = s.checked.errors[0].message;
+    mem::set_allocator(outside);
+    return message;
+}
+
+static Str kept(char chars[:]) {
+    return chars;
+}
+
+static Str joined(Str a, Str b) {
+    return kept(format::push(a, b));
+}
+
+static Str declaration() {
+    return "fn connect(host: i32; timeout: i32 = 30, retry: i32 = 0) -> i32:\n"
+           "    host + timeout * 10 + retry * 100\n"
+           "struct Opts:\n    timeout: i32\n    retry: i32\n";
+}
+
+export void test_front_kw_spread_struct_and_named_tuple_run() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of(joined(declaration(), "pub fn from_struct(n: i32) -> i32:\n"
+                                           "    let opts = Opts(timeout = 2, retry = 3)\n    connect(n; opts...)\n"
+                                           "pub fn from_tuple(n: i32) -> i32:\n"
+                                           "    let opts = (timeout = 4, retry = 5)\n    connect(n; opts...)\n"
+                                           "pub fn with_named(n: i32) -> i32:\n"
+                                           "    let opts = (timeout = 4)\n    connect(n; opts..., retry = 1)\n"),
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    Pick from_struct = (Pick)symbol_of(&host, "from_struct");
+    Pick from_tuple = (Pick)symbol_of(&host, "from_tuple");
+    Pick with_named = (Pick)symbol_of(&host, "with_named");
+    test::check_equal(from_struct(10), (I32)(10 + 20 + 300));
+    test::check_equal(from_tuple(10), (I32)(10 + 40 + 500));
+    test::check_equal(with_named(10), (I32)(10 + 40 + 100));
+    emit_jit::stop(&host);
+}
+
+export void test_front_kw_spread_given_twice_is_an_error() {
+    Str written = "fn run(n: i32) -> i32:\n    let opts = (retry = 1)\n    connect(n; opts..., retry = 2)\n";
+    Str spread_twice = "fn run(n: i32) -> i32:\n    let a = (retry = 1)\n    connect(n; a..., a...)\n";
+    Str expected = "the parameter `retry` is given twice; give each parameter once";
+    test::check_equal(first_error(joined(declaration(), written)), expected);
+    test::check_equal(first_error(joined(declaration(), spread_twice)), expected);
+}
+
+export void test_front_kw_spread_of_a_non_record_is_an_error() {
+    Str call = "fn run(n: i32) -> i32:\n    let opts: i32 = 3\n    connect(n; opts...)\n";
+    Str expected = "cannot spread a value of type `I32`; spread a struct or a named tuple after the `;`";
+    test::check_equal(first_error(joined(declaration(), call)), expected);
+}
+
+export void test_front_kw_spread_field_without_parameter_is_an_error() {
+    Str call = "fn run(n: i32) -> i32:\n    let opts = (speed = 3)\n    connect(n; opts...)\n";
+    Str expected = "the function has no parameter `speed`; name one of its parameters, such as `host`";
+    test::check_equal(first_error(joined(declaration(), call)), expected);
+}

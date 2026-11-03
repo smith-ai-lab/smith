@@ -1,0 +1,5 @@
+fn f(a: i32,
+  b: i32) -> i32:
+    let x = g(a,
+         b)
+    return x  

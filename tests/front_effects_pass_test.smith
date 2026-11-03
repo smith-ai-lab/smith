@@ -1,0 +1,151 @@
+// Tests of front::effects_pass and front::effects_cache (#2018, piece 1 of #1939): the sets of the functions of
+// tests/effects/effects_chain.smith as the unoptimized IR of a module gives them, written here as IR text, the leaves
+// from the table, a recursive pair, a write to a global, a call through a pointer, the chain of causes, and the cache.
+module front_effects_pass_test;
+
+import <llvm-c/Core.h>;
+import <llvm-c/IRReader.h>;
+
+import front::effects_cache;
+import front::effects_pass;
+import front::effects_table;
+import std::test;
+
+static const char *chain_ir = "@counter = internal global i32 0\n"
+                              "@.str = private constant [3 x i8] c\"hi\\00\"\n"
+                              "declare i32 @printf(ptr, ...)\n"
+                              "declare ptr @malloc(i64)\n"
+                              "declare double @sqrt(double)\n"
+                              "declare void @mystery(i32)\n"
+                              "declare void @llvm.trap()\n"
+                              "define void @log_it() !dbg !7 {\n"
+                              "  store i32 1, ptr @counter, !dbg !9\n"
+                              "  %r = call i32 (ptr, ...) @printf(ptr @.str), !dbg !10\n"
+                              "  ret void\n"
+                              "}\n"
+                              "define i64 @length(i64 %n) {\n"
+                              "  %r = call double @sqrt(double 1.0)\n"
+                              "  ret i64 %n\n"
+                              "}\n"
+                              "define ptr @grab() {\n"
+                              "  %p = call ptr @malloc(i64 8)\n"
+                              "  ret ptr %p\n"
+                              "}\n"
+                              "define void @bad() {\n"
+                              "  call void @log_it()\n"
+                              "  ret void\n"
+                              "}\n"
+                              "define void @ping() {\n"
+                              "  call void @pong()\n"
+                              "  ret void\n"
+                              "}\n"
+                              "define void @pong() {\n"
+                              "  call void @ping()\n"
+                              "  %p = call ptr @malloc(i64 8)\n"
+                              "  ret void\n"
+                              "}\n"
+                              "define void @indirect(ptr %f) {\n"
+                              "  call void %f()\n"
+                              "  ret void\n"
+                              "}\n"
+                              "define void @unlisted() {\n"
+                              "  call void @mystery(i32 1)\n"
+                              "  ret void\n"
+                              "}\n"
+                              "define void @boom() {\n"
+                              "  call void @llvm.trap()\n"
+                              "  unreachable\n"
+                              "}\n"
+                              "!llvm.dbg.cu = !{!0}\n"
+                              "!llvm.module.flags = !{!5, !6}\n"
+                              "!0 = distinct !DICompileUnit(language: DW_LANG_C11, file: !1, producer: \"t\", "
+                              "isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)\n"
+                              "!1 = !DIFile(filename: \"log.c\", directory: \".\")\n"
+                              "!5 = !{i32 2, !\"Debug Info Version\", i32 3}\n"
+                              "!6 = !{i32 2, !\"Dwarf Version\", i32 5}\n"
+                              "!7 = distinct !DISubprogram(name: \"log_it\", scope: !1, file: !1, line: 4, type: !8, "
+                              "spFlags: DISPFlagDefinition, unit: !0)\n"
+                              "!8 = !DISubroutineType(types: !{})\n"
+                              "!9 = !DILocation(line: 5, scope: !7)\n"
+                              "!10 = !DILocation(line: 12, scope: !7)\n";
+
+static c::LLVMModuleRef parse(c::LLVMContextRef context, const char *text, const char *name) {
+    c::LLVMMemoryBufferRef buffer = c::LLVMCreateMemoryBufferWithMemoryRangeCopy(text, c::strlen(text), name);
+    c::LLVMModuleRef module = nullptr;
+    char *problem = nullptr;
+    if (c::LLVMParseIRInContext(context, buffer, &module, &problem) != 0) {
+        c::LLVMDisposeMessage(problem);
+        test::check(false);
+    }
+    return module;
+}
+
+static U32 bits(effects_pass::Graph *g, Str name) {
+    return effects_pass::set_of(g, name);
+}
+
+export void test_front_effects_pass_sets() {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    defer c::LLVMContextDispose(context);
+    c::LLVMModuleRef module = parse(context, chain_ir, "chain.ll");
+    defer c::LLVMDisposeModule(module);
+    effects_pass::Graph g = effects_pass::make();
+    defer effects_pass::release(&g);
+    effects_pass::add_module(&g, module, nullptr);
+    effects_pass::solve(&g);
+    test::check_equal(bits(&g, "log_it"), effects_table::console | effects_table::globals);
+    test::check_equal(bits(&g, "length"), 0u);
+    test::check_equal(bits(&g, "grab"), effects_table::alloc);
+    test::check_equal(bits(&g, "bad"), effects_table::console | effects_table::globals);
+    test::check_equal(bits(&g, "ping"), effects_table::alloc);
+    test::check_equal(bits(&g, "pong"), effects_table::alloc);
+    test::check_equal(bits(&g, "indirect"), effects_table::unknown);
+    test::check_equal(bits(&g, "unlisted"), effects_table::unknown);
+    test::check_equal(bits(&g, "boom"), effects_table::fails);
+    test::check_equal(bits(&g, "not_in_the_graph"), effects_table::unknown);
+}
+
+export void test_front_effects_pass_chain_of_causes() {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    defer c::LLVMContextDispose(context);
+    c::LLVMModuleRef module = parse(context, chain_ir, "chain.ll");
+    defer c::LLVMDisposeModule(module);
+    effects_pass::Graph g = effects_pass::make();
+    defer effects_pass::release(&g);
+    effects_pass::add_module(&g, module, nullptr);
+    effects_pass::solve(&g);
+    Usize bad = effects_pass::find(&g, "bad");
+    Usize log_it = effects_pass::find(&g, "log_it");
+    Usize printf_at = effects_pass::find(&g, "printf");
+    test::check(bad != effects_pass::none);
+    effects_pass::Cause step = effects_pass::cause_of(&g, bad, 3); // console
+    test::check_equal(step.callee, log_it);
+    effects_pass::Cause next = effects_pass::cause_of(&g, log_it, 3);
+    test::check_equal(next.callee, printf_at);
+    test::check_equal(next.line, 12u);
+    effects_pass::Cause own = effects_pass::cause_of(&g, log_it, 8); // globals: the store in its own body
+    test::check_equal(own.callee, effects_pass::none);
+}
+
+export void test_front_effects_pass_cache() {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    defer c::LLVMContextDispose(context);
+    effects_cache::Cache cache = {};
+    defer effects_cache::release(&cache);
+    c::LLVMModuleRef first = parse(context, chain_ir, "chain.ll");
+    effects_pass::Graph g = effects_pass::make();
+    effects_pass::add_module(&g, first, &cache);
+    effects_pass::release(&g);
+    c::LLVMDisposeModule(first);
+    test::check_equal(cache.hits, 0ul);
+    test::check_equal(cache.misses, 9ul);
+    // The same IR again: every function hits.
+    c::LLVMModuleRef again = parse(context, chain_ir, "chain.ll");
+    effects_pass::Graph h = effects_pass::make();
+    effects_pass::add_module(&h, again, &cache);
+    effects_pass::solve(&h);
+    test::check_equal(cache.hits, 9ul);
+    test::check_equal(effects_pass::set_of(&h, "bad"), effects_table::console | effects_table::globals);
+    effects_pass::release(&h);
+    c::LLVMDisposeModule(again);
+}

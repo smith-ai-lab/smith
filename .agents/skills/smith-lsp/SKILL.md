@@ -29,7 +29,7 @@ Diagnostics at the line and column of the source (the lowering's own, such as ``
 
 ## The server for `.smith` on smith's own front end (experimental)
 
-`smith lsp --smith` speaks LSP over stdio and serves only `.smith` files, with the new front end's parser and checker: diagnostics on open and on every change (full document sync). No hover, definition or completion yet (#1892 to #1894). Register it for the `smith` file type alone; keep `smith lsp` (clangd) for C. Columns are bytes. Design: `knowledge/front-end.md`, section The language server.
+`smith lsp --smith` speaks LSP over stdio and serves only `.smith` files, with the new front end's parser and checker: diagnostics on open and on every change (full document sync), hover, and semantic tokens (`textDocument/semanticTokens/full` and `/range`, #2008): keywords, types, functions, methods, parameters, locals, fields, enum variants, modules, comments, strings, numbers and `@attributes`, with the modifiers `declaration`, `readonly` (a `let` without `mut`, a parameter that is not `mut`) and `defaultLibrary` (`std`), named by the protocol's standard types so every editor colours them with no configuration. A file that does not parse still gets the tokens the lexer reads. No definition or completion yet (#1893, #1894). Register it for the `smith` file type alone; keep `smith lsp` (clangd) for C. Columns are bytes. Design: `knowledge/front-end.md`, section The language server.
 
 ## Ask it from the shell
 
