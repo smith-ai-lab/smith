@@ -360,13 +360,48 @@ export void test_front_e2e_c_printf_prints() {
     remove_all(folder);
 }
 
-// `import c <h>` brings the header's names as `c.name` (#1961): `c.abs(...)` is the name `c::abs`, never `unknown name
-// c`.
-export void test_front_e2e_import_c_names_are_read_with_a_dot() {
+// `import c <stdlib.h>` binds `stdlib` (#1678): `stdlib.abs(...)` is the header's `abs`, and there is no global `c`.
+export void test_front_e2e_import_c_names_are_read_through_the_binding() {
     use_header_flags();
     Str folder = folder_for("c_dot");
-    Str source = "import c <stdlib.h>\n\npub fn check() -> i32:\n    if c.abs(-5) != 5:\n        return 1\n    0\n";
+    Str source =
+        "import c <stdlib.h>\n\npub fn check() -> i32:\n    if stdlib.abs(-5) != 5:\n        return 1\n    0\n";
     compile::Report report = compile_module(folder, "dot", source);
+    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    test::check_equal(report.ok, true);
+    remove_all(folder);
+}
+
+// `c.abs` with no binding named `c` is an error that says which binding to write.
+export void test_front_e2e_a_bare_c_is_an_error_naming_the_binding() {
+    use_header_flags();
+    Str folder = folder_for("c_bare");
+    Str source = "import c <stdlib.h>\n\npub fn check() -> i32:\n    c.abs(-5)\n    0\n";
+    compile::Report report = compile_module(folder, "bare", source);
+    test::check_equal(report.ok, false);
+    test::check_equal(has(report.text, "there is no global `c`: write `stdlib.abs`"), true);
+    remove_all(folder);
+}
+
+// A name the binding's header does not declare is an error.
+export void test_front_e2e_a_name_the_binding_lacks_is_an_error() {
+    use_header_flags();
+    Str folder = folder_for("c_lacks");
+    Str source = "import c <stdlib.h>\n\npub fn check() -> i32:\n    stdlib.not_a_c_function(1)\n    0\n";
+    compile::Report report = compile_module(folder, "lacks", source);
+    test::check_equal(report.ok, false);
+    test::check_equal(has(report.text, "`stdlib.not_a_c_function` is not declared by that header"), true);
+    remove_all(folder);
+}
+
+// Two bindings: a `size_t` from `string` goes to a `stdlib` function, and `as` picks another binding name.
+export void test_front_e2e_two_bindings_share_the_entities_they_reach() {
+    use_header_flags();
+    Str folder = folder_for("c_two");
+    Str source = "import c <stdio.h>\nimport c <stdlib.h>\nimport c <string.h> as str\n\n"
+                 "pub fn check(f: *stdio.FILE) -> i32:\n    let p = stdlib.calloc(str.strlen(\"abc\"), 1)\n"
+                 "    stdlib.free(p)\n    0\n";
+    compile::Report report = compile_module(folder, "two", source);
     if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
     test::check_equal(report.ok, true);
     remove_all(folder);
