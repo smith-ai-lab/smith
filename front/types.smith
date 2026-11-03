@@ -60,6 +60,7 @@
 module front::types;
 
 import front::ast;
+import front::ast_clone;
 import front::parse as syntax;
 import std::arena;
 import std::format;
@@ -731,6 +732,9 @@ export struct Symbol {
     Bool may_mut;
     const ast::TypeExpr *written;
     const ast::Expr *init;
+    Bool generic; // a function with compile-time parameters (`T: type`, `const n: usize`): a template, no body checked
+    Bool has_value; // a compile-time parameter bound in an instance (`n`): `value` is what the call passed
+    U64 value;
 };
 
 // The stack of scopes: `marks[d]` is where scope `d + 1` starts in `symbols`; scope 0 (the module's) always exists.
@@ -850,8 +854,30 @@ export struct Options {
     HeaderLoader headers; // null: C headers are not read
 };
 
+// What a call passed for one compile-time parameter of a generic function (#1908, part of #1700): a type, or a value.
+export struct Binding {
+    Str name;
+    Bool is_type;
+    TypeRef type; // the type passed (`is_type`), else the type of the parameter
+    U64 value;
+};
+
+// One instance of a generic function: its declaration cloned with the compile-time parameters taken out, and what
+// they are bound to. Its body is checked after the bodies of the module (`types_decl::check_instances`).
+export struct Instance {
+    const ast::Decl *template;
+    ast::Decl *decl;
+    Binding bindings[:];
+    TypeRef signature;
+    Bool checked;
+};
+
+export const Usize max_instances = 256;
+
 export struct Checked {
     Options options;
+    Instance instances[:];
+    Usize instance_count;
     Bool new_body;   // the function being checked has a parameter or a local in smith's own syntax (so far)
     Bool new_syntax; // the type being resolved is written in smith's own syntax (`x: int`): lowercase names, concepts
     Bool in_header;  // the declarations of a C header are being declared: a repeated name is not an error
@@ -1457,6 +1483,13 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
     }
     if (node->kind == .array) {
         const ast::Expr *count = node->kind.array.count;
+        if (count != nullptr && count->kind == .name && countof(count->kind.name.path.segments) == 1) {
+            const Symbol *bound = lookup(&r->scopes, count->kind.name.path.segments[0].text); // `n` of an instance
+            if (bound != nullptr && bound->has_value) {
+                Bool bound_const = node->kind.array.element->qualifiers.is_const;
+                return array_of(&r->table, w->values[base].type, bound->value, bound_const);
+            }
+        }
         U64 length = 0;
         if (count == nullptr || !constant_length(r, count, &length)) {
             ast::Span at = node->span;
@@ -1771,8 +1804,44 @@ static Bool is_type_name(const ast::TypeExpr *written) {
            (same_text(path.segments[0].text, "Type") || same_text(path.segments[0].text, "type"));
 }
 
+// Whether a parameter is known at compile time in smith's own syntax: `T: type` or `const n: usize`.
+export Bool is_compile_time(const ast::Param *p) {
+    return p->is_new && (is_type_name(p->type) || p->is_const) && !p->is_rest;
+}
+
+// Whether a compile-time parameter is a type (`T: type`), else a constant (`const n: usize`).
+export Bool is_type_parameter(const ast::Param *p) {
+    return is_type_name(p->type);
+}
+
+// A function with a body and a compile-time parameter, whose result is not a type, is a template (#1908): its body is
+// checked in each instance, not here. A type function (`-> type`) and a prototype are ordinary.
+static Bool is_template(const ast::Decl *d, ast::Param list[:], const ast::TypeExpr *result_type) {
+    if (d->kind != .function || d->kind.function.body == nullptr || is_type_name(result_type)) return false;
+    for (Usize i = 0; i < countof(list); i++) {
+        if (is_compile_time(&list[i])) return true;
+    }
+    return false;
+}
+
+// The template's symbol: a signature with no types, since a call finds the instance's.
+static void declare_template(Checked *r, const ast::Decl *d, Str name, ast::Param list[:]) {
+    Slot params[:] = mem::alloc_slice(Slot, countof(list));
+    for (Usize i = 0; i < countof(list); i++) {
+        params[i] = (Slot){.name = list[i].name, .type = r->table.invalid};
+    }
+    TypeRef type = function_of(&r->table, params, r->table.invalid, false);
+    Symbol symbol = {.name = name, .kind = .function_symbol, .type = type, .decl = d, .exported = d->exported};
+    symbol.generic = true;
+    declare_in_module(r, symbol, d->span);
+}
+
 static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Param list[:],
                              const ast::TypeExpr *result_type, Bool variadic) {
+    if (is_template(d, list, result_type)) {
+        declare_template(r, d, name, list);
+        return;
+    }
     Usize n = countof(list);
     Slot params[:] = mem::alloc_slice(Slot, n);
     push_scope(&r->scopes); // the parameters, for a `typeof(a)` after them
@@ -1819,6 +1888,131 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
     TypeRef type = function_of(&r->table, params, result, variadic);
     Symbol symbol = {.name = name, .kind = .function_symbol, .type = type, .decl = d, .exported = d->exported};
     declare_in_module(r, symbol, d->span);
+}
+
+// Whether an instance of `template` with these bindings exists; its index, or max when there is none.
+static Usize find_instance(const Checked *r, const ast::Decl *template, Binding given[:]) {
+    for (Usize i = 0; i < r->instance_count; i++) {
+        const Instance *x = &r->instances[i];
+        if (x->template != template || countof(x->bindings) != countof(given)) continue;
+        Bool same = true;
+        for (Usize k = 0; k < countof(given); k++) {
+            if (x->bindings[k].is_type != given[k].is_type || x->bindings[k].type != given[k].type ||
+                x->bindings[k].value != given[k].value) {
+                same = false;
+            }
+        }
+        if (same) return i;
+    }
+    return r->instance_count + max_instances;
+}
+
+// A type as an instance name spells it: a scalar in smith's own lowercase (`i32`, `f64`, `bool`), others as `show`.
+static Str instance_type_name(TypeRef t) {
+    Str shown = show(t);
+    if (t->kind != .integer && t->kind != .floating && t->kind != .bool_type) return shown;
+    char lower[:] = mem::alloc_slice(char, countof(shown));
+    for (Usize i = 0; i < countof(shown); i++) {
+        char ch = shown[i];
+        lower[i] = ch >= 'A' && ch <= 'Z' ? (char)(ch + ('a' - 'A')) : ch;
+    }
+    return lower;
+}
+
+// The name of an instance: `alloc.i32`, `table.64`, stable and readable in a debugger.
+static Str instance_name(Str base, Binding bindings[:]) {
+    Str name = base;
+    for (Usize i = 0; i < countof(bindings); i++) {
+        if (bindings[i].is_type) {
+            name = msg(format::push(name, ".", instance_type_name(bindings[i].type)));
+        } else {
+            name = msg(format::push(name, ".", bindings[i].value));
+        }
+    }
+    return name;
+}
+
+// Binds the compile-time parameters of an instance in the innermost scope: a type is a type name, a value a constant.
+export void bind_instance(Checked *r, const Instance *x) {
+    for (Usize i = 0; i < countof(x->bindings); i++) {
+        const Binding *b = &x->bindings[i];
+        Symbol symbol = {.name = b->name, .kind = .variable, .type = b->type};
+        if (b->is_type) symbol.kind = .type_name;
+        symbol.is_new = true;
+        symbol.is_const = true;
+        symbol.has_value = !b->is_type;
+        symbol.value = b->value;
+        declare(&r->scopes, symbol);
+    }
+}
+
+// The instance of the template `template` for what a call passed, one per set of arguments: made (cloned, its
+// compile-time parameters taken out, its signature typed) on the first call and found after. Its index in
+// `r->instances`, or `max_instances` when there are too many.
+export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]) {
+    Usize found = find_instance(r, template, given);
+    if (found < r->instance_count) return found;
+    if (template->kind != .function) return max_instances;
+    if (r->instance_count == max_instances) {
+        failf(r, template->span, "`", template->kind.function.name, "` has more than ", max_instances,
+              " instances; a generic function that calls itself with ever larger types never ends");
+        return max_instances;
+    }
+    ast::Decl *copy = ast_clone::clone_decl(template);
+    if (copy->kind != .function) return max_instances;
+    ast::Param all[:] = copy->kind.function.params;
+    Usize kept_count = 0;
+    Binding bindings[:] = mem::alloc_slice(Binding, countof(given));
+    Usize bound = 0;
+    push_scope(&r->scopes);
+    for (Usize i = 0; i < countof(all); i++) {
+        if (!is_compile_time(&all[i])) {
+            kept_count += 1;
+            continue;
+        }
+        bindings[bound] = given[bound];
+        bindings[bound].name = all[i].name;
+        if (!bindings[bound].is_type) {
+            r->new_syntax = true;
+            bindings[bound].type = resolve(r, all[i].type);
+            r->new_syntax = false;
+        }
+        bound += 1;
+    }
+    Instance made = {.template = template, .decl = copy, .bindings = bindings};
+    bind_instance(r, &made);
+    ast::Param kept[:] = mem::alloc_slice(ast::Param, kept_count);
+    Slot slots[:] = mem::alloc_slice(Slot, kept_count);
+    Usize at = 0;
+    for (Usize i = 0; i < countof(all); i++) {
+        if (is_compile_time(&all[i])) {
+            continue;
+        }
+        kept[at] = all[i];
+        slots[at].name = all[i].name;
+        r->new_syntax = true;
+        slots[at].type = all[i].type == nullptr ? r->table.invalid : resolve(r, all[i].type);
+        r->new_syntax = false;
+        at += 1;
+    }
+    TypeRef result = r->table.void_type;
+    if (copy->kind.function.result != nullptr) {
+        r->new_syntax = true;
+        result = resolve(r, copy->kind.function.result);
+        r->new_syntax = false;
+    }
+    pop_scope(&r->scopes);
+    copy->kind.function.params = kept;
+    copy->kind.function.name = instance_name(copy->kind.function.name, bindings);
+    made.signature = function_of(&r->table, slots, result, copy->kind.function.variadic);
+    if (r->instance_count == countof(r->instances)) {
+        Usize capacity = countof(r->instances) * 2;
+        if (capacity < 8) capacity = 8;
+        r->instances = mem::realloc(r->instances, capacity);
+    }
+    r->instances[r->instance_count] = made;
+    r->instance_count += 1;
+    return r->instance_count - 1;
 }
 
 // The type a literal initializer gives `let a = 3` (smith's own syntax: `i32` for an integer, `f64` for a float, the
