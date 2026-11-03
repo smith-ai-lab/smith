@@ -2008,23 +2008,11 @@ export Usize instance_called(const Checked *r, const ast::Expr *call) {
 // The instance of the template `template` for what a call passed, one per set of arguments: made (cloned, its
 // compile-time parameters taken out, its signature typed) on the first call and found after. Its index in
 // `r->instances`, or `max_instances` when there are too many.
-export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]) {
-    Usize found = find_instance(r, template, given);
-    if (found < r->instance_count) return found;
-    if (template->kind != .function) return max_instances;
-    if (r->instance_count == max_instances) {
-        failf(r, template->span, "`", template->kind.function.name, "` has more than ", max_instances,
-              " instances; a generic function that calls itself with ever larger types never ends");
-        return max_instances;
-    }
-    ast::Decl *copy = ast_clone::clone_decl(template);
-    if (copy->kind != .function) return max_instances;
-    ast::Param all[:] = copy->kind.function.params;
+// Fills `bindings` from what the call passed, one per compile-time or `auto` parameter in order. Returns how many
+// parameters the instance keeps; `auto_syntax` is set when the kept parameters are written in today's syntax.
+static Usize bind_given(Checked *r, ast::Param all[:], Binding given[:], Binding bindings[:], Bool *auto_syntax) {
     Usize kept_count = 0;
-    Binding bindings[:] = mem::alloc_slice(Binding, countof(given));
     Usize bound = 0;
-    push_scope(&r->scopes);
-    Bool auto_syntax = false; // the types of an `auto` template are written in today's syntax
     for (Usize i = 0; i < countof(all); i++) {
         if (is_auto_param(&all[i])) {
             kept_count += 1;
@@ -2035,7 +2023,7 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]
         }
         if (!is_compile_time(&all[i])) {
             kept_count += 1;
-            auto_syntax = auto_syntax || !all[i].is_new;
+            *auto_syntax = *auto_syntax || !all[i].is_new;
             continue;
         }
         bindings[bound] = given[bound];
@@ -2047,10 +2035,12 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]
         }
         bound += 1;
     }
-    Instance made = {.template = template, .decl = copy, .bindings = bindings};
-    bind_instance(r, &made);
-    ast::Param kept[:] = mem::alloc_slice(ast::Param, kept_count);
-    Slot slots[:] = mem::alloc_slice(Slot, kept_count);
+    return kept_count;
+}
+
+// The parameters an instance keeps, with their types: an `auto` parameter has the type it was bound to.
+static void keep_params(Checked *r, ast::Param all[:], Binding bindings[:], Bool auto_syntax, ast::Param kept[:],
+                        Slot slots[:]) {
     Usize at = 0;
     Usize taken = 0; // the next binding for an `auto` parameter
     for (Usize i = 0; i < countof(all); i++) {
@@ -2070,6 +2060,32 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]
         }
         at += 1;
     }
+}
+
+// The instance of the template `template` for what a call passed, one per set of arguments: made (cloned, its
+// compile-time parameters taken out, its signature typed) on the first call and found after. Its index in
+// `r->instances`, or `max_instances` when there are too many.
+export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]) {
+    Usize found = find_instance(r, template, given);
+    if (found < r->instance_count) return found;
+    if (template->kind != .function) return max_instances;
+    if (r->instance_count == max_instances) {
+        failf(r, template->span, "`", template->kind.function.name, "` has more than ", max_instances,
+              " instances; a generic function that calls itself with ever larger types never ends");
+        return max_instances;
+    }
+    ast::Decl *copy = ast_clone::clone_decl(template);
+    if (copy->kind != .function) return max_instances;
+    ast::Param all[:] = copy->kind.function.params;
+    Binding bindings[:] = mem::alloc_slice(Binding, countof(given));
+    Bool auto_syntax = false; // the types of an `auto` template are written in today's syntax
+    push_scope(&r->scopes);
+    Usize kept_count = bind_given(r, all, given, bindings, &auto_syntax);
+    Instance made = {.template = template, .decl = copy, .bindings = bindings};
+    bind_instance(r, &made);
+    ast::Param kept[:] = mem::alloc_slice(ast::Param, kept_count);
+    Slot slots[:] = mem::alloc_slice(Slot, kept_count);
+    keep_params(r, all, bindings, auto_syntax, kept, slots);
     TypeRef result = r->table.void_type;
     if (copy->kind.function.result != nullptr) {
         r->new_syntax = !auto_syntax;
