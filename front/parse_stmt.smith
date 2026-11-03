@@ -106,6 +106,9 @@ struct Frame {
     Str head;        // and what replaces it
     ast::Span close; // the `)`, when `has_close`
     Str message;
+    Str tail;        // a `for` written as `while`: the step, put before the `}` of the body
+    Usize body_from; // and the token where the body starts (0: not a `while`)
+    Bool wrapped;    // and the `while` is inside a block with the init: a `}` closes it
     // An old `switch` and the fix that writes it as `match` (case_fix): its edits so far, in source order.
     parse::Edits switch_edits;
     Usize switch_edit_count;
@@ -710,9 +713,37 @@ static void paren_fix(Frame *frame, Header head, U32 cut_start, U32 keyword_end,
 }
 
 // Records the fix of an old header, now that its body is known: all its edits or none.
+// Whether the tokens from `from` to the position hold a `continue`: the step of a `while` would be skipped by it.
+static Bool has_continue(const parse::Parser *p, Usize from) {
+    for (Usize i = from; i < p->position; i += 1) {
+        if (p->tokens[i].kind == lex::kw_continue) return true;
+    }
+    return false;
+}
+
+// A `for (init; cond; step) { body }` as `{ init; while cond { body step; } }`, when its body is a block with no
+// `continue`; otherwise a warning with no edits.
+static void loop_fix(parse::Parser *p, Frame *frame, ast::Stmt *body) {
+    if (body->kind != .block || has_continue(p, frame->body_from)) {
+        parse::Edits none = {};
+        parse::warning_fix(p, frame->cut, "this `for` has no `while` form here: write it by hand with `while`", none);
+        return;
+    }
+    Usize count = frame->wrapped ? 3 : 2;
+    parse::Edits edits = edit_list(count);
+    edits[0] = edit(frame->cut, frame->head);
+    edits[1] = edit(point(body->span.end - 1), frame->tail);
+    if (frame->wrapped) edits[2] = edit(point(body->span.end), "\n}");
+    parse::warning_fix(p, frame->cut, frame->message, edits);
+}
+
 static void old_header_fix(parse::Parser *p, Frame *frame, ast::Stmt *body) {
     if (!frame->old) return;
     frame->old = false;
+    if (frame->body_from > 0) {
+        loop_fix(p, frame, body);
+        return;
+    }
     Bool wrap = body->kind != .block;
     Str brace = " {";
     Usize count = 1 + (frame->has_close ? 1 : 0) + (wrap ? 1 : 0);
@@ -899,6 +930,9 @@ static Str tokens_text(const parse::Parser *p, Usize first, Usize last) {
 struct RangeText {
     Bool ok;
     Str text;
+    Bool loop; // the text is a `while` (with the init before it in a block); `tail` is the step
+    Str tail;
+    Bool wrapped;
 };
 
 static Bool same_name(const parse::Parser *p, Usize at, Str name) {
@@ -948,18 +982,42 @@ static RangeText range_of_count(const parse::Parser *p, Usize close, Usize first
     return found;
 }
 
+// `(init; cond; step)` is `{ init; while cond { body step; } }`: C's three-part `for`, as the spec says, is `while`. No
+// comma in the init or the step (two names, two steps) and no empty header gets this form.
+static RangeText while_of(const parse::Parser *p, Usize close, Usize first_semicolon) {
+    RangeText none = {};
+    Usize second = find_at_depth_0(p, first_semicolon + 1, close, lex::semicolon);
+    if (second == close) return none;
+    if (find_at_depth_0(p, 1, first_semicolon, lex::comma) != first_semicolon) return none;
+    if (find_at_depth_0(p, second + 1, close, lex::comma) != close) return none;
+    Str init = "";
+    if (first_semicolon > 1) init = tokens_text(p, 1, first_semicolon - 1);
+    Str condition = "true";
+    if (second > first_semicolon + 1) condition = tokens_text(p, first_semicolon + 1, second - 1);
+    Str step = "";
+    if (close > second + 1) step = tokens_text(p, second + 1, close - 1);
+    char head[:] = format::push("while ", condition);
+    if (countof(init) > 0) head = format::push("{ ", init, ";\nwhile ", condition);
+    char tail[:] = format::push("");
+    if (countof(step) > 0) tail = format::push(step, ";\n");
+    RangeText found = {.ok = true, .text = head, .loop = true, .tail = tail, .wrapped = countof(init) > 0};
+    return found;
+}
+
 static RangeText range_text(const parse::Parser *p) {
     Usize close = after_group(p, 0) - 1;
     Usize first_semicolon = find_at_depth_0(p, 1, close, lex::semicolon);
     if (first_semicolon == close) return range_of_collection(p, close);
-    return range_of_count(p, close, first_semicolon);
+    RangeText counted = range_of_count(p, close, first_semicolon);
+    if (counted.ok) return counted;
+    return while_of(p, close, first_semicolon);
 }
 
 // The fix of an old `for`: the header is `x in xs` or `i in range(a, b)`, or a warning with no fix when it has none.
 static void for_fix(parse::Parser *p, Frame *frame, U32 cut_start, RangeText range) {
     ast::Span close = p->tokens[p->position - 1].span;
     ast::Span whole = {.start = cut_start, .end = close.end};
-    if (!range.ok) {
+    if (!range.ok || (range.loop && frame->is_constexpr)) {
         warn(p, whole, "this `for` has no range form: write `for x in ...`, or `while`");
         return;
     }
@@ -967,6 +1025,14 @@ static void for_fix(parse::Parser *p, Frame *frame, U32 cut_start, RangeText ran
     frame->cut = whole;
     frame->head = range.text;
     frame->message = "a `for` reads `for x in xs` or `for i in range(a, b)`: write it so";
+    if (range.loop) {
+        // The whole `for (...)`, and the step and the closing brace once the body is known.
+        frame->cut.start = frame->start;
+        frame->tail = range.tail;
+        frame->wrapped = range.wrapped;
+        frame->body_from = p->position;
+        frame->message = "a `for` with three parts is a `while`: write `{ init; while cond { body step } }`";
+    }
 }
 
 // `for [constexpr] (init; cond; step)`. A broken header is skipped as a whole.
@@ -982,7 +1048,9 @@ static Frame open_for(parse::Parser *p) {
     parse::expect(p, lex::left_paren, "`(`");
     if (countof(p->errors) == before && !parse::accept(p, lex::semicolon)) {
         if (starts_declaration(p)) {
+            p->for_init = true;
             frame.init = declaration_statement(p);
+            p->for_init = false;
         } else {
             U32 start = parse::peek(p).span.start;
             ast::Expr *value = expression(p);
