@@ -70,7 +70,11 @@ export void test_dbg_front_a_crash_in_a_new_syntax_function_shows_its_source_lin
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     if (!made(&p)) return;
-    scratch::Run run = scratch::sh(&p, "smith dbg --crash ./prog x 2>&1");
+    // Status 3: this account may not debug here (ptrace_scope, permissions), so there is nothing to test.
+    scratch::Run run =
+        scratch::sh(&p, "o=$(smith dbg --crash ./prog x 2>&1); case \"$o\" in *'not debugged'*) exit 3;; "
+                        "esac; echo \"$o\"");
+    if (run.status == 3) return;
     scratch::expect_contains("the crash is named", run.out, "stopped: signal");
     scratch::expect_contains("the function and its line are shown by source name", run.out, "geometry.smith:10: boom");
     scratch::expect_contains("the failing line is printed", run.out, "q / (p - p)");
