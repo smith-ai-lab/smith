@@ -1,0 +1,12 @@
+import "lens.h";
+import <stdio.h>;
+
+struct Lens:
+    vector_length: i32
+
+pub fn main() -> i32:
+    let lens = Lens(vector_length = 3)
+    let p = &lens
+    # A member after `.` is a field, never a use of the macro of the same name.
+    let _ = c::printf("%d %d\n", lens.vector_length, p.vector_length)
+    0
