@@ -667,6 +667,31 @@ static void expression_statement(types::Checked *r, const ast::Stmt *s) {
                  "`, is not used; use it, or write `let _ = ...` to discard it");
 }
 
+// `switch (v) { case .a: ... default: ... }` (#1916): the value is typed, and when it is an enumeration with payloads
+// its cases are variants, which the arms of a `match` check by name; any other value types its cases against it. Each
+// case opens a scope for its body, like a block.
+static void switch_statement(types::Checked *r, const ast::Stmt *s) {
+    if (!(s->kind == .switch_stmt)) {
+        return;
+    }
+    types::TypeRef t = types_expr::infer(r, s->kind.switch_stmt.value);
+    Bool variants = t != nullptr && t->kind == .enumeration && t->has_payload;
+    ast::SwitchCase cases[:] = s->kind.switch_stmt.cases;
+    for (Usize i = countof(cases); i > 0; i--) {
+        ast::SwitchCase *k = &cases[i - 1];
+        push(ast::block(k->body), nullptr, enter);
+    }
+    if (variants || t == nullptr) {
+        return;
+    }
+    for (Usize i = 0; i < countof(cases); i++) {
+        ast::ExprRef values[:] = cases[i].values;
+        for (Usize j = 0; j < countof(values); j++) {
+            types_expr::check(r, values[j], t);
+        }
+    }
+}
+
 // Reads one statement: does what needs no children now, and pushes the children.
 static void enter_statement(types::Checked *r, const ast::Stmt *s) {
     if (s->kind == .expression) {
@@ -698,7 +723,7 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
     } else if (s->kind == .labeled) {
         push(s->kind.labeled.body, nullptr, enter);
     } else if (s->kind == .switch_stmt) {
-        not_yet(r, s, "switch");
+        switch_statement(r, s);
     } else if (s->kind == .static_assert_stmt) {
         not_yet(r, s, "static_assert in a body");
     }

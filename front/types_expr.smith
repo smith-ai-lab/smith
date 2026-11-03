@@ -53,7 +53,7 @@
 // constant unless `mut`, `&x` is `*mut T` for a `mut x` and else `*T`, `p.x` through a pointer, and a write through
 // `*T` is an error naming `*mut T`.
 //
-// NOT YET TYPED (each reported as `not yet typed: <kind>` with its span): `try`, a type used as a value, a name from
+// NOT YET TYPED (each reported as `not yet typed: <kind>` with its span): `try`, a name from
 // another module (`arena::push`), nested designators (`.a.b = 1`), a designator index that is not an integer literal.
 //
 // LITERALS NEXT TO A TYPED OPERAND: in `x + 1` and `x < 10` an unsuffixed literal takes the type of the other operand
@@ -2494,7 +2494,8 @@ static Bool countable(types::TypeRef t) {
 
 static void count_check(types::Checked *c, const ast::Expr *e, types::TypeRef t) {
     types::TypeRef bad = invalid(c);
-    if (t == bad || countable(t)) {
+    // `Auto` is a generic parameter or a pack not yet instantiated (#1916): its count is known at the instance.
+    if (t == bad || t == c->table.automatic || countable(t)) {
         return;
     }
     types::failf(c, e->span, "countof takes an array or a slice, found `", types::show(t),
@@ -3444,7 +3445,9 @@ static const ast::Expr *type_value_call(types::Checked *c, const ast::Expr *e) {
 static void type_value_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *call = type_value_call(c, f.node);
     if (call == nullptr) {
-        not_yet(c, f.node, "a type used as a value");
+        // A type passed to a `Type` parameter (`choose(U8)`, `Pair(T)`): a compile-time value whose type the instance
+        // decides, so it is `Auto` here, as the parameter that takes it is (#1916).
+        types::set_type(c, f.node, c->table.automatic);
         return;
     }
     push_frame(w, (Frame){.node = f.node, .expected = f.expected, .stage = 1, .twin = call});
