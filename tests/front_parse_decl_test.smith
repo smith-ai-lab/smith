@@ -910,15 +910,15 @@ export void test_parse_decl_old_functions() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_fixed("I32 f(I32 a, I32 b) { }\n", "fn f(a: i32, b: i32) -> i32 { }\n", 1);
-    expect_fixed("void g(void) { }\n", "fn g() { }\n", 1);
-    expect_fixed("constexpr I32 h(I32 a) { }\n", "fn h(a: i32) -> i32 { }\n", 1);
-    expect_fixed("I32 t(constexpr Type T, auto... rest) { }\n", "fn t(T: type, rest: ...) -> i32 { }\n", 1);
+    expect_fixed("I32 f(I32 a, I32 b) { }\n", "fn f(a: i32, b: i32) -> i32:\n", 1);
+    expect_fixed("void g(void) { }\n", "fn g():\n", 1);
+    expect_fixed("constexpr I32 h(I32 a) { }\n", "fn h(a: i32) -> i32:\n", 1);
+    expect_fixed("I32 t(constexpr Type T, auto... rest) { }\n", "fn t(T: type, rest: ...) -> i32:\n", 1);
     expect_fixed("I32 p(I32 a);\n", "i32 p(i32 a);\n", 2);
-    expect_fixed("I32 s(I32 xs[:]) { }\n", "fn s(xs: []i32) -> i32 { }\n", 1);
-    expect_fixed("void k(U64 key, U64 keys[3]) { }\n", "fn k(key: u64, keys: [3]u64) { }\n", 1);
-    expect_fixed("void m(I32 grid[:][2]) { }\n", "fn m(grid: [][2]i32) { }\n", 1);
-    expect_fixed("void q(I32 xs[const :]) { }\n", "void q(i32 xs[const :]) { }\n", 1);
+    expect_fixed("I32 s(I32 xs[:]) { }\n", "fn s(xs: []i32) -> i32:\n", 1);
+    expect_fixed("void k(U64 key, U64 keys[3]) { }\n", "fn k(key: u64, keys: [3]u64):\n", 1);
+    expect_fixed("void m(I32 grid[:][2]) { }\n", "fn m(grid: [][2]i32):\n", 1);
+    expect_fixed("void q(I32 xs[const :]) { }\n", "void q(i32 xs[const :]):\n", 1);
 }
 
 export void test_parse_decl_old_types() {
@@ -926,13 +926,13 @@ export void test_parse_decl_old_types() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_fixed("struct P {\n    I32 x;\n    I32 y;\n};\n", "struct P {\n    x: i32\n    y: i32\n}\n", 5);
-    expect_fixed("struct Q {\n    I32 a;\n    I32 xs[4];\n};\n", "struct Q {\n    a: i32\n    xs: [4]i32\n}\n", 5);
-    expect_fixed("enum C {\n    red,\n    green = 2,\n};\n", "enum C {\n    red\n    green = 2\n}\n", 3);
+    expect_fixed("struct P {\n    I32 x;\n    I32 y;\n};\n", "struct P:\n    x: i32\n    y: i32\n", 5);
+    expect_fixed("struct Q {\n    I32 a;\n    I32 xs[4];\n};\n", "struct Q:\n    a: i32\n    xs: [4]i32\n", 5);
+    expect_fixed("enum C {\n    red,\n    green = 2,\n};\n", "enum C:\n    red\n    green = 2\n", 3);
     expect_fixed("typedef U32 Index;\n", "let Index = u32\n", 1);
-    expect_fixed("typedef struct {\n    I32 x;\n} Point;\n", "struct Point {\n    x: i32\n}\n", 3);
+    expect_fixed("typedef struct {\n    I32 x;\n} Point;\n", "struct Point:\n    x: i32\n", 3);
     expect_fixed("typedef enum {\n    Circle circle;\n    empty;\n} Shape;\n",
-                 "enum Shape {\n    circle: Circle\n    empty\n}\n", 3);
+                 "enum Shape:\n    circle: Circle\n    empty\n", 3);
 }
 
 // An array suffix moves in front of the type (#1898): on a field, an alias and a variable. What C zeroes (a file-level
@@ -943,10 +943,10 @@ export void test_parse_decl_old_array_suffixes_are_fixed() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     expect_fixed("struct R {\n    U8 bytes[16];\n    Str rows[:];\n    I32 grid[:][2];\n};\n",
-                 "struct R {\n    bytes: [16]u8\n    rows: []str\n    grid: [][2]i32\n}\n", 7);
+                 "struct R:\n    bytes: [16]u8\n    rows: []str\n    grid: [][2]i32\n", 7);
     expect_fixed("typedef I32 Row[4];\n", "let Row = [4]i32\n", 1);
-    expect_fixed("void f(void) {\n    I32 xs[4];\n}\n", "fn f() {\n    let mut xs: [4]i32 = undefined\n}\n", 2);
-    expect_fixed("void f(I32 *p) {\n    U8 *ys[3] = p;\n}\n", "fn f(p: *i32) {\n    let ys: [3]*u8 = p\n}\n", 2);
+    expect_fixed("void f(void) {\n    I32 xs[4];\n}\n", "fn f():\n    let mut xs: [4]i32 = undefined\n", 2);
+    expect_fixed("void f(I32 *p) {\n    U8 *ys[3] = p;\n}\n", "fn f(p: *i32):\n    let ys: [3]*u8 = p\n", 2);
 }
 
 export void test_parse_decl_old_array_suffixes_without_a_fix_stay() {
@@ -966,10 +966,10 @@ export void test_parse_decl_old_attributes() {
     defer mem::set_allocator(outside);
     expect_fixed("[[nodiscard]] I32 a = 1;\n", "let mut a: i32 = 1\n", 2);
     expect_fixed("[[maybe_unused]] I32 a = 1;\n", "let mut _a: i32 = 1\n", 1);
-    expect_fixed("[[std::affine]] struct K {\n};\n", "@affine struct K {\n}\n", 2);
+    expect_fixed("[[std::affine]] struct K {\n};\n", "@affine struct K:\n", 2);
     expect_fixed("[[std::c_name(\"k\")]] I32 a = 1;\n", "@c_name(\"k\") let mut a: i32 = 1\n", 2);
-    expect_fixed("[[gnu::cold]] void f(I32 a) { }\n", "@cold fn f(a: i32) { }\n", 2);
-    expect_fixed("void f([[maybe_unused]] I32 a) { }\n", "fn f(_a: i32) { }\n", 1);
+    expect_fixed("[[gnu::cold]] void f(I32 a) { }\n", "@cold fn f(a: i32):\n", 2);
+    expect_fixed("void f([[maybe_unused]] I32 a) { }\n", "fn f(_a: i32):\n", 1);
 }
 
 // A local declaration is mended like a top-level one (#1742): `T *p = e;` is `p: *T = e`, the type written as smith's
@@ -979,9 +979,9 @@ export void test_parse_decl_locals_are_fixed_too() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_fixed("void f(void) {\n    Key *p = &key;\n}\n", "fn f() {\n    let p: *Key = &key\n}\n", 2);
+    expect_fixed("void f(void) {\n    Key *p = &key;\n}\n", "fn f():\n    let p: *Key = &key\n", 2);
     expect_fixed("void f(void) {\n    U64 n = 3;\n    I32 m;\n}\n",
-                 "fn f() {\n    let n: u64 = 3\n    let mut m: i32 = undefined\n}\n", 3);
-    expect_fixed("void f(I32 n) {\n    I32 a = (I32)n;\n}\n", "fn f(n: i32) {\n    let a: i32 = n.to(i32)\n}\n", 3);
-    expect_fixed("void f(Point *p) {\n}\n", "fn f(p: *Point) {\n}\n", 1);
+                 "fn f():\n    let n: u64 = 3\n    let mut m: i32 = undefined\n", 3);
+    expect_fixed("void f(I32 n) {\n    I32 a = (I32)n;\n}\n", "fn f(n: i32):\n    let a: i32 = n.to(i32)\n", 3);
+    expect_fixed("void f(Point *p) {\n}\n", "fn f(p: *Point):\n", 1);
 }

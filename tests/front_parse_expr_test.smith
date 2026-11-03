@@ -379,7 +379,7 @@ export void test_parse_expr_lint_fix_twice_on_every_old_form() {
     // The locals are mended too (#1742): the name first, and the expressions as smith's own.
     test::check_condition(contains(first.text, "a: i32 = n.to(i32)\n"));
     test::check_condition(contains(first.text, "b: i32 = p.x + p.*\n"));
-    test::check_condition(contains(first.text, "c: i32 = if n > 0 { a } else { b }\n"));
+    test::check_condition(contains(first.text, "c: i32 = if n > 0: a else: b\n"));
     test::check_condition(contains(first.text, "q: Point = Point(x = 1, y = 2)\n"));
     test::check_condition(contains(first.text, "n += 1"));
     fix::Fixed second = fix::fix_text("m.smith", first.text);

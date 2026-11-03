@@ -29,20 +29,19 @@ static void expect_fixed(Str before, Str want) {
 
 export void test_front_fix_cast_in_a_for_range_header() {
     expect_fixed("module m;\nvoid f(Usize k) {\n    for (Usize i = (Usize)k; i < 3; i++) work(i);\n}\n",
-                 "fn f(k: usize) {\n    for i in range(k.to(usize), 3) { work(i) }\n}\n");
+                 "fn f(k: usize):\n    for i in range(k.to(usize), 3):\n        work(i)\n");
 }
 
 export void test_front_fix_cast_in_a_for_bound() {
     expect_fixed("module m;\nvoid f(U64 n) {\n    for (Usize i = 0; i < (Usize)n; i++) work(i);\n}\n",
-                 "fn f(n: u64) {\n    for i in range(0, n.to(usize)) { work(i) }\n}\n");
+                 "fn f(n: u64):\n    for i in range(0, n.to(usize)):\n        work(i)\n");
 }
 
 export void test_front_fix_cast_in_a_call_argument() {
-    expect_fixed("module m;\nvoid f(Usize k) {\n    g((Usize)k, 1);\n}\n",
-                 "fn f(k: usize) {\n    g(k.to(usize), 1)\n}\n");
+    expect_fixed("module m;\nvoid f(Usize k) {\n    g((Usize)k, 1);\n}\n", "fn f(k: usize):\n    g(k.to(usize), 1)\n");
 }
 
 export void test_front_fix_positional_compound_literal_in_a_return() {
     expect_fixed("module m;\nHex f(U64 v, U32 w) {\n    return (Hex){v, w};\n}\n",
-                 "fn f(v: u64, w: u32) -> Hex {\n    return Hex(v, w)\n}\n");
+                 "fn f(v: u64, w: u32) -> Hex:\n    return Hex(v, w)\n");
 }
