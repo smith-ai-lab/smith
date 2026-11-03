@@ -1847,12 +1847,19 @@ export Bool is_type_parameter(const ast::Param *p) {
     return is_type_name(p->type);
 }
 
-// A function with a body and a compile-time parameter, whose result is not a type, is a template (#1908): its body is
-// checked in each instance, not here. A type function (`-> type`) and a prototype are ordinary.
+// Whether a parameter is written `auto x` in today's syntax: its type is the type each call passes, so the function is
+// a template with one instance per set of argument types (#1934).
+export Bool is_auto_param(const ast::Param *p) {
+    return !p->is_new && p->type != nullptr && p->type->kind == .auto_type && !p->is_rest && !p->is_pack &&
+           !p->is_gather;
+}
+
+// A function with a body and a compile-time or `auto` parameter, whose result is not a type, is a template (#1908,
+// #1934): its body is checked in each instance, not here. A type function (`-> type`) and a prototype are ordinary.
 static Bool is_template(const ast::Decl *d, ast::Param list[:], const ast::TypeExpr *result_type) {
     if (d->kind != .function || d->kind.function.body == nullptr || is_type_name(result_type)) return false;
     for (Usize i = 0; i < countof(list); i++) {
-        if (is_compile_time(&list[i])) return true;
+        if (is_compile_time(&list[i]) || is_auto_param(&list[i])) return true;
     }
     return false;
 }
@@ -2017,9 +2024,18 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]
     Binding bindings[:] = mem::alloc_slice(Binding, countof(given));
     Usize bound = 0;
     push_scope(&r->scopes);
+    Bool auto_syntax = false; // the types of an `auto` template are written in today's syntax
     for (Usize i = 0; i < countof(all); i++) {
+        if (is_auto_param(&all[i])) {
+            kept_count += 1;
+            bindings[bound] = given[bound];
+            bindings[bound].name = msg(format::push("$auto.", all[i].name));
+            bound += 1;
+            continue;
+        }
         if (!is_compile_time(&all[i])) {
             kept_count += 1;
+            auto_syntax = auto_syntax || !all[i].is_new;
             continue;
         }
         bindings[bound] = given[bound];
@@ -2036,20 +2052,27 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]
     ast::Param kept[:] = mem::alloc_slice(ast::Param, kept_count);
     Slot slots[:] = mem::alloc_slice(Slot, kept_count);
     Usize at = 0;
+    Usize taken = 0; // the next binding for an `auto` parameter
     for (Usize i = 0; i < countof(all); i++) {
         if (is_compile_time(&all[i])) {
+            taken += 1;
             continue;
         }
         kept[at] = all[i];
         slots[at].name = all[i].name;
-        r->new_syntax = true;
-        slots[at].type = all[i].type == nullptr ? r->table.invalid : resolve(r, all[i].type);
-        r->new_syntax = false;
+        if (is_auto_param(&all[i])) {
+            slots[at].type = bindings[taken].type;
+            taken += 1;
+        } else {
+            r->new_syntax = !auto_syntax;
+            slots[at].type = all[i].type == nullptr ? r->table.invalid : resolve(r, all[i].type);
+            r->new_syntax = false;
+        }
         at += 1;
     }
     TypeRef result = r->table.void_type;
     if (copy->kind.function.result != nullptr) {
-        r->new_syntax = true;
+        r->new_syntax = !auto_syntax;
         result = resolve(r, copy->kind.function.result);
         r->new_syntax = false;
     }
