@@ -1,0 +1,21 @@
+import c <stdio.h>
+
+# Brackets in every position they take: array sizes inferred, designated-style fills, subscripts after a name, a call
+# or another subscript, and a parameter of slice type.
+fn first(values: []i32, count: usize) -> i32:
+    if count > 0:
+        values[0]
+    else:
+        -1
+
+fn pointer(values: *i32) -> *i32:
+    values
+
+pub fn main() -> i32:
+    let sized = [4, 5, 6]
+    let designated: [4]i32 = [8, 0, 7, 0]
+    let matrix: [2][3]i32 = [[1, 2, 3], [4, 5, 6]]
+    let names = ["a", "b"]
+    let _ = stdio.printf("%d %d %d\n", first(sized[0:3], 3), designated[0] + designated[2], pointer(&sized[0])[1])
+    let _ = stdio.printf("%d %d %zu %s\n", matrix[1][2], (matrix[0])[1], countof(sized), names[1])
+    0
