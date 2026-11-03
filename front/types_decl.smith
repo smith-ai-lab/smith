@@ -66,6 +66,7 @@ import front::types_expr;
 import front::types_fn;
 import front::types_iter;
 import front::types_stream;
+import front::types_undefined;
 import front::when;
 import std::arena;
 import std::format;
@@ -691,6 +692,7 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
     types::TypeRef outer = state.result;
     state.result = result;
     find_tails(root);
+    types_undefined::check_body(r, root);
     state.top = 0;
     push(root, nullptr, enter);
     while (state.top > 0) {
