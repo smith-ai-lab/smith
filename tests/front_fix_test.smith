@@ -250,7 +250,7 @@ export void test_an_if_around_declarations_becomes_when() {
                                                 "int open_window() {\n    return 2;\n}\n#endif\n"
                                                 "#ifdef __linux__\nint only_linux() {\n    return 4;\n}\n#endif\n");
     check_text(fixed.text, "@when(target.os == .macos)\nfn open_window() -> i32 {\n    return 1\n}\n"
-                           "// closes it\n@when(target.os == .macos)\nfn close_window() -> i32 {\n    return 3\n}\n"
+                           "# closes it\n@when(target.os == .macos)\nfn close_window() -> i32 {\n    return 3\n}\n"
                            "@when(target.os != .macos)\nfn open_window() -> i32 {\n    return 2\n}\n"
                            "@when(target.os == .linux)\nfn only_linux() -> i32 {\n    return 4\n}\n");
     parser::Parsed again = parser::parse_new("t.smith", fixed.text);
@@ -365,4 +365,19 @@ export void test_a_variable_with_a_designated_list_is_rewritten_to_a_call() {
                "struct Node { a: i32 }\nstatic fn make() -> Node {\n    n := Node(a = 1)\n    return n\n}\n");
     parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
     check_count(countof(again.errors), 0);
+}
+
+// A `//` comment is `#` in the revised syntax: the lexer error carries the edit, and fix_text writes it at the end.
+export void test_a_slash_comment_becomes_a_hash_comment() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed own = parser::parse_new("t.smith", "fn f() -> i32 {\n    return 1 //one\n}\n");
+    check_count(countof(own.errors), 1);
+    syntax::Edits edits = own.errors[0].fix;
+    check_count(countof(edits), 1);
+    check_text(edits[0].text, "# ");
+    fix::Fixed fixed = fix::fix_text("t.smith", "int f() {\n    return 1; // \"x\" // a\n}\n// end\n");
+    check_text(fixed.text, "fn f() -> i32 {\n    return 1 # \"x\" // a\n}\n# end\n");
 }

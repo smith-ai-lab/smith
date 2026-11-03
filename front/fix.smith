@@ -177,6 +177,30 @@ export Bool store(Str path, Str text) {
     return written != .error;
 }
 
+// The text with every `//` comment written as a `#` comment (a space after it when there is none). Only the text
+// between tokens is looked at, so a `//` in a string is left. Nothing changes when the text does not tokenize as
+// today's syntax.
+static Str hash_comments(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    if (lexed == .error) return source;
+    Str out = "";
+    Usize copied = 0;
+    Usize gap = 0;
+    for (lex::Token token : lexed.ok) {
+        for (Usize i = gap; i + 1 < token.span.start; i++) {
+            if (source[i] != '/' || source[i + 1] != '/') continue;
+            Bool blank = i + 2 >= countof(source) || source[i + 2] == ' ' || source[i + 2] == '\n';
+            Str spaced = blank ? "#" : "# ";
+            out = as_str(format::push(out, source[copied:i], spaced));
+            copied = i + 2;
+            while (i < token.span.start && source[i] != '\n')
+                i += 1;
+        }
+        gap = token.span.end;
+    }
+    return as_str(format::push(out, source[copied:countof(source)]));
+}
+
 // Mends the text of the file called `file`: parses, applies the fixes, and parses the result again, until a pass
 // applies none (at most 8 passes). `applied` counts the fixes of all the passes.
 export Fixed fix_text(Str file, Str source) {
@@ -196,6 +220,11 @@ export Fixed fix_text(Str file, Str source) {
         total.text = fixed.text;
         total.applied += fixed.applied;
         total.skipped = fixed.skipped;
+    }
+    Str hashed = hash_comments(total.text);
+    if (total.applied > 0 && countof(hashed) != countof(total.text) &&
+        countof(parser::parse_new(file, hashed).errors) == 0) {
+        total.text = hashed;
     }
     return total;
 }

@@ -31,11 +31,26 @@ export struct Parsed {
     parse::Errors warnings;
 };
 
+// The fix of a `//` comment: `#` in its place, with a space after it when the comment has none. (A `/*` has no fix.)
+static parse::Edits slash_comment_edits(Str source, ast::Span at) {
+    parse::Edits none = {};
+    if (source[at.start + 1] != '/') return none;
+    Bool spaced = at.end >= countof(source) || source[at.end] == ' ' || source[at.end] == '\n';
+    Str text = spaced ? "#" : "# ";
+    parse::Edit change = {.span = at, .text = text};
+    parse::Edits edits = {};
+    edits = mem::realloc(edits, 1);
+    edits[0] = change;
+    return edits;
+}
+
 // The fix of a lexer error: a `#` that starts a simple `#define` or `#include` line carries the edits of all such lines
 // (front::fix_directive, #1748); any other lexer error has none.
 static parse::Edits lex_fix(Str source, lex::LexError failure) {
     parse::Edits none = {};
-    if (failure.span.start >= countof(source) || source[failure.span.start] != '#') return none;
+    if (failure.span.start >= countof(source)) return none;
+    if (source[failure.span.start] == '/') return slash_comment_edits(source, failure.span);
+    if (source[failure.span.start] != '#') return none;
     return fix_directive::edits(source);
 }
 
