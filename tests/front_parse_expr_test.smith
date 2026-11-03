@@ -13,6 +13,7 @@ import front::ast;
 import front::lex;
 import front::parse;
 import front::parse_expr;
+import front::parse_stmt;
 import front::fix;
 import front::parse_type;
 
@@ -409,4 +410,92 @@ export void test_parse_expr_keyword_is_a_member_name() {
     ast::Expr *e = parse::expression(&p);
     test::check_condition(e != nullptr);
     test::check_equal(countof(p.errors), 0UL);
+}
+
+// ---- lambdas, `do:` and trailing blocks read `:` and indentation (#1858): the tokens go through lex::layout, the
+// parser has `layout` set and the real statement hook reads the bodies. Each source is one expression statement of a
+// function.
+
+static Str dump_layout(Str source) {
+    lex::Lexed lexed = lex::tokenize_new(source);
+    lex::Tokens tokens = {};
+    switch (lexed) {
+    case .ok:
+        tokens = lexed.ok;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    lex::Lexed laid = lex::layout(source, tokens);
+    switch (laid) {
+    case .ok:
+        tokens = laid.ok;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(laid.error.message, expected);
+    }
+    parse::Parser p = parse::make(tokens, source);
+    p.new_syntax = true;
+    p.layout = true;
+    p.hooks.expression = parse_expr::expression;
+    p.hooks.type = parse_type::type;
+    p.hooks.statement = parse_stmt::statement;
+    ast::Expr *e = parse::expression(&p);
+    ast::StmtRef statements[1] = {ast::return_value(e)};
+    ast::StmtRef none[:] = {};
+    ast::Stmt *body = ast::block(none);
+    if (e != nullptr) body = ast::block(statements);
+    ast::Param params[:] = {};
+    ast::DeclRef decls[1] = {ast::function("f", params, ast::named("I32"), body)};
+    ast::Module m = ast::new_module("m", decls);
+    char text[:] = format::push(source, "\n", ast::dump(&m));
+    for (Usize i = 0; i < countof(p.errors); i += 1) {
+        text = format::push(text, "error ", p.errors[i].span.start, "-", p.errors[i].span.end, ": ",
+                            p.errors[i].message, "\n");
+    }
+    return text;
+}
+
+static Str layout_source(Usize which) {
+    switch (which) {
+    case 0:
+        return "fn(x): x * 2\n";
+    case 1:
+        return "fn(x: i32, y) -> i32: x\n";
+    case 2:
+        return "fn(x):\n    g(x)\n    x\n";
+    case 3:
+        return "f(1, fn(x): x)\n";
+    case 4:
+        return "sort(xs) fn(a, b): a < b\n";
+    case 5:
+        return "retry(3):\n    fetch(url)\n";
+    case 6:
+        return "do: 1\n";
+    case 7:
+        return "do:\n    g(2)\n    w * w\n";
+    case 8:
+        return "fn(i32) -> i32\n";
+    case 9:
+        return "match s:\n    .a: do:\n        f(1)\n    .b: fn(x): x\n";
+    case 10:
+        return "fn(x)\n";
+    case 11:
+        return "do 1\n";
+    default:
+        return "";
+    }
+}
+
+export void test_parse_expr_layout_lambdas_do_and_trailing_blocks() {
+    arena::Arena memory = test::memory(1U << 23);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    char all[:] = {};
+    for (Usize i = 0; i < 12; i += 1)
+        all = format::push(all, dump_layout(layout_source(i)), "\n");
+    test::golden("tests/front/parse_expr/layout_forms.txt", all);
 }

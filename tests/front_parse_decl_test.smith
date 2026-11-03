@@ -149,6 +149,26 @@ static ast::Stmt *stub_statement(parse::Parser *p) {
     return ast::block(items);
 }
 
+// Layout path (#1857): `newline`, `indent` ... `dedent` or a statement on the line; the returns of the block, and every
+// other token skipped.
+static ast::Stmt *stub_layout_statement(parse::Parser *p) {
+    ast::StmtRef *block = (ast::StmtRef *)mem::alloc_array_raw(sizeof(ast::StmtRef), 8, alignof(ast::StmtRef));
+    Usize count = 0;
+    parse::expect(p, lex::newline, "a line break");
+    parse::expect(p, lex::indent, "an indented block");
+    while (!parse::at(p, lex::dedent) && !parse::at(p, lex::end_of_file)) {
+        if (parse::accept(p, lex::kw_return) && count < 8) {
+            block[count] = ast::return_value(parse::expression(p));
+            count += 1;
+        } else {
+            parse::advance(p);
+        }
+    }
+    parse::expect(p, lex::dedent, "the end of the block");
+    StmtRefList items = block[0:count];
+    return ast::block(items);
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Helpers
 
@@ -504,6 +524,53 @@ static parse::Parser new_parser_of(Str source) {
     return p;
 }
 
+// The same over the tokens with layout (#1857): blocks are `:` and an indented block, a line ends with `newline`.
+static parse::Parser layout_parser_of(Str source) {
+    lex::Lexed lexed = lex::tokenize_new(source);
+    lex::Tokens tokens = {};
+    switch (lexed) {
+    case .ok:
+        tokens = lexed.ok;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    lex::Lexed laid = lex::layout(source, tokens);
+    switch (laid) {
+    case .ok:
+        tokens = laid.ok;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(laid.error.message, expected);
+    }
+    parse::Parser p = parse::make(tokens, source);
+    p.layout = true;
+    p.hooks.expression = stub_expression;
+    p.hooks.type = stub_new_type;
+    p.hooks.statement = stub_layout_statement;
+    p.hooks.declaration = parse_decl::declaration;
+    return p;
+}
+
+static Str layout_dump_of(Str source) {
+    parse::Parser p = layout_parser_of(source);
+    ast::Module m = parse_decl::file(&p, "test.smith");
+    if (countof(p.errors) > 0) {
+        Str expected = "no error";
+        test::check_equal(p.errors[0].message, expected);
+    }
+    return ast::dump(&m);
+}
+
+static Str layout_first_error(Str source) {
+    parse::Parser p = layout_parser_of(source);
+    ast::Module m = parse_decl::file(&p, "test.smith");
+    if (countof(p.errors) == 0) return "no error";
+    return p.errors[0].message;
+}
+
 static Str new_dump_of(Str source) {
     parse::Parser p = new_parser_of(source);
     ast::Module m = parse_decl::file(&p, "test.smith");
@@ -546,25 +613,22 @@ export void test_parse_decl_new_functions() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str source = "pub fn area(r: f64) -> f64 {\n"
+    Str source = "pub fn area(r: f64) -> f64:\n"
                  "    return r\n"
-                 "}\n"
-                 "fn bump(mut x: i32) -> i32 {\n"
+                 "fn bump(mut x: i32) -> i32:\n"
                  "    return x\n"
-                 "}\n"
                  "@inline\n"
                  "@c_name(\"smith_log\")\n"
-                 "fn log(s: str) {\n"
-                 "}\n"
-                 "fn table(const n: usize, T: type, rest: ...) -> T {\n"
-                 "}\n"
-                 "fn Pair(T: type) -> type {\n"
-                 "}\n"
-                 "fn tagged(@cold p: *mut point, q: i32,) {\n"
-                 "}\n"
-                 "fn none() {\n"
-                 "}\n";
-    test::golden("tests/front/parse_decl/new_functions.txt", new_dump_of(source));
+                 "fn log(s: str):\n"
+                 "    return s\n"
+                 "fn table(const n: usize, T: type, rest: ...) -> T:\n"
+                 "    return n\n"
+                 "fn Pair(T: type) -> type:\n"
+                 "    return T\n"
+                 "fn tagged(@cold p: *mut point, q: i32,):\n"
+                 "    return q\n"
+                 "fn none():\n";
+    test::golden("tests/front/parse_decl/new_functions.txt", layout_dump_of(source));
 }
 
 export void test_parse_decl_new_types() {
@@ -572,31 +636,26 @@ export void test_parse_decl_new_types() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str source = "struct Point {\n"
+    Str source = "struct Point:\n"
                  "    x: f64\n"
                  "    y: f64\n"
-                 "}\n"
-                 "pub struct Empty {}\n"
-                 "enum Color {\n"
+                 "pub struct Empty:\n"
+                 "enum Color:\n"
                  "    red\n"
                  "    green\n"
                  "    blue\n"
-                 "}\n"
-                 "enum Small: u8 {\n"
+                 "enum Small(u8):\n"
                  "    low = 2\n"
                  "    high = 9\n"
-                 "}\n"
-                 "enum Shape {\n"
+                 "enum Shape:\n"
                  "    circle: Circle\n"
                  "    rect: Rect\n"
                  "    empty\n"
-                 "}\n"
-                 "enum Single {\n"
+                 "enum Single:\n"
                  "    only\n"
-                 "}\n"
                  "struct Old { I32 x; };\n"
                  "enum OldColor { red, green };\n";
-    test::golden("tests/front/parse_decl/new_types.txt", new_dump_of(source));
+    test::golden("tests/front/parse_decl/new_types.txt", layout_dump_of(source));
 }
 
 // A keyword names a field in a struct body (`module: str`), never a local or a parameter (#1770).
@@ -605,7 +664,7 @@ export void test_parse_decl_keyword_names_a_field() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_text(new_first_error("struct P {\n    module: str\n    type: Kind\n}\n"), "no error");
+    expect_text(layout_first_error("struct P:\n    module: str\n    type: Kind\n"), "no error");
 }
 
 // 1 when the first field of a record declaration is written in smith's own syntax, 0 when not, 2 for no record.
@@ -619,7 +678,7 @@ export void test_parse_decl_new_fields_carry_is_new() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parse::Parser p = new_parser_of("struct New {\n    x: i32\n}\nstruct Old { I32 x; };\n");
+    parse::Parser p = layout_parser_of("struct New:\n    x: i32\nstruct Old { I32 x; };\n");
     ast::Module m = parse_decl::file(&p, "test.smith");
     test::check_equal(countof(p.errors), 0);
     test::check_equal(countof(m.decls), 2);
@@ -653,7 +712,7 @@ export void test_parse_decl_new_goes_on_after_an_error() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parse::Parser p = new_parser_of("let a: i32\nlet b = 1\nfn f(x) {\n}\nlet mut c = 2\n");
+    parse::Parser p = layout_parser_of("let a: i32\nlet b = 1\nfn f(x):\n    return x\nlet mut c = 2\n");
     ast::Module m = parse_decl::file(&p, "test.smith");
     test::check_equal(countof(p.errors), 2);
     test::check_equal(countof(m.decls), 2);
@@ -730,10 +789,10 @@ export void test_parse_decl_new_error_function_parameters() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     Str expected = "a parameter is written `name: type`, found `)`";
-    expect_text(new_first_error("fn f(a, ) {\n}\n"), "a parameter is written `name: type`: `a` has no type");
-    expect_text(new_first_error("fn f(i32) {\n}\n"), "a parameter is written `name: type`: `i32` has no type");
-    expect_text(new_first_error("fn f(a: ) {\n}\n"), "the type stub reads a name");
-    expect_text(new_first_error("fn f(mut) {\n}\n"), expected);
+    expect_text(layout_first_error("fn f(a, ):\n"), "a parameter is written `name: type`: `a` has no type");
+    expect_text(layout_first_error("fn f(i32):\n"), "a parameter is written `name: type`: `i32` has no type");
+    expect_text(layout_first_error("fn f(a: ):\n"), "the type stub reads a name");
+    expect_text(layout_first_error("fn f(mut):\n"), expected);
 }
 
 export void test_parse_decl_new_error_function_head() {
@@ -741,10 +800,10 @@ export void test_parse_decl_new_error_function_head() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_text(new_first_error("fn (a: i32) {\n}\n"), "a function has a name: write `fn name(a: i32) -> i32 { ... }`");
-    expect_text(new_first_error("fn f a: i32 {\n}\n"), "expected `(` after the function's name, found `a`");
-    expect_text(new_first_error("fn f() -> {\n}\n"), "the type stub reads a name");
-    expect_text(new_first_error("fn f()\nlet x = 1\n"), "a function has a body: expected `{` after the parameters");
+    expect_text(layout_first_error("fn (a: i32):\n"), "a function has a name: write `fn name(a: i32) -> i32:`");
+    expect_text(layout_first_error("fn f a: i32:\n"), "expected `(` after the function's name, found `a`");
+    expect_text(layout_first_error("fn f() -> :\n"), "the type stub reads a name");
+    expect_text(layout_first_error("fn f()\nlet x = 1\n"), "a function has a body: expected `:` after the parameters");
 }
 
 export void test_parse_decl_new_error_a_destructuring() {
@@ -779,12 +838,12 @@ export void test_parse_decl_new_error_a_field() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_text(new_first_error("struct P {\n    x: f64,\n}\n"), "a field ends with the line, not `,`: remove it");
-    expect_text(new_first_error("struct P {\n    x: f64;\n}\n"), "a field ends with the line, not `;`: remove it");
-    expect_text(new_first_error("struct P {\n    x: f64 y: f64\n}\n"),
+    expect_text(layout_first_error("struct P:\n    x: f64,\n"), "a field ends with the line, not `,`: remove it");
+    expect_text(layout_first_error("struct P:\n    x: f64;\n"), "a field ends with the line, not `;`: remove it");
+    expect_text(layout_first_error("struct P:\n    x: f64 y: f64\n"),
                 "a field is one line: expected a line break after it, found `y`");
-    expect_text(new_first_error("struct P {\n    x:\n}\n"), "the type stub reads a name");
-    expect_text(new_first_error("struct P {\n    x: f64\n};\n"), "a type ends with the line, not `;`: remove it");
+    expect_text(layout_first_error("struct P:\n    x:\n"), "the type stub reads a name");
+    expect_text(layout_first_error("struct P:\n    x: f64\n;\n"), "a type ends with the line, not `;`: remove it");
 }
 
 export void test_parse_decl_new_error_an_enumerator() {
@@ -792,9 +851,9 @@ export void test_parse_decl_new_error_an_enumerator() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_text(new_first_error("enum E {\n    a: T,\n}\n"), "a member ends with the line, not `,`: remove it");
-    expect_text(new_first_error("enum E {\n    a:\n}\n"), "the type stub reads a name");
-    expect_text(new_first_error("enum E {\n    a: T b: U\n}\n"),
+    expect_text(layout_first_error("enum E:\n    a: T,\n"), "a member ends with the line, not `,`: remove it");
+    expect_text(layout_first_error("enum E:\n    a:\n"), "the type stub reads a name");
+    expect_text(layout_first_error("enum E:\n    a: T b: U\n"),
                 "a member is one line: expected a line break after it, found `b`");
 }
 
