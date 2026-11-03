@@ -28,6 +28,12 @@ static Str text_of(Str path) {
     return chars;
 }
 
+// The repository's folder: the runner's folder only links tests, lib and front, so plugin/ is found through $SMITH_REPO.
+static Str repo() {
+    const char *folder = c::getenv("SMITH_REPO");
+    return folder != nullptr ? as_str(format::push(folder)) : as_str(format::push("."));
+}
+
 static Bool starts_with(Str text, Str prefix) {
     return countof(text) >= countof(prefix) && roots::same(text[0:countof(prefix)], prefix);
 }
@@ -53,7 +59,7 @@ static void write_text(Str path, Str text) {
 // The bundle has no problem: `smith docs plugin` checks plugin/knowledge/ with the types its index declares.
 export void test_plugin_knowledge_smith_docs_passes() {
     const char *self = c::getenv("SMITH_SELF");
-    Str command = as_str(format::push(self != nullptr ? self : "smith", " docs plugin"));
+    Str command = as_str(format::push(self != nullptr ? self : "smith", " docs ", repo(), "/plugin"));
     const char *const argv[4] = {"sh", "-c", command.data, nullptr};
     process::OutputResult done = process::run(argv[0:3]);
     test::check_equal(done == .ok, true);
@@ -104,13 +110,13 @@ static void compile_concept(Str file, Str name) {
 
 // Every ```smith block of every concept compiles through the new front end.
 export void test_plugin_knowledge_every_example_compiles() {
-    files::EntriesResult listing = files::list("plugin/knowledge");
+    files::EntriesResult listing = files::list(as_str(format::push(repo(), "/plugin/knowledge")));
     test::check_equal(listing == .ok, true);
     if (listing != .ok) return;
     for (files::Entry entry : listing.ok) {
         Str file = entry.name;
         if (!ends_with(file, ".md") || roots::same(file, "index.md")) continue;
         Str name = file[0:countof(file) - 3];
-        compile_concept(as_str(format::push("plugin/knowledge/", file)), name);
+        compile_concept(as_str(format::push(repo(), "/plugin/knowledge/", file)), name);
     }
 }
