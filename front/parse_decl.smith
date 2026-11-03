@@ -2446,7 +2446,21 @@ static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 
     }
     ParamList params = {};
     Bool keyword_only = false;
+    Bool variadic = false;
     while (!failed_since(p, errors_before) && !parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
+        if (parse::at(p, lex::ellipsis)) {
+            // A bare `...` ends the parameters of an `extern fn`: it declares a C variadic.
+            lex::Token dots = parse::advance(p);
+            variadic = true;
+            if (!pre->is_extern) {
+                parse::error(p, dots.span,
+                             "a Smith function names its variadic parameters: `rest...`; a bare `...` only declares a "
+                             "C function with `extern fn`");
+            } else if (!parse::at(p, lex::right_paren)) {
+                parse::error(p, parse::peek(p).span, "`...` is the last parameter of an `extern fn`");
+            }
+            break;
+        }
         ast::Param param = {};
         if (!parse_new_param(p, &param)) break;
         param.is_keyword = keyword_only;
@@ -2469,6 +2483,17 @@ static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 
     if (!failed_since(p, errors_before)) parse::expect(p, lex::right_paren, "`)`");
     ast::TypeExpr *result = nullptr;
     if (!failed_since(p, errors_before) && parse::accept(p, lex::arrow)) result = parse::type(p);
+    if (pre->is_extern && !failed_since(p, errors_before) && !parse::at(p, lex::colon) &&
+        !parse::at(p, lex::left_brace)) {
+        // `extern fn name(a: i32, ...) -> r` has no body: the linker provides it.
+        parse::accept(p, lex::semicolon);
+        ast::DeclKind kind = {.function = {.name = parse::text(p, name),
+                                           .params = params,
+                                           .result = result,
+                                           .body = nullptr,
+                                           .variadic = variadic}};
+        return make(p, start, pre, kind);
+    }
     if (p->layout) return finish_layout_function(p, pre, start, name, params, result, errors_before);
     if (!failed_since(p, errors_before) && !parse::at(p, lex::left_brace)) {
         parse::error(p, parse::peek(p).span, "a function has a body: expected `{` after the parameters");
