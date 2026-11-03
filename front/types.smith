@@ -1865,10 +1865,11 @@ export Bool is_type_parameter(const ast::Param *p) {
 }
 
 // Whether a parameter is written `auto x` in today's syntax: its type is the type each call passes, so the function is
-// a template with one instance per set of argument types (#1934).
+// a template with one instance per set of argument types (#1934). A `; kw...` parameter is one too: its type is the
+// named tuple of the call's leftover named arguments, so each call site has its own instance (#1985).
 export Bool is_auto_param(const ast::Param *p) {
-    return !p->is_new && p->type != nullptr && p->type->kind == .auto_type && !p->is_rest && !p->is_pack &&
-           !p->is_gather;
+    if (p->is_gather) return p->is_new && !p->is_pack;
+    return !p->is_new && p->type != nullptr && p->type->kind == .auto_type && !p->is_rest && !p->is_pack;
 }
 
 // A function with a body and a compile-time or `auto` parameter, whose result is not a type, is a template (#1908,
@@ -1896,6 +1897,9 @@ static void declare_template(Checked *r, const ast::Decl *d, Str name, ast::Para
 static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Param list[:],
                              const ast::TypeExpr *result_type, Bool variadic) {
     if (is_template(d, list, result_type)) {
+        for (Usize i = 0; i < countof(list); i++) {
+            if (list[i].is_pack) failf(r, list[i].span, "not yet: positional packs");
+        }
         declare_template(r, d, name, list);
         return;
     }
