@@ -360,6 +360,18 @@ export void test_front_e2e_c_printf_prints() {
     remove_all(folder);
 }
 
+// `import c <h>` brings the header's names as `c.name` (#1961): `c.abs(...)` is the name `c::abs`, never `unknown name
+// c`.
+export void test_front_e2e_import_c_names_are_read_with_a_dot() {
+    use_header_flags();
+    Str folder = folder_for("c_dot");
+    Str source = "import c <stdlib.h>\n\npub fn check() -> i32:\n    if c.abs(-5) != 5:\n        return 1\n    0\n";
+    compile::Report report = compile_module(folder, "dot", source);
+    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    test::check_equal(report.ok, true);
+    remove_all(folder);
+}
+
 // A name no imported header declares is an error that names it.
 export void test_front_e2e_a_c_name_no_header_declares_is_an_error() {
     use_header_flags();

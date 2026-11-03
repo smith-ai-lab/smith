@@ -105,13 +105,6 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
     ast::Param source[:] = d->kind.function.params;
     const ast::TypeExpr *result_type = d->kind.function.result;
     Bool variadic = d->kind.function.variadic;
-    if (variadic) return signature_failed(state::not_emitted("variadic function", d->span));
-    if (d->is_extern) return signature_failed(state::not_emitted("extern C function", d->span));
-    for (Usize i = 0; i < countof(d->attributes); i++) {
-        ast::Path name = d->attributes[i].name;
-        if (state::same_text(name.segments[countof(name.segments) - 1].text, "c_name"))
-            return signature_failed(state::not_emitted("c_name", d->attributes[i].span));
-    }
     if (result_type == nullptr) return signature_failed(state::not_emitted("function without a result", d->span));
     Usize count = countof(source);
     if (count > 64) return signature_failed(state::not_emitted("more than 64 parameters", d->span));
@@ -139,8 +132,8 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
         mem::free(all.data);
         return {.error = made_result.error};
     }
-    Signature sig = {.result = made_result.ok, .params = all[0:count], .owned = true};
-    sig.type = c::LLVMFunctionType(made_result.ok.llvm, types, (U32)count, 0);
+    Signature sig = {.result = made_result.ok, .params = all[0:count], .owned = true, .variadic = variadic};
+    sig.type = c::LLVMFunctionType(made_result.ok.llvm, types, (U32)count, variadic ? 1 : 0);
     return sig;
 }
 
@@ -200,7 +193,8 @@ static SignatureResult imported_function(state::Emitter *e, Str key, const ast::
     e->import_scope = "";
     if (made == .error) return made;
     Signature sig = made.ok;
-    char *label = state::cstr(key);
+    Str own = state::c_name_of(d); // `@c_name("__enzyme_autodiff")`: the symbol is the C name, not the module's path
+    char *label = state::cstr(countof(own) > 0 ? own : key);
     sig.function = c::LLVMGetNamedFunction(e->module, label);
     if (sig.function == nullptr) sig.function = c::LLVMAddFunction(e->module, label, sig.type);
     mem::free(label);
@@ -213,8 +207,18 @@ static Bool is_c_path(ast::Path path) {
 
 // `c::name` where `name` is a function a header declared.
 static Bool c_callee(state::Emitter *e, const ast::Expr *callee, const ast::Decl **found, Str *symbol) {
-    if (callee->kind != .name) return false;
-    Str full = join(callee->kind.name.path);
+    Str full = "";
+    if (callee->kind == .name) {
+        full = join(callee->kind.name.path);
+    } else if (callee->kind == .member) { // `c.name` after `import c <h>` (#1961), unless a local `c` hides it
+        state::Local local = {};
+        if (state::find_local(e, "c", &local)) return false;
+        Str name = types::c_member_name(callee);
+        if (countof(name) == 0) return false;
+        full = state::msg(format::push("c::", name)); // an owned copy, as `join` makes
+    } else {
+        return false;
+    }
     const types::Symbol *target = types::lookup(&e->options.checked->scopes, full);
     if (target == nullptr || target->kind != .function_symbol || target->decl->kind != .function) {
         state::free_text(full);
@@ -234,6 +238,7 @@ static Bool imported_callee(state::Emitter *e, const ast::Expr *callee, const as
     if (callee->kind == .name && is_c_path(callee->kind.name.path)) {
         return c_callee(e, callee, found, symbol);
     }
+    if (callee->kind == .member && c_callee(e, callee, found, symbol)) return true;
     if (callee->kind == .member) {
         names = types::member_names(callee);
     } else if (callee->kind == .name && countof(callee->kind.name.path.segments) == 1) {
@@ -349,6 +354,13 @@ static const types::Instance *callee_of(state::Emitter *e, const ast::Expr *writ
     return instance;
 }
 
+// The symbol of a prototype of this module: its `@c_name`, else the module's path and its name.
+static Str prototype_symbol(state::Emitter *e, const ast::Decl *d, Str name) {
+    Str own = state::c_name_of(d);
+    if (countof(own) > 0) return state::msg(format::push(own));
+    return symbol_for(e, name);
+}
+
 // The function a call names: one of the module's with a body, or a prototype of the module.
 static SignatureResult find(state::Emitter *e, Str key, ast::Span span, const ast::Decl *imported) {
     if (imported != nullptr) return imported_function(e, key, imported);
@@ -367,7 +379,7 @@ static SignatureResult find(state::Emitter *e, Str key, ast::Span span, const as
         SignatureResult made = signature(e, d);
         if (made == .error) return made;
         Signature sig = made.ok;
-        Str symbol = symbol_for(e, key);
+        Str symbol = prototype_symbol(e, d, key);
         char *label = state::cstr(symbol);
         state::free_text(symbol);
         sig.function = c::LLVMGetNamedFunction(e->module, label);
@@ -831,7 +843,7 @@ export state::Status prototype(state::Emitter *e, const ast::Decl *d) {
     SignatureResult made = signature(e, d);
     if (made == .error) return {.error = made.error};
     Signature sig = made.ok;
-    Str symbol = symbol_for(e, name);
+    Str symbol = prototype_symbol(e, d, name);
     char *label = state::cstr(symbol);
     state::free_text(symbol);
     if (c::LLVMGetNamedFunction(e->module, label) != nullptr) {
