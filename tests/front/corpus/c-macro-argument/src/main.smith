@@ -1,0 +1,13 @@
+import c <assert.h>
+import c <stdint.h>
+import c <stdio.h>
+
+# A function-like C macro is called through its header: the preprocessor expands it with the arguments, && clang
+# types the result. SIZE_MAX is a usize, so `small < stdint.SIZE_MAX` type-checks against a usize.
+
+pub fn main() -> i32:
+    let small: usize = 3
+    assert.assert(small < stdint.SIZE_MAX)
+    assert.assert(stdint.UINT64_MAX > 0 && small != stdint.SIZE_MAX)
+    let _ = stdio.printf("%zu\n", small)
+    0
