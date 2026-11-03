@@ -23,6 +23,13 @@ static const char *smith_path() {
     return self != nullptr ? self : "smith";
 }
 
+static Bool contains(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        if (roots::same(text[i:i + countof(needle)], needle)) return true;
+    }
+    return false;
+}
+
 static Str folder_for(Str name) {
     Str path = as_str(format::push("/tmp/front_header_", (I64)c::getpid(), "_", name));
     c::mkdir(path.data, 0o700);
@@ -280,5 +287,26 @@ export void test_front_header_the_driver_writes_the_same_header() {
     Str want = with_dir(golden(""), as_str(format::push("")));
     Str got = text_of(header_path(folder));
     test::check_equal(got, replace_slash(want));
+    remove_all(folder);
+}
+
+// `@when(cond)` on a function and on a field is `#if` in the header (#1801).
+export void test_front_header_when_is_if() {
+    Str folder = folder_for("when");
+    Str source = "pub struct Point {\n    x: i64\n    @when(target.os == .macos)\n    y: i64\n}\n\n"
+                 "@when(target.os == .macos)\npub fn open_window() -> i64 {\n    1\n}\n\n"
+                 "@when(target.os != .macos && target.os != .linux)\npub fn nothing() -> i64 {\n    2\n}\n\n"
+                 "@when(target.os != .macos)\npub fn open_window() -> i64 {\n    3\n}\n";
+    write_text(shapes_path(folder), source);
+    compile::Report done =
+        compile::header(shapes_path(folder), header_path(folder), "x86_64-unknown-linux-gnu", roots_of(folder));
+    test::check_equal(done.ok, true);
+    Str got = text_of(header_path(folder));
+    Str want = "typedef struct { int64_t x; \n#if defined(__APPLE__)\nint64_t y; \n#endif\n} geometry_shapes_Point;\n";
+    test::check_condition(contains(got, want));
+    test::check_condition(contains(got, "#if defined(__APPLE__)\nint64_t geometry_shapes_open_window(void)"));
+    test::check_condition(contains(got, "#if !defined(__APPLE__)\nint64_t geometry_shapes_open_window(void)"));
+    test::check_condition(
+        contains(got, "#if !defined(__APPLE__) && !defined(__linux__)\nint64_t geometry_shapes_nothing"));
     remove_all(folder);
 }

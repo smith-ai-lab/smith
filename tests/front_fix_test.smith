@@ -238,6 +238,43 @@ export void test_define_and_include_lines_get_one_fix() {
     check_count(fixed.applied, 1);
 }
 
+// `#if defined(__APPLE__) ... #else ... #endif` around declarations is `@when` on each declaration (#1801).
+export void test_an_if_around_declarations_becomes_when() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    // The `@when` lines come from this fix; the rest of each line is mended by the passes after it.
+    fix::Fixed fixed = fix::fix_text("t.smith", "#if defined(__APPLE__)\nint open_window() {\n    return 1;\n}\n"
+                                                "// closes it\nint close_window() {\n    return 3;\n}\n#else\n"
+                                                "int open_window() {\n    return 2;\n}\n#endif\n"
+                                                "#ifdef __linux__\nint only_linux() {\n    return 4;\n}\n#endif\n");
+    check_text(fixed.text, "@when(target.os == .macos)\nfn open_window() -> i32 {\n    return 1\n}\n"
+                           "// closes it\n@when(target.os == .macos)\nfn close_window() -> i32 {\n    return 3\n}\n"
+                           "@when(target.os != .macos)\nfn open_window() -> i32 {\n    return 2\n}\n"
+                           "@when(target.os == .linux)\nfn only_linux() -> i32 {\n    return 4\n}\n");
+    parser::Parsed again = parser::parse_new("t.smith", fixed.text);
+    check_count(countof(again.errors), 0);
+}
+
+// An `#if` that is not about the system, is inside a function or holds another directive stays as it is.
+export void test_an_if_that_is_not_about_the_system_has_no_fix() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed none = parser::parse(file_name, "#if defined(DEBUG)\nint f();\n#endif\n");
+    check_count(countof(none.errors), 1);
+    syntax::Edits no_edits = none.errors[0].fix;
+    check_count(countof(no_edits), 0);
+    parser::Parsed inside = parser::parse(file_name, "int f() {\n#if defined(__APPLE__)\n    return 1;\n#endif\n}\n");
+    syntax::Edits inside_edits = inside.errors[0].fix;
+    check_count(countof(inside_edits), 0);
+    parser::Parsed other = parser::parse(file_name, "#if defined(__APPLE__)\n#define A 1\n#endif\n");
+    syntax::Edits other_edits = other.errors[0].fix;
+    check_count(countof(other_edits), 1);
+}
+
 export void test_a_fixed_define_reads_in_smiths_own_syntax() {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);

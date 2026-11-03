@@ -13,6 +13,8 @@
 //   other module  `@serial::rename(...)` names a struct of another module, which the checker of one module cannot
 //               see: it is reported as `not yet typed`, as every name from another module is (types_expr). A
 //               qualified name whose first part is no import is an error.
+//   @when       `@when(cond)` on a top-level declaration or a field is read by front::when and checked by
+//               check_when: one condition the checker can read, and a place where it means something.
 //   record      An attribute has no behaviour of its own: the parser already holds the written value in the
 //               `attributes` of the declaration, the field or the enumerator, for reflection (#332) and nothing else.
 //
@@ -23,6 +25,7 @@ import front::ast;
 import front::parse as syntax;
 import front::types;
 import front::types_expr;
+import front::when;
 import std::format;
 import std::mem;
 
@@ -41,7 +44,7 @@ static Bool same_text(Str a, Str b) {
 static Bool is_built_in(Str name) {
     return same_text(name, "inline") || same_text(name, "noinline") || same_text(name, "cold") ||
            same_text(name, "pure") || same_text(name, "affine") || same_text(name, "c_name") ||
-           same_text(name, "attribute") || same_text(name, "effects");
+           same_text(name, "attribute") || same_text(name, "effects") || same_text(name, "when");
 }
 
 static Str path_text(ast::Path path) {
@@ -162,7 +165,7 @@ static void check_attribute(types::Checked *r, const ast::Attribute *a) {
         if (is_built_in(name)) return;
         types::failf(r, a->span, "unknown attribute `", name,
                      "`; the built-in ones are `@inline`, `@noinline`, `@cold`, `@pure`, `@affine`, `@c_name(...)`, ",
-                     "`@attribute` and `@effects(...)`, and your own are structs marked `@attribute`");
+                     "`@attribute`, `@effects(...)` and `@when(...)`, and your own are structs marked `@attribute`");
         return;
     }
     if (symbol->decl == nullptr || !marks_attribute(symbol->decl)) {
@@ -188,6 +191,57 @@ export void check_module(types::Checked *r, const ast::Module *m) {
         } else if (d->kind == .enumeration) {
             for (Usize k = 0; k < countof(d->kind.enumeration.items); k++)
                 check_all(r, d->kind.enumeration.items[k].attributes);
+        }
+    }
+}
+
+const Str when_place = "`@when` is for a function, variable, struct, enum or typedef at the top level, and for a "
+                       "struct's field; inside a function choose with `if constexpr`";
+
+// One `@when(cond)`: exactly one argument, and a condition the checker can read.
+static void check_when_one(types::Checked *r, const ast::Attribute *a) {
+    if (countof(a->args) != 1) {
+        types::fail(r, a->span, "`@when` takes one condition, such as `@when(target.os == .macos)`");
+        return;
+    }
+    Str shown = when::smith_text(a->args[0]);
+    if (countof(shown) == 0) {
+        types::fail(r, a->args[0]->span,
+                    "`@when` reads `target.os == .macos`, `target.os != .linux`, `!`, `&&` and `||` of those");
+    }
+}
+
+// Where `@when` may not be written: on anything but a declaration or a field.
+static void refuse_when(types::Checked *r, ast::Attribute list[:]) {
+    const ast::Attribute *a = when::find(list);
+    if (a != nullptr) types::fail(r, a->span, when_place);
+}
+
+// `@when` on a module's declarations, fields, enumerators and parameters (a statement takes no attribute: the parser
+// refuses `@when` on a local).
+export void check_when(types::Checked *r, const ast::Module *m) {
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->from_c) continue;
+        const ast::Attribute *a = when::find(d->attributes);
+        if (a != nullptr) {
+            if (countof(when::name_of(d)) == 0) {
+                types::fail(r, a->span, when_place);
+            } else {
+                check_when_one(r, a);
+            }
+        }
+        if (d->kind == .record) {
+            for (Usize k = 0; k < countof(d->kind.record.fields); k++) {
+                const ast::Attribute *f = when::find(d->kind.record.fields[k].attributes);
+                if (f != nullptr) check_when_one(r, f);
+            }
+        } else if (d->kind == .enumeration) {
+            for (Usize k = 0; k < countof(d->kind.enumeration.items); k++)
+                refuse_when(r, d->kind.enumeration.items[k].attributes);
+        } else if (d->kind == .function) {
+            for (Usize k = 0; k < countof(d->kind.function.params); k++)
+                refuse_when(r, d->kind.function.params[k].attributes);
         }
     }
 }

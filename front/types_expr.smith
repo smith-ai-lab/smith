@@ -2065,6 +2065,22 @@ static void construct_before(Work *w, Frame f, types::TypeRef record) {
     }
 }
 
+// Outside the module that declares the record, a construction may name only `pub` fields; a field it leaves out,
+// private ones included, is zero (#1428). False, after an error naming the first private field it names, when it
+// names one.
+static Bool private_construction(types::Checked *c, const ast::Expr *e, types::TypeRef record, ast::ExprRef args[:]) {
+    for (Usize i = 0; i < countof(args); i++) {
+        const ast::Expr *arg = args[i];
+        if (!(arg->kind == .named_arg)) continue;
+        const types::Slot *field = types::member(record, arg->kind.named_arg.name);
+        if (field != nullptr && !types::field_visible(record, field)) {
+            types::private_field(c, e->span, record, field->name);
+            return false;
+        }
+    }
+    return true;
+}
+
 // The values are typed: every argument is a named, known field, given once. A field left out is zero.
 static void construct_after(types::Checked *c, Frame f, types::TypeRef record) {
     const ast::Expr *e = f.node;
@@ -2074,7 +2090,7 @@ static void construct_after(types::Checked *c, Frame f, types::TypeRef record) {
     ast::ExprRef args[:] = e->kind.call.args;
     Str shown = types::show(record);
     Bool seen[:] = mem::alloc_slice(Bool, countof(record->slots));
-    Bool ok = true;
+    Bool ok = private_construction(c, e, record, args);
     for (Usize i = 0; i < countof(args); i++) {
         const ast::Expr *arg = args[i];
         if (!(arg->kind == .named_arg)) {
@@ -2385,6 +2401,11 @@ static void member_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
+    if (!types::field_visible(record, field)) {
+        types::private_field(c, e->span, record, name);
+        poison(c, e);
+        return;
+    }
     finish(c, e, field->type, f.expected);
 }
 
@@ -2521,6 +2542,10 @@ static types::TypeRef record_item(types::Checked *c, types::TypeRef t, const ast
         const types::Slot *field = types::member(t, name);
         if (field == nullptr) {
             types::failf(c, span, "`", types::show(t), "` has no field `", name, "`; write one of its fields");
+            return nullptr;
+        }
+        if (!types::field_visible(t, field)) {
+            types::private_field(c, span, t, name);
             return nullptr;
         }
         for (Usize k = 0; k < countof(t->slots); k++) {
