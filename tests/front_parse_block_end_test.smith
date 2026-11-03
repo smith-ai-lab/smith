@@ -1,0 +1,23 @@
+// Tests of where a statement ends when its last piece is an indented block (#1859 of #1845): a trailing block
+// `f(x):` and a binding whose value is `do:` end at the `dedent`, and the next line starts the next statement.
+module front_parse_block_end_test;
+
+import front::parser;
+import std::test;
+
+static Usize errors_of(Str source) {
+    parser::Parsed parsed = parser::parse_new("x.smith", source);
+    if (countof(parsed.errors) > 0) {
+        Str expected = "no error";
+        test::check_equal(parsed.errors[0].message, expected);
+    }
+    return countof(parsed.errors);
+}
+
+export void test_parse_block_end_a_trailing_block_ends_the_statement() {
+    test::check_equal(errors_of("fn f():\n    repeat(3):\n        work()\n    after()\n"), (Usize)0);
+}
+
+export void test_parse_block_end_a_do_value_ends_the_binding() {
+    test::check_equal(errors_of("fn f():\n    let r = do:\n        g(2)\n    after(r)\n"), (Usize)0);
+}

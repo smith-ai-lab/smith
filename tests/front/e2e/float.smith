@@ -1,30 +1,23 @@
-fn area(r: f64) -> f64 {
+fn area(r: f64) -> f64:
     const tau: f64 = 6.283185307179586
     tau / 2.0 * r * r
-}
 
-fn mean(a: f32, b: f32) -> f64 {
+fn mean(a: f32, b: f32) -> f64:
     let sum: f64 = a + b
     sum / 2.0
-}
 
-pub fn check() -> i32 {
+pub fn check() -> i32:
     let a = area(2.0)
-    if a < 12.56 || a > 12.57 {
+    if a < 12.56 || a > 12.57:
         return 1
-    }
-    if mean(1.5, 2.5) != 2.0 {
+    if mean(1.5, 2.5) != 2.0:
         return 2
-    }
     let mut x: f64 = 0
     x += 0.25
     x = -x
-    if x.to(i32) != 0 || (x * -8.0).to(i32) != 2 {
+    if x.to(i32) != 0 || (x * -8.0).to(i32) != 2:
         return 3
-    }
     let n: i32 = 7
-    if (n.to(f64)) / 2.0 != 3.5 {
+    if (n.to(f64)) / 2.0 != 3.5:
         return 4
-    }
     0
-}
