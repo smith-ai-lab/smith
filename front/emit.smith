@@ -712,7 +712,7 @@ static state::Status dispatch_statement(state::Emitter *e, const ast::Stmt *s) {
     if (s->kind == .empty) return state::success();
     if (s->kind == .match_stmt) return matching::match_stmt(e, s);
     if (s->kind == .for_in) return looping::for_in(e, s);
-    if (s->kind == .if_let) return optional::if_let(e, s);
+    if (s->kind == .if_let) return matching::if_let(e, s);
     if (s->kind == .destructure) return tupled::destructure(e, s);
     if (s->kind == .yield_stmt) return streams::yield_statement(e, s);
     return state::not_emitted("static_assert", s->span); // the one kind left
