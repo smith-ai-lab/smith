@@ -134,22 +134,44 @@ typedef I32 (*Pick)(I32);
 export void test_front_emit_match_enumerators_take_their_values_in_order_or_as_written() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = ir_of("enum Color {\n    red\n    green\n    blue\n}\n"
-                     "enum Small: u8 {\n    low = 2\n    mid\n    high = 9\n    top\n}\n"
-                     "pub fn green() -> i32 {\n    let c: Color = .green\n    c.to(i32)\n}\n"
-                     "pub fn mid() -> i32 {\n    let c: Small = .mid\n    c.to(i32)\n}\n"
-                     "pub fn top() -> i32 {\n    let c: Small = .top\n    c.to(i32)\n}\n"
-                     "pub fn eq(n: i32) -> i32 {\n    let a: Color = .blue\n    let b: Color = .blue\n    if a == b "
-                     "{\n        return 1\n   "
-                     " }\n    0\n}\n"
-                     "pub fn back(n: i32) -> i32 {\n    let c = n.to(Color)\n    let k: Color = .blue\n    if c == k "
-                     "{\n        return 1\n "
-                     " "
-                     "  }\n    0\n}\n"
-                     "pub fn zero(n: i32) -> i32 {\n    let c: Color = .red\n    let r: Color = .red\n    if c == r "
-                     "{\n        return 1\n    "
-                     "}\n    0\n}\n"
-                     "pub fn small(c: Small) -> i32 {\n    0\n}\n",
+    char *ir = ir_of("enum Color:\n"
+                     "    red\n"
+                     "    green\n"
+                     "    blue\n"
+                     "enum Small(u8):\n"
+                     "    low = 2\n"
+                     "    mid\n"
+                     "    high = 9\n"
+                     "    top\n"
+                     "pub fn green() -> i32:\n"
+                     "    let c: Color = .green\n"
+                     "    c.to(i32)\n"
+                     "pub fn mid() -> i32:\n"
+                     "    let c: Small = .mid\n"
+                     "    c.to(i32)\n"
+                     "pub fn top() -> i32:\n"
+                     "    let c: Small = .top\n"
+                     "    c.to(i32)\n"
+                     "pub fn eq(n: i32) -> i32:\n"
+                     "    let a: Color = .blue\n"
+                     "    let b: Color = .blue\n"
+                     "    if a == b:\n"
+                     "        return 1\n"
+                     "    0\n"
+                     "pub fn back(n: i32) -> i32:\n"
+                     "    let c = n.to(Color)\n"
+                     "    let k: Color = .blue\n"
+                     "    if c == k:\n"
+                     "        return 1\n"
+                     "    0\n"
+                     "pub fn zero(n: i32) -> i32:\n"
+                     "    let c: Color = .red\n"
+                     "    let r: Color = .red\n"
+                     "    if c == r:\n"
+                     "        return 1\n"
+                     "    0\n"
+                     "pub fn small(c: Small) -> i32:\n"
+                     "    0\n",
                      &host, &s);
     test::check_equal(ir != nullptr, true);
     test::check_equal(contains(ir, "i8"), true);
@@ -166,13 +188,25 @@ export void test_front_emit_match_enumerators_take_their_values_in_order_or_as_w
 export void test_front_emit_match_over_an_enumeration_is_one_switch() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir =
-        ir_of("enum Color {\n    red\n    green\n    blue\n}\n"
-              "fn score(c: Color) -> i32 {\n    match c {\n        .red => 1\n        .green, .blue => 2\n    }\n}\n"
-              "pub fn pick(n: i32) -> i32 {\n    score(n.to(Color))\n}\n"
-              "pub fn stmt(n: i32) -> i32 {\n    let mut seen = 0\n    let c = n.to(Color)\n    match c {\n"
-              "        .red => seen = 1\n        .green => seen = 2\n        .blue => seen = 3\n    }\n    seen\n}\n",
-              &host, &s);
+    char *ir = ir_of("enum Color:\n"
+                     "    red\n"
+                     "    green\n"
+                     "    blue\n"
+                     "fn score(c: Color) -> i32:\n"
+                     "    match c:\n"
+                     "        .red: 1\n"
+                     "        .green, .blue: 2\n"
+                     "pub fn pick(n: i32) -> i32:\n"
+                     "    score(n.to(Color))\n"
+                     "pub fn stmt(n: i32) -> i32:\n"
+                     "    let mut seen = 0\n"
+                     "    let c = n.to(Color)\n"
+                     "    match c:\n"
+                     "        .red: seen = 1\n"
+                     "        .green: seen = 2\n"
+                     "        .blue: seen = 3\n"
+                     "    seen\n",
+                     &host, &s);
     test::check_equal(ir != nullptr, true);
     test::check_equal(contains(ir, "switch i32"), true);
     test::check_equal(contains(ir, "unreachable"), true);
@@ -190,11 +224,21 @@ export void test_front_emit_match_over_an_enumeration_is_one_switch() {
 export void test_front_emit_match_over_an_option_binds_the_payload() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = ir_of("fn count(o: ?i32) -> i32 {\n    match o {\n        .some(n) => n\n        .none => 0\n    }\n}\n"
-                     "pub fn some(n: i32) -> i32 {\n    count(.some(n))\n}\n"
-                     "pub fn none(n: i32) -> i32 {\n    count(.none)\n}\n"
-                     "pub fn stmt(n: i32) -> i32 {\n    let mut seen = 0\n    let o: ?i32 = .some(n)\n    match o {\n"
-                     "        .some(_) => seen = 1\n        .none => seen = 2\n    }\n    seen\n}\n",
+    char *ir = ir_of("fn count(o: ?i32) -> i32:\n"
+                     "    match o:\n"
+                     "        .some(n): n\n"
+                     "        .none: 0\n"
+                     "pub fn some(n: i32) -> i32:\n"
+                     "    count(.some(n))\n"
+                     "pub fn none(n: i32) -> i32:\n"
+                     "    count(.none)\n"
+                     "pub fn stmt(n: i32) -> i32:\n"
+                     "    let mut seen = 0\n"
+                     "    let o: ?i32 = .some(n)\n"
+                     "    match o:\n"
+                     "        .some(_): seen = 1\n"
+                     "        .none: seen = 2\n"
+                     "    seen\n",
                      &host, &s);
     test::check_equal(ir != nullptr, true);
     test::check_equal(((Pick)symbol_of(&host, "some"))(6), (I32)6);
@@ -204,19 +248,25 @@ export void test_front_emit_match_over_an_option_binds_the_payload() {
 }
 
 export void test_front_emit_match_a_payload_enumeration_is_an_error_at_its_declaration() {
-    stops_with("enum Shape {\n    circle: i32\n    none\n}\n", false, "not emitted yet: a payload enumeration",
-               "enum Shape");
+    stops_with("enum Shape:\n"
+               "    circle: i32\n"
+               "    none\n",
+               false, "not emitted yet: a payload enumeration", "enum Shape");
 }
 
 export void test_front_emit_match_an_enumerator_value_that_is_not_a_literal_is_an_error() {
-    stops_with("enum Color {\n    red = 1 + 1\n}\n", false,
-               "not emitted yet: an enumerator value that is not an integer literal", "1 + 1");
+    stops_with("enum Color:\n"
+               "    red = 1 + 1\n",
+               false, "not emitted yet: an enumerator value that is not an integer literal", "1 + 1");
 }
 
 // `emit` sends a `.red` with no hint and no checker to the handler, so it is called directly.
 export void test_front_emit_match_an_untyped_enumerator_is_an_error() {
     Scenario s = {};
-    begin(&s, "fn f() -> i32 {\n    0\n}\n", false);
+    begin(&s,
+          "fn f() -> i32:\n"
+          "    0\n",
+          false);
     emit_state::Emitter e = {};
     e.node_type_hook = emit::type_of_node;
     ast::Expr *x = ast::variant_of("red", nullptr);

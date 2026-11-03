@@ -108,8 +108,11 @@ static void stops_at(Str source, Bool with_checker, Str what, Str at) {
 }
 
 export void test_front_emit_wave3_for_in_over_something_unbuilt_reaches_its_stub() {
-    stops_at("fn f(xs: i32) -> i32 {\n    for x in xs {\n        let _ = x\n    }\n    0\n}\n", false,
-             "a loop over a block or a stream", "xs");
+    stops_at("fn f(xs: i32) -> i32:\n"
+             "    for x in xs:\n"
+             "        let _ = x\n"
+             "    0\n",
+             false, "a loop over a block or a stream", "xs");
 }
 
 // (A lambda and a `fn` type are emitted since #1620: tests/front_emit_lambda_test.smith.
@@ -147,11 +150,19 @@ static Bool contains(const char *text, Str needle) {
 export void test_front_emit_wave3_a_narrower_integer_is_widened_where_the_types_differ() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = ir_of("pub fn widen(n: i32) -> i64 {\n    n\n}\n"
-                     "pub fn via_local(n: i32) -> i64 {\n    let x: i64 = n\n    x\n}\n"
-                     "pub fn byte_up(b: u8) -> u32 {\n    return b\n}\n"
-                     "pub fn u32_up(u: u32) -> i64 {\n    return u\n}\n"
-                     "pub fn via_assign(n: i32) -> i64 {\n    let mut wide: i64 = 0\n    wide = n\n    wide\n}\n",
+    char *ir = ir_of("pub fn widen(n: i32) -> i64:\n"
+                     "    n\n"
+                     "pub fn via_local(n: i32) -> i64:\n"
+                     "    let x: i64 = n\n"
+                     "    x\n"
+                     "pub fn byte_up(b: u8) -> u32:\n"
+                     "    return b\n"
+                     "pub fn u32_up(u: u32) -> i64:\n"
+                     "    return u\n"
+                     "pub fn via_assign(n: i32) -> i64:\n"
+                     "    let mut wide: i64 = 0\n"
+                     "    wide = n\n"
+                     "    wide\n",
                      &host, &s);
     test::check_equal(contains(ir, "sext i32 "), true);
     test::check_equal(contains(ir, "zext i8 "), true);
@@ -171,7 +182,10 @@ export void test_front_emit_wave3_a_narrower_integer_is_widened_where_the_types_
 
 export void test_front_emit_wave3_a_narrowing_or_sign_changing_conversion_is_still_an_error() {
     Scenario s = {};
-    begin(&s, "fn f(n: i64) -> i32 {\n    return 1\n}\n", false);
+    begin(&s,
+          "fn f(n: i64) -> i32:\n"
+          "    return 1\n",
+          false);
     emit_jit::Jit host = start_jit();
     c::LLVMContextRef context = c::LLVMContextCreate();
     emit::ModuleResult emitted = emit::module(context, &s.parsed.module, options_for(host.target, &s));
@@ -179,7 +193,10 @@ export void test_front_emit_wave3_a_narrowing_or_sign_changing_conversion_is_sti
     if (emitted == .ok) c::LLVMDisposeModule(emitted.ok);
     c::LLVMContextDispose(context);
     Scenario t = {};
-    begin(&t, "fn g(n: i64) -> i32 {\n    return n\n}\n", false);
+    begin(&t,
+          "fn g(n: i64) -> i32:\n"
+          "    return n\n",
+          false);
     context = c::LLVMContextCreate();
     emitted = emit::module(context, &t.parsed.module, options_for(host.target, &t));
     test::check_equal(emitted == .error, true);
@@ -196,7 +213,10 @@ export void test_front_emit_wave3_a_narrowing_or_sign_changing_conversion_is_sti
 
 export void test_front_emit_wave3_type_of_node_needs_the_checker_on_a_tree_built_by_hand() {
     Scenario s = {};
-    begin(&s, "fn f() -> i32 {\n    0\n}\n", false);
+    begin(&s,
+          "fn f() -> i32:\n"
+          "    0\n",
+          false);
     emit_state::Emitter e = {};
     ast::Expr *x = ast::name("x");
     emit_state::TyResult made = emit::type_of_node(&e, x);
