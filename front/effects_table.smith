@@ -1,0 +1,490 @@
+// front::effects_table: the effects of smith's own checker as data (#1965, piece 1 of #1939): the 13 bits, their
+// names, and what each function of libc and libSystem does to the world. It carries the same bits and the same table
+// as shim/effects_table.h, which the plugin reads and stays the source until the plugin is deleted (#1632);
+// tests/front_effects_table_test.smith fails when the two differ.
+//
+//   describe(set)      the names of the bits of a set joined by ", " ("nothing" for the empty set)
+//   leaf(name, &set)   true and the set of a function of the C library by name (0 for a pure one); false when the
+//                      table does not know the name, which is `unknown` for the checker
+//   count / name_at / set_at   the table itself, sorted by name (bytes), for the drift test
+module front::effects_table;
+
+import <string.h>;
+
+import std::format;
+import std::mem;
+
+export constexpr U32 alloc = 1u << 0;
+export constexpr U32 files = 1u << 1;
+export constexpr U32 net = 1u << 2;
+export constexpr U32 console = 1u << 3;
+export constexpr U32 clock = 1u << 4;
+export constexpr U32 process = 1u << 5;
+export constexpr U32 env = 1u << 6;
+export constexpr U32 entropy = 1u << 7;
+export constexpr U32 globals = 1u << 8;
+export constexpr U32 unknown = 1u << 9;
+export constexpr U32 fails = 1u << 10;
+export constexpr U32 code = 1u << 11;
+export constexpr U32 tasks = 1u << 12;
+export constexpr U32 everything = (1u << 13) - 1;
+
+export constexpr Usize bit_count = 13;
+
+static Str msg(char chars[:]) {
+    return chars;
+}
+
+static Str text_of(const char *chars) {
+    return chars[0:c::strlen(chars)];
+}
+
+static const char *const bit_names[13] = {"alloc",   "files",   "net",     "console", "clock", "process", "env",
+                                          "entropy", "globals", "unknown", "fails",   "code",  "tasks"};
+
+// The name of bit `i` (0 to 12), "" past the end.
+export Str bit_name(Usize i) {
+    if (i >= bit_count) return "";
+    return text_of(bit_names[i]);
+}
+
+// The names of the bits of a set, in bit order, joined by ", ": "alloc, files". "nothing" for the empty set.
+export Str describe(U32 set) {
+    Str text = "";
+    for (Usize i = 0; i < bit_count; i++) {
+        if ((set & (1u << i)) == 0) continue;
+        if (countof(text) > 0) text = msg(format::push(text, ", "));
+        text = msg(format::push(text, text_of(bit_names[i])));
+    }
+    if (countof(text) == 0) return "nothing";
+    return text;
+}
+
+export constexpr Usize count = 365;
+
+static const char *const function_names[365] = {
+    "__assert_fail",
+    "__assert_rtn",
+    "__builtin_abort",
+    "__builtin_trap",
+    "__builtin_unreachable",
+    "__ctype_b_loc",
+    "__ctype_tolower_loc",
+    "__ctype_toupper_loc",
+    "__errno_location",
+    "__error",
+    "__stack_chk_fail",
+    "_exit",
+    "abort",
+    "abs",
+    "accept",
+    "access",
+    "acos",
+    "acosf",
+    "acosh",
+    "aligned_alloc",
+    "arc4random",
+    "arc4random_buf",
+    "arc4random_uniform",
+    "asctime",
+    "asin",
+    "asinf",
+    "asinh",
+    "asprintf",
+    "atan",
+    "atan2",
+    "atan2f",
+    "atanf",
+    "atanh",
+    "atexit",
+    "atof",
+    "atoi",
+    "atol",
+    "atoll",
+    "basename",
+    "bcopy",
+    "bind",
+    "bsearch",
+    "bzero",
+    "calloc",
+    "cbrt",
+    "cbrtf",
+    "ceil",
+    "ceilf",
+    "chdir",
+    "chmod",
+    "clock",
+    "clock_gettime",
+    "close",
+    "closedir",
+    "connect",
+    "copysign",
+    "copysignf",
+    "cos",
+    "cosf",
+    "cosh",
+    "creat",
+    "ctermid",
+    "ctime",
+    "cuserid",
+    "difftime",
+    "dirname",
+    "div",
+    "dlclose",
+    "dlerror",
+    "dlopen",
+    "drand48",
+    "dup",
+    "dup2",
+    "erf",
+    "erfc",
+    "errno",
+    "execl",
+    "execlp",
+    "execv",
+    "execve",
+    "execvp",
+    "exit",
+    "exp",
+    "exp2",
+    "exp2f",
+    "expf",
+    "expm1",
+    "fabs",
+    "fabsf",
+    "fclose",
+    "fcntl",
+    "fdopen",
+    "fdopendir",
+    "fflush",
+    "fgetc",
+    "fgets",
+    "fileno",
+    "flock",
+    "floor",
+    "floorf",
+    "fma",
+    "fmaf",
+    "fmax",
+    "fmaxf",
+    "fmin",
+    "fminf",
+    "fmod",
+    "fmodf",
+    "fopen",
+    "fork",
+    "fprintf",
+    "fputc",
+    "fputs",
+    "fread",
+    "free",
+    "freeaddrinfo",
+    "freopen",
+    "frexp",
+    "fscanf",
+    "fseek",
+    "fstat",
+    "fsync",
+    "ftell",
+    "ftruncate",
+    "fwrite",
+    "gai_strerror",
+    "getaddrinfo",
+    "getc",
+    "getchar",
+    "getcwd",
+    "getdelim",
+    "getentropy",
+    "getenv",
+    "gethostbyname",
+    "gethostname",
+    "getline",
+    "getlogin",
+    "getpagesize",
+    "getpid",
+    "getppid",
+    "getpwnam",
+    "getpwuid",
+    "getrandom",
+    "gets",
+    "getsockopt",
+    "gettimeofday",
+    "getuid",
+    "gmtime",
+    "hypot",
+    "hypotf",
+    "ioctl",
+    "isalnum",
+    "isalpha",
+    "isatty",
+    "isblank",
+    "iscntrl",
+    "isdigit",
+    "isfinite",
+    "isgraph",
+    "isinf",
+    "islower",
+    "isnan",
+    "isprint",
+    "ispunct",
+    "isspace",
+    "isupper",
+    "isxdigit",
+    "kevent",
+    "kill",
+    "kqueue",
+    "labs",
+    "ldexp",
+    "ldiv",
+    "lgamma",
+    "listen",
+    "llabs",
+    "lldiv",
+    "llrint",
+    "llround",
+    "localeconv",
+    "localtime",
+    "localtime_r",
+    "log",
+    "log10",
+    "log10f",
+    "log1p",
+    "log2",
+    "log2f",
+    "logf",
+    "longjmp",
+    "lrint",
+    "lround",
+    "lseek",
+    "lstat",
+    "mach_absolute_time",
+    "malloc",
+    "memccpy",
+    "memchr",
+    "memcmp",
+    "memcmp_explicit",
+    "memcpy",
+    "memmove",
+    "memset",
+    "mkdir",
+    "mkdtemp",
+    "mkstemp",
+    "mktime",
+    "mmap",
+    "modf",
+    "mprotect",
+    "munmap",
+    "nanosleep",
+    "nearbyint",
+    "open",
+    "openat",
+    "opendir",
+    "pclose",
+    "perror",
+    "pipe",
+    "poll",
+    "popen",
+    "posix_memalign",
+    "posix_spawn",
+    "posix_spawnp",
+    "pow",
+    "powf",
+    "pread",
+    "printf",
+    "pthread_cond_signal",
+    "pthread_cond_wait",
+    "pthread_create",
+    "pthread_join",
+    "pthread_mutex_lock",
+    "pthread_mutex_unlock",
+    "putc",
+    "putchar",
+    "putenv",
+    "puts",
+    "pwrite",
+    "qsort",
+    "raise",
+    "rand",
+    "rand_r",
+    "random",
+    "read",
+    "readdir",
+    "readv",
+    "realloc",
+    "reallocf",
+    "realpath",
+    "recv",
+    "recvfrom",
+    "recvmsg",
+    "remainder",
+    "remove",
+    "rename",
+    "rewind",
+    "rint",
+    "rintf",
+    "rmdir",
+    "round",
+    "roundf",
+    "scanf",
+    "sched_yield",
+    "select",
+    "send",
+    "sendmsg",
+    "sendto",
+    "setbuf",
+    "setenv",
+    "setjmp",
+    "setlocale",
+    "setsockopt",
+    "setvbuf",
+    "shutdown",
+    "sigaction",
+    "signal",
+    "signbit",
+    "sin",
+    "sinf",
+    "sinh",
+    "sleep",
+    "smith_check_failed",
+    "smith_contract_failed",
+    "smith_failure",
+    "smith_failure_detail",
+    "smith_failure_format",
+    "smith_failure_proved",
+    "smith_test_failed",
+    "snprintf",
+    "socket",
+    "socketpair",
+    "sprintf",
+    "sqrt",
+    "sqrtf",
+    "srand",
+    "srand48",
+    "srandom",
+    "sscanf",
+    "stat",
+    "strcat",
+    "strchr",
+    "strcmp",
+    "strcoll",
+    "strcpy",
+    "strcspn",
+    "strdup",
+    "strerror",
+    "strftime",
+    "strlcat",
+    "strlcpy",
+    "strlen",
+    "strncat",
+    "strncmp",
+    "strncpy",
+    "strndup",
+    "strnlen",
+    "strpbrk",
+    "strrchr",
+    "strsignal",
+    "strspn",
+    "strstr",
+    "strtod",
+    "strtof",
+    "strtoimax",
+    "strtok",
+    "strtok_r",
+    "strtol",
+    "strtold",
+    "strtoll",
+    "strtoul",
+    "strtoull",
+    "strtoumax",
+    "sysconf",
+    "system",
+    "tan",
+    "tanf",
+    "tanh",
+    "tempnam",
+    "tgamma",
+    "time",
+    "tmpfile",
+    "tmpnam",
+    "tolower",
+    "toupper",
+    "trunc",
+    "truncate",
+    "truncf",
+    "ttyname",
+    "uname",
+    "ungetc",
+    "unlink",
+    "unsetenv",
+    "usleep",
+    "valloc",
+    "vasprintf",
+    "vfork",
+    "vfprintf",
+    "vprintf",
+    "vsnprintf",
+    "vsprintf",
+    "wait",
+    "waitpid",
+    "write",
+    "writev",
+};
+
+static constexpr U16 function_sets[365] = {
+    1024, 1024, 1024, 1024, 0,   256, 256, 256, 256, 256,  0,    32,   1024, 0,    4,   2,    0,   0,   0,  1,   128,
+    128,  128,  272,  0,    0,   0,   1,   0,   0,   0,    0,    0,    288,  0,    0,   0,    0,   256, 0,  4,   0,
+    0,    1,    0,    0,    0,   0,   2,   2,   16,  16,   6,    2,    4,    0,    0,   0,    0,   0,   2,  256, 272,
+    320,  0,    256,  0,    258, 256, 258, 256, 6,   6,    0,    0,    256,  32,   32,  32,   32,  32,  32, 0,   0,
+    0,    0,    0,    0,    0,   258, 6,   258, 2,   266,  266,  266,  2,    2,    0,   0,    0,   0,   0,  0,   0,
+    0,    0,    0,    258,  32,  266, 266, 266, 266, 1,    4,    258,  0,    266,  258, 2,    2,   258, 2,  266, 256,
+    4,    266,  264,  3,    259, 128, 320, 260, 64,  259,  320,  64,   32,   32,   258, 258,  128, 264, 4,  16,  64,
+    272,  0,    0,    6,    0,   0,   8,   0,   0,   0,    0,    0,    0,    0,    0,   0,    0,   0,   0,  0,   6,
+    32,   6,    0,    0,    0,   0,   4,   0,   0,   0,    0,    320,  272,  16,   0,   0,    0,   0,   0,  0,   0,
+    32,   0,    0,    2,    2,   16,  1,   0,   0,   0,    0,    0,    0,    0,    2,   2,    2,   272, 1,  0,   1,
+    1,    16,   0,    2,    2,   2,   288, 264, 2,   6,    290,  1,    32,   32,   0,   0,    2,   264, 32, 32,  32,
+    32,   32,   32,   266,  264, 320, 264, 2,   0,   32,   256,  0,    256,  6,    2,   6,    1,   1,   3,  4,   4,
+    4,    0,    2,    2,    258, 0,   0,   2,   0,   0,    264,  32,   6,    4,    4,   4,    258, 320, 32, 320, 4,
+    258,  4,    288,  288,  0,   0,   0,   0,   16,  1024, 1024, 1024, 1024, 1024, 0,   1024, 0,   4,   4,  0,   0,
+    0,    256,  256,  256,  0,   2,   0,   0,   0,   0,    0,    0,    1,    256,  272, 0,    0,   0,   0,  0,   0,
+    1,    0,    0,    0,    256, 0,   0,   0,   0,   0,    256,  0,    0,    0,    0,   0,    0,   0,   64, 32,  0,
+    0,    0,    257,  0,    16,  258, 256, 0,   0,   0,    2,    0,    256,  64,   258, 2,    320, 16,  1,  1,   32,
+    266,  264,  0,    0,    32,  32,  6,   6,
+};
+
+export Str name_at(Usize i) {
+    return text_of(function_names[i]);
+}
+
+export U32 set_at(Usize i) {
+    return function_sets[i];
+}
+
+// -1 when a sorts before b byte for byte, 1 when after, 0 when equal.
+static I32 compare(Str a, Str b) {
+    Usize n = countof(a) < countof(b) ? countof(a) : countof(b);
+    for (Usize i = 0; i < n; i++) {
+        if (a[i] != b[i]) return (U8)a[i] < (U8)b[i] ? -1 : 1;
+    }
+    if (countof(a) == countof(b)) return 0;
+    return countof(a) < countof(b) ? -1 : 1;
+}
+
+// The effects of a function of the C library by name: true and `*set` when the table knows it (0 for a pure one).
+export Bool leaf(Str name, U32 *set) {
+    Usize low = 0;
+    Usize high = count;
+    while (low < high) {
+        Usize middle = low + (high - low) / 2;
+        I32 order = compare(name, text_of(function_names[middle]));
+        if (order == 0) {
+            *set = function_sets[middle];
+            return true;
+        }
+        if (order < 0) {
+            high = middle;
+        } else {
+            low = middle + 1;
+        }
+    }
+    return false;
+}

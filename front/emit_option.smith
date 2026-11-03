@@ -63,6 +63,66 @@ export state::TyResult type_option(state::Emitter *e, const ast::TypeExpr *t) {
     return build(e, made.ok, t->span);
 }
 
+// Whether `t` is `Option(T)` or `Result(T, E)` written as an applied type.
+export Bool is_applied(const ast::TypeExpr *t) {
+    if (t->kind != .applied) return false;
+    ast::Path name = t->kind.applied.name;
+    if (countof(name.segments) != 1) return false;
+    Str last = name.segments[0].text;
+    return state::same_text(last, "Option") || state::same_text(last, "Result") || state::same_text(last, "Checked");
+}
+
+// The type argument `i` of an applied type, or the reason there is none.
+static state::TyResult applied_argument(state::Emitter *e, const ast::TypeExpr *t, Usize i) {
+    if (t->kind != .applied) return state::ty_fail("not an applied type", t->span);
+    ast::TypeArg args[:] = t->kind.applied.args;
+    if (i >= countof(args)) return state::ty_fail("not emitted yet: this applied type", t->span);
+    const ast::TypeArg *arg = &args[i];
+    if (!(*arg == .type)) return state::ty_fail("not emitted yet: this applied type", t->span);
+    return state::type_of(e, arg->type.type);
+}
+
+typedef state::Ty TyList[:];
+
+// `Result(ok, error)`: `{ i8 tag, ok, error }`, tag 0 is ok. One block whose first two slots are the header of its
+// link in the chain (as a tuple's), then `ok` and `error`, so `memory::release` frees it.
+static state::TyResult build_result(state::Emitter *e, state::Ty ok, state::Ty error) {
+    TyList block = {};
+    block = mem::realloc(block, 4);
+    state::OwnedTy *head = (state::OwnedTy *)(Usize)block.data;
+    head->next = e->owned;
+    e->owned = head;
+    block[2] = ok;
+    block[3] = error;
+    c::LLVMTypeRef fields[3];
+    fields[0] = c::LLVMInt8TypeInContext(e->context);
+    fields[1] = ok.llvm;
+    fields[2] = error.llvm;
+    state::Ty ty = {.kind = .result,
+                    .llvm = c::LLVMStructTypeInContext(e->context, fields, 3, false),
+                    .name = state::msg(format::push("Result(", ok.name, ", ", error.name, ")")),
+                    .parts = &block[2],
+                    .part_count = 2};
+    return ty;
+}
+
+// `Option(T)` and `Result(T, E)` written as types.
+export state::TyResult type_applied(state::Emitter *e, const ast::TypeExpr *t) {
+    if (t->kind != .applied) return state::ty_fail("not an applied type", t->span);
+    ast::Path name = t->kind.applied.name;
+    ast::TypeArg args[:] = t->kind.applied.args;
+    state::TyResult first = applied_argument(e, t, 0);
+    if (first == .error) return {.error = first.error};
+    if (state::same_text(name.segments[0].text, "Option")) {
+        if (countof(args) != 1) return state::ty_fail("`Option` takes one type", t->span);
+        return build(e, first.ok, t->span);
+    }
+    if (countof(args) != 2) return state::ty_fail("`Result` takes two types", t->span);
+    state::TyResult second = applied_argument(e, t, 1);
+    if (second == .error) return {.error = second.error};
+    return build_result(e, first.ok, second.ok);
+}
+
 // The payload the checker names, as a `Ty`: a `bool`, an integer, or a record of the module (an option is walked by
 // `from_checked`'s loop).
 static state::TyResult payload_of_checked(state::Emitter *e, types::TypeRef t) {
