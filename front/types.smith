@@ -1864,11 +1864,27 @@ export Bool is_type_parameter(const ast::Param *p) {
     return is_type_name(p->type);
 }
 
+// Whether a written type is a slice of `auto` (`const auto xs[:]`): the call's argument must be a slice, and the
+// instance keeps its element type and the parameter's `const` (#2070).
+export Bool is_auto_slice(const ast::TypeExpr *t) {
+    if (t == nullptr || !(t->kind == .slice)) return false;
+    return t->kind.slice.element != nullptr && t->kind.slice.element->kind == .auto_type;
+}
+
 // Whether a parameter is written `auto x` in today's syntax: its type is the type each call passes, so the function is
 // a template with one instance per set of argument types (#1934).
 export Bool is_auto_param(const ast::Param *p) {
-    return !p->is_new && p->type != nullptr && p->type->kind == .auto_type && !p->is_rest && !p->is_pack &&
-           !p->is_gather;
+    if (p->type == nullptr || p->is_rest || p->is_pack || p->is_gather) return false;
+    return is_auto_slice(p->type) || (!p->is_new && p->type->kind == .auto_type);
+}
+
+// The type an `auto` parameter is bound to for an argument of type `given`: the argument's type, and for a slice of
+// `auto` its element with the parameter's `const` added; null when the argument is not a slice.
+export TypeRef auto_binding(Checked *r, const ast::Param *p, TypeRef given) {
+    if (!is_auto_slice(p->type) || !(p->type->kind == .slice)) return given;
+    if (given->kind != .slice) return nullptr;
+    Bool fixed = given->pointee_const || p->type->kind.slice.element->qualifiers.is_const;
+    return slice_of(&r->table, given->element, fixed);
 }
 
 // A function with a body and a compile-time or `auto` parameter, whose result is not a type, is a template (#1908,
@@ -2075,6 +2091,8 @@ static void keep_params(Checked *r, ast::Param all[:], Binding bindings[:], Bool
             slots[at].type = all[i].type == nullptr ? r->table.invalid : resolve(r, all[i].type);
             r->new_syntax = false;
         }
+        declare(&r->scopes,
+                (Symbol){.name = all[i].name, .kind = .variable, .type = slots[at].type}); // for `typeof(a)`
         at += 1;
     }
 }
