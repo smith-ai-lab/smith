@@ -177,28 +177,78 @@ export Bool store(Str path, Str text) {
     return written != .error;
 }
 
-// The text with every `//` comment written as a `#` comment (a space after it when there is none). Only the text
-// between tokens is looked at, so a `//` in a string is left. Nothing changes when the text does not tokenize as
-// today's syntax.
+// The text of a `/* */` comment written as `#` lines: each line of `content` gets a `#` in front of it.
+static Str block_as_hashes(Str content) {
+    Str out = "#";
+    for (Usize k = 0; k < countof(content); k++) {
+        if (content[k] == '\n') out = as_str(format::push(out, "\n#"));
+        else out = as_str(format::push(out, content[k:k + 1]));
+    }
+    return out;
+}
+
+// The index of the `/` after `*/` closing the block comment that opens at i, or the length of the text when none does.
+static Usize block_end(Str source, Usize i) {
+    Usize n = countof(source);
+    for (Usize k = i + 2; k + 1 < n; k++) {
+        if (source[k] == '*' && source[k + 1] == '/') return k + 1;
+    }
+    return n;
+}
+
+// The index after the closing quote of the string or character literal that opens at i, on the same line; i itself
+// when the line holds no closing quote, so the quote is text (an apostrophe in a comment).
+static Usize quoted_end(Str source, Usize i) {
+    Usize n = countof(source);
+    Usize k = i + 1;
+    while (k < n && source[k] != '\n') {
+        if (source[k] == '\\') {
+            k += 2;
+            continue;
+        }
+        if (source[k] == source[i]) return k + 1;
+        k += 1;
+    }
+    return i;
+}
+
+// The text with every `//` comment written as a `#` comment (a space after it when there is none), and every
+// `/* */` comment as `#` lines. The text is read as characters, not tokens: once the fixer has written `#` comments
+// the text no longer tokenizes as today's syntax, and the `//` left would hide the causes behind it. A string or a
+// character literal is left, so a `//` in a string stays.
 static Str hash_comments(Str source) {
-    lex::Lexed lexed = lex::tokenize(source);
-    if (lexed == .error) return source;
+    Usize n = countof(source);
     Str out = "";
     Usize copied = 0;
-    Usize gap = 0;
-    for (lex::Token token : lexed.ok) {
-        for (Usize i = gap; i + 1 < token.span.start; i++) {
-            if (source[i] != '/' || source[i + 1] != '/') continue;
-            Bool blank = i + 2 >= countof(source) || source[i + 2] == ' ' || source[i + 2] == '\n';
+    Usize i = 0;
+    while (i < n) {
+        if (source[i] == '"' || source[i] == '\'') {
+            Usize end = quoted_end(source, i);
+            i = end > i ? end : i + 1;
+            continue;
+        }
+        if (i + 1 < n && source[i] == '/' && source[i + 1] == '/') {
+            Bool blank = i + 2 >= n || source[i + 2] == ' ' || source[i + 2] == '\n';
             Str spaced = blank ? "#" : "# ";
             out = as_str(format::push(out, source[copied:i], spaced));
             copied = i + 2;
-            while (i < token.span.start && source[i] != '\n')
-                i += 1;
+            while (i < n && source[i] != '\n') i += 1;
+            continue;
         }
-        gap = token.span.end;
+        if (i + 1 < n && source[i] == '/' && source[i + 1] == '*') {
+            Usize close = block_end(source, i);
+            if (close >= n) {
+                i = n;
+                continue;
+            }
+            out = as_str(format::push(out, source[copied:i], block_as_hashes(source[i + 2:close - 1])));
+            copied = close + 1;
+            i = copied;
+            continue;
+        }
+        i += 1;
     }
-    return as_str(format::push(out, source[copied:countof(source)]));
+    return as_str(format::push(out, source[copied:n]));
 }
 
 // Mends the text of the file called `file`: parses, applies the fixes, and parses the result again, until a pass
@@ -221,11 +271,8 @@ export Fixed fix_text(Str file, Str source) {
         total.applied += fixed.applied;
         total.skipped = fixed.skipped;
     }
-    Str hashed = hash_comments(total.text);
-    if (total.applied > 0 && countof(hashed) != countof(total.text) &&
-        countof(parser::parse_new(file, hashed).errors) == 0) {
-        total.text = hashed;
-    }
+    // The comments are written even when a form the fixer cannot mend is left, so no `//` hides the other causes.
+    if (total.applied > 0) total.text = hash_comments(total.text);
     return total;
 }
 
