@@ -1,0 +1,119 @@
+// Tests of the fix-it for method calls (#1797, part of #1793 of #1428): `smith lint --fix` writes `list.push(&xs, 5)`
+// as `xs.push(5)` where the method form applies, and leaves a call it does not apply to alone. The imported module is
+// `lib.list`, read from text.
+module front_fix_method_test;
+
+import front::ast;
+import front::fix;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+import <string.h>;
+
+static Str list_source() {
+    return "pub struct List {\n    pub count: i32\n}\n\n"
+           "pub fn push(l: *mut List, x: i32) {\n    l.count += x\n}\n\n"
+           "pub fn size(l: *List) -> i32 {\n    l.count\n}\n\n"
+           "pub fn first(l: List) -> i32 {\n    l.count\n}\n\n"
+           "pub fn make() -> List {\n    return List(count = 0)\n}\n\n"
+           "pub struct Other {\n    pub n: i32\n}\n\n"
+           "pub fn limit(o: Other) -> i32 {\n    o.n\n}\n";
+}
+
+static Bool same(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+static const ast::Module *load(const char *name) {
+    Str path = name[0:c::strlen(name)];
+    if (!same(path, "lib.list")) return nullptr;
+    parser::Parsed p = fix::parse_for_fix("lib/list.smith", list_source());
+    test::check_equal(countof(p.errors), (Usize)0);
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = p.module;
+    return copy;
+}
+
+static Str head() {
+    return "list := import lib.list\n\n";
+}
+
+static Str with_head(Str body) {
+    return types::message_of(format::push(head(), body));
+}
+
+static Usize errors_in(Str source) {
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    if (countof(parsed.errors) != 0) return 1000;
+    return types_decl::check_module_with(&parsed.module, types::lp64(), load).error_count;
+}
+
+static void expect(Str before, Str after, Usize applied) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::set_loader(load);
+    defer fix::set_loader(nullptr);
+    fix::Fixed first = fix::fix_text("t.smith", with_head(before));
+    test::check_equal(first.text, with_head(after));
+    test::check_equal(first.applied, applied);
+    fix::Fixed again = fix::fix_text("t.smith", first.text);
+    test::check_equal(again.text, first.text);
+    test::check_equal(again.applied, (Usize)0);
+    test::check_equal(errors_in(first.text), (Usize)0);
+}
+
+export void test_front_fix_method_a_call_taking_the_address_is_written_as_a_method() {
+    expect("fn run() {\n    mut xs := list.make()\n    list.push(&xs, 5)\n}\n",
+           "fn run() {\n    mut xs := list.make()\n    xs.push(5)\n}\n", 1);
+}
+
+export void test_front_fix_method_a_pointer_is_passed_on_and_a_value_stays_a_value() {
+    expect("fn run(p: *list.List, v: list.List) -> i32 {\n    list.size(p) + list.first(v)\n}\n",
+           "fn run(p: *list.List, v: list.List) -> i32 {\n    p.size() + v.first()\n}\n", 2);
+}
+
+export void test_front_fix_method_the_other_arguments_are_kept() {
+    expect("fn run(p: *mut list.List) {\n    list.push(p, 1 + 2)\n}\n",
+           "fn run(p: *mut list.List) {\n    p.push(1 + 2)\n}\n", 1);
+}
+
+export void test_front_fix_method_a_function_of_this_module_is_left_alone() {
+    expect(
+        "fn twice(l: list.List) -> i32 {\n    list.first(l) * 2\n}\n\nfn run(l: list.List) -> i32 {\n    twice(l)\n}\n",
+        "fn twice(l: list.List) -> i32 {\n    l.first() * 2\n}\n\nfn run(l: list.List) -> i32 {\n    twice(l)\n}\n", 1);
+}
+
+export void test_front_fix_method_a_function_of_the_module_for_another_type_is_rewritten_on_that_type() {
+    expect("fn run(o: list.Other, l: list.List) -> i32 {\n    list.limit(o) + list.first(l)\n}\n",
+           "fn run(o: list.Other, l: list.List) -> i32 {\n    o.limit() + l.first()\n}\n", 2);
+}
+
+export void test_front_fix_method_a_call_that_is_already_a_method_is_left_alone() {
+    expect("fn run(l: *list.List) -> i32 {\n    l.size()\n}\n", "fn run(l: *list.List) -> i32 {\n    l.size()\n}\n", 0);
+}
+
+export void test_front_fix_method_a_value_call_in_the_last_line_is_rewritten() {
+    expect("fn run(l: list.List) -> i32 {\n    list.first(l)\n}\n", "fn run(l: list.List) -> i32 {\n    l.first()\n}\n",
+           1);
+}
+
+export void test_front_fix_method_without_a_loader_nothing_is_rewritten() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = with_head("fn run(p: *list.List) -> i32 {\n    list.size(p)\n}\n");
+    fix::Fixed got = fix::fix_text("t.smith", source);
+    test::check_equal(got.text, source);
+    test::check_equal(got.applied, (Usize)0);
+}
