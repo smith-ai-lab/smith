@@ -30,17 +30,17 @@ a + b ? c : d
 
 (I32)c ? a : b
   warning 1-4: write the type `I32` as `i32` in smith's own syntax
-  warning 0-6: a cast is `x as T`: write `x as i32`
+  warning 0-6: a cast is `x.to(T)`: write `x.to(i32)`
   warning 0-14: `c ? a : b` is written `if c { a } else { b }`
-  fixed: if c as i32 { a } else { b }
+  fixed: if c.to(i32) { a } else { b }
   warnings left: 0
 
 c ? (I32)a : (U8)b
   warning 5-8: write the type `I32` as `i32` in smith's own syntax
-  warning 4-10: a cast is `x as T`: write `x as i32`
+  warning 4-10: a cast is `x.to(T)`: write `x.to(i32)`
   warning 14-16: write the type `U8` as `u8` in smith's own syntax
   warning 0-18: `c ? a : b` is written `if c { a } else { b }`
-  fixed: if c { a as i32 } else { b as u8 }
+  fixed: if c { a.to(i32) } else { b.to(u8) }
   warnings left: 0
 
 (P){.a.b = 1}
