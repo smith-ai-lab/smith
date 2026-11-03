@@ -1,6 +1,6 @@
 ---
 name: smith-dev-syntax-loops
-description: "New syntax (#1428): `for x in xs:`, `while`, `while let`, `std.seq` (`range`, `enumerate`, `zip`, `refs`, `take`, `drop`), iterators (any type whose module has `next`), generators with `yield` returning `iter(T)`, `mut` on a loop name, `for` as an expression that builds an array, `continue` as a filter, fused reductions like `sum(for x in xs: x * x)`. Load when writing a loop or an iterator in the new syntax."
+description: "New syntax (#1428): `for x in xs:`, `while`, `while let`, `std.seq` (`range`, `enumerate`, `zip`, `refs`, `take`, `drop`, `peekable`), generators with `yield` returning `iter(T)` (no user-written `next`), containers looped through their `items`, `mut` on a loop name, `for` as an expression that builds an array, `continue` as a filter, fused reductions like `sum(for x in xs: x * x)`. Load when writing a loop or an iterator in the new syntax."
 ---
 
 # Loops and iterators
@@ -19,8 +19,7 @@ for (i, mut x) in enumerate(copies): x *= 2     # mut on one name, as in let
 while let .some(n) = todo.pop(): visit(n)       # until the pattern fails to match
 ```
 
-- `for` loops over arrays, slices (so `str`), contiguous blocks (one row per turn) and **iterators**: any value whose type's module has `fn next(it: *mut T) -> ?E`, found as a method call is. `std.seq`'s functions (`range`, `enumerate`, `zip`, `refs`, `take`, `drop`, ...) are such structs: zero cost, the loop compiles to the hand-written one. There is no `map` or `filter`: a `for` expression does that.
-- C's three-part `for` and today's `for (Usize i, T x : xs)` are errors; the fix is `range`, `enumerate` or `while`.
+- `for` loops over arrays, slices (so `str`), contiguous blocks (one row per turn), **iterators** (`iter(T)` values, made by generators) and **containers**: a value whose type's module has `items`, which `for x in c` calls as `c.items()`, so each loop gets a fresh pass. `std.seq` (`range`, `enumerate`, `zip`, `refs`, `take`, `drop`, `peekable`) is written with `yield`. There is no `map` or `filter`: a `for` expression does that.
 
 ## Generators
 
@@ -33,7 +32,14 @@ fn nats() -> iter(i32):
 ```
 
 - A function returning `iter(T)` with a `yield` in its body is a generator: lazy, nothing runs until the first `next`. `return` ends it; `return v` is an error ("`yield v` first"). `yield` stands only in the generator's own body, not in a lambda or a called function.
-- It compiles to a state machine (its locals become a struct, `next` resumes at the last `yield`), so it is zero cost when inlined. `iter(T)` is a concept: "a type whose `next` gives `?T`"; each generator has its own type. `it.next()` and `it.close()` (runs its `defer`s) are built in.
+- It compiles to a state machine (its locals become a struct that resumes at the last `yield`), so it is zero cost when inlined. `iter(T)` is a concept; each generator has its own type. `it.next()` (gives `?T`) and `it.close()` (runs its `defer`s) are built in; nobody writes a `next`. A container's module defines its passes as generators:
+
+```smith
+pub fn items(l: *List(T)) -> iter(T):            # for x in shapes: ...
+    for i in range(0, l.len): yield l.data[i]
+pub fn refs(l: *mut List(T)) -> iter(*mut T):    # for p in refs(shapes): p.x += 1
+    for i in range(0, l.len): yield &l.data[i]
+```
 
 ## for as an expression
 
